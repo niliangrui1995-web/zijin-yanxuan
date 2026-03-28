@@ -9,7 +9,6 @@ import os
 import re
 import glob
 import datetime
-import threading
 
 from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,

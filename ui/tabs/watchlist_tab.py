@@ -6,7 +6,6 @@ import json
 import time
 import pickle
 import datetime
-import threading
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,

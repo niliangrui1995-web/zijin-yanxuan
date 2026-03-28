@@ -7,7 +7,6 @@ AI产业链得分 独立 Tab 组件 — 从 AITrackerMixin 解耦重构为完全
 """
 import os
 import glob
-import threading
 import datetime
 
 import pandas as pd

@@ -29,7 +29,8 @@ class BackgroundWorker(QRunnable):
         self.kwargs = kwargs
         self.signals = _WorkerSignals()
         self._is_cancelled = False
-        self.setAutoDelete(True)
+        # 不自动删除，由 active_workers 字典持有引用控制生命周期
+        self.setAutoDelete(False)
 
     def cancel(self):
         self._is_cancelled = True
@@ -39,12 +40,19 @@ class BackgroundWorker(QRunnable):
         try:
             result = self.fn(*self.args, **self.kwargs)
             if not self._is_cancelled:
-                self.signals.finished.emit(result)
+                try:
+                    self.signals.finished.emit(result)
+                except RuntimeError:
+                    pass  # 信号对象已被销毁，安全忽略
         except Exception as e:
             tb = traceback.format_exc()
-            print(f"[任务调度] Worker 异常: {e}\n{tb}")
+            from core.logger import get_logger
+            get_logger(__name__).error(f"[任务调度] Worker 异常: {e}\n{tb}")
             if not self._is_cancelled:
-                self.signals.error.emit(str(e))
+                try:
+                    self.signals.error.emit(str(e))
+                except RuntimeError:
+                    pass  # 信号对象已被销毁，安全忽略
 
 
 class GlobalTaskManager(QObject):
