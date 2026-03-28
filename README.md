@@ -30,13 +30,11 @@
 ├── .gitignore                     # Git 忽略规则
 ├── bull_icon.ico                  # 应用图标
 │
-├── core/                          # 核心基础设施层（v2 新增）
+├── core/                          # 核心基础设施层
 │   ├── __init__.py
-│   ├── config.py                  # 集中配置管理中心
 │   ├── event_bus.py               # 全局事件总线（PyQt 信号中转）
 │   ├── task_manager.py            # 统一异步任务调度器（替代 threading.Thread）
-│   ├── logger.py                  # 标准化日志系统（替代 print）
-│   └── memory_optimizer.py        # 内存优化器（大 DataFrame 降精度）
+│   └── logger.py                  # 标准化日志系统（替代 print）
 │
 ├── vcp/                           # 核心引擎层（策略 + 数据）
 │   ├── __init__.py
@@ -46,7 +44,6 @@
 │   ├── engine.py                  # VCP 策略中台（选股、评分、RPS）
 │   ├── data_provider.py           # 数据中台（通达信/pytdx 数据获取与缓存）
 │   ├── ai_service.py              # AI 诊断服务（Kimi API 封装）
-│   ├── finance_cache.py           # 财务数据缓存（TTL 防重复请求）
 │   ├── sector.py                  # 板块数据管理与板块 RPS 计算
 │   └── polars_engine.py           # 高性能加速引擎（numpy/Polars 优化）
 │
@@ -196,7 +193,6 @@ pythonw vcp_hunter_qt.pyw
 1. **numpy 向量化**：`pct_change` + `rank` 替代 pandas，加速 3-5x
 2. **Parquet 缓存**：替代 pickle，读取速度提升 2-3x
 3. **增量 RPS**：磁盘缓存价格矩阵，二次运行自动增量复用
-4. **内存优化器**：`core/memory_optimizer.py` 对大 DataFrame 自动降精度
 
 ---
 
