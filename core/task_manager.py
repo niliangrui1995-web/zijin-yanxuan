@@ -1,13 +1,61 @@
+# -*- coding: utf-8 -*-
+"""统一任务调度管理中心 — 替代散落的 threading.Thread
+
+提供 run_in_background() 便捷方法：
+- 后台执行函数
+- 结果通过 pyqtSignal 安全回传到主线程
+- 自动异常捕获与日志
+"""
+
 import uuid
-from PyQt6.QtCore import QObject, QRunnable, QThreadPool
+import traceback
+from PyQt6.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal, pyqtSlot
+
+
+class _WorkerSignals(QObject):
+    """Worker 内部信号（跨线程回传结果）"""
+    finished = pyqtSignal(object)   # 成功: 传回结果
+    error = pyqtSignal(str)         # 失败: 传回错误信息
+    progress = pyqtSignal(int, str) # 进度: pct, msg
+
+
+class BackgroundWorker(QRunnable):
+    """通用后台 Worker — 包装任意可调用对象"""
+
+    def __init__(self, fn, *args, **kwargs):
+        super().__init__()
+        self.fn = fn
+        self.args = args
+        self.kwargs = kwargs
+        self.signals = _WorkerSignals()
+        self._is_cancelled = False
+        self.setAutoDelete(True)
+
+    def cancel(self):
+        self._is_cancelled = True
+
+    @pyqtSlot()
+    def run(self):
+        try:
+            result = self.fn(*self.args, **self.kwargs)
+            if not self._is_cancelled:
+                self.signals.finished.emit(result)
+        except Exception as e:
+            tb = traceback.format_exc()
+            print(f"[任务调度] Worker 异常: {e}\n{tb}")
+            if not self._is_cancelled:
+                self.signals.error.emit(str(e))
+
 
 class GlobalTaskManager(QObject):
     """
     紫金研选 统一任务调度管理中心 (Task Manager)
-    托管所有底层的异步计算、大模型网络请求，提供彻底的「一键拦截」「并发池」等核心控制。
+    托管所有底层的异步计算、网络请求，提供「一键拦截」「并发池」等核心控制。
+
+    v2: 新增 run_in_background() 便捷方法
     """
     _instance = None
-    
+
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
             cls._instance = super(GlobalTaskManager, cls).__new__(cls, *args, **kwargs)
@@ -15,44 +63,72 @@ class GlobalTaskManager(QObject):
 
     def __init__(self):
         super().__init__()
-        # 初始化只执行一次
         if hasattr(self, '_initialized'):
             return
         self._initialized = True
-        
-        # 使用 Qt 官方线程池
+
         self.thread_pool = QThreadPool.globalInstance()
-        # 将最大线程数设置为当前 CPU 核心数 * 2 比较稳妥
-        self.thread_pool.setMaxThreadCount(self.thread_pool.maxThreadCount() + 10)
-        
-        # 未来可注册用于状态追踪的字典
-        self.active_workers = {}
+        self.thread_pool.setMaxThreadCount(
+            max(self.thread_pool.maxThreadCount(), 8)
+        )
+
+        self.active_workers: dict[str, BackgroundWorker] = {}
 
     def submit_task(self, worker: QRunnable, task_id: str = None) -> str:
-        """
-        抛入一个 QRunnable 的 Worker 用于后台排队执行。
-        """
+        """提交 QRunnable Worker"""
         if not task_id:
             task_id = str(uuid.uuid4())[:8]
-            
         self.active_workers[task_id] = worker
         self.thread_pool.start(worker)
         return task_id
-        
+
+    def run_in_background(self, fn, *args,
+                          on_success=None,
+                          on_error=None,
+                          task_id: str = None,
+                          **kwargs) -> str:
+        """便捷方法：后台执行函数，结果通过 Qt 信号安全回传主线程
+
+        参数:
+            fn: 后台执行的函数
+            *args, **kwargs: 传给 fn 的参数
+            on_success: 主线程回调 fn(result)
+            on_error: 主线程回调 fn(error_msg)
+            task_id: 可选任务 ID
+
+        返回:
+            task_id
+        """
+        worker = BackgroundWorker(fn, *args, **kwargs)
+
+        if on_success:
+            worker.signals.finished.connect(on_success)
+        if on_error:
+            worker.signals.error.connect(on_error)
+
+        # 完成后清理 active_workers
+        tid = task_id or str(uuid.uuid4())[:8]
+
+        def _cleanup(_):
+            self.active_workers.pop(tid, None)
+
+        worker.signals.finished.connect(_cleanup)
+        worker.signals.error.connect(_cleanup)
+
+        return self.submit_task(worker, tid)
+
     def cancel_all(self):
-        """
-        终极清退指令：清除所有排队但还没启动的任务；
-        强制停止现有的 Worker（要求 Worker 内部响应 _is_cancelled 标志）。
-        """
+        """终极清退：停止所有排队和运行中的任务"""
         self.thread_pool.clear()
-        
-        # 广播取消标记到每一个托管的 Worker
         for task_id, worker in list(self.active_workers.items()):
             if hasattr(worker, 'cancel'):
                 worker.cancel()
-        
-        # 清空记录
         self.active_workers.clear()
 
-# 全局单例任务调度池
+    @property
+    def active_count(self) -> int:
+        return len(self.active_workers)
+
+
+# 全局单例
 task_manager = GlobalTaskManager()

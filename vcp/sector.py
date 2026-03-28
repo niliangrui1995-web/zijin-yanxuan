@@ -23,6 +23,17 @@ class SectorManager:
     # 板块 RPS 计算的周期列表
     RPS_PERIODS = [5, 10, 15, 20, 50]
 
+    _instance = None
+    _instance_root = None
+
+    @classmethod
+    def get_instance(cls, tdx_root: str = r'D:\HT') -> 'SectorManager':
+        """获取单例实例（首次调用时解析板块文件，后续直接返回缓存）"""
+        if cls._instance is None or cls._instance_root != tdx_root:
+            cls._instance = cls(tdx_root)
+            cls._instance_root = tdx_root
+        return cls._instance
+
     def __init__(self, tdx_root=r'D:\HT'):
         """初始化：解析通达信板块文件
 

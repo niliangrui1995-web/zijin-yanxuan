@@ -21,10 +21,23 @@ from vcp.models import VCPParams
 
 
 class VCPEngine:
+    _instance = None
+
+    @classmethod
+    def get_instance(cls) -> 'VCPEngine':
+        """获取全局唯一引擎实例（单例）"""
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
     def __init__(self):
-        self._daily_rps_cache = {}
+        # 防止多次初始化覆盖已有数据
+        if hasattr(self, '_initialized'):
+            return
+        self._initialized = True
+        self._daily_rps_cache: dict = {}
         self._rps_cache_date = None
-        self._precomputed_rps_bundle = None
+        self._precomputed_rps_bundle: dict | None = None
 
     def set_precomputed_rps(self, cache_date: str, rps120, rps250) -> None:
         self._precomputed_rps_bundle = {
