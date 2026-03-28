@@ -25,52 +25,76 @@
 
 ```
 紫金研选/
-├── vcp_hunter_qt.pyw          # 应用程序入口
-├── benchmark_polars.py        # 性能基准测试脚本
-├── requirements.txt           # Python 依赖声明
-├── .gitignore                 # Git 忽略规则
-├── bull_icon.ico              # 应用图标
+├── vcp_hunter_qt.pyw              # 应用程序入口（双击启动）
+├── requirements.txt               # Python 依赖声明
+├── .gitignore                     # Git 忽略规则
+├── bull_icon.ico                  # 应用图标
 │
-├── vcp/                       # 核心引擎层
+├── core/                          # 核心基础设施层（v2 新增）
 │   ├── __init__.py
-│   ├── constants.py           # 全局常量、配色、策略参数
-│   ├── models.py              # 数据类（VCPParams）
-│   ├── utils.py               # 辅助工具函数（拼音搜索、时间判断、通达信路径）
-│   ├── engine.py              # VCP 策略中台（选股逻辑、评分、市值/机构筛选）
-│   ├── data_provider.py       # 数据中台（通达信/pytdx 数据获取、缓存管理）
-│   ├── ai_service.py          # AI 诊断服务（Kimi API 封装）
-│   ├── sector.py              # 板块数据管理与板块 RPS 计算
-│   └── polars_engine.py       # 高性能加速引擎（numpy/Polars 优化）
+│   ├── config.py                  # 集中配置管理中心
+│   ├── event_bus.py               # 全局事件总线（PyQt 信号中转）
+│   ├── task_manager.py            # 统一异步任务调度器（替代 threading.Thread）
+│   ├── logger.py                  # 标准化日志系统（替代 print）
+│   └── memory_optimizer.py        # 内存优化器（大 DataFrame 降精度）
 │
-├── ui/                        # UI 层（PyQt6）
+├── vcp/                           # 核心引擎层（策略 + 数据）
 │   ├── __init__.py
-│   ├── main_window_qt.py      # 主窗口
-│   ├── kline_window_qt.py     # K 线图窗口
-│   ├── components.py          # 通用 UI 组件（标题栏、动画卡片、呼吸灯等）
-│   ├── workers.py             # 后台工作线程（ScanWorker、RtScanWorker）
-│   └── mixins/                # 功能模块 Mixin
-│       ├── ai_diag_mixin.py   # AI 诊断面板
-│       ├── ai_tracker_mixin.py# AI 追踪面板
-│       ├── cache_mixin.py     # 缓存管理
-│       ├── log_mixin.py       # 日志面板
-│       ├── na_daily_mixin.py  # 北向资金日报
-│       ├── rt_monitor_mixin.py# 盘中监控
-│       ├── scan_mixin.py      # 扫描结果
-│       └── watchlist_mixin.py # 关注池
+│   ├── constants.py               # 全局常量、配色、策略参数
+│   ├── models.py                  # 数据类（VCPParams）
+│   ├── utils.py                   # 辅助工具（拼音搜索、时间判断、通达信路径）
+│   ├── engine.py                  # VCP 策略中台（选股、评分、RPS）
+│   ├── data_provider.py           # 数据中台（通达信/pytdx 数据获取与缓存）
+│   ├── ai_service.py              # AI 诊断服务（Kimi API 封装）
+│   ├── finance_cache.py           # 财务数据缓存（TTL 防重复请求）
+│   ├── sector.py                  # 板块数据管理与板块 RPS 计算
+│   └── polars_engine.py           # 高性能加速引擎（numpy/Polars 优化）
 │
-├── vcp_simulator/             # VCP 模拟器（嵌入式）
+├── ui/                            # UI 层（PyQt6）
 │   ├── __init__.py
-│   ├── sim_tab.py             # 模拟器 Tab 页面
-│   ├── sim_engine.py          # 模拟引擎
-│   └── sim_chart.py           # 模拟器图表
+│   ├── main_window_qt.py          # 主窗口外壳（UI 布局 + 信号转发）
+│   ├── kline_window_qt.py         # K 线图窗口（彭博终端风格）
+│   ├── splash_screen.py           # 启动画面
+│   ├── components.py              # 通用 UI 组件（标题栏、动画卡片、呼吸灯）
+│   ├── workers.py                 # 后台 QThread（ScanWorker、RtScanWorker）
+│   ├── theme.py                   # 主题色常量（涨跌着色、状态色）
+│   │
+│   ├── tabs/                      # Tab 页组件（全部继承 BaseStockTab）
+│   │   ├── __init__.py
+│   │   ├── base_stock_tab.py      # Tab 基类（通达信跳转、着色、日志）
+│   │   ├── scan_tab.py            # F5 全量扫描结果
+│   │   ├── rt_monitor_tab.py      # 盘中实时监控
+│   │   ├── watchlist_tab.py       # 关注池管理
+│   │   ├── na_daily_tab.py        # 北美战报
+│   │   ├── ai_tracker_tab.py      # AI 追踪
+│   │   └── log_tab.py             # 系统运行日志
+│   │
+│   ├── panels/                    # 侧边面板组件
+│   │   ├── __init__.py
+│   │   └── ai_diag_panel.py       # AI 诊断面板
+│   │
+│   ├── mixins/                    # 功能 Mixin（从 MainWindow 抽离）
+│   │   ├── __init__.py
+│   │   └── data_cache_mixin.py    # 数据缓存操作（F5/RPS/RT 缓存）
+│   │
+│   └── styles/                    # 样式管理
+│       ├── __init__.py
+│       └── global_qss.py          # 全局 QSS 样式表
 │
-├── data/                      # 数据目录（运行时生成）
-│   ├── Cache/                 # 缓存文件（pkl/parquet/json）
-│   └── Export/                # 导出报告
+├── vcp_simulator/                 # VCP 模拟器（嵌入式回测模块）
+│   ├── __init__.py
+│   ├── sim_tab.py                 # 模拟器 Tab 页面
+│   ├── sim_engine.py              # 模拟引擎
+│   └── sim_chart.py               # 模拟器图表
 │
-└── docs/                      # 文档
+├── data/                          # 数据目录（运行时生成，git 忽略）
+│   ├── Cache/                     # 缓存文件（pkl/parquet/json）
+│   ├── Export/                    # 导出报告
+│   └── logs/                      # 运行日志
+│
+└── docs/                          # 文档
     ├── 项目全景介绍文档.md
-    └── vcp_filter_flowchart.png
+    └── *.png                      # UI 截图、流程图
 ```
 
 ---
@@ -126,12 +150,15 @@ pythonw vcp_hunter_qt.pyw
 
 | 组件 | 技术 | 说明 |
 |------|------|------|
-| UI 框架 | PyQt6 + QDarkStyle | 深色专业终端风格 |
+| UI 框架 | PyQt6 | 深色专业终端风格 |
 | 数据源 | 通达信本地 `.day` + pytdx | 本地优先、联网增量补全 |
 | 行情接口 | pytdx (通达信协议) | 动态测速池、多线程同步 |
 | 加速引擎 | numpy + Polars | 向量化 pct_change/rank、Parquet 缓存 |
 | AI 诊股 | Moonshot (Kimi) API | 内置联网搜索、利好/利空结构化输出 |
 | 板块分析 | 通达信 tdxhy.cfg + infoharbor_block.dat | 行业+概念板块 RPS |
+| 任务调度 | core/task_manager (QThreadPool) | 统一后台任务管理 |
+| 日志系统 | core/logger (RotatingFileHandler) | 文件+控制台双输出 |
+| 事件总线 | core/event_bus (PyQt Signal) | 组件间解耦通信 |
 
 ---
 
@@ -164,15 +191,12 @@ pythonw vcp_hunter_qt.pyw
 
 ## 性能优化
 
-项目包含三层性能优化，通过 `benchmark_polars.py` 可验证加速效果：
+项目包含三层性能优化：
 
 1. **numpy 向量化**：`pct_change` + `rank` 替代 pandas，加速 3-5x
 2. **Parquet 缓存**：替代 pickle，读取速度提升 2-3x
 3. **增量 RPS**：磁盘缓存价格矩阵，二次运行自动增量复用
-
-```bash
-python benchmark_polars.py
-```
+4. **内存优化器**：`core/memory_optimizer.py` 对大 DataFrame 自动降精度
 
 ---
 
