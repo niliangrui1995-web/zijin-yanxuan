@@ -1,7 +1,7 @@
 import os
 import json
 from PyQt6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
+    QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QPushButton, QLabel, QLineEdit, QMenu,
     QAbstractItemView, QMessageBox, QDialog, QComboBox, QSpinBox, QToolButton
 )

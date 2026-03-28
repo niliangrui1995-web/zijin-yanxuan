@@ -9,7 +9,7 @@ import datetime
 import threading
 
 from PyQt6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
+    QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QPushButton, QLineEdit, QAbstractItemView, QMenu,
     QFileDialog, QMessageBox
 )

@@ -3,7 +3,7 @@ import datetime
 import json
 import pandas as pd
 from PyQt6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
+    QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QPushButton, QLabel, QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox,
     QAbstractItemView, QMessageBox, QDialog, QFileDialog, QMenu, QToolButton
 )
