@@ -26,6 +26,7 @@ from vcp.constants import SPECIAL_LATEST_DATA, SPECIAL_POOL_DATA_CACHE
 from ui.components import NumericTableWidgetItem
 from core.event_bus import event_bus
 from core.logger import get_logger
+from core.task_manager import task_manager
 from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
@@ -189,11 +190,10 @@ class WatchlistTab(BaseStockTab):
 
         # 2) 再尝试拉取实时报价覆盖（交易时段会用最新价）
         if all_codes:
-            threading.Thread(
-                target=self._refresh_special_quotes,
-                args=(list(all_codes),),
-                daemon=True
-            ).start()
+            task_manager.run_in_background(
+                self._refresh_special_quotes, list(all_codes),
+                task_id="watchlist_quotes"
+            )
 
     def _backfill_from_cache(self, codes):
         """从 cache_data 历史数据回填现价/涨幅，确保非交易时段也有数据"""
@@ -472,11 +472,10 @@ class WatchlistTab(BaseStockTab):
 
         # 后台计算 VCP 评分/RPS/突破状态
         if codes_to_eval:
-            threading.Thread(
-                target=self._refresh_vcp_indicators,
-                args=(codes_to_eval,),
-                daemon=True
-            ).start()
+            task_manager.run_in_background(
+                self._refresh_vcp_indicators, codes_to_eval,
+                task_id="watchlist_vcp"
+            )
 
     def _refresh_vcp_indicators(self, codes_with_rows):
         """后台线程：计算关注池标的的 VCP 评分、RPS、突破状态、市值"""
@@ -817,15 +816,15 @@ class WatchlistTab(BaseStockTab):
                                    for r in range(self.table_sp.rowCount())
                                    if self.table_sp.item(r, 0)]
                 if codes_with_rows:
-                    threading.Thread(
-                        target=self._refresh_vcp_indicators,
-                        args=(codes_with_rows,), daemon=True
-                    ).start()
+                    task_manager.run_in_background(
+                        self._refresh_vcp_indicators, codes_with_rows,
+                        task_id="watchlist_vcp_2"
+                    )
                 # 同时尝试拉实时报价覆盖
-                threading.Thread(
-                    target=self._refresh_special_quotes,
-                    args=(codes,), daemon=True
-                ).start()
+                task_manager.run_in_background(
+                    self._refresh_special_quotes, codes,
+                    task_id="watchlist_quotes_2"
+                )
             return
         # VCP 指标计算完成 → 主线程安全更新 UI
         if channel == "vcp_watchlist_ready" and payload:

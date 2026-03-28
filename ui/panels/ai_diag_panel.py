@@ -2,7 +2,6 @@ import os
 import time
 import datetime
 import json
-import threading
 import concurrent.futures
 import pandas as pd
 from PyQt6.QtWidgets import (
@@ -16,6 +15,10 @@ from PyQt6.QtGui import QColor
 from vcp.constants import SPECIAL_LATEST_DATA
 from vcp.engine import VCPEngine
 from core.event_bus import event_bus
+from core.logger import get_logger
+from core.task_manager import task_manager
+
+log = get_logger(__name__)
 
 class AIDiagPanel(QFrame):
     """
@@ -157,7 +160,7 @@ class AIDiagPanel(QFrame):
                 ok, msg = False, f"本地诊断异常: {e}"
             # 跨线程投递至主UI
             event_bus.sig_ui_task.emit(lambda: self.ai_content.setPlainText(msg if ok else f"❌ {msg}"))
-        threading.Thread(target=do_local_diag, daemon=True).start()
+        task_manager.run_in_background(do_local_diag, task_id="ai_local_diag")
 
     def _run_kim_diag_sidebar(self, code, diag_date=""):
         name = getattr(self.data_provider, 'code2name', {}).get(code, "未知")
@@ -180,7 +183,7 @@ class AIDiagPanel(QFrame):
             else:
                 self.ai_content.setPlainText("❌ " + str(msg))
                 
-        threading.Thread(target=do_request, daemon=True).start()
+        task_manager.run_in_background(do_request, task_id="ai_kimi_diag")
 
     def _get_technical_report_text(self, code, name, diag_date=""):
         df = self.data_provider.get_data(code)
@@ -257,7 +260,7 @@ class AIDiagPanel(QFrame):
                     data_dict[code]["AI诊断"] = text
                     with open(SPECIAL_LATEST_DATA, 'w', encoding='utf-8') as f:
                         json.dump(data_dict, f, ensure_ascii=False, indent=4)
-            except Exception as e: print(f"[AI诊断] 缓存写入异常: {e}")
+            except Exception as e: log.error(f"[AI诊断] 缓存写入异常: {e}")
 
     def refresh_ai_column_from_cache(self):
         """一次性从内存回填关注池全部数据"""
@@ -350,7 +353,7 @@ class AIDiagPanel(QFrame):
         self._diag_poll_timer.timeout.connect(_poll)
         self._diag_poll_timer.start(500)
         
-        threading.Thread(target=run_bg, daemon=True).start()
+        task_manager.run_in_background(run_bg, task_id="ai_batch_diag")
 
     def _finish_batch_diag(self):
         event_bus.sig_task_progress.emit("ai_diag", -1, str(self._diag_errors))

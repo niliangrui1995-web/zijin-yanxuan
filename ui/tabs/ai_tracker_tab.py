@@ -27,6 +27,7 @@ from ui.theme import (
 from ui.components import NumericTableWidgetItem
 from core.event_bus import event_bus
 from core.logger import get_logger
+from core.task_manager import task_manager
 from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
@@ -458,7 +459,7 @@ class AITrackerTab(BaseStockTab):
             except Exception as _e:
                 log.error(f"[AI跟踪-独立刷新] 异常: {_e}")
 
-        threading.Thread(target=_bg_fetch, daemon=True).start()
+        task_manager.run_in_background(_bg_fetch, task_id="ai_tracker_quotes")
 
     # ================================================================
     # EventBus 事件

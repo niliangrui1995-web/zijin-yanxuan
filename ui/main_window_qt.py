@@ -1,5 +1,4 @@
 import os
-import threading
 import datetime
 from vcp.constants import SPECIAL_LATEST_DATA, SPECIAL_POOL_DATA_CACHE, APP_VERSION
 from PyQt6.QtWidgets import (
@@ -19,6 +18,10 @@ from vcp_simulator.sim_tab import SimulatorTab
 
 from ui.components import NumericTableWidgetItem, CustomTitleBar, AnimatedCard, PulsingDot, GlassPanel, AnimatedHoverButton
 from core.event_bus import event_bus
+from core.logger import get_logger
+from core.task_manager import task_manager
+
+log = get_logger(__name__)
 
 
 class MainWindowQT(QMainWindow):
@@ -190,10 +193,10 @@ class MainWindowQT(QMainWindow):
                     self.data_provider.set_online_mode(True)
                     self._call_in_ui(lambda: self._update_network_ui(True))
                 except Exception as e:
-                    print(f"[网络] 切换联网失败: {e}")
+                    log.error(f"[网络] 切换联网失败: {e}")
                     self._call_in_ui(lambda: self._update_network_ui(False))
 
-            threading.Thread(target=_go_online, daemon=True).start()
+            task_manager.run_in_background(_go_online, task_id="go_online")
         else:
             self.data_provider.set_online_mode(False)
             self._update_network_ui(False)
@@ -772,14 +775,14 @@ class MainWindowQT(QMainWindow):
                 pyautogui.typewrite(code, interval=0.02)
                 time.sleep(0.1)
                 pyautogui.press('enter')
-                print(f"[通达信] 已跳转: {code}")
+                log.info(f"[通达信] 已跳转: {code}")
                 
             except ImportError:
-                print("[通达信] 需要安装pyautogui: pip install pyautogui")
+                log.error("[通达信] 需要安装pyautogui: pip install pyautogui")
             except Exception as e:
-                print(f"[通达信] 跳转异常: {e}")
+                log.error(f"[通达信] 跳转异常: {e}")
         
-        threading.Thread(target=_worker, daemon=True).start()
+        task_manager.run_in_background(_worker, task_id="launch_tdx")
 
     def _save_ui_state(self):
         """Persist splitter sizes, window geometry, and table widths."""
@@ -1044,19 +1047,18 @@ class MainWindowQT(QMainWindow):
                     _tb.print_exc()
 
                 elapsed = _time.time() - total_start
-                print(f"\n[F5] ✅ 全部完成 -- 耗时 {elapsed:.1f} 秒")
-                print("=" * 60)
+                log.info(f"[F5] ✅ 全部完成 -- 耗时 {elapsed:.1f} 秒")
 
             except Exception as e:
-                print(f"\n[F5] ❌ 预计算过程发生未预期异常: {e}")
+                log.error(f"[F5] ❌ 预计算过程发生未预期异常: {e}")
                 _tb.print_exc()
             finally:
                 elapsed = _time.time() - total_start
                 count = len(self.data_provider.cache_data) if self.data_provider.cache_data else 0
-                print(f"[F5] 正在恢复UI状态... (count={count}, elapsed={elapsed:.1f}s)")
+                log.info(f"[F5] 正在恢复UI状态... (count={count}, elapsed={elapsed:.1f}s)")
                 self._sig_f5_done.emit(count, elapsed)
 
-        threading.Thread(target=run_f5, daemon=True).start()
+        task_manager.run_in_background(run_f5, task_id="f5_precompute")
 
     def _deferred_data_load(self):
         """延迟加载缓存数据（pkl + RT缓存 + RPS缓存），避免阻塞UI线程"""
@@ -1073,7 +1075,7 @@ class MainWindowQT(QMainWindow):
                         f"已加载 {count} 只标的缓存 (日期: {cache_date})"
                     ))
             except Exception as e:
-                print(f"[启动] 延迟加载缓存异常: {e}")
+                log.error(f"[启动] 延迟加载缓存异常: {e}")
 
             # 在UI线程恢复RT缓存
             self._call_in_ui(self._load_rt_cache)
@@ -1082,14 +1084,14 @@ class MainWindowQT(QMainWindow):
             try:
                 self._try_load_rps_from_disk()
             except Exception as e:
-                print(f"[启动] RPS 缓存加载异常: {e}")
+                log.error(f"[启动] RPS 缓存加载异常: {e}")
 
             # 通知各 Tab: 缓存数据已就绪，可以回填历史数据
             self._call_in_ui(
                 lambda: event_bus.sig_data_updated.emit("cache_loaded", None)
             )
 
-        threading.Thread(target=_load_bg, daemon=True).start()
+        task_manager.run_in_background(_load_bg, task_id="deferred_load")
 
     def _smart_startup(self):
         """智能启动：异步检测网络，联网可用则自动切换联网模式"""
@@ -1098,14 +1100,14 @@ class MainWindowQT(QMainWindow):
                 if self.data_provider.test_network(timeout=3):
                     self.data_provider.set_online_mode(True)
                     self._call_in_ui(lambda: self._update_network_ui(True))
-                    print("[智能启动] ✅ 网络可用，已自动切换到联网模式")
+                    log.info("[智能启动] ✅ 网络可用，已自动切换到联网模式")
                     self._call_in_ui(self._auto_start_rt_if_ready)
                 else:
-                    print("[智能启动] 网络不可用，保持离线模式")
+                    log.info("[智能启动] 网络不可用，保持离线模式")
             except Exception as e:
-                print(f"[智能启动] 网络检测异常: {e}")
+                log.error(f"[智能启动] 网络检测异常: {e}")
 
-        threading.Thread(target=_check_and_go_online, daemon=True).start()
+        task_manager.run_in_background(_check_and_go_online, task_id="smart_startup")
 
     def _auto_start_rt_if_ready(self):
         """智能启动后自动开启盘中监控（仅在交易时间且数据就绪时）"""

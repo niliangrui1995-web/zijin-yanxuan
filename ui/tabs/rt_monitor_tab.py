@@ -19,6 +19,7 @@ from ui.workers import RtScanWorker
 from vcp.constants import SPECIAL_LATEST_DATA
 from core.event_bus import event_bus
 from core.logger import get_logger
+from core.task_manager import task_manager
 from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
@@ -177,21 +178,28 @@ class RtMonitorTab(BaseStockTab):
             if not self.data_provider.server_pool or not self.data_provider.is_online():
                 self.lbl_rt_info.setText("正在尝试连接行情服务器...")
                 self.btn_rt_start.setEnabled(False)
-                import threading
                 def _try_connect():
-                    try:
-                        ok = self.data_provider.test_network(timeout=5)
-                        from PyQt6.QtCore import QMetaObject, Qt as QtCore_Qt
-                        if ok:
-                            self.data_provider.set_online_mode(True)
-                            QMetaObject.invokeMethod(self, "_on_rt_network_ready", QtCore_Qt.ConnectionType.QueuedConnection)
-                        else:
-                            QMetaObject.invokeMethod(self, "_on_rt_network_failed", QtCore_Qt.ConnectionType.QueuedConnection)
-                    except Exception as e:
-                        event_bus.sig_system_log.emit("error", f"[盘中监控] 联网异常: {e}")
-                        from PyQt6.QtCore import QMetaObject, Qt as QtCore_Qt
-                        QMetaObject.invokeMethod(self, "_on_rt_network_failed", QtCore_Qt.ConnectionType.QueuedConnection)
-                threading.Thread(target=_try_connect, daemon=True).start()
+                    ok = self.data_provider.test_network(timeout=5)
+                    if ok:
+                        self.data_provider.set_online_mode(True)
+                    return ok
+
+                def _on_connect_result(ok):
+                    if ok:
+                        self._on_rt_network_ready()
+                    else:
+                        self._on_rt_network_failed()
+
+                def _on_connect_error(msg):
+                    event_bus.sig_system_log.emit("error", f"[盘中监控] 联网异常: {msg}")
+                    self._on_rt_network_failed()
+
+                task_manager.run_in_background(
+                    _try_connect,
+                    on_success=_on_connect_result,
+                    on_error=_on_connect_error,
+                    task_id="rt_connect"
+                )
                 return
             self._start_rt_worker()
 

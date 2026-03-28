@@ -27,6 +27,7 @@ from ui.theme import (
 from ui.components import NumericTableWidgetItem
 from core.event_bus import event_bus
 from core.logger import get_logger
+from core.task_manager import task_manager
 from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
@@ -565,7 +566,7 @@ class NADailyTab(BaseStockTab):
                     if attempt < max_retries:
                         _time.sleep(retry_delay)
 
-        threading.Thread(target=_bg_fetch, daemon=True).start()
+        task_manager.run_in_background(_bg_fetch, task_id="na_daily_quotes")
 
     def _update_na_daily_realtime(self, quotes: dict):
         """用实时报价更新北美战报表格"""
