@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / Packaging
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual Environment
+venv/
+.env/
+
+# Data Cache (large binary files, not versioned)
+data/Cache/*.pkl
+data/Cache/*.parquet
+data/Cache/parquet/
+data/Cache/vcp_*.pkl
+data/Cache/vcp_*.json
+data/Cache/vcp_*.txt
+data/Cache/gbbq_parsed.pkl
+data/Cache/ai_diag_*.json
+data/Cache/vcp_launch.log
+data/Cache/rt_monitor_*.pkl
+
+# Scan cache (auto-generated)
+data/scan_cache.json
+
+# Special pool data (user-generated, contains personal watchlist)
+data/special_latest_data.json
+
+# Export (user-generated reports)
+data/Export/
+!data/Export/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Misc
+*.bak
+*.tmp
+*.corrupted
+

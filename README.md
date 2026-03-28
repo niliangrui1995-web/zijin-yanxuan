@@ -1,0 +1,181 @@
+# 紫金研选量化终端
+
+> VCP (Volatility Contraction Pattern) 自动化选股系统 — 基于通达信本地日线数据
+
+![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue)
+![PyQt6](https://img.shields.io/badge/UI-PyQt6-green)
+![License](https://img.shields.io/badge/License-Private-red)
+
+---
+
+## 功能概览
+
+| 模块 | 功能 | 说明 |
+|------|------|------|
+| **F5 全量扫描** | VCP 形态选股 | 按 RPS 强度 + 三高点收缩区间 + 均线粘合逻辑筛选 |
+| **盘中监控** | 实时突破检测 | 预构建待突破池 → 轻量 rt_quick_check（~0.01ms/只） |
+| **AI 诊股** | Kimi 联网分析 | 自动联网检索利好/利空信息并结构化输出 |
+| **K线图** | 专业级图表 | 彭博终端风格、高点/区间标注、技术指标叠加 |
+| **板块 RPS** | 热点板块排名 | 解析通达信本地板块文件，计算多周期板块 RPS |
+| **VCP 模拟器** | 策略回测 | 可视化模拟 VCP 参数调优与历史信号验证 |
+
+---
+
+## 项目结构
+
+```
+紫金研选/
+├── vcp_hunter_qt.pyw          # 应用程序入口
+├── benchmark_polars.py        # 性能基准测试脚本
+├── requirements.txt           # Python 依赖声明
+├── .gitignore                 # Git 忽略规则
+├── bull_icon.ico              # 应用图标
+│
+├── vcp/                       # 核心引擎层
+│   ├── __init__.py
+│   ├── constants.py           # 全局常量、配色、策略参数
+│   ├── models.py              # 数据类（VCPParams）
+│   ├── utils.py               # 辅助工具函数（拼音搜索、时间判断、通达信路径）
+│   ├── engine.py              # VCP 策略中台（选股逻辑、评分、市值/机构筛选）
+│   ├── data_provider.py       # 数据中台（通达信/pytdx 数据获取、缓存管理）
+│   ├── ai_service.py          # AI 诊断服务（Kimi API 封装）
+│   ├── sector.py              # 板块数据管理与板块 RPS 计算
+│   └── polars_engine.py       # 高性能加速引擎（numpy/Polars 优化）
+│
+├── ui/                        # UI 层（PyQt6）
+│   ├── __init__.py
+│   ├── main_window_qt.py      # 主窗口
+│   ├── kline_window_qt.py     # K 线图窗口
+│   ├── components.py          # 通用 UI 组件（标题栏、动画卡片、呼吸灯等）
+│   ├── workers.py             # 后台工作线程（ScanWorker、RtScanWorker）
+│   └── mixins/                # 功能模块 Mixin
+│       ├── ai_diag_mixin.py   # AI 诊断面板
+│       ├── ai_tracker_mixin.py# AI 追踪面板
+│       ├── cache_mixin.py     # 缓存管理
+│       ├── log_mixin.py       # 日志面板
+│       ├── na_daily_mixin.py  # 北向资金日报
+│       ├── rt_monitor_mixin.py# 盘中监控
+│       ├── scan_mixin.py      # 扫描结果
+│       └── watchlist_mixin.py # 关注池
+│
+├── vcp_simulator/             # VCP 模拟器（嵌入式）
+│   ├── __init__.py
+│   ├── sim_tab.py             # 模拟器 Tab 页面
+│   ├── sim_engine.py          # 模拟引擎
+│   └── sim_chart.py           # 模拟器图表
+│
+├── data/                      # 数据目录（运行时生成）
+│   ├── Cache/                 # 缓存文件（pkl/parquet/json）
+│   └── Export/                # 导出报告
+│
+└── docs/                      # 文档
+    ├── 项目全景介绍文档.md
+    └── vcp_filter_flowchart.png
+```
+
+---
+
+## 快速开始
+
+### 1. 环境要求
+
+- **Python 3.10+**
+- **通达信客户端**（本地 K 线数据源）
+
+### 2. 安装依赖
+
+```bash
+pip install -r requirements.txt
+```
+
+### 3. 配置通达信路径
+
+在通达信安装目录或项目根目录创建 `vcp_tdx_config.json`：
+
+```json
+{
+  "tdx_vipdoc_root": "D:\\HT\\vipdoc"
+}
+```
+
+程序会自动查找以下候选路径：
+1. `D:\vcp_qt\vcp_tdx_config.json`
+2. `D:\HT\vcp_tdx_config.json`
+3. 项目根目录下的 `vcp_tdx_config.json`
+
+### 4. 配置 AI 诊股（可选）
+
+程序首次运行时会自动在 `data/Cache/ai_diag_config.json` 中创建配置文件。
+你也可以通过环境变量设置：
+
+```bash
+set KIMI_API_KEY=your-api-key-here
+```
+
+### 5. 启动程序
+
+```bash
+pythonw vcp_hunter_qt.pyw
+```
+
+或双击 `vcp_hunter_qt.pyw` 文件启动。
+
+---
+
+## 核心技术栈
+
+| 组件 | 技术 | 说明 |
+|------|------|------|
+| UI 框架 | PyQt6 + QDarkStyle | 深色专业终端风格 |
+| 数据源 | 通达信本地 `.day` + pytdx | 本地优先、联网增量补全 |
+| 行情接口 | pytdx (通达信协议) | 动态测速池、多线程同步 |
+| 加速引擎 | numpy + Polars | 向量化 pct_change/rank、Parquet 缓存 |
+| AI 诊股 | Moonshot (Kimi) API | 内置联网搜索、利好/利空结构化输出 |
+| 板块分析 | 通达信 tdxhy.cfg + infoharbor_block.dat | 行业+概念板块 RPS |
+
+---
+
+## 数据流
+
+```
+通达信本地 .day 文件
+        │
+        ▼
+  TdxDataProvider（data_provider.py）
+  ├── 本地读取 → read_tdx_day_file()
+  ├── 联网增量 → pytdx API
+  └── 前复权    → gbbq 股本变迁数据
+        │
+        ▼
+  VCPEngine（engine.py）
+  ├── 技术指标 → SMA50/150/200, ATR, MACD, RSI, 布林带
+  ├── RPS 矩阵 → 50/120/250 日相对强度排名
+  ├── VCP 形态 → 三高点区间 + 弹性峰计算
+  └── 综合评分 → 均线/量价/突破状态/板块 RPS
+        │
+        ▼
+  MainWindowQT（main_window_qt.py）
+  ├── F5 全量扫描结果 → 表格展示
+  ├── 盘中监控信号   → 实时刷新
+  └── K线图/AI诊断   → 详情窗口
+```
+
+---
+
+## 性能优化
+
+项目包含三层性能优化，通过 `benchmark_polars.py` 可验证加速效果：
+
+1. **numpy 向量化**：`pct_change` + `rank` 替代 pandas，加速 3-5x
+2. **Parquet 缓存**：替代 pickle，读取速度提升 2-3x
+3. **增量 RPS**：磁盘缓存价格矩阵，二次运行自动增量复用
+
+```bash
+python benchmark_polars.py
+```
+
+---
+
+## 许可证
+
+本项目为私有项目，未经授权不得分发。
