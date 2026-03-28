@@ -149,7 +149,7 @@ class WatchlistTab(BaseStockTab):
                 with open(SPECIAL_LATEST_DATA, 'r', encoding='utf-8') as f:
                     data_dict = json.load(f)
             except Exception as e:
-                print(f"[关注池] 加载异常: {e}")
+                log.error(f"[关注池] 加载异常: {e}")
 
         # 2. 老UI pkl 兼容迁移
         old_pool = {}
@@ -161,7 +161,7 @@ class WatchlistTab(BaseStockTab):
                         raw = pickle.load(f)
                     old_pool = raw.get('data', {}) if isinstance(raw, dict) else {}
                 except Exception as e:
-                    print(f"[关注池] 老UI缓存读取异常: {e}")
+                    log.error(f"[关注池] 老UI缓存读取异常: {e}")
 
         # 3. AI 诊断缓存
         ai_cache_path = os.path.join(data_dir, 'data', 'Cache', 'ai_diag_special.json')
@@ -172,7 +172,7 @@ class WatchlistTab(BaseStockTab):
                     ai_raw = json.load(f)
                 ai_cache = ai_raw.get('results', {}) if isinstance(ai_raw, dict) else {}
             except Exception as e:
-                print(f"[关注池] AI缓存读取异常: {e}")
+                log.error(f"[关注池] AI缓存读取异常: {e}")
 
         # 合并代码列表
         all_codes = list(data_dict.keys())
@@ -359,7 +359,7 @@ class WatchlistTab(BaseStockTab):
 
         self.table_sp.setSortingEnabled(True)
         self.table_sp.sortByColumn(4, Qt.SortOrder.DescendingOrder)
-        print(
+        log.info(
             f"[关注池] 加载完成: {len(all_codes)} 只标的"
             f"(新UI={len(data_dict)}, 老UI缓存={len(old_pool)})"
         )
@@ -375,23 +375,23 @@ class WatchlistTab(BaseStockTab):
                     ok = self.data_provider.test_network(timeout=5)
                     if ok:
                         self.data_provider.set_online_mode(True)
-                        print("[关注池] 已自动切换到联网模式")
+                        log.info("[关注池] 已自动切换到联网模式")
                     else:
-                        print("[关注池] 网络不可用，跳过实时报价")
+                        log.info("[关注池] 网络不可用，跳过实时报价")
                         return
                 except Exception as e:
-                    print(f"[关注池] 联网失败: {e}")
+                    log.error(f"[关注池] 联网失败: {e}")
                     return
 
             quotes = self.data_provider.fetch_realtime_quotes_batch(codes)
             if not quotes:
-                print("[关注池] 批量报价返回为空")
+                log.info("[关注池] 批量报价返回为空")
                 return
 
             # 使用 QTimer.singleShot(0) 安全地切回主线程更新 UI
             QTimer.singleShot(0, lambda q=quotes: self._apply_quotes_ui(q))
         except Exception as e:
-            print(f"[关注池] 实时报价刷新异常: {e}")
+            log.error(f"[关注池] 实时报价刷新异常: {e}")
             import traceback
             traceback.print_exc()
 
@@ -485,7 +485,7 @@ class WatchlistTab(BaseStockTab):
             from vcp.models import VCPParams
             import pickle
 
-            print(f"[关注池-VCP] 开始计算 {len(codes_with_rows)} 只标的...")
+            log.info(f"[关注池-VCP] 开始计算 {len(codes_with_rows)} 只标的...")
 
             # 从主窗口引擎获取预计算 RPS
             rps_bundle = None
@@ -494,9 +494,9 @@ class WatchlistTab(BaseStockTab):
                 if main_win and hasattr(main_win, 'engine'):
                     rps_bundle = main_win.engine.get_precomputed_rps()
                     if rps_bundle:
-                        print(f"[关注池-VCP] ✓ 从主窗口引擎获取到 RPS")
+                        log.info(f"[关注池-VCP] ✓ 从主窗口引擎获取到 RPS")
             except Exception as e:
-                print(f"[关注池-VCP] 主窗口引擎获取失败: {e}")
+                log.error(f"[关注池-VCP] 主窗口引擎获取失败: {e}")
 
             # 回退：从磁盘加载 RPS 缓存
             if not rps_bundle:
@@ -507,16 +507,16 @@ class WatchlistTab(BaseStockTab):
                     'data', 'Cache'
                 )
                 rps_path = os.path.join(cache_dir, 'vcp_rps_precomputed.pkl')
-                print(f"[关注池-VCP] 尝试从磁盘读 RPS: {rps_path}")
+                log.info(f"[关注池-VCP] 尝试从磁盘读 RPS: {rps_path}")
                 if os.path.exists(rps_path):
                     try:
                         with open(rps_path, 'rb') as f:
                             rps_bundle = pickle.load(f)
-                        print(f"[关注池-VCP] ✓ 从磁盘加载 RPS 成功")
+                        log.info(f"[关注池-VCP] ✓ 从磁盘加载 RPS 成功")
                     except Exception as e:
-                        print(f"[关注池-VCP] 磁盘 RPS 加载失败: {e}")
+                        log.error(f"[关注池-VCP] 磁盘 RPS 加载失败: {e}")
                 else:
-                    print(f"[关注池-VCP] ✗ RPS 缓存文件不存在（需先执行 F5 预计算）")
+                    log.info(f"[关注池-VCP] ✗ RPS 缓存文件不存在（需先执行 F5 预计算）")
 
             rps120_series = rps_bundle.get('rps120') if rps_bundle else None
             rps250_series = rps_bundle.get('rps250') if rps_bundle else None
@@ -525,7 +525,7 @@ class WatchlistTab(BaseStockTab):
             if rps120_series is None or rps250_series is None:
                 try:
                     import pandas as pd
-                    print("[关注池-VCP] 正在从缓存数据实时计算 RPS...")
+                    log.info("[关注池-VCP] 正在从缓存数据实时计算 RPS...")
                     cache_data = getattr(self.data_provider, 'cache_data', {})
                     if cache_data and len(cache_data) > 100:
                         # 构建收盘价矩阵
@@ -539,9 +539,9 @@ class WatchlistTab(BaseStockTab):
                                              .rank(pct=True) * 100)
                             rps250_series = (prices.pct_change(250).iloc[-1]
                                              .rank(pct=True) * 100)
-                            print(f"[关注池-VCP] ✓ 实时 RPS 计算完成: {len(close_dict)} 只参与排名")
+                            log.info(f"[关注池-VCP] ✓ 实时 RPS 计算完成: {len(close_dict)} 只参与排名")
                 except Exception as e:
-                    print(f"[关注池-VCP] 实时 RPS 计算失败: {e}")
+                    log.error(f"[关注池-VCP] 实时 RPS 计算失败: {e}")
 
             # 热点板块查询
             sector_info = {}
@@ -556,9 +556,9 @@ class WatchlistTab(BaseStockTab):
                         # 取前2个板块，简化显示
                         short = [s.replace('GN_', '').replace('行业_', '')[:6] for s in sectors[:2]]
                         sector_info[code] = ' | '.join(short)
-                print(f"[关注池-VCP] ✓ 热点板块查询完成: {len(sector_info)} 只")
+                log.info(f"[关注池-VCP] ✓ 热点板块查询完成: {len(sector_info)} 只")
             except Exception as e:
-                print(f"[关注池-VCP] 热点板块查询失败: {e}")
+                log.error(f"[关注池-VCP] 热点板块查询失败: {e}")
 
             params = VCPParams()
             params.rps_threshold = 0
@@ -582,9 +582,9 @@ class WatchlistTab(BaseStockTab):
                 cap_results = VCPEngine.batch_check_market_cap(
                     all_codes, close_prices=close_prices
                 )
-                print(f"[关注池-VCP] ✓ 市值计算完成: {len(cap_results)} 只")
+                log.info(f"[关注池-VCP] ✓ 市值计算完成: {len(cap_results)} 只")
             except Exception as e:
-                print(f"[关注池-VCP] 市值计算异常（可能需联网）: {e}")
+                log.error(f"[关注池-VCP] 市值计算异常（可能需联网）: {e}")
 
             ok_count = 0
             err_count = 0
@@ -645,18 +645,18 @@ class WatchlistTab(BaseStockTab):
                     }
                     ok_count += 1
                 except Exception as e:
-                    print(f"[关注池-VCP] {code} 计算异常: {e}")
+                    log.error(f"[关注池-VCP] {code} 计算异常: {e}")
                     err_count += 1
                     continue
 
-            print(f"[关注池-VCP] 计算结束: 成功={ok_count} 失败={err_count} 结果={len(results)}")
+            log.error(f"[关注池-VCP] 计算结束: 成功={ok_count} 失败={err_count} 结果={len(results)}")
             if results:
                 # 通过线程安全的 Qt 信号传递结果到主线程
                 event_bus.sig_data_updated.emit("vcp_watchlist_ready", results)
             else:
-                print("[关注池-VCP] ⚠ 无有效结果，跳过UI更新")
+                log.warning("[关注池-VCP] ⚠ 无有效结果，跳过UI更新")
         except Exception as e:
-            print(f"[关注池-VCP] 批量计算顶层异常: {e}")
+            log.error(f"[关注池-VCP] 批量计算顶层异常: {e}")
             import traceback
             traceback.print_exc()
 
@@ -713,7 +713,7 @@ class WatchlistTab(BaseStockTab):
         """从表格当前状态序列化保存到磁盘"""
         try:
             if self.table_sp.rowCount() == 0:
-                print("[关注池] 缓存为空，跳过保存")
+                log.info("[关注池] 缓存为空，跳过保存")
                 return
             cache = {}
             for r in range(self.table_sp.rowCount()):
@@ -735,9 +735,9 @@ class WatchlistTab(BaseStockTab):
                 return
             with open(SPECIAL_LATEST_DATA, 'w', encoding='utf-8') as f:
                 json.dump(cache, f, ensure_ascii=False, indent=2)
-            print(f"[关注池] 缓存已保存: {len(cache)} 只")
+            log.info(f"[关注池] 缓存已保存: {len(cache)} 只")
         except Exception as e:
-            print(f"[关注池] 保存缓存异常: {e}")
+            log.error(f"[关注池] 保存缓存异常: {e}")
 
     # ================================================================
     # 关注池增删操作
@@ -755,7 +755,7 @@ class WatchlistTab(BaseStockTab):
                 with open(SPECIAL_LATEST_DATA, 'r', encoding='utf-8') as f:
                     current_data = json.load(f)
             except Exception as e:
-                print(f"[关注池] 异常: {e}")
+                log.error(f"[关注池] 异常: {e}")
 
         if is_fav:
             if code in current_data:
@@ -789,7 +789,7 @@ class WatchlistTab(BaseStockTab):
                 with open(SPECIAL_LATEST_DATA, 'r', encoding='utf-8') as f:
                     current_data = json.load(f)
             except Exception as e:
-                print(f"[关注池] 异常: {e}")
+                log.error(f"[关注池] 异常: {e}")
         if code in current_data:
             del current_data[code]
             with open(SPECIAL_LATEST_DATA, 'w', encoding='utf-8') as f:
@@ -829,7 +829,7 @@ class WatchlistTab(BaseStockTab):
             return
         # VCP 指标计算完成 → 主线程安全更新 UI
         if channel == "vcp_watchlist_ready" and payload:
-            print(f"[关注池-VCP] 收到信号，正在写入 {len(payload)} 条结果到表格...")
+            log.info(f"[关注池-VCP] 收到信号，正在写入 {len(payload)} 条结果到表格...")
             self._apply_vcp_indicators_ui(payload)
             return
         if channel != "rt_quotes_refreshed":

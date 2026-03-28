@@ -303,7 +303,7 @@ class NADailyTab(BaseStockTab):
                 from vcp.engine import VCPEngine
                 cap_results = VCPEngine.batch_check_market_cap(codes, close_prices=close_prices)
             except Exception as e:
-                print(f"[北美战报] 市值批量计算异常: {e}")
+                log.error(f"[北美战报] 市值批量计算异常: {e}")
 
         for row in range(self.na_daily_table.rowCount()):
             code_item = self.na_daily_table.item(row, 2)
@@ -392,10 +392,10 @@ class NADailyTab(BaseStockTab):
 
         new_stocks = [s for s in stocks if s.get("代码", "") not in existing_codes]
         if not new_stocks:
-            print("[北美战报] 增量刷新：无新增股票")
+            log.info("[北美战报] 增量刷新：无新增股票")
             return
 
-        print(f"[北美战报] 增量刷新：新增 {len(new_stocks)} 只股票")
+        log.info(f"[北美战报] 增量刷新：新增 {len(new_stocks)} 只股票")
         filename = os.path.basename(latest_file)
         self.na_daily_source_label.setText(
             f"📄 {filename}（+{len(new_stocks)}新增）"
@@ -502,7 +502,7 @@ class NADailyTab(BaseStockTab):
                                 self.data_provider.set_online_mode(True)
                             else:
                                 if attempt < max_retries:
-                                    print(f"[北美战报] 独立刷新第{attempt}次: "
+                                    log.info(f"[北美战报] 独立刷新第{attempt}次: "
                                           f"服务器未就绪，{retry_delay}秒后重试...")
                                     _time.sleep(retry_delay)
                                     continue
@@ -547,21 +547,21 @@ class NADailyTab(BaseStockTab):
                                 else:
                                     self._cap_cache_na[c] = '--'
                         except Exception as _e:
-                            print(f"[北美战报] 独立刷新-市值补全异常: {_e}")
+                            log.error(f"[北美战报] 独立刷新-市值补全异常: {_e}")
 
                     # 安全切回主线程更新 UI
                     QTimer.singleShot(
                         0,
                         lambda q=na_quotes: self._update_na_daily_realtime(q)
                     )
-                    print(
+                    log.info(
                         f"[北美战报] 独立刷新完成: "
                         f"{len(na_quotes)}/{len(na_codes)} 只股票"
                     )
                     return
 
                 except Exception as _e:
-                    print(f"[北美战报] 独立刷新异常(第{attempt}次): {_e}")
+                    log.error(f"[北美战报] 独立刷新异常(第{attempt}次): {_e}")
                     if attempt < max_retries:
                         _time.sleep(retry_delay)
 
@@ -699,10 +699,10 @@ class NADailyTab(BaseStockTab):
             if 0 <= now_minutes - target_minutes <= 1:
                 self._na_daily_fired_today.add(key)
                 if mode == 'full':
-                    print(f"[北美战报] 全量刷新触发 {h:02d}:{m:02d}")
+                    log.info(f"[北美战报] 全量刷新触发 {h:02d}:{m:02d}")
                     self._load_na_daily_report()
                 else:
-                    print(f"[北美战报] 增量刷新触发 {h:02d}:{m:02d}")
+                    log.info(f"[北美战报] 增量刷新触发 {h:02d}:{m:02d}")
                     self._load_na_daily_incremental("#32D7E0")
                 break
 

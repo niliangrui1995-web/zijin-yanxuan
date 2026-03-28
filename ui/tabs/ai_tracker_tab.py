@@ -283,7 +283,7 @@ class AITrackerTab(BaseStockTab):
                 from vcp.engine import VCPEngine
                 cap_results = VCPEngine.batch_check_market_cap(codes, close_prices=close_prices)
             except Exception as e:
-                print(f"[AI算力链] 市值批量计算异常: {e}")
+                log.error(f"[AI算力链] 市值批量计算异常: {e}")
 
         for row in range(self.ai_tracker_table.rowCount()):
             code_item = self.ai_tracker_table.item(row, 1)
@@ -448,7 +448,7 @@ class AITrackerTab(BaseStockTab):
                             else:
                                 self._cap_cache_ai_tracker[c] = '--'
                     except Exception as _e:
-                        print(f"[AI跟踪-独立刷新] 市值补全异常: {_e}")
+                        log.error(f"[AI跟踪-独立刷新] 市值补全异常: {_e}")
 
                 # 安全切回主线程
                 QTimer.singleShot(
@@ -456,7 +456,7 @@ class AITrackerTab(BaseStockTab):
                     lambda q=ai_quotes: self._update_ai_tracker_realtime(q)
                 )
             except Exception as _e:
-                print(f"[AI跟踪-独立刷新] 异常: {_e}")
+                log.error(f"[AI跟踪-独立刷新] 异常: {_e}")
 
         threading.Thread(target=_bg_fetch, daemon=True).start()
 
