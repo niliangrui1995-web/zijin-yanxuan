@@ -3,7 +3,7 @@ import datetime
 import json
 import pandas as pd
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
+    QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QPushButton, QLabel, QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox,
     QAbstractItemView, QMessageBox, QDialog, QFileDialog, QMenu, QToolButton
 )
@@ -21,16 +21,19 @@ from ui.workers import ScanWorker
 from vcp.engine import VCPParams
 from core.event_bus import event_bus
 from core.task_manager import task_manager
+from core.logger import get_logger
 from vcp.constants import SPECIAL_LATEST_DATA
+from ui.tabs.base_stock_tab import BaseStockTab
 
-class ScanTab(QWidget):
+log = get_logger(__name__)
+
+class ScanTab(BaseStockTab):
     """
     静态扫描 (VCP 区间扫描) 独立组件
     包含扫描渲染、策略表格、本地JSON缓存，并通过事件总线驱动进度。
     """
     def __init__(self, data_provider, engine, parent=None):
-        super().__init__(parent)
-        self.data_provider = data_provider
+        super().__init__(data_provider=data_provider, parent=parent)
         self.engine = engine
         self._current_results = []
         self.worker = None
@@ -327,11 +330,10 @@ class ScanTab(QWidget):
                             elif score >= 80: item.setForeground(QColor(STATUS_APPROACHING))
                             elif score < 70: item.setForeground(QColor(STATUS_INACTIVE))
                         except Exception: pass
-                    elif col_idx == 8:  
+                    elif col_idx == 8:
                         try:
                             val = float(text.replace('%', '').replace('+', ''))
-                            if val > 0: item.setForeground(QColor(COLOR_RISE_STRONG) if val > 5 else QColor(COLOR_RISE))
-                            elif val < 0: item.setForeground(QColor(COLOR_FALL_STRONG) if val < -5 else QColor(COLOR_FALL))
+                            self.apply_pct_color(item, val)
                         except Exception: pass
                     elif col_idx == 9:
                         if "放量突破" in text:
@@ -391,9 +393,9 @@ class ScanTab(QWidget):
             cache_data = {'saved_at': datetime.datetime.now().isoformat(), 'count': len(results), 'results': results}
             with open(cache_path, 'w', encoding='utf-8') as f:
                 json.dump(cache_data, f, ensure_ascii=False, indent=2, default=str)
-            event_bus.sig_system_log.emit("info", f"[扫描缓存] 已保存 {len(results)} 条结果")
+            log.info(f"[扫描缓存] 已保存 {len(results)} 条结果")
         except Exception as e:
-            event_bus.sig_system_log.emit("error", f"[扫描缓存] 保存失败: {e}")
+            log.error(f"[扫描缓存] 保存失败: {e}")
 
     def _load_scan_cache(self):
         try:
@@ -521,75 +523,4 @@ class ScanTab(QWidget):
         except Exception as e:
             event_bus.sig_system_log.emit("error", f"关注池操作异常: {e}")
 
-    def _launch_tdx(self, code: str):
-        """跳转通达信并输入股票代码"""
-        import subprocess, threading
-        tdx_vipdoc = getattr(self.data_provider, 'tdx_vipdoc', '')
-        tdx_path = tdx_vipdoc.replace("vipdoc", "tdxw.exe") if tdx_vipdoc else ""
-        if not os.path.exists(tdx_path):
-            event_bus.sig_system_log.emit("error", "未找到通达信路径")
-            return
-
-        def _worker():
-            import time, ctypes, ctypes.wintypes
-            user32 = ctypes.windll.user32
-            kernel32 = ctypes.windll.kernel32
-            try:
-                CREATE_NO_WINDOW = 0x08000000
-                result = subprocess.run(
-                    ['tasklist', '/FI', 'IMAGENAME eq tdxw.exe'],
-                    capture_output=True, text=True, timeout=5,
-                    creationflags=CREATE_NO_WINDOW
-                )
-                already_running = 'tdxw.exe' in result.stdout.lower()
-                if not already_running:
-                    subprocess.Popen([tdx_path], cwd=os.path.dirname(tdx_path))
-                    time.sleep(3.0)
-
-                EnumWindowsProc = ctypes.WINFUNCTYPE(
-                    ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM
-                )
-                tdx_hwnd = ctypes.wintypes.HWND(0)
-
-                def callback(hwnd, lParam):
-                    nonlocal tdx_hwnd
-                    if not user32.IsWindowVisible(hwnd):
-                        return True
-                    length = user32.GetWindowTextLengthW(hwnd)
-                    if length > 0:
-                        buf = ctypes.create_unicode_buffer(length + 1)
-                        user32.GetWindowTextW(hwnd, buf, length + 1)
-                        if '华泰' in buf.value or '通达信' in buf.value or '交易' in buf.value or '行情' in buf.value:
-                            tdx_hwnd = hwnd
-                            return False
-                    return True
-
-                user32.EnumWindows(EnumWindowsProc(callback), 0)
-                if not tdx_hwnd:
-                    return
-
-                fore_thread = user32.GetWindowThreadProcessId(
-                    user32.GetForegroundWindow(), None
-                )
-                cur_thread = kernel32.GetCurrentThreadId()
-                if fore_thread != cur_thread:
-                    user32.AttachThreadInput(cur_thread, fore_thread, True)
-                if user32.IsIconic(tdx_hwnd):
-                    user32.ShowWindow(tdx_hwnd, 9)
-                user32.BringWindowToTop(tdx_hwnd)
-                user32.SetForegroundWindow(tdx_hwnd)
-                if fore_thread != cur_thread:
-                    user32.AttachThreadInput(cur_thread, fore_thread, False)
-
-                time.sleep(0.5)
-                import pyautogui
-                pyautogui.typewrite(code, interval=0.02)
-                time.sleep(0.1)
-                pyautogui.press('enter')
-                print(f"[通达信] 已跳转: {code}")
-            except ImportError:
-                print("[通达信] 需要安装pyautogui: pip install pyautogui")
-            except Exception as e:
-                print(f"[通达信] 跳转异常: {e}")
-
-        threading.Thread(target=_worker, daemon=True).start()
+    # _launch_tdx 已迁移至 BaseStockTab 基类

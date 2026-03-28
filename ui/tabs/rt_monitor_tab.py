@@ -1,7 +1,7 @@
 import os
 import json
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
+    QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QPushButton, QLabel, QLineEdit, QMenu,
     QAbstractItemView, QMessageBox, QDialog, QComboBox, QSpinBox, QToolButton
 )
@@ -18,15 +18,18 @@ from ui.components import NumericTableWidgetItem
 from ui.workers import RtScanWorker
 from vcp.constants import SPECIAL_LATEST_DATA
 from core.event_bus import event_bus
+from core.logger import get_logger
+from ui.tabs.base_stock_tab import BaseStockTab
 
-class RtMonitorTab(QWidget):
+log = get_logger(__name__)
+
+class RtMonitorTab(BaseStockTab):
     """
     盘中监控 独立组件 (Controller + View)
     负责独立的盘中轮询逻辑，表格渲染。
     """
     def __init__(self, data_provider, engine, parent=None):
-        super().__init__(parent)
-        self.data_provider = data_provider
+        super().__init__(data_provider=data_provider, parent=parent)
         self.engine = engine
         self._init_ui()
         self._init_settings_widgets()
@@ -246,8 +249,7 @@ class RtMonitorTab(QWidget):
                 if col_idx == 4:
                     try:
                         pct = float(str(res.get('涨幅%', 0)).replace('%', '').replace('+', ''))
-                        if pct > 0: item.setForeground(QColor(COLOR_RISE_STRONG))
-                        elif pct < 0: item.setForeground(QColor(COLOR_FALL_STRONG))
+                        self.apply_pct_color(item, pct)
                     except: pass
                 elif col_idx == 7:  
                     st = str(text)
@@ -358,75 +360,5 @@ class RtMonitorTab(QWidget):
         except Exception as e:
             event_bus.sig_system_log.emit("error", f"关注池操作异常: {e}")
 
-    def _launch_tdx(self, code: str):
-        """跳转通达信(华泰)并自动输入股票代码"""
-        import subprocess, threading
-        tdx_vipdoc = getattr(self.data_provider, 'tdx_vipdoc', '')
-        tdx_path = tdx_vipdoc.replace("vipdoc", "tdxw.exe") if tdx_vipdoc else ""
-        if not os.path.exists(tdx_path):
-            event_bus.sig_system_log.emit("error", "未找到通达信路径")
-            return
+    # _launch_tdx 已迁移至 BaseStockTab 基类
 
-        def _worker():
-            import time, ctypes, ctypes.wintypes
-            user32 = ctypes.windll.user32
-            kernel32 = ctypes.windll.kernel32
-            try:
-                CREATE_NO_WINDOW = 0x08000000
-                result = subprocess.run(
-                    ['tasklist', '/FI', 'IMAGENAME eq tdxw.exe'],
-                    capture_output=True, text=True, timeout=5,
-                    creationflags=CREATE_NO_WINDOW
-                )
-                already_running = 'tdxw.exe' in result.stdout.lower()
-                if not already_running:
-                    subprocess.Popen([tdx_path], cwd=os.path.dirname(tdx_path))
-                    time.sleep(3.0)
-
-                EnumWindowsProc = ctypes.WINFUNCTYPE(
-                    ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM
-                )
-                tdx_hwnd = ctypes.wintypes.HWND(0)
-
-                def callback(hwnd, lParam):
-                    nonlocal tdx_hwnd
-                    if not user32.IsWindowVisible(hwnd):
-                        return True
-                    length = user32.GetWindowTextLengthW(hwnd)
-                    if length > 0:
-                        buf = ctypes.create_unicode_buffer(length + 1)
-                        user32.GetWindowTextW(hwnd, buf, length + 1)
-                        if '华泰' in buf.value or '通达信' in buf.value or '交易' in buf.value or '行情' in buf.value:
-                            tdx_hwnd = hwnd
-                            return False
-                    return True
-
-                user32.EnumWindows(EnumWindowsProc(callback), 0)
-                if not tdx_hwnd:
-                    return
-
-                fore_thread = user32.GetWindowThreadProcessId(
-                    user32.GetForegroundWindow(), None
-                )
-                cur_thread = kernel32.GetCurrentThreadId()
-                if fore_thread != cur_thread:
-                    user32.AttachThreadInput(cur_thread, fore_thread, True)
-                if user32.IsIconic(tdx_hwnd):
-                    user32.ShowWindow(tdx_hwnd, 9)
-                user32.BringWindowToTop(tdx_hwnd)
-                user32.SetForegroundWindow(tdx_hwnd)
-                if fore_thread != cur_thread:
-                    user32.AttachThreadInput(cur_thread, fore_thread, False)
-
-                time.sleep(0.5)
-                import pyautogui
-                pyautogui.typewrite(code, interval=0.02)
-                time.sleep(0.1)
-                pyautogui.press('enter')
-                print(f"[通达信] 已跳转: {code}")
-            except ImportError:
-                print("[通达信] 需要安装pyautogui: pip install pyautogui")
-            except Exception as e:
-                print(f"[通达信] 跳转异常: {e}")
-
-        threading.Thread(target=_worker, daemon=True).start()

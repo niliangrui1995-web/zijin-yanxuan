@@ -12,7 +12,7 @@ import datetime
 
 import pandas as pd
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
+    QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QPushButton, QLabel, QAbstractItemView, QLineEdit, QMenu
 )
 from PyQt6.QtCore import Qt, QTimer, QSettings
@@ -26,14 +26,17 @@ from ui.theme import (
 
 from ui.components import NumericTableWidgetItem
 from core.event_bus import event_bus
+from core.logger import get_logger
+from ui.tabs.base_stock_tab import BaseStockTab
+
+log = get_logger(__name__)
 
 
-class AITrackerTab(QWidget):
+class AITrackerTab(BaseStockTab):
     """AI产业链得分 独立 Tab: 从最新 CSV 读取 AI含量>0 的股票并展示"""
 
     def __init__(self, data_provider, parent=None):
-        super().__init__(parent)
-        self.data_provider = data_provider
+        super().__init__(data_provider=data_provider, parent=parent)
         self._ai_tracker_codes = set()
         self._cap_cache_ai_tracker = {}
         self.setStyleSheet("background-color: transparent;")
@@ -576,64 +579,5 @@ class AITrackerTab(QWidget):
         ]
         settings.setValue("ai_tracker_col_widths_v1", widths)
 
-    def _launch_tdx(self, code: str):
-        """跳转通达信(华泰)并自动输入股票代码"""
-        import subprocess, threading
-        tdx_vipdoc = getattr(self.data_provider, 'tdx_vipdoc', '')
-        tdx_path = tdx_vipdoc.replace("vipdoc", "tdxw.exe") if tdx_vipdoc else ""
-        if not os.path.exists(tdx_path):
-            event_bus.sig_system_log.emit("error", "未找到通达信路径")
-            return
+    # _launch_tdx 已迁移至 BaseStockTab 基类
 
-        def _worker():
-            import time as _time, ctypes, ctypes.wintypes
-            user32 = ctypes.windll.user32
-            kernel32 = ctypes.windll.kernel32
-            try:
-                CREATE_NO_WINDOW = 0x08000000
-                result = subprocess.run(
-                    ['tasklist', '/FI', 'IMAGENAME eq tdxw.exe'],
-                    capture_output=True, text=True, timeout=5,
-                    creationflags=CREATE_NO_WINDOW
-                )
-                already_running = 'tdxw.exe' in result.stdout.lower()
-                if not already_running:
-                    subprocess.Popen([tdx_path], cwd=os.path.dirname(tdx_path))
-                    _time.sleep(3.0)
-                EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
-                tdx_hwnd = ctypes.wintypes.HWND(0)
-                def callback(hwnd, lParam):
-                    nonlocal tdx_hwnd
-                    if not user32.IsWindowVisible(hwnd):
-                        return True
-                    length = user32.GetWindowTextLengthW(hwnd)
-                    if length > 0:
-                        buf = ctypes.create_unicode_buffer(length + 1)
-                        user32.GetWindowTextW(hwnd, buf, length + 1)
-                        if '华泰' in buf.value or '通达信' in buf.value or '交易' in buf.value or '行情' in buf.value:
-                            tdx_hwnd = hwnd
-                            return False
-                    return True
-                user32.EnumWindows(EnumWindowsProc(callback), 0)
-                if not tdx_hwnd:
-                    return
-                fore_thread = user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), None)
-                cur_thread = kernel32.GetCurrentThreadId()
-                if fore_thread != cur_thread:
-                    user32.AttachThreadInput(cur_thread, fore_thread, True)
-                if user32.IsIconic(tdx_hwnd):
-                    user32.ShowWindow(tdx_hwnd, 9)
-                user32.BringWindowToTop(tdx_hwnd)
-                user32.SetForegroundWindow(tdx_hwnd)
-                if fore_thread != cur_thread:
-                    user32.AttachThreadInput(cur_thread, fore_thread, False)
-                _time.sleep(0.5)
-                import pyautogui
-                pyautogui.typewrite(code, interval=0.02)
-                _time.sleep(0.1)
-                pyautogui.press('enter')
-            except ImportError:
-                print("[通达信] 需要安装pyautogui: pip install pyautogui")
-            except Exception as e:
-                print(f"[通达信] 跳转异常: {e}")
-        threading.Thread(target=_worker, daemon=True).start()
