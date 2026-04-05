@@ -523,7 +523,7 @@ class AsianMarketTab(BaseStockTab):
             self.asian_table.setColumnWidth(i, w)
             
         # 绑定防抖自动保存与恢复配置
-        self.bind_header_persistence(self.asian_table, "table_header_state")
+        self.bind_header_persistence(self.asian_table, "header_state_asian_v2")
 
     def _show_context_menu(self, pos):
         index = self.asian_table.indexAt(pos)

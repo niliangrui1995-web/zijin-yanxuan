@@ -169,7 +169,7 @@ class ScanTab(BaseStockTab):
         header.setSectionResizeMode(11, QHeaderView.ResizeMode.Stretch)
 
         # 绑定防抖自动保存与恢复配置
-        self.bind_header_persistence(self.table_scan, "header_state")
+        self.bind_header_persistence(self.table_scan, "header_state_scan_v2")
         
         # 行高 (加强呼吸感)
         self.table_scan.verticalHeader().setDefaultSectionSize(40)

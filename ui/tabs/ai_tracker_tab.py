@@ -117,7 +117,7 @@ class AITrackerTab(BaseStockTab):
         self.ai_tracker_table.verticalHeader().setDefaultSectionSize(40)
 
         # 绑定防抖自动保存与恢复配置
-        self.bind_header_persistence(self.ai_tracker_table, "header_state")
+        self.bind_header_persistence(self.ai_tracker_table, "header_state_ai_tracker_v2")
 
         self.ai_tracker_table.doubleClicked.connect(self._on_table_double_clicked)
         # 右键菜单

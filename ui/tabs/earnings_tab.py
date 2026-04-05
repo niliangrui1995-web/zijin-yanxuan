@@ -133,7 +133,7 @@ class EarningsTab(BaseStockTab):
             header_view.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
             self.table.setColumnWidth(i, w)
             
-        self.bind_header_persistence(self.table, "earnings_header_state")
+        self.bind_header_persistence(self.table, "earnings_header_state_v2")
 
     def _on_manual_fetch(self):
         target_str = self.ent_target_date.text().strip()
@@ -200,7 +200,11 @@ class EarningsTab(BaseStockTab):
             def _fetch_caps():
                 try:
                     from vcp.engine import VCPEngine
-                    cap_results = VCPEngine.batch_check_market_cap(codes_need_cap)
+                    # 动态拉取现价以供市值计算（不依赖UI，直接用 data_provider）
+                    quotes = self.data_provider.fetch_realtime_quotes_batch(codes_need_cap) if self.data_provider else {}
+                    close_prices = {c: quotes[c].get('close', 0) for c in codes_need_cap if c in quotes and quotes[c]}
+                    
+                    cap_results = VCPEngine.batch_check_market_cap(codes_need_cap, close_prices=close_prices)
                     caps = {}
                     for c in codes_need_cap:
                         cap = cap_results.get(c)

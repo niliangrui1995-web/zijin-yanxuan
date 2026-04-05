@@ -134,7 +134,7 @@ class RtMonitorTab(BaseStockTab):
         self.table_rt.horizontalHeader().setSortIndicatorShown(True)
         
         # 绑定防抖自动保存与恢复配置
-        self.bind_header_persistence(self.table_rt, "header_state_v3")
+        self.bind_header_persistence(self.table_rt, "header_state_rt_v4")
         
         # 绑定双击事件，广播K线上下文
         self.table_rt.doubleClicked.connect(self._on_table_double_clicked)

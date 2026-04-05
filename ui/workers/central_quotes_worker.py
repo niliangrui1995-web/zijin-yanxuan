@@ -80,13 +80,18 @@ class CentralQuotesService(QObject):
             return
             
         # 优化：盘后不以3秒高频拉取，改为60秒拉取一次（保持收盘数据最终一致性即可）
+        # 新增：盘后开机的『前首次』无条件立刻拉取一轮，不等待60s
         if not self._is_market_open():
-            if not hasattr(self, '_off_market_counter'):
+            if not getattr(self, '_first_off_market_fetch_done', False):
+                self._first_off_market_fetch_done = True
                 self._off_market_counter = 0
-            self._off_market_counter += 1
-            if self._off_market_counter < 20: # 3 * 20 = 60s
-                return
-            self._off_market_counter = 0
+            else:
+                if not hasattr(self, '_off_market_counter'):
+                    self._off_market_counter = 0
+                self._off_market_counter += 1
+                if self._off_market_counter < 20: # 3 * 20 = 60s
+                    return
+                self._off_market_counter = 0
 
         codes = self._get_all_active_codes()
         if not codes:

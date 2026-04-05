@@ -394,7 +394,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         header.setSectionResizeMode(12, QHeaderView.ResizeMode.Stretch)
 
         # 绑定防抖自动保存与恢复配置
-        self.bind_header_persistence(self.table, "header_state")
+        self.bind_header_persistence(self.table, "block_trade_header_state_v2")
 
         # 双击 → K线图
         self.table.doubleClicked.connect(self._on_double_click)
@@ -609,7 +609,11 @@ class ForeignBlockTradeTab(BaseStockTab):
             def _fetch_caps():
                 try:
                     from vcp.engine import VCPEngine
-                    cap_results = VCPEngine.batch_check_market_cap(codes_need_cap)
+                    # 动态拉取现价以供市值计算（不依赖UI，直接用 data_provider）
+                    quotes = self.data_provider.fetch_realtime_quotes_batch(codes_need_cap) if self.data_provider else {}
+                    close_prices = {c: quotes[c].get('close', 0) for c in codes_need_cap if c in quotes and quotes[c]}
+
+                    cap_results = VCPEngine.batch_check_market_cap(codes_need_cap, close_prices=close_prices)
                     caps = {}
                     for c in codes_need_cap:
                         cap = cap_results.get(c)

@@ -149,7 +149,7 @@ class WatchlistTab(BaseStockTab):
         self.table_sp.verticalHeader().setDefaultSectionSize(32)
         
         # 绑定防抖自动保存与恢复配置
-        self.bind_header_persistence(self.table_sp, "header_state_watchlist")
+        self.bind_header_persistence(self.table_sp, "header_state_watchlist_v2")
 
         # 双击 → 查看K线图（通过 EventBus 广播）
         self.table_sp.doubleClicked.connect(self._on_double_click)

@@ -138,7 +138,7 @@ class NADailyTab(BaseStockTab):
         self.na_daily_table.verticalHeader().setDefaultSectionSize(32)
 
         # 绑定防抖自动保存与恢复配置
-        self.bind_header_persistence(self.na_daily_table, "header_state")
+        self.bind_header_persistence(self.na_daily_table, "header_state_na_daily_v2")
 
         self.na_daily_table.doubleClicked.connect(self._on_double_click)
         self.na_daily_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
