@@ -2,6 +2,9 @@
 import json
 import time
 import threading
+import logging
+
+_log = logging.getLogger(__name__)
 
 try:
     import requests
@@ -78,7 +81,7 @@ class KimiAIService:
         for attempt in range(max_retries):
             t0 = time.time()
             try:
-                print(f"[AI诊断] 请求 Kimi: {name}({code}) 第{attempt+1}次...")
+                _log.info(f"[AI诊断] 请求 Kimi: {name}({code}) 第{attempt+1}次...")
                 resp = session.post(url, json=payload, headers=headers, timeout=timeout)
                 if resp.status_code != 200:
                     try:
@@ -88,7 +91,7 @@ class KimiAIService:
                     except Exception as e:
                         msg = resp.text.lower() if resp.text else str(resp.status_code)
                         last_error = f"Kimi 请求失败: {str(e)}"
-                        print(f"[Error] call_kimi_diag: {str(e)}")
+                        _log.error(f"[AI诊断] 响应解析失败: {str(e)}")
                     if ("overloaded" in msg or "try again" in msg or "429" in str(resp.status_code)) and attempt < max_retries - 1:
                         time.sleep(min(2 ** attempt * 2, 30))
                         continue
@@ -120,7 +123,7 @@ class KimiAIService:
                                     err_msg = (json.loads(err_body).get("error", {}).get("message", err_body) or err_body or str(resp2.status_code)).lower()
                                 except Exception as e:
                                     err_msg = (resp2.text or str(resp2.status_code)).lower()
-                                    print(f"[Error] call_kimi_diag: {str(e)}")
+                                    _log.error(f"[AI诊断] 二次请求解析失败: {str(e)}")
                                 if ("overloaded" in err_msg or "try again" in err_msg or "429" in str(resp2.status_code)) and retry < max_retries - 1:
                                     time.sleep(min(2 ** retry * 2, 30))
                                     continue
@@ -129,7 +132,7 @@ class KimiAIService:
                             data2 = resp2.json()
                             break
                         except Exception as e2:
-                            print(f"[Error] call_kimi_diag: {str(e2)}")
+                            _log.error(f"[AI诊断] 联网搜索回调异常: {str(e2)}")
                             if retry < max_retries - 1:
                                 time.sleep(min(2 ** retry * 2, 30))
                                 continue
@@ -140,18 +143,18 @@ class KimiAIService:
                 if not text:
                     return False, "Kimi 接口返回内容为空"
                 elapsed_total = time.time() - t0
-                print(f"[AI诊断] ✅ {name}({code}) 成功 (耗时 {elapsed_total:.1f}s, {len(text)} 字)")
+                _log.info(f"[AI诊断] ✅ {name}({code}) 成功 (耗时 {elapsed_total:.1f}s, {len(text)} 字)")
                 return True, text
             except requests.exceptions.RequestException as e:
                 last_error = f"Kimi 请求异常: {repr(e)}"
-                print(f"[Error] call_kimi_diag: {str(e)}")
+                _log.error(f"[AI诊断] 请求异常: {str(e)}")
                 if ("429" in str(e) or "overloaded" in str(e).lower() or "try again" in str(e).lower()) and attempt < max_retries - 1:
                     time.sleep(min(2 ** attempt * 2, 30))
                     continue
                 return False, last_error
             except Exception as e:
                 last_error = f"Kimi 请求异常: {repr(e)}"
-                print(f"[Error] call_kimi_diag: {str(e)}")
+                _log.error(f"[AI诊断] 未知异常: {str(e)}")
                 if attempt < max_retries - 1:
                     time.sleep(min(2 ** attempt * 2, 30))
                     continue

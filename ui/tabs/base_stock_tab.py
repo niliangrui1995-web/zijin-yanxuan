@@ -171,9 +171,11 @@ class BaseStockTab(QWidget):
 
         menu.addSeparator()
 
-        # 跳转通达信
+        # 跳转通达信/东方财富
         act_tdx = menu.addAction("🖥️ 跳转通达信")
         act_tdx.triggered.connect(lambda: self._launch_tdx(code))
+        act_em = menu.addAction("🖥️ 跳转东方财富")
+        act_em.triggered.connect(lambda: self._launch_eastmoney(code))
 
         # 复制代码
         act_copy = menu.addAction("📋 复制代码")
@@ -193,26 +195,128 @@ class BaseStockTab(QWidget):
                 event_bus.sig_system_log.emit("warn", f"[TDX] 未找到通达信: {tdx_path}")
                 return
 
-            # 查找华泰高级版窗口
-            target_title = "华泰网上交易(高级版)"
-            hwnd = ctypes.windll.user32.FindWindowW(None, target_title)
+            EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+            user32 = ctypes.windll.user32
+            
+            def find_tdx_window():
+                found_hwnd = ctypes.wintypes.HWND(0)
+                def callback(hwnd, lParam):
+                    nonlocal found_hwnd
+                    if not user32.IsWindowVisible(hwnd):
+                        return True
+                    length = user32.GetWindowTextLengthW(hwnd)
+                    if length > 0:
+                        buf = ctypes.create_unicode_buffer(length + 1)
+                        user32.GetWindowTextW(hwnd, buf, length + 1)
+                        title = buf.value
+                        
+                        class_buf = ctypes.create_unicode_buffer(256)
+                        user32.GetClassNameW(hwnd, class_buf, 256)
+                        class_name = class_buf.value
+                        
+                        if ('华泰网上' in title or '华泰证券' in title or '通达信' in title or 
+                            '网上股票交易' in title or class_name == 'TdxW_MainFrame_Class'):
+                            found_hwnd = hwnd
+                            return False
+                    return True
+                user32.EnumWindows(EnumWindowsProc(callback), 0)
+                return found_hwnd
+
+            hwnd = find_tdx_window()
             if not hwnd:
                 subprocess.Popen([tdx_path])
                 time.sleep(2)
-                hwnd = ctypes.windll.user32.FindWindowW(None, target_title)
+                hwnd = find_tdx_window()
 
+            import pyautogui
             if hwnd:
-                ctypes.windll.user32.SetForegroundWindow(hwnd)
-                time.sleep(0.3)
+                user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                user32.SetForegroundWindow(hwnd)
+                time.sleep(0.5)
                 # 输入股票代码
                 bare = code.replace('sh', '').replace('sz', '')
-                for ch in bare:
-                    vk = ord(ch)
-                    ctypes.windll.user32.keybd_event(vk, 0, 0, 0)
-                    ctypes.windll.user32.keybd_event(vk, 0, 2, 0)
-                    time.sleep(0.05)
-                # 按回车
-                ctypes.windll.user32.keybd_event(0x0D, 0, 0, 0)
-                ctypes.windll.user32.keybd_event(0x0D, 0, 2, 0)
+                pyautogui.typewrite(bare, interval=0.05)
+                pyautogui.press('enter')
         except Exception as e:
             event_bus.sig_system_log.emit("error", f"[TDX] 跳转失败: {e}")
+
+    def _launch_eastmoney(self, code: str):
+        """跳转东方财富并输入股票代码"""
+        try:
+            import ctypes
+            EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+            user32 = ctypes.windll.user32
+            
+            def find_em_window():
+                found_hwnd = ctypes.wintypes.HWND(0)
+                def callback(hwnd, lParam):
+                    nonlocal found_hwnd
+                    if not user32.IsWindowVisible(hwnd):
+                        return True
+                    length = user32.GetWindowTextLengthW(hwnd)
+                    if length > 0:
+                        buf = ctypes.create_unicode_buffer(length + 1)
+                        user32.GetWindowTextW(hwnd, buf, length + 1)
+                        title = buf.value
+                        
+                        if '东方财富' in title:
+                            found_hwnd = hwnd
+                            return False
+                    return True
+                user32.EnumWindows(EnumWindowsProc(callback), 0)
+                return found_hwnd
+
+            hwnd = find_em_window()
+            if not hwnd:
+                event_bus.sig_system_log.emit("warn", "[东方财富] 未检测到运行中的东方财富终端，请先启动！")
+                return
+
+            import pyautogui
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+            user32.SetForegroundWindow(hwnd)
+            time.sleep(0.5)
+            # 输入股票代码
+            bare = code.replace('sh', '').replace('sz', '')
+            pyautogui.typewrite(bare, interval=0.05)
+            pyautogui.press('enter')
+        except Exception as e:
+            event_bus.sig_system_log.emit("error", f"[东方财富] 跳转失败: {e}")
+
+    def bind_header_persistence(self, table, settings_key: str = "header_state"):
+        """通用：绑定表格列宽调整后自动保存（带防抖），并恢复上次保存的宽度"""
+        from PyQt6.QtCore import QSettings, QTimer
+        
+        # 使用当前类的名字作为配置的分类，确保不冲突
+        settings = QSettings("VCPHunter", self.__class__.__name__)
+        header = table.horizontalHeader()
+        
+        # 1. 如果有保存的配置，则立刻恢复
+        if settings.contains(settings_key):
+            try:
+                header.restoreState(settings.value(settings_key))
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"恢复列宽配置异常 {settings_key}: {e}")
+
+        # 2. 创建防抖定时器，防止拖拉列宽时高频疯狂写盘
+        if not hasattr(self, "_header_save_timers"):
+            self._header_save_timers = []
+            
+        throttle_timer = QTimer(self)
+        throttle_timer.setSingleShot(True)
+        throttle_timer.setInterval(800) # 停止拖拽 800ms 后保存
+        self._header_save_timers.append(throttle_timer)
+        
+        def _save_state():
+            try:
+                settings.setValue(settings_key, header.saveState())
+                settings.sync()
+            except Exception as e:
+                pass
+                
+        throttle_timer.timeout.connect(_save_state)
+        
+        # 宽度拖拽改变 或 列被拖拽移动 时触发重置定时器
+        header.sectionResized.connect(lambda: throttle_timer.start())
+        header.sectionMoved.connect(lambda: throttle_timer.start())
+

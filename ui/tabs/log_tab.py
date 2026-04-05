@@ -16,7 +16,8 @@ class LogTab(QWidget):
         self._setup_log_redirect()
         
         # 挂载中心事件总线
-        event_bus.sig_system_log.connect(self._on_log_msg)
+        from PyQt6.QtCore import Qt
+        event_bus.sig_system_log.connect(self._on_log_msg, type=Qt.ConnectionType.QueuedConnection)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)

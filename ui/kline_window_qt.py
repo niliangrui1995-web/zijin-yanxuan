@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
 import os as _os
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QFont, QPicture, QPainter
+from ui.viewmodels.watchlist_vm import watchlist_vm
 
 # === Custom Candlestick Graphics Item ===
 class CandlestickItem(pg.GraphicsObject):
@@ -71,6 +72,7 @@ class KLineChartWindow(QWidget):
         
         self.setWindowTitle(f"{name} ({code}) - K线详情")
         self.resize(1000, 600)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         
         # 设置窗口图标（与主窗口一致）
         from PyQt6.QtGui import QIcon
@@ -190,14 +192,7 @@ class KLineChartWindow(QWidget):
 
     def _check_fav_status(self):
         try:
-            import os, json
-            special_path = SPECIAL_LATEST_DATA
-            fav_codes = []
-            if os.path.exists(special_path):
-                with open(special_path, 'r', encoding='utf-8') as f:
-                    fav_codes = list(json.load(f).keys())
-                    
-            self.is_fav = self.code in fav_codes
+            self.is_fav = watchlist_vm.is_in_watchlist(self.code)
             if self.is_fav:
                 self.btn_fav.setText("⭐ 移出关注池")
             else:
@@ -208,68 +203,97 @@ class KLineChartWindow(QWidget):
 
     def _toggle_fav(self):
         try:
-            import os, json
-            
-            data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
-            os.makedirs(data_dir, exist_ok=True)
-            special_path = SPECIAL_LATEST_DATA
-            
-            current_data = {}
-            if os.path.exists(special_path):
-                try:
-                    with open(special_path, 'r', encoding='utf-8') as f:
-                        current_data = json.load(f)
-                except Exception as e: print(f"[K线图] 异常: {e}")
-                
-            if self.is_fav:
-                if self.code in current_data:
-                    del current_data[self.code]
-            else:
-                current_data[self.code] = {"现价": 0, "涨幅%": 0, "AI诊断": ""}
-                
-            with open(special_path, 'w', encoding='utf-8') as f:
-                json.dump(current_data, f, ensure_ascii=False, indent=4)
-                
-            # Req refresh main window if possible (for simplicity we just toggle local button)
+            watchlist_vm.toggle_stock(self.code, self.name, self.vcp_data)
             self._check_fav_status()
         except Exception as e:
             print(f"[K线窗口] 切换关注状态失败: {e}")
             
     def _load_and_draw(self):
-        # Read from Data Provider
+        is_asian = '.' in self.code
+        if is_asian:
+            self._load_asian_chart()
+            return
+            
+        # 1. 尝试从内存缓存秒开，避免双击卡顿
+        df = self.data_provider.get_data(self.code)
+        if df is not None and len(df) >= 60:
+            self._render_chart_frame(df, loading=True)
+        else:
+            self.info_lbl.setText("📡 正在从服务器获取完整 K 线数据...")
+            
+        # 2. 异步拉取最新日线和盘中实时跳动，拼装后重绘
+        def _bg_fetch():
+            import pandas as pd
+            from datetime import datetime
+            # 这里的 get_data_fresh_for_chart 包含同步网络IO，必须在 bg_task 里执行
+            fresh_df = self.data_provider.get_data_fresh_for_chart(self.code)
+            
+            now = datetime.now()
+            quote_to_apply = None
+            
+            # 是否需要拉取实时节点？
+            # 只要没离线，就拉取。因为即便是周末，也可以拉取到周五最后收盘价来补齐未 F5 的数据。
+            if not getattr(self.data_provider, '_offline', False):
+                already_has_latest = False
+                if fresh_df is not None and not fresh_df.empty:
+                    last_dt = pd.Timestamp(fresh_df.index[-1]).date()
+                    # 如果当前是交易日且下午 15:05 之后，并且 K 线里已经包含了今天的日期，说明 F5 按过了，不需要再拉了。
+                    if now.hour > 15 or (now.hour == 15 and now.minute > 5):
+                        if last_dt >= now.date():
+                            already_has_latest = True
+                            
+                is_pre_market = now.weekday() < 5 and (now.hour < 9 or (now.hour == 9 and now.minute < 25))
+                is_weekend = now.weekday() >= 5
+                
+                if not already_has_latest and not is_pre_market and not is_weekend:
+                    try:
+                        quotes = self.data_provider.fetch_realtime_quotes_batch([self.code])
+                        if quotes and self.code in quotes:
+                            quote_to_apply = quotes[self.code]
+                    except Exception as e:
+                        print(f"[K线] 盘中实时拼接失败: {e}")
+            return fresh_df, quote_to_apply
+            
+        def _on_fetch_success(result):
+            try:
+                if result:
+                    fresh_df, quote_to_apply = result
+                    if fresh_df is not None:
+                        self._render_chart_frame(fresh_df, loading=False)
+                        if quote_to_apply is not None:
+                            self._refresh_last_bar(quote_to_apply)
+            except RuntimeError:
+                # The window was closed by the user before the background task finished
+                pass
+            
+        from core.task_manager import task_manager
+        task_manager.run_in_background(_bg_fetch, on_success=_on_fetch_success, task_id=f"kline_{self.code}")
+
+    def _render_chart_frame(self, df, loading=False):
         from vcp.engine import VCPEngine
-        from datetime import datetime
-        
-        df = self.data_provider.get_data_fresh_for_chart(self.code)
         
         if df is None or len(df) < 60:
-            self.info_lbl.setText("⚠ 数据不足，无法绘图")
+            if not loading:
+                self.info_lbl.setText("⚠ 数据不足，无法绘图")
             return
-        
-        # === 盘中实时K线拼接 ===
-        # 判断当前是否在交易时段（9:25 ~ 15:05），如果是则拉取实时报价并拼入末尾
-        now = datetime.now()
-        is_trading_hours = (now.weekday() < 5 and 
-                           ((now.hour == 9 and now.minute >= 25) or 
-                            (10 <= now.hour <= 14) or 
-                            (now.hour == 15 and now.minute <= 5)))
-        
-        if is_trading_hours and not self.data_provider._offline:
-            try:
-                quotes = self.data_provider.fetch_realtime_quotes_batch([self.code])
-                if quotes and self.code in quotes:
-                    quote = quotes[self.code]
-                    rt_df = self.data_provider.build_realtime_df(self.code, quote)
-                    if rt_df is not None and len(rt_df) >= 60:
-                        df = rt_df
-                        print(f"[K线] {self.code} 已拼入盘中实时K线 "
-                              f"(现价 {quote.get('close', 0):.2f})")
-            except Exception as e:
-                print(f"[K线] {self.code} 实时报价拼接失败，使用历史数据: {e}")
             
         if 'MACD' not in df.columns or df['MACD'].isna().all():
             df = VCPEngine.calculate_indicators(df)
             
+        if not loading:
+            self.info_lbl.setText(f"✅ 数据拉取成功 (缓存行数: {len(df)})")
+            
+        # 先清除可能存在的旧图元
+        self.p1.clear()
+        self.p2.clear()
+        self.p3.clear()
+        self.p1.addItem(self.vLines[0], ignoreBounds=True)
+        self.p1.addItem(self.hLines[0], ignoreBounds=True)
+        self.p2.addItem(self.vLines[1], ignoreBounds=True)
+        self.p2.addItem(self.hLines[1], ignoreBounds=True)
+        self.p3.addItem(self.vLines[2], ignoreBounds=True)
+        self.p3.addItem(self.hLines[2], ignoreBounds=True)
+
         # Draw last 250 bars like original design
         self.df = df.iloc[-250:].copy()
         for col in ['open', 'high', 'low', 'close', 'volume']:
@@ -277,7 +301,8 @@ class KLineChartWindow(QWidget):
                 self.df[col] = self.df[col].ffill().bfill()
         
         # 启动盘中定时刷新（60秒间隔）
-        self._start_rt_timer()
+        if not loading:
+            self._start_rt_timer()
                 
         # Data prep for CandlestickItem and Volume
         candle_data = []
@@ -500,28 +525,7 @@ class KLineChartWindow(QWidget):
                  label_low.setPos(x_start, box_low)
                  self.p1.addItem(label_low)
 
-        # 3. 在左上角增加一个文本框提供 VCP 诊断摘要
-        score = self.vcp_data.get('评分', '')
-        vcp_status = self.vcp_data.get('突破状态', '')
-        amp = self.vcp_data.get('区间振幅', '')
-        dist = self.vcp_data.get('距突破', '')
-        rps = self.vcp_data.get('RPS强度', '')
-        
-        summary_html = f"""
-        <div style="color: #F5F5F7; background-color: rgba(22, 22, 24, 0.8); border: 1px solid #3A3A3C; padding: 10px;">
-            <b>VCP 诊断摘要</b><br><br>
-            评分等级: <span style="color: #FFD60A;">{score}</span><br>
-            RPS矩阵: <span style="color: #0A84FF;">{rps}</span><br>
-            状态: <span style="color: #F23645;">{vcp_status}</span><br>
-            距突破: {dist}<br>
-            左侧振幅: {amp}
-        </div>
-        """
-        summary_box = pg.TextItem(html=summary_html, anchor=(0, 0))
-        # 放在主图表视图内的左上方 (忽略数据坐标绑定)
-        self.p1.scene().addItem(summary_box)
-        summary_box.setPos(75, 55) # 下移避开 MA 标签区域
-        self.summary_box = summary_box # Keep ref
+        # 3. (无需显示 VCP 诊断摘要，已被删减)
         
         # 把信息栏默认设置成数据概览
         self.info_lbl.setText(f"数据加载完成: {len(self.df)}根 K线 | 发现 {trigger_date} VCP 买点")
@@ -557,12 +561,55 @@ class KLineChartWindow(QWidget):
             return
         
         try:
-            quotes = self.data_provider.fetch_realtime_quotes_batch([self.code])
-            if quotes and self.code in quotes:
-                quote = quotes[self.code]
-                self._refresh_last_bar(quote)
+            if '.' in self.code:
+                import yfinance as yf
+                rt_df = yf.Ticker(self.code).history(period="1d", interval="1d")
+                if not rt_df.empty:
+                    last_row = rt_df.iloc[-1]
+                    # last_row.name holds the actual DatetimeIndex
+                    rt_date = pd.Timestamp(last_row.name).strftime('%Y-%m-%d')
+                    quote = {'date': rt_date, 'open': float(last_row['Open']), 'high': float(last_row['High']), 'low': float(last_row['Low']), 'close': float(last_row['Close']), 'volume': float(last_row.get('Volume', 0))}
+                    self._refresh_last_bar(quote)
+            else:
+                quotes = self.data_provider.fetch_realtime_quotes_batch([self.code])
+                if quotes and self.code in quotes:
+                    quote = quotes[self.code]
+                    self._refresh_last_bar(quote)
         except Exception as e:
             print(f"[K线] {self.code} 实时刷新异常: {e}")
+
+    def _load_asian_chart(self):
+        import json, os, pandas as pd
+        from ui.tabs.asian_market_tab import JSON_CACHE, GLOBAL_ASIAN_RT_CACHE
+        df = None
+        if os.path.exists(JSON_CACHE):
+            with open(JSON_CACHE, 'r', encoding='utf-8') as f:
+                raw = json.load(f)
+                stocks = raw.get('stocks', [])
+                target_stock = next((s for s in stocks if s.get('ticker') == self.code), None)
+                if target_stock:
+                    data = target_stock.get('klines', [])
+                    if data:
+                        df = pd.DataFrame(data)
+                        if 'date' in df.columns:
+                            df['date'] = pd.to_datetime(df['date'])
+                            df.set_index('date', inplace=True)
+                        for col in ['open', 'high', 'low', 'close', 'volume']:
+                            if col in df.columns:
+                                df[col] = df[col].astype(float)
+        
+        if df is not None:
+            self._render_chart_frame(df, loading=False)
+            if self.code in GLOBAL_ASIAN_RT_CACHE:
+                quote = GLOBAL_ASIAN_RT_CACHE[self.code]
+                df_today = quote.get('df_today')
+                if df_today is not None and not df_today.empty:
+                    last_row = df_today.iloc[-1]
+                    rt_date = pd.Timestamp(last_row.name).strftime('%Y-%m-%d')
+                    rt_quote = {'date': rt_date, 'open': float(last_row['Open']), 'high': float(last_row['High']), 'low': float(last_row['Low']), 'close': float(last_row['Close']), 'volume': float(last_row.get('Volume', 0))}
+                    self._refresh_last_bar(rt_quote)
+        else:
+            self.info_lbl.setText("⚠ 暂无该亚洲标的历史数据")
 
     def _refresh_last_bar(self, quote):
         """增量更新最后一根K线的 OHLCV 数据，不全量重绘。"""
@@ -580,28 +627,39 @@ class KLineChartWindow(QWidget):
         
         import pandas as pd
         from datetime import datetime
-        today = pd.Timestamp(datetime.now().date())
-        last_idx = len(self.df) - 1
-        last_date = self.df.index[-1]
         
-        # 判断最后一根K线是否是今天的
-        if pd.Timestamp(last_date).date() == today.date():
-            # 更新今天这根K线的 OHLCV
+        # 提取真实交易日。如果获取不到，兜底用本日历天
+        rt_date_str = quote.get('date')
+        if rt_date_str:
+            rt_date = pd.Timestamp(rt_date_str).date()
+        else:
+            rt_date = pd.Timestamp(datetime.now().date()).date()
+            
+        last_idx = len(self.df) - 1
+        last_date = pd.Timestamp(self.df.index[-1]).date()
+        
+        # 判断最后一根K线日期是否与该实时行情的日期重叠
+        if last_date >= rt_date:
+            # 如果本地 K 线图的最后一天等于(或异常大于)获取到的实际交易日，说明今天这根 K 线已经包含或者无需新建
+            # 仅仅需要用最新的 OHLCV 更新最后一根（覆盖它的跳动）
             self.df.iloc[-1, self.df.columns.get_loc('open')] = rt_open
-            self.df.iloc[-1, self.df.columns.get_loc('high')] = rt_high
-            self.df.iloc[-1, self.df.columns.get_loc('low')] = rt_low
+            self.df.iloc[-1, self.df.columns.get_loc('high')] = max(self.df.iloc[-1, self.df.columns.get_loc('high')], rt_high)
+            self.df.iloc[-1, self.df.columns.get_loc('low')] = min(self.df.iloc[-1, self.df.columns.get_loc('low')], rt_low)
             self.df.iloc[-1, self.df.columns.get_loc('close')] = rt_close
             if 'volume' in self.df.columns:
                 self.df.iloc[-1, self.df.columns.get_loc('volume')] = rt_vol
+            
+            # 同时修正 time_dict 中的标记（避免覆盖成周末日期）
+            self.time_dict[last_idx] = last_date.strftime('%Y-%m-%d')
         else:
-            # 今天的K线还不存在，追加一根新K线
+            # 说明 rt_date 是一个全新的交易日（比如周一开盘），而且本地最后一根(比如上周五)比它小
             new_row = pd.DataFrame({
                 'open': [rt_open], 'high': [rt_high], 'low': [rt_low],
                 'close': [rt_close], 'volume': [rt_vol]
-            }, index=[today])
+            }, index=[pd.Timestamp(rt_date)])
             self.df = pd.concat([self.df, new_row])
             last_idx = len(self.df) - 1
-            self.time_dict[last_idx] = today.strftime('%Y-%m-%d')
+            self.time_dict[last_idx] = rt_date.strftime('%Y-%m-%d')
         
         # === 增量重绘：清除旧图元，重新绘制全部K线 ===
         # （pyqtgraph 的 CandlestickItem 是 QPicture 预渲染的，无法局部更新，
@@ -642,9 +700,13 @@ class KLineChartWindow(QWidget):
         self.p1.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
         
         # 更新信息栏
-        pct = ((rt_close - rt_open) / rt_open * 100) if rt_open > 0 else 0
-        color = '#E85D5D' if rt_close >= rt_open else '#3CC68A'
-        sign = '+' if rt_close >= rt_open else ''
+        pre_close = rt_open
+        if len(self.df) >= 2:
+            pre_close = self.df.iloc[-2]['close']
+            
+        pct = ((rt_close - pre_close) / pre_close * 100) if pre_close > 0 else 0
+        color = '#E85D5D' if rt_close >= pre_close else '#3CC68A'
+        sign = '+' if rt_close >= pre_close else ''
         now_str = datetime.now().strftime('%H:%M:%S')
         self.info_lbl.setText(
             f"🔴 实时 {now_str} | "
@@ -663,10 +725,6 @@ class KLineChartWindow(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        # 每次调节窗口大小时，确保 VCP 摘要能随布局偏移（在信息栏下方）
-        if hasattr(self, 'summary_box'):
-            # TextItem 的位置相对于整个图口
-            pass
 
     def _update_ma_label(self, index):
         """更新左上角 MA 标签为指定索引的均线价格。"""
@@ -711,7 +769,12 @@ class KLineChartWindow(QWidget):
                 dt_str = self.time_dict.get(index, "")
                 o, c, h, l, v = row['open'], row['close'], row['high'], row['low'], row['volume']
                 
-                pct = (c - o) / o * 100 if o > 0 else 0
+                if index > 0:
+                    pre_close = self.df.iloc[index-1]['close']
+                else:
+                    pre_close = o
+                    
+                pct = (c - pre_close) / pre_close * 100 if pre_close > 0 else 0
                 
                 # Check 涨跌停高亮
                 limit_color = ""
@@ -723,8 +786,8 @@ class KLineChartWindow(QWidget):
                     limit_color = "#30D158"
                     limit_sign = "💦跌停💦 "
                     
-                color = "#E85D5D" if c >= o else "#3CC68A"
-                sign = "+" if c >= o else ""
+                color = "#E85D5D" if c >= pre_close else "#3CC68A"
+                sign = "+" if c >= pre_close else ""
                 if limit_color: color = limit_color
                 
                 info_text = (
@@ -783,11 +846,7 @@ class KLineChartWindow(QWidget):
             self.p2.clear()
             self.p3.clear()
             
-            if hasattr(self, 'summary_box'):
-                try:
-                    self.p1.scene().removeItem(self.summary_box)
-                    delattr(self, 'summary_box')
-                except Exception as e: print(f"[K线图] 异常: {e}")
+            # 已移除 VCP 摘要及清理逻辑
             if self._ma_label is not None:
                 try:
                     self.p1.scene().removeItem(self._ma_label)

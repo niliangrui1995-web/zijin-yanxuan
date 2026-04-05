@@ -54,4 +54,9 @@ Desktop.ini
 *.bak
 *.tmp
 *.corrupted
+diff.txt
+ui_backup_*/
+fix_*.py
+rewrite_*.py
+_migrate_*.py
 

@@ -13,17 +13,11 @@ from vcp.constants import (
     PROJECT_ROOT,
 )
 
+from core.logger import get_logger
+_log = get_logger(__name__)
 
-def _text_to_pinyin_initials(text):
-    """将中文转为拼音首字母串，用于模糊搜索。"""
-    try:
-        from pypinyin import lazy_pinyin
-        s = str(text).strip()
-        if not s:
-            return ""
-        return "".join((p[0] if p else "") for p in lazy_pinyin(s)).lower()
-    except Exception:
-        return ""
+
+
 
 # ==========================================
 # AI 诊断配置读写
@@ -65,7 +59,7 @@ def _get_kimi_api_key():
     _default_key = "sk-jtTBTLeEN6CHrOv6824AYWauI9keEYuhyOlYFWhE71mVSleR"
     try:
         _save_ai_diag_config({"kimi_api_key": _default_key})
-        print("[AI配置] 已自动创建配置文件并写入默认 API Key")
+        _log.info("[AI配置] 已自动创建配置文件并写入默认 API Key")
     except Exception:
         pass
     return _default_key
@@ -121,7 +115,7 @@ def read_tdx_day_file(filepath, price_div=100.0):
         with open(filepath, 'rb') as f:
             buf = f.read()
     except Exception as e:
-        print(f"[Error] read_tdx_day_file: {str(e)}")
+        _log.error(f"[Error] read_tdx_day_file: {str(e)}")
         return None
     n = len(buf) // 32
     if n == 0:
@@ -145,7 +139,7 @@ def read_tdx_day_file(filepath, price_div=100.0):
         df = df.sort_index(ascending=True)
         return df
     except Exception as e:
-        print(f"[Error] read_tdx_day_file: {str(e)}")
+        _log.error(f"[Error] read_tdx_day_file: {str(e)}")
         return None
 
 # ==========================================

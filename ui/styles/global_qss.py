@@ -14,7 +14,7 @@ GLOBAL_QSS = """
 
 /* --- 全局窗口基底 --- */
 QMainWindow, QWidget {
-    background-color: #0F1117;
+    background-color: #0F172A;
     color: #E2E8F0;
     font-family: "Microsoft YaHei UI", "Inter", "Segoe UI", sans-serif;
     font-size: 13px;
@@ -29,7 +29,7 @@ QWidget#leftPanel {
 
 /* --- AnimatedCard 模块卡片 --- */
 QFrame#moduleCard {
-    background-color: #1A1F2E;
+    background-color: #1E293B;
     border: 1px solid rgba(255, 255, 255, 0.05);
     border-radius: 12px;
 }
@@ -83,9 +83,9 @@ QTabBar::tab:selected {
 /* ═══════════════════════════════════════════
    QTableWidget - 数据表格
    ═══════════════════════════════════════════ */
-QTableWidget {
+QTableView {
     background-color: #12141A;
-    alternate-background-color: #161B26;
+    alternate-background-color: #1E293B;
     color: #E2E8F0;
     gridline-color: rgba(255, 255, 255, 0.03);
     border: none;
@@ -94,18 +94,18 @@ QTableWidget {
     selection-color: #F9FAFB;
     outline: none;
 }
-QTableWidget::item {
+QTableView::item {
     padding: 4px 8px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.02);
 }
-QTableWidget::item:hover {
+QTableView::item:hover {
     background-color: rgba(139, 92, 246, 0.08);
 }
-QTableWidget::item:selected {
+QTableView::item:selected {
     background-color: rgba(139, 92, 246, 0.18);
     color: #F9FAFB;
 }
-QTableWidget:focus {
+QTableView:focus {
     border: 1px solid rgba(139, 92, 246, 0.3);
     border-radius: 4px;
 }

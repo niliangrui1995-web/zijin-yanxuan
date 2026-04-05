@@ -1,11 +1,18 @@
+# core/event_bus.py
+# ================================================================================
+# 紫金研选 全局核心事件总线 (Event Bus) - 单例模式
+#
+# v3 重构: 引入 EventType 枚举，sig_data_updated 支持 Enum 和字符串双模式。
+#         新增 sig_ui_task 信号，用于从后台线程安全操作 UI。
+# ================================================================================
 from PyQt6.QtCore import QObject, pyqtSignal
+
 
 class GlobalEventBus(QObject):
     """
-    紫金研选 全局核心事件总线 (Event Bus) - 单例模式
-    用于彻底解耦各个 UI 组件与数据层，取代直接调用与信号混乱传递。
+    紫金研选全局事件总线 — 解耦 UI 组件与数据层的唯一通道
 
-    v2: 拆分 sig_data_updated 为语义明确的专用信号
+    事件类型说明见 core/event_types.py 的 EVENT_REGISTRY
     """
     _instance = None
 
@@ -20,31 +27,21 @@ class GlobalEventBus(QObject):
     # 应用关闭通知（各组件保存缓存）
     sig_app_closing = pyqtSignal()
 
-    # ====== [数据层信号 - 从 sig_data_updated 拆分] ======
+    # ====== [数据层信号] ======
 
-    # 实时报价刷新完成 — payload: list[dict]
-    sig_rt_quotes = pyqtSignal(list)
-
-    # Parquet/pkl 缓存加载完成
-    sig_cache_ready = pyqtSignal()
-
-    # VCP 指标计算完成 — tab_id: str, results: dict
-    sig_vcp_indicators = pyqtSignal(str, object)
-
-    # 扫描完成 — results: list, elapsed: float
-    sig_scan_complete = pyqtSignal(list, float)
-
-    # 通用数据更新（向后兼容，逐步弃用）
-    # 参数: data_type (str), data_payload (object)
+    # 通用数据更新 — data_type (str|DataEvent), data_payload (object)
+    # 建议使用 DataEvent 枚举: emit(DataEvent.RT_QUOTES_BROADCAST.value, data)
     sig_data_updated = pyqtSignal(str, object)
 
     # ====== [任务控制信号] ======
 
-    # 后台任务进度 — task_id, progress_pct, status_msg
+    # 后台任务进度 — task_id (str|TaskEvent), progress_pct, status_msg
     sig_task_progress = pyqtSignal(str, int, str)
 
-    # 终止所有后台计算
-    sig_action_cancel_all = pyqtSignal()
+    # ====== [UI 线程安全信号] ======
+
+    # 从后台线程安全操作 UI — callable (无参函数)
+    sig_ui_task = pyqtSignal(object)
 
     # ====== [用户操作信号] ======
 
@@ -53,6 +50,9 @@ class GlobalEventBus(QObject):
 
     # K线图请求 — 仅 code
     sig_show_kline = pyqtSignal(str)
+
+    # K线图请求带列表 — code, code_list, current_idx
+    sig_show_kline_with_list = pyqtSignal(str, object, int)
 
     # 关注池变更 — action: 'add'/'remove', code
     sig_watchlist_changed = pyqtSignal(str, str)
@@ -64,6 +64,7 @@ class GlobalEventBus(QObject):
         if not cls._instance:
             cls._instance = super(GlobalEventBus, cls).__new__(cls, *args, **kwargs)
         return cls._instance
+
 
 # 全局单例
 event_bus = GlobalEventBus()

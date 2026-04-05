@@ -1,10 +1,12 @@
 import os
 import datetime
-from vcp.constants import SPECIAL_LATEST_DATA, SPECIAL_POOL_DATA_CACHE, APP_VERSION
+from vcp.constants import SPECIAL_POOL_DATA_CACHE, APP_VERSION
+from ui.components.kline_window_manager import kline_manager
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QTabWidget, QPushButton, QLabel, QLineEdit, QComboBox, QMenu,
-    QTextEdit, QProgressBar, QSpinBox, QDoubleSpinBox, QFrame
+    QTextEdit, QProgressBar, QSpinBox, QDoubleSpinBox, QFrame,
+    QToolButton
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot, QSettings
 from PyQt6.QtGui import QColor, QIcon, QShortcut, QKeySequence
@@ -14,10 +16,18 @@ from vcp.data_provider import TdxDataProvider
 from vcp.engine import VCPEngine
 from vcp.ai_service import KimiAIService
 from ui.kline_window_qt import KLineChartWindow
-from vcp_simulator.sim_tab import SimulatorTab
 
-from ui.components import NumericTableWidgetItem, CustomTitleBar, AnimatedCard, PulsingDot, GlassPanel, AnimatedHoverButton
+from ui.components import NumericTableWidgetItem, AnimatedCard, PulsingDot, GlassPanel, AnimatedHoverButton
+from ui.tabs.scan_tab import ScanTab
+from ui.panels.ai_diag_panel import AIDiagPanel
+from ui.tabs.rt_monitor_tab import RtMonitorTab
+from ui.tabs.watchlist_tab import WatchlistTab
+from ui.tabs.na_daily_tab import NADailyTab
+from ui.tabs.foreign_block_trade_tab import ForeignBlockTradeTab
+from ui.tabs.ai_tracker_tab import AITrackerTab
+from ui.tabs.asian_market_tab import AsianMarketTab
 from core.event_bus import event_bus
+from core.event_types import DataEvent
 from core.logger import get_logger
 from core.task_manager import task_manager
 from ui.mixins.data_cache_mixin import DataCacheMixin
@@ -52,18 +62,21 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
         super().__init__()
         self._splash = splash
         self.setWindowTitle('紫金研选量化终端')
-        self.resize(1600, 900)
+
+        # 记录默认逻辑工作区
+        self._available_screen_geo = self._get_logical_work_area()
         self.setWindowIcon(QIcon(os.path.join(os.path.dirname(os.path.dirname(__file__)), "bull_icon.ico")))
-        self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
-        # F5 预计算完成 -> 更新 UI
-        self._sig_f5_done.connect(self._on_f5_done)
+        # 注意：这里我们移除了 FramelessWindowHint，完全拥抱原生窗口！
+        self.setWindowTitle("紫金研选量化终端")
+        # 强制接管最小尺寸，不让内部控件撑爆屏幕导致 resize 生效失败！
+        self.setMinimumSize(1000, 600)
         self._sig_ui_call.connect(self._run_ui_callback)
         self._settings = QSettings("VCPHunter", "MainWindowQT")
         
         self._splash_update(60, "正在构建主界面模块...")
         self.data_provider = TdxDataProvider(offline=True)
         self.data_provider.code2name = self.data_provider._get_codes_from_vipdoc()
-        self.engine = VCPEngine()
+        self.engine = VCPEngine.get_instance()
         self.worker = None
         self._current_results = []
         self._ai_diag_results = {}
@@ -74,25 +87,14 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
         from ui.styles.global_qss import GLOBAL_QSS
         self.setStyleSheet(GLOBAL_QSS)
 
-
-
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
         
         main_layout = QVBoxLayout(main_widget)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
-
-        self.custom_title_bar = CustomTitleBar(self)
-        main_layout.addWidget(self.custom_title_bar)
         
-        h_split_widget = QWidget()
-        h_split_layout = QHBoxLayout(h_split_widget)
-        h_split_layout.setContentsMargins(0, 0, 0, 0)
-        
-        self.splitter = QSplitter(Qt.Orientation.Horizontal)
-        h_split_layout.addWidget(self.splitter)
-        
+        # 已彻底移除 self.custom_title_bar，使用完美原生标题栏
         left_panel = QWidget()
         left_panel.setObjectName("leftPanel")
         left_layout = QVBoxLayout(left_panel)
@@ -113,30 +115,44 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
         
         self.pulsing_dot = PulsingDot(color="#EF4444")
         status_layout.addWidget(self.pulsing_dot)
-
-        self.btn_datasource = QPushButton("离线模式")
-        self.btn_datasource.setObjectName("statusBadge")
-        self.btn_datasource.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        self.btn_datasource = AnimatedHoverButton("离线模式")
+        self.btn_datasource.setStyleSheet("font-size: 11px; color: #EF4444; font-weight: bold; padding: 2px 6px; border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 4px; background: rgba(239, 68, 68, 0.05);")
         self.btn_datasource.clicked.connect(self._toggle_network)
-        
-        self.lbl_code_count = QLabel("---")
-        self.lbl_code_count.setProperty("class", "subText")
-        
+        self.btn_datasource.setCursor(Qt.CursorShape.PointingHandCursor)
         status_layout.addWidget(self.btn_datasource)
         status_layout.addStretch()
-        status_layout.addWidget(self.lbl_code_count)
+        
+        self.btn_reconnect = AnimatedHoverButton("强制测速")
+        self.btn_reconnect.setStyleSheet("font-size: 11px; color: #93C5FD; font-weight: bold; padding: 2px 6px; border: 1px solid rgba(147, 197, 253, 0.3); border-radius: 4px; background: rgba(147, 197, 253, 0.05);")
+        self.btn_reconnect.clicked.connect(self._force_reconnect)
+        self.btn_reconnect.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_reconnect.hide()  # 仅联机模式下显示
+        status_layout.addWidget(self.btn_reconnect)
         
         cb_layout.addLayout(status_layout)
         left_layout.addWidget(card_brand)
         
         self._init_left_panel_controls(left_layout)
+        left_layout.addStretch()
         
-        self.splitter.addWidget(left_panel)
+        h_split_widget = QWidget()
+        h_split_layout = QHBoxLayout(h_split_widget)
+        h_split_layout.setContentsMargins(0, 0, 0, 0)
         
         self._splash_update(75, "组件注册中...")
         self._init_right_panel()
         
-        main_layout.addWidget(h_split_widget, 1)
+        # 将左侧边栏和右侧 Tab 容器包装成水平布局，完全抛弃 QSplitter
+        # 事实证明 QT6 在 Windows 下，多重嵌套 QTableView 和 QSplitter 有极大概率死锁或崩溃
+        content_layout = QHBoxLayout()
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.addWidget(left_panel, 1)
+        content_layout.addWidget(self.tabs_wrapper, 5)
+        self.panel_ai.setVisible(False) # 默认隐藏
+        content_layout.addWidget(self.panel_ai, 1)
+        
+        main_layout.addLayout(content_layout, 1)
         
         status_bar = QWidget()
         status_bar.setFixedHeight(32)
@@ -159,6 +175,10 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
         self.lbl_status.setStyleSheet("color: #6B7280; font-size: 12px; font-family: 'Consolas', 'Courier New', monospace;")
         status_layout.addWidget(self.lbl_status)
         
+        self.lbl_code_count = QLabel("标的池: 0")
+        self.lbl_code_count.setStyleSheet("color: #6B7280; font-size: 12px; font-weight: bold;")
+        status_layout.addWidget(self.lbl_code_count)
+        
         status_layout.addStretch()
 
         self.lbl_clock = QLabel()
@@ -176,11 +196,86 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
         
         main_layout.addWidget(status_bar, 0)
         
+        # 9. 恢复之前的界面布局、列宽、表格排序
         self._restore_ui_state()
+        
+        self._last_auto_rt_date = ""
+        self._auto_rt_timer = QTimer(self)
+        self._auto_rt_timer.timeout.connect(self._check_auto_rt_monitor)
+        self._auto_rt_timer.start(60000)
 
         self._splash_update(90, "正在加载数据...")
-        QTimer.singleShot(100, self._deferred_data_load)
-        QTimer.singleShot(2000, self._smart_startup)
+        QTimer.singleShot(2500, self._deferred_data_load)
+        QTimer.singleShot(4500, self._smart_startup)
+        
+        self._init_central_broadcaster()
+
+    def _init_central_broadcaster(self):
+        from ui.workers.central_quotes_worker import CentralQuotesService
+        self.central_quotes_svc = CentralQuotesService(self, self.data_provider)
+
+    def _get_logical_work_area(self):
+        """原生窗口直接获取可用区域即可，无需魔改扣除像素"""
+        from PyQt6.QtWidgets import QApplication
+        screen = QApplication.primaryScreen()
+        return screen.availableGeometry()
+
+    # Bug#2 修复: _smart_startup 统一由 DataCacheMixin 提供，此处不再覆盖
+    # 联网成功后的各 Tab 刷新逻辑由 _on_smart_startup_online_done 负责
+
+    def _on_smart_startup_online_done(self):
+        """智能启动联网成功后，触发各Tab的实时数据刷新"""
+        try:
+            self._update_network_ui(True)
+            # 测速完成后，主动触发各表格的独立联网实时刷新(覆盖掉此前加载的本地缓存)
+            if hasattr(self, 'tab_na_daily') and getattr(self.tab_na_daily, '_na_daily_codes', None):
+                self.tab_na_daily._auto_refresh_realtime(force=True)
+            if hasattr(self, 'tab_ai_tracker') and getattr(self.tab_ai_tracker, '_ai_tracker_codes', None):
+                self.tab_ai_tracker._auto_refresh_ai_tracker(force=True)
+            if hasattr(self, 'tab_foreign_block') and getattr(self.tab_foreign_block, '_block_trade_codes', None):
+                self.tab_foreign_block._auto_refresh_realtime(force=True)
+            if hasattr(self, 'tab_watchlist') and self.tab_watchlist:
+                sp_codes = [str(r.get("代码")) for r in self.tab_watchlist.model.row_data if r.get("代码")]
+                if sp_codes:
+                    task_manager.run_in_background(
+                        self.tab_watchlist._refresh_special_quotes, sp_codes,
+                        on_success=lambda q: self.tab_watchlist._update_quotes_ui(q) if q else None,
+                        task_id="smart_startup_watchlist"
+                    )
+        except Exception as e:
+            log.error(f"[智能启动] 联网后Tab刷新异常: {e}")
+
+    def _check_auto_rt_monitor(self):
+        """挂机闹钟：每天只需触发一次在盘中时间段的自动刷新开始"""
+        if not hasattr(self, 'tab_rt'):
+            return
+            
+        now = datetime.datetime.now()
+        today_str = now.strftime("%Y-%m-%d")
+        if getattr(self, '_last_auto_rt_date', "") == today_str:
+            return
+            
+        # 如果已经人工开启了，记录一下，今天就不越俎代庖了
+        if hasattr(self.tab_rt, 'rt_worker') and self.tab_rt.rt_worker and self.tab_rt.rt_worker.isRunning():
+            self._last_auto_rt_date = today_str
+            return
+            
+        from vcp.constants import MARKET_OPEN_AM, MARKET_CLOSE_PM
+        h, m = now.hour, now.minute
+        in_market = (
+            (h > MARKET_OPEN_AM[0] or (h == MARKET_OPEN_AM[0] and m >= MARKET_OPEN_AM[1]))
+            and (h < MARKET_CLOSE_PM[0] or (h == MARKET_CLOSE_PM[0] and m <= MARKET_CLOSE_PM[1]))
+        )
+        
+        if in_market:
+            # 只有当数据已经备齐，且网络通畅时才帮用户按按钮
+            if self.data_provider.cache_data and len(self.data_provider.cache_data) >= 100:
+                if self.data_provider.is_online():
+                    log.info(f"[挂机闹钟] 现在是 {h:02d}:{m:02d} 进入盘中，代替人工点击启动...")
+                    from ui.components.toast_widget import show_toast
+                    show_toast("挂机闹钟：进入盘中时段，自动拉起盘中监控！", "info", self, duration=4000)
+                    self.tab_rt._toggle_rt_monitor()
+                    self._last_auto_rt_date = today_str
 
     def _toggle_network(self):
         """"""
@@ -212,9 +307,48 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
                 else self.btn_datasource.styleSheet()
             )
             self.pulsing_dot.set_color("#22C55E")
+            if hasattr(self, 'btn_reconnect'):
+                self.btn_reconnect.show()
         else:
             self.btn_datasource.setText("离线模式")
             self.pulsing_dot.set_color("#EF4444")
+            if hasattr(self, 'btn_reconnect'):
+                self.btn_reconnect.hide()
+
+    def _force_reconnect(self):
+        """主站强制重新测速方法"""
+        if not self.data_provider.is_online():
+            return
+            
+        self.btn_reconnect.setEnabled(False)
+        self.btn_datasource.setText("测速中...")
+        self.btn_datasource.setStyleSheet(
+             self.btn_datasource.styleSheet().replace("#22C55E", "#F59E0B")
+             if "#22C55E" in self.btn_datasource.styleSheet() 
+             else self.btn_datasource.styleSheet()
+        )
+        self.pulsing_dot.set_color("#F59E0B")
+        
+        def _reconnect_task():
+            try:
+                self.data_provider.force_reconnect_servers()
+                ok = self.data_provider.test_network(timeout=2)
+                return ok
+            except Exception as e:
+                log.error(f"强制重连异常: {e}")
+                return False
+
+        def _on_done(ok):
+            self.btn_reconnect.setEnabled(True)
+            self._update_network_ui(True)
+            from ui.components.toast_widget import show_toast
+            if ok:
+                show_toast("强制测速完成，已切换至最快服务器。", "success", self, duration=2500)
+            else:
+                show_toast("服务器测速失败，请检查网络。", "error", self, duration=3500)
+
+        task_manager.run_in_background(_reconnect_task, on_success=lambda res: self._call_in_ui(lambda: _on_done(res)), task_id="force_reconnect")
+
 
     def _splash_update(self, value: int, status: str = ""):
         """update progress"""
@@ -295,36 +429,97 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
         ops_layout.setContentsMargins(16, 16, 16, 16)
         ops_layout.setSpacing(12)
         
+        # --- [1] Header: Title & Last F5 Time ---
+        header_layout = QHBoxLayout()
         lbl_ops_title = QLabel("功能操作面板")
-        lbl_ops_title.setStyleSheet("color: #6B7280; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;")
-        ops_layout.addWidget(lbl_ops_title)
+        lbl_ops_title.setStyleSheet("color: #9CA3AF; font-size: 12px; font-weight: bold; letter-spacing: 1px;")
+        header_layout.addWidget(lbl_ops_title)
+        
+        self.lbl_last_f5 = QLabel("上次: --")
+        self.lbl_last_f5.setStyleSheet("color: #6B7280; font-size: 11px;")
+        header_layout.addStretch()
+        header_layout.addWidget(self.lbl_last_f5)
+        ops_layout.addLayout(header_layout)
 
-        self.btn_scan = AnimatedHoverButton("执行全盘VCP扫描")
+        # --- [2] Primary Action: Start Scan ---
+        self.btn_scan = QPushButton("🚀 执行全盘选股")
+        self.btn_scan.setObjectName("ctaButton")
+        self.btn_scan.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_scan.setFixedHeight(46)
+        self.btn_scan.setStyleSheet("""
+            QPushButton#ctaButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #8B5CF6, stop:1 #6366F1);
+                color: #FFFFFF; border: none; border-radius: 8px; font-weight: bold; font-size: 14px;
+                letter-spacing: 1px;
+            }
+            QPushButton#ctaButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #A78BFA, stop:1 #818CF8);
+            }
+            QPushButton#ctaButton:pressed { background: #4F46E5; }
+        """)
         self.btn_scan.clicked.connect(self._start_scan)
-        self.btn_scan.set_active(True)
         ops_layout.addWidget(self.btn_scan)
         QShortcut(QKeySequence("Ctrl+R"), self, activated=self._start_scan)
 
-        self.btn_f5 = AnimatedHoverButton("运行F5预计算")
-        self.btn_f5.clicked.connect(self._action_refresh)
-        ops_layout.addWidget(self.btn_f5)
-        QShortcut(QKeySequence("F5"), self, activated=self._action_refresh)
-
-        self.btn_diag = AnimatedHoverButton("AI 深度诊断")
+        # --- [3] Secondary Actions Grid ---
+        from PyQt6.QtWidgets import QGridLayout
+        sec_layout = QGridLayout()
+        sec_layout.setSpacing(10)
+        
+        self.btn_f5 = QPushButton("🔄 F5 日线预计算")
+        self.btn_rt_sidebar = QPushButton("⚡ 启动盘中监控")
+        self.btn_diag = QPushButton("🤖 AI 个股诊断")
         self.btn_diag.setEnabled(False)
         self.btn_diag.setToolTip("AI 个股深度诊断")
-        ops_layout.addWidget(self.btn_diag)
-
-        self.btn_rt_sidebar = AnimatedHoverButton("⚡ 启动盘中监控")
-        self.btn_rt_sidebar.clicked.connect(lambda: hasattr(self, 'tab_rt') and self.tab_rt._toggle_rt_monitor())
-        ops_layout.addWidget(self.btn_rt_sidebar)
         
+        common_btn_qss = """
+            QPushButton { 
+                background-color: #1E293B; border: 1px solid #334155; 
+                border-radius: 6px; color: #CBD5E1; font-weight: 500; font-size: 12px;
+            }
+            QPushButton:hover { background-color: #2D3748; border: 1px solid #8B5CF6; color: #FFFFFF; }
+            QPushButton:pressed { background-color: #0F172A; }
+            QPushButton:disabled { color: #475569; border: 1px solid #1E293B; }
+        """
+        for b in (self.btn_f5, self.btn_rt_sidebar, self.btn_diag):
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setFixedHeight(34)
+            b.setStyleSheet(common_btn_qss)
+            
+        sec_layout.addWidget(self.btn_f5, 0, 0)
+        sec_layout.addWidget(self.btn_rt_sidebar, 0, 1)
+        sec_layout.addWidget(self.btn_diag, 1, 0, 1, 2)
+        
+        ops_layout.addLayout(sec_layout)
+        
+        self.btn_f5.clicked.connect(self._action_refresh)
+        self.btn_rt_sidebar.clicked.connect(lambda *args: hasattr(self, 'tab_rt') and self.tab_rt._toggle_rt_monitor())
+        self._update_last_f5_time()
+        QShortcut(QKeySequence("F5"), self, activated=self._action_refresh)
+        
+        ops_layout.addSpacing(4)
+        
+        # --- [4] Progress & Footer ---
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedHeight(4)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar { background-color: rgba(255,255,255,0.05); border: none; border-radius: 2px; }
+            QProgressBar::chunk { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #8B5CF6, stop:1 #A78BFA); border-radius: 2px; }
+        """)
         ops_layout.addWidget(self.progress_bar)
 
-        self.btn_cancel = QPushButton("中止扫描")
+        self.btn_cancel = QPushButton("⏹ 中止扫描与分析")
         self.btn_cancel.setProperty("class", "dangerGhost")
+        self.btn_cancel.setFixedHeight(32)
+        self.btn_cancel.setStyleSheet("""
+            QPushButton { 
+                background: rgba(239, 68, 68, 0.05); color: #FCA5A5; 
+                border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 6px; font-weight: 500; font-size: 12px;
+            }
+            QPushButton:hover { background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.6); color: #FECACA; }
+            QPushButton:disabled { background: transparent; border: 1px solid rgba(255, 255, 255, 0.1); color: #4B5563; }
+        """)
+        self.btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_cancel.clicked.connect(self._cancel_scan)
         ops_layout.addWidget(self.btn_cancel)
 
@@ -351,17 +546,20 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
         self.spn_scan_high250.setSingleStep(0.05)
         self.spn_scan_high250.setValue(0.10)
 
-        self.cmb_rt_interval = QComboBox()
-        self.cmb_rt_interval.addItems(["30s", "1m", "3m", "5m"])
-        self.cmb_rt_interval.setCurrentIndex(0)
-        self.spn_rt_rps = QSpinBox()
-        self.spn_rt_rps.setRange(0, 100)
-        self.spn_rt_rps.setValue(80)
+        # 已移除原本用作中间存储状态的未挂载 QComboBox 和 QSpinBox
 
     def _init_right_panel(self):
-        self.right_splitter = QSplitter(Qt.Orientation.Horizontal)
-        
-        self.tabs_wrapper = GlassPanel(self, radius=10, alpha=0.95)
+        # 不使用嵌套 QSplitter——大量 QTableView 子组件在嵌套 QSplitter 中
+        # 触发 Qt6 底层 access violation (Windows fatal exception)
+        self.tabs_wrapper = QFrame(self)
+        self.tabs_wrapper.setObjectName("tabsWrapperFrame")
+        self.tabs_wrapper.setStyleSheet("""
+            QFrame#tabsWrapperFrame {
+                background-color: rgba(18, 20, 26, 0.95);
+                border-radius: 10px;
+                border: 1px solid rgba(255, 255, 255, 0.04);
+            }
+        """)
         tabs_layout = QVBoxLayout(self.tabs_wrapper)
         tabs_layout.setContentsMargins(6, 6, 6, 6)
         
@@ -369,49 +567,55 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
         self.tabs.setDocumentMode(True)
         tabs_layout.addWidget(self.tabs)
         
-        from ui.tabs.scan_tab import ScanTab
+
         self.tab_scan = ScanTab(self.data_provider, self.engine, self)
         self.tabs.addTab(self.tab_scan, "VCP扫描")
         self.table_scan = self.tab_scan.table_scan
-        self._scan_stretch_cols = {11}
 
         # --- 右侧 AI 诊断面板(独立组件) ---
-        from ui.panels.ai_diag_panel import AIDiagPanel
+
         self.panel_ai = AIDiagPanel(self.data_provider, self._kimi_service, self)
-        self.right_splitter.addWidget(self.panel_ai)
-        self.right_splitter.setSizes([1000, 0]) # 默认隐藏AI面板
         
-        from ui.tabs.rt_monitor_tab import RtMonitorTab
+
         self.tab_rt = RtMonitorTab(self.data_provider, self.engine, self)
         self.tabs.addTab(self.tab_rt, "盘中监控")
         
         self.table_rt = self.tab_rt.table_rt
         self.btn_rt_start = self.tab_rt.btn_rt_start
         self.lbl_rt_info = self.tab_rt.lbl_rt_info
-        self.cmb_rt_interval = self.tab_rt.cmb_rt_interval
-        self.spn_rt_rps = self.tab_rt.spn_rt_rps
 
         # Tab 3: 关注池（独立组件）
-        from ui.tabs.watchlist_tab import WatchlistTab
+
         self.tab_watchlist = WatchlistTab(self.data_provider, self.panel_ai, self)
         self.tabs.addTab(self.tab_watchlist, '关注池')
         self.table_sp = self.tab_watchlist.table_sp  # 向下兼容引用
 
         # Tab 4: 北美战报（独立组件）
-        from ui.tabs.na_daily_tab import NADailyTab
+
         self.tab_na_daily = NADailyTab(self.data_provider, self)
         self.tabs.addTab(self.tab_na_daily, "美股日报")
         self.na_daily_table = self.tab_na_daily.na_daily_table  # 向下兼容
 
-        # Tab 5: AI产业链跟踪（独立组件）
+        # Tab 5: 亚洲市场跟踪 (独立组件)
+
+        self.tab_asian_market = AsianMarketTab(self.data_provider, self)
+        self.tabs.addTab(self.tab_asian_market, "亚洲寡头")
+
+        # Tab 6: 外资大宗交易 (独立组件)
+
+        self.tab_foreign_block = ForeignBlockTradeTab(self.data_provider, self)
+        self.tabs.addTab(self.tab_foreign_block, "大宗交易")
+
+        # Tab 7: AI产业链跟踪（独立组件）
         from ui.tabs.ai_tracker_tab import AITrackerTab
         self.tab_ai_tracker = AITrackerTab(self.data_provider, self)
         self.tabs.addTab(self.tab_ai_tracker, "AI算力链")
         self.ai_tracker_table = self.tab_ai_tracker.ai_tracker_table  # 向下兼容
 
-        self.tab_simulator = SimulatorTab(self.data_provider, self.engine)
-        self.tab_simulator.setStyleSheet("background-color: transparent;")
-        self.tabs.addTab(self.tab_simulator, "回测模拟")
+        # Tab 8: 业绩预告与财报爆点追踪（独立组件）
+        from ui.tabs.earnings_tab import EarningsTab
+        self.tab_earnings = EarningsTab(self.data_provider, self)
+        self.tabs.addTab(self.tab_earnings, "业绩异动")
 
         from ui.tabs.log_tab import LogTab
         self.tab_log = LogTab(self)
@@ -420,59 +624,66 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
         event_bus.sig_data_updated.connect(self._on_global_data_updated)
         event_bus.sig_task_progress.connect(self._on_task_progress)
         event_bus.sig_show_kline.connect(self._on_show_kline)
+        event_bus.sig_show_kline_with_list.connect(self._on_show_kline_with_list)
         event_bus.sig_open_ai_diag.connect(self._on_open_ai_diag)
 
-        self.right_splitter.addWidget(self.tabs_wrapper)
-        
-        self.ai_panel = QFrame()
-        self.ai_panel.setObjectName("moduleCard")
-        self.ai_panel.hide() # 默认隐藏
-        ai_layout = QVBoxLayout(self.ai_panel)
-        ai_layout.setContentsMargins(12, 12, 12, 12)
-        ai_layout.setSpacing(8)
-        
-        ai_header = QHBoxLayout()
-        ai_title = QLabel("AI 诊断面板")
-        ai_title.setStyleSheet("font-size: 14px; font-weight: bold; color: #E5E7EB;")
-        btn_close_ai = QPushButton("✕")
-        btn_close_ai.setObjectName("iconButton")
-        btn_close_ai.setFixedSize(24, 24)
-        btn_close_ai.clicked.connect(self.ai_panel.hide)
-        ai_header.addWidget(ai_title)
-        ai_header.addStretch()
-        ai_header.addWidget(btn_close_ai)
-        ai_layout.addLayout(ai_header)
-        
-        self.ai_content = QTextEdit()
-        self.ai_content.setReadOnly(True)
-        self.ai_content.setStyleSheet("""
-            background-color: #0A0C10;
-            border: 1px solid #252A36;
-            border-radius: 8px;
-            padding: 12px;
-            color: #C9CDD4;
-            font-family: 'Consolas', 'Courier New', monospace;
-        """)
-        self.ai_content.setPlainText("AI模型就绪，点击个股获取诊断...")
-        ai_layout.addWidget(self.ai_content)
-        
-        self.right_splitter.addWidget(self.ai_panel)
-        self.right_splitter.setSizes([1000, 0])
+        # AI 面板默认隐藏，通过 event_bus 信号按需显示
+        self.panel_ai.hide()
 
-        self.splitter.addWidget(self.right_splitter)
-        # 左侧与右侧比例 1:4
-        self.splitter.setSizes([300, 1300])
+        # === Bug#5 修复: Ctrl+C 钩子适配 QTableView + QTableWidget 双模式 ===
+        tables_to_patch = [
+            getattr(self, 'table_scan', None),
+            getattr(self, 'table_rt', None),
+            getattr(self, 'table_sp', None), 
+            getattr(self, 'na_daily_table', None), 
+            getattr(self, 'ai_tracker_table', None),
+            getattr(getattr(self, 'tab_foreign_block', None), 'table', None),
+            getattr(getattr(self, 'tab_asian_market', None), 'asian_table', None),
+            getattr(getattr(self, 'tab_earnings', None), 'table', None)
+        ]
+        
+        from PyQt6.QtWidgets import QAbstractItemView, QApplication
+        from PyQt6.QtGui import QKeySequence
+        from ui.components.toast_widget import show_toast
+        
+        for t in tables_to_patch:
+            if not t: continue
+            
+            # 允许点选单独的单元格，并且支持按住左键拉框多选多个格子
+            t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
+            t.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+            
+            # 统一 Ctrl+C 钩子：兼容 QTableView（selectionModel）和 QTableWidget（selectedRanges）
+            original_kp = t.keyPressEvent
+            def make_kp(table, orig):
+                def new_kp(event):
+                    if event.matches(QKeySequence.StandardKey.Copy):
+                        # 通用路径: 使用 selectionModel().selectedIndexes()，兼容 QTableView 和 QTableWidget
+                        sel_model = table.selectionModel()
+                        if sel_model:
+                            indexes = sel_model.selectedIndexes()
+                            if indexes:
+                                # 按行列分组，组装制表符分隔文本（兼容 Excel 粘贴）
+                                from collections import defaultdict
+                                rows_dict = defaultdict(dict)
+                                for idx in indexes:
+                                    # 通过 model 取 DisplayRole 内容，避免依赖 .item() API
+                                    display_val = table.model().data(idx, Qt.ItemDataRole.DisplayRole)
+                                    rows_dict[idx.row()][idx.column()] = str(display_val) if display_val is not None else ""
+                                lines = []
+                                for row_key in sorted(rows_dict.keys()):
+                                    cols = rows_dict[row_key]
+                                    line = "\t".join(cols.get(c, "") for c in sorted(cols.keys()))
+                                    lines.append(line)
+                                QApplication.clipboard().setText("\n".join(lines))
+                                show_toast("✅ 已复制单元格内容 (支持粘入Excel)", "success", table.window(), duration=1500)
+                        event.accept()
+                    else:
+                        orig(event)
+                return new_kp
+                
+            t.keyPressEvent = make_kp(t, original_kp)
 
-    def _renumber_column(self, table, col=0):
-        for r in range(table.rowCount()):
-            item = table.item(r, col)
-            if item:
-                item.setText(str(r + 1))
-            else:
-                new_item = NumericTableWidgetItem(str(r + 1))
-                new_item.setForeground(QColor("#F5F5F7"))
-                new_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                table.setItem(r, col, new_item)
 
     def _filter_table(self, table, text, code_col=0, name_col=2):
         import pypinyin
@@ -495,376 +706,76 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
             table.setRowHidden(r, not match)
 
 
-    def _on_table_double_click(self, item):
-        # Determine which table triggered the click
-        sender_table = self.sender()
-        if not sender_table:
-            # Fallback if somehow not via trigger (like hotkeys intercept logic on table_scan)
-            sender_table = self.table_scan 
+    # _on_table_double_click 已移除(#3)，各 Tab 自行通过 EventBus 广播 K 线请求
 
-        row = item.row()
-        if sender_table in (self.table_rt, self.table_sp):
-            code_item = sender_table.item(row, 0)
-            name_item = sender_table.item(row, 2)
-        elif hasattr(self, 'na_daily_table') and sender_table == self.na_daily_table:
-            code_item = sender_table.item(row, 2)
-            name_item = sender_table.item(row, 4)
-        elif hasattr(self, 'ai_tracker_table') and sender_table == self.ai_tracker_table:
-            code_item = sender_table.item(row, 1)   # AI跟踪：序号(0) 代码(1)
-            name_item = sender_table.item(row, 2)
-        else:
-            code_item = sender_table.item(row, 1)
-            name_item = sender_table.item(row, 3)
-        
-        if not code_item or not name_item:
-            return
-            
-        code = code_item.text()
-        name = name_item.text()
-        
-        vcp_data = None
-        current_list = []
-        if sender_table == self.table_scan:
-            seq_item = sender_table.item(row, 0)
-            if seq_item:
-                vcp_data = seq_item.data(Qt.ItemDataRole.UserRole)
-            if hasattr(self, '_current_results'):
-                current_list = self._current_results
+    # _show_context_menu 已移除(#2)，各 Tab 使用 stock_context_menu 工厂
 
-        if not current_list and sender_table.rowCount() > 0:
-            if hasattr(self, 'na_daily_table') and sender_table == self.na_daily_table:
-                code_col, name_col = 2, 4
-            elif hasattr(self, 'ai_tracker_table') and sender_table == self.ai_tracker_table:
-                code_col, name_col = 1, 2
-            elif sender_table == self.table_scan:
-                code_col, name_col = 1, 3
-            else:
-                code_col, name_col = 0, 2
-            for r in range(sender_table.rowCount()):
-                c_item = sender_table.item(r, code_col)
-                n_item = sender_table.item(r, name_col)
-                if c_item and n_item:
-                    current_list.append({'代码': c_item.text(), '名称': n_item.text()})
-        elif sender_table == self.table_rt:
-            if hasattr(self, 'rt_worker') and hasattr(self.rt_worker, '_signal_details') and code in self.rt_worker._signal_details:
-                vcp_data = self.rt_worker._signal_details[code]
-                
-            # fallback: build a basic block from table visual row
-            if not vcp_data:
-                vcp_data = {
-                    'code': code,
-                    'name': name
-                }
-            
-            # Use original pool if missing structural metadata
-            if hasattr(self, 'rt_worker') and hasattr(self.rt_worker, '_ready_pool') and code in self.rt_worker._ready_pool:
-                pool_entry = self.rt_worker._ready_pool[code]
-                if 'meta' in pool_entry and isinstance(pool_entry['meta'], dict):
-                    vcp_data.update(pool_entry['meta'])
-
-        elif sender_table == self.table_sp:
-            import os, pickle
-            data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
-            pool_pkl = SPECIAL_POOL_DATA_CACHE
-            if os.path.exists(pool_pkl):
-                try:
-                    with open(pool_pkl, 'rb') as f:
-                        raw = pickle.load(f)
-                    old_pool = raw.get('data', {}) if isinstance(raw, dict) else {}
-                    if code in old_pool:
-                        vcp_data = old_pool[code]
-                except Exception as e: print(f"[关注池] 读取失败: {e}")
-            
-            if not vcp_data:
-                vcp_data = {
-                    'code': code,
-                    'name': name
-                }
-        
-        if not hasattr(self, '_charts'):
-            self._charts = []
-
-        # 清理已关闭的窗口
-        self._charts = [c for c in self._charts if c.isVisible()]
-
-        # 限制K线窗口数量，超出时关闭最旧的
-        MAX_CHART_WINDOWS = 3
-        while len(self._charts) >= MAX_CHART_WINDOWS:
-            oldest = self._charts.pop(0)
-            oldest.close()
-
-        chart = KLineChartWindow(
-            main_window=self, 
-            code=code, 
-            name=name, 
-            data_provider=self.data_provider, 
-            vcp_data=vcp_data,
-            code_list=current_list,
-            current_idx=row
-        )
-        chart.show()
-        self._charts.append(chart)
-
-    def _show_context_menu(self, pos):
-        """主窗口统一右键菜单（扫描/盘中监控/北美/AI跟踪表格）"""
-        try:
-            sender_table = self.sender()
-            if not sender_table:
-                sender_table = self.table_scan
-
-            item = sender_table.itemAt(pos)
-            if not item:
-                return
-
-            row = item.row()
-            if sender_table == self.table_scan:
-                code_item = sender_table.item(row, 1)
-                name_item = sender_table.item(row, 3)
-            elif hasattr(self, 'na_daily_table') and sender_table == self.na_daily_table:
-                code_item = sender_table.item(row, 2)
-                name_item = sender_table.item(row, 4)
-            elif hasattr(self, 'ai_tracker_table') and sender_table == self.ai_tracker_table:
-                code_item = sender_table.item(row, 1)
-                name_item = sender_table.item(row, 2)
-            else:
-                code_item = sender_table.item(row, 0)
-                name_item = sender_table.item(row, 2)
-
-            if not code_item or not name_item:
-                return
-
-            code = code_item.text()
-            name = name_item.text()
-            menu = QMenu(self)
-            menu.setStyleSheet("""
-                QMenu { background-color: #151820; color: #C9CDD4; border: 1px solid #252A36; border-radius: 8px; padding: 4px; }
-                QMenu::item { padding: 6px 24px; }
-                QMenu::item:selected { background-color: rgba(59, 130, 246, 0.2); color: white; }
-                QMenu::separator { height: 1px; background: #252A36; margin: 4px 8px; }
-            """)
-
-            act_chart = menu.addAction("📈 查看K线图")
-            act_copy = menu.addAction("📋 复制代码")
-            menu.addSeparator()
-
-            import json
-            fav_codes = []
-            if os.path.exists(SPECIAL_LATEST_DATA):
-                try:
-                    with open(SPECIAL_LATEST_DATA, 'r', encoding='utf-8') as f:
-                        fav_codes = list(json.load(f).keys())
-                except Exception as e:
-                    log.error(f"[关注池] 读取失败: {e}")
-
-            is_fav = code in fav_codes
-            act_special = menu.addAction("⭐ 移出关注池" if is_fav else "⭐ 加入关注池")
-            menu.addSeparator()
-            act_tdx = menu.addAction("🖥️ 跳转通达信")
-            menu.addSeparator()
-            act_ai = menu.addAction("🤖 AI深度诊断")
-            act_local_diag = menu.addAction("🧪 本地技术诊断")
-            menu.addSeparator()
-            act_export = menu.addAction("📤 导出当前表")
-
-            action = menu.exec(sender_table.viewport().mapToGlobal(pos))
-
-            if action == act_chart:
-                self._on_table_double_click(item)
-            elif action == act_copy:
-                from PyQt6.QtWidgets import QApplication
-                QApplication.clipboard().setText(code)
-                self.lbl_status.setText(f"已复制: {code}")
-            elif action == act_special:
-                vcp_data = None
-                if sender_table == self.table_scan:
-                    seq_item = sender_table.item(row, 0)
-                    if seq_item:
-                        vcp_data = seq_item.data(Qt.ItemDataRole.UserRole)
-                elif sender_table == self.table_rt and hasattr(self, 'rt_worker') and hasattr(self.rt_worker, '_signal_details'):
-                    if code in self.rt_worker._signal_details:
-                        vcp_data = self.rt_worker._signal_details[code]
-                    elif hasattr(self.rt_worker, '_ready_pool') and code in self.rt_worker._ready_pool:
-                        pool_entry = self.rt_worker._ready_pool[code]
-                        if 'meta' in pool_entry and isinstance(pool_entry['meta'], dict):
-                            vcp_data = pool_entry['meta']
-                self._toggle_special(code, name, is_fav, vcp_data=vcp_data)
-            elif action == act_tdx:
-                self._launch_tdx(code)
-            elif action == act_ai:
-                if hasattr(self, 'panel_ai'):
-                    self.panel_ai.open_ai_diag(preset_code=code, auto_start='ai')
-            elif action == act_local_diag:
-                if hasattr(self, 'panel_ai'):
-                    self.panel_ai.open_ai_diag(preset_code=code, auto_start='local')
-            elif action == act_export:
-                self._export_current_tab()
-        except Exception as e:
-            self.lbl_status.setText(f"右键菜单异常: {str(e)}")
-            log.error(f"[右键菜单] 异常: {e}")
-
-    def _launch_tdx(self, code):
-        """Launch or focus TDX and jump to the given stock code."""
-        import os, threading
-        tdx_path = self.data_provider.tdx_vipdoc.replace("vipdoc", "tdxw.exe") if self.data_provider.tdx_vipdoc else ""
-        if not os.path.exists(tdx_path):
-            self.lbl_status.setText("未找到通达信路径")
-            return
-        self.lbl_status.setText("正在跳转通达信...")
-        
-        def _worker():
-            import subprocess, time, ctypes, ctypes.wintypes
-            user32 = ctypes.windll.user32
-            kernel32 = ctypes.windll.kernel32
-            
-            try:
-                CREATE_NO_WINDOW = 0x08000000
-                result = subprocess.run(
-                    ['tasklist', '/FI', 'IMAGENAME eq tdxw.exe'],
-                    capture_output=True, text=True, timeout=5,
-                    creationflags=CREATE_NO_WINDOW
-                )
-                already_running = 'tdxw.exe' in result.stdout.lower()
-                
-                if not already_running:
-                    subprocess.Popen([tdx_path], cwd=os.path.dirname(tdx_path))
-                    time.sleep(3.0)
-                
-                EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
-                tdx_hwnd = ctypes.wintypes.HWND(0)
-                
-                def callback(hwnd, lParam):
-                    nonlocal tdx_hwnd
-                    if not user32.IsWindowVisible(hwnd):
-                        return True
-                    length = user32.GetWindowTextLengthW(hwnd)
-                    if length > 0:
-                        buf = ctypes.create_unicode_buffer(length + 1)
-                        user32.GetWindowTextW(hwnd, buf, length + 1)
-                        # Match TDX window title
-                        if '华泰' in buf.value or '通达信' in buf.value or '交易' in buf.value or '行情' in buf.value:
-                            tdx_hwnd = hwnd
-                            return False
-                    return True
-                
-                user32.EnumWindows(EnumWindowsProc(callback), 0)
-                
-                if not tdx_hwnd:
-                    pass
-                    return
-                
-                fore_thread = user32.GetWindowThreadProcessId(
-                    user32.GetForegroundWindow(), None
-                )
-                cur_thread = kernel32.GetCurrentThreadId()
-                
-                if fore_thread != cur_thread:
-                    user32.AttachThreadInput(cur_thread, fore_thread, True)
-                
-                if user32.IsIconic(tdx_hwnd):
-                    user32.ShowWindow(tdx_hwnd, 9)  # SW_RESTORE
-                
-                user32.BringWindowToTop(tdx_hwnd)
-                user32.SetForegroundWindow(tdx_hwnd)
-                
-                if fore_thread != cur_thread:
-                    user32.AttachThreadInput(cur_thread, fore_thread, False)
-                
-                time.sleep(0.5)
-                
-                import pyautogui
-                pyautogui.typewrite(code, interval=0.02)
-                time.sleep(0.1)
-                pyautogui.press('enter')
-                log.info(f"[通达信] 已跳转: {code}")
-                
-            except ImportError:
-                log.error("[通达信] 需要安装pyautogui: pip install pyautogui")
-            except Exception as e:
-                log.error(f"[通达信] 跳转异常: {e}")
-        
-        task_manager.run_in_background(_worker, task_id="launch_tdx")
+    # _launch_tdx / _launch_eastmoney 已移除(#1)
+    # 统一由 BaseStockTab 基类提供，避免双份代码维护噩梦
 
     def _save_ui_state(self):
         """Persist splitter sizes, window geometry, and table widths."""
-        import json
         s = self._settings
+        # 使用原生边框后，可以完美信任并且使用系统的 saveGeometry()
         s.setValue("geometry", self.saveGeometry())
-        # splitter 比例
-        s.setValue("splitter_sizes", self.splitter.sizes())
-        
-        for name, table, stretch_cols in [
-            ("scan", self.table_scan, getattr(self, '_scan_stretch_cols', set())),
-            ("rt", self.table_rt, getattr(self, '_rt_stretch_cols', set())),
-            ("sp", self.table_sp, getattr(self, '_sp_stretch_cols', set())),
-        ]:
-            widths = []
-            for c in range(table.columnCount()):
-                widths.append(table.columnWidth(c) if c not in stretch_cols else -1)
-            # 使用 JSON 序列化存储 避免 PyQt6 QVariant 类型转换问题
-            s.setValue(f"col_widths_{name}", json.dumps(widths))
         s.sync()
 
     def _restore_ui_state(self):
-        """Restore splitter sizes, window geometry, and table widths."""
+        """Restore native geometry, splitter sizes, and table widths."""
         import json
         s = self._settings
-        geo = s.value("geometry")
-        if geo:
-            self.restoreGeometry(geo)
-        # splitter 比例
-        sizes = s.value("splitter_sizes")
-        if sizes:
-            try:
-                self.splitter.setSizes([int(x) for x in sizes])
-            except Exception:
-                pass
         
-        for name, table, stretch_cols in [
-            ("scan", self.table_scan, getattr(self, '_scan_stretch_cols', set())),
-            ("rt", self.table_rt, getattr(self, '_rt_stretch_cols', set())),
-            ("sp", self.table_sp, getattr(self, '_sp_stretch_cols', set())),
-        ]:
-            raw_widths = s.value(f"col_widths_{name}")
-            widths = None
-            if raw_widths:
-                if isinstance(raw_widths, str):
-                    try:
-                        parsed = json.loads(raw_widths)
-                        if isinstance(parsed, list):
-                            widths = parsed
-                    except Exception:
-                        pass
+        # 完美的原生窗口只需让 QT 内置几何接口接管即可！
+        geom_data = s.value("geometry")
+        if geom_data:
+            self.restoreGeometry(geom_data)
+        else:
+            from PyQt6.QtWidgets import QApplication
+            screen = QApplication.primaryScreen()
+            if screen:
+                avail = screen.availableGeometry()
+                # 动态自适应：宽度占屏幕可用区域的 80%，高度占 70%。完美适配任意 DPI 缩放比例
+                w = int(avail.width() * 0.8)
+                h = int(avail.height() * 0.7)
+                self.resize(w, h)
                 
-                if widths is None and isinstance(raw_widths, list):
-                    widths = raw_widths
-            
-            if widths:
-                try:
-                    for c, w in enumerate(widths):
-                        try:
-                            w = int(float(w))
-                        except (ValueError, TypeError):
-                            continue
-                        
-                        if w > 0 and c not in stretch_cols:
-                            if c < table.columnCount():
-                                table.setColumnWidth(c, w)
-                except Exception as e:
-                    log.error(f"[UI] 恢复列宽异常: {e}")
+                center = avail.center()
+                geo = self.frameGeometry()
+                geo.moveCenter(center)
+                self.move(geo.topLeft())
+            else:
+                self.resize(1024, 768)
 
     # F5预计算 / 缓存加载 / 智能启动 / RPS缓存 / RT缓存
     # 已迁移至 ui.mixins.data_cache_mixin.DataCacheMixin
+
+    def _update_last_f5_time(self):
+        import os, datetime
+        cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'Cache')
+        rps_path = os.path.join(cache_dir, 'vcp_rps_precomputed.pkl')
+        if os.path.exists(rps_path) and hasattr(self, 'lbl_last_f5'):
+            mtime = os.path.getmtime(rps_path)
+            dt = datetime.datetime.fromtimestamp(mtime)
+            # 例如展示格式：03-30 15:30
+            self.lbl_last_f5.setText(f"上次: {dt.strftime('%m-%d %H:%M')}")
+        elif hasattr(self, 'lbl_last_f5'):
+            self.lbl_last_f5.setText("上次: 无")
 
     def _on_f5_done(self, count, elapsed):
         """Handle the completion signal from the F5 precompute workflow."""
         import gc
         gc.collect()  # 大型计算完成后主动回收内存
         self.btn_scan.setEnabled(True)
+        self._update_last_f5_time()
         if count > 0:
             self.lbl_status.setText(f"F5预计算完成: {count}只 | 耗时{elapsed:.1f}s")
             self.lbl_code_count.setText(f"标的池: {count} 只")
         else:
             self.lbl_status.setText("F5预计算完成: 无新增数据")
+
+    def showEvent(self, event):
+        """正常显示事件"""
+        super().showEvent(event)
 
     def closeEvent(self, event):
         """应用关闭：广播信号让各组件自行保存，然后清理资源"""
@@ -873,15 +784,26 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
         except Exception as e:
             log.error(f"[关闭] 保存UI状态异常: {e}")
 
+        # 保存盘中监控缓存（MVC兼容）
+        try:
+            self._save_rt_cache()
+        except Exception as e:
+            log.error(f"[关闭] 保存盘中缓存异常: {e}")
+
         # 广播关闭信号，各 Tab 组件自行保存缓存
         try:
             event_bus.sig_app_closing.emit()
         except Exception as e:
             log.error(f"[关闭] 广播关闭信号异常: {e}")
 
-        if hasattr(self, 'rt_worker') and self.rt_worker.isRunning():
-            self.rt_worker.stop()
-            self.rt_worker.wait(2000)
+        # Bug#1 修复: rt_worker 属于 tab_rt，不是 MainWindowQT 自身的属性
+        if hasattr(self, 'tab_rt') and hasattr(self.tab_rt, 'rt_worker'):
+            try:
+                if self.tab_rt.rt_worker.isRunning():
+                    self.tab_rt.rt_worker.stop()
+                    self.tab_rt.rt_worker.wait(2000)
+            except Exception as e:
+                log.error(f"[关闭] 停止盘中监控线程异常: {e}")
 
         if self.worker and self.worker.isRunning():
             self.worker.cancel()
@@ -904,16 +826,13 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
         if getattr(self, '_f5_cancelled', None) is not None:
             self._f5_cancelled = True
 
-        if hasattr(self, 'rt_worker') and self.rt_worker is not None:
+        # Bug#1 修复: rt_worker 属于 tab_rt
+        if hasattr(self, 'tab_rt') and hasattr(self.tab_rt, 'rt_worker'):
             try:
-                self.rt_worker.stop()
-                stopped.append("盘中监控(新)")
-            except Exception:
-                pass
-
-        if hasattr(self, 'tab_rt') and hasattr(self.tab_rt, 'cancel_monitor'):
-            if self.tab_rt.cancel_monitor():
+                self.tab_rt.rt_worker.stop()
                 stopped.append("盘中监控")
+            except Exception as e:
+                log.error(f"[中止] 停止盘中监控异常: {e}")
 
         if stopped:
             event_bus.sig_task_progress.emit("scan", 0, "已中止")
@@ -929,10 +848,7 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
             action_text = "移出" if is_fav else "加入"
             self.lbl_status.setText(f"{name}({code}) 已{action_text}关注池")
 
-    def _remove_from_special(self, code: str):
-        """从关注池移除 — 委托给 WatchlistTab 组件"""
-        if hasattr(self, 'tab_watchlist'):
-            self.tab_watchlist.remove_from_special(code)
+
 
     def _export_current_tab(self):
         """导出当前激活 Tab 的表格数据"""
@@ -945,8 +861,11 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
         if hasattr(tab_widget, '_export_to_excel'):
             tab_widget._export_to_excel()
             return
-        # 兜底：通用导出
-        self._export_generic_table(current_idx)
+        # Bug#3 修复: 兜底友好提示，不再调用不存在的方法
+        from ui.components.toast_widget import show_toast
+        tab_name = self.tabs.tabText(current_idx)
+        show_toast(f"「{tab_name}」暂不支持导出", "warning", self, duration=2500)
+        log.warning(f"[导出] Tab '{tab_name}' 未实现导出方法")
 
     # =======================================================================
     # [Global Event Bus] 信号中转站
@@ -955,7 +874,7 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
     def _on_global_data_updated(self, data_type: str, payload: object):
         """响应全局数据变更信号，更新状态栏与标的池计数"""
         try:
-            if data_type == "rt_quotes_refreshed":
+            if data_type == DataEvent.RT_QUOTES_REFRESHED.value:
                 count = len(payload) if payload else 0
                 self.lbl_status.setText(f"实时报价已刷新 ({count} 条)")
             elif data_type == "scan_results":
@@ -987,34 +906,51 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
                 # 扫描完成后主动回收内存
                 import gc
                 gc.collect()
+        elif module == "rt_monitor":
+            if msg == "start":
+                self.btn_rt_sidebar.setText("⏹ 停止盘中监控")
+                # 与 Tab 内按钮一致的红色运行态样式
+                self.btn_rt_sidebar.setStyleSheet(
+                    "QPushButton { color: white; border: none; font-weight: 500; font-size: 12px; "
+                    "background-color: qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #DC2626,stop:1 #EF4444); "
+                    "border-radius: 6px; }"
+                    "QPushButton:hover { background-color: #B91C1C; }"
+                )
+            elif msg == "stop":
+                self.btn_rt_sidebar.setText("⚡ 启动盘中监控")
+                # 恢复默认灰色样式
+                self.btn_rt_sidebar.setStyleSheet(
+                    "QPushButton { background-color: #1E293B; border: 1px solid #334155; "
+                    "border-radius: 6px; color: #CBD5E1; font-weight: 500; font-size: 12px; }"
+                    "QPushButton:hover { background-color: #2D3748; border: 1px solid #8B5CF6; color: #FFFFFF; }"
+                    "QPushButton:pressed { background-color: #0F172A; }"
+                    "QPushButton:disabled { color: #475569; border: 1px solid #1E293B; }"
+                )
 
     # ================================================================
     # EventBus 信号处理（各 Tab 组件广播的信号）
     # ================================================================
     def _on_show_kline(self, code: str):
-        """响应各 Tab 的 K 线图请求"""
+        """响应简单K线图请求（无上下文列表）"""
+        self._on_show_kline_with_list(code, [], 0)
+
+    def _on_show_kline_with_list(self, code: str, code_list: list, current_idx: int):
+        """响应带列表上下文的 K 线图请求 — 委托给 KLineWindowManager (#1)"""
         name = getattr(self.data_provider, 'code2name', {}).get(code, code)
-        if not hasattr(self, '_charts'):
-            self._charts = []
+        if code_list and 0 <= current_idx < len(code_list):
+            item_data = code_list[current_idx]
+            if isinstance(item_data, dict) and item_data.get('代码') == code:
+                name = item_data.get('名称', name)
 
-        # 清理已关闭的窗口 + 限制数量
-        self._charts = [c for c in self._charts if c.isVisible()]
-        MAX_CHART_WINDOWS = 3
-        while len(self._charts) >= MAX_CHART_WINDOWS:
-            oldest = self._charts.pop(0)
-            oldest.close()
-
-        chart = KLineChartWindow(
+        kline_manager.open_chart(
             main_window=self,
             code=code,
             name=name,
             data_provider=self.data_provider,
             vcp_data={'code': code, 'name': name},
-            code_list=[],
-            current_idx=0
+            code_list=code_list,
+            current_idx=current_idx,
         )
-        chart.show()
-        self._charts.append(chart)
 
     def _on_open_ai_diag(self, code: str, auto_start: str):
         """响应各 Tab 的 AI 诊断请求"""

@@ -16,6 +16,7 @@ import pickle
 
 from core.logger import get_logger
 from core.event_bus import event_bus
+from core.event_types import DataEvent
 from core.task_manager import task_manager
 
 log = get_logger(__name__)
@@ -64,8 +65,8 @@ class DataCacheMixin:
         reply = QMessageBox.question(self, "盘后一键预计算",
             "此操作将执行完整的盘后数据重建流程：\n\n"
             "① 从通达信本地日线(vipdoc)重新读取数据\n"
-            "② 重算全市场技术指标(MA/MACD等)\n"
-            "③ 预计算全市场RPS排名(120日/250日)\n"
+            "② 预计算全市场RPS排名(120日/250日)\n"
+            "③ 预计算板块RPS排名\n"
             "④ 保存缓存供次日盘中监控使用\n\n"
             "请确保已在通达信中完成【盘后数据下载】.\n是否执行?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
@@ -101,32 +102,61 @@ class DataCacheMixin:
                     log.error(f"[F5] gbbq 解析异常(不影响后续): {e}")
 
                 # 阶段1: 重读本地日线
-                log.info("[F5] 阶段1/3: 清空缓存,开始从 vipdoc 重读...")
+                # #5: 断点续算 — 如果今天的 Parquet 缓存已存在，跳过阶段1
+                today_str = datetime.date.today().strftime('%Y%m%d')
+                skip_stage1 = False
                 try:
-                    self.data_provider.cache_data = {}
-                    was_online = self.data_provider.is_online()
-                    self.data_provider.set_online_mode(False)
-                    try:
-                        codes_dict = self.data_provider._get_codes_from_vipdoc()
-                        log.info(f"[F5] 阶段1/3: 从 vipdoc 扫描到 {len(codes_dict)} 只标的")
-
-                        def _progress(done, total, eta):
-                            if total > 0 and done % 500 == 0:
-                                log.info(f"[F5] 阶段1/3: 重读本地数据 {done}/{total}")
-
-                        self.data_provider.sync_market_data(
-                            codes_dict, force_refresh=True, progress_callback=_progress
-                        )
-                        self.data_provider.code2name = codes_dict
-                    finally:
-                        if was_online:
-                            self.data_provider.set_online_mode(True)
-                    count = len(self.data_provider.cache_data)
-                    log.info(f"[F5] 阶段1/3 完成 -- 共加载 {count} 只标的")
+                    from vcp.polars_engine import load_cache_parquet
+                    cached = load_cache_parquet()
+                    if cached:
+                        cached_data, cached_date = cached
+                        if cached_date == today_str and len(cached_data) > 2000:
+                            self.data_provider.cache_data = cached_data
+                            # 同步 code2name
+                            codes_dict = self.data_provider._get_codes_from_vipdoc()
+                            self.data_provider.code2name = codes_dict
+                            log.info(f"[F5] 阶段1/3: ⚡ 断点续算 — 检测到今日 Parquet 缓存"
+                                     f"({len(cached_data)} 只, 日期 {cached_date})，跳过重读")
+                            skip_stage1 = True
                 except Exception as e:
-                    log.error(f"[F5] ❌ 阶段1 重读本地数据异常: {e}")
-                    _tb.print_exc()
-                    return
+                    log.info(f"[F5] 断点续算检测失败(不影响全量重读): {e}")
+
+                if not skip_stage1:
+                    log.info("[F5] 阶段1/3: 清空缓存,开始从 vipdoc 重读...")
+                    try:
+                        self.data_provider.cache_data = {}
+                        was_online = self.data_provider.is_online()
+                        self.data_provider.set_online_mode(False)
+                        try:
+                            codes_dict = self.data_provider._get_codes_from_vipdoc()
+                            log.info(f"[F5] 阶段1/3: 从 vipdoc 扫描到 {len(codes_dict)} 只标的")
+
+                            def _progress(done, total, eta):
+                                if total > 0 and done % 500 == 0:
+                                    log.info(f"[F5] 阶段1/3: 重读本地数据 {done}/{total}")
+
+                            self.data_provider.sync_market_data(
+                                codes_dict, force_refresh=True, progress_callback=_progress
+                            )
+                            self.data_provider.code2name = codes_dict
+                        finally:
+                            if was_online:
+                                self.data_provider.set_online_mode(True)
+                        count = len(self.data_provider.cache_data)
+                        log.info(f"[F5] 阶段1/3 完成 -- 共加载 {count} 只标的")
+
+                        # #5: 阶段1完成后立即保存缓存，实现断点续算
+                        try:
+                            from vcp.polars_engine import save_cache_parquet
+                            save_cache_parquet(self.data_provider.cache_data, today_str)
+                            log.info("[F5] 阶段1 断点存档完成 — 下次 F5 可跳过重读")
+                        except Exception as e:
+                            log.warning(f"[F5] 断点存档失败(不影响后续): {e}")
+
+                    except Exception as e:
+                        log.error(f"[F5] ❌ 阶段1 重读本地数据异常: {e}")
+                        _tb.print_exc()
+                        return
 
                 if getattr(self, '_f5_cancelled', False):
                     log.info("[F5] ⏹ 用户取消")
@@ -173,9 +203,9 @@ class DataCacheMixin:
                     from vcp.constants import SECTOR_RPS_CACHE_FILE
                     tdx_root = (
                         os.path.dirname(self.data_provider.tdx_vipdoc)
-                        if self.data_provider.tdx_vipdoc else r'D:\\HT'
+                        if self.data_provider.tdx_vipdoc else r'D:\HT'
                     )
-                    sm = SectorManager(tdx_root)
+                    sm = SectorManager.get_instance(tdx_root)
                     all_data_f5 = {
                         c: df for c, df in self.data_provider.cache_data.items()
                         if df is not None and len(df) >= 60
@@ -186,9 +216,15 @@ class DataCacheMixin:
                     with open(SECTOR_RPS_CACHE_FILE, 'wb') as f:
                         pickle.dump(sector_pkg, f, protocol=4)
                     log.info(f"[F5] 阶段2.5/3 完成 -- 板块 RPS ({len(sector_rps)} 个板块)")
+                    # Phase3 内存优化: 板块RPS算完立即释放临时数据
+                    del all_data_f5, sector_rps, sector_pkg
                 except Exception as e:
                     log.error(f"[F5] ❌ 阶段2.5 板块 RPS 异常: {e}")
                     _tb.print_exc()
+                
+                # Phase3 内存优化: F5 全流程完成后主动回收
+                import gc
+                gc.collect()
 
                 elapsed = _time.time() - total_start
                 log.info(f"[F5] ✅ 全部完成 -- 耗时 {elapsed:.1f} 秒")
@@ -200,6 +236,15 @@ class DataCacheMixin:
                 elapsed = _time.time() - total_start
                 count = len(self.data_provider.cache_data) if self.data_provider.cache_data else 0
                 log.info(f"[F5] 正在恢复UI状态... (count={count}, elapsed={elapsed:.1f}s)")
+                
+                # F5 完成后顺手清理过期缓存
+                try:
+                    from core.cache_policy import cleanup_stale_caches
+                    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                    cleanup_stale_caches(project_root)
+                except Exception as e:
+                    log.warning(f"[F5] 缓存清理跳过: {e}")
+                
                 self._sig_f5_done.emit(count, elapsed)
 
         task_manager.run_in_background(run_f5, task_id="f5_precompute")
@@ -216,7 +261,7 @@ class DataCacheMixin:
                     self._cache_date = cache_date
                     count = len(self.data_provider.cache_data)
                     self._call_in_ui(
-                        lambda: self.lbl_code_count.setText(f"标的池: {count}")
+                        lambda: getattr(self, 'lbl_code_count') and self.lbl_code_count.setText(f"标的池: {count}") if hasattr(self, 'lbl_code_count') else None
                     )
                     self._call_in_ui(lambda: self.lbl_status.setText(
                         f"已加载 {count} 只标的缓存 (日期: {cache_date})"
@@ -235,19 +280,56 @@ class DataCacheMixin:
 
             # 通知各 Tab: 缓存数据已就绪，可以回填历史数据
             self._call_in_ui(
-                lambda: event_bus.sig_data_updated.emit("cache_loaded", None)
+                lambda: event_bus.sig_data_updated.emit(DataEvent.CACHE_LOADED.value, None)
             )
 
         task_manager.run_in_background(_load_bg, task_id="deferred_load")
 
+        # 启动时静默检查并更新亚洲寡头历史 json 缓存
+        def _check_asian_data_bg():
+            import datetime, os, subprocess
+            from core.event_bus import event_bus
+            
+            # 基于项目根目录计算路径，避免硬编码绝对路径导致换机器就炸 (#14)
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            sibling_dir = os.path.join(os.path.dirname(project_root), "每日战报", "亚洲寡头行情")
+            json_cache = os.path.join(sibling_dir, "data", "asian_klines_latest.json")
+            script_path = os.path.join(sibling_dir, "asian_kline_fetcher.py")
+            
+            needs_update = False
+            if not os.path.exists(json_cache):
+                needs_update = True
+            else:
+                mtime = os.path.getmtime(json_cache)
+                mdate = datetime.date.fromtimestamp(mtime)
+                # 哪怕今天是周末，只要 mdate 不是今天，就静默重跑一下保证数据绝对最新
+                if mdate < datetime.date.today():
+                    needs_update = True
+                    
+            if needs_update and os.path.exists(script_path):
+                log.info("[启动] 亚洲市场 JSON 已非最新，后台静默拉取中(YF)...")
+                try:
+                    # 使用 CREATE_NO_WINDOW 防止闪黑框
+                    creationflags = 0x08000000 if os.name == 'nt' else 0
+                    subprocess.run(["python", script_path], check=True, creationflags=creationflags)
+                    log.info("[启动] 亚洲市场静默增量拉取完成，触发界面重载...")
+                    self._call_in_ui(lambda: event_bus.sig_data_updated.emit(DataEvent.ASIAN_KLINES_READY.value, None))
+                except Exception as e:
+                    log.error(f"[启动] 亚洲市场后台静默更新失败: {e}")
+
+        task_manager.run_in_background(_check_asian_data_bg, task_id="asian_data_sync_bg")
+
     def _smart_startup(self):
-        """智能启动：异步检测网络，联网可用则自动切换联网模式"""
+        """智能启动：异步检测网络，联网可用则自动切换联网模式并触发各Tab刷新"""
         def _check_and_go_online():
             try:
                 if self.data_provider.test_network(timeout=3):
                     self.data_provider.set_online_mode(True)
-                    self._call_in_ui(lambda: self._update_network_ui(True))
                     log.info("[智能启动] ✅ 网络可用，已自动切换到联网模式")
+                    # 在 UI 线程中执行：更新网络状态 + 各Tab联网刷新 + 盘中自动启动
+                    self._call_in_ui(lambda: self._update_network_ui(True))
+                    if hasattr(self, '_on_smart_startup_online_done'):
+                        self._call_in_ui(self._on_smart_startup_online_done)
                     self._call_in_ui(self._auto_start_rt_if_ready)
                 else:
                     log.info("[智能启动] 网络不可用，保持离线模式")
@@ -301,7 +383,10 @@ class DataCacheMixin:
             self.engine.set_precomputed_rps(cached_date, rps120, rps250)
             count = int(rps120.notna().sum()) if hasattr(rps120, 'notna') else 0
             log.info(f"[RPS] ✓ 从磁盘加载预计算RPS(基准日 {cached_date},{count} 只有效排名)")
-            self.lbl_status.setText(f"RPS缓存已加载({cached_date},{count}只)")
+            # Bug#7 修复: 此方法在后台线程调用，必须通过 _call_in_ui 安全更新 UI
+            self._call_in_ui(
+                lambda: self.lbl_status.setText(f"RPS缓存已加载({cached_date},{count}只)")
+            )
         except Exception as e:
             log.error(f"[RPS] 磁盘加载失败: {e}")
 
@@ -311,36 +396,42 @@ class DataCacheMixin:
     def _save_rt_cache(self):
         """保存盘中监控当日缓存到 pkl 文件"""
         import re
-        from PyQt6.QtWidgets import QTableWidgetItem
         table = self.table_rt
-        if table.rowCount() == 0:
-            return
+        
         cache_dir = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
             'data', 'Cache'
         )
         os.makedirs(cache_dir, exist_ok=True)
+        
         try:
             rows = []
-            for r in range(table.rowCount()):
-                row_vals = []
-                for c in range(table.columnCount()):
-                    item = table.item(r, c)
-                    row_vals.append(item.text() if item else '')
-                rows.append(row_vals)
+            headers = []
+            
+            # MVC 处理: 盘中监控已全面迁移到 QTableView + Model
+            if hasattr(table, 'model') and getattr(table, 'model', lambda: None)():
+                model = table.model()
+                if hasattr(model, 'sourceModel'): model = model.sourceModel()
+                
+                if hasattr(model, 'row_data'):
+                    if not model.row_data: return
+                    headers = model.headers if hasattr(model, 'headers') else []
+                    for row_dict in model.row_data:
+                        rows.append([str(row_dict.get(h, '')) for h in headers])
+            
+            if not rows: return
+            
             if rows and rows[0]:
                 first_cell = rows[0][0]
                 if len(first_cell) > 10 or '(' in first_cell or ',' in first_cell:
                     log.error(f"[盘中缓存] 检测到异常数据,跳过保存")
                     return
+                    
             data = {
                 'date': datetime.date.today().isoformat(),
                 'version': 2,
                 'rows': rows,
-                'headers': [
-                    table.horizontalHeaderItem(c).text()
-                    for c in range(table.columnCount())
-                ],
+                'headers': headers,
             }
             path = os.path.join(
                 cache_dir, f"rt_monitor_{datetime.date.today().isoformat()}.pkl"
@@ -368,10 +459,7 @@ class DataCacheMixin:
 
     def _load_rt_cache(self):
         """启动时加载最近的盘中监控缓存"""
-        from PyQt6.QtWidgets import QTableWidgetItem
-        from PyQt6.QtGui import QColor
         from PyQt6.QtCore import Qt
-        from ui.components import NumericTableWidgetItem
 
         cache_dir = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
@@ -396,44 +484,31 @@ class DataCacheMixin:
                 return
             cache_date = data.get('date', '?')
 
-            # 自动检测格式
-            first = raw_rows[0]
-            is_old_format = (
-                isinstance(first, (list, tuple)) and len(first) == 2
-                and isinstance(first[0], (list, tuple))
-                and isinstance(first[1], (list, tuple))
-            )
-
             table = self.table_rt
-            if is_old_format:
-                table.setSortingEnabled(False)
-                table.setRowCount(len(raw_rows))
-                for r, (texts, _colors) in enumerate(raw_rows):
-                    for c, text in enumerate(texts):
-                        if c < table.columnCount():
-                            item = NumericTableWidgetItem(str(text)) if c in (3, 4, 5) else QTableWidgetItem(str(text))
-                            item.setForeground(QColor("#C9CDD4"))
-                            item.setTextAlignment(
-                                Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
-                            )
-                            table.setItem(r, c, item)
-                table.setSortingEnabled(True)
-            else:
-                table.setSortingEnabled(False)
-                table.setRowCount(len(raw_rows))
-                for r, row_vals in enumerate(raw_rows):
-                    for c, text in enumerate(row_vals):
-                        if c < table.columnCount():
-                            item = NumericTableWidgetItem(str(text)) if c in (3, 4, 5) else QTableWidgetItem(str(text))
-                            item.setForeground(QColor("#C9CDD4"))
-                            item.setTextAlignment(
-                                Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
-                            )
-                            table.setItem(r, c, item)
-                table.setSortingEnabled(True)
+            
+            # MVC 处理: 盘中监控已全面迁移到 QTableView + Model
+            if hasattr(table, 'model') and getattr(table, 'model', lambda: None)():
+                model = table.model()
+                if hasattr(model, 'sourceModel'): model = model.sourceModel()
+                
+                if hasattr(model, 'update_data') and hasattr(model, 'headers'):
+                    historical_headers = data.get('headers', [])
+                    effective_headers = historical_headers if historical_headers else model.headers
+                    
+                    final_data = []
+                    for row_vals in raw_rows:
+                        # 兼容旧版格式: (texts, colors) 元组
+                        if isinstance(row_vals, (list, tuple)) and len(row_vals) == 2 and isinstance(row_vals[0], (list, tuple)):
+                            row_vals = row_vals[0]
+                        row_dict = {}
+                        for c, val in enumerate(row_vals):
+                            if c < len(effective_headers):
+                                row_dict[effective_headers[c]] = val
+                        final_data.append(row_dict)
+                    model.update_data(final_data)
+                    self.lbl_status.setText(f"已恢复盘中MVC缓存 ({cache_date}, {len(raw_rows)} 条)")
+                    return
 
-            self.lbl_status.setText(
-                f"已恢复盘中缓存 ({cache_date}, {len(raw_rows)} 条)"
-            )
+            log.warning("[盘中缓存] table_rt 未找到有效 Model，跳过加载")
         except Exception as e:
             log.error(f"[盘中缓存] 加载失败: {e}")

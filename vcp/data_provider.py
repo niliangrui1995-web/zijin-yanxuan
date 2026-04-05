@@ -15,6 +15,8 @@ from vcp.constants import (
 )
 from vcp.utils import _load_tdx_local_config, read_tdx_day_file
 
+from core.logger import get_logger
+_log = get_logger(__name__)
 
 class TdxDataProvider:
     def __init__(self, is_trading_day=None, offline=False):
@@ -31,13 +33,13 @@ class TdxDataProvider:
         # 预加载本地 gbbq (股本变迁/除权除息) 数据
         self._local_gbbq = {}  # {code: DataFrame}
         if self.tdx_vipdoc:
-            print(f"[启动] 已启用通达信本地K线数据: {self.tdx_vipdoc}")
+            _log.info(f"[启动] 已启用通达信本地K线数据: {self.tdx_vipdoc}")
             self._load_local_gbbq()
         if offline:
-            print("[启动] 离线模式启动：跳过服务器测速，使用本地数据")
+            _log.warning("[启动] 离线模式启动：跳过服务器测速，使用本地数据")
             self.server_pool = []
         else:
-            print("[启动] 正在启动动态测速池...")
+            _log.info("[启动] 正在启动动态测速池...")
             self.server_pool = self._auto_select_best_servers()
 
     def _downcast_memory(self):
@@ -59,14 +61,16 @@ class TdxDataProvider:
                     changed = True
             if changed:
                 count += 1
-            # 每 200 只释放一次 GIL，让 UI 线程有机会响应
-            if i % 200 == 0 and i > 0:
+            # 每 50 只释放一次 GIL，避免长时间霸占导致 UI 卡顿
+            if i % 50 == 0 and i > 0:
                 _time.sleep(0)
         if count > 0:
-            print(f"[内存优化] 已将 {count} 只标的数据降精度 (float64→float32)")
+            from core.logger import get_logger
+            get_logger(__name__).info(f"[内存优化] 已将 {count} 只标的数据降精度 (float64→float32)")
 
 
     def _auto_select_best_servers(self):
+        """轻量级测速，避免大量并发线程导致 PyQT6 C++ 内存崩溃"""
         candidates = [
             ('119.147.212.81',7709),('124.71.187.122',7709),('106.120.74.86',7709),
             ('122.51.120.217',7709),('121.36.54.217',7709),('124.71.85.110',7709),
@@ -76,31 +80,30 @@ class TdxDataProvider:
             ('180.153.18.17',7709),('180.153.18.170',7709),('180.153.18.171',7709),
             ('218.108.47.69',7709),('218.108.50.178',7709),('218.108.98.244',7709),
             ('218.75.126.9',7709),('218.9.148.108',7709),('221.194.181.176',7709),
-            ('59.173.18.69',7709),('60.12.136.250',7709),('60.191.117.167',7709),
-            ('61.135.142.88',7709),('61.152.107.168',7709),('61.152.249.56',7709),
-            ('61.153.144.179',7709),('61.153.209.138',7709),('61.153.209.139',7709),
-            ('180.153.18.172',7709),('202.108.253.131',7709),('58.67.221.146',7709),
-            ('103.24.178.242',7709),('218.6.170.55',7709),('112.74.214.43',7709),
-            ('119.147.86.171',7709),('124.160.88.183',7709)
         ]
-        def test_latency(ip_port):
-            ip, port = ip_port
+        import random, socket, time
+        random.shuffle(candidates)
+        test_list = candidates[:10]  # Just test 10 random servers sequentially
+        
+        results = []
+        for ip, port in test_list:
             try:
                 start = time.time()
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                s.settimeout(2)
+                s.settimeout(0.5)
                 s.connect((ip, port))
                 s.close()
-                return (ip, port, time.time() - start)
+                results.append((ip, port, time.time() - start))
             except Exception:
-                return (ip, port, 999)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
-            results = list(executor.map(test_latency, candidates))
-        best = sorted([r for r in results if r[2] < 999], key=lambda x: x[2])[:5]
-        if not best: best = candidates[:5]
-        print("[OK] 动态测速完成，最优 Top5 服务器（延迟 ms）：")
+                pass
+                
+        best = sorted(results, key=lambda x: x[2])[:5]
+        if not best: best = [(ip, port, 999) for ip, port in candidates[:5]]
+        
+        _log.info("[OK] 轻量级动态测速完成，最优服务器（延迟 ms）：")
         for i, (ip, port, lat) in enumerate(best, 1):
-            print(f"   {i}. {ip}:{port}  -> {lat*1000:.0f}ms")
+            _log.info(f"   {i}. {ip}:{port}  -> {lat*1000:.0f}ms")
+            
         return [(ip, port) for ip, port, _ in best]
 
     def _load_local_gbbq(self, force=False):
@@ -112,7 +115,7 @@ class TdxDataProvider:
         tdx_root = os.path.dirname(self.tdx_vipdoc)  # vipdoc 的父目录即为通达信根目录
         gbbq_path = os.path.join(tdx_root, 'T0002', 'hq_cache', 'gbbq')
         if not os.path.exists(gbbq_path):
-            print(f"[数据中台] 本地 gbbq 文件不存在: {gbbq_path}")
+            _log.info(f"[数据中台] 本地 gbbq 文件不存在: {gbbq_path}")
             return
         gbbq_mtime = os.path.getmtime(gbbq_path)
         
@@ -127,7 +130,7 @@ class TdxDataProvider:
                 if cached.get('mtime') and cached.get('mtime') != gbbq_mtime:
                     raise ValueError("gbbq 文件已更新，需要重新解析缓存")
                 self._local_gbbq = cached['data']
-                print(f"[缓存] 已加载本地 gbbq 缓存: {len(self._local_gbbq)} 个代码, {cached.get('records', '?')} 条记录")
+                _log.info(f"[缓存] 已加载本地 gbbq 缓存: {len(self._local_gbbq)} 个代码, {cached.get('records', '?')} 条记录")
                 return
             except Exception:
                 pass  # 缓存损坏, 回退到重新解析        
@@ -136,15 +139,14 @@ class TdxDataProvider:
             reader = GbbqReader()
             df = reader.get_df(gbbq_path)
             if df is None or df.empty:
-                print("[数据中台] gbbq 文件解析为空")
+                _log.info("[数据中台] gbbq 文件解析为空")
                 return
             # 只保留除权除息记录。
             xdxr = df[df['category'] == 1].copy()
             # 按股票代码分组缓存到内存。
             for code, group in xdxr.groupby('code'):
                 self._local_gbbq[str(code)] = group
-            print(f"[缓存] 已解析本地 gbbq 原始文件: {len(self._local_gbbq)} 个代码, {len(xdxr)} 条记录")
-            
+            _log.info(f"[缓存] 已解析本地 gbbq 原始文件: {len(self._local_gbbq)} 个代码, {len(xdxr)} 条记录")
             # 保存 pkl 缓存，后续启动可直接复用解析结果。
             try:
                 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -154,12 +156,11 @@ class TdxDataProvider:
                         f,
                         protocol=4,
                     )
-                print(f"[数据中台] gbbq pkl 缓存已保存 -> {gbbq_pkl}")
+                _log.info(f"[数据中台] gbbq pkl 缓存已保存 -> {gbbq_pkl}")
             except Exception as e:
-                print(f"[数据中台] gbbq pkl 缓存保存失败: {e}")
+                _log.error(f"[数据中台] gbbq pkl 缓存保存失败: {e}")
         except Exception as e:
-            print(f"[数据中台] gbbq 加载失败(不影响联网复权): {e}")
-
+            _log.error(f"[数据中台] gbbq 加载失败(不影响联网复权): {e}")
     def _get_market_code(self, stock_code):
         stock_code = str(stock_code)
         return 1 if stock_code.startswith(('6', '9')) else 0
@@ -193,19 +194,20 @@ class TdxDataProvider:
             if self._local_gbbq:
                 df = self._apply_forward_adjustment(None, self._get_market_code(code), code, df)
             elif not getattr(self, '_offline_warn_printed', False):
-                print("[警告] 本地 gbbq 缓存不可用，前复权一致性可能下降")
-                print("[提示] 请确认通达信目录下存在 T0002/hq_cache/gbbq 文件")
+                _log.warning("[警告] 本地 gbbq 缓存不可用，前复权一致性可能下降")
+                _log.info("[提示] 请确认通达信目录下存在 T0002/hq_cache/gbbq 文件")
                 self._offline_warn_printed = True
         return df
 
     def _get_thread_api(self):
         if not hasattr(self.thread_local, "api"):
-            api = self.TdxHq_API(auto_retry=True)
+            api = self.TdxHq_API(auto_retry=True, heartbeat=True)
             for ip, port in self.server_pool:
                 try:
                     if api.connect(ip, port, time_out=5) and api.get_security_count(0) > 0:
                         break
-                except Exception:
+                except Exception as e:
+                    _log.debug(f"[网络] 测速连接节点失败 {ip}:{port} - {e}")
                     continue
             self.thread_local.api = api
         return self.thread_local.api
@@ -264,7 +266,7 @@ class TdxDataProvider:
             return adj_df
         except Exception as e:
             import traceback
-            print(f"[数据中台] 前复权计算异常: {e}", flush=True)
+            _log.error(f"[数据中台] 前复权计算异常: {e}")
             traceback.print_exc()
             raise ValueError(f"除权除息因子计算失败: {e}") from e
 
@@ -279,12 +281,11 @@ class TdxDataProvider:
                         local_df.rename(columns={'vol': 'volume'}, inplace=True)
                     return local_df
                 except Exception as e:
-                    print(f"[数据中台] 本地 {code} 复权失败，改用网络: {e}")
+                    _log.error(f"[数据中台] 本地 {code} 复权失败，改用网络: {e}")
             elif local_df is not None and len(local_df) < 250:
-                print(f"[缓存] 本地日线 {code}: 共 {len(local_df)} 条")
+                _log.info(f"[缓存] 本地日线 {code}: 共 {len(local_df)} 条")
             elif self.tdx_vipdoc and (local_df is None or local_df.empty):
-                print(f"[数据中台] 本地日线 {code} 异常，改用网络")
-
+                _log.error(f"[数据中台] 本地日线 {code} 异常，改用网络")
         for _ in range(2):
             try:
                 data = api.get_security_bars(9, market, code, 0, count)
@@ -298,7 +299,7 @@ class TdxDataProvider:
                     return df
             except ValueError as ve: raise ve
             except Exception as e:
-                print(f"[数据中台] 拉取 {code} 历史数据失败: {e}")
+                _log.error(f"[数据中台] 拉取 {code} 历史数据失败: {e}")
                 pass
         return None
 
@@ -312,10 +313,10 @@ class TdxDataProvider:
                     with open(_name_cache_file, 'r', encoding='utf-8') as f:
                         cached = _json.load(f)
                     if cached:
-                        print(f"[离线模式] 从名称缓存读取 {len(cached)} 只标的（含股票名称）")
+                        _log.info(f"[离线模式] 从名称缓存读取 {len(cached)} 只标的（含股票名称）")
                         return cached
                 except Exception as e:
-                    print(f"[离线模式] 名称缓存读取失败: {e}")
+                    _log.error(f"[离线模式] 名称缓存读取失败: {e}")
             if self.tdx_vipdoc:
                 return self._get_codes_from_vipdoc()
             return {}
@@ -338,9 +339,9 @@ class TdxDataProvider:
             try:
                 with open(_name_cache_file, 'w', encoding='utf-8') as f:
                     _json.dump(stocks, f, ensure_ascii=False)
-                print(f"[数据中台] 已保存 {len(stocks)} 只标的名称缓存 -> {_name_cache_file}")
+                _log.info(f"[数据中台] 已保存 {len(stocks)} 只标的名称缓存 -> {_name_cache_file}")
             except Exception as e:
-                print(f"[数据中台] 名称缓存保存失败: {e}")
+                _log.error(f"[数据中台] 名称缓存保存失败: {e}")
         return stocks
 
     def _get_codes_from_vipdoc(self):
@@ -355,6 +356,13 @@ class TdxDataProvider:
                     name_map = _json.load(f) or {}
         except Exception:
             pass
+            
+        # --- 曾用名/新名 人工热修复映射册 ---
+        # 防止因 pytdx 证券列表缓存不及时或本地 JSON 始终未刷新导致的名称滞后
+        MANUAL_NAME_ALIASES = {
+            '603196': '璞源材料'
+        }
+            
         for sub, prefix in [('sh/lday', 'sh'), ('sz/lday', 'sz')]:
             lday_dir = os.path.join(self.tdx_vipdoc, sub.replace('/', os.sep))
             if not os.path.isdir(lday_dir):
@@ -365,12 +373,17 @@ class TdxDataProvider:
                 code = fname[2:-4]
                 # 优先使用缓存名称，无缓存则用代码占位
                 display_name = name_map.get(code, code)
+                
+                # 若命中热修复库，则强行覆写最新名称
+                if code in MANUAL_NAME_ALIASES:
+                    display_name = MANUAL_NAME_ALIASES[code]
+                    
                 if prefix == 'sh' and code.startswith(('60', '68')):
                     stocks[code] = display_name
                 elif prefix == 'sz' and code.startswith(('00', '30')):
                     stocks[code] = display_name
         has_names = sum(1 for c, n in stocks.items() if c != n)
-        print(f"[离线模式] 已从 vipdoc 扫描 {len(stocks)} 只标的（其中 {has_names} 只有名称）")
+        _log.info(f"[离线模式] 已从 vipdoc 扫描 {len(stocks)} 只标的（其中 {has_names} 只有名称）")
         return stocks
 
     def _worker_fetch(self, code, force_refresh, existing_df):
@@ -415,7 +428,7 @@ class TdxDataProvider:
                 return code, None, "全量下载超时"
         except ValueError as ve: return code, None, str(ve)
         except Exception as e:
-            print(f"[数据中台] {code} 标的数据抓取发生异常: {e}")
+            _log.error(f"[数据中台] {code} 标的数据抓取发生异常: {e}")
             return code, None, "底层结构异常/长期停牌"
 
     def load_cache_from_disk(self):
@@ -432,14 +445,13 @@ class TdxDataProvider:
                 if loaded_data and isinstance(loaded_data, dict):
                     with self.cache_lock:
                         self.cache_data = loaded_data
-                    self._downcast_memory()
-                    print(f"\n[数据中台] Parquet 快速加载: {len(self.cache_data)} 只标的 (缓存日期: {last_date})")
+                    # Parquet 数据在保存前已经过 _downcast_memory 降精度，无需重复执行
+                    _log.info(f"\n[数据中台] Parquet 快速加载: {len(self.cache_data)} 只标的 (缓存日期: {last_date})")
                     return last_date
         except ImportError:
             pass  # polars 未安装，回退 pkl
         except Exception as e:
-            print(f"[数据中台] Parquet 加载失败，回退 pkl: {e}")
-
+            _log.error(f"[数据中台] Parquet 加载失败，回退 pkl: {e}")
         # ---- 回退: pickle 加载 ----
         if not os.path.exists(self.cache_file):
             return ""
@@ -453,7 +465,7 @@ class TdxDataProvider:
                 raise ValueError("缓存版本不匹配")
             version = pkg.get('version', 0)
             if version != CACHE_VERSION:
-                print(f"\n[缓存] 缓存版本不匹配(version={version})，准备强制重建")
+                _log.warning(f"\n[缓存] 缓存版本不匹配(version={version})，准备强制重建")
                 self.cache_data = {}
                 return ""
             loaded_data = pkg.get('data', {})
@@ -463,20 +475,20 @@ class TdxDataProvider:
                 self.cache_data = loaded_data
             self._downcast_memory()
             last_date = pkg.get('date', '')
-            print(f"\n[数据中台] pkl 回退加载: {len(self.cache_data)} 只标的 (缓存日期: {last_date})")
+            _log.info(f"\n[数据中台] pkl 回退加载: {len(self.cache_data)} 只标的 (缓存日期: {last_date})")
             return last_date
         except (pickle.UnpicklingError, ValueError, TypeError, KeyError) as e:
             self.cache_data = {}
-            print(f"\n[数据中台] 读取缓存文件失败(格式异常)，已丢弃旧缓存并准备重建。原因: {e}", flush=True)
+            _log.error(f"\n[数据中台] 读取缓存文件失败(格式异常)，已丢弃旧缓存并准备重建。原因: {e}")
             try:
                 os.rename(self.cache_file, self.cache_file + '.corrupted')
-                print("[缓存] 缓存文件已损坏或无法读取")
+                _log.error("[缓存] 缓存文件已损坏或无法读取")
             except Exception:
                 pass
             return ""
         except Exception as e:
             self.cache_data = {}
-            print(f"\n[数据中台] 读取缓存文件失败，已丢弃旧缓存并准备重建。原因: {e}", flush=True)
+            _log.error(f"\n[数据中台] 读取缓存文件失败，已丢弃旧缓存并准备重建。原因: {e}")
             import traceback
             traceback.print_exc()
             return ""
@@ -493,15 +505,15 @@ class TdxDataProvider:
 
         if last_date == today and not force_refresh: return True
         if not force_refresh and self._is_before_930_today() and self._is_trading_day() and last_date:
-            print(f"[缓存] 最近一次更新早于 09:30（{last_date}），继续沿用上一交易日快照")
+            _log.info(f"[缓存] 最近一次更新早于 09:30（{last_date}），继续沿用上一交易日快照")
             return True
 
         total = len(codes)
         workers = 50 if self._offline else MARKET_SYNC_WORKERS
-        print(f"\n[数据中台] 阶段1: 同步日线 -> 目标 {total} 只 | 线程数 {workers} | {'离线本地' if self._offline else ('强制覆盖' if force_refresh else '增量/缓存')}")
+        _log.info(f"\n[数据中台] 阶段1: 同步日线 -> 目标 {total} 只 | 线程数 {workers} | {'离线本地' if self._offline else ('强制覆盖' if force_refresh else '增量/缓存')}")
         if self.tdx_vipdoc:
-            print(f"         数据源: 优先通达信本地 -> {self.tdx_vipdoc}")
-        print("         请稍候...")
+            _log.info(f"         数据源: 优先通达信本地 -> {self.tdx_vipdoc}")
+        _log.info("         请稍候...")
         completed, audit_log = 0, {}
         start_time = time.time()
         last_log_at = 0
@@ -522,7 +534,7 @@ class TdxDataProvider:
                         eta_msg = f" ETA {int(remaining_sec / 60)} min" if remaining_sec >= 60 else f" ETA {int(remaining_sec)} s"
                     else:
                         eta_msg = ""
-                    print(f" -> 同步进度: {percent}% [{completed}/{total}]{eta_msg}")
+                    _log.info(f" -> 同步进度: {percent}% [{completed}/{total}]{eta_msg}")
                     if progress_callback:
                         try:
                             progress_callback(completed, total, eta_msg)
@@ -535,80 +547,46 @@ class TdxDataProvider:
                 else:
                     audit_log.setdefault(status_msg, []).append(res_code)
         failed_count = sum(len(v) for v in audit_log.values())
-        print(f"\n[缓存] 阶段1完成：已同步 {len(self.cache_data)} 只标的 | 失败 {failed_count} | 耗时 {time.time()-start_time:.1f}s")
-        print(f"{'='*50}\n [内部审计报告] 数据对账单\n{'='*50}")
-        print(f" total: {total} | cached: {len(self.cache_data)} | failed: {failed_count}")
+        _log.error(f"\n[缓存] 阶段1完成：已同步 {len(self.cache_data)} 只标的 | 失败 {failed_count} | 耗时 {time.time()-start_time:.1f}s")
+        _log.info(f"{'='*50}\n [内部审计报告] 数据对账单\n{'='*50}")
+        _log.info(f" total: {total} | cached: {len(self.cache_data)} | failed: {failed_count}")
         if failed_count > 0:
             for reason, err_codes in sorted(audit_log.items(), key=lambda item: len(item[1]), reverse=True):
-                print(f"  - {reason}: {len(err_codes)} 只 (例: {', '.join(err_codes[:5])}...)")
-        print(f"{'='*50}")
-
-        print(f"\n[数据中台] 阶段2: 指标预计算 -> 共 {len(self.cache_data)} 只标的...")
-        try:
-            # ---- Polars 批量预算快速路径 ----
-            try:
-                from vcp.polars_engine import calculate_indicators_batch_pl
-                calculate_indicators_batch_pl(self.cache_data)
-            except ImportError:
-                # polars 未安装，使用 pandas 逐只计算
-                def _calc_one(item):
-                    _code, _df = item
-                    if _df is not None and len(_df) >= 10:
-                        try:
-                            VCPEngine.calculate_indicators(_df, include_chart=False)
-                        except Exception as e:
-                            print(f"[数据中台] [{_code}] 指标预计算失败: {e}")
-                items = list(self.cache_data.items())
-                max_workers = min(8, (os.cpu_count() or 4))
-                with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
-                    list(ex.map(_calc_one, items))
-            except Exception as e:
-                print(f"[数据中台] Polars 批量预计算失败，回退 pandas: {e}")
-                def _calc_one(item):
-                    _code, _df = item
-                    if _df is not None and len(_df) >= 10:
-                        try:
-                            VCPEngine.calculate_indicators(_df, include_chart=False)
-                        except Exception as e2:
-                            print(f"[数据中台] [{_code}] 指标预计算失败: {e2}")
-                items = list(self.cache_data.items())
-                max_workers = min(8, (os.cpu_count() or 4))
-                with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
-                    list(ex.map(_calc_one, items))
-        except Exception as e:
-            print(f"[数据中台] 指标预计算阶段出现全局异常: {e}")
-
-        print(f"[缓存] 阶段2完成：已刷新 {len(self.cache_data)} 只标的")
-
-        # 阶段2.5：float64→float32 降精度节省约 50% 数值内存
+                _log.info(f"  - {reason}: {len(err_codes)} 只 (例: {', '.join(err_codes[:5])}...)")
+        _log.info(f"{'='*50}")
+        # 阶段2: 跳过批量指标预算（按需计算更高效）
+        # 原因: 5000 只全量预算耗时 5-10 秒且霸占 GIL 导致 UI 卡顿，
+        #       而 evaluate_conditions/precompute_ready_pool 内部已有
+        #       'if entangle not in df.columns' 的按需计算兜底逻辑，
+        #       实际只有 RPS≥80 的几百只会被真正评估。
+        _log.info(f"[数据中台] 阶段2: 跳过批量指标预算(改为按需计算)，直接进入降精度...")
         self._downcast_memory()
 
-        print("[数据中台] 阶段3: 写入本地缓存...")
-        # ---- Parquet 双写（快速加载）----
+        _log.info("[数据中台] 阶段3: 写入本地缓存(Parquet)...")
+        # 主路径写 Parquet（体积更小、加载更快）
+        parquet_saved = False
         try:
             from vcp.polars_engine import save_cache_parquet
             save_cache_parquet(self.cache_data, today)
+            parquet_saved = True
         except ImportError:
-            pass
+            _log.error("[数据中台] polars 未安装，无法写入 Parquet 缓存")
         except Exception as e:
-            print(f"[数据中台] Parquet 写入失败(不影响 pickle): {e}")
-
-        # ---- pickle 写入（兼容回退）---
-        tmp_path = self.cache_file + '.tmp'
-        try:
-            with open(tmp_path, 'wb') as f:
-                pickle.dump({'date': today, 'data': self.cache_data, 'version': CACHE_VERSION}, f, protocol=4)
-            os.replace(tmp_path, self.cache_file)
-        except Exception as e:
-            if os.path.exists(tmp_path):
-                try:
-                    os.remove(tmp_path)
-                except Exception:
-                    pass
-            print(f"[数据中台] 缓存写入失败: {e}", flush=True)
+            _log.error(f"[数据中台] Parquet 写入失败: {e}")
             import traceback
             traceback.print_exc()
-        print(f"[数据中台] 阶段3 完成 -> 缓存已保存 (日期: {today})\n")
+
+        # #13: Parquet 保存失败时，fallback 写一份 pkl 作为保底
+        if not parquet_saved:
+            try:
+                import pickle
+                pkl_path = os.path.join(self._cache_dir, 'cache_data_fallback.pkl')
+                with open(pkl_path, 'wb') as f:
+                    pickle.dump({'date': today, 'data': self.cache_data}, f, protocol=4)
+                _log.warning(f"[数据中台] Parquet 失败,已 fallback 写入 pkl: {pkl_path}")
+            except Exception as pkl_e:
+                _log.error(f"[数据中台] pkl fallback 也失败: {pkl_e}")
+        _log.info(f"[数据中台] 阶段3 完成 -> 缓存已保存 (日期: {today})\n")
         return True
 
     def get_data(self, code):
@@ -657,7 +635,7 @@ class TdxDataProvider:
                         self.cache_data[code] = full_df
                     return full_df
         except Exception as e:
-            print(f"[K线 {code}] 联网补全失败，继续使用缓存: {e}")
+            _log.error(f"[K线 {code}] 联网补全失败，继续使用缓存: {e}")
         return existing_df
 
     def has_cache(self):
@@ -671,39 +649,57 @@ class TdxDataProvider:
         if online and self._offline:
             self._offline = False
             if not self.server_pool:
-                print("[网络] 正在切换到联网模式，启动测速...")
+                _log.info("[网络] 正在切换到联网模式，启动测速...")
                 self.server_pool = self._auto_select_best_servers()
-            print("[网络] ✅ 已切换到联网模式")
+            _log.info("[网络] ✅ 已切换到联网模式")
         elif not online and not self._offline:
             self._offline = True
-            print("[网络] 已切换到离线模式")
+            _log.info("[网络] 已切换到离线模式")
+
+    def force_reconnect_servers(self):
+        """强制重新测速并重置当前所有线程的 API 连接，选取 Top5 最快服务器"""
+        if self._offline:
+            _log.info("[网络] 当前为离线模式，无法测速。")
+            return
+            
+        _log.info("[网络] 🌐 强制重新联网测速中...")
+        new_pool = self._auto_select_best_servers()
+        if not new_pool:
+            _log.error("[网络] 测速失败，暂保留原有服务器池。")
+            return
+            
+        self.server_pool = new_pool
+        
+        # 清除主线程的 API 以强制重建，并在下一次请求时重新连接
+        if hasattr(self.thread_local, 'api'):
+            try:
+                self.thread_local.api.disconnect()
+            except Exception:
+                pass
+            delattr(self.thread_local, 'api')
+            
+        _log.info("[网络] ✅ 强制重连成功，已刷新优质节点。")
 
     def test_network(self, timeout=3):
-        """测试是否能连通通达信行情服务器（从候选池随机抽取多个并行检测）"""
+        """测试是否能连通通达信行情服务器（按序轻量化测试，避免启动期因并发导致内存越界崩溃）"""
         candidates = [
             ('119.147.212.81', 7709), ('124.71.187.122', 7709), ('106.120.74.86', 7709),
             ('122.51.120.217', 7709), ('121.36.54.217', 7709), ('124.71.85.110', 7709),
             ('114.80.149.19', 7709), ('114.80.149.22', 7709), ('115.238.56.198', 7709),
             ('180.153.18.17', 7709), ('218.108.47.69', 7709), ('61.135.142.88', 7709),
         ]
-        # 随机打乱后取前6个并行测试，任一成功即可
+        import random
+        import socket
         random.shuffle(candidates)
-        test_list = candidates[:6]
-        def _try_connect(ip_port):
-            ip, port = ip_port
+        for ip, port in candidates[:3]:
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                s.settimeout(timeout)
+                s.settimeout(0.5)
                 s.connect((ip, port))
                 s.close()
                 return True
             except Exception:
-                return False
-        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
-            futures = [executor.submit(_try_connect, addr) for addr in test_list]
-            for f in concurrent.futures.as_completed(futures):
-                if f.result():
-                    return True
+                pass
         return False
 
     def get_all_valid_data(self):
@@ -714,7 +710,7 @@ class TdxDataProvider:
     def fetch_realtime_quotes_batch(self, codes, _retry_once=True):
         """Fetch realtime quotes in batches of up to 80 symbols."""
         if self._offline or not self.server_pool:
-            print("[实时报价] 离线模式或无服务器，无法拉取实时报价")
+            _log.info("[实时报价] 离线模式或无服务器，无法拉取实时报价")
             return {}
         api = self._get_thread_api()
         result = {}
@@ -737,6 +733,7 @@ class TdxDataProvider:
                             'low':    q.get('low',   0),
                             'close':  q.get('price', 0),
                             'volume': q.get('vol',   0),
+                            'amount': q.get('amount', 0),
                             'last_close': q.get('last_close', 0),
                         }
             except Exception:
@@ -751,9 +748,9 @@ class TdxDataProvider:
                     pass
                 delattr(self.thread_local, 'api')
             if _retry_once:
-                print("[实时报价] 首轮批次失败，已重建 API 连接并立即重试")
+                _log.error("[实时报价] 首轮批次失败，已重建 API 连接并立即重试")
                 return self.fetch_realtime_quotes_batch(codes, _retry_once=False)
-            print("[实时报价] 全部批次失败，已清除 API 缓存，下次将重新连接")
+            _log.error("[实时报价] 全部批次失败，已清除 API 缓存，下次将重新连接")
         return result
 
     def get_realtime_quotes(self, codes):
@@ -765,9 +762,19 @@ class TdxDataProvider:
         for code in codes:
             if code in raw_res:
                 q = raw_res[code]
-                cur = q.get('close', 0)
-                last_close = q.get('last_close', 0)
-                op = q.get('open', 0)
+                cur = float(q.get('close', 0) or 0)
+                last_close = float(q.get('last_close', 0) or 0)
+                op = float(q.get('open', 0) or 0)
+                
+                # --- 兜底检查：防御 Pytdx 零值Bug (停牌/未开盘/断流) ---
+                if last_close <= 0:
+                    hist_df = self.cache_data.get(code)
+                    if hist_df is not None and len(hist_df) > 0:
+                        last_close = float(hist_df.iloc[-1]['close'])
+                        
+                if cur <= 0 and last_close > 0:
+                    cur = last_close
+
                 # 【修复】涨幅: 使用标准算法 (现价 - 昨收) / 昨收 * 100
                 if last_close > 0:
                     pct = ((cur - last_close) / last_close * 100)

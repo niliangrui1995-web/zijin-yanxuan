@@ -1,28 +1,49 @@
 import sys
 import os
 import io
+import faulthandler
 
 # pythonw.exe 没有控制台, stdout/stderr 可能为 None → print() 会崩溃
 # 安全兜底: 重定向到日志文件
-if sys.stdout is None or sys.stderr is None:
-    _log_dir = os.path.join(os.path.dirname(__file__), 'data', 'Cache')
-    os.makedirs(_log_dir, exist_ok=True)
-    _log = open(os.path.join(_log_dir, 'vcp_launch.log'), 'w', encoding='utf-8')
-    if sys.stdout is None:
-        sys.stdout = _log
-    if sys.stderr is None:
-        sys.stderr = _log
-# 即使有控制台, 也强制 UTF-8 编码避免 GBK 编码错误
-elif hasattr(sys.stdout, 'buffer'):
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+# Redirection removed for debugging!
 
 
 def main():
     # 增加高分屏支持
     os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
 
-    from PyQt6.QtWidgets import QApplication
+    from PyQt6.QtWidgets import QApplication, QMessageBox
+    import traceback
+
+    def ui_exception_hook(exc_type, exc_value, exc_traceback):
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+
+        tb_list = traceback.format_exception(exc_type, exc_value, exc_traceback)
+        tb_text = "".join(tb_list)
+        
+        if sys.stderr:
+            sys.stderr.write(f"Uncaught exception:\\n{tb_text}\\n")
+            sys.stderr.flush()
+
+        friendly_msg = f"⚙️ 程序运行时发生未处理的系统异常！\\n\\n【错误类型】: {exc_type.__name__}\\n【错误提示】: {str(exc_value)}\\n\\n系统不会因此立刻崩溃，但某些功能可能无法按预期运行。您可以尝试继续使用，或者重启客户端。"
+        
+        app = QApplication.instance()
+        if app:
+            msg_box = QMessageBox()
+            msg_box.setIcon(QMessageBox.Icon.Critical)
+            msg_box.setWindowTitle("⚠️ 系统故障 (Human Readable Error)")
+            msg_box.setText(friendly_msg)
+            msg_box.setDetailedText(tb_text)
+            # 兼容新主题皮肤
+            msg_box.setStyleSheet(app.styleSheet())
+            msg_box.exec()
+        else:
+            print("Crash early before QApplication creation.")
+
+    sys.excepthook = ui_exception_hook
+
     app = QApplication(sys.argv)
 
     # === 单实例锁：防止多开 ===

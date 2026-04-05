@@ -16,6 +16,9 @@ import numpy as np
 import pandas as pd
 from collections import defaultdict
 
+from core.logger import get_logger
+_log = get_logger(__name__)
+
 
 class SectorManager:
     """板块管理器：解析板块映射，计算板块 RPS"""
@@ -54,7 +57,7 @@ class SectorManager:
 
         # 汇总所有板块名
         self.all_sector_names = sorted(self.sector_to_codes.keys())
-        print(f"[板块管理] 加载完成: {len(self.all_sector_names)} 个板块 | "
+        _log.info(f"[板块管理] 加载完成: {len(self.all_sector_names)} 个板块 | "
               f"行业映射 {self._hy_count} 条 | 概念板块 {self._gn_count} 个")
 
     # ---------- 解析通达信行业分类文件 ----------
@@ -66,7 +69,7 @@ class SectorManager:
         """
         self._hy_count = 0
         if not os.path.exists(filepath):
-            print(f"[板块管理] ⚠ 未找到行业文件: {filepath}")
+            _log.warning(f"[板块管理] ⚠ 未找到行业文件: {filepath}")
             return
 
         # 读取 incon.dat 获取行业代码→行业名称映射
@@ -91,8 +94,7 @@ class SectorManager:
                         if len(parts) >= 2:
                             hy_name_map[parts[0]] = parts[1]
             except Exception as e:
-                print(f"[板块管理] ⚠ 解析 incon.dat 失败: {e}")
-
+                _log.error(f"[板块管理] ⚠ 解析 incon.dat 失败: {e}")
         try:
             with open(filepath, 'r', encoding='gbk', errors='ignore') as f:
                 for line in f:
@@ -120,8 +122,7 @@ class SectorManager:
                     self.sector_to_codes[sector_name].append(full_code)
                     self._hy_count += 1
         except Exception as e:
-            print(f"[板块管理] ⚠ 解析行业文件失败: {e}")
-
+            _log.error(f"[板块管理] ⚠ 解析行业文件失败: {e}")
     # ---------- 解析概念板块文件 ----------
     def _parse_concepts(self, filepath):
         """解析 infoharbor_block.dat → 概念板块映射
@@ -132,14 +133,34 @@ class SectorManager:
         """
         self._gn_count = 0
         if not os.path.exists(filepath):
-            print(f"[板块管理] ⚠ 未找到概念板块文件: {filepath}")
+            _log.warning(f"[板块管理] ⚠ 未找到概念板块文件: {filepath}，尝试 fallback")
+            
+        text = ""
+        try:
+            if os.path.exists(filepath):
+                with open(filepath, 'rb') as f:
+                    raw = f.read()
+                text = raw.decode('gbk', errors='replace')
+        except Exception as e:
+            _log.error(f"[板块管理] ⚠ 读取 {filepath} 失败: {e}，尝试 fallback")
+
+        if not text:
+            fallback_path = os.path.join(self.tdx_root, 'T0002', 'hq_cache', 'block.dat')
+            if os.path.exists(fallback_path):
+                try:
+                    with open(fallback_path, 'rb') as f:
+                        raw = f.read()
+                    text = raw.decode('gbk', errors='replace')
+                    _log.info(f"[板块管理] 成功读取备用文件: {fallback_path}")
+                except Exception as e:
+                    _log.error(f"[板块管理] ⚠ 备用文件 {fallback_path} 读取失败: {e}")
+            else:
+                _log.warning(f"[板块管理] ⚠ 备用文件也不存在: {fallback_path}")
+
+        if not text:
             return
 
         try:
-            with open(filepath, 'rb') as f:
-                raw = f.read()
-            text = raw.decode('gbk', errors='ignore')
-
             # 按 #GN_ 分割为各板块段落
             sections = re.split(r'(?=#GN_)', text)
             for section in sections:
@@ -171,8 +192,7 @@ class SectorManager:
 
                 self._gn_count += 1
         except Exception as e:
-            print(f"[板块管理] ⚠ 解析概念板块文件失败: {e}")
-
+            _log.error(f"[板块管理] ⚠ 解析概念板块文件失败: {e}")
     # ---------- 查询接口 ----------
     def get_sectors(self, code):
         """返回该股票所属的所有板块名（行业+概念）
@@ -216,8 +236,7 @@ class SectorManager:
         except ImportError:
             pass  # polars 未安装
         except Exception as e:
-            print(f"[板块管理] Polars 板块 RPS 计算失败，回退 numpy: {e}")
-
+            _log.error(f"[板块管理] Polars 板块 RPS 计算失败，回退 numpy: {e}")
         # ---- numpy 原始路径（fallback）----
         target_dt = pd.to_datetime(target_date)
         max_lookback = max(periods) + 5  # 多留几天余量

@@ -48,11 +48,11 @@ class BackgroundWorker(QRunnable):
             tb = traceback.format_exc()
             from core.logger import get_logger
             get_logger(__name__).error(f"[任务调度] Worker 异常: {e}\n{tb}")
-            if not self._is_cancelled:
-                try:
-                    self.signals.error.emit(str(e))
-                except RuntimeError:
-                    pass  # 信号对象已被销毁，安全忽略
+            # 无论是否被取消都 emit error，确保 _cleanup 触发清理 active_workers
+            try:
+                self.signals.error.emit(str(e))
+            except RuntimeError:
+                pass  # 信号对象已被销毁，安全忽略
 
 
 class GlobalTaskManager(QObject):
@@ -109,10 +109,11 @@ class GlobalTaskManager(QObject):
         """
         worker = BackgroundWorker(fn, *args, **kwargs)
 
+        from PyQt6.QtCore import Qt
         if on_success:
-            worker.signals.finished.connect(on_success)
+            worker.signals.finished.connect(on_success, type=Qt.ConnectionType.QueuedConnection)
         if on_error:
-            worker.signals.error.connect(on_error)
+            worker.signals.error.connect(on_error, type=Qt.ConnectionType.QueuedConnection)
 
         # 完成后清理 active_workers
         tid = task_id or str(uuid.uuid4())[:8]

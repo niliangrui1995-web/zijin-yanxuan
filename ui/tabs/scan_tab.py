@@ -3,26 +3,27 @@ import datetime
 import json
 import pandas as pd
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
+    QWidget, QVBoxLayout, QHBoxLayout, QTableView,
     QHeaderView, QPushButton, QLabel, QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox,
-    QAbstractItemView, QMessageBox, QDialog, QFileDialog, QMenu, QToolButton
+    QAbstractItemView, QDialog, QFileDialog, QToolButton
 )
-from PyQt6.QtCore import Qt, QTimer
+from ui.components.toast_widget import show_toast
+from PyQt6.QtCore import Qt, QTimer, QModelIndex
 from PyQt6.QtGui import QColor
 from ui.theme import (
     COLOR_RISE, COLOR_RISE_STRONG, COLOR_FALL, COLOR_FALL_STRONG, COLOR_FLAT,
     COLOR_WARNING, STATUS_APPROACHING, STATUS_INACTIVE, STATUS_VCP,
-    STATUS_BREAKOUT, SCORE_EXCELLENT, SCORE_GOOD, SCORE_NORMAL, SCORE_LOW,
-    COLOR_SUCCESS, COLOR_ERROR, apply_rise_fall_color, apply_score_color
+    STATUS_BREAKOUT, SCORE_EXCELLENT, SCORE_GOOD, SCORE_NORMAL, SCORE_LOW
 )
 
-from ui.components import NumericTableWidgetItem
-from ui.workers import ScanWorker
+from ui.models.table_models import StockTableModel, RtSortFilterProxyModel, StockItemDelegate
+from ui.workers.scan_worker import ScanWorker
 from vcp.engine import VCPParams
 from core.event_bus import event_bus
+from core.event_types import DataEvent
 from core.task_manager import task_manager
 from core.logger import get_logger
-from vcp.constants import SPECIAL_LATEST_DATA
+from ui.viewmodels.watchlist_vm import watchlist_vm
 from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
@@ -43,32 +44,42 @@ class ScanTab(BaseStockTab):
         
         # 启动时自动加载上次缓存的扫描结果
         QTimer.singleShot(300, self._load_scan_cache)
+        
+        event_bus.sig_data_updated.connect(self._on_global_data)
+
+    def _on_global_data(self, evt_type: str, data: object):
+        if evt_type == DataEvent.RT_QUOTES_BROADCAST.value:
+            if hasattr(self, 'source_model') and self.source_model:
+                self.source_model.update_quotes(data)
 
     def _init_settings_widgets(self):
-        """初始化扫描策略的内部存储控件，避免抛出 AttributeError"""
+        """初始化扫描策略的内部存储控件，从 QSettings 恢复上次参数 (#8)"""
+        from PyQt6.QtCore import QSettings
+        self._settings = QSettings("VCPHunter", "ScanTab")
+
         self.spn_scan_rps = QSpinBox()
         self.spn_scan_rps.setRange(50, 99)
-        self.spn_scan_rps.setValue(80)
+        self.spn_scan_rps.setValue(self._settings.value("rps_threshold", 80, type=int))
 
         self.spn_scan_amp = QDoubleSpinBox()
         self.spn_scan_amp.setRange(0.1, 1.5)
         self.spn_scan_amp.setSingleStep(0.05)
-        self.spn_scan_amp.setValue(0.45)
+        self.spn_scan_amp.setValue(self._settings.value("amp_threshold", 0.45, type=float))
 
         self.spn_scan_ma_bind = QDoubleSpinBox()
         self.spn_scan_ma_bind.setRange(0.01, 0.2)
         self.spn_scan_ma_bind.setSingleStep(0.01)
-        self.spn_scan_ma_bind.setValue(0.05)
+        self.spn_scan_ma_bind.setValue(self._settings.value("ma_bind_threshold", 0.05, type=float))
 
         self.spn_scan_amount = QDoubleSpinBox()
         self.spn_scan_amount.setRange(0.1, 50.0)
         self.spn_scan_amount.setSingleStep(0.5)
-        self.spn_scan_amount.setValue(1.5)
+        self.spn_scan_amount.setValue(self._settings.value("min_amount", 0.8, type=float))
 
         self.spn_scan_high250 = QDoubleSpinBox()
         self.spn_scan_high250.setRange(0.01, 1.0)
         self.spn_scan_high250.setSingleStep(0.05)
-        self.spn_scan_high250.setValue(0.10)
+        self.spn_scan_high250.setValue(self._settings.value("high_250_threshold", 0.10, type=float))
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -107,14 +118,18 @@ class ScanTab(BaseStockTab):
         stb_layout.addWidget(btn_scan_settings)
         layout.addWidget(scan_toolbar)
 
-        # 表格控件
-        self.table_scan = QTableWidget()
-        self.table_scan.setColumnCount(12)
-        headers = ["序号", "代码", "日期", "名称", "收盘价", "评分", "RPS强度", "市值", "距突破", "突破状态", "区间振幅", "热门板块"]
-        self.table_scan.setHorizontalHeaderLabels(headers)
+        # 表格控件 (MVC)
+        self.columns = ["代码", "名称", "现价", "涨幅%", "触发日期", "评分", "RPS强度", "市值", "距突破", "突破状态", "区间振幅", "热门板块"]
+        self.source_model = StockTableModel(self.columns)
+        self.proxy_model = RtSortFilterProxyModel(self)
+        self.proxy_model.setSourceModel(self.source_model)
+
+        self.table_scan = QTableView()
+        self.table_scan.setModel(self.proxy_model)
+        self.table_scan.setItemDelegate(StockItemDelegate(self.table_scan))
         
         # 表格自适应和交互设置
-        self.table_scan.verticalHeader().setVisible(False)      
+        self.table_scan.verticalHeader().setVisible(True)      
         self.table_scan.setAlternatingRowColors(True)           
         self.table_scan.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows) 
         self.table_scan.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)    
@@ -122,11 +137,8 @@ class ScanTab(BaseStockTab):
         self.table_scan.setShowGrid(False)                      
         self.table_scan.setStyleSheet(self.table_scan.styleSheet() + "::item { padding: 0px 10px; }")
         
-        # 绑定双击事件:广播调取K线图信号 (交由主窗口或专门的图表控制器来处理)
-        self.table_scan.itemDoubleClicked.connect(
-            lambda item: event_bus.sig_show_kline.emit(self.table_scan.item(item.row(), 1).text())
-            if self.table_scan.item(item.row(), 1) else None
-        )
+        # 绑定双击事件:广播调取K线图信号，带上前后文以便K线图能够「上一只」「下一只」滑动
+        self.table_scan.doubleClicked.connect(self._handle_show_kline)
         
         # 右键菜单
         self.table_scan.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -136,55 +148,111 @@ class ScanTab(BaseStockTab):
         original_keypress = self.table_scan.keyPressEvent
         def table_key_press(event):
             if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
-                curr_item = self.table_scan.currentItem()
-                if curr_item:
-                    code_item = self.table_scan.item(curr_item.row(), 1)
-                    if code_item:
-                        event_bus.sig_show_kline.emit(code_item.text())
+                curr_idx = self.table_scan.currentIndex()
+                if curr_idx.isValid():
+                    self._handle_show_kline(curr_idx)
                 event.accept()
             else:
                 original_keypress(event)
         self.table_scan.keyPressEvent = table_key_press
 
-        # 列宽策略
-        scan_weights = [0.5, 0.8, 0.9, 1.2, 0.8, 1.0, 1.0, 0.7, 0.9, 1.0, 0.7, 2.5]
+        # 列宽策略 (QSettings 持久化)
         header = self.table_scan.horizontalHeader()
         header.setStretchLastSection(False)
+        header.setSectionsClickable(True)
+        self.table_scan.setSortingEnabled(True)
+
+        scan_weights = [0.8, 0.9, 0.8, 0.8, 1.2, 1.0, 1.0, 0.7, 0.9, 1.0, 0.7, 2.5]
         for col_idx, w in enumerate(scan_weights):
             header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
             self.table_scan.setColumnWidth(col_idx, int(w * 80))
         header.setSectionResizeMode(11, QHeaderView.ResizeMode.Stretch)
+
+        # 绑定防抖自动保存与恢复配置
+        self.bind_header_persistence(self.table_scan, "header_state")
         
         # 行高 (加强呼吸感)
         self.table_scan.verticalHeader().setDefaultSectionSize(40)
-        self.table_scan.setSortingEnabled(True)
-        self.table_scan.horizontalHeader().setSortIndicatorShown(True)
-        self.table_scan.horizontalHeader().sectionClicked.connect(
-            lambda: QTimer.singleShot(50, lambda: self._renumber_column(self.table_scan, 0))
-        )
 
         layout.addWidget(self.table_scan)
 
-    def _on_search_text_changed(self, text):
-        from ui.components import SearchFilter
-        SearchFilter.filter_table(self.table_scan, text, code_col=1, name_col=3)
+    def _handle_show_kline(self, index=None):
+        if index is None or not index.isValid(): return
+        model = index.model()
+        row = index.row()
+        code_idx = model.index(row, 0)
+        current_code = model.data(code_idx, Qt.ItemDataRole.DisplayRole)
+        if not current_code: return
+        
+        code_list = []
+        visual_rows = []
+        
+        # 构建当前经过筛选后(未隐藏)的股票列表，支持在K线中翻页
+        for r in range(model.rowCount()):
+            c_code = model.data(model.index(r, 0), Qt.ItemDataRole.DisplayRole)
+            c_name = model.data(model.index(r, 1), Qt.ItemDataRole.DisplayRole)
+            if c_code:
+                # Pull full user dict for that row
+                row_data = model.data(model.index(r, 0), Qt.ItemDataRole.UserRole)
+                if not isinstance(row_data, dict):
+                    row_data = {'代码': c_code, '名称': c_name}
+                    
+                code_list.append(row_data)
+                visual_rows.append(r)
+                    
+        try:
+            current_idx = visual_rows.index(row)
+            event_bus.sig_show_kline_with_list.emit(current_code, code_list, current_idx)
+        except ValueError:
+            event_bus.sig_show_kline.emit(current_code)
 
-    def _renumber_column(self, table, col_idx):
-        for r in range(table.rowCount()):
-            item = table.item(r, col_idx)
-            if item:
-                item.setText(str(r + 1))
+    def _on_search_text_changed(self, text):
+        self.proxy_model.setFilterText(text)
 
     def _show_scan_settings(self):
         dlg = QDialog(self)
         dlg.setWindowTitle("⚙ 扫描策略参数")
-        dlg.setFixedSize(360, 300)
+        dlg.setFixedSize(400, 390)
         dlg.setStyleSheet("QDialog { background-color: #151820; } QLabel { color: #C9CDD4; font-size: 13pt; }")
         
         form = QVBoxLayout(dlg)
         form.setContentsMargins(20, 20, 20, 20)
         form.setSpacing(12)
-        
+
+        # #16: 策略预设下拉框
+        preset_row = QHBoxLayout()
+        preset_row.addWidget(QLabel("预设方案:"))
+        combo_preset = QComboBox()
+        combo_preset.setFixedHeight(28)
+        combo_preset.setStyleSheet("QComboBox { background: #1E2330; color: #C9CDD4; border: 1px solid #252A36; }")
+
+        # 内置预设
+        _builtin_presets = {
+            "VCP 标准": {"rps": 80, "amp": 0.45, "ma_bind": 0.05, "amount": 0.8, "high250": 0.10},
+            "激进 (低门槛)": {"rps": 60, "amp": 0.60, "ma_bind": 0.08, "amount": 0.3, "high250": 0.20},
+            "保守 (严筛选)": {"rps": 90, "amp": 0.30, "ma_bind": 0.03, "amount": 2.0, "high250": 0.08},
+        }
+        # 从 QSettings 加载用户自定义预设
+        import json
+        user_presets_raw = self._settings.value("user_presets", "{}")
+        try:
+            user_presets = json.loads(user_presets_raw) if isinstance(user_presets_raw, str) else {}
+        except Exception:
+            user_presets = {}
+        all_presets = {**_builtin_presets, **user_presets}
+
+        combo_preset.addItem("-- 选择预设 --")
+        for preset_name in all_presets:
+            combo_preset.addItem(preset_name)
+        preset_row.addWidget(combo_preset)
+
+        btn_save_preset = QPushButton("💾 保存")
+        btn_save_preset.setFixedSize(60, 28)
+        btn_save_preset.setProperty("class", "secondary")
+        preset_row.addWidget(btn_save_preset)
+        form.addLayout(preset_row)
+
+        # 参数控件行
         rows = [
             ("RPS 阈值:", self.spn_scan_rps, ""),
             ("振幅上限:", self.spn_scan_amp, "← 0.45=45%"),
@@ -200,6 +268,39 @@ class ScanTab(BaseStockTab):
             if hint:
                 r.addWidget(QLabel(hint))
             form.addLayout(r)
+
+        def _on_preset_selected(idx):
+            name = combo_preset.currentText()
+            preset = all_presets.get(name)
+            if not preset:
+                return
+            self.spn_scan_rps.setValue(int(preset.get("rps", 80)))
+            self.spn_scan_amp.setValue(float(preset.get("amp", 0.45)))
+            self.spn_scan_ma_bind.setValue(float(preset.get("ma_bind", 0.05)))
+            self.spn_scan_amount.setValue(float(preset.get("amount", 0.8)))
+            self.spn_scan_high250.setValue(float(preset.get("high250", 0.10)))
+
+        combo_preset.currentIndexChanged.connect(_on_preset_selected)
+
+        def _on_save_preset():
+            from PyQt6.QtWidgets import QInputDialog
+            name, ok = QInputDialog.getText(dlg, "保存预设", "预设名称:")
+            if ok and name.strip():
+                new_preset = {
+                    "rps": self.spn_scan_rps.value(),
+                    "amp": self.spn_scan_amp.value(),
+                    "ma_bind": self.spn_scan_ma_bind.value(),
+                    "amount": self.spn_scan_amount.value(),
+                    "high250": self.spn_scan_high250.value(),
+                }
+                user_presets[name.strip()] = new_preset
+                self._settings.setValue("user_presets", json.dumps(user_presets, ensure_ascii=False))
+                # 刷新下拉列表
+                if name.strip() not in [combo_preset.itemText(i) for i in range(combo_preset.count())]:
+                    combo_preset.addItem(name.strip())
+                all_presets[name.strip()] = new_preset
+
+        btn_save_preset.clicked.connect(_on_save_preset)
             
         form.addStretch()
         btn_ok = QPushButton("确定")
@@ -224,8 +325,7 @@ class ScanTab(BaseStockTab):
         # 广播 UI 状态更新让主窗口锁定按钮
         event_bus.sig_task_progress.emit("scan", 0, "start")
         
-        self.table_scan.setSortingEnabled(False)
-        self.table_scan.setRowCount(0)
+        self.source_model.update_data([])
 
         params = VCPParams(
             rps_threshold=self.spn_scan_rps.value(),
@@ -234,6 +334,13 @@ class ScanTab(BaseStockTab):
             high_250_threshold=self.spn_scan_high250.value(),
             min_amount_20d=self.spn_scan_amount.value() * 1e8,
         )
+
+        # #8: 持久化当前参数到 QSettings，下次启动自动恢复
+        self._settings.setValue("rps_threshold", self.spn_scan_rps.value())
+        self._settings.setValue("amp_threshold", self.spn_scan_amp.value())
+        self._settings.setValue("ma_bind_threshold", self.spn_scan_ma_bind.value())
+        self._settings.setValue("min_amount", self.spn_scan_amount.value())
+        self._settings.setValue("high_250_threshold", self.spn_scan_high250.value())
         
         self.worker = ScanWorker(self.data_provider, self.engine, sd, ed, params)
         self.worker.progress.connect(lambda p, m: event_bus.sig_task_progress.emit("scan", p, m))
@@ -273,16 +380,10 @@ class ScanTab(BaseStockTab):
             event_bus.sig_system_log.emit("error", f"数据整理失败: {e}")
             final_list = results
             
-        fav_codes = set()
-        if os.path.exists(SPECIAL_LATEST_DATA):
-            try:
-                with open(SPECIAL_LATEST_DATA, 'r', encoding='utf-8') as f:
-                    fav_codes = set(json.load(f).keys())
-            except Exception: pass
+        fav_codes = set(watchlist_vm.get_all_codes())
+        formatted_list = []
 
         try:
-            self.table_scan.setSortingEnabled(False)
-            self.table_scan.setRowCount(len(final_list))
             for row_idx, row_data in enumerate(final_list):
                 code_str = str(row_data.get('代码', ''))
                 name_str = str(row_data.get('名称', ''))
@@ -293,90 +394,72 @@ class ScanTab(BaseStockTab):
                     try: return fmt.format(float(val))
                     except (ValueError, TypeError): return str(val)
 
-                display_row = [
-                    str(row_idx + 1), code_str, str(row_data.get('触发日期', '')), name_str,
-                    _safe_float_str(row_data.get('收盘', 0)), str(row_data.get('评分', '')),
-                    str(row_data.get('RPS强度', '')), str(row_data.get('市值', '')),
-                    str(row_data.get('距突破', '')), str(row_data.get('突破状态', '')),
-                    str(row_data.get('区间振幅', '')), str(row_data.get('热点板块', '-'))
-                ]
+                status = str(row_data.get('突破状态', ''))
+                row_style = ""
+                if "放量突破" in status:
+                    row_style = "breakout"
+                elif "临近" in status:
+                    row_style = "approaching"
+                elif "假突破" in status or "缩量" in status:
+                    row_style = "fake_breakout"
+                elif "关注" in name_str or "⭐" in name_str:
+                    row_style = "approaching"
+                    
+                # Format score cleanly
+                score_str = str(row_data.get('评分', ''))
+                try:
+                    if float(score_str) >= 90: score_str = f"⭐ {score_str}"
+                except (ValueError, TypeError): pass
+
+                formatted_row = {
+                    "代码": code_str,
+                    "名称": name_str,
+                    "现价": _safe_float_str(row_data.get('收盘', 0)),
+                    "涨幅%": "--", # Historical static scan lacks intraday % change originally
+                    "触发日期": str(row_data.get('触发日期', '')),
+                    "评分": score_str,
+                    "RPS强度": str(row_data.get('RPS强度', '')),
+                    "市值": str(row_data.get('市值', '')),
+                    "距突破": str(row_data.get('距突破', '')),
+                    "突破状态": status,
+                    "区间振幅": str(row_data.get('区间振幅', '')),
+                    "热门板块": str(row_data.get('热点板块', '-')),
+                    "_row_style": row_style, # Using background dye injected to StockTableModel
+                }
+                # Keep original data nested so double clicks can retrieve it
+                for k, v in row_data.items():
+                    if k not in formatted_row:
+                        formatted_row[k] = v
+                        
+                formatted_list.append(formatted_row)
                 
-                for col_idx, text in enumerate(display_row):
-                    if col_idx in (0, 4, 5, 6, 7, 8, 10): 
-                        item = NumericTableWidgetItem(text)
-                    else:
-                        item = QTableWidgetItem(text)
-                    item.setForeground(QColor(COLOR_FLAT))
-                    
-                    if col_idx == 0:
-                        item.setData(Qt.ItemDataRole.UserRole, row_data)
-                    
-                    if col_idx in [0, 4, 5, 6, 7, 8, 10]:
-                        item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                    elif col_idx in [3, 11]:
-                        item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-                    else:
-                        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-                    
-                    # 着色
-                    if col_idx == 3 and text.startswith("⭐ "):
-                        item.setForeground(QColor(STATUS_APPROACHING))
-                    elif col_idx == 5:
-                        try:
-                            score = float(text)
-                            if score >= 90:
-                                item.setText(f"⭐ {text}"); item.setForeground(QColor(STATUS_APPROACHING))
-                                font = item.font(); font.setBold(True); item.setFont(font)
-                            elif score >= 80: item.setForeground(QColor(STATUS_APPROACHING))
-                            elif score < 70: item.setForeground(QColor(STATUS_INACTIVE))
-                        except Exception: pass
-                    elif col_idx == 8:
-                        try:
-                            val = float(text.replace('%', '').replace('+', ''))
-                            self.apply_pct_color(item, val)
-                        except Exception: pass
-                    elif col_idx == 9:
-                        if "放量突破" in text:
-                            item.setText(f"🚀 {text}"); item.setForeground(QColor(COLOR_RISE_STRONG))
-                            font = item.font(); font.setBold(True); item.setFont(font)
-                        elif "临近" in text:
-                            item.setText(f"⏳ {text}"); item.setForeground(QColor(COLOR_WARNING))
-                        elif "假突破" in text:
-                            item.setText(f"⚠️ {text}"); item.setForeground(QColor(COLOR_FALL_STRONG))
-
-                    self.table_scan.setItem(row_idx, col_idx, item)
-                    
-                # 突破整行暗红
-                if "放量突破" in str(row_data.get('突破状态', '')):
-                    for c_h in range(12):
-                        cell = self.table_scan.item(row_idx, c_h)
-                        if cell: cell.setBackground(QColor(232, 93, 93, 20))
-
-            self.table_scan.setSortingEnabled(True) 
+            self.source_model.update_data(formatted_list)
         except Exception as e:
             event_bus.sig_system_log.emit("error", f"渲染表格错误: {e}")
-            self.table_scan.setSortingEnabled(True)
 
     def export_table_to_excel(self):
-        if self.table_scan.rowCount() == 0:
-            QMessageBox.information(self, "提示", "当前表格为空,无法导出")
+        proxy = self.proxy_model
+        if proxy.rowCount() == 0:
+            show_toast("当前表格为空,无法导出", "warning", self)
             return
         path, _ = QFileDialog.getSaveFileName(self, "导出扫描结果", f"扫描结果_{datetime.date.today().strftime('%Y%m%d')}.xlsx", "Excel Files (*.xlsx)")
         if not path: return
         try:
-            headers = [self.table_scan.horizontalHeaderItem(c).text() for c in range(self.table_scan.columnCount())]
+            # Reconstruct table from Proxy Model
+            headers = self.columns
             rows = []
-            for r in range(self.table_scan.rowCount()):
+            for r in range(proxy.rowCount()):
                 row = []
-                for c in range(self.table_scan.columnCount()):
-                    item = self.table_scan.item(r, c)
-                    row.append(item.text() if item else "")
+                for c in range(len(headers)):
+                    idx = proxy.index(r, c)
+                    val = proxy.data(idx, Qt.ItemDataRole.DisplayRole)
+                    row.append(val if val else "")
                 rows.append(row)
             df = pd.DataFrame(rows, columns=headers)
             df.to_excel(path, index=False, engine='openpyxl')
-            event_bus.sig_system_log.emit("info", f"✅ 已导出 {len(rows)} 条扫描记录至 {path}")
+            show_toast(f"✅ 已导出 {len(df)} 条扫描记录至 {path}", "success", self)
         except Exception as e:
-            QMessageBox.warning(self, "导出失败", str(e))
+            show_toast(f"导出失败: {str(e)}", "error", self)
 
     # ==========================
     # 扫描结果本地缓存
@@ -390,7 +473,20 @@ class ScanTab(BaseStockTab):
         if not results: return
         try:
             cache_path = self._get_scan_cache_path()
-            cache_data = {'saved_at': datetime.datetime.now().isoformat(), 'count': len(results), 'results': results}
+            # #9: 保存当时的扫描参数快照，加载时回显
+            params_snapshot = {
+                'rps': self.spn_scan_rps.value(),
+                'amp': self.spn_scan_amp.value(),
+                'ma_bind': self.spn_scan_ma_bind.value(),
+                'amount': self.spn_scan_amount.value(),
+                'high250': self.spn_scan_high250.value(),
+            }
+            cache_data = {
+                'saved_at': datetime.datetime.now().isoformat(),
+                'count': len(results),
+                'params': params_snapshot,
+                'results': results,
+            }
             with open(cache_path, 'w', encoding='utf-8') as f:
                 json.dump(cache_data, f, ensure_ascii=False, indent=2, default=str)
             log.info(f"[扫描缓存] 已保存 {len(results)} 条结果")
@@ -408,7 +504,19 @@ class ScanTab(BaseStockTab):
             saved_at = cache_data.get('saved_at', '未知')
             self._current_results = results
             self._render_scan_table(results)
-            event_bus.sig_system_log.emit("info", f"[扫描缓存] 已加载 {len(results)} 条记录 (保存于 {saved_at[:16]})")
+
+            # #9: 回显参数快照，让用户知道这批结果用的什么参数
+            params_info = cache_data.get('params')
+            params_hint = ""
+            if params_info and isinstance(params_info, dict):
+                params_hint = (f" | RPS≥{params_info.get('rps', '?')}"
+                               f" 振幅≤{int(params_info.get('amp', 0)*100)}%"
+                               f" 均线粘合≤{int(params_info.get('ma_bind', 0)*100)}%")
+
+            event_bus.sig_system_log.emit(
+                "info",
+                f"[扫描缓存] 已加载 {len(results)} 条记录 (保存于 {saved_at[:16]}){params_hint}"
+            )
             event_bus.sig_task_progress.emit("scan", 100, f"已加载 {len(results)} 条扫描缓存")
         except Exception as e:
             event_bus.sig_system_log.emit("error", f"[扫描缓存] 加载失败: {e}")
@@ -417,110 +525,31 @@ class ScanTab(BaseStockTab):
     # 右键菜单
     # ==========================
     def _show_context_menu(self, pos):
-        """扫描结果表格右键菜单"""
-        item = self.table_scan.itemAt(pos)
-        if not item:
+        """扫描结果表格右键菜单 — 委托给统一菜单工厂"""
+        index = self.table_scan.indexAt(pos)
+        if not index.isValid():
             return
-        row = item.row()
-        code_item = self.table_scan.item(row, 1)
-        name_item = self.table_scan.item(row, 3)
-        if not code_item or not name_item:
+            
+        model = index.model()
+        row = index.row()
+        code = model.data(model.index(row, 0), Qt.ItemDataRole.DisplayRole)
+        name = model.data(model.index(row, 1), Qt.ItemDataRole.DisplayRole)
+        if not code or not name:
             return
 
-        code = code_item.text()
-        name = name_item.text().replace("⭐ ", "")
+        name = name.replace("⭐ ", "")
 
-        menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu { background-color: #151820; color: #C9CDD4; border: 1px solid #252A36; border-radius: 8px; padding: 4px; }
-            QMenu::item { padding: 6px 24px; }
-            QMenu::item:selected { background-color: rgba(59, 130, 246, 0.2); color: white; }
-            QMenu::separator { height: 1px; background: #252A36; margin: 4px 8px; }
-        """)
-
-        act_chart = menu.addAction("📈 查看K线图")
-        act_copy = menu.addAction("📋 复制代码")
-        menu.addSeparator()
-
-        # 读取关注池状态
-        fav_codes = set()
-        if os.path.exists(SPECIAL_LATEST_DATA):
-            try:
-                with open(SPECIAL_LATEST_DATA, 'r', encoding='utf-8') as f:
-                    fav_codes = set(json.load(f).keys())
-            except Exception:
-                pass
-        is_fav = code in fav_codes
-        act_special = menu.addAction("⭐ 移出关注池" if is_fav else "⭐ 加入关注池")
-        menu.addSeparator()
-        act_tdx = menu.addAction("🖥️ 跳转通达信")
-        menu.addSeparator()
-        act_ai = menu.addAction("🤖 AI深度诊断")
-        act_local = menu.addAction("🧪 本地技术诊断")
-        menu.addSeparator()
-        act_export = menu.addAction("📤 导出当前表")
-
-        action = menu.exec(self.table_scan.viewport().mapToGlobal(pos))
-
-        if action == act_chart:
-            event_bus.sig_show_kline.emit(code)
-        elif action == act_copy:
-            from PyQt6.QtWidgets import QApplication
-            QApplication.clipboard().setText(code)
-            event_bus.sig_system_log.emit("info", f"已复制: {code}")
-        elif action == act_special:
-            # 获取该行的 VCP 数据
+        # 提取 VCP 数据用于关注池附带信息
+        vcp_data = model.data(model.index(row, 0), Qt.ItemDataRole.UserRole)
+        if not isinstance(vcp_data, dict):
             vcp_data = None
-            seq_item = self.table_scan.item(row, 0)
-            if seq_item:
-                vcp_data = seq_item.data(Qt.ItemDataRole.UserRole)
-            event_bus.sig_watchlist_changed.emit(
-                "remove" if is_fav else "add", code
-            )
-            # 直接操作关注池 JSON 文件
-            self._toggle_special_file(code, name, is_fav, vcp_data)
-        elif action == act_tdx:
-            self._launch_tdx(code)
-        elif action == act_ai:
-            event_bus.sig_open_ai_diag.emit(code, 'ai')
-        elif action == act_local:
-            event_bus.sig_open_ai_diag.emit(code, 'local')
-        elif action == act_export:
-            self.export_table_to_excel()
 
-    def _toggle_special_file(self, code: str, name: str, is_fav: bool, vcp_data=None):
-        """直接操作关注池 JSON 文件"""
-        current_data = {}
-        if os.path.exists(SPECIAL_LATEST_DATA):
-            try:
-                with open(SPECIAL_LATEST_DATA, 'r', encoding='utf-8') as f:
-                    current_data = json.load(f)
-            except Exception:
-                pass
-
-        if is_fav:
-            if code in current_data:
-                del current_data[code]
-            event_bus.sig_system_log.emit("info", f"[{name}] 已移出关注池")
-        else:
-            entry = {"现价": 0, "涨幅%": 0, "评分": ""}
-            if vcp_data and isinstance(vcp_data, dict):
-                for k, v in vcp_data.items():
-                    if hasattr(v, 'item'):
-                        entry[k] = v.item()
-                    elif isinstance(v, (str, int, float, bool, list, dict, type(None))):
-                        entry[k] = v
-                    else:
-                        entry[k] = str(v)
-            current_data[code] = entry
-            event_bus.sig_system_log.emit("info", f"[{name}] 已加入关注池")
-
-        try:
-            with open(SPECIAL_LATEST_DATA, 'w', encoding='utf-8') as f:
-                json.dump(current_data, f, ensure_ascii=False, indent=4)
-            # 通知关注池 Tab 重新加载
-            event_bus.sig_watchlist_changed.emit("toggle", code)
-        except Exception as e:
-            event_bus.sig_system_log.emit("error", f"关注池操作异常: {e}")
+        from ui.components.stock_context_menu import build_stock_context_menu
+        build_stock_context_menu(
+            self, code, name,
+            vcp_data=vcp_data,
+            show_export=True,
+            export_callback=self.export_table_to_excel,
+        )
 
     # _launch_tdx 已迁移至 BaseStockTab 基类

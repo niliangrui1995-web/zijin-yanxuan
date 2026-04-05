@@ -1,26 +1,21 @@
 import os
 import json
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
-    QHeaderView, QPushButton, QLabel, QLineEdit, QMenu,
-    QAbstractItemView, QMessageBox, QDialog, QComboBox, QSpinBox, QToolButton
+    QWidget, QVBoxLayout, QHBoxLayout, QTableView,
+    QHeaderView, QPushButton, QLabel, QLineEdit,
+    QAbstractItemView, QDialog, QComboBox, QSpinBox, QToolButton
 )
-from PyQt6.QtCore import Qt, pyqtSlot
-from PyQt6.QtGui import QColor
-from ui.theme import (
-    COLOR_RISE, COLOR_RISE_STRONG, COLOR_FALL, COLOR_FALL_STRONG, COLOR_FLAT,
-    COLOR_WARNING, STATUS_APPROACHING, STATUS_INACTIVE, STATUS_VCP,
-    STATUS_BREAKOUT, SCORE_EXCELLENT, SCORE_GOOD, SCORE_NORMAL, SCORE_LOW,
-    COLOR_SUCCESS, COLOR_ERROR, apply_rise_fall_color, apply_score_color
-)
-
-from ui.components import NumericTableWidgetItem
-from ui.workers import RtScanWorker
-from vcp.constants import SPECIAL_LATEST_DATA
+from ui.components.toast_widget import show_toast
+from PyQt6.QtCore import Qt, pyqtSlot, QTimer
+from ui.models.table_models import RtTableModel, RtSortFilterProxyModel
+from ui.workers.rt_scan_worker import RtScanWorker
+from ui.viewmodels.watchlist_vm import watchlist_vm
 from core.event_bus import event_bus
+from core.event_types import DataEvent
 from core.logger import get_logger
 from core.task_manager import task_manager
 from ui.tabs.base_stock_tab import BaseStockTab
+from core.throttler import SignalThrottler
 
 log = get_logger(__name__)
 
@@ -32,16 +27,20 @@ class RtMonitorTab(BaseStockTab):
     def __init__(self, data_provider, engine, parent=None):
         super().__init__(data_provider=data_provider, parent=parent)
         self.engine = engine
+        from PyQt6.QtCore import QSettings
+        self._settings = QSettings("VCPHunter", "RtMonitorTab")
         self._init_ui()
-        self._init_settings_widgets()
+        
+        # 核心：实时数据流 UI 防抖拦截器 (针对未来的海量 tick 数据)
+        self._rt_throttler = SignalThrottler(interval=1000, parent=self)
+        self._rt_throttler.throttled_signal.connect(self._do_update_rt_table)
+        
+        event_bus.sig_data_updated.connect(self._on_global_data)
 
-    def _init_settings_widgets(self):
-        # 初始化设置参数的内部储存控件
-        self.cmb_rt_interval = QComboBox()
-        self.cmb_rt_interval.addItems(["30秒", "1分钟", "3分钟", "5分钟"])
-        self.spn_rt_rps = QSpinBox()
-        self.spn_rt_rps.setRange(50, 99)
-        self.spn_rt_rps.setValue(80)
+    def _on_global_data(self, evt_type: str, data: object):
+        if evt_type == DataEvent.RT_QUOTES_BROADCAST.value:
+            if getattr(self, "source_model", None):
+                self.source_model.update_quotes(data)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -56,7 +55,7 @@ class RtMonitorTab(BaseStockTab):
         self.btn_rt_start.setObjectName("primaryButton")
         self.btn_rt_start.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_rt_start.setFixedWidth(150)
-        self.btn_rt_start.clicked.connect(self._toggle_rt_monitor)
+        self.btn_rt_start.clicked.connect(lambda *args: self._toggle_rt_monitor())
         tb_layout.addWidget(self.btn_rt_start)
         
         self.lbl_rt_info = QLabel("尚未启动监控")
@@ -95,11 +94,13 @@ class RtMonitorTab(BaseStockTab):
         tb_layout.addWidget(btn_rt_settings)
         layout.addWidget(toolbar)
 
-        # 表格控件
-        self.table_rt = QTableWidget()
-        self.table_rt.setColumnCount(11)
-        headers = ["代码", "时间", "名称", "现价", "涨幅%", "评分", "RPS强度", "突破状态", "市值", "区间振幅", "热点板块"]
-        self.table_rt.setHorizontalHeaderLabels(headers)
+        # 表格控件 MVC
+        self.source_model = RtTableModel()
+        self.proxy_model = RtSortFilterProxyModel(self)
+        self.proxy_model.setSourceModel(self.source_model)
+        
+        self.table_rt = QTableView()
+        self.table_rt.setModel(self.proxy_model)
         
         self.table_rt.verticalHeader().setVisible(False)
         self.table_rt.setAlternatingRowColors(True)
@@ -109,17 +110,34 @@ class RtMonitorTab(BaseStockTab):
         self.table_rt.setShowGrid(False)
         self.table_rt.setStyleSheet(self.table_rt.styleSheet() + "::item { padding: 0px 10px; }")
         
-        # 自适应列宽
-        rt_weights = [0.75, 0.65, 1.4, 0.75, 0.9, 0.55, 0.8, 1.5, 0.65, 0.8, 2.0]
+        # 自适应列宽 (匹配 headers=["代码","名称","现价","涨幅%","时间","评分","RPS强度","突破状态","市值","区间振幅","热点板块"])
+        rt_weights = [0.8, 1.4, 0.8, 0.8, 0.7, 0.6, 0.8, 1.5, 0.7, 0.8, 2.0]
         header = self.table_rt.horizontalHeader()
         header.setStretchLastSection(False)
         for col_idx, w in enumerate(rt_weights):
             header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
-            self.table_rt.setColumnWidth(col_idx, int(w * 80))
+        
+        try:
+            col_count = self.source_model.columnCount()
+            # Bug#6 修复: 使用固定基准宽度，避免未定义 base_w
+            base_width = 100  # 基准列宽 100px
+            for col_idx in range(col_count):
+                header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
+                if col_idx < len(rt_weights):
+                    w = int(base_width * rt_weights[col_idx])
+                    self.table_rt.setColumnWidth(col_idx, w)
+        except Exception as e:
+            log.warning(f"[盘中监控] 列宽初始化异常: {e}")
         header.setSectionResizeMode(10, QHeaderView.ResizeMode.Stretch)
         self.table_rt.verticalHeader().setDefaultSectionSize(40) # 视觉重构版行高
         self.table_rt.setSortingEnabled(True)
         self.table_rt.horizontalHeader().setSortIndicatorShown(True)
+        
+        # 绑定防抖自动保存与恢复配置
+        self.bind_header_persistence(self.table_rt, "header_state_v3")
+        
+        # 绑定双击事件，广播K线上下文
+        self.table_rt.doubleClicked.connect(self._on_table_double_clicked)
 
         # 右键菜单
         self.table_rt.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -128,12 +146,11 @@ class RtMonitorTab(BaseStockTab):
         layout.addWidget(self.table_rt)
 
     def _clear_table(self):
-        self.table_rt.setRowCount(0)
+        self.source_model.update_data([])
         self.lbl_rt_info.setText("记录已清空")
 
     def _on_search_text_changed(self, text):
-        from ui.components import SearchFilter
-        SearchFilter.filter_table(self.table_rt, text, code_col=0, name_col=2)
+        self.proxy_model.setFilterText(text)
 
     def _show_rt_settings(self):
         dlg = QDialog(self)
@@ -144,14 +161,22 @@ class RtMonitorTab(BaseStockTab):
         form = QVBoxLayout(dlg)
         form.setContentsMargins(20, 20, 20, 20)
         
+        cmb_interval = QComboBox()
+        cmb_interval.addItems(["30秒", "1分钟", "3分钟", "5分钟"])
+        cmb_interval.setCurrentText(str(self._settings.value("interval", "30秒")))
+        
+        spn_rps = QSpinBox()
+        spn_rps.setRange(50, 99)
+        spn_rps.setValue(int(self._settings.value("rps", 80)))
+
         row1 = QHBoxLayout()
         row1.addWidget(QLabel("刷新间隔:"))
-        row1.addWidget(self.cmb_rt_interval)
+        row1.addWidget(cmb_interval)
         form.addLayout(row1)
         
         row2 = QHBoxLayout()
         row2.addWidget(QLabel("RPS 阈值:"))
-        row2.addWidget(self.spn_rt_rps)
+        row2.addWidget(spn_rps)
         form.addLayout(row2)
         
         form.addStretch()
@@ -160,7 +185,12 @@ class RtMonitorTab(BaseStockTab):
         btn_ok.setFixedHeight(32)
         btn_ok.clicked.connect(dlg.accept)
         form.addWidget(btn_ok)
-        dlg.exec()
+
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._settings.setValue("interval", cmb_interval.currentText())
+            self._settings.setValue("rps", spn_rps.value())
+            self._settings.sync()
+            show_toast("盘中监控参数已保存", "success", self)
 
     def _toggle_rt_monitor(self):
         if hasattr(self, 'rt_worker') and self.rt_worker.isRunning():
@@ -171,8 +201,18 @@ class RtMonitorTab(BaseStockTab):
             self.lbl_rt_info.setText("监控已停止")
             event_bus.sig_task_progress.emit("rt_monitor", 0, "stop")
         else:
+            # 兜底：如果内存缓存为空，先尝试从磁盘加载昨日F5的缓存
             if not self.data_provider.cache_data:
-                QMessageBox.warning(self, "数据未就绪", "请先执行扫描或按 F5 加载数据后再启动盘中监控.")
+                self.lbl_rt_info.setText("正在加载磁盘缓存...")
+                try:
+                    cache_date = self.data_provider.load_cache_from_disk()
+                    if cache_date and self.data_provider.cache_data:
+                        log.info(f"[盘中监控] 缓存为空，从磁盘自动加载成功(日期: {cache_date})")
+                except Exception as e:
+                    log.error(f"[盘中监控] 磁盘缓存自动加载失败: {e}")
+            if not self.data_provider.cache_data:
+                show_toast("请先执行扫描或按 F5 加载数据后再启动", "warning", self)
+                self.lbl_rt_info.setText("尚未启动监控")
                 return
             
             if not self.data_provider.server_pool or not self.data_provider.is_online():
@@ -204,13 +244,14 @@ class RtMonitorTab(BaseStockTab):
             self._start_rt_worker()
 
     def _start_rt_worker(self):
-        interval_text = self.cmb_rt_interval.currentText()
+        interval_text = str(self._settings.value("interval", "30秒"))
         interval_map = {"30秒": 30, "1分钟": 60, "3分钟": 180, "5分钟": 300}
         interval_sec = interval_map.get(interval_text, 30)
-        rps_threshold = int(self.spn_rt_rps.value())
+        rps_threshold = int(self._settings.value("rps", 80))
 
         self.rt_worker = RtScanWorker(self.data_provider, self.engine, interval=interval_sec, rps_threshold=rps_threshold)
-        self.rt_worker.rt_result_ready.connect(self._update_rt_table)
+        # 拦截：工作线程的高频抛出不再直接刷新界面，只喂给 throttler
+        self.rt_worker.rt_result_ready.connect(lambda data: self._rt_throttler.trigger(data))
         self.rt_worker.progress.connect(self.lbl_rt_info.setText)
         self.rt_worker.scan_count.connect(lambda n, pool: event_bus.sig_system_log.emit("info", f"[监控] 第{n}轮 | 待突破池 {pool} 只"))
         
@@ -233,140 +274,60 @@ class RtMonitorTab(BaseStockTab):
     def _on_rt_network_failed(self):
         self.btn_rt_start.setEnabled(True)
         self.lbl_rt_info.setText("联网失败,无法启动")
-        QMessageBox.warning(self, "无法启动", "无法连接通达信行情服务器.请检查网络连接后重试.")
+        show_toast("无法连接通达信行情服务器", "error", self)
 
-    def _update_rt_table(self, results):
+    def _do_update_rt_table(self, results):
+        """实际执行刷新：这部分现在由于 Throttler 保护，每秒最多只执行一次"""
         rt_only = [r for r in results if not r.get('_is_special')]
-        self.table_rt.setSortingEnabled(False)
-        self.table_rt.setRowCount(len(rt_only))
-        for row_idx, res in enumerate(rt_only):
-            row_data = [
-                res.get('代码', ''), res.get('时间', ''), res.get('名称', ''),
-                str(res.get('现价', '')), str(res.get('涨幅%', '')), str(res.get('评分', '--')),
-                str(res.get('RPS强度', '')), str(res.get('突破状态', '')), str(res.get('市值', '')),
-                str(res.get('区间振幅', '')), str(res.get('热点板块', ''))
-            ]
-            for col_idx, text in enumerate(row_data):
-                if col_idx in (3, 4, 5, 6, 8, 9):
-                    item = NumericTableWidgetItem(str(text))
-                else:
-                    item = QTableWidgetItem(str(text))
-                item.setForeground(QColor(COLOR_FLAT))
-                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-                
-                if col_idx == 4:
-                    try:
-                        pct = float(str(res.get('涨幅%', 0)).replace('%', '').replace('+', ''))
-                        self.apply_pct_color(item, pct)
-                    except: pass
-                elif col_idx == 7:  
-                    st = str(text)
-                    if "放量突破" in st:
-                        item.setText(f"🚀 {st}"); item.setForeground(QColor(COLOR_RISE_STRONG))
-                        f = item.font(); f.setBold(True); item.setFont(f)
-                    elif "缩量突破" in st:
-                        item.setText(f"⚠️ {st}"); item.setForeground(QColor(COLOR_WARNING))
-                        f = item.font(); f.setBold(True); item.setFont(f)
-                    elif "临近" in st:
-                        item.setText(f"⏳ {st}"); item.setForeground(QColor(STATUS_APPROACHING))
-                    elif "VCP蓄力" in st:
-                        item.setForeground(QColor(STATUS_VCP))
-                    elif "非红盘" in st or "异常" in st or "一字" in st or "观望" in st:
-                        item.setForeground(QColor(STATUS_INACTIVE))
-
-                if col_idx in (7, 10):
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-                self.table_rt.setItem(row_idx, col_idx, item)
-        self.table_rt.setSortingEnabled(True)
-        self.table_rt.sortByColumn(4, Qt.SortOrder.DescendingOrder)
+        try:
+            self.source_model.update_data(rt_only)
+        except Exception as e:
+            log.error(f"Failed to update rt table: {e}")
 
         # 核心解耦点：表格自身渲染完毕后，向全系统抛出数据刷新事件！
         # 让 MainWindowQT 或者 WatchlistTab 自行拦截处理剩下的全局关联逻辑。
-        event_bus.sig_data_updated.emit("rt_quotes_refreshed", results)
+        event_bus.sig_data_updated.emit(DataEvent.RT_QUOTES_REFRESHED.value, results)
 
     # ================================================================
-    # 右键菜单
+    # 交互事件 (右键菜单 / 双击)
     # ================================================================
+    def _on_table_double_clicked(self, idx):
+        if not idx.isValid(): return
+        proxy_row = idx.row()
+        
+        # 提取当前所有过滤后的结果构建上下文列表
+        code_list = []
+        for r in range(self.proxy_model.rowCount()):
+            c_idx = self.proxy_model.index(r, 0) # 代码
+            n_idx = self.proxy_model.index(r, 2) # 名称
+            c = str(self.proxy_model.data(c_idx))
+            n = str(self.proxy_model.data(n_idx))
+            code_list.append({'代码': c, '名称': n})
+            
+        current_code = str(self.proxy_model.data(self.proxy_model.index(proxy_row, 0)))
+        event_bus.sig_show_kline_with_list.emit(current_code, code_list, proxy_row)
+
     def _show_context_menu(self, pos):
-        """盘中监控表格右键菜单"""
-        item = self.table_rt.itemAt(pos)
-        if not item:
+        """盘中监控表格右键菜单 — 委托给统一菜单工厂 (#2)"""
+        index = self.table_rt.indexAt(pos)
+        if not index.isValid():
             return
-        row = item.row()
-        code_item = self.table_rt.item(row, 0)
-        name_item = self.table_rt.item(row, 2)
-        if not code_item or not name_item:
+            
+        source_index = self.proxy_model.mapToSource(index)
+        row_data = self.source_model.get_row_data(source_index.row())
+        if not row_data:
             return
 
-        code = code_item.text()
-        name = name_item.text()
+        code = str(row_data.get('代码', ''))
+        name = str(row_data.get('名称', ''))
+        if not code:
+            return
 
-        menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu { background-color: #151820; color: #C9CDD4; border: 1px solid #252A36; border-radius: 8px; padding: 4px; }
-            QMenu::item { padding: 6px 24px; }
-            QMenu::item:selected { background-color: rgba(59, 130, 246, 0.2); color: white; }
-            QMenu::separator { height: 1px; background: #252A36; margin: 4px 8px; }
-        """)
-
-        act_chart = menu.addAction("📈 查看K线图")
-        act_copy = menu.addAction("📋 复制代码")
-        menu.addSeparator()
-
-        fav_codes = set()
-        if os.path.exists(SPECIAL_LATEST_DATA):
-            try:
-                with open(SPECIAL_LATEST_DATA, 'r', encoding='utf-8') as f:
-                    fav_codes = set(json.load(f).keys())
-            except Exception:
-                pass
-        is_fav = code in fav_codes
-        act_special = menu.addAction("⭐ 移出关注池" if is_fav else "⭐ 加入关注池")
-        menu.addSeparator()
-        act_tdx = menu.addAction("🖥️ 跳转通达信")
-        menu.addSeparator()
-        act_ai = menu.addAction("🤖 AI深度诊断")
-        act_local = menu.addAction("🧪 本地技术诊断")
-
-        action = menu.exec(self.table_rt.viewport().mapToGlobal(pos))
-
-        if action == act_chart:
-            event_bus.sig_show_kline.emit(code)
-        elif action == act_copy:
-            from PyQt6.QtWidgets import QApplication
-            QApplication.clipboard().setText(code)
-            event_bus.sig_system_log.emit("info", f"已复制: {code}")
-        elif action == act_special:
-            self._toggle_special_file(code, name, is_fav)
-        elif action == act_tdx:
-            self._launch_tdx(code)
-        elif action == act_ai:
-            event_bus.sig_open_ai_diag.emit(code, 'ai')
-        elif action == act_local:
-            event_bus.sig_open_ai_diag.emit(code, 'local')
-
-    def _toggle_special_file(self, code: str, name: str, is_fav: bool):
-        """直接操作关注池 JSON 文件"""
-        current_data = {}
-        if os.path.exists(SPECIAL_LATEST_DATA):
-            try:
-                with open(SPECIAL_LATEST_DATA, 'r', encoding='utf-8') as f:
-                    current_data = json.load(f)
-            except Exception:
-                pass
-        if is_fav:
-            if code in current_data:
-                del current_data[code]
-            event_bus.sig_system_log.emit("info", f"[{name}] 已移出关注池")
-        else:
-            current_data[code] = {"现价": 0, "涨幅%": 0, "评分": ""}
-            event_bus.sig_system_log.emit("info", f"[{name}] 已加入关注池")
-        try:
-            with open(SPECIAL_LATEST_DATA, 'w', encoding='utf-8') as f:
-                json.dump(current_data, f, ensure_ascii=False, indent=4)
-            event_bus.sig_watchlist_changed.emit("toggle", code)
-        except Exception as e:
-            event_bus.sig_system_log.emit("error", f"关注池操作异常: {e}")
+        from ui.components.stock_context_menu import build_stock_context_menu
+        build_stock_context_menu(
+            self, code, name,
+            vcp_data=row_data,
+        )
 
     # _launch_tdx 已迁移至 BaseStockTab 基类
 

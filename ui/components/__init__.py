@@ -17,6 +17,16 @@ class NumericTableWidgetItem(QTableWidgetItem):
     对含 %/+/亿/万 等后缀的文本提取数值进行比较,
     无法解析时退化为字符串比较.
     """
+    def __init__(self, text=""):
+        super().__init__(str(text))
+        from PyQt6.QtGui import QFont
+        font = QFont()
+        # 兼容包含中文字符时的等宽显示(如市值 450亿)
+        font.setFamilies(["Consolas", "Microsoft YaHei UI", "monospace"])
+        font.setPointSize(10)
+        font.setStyleHint(QFont.StyleHint.Monospace)
+        self.setFont(font)
+
     def __lt__(self, other):
         try:
             val1 = self._to_float()
@@ -26,129 +36,15 @@ class NumericTableWidgetItem(QTableWidgetItem):
             return super().__lt__(other)
 
     def _to_float(self):
-        t = self.text().replace('%', '').replace('+', '').replace('亿', '').replace('万', '').replace('⭐', '').replace('🚀', '').replace('⏳', '').replace('⚠️', '').strip()
-        if t in ('', '--', '--', '-'):
+        import re
+        t = self.text().replace(',', '')
+        if not t or t in ('--', '-'):
             return float('-inf')
-        try:
-            return float(t)
-        except ValueError:
-            return float('-inf')
+        m = re.search(r'([-+]?\d*\.?\d+)', t)
+        if m:
+            return float(m.group(1))
+        return float('-inf')
 
-class CustomTitleBar(QFrame):
-    """
-    自定义的深色深邃标题栏,接管拖拽,最小化,最大化与关闭功能.
-    高度契合暗黑风格.
-    """
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.parent_window = parent
-        self.setObjectName("customTitleBar")
-        self.setFixedHeight(36)
-        
-        # 允许标题栏背景颜色通过 PaintEvent 生效
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet("""
-            QFrame#customTitleBar {
-                background-color: #101216;
-                border-bottom: 1px solid qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 rgba(59, 130, 246, 0.4),
-                    stop:0.5 rgba(147, 197, 253, 0.15),
-                    stop:1 rgba(59, 130, 246, 0.4));
-            }
-            QLabel#titleText {
-                color: #A0A5B2;
-                font-size: 13px;
-                font-weight: 600;
-                padding-left: 12px;
-                letter-spacing: 0.5px;
-            }
-            QPushButton[class="titleBtn"] {
-                background: transparent;
-                border: none;
-                color: #4B5563;
-                font-size: 15px;
-                width: 44px;
-                height: 38px;
-            }
-            QPushButton[class="titleBtn"]:hover {
-                background: rgba(59, 130, 246, 0.08);
-                color: #93C5FD;
-            }
-            QPushButton#btnTitleClose:hover {
-                background: rgba(220, 38, 38, 0.85);
-                color: #FFFFFF;
-            }
-        """)
-        
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        
-        # 图标预留或者直接文本
-        self.lbl_title = QLabel("  紫金研选量化终端")
-        self.lbl_title.setObjectName("titleText")
-        
-        # 按钮组合
-        self.btn_min = QPushButton("─")
-        self.btn_min.setProperty("class", "titleBtn")
-        self.btn_min.clicked.connect(self.parent_window.showMinimized)
-        
-        self.btn_max = QPushButton("□")
-        self.btn_max.setProperty("class", "titleBtn")
-        self.btn_max.clicked.connect(self.toggle_maximize)
-        
-        self.btn_close = QPushButton("×")
-        self.btn_close.setObjectName("btnTitleClose")
-        self.btn_close.setProperty("class", "titleBtn")
-        # 更大且稍微不同的 X 字体
-        font = self.btn_close.font()
-        font.setPointSize(16)
-        self.btn_close.setFont(font)
-        self.btn_close.clicked.connect(self.parent_window.close)
-        
-        layout.addWidget(self.lbl_title)
-        layout.addStretch()
-        layout.addWidget(self.btn_min)
-        layout.addWidget(self.btn_max)
-        layout.addWidget(self.btn_close)
-        
-        self._is_tracking = False
-        self._start_pos = QPoint()
-        
-    def toggle_maximize(self):
-        if self.parent_window.isMaximized():
-            self.parent_window.showNormal()
-            self.btn_max.setText("□")
-        else:
-            self.parent_window.showMaximized()
-            self.btn_max.setText("❐")
-            
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._is_tracking = True
-            # 获取相对于桌面的全局坐标减去窗口当前的全局坐标,以确定相对偏移量
-            # 兼容 Qt6 pos() 行为
-            self._start_pos = event.globalPosition().toPoint() - self.parent_window.frameGeometry().topLeft()
-            event.accept()
-
-    def mouseMoveEvent(self, event):
-        if self._is_tracking and event.buttons() == Qt.MouseButton.LeftButton:
-            if self.parent_window.isMaximized():
-                # 拖动时自动恢复普通尺寸
-                self.parent_window.showNormal()
-                self.btn_max.setText("□")
-                # 重新计算 _start_pos
-                self._start_pos = QPoint(self.width() // 2, self.height() // 2)
-            self.parent_window.move(event.globalPosition().toPoint() - self._start_pos)
-            event.accept()
-
-    def mouseReleaseEvent(self, event):
-        self._is_tracking = False
-        event.accept()
-
-    def mouseDoubleClickEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.toggle_maximize()
 
 class GlassPanel(QFrame):
     """毛玻璃质感面板，提供深邃和空间层级感"""
@@ -166,13 +62,8 @@ class GlassPanel(QFrame):
                 border: 1px solid rgba(255, 255, 255, 0.04);
             }}
         """)
-        # 悬浮投影
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(20)
-        shadow.setXOffset(0)
-        shadow.setYOffset(5)
-        shadow.setColor(QColor(0, 0, 0, 140))
-        self.setGraphicsEffect(shadow)
+        # 不再应用 QGraphicsDropShadowEffect
+        # 原因：在嵌套 QSplitter 布局中会触发 Qt6 底层渲染崩溃 (C++ SegFault)
 
 class AnimatedHoverButton(QPushButton):
     """滑动微动效按钮，提供 0.25s 弹性过渡 + 紫色光影效果"""
@@ -246,33 +137,24 @@ class AnimatedHoverButton(QPushButton):
         r = rect.adjusted(2, 1, -2, -1)
         
         if self._is_active:
-            # 激活态：品牌紫背景 + 微光边框 + 左侧指示条 + 底部发光
             painter.setBrush(QColor(139, 92, 246, 30))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawRoundedRect(r, 8, 8)
-            
-            # 微光边框
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(QPen(QColor(139, 92, 246, 50), 1))
             painter.drawRoundedRect(r, 8, 8)
-            
-            # 左侧品牌紫指示条
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(139, 92, 246))
             painter.drawRoundedRect(2, rect.height() // 4, 3, rect.height() // 2, 2, 2)
-            
-            # 底部发光线
             glow = QLinearGradient(rect.width() * 0.2, rect.height(), rect.width() * 0.8, rect.height())
             glow.setColorAt(0, QColor(139, 92, 246, 0))
             glow.setColorAt(0.5, QColor(139, 92, 246, 60))
             glow.setColorAt(1, QColor(139, 92, 246, 0))
             painter.setBrush(QBrush(glow))
             painter.drawRect(int(rect.width() * 0.15), rect.height() - 2, int(rect.width() * 0.7), 2)
-            
         else:
-            # 默认态：统一暗色底、细边框，让按钮有实体感
-            base_alpha = 15  # 微弱底色
-            border_alpha = 18  # 微弱边框
+            base_alpha = 15
+            border_alpha = 18
             painter.setBrush(QColor(255, 255, 255, base_alpha))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawRoundedRect(r, 8, 8)
@@ -282,18 +164,12 @@ class AnimatedHoverButton(QPushButton):
 
             if self._hover_progress > 0:
                 p = self._hover_progress
-                
-                # 悬停叠加：紫色微光背景
                 painter.setBrush(QColor(139, 92, 246, int(p * 35)))
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.drawRoundedRect(r, 8, 8)
-                
-                # hover 边框微光
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 painter.setPen(QPen(QColor(139, 92, 246, int(p * 40)), 1))
                 painter.drawRoundedRect(r, 8, 8)
-                
-                # hover 底部发光线
                 glow = QLinearGradient(rect.width() * 0.25, rect.height(), rect.width() * 0.75, rect.height())
                 glow.setColorAt(0, QColor(167, 139, 250, 0))
                 glow.setColorAt(0.5, QColor(167, 139, 250, int(p * 45)))
@@ -319,9 +195,8 @@ class PulsingDot(QWidget):
         self.anim.setStartValue(0.2)
         self.anim.setEndValue(1.0)
         self.anim.setEasingCurve(QEasingCurve.Type.InOutSine)
-        self.anim.setLoopCount(-1)  # 无限循环
+        self.anim.setLoopCount(-1)
         
-        # 错开动画启动，避免多个点同步显得死板
         QTimer.singleShot(100, self.anim.start)
 
     @pyqtProperty(float)
@@ -341,14 +216,12 @@ class PulsingDot(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
-        # 发光外圈（柔和光晕）
         glow_color = QColor(self.dot_color)
         glow_color.setAlphaF(self._opacity * 0.3)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(glow_color))
         painter.drawEllipse(self.rect().center(), int(self._radius + 3), int(self._radius + 3))
         
-        # 内核实心点
         core_color = QColor(self.dot_color)
         core_color.setAlphaF(self._opacity * 0.9)
         painter.setBrush(QBrush(core_color))
@@ -363,35 +236,25 @@ class AnimatedCard(QFrame):
         self.setObjectName("moduleCard")
         self.delay = delay
         
-        # 初始透明度和偏移设置
-        self.op_effect = QGraphicsOpacityEffect(self)
-        self.op_effect.setOpacity(0.0)
+        # self.op_effect = QGraphicsOpacityEffect(self)
+        # self.op_effect.setOpacity(0.0)
+        # self.setGraphicsEffect(self.op_effect)
         
-        # 悬浮投影
-        self.shadow_effect = QGraphicsDropShadowEffect(self)
-        self.shadow_effect.setBlurRadius(24)
-        self.shadow_effect.setXOffset(0)
-        self.shadow_effect.setYOffset(6)
-        self.shadow_effect.setColor(QColor(0, 0, 0, 150))
-        
-        # 由于一个 Widget 只能有一个 GraphicsEffect，我们通过重写 paintEvent 处理透明度和位移
-        # 这里为保持简单，保留透明度效果为主要 effect，阴影效果通过 StyleSheet 辅助或直接舍弃 GraphicsEffect 组合
-        # 最佳实践：将 shadow_effect 应用于自身
-        self.setGraphicsEffect(self.shadow_effect)
-        self._opacity = 0.0
-        self._y_offset = 20
+        # 不再应用 QGraphicsDropShadowEffect
+        # 原因：在嵌套 QSplitter 布局中会触发 Qt6 底层渲染崩溃 (C++ SegFault)
+        # 设置初始值为可见状态——动画从 0 开始渐入会在 show() 前绘制透明+偏移的帧
+        # 导致 Qt6 底层渲染 access violation
+        self._opacity = 1.0
+        self._y_offset = 0
 
-        # 入场动画组
         self.enter_anim_group = QParallelAnimationGroup(self)
         
-        # 1. 透明度淡入
         self.fade_anim = QPropertyAnimation(self, b"opacityStr")
         self.fade_anim.setDuration(600)
         self.fade_anim.setStartValue(0.0)
         self.fade_anim.setEndValue(1.0)
         self.fade_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         
-        # 2. Y轴上浮
         self.pos_anim = QPropertyAnimation(self, b"yOffset")
         self.pos_anim.setDuration(600)
         self.pos_anim.setStartValue(20)
@@ -401,11 +264,9 @@ class AnimatedCard(QFrame):
         self.enter_anim_group.addAnimation(self.fade_anim)
         self.enter_anim_group.addAnimation(self.pos_anim)
 
-        # 延迟触发入场动画
-        if delay > 0:
-            QTimer.singleShot(delay, self.enter_anim_group.start)
-        else:
-            self.enter_anim_group.start()
+        # 所有 delay 都通过 QTimer.singleShot 延迟——在 __init__ 中直接 start()
+        # 会触发 "non-existing property" 错误，因为 pyqtProperty 的元类注册还没完成
+        QTimer.singleShot(max(delay, 50), self.enter_anim_group.start)
 
     @pyqtProperty(int)
     def yOffset(self):
@@ -426,13 +287,11 @@ class AnimatedCard(QFrame):
         self.update()
 
     def paintEvent(self, event):
-        # 覆写 paintEvent 以应用 translateY 和透明度
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setOpacity(self._opacity)
         painter.translate(0, self._y_offset)
         
-        # 让 QFrame 的原生 StyleSheet 绘制在偏移后的画布上
         opt = QStyleOption()
         opt.initFrom(self)
         self.style().drawPrimitive(QStyle.PrimitiveElement.PE_Widget, opt, painter, self)
@@ -449,9 +308,121 @@ class AnimatedCard(QFrame):
         self._collapse_anim.stop()
         if is_collapsed:
             self._collapse_anim.setStartValue(self.height())
-            self._collapse_anim.setEndValue(48)  # 仅保留标题栏高度
+            self._collapse_anim.setEndValue(48)
         else:
             self._collapse_anim.setStartValue(self.height())
             self._collapse_anim.setEndValue(expanded_height)
         self._collapse_anim.start()
 
+
+class SvgIconBuilder:
+    """构建无失真矢量的纯净 SVG 图标（替代原始 Emoji）"""
+    @staticmethod
+    def create_icon(svg_str: str, color: str = "#8B5CF6", size: int = 16):
+        from PyQt6.QtSvg import QSvgRenderer
+        from PyQt6.QtGui import QPixmap, QIcon, QPainter, QColor
+        from PyQt6.QtCore import Qt, QByteArray
+
+        if 'currentColor' in svg_str:
+            svg_str = svg_str.replace('currentColor', color)
+        
+        renderer = QSvgRenderer(QByteArray(svg_str.encode('utf-8')))
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        renderer.render(painter)
+        painter.end()
+        
+        return QIcon(pixmap)
+
+    @staticmethod
+    def gear(color="#A0AEC0"):
+        return SvgIconBuilder.create_icon(
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>',
+            color
+        )
+
+    @staticmethod
+    def download(color="#10B981"):
+        return SvgIconBuilder.create_icon(
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>',
+            color
+        )
+
+
+class SlidingDrawer(QWidget):
+    """边缘向下滑入/滑出的抽屉容器"""
+    def __init__(self, parent=None, expanded_height=120):
+        super().__init__(parent)
+        self.expanded_height = expanded_height
+        self.setFixedHeight(0)
+        
+        from PyQt6.QtWidgets import QVBoxLayout
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(16, 0, 16, 8)
+        
+        self.panel = GlassPanel(self, radius=8, alpha=0.95)
+        main_layout.addWidget(self.panel, alignment=Qt.AlignmentFlag.AlignTop)
+        
+        from PyQt6.QtCore import QPropertyAnimation, QEasingCurve
+        self.anim = QPropertyAnimation(self, b"maximumHeight")
+        self.anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.anim.setDuration(300)
+        self._is_open = False
+
+    def set_content_layout(self, layout):
+        self.panel.setLayout(layout)
+
+    def toggle(self):
+        self.anim.stop()
+        if self._is_open:
+            self.anim.setStartValue(self.height())
+            self.anim.setEndValue(0)
+        else:
+            self.anim.setStartValue(self.height())
+            self.anim.setEndValue(self.expanded_height)
+        self._is_open = not self._is_open
+        self.anim.start()
+
+    def close_drawer(self):
+        if self._is_open:
+            self.toggle()
+
+class SearchFilter:
+    @staticmethod
+    def filter_table(table, text, code_col=0, name_col=1):
+        """表格通用搜索过滤，支持拼音首字母检索"""
+        val = text.strip().lower()
+        if not val:
+            for r in range(table.rowCount()):
+                table.setRowHidden(r, False)
+            return
+
+        import pypinyin
+        for r in range(table.rowCount()):
+            code_item = table.item(r, code_col)
+            name_item = table.item(r, name_col)
+            if not code_item or not name_item:
+                continue
+
+            code_text = code_item.text().lower()
+            name_text = name_item.text().lower()
+
+            if SearchFilter.match_pinyin_or_text(val, code_text, name_text):
+                table.setRowHidden(r, False)
+            else:
+                table.setRowHidden(r, True)
+
+    @staticmethod
+    def match_pinyin_or_text(search_val, code_text, name_text):
+        """辅助方法: 判断 search_val 是否匹配代码、名称或拼音首字母"""
+        if not search_val:
+            return True
+        if search_val in code_text or search_val in name_text:
+            return True
+            
+        import pypinyin
+        py_initials = "".join(pypinyin.lazy_pinyin(name_text, style=pypinyin.Style.FIRST_LETTER)).lower()
+        return search_val in py_initials

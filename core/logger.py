@@ -17,6 +17,21 @@ from typing import Optional
 _logger: Optional[logging.Logger] = None
 
 
+class EventBusHandler(logging.Handler):
+    """将日志发送到系统的事件总线上，从而显示在 UI 日志面板中"""
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            level = record.levelname.lower()
+            if level == 'warning':
+                level = 'warn'
+            # 动态导入，避免启动时循环引用或Qt尚未就绪
+            from core.event_bus import event_bus
+            event_bus.sig_system_log.emit(level, msg + '\n')
+        except Exception:
+            self.handleError(record)
+
+
 def get_logger(name: str = "vcp_hunter") -> logging.Logger:
     """获取全局日志实例（单例）"""
     global _logger
@@ -26,15 +41,23 @@ def get_logger(name: str = "vcp_hunter") -> logging.Logger:
     _logger = logging.getLogger(name)
     _logger.setLevel(logging.DEBUG)
 
-    # 控制台输出
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)
     console_fmt = logging.Formatter(
         "[%(asctime)s] %(levelname)-5s | %(message)s",
         datefmt="%H:%M:%S",
     )
-    console_handler.setFormatter(console_fmt)
-    _logger.addHandler(console_handler)
+
+    # 控制台输出 (底层原始标准输出)
+    if sys.stdout is not None and hasattr(sys.stdout, 'write'):
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(logging.INFO)
+        console_handler.setFormatter(console_fmt)
+        _logger.addHandler(console_handler)
+
+    # 事件总线输出 (UI 展示)
+    eb_handler = EventBusHandler()
+    eb_handler.setLevel(logging.INFO)
+    eb_handler.setFormatter(console_fmt)
+    _logger.addHandler(eb_handler)
 
     # 文件输出（可选）
     log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "logs")

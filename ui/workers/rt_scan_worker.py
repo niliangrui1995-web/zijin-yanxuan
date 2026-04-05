@@ -1,7 +1,6 @@
 # ui/workers.py - 后台工作线程
 # 从 main_window_qt.py 拆分出来的 ScanWorker 和 RtScanWorker
 import os
-from vcp.constants import SPECIAL_LATEST_DATA
 import datetime
 import pandas as pd
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -9,139 +8,6 @@ from vcp.engine import VCPEngine, VCPParams
 from core.logger import get_logger
 
 log = get_logger(__name__)
-
-
-class ScanWorker(QThread):
-    progress = pyqtSignal(int, str)
-    result_ready = pyqtSignal(list)
-    finished_scan = pyqtSignal(bool, str)
-
-    def __init__(self, data_provider, engine, sd, ed, params):
-        super().__init__()
-        self.data_provider = data_provider
-        self.engine = engine
-        self.sd = sd
-        self.ed = ed
-        self.params = params
-        self._is_cancelled = False
-
-    def cancel(self):
-        self._is_cancelled = True
-
-    def run(self):
-        self.progress.emit(0, "正在查询数据...")
-        try:
-            # 首次运行:需要读取由vipdoc目录结构提取的股票名称和预缓存数据
-            if not self.data_provider.cache_data:
-                self.progress.emit(0, "首次扫描:读取本地代码表...")
-                codes_dict = self.data_provider._get_codes_from_vipdoc()
-                
-                # 设置一个进度回调映射到信号(占用前 50% 进度条)
-                def _sync_cb(done, total, eta):
-                    if self._is_cancelled:
-                        raise InterruptedError("用户取消")
-                    if total > 0 and done % 50 == 0:
-                        pct = int((done / total) * 50)
-                        self.progress.emit(pct, f"缓存本地日线: {done}/{total} {eta}")
-                        
-                self.data_provider.sync_market_data(codes_dict, force_refresh=False, progress_callback=_sync_cb)
-                self.data_provider.code2name = codes_dict
-            elif not hasattr(self.data_provider, 'code2name'):
-                self.data_provider.code2name = self.data_provider._get_codes_from_vipdoc()
-
-            if self._is_cancelled:
-                self.finished_scan.emit(False, "任务已取消")
-                return
-
-            self.progress.emit(50, "计算 RPS 相对强度矩阵...")
-            matrix = self.engine.build_rps_matrix(self.data_provider.cache_data, self.sd, self.ed)
-            
-            if not matrix:
-                self.finished_scan.emit(False, "区间无效或无通达信本地数据")
-                return
-
-            total_days = len(matrix)
-            all_results = []
-            
-            for i, (d_str, d_rps) in enumerate(matrix.items()):
-                if self._is_cancelled:
-                    self.finished_scan.emit(False, "任务已取消")
-                    return
-                
-                pct = int(100 * (i+1) / total_days)
-                self.progress.emit(pct, f"扫描 {d_str} ({i+1}/{total_days})")
-                
-                targets = [k for k, v in d_rps['rps250'].items() 
-                           if pd.notna(v) and v >= self.params.rps_threshold 
-                           and (v >= 90 or v >= d_rps['rps120'].get(k, 0))]
-                
-                for code in targets:
-                    # === ST 股过滤:ST/*ST 涨跌幅仅 5%,易伪装成 VCP 收缩形态 ===
-                    stock_name = self.data_provider.code2name.get(code, '')
-                    if 'ST' in stock_name.upper():
-                        continue
-                    df = self.data_provider.get_data(code)
-                    if df is not None:
-                        try:
-                            ok, reason, m = self.engine.evaluate_conditions(
-                                df, pd.to_datetime(d_str),
-                                d_rps['rps120'].get(code, 0),
-                                d_rps['rps250'].get(code, 0), None, self.params)
-                            if ok:
-                                m.update({
-                                    '代码': code,
-                                    '名称': self.data_provider.code2name.get(code, ""),
-                                    '触发日期': d_str,
-                                    '热点板块': "-"
-                                })
-                                all_results.append(m)
-                        except Exception:
-                            continue
-            
-            # Enrich Market Cap
-            if all_results:
-                self.progress.emit(99, "计算市值...")
-                df_res = pd.DataFrame(all_results)
-                unique_codes = df_res['代码'].unique().tolist()
-                _scan_close = {}
-                for c in unique_codes:
-                    _cd = self.data_provider.cache_data.get(c)
-                    if _cd is not None and not _cd.empty:
-                        _scan_close[c] = float(_cd.iloc[-1]['close'])
-                cap_results = VCPEngine.batch_check_market_cap(unique_codes, close_prices=_scan_close)
-                
-                for res in all_results:
-                    c = res['代码']
-                    if cap_results.get(c):
-                        res['市值'] = f"{cap_results[c] / 1e8:.0f}亿"
-                    else:
-                        res['市值'] = ""
-
-            # Enrich 热点板块(板块 RPS)
-            if all_results:
-                self.progress.emit(99, "查询热点板块...")
-                try:
-                    from vcp.sector import SectorManager
-                    tdx_root = os.path.dirname(self.data_provider.tdx_vipdoc) if self.data_provider.tdx_vipdoc else r'D:\HT'
-                    sm = SectorManager(tdx_root)
-                    # 取最后一个扫描日作为板块 RPS 基准日
-                    last_date = all_results[-1].get('触发日期', '')
-                    if last_date:
-                        sector_rps = sm.build_sector_rps(self.data_provider.cache_data, last_date)
-                        for res in all_results:
-                            code = res['代码']
-                            passed, info_str, _ = sm.check_sector_rps(code, sector_rps, threshold=0)
-                            res['热点板块'] = info_str if info_str else "-"
-                except Exception as e:
-                    log.error(f"[板块查询] 异常: {e}")
-            
-            self.result_ready.emit(all_results)
-            self.finished_scan.emit(True, f"扫描完成,捕获 {len(all_results)} 条信号")
-
-        except InterruptedError:
-            self.finished_scan.emit(False, "任务已取消")
-        except Exception as e:
-            self.finished_scan.emit(False, f"扫描异常: {str(e)}")
 
 class RtScanWorker(QThread):
     """盘中监控核心工作线程:
@@ -266,7 +132,17 @@ class RtScanWorker(QThread):
             )
             new_pool = VCPEngine.precompute_ready_pool(
                 self._all_data, self._rps120, self._rps250, rt_params,
-                code2name=self.data_provider.code2name)
+                code2name=self.data_provider.code2name,
+                progress_callback=lambda msg: self.progress.emit(msg))
+                
+            # 【缓存同步】将盘中算出的带有技术指标的 DataFrame 同步回全局字典
+            # 防止取消监控后再次进入盘中监控或区间扫描时发生 80 秒的重复初次计算
+            for _code, _df in self._all_data.items():
+                if 'entangle' in _df.columns:
+                    _orig = self.data_provider.cache_data.get(_code)
+                    if _orig is not None and 'entangle' not in _orig.columns:
+                        self.data_provider.cache_data[_code] = _df
+
             if self._ready_pool is not None:
                 old_codes = set(self._ready_pool.keys())
                 new_codes = set(new_pool.keys())
@@ -283,15 +159,26 @@ class RtScanWorker(QThread):
         # ===== 阶段4: 拉取实时报价 =====
         codes_to_fetch = list(self._ready_pool.keys())
         # 加入关注池代码(即使不在待突破池中)
-        import json
-        special_codes = set()
-        special_path = SPECIAL_LATEST_DATA
-        if os.path.exists(special_path):
-            try:
-                with open(special_path, 'r', encoding='utf-8') as f:
-                    special_codes = set(json.load(f).keys())
-            except Exception:
-                pass
+        from ui.viewmodels.watchlist_vm import watchlist_vm
+        special_codes = set(watchlist_vm.get_all_codes())
+        
+        # 【修复 BUG】清理已剔除出待突破池的历史爆破信号，防止"诈尸"
+        stale_signals = [c for c in self._signal_details if c not in self._ready_pool]
+        for c in stale_signals:
+            del self._signal_details[c]
+
+        # 【#4 修复内存泄漏】同步清理 _seen_signals 中不在新池的 stale key
+        # 避免盘中连续运行一整天时 set 无限增长
+        self._seen_signals = {
+            (code, status) for code, status in self._seen_signals
+            if code in self._ready_pool
+        }
+
+        # 【修复 BUG】清理已经移出关注池的历史缓存明细，避免断线重连或盘中监控时“诈尸”显示
+        stale_keys = [c for c in self._special_details if c not in special_codes]
+        for c in stale_keys:
+            del self._special_details[c]
+
         for sc in special_codes:
             if sc not in codes_to_fetch:
                 codes_to_fetch.append(sc)
@@ -313,16 +200,21 @@ class RtScanWorker(QThread):
             # 涨幅计算:优先使用 pytdx 返回的昨收价,精确可靠
             last_close = float(quote.get('last_close', 0) or 0)
             rt_close = float(quote.get('close', 0) or 0)
+            
+            # --- 兜底检查：防御 Pytdx 服务器返回零值 (停牌/断流) ---
+            if last_close <= 0:
+                hist_df = self._all_data.get(code)
+                if hist_df is not None and len(hist_df) > 0:
+                    last_close = float(hist_df.iloc[-1]['close'])
+                    
+            if rt_close <= 0 and last_close > 0:
+                rt_close = last_close
+                quote['close'] = rt_close  # 回写防御后续使用 quote['close']
+
             if last_close > 0 and rt_close > 0:
                 pct = ((rt_close / last_close) - 1) * 100
             else:
-                # 兜底:用历史缓存最后一根K线
-                hist_df = self._all_data.get(code)
-                if hist_df is not None and len(hist_df) > 0:
-                    prev_close = float(hist_df.iloc[-1]['close'])
-                    pct = ((rt_close / prev_close) - 1) * 100 if prev_close > 0 else 0
-                else:
-                    pct = 0
+                pct = 0
 
             # ------ 关注池股票:完整 evaluate ------
             if is_special:
@@ -374,8 +266,15 @@ class RtScanWorker(QThread):
             sig_key = (code, breakout_status)
             if sig_key not in self._seen_signals:
                 self._seen_signals.add(sig_key)
-                log.info(f"  🔥 新信号! {code} {self.data_provider.code2name.get(code, '')} "
+                stock_name = self.data_provider.code2name.get(code, '')
+                log.info(f"  🔥 新信号! {code} {stock_name} "
                       f"| 现价 {quote['close']:.2f} | {pct:+.2f}% | {breakout_status}")
+                # #15: 桌面通知 + 声音提醒，让用户即使不在终端也能感知
+                try:
+                    from ui.components.notification_service import notify_breakout
+                    notify_breakout(code, stock_name, f"{pct:+.2f}% {breakout_status}")
+                except Exception:
+                    pass  # 通知失败不应影响核心扫描逻辑
 
             # 构建信号时,优先使用 pool_entry 中的板块/市值,
             # 若为空则保留上一轮已经通过阶段6补全的旧值(防止覆盖)
@@ -406,12 +305,14 @@ class RtScanWorker(QThread):
                 close_prices = {}
                 for c in codes_need_cap:
                     q = quotes.get(c)
-                    if q:
-                        close_prices[c] = float(q.get('close', 0) or 0)
-                    else:
+                    rt_price = float(q.get('close', 0) or 0) if q else 0
+                    
+                    if rt_price <= 0:
                         hist = self._all_data.get(c)
                         if hist is not None and len(hist) > 0:
-                            close_prices[c] = float(hist.iloc[-1]['close'])
+                            rt_price = float(hist.iloc[-1]['close'])
+                            
+                    close_prices[c] = rt_price
                 cap_results = VCPEngine.batch_check_market_cap(codes_need_cap, close_prices=close_prices)
                 for c in codes_need_cap:
                     cap = cap_results.get(c)
@@ -427,8 +328,8 @@ class RtScanWorker(QThread):
             try:
                 from vcp.sector import SectorManager
                 import pickle as _pkl
-                tdx_root = os.path.dirname(self.data_provider.tdx_vipdoc) if self.data_provider.tdx_vipdoc else r'D:\\HT'
-                self._sector_manager = SectorManager(tdx_root)
+                tdx_root = os.path.dirname(self.data_provider.tdx_vipdoc) if self.data_provider.tdx_vipdoc else r'D:\HT'
+                self._sector_manager = SectorManager.get_instance(tdx_root)
 
                 # 优先从磁盘加载板块 RPS 缓存(F5 或上次盘中监控保存的)
                 from vcp.constants import SECTOR_RPS_CACHE_FILE

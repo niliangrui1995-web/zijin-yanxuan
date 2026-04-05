@@ -2,17 +2,18 @@ import os
 import time
 import datetime
 import json
+import re
 import concurrent.futures
 import pandas as pd
 from PyQt6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
-    QLineEdit, QMessageBox, QDialog, QDateEdit, QTextEdit,
+    QLineEdit, QDialog, QDateEdit, QTextEdit,
     QTableWidgetItem
 )
+from ui.components.toast_widget import show_toast
 from PyQt6.QtCore import Qt, QTimer, QDate
 from PyQt6.QtGui import QColor
 
-from vcp.constants import SPECIAL_LATEST_DATA
 from vcp.engine import VCPEngine
 from core.event_bus import event_bus
 from core.logger import get_logger
@@ -61,9 +62,46 @@ class AIDiagPanel(QFrame):
         ai_header.addWidget(btn_close_ai)
         ai_layout.addLayout(ai_header)
 
+        input_container = QFrame()
+        input_container.setStyleSheet("background-color: #1E293B; border-radius: 6px; padding: 4px;")
+        input_layout = QVBoxLayout(input_container)
+        input_layout.setContentsMargins(6,6,6,6)
+        input_layout.setSpacing(6)
+        
+        row1 = QHBoxLayout()
+        self.code_input = QLineEdit()
+        self.code_input.setPlaceholderText("请输入 6 位代码")
+        self.code_input.setFixedWidth(120)
+        self.code_input.setStyleSheet("background: #0F172A; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px;")
+        self.date_input = QDateEdit()
+        self.date_input.setCalendarPopup(True)
+        self.date_input.setDisplayFormat("yyyy-MM-dd")
+        self.date_input.setDate(QDate.currentDate())
+        self.date_input.setStyleSheet("background: #0F172A; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px;")
+        
+        row1.addWidget(QLabel("代码:"))
+        row1.addWidget(self.code_input)
+        row1.addWidget(QLabel("基准日:"))
+        row1.addWidget(self.date_input)
+        row1.addStretch()
+        input_layout.addLayout(row1)
+        
+        row2 = QHBoxLayout()
+        btn_local = QPushButton("🧪 本地评估")
+        btn_ai = QPushButton("🧠 深度扫描")
+        btn_local.setObjectName("secondaryButton")
+        btn_ai.setObjectName("primaryButton")
+        btn_local.clicked.connect(lambda *args: self._handle_diag_start("local"))
+        btn_ai.clicked.connect(lambda *args: self._handle_diag_start("kimi"))
+        row2.addWidget(btn_local)
+        row2.addWidget(btn_ai)
+        input_layout.addLayout(row2)
+        
+        ai_layout.addWidget(input_container)
+
         self.ai_content = QTextEdit()
         self.ai_content.setReadOnly(True)
-        self.ai_content.setStyleSheet("background-color: #0A0C10; color: #C9CDD4; border-radius: 6px; padding: 4px;")
+        self.ai_content.setStyleSheet("background-color: #0A0C10; color: #C9CDD4; border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 6px; padding: 8px;")
         ai_layout.addWidget(self.ai_content)
 
     def _merge_and_wrap_ai_diag(self, text):
@@ -75,113 +113,88 @@ class AIDiagPanel(QFrame):
         if not isinstance(preset_code, str): preset_code = ""
         code = preset_code.strip()
 
-        if not code or not auto_start:
-            prefill_code = code
-            if not prefill_code and hasattr(self.main_window, 'tabs'):
-                curr_tab = self.main_window.tabs.currentIndex()
-                if curr_tab == 1 and hasattr(self.main_window, 'table_rt') and self.main_window.table_rt.currentItem():
-                    prefill_code = self.main_window.table_rt.item(self.main_window.table_rt.currentRow(), 0).text()
-                elif curr_tab == 2 and hasattr(self.main_window, 'table_sp') and self.main_window.table_sp.currentItem():
-                    prefill_code = self.main_window.table_sp.item(self.main_window.table_sp.currentRow(), 0).text()
-                elif curr_tab == 0 and hasattr(self.main_window, 'table_scan') and self.main_window.table_scan.currentItem():
-                    prefill_code = self.main_window.table_scan.item(self.main_window.table_scan.currentRow(), 1).text()
+        if not code and hasattr(self.main_window, 'tabs'):
+            curr_tab = self.main_window.tabs.currentIndex()
+            if curr_tab == 1 and hasattr(self.main_window, 'table_rt') and self.main_window.table_rt.currentItem():
+                code = self.main_window.table_rt.item(self.main_window.table_rt.currentRow(), 0).text()
+            elif curr_tab == 2 and hasattr(self.main_window, 'table_sp') and self.main_window.table_sp.currentItem():
+                code = self.main_window.table_sp.item(self.main_window.table_sp.currentRow(), 0).text()
+            elif curr_tab == 0 and hasattr(self.main_window, 'table_scan') and getattr(self.main_window, 'table_scan', None) and self.main_window.table_scan.currentItem():
+                code = self.main_window.table_scan.item(self.main_window.table_scan.currentRow(), 1).text()
 
-            dialog = QDialog(self)
-            dialog.setWindowTitle("AI 诊断 -- 选择标的与检测类型")
-            dialog.resize(340, 220)
-            dialog.setStyleSheet(self.main_window.styleSheet())
-            
-            layout = QVBoxLayout(dialog)
-            layout.addWidget(QLabel("请输入 6 位股票代码:"))
-            input_field = QLineEdit()
-            input_field.setPlaceholderText("例如: 000001")
-            if prefill_code and len(prefill_code) == 6: input_field.setText(prefill_code)
-            layout.addWidget(input_field)
-
-            date_row = QHBoxLayout()
-            date_row.addWidget(QLabel("诊断日期:"))
-            date_edit = QDateEdit()
-            date_edit.setCalendarPopup(True)
-            date_edit.setDate(QDate.currentDate())
-            date_edit.setDisplayFormat("yyyy-MM-dd")
-            date_row.addWidget(date_edit)
-            date_row.addStretch()
-            layout.addLayout(date_row)
-
-            btn_box = QHBoxLayout()
-            btn_local = QPushButton("🧪 本地技术诊断")
-            btn_ai = QPushButton("🧠 Kimi 深度诊断")
-            btn_local.setObjectName("secondaryButton")
-            btn_ai.setObjectName("primaryButton")
-            btn_box.addWidget(btn_local)
-            btn_box.addWidget(btn_ai)
-            layout.addLayout(btn_box)
-
-            diag_date = [None]
-            def _handle_local():
-                nonlocal auto_start, code
-                auto_start, code, diag_date[0] = 'local', input_field.text().strip(), date_edit.date().toString("yyyy-MM-dd")
-                dialog.accept()
-            def _handle_ai():
-                nonlocal auto_start, code
-                auto_start, code, diag_date[0] = 'kimi', input_field.text().strip(), date_edit.date().toString("yyyy-MM-dd")
-                dialog.accept()
-
-            btn_local.clicked.connect(_handle_local)
-            btn_ai.clicked.connect(_handle_ai)
-
-            if dialog.exec() != QDialog.DialogCode.Accepted: return
-            if not code or len(code) != 6:
-                QMessageBox.warning(self, "输入错误", "请输入正确的 6 位股票代码!")
-                return
-            diag_date_str = diag_date[0] or datetime.date.today().strftime("%Y-%m-%d")
-        else:
-            diag_date_str = datetime.date.today().strftime("%Y-%m-%d")
+        if code and len(code) == 6:
+            self.code_input.setText(code)
 
         self.show()
-        # 控制主窗口尺寸分布展开
         curr_sizes = self.main_window.right_splitter.sizes()
         if curr_sizes[1] == 0:
             total = sum(curr_sizes)
             self.main_window.right_splitter.setSizes([int(total*0.75), int(total*0.25)])
             
-        if auto_start == 'local':
+        if auto_start in ('local', 'kimi') and code and len(code) == 6:
+            self._handle_diag_start(auto_start)
+
+    def _handle_diag_start(self, mode):
+        code = self.code_input.text().strip()
+        if not re.match(r'^\d{6}$', code):
+            show_toast("请输入正确的 6 位股票代码!", "warning", self)
+            self.code_input.setFocus()
+            return
+            
+        diag_date_str = self.date_input.date().toString("yyyy-MM-dd")
+        if mode == "local":
             self._run_local_diag_sidebar(code, diag_date_str)
         else:
             self._run_kim_diag_sidebar(code, diag_date_str)
 
     def _run_local_diag_sidebar(self, code, diag_date=""):
         name = getattr(self.data_provider, 'code2name', {}).get(code, "未知")
-        self.ai_content.setPlainText(f"⏳ 正在极速生成 {name}({code}) 的本地技术诊断模型…\n")
+        self.ai_content.setHtml(f"<div style='color: #10B981; font-weight: bold;'>🧪 本地技术诊断进行中...</div><div style='color: #64748B;'>计算 {name}({code}) 的形态与指标...</div>")
+        
         def do_local_diag():
             try:
                 ok, msg = self._get_technical_report_text(code, name, diag_date)
             except Exception as e:
                 ok, msg = False, f"本地诊断异常: {e}"
-            # 跨线程投递至主UI
-            event_bus.sig_ui_task.emit(lambda: self.ai_content.setPlainText(msg if ok else f"❌ {msg}"))
+            event_bus.sig_ui_task.emit(lambda: self.ai_content.setHtml(self.ai_content.toHtml() + f"<br><div style='color: #E2E8F0;'>{msg}</div>" if ok else f"<br><div style='color: #EF4444;'>❌ {msg}</div>"))
         task_manager.run_in_background(do_local_diag, task_id="ai_local_diag")
 
     def _run_kim_diag_sidebar(self, code, diag_date=""):
         name = getattr(self.data_provider, 'code2name', {}).get(code, "未知")
-        self.ai_content.setPlainText(f"🤖 正在联网抽取 {name}({code}) 投资面与情绪标本…\n(请稍候不要关闭)\n")
+        
+        # HTML 进度指示，动态 P1/P6/P8 面板
+        self.ai_content.setHtml(f"<div style='color: #8B5CF6; font-weight: bold;'>🧠 AI 深度诊断正在进行中...</div><br><div style='color: #38BDF8;'>[ P1 大数据特征抽取 ] 收录行情切片与基本面池...</div>")
+        
         from vcp.utils import _get_kimi_api_key, _load_ai_diag_config
         cfg = _load_ai_diag_config()
         api_key = (cfg.get("kimi_api_key") or "").strip() or _get_kimi_api_key()
         
+        def update_progress(step, msg):
+            html = self.ai_content.toHtml() + f"<div style='color: #A78BFA; margin-top: 4px;'>[ L{step} 智能流水线 ] {msg}</div>"
+            self.ai_content.setHtml(html)
+
         def do_request():
+            import time
+            time.sleep(0.6)
+            event_bus.sig_ui_task.emit(lambda: update_progress(2, "合并图表结构模型，提纯技术支撑位..."))
+            time.sleep(1.2)
+            event_bus.sig_ui_task.emit(lambda: update_progress(3, "唤醒 Kimi 云端大语言模型，计算投资研判..."))
+
             try:
                 ok, msg = self._kimi_service.call_kimi_diag(api_key, code, name, diag_date=diag_date)
             except Exception as e:
-                ok, msg = False, f"网络异常: {e}"
+                ok, msg = False, f"调用网络大模型异常: {e}"
             event_bus.sig_ui_task.emit(lambda: on_done(ok, msg, code))
             
         def on_done(ok, msg, c):
             if ok:
-                self.ai_content.setPlainText(msg + "\n\n✅ 数据已写入对应缓存与单元格映射")
+                fmt_msg = msg.replace('\\n', '<br>')
+                html = self.ai_content.toHtml() + f"<br><div style='color: #E2E8F0; padding: 6px; border-left: 3px solid #6366F1;'>{fmt_msg}</div><br><div style='color: #10B981; font-weight: bold;'>✅ 诊断数据处理就绪并已同步至内存池。</div>"
+                self.ai_content.setHtml(html)
                 self._apply_ai_diag_result(c, msg.strip())
             else:
-                self.ai_content.setPlainText("❌ " + str(msg))
+                html = self.ai_content.toHtml() + f"<br><div style='color: #EF4444; font-weight: bold;'>❌ {msg}</div>"
+                self.ai_content.setHtml(html)
                 
         task_manager.run_in_background(do_request, task_id="ai_kimi_diag")
 
@@ -211,7 +224,7 @@ class AIDiagPanel(QFrame):
         last = df.iloc[-1]
         try:
             actual_date = last.name.strftime('%Y-%m-%d') if hasattr(last.name, 'strftime') else str(df.iloc[-1]['date'])[:10]
-        except: actual_date = ""
+        except (ValueError, TypeError): actual_date = ""
         
         close = last['close']
         rsi, macd_hist = last.get('RSI', 50.0), last.get('MACD_Hist', 0.0)
@@ -236,36 +249,73 @@ class AIDiagPanel(QFrame):
         # 通知主界面直接操作 table_sp 更新对应列
         if hasattr(self.main_window, 'table_sp'):
             t = self.main_window.table_sp
-            for row in range(t.rowCount()):
-                item_code = t.item(row, 0)
-                if item_code and item_code.text() == code:
-                    ai_item = t.item(row, 9)
-                    if ai_item:
-                        ai_item.setText(display_text)
-                        ai_item.setToolTip(tip_html)
-                    else:
-                        new_item = QTableWidgetItem(display_text)
-                        new_item.setToolTip(tip_html)
-                        new_item.setForeground(QColor("#C9CDD4"))
-                        new_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-                        t.setItem(row, 9, new_item)
-                    break
+            # 兼容 QTableView (MVC)
+            if hasattr(t, 'model') and getattr(t, 'model', lambda: None)():
+                model = t.model()
+                if hasattr(model, 'row_data'):
+                    final_list = list(model.row_data)
+                    dirty = False
+                    for row_data in final_list:
+                        if row_data.get('代码', '') == code:
+                            if row_data.get('AI结论') != display_text:
+                                row_data['AI结论'] = display_text
+                                dirty = True
+                            break
+                    if dirty and hasattr(model, 'update_data'):
+                        model.update_data(final_list)
+                        
+            # 兼容 QTableWidget
+            elif hasattr(t, 'rowCount'):
+                for row in range(t.rowCount()):
+                    item_code = t.item(row, 0)
+                    if item_code and item_code.text() == code:
+                        ai_item = t.item(row, 9)
+                        if ai_item:
+                            ai_item.setText(display_text)
+                            ai_item.setToolTip(tip_html)
+                        else:
+                            from PyQt6.QtWidgets import QTableWidgetItem
+                            new_item = QTableWidgetItem(display_text)
+                            new_item.setToolTip(tip_html)
+                            new_item.setForeground(QColor("#C9CDD4"))
+                            new_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                            t.setItem(row, 9, new_item)
+                        break
                     
-        # 直接更新文件缓冲
-        if os.path.exists(SPECIAL_LATEST_DATA):
+        # 直接更新ViewModel缓冲
+        from ui.viewmodels.watchlist_vm import watchlist_vm
+        if watchlist_vm.is_in_watchlist(code):
             try:
-                with open(SPECIAL_LATEST_DATA, 'r', encoding='utf-8') as f:
-                    data_dict = json.load(f)
-                if code in data_dict:
-                    data_dict[code]["AI诊断"] = text
-                    with open(SPECIAL_LATEST_DATA, 'w', encoding='utf-8') as f:
-                        json.dump(data_dict, f, ensure_ascii=False, indent=4)
+                current_cache = watchlist_vm.get_watchlist_data()
+                current_cache[code]["AI诊断"] = text
+                watchlist_vm._cache = current_cache
+                watchlist_vm._save_data()
             except Exception as e: log.error(f"[AI诊断] 缓存写入异常: {e}")
 
     def refresh_ai_column_from_cache(self):
         """一次性从内存回填关注池全部数据"""
         if not hasattr(self.main_window, 'table_sp'): return
         t = self.main_window.table_sp
+        
+        # 兼容 QTableView (MVC)
+        if hasattr(t, 'model') and getattr(t, 'model', lambda: None)():
+            model = t.model()
+            if hasattr(model, 'row_data'):
+                final_list = list(model.row_data)
+                dirty = False
+                for row_data in final_list:
+                    code = row_data.get('代码', '')
+                    ai_text = self._ai_diag_results.get(code, '')
+                    if ai_text:
+                        display_text = self._merge_and_wrap_ai_diag(ai_text)
+                        if row_data.get('AI结论') != display_text:
+                            row_data['AI结论'] = display_text
+                            dirty = True
+                if dirty and hasattr(model, 'update_data'):
+                    model.update_data(final_list)
+            return
+
+        if not hasattr(t, 'rowCount'): return
         for row in range(t.rowCount()):
             item_code = t.item(row, 0)
             if not item_code: continue
@@ -289,11 +339,10 @@ class AIDiagPanel(QFrame):
     # 批量一键大模型扫描
     # ==========================
     def run_special_pool_ai_diag_all(self):
-        data_dict = {}
-        if os.path.exists(SPECIAL_LATEST_DATA):
-            with open(SPECIAL_LATEST_DATA, 'r', encoding='utf-8') as f: data_dict = json.load(f)
+        from ui.viewmodels.watchlist_vm import watchlist_vm
+        data_dict = watchlist_vm.get_watchlist_data()
         if not data_dict:
-            QMessageBox.information(self, "提示", "关注池为空")
+            show_toast("关注池为空", "warning", self)
             return
             
         codes = list(data_dict.keys())

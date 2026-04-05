@@ -13,11 +13,14 @@ from vcp.constants import (
     FLEXIBLE_MIN_INTERVAL, FLEXIBLE_MAX_INTERVAL,
     MIN_DAYS_AFTER_LAST_PEAK, MIN_DAYS_AFTER_LAST_PEAK_CONFIRM,
     MAX_R2_BELOW_R1_PCT, MIN_FIRST_TO_THIRD_DAYS, MIN_R1_R2_DAYS,
-    MIN_SMA50_SLOPE, MIN_ATR10_THRESHOLD, MIN_ENTANGLE_PRE_SPREAD,
+    MIN_SMA50_SLOPE,
     INSTITUTION_KEYWORDS, INSTITUTION_NAME_KEYWORDS,
     SHAREHOLDER_CACHE_FILE, MIN_MARKET_CAP,
 )
 from vcp.models import VCPParams
+
+from core.logger import get_logger
+_log = get_logger(__name__)
 
 
 class VCPEngine:
@@ -146,8 +149,7 @@ class VCPEngine:
         except ImportError:
             pass  # polars_engine 不可用，使用 pandas
         except Exception as e:
-            print(f"[策略中台] 加速矩阵构建失败，回退 pandas: {e}")
-
+            _log.error(f"[策略中台] 加速矩阵构建失败，回退 pandas: {e}")
         # ---- pandas 原始路径（fallback）----
         valid = [(c, df) for c, df in data_dict.items() if df is not None and not df.empty]
         if not valid:
@@ -162,7 +164,7 @@ class VCPEngine:
                 if not sliced.empty:
                     series_list.append(sliced.rename(c))
             except Exception as e:
-                print(f"[策略中台] 构建 RPS 时忽略 {c}，原因: {e}")
+                _log.info(f"[策略中台] 构建 RPS 时忽略 {c}，原因: {e}")
         if not series_list:
             return pd.DataFrame()
         prices = pd.concat(series_list, axis=1).sort_index()
@@ -177,7 +179,7 @@ class VCPEngine:
             self._rps_cache_date = today
         cache_key = (str(start_date), str(end_date))
         if cache_key in self._daily_rps_cache:
-            print(f"\n[策略中台] RPS 矩阵命中缓存 (区间 {start_date} ~ {end_date})，跳过重算")
+            _log.warning(f"\n[策略中台] RPS 矩阵命中缓存 (区间 {start_date} ~ {end_date})，跳过重算")
             return self._daily_rps_cache[cache_key]
 
         # ---- Polars 快速路径 ----
@@ -189,17 +191,16 @@ class VCPEngine:
         except ImportError:
             pass  # polars 未安装
         except Exception as e:
-            print(f"[策略中台] Polars RPS 计算失败，回退 pandas: {e}")
-
+            _log.error(f"[策略中台] Polars RPS 计算失败，回退 pandas: {e}")
         # ---- pandas 原始路径（fallback）----
-        print(f"\n[策略中台] 正在计算全市场 RPS 强度矩阵... (标的数: {num_stocks})")
+        _log.info(f"\n[策略中台] 正在计算全市场 RPS 强度矩阵... (标的数: {num_stocks})")
         start_ts = pd.to_datetime(start_date)
         end_ts = pd.to_datetime(end_date)
         min_start = start_ts - pd.Timedelta(days=RPS_BUFFER_DAYS)
 
         prices = self._build_prices_matrix(data_dict, min_start, end_ts)
         if prices.empty:
-            print(f"[策略中台] ⚠ 区间 {start_date} ~ {end_date} 无可用价格数据，跳过该段 RPS 计算。")
+            _log.warning(f"[策略中台] ⚠ 区间 {start_date} ~ {end_date} 无可用价格数据，跳过该段 RPS 计算。")
             return {}
 
         rps50  = prices.pct_change(50).rank(axis=1, pct=True) * 100
@@ -217,7 +218,7 @@ class VCPEngine:
                 'rps120': r120_d[valid].to_dict(),
                 'rps250': r250_d[valid].to_dict()
             }
-        print(f"[策略中台] RPS 矩阵构建完成 — 参与标的 {prices.shape[1]} 只 | 扫描交易日 {len(target_dates)} 个")
+        _log.info(f"[策略中台] RPS 矩阵构建完成 — 参与标的 {prices.shape[1]} 只 | 扫描交易日 {len(target_dates)} 个")
         self._daily_rps_cache[cache_key] = result
         return result
 
@@ -306,30 +307,7 @@ class VCPEngine:
             return False, slope
         return True, slope
 
-    @staticmethod
-    def _check_volatility(df: pd.DataFrame, curr_idx: int, params: VCPParams) -> tuple[bool, float]:
-        if not params.enable_volatility_filter:
-            return True, 0
-        row = df.iloc[curr_idx]
-        if pd.isna(row['ATR10']) or row['close'] <= 0:
-            return False, 0
-        atr_ratio = row['ATR10'] / row['close']
-        if atr_ratio < MIN_ATR10_THRESHOLD:
-            return False, atr_ratio
-        return True, atr_ratio
 
-    @staticmethod
-    def _check_entangle_pre_spread(df: pd.DataFrame, curr_idx: int, params: VCPParams) -> tuple[bool, float]:
-        if not params.enable_pre_spread:
-            return True, 0
-        if curr_idx < 30:
-            return False, 0
-        entangle_max = df.iloc[max(0, curr_idx-29):curr_idx+1]['entangle'].max()
-        if pd.isna(entangle_max):
-            return False, 0
-        if entangle_max < MIN_ENTANGLE_PRE_SPREAD:
-            return False, entangle_max
-        return True, entangle_max
 
     @staticmethod
     def _check_observation_vs_buy(df: pd.DataFrame, curr_idx: int, final_peaks: list, row: pd.Series, params: VCPParams) -> tuple[str, str]:
@@ -343,7 +321,7 @@ class VCPEngine:
 
     @staticmethod
     def evaluate_conditions(df: pd.DataFrame, current_day, rps120: float, rps250: float,
-                            rps_history: dict | None = None, params: VCPParams | None = None,
+                            _rps_history: dict | None = None, params: VCPParams | None = None,
                             skip_red_check: bool = False) -> tuple[bool, str, dict]:
         """增强版选股条件判断"""
         if params is None:
@@ -364,7 +342,9 @@ class VCPEngine:
             return False, "RPS数据不足", {}
 
         if 'entangle' not in df.columns:
-            try: df = VCPEngine.calculate_indicators(df.copy())
+            # 直接在原 df 上计算核心指标（不 copy），让结果持久化到 cache_data
+            # 避免每次 evaluate 都重复计算浪费 CPU
+            try: VCPEngine.calculate_indicators(df, include_chart=False)
             except Exception: return False, "指标计算失败", {}
 
         row = df.iloc[curr_idx]
@@ -572,34 +552,76 @@ class VCPEngine:
 
     @staticmethod
     def batch_get_finance_info(codes):
-        """通过通达信批量获取财务信息（总股本、法人股等）
-
-        参数:
-            codes: ['603659', '002463', ...] 股票代码列表
-
-        返回:
-            {code: {zongguben, farengu, hgu, guojiagu, ...}} 字典
-        """
+        """通过通达信批量获取财务信息（总股本、法人股等），带30天磁盘缓存"""
         import time as _time
-        api = VCPEngine._tdx_connect()
-        if api is None:
-            print("[pytdx] 无法连接通达信服务器")
-            return {}
+        import os
+        import pickle
+        from datetime import datetime
+        from vcp.constants import FINANCE_CACHE_FILE
+
+        # 1. 加载本地缓存（有效期 30 天）
+        cache = {}
+        if os.path.exists(FINANCE_CACHE_FILE):
+            try:
+                with open(FINANCE_CACHE_FILE, 'rb') as f:
+                    cache = pickle.load(f)
+            except Exception:
+                cache = {}
 
         results = {}
+        need_query = []
+        now = datetime.now()
+
+        for code in codes:
+            if code in cache:
+                cached = cache[code]
+                try:
+                    cache_date = datetime.strptime(cached.get('date', '2000-01-01'), '%Y-%m-%d')
+                    if (now - cache_date).days < 30:
+                        results[code] = cached['info']
+                        continue
+                except Exception:
+                    pass
+            need_query.append(code)
+
+        if not need_query:
+            return results
+
+        api = VCPEngine._tdx_connect()
+        if api is None:
+            _log.warning("[pytdx] 无法连接通达信服务器，市值计算将使用本地旧缓存或暂无数据")
+            # 离线降级：如果连不上服务器，强制使用历史缓存（即使已过期）
+            for code in need_query:
+                if code in cache:
+                    results[code] = cache[code]['info']
+            return results
+
         try:
-            for i, code in enumerate(codes):
+            for i, raw_code in enumerate(need_query):
+                # 清理 sh / sz 前缀
+                code = raw_code.replace("sh", "").replace("sz", "")
+                
                 # 判断市场：6/5开头=上海(market=1)，其余=深圳(market=0)
                 market = 1 if code.startswith(('6', '5')) else 0
                 try:
                     info = api.get_finance_info(market, code)
                     if info:
-                        results[code] = info
+                        results[raw_code] = info
+                        cache[raw_code] = {'info': info, 'date': now.strftime('%Y-%m-%d')}
                 except Exception:
                     pass
+                
                 # 每50个暂停一下避免断连
                 if (i + 1) % 50 == 0:
                     _time.sleep(0.3)
+            
+            # 写入缓存
+            try:
+                with open(FINANCE_CACHE_FILE, 'wb') as f:
+                    pickle.dump(cache, f)
+            except Exception as e:
+                _log.error(f"[pytdx] 财务缓存写入失败: {e}")
+                
         finally:
             try:
                 api.disconnect()
@@ -628,10 +650,10 @@ class VCPEngine:
             zongguben = info.get('zongguben', 0)
             if zongguben and zongguben > 0:
                 if close_prices and code in close_prices:
-                    # 总市值 = 总股本 × 收盘价
+                    # zongguben 如果已经是股数（或 UI 已做好 1e8 转换），这里就不乘 10000。
                     results[code] = zongguben * close_prices[code]
                 else:
-                    results[code] = zongguben  # 无收盘价时返回股本数
+                    results[code] = zongguben
         return results
 
     # ================================================================
@@ -774,7 +796,7 @@ class VCPEngine:
 
         # ---- 联网查询未缓存的（东方财富 F10） ----
         if need_query:
-            print(f"[机构股东] 东方财富查询 {len(need_query)} 只（缓存命中 {len(codes) - len(need_query)} 只）...")
+            _log.info(f"[机构股东] 东方财富查询 {len(need_query)} 只（缓存命中 {len(codes) - len(need_query)} 只）...")
             for i, code in enumerate(need_query):
                 has_inst, detail = VCPEngine.check_institutional_shareholders(code)
                 entry = {
@@ -805,7 +827,7 @@ class VCPEngine:
     @staticmethod
     def precompute_ready_pool(all_data, rps120_series, rps250_series, params,
                               sector_manager=None, sector_rps_dict=None, sector_threshold=70,
-                              server_pool=None, code2name=None):
+                              server_pool=None, code2name=None, progress_callback=None):
         """收盘后一次性预计算"待突破池"
 
         用昨日 EOD 数据对全量股票执行完整 evaluate_conditions，
@@ -833,10 +855,19 @@ class VCPEngine:
                 'meta': 完整evaluate返回的m字典,
             }}
         """
+        import time as _time
         ready_pool = {}
         processed = 0
         st_filtered = 0
-        for code, df in all_data.items():
+        total_count = len(all_data)
+        for idx_code, (code, df) in enumerate(all_data.items()):
+            # 【休眠释放 GIL】每完成几只后主动释放 CPU，防卡死
+            if idx_code % 20 == 0:
+                _time.sleep(0.001)
+            # #10: 每处理 200 只回报进度，消除首轮启动的“黑屏焦虑”
+            if progress_callback and idx_code % 200 == 0:
+                progress_callback(f"构建待突破池: {idx_code}/{total_count}...")
+                
             if df is None or len(df) < 250:
                 continue
 
@@ -900,8 +931,7 @@ class VCPEngine:
             }
             processed += 1
 
-        print(f"[待突破池] 预计算完成 | 全量 {len(all_data)} 只 → 候选 {len(ready_pool)} 只（ST 剔除 {st_filtered} 只）")
-
+        _log.info(f"[待突破池] 预计算完成 | 全量 {len(all_data)} 只 → 候选 {len(ready_pool)} 只（ST 剔除 {st_filtered} 只）")
         # ---- 批量查询机构股东（东方财富 F10 API，90天缓存） ----
         if ready_pool:
             try:
@@ -919,10 +949,9 @@ class VCPEngine:
                 # 剔除无机构的股票
                 for code in no_inst_codes:
                     del ready_pool[code]
-                print(f"[机构股东] 筛选完成 | 有机构 {len(ready_pool)} 只，剔除无机构 {len(no_inst_codes)} 只")
+                _log.info(f"[机构股东] 筛选完成 | 有机构 {len(ready_pool)} 只，剔除无机构 {len(no_inst_codes)} 只")
             except Exception as e:
-                print(f"[机构股东] 查询异常，跳过筛选: {e}")
-
+                _log.error(f"[机构股东] 查询异常，跳过筛选: {e}")
         # ---- 总市值筛选：总股本×收盘价（通达信），剔除 < 40亿的股票 ----
         if ready_pool:
             try:
@@ -947,10 +976,9 @@ class VCPEngine:
                 # 剔除小市值
                 for code in small_cap_codes:
                     del ready_pool[code]
-                print(f"[市值筛选] 完成 | 保留 {len(ready_pool)} 只，剔除小市值(<40亿) {len(small_cap_codes)} 只")
+                _log.info(f"[市值筛选] 完成 | 保留 {len(ready_pool)} 只，剔除小市值(<40亿) {len(small_cap_codes)} 只")
             except Exception as e:
-                print(f"[市值筛选] 查询异常，跳过: {e}")
-
+                _log.error(f"[市值筛选] 查询异常，跳过: {e}")
         return ready_pool
 
     @staticmethod
