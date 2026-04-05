@@ -9,7 +9,9 @@ from PyQt6.QtCore import Qt, pyqtSlot
 from ui.tabs.base_stock_tab import BaseStockTab
 from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
 from core.event_bus import event_bus
+from core.event_types import DataEvent
 from core.logger import get_logger
+from core.task_manager import task_manager
 
 from earnings.scheduler import EarningsScheduler
 
@@ -21,7 +23,11 @@ class EarningsTab(BaseStockTab):
     def __init__(self, data_provider=None, parent=None):
         super().__init__(data_provider, parent)
         self.row_data = []
+        self._cap_cache = {}
         self._init_ui()
+        
+        # 订阅中央广播站报价（盘中/盘后/非交易日均覆盖）
+        event_bus.sig_data_updated.connect(self._on_global_data)
         
         # 挂载后台总调度器
         self.scheduler = EarningsScheduler(self)
@@ -29,6 +35,18 @@ class EarningsTab(BaseStockTab):
         
         # 界面初始化完成后，立刻命令调度器开机暴走（吐缓存 + 追扫重连）
         self.scheduler.start_patrol()
+
+    def _on_global_data(self, evt_type: str, data: object):
+        """中央广播站报价 → 刷新现价/涨幅，同时补充市值"""
+        if evt_type == DataEvent.RT_QUOTES_BROADCAST.value:
+            if not getattr(self, 'model', None) or not data:
+                return
+            self.model.update_quotes(data)
+            # 市值补充
+            for row_idx, row_dict in enumerate(self.model.row_data):
+                code = row_dict.get("代码", "")
+                if code in self._cap_cache and row_dict.get("市值") == "--":
+                    self.model.set_cell_value(row_idx, "市值", self._cap_cache[code])
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -174,6 +192,32 @@ class EarningsTab(BaseStockTab):
                 
         # 刷新视图
         self.model.update_data(self.row_data)
+        
+        # 一次性后台拉取市值（只拉没缓存的）
+        codes_need_cap = [r.get("代码") for r in self.row_data 
+                          if r.get("代码") and r["代码"] not in self._cap_cache]
+        if codes_need_cap and self.data_provider:
+            def _fetch_caps():
+                try:
+                    from vcp.engine import VCPEngine
+                    cap_results = VCPEngine.batch_check_market_cap(codes_need_cap)
+                    caps = {}
+                    for c in codes_need_cap:
+                        cap = cap_results.get(c)
+                        caps[c] = f"{cap / 1e8:.0f}亿" if cap and cap > 0 else "--"
+                    return caps
+                except Exception:
+                    return {}
+            
+            def _apply_caps(caps):
+                if not caps: return
+                self._cap_cache.update(caps)
+                for row_idx, row_dict in enumerate(self.model.row_data):
+                    code = row_dict.get("代码", "")
+                    if code in caps:
+                        self.model.set_cell_value(row_idx, "市值", caps[code])
+            
+            task_manager.run_in_background(_fetch_caps, on_success=_apply_caps, task_id="earnings_caps")
 
     def _show_context_menu(self, pos):
         index = self.table.indexAt(pos)

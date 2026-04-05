@@ -63,22 +63,18 @@ class WatchlistTab(BaseStockTab):
         self._rt_fetch_timer.start(30 * 1000)
 
     def _on_rt_fetch_timer(self):
-        from vcp.constants import MARKET_OPEN_AM, MARKET_CLOSE_PM
-        import datetime
-        now = datetime.datetime.now()
-        h, m = now.hour, now.minute
-        in_market = (
-            (h > MARKET_OPEN_AM[0] or (h == MARKET_OPEN_AM[0] and m >= MARKET_OPEN_AM[1]))
-            and (h < MARKET_CLOSE_PM[0] or (h == MARKET_CLOSE_PM[0] and m <= 5))
-        )
-        if in_market and now.weekday() < 5:
-            sp_codes = [str(r.get("代码")) for r in self.model.row_data if r.get("代码")]
-            if sp_codes:
-                task_manager.run_in_background(
-                    self._refresh_special_quotes, sp_codes,
-                    on_success=lambda q: self._update_quotes_ui(q) if q else None,
-                    task_id="watchlist_quotes_indie"
-                )
+        """独立30s定时器：仅负责首次拉一次报价+市值（盘后/非交易日也能展示收盘数据）"""
+        # 已通过中央广播接收盘中实时报价，此 timer 只为冷启动首次填充
+        if getattr(self, '_initial_quotes_done', False):
+            return
+        sp_codes = [str(r.get("代码")) for r in self.model.row_data if r.get("代码")]
+        if sp_codes:
+            task_manager.run_in_background(
+                self._refresh_special_quotes, sp_codes,
+                on_success=lambda q: self._update_quotes_ui(q) if q else None,
+                task_id="watchlist_quotes_indie"
+            )
+            self._initial_quotes_done = True
 
     # ================================================================
     # UI 构建
@@ -604,7 +600,13 @@ class WatchlistTab(BaseStockTab):
             log.error(f"[关注池] 同步缓存到 ViewModel 失败: {e}")
 
     def _on_data_updated(self, channel: str, payload: object):
-        """监听盘中监控的数据完成状态（与本地缓存解耦不读取现价，仅同步VCP指标）"""
+        """统一事件消费：广播报价 + F5缓存完成 + VCP指标就绪"""
+        # 盘中实时报价广播 → 刷新现价/涨幅
+        if channel == DataEvent.RT_QUOTES_BROADCAST.value:
+            if getattr(self, 'model', None):
+                self.model.update_quotes(payload)
+            return
+
         if channel == DataEvent.CACHE_LOADED.value and not getattr(self, "_vcp_computed", False):
             self._vcp_computed = True
             codes = [str(r.get("代码")) for r in self.model.row_data if r.get("代码")]
@@ -622,8 +624,6 @@ class WatchlistTab(BaseStockTab):
             log.info(f"[关注池-VCP] 收到信号，正在写入 {len(payload)} 条结果到表格...")
             self._apply_vcp_indicators_ui(payload)
             return
-        
-        # 已与盘中监控解耦，不再响应 rt_quotes_refreshed
 
     # ================================================================
     # 工具方法

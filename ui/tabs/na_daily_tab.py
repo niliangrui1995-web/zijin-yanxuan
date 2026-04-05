@@ -18,6 +18,7 @@ from PyQt6.QtGui import QColor
 from ui.theme import COLOR_FLAT
 from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
 from core.event_bus import event_bus
+from core.event_types import DataEvent
 from core.logger import get_logger
 from core.task_manager import task_manager
 from ui.tabs.base_stock_tab import BaseStockTab
@@ -36,18 +37,36 @@ class NADailyTab(BaseStockTab):
         # 开机延迟拉取/展现
         QTimer.singleShot(3500, self._load_na_daily_report)
 
-        # 定时刷新战报
+        # 订阅中央广播站报价（覆盖盘中/盘后/非交易日）
+        event_bus.sig_data_updated.connect(self._on_global_data)
+
+        # 定时刷新战报增量 + 首次拉取报价市值
         self._na_daily_schedule_timer = QTimer(self)
         self._na_daily_schedule_timer.timeout.connect(self._check_na_daily_schedule)
         self._na_daily_schedule_timer.start(30 * 1000)
         self._na_daily_fired_today = set()
 
-        # 实时拉取
-        self._rt_fetch_timer = QTimer(self)
-        self._rt_fetch_timer.timeout.connect(self._on_rt_fetch_timer)
-        self._rt_fetch_timer.start(30 * 1000)
+        # 盘中增量检查定时器（仅刷新战报文件，不再拉报价）
+        self._incremental_timer = QTimer(self)
+        self._incremental_timer.timeout.connect(self._check_incremental)
+        self._incremental_timer.start(30 * 1000)
+        self._initial_quotes_done = False
 
-    def _on_rt_fetch_timer(self):
+    def _on_global_data(self, evt_type: str, data: object):
+        """中央广播站报价 → 刷新现价/涨幅，同时补充市值"""
+        if evt_type == DataEvent.RT_QUOTES_BROADCAST.value:
+            if not getattr(self, 'model', None) or not data:
+                return
+            self.model.update_quotes(data)
+            # 市值补充：从广播数据中取 close 价格计算市值并回填
+            for row_idx, row_dict in enumerate(self.model.row_data):
+                code = row_dict.get("代码", "")
+                if code in self._cap_cache_na and row_dict.get("市值") == "--":
+                    self.model.set_cell_value(row_idx, "市值", self._cap_cache_na[code])
+
+    def _check_incremental(self):
+        """盘中每30秒检查战报文件增量 + 首次启动时拉取市值"""
+        # 盘中增量检查战报文件
         from vcp.constants import MARKET_OPEN_AM, MARKET_CLOSE_PM
         now = datetime.datetime.now()
         h, m = now.hour, now.minute
@@ -57,8 +76,11 @@ class NADailyTab(BaseStockTab):
         )
         if in_market and now.weekday() < 5:
             self._load_na_daily_incremental()
-            if getattr(self, '_na_daily_codes', None):
-                self._fetch_na_quotes_independently()
+
+        # 首次启动：拉一次报价+市值（盘后也能展示收盘数据）
+        if not self._initial_quotes_done and self._na_daily_codes:
+            self._fetch_na_quotes_independently()
+            self._initial_quotes_done = True
 
     def _init_ui(self):
         layout = QVBoxLayout(self)

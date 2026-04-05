@@ -256,6 +256,7 @@ class ForeignBlockTradeTab(BaseStockTab):
     def __init__(self, data_provider, parent=None):
         super().__init__(data_provider=data_provider, parent=parent)
         self._block_trade_codes = set()
+        self._cap_cache = {}
         self.setStyleSheet("background-color: transparent;")
         
         self.days_to_fetch = 20  # 默认拉取最近20个交易日
@@ -270,6 +271,11 @@ class ForeignBlockTradeTab(BaseStockTab):
         if evt_type == DataEvent.RT_QUOTES_BROADCAST.value:
             if getattr(self, '_block_trade_codes', None) and getattr(self, 'model', None):
                 self.model.update_quotes(data)
+                # 市值补充
+                for row_idx, row_dict in enumerate(self.model.row_data):
+                    code = row_dict.get("代码", "")
+                    if code in self._cap_cache and row_dict.get("市值") == "--":
+                        self.model.set_cell_value(row_idx, "市值", self._cap_cache[code])
 
     def _on_fetch_days_changed(self, index):
         days_map = {0: 10, 1: 20, 2: 40}
@@ -593,8 +599,34 @@ class ForeignBlockTradeTab(BaseStockTab):
         # 强制应用当前的筛选状态
         self._filter_table_combo()
         
-        # 异步计算黄金信号（涉及大量本地K线读取，不能阻塞UI）
+        # 异步计算黄金信号（涉及大量K线读取，不能阻塞UI）
         self._compute_golden_signal_async()
+        
+        # 一次性后台拉取市值
+        codes_need_cap = [str(c) for c in self._block_trade_codes if c not in self._cap_cache]
+        if codes_need_cap and self.data_provider:
+            from core.task_manager import task_manager
+            def _fetch_caps():
+                try:
+                    from vcp.engine import VCPEngine
+                    cap_results = VCPEngine.batch_check_market_cap(codes_need_cap)
+                    caps = {}
+                    for c in codes_need_cap:
+                        cap = cap_results.get(c)
+                        caps[c] = f"{cap / 1e8:.0f}亿" if cap and cap > 0 else "--"
+                    return caps
+                except Exception:
+                    return {}
+            
+            def _apply_caps(caps):
+                if not caps: return
+                self._cap_cache.update(caps)
+                for row_idx, row_dict in enumerate(self.model.row_data):
+                    code = row_dict.get("代码", "")
+                    if code in caps:
+                        self.model.set_cell_value(row_idx, "市值", caps[code])
+            
+            task_manager.run_in_background(_fetch_caps, on_success=_apply_caps, task_id="block_trade_caps")
 
     def _compute_golden_signal_async(self):
         """在后台线程计算黄金信号，完成后回调到UI"""

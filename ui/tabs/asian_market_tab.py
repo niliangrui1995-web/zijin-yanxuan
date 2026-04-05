@@ -381,22 +381,22 @@ class AsianMarketTab(BaseStockTab):
         # 1. 冷开机瞬间加载本地 JSON (asian_klines_latest.json)
         self._load_local_cache()
         
-        # # 2. 启动后台 Worker, 进行 60 秒常态轮询
-        # codes = [item['代码'] for item in self.row_data]
-        # self.worker = AsianMarketWorker(codes)
-        # self.worker.progress.connect(self.lbl_status.setText)
-        # self.worker.result_ready.connect(self._on_rt_update)
-        # # 等界面加载完稍微延后一点启动后台
-        # QTimer.singleShot(1000, self.worker.start)
+        # 2. 启动后台 Worker, 进行 60 秒常态轮询
+        codes = [item['代码'] for item in self.row_data]
+        self.worker = AsianMarketWorker(codes)
+        self.worker.progress.connect(self.lbl_status.setText)
+        self.worker.result_ready.connect(self._on_rt_update)
+        # 等界面加载完稍微延后一点启动后台
+        QTimer.singleShot(1000, self.worker.start)
         
-        # # 3. 监听全局数据更新事件 (如被 deferred_load 静默更新完毕)
-        # event_bus.sig_data_updated.connect(self._on_global_data_updated)
+        # 3. 监听全局数据更新事件 (如被 deferred_load 静默更新完毕)
+        event_bus.sig_data_updated.connect(self._on_global_data_updated)
         
-        # # 4. 自动缓存校验器
-        # self.auto_cache_timer = QTimer(self)
-        # self.auto_cache_timer.timeout.connect(self._check_auto_cache)
-        # self.auto_cache_timer.start(60000) # 每分钟检查一次
-        # QTimer.singleShot(2000, self._check_auto_cache) # 开机延迟检查
+        # 4. 自动缓存校验器：每分钟检查本地缓存是否需要更新
+        self.auto_cache_timer = QTimer(self)
+        self.auto_cache_timer.timeout.connect(self._check_auto_cache)
+        self.auto_cache_timer.start(60000)
+        QTimer.singleShot(2000, self._check_auto_cache)
 
     def _check_auto_cache(self):
         import time, os

@@ -60,6 +60,14 @@ class CentralQuotesService(QObject):
             
         if hasattr(mw, 'tab_foreign_block') and hasattr(mw.tab_foreign_block, '_block_trade_codes'):
             for c in mw.tab_foreign_block._block_trade_codes: codes.add(str(c))
+
+        # 美股日报只含 A 股标的，纳入统一广播
+        if hasattr(mw, 'tab_na_daily') and getattr(mw.tab_na_daily, 'model', None):
+            _extract(mw.tab_na_daily.model.row_data)
+
+        # 业绩异动同理
+        if hasattr(mw, 'tab_earnings') and getattr(mw.tab_earnings, 'model', None):
+            _extract(mw.tab_earnings.model.row_data)
             
         return codes
 
