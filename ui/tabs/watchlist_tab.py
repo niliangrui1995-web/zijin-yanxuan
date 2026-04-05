@@ -132,7 +132,7 @@ class WatchlistTab(BaseStockTab):
         
         # 绑定 Model 与 Delegate
         headers = [
-            "代码", "名称", "现价", "涨幅%", "时间", "市值",
+            "代码", "名称", "现价", "涨幅%", "市值", "时间",
             "RPS强度", "热点板块", "AI结论", "备注"
         ]
         self.model = StockTableModel(headers)
@@ -144,7 +144,7 @@ class WatchlistTab(BaseStockTab):
         self.table_sp.setItemDelegate(self.delegate)
 
         # 自适应列宽
-        sp_weights = [0.75, 0.65, 1.4, 0.75, 0.7, 0.9, 0.8, 1.4, 2.2, 1.5]
+        sp_weights = [0.75, 0.65, 1.4, 0.75, 0.9, 0.7, 0.8, 1.4, 2.2, 1.5]
         header = self.table_sp.horizontalHeader()
         header.setStretchLastSection(False)
         for col_idx, w in enumerate(sp_weights):

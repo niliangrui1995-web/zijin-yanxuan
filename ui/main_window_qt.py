@@ -606,16 +606,16 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
         self.tab_foreign_block = ForeignBlockTradeTab(self.data_provider, self)
         self.tabs.addTab(self.tab_foreign_block, "大宗交易")
 
-        # Tab 7: AI产业链跟踪（独立组件）
+        # Tab 7: 业绩预告与财报爆点追踪（独立组件）
+        from ui.tabs.earnings_tab import EarningsTab
+        self.tab_earnings = EarningsTab(self.data_provider, self)
+        self.tabs.addTab(self.tab_earnings, "业绩异动")
+
+        # Tab 8: AI产业链跟踪（独立组件）
         from ui.tabs.ai_tracker_tab import AITrackerTab
         self.tab_ai_tracker = AITrackerTab(self.data_provider, self)
         self.tabs.addTab(self.tab_ai_tracker, "AI算力链")
         self.ai_tracker_table = self.tab_ai_tracker.ai_tracker_table  # 向下兼容
-
-        # Tab 8: 业绩预告与财报爆点追踪（独立组件）
-        from ui.tabs.earnings_tab import EarningsTab
-        self.tab_earnings = EarningsTab(self.data_provider, self)
-        self.tabs.addTab(self.tab_earnings, "业绩异动")
 
         from ui.tabs.log_tab import LogTab
         self.tab_log = LogTab(self)

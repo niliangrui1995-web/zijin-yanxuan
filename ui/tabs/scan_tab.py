@@ -119,7 +119,7 @@ class ScanTab(BaseStockTab):
         layout.addWidget(scan_toolbar)
 
         # 表格控件 (MVC)
-        self.columns = ["代码", "名称", "现价", "涨幅%", "触发日期", "评分", "RPS强度", "市值", "距突破", "突破状态", "区间振幅", "热门板块"]
+        self.columns = ["代码", "名称", "现价", "涨幅%", "市值", "触发日期", "评分", "RPS强度", "距突破", "突破状态", "区间振幅", "热门板块"]
         self.source_model = StockTableModel(self.columns)
         self.proxy_model = RtSortFilterProxyModel(self)
         self.proxy_model.setSourceModel(self.source_model)
@@ -162,7 +162,7 @@ class ScanTab(BaseStockTab):
         header.setSectionsClickable(True)
         self.table_scan.setSortingEnabled(True)
 
-        scan_weights = [0.8, 0.9, 0.8, 0.8, 1.2, 1.0, 1.0, 0.7, 0.9, 1.0, 0.7, 2.5]
+        scan_weights = [0.8, 0.9, 0.8, 0.8, 0.7, 1.2, 1.0, 1.0, 0.9, 1.0, 0.7, 2.5]
         for col_idx, w in enumerate(scan_weights):
             header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
             self.table_scan.setColumnWidth(col_idx, int(w * 80))

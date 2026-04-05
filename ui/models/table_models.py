@@ -37,7 +37,7 @@ class RtTableModel(QAbstractTableModel):
     def __init__(self, data=None):
         super().__init__()
         self._data = data or []
-        self._headers = ["代码", "名称", "现价", "涨幅%", "时间", "评分", "RPS强度", "突破状态", "市值", "区间振幅", "热点板块"]
+        self._headers = ["代码", "名称", "现价", "涨幅%", "市值", "时间", "评分", "RPS强度", "突破状态", "区间振幅", "热点板块"]
         # Monospace font for numerical columns
         self.mono_font = QFont()
         self.mono_font.setFamilies(["Consolas", "Microsoft YaHei UI", "monospace"])
@@ -507,6 +507,13 @@ class StockTableModel(QAbstractTableModel):
         elif role == Qt.ItemDataRole.UserRole:
             import re
             s_val = str(raw_val).replace(',', '')
+            
+            # 日期格式识别：YYYY-MM-DD 或 YYYYMMDD，转为整数以正确排序
+            if re.fullmatch(r'\d{4}-\d{2}-\d{2}', s_val):
+                return int(s_val.replace('-', ''))
+            if re.fullmatch(r'\d{8}', s_val):
+                return int(s_val)
+            
             # try to parse numeric values strongly
             if '万' in s_val:
                 m = re.search(r'([-+]?\d*\.?\d+)', s_val)

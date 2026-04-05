@@ -84,8 +84,8 @@ class NADailyTab(BaseStockTab):
         layout.addLayout(header_layout)
 
         columns = [
-            "代码", "名称", "现价", "涨幅%", "细分板块",
-            "市值", "近3月落位", "量能", "股价弹性",
+            "代码", "名称", "现价", "涨幅%", "市值", "细分板块",
+            "近3月落位", "量能", "股价弹性",
             "催化剂", "风控", "评级", "操作策略与理由"
         ]
         self.na_daily_table = QTableView()
@@ -108,7 +108,7 @@ class NADailyTab(BaseStockTab):
 
         header = self.na_daily_table.horizontalHeader()
         header.setStretchLastSection(False)
-        default_widths = [60, 70, 60, 60, 100, 60, 130, 60, 80, 120, 50, 60, 200]
+        default_widths = [60, 70, 60, 60, 60, 100, 130, 60, 80, 120, 50, 60, 200]
         for i, w in enumerate(default_widths):
             if i < len(columns):
                 header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)

@@ -357,7 +357,7 @@ class ForeignBlockTradeTab(BaseStockTab):
 
         # 表格
         self.columns = [
-            "代码", "名称", "现价", "涨幅%", "交易日期", "交易详情", 
+            "代码", "名称", "现价", "涨幅%", "市值", "交易日期", "交易详情", 
             "当日收盘价", "成交价格", "折/溢价率(%)", "成交数量(万股)", "成交金额(万元)", 
             "买方营业部", "卖方营业部", "黄金信号"
         ]
@@ -380,12 +380,12 @@ class ForeignBlockTradeTab(BaseStockTab):
         # 列宽
         header = self.table.horizontalHeader()
         header.setStretchLastSection(False)
-        default_widths = [70, 80, 70, 70, 80, 100, 80, 80, 90, 100, 100, 220, 220, 70]
+        default_widths = [70, 80, 70, 70, 70, 80, 100, 80, 80, 90, 100, 100, 220, 220, 70]
         for i, w in enumerate(default_widths):
             header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
             self.table.setColumnWidth(i, w)
             
-        header.setSectionResizeMode(11, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(12, QHeaderView.ResizeMode.Stretch)
 
         # 绑定防抖自动保存与恢复配置
         self.bind_header_persistence(self.table, "header_state")
@@ -573,6 +573,7 @@ class ForeignBlockTradeTab(BaseStockTab):
                 "名称": name,
                 "现价": "--",
                 "涨幅%": "--",
+                "市值": "--",
                 "交易日期": trade_date,
                 "交易详情": direction,
                 "当日收盘价": f"{close_price:.2f}" if close_price else "--",

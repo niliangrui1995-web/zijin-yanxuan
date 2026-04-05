@@ -79,9 +79,10 @@ class EarningsTab(BaseStockTab):
         self.table = QTableView()
         layout.addWidget(self.table)
         
-        # 字段映射表
+        # 字段映射表：前四列必须是标准列（代码/名称/现价/涨幅%），以便接收盘中广播
         self.header_labels = [
-            "代码", "名称", "环比%", "单季利润(新)", "单季利润(旧)", 
+            "代码", "名称", "现价", "涨幅%", "市值",
+            "环比%", "单季利润(新)", "单季利润(旧)", 
             "报告期", "类型", "揭晓日", "基调"
         ]
         
@@ -109,7 +110,7 @@ class EarningsTab(BaseStockTab):
         # 持久化列宽
         header_view = self.table.horizontalHeader()
         header_view.setStretchLastSection(False)
-        default_widths = [70, 100, 100, 120, 120, 80, 70, 90, 80]
+        default_widths = [70, 80, 70, 70, 70, 80, 120, 120, 80, 70, 90, 80]
         for i, w in enumerate(default_widths):
             header_view.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
             self.table.setColumnWidth(i, w)
@@ -149,6 +150,9 @@ class EarningsTab(BaseStockTab):
             row_obj = {
                 "代码": code,
                 "名称": name,
+                "现价": "--",
+                "涨幅%": "--",
+                "市值": "--",
                 "环比%": pct,
                 "单季利润(新)": fmt_money(cur_profit),
                 "单季利润(旧)": fmt_money(last_profit),

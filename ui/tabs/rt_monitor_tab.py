@@ -110,8 +110,8 @@ class RtMonitorTab(BaseStockTab):
         self.table_rt.setShowGrid(False)
         self.table_rt.setStyleSheet(self.table_rt.styleSheet() + "::item { padding: 0px 10px; }")
         
-        # 自适应列宽 (匹配 headers=["代码","名称","现价","涨幅%","时间","评分","RPS强度","突破状态","市值","区间振幅","热点板块"])
-        rt_weights = [0.8, 1.4, 0.8, 0.8, 0.7, 0.6, 0.8, 1.5, 0.7, 0.8, 2.0]
+        # 自适应列宽 (匹配 headers=["代码","名称","现价","涨幅%","市值","时间","评分","RPS强度","突破状态","区间振幅","热点板块"])
+        rt_weights = [0.8, 1.4, 0.8, 0.8, 0.7, 0.7, 0.6, 0.8, 1.5, 0.8, 2.0]
         header = self.table_rt.horizontalHeader()
         header.setStretchLastSection(False)
         for col_idx, w in enumerate(rt_weights):
