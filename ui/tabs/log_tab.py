@@ -21,8 +21,7 @@ class LogTab(QWidget):
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
         
         # 1. 优先初始化日志文本区 (被下方按钮事件依赖)
         self.log_text = QTextEdit()
@@ -39,7 +38,7 @@ class LogTab(QWidget):
         # 2. 工具栏
         toolbar = QWidget()
         tb_layout = QHBoxLayout(toolbar)
-        tb_layout.setContentsMargins(6, 4, 6, 4)
+        tb_layout.setContentsMargins(8, 6, 8, 6)
         
         lbl = QLabel("系统运行日志")
         lbl.setStyleSheet("color: #6B7280; font-weight: 600; font-size: 12px;")
@@ -48,13 +47,13 @@ class LogTab(QWidget):
         
         btn_export_log = QPushButton("📄 导出日志")
         btn_export_log.setProperty("class", "ctaSecondary")
-        btn_export_log.setFixedHeight(32)
+        btn_export_log.setFixedHeight(28)
         btn_export_log.clicked.connect(self._export_log)
         tb_layout.addWidget(btn_export_log)
         
         btn_clear_log = QPushButton("🗑 清空")
         btn_clear_log.setProperty("class", "ctaSecondary")
-        btn_clear_log.setFixedHeight(32)
+        btn_clear_log.setFixedHeight(28)
         btn_clear_log.clicked.connect(self.log_text.clear)
         tb_layout.addWidget(btn_clear_log)
 
@@ -62,7 +61,7 @@ class LogTab(QWidget):
         from PyQt6.QtWidgets import QComboBox
         self.level_filter = QComboBox()
         self.level_filter.addItems(["全部", "仅 Error", "仅 Warning"])
-        self.level_filter.setFixedHeight(32)
+        self.level_filter.setFixedHeight(28)
         self.level_filter.setFixedWidth(120)
         self.level_filter.setStyleSheet("""
             QComboBox {

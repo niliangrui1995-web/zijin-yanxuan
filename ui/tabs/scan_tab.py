@@ -11,6 +11,7 @@ from PyQt6.QtCore import Qt, QTimer
 # Removed unused imports from ui.theme and PyQt6
 
 from ui.models.table_models import StockTableModel, RtSortFilterProxyModel, StockItemDelegate
+from ui.components.vcp_table_view import VCPTableView
 from ui.workers.scan_worker import ScanWorker
 from vcp.engine import VCPParams
 from core.event_bus import event_bus
@@ -71,23 +72,22 @@ class ScanTab(BaseStockTab):
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
 
         # 搜索过滤工具栏
         scan_toolbar = QWidget()
         stb_layout = QHBoxLayout(scan_toolbar)
-        stb_layout.setContentsMargins(6, 4, 6, 4)
+        stb_layout.setContentsMargins(8, 6, 8, 6)
         
         self.scan_search = QLineEdit()
         self.scan_search.setPlaceholderText("🔍 输入代码/名称筛选...")
-        self.scan_search.setFixedHeight(32)
+        self.scan_search.setFixedHeight(28)
         self.scan_search.textChanged.connect(self._on_search_text_changed)
         stb_layout.addWidget(self.scan_search)
         
         btn_export_scan = QPushButton("📄 导出 (Ctrl+E)")
         btn_export_scan.setProperty("class", "secondary")
-        btn_export_scan.setFixedHeight(32)
+        btn_export_scan.setFixedHeight(28)
         btn_export_scan.clicked.connect(self.export_table_to_excel)
         stb_layout.addWidget(btn_export_scan)
         
@@ -112,18 +112,9 @@ class ScanTab(BaseStockTab):
         self.proxy_model = RtSortFilterProxyModel(self)
         self.proxy_model.setSourceModel(self.source_model)
 
-        self.table_scan = QTableView()
+        self.table_scan = VCPTableView(default_row_height=28)
         self.table_scan.setModel(self.proxy_model)
         self.table_scan.setItemDelegate(StockItemDelegate(self.table_scan))
-        
-        # 表格自适应和交互设置
-        self.table_scan.verticalHeader().setVisible(False)
-        self.table_scan.setAlternatingRowColors(True)           
-        self.table_scan.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows) 
-        self.table_scan.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)    
-        self.table_scan.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)        
-        self.table_scan.setShowGrid(False)                      
-        self.table_scan.setStyleSheet(self.table_scan.styleSheet() + "::item { padding: 0px 10px; }")
         
         # 绑定双击事件:广播调取K线图信号，带上前后文以便K线图能够「上一只」「下一只」滑动
         self.table_scan.doubleClicked.connect(self._handle_show_kline)
@@ -162,9 +153,6 @@ class ScanTab(BaseStockTab):
         # 强制默认按第5列（触发日期）降序排序（由近到远），覆盖掉持久化中可能记录的其他排序列
         self.table_scan.sortByColumn(5, Qt.SortOrder.DescendingOrder)
         
-        # 行高 (加强呼吸感)
-        self.table_scan.verticalHeader().setDefaultSectionSize(40)
-
         layout.addWidget(self.table_scan)
 
     def _handle_show_kline(self, index=None):
@@ -296,7 +284,7 @@ class ScanTab(BaseStockTab):
         form.addStretch()
         btn_ok = QPushButton("确定")
         btn_ok.setProperty("class", "secondary")
-        btn_ok.setFixedHeight(32)
+        btn_ok.setFixedHeight(28)
         btn_ok.clicked.connect(dlg.accept)
         form.addWidget(btn_ok)
         dlg.exec()
@@ -400,9 +388,9 @@ class ScanTab(BaseStockTab):
                 # Format score cleanly
                 score_str = str(row_data.get('评分', ''))
                 try:
-                    if float(score_str) >= 90: score_str = f"⭐ {score_str}"
+                    _ = float(score_str)
                 except (ValueError, TypeError):
-                    pass  # 评分为非数字(如 '--')时不加星标，属于正常分支
+                    pass
 
                 formatted_row = {
                     "代码": code_str,

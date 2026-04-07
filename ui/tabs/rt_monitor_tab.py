@@ -11,6 +11,7 @@ from core.event_bus import event_bus
 from core.logger import get_logger
 from core.task_manager import task_manager
 from ui.tabs.base_stock_tab import BaseStockTab
+from ui.components.vcp_table_view import VCPTableView
 from core.throttler import SignalThrottler
 
 log = get_logger(__name__)
@@ -57,13 +58,12 @@ class RtMonitorTab(BaseStockTab):
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
         
         # Toolbar
         toolbar = QWidget()
         tb_layout = QHBoxLayout(toolbar)
-        tb_layout.setContentsMargins(6, 4, 6, 4)
+        tb_layout.setContentsMargins(8, 6, 8, 6)
         self.btn_rt_start = QPushButton("🚀 启动盘中监控")
         self.btn_rt_start.setObjectName("primaryButton")
         self.btn_rt_start.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -80,7 +80,7 @@ class RtMonitorTab(BaseStockTab):
         self.rt_search = QLineEdit()
         self.rt_search.setPlaceholderText("🔍 筛选...")
         self.rt_search.setFixedWidth(150)
-        self.rt_search.setFixedHeight(32)
+        self.rt_search.setFixedHeight(28)
         self.rt_search.textChanged.connect(self._on_search_text_changed)
         tb_layout.addWidget(self.rt_search)
         
@@ -88,7 +88,7 @@ class RtMonitorTab(BaseStockTab):
         self.btn_rt_clear = QPushButton("🗑 清空")
         self.btn_rt_clear.setProperty("class", "secondary")
         self.btn_rt_clear.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_rt_clear.setFixedHeight(32)
+        self.btn_rt_clear.setFixedHeight(28)
         self.btn_rt_clear.clicked.connect(self._clear_table)
         tb_layout.addWidget(self.btn_rt_clear)
         
@@ -112,16 +112,8 @@ class RtMonitorTab(BaseStockTab):
         self.proxy_model = RtSortFilterProxyModel(self)
         self.proxy_model.setSourceModel(self.source_model)
         
-        self.table_rt = QTableView()
+        self.table_rt = VCPTableView(default_row_height=28)
         self.table_rt.setModel(self.proxy_model)
-        
-        self.table_rt.verticalHeader().setVisible(False)
-        self.table_rt.setAlternatingRowColors(True)
-        self.table_rt.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table_rt.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.table_rt.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table_rt.setShowGrid(False)
-        self.table_rt.setStyleSheet(self.table_rt.styleSheet() + "::item { padding: 0px 10px; }")
         
         # 自适应列宽 (匹配 headers=["代码","名称","现价","涨幅%","市值","时间","评分","RPS强度","突破状态","区间振幅","热点板块"])
         rt_weights = [0.8, 1.4, 0.8, 0.8, 0.7, 0.7, 0.6, 0.8, 1.5, 0.8, 2.0]
@@ -142,7 +134,6 @@ class RtMonitorTab(BaseStockTab):
         except Exception as e:
             log.warning(f"[盘中监控] 列宽初始化异常: {e}")
         header.setSectionResizeMode(10, QHeaderView.ResizeMode.Stretch)
-        self.table_rt.verticalHeader().setDefaultSectionSize(40) # 视觉重构版行高
         self.table_rt.setSortingEnabled(True)
         self.table_rt.horizontalHeader().setSortIndicatorShown(True)
         
@@ -195,7 +186,7 @@ class RtMonitorTab(BaseStockTab):
         form.addStretch()
         btn_ok = QPushButton("确定")
         btn_ok.setProperty("class", "secondary")
-        btn_ok.setFixedHeight(32)
+        btn_ok.setFixedHeight(28)
         btn_ok.clicked.connect(dlg.accept)
         form.addWidget(btn_ok)
 

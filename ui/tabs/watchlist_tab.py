@@ -7,7 +7,7 @@ import pickle
 import datetime
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTableView,
+    QWidget, QVBoxLayout, QHBoxLayout,
     QHeaderView, QPushButton, QLineEdit, QAbstractItemView,
     QFileDialog
 )
@@ -16,6 +16,7 @@ from PyQt6.QtCore import Qt, QTimer
 
 from ui.viewmodels.watchlist_vm import watchlist_vm
 from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
+from ui.components.vcp_table_view import VCPTableView
 from core.event_bus import event_bus
 from core.logger import get_logger
 from core.task_manager import task_manager
@@ -58,13 +59,12 @@ class WatchlistTab(BaseStockTab):
     # ================================================================
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
 
         # 工具栏
         toolbar = QWidget()
         tb_layout = QHBoxLayout(toolbar)
-        tb_layout.setContentsMargins(6, 4, 6, 4)
+        tb_layout.setContentsMargins(8, 6, 8, 6)
 
         # 占位或省略，直接加自动伸缩
         tb_layout.addStretch()
@@ -73,7 +73,7 @@ class WatchlistTab(BaseStockTab):
         self.sp_search = QLineEdit()
         self.sp_search.setPlaceholderText("🔍 搜索关注池...")
         self.sp_search.setFixedWidth(150)
-        self.sp_search.setFixedHeight(32)
+        self.sp_search.setFixedHeight(28)
         self.sp_search.textChanged.connect(
             lambda t: self._filter_table(t)
         )
@@ -81,28 +81,19 @@ class WatchlistTab(BaseStockTab):
 
         btn_reset = QPushButton("解除列表排序")
         btn_reset.setProperty("class", "secondary")
-        btn_reset.setFixedHeight(32)
+        btn_reset.setFixedHeight(28)
         btn_reset.clicked.connect(self._reset_view)
         tb_layout.addWidget(btn_reset)
 
         btn_export_sp = QPushButton("📄 导出")
         btn_export_sp.setProperty("class", "secondary")
-        btn_export_sp.setFixedHeight(32)
+        btn_export_sp.setFixedHeight(28)
         btn_export_sp.clicked.connect(self._export_to_excel)
         tb_layout.addWidget(btn_export_sp)
         layout.addWidget(toolbar)
 
         # 表格控件
-        self.table_sp = QTableView()
-        
-        # 表格交互设置
-        self.table_sp.verticalHeader().setVisible(False)
-        self.table_sp.setAlternatingRowColors(True)
-        self.table_sp.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table_sp.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.table_sp.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table_sp.setShowGrid(False)
-        self.table_sp.setSortingEnabled(True)
+        self.table_sp = VCPTableView(default_row_height=28)
         
         # 拖拽排序设置 (只有在默认排序状态下才可用)
         self.table_sp.setDragEnabled(True)
@@ -114,7 +105,7 @@ class WatchlistTab(BaseStockTab):
         # 绑定 Model 与 Delegate
         headers = [
             "代码", "名称", "现价", "涨幅%", "市值", "时间",
-            "RPS强度", "热点板块", "美股日报", "大宗交易", "业绩异动"
+            "RPS强度", "热点板块", "美股日报", "业绩异动", "大宗交易"
         ]
         self.model = StockTableModel(headers)
         self.proxy_model = RtSortFilterProxyModel(self.table_sp)
@@ -128,14 +119,14 @@ class WatchlistTab(BaseStockTab):
         self.model.sig_rows_reordered.connect(self._on_rows_reordered)
 
         # 自适应列宽
-        sp_weights = [0.75, 0.65, 1.4, 0.75, 0.9, 0.7, 0.8, 1.4, 1.8, 1.8, 1.2]
+        sp_weights = [0.75, 0.65, 1.4, 0.75, 0.9, 0.7, 0.8, 1.4, 1.8, 1.2, 1.8]
         header = self.table_sp.horizontalHeader()
         header.setStretchLastSection(True)
         for col_idx, w in enumerate(sp_weights):
             header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
             self.table_sp.setColumnWidth(col_idx, int(w * 80))
         # 绑定防抖自动保存与恢复配置（restoreState 会连带把上次的排序列也恢复了）
-        self.bind_header_persistence(self.table_sp, "header_state_watchlist_v2")
+        self.bind_header_persistence(self.table_sp, "header_state_watchlist_v3")
         
         # 【修复】强制抹掉任何因为 header.restoreState 还原出来的自动排序状态
         # 因为在关闭时，我们已经把当前的各种（哪怕是点击表头排出来的）视觉顺序定死并按此顺序拍扁存入硬盘了

@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
+from ui.components.vcp_table_view import VCPTableView
 
 # ==================== 黑魔法：全局劫持发包器 ====================
 # ⚠️ WARNING: 此 monkey-patch 会影响整个进程中所有使用 requests/curl_cffi 的模块！
@@ -476,7 +477,7 @@ class AsianMarketTab(BaseStockTab):
         layout.setContentsMargins(0, 0, 0, 0)
         
         header = QHBoxLayout()
-        header.setContentsMargins(12, 12, 12, 12)
+        header.setContentsMargins(8, 6, 8, 6)
         
         title = QLabel("🌏 亚洲寡头核心资产监控 (由于存在日韩台港多股市，按 YF 实时接口为准)")
         title.setStyleSheet("font-size: 16px; font-weight: bold; color: #E5E7EB;")
@@ -512,7 +513,7 @@ class AsianMarketTab(BaseStockTab):
         
         layout.addLayout(header)
 
-        self.asian_table = QTableView()
+        self.asian_table = VCPTableView(default_row_height=28)
         layout.addWidget(self.asian_table)
         
         self.header_labels = ["代码", "名称", "现价", "涨幅%", "市场", "状态", "赛道", "角色定位", "货币", "5日涨跌%", "10日涨跌%", "20日涨跌%"]
@@ -524,14 +525,6 @@ class AsianMarketTab(BaseStockTab):
         
         self.delegate = StockItemDelegate(self.asian_table)
         self.asian_table.setItemDelegate(self.delegate)
-        
-        self.asian_table.verticalHeader().setVisible(False)
-        self.asian_table.setAlternatingRowColors(True)
-        self.asian_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.asian_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.asian_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.asian_table.setShowGrid(False)
-        self.asian_table.setSortingEnabled(True)
 
         # Context menu
         self.asian_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)

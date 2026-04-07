@@ -13,9 +13,11 @@ from PyQt6.QtWidgets import (
     QHeaderView, QPushButton, QLabel, QAbstractItemView, QLineEdit
 )
 from PyQt6.QtCore import Qt, QTimer
+import pandas as pd
 
 
 from ui.models.table_models import StockTableModel, RtSortFilterProxyModel, StockItemDelegate
+from ui.components.vcp_table_view import VCPTableView
 from core.event_bus import event_bus
 from core.logger import get_logger
 from ui.tabs.base_stock_tab import BaseStockTab
@@ -46,11 +48,11 @@ class AITrackerTab(BaseStockTab):
     # ================================================================
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
+        layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
 
         # 顶部
         header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(8, 6, 8, 6)
         lbl_title = QLabel("🤖 AI产业链得分 — 非零标的")
         lbl_title.setStyleSheet(
             "font-size: 15px; font-weight: bold; color: #C9CDD4;"
@@ -68,7 +70,7 @@ class AITrackerTab(BaseStockTab):
         self.ai_tracker_search = QLineEdit()
         self.ai_tracker_search.setPlaceholderText("🔍 搜索代码/名称/拼音...")
         self.ai_tracker_search.setFixedWidth(180)
-        self.ai_tracker_search.setFixedHeight(32)
+        self.ai_tracker_search.setFixedHeight(28)
         self.ai_tracker_search.textChanged.connect(self._filter_table)
         header_layout.addWidget(self.ai_tracker_search)
 
@@ -86,17 +88,9 @@ class AITrackerTab(BaseStockTab):
         self.proxy_model = RtSortFilterProxyModel(self)
         self.proxy_model.setSourceModel(self.source_model)
         
-        self.ai_tracker_table = QTableView()
+        self.ai_tracker_table = VCPTableView(default_row_height=28)
         self.ai_tracker_table.setModel(self.proxy_model)
         self.ai_tracker_table.setItemDelegate(StockItemDelegate(self.ai_tracker_table))
-        
-        self.ai_tracker_table.setAlternatingRowColors(True)
-        self.ai_tracker_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.ai_tracker_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.ai_tracker_table.setSortingEnabled(True)
-        self.ai_tracker_table.verticalHeader().setVisible(False)
-        self.ai_tracker_table.setShowGrid(False)
-        self.ai_tracker_table.setStyleSheet(self.ai_tracker_table.styleSheet() + "::item { padding: 0px 10px; }")
 
         # 列宽
         header = self.ai_tracker_table.horizontalHeader()
@@ -106,7 +100,6 @@ class AITrackerTab(BaseStockTab):
             header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
             self.ai_tracker_table.setColumnWidth(i, w)
         header.setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
-        self.ai_tracker_table.verticalHeader().setDefaultSectionSize(40)
 
         # 绑定防抖自动保存与恢复配置
         self.bind_header_persistence(self.ai_tracker_table, "header_state_ai_tracker_v2")

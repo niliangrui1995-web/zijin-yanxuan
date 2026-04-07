@@ -19,6 +19,7 @@ from ui.theme import (
     COLOR_RISE, COLOR_FALL, COLOR_FLAT
 )
 from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
+from ui.components.vcp_table_view import VCPTableView
 from core.event_bus import event_bus
 
 class BlockTradeFilterProxyModel(RtSortFilterProxyModel):
@@ -269,11 +270,11 @@ class ForeignBlockTradeTab(BaseStockTab):
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
+        layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
 
         # 顶部工具栏
         header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(8, 6, 8, 6)
         lbl_title = QLabel("🌐 外资大宗动向 (含机构马甲)")
         lbl_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #C9CDD4;")
         header_layout.addWidget(lbl_title)
@@ -286,28 +287,28 @@ class ForeignBlockTradeTab(BaseStockTab):
         # ── 筛选器组：按数据维度从大到小排列 ──
         self.cmb_filter_date = QComboBox()
         self.cmb_filter_date.addItem("全部日期")
-        self.cmb_filter_date.setFixedHeight(32)
+        self.cmb_filter_date.setFixedHeight(28)
         self.cmb_filter_date.setFixedWidth(110)
         self.cmb_filter_date.currentIndexChanged.connect(self._filter_table_combo)
         header_layout.addWidget(self.cmb_filter_date)
 
         self.cmb_filter_stock = QComboBox()
         self.cmb_filter_stock.addItem("全部股票")
-        self.cmb_filter_stock.setFixedHeight(32)
+        self.cmb_filter_stock.setFixedHeight(28)
         self.cmb_filter_stock.setFixedWidth(110)
         self.cmb_filter_stock.currentIndexChanged.connect(self._filter_table_combo)
         header_layout.addWidget(self.cmb_filter_stock)
 
         self.cmb_filter_branch = QComboBox()
         self.cmb_filter_branch.addItem("全部外资席位")
-        self.cmb_filter_branch.setFixedHeight(32)
+        self.cmb_filter_branch.setFixedHeight(28)
         self.cmb_filter_branch.setFixedWidth(140)
         self.cmb_filter_branch.currentIndexChanged.connect(self._filter_table_combo)
         header_layout.addWidget(self.cmb_filter_branch)
 
         self.cmb_filter_direction = QComboBox()
         self.cmb_filter_direction.addItems(["全部动作", "外资买入", "外资卖出", "外资对倒"])
-        self.cmb_filter_direction.setFixedHeight(32)
+        self.cmb_filter_direction.setFixedHeight(28)
         self.cmb_filter_direction.setFixedWidth(100)
         self.cmb_filter_direction.currentIndexChanged.connect(self._filter_table_combo)
         header_layout.addWidget(self.cmb_filter_direction)
@@ -315,7 +316,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("🔍 搜索代码/名称/任意词...")
         self.search_box.setFixedWidth(180)
-        self.search_box.setFixedHeight(32)
+        self.search_box.setFixedHeight(28)
         self.search_box.textChanged.connect(self._filter_table_combo)
         header_layout.addWidget(self.search_box)
 
@@ -324,7 +325,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.cmb_days.addItems(["近 10 交易日", "近 20 交易日", "近 40 交易日", "近 60 交易日"])
         # 默认选中 20 交易日，与 self.days_to_fetch 初始值保持一致
         self.cmb_days.setCurrentIndex(1)
-        self.cmb_days.setFixedHeight(32)
+        self.cmb_days.setFixedHeight(28)
         self.cmb_days.currentIndexChanged.connect(self._on_days_changed)
         header_layout.addWidget(self.cmb_days)
 
@@ -332,7 +333,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.btn_refresh.setObjectName("ctaButton")
         self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_refresh.setFixedWidth(100)
-        self.btn_refresh.setFixedHeight(32)
+        self.btn_refresh.setFixedHeight(28)
         self.btn_refresh.clicked.connect(self._load_block_trade_data)
         header_layout.addWidget(self.btn_refresh)
         layout.addLayout(header_layout)
@@ -343,36 +344,27 @@ class ForeignBlockTradeTab(BaseStockTab):
             "当日收盘价", "成交价格", "折/溢价率(%)", "成交数量(万股)", "成交金额(万元)", 
             "买方营业部", "卖方营业部", "黄金信号"
         ]
-        self.table = QTableView()
+        self.table = VCPTableView(default_row_height=28)
         self.model = StockTableModel(self.columns)
         self.proxy_model = BlockTradeFilterProxyModel(self.table)
         self.proxy_model.setSourceModel(self.model)
         self.table.setModel(self.proxy_model)
         self.delegate = StockItemDelegate(self.table)
         self.table.setItemDelegate(self.delegate)
-        
-        self.table.verticalHeader().setVisible(False)
-        self.table.setAlternatingRowColors(True)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.setShowGrid(False)
-        self.table.setSortingEnabled(True)
         # 大宗交易默认按时间排序 由近到远
         self.table.sortByColumn(5, Qt.SortOrder.DescendingOrder)
 
         # 列宽
         header = self.table.horizontalHeader()
-        header.setStretchLastSection(False)
-        default_widths = [70, 80, 70, 70, 70, 80, 100, 80, 80, 90, 100, 100, 220, 220, 70]
+        header.setStretchLastSection(True)
+        # 严格压缩默认列宽，总和约1200px以内，确保即使在小屏幕/高缩放比下也不会超过屏幕宽度产生滚动条
+        default_widths = [60, 70, 55, 55, 55, 70, 70, 65, 65, 65, 75, 75, 140, 140, 60]
         for i, w in enumerate(default_widths):
             header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
             self.table.setColumnWidth(i, w)
-            
-        header.setSectionResizeMode(12, QHeaderView.ResizeMode.Stretch)
 
-        # 绑定防抖自动保存与恢复配置
-        self.bind_header_persistence(self.table, "block_trade_header_state_v2")
+        # 绑定防抖自动保存与恢复配置 (v4 强制刷新新布局)
+        self.bind_header_persistence(self.table, "block_trade_header_state_v4")
 
         # 双击 → K线图
         self.table.doubleClicked.connect(self._on_double_click)

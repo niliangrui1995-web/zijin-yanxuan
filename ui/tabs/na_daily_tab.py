@@ -9,7 +9,7 @@ import glob
 import datetime
 
 from PyQt6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QTableView,
+    QVBoxLayout, QHBoxLayout,
     QHeaderView, QPushButton, QLabel, QAbstractItemView
 )
 from PyQt6.QtCore import Qt, QTimer
@@ -17,6 +17,7 @@ from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFil
 from core.event_bus import event_bus
 from core.logger import get_logger
 from ui.tabs.base_stock_tab import BaseStockTab
+from ui.components.vcp_table_view import VCPTableView
 
 log = get_logger(__name__)
 
@@ -68,10 +69,10 @@ class NADailyTab(BaseStockTab):
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
+        layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
 
         header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(8, 6, 8, 6)
         lbl_title = QLabel("北美战报 — P9 战报标的")
         lbl_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #C9CDD4;")
         header_layout.addWidget(lbl_title)
@@ -93,7 +94,7 @@ class NADailyTab(BaseStockTab):
             "代码", "名称", "现价", "涨幅%", "市值", "细分板块",
             "股价弹性", "催化剂", "风控", "评级"
         ]
-        self.na_daily_table = QTableView()
+        self.na_daily_table = VCPTableView(default_row_height=28)
         
         self.model = StockTableModel(columns)
         self.proxy_model = RtSortFilterProxyModel(self)
@@ -102,14 +103,6 @@ class NADailyTab(BaseStockTab):
         
         self.delegate = StockItemDelegate(self.na_daily_table)
         self.na_daily_table.setItemDelegate(self.delegate)
-        
-        self.na_daily_table.setAlternatingRowColors(True)
-        self.na_daily_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.na_daily_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.na_daily_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.na_daily_table.setSortingEnabled(True)
-        self.na_daily_table.verticalHeader().setVisible(False)
-        self.na_daily_table.setShowGrid(False)
 
         header = self.na_daily_table.horizontalHeader()
         header.setStretchLastSection(False)
@@ -118,7 +111,6 @@ class NADailyTab(BaseStockTab):
             if i < len(columns):
                 header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
                 self.na_daily_table.setColumnWidth(i, w)
-        self.na_daily_table.verticalHeader().setDefaultSectionSize(32)
 
         # 绑定防抖自动保存与恢复配置
         self.bind_header_persistence(self.na_daily_table, "header_state_na_daily_v2")

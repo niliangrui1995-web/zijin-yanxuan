@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 from datetime import datetime
+import pandas as pd
 from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QTableView, QHeaderView, QPushButton, QLabel, QLineEdit, QAbstractItemView, QComboBox
 )
 from PyQt6.QtCore import Qt, pyqtSlot
 from ui.tabs.base_stock_tab import BaseStockTab
 from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
+from ui.components.vcp_table_view import VCPTableView
 from core.event_bus import event_bus
 from core.logger import get_logger
 
@@ -37,7 +39,7 @@ class EarningsTab(BaseStockTab):
         
         # --- 头部控制栏 ---
         header = QHBoxLayout()
-        header.setContentsMargins(12, 12, 12, 12)
+        header.setContentsMargins(8, 6, 8, 6)
         
         title = QLabel("🚀 超预期金矿：业绩预告与财报环比高增追踪")
         title.setStyleSheet("font-size: 16px; font-weight: bold; color: #E5E7EB;")
@@ -100,13 +102,13 @@ class EarningsTab(BaseStockTab):
         layout.addLayout(header)
 
         # --- 表格显示区 ---
-        self.table = QTableView()
+        self.table = VCPTableView(default_row_height=28)
         layout.addWidget(self.table)
         
         # 字段映射表：前四列必须是标准列（代码/名称/现价/涨幅%），以便接收盘中广播
         self.header_labels = [
             "代码", "名称", "现价", "涨幅%", "市值", "PE(TTM)",
-            "环比%", "同比%", "单季利润(新)", "单季利润(旧)", 
+            "环比%", "同比%", "当季利润", "上季利润", 
             "报告期", "类型", "揭晓日", "基调", "所属行业与概念"
         ]
         
@@ -117,14 +119,6 @@ class EarningsTab(BaseStockTab):
         
         self.delegate = StockItemDelegate(self.table)
         self.table.setItemDelegate(self.delegate)
-        
-        self.table.verticalHeader().setVisible(False)
-        self.table.setAlternatingRowColors(True)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.setShowGrid(False)
-        self.table.setSortingEnabled(True)
         # 默认按第12列（“揭晓日”）由近到远（降序）排列，让最新鲜的情报自动顶在最上面
         self.table.sortByColumn(12, Qt.SortOrder.DescendingOrder)
 
@@ -213,8 +207,8 @@ class EarningsTab(BaseStockTab):
                 "PE(TTM)": "--",
                 "环比%": pct,
                 "同比%": float(row.get('同比增速_百分比', 0.0)),
-                "单季利润(新)": fmt_money(cur_profit),
-                "单季利润(旧)": fmt_money(last_profit),
+                "当季利润": fmt_money(cur_profit),
+                "上季利润": fmt_money(last_profit),
                 "_raw_profit": float(row.get('单季净利润_新增', 0.0)),  # 用于计算PE的隐含原始数值
                 "报告期": str(row.get("报告期", "")),
                 "类型": str(row.get("数据类型", "")),
