@@ -22,9 +22,10 @@ from datetime import datetime
 
 import yfinance as yf
 
-# Why: 行业字典暂未收入本项目工程，仍作为独立的 P1 预处理配置，我们使用绝对路径引用
-_PIPELINE_DIR = r"D:\vcp_hunter\每日战报\每日战报"
-if _PIPELINE_DIR not in sys.path:
+# Why: 行业字典暂未收入本项目工程，通过项目根目录向上推导兄弟目录，避免硬编码特定机器的绝对路径
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_PIPELINE_DIR = os.path.join(os.path.dirname(_PROJECT_ROOT), "每日战报", "每日战报")
+if os.path.isdir(_PIPELINE_DIR) and _PIPELINE_DIR not in sys.path:
     sys.path.insert(0, _PIPELINE_DIR)
 
 from industry_dict import VANGUARD_TICKERS, OLIGARCH_DICT  # noqa: E402

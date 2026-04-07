@@ -30,19 +30,28 @@ class SectorManager:
     _instance_root = None
 
     @classmethod
-    def get_instance(cls, tdx_root: str = r'D:\HT') -> 'SectorManager':
+    def get_instance(cls, tdx_root: str | None = None) -> 'SectorManager':
         """获取单例实例（首次调用时解析板块文件，后续直接返回缓存）"""
+        if tdx_root is None:
+            # 动态获取通达信安装路径，不再硬编码特定机器的路径
+            from core.app_config import app_config
+            vipdoc = app_config.get('scan/tdx_vipdoc', '')
+            tdx_root = os.path.dirname(vipdoc) if vipdoc else r'D:\HT'
         if cls._instance is None or cls._instance_root != tdx_root:
             cls._instance = cls(tdx_root)
             cls._instance_root = tdx_root
         return cls._instance
 
-    def __init__(self, tdx_root=r'D:\HT'):
+    def __init__(self, tdx_root: str | None = None):
         """初始化：解析通达信板块文件
 
         参数:
             tdx_root: 通达信安装根目录
         """
+        if tdx_root is None:
+            from core.app_config import app_config
+            vipdoc = app_config.get('scan/tdx_vipdoc', '')
+            tdx_root = os.path.dirname(vipdoc) if vipdoc else r'D:\HT'
         self.tdx_root = tdx_root
         # 股票代码 → 所属板块名列表
         self.code_to_sectors = defaultdict(list)
