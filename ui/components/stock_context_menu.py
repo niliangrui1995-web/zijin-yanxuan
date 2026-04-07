@@ -51,19 +51,17 @@ def build_stock_context_menu(
 
     # --- 关注池操作 ---
     act_watchlist = None
+    act_pin_top = None
     if show_watchlist_toggle:
         is_fav = watchlist_vm.is_in_watchlist(code)
         act_watchlist = menu.addAction("⭐ 移出关注池" if is_fav else "⭐ 加入关注池")
+        if is_fav:
+            act_pin_top = menu.addAction("🔝 置顶标的")
         menu.addSeparator()
 
     # --- 跳转操作 ---
     act_tdx = menu.addAction("🖥️ 跳转通达信")
     act_em = menu.addAction("🖥️ 跳转东方财富")
-    menu.addSeparator()
-
-    # --- AI 诊断 ---
-    act_ai = menu.addAction("🤖 AI深度诊断")
-    act_local = menu.addAction("🧪 本地技术诊断")
 
     # --- 导出 ---
     act_export = None
@@ -89,6 +87,9 @@ def build_stock_context_menu(
         clean_name = name.replace("⭐ ", "")
         watchlist_vm.toggle_stock(code, clean_name, vcp_data)
 
+    elif action == act_pin_top and act_pin_top is not None:
+        watchlist_vm.pin_to_top(code)
+
     elif action == act_tdx:
         # 通过基类方法跳转(parent 需要继承 BaseStockTab)
         if hasattr(parent, '_launch_tdx'):
@@ -97,12 +98,6 @@ def build_stock_context_menu(
     elif action == act_em:
         if hasattr(parent, '_launch_eastmoney'):
             parent._launch_eastmoney(code)
-
-    elif action == act_ai:
-        event_bus.sig_open_ai_diag.emit(code, 'ai')
-
-    elif action == act_local:
-        event_bus.sig_open_ai_diag.emit(code, 'local')
 
     elif action == act_export and show_export and export_callback:
         export_callback()

@@ -7,23 +7,19 @@ ui/tabs/foreign_block_trade_tab.py
 """
 import datetime
 import os
-import struct
 import pandas as pd
 import akshare as ak
 
 from PyQt6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QTableView, QHeaderView, QPushButton, QLabel, QAbstractItemView, QLineEdit, QMenu, QComboBox
+    QVBoxLayout, QHBoxLayout, QTableView, QHeaderView, QPushButton, QLabel, QAbstractItemView, QLineEdit, QComboBox
 )
-from PyQt6.QtCore import Qt, QTimer, QSettings
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import Qt, QTimer
 
 from ui.theme import (
-    COLOR_RISE, COLOR_RISE_STRONG, COLOR_FALL, COLOR_FALL_STRONG, COLOR_FLAT,
-    SCORE_EXCELLENT, SCORE_GOOD, SCORE_NORMAL, SCORE_LOW
+    COLOR_RISE, COLOR_FALL, COLOR_FLAT
 )
 from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
 from core.event_bus import event_bus
-from core.event_types import DataEvent
 
 class BlockTradeFilterProxyModel(RtSortFilterProxyModel):
     def __init__(self, parent=None):
@@ -43,10 +39,10 @@ class BlockTradeFilterProxyModel(RtSortFilterProxyModel):
             row_data = model.row_data[source_row]
             for col_name, val in self.exact_filters.items():
                 cell_val = str(row_data.get(col_name, ''))
-                # 席位做包含匹配，其它做绝对匹配
-                if col_name in ("买方营业部", "卖方营业部") and val not in cell_val:
-                    # 如果匹配的营业部要求在买或卖中出现即可
-                    pass 
+                if col_name in ("买方营业部", "卖方营业部"):
+                    # 席位做包含匹配（模糊搜索），匹配不上则拦截
+                    if val not in cell_val:
+                        return False
                 elif col_name == "_branch":
                     # 特殊的席位联合逻辑
                     if val not in str(row_data.get("买方营业部", "")) and val not in str(row_data.get("卖方营业部", "")):
@@ -64,7 +60,7 @@ log = get_logger(__name__)
 
 FOREIGN_KEYWORDS = ["高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴", "渣打", "野村", "汇丰", "星展", "大和"]
 VIP_KEYWORDS_SIGNAL = ["高盛", "瑞银", "摩根大通"]
-TDX_DIR = r"D:\HT\vipdoc"
+# TDX_DIR 死代码已清除，实际使用 self.data_provider.tdx_vipdoc
 
 
 def _parse_tdx_day_file(filepath: str) -> pd.DataFrame:
@@ -83,7 +79,8 @@ def _parse_tdx_day_file(filepath: str) -> pd.DataFrame:
         df['close'] = df['close'] / 100.0
         df['date'] = df['date'].astype(str)
         return df.set_index('date')
-    except Exception:
+    except Exception as _e:
+        log.debug(f"[大宗交易] 解析通达信 .day 文件失败: {_e}")
         return pd.DataFrame()
 
 
@@ -135,7 +132,8 @@ def _compute_rps50_baseline(target_date: str, all_codes: list, tdx_dir: str) -> 
     ])
     try:
         target_int = int(str(target_date).replace('-', ''))
-    except Exception:
+    except (ValueError, TypeError) as _e:
+        log.debug(f"[大宗交易] RPS 日期解析失败: {_e}")
         return []
 
     for code in all_codes:
@@ -158,7 +156,8 @@ def _compute_rps50_baseline(target_date: str, all_codes: list, tdx_dir: str) -> 
                     curr_close = data['close'][pos]
                     if past_close > 0:
                         returns_list.append((curr_close / past_close - 1) * 100.0)
-        except Exception:
+        except Exception as _e:
+            log.debug(f"[大宗交易] {code} K线读取/计算失败: {_e}")
             continue
 
     returns_list.sort()
@@ -265,28 +264,15 @@ class ForeignBlockTradeTab(BaseStockTab):
         # 延迟加载缓存
         QTimer.singleShot(3200, self._load_block_trade_data)
 
-        event_bus.sig_data_updated.connect(self._on_global_data)
-
-    def _on_global_data(self, evt_type: str, data: object):
-        if evt_type == DataEvent.RT_QUOTES_BROADCAST.value:
-            if getattr(self, '_block_trade_codes', None) and getattr(self, 'model', None):
-                self.model.update_quotes(data)
-                # 市值补充
-                for row_idx, row_dict in enumerate(self.model.row_data):
-                    code = row_dict.get("代码", "")
-                    if code in self._cap_cache and row_dict.get("市值") == "--":
-                        self.model.set_cell_value(row_idx, "市值", self._cap_cache[code])
-
-    def _on_fetch_days_changed(self, index):
-        days_map = {0: 10, 1: 20, 2: 40}
-        self.days_to_fetch = days_map.get(index, 10)
+        # 订阅中央广播站报价及开启大一统市值更新
+        self.subscribe_global_quotes()
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
-        # 顶部
+        # 顶部工具栏
         header_layout = QHBoxLayout()
         lbl_title = QLabel("🌐 外资大宗动向 (含机构马甲)")
         lbl_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #C9CDD4;")
@@ -297,25 +283,13 @@ class ForeignBlockTradeTab(BaseStockTab):
         header_layout.addWidget(self.lbl_status)
         header_layout.addStretch()
 
+        # ── 筛选器组：按数据维度从大到小排列 ──
         self.cmb_filter_date = QComboBox()
         self.cmb_filter_date.addItem("全部日期")
         self.cmb_filter_date.setFixedHeight(32)
         self.cmb_filter_date.setFixedWidth(110)
         self.cmb_filter_date.currentIndexChanged.connect(self._filter_table_combo)
         header_layout.addWidget(self.cmb_filter_date)
-
-        self.cmb_fetch_days = QComboBox()
-        self.cmb_fetch_days.addItems(["近 10 交易日", "近 20 交易日", "近 40 交易日"])
-        self.cmb_fetch_days.setFixedHeight(32)
-        self.cmb_fetch_days.setFixedWidth(120)
-        self.cmb_fetch_days.setCurrentIndex(1)  # 默认20个交易日
-        self.cmb_fetch_days.currentIndexChanged.connect(self._on_fetch_days_changed)
-        header_layout.addWidget(self.cmb_fetch_days)
-
-        self.btn_refresh = QPushButton("🔄 刷新")
-        self.btn_refresh.setFixedHeight(32)
-        self.btn_refresh.clicked.connect(self._load_block_trade_data)
-        header_layout.addWidget(self.btn_refresh)
 
         self.cmb_filter_stock = QComboBox()
         self.cmb_filter_stock.addItem("全部股票")
@@ -344,21 +318,23 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.search_box.setFixedHeight(32)
         self.search_box.textChanged.connect(self._filter_table_combo)
         header_layout.addWidget(self.search_box)
-        
+
+        # ── 数据拉取范围 + 操作按钮（合并后唯一一组） ──
         self.cmb_days = QComboBox()
         self.cmb_days.addItems(["近 10 交易日", "近 20 交易日", "近 40 交易日", "近 60 交易日"])
-        self.cmb_days.setCurrentIndex(0)
+        # 默认选中 20 交易日，与 self.days_to_fetch 初始值保持一致
+        self.cmb_days.setCurrentIndex(1)
         self.cmb_days.setFixedHeight(32)
         self.cmb_days.currentIndexChanged.connect(self._on_days_changed)
         header_layout.addWidget(self.cmb_days)
 
-        btn_refresh = QPushButton("🔄 抓取数据")
-        btn_refresh.setObjectName("ctaButton")
-        btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_refresh.setFixedWidth(100)
-        btn_refresh.setFixedHeight(32)
-        btn_refresh.clicked.connect(self._load_block_trade_data)
-        header_layout.addWidget(btn_refresh)
+        self.btn_refresh = QPushButton("🔄 抓取数据")
+        self.btn_refresh.setObjectName("ctaButton")
+        self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_refresh.setFixedWidth(100)
+        self.btn_refresh.setFixedHeight(32)
+        self.btn_refresh.clicked.connect(self._load_block_trade_data)
+        header_layout.addWidget(self.btn_refresh)
         layout.addLayout(header_layout)
 
         # 表格
@@ -382,6 +358,8 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setShowGrid(False)
         self.table.setSortingEnabled(True)
+        # 大宗交易默认按时间排序 由近到远
+        self.table.sortByColumn(5, Qt.SortOrder.DescendingOrder)
 
         # 列宽
         header = self.table.horizontalHeader()
@@ -437,6 +415,8 @@ class ForeignBlockTradeTab(BaseStockTab):
     def _load_block_trade_data(self):
         self.lbl_status.setText("拼命拉取大宗交易数据中...")
         self.model.update_data([])
+        # 清空上一轮的K线缓存，防止跨交易日窗口后内存只增不减
+        _kline_cache.clear()
         
         def _fetch_task():
             end_dt = datetime.datetime.now()
@@ -602,35 +582,8 @@ class ForeignBlockTradeTab(BaseStockTab):
         # 异步计算黄金信号（涉及大量K线读取，不能阻塞UI）
         self._compute_golden_signal_async()
         
-        # 一次性后台拉取市值
-        codes_need_cap = [str(c) for c in self._block_trade_codes if c not in self._cap_cache]
-        if codes_need_cap and self.data_provider:
-            from core.task_manager import task_manager
-            def _fetch_caps():
-                try:
-                    from vcp.engine import VCPEngine
-                    # 动态拉取现价以供市值计算（不依赖UI，直接用 data_provider）
-                    quotes = self.data_provider.fetch_realtime_quotes_batch(codes_need_cap) if self.data_provider else {}
-                    close_prices = {c: quotes[c].get('close', 0) for c in codes_need_cap if c in quotes and quotes[c]}
-
-                    cap_results = VCPEngine.batch_check_market_cap(codes_need_cap, close_prices=close_prices)
-                    caps = {}
-                    for c in codes_need_cap:
-                        cap = cap_results.get(c)
-                        caps[c] = f"{cap / 1e8:.0f}亿" if cap and cap > 0 else "--"
-                    return caps
-                except Exception:
-                    return {}
-            
-            def _apply_caps(caps):
-                if not caps: return
-                self._cap_cache.update(caps)
-                for row_idx, row_dict in enumerate(self.model.row_data):
-                    code = row_dict.get("代码", "")
-                    if code in caps:
-                        self.model.set_cell_value(row_idx, "市值", caps[code])
-            
-            task_manager.run_in_background(_fetch_caps, on_success=_apply_caps, task_id="block_trade_caps")
+        # 统一异步刷新市值
+        self.async_update_market_caps()
 
     def _compute_golden_signal_async(self):
         """在后台线程计算黄金信号，完成后回调到UI"""
@@ -709,96 +662,8 @@ class ForeignBlockTradeTab(BaseStockTab):
         else:
             self.lbl_status.setText(f"{status_base}信号计算完成，暂无黄金信号。")
 
-    def _auto_refresh_realtime(self, force=False):
-        """独立拉取大宗交易股票的实时行情（与美股日报一致的重试+自动联网逻辑）"""
-        if not self.data_provider or not self._block_trade_codes:
-            return
-        import time as _time
 
-        def _bg_fetch():
-            max_retries = 3
-            retry_delay = 5
 
-            for attempt in range(1, max_retries + 1):
-                try:
-                    bt_codes = list(self._block_trade_codes)
-                    if not bt_codes:
-                        return {}
-
-                    # 自动联网探测（与美股日报一致）
-                    if not self.data_provider.is_online():
-                        try:
-                            if self.data_provider.test_network(timeout=3):
-                                self.data_provider.set_online_mode(True)
-                            else:
-                                if attempt < max_retries:
-                                    log.info(f"[大宗交易] 独立刷新第{attempt}次: "
-                                          f"服务器未就绪，{retry_delay}秒后重试...")
-                                    _time.sleep(retry_delay)
-                                    continue
-                                return {}
-                        except Exception:
-                            if attempt < max_retries:
-                                _time.sleep(retry_delay)
-                                continue
-                            return {}
-
-                    if not self.data_provider.server_pool:
-                        if attempt < max_retries:
-                            _time.sleep(retry_delay)
-                            continue
-                        return {}
-
-                    quotes = self.data_provider.fetch_realtime_quotes_batch(bt_codes)
-                    if not quotes:
-                        if attempt < max_retries:
-                            _time.sleep(retry_delay)
-                            continue
-                        return {}
-
-                    log.info(f"[大宗交易] 独立刷新完成: "
-                          f"{len(quotes)}/{len(bt_codes)} 只股票")
-                    return quotes
-
-                except Exception as e:
-                    log.error(f"[大宗交易] 独立刷新异常(第{attempt}次): {e}")
-                    if attempt < max_retries:
-                        _time.sleep(retry_delay)
-            return {}
-
-        task_manager.run_in_background(
-            _bg_fetch, 
-            task_id="block_trade_quotes",
-            on_success=self._update_realtime_ui
-        )
-
-    def _update_realtime_ui(self, quotes: dict):
-        if not quotes or len(self.model.row_data) == 0:
-            return
-
-        for row_idx, row_dict in enumerate(self.model.row_data):
-            code = row_dict.get("代码", "")
-            quote = quotes.get(code)
-            if not quote: continue
-
-            rt_close = float(quote.get('close', 0) or 0)
-            last_close = float(quote.get('last_close', 0) or 0)
-            
-            if rt_close <= 0 and last_close > 0:
-                rt_close = last_close  
-
-            if last_close > 0 and rt_close > 0:
-                pct = ((rt_close / last_close) - 1) * 100
-                row_dict["涨幅%"] = pct
-                row_dict["现价"] = rt_close
-            else:
-                row_dict["涨幅%"] = "--"
-                row_dict["现价"] = "--"
-
-            self.model.dataChanged.emit(
-                self.model.index(row_idx, 0),
-                self.model.index(row_idx, len(self.columns)-1)
-            )
 
     def _filter_table_combo(self):
         search_text = self.search_box.text().strip().lower()
@@ -849,7 +714,8 @@ class ForeignBlockTradeTab(BaseStockTab):
 
         code = self.model.row_data[row].get("代码", "")
         name = self.model.row_data[row].get("名称", "")
+        row_data = self.model.row_data[row]
         if not code: return
 
         from ui.components.stock_context_menu import build_stock_context_menu
-        build_stock_context_menu(self, code, name)
+        build_stock_context_menu(self, code, name, vcp_data=row_data)

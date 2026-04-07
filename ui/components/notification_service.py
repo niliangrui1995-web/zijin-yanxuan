@@ -38,20 +38,19 @@ def notify_breakout(code: str, name: str, status: str, *, sound: bool = True):
         try:
             _send_windows_toast(title, message)
         except Exception:
-            log.warning(f"[通知] 桌面通知发送失败: {e}")
+            log.debug(f"[通知] toast 通知也发送失败: {e}")
 
     # 2. 声音提醒 — 使用系统自带的默认提示音
     if sound:
         try:
             _play_alert_sound()
-        except Exception:
-            pass
+        except Exception as _e:
+            log.debug(f"[通知] 提示音播放失败: {_e}")
 
 
 def _send_tray_notification(title: str, message: str):
     """通过 QSystemTrayIcon 发送系统托盘通知"""
     from PyQt6.QtWidgets import QApplication, QSystemTrayIcon
-    from PyQt6.QtGui import QIcon
 
     app = QApplication.instance()
     if not app:
@@ -92,8 +91,8 @@ def _send_windows_toast(title: str, message: str):
             capture_output=True, timeout=5,
             creationflags=0x08000000  # CREATE_NO_WINDOW
         )
-    except Exception:
-        pass
+    except Exception as _e:
+        log.debug(f"[通知] PowerShell toast 发送异常: {_e}")
 
 
 def _play_alert_sound():

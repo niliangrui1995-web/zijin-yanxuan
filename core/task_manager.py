@@ -109,14 +109,24 @@ class GlobalTaskManager(QObject):
         """
         worker = BackgroundWorker(fn, *args, **kwargs)
 
+        # 完成后清理 active_workers
+        tid = task_id or str(uuid.uuid4())[:8]
+
+        # 防静默死亡：如果调用方没有传 on_error，注入默认兜底闭包
+        # 这样后台线程崩了，至少日志里有痕迹，不会让 UI 永远卡在"加载中"
+        if on_error is None:
+            def _default_error_handler(error_message: str):
+                from core.logger import get_logger
+                get_logger(__name__).error(
+                    f"[TaskManager] 后台任务 '{tid}' 未捕获异常: {error_message}"
+                )
+            on_error = _default_error_handler
+
         from PyQt6.QtCore import Qt
         if on_success:
             worker.signals.finished.connect(on_success, type=Qt.ConnectionType.QueuedConnection)
         if on_error:
             worker.signals.error.connect(on_error, type=Qt.ConnectionType.QueuedConnection)
-
-        # 完成后清理 active_workers
-        tid = task_id or str(uuid.uuid4())[:8]
 
         def _cleanup(_):
             self.active_workers.pop(tid, None)

@@ -155,7 +155,8 @@ class AppConfig:
         raw = self.get("scan/user_presets", "{}")
         try:
             return json.loads(raw) if isinstance(raw, str) else {}
-        except Exception:
+        except (json.JSONDecodeError, TypeError, ValueError) as _e:
+            _log.debug(f"[AppConfig] 扫描预设解析失败: {_e}")
             return {}
 
     def save_scan_presets(self, presets: dict):

@@ -2,30 +2,21 @@
 # ui/tabs/watchlist_tab.py
 # 关注池独立组件 — 从 WatchlistMixin 解耦重构为完全自治的 QWidget
 import os
-import json
 import time
 import pickle
 import datetime
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableView,
-    QHeaderView, QPushButton, QLineEdit, QAbstractItemView, QMenu,
+    QHeaderView, QPushButton, QLineEdit, QAbstractItemView,
     QFileDialog
 )
 from ui.components.toast_widget import show_toast
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QColor
-from ui.theme import (
-    COLOR_RISE, COLOR_RISE_STRONG, COLOR_FALL, COLOR_FALL_STRONG, COLOR_FLAT,
-    COLOR_WARNING, STATUS_APPROACHING, STATUS_INACTIVE, STATUS_VCP,
-    STATUS_BREAKOUT, SCORE_EXCELLENT, SCORE_GOOD, SCORE_NORMAL, SCORE_LOW
-)
 
 from ui.viewmodels.watchlist_vm import watchlist_vm
 from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
-from ui.components import SvgIconBuilder
 from core.event_bus import event_bus
-from core.event_types import DataEvent
 from core.logger import get_logger
 from core.task_manager import task_manager
 from ui.tabs.base_stock_tab import BaseStockTab
@@ -40,41 +31,27 @@ class WatchlistTab(BaseStockTab):
     通过 EventBus 与外部通信，不直接依赖 MainWindowQT。
     """
 
-    def __init__(self, data_provider, ai_panel=None, parent=None):
+    def __init__(self, data_provider, parent=None):
         super().__init__(data_provider=data_provider, parent=parent)
-        self.ai_panel = ai_panel  # AIDiagPanel 引用（用于一键诊断）
-        self._ai_diag_results = {}
         self.setStyleSheet("background-color: transparent;")
 
         self._init_ui()
 
+        # 订阅全局报价与大一统市值更新机制
+        self.subscribe_global_quotes()
+
         # 挂载全局事件总线
-        event_bus.sig_data_updated.connect(self._on_data_updated)
         event_bus.sig_watchlist_changed.connect(self._on_watchlist_changed)
         event_bus.sig_app_closing.connect(self._on_app_closing)
+        
+        # v4: 使用精准专用信道
+        event_bus.sig_cache_loaded.connect(self._on_cache_or_earnings_updated)
+        event_bus.sig_earnings_updated.connect(self._on_cache_or_earnings_updated)
+        event_bus.sig_vcp_watchlist_ready.connect(self._on_vcp_watchlist_ready)
         self._cache_backfill_done = False
 
         # 延迟加载数据
         QTimer.singleShot(3500, self._load_special_data)
-
-        # 盘中每30秒独立实时拉取股价，与全局监控分离
-        self._rt_fetch_timer = QTimer(self)
-        self._rt_fetch_timer.timeout.connect(self._on_rt_fetch_timer)
-        self._rt_fetch_timer.start(30 * 1000)
-
-    def _on_rt_fetch_timer(self):
-        """独立30s定时器：仅负责首次拉一次报价+市值（盘后/非交易日也能展示收盘数据）"""
-        # 已通过中央广播接收盘中实时报价，此 timer 只为冷启动首次填充
-        if getattr(self, '_initial_quotes_done', False):
-            return
-        sp_codes = [str(r.get("代码")) for r in self.model.row_data if r.get("代码")]
-        if sp_codes:
-            task_manager.run_in_background(
-                self._refresh_special_quotes, sp_codes,
-                on_success=lambda q: self._update_quotes_ui(q) if q else None,
-                task_id="watchlist_quotes_indie"
-            )
-            self._initial_quotes_done = True
 
     # ================================================================
     # UI 构建
@@ -89,12 +66,7 @@ class WatchlistTab(BaseStockTab):
         tb_layout = QHBoxLayout(toolbar)
         tb_layout.setContentsMargins(6, 4, 6, 4)
 
-        self.btn_special_diag = QPushButton("🤖 一键AI诊断全部")
-        self.btn_special_diag.setObjectName("outlineButton")
-        self.btn_special_diag.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_special_diag.setFixedWidth(160)
-        self.btn_special_diag.clicked.connect(self._run_batch_ai_diag)
-        tb_layout.addWidget(self.btn_special_diag)
+        # 占位或省略，直接加自动伸缩
         tb_layout.addStretch()
 
         # 搜索过滤
@@ -106,6 +78,12 @@ class WatchlistTab(BaseStockTab):
             lambda t: self._filter_table(t)
         )
         tb_layout.addWidget(self.sp_search)
+
+        btn_reset = QPushButton("解除列表排序")
+        btn_reset.setProperty("class", "secondary")
+        btn_reset.setFixedHeight(32)
+        btn_reset.clicked.connect(self._reset_view)
+        tb_layout.addWidget(btn_reset)
 
         btn_export_sp = QPushButton("📄 导出")
         btn_export_sp.setProperty("class", "secondary")
@@ -126,10 +104,17 @@ class WatchlistTab(BaseStockTab):
         self.table_sp.setShowGrid(False)
         self.table_sp.setSortingEnabled(True)
         
+        # 拖拽排序设置 (只有在默认排序状态下才可用)
+        self.table_sp.setDragEnabled(True)
+        self.table_sp.setAcceptDrops(True)
+        self.table_sp.setDropIndicatorShown(True)
+        self.table_sp.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.table_sp.setDragDropOverwriteMode(False)
+        
         # 绑定 Model 与 Delegate
         headers = [
             "代码", "名称", "现价", "涨幅%", "市值", "时间",
-            "RPS强度", "热点板块", "AI结论", "备注"
+            "RPS强度", "热点板块", "美股日报", "大宗交易", "业绩异动"
         ]
         self.model = StockTableModel(headers)
         self.proxy_model = RtSortFilterProxyModel(self.table_sp)
@@ -138,18 +123,24 @@ class WatchlistTab(BaseStockTab):
         
         self.delegate = StockItemDelegate(self.table_sp)
         self.table_sp.setItemDelegate(self.delegate)
+        
+        # 接收模型发出的手动排序完成信号
+        self.model.sig_rows_reordered.connect(self._on_rows_reordered)
 
         # 自适应列宽
-        sp_weights = [0.75, 0.65, 1.4, 0.75, 0.9, 0.7, 0.8, 1.4, 2.2, 1.5]
+        sp_weights = [0.75, 0.65, 1.4, 0.75, 0.9, 0.7, 0.8, 1.4, 1.8, 1.8, 1.2]
         header = self.table_sp.horizontalHeader()
-        header.setStretchLastSection(False)
+        header.setStretchLastSection(True)
         for col_idx, w in enumerate(sp_weights):
             header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
             self.table_sp.setColumnWidth(col_idx, int(w * 80))
-        self.table_sp.verticalHeader().setDefaultSectionSize(32)
-        
-        # 绑定防抖自动保存与恢复配置
+        # 绑定防抖自动保存与恢复配置（restoreState 会连带把上次的排序列也恢复了）
         self.bind_header_persistence(self.table_sp, "header_state_watchlist_v2")
+        
+        # 【修复】强制抹掉任何因为 header.restoreState 还原出来的自动排序状态
+        # 因为在关闭时，我们已经把当前的各种（哪怕是点击表头排出来的）视觉顺序定死并按此顺序拍扁存入硬盘了
+        # 所以重启后，应当直接默认展示物理顺序，而不受过去排序标记的干扰
+        self.table_sp.sortByColumn(-1, Qt.SortOrder.AscendingOrder)
 
         # 双击 → 查看K线图（通过 EventBus 广播）
         self.table_sp.doubleClicked.connect(self._on_double_click)
@@ -183,63 +174,57 @@ class WatchlistTab(BaseStockTab):
                 except Exception as e:
                     log.error(f"[关注池] 老UI缓存读取异常: {e}")
 
-        # 3. AI 诊断缓存
-        ai_cache_path = os.path.join(data_dir, 'data', 'Cache', 'ai_diag_special.json')
-        ai_cache = {}
-        if os.path.exists(ai_cache_path):
-            try:
-                with open(ai_cache_path, 'r', encoding='utf-8') as f:
-                    ai_raw = json.load(f)
-                ai_cache = ai_raw.get('results', {}) if isinstance(ai_raw, dict) else {}
-            except Exception as e:
-                log.error(f"[关注池] AI缓存读取异常: {e}")
 
-        # 合并代码列表
         all_codes = list(data_dict.keys())
         for code in old_pool:
             if code not in data_dict:
                 all_codes.append(code)
 
         # 渲染表格
-        self._render_table(all_codes, data_dict, old_pool, ai_cache)
+        self._render_table(all_codes, data_dict, old_pool)
 
-        # 抛弃本地缓存回填，直接拉取实时报价覆盖（非交易时段 PyTdx 自动返回收盘快照）
+        # 抛弃本地缓存回填，直接触发基类的大一统市值刷新方案
         if all_codes:
-            def _on_quotes_ready(q):
-                if q: self._update_quotes_ui(q)
-            task_manager.run_in_background(
-                self._refresh_special_quotes, list(all_codes),
-                on_success=_on_quotes_ready,
-                task_id="watchlist_quotes"
-            )
+            self.async_update_market_caps()
 
-    def _render_table(self, all_codes, data_dict, old_pool, ai_cache):
+        # 主动触发 VCP 指标刷新（热点板块/RPS/业绩异动等）
+        # 为什么不依赖 CACHE_LOADED 事件：因为存在时序竞态——
+        # 缓存可能在 3.5s 延迟前就加载完了，那时 model.row_data 还是空的
+        # 引入 _request_vcp_calc 防抖 500ms 重复合并
+        self._request_vcp_calc()
+
+    def _render_table(self, all_codes, data_dict, old_pool):
         """渲染关注池表格"""
+        
+        # 提取当前表格中活跃的实时行情和市值，避免重绘时发生闪退或变成 '--'
+        live_data_map = {}
+        if hasattr(self, 'model') and getattr(self.model, 'row_data', None):
+            for r in self.model.row_data:
+                c = r.get("代码")
+                if c:
+                    live_data_map[c] = {
+                        "现价": r.get("现价", "--"),
+                        "涨幅%": r.get("涨幅%", "--"),
+                        "市值": r.get("市值", "--"),
+                        "_zongguben": r.get("_zongguben", 0)
+                    }
+
         final_list = []
         for row_idx, code in enumerate(all_codes):
             info_new = data_dict.get(code, {})
             info_old = old_pool.get(code, {})
-            name = getattr(self.data_provider, 'code2name', {}).get(code, code)
+            # 优先从新老池数据中提取名称，最后使用全局映射
+            name = info_new.get("名称") or info_old.get("名称")
+            if not name or name == str(code):
+                name = getattr(self.data_provider, 'code2name', {}).get(code, code)
 
-            # AI诊断文本提取（多源优先级合并）
-            def _extract_ai_text(val):
-                if isinstance(val, dict):
-                    return val.get('text', '') or val.get('content', '') or ''
-                return str(val) if val else ''
+            live_entry = live_data_map.get(code, {})
+            # 优先保留活跃数据
+            cur_price = live_entry.get("现价") if live_entry.get("现价", "--") != "--" else info_new.get("现价", '--')
+            pct_str = live_entry.get("涨幅%") if live_entry.get("涨幅%", "--") != "--" else info_new.get("涨幅%", '--')
+            cap = live_entry.get("市值") if live_entry.get("市值", "--") != "--" else info_new.get("市值", '--')
 
-            ai_text = (
-                _extract_ai_text(self._ai_diag_results.get(code, ''))
-                or _extract_ai_text(ai_cache.get(code, ''))
-                or _extract_ai_text(info_old.get("AI结论", ''))
-                or _extract_ai_text(info_new.get("AI结论", ''))
-            )
-            if ai_text:
-                self._ai_diag_results[code] = ai_text
-
-            cur_price = info_new.get("现价", '--')
-            pct_str = info_new.get("涨幅%", '--')
             rps = info_new.get("RPS强度", '--')
-            cap = info_new.get("市值", '--')
             sector = info_new.get("热点板块", '--')
             ts = info_new.get('时间', time.strftime("%H:%M:%S"))
             cap_display = cap if cap and cap != '--' else ''
@@ -253,87 +238,30 @@ class WatchlistTab(BaseStockTab):
                 "市值": str(cap_display),
                 "RPS强度": str(rps),
                 "热点板块": str(sector),
-                "AI结论": self._merge_and_wrap_ai_diag(ai_text),
-                "备注": info_new.get("备注", ""),
+                "美股日报": info_new.get("美股日报", ""),
+                "大宗交易": info_new.get("大宗交易", ""),
+                "业绩异动": info_new.get("业绩异动", ""),
+                "_zongguben": live_entry.get("_zongguben", 0)
             }
             final_list.append(row_data)
 
         self.model.update_data(final_list)
 
-    def _refresh_special_quotes(self, codes):
-        """后台拉取实时行情，具备重试和离线恢复机制"""
-        import time as _time
-        max_retries = 3
-        retry_delay = 5
-
-        for attempt in range(1, max_retries + 1):
-            try:
-                if not self.data_provider:
-                    return None
-
-                if not self.data_provider.is_online():
-                    try:
-                        if self.data_provider.test_network(timeout=3):
-                            self.data_provider.set_online_mode(True)
-                        else:
-                            if attempt < max_retries:
-                                log.info(f"[关注池] 独立刷新第{attempt}次: 服务器未就绪，{retry_delay}秒后重试...")
-                                _time.sleep(retry_delay)
-                                continue
-                            return None
-                    except Exception:
-                        if attempt < max_retries:
-                            _time.sleep(retry_delay)
-                            continue
-                        return None
-
-                if not getattr(self.data_provider, 'server_pool', None):
-                    if attempt < max_retries:
-                        _time.sleep(retry_delay)
-                        continue
-                    return None
-
-                raw_quotes = self.data_provider.fetch_realtime_quotes_batch(codes)
-                if not raw_quotes:
-                    if attempt < max_retries:
-                        _time.sleep(retry_delay)
-                        continue
-                    return None
-
-                quotes = {}
-                for c, q in raw_quotes.items():
-                    quotes[c] = {'price': float(q.get('close', 0) or 0), 'pre_close': float(q.get('last_close', 0) or 0)}
-                return quotes
-            except Exception as e:
-                log.error(f"[关注池] 实时行情刷新异常(第{attempt}次): {e}")
-                if attempt < max_retries:
-                    _time.sleep(retry_delay)
-        return None
+    def _on_rows_reordered(self, new_codes_list):
+        """当用户在表格手动拖拽重排后，更新VM字典保存并重新渲染"""
+        # 1. 如果表格处于按某列排序模式(如按涨幅排)，禁止拖拽覆盖
+        if self.proxy_model.sortColumn() != -1:
+            from ui.components.toast_widget import show_toast
+            show_toast("当前正处于条件排序状态，拖拽无效，请点击右上角【还原默认视图】后再拖拽！", "warning", self)
+            self._load_special_data() # 撤销刚刚拖拽引发的界面错乱，滚回原状
+            return
             
-    def _update_quotes_ui(self, quotes):
-        """将最新的行情批量应用到 Model"""
-        final_list = list(self.model.row_data)
-        dirty = False
+        # 2. 调用 VM 写入磁盘
+        watchlist_vm.reorder(new_codes_list)
         
-        for row_data in final_list:
-            code = str(row_data.get('代码', ''))
-            if code in quotes:
-                q = quotes[code]
-                c_price = q.get('price', 0)
-                p_close = q.get('pre_close', 0)
+        # 3. 再重新拉取一次保持严格同步
+        self._load_special_data()
 
-                # --- 零值纠正 ---                        
-                if c_price <= 0 and p_close > 0:
-                    c_price = p_close
-
-                if p_close > 0:
-                    pct = ((c_price - p_close) / p_close) * 100
-                    row_data["现价"] = f"{c_price:.2f}"
-                    row_data["涨幅%"] = f"{pct:+.2f}%"
-                    dirty = True
-
-        if dirty:
-            self.model.update_data(final_list)
 
     # ================================================================
     # 交互事件
@@ -342,7 +270,6 @@ class WatchlistTab(BaseStockTab):
         """双击行 → 备注列弹编辑框(#11)，其他列跳 K 线图"""
         if not index.isValid():
             return
-        proxy_row = index.row()
         source_index = self.proxy_model.mapToSource(index)
         row = source_index.row()
         col = source_index.column()
@@ -377,8 +304,20 @@ class WatchlistTab(BaseStockTab):
         # 非备注列 → K 线图
         code = self.model.row_data[row].get("代码")
         if code:
-            code_list = [{'代码': r.get("代码", ""), '名称': r.get("名称", "")} for r in self.model.row_data]
-            event_bus.sig_show_kline_with_list.emit(code, code_list, proxy_row)
+            code_list = []
+            for r in range(self.proxy_model.rowCount()):
+                s_idx = self.proxy_model.mapToSource(self.proxy_model.index(r, 0))
+                if s_idx.row() < len(self.model.row_data):
+                    rd = self.model.row_data[s_idx.row()]
+                    code_list.append({'代码': rd.get("代码", ""), '名称': rd.get("名称", "")})
+            
+            current_idx = 0
+            for i, c in enumerate(code_list):
+                if c['代码'] == code:
+                    current_idx = i
+                    break
+                    
+            event_bus.sig_show_kline_with_list.emit(code, code_list, current_idx)
 
     def _show_context_menu(self, pos):
         """关注池右键菜单 — 委托给统一菜单工厂 (#2)"""
@@ -399,10 +338,7 @@ class WatchlistTab(BaseStockTab):
         from ui.components.stock_context_menu import build_stock_context_menu
         build_stock_context_menu(self, code, name)
 
-    def _run_batch_ai_diag(self):
-        """一键AI诊断：委托给 AIDiagPanel"""
-        if self.ai_panel and hasattr(self.ai_panel, 'run_special_pool_ai_diag_all'):
-            self.ai_panel.run_special_pool_ai_diag_all()
+
 
     def _export_to_excel(self):
         """导出关注池表格到 Excel"""
@@ -434,39 +370,78 @@ class WatchlistTab(BaseStockTab):
         except Exception as e:
             show_toast(f"导出失败: {str(e)}", "error", self)
 
+    def _reset_view(self):
+        """取消强制排序：仅重置表格排序状态，不影响用户自定义的列宽"""
+        # 还原默认排序列，使得可随意拖拽
+        self.table_sp.sortByColumn(-1, Qt.SortOrder.AscendingOrder)
+        
+        show_toast("已解除列表排序，您可以自由拖拽个股顺序了", "success", self.window(), duration=2500)
+
     # ================================================================
     # EventBus 事件监听及同步更新
     # ================================================================
-    def _on_watchlist_changed(self, action: str, code: str):
-        """外部请求关注池变更时重新加载"""
-        self._load_special_data()
-        
-        # 自动触发重新计算所有个股的 RPS 和 版块信息
-        if self.model and self.model.row_data:
-            codes_with_rows = [(idx, str(r.get("代码"))) for idx, r in enumerate(self.model.row_data) if r.get("代码")]
-            if codes_with_rows:
-                task_manager.run_in_background(
-                    self._refresh_vcp_indicators, codes_with_rows,
-                    task_id="watchlist_vcp_refresh"
-                )
+    def _gather_radar_data(self):
+        """主线程快速提取 UI 数据，供后台线程使用（避免跨线程访问UI崩溃）"""
+        na_data, block_data, earn_data = {}, {}, {}
+        rps_bundle = None
+        try:
+            main_win = self.window()
+            if main_win:
+                if hasattr(main_win, 'engine'):
+                    rps_bundle = main_win.engine.get_precomputed_rps()
+                    
+                if hasattr(main_win, 'tab_na_daily') and hasattr(main_win.tab_na_daily, 'model'):
+                    for r in main_win.tab_na_daily.model.row_data:
+                        c = str(r.get("代码", ""))
+                        if c: na_data[c] = str(r.get("催化剂", "") or r.get("💥催化剂", ""))
+                        
+                if hasattr(main_win, 'tab_foreign_block') and hasattr(main_win.tab_foreign_block, 'model'):
+                    for r in main_win.tab_foreign_block.model.row_data:
+                        c = str(r.get("代码", ""))
+                        if c:
+                            detail = str(r.get("交易详情", ""))
+                            buy = str(r.get("买方营业部", ""))
+                            sell = str(r.get("卖方营业部", ""))
+                            memo = detail
+                            if "买入" in detail:
+                                memo = f"{detail}: {buy}"
+                            elif "卖出" in detail:
+                                memo = f"{detail}: {sell}"
+                            block_data[c] = memo
+                            
+                if hasattr(main_win, 'tab_earnings') and hasattr(main_win.tab_earnings, 'model'):
+                    for r in main_win.tab_earnings.model.row_data:
+                        c = str(r.get("代码", ""))
+                        pct = str(r.get("环比%", ""))
+                        if c and pct and pct != "--": earn_data[c] = f"环比增幅: {pct}%"
+        except Exception as e:
+            log.warning(f"[关注池] 提取主界面数据异常: {e}")
+        return na_data, block_data, earn_data, rps_bundle
 
-    def _refresh_vcp_indicators(self, codes_with_rows):
+    def _on_watchlist_changed(self, action: str, code: str):
+        """外部请求关注池变更时，防抖 300ms 后再重新加载（防止快速增删导致任务堆积）"""
+        if not hasattr(self, '_debounce_timer'):
+            self._debounce_timer = QTimer(self)
+            self._debounce_timer.setSingleShot(True)
+            self._debounce_timer.timeout.connect(self._do_watchlist_reload)
+        # 每次新信号进来都重置计时器，只有最后一次 300ms 后才真正触发
+        self._debounce_timer.start(300)
+
+    def _do_watchlist_reload(self):
+        """防抖后的实际重载逻辑"""
+        self._load_special_data()
+
+    def _refresh_vcp_indicators(self, codes_with_rows, radar_data_tuple=None):
         """后台线程：计算关注池标的的 VCP 评分、RPS、突破状态、市值"""
         try:
-            from vcp.engine import VCPEngine
             from vcp.models import VCPParams
-            import pickle, os
+            import pickle
+            import os
 
-            log.info(f"[关注池-VCP] 开始计算 {len(codes_with_rows)} 只标的...")
+            log.info(f"[关注池] 开始计算 {len(codes_with_rows)} 只标的附加指标...")
 
             # 1. 尝试从引擎获取RPS
-            rps_bundle = None
-            try:
-                main_win = self.window()
-                if main_win and hasattr(main_win, 'engine'):
-                    rps_bundle = main_win.engine.get_precomputed_rps()
-            except Exception as e:
-                log.error(f"[关注池-VCP] 获取RPS异常: {e}")
+            rps_bundle = radar_data_tuple[3] if radar_data_tuple else None
 
             if not rps_bundle:
                 cache_dir = os.path.join(
@@ -484,9 +459,11 @@ class WatchlistTab(BaseStockTab):
             # 2. 从本地缓存获取数据并处理
             sector_info = {}
             try:
-                tdx_vipdoc = getattr(self.data_provider, 'tdx_vipdoc', '')
-                tdx_root = os.path.dirname(tdx_vipdoc) if tdx_vipdoc else r'D:\HT'
+                from core.app_config import app_config
                 from vcp.sector import SectorManager
+                # 统一从全局单例获取通达信路径（与 earnings/engine.py 保持一致）
+                tdx_vipdoc = app_config.get('scan/tdx_vipdoc', getattr(self.data_provider, 'tdx_vipdoc', r'D:\HT\vipdoc'))
+                tdx_root = os.path.dirname(tdx_vipdoc) if tdx_vipdoc else r'D:\HT'
                 sm = SectorManager.get_instance(tdx_root)
                 for _, code in codes_with_rows:
                     sectors = sm.get_sectors(code)
@@ -494,32 +471,26 @@ class WatchlistTab(BaseStockTab):
                         short = [s.replace('GN_', '').replace('行业_', '')[:6] for s in sectors[:2]]
                         sector_info[code] = ' | '.join(short)
             except Exception as e:
-                pass
+                log.warning(f"[关注池] 板块数据加载失败(通达信路径是否正确?): {e}")
 
-            params = VCPParams()
-            params.rps_threshold = 0
-            params.amp_threshold = 2.0
-            params.ma_bind_threshold = 0.30
-            params.high_250_threshold = 0.50
-            params.min_amount_20d = 0
-            params.min_history_days = 60
-
-            results = {}
-
-            # 计算市值
-            all_codes = [code for _, code in codes_with_rows]
-            close_prices = {}
-            for _, code in codes_with_rows:
-                df_tmp = self.data_provider.get_data(code)
-                if df_tmp is not None and len(df_tmp) > 0:
-                    close_prices[code] = float(df_tmp.iloc[-1]['close'])
-            cap_results = {}
             try:
-                cap_results = VCPEngine.batch_check_market_cap(all_codes, close_prices=close_prices)
-            except Exception as e:
-                log.error(f"[关注池-VCP] 市值计算失败: {e}")
+                from vcp.models import VCPParams
+                params = VCPParams()
+                params.rps_threshold = 0
+                params.amp_threshold = 2.0
+                params.ma_bind_threshold = 0.30
+                params.high_250_threshold = 0.50
+                params.min_amount_20d = 0
+                params.min_history_days = 60
+            except ImportError as _e:
+                log.debug(f"[关注池] VCPParams 导入失败，跳过参数初始化: {_e}")
+            # --- 动态扫盘：三大挂载战场的雷达数据提取 ---
+            na_data, block_data, earn_data = (radar_data_tuple[0], radar_data_tuple[1], radar_data_tuple[2]) if radar_data_tuple else ({}, {}, {})
 
+            # 剥离不再必要的重复计算市值逻辑 (由大一统机制负责)
             ok_count = err_count = 0
+            results = {}  # 修复局部变量未初始化的 bug
+            
             for row_idx, code in codes_with_rows:
                 try:
                     rps120_val = float(rps120_series.get(code, 0)) if rps120_series is not None and code in rps120_series else 0
@@ -531,36 +502,49 @@ class WatchlistTab(BaseStockTab):
                         if rps120_val > 0:
                             rps_display += f"/{rps120_val:.0f}"
                             
-                    cap = cap_results.get(code)
-                    cap_str = f"{cap / 1e8:.0f}亿" if cap and cap > 0 else '--'
-
-                    results[row_idx] = {
+                    results[code] = {
                         'rps': rps_display,
-                        'cap': cap_str,
-                        'sector': sector_info.get(code, '--')
+                        'sector': sector_info.get(code, '--'),
+                        'na_catalyst': na_data.get(code, ''),
+                        'block_trade': block_data.get(code, ''),
+                        'earnings': earn_data.get(code, '')
                     }
                     ok_count += 1
-                except Exception as e:
+                except Exception as _e:
+                    log.debug(f"[关注池] {code} RPS指标计算异常: {_e}")
                     err_count += 1
                     continue
             
             if results:
-                event_bus.sig_data_updated.emit(DataEvent.VCP_WATCHLIST_READY.value, results)
+                event_bus.sig_vcp_watchlist_ready.emit(results)
+                log.info(f"[关注池] {len(results)} 只标的附加指标计算完成")
 
         except Exception as e:
-            log.error(f"[关注池-VCP] 批量计算顶层异常: {e}")
+            log.error(f"[关注池] 附加指标批量计算异常: {e}")
 
     def _apply_vcp_indicators_ui(self, results: dict):
-        """主线程：将 VCP 指标更新到 Model"""
+        """主线程：将 VCP 指标更新到 Model（按股票代码匹配，不再按行号，防止排序/拖拽后错位）"""
         if not results: return
         
-        for row_idx, data in results.items():
+        # 构建 code -> row_idx 的当前映射（实时安全）
+        code_to_row = {}
+        for idx, row_dict in enumerate(self.model.row_data):
+            c = row_dict.get('代码')
+            if c:
+                code_to_row[c] = idx
+        
+        for code, data in results.items():
+            row_idx = code_to_row.get(code, -1)
             if row_idx < 0 or row_idx >= len(self.model.row_data): continue
             
             row_dict = self.model.row_data[row_idx]
-            row_dict['市值'] = data.get('cap', '--')
             row_dict['RPS强度'] = data.get('rps', '--')
             row_dict['热点板块'] = data.get('sector', '--')
+            
+            # 三大阵营的数据注入 (如果原本有数据但不为空，我们不覆盖；如果本次扫到了，坚决覆盖)
+            if data.get('na_catalyst'): row_dict['美股日报'] = data['na_catalyst']
+            if data.get('block_trade'): row_dict['大宗交易'] = data['block_trade']
+            if data.get('earnings'): row_dict['业绩异动'] = data['earnings']
             
             # trigger row update
             self.model.dataChanged.emit(
@@ -568,7 +552,7 @@ class WatchlistTab(BaseStockTab):
                 self.model.index(row_idx, len(self.model._headers)-1)
             )
             
-        event_bus.sig_system_log.emit("info", "[关注池] VCP指标已刷新")
+        event_bus.sig_system_log.emit("info", "[关注池] 附加指标已更新")
 
     def _on_app_closing(self):
         """应用关闭前保存缓存"""
@@ -576,54 +560,78 @@ class WatchlistTab(BaseStockTab):
             self._save_special_cache_from_table()
 
     def _save_special_cache_from_table(self):
-        """应用关闭前将表格最新数据更新回 ViewModel"""
+        """应用关闭前将表格最新数据更新回 ViewModel，同时保存最终的视觉排序效果"""
         try:
-            # ViewModel 自己管理全量状态，我们只需更新每个 code 的诊断结果和指标即可
             current_cache = watchlist_vm.get_watchlist_data()
-            dirty = False
-            for row in self.model.row_data:
-                code = str(row.get("代码", ""))
+            if not current_cache:
+                return
+
+            new_cache = {}
+            # 从 proxy_model 里拿，确保记录的是屏幕上最终排序后的顺序
+            row_count = self.proxy_model.rowCount()
+            for r in range(row_count):
+                source_idx = self.proxy_model.mapToSource(self.proxy_model.index(r, 0))
+                if not source_idx.isValid():
+                    continue
+                row_dict = self.model.row_data[source_idx.row()]
+                code = str(row_dict.get("代码", ""))
                 if not code or code not in current_cache:
                     continue
                 
                 # 更新最新的结构化指标到 ViewModel
                 entry = current_cache[code]
-                entry["RPS强度"] = str(row.get("RPS强度", ""))
-                entry["AI结论"] = str(row.get("AI结论", ""))
-                entry["热点板块"] = str(row.get("热点板块", ""))
-                dirty = True
+                entry["RPS强度"] = str(row_dict.get("RPS强度", ""))
+                entry["AI结论"] = str(row_dict.get("AI结论", ""))
+                entry["热点板块"] = str(row_dict.get("热点板块", ""))
+                entry["美股日报"] = str(row_dict.get("美股日报", ""))
+                entry["大宗交易"] = str(row_dict.get("大宗交易", ""))
+                entry["业绩异动"] = str(row_dict.get("业绩异动", ""))
                 
-            if dirty:
-                watchlist_vm._cache = current_cache
+                # 按视觉顺序保存
+                new_cache[code] = entry
+
+            # 防护网：如果用户有关闭前正在搜索过滤，没显示在表面的隐身票，原样追回防止丢票
+            for code, entry in current_cache.items():
+                if code not in new_cache:
+                    new_cache[code] = entry
+
+            if new_cache:
+                watchlist_vm._cache = new_cache
                 watchlist_vm._save_data()
         except Exception as e:
             log.error(f"[关注池] 同步缓存到 ViewModel 失败: {e}")
 
-    def _on_data_updated(self, channel: str, payload: object):
-        """统一事件消费：广播报价 + F5缓存完成 + VCP指标就绪"""
-        # 盘中实时报价广播 → 刷新现价/涨幅
-        if channel == DataEvent.RT_QUOTES_BROADCAST.value:
-            if getattr(self, 'model', None):
-                self.model.update_quotes(payload)
-            return
+    def _on_cache_or_earnings_updated(self):
+        """统一事件消费： F5缓存完成 or 业绩数据更新"""
+        # F5 缓存完成后作为第二次刷新机会（此时 earnings/大宗交易/美股等可能已有数据）
+        # 合并启动后期的重复触发
+        self._request_vcp_calc()
 
-        if channel == DataEvent.CACHE_LOADED.value and not getattr(self, "_vcp_computed", False):
-            self._vcp_computed = True
-            codes = [str(r.get("代码")) for r in self.model.row_data if r.get("代码")]
-            if codes:
-                codes_with_rows = [(r_idx, str(r.get("代码"))) 
-                                   for r_idx, r in enumerate(self.model.row_data) if r.get("代码")]
-                if codes_with_rows:
-                    task_manager.run_in_background(
-                        self._refresh_vcp_indicators, codes_with_rows,
-                        task_id="watchlist_vcp_2"
-                    )
-            return
-
-        if channel == DataEvent.VCP_WATCHLIST_READY.value and payload:
-            log.info(f"[关注池-VCP] 收到信号，正在写入 {len(payload)} 条结果到表格...")
+    def _on_vcp_watchlist_ready(self, payload: object):
+        if payload:
+            log.info(f"[关注池] 附加指标已就绪，正在写入 {len(payload)} 条结果到表格...")
             self._apply_vcp_indicators_ui(payload)
-            return
+
+    def _request_vcp_calc(self):
+        """请求计算 VCP 附加指标，带有防抖功能，防止启动时多次触发"""
+        if not hasattr(self, '_vcp_calc_timer'):
+            self._vcp_calc_timer = QTimer(self)
+            self._vcp_calc_timer.setSingleShot(True)
+            self._vcp_calc_timer.timeout.connect(self._do_vcp_calc)
+        self._vcp_calc_timer.start(500)
+
+    def _do_vcp_calc(self):
+        """实际计算"""
+        if self.model and self.model.row_data:
+            codes_with_rows = [(idx, str(r.get("代码")))
+                               for idx, r in enumerate(self.model.row_data) if r.get("代码")]
+            if codes_with_rows:
+                radar_data_tuple = self._gather_radar_data()
+                task_manager.run_in_background(
+                    self._refresh_vcp_indicators, codes_with_rows, radar_data_tuple,
+                    on_error=lambda e: log.error(f"[关注池] 附加指标后台计算异常: {e}"),
+                    task_id="watchlist_vcp_refresh"
+                )
 
     # ================================================================
     # 工具方法
@@ -631,13 +639,4 @@ class WatchlistTab(BaseStockTab):
     def _filter_table(self, text):
         """搜索过滤：支持代码、名称、拼音首字母"""
         self.proxy_model.setFilterText(text)
-
-    @staticmethod
-    def _merge_and_wrap_ai_diag(text):
-        """保留AI诊断完整文本供Tooltip使用，显示截断和格式由Model与View处理"""
-        if not text or text == '--':
-            return ""
-        return str(text).strip()
-
-    # _launch_tdx 已迁移至 BaseStockTab 基类
 

@@ -1,5 +1,3 @@
-import os
-import json
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableView,
     QHeaderView, QPushButton, QLabel, QLineEdit,
@@ -9,9 +7,7 @@ from ui.components.toast_widget import show_toast
 from PyQt6.QtCore import Qt, pyqtSlot, QTimer
 from ui.models.table_models import RtTableModel, RtSortFilterProxyModel
 from ui.workers.rt_scan_worker import RtScanWorker
-from ui.viewmodels.watchlist_vm import watchlist_vm
 from core.event_bus import event_bus
-from core.event_types import DataEvent
 from core.logger import get_logger
 from core.task_manager import task_manager
 from ui.tabs.base_stock_tab import BaseStockTab
@@ -35,12 +31,29 @@ class RtMonitorTab(BaseStockTab):
         self._rt_throttler = SignalThrottler(interval=1000, parent=self)
         self._rt_throttler.throttled_signal.connect(self._do_update_rt_table)
         
-        event_bus.sig_data_updated.connect(self._on_global_data)
+        # 盘中监控由 RtScanWorker 独立推送数据，不订阅中央广播站
+        # 盘后 Worker 停止后，model 中的数据原地保留，第二天自动覆盖
+        
+        # 自动化监控：交易日 9:15-16:00 自动启动
+        self._manually_toggled = False
+        self._auto_timer = QTimer(self)
+        self._auto_timer.timeout.connect(self._check_auto_start_stop)
+        self._auto_timer.start(30000)  # 每 30 秒检查一次
 
-    def _on_global_data(self, evt_type: str, data: object):
-        if evt_type == DataEvent.RT_QUOTES_BROADCAST.value:
-            if getattr(self, "source_model", None):
-                self.source_model.update_quotes(data)
+    def _check_auto_start_stop(self):
+        from core.market_calendar import MarketCalendar
+        is_active = MarketCalendar.is_market_active()
+        is_running = hasattr(self, 'rt_worker') and self.rt_worker.isRunning()
+
+        # 如果在活跃时间，没在运行，且用户没有手动强行关掉它 -> 自动启动
+        if is_active and not is_running and not self._manually_toggled:
+            log.info("[盘中监控] 交易时段到达，触发自动启动...")
+            self._toggle_rt_monitor(auto=True)
+        # 如果不在活跃时间，但它还在运行 -> 自动关掉静默
+        elif not is_active and is_running:
+            log.info("[盘中监控] 非交易时段，触发自动静默...")
+            self._toggle_rt_monitor(auto=True)
+            self._manually_toggled = False  # 清除人工标记，确保明早能自动启动
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -192,13 +205,16 @@ class RtMonitorTab(BaseStockTab):
             self._settings.sync()
             show_toast("盘中监控参数已保存", "success", self)
 
-    def _toggle_rt_monitor(self):
+    def _toggle_rt_monitor(self, auto=False):
+        if not auto: 
+            self._manually_toggled = True
+
         if hasattr(self, 'rt_worker') and self.rt_worker.isRunning():
             self.rt_worker.stop()
-            self.rt_worker.wait()
+            self.rt_worker.wait(3000)  # 3 秒超时，防止 worker 死锁卡死主线程
             self.btn_rt_start.setText("🚀 启动盘中监控")
             self.btn_rt_start.setStyleSheet("")
-            self.lbl_rt_info.setText("监控已停止")
+            self.lbl_rt_info.setText("监控已停止" if not auto else "监控自动休眠(非盘中)")
             event_bus.sig_task_progress.emit("rt_monitor", 0, "stop")
         else:
             # 兜底：如果内存缓存为空，先尝试从磁盘加载昨日F5的缓存
@@ -286,7 +302,7 @@ class RtMonitorTab(BaseStockTab):
 
         # 核心解耦点：表格自身渲染完毕后，向全系统抛出数据刷新事件！
         # 让 MainWindowQT 或者 WatchlistTab 自行拦截处理剩下的全局关联逻辑。
-        event_bus.sig_data_updated.emit(DataEvent.RT_QUOTES_REFRESHED.value, results)
+        event_bus.sig_rt_quotes_refreshed.emit(results)
 
     # ================================================================
     # 交互事件 (右键菜单 / 双击)
@@ -299,7 +315,7 @@ class RtMonitorTab(BaseStockTab):
         code_list = []
         for r in range(self.proxy_model.rowCount()):
             c_idx = self.proxy_model.index(r, 0) # 代码
-            n_idx = self.proxy_model.index(r, 2) # 名称
+            n_idx = self.proxy_model.index(r, 1) # 名称（第1列，不是第2列"现价"）
             c = str(self.proxy_model.data(c_idx))
             n = str(self.proxy_model.data(n_idx))
             code_list.append({'代码': c, '名称': n})

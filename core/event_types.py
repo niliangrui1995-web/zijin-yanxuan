@@ -6,7 +6,7 @@
 # 用裸字符串标识事件类型，谁发什么、谁听什么全靠 grep 搜索。
 # 现在用 Enum 明确枚举所有事件，并附带 payload 格式说明。
 # ================================================================================
-from enum import Enum, auto
+from enum import Enum
 
 
 class DataEvent(Enum):
@@ -24,6 +24,9 @@ class DataEvent(Enum):
     # 本地缓存加载完成 — payload: None
     CACHE_LOADED = "cache_loaded"
 
+    # 业绩 Tab 数据更新完成 — payload: None
+    EARNINGS_UPDATED = "earnings_updated"
+
     # 亚洲K线数据就绪 — payload: None
     ASIAN_KLINES_READY = "asian_klines_ready"
 
@@ -33,7 +36,6 @@ class TaskEvent(Enum):
 
     SCAN = "scan"
     RT_MONITOR = "rt_monitor"
-    AI_DIAG = "ai_diag"
 
 
 # ======================== 事件注册表 (文档化) ========================
@@ -42,7 +44,7 @@ EVENT_REGISTRY = {
     DataEvent.RT_QUOTES_BROADCAST: {
         "emitter": "central_quotes_worker.py",
         "listeners": ["scan_tab", "rt_monitor_tab", "watchlist_tab",
-                       "foreign_block_tab", "ai_tracker_tab", "main_window"],
+                       "foreign_block_tab", "main_window"],
         "payload": "list[dict] — 每只股票的 sina/pytdx 实时报价",
     },
     DataEvent.RT_QUOTES_REFRESHED: {
@@ -56,13 +58,18 @@ EVENT_REGISTRY = {
         "payload": "list[dict] — 关注池 VCP 评估结果",
     },
     DataEvent.CACHE_LOADED: {
-        "emitter": "data_cache_mixin.py",
+        "emitter": "startup_loader.py",
         "listeners": ["main_window"],
         "payload": "None",
     },
     DataEvent.ASIAN_KLINES_READY: {
-        "emitter": "data_cache_mixin.py",
+        "emitter": "startup_loader.py",
         "listeners": ["asian_market_tab"],
         "payload": "None",
+    },
+    DataEvent.EARNINGS_UPDATED: {
+        "emitter": "earnings_tab.py",
+        "listeners": ["watchlist_tab"],
+        "payload": "None — 通知关注池重新拉取业绩异动列",
     },
 }

@@ -8,7 +8,6 @@ AI产业链得分 独立 Tab 组件 — 从 AITrackerMixin 解耦重构为完全
 import os
 import glob
 
-import pandas as pd
 from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QTableView,
     QHeaderView, QPushButton, QLabel, QAbstractItemView, QLineEdit
@@ -18,9 +17,7 @@ from PyQt6.QtCore import Qt, QTimer
 
 from ui.models.table_models import StockTableModel, RtSortFilterProxyModel, StockItemDelegate
 from core.event_bus import event_bus
-from core.event_types import DataEvent
 from core.logger import get_logger
-from core.task_manager import task_manager
 from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
@@ -41,13 +38,8 @@ class AITrackerTab(BaseStockTab):
         # 延迟加载
         QTimer.singleShot(600, self._load_ai_tracker_data)
 
-        # 订阅全系统事件总线接收盘中广播流
-        event_bus.sig_data_updated.connect(self._on_global_data)
-
-    def _on_global_data(self, evt_type: str, data: object):
-        if evt_type == DataEvent.RT_QUOTES_BROADCAST.value:
-            if getattr(self, '_ai_tracker_codes', None) and getattr(self, 'source_model', None):
-                self.source_model.update_quotes(data)
+        # 订阅全系统事件总线接收盘中广播流与市值测算大一统
+        self.subscribe_global_quotes()
 
     # ================================================================
     # UI 构建
@@ -195,41 +187,8 @@ class AITrackerTab(BaseStockTab):
         self.source_model.update_data(row_dicts)
         self.ai_tracker_table.sortByColumn(5, Qt.SortOrder.DescendingOrder)
 
-        # 初始只触发一次市值获取（不需要放进 3秒循环里）
-        if self._ai_tracker_codes:
-            self._fetch_static_caps()
-
-    # ================================================================
-    # 实时报价
-    # ================================================================
-    def _fetch_static_caps(self):
-        def _bg_cap():
-            from vcp.engine import VCPEngine
-            try:
-                ai_codes = list(self._ai_tracker_codes)
-                # First fetch quotes to get close prices for calculating cap using daily shares
-                quotes = self.data_provider.fetch_realtime_quotes_batch(ai_codes)
-                close_prices = {c: float(quotes[c].get('close', 0) or 0) for c in quotes if c in quotes}
-                cap_results = VCPEngine.batch_check_market_cap(ai_codes, close_prices=close_prices)
-                return {c: f"{cap_results[c]/1e8:.0f}亿" for c in cap_results if cap_results[c] and cap_results[c] > 0}
-            except Exception as e:
-                log.error(f"[AI跟踪] 市值初始化失败: {e}")
-                return {}
-        def _on_cap(caps):
-            if not getattr(self, "source_model", None): return
-            for row, d in enumerate(self.source_model.row_data):
-                c = d.get("代码")
-                if c in caps:
-                    self.source_model.set_cell_value(row, "市值", caps[c])
-        task_manager.run_in_background(_bg_cap, task_id="ai_tracker_caps", on_success=_on_cap)
-
-    # ================================================================
-    # 定时刷新与后台抓取 (从 EventBus 彻底解耦)
-    # ================================================================
-
-    # ================================================================
-    # 交互事件
-    # ================================================================
+        # 统一异步刷新市值
+        self.async_update_market_caps()
     def _on_table_double_clicked(self, idx):
         if not idx.isValid(): return
         proxy_row = idx.row()
@@ -260,9 +219,8 @@ class AITrackerTab(BaseStockTab):
     # 工具方法
     # ================================================================
     def _filter_table(self, text):
-        """搜索过滤：支持代码、名称、拼音首字母匹配"""
-        from ui.components import SearchFilter
-        SearchFilter.filter_table(self.ai_tracker_table, text, code_col=1, name_col=2)
+        """搜索过滤：通过 proxy_model 的文本过滤（支持拼音首字母）"""
+        self.proxy_model.setFilterText(text)
 
     # _launch_tdx 已迁移至 BaseStockTab 基类
 

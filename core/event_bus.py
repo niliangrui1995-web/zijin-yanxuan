@@ -27,11 +27,31 @@ class GlobalEventBus(QObject):
     # 应用关闭通知（各组件保存缓存）
     sig_app_closing = pyqtSignal()
 
-    # ====== [数据层信号] ======
+    # ==== [v4 专属：高速点对点数据通讯专线] ====
+    # 代替老旧的巨石信号 sig_data_updated (消除 if-else 地狱)
 
-    # 通用数据更新 — data_type (str|DataEvent), data_payload (object)
-    # 建议使用 DataEvent 枚举: emit(DataEvent.RT_QUOTES_BROADCAST.value, data)
-    sig_data_updated = pyqtSignal(str, object)
+    # 1. 实时行情广播 — payload: dict { code: {close, pct, ...} }
+    # 接收方：scan_tab, rt_monitor_tab, watchlist_tab, main_window 等
+    sig_rt_quotes = pyqtSignal(object)
+
+    # 2. 盘中监控刷新完成 — payload: list[dict] (含 VCP 评分完整结果)
+    # 接收方：main_window 等
+    sig_rt_quotes_refreshed = pyqtSignal(object)
+
+    # 3. 关注池 VCP 数据就绪 — payload: list[dict]
+    sig_vcp_watchlist_ready = pyqtSignal(object)
+
+    # 4. 本地缓存加载完成
+    # 接收方：main_window 等
+    sig_cache_loaded = pyqtSignal()
+
+    # 5. 业绩异动数据更新完成
+    # 接收方：watchlist_tab 等
+    sig_earnings_updated = pyqtSignal()
+
+    # 6. 亚洲 K 线离线缓存就绪
+    # 接收方：asian_market_tab
+    sig_asian_klines_ready = pyqtSignal()
 
     # ====== [任务控制信号] ======
 
@@ -45,9 +65,6 @@ class GlobalEventBus(QObject):
 
     # ====== [用户操作信号] ======
 
-    # K线图请求 — code, name
-    sig_action_open_kline = pyqtSignal(str, str)
-
     # K线图请求 — 仅 code
     sig_show_kline = pyqtSignal(str)
 
@@ -56,9 +73,6 @@ class GlobalEventBus(QObject):
 
     # 关注池变更 — action: 'add'/'remove', code
     sig_watchlist_changed = pyqtSignal(str, str)
-
-    # AI 诊断请求 — code, mode: 'local'/'ai'/''
-    sig_open_ai_diag = pyqtSignal(str, str)
 
     def __new__(cls, *args, **kwargs):
         if not cls._instance:

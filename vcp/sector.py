@@ -13,7 +13,7 @@
 import os
 import re
 import numpy as np
-import pandas as pd
+from datetime import datetime as _datetime
 from collections import defaultdict
 
 from core.logger import get_logger
@@ -207,9 +207,10 @@ class SectorManager:
             for prefix in ['sz', 'sh']:
                 full = f"{prefix}{code}"
                 if full in self.code_to_sectors:
-                    return self.code_to_sectors[full]
+                    # 使用 dict.fromkeys 去重并保持顺序
+                    return list(dict.fromkeys(self.code_to_sectors[full]))
             return []
-        return self.code_to_sectors.get(code, [])
+        return list(dict.fromkeys(self.code_to_sectors.get(code, [])))
 
     # ---------- 板块 RPS 计算 ----------
     def build_sector_rps(self, all_data, target_date, periods=None):
@@ -238,7 +239,12 @@ class SectorManager:
         except Exception as e:
             _log.error(f"[板块管理] Polars 板块 RPS 计算失败，回退 numpy: {e}")
         # ---- numpy 原始路径（fallback）----
-        target_dt = pd.to_datetime(target_date)
+        if isinstance(target_date, str):
+            target_dt = _datetime.strptime(target_date, '%Y%m%d').date()
+        elif hasattr(target_date, 'date') and callable(getattr(target_date, 'date')):
+            target_dt = target_date.date()
+        else:
+            target_dt = target_date
         max_lookback = max(periods) + 5  # 多留几天余量
 
         # 1. 计算每只股票在各周期的涨幅
@@ -246,27 +252,41 @@ class SectorManager:
         for code, df in all_data.items():
             if df is None or len(df) < max_lookback:
                 continue
-            # 找到 target_date 对应的位置
             try:
-                if target_dt in df.index:
-                    loc = df.index.get_loc(target_dt)
-                else:
-                    # 找最近的前一个交易日
-                    valid = df.index[df.index <= target_dt]
-                    if len(valid) == 0:
+                import polars as pl
+                # 兼容 Polars 和 Pandas 输入
+                if isinstance(df, pl.DataFrame):
+                    if 'close' not in df.columns or 'datetime' not in df.columns:
                         continue
-                    loc = df.index.get_loc(valid[-1])
-            except Exception:
+                    dates_col = df['datetime'].cast(pl.Date)
+                    mask_list = (dates_col <= pl.lit(target_dt)).to_list()
+                    valid_indices = [i for i, v in enumerate(mask_list) if v]
+                    if not valid_indices:
+                        continue
+                    loc = valid_indices[-1]
+                    curr_close = float(df['close'][loc])
+                else:
+                    # Pandas fallback（向下兼容旧缓存等极端情况）
+                    import pandas as pd
+                    _target_ts = pd.to_datetime(target_date)
+                    if _target_ts in df.index:
+                        loc = df.index.get_loc(_target_ts)
+                    else:
+                        valid = df.index[df.index <= _target_ts]
+                        if len(valid) == 0:
+                            continue
+                        loc = df.index.get_loc(valid[-1])
+                    if isinstance(loc, slice):
+                        loc = loc.stop - 1 if loc.stop else loc.start
+                    elif isinstance(loc, np.ndarray):
+                        loc = int(loc[-1])
+                    else:
+                        loc = int(loc)
+                    curr_close = float(df.iloc[loc]['close'])
+            except Exception as _e:
+                _log.debug(f"[板块管理] 计算 {code} 涨幅时异常: {_e}")
                 continue
 
-            if isinstance(loc, slice):
-                loc = loc.stop - 1 if loc.stop else loc.start
-            elif isinstance(loc, np.ndarray):
-                loc = int(loc[-1])
-            else:
-                loc = int(loc)
-
-            curr_close = float(df.iloc[loc]['close'])
             if curr_close <= 0:
                 continue
 
@@ -275,7 +295,10 @@ class SectorManager:
                 prev_loc = loc - p
                 if prev_loc < 0:
                     continue
-                prev_close = float(df.iloc[prev_loc]['close'])
+                if isinstance(df, pl.DataFrame):
+                    prev_close = float(df['close'][prev_loc])
+                else:
+                    prev_close = float(df.iloc[prev_loc]['close'])
                 if prev_close > 0:
                     ret[p] = (curr_close - prev_close) / prev_close
             if ret:

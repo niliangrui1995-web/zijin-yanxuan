@@ -44,6 +44,13 @@ def main():
 
     sys.excepthook = ui_exception_hook
 
+    # WebEngine 的 Chromium 内核要求在 QApplication 创建之前完成 OpenGL 共享初始化
+    # 如果不提前 import，后面懒加载 K 线窗口时会直接崩溃
+    try:
+        from PyQt6.QtWebEngineWidgets import QWebEngineView  # noqa: F401
+    except ImportError:
+        pass  # 如果没装 WebEngine 包，后续再报错
+
     app = QApplication(sys.argv)
 
     # === 单实例锁：防止多开 ===

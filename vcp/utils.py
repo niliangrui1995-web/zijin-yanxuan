@@ -4,11 +4,10 @@ import os
 import json
 import re
 import numpy as np
-import pandas as pd
 from datetime import datetime
+import pandas as pd
 
 from vcp.constants import (
-    AI_DIAG_CONFIG_PATH,
     MARKET_OPEN_AM, MARKET_CLOSE_AM, MARKET_OPEN_PM, MARKET_CLOSE_PM,
     PROJECT_ROOT,
 )
@@ -18,51 +17,6 @@ _log = get_logger(__name__)
 
 
 
-
-# ==========================================
-# AI 诊断配置读写
-# ==========================================
-def _load_ai_diag_config():
-    """读取 AI 诊断配置（Kimi API Key 等）。"""
-    out = {"kimi_api_key": ""}
-    try:
-        if os.path.exists(AI_DIAG_CONFIG_PATH):
-            with open(AI_DIAG_CONFIG_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            out["kimi_api_key"] = (data.get("kimi_api_key") or "").strip()
-    except Exception:
-        pass
-    return out
-
-def _save_ai_diag_config(cfg):
-    """保存 AI 诊断配置。"""
-    try:
-        existing = _load_ai_diag_config()
-        existing.update(cfg)
-        with open(AI_DIAG_CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(existing, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
-
-def _get_kimi_api_key():
-    """获取 Kimi API Key：配置文件 → 环境变量 → 自动初始化默认值
-    用户无需手动输入，首次运行自动创建配置文件。"""
-    # 1. 优先读取配置文件
-    cfg_key = _load_ai_diag_config().get('kimi_api_key', '').strip()
-    if cfg_key:
-        return cfg_key
-    # 2. 其次读取环境变量
-    env_key = os.environ.get('KIMI_API_KEY', '').strip()
-    if env_key:
-        return env_key
-    # 3. 兜底：使用内置默认值，并自动写入配置文件以便后续管理
-    _default_key = "sk-jtTBTLeEN6CHrOv6824AYWauI9keEYuhyOlYFWhE71mVSleR"
-    try:
-        _save_ai_diag_config({"kimi_api_key": _default_key})
-        _log.info("[AI配置] 已自动创建配置文件并写入默认 API Key")
-    except Exception:
-        pass
-    return _default_key
 
 # ==========================================
 # 通达信本地路径配置
@@ -94,7 +48,8 @@ def _load_tdx_local_config():
                     vipdoc = os.path.join(root, 'vipdoc')
                 if _check_vipdoc_valid(vipdoc):
                     return vipdoc
-        except Exception:
+        except Exception as _e:
+            _log.debug(f"[配置] 通达信配置文件 {cfg_path} 读取异常: {_e}")
             continue
     default_ht = os.path.join('D:\\', 'HT', 'vipdoc')
     if _check_vipdoc_valid(default_ht):
@@ -128,15 +83,23 @@ def read_tdx_day_file(filepath, price_div=100.0):
         if not valid.any():
             return None
         dates = dates[valid]
+        import polars as pl
         o = (raw['o'][valid].astype(np.float64) / price_div).round(2)
         h = (raw['h'][valid].astype(np.float64) / price_div).round(2)
         low = (raw['low'][valid].astype(np.float64) / price_div).round(2)
         c = (raw['c'][valid].astype(np.float64) / price_div).round(2)
         amount = raw['amount'][valid].astype(np.float64)
         vol = raw['vol'][valid].astype(np.int64)
-        df = pd.DataFrame({'datetime': dates.values, 'open': o, 'high': h, 'low': low, 'close': c, 'amount': amount, 'volume': vol})
-        df.set_index('datetime', inplace=True)
-        df = df.sort_index(ascending=True)
+        df = pl.DataFrame({
+            'datetime': dates.values, 
+            'open': o, 
+            'high': h, 
+            'low': low, 
+            'close': c, 
+            'amount': amount, 
+            'volume': vol
+        })
+        df = df.sort('datetime')
         return df
     except Exception as e:
         _log.error(f"[Error] read_tdx_day_file: {str(e)}")

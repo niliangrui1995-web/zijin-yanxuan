@@ -64,10 +64,7 @@ def get_data_dir(sub_folder="Cache"):
 CACHE_DIR  = get_data_dir("Cache")
 EXPORT_DIR = get_data_dir("Export")
 
-# AI 诊断配置
-AI_DIAG_CONFIG_PATH = os.path.join(CACHE_DIR, "ai_diag_config.json")
-AI_DIAG_CACHE_RT = os.path.join(CACHE_DIR, "ai_diag_rt.json")
-AI_DIAG_CACHE_SPECIAL = os.path.join(CACHE_DIR, "ai_diag_special.json")
+
 SPECIAL_POOL_DATA_CACHE = os.path.join(CACHE_DIR, "vcp_special_pool_data.pkl")
 RPS_CACHE_FILE = os.path.join(CACHE_DIR, "vcp_rps_precomputed.pkl")        # F5预算RPS矩阵
 SECTOR_RPS_CACHE_FILE = os.path.join(CACHE_DIR, "vcp_sector_rps_precomputed.pkl")  # F5预算板块RPS

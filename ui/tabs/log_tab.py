@@ -57,6 +57,23 @@ class LogTab(QWidget):
         btn_clear_log.setFixedHeight(32)
         btn_clear_log.clicked.connect(self.log_text.clear)
         tb_layout.addWidget(btn_clear_log)
+
+        # 日志级别过滤下拉框
+        from PyQt6.QtWidgets import QComboBox
+        self.level_filter = QComboBox()
+        self.level_filter.addItems(["全部", "仅 Error", "仅 Warning"])
+        self.level_filter.setFixedHeight(32)
+        self.level_filter.setFixedWidth(120)
+        self.level_filter.setStyleSheet("""
+            QComboBox {
+                background-color: #1A1E28; color: #9CA3AF; border: 1px solid #3A3A3C;
+                border-radius: 4px; padding: 4px 8px; font-size: 12px;
+            }
+            QComboBox::drop-down { border: none; }
+            QComboBox QAbstractItemView { background-color: #1A1E28; color: #9CA3AF; }
+        """)
+        tb_layout.addWidget(self.level_filter)
+
         layout.addWidget(toolbar)
         
         # 3. 按照顺序加入布局
@@ -75,17 +92,20 @@ class LogTab(QWidget):
                     try:
                         self.original.write(text)
                         self.original.flush()
-                    except Exception:
-                        pass
-                    # 将截获的各种 print 抛入总线
-                    event_bus.sig_system_log.emit("info", text)
+                    except Exception as _e:
+                        sys.__stderr__.write(f"[LogStream] 原始流写入失败: {_e}\n")
+                    # 将截获的各种 print 抛入总线，使用 try-except 防止事件发送失败引发死循环
+                    try:
+                        event_bus.sig_system_log.emit("info", text)
+                    except Exception as _e:
+                        sys.__stderr__.write(f"[LogStream] 事件总线发射失败: {_e}\n")
                 return len(text) if text else 0
 
             def flush(self):
                 try:
                     self.original.flush()
-                except Exception:
-                    pass
+                except Exception as _e:
+                    sys.__stderr__.write(f"[LogStream] flush失败: {_e}\n")
         
         sys.stdout = LogStream(sys.__stdout__)
         sys.stderr = LogStream(sys.__stderr__)
@@ -97,17 +117,32 @@ class LogTab(QWidget):
         self._log_flush_timer.start(200)
 
     def _on_log_msg(self, level, text):
-        self._log_buffer.append(text)
+        # 保存 (级别, 文本) 以支持客户端侧过滤
+        self._log_buffer.append((level, text))
 
     def _flush_log_buffer(self):
         if not self._log_buffer:
             return
-        batch = ''.join(self._log_buffer)
+
+        # 读取当前过滤级别
+        filter_idx = self.level_filter.currentIndex() if hasattr(self, 'level_filter') else 0
+
+        filtered_texts = []
+        for level, text in self._log_buffer:
+            if filter_idx == 1 and level != 'error':
+                continue
+            if filter_idx == 2 and level not in ('warn', 'warning'):
+                continue
+            filtered_texts.append(text)
+
         self._log_buffer.clear()
-        self.log_text.append(batch.rstrip())
-        # 自动滚动到底端
-        sb = self.log_text.verticalScrollBar()
-        sb.setValue(sb.maximum())
+
+        if filtered_texts:
+            batch = ''.join(filtered_texts)
+            self.log_text.append(batch.rstrip())
+            # 自动滚动到底端
+            sb = self.log_text.verticalScrollBar()
+            sb.setValue(sb.maximum())
 
     def _export_log(self):
         path, _ = QFileDialog.getSaveFileName(self, "导出日志", f"系统日志_{datetime.date.today().strftime('%Y%m%d')}.txt", "Text Files (*.txt)")

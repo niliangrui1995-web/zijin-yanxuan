@@ -74,7 +74,6 @@ def cleanup_stale_caches(project_root: str, dry_run: bool = False) -> dict:
         if not os.path.isdir(target_dir):
             continue
 
-        max_age_seconds = policy["max_age_days"] * 86400
         pattern = os.path.join(target_dir, policy["pattern"])
         files = glob.glob(pattern)
 

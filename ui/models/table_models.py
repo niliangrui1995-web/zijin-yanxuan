@@ -21,16 +21,18 @@
 5. 👉 安全操作：永远不要再用 `.setRowCount(0)` 来清空表格，唯一合法清空手段是 `self.model.update_data([])`。
 ================================================================================
 """
-import sys
+import re
 import logging
-from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QSortFilterProxyModel, QRect
+import textwrap
+from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QSortFilterProxyModel, QRect, pyqtSignal, QMimeData
 from PyQt6.QtGui import QColor, QFont
+from ui.components import SearchFilter
 
 _log = logging.getLogger(__name__)
 from ui.theme import (
     COLOR_RISE, COLOR_RISE_STRONG, COLOR_FALL, COLOR_FALL_STRONG, COLOR_FLAT,
     COLOR_WARNING, STATUS_APPROACHING, STATUS_INACTIVE, STATUS_VCP,
-    STATUS_BREAKOUT, SCORE_EXCELLENT, SCORE_GOOD, SCORE_NORMAL, SCORE_LOW
+    SCORE_EXCELLENT, SCORE_GOOD, SCORE_NORMAL, SCORE_LOW
 )
 
 class RtTableModel(QAbstractTableModel):
@@ -98,8 +100,21 @@ class RtTableModel(QAbstractTableModel):
             item_dict["现价"] = f"{rt_close:.2f}" if rt_close > 0 else "--"
             item_dict["涨幅%"] = pct
             
-            idx_start = self.index(row, col_price_idx)
-            idx_end = self.index(row, col_pct_idx)
+            zbg = item_dict.get("_zongguben", 0)
+            if zbg > 0 and rt_close > 0:
+                cap = zbg * rt_close
+                item_dict["市值"] = f"{cap / 1e8:.0f}亿"
+                try:
+                    col_cap_idx = self._headers.index("市值")
+                    idx_start = self.index(row, min(col_price_idx, col_cap_idx))
+                    idx_end = self.index(row, max(col_pct_idx, col_cap_idx))
+                except ValueError:
+                    idx_start = self.index(row, col_price_idx)
+                    idx_end = self.index(row, col_pct_idx)
+            else:
+                idx_start = self.index(row, col_price_idx)
+                idx_end = self.index(row, col_pct_idx)
+                
             self.dataChanged.emit(idx_start, idx_end, [Qt.ItemDataRole.DisplayRole])
 
     def data(self, index, role):
@@ -121,9 +136,7 @@ class RtTableModel(QAbstractTableModel):
                     return f"⚠️ {st}"
                 elif "临近" in st:
                     return f"⏳ {st}"
-            if key in ["AI结论", "AI诊断"]:
-                return str(raw_val).replace('\n', ' ')
-                
+
             if "%" in key:
                 s_val = str(raw_val)
                 if s_val == "--" or s_val == "": return s_val
@@ -134,13 +147,22 @@ class RtTableModel(QAbstractTableModel):
                 except (ValueError, TypeError):
                     pass
                     
+            if key in ["现价", "市价"]:
+                try:
+                    f_val = float(raw_val)
+                    if f_val <= 0: return "--"
+                    # 小于10元的小市值精确到3位，大多数精确到2位
+                    return f"{f_val:.3f}" if f_val < 10 else f"{f_val:.2f}"
+                except (ValueError, TypeError):
+                    pass
+                    
             return str(raw_val)
 
         elif role == Qt.ItemDataRole.ToolTipRole:
             text = str(raw_val).strip()
             if text:
                 if len(text) > 40:
-                    import textwrap
+
                     return '\n'.join([textwrap.fill(line, width=50) for line in text.split('\n')])
                 return text
 
@@ -181,7 +203,7 @@ class RtTableModel(QAbstractTableModel):
 
         elif role == Qt.ItemDataRole.UserRole:
             # specifically for sorting numerical columns
-            import re
+
             s_val = str(raw_val).replace(',', '')
             if col in [4, 6] or "万" in s_val or "亿" in s_val:
                 if '万' in s_val:
@@ -209,6 +231,14 @@ class RtSortFilterProxyModel(QSortFilterProxyModel):
         super().__init__(parent)
         self.setSortRole(Qt.ItemDataRole.UserRole)
         self._filter_text = ""
+        self._exact_column_filters = {}
+
+    def setColumnFilter(self, col_name, text):
+        if text:
+            self._exact_column_filters[col_name] = text
+        else:
+            self._exact_column_filters.pop(col_name, None)
+        self.invalidateFilter()
 
     def lessThan(self, left, right):
         leftData = self.sourceModel().data(left, Qt.ItemDataRole.UserRole)
@@ -243,20 +273,32 @@ class RtSortFilterProxyModel(QSortFilterProxyModel):
         self.invalidateFilter()
 
     def filterAcceptsRow(self, source_row, source_parent):
+        model = self.sourceModel()
+        
+        # 1. 拦截层：表头精确定向筛选（模拟 Excel 表头筛选）
+        if getattr(self, '_exact_column_filters', None):
+            headers = model._headers if hasattr(model, '_headers') else []
+            for col_name, pattern in self._exact_column_filters.items():
+                if col_name in headers:
+                    col_idx = headers.index(col_name)
+                    idx = model.index(source_row, col_idx, source_parent)
+                    val = str(model.data(idx, Qt.ItemDataRole.DisplayRole) or "")
+                    if pattern not in val:
+                        return False
+
+        # 2. 全局拼音搜索层
         if not self._filter_text:
             return True
             
-        model = self.sourceModel()
-        # column 0 is code, 2 is name (or maybe 1, we must safely get them based on headers if possible, but 0 and 2 are defaults here)
-        code_idx = model.index(source_row, 0, source_parent)
-        name_idx = model.index(source_row, 2, source_parent)
+        headers = model._headers if hasattr(model, '_headers') else []
+        code_col = headers.index("代码") if "代码" in headers else 0
+        name_col = headers.index("名称") if "名称" in headers else 1
+        code_idx = model.index(source_row, code_col, source_parent)
+        name_idx = model.index(source_row, name_col, source_parent)
         
-        # in some tabs (like RTMonitor) code might be 1 and name 2
-        # gracefully handle this by scanning for actual column names if needed, but for now we search all accessible text
         c_text = str(model.data(code_idx, Qt.ItemDataRole.DisplayRole) or "").lower()
         n_text = str(model.data(name_idx, Qt.ItemDataRole.DisplayRole) or "").lower()
         
-        from ui.components import SearchFilter
         if SearchFilter.match_pinyin_or_text(self._filter_text, c_text, n_text):
             return True
             
@@ -269,9 +311,77 @@ class RtSortFilterProxyModel(QSortFilterProxyModel):
                 
         return False
 
+    def mimeTypes(self):
+        """确保 proxy 层声明的拖拽 MIME 类型与 source model 一致"""
+        return ["application/x-watchlist-row"]
+
+    def canDropMimeData(self, data, action, row, column, parent):
+        """
+        【关键修复】Qt 默认的 QSortFilterProxyModel.canDropMimeData 会先做
+        index 映射预检，从上往下拖时映射常常失败，导致 drop 被静默拒绝。
+        这里直接绕过那套映射，只检查 MIME 类型即可。
+        """
+        return data.hasFormat("application/x-watchlist-row")
+
+    def supportedDropActions(self):
+        """直接声明支持移动操作，防止 Qt 默认链路吞掉 drop 事件"""
+        return Qt.DropAction.MoveAction
+
+    def mimeData(self, indices):
+        """
+        拖拽发起时 Qt 会调用 proxy 的 mimeData。
+        这里要把 proxy 行号 → 映射成 source 行号 → 编码到 MIME 里，
+        确保 dropMimeData 收到的永远是 source model 的真实行号。
+        """
+        import json
+        source = self.sourceModel()
+        if not source:
+            return QMimeData()
+
+        source_rows = set()
+        for proxy_idx in indices:
+            src_idx = self.mapToSource(proxy_idx)
+            if src_idx.isValid():
+                source_rows.add(src_idx.row())
+
+        mime = QMimeData()
+        if source_rows:
+            mime.setData("application/x-watchlist-row",
+                         json.dumps(sorted(source_rows)).encode('utf-8'))
+        return mime
+
+    def dropMimeData(self, data, action, row, column, parent):
+        """
+        拖拽释放时的核心处理：
+        row/parent 是 proxy 空间的坐标，需要映射到 source 空间后转发给 source model。
+        """
+        if self.sortColumn() != -1:
+            return False
+
+        source = self.sourceModel()
+        if not source:
+            return False
+
+        # 把 proxy 空间的 drop 位置转换为 source 空间
+        if row >= 0:
+            # 拖到两行之间 → 映射 proxy row → source row
+            if row < self.rowCount():
+                src_idx = self.mapToSource(self.index(row, 0))
+                source_row = src_idx.row() if src_idx.isValid() else source.rowCount()
+            else:
+                source_row = source.rowCount()
+        elif parent.isValid():
+            # 拖到某行上面 → 取该行的 source 位置
+            src_idx = self.mapToSource(parent)
+            source_row = src_idx.row() if src_idx.isValid() else source.rowCount()
+        else:
+            source_row = source.rowCount()
+
+        return source.dropMimeData(data, action, source_row, column, QModelIndex())
+
 import time
 from PyQt6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QApplication, QStyle
-from PyQt6.QtGui import QPainter, QColor, QPen, QBrush
+from PyQt6.QtGui import QPainter, QPen, QBrush
 
 class StockItemDelegate(QStyledItemDelegate):
     """
@@ -346,6 +456,8 @@ class StockItemDelegate(QStyledItemDelegate):
 
 
 class StockTableModel(QAbstractTableModel):
+    sig_rows_reordered = pyqtSignal(list)
+
     def __init__(self, headers, data=None):
         super().__init__()
         self._headers = headers
@@ -382,7 +494,61 @@ class StockTableModel(QAbstractTableModel):
     def update_data(self, new_data):
         self.beginResetModel()
         self._data = new_data
+        self._flash_records.clear()
         self.endResetModel()
+
+    def supportedDropActions(self):
+        return Qt.DropAction.MoveAction
+
+    def flags(self, index):
+        default_flags = super().flags(index)
+        if index.isValid():
+            return default_flags | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
+        else:
+            return default_flags | Qt.ItemFlag.ItemIsDropEnabled
+
+    def mimeTypes(self):
+        return ["application/x-watchlist-row"]
+
+    def mimeData(self, indices):
+        import json
+        mime_data = QMimeData()
+        rows = list(set([i.row() for i in indices]))
+        if not rows: return mime_data
+        data_str = json.dumps(rows).encode('utf-8')
+        mime_data.setData("application/x-watchlist-row", data_str)
+        return mime_data
+
+    def dropMimeData(self, data, action, row, column, parent):
+        if not data.hasFormat("application/x-watchlist-row"): return False
+        import json
+        try:
+            drag_rows = sorted(json.loads(data.data("application/x-watchlist-row").data().decode('utf-8')))
+        except (json.JSONDecodeError, ValueError, UnicodeDecodeError) as _e:
+            _log.debug(f"[拖拽] MIME 数据解析失败: {_e}")
+            return False
+            
+        target_row = row
+        if row == -1:
+            target_row = parent.row() if parent.isValid() else self.rowCount()
+        
+        items_to_move = [self._data[r] for r in drag_rows]
+        new_data = [item for i, item in enumerate(self._data) if i not in drag_rows]
+        
+        insert_row = target_row
+        for r in drag_rows:
+            if r < target_row:
+                insert_row -= 1
+                
+        new_data[insert_row:insert_row] = items_to_move
+        
+        # We manually trigger the array rebuild and signal the VM
+        codes = [d.get("代码") for d in new_data if d.get("代码")]
+        self.sig_rows_reordered.emit(codes)
+        
+        # Returning False stops the view from doing standard Qt double-delete shenanigans,
+        # but because we emit a signal that eventually rebuilds the table, it snaps visually correctly!
+        return False
 
     def set_cell_value(self, row, col_name, new_val):
         """用于局部闪动更新的接口"""
@@ -432,6 +598,12 @@ class StockTableModel(QAbstractTableModel):
                 
             self.set_cell_value(row, "现价", f"{rt_close:.2f}" if rt_close > 0 else "--")
             self.set_cell_value(row, "涨幅%", pct)
+            
+            if "市值" in self._headers:
+                zbg = item_dict.get("_zongguben", 0)
+                if zbg > 0 and rt_close > 0:
+                    cap = zbg * rt_close
+                    self.set_cell_value(row, "市值", f"{cap / 1e8:.0f}亿")
 
 
     def data(self, index, role):
@@ -447,9 +619,7 @@ class StockTableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.DisplayRole:
             if key == "代码" and isinstance(raw_val, str) and not raw_val.startswith("sz") and not raw_val.startswith("sh"):
                 pass 
-            if key in ["AI结论", "AI诊断"]:
-                return str(raw_val).replace('\n', ' ')
-                
+
             if "%" in key:
                 s_val = str(raw_val)
                 if s_val == "--" or s_val == "": return s_val
@@ -466,7 +636,6 @@ class StockTableModel(QAbstractTableModel):
             text = str(raw_val).strip()
             if text:
                 if len(text) > 40:
-                    import textwrap
                     return '\n'.join([textwrap.fill(line, width=50) for line in text.split('\n')])
                 return text
 
@@ -488,6 +657,20 @@ class StockTableModel(QAbstractTableModel):
                     elif pct < 0: return QColor(COLOR_FALL)
                 except (ValueError, TypeError):
                     pass
+            elif key == "卖方营业部":
+                val_str = str(raw_val)
+                if any(kw in val_str for kw in ["高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴", "渣打", "野村", "汇丰", "星展", "大和"]):
+                    return QColor(COLOR_FALL)  # 外资卖出标为绿
+            elif key == "买方营业部":
+                val_str = str(raw_val)
+                if any(kw in val_str for kw in ["高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴", "渣打", "野村", "汇丰", "星展", "大和"]):
+                    return QColor(COLOR_RISE)  # 外资买入标为红
+            elif key == "交易详情":
+                val_str = str(raw_val)
+                if "卖出" in val_str:
+                    return QColor(COLOR_FALL)  # 卖出标为绿
+                elif "买入" in val_str:
+                    return QColor(COLOR_RISE)  # 买入标为红
             return QColor(COLOR_FLAT)
 
         elif role == Qt.ItemDataRole.BackgroundRole:
@@ -505,7 +688,6 @@ class StockTableModel(QAbstractTableModel):
             return None
 
         elif role == Qt.ItemDataRole.UserRole:
-            import re
             s_val = str(raw_val).replace(',', '')
             
             # 日期格式识别：YYYY-MM-DD 或 YYYYMMDD，转为整数以正确排序

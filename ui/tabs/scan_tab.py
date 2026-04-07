@@ -1,27 +1,19 @@
 import os
 import datetime
 import json
-import pandas as pd
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableView,
     QHeaderView, QPushButton, QLabel, QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox,
     QAbstractItemView, QDialog, QFileDialog, QToolButton
 )
 from ui.components.toast_widget import show_toast
-from PyQt6.QtCore import Qt, QTimer, QModelIndex
-from PyQt6.QtGui import QColor
-from ui.theme import (
-    COLOR_RISE, COLOR_RISE_STRONG, COLOR_FALL, COLOR_FALL_STRONG, COLOR_FLAT,
-    COLOR_WARNING, STATUS_APPROACHING, STATUS_INACTIVE, STATUS_VCP,
-    STATUS_BREAKOUT, SCORE_EXCELLENT, SCORE_GOOD, SCORE_NORMAL, SCORE_LOW
-)
+from PyQt6.QtCore import Qt, QTimer
+# Removed unused imports from ui.theme and PyQt6
 
 from ui.models.table_models import StockTableModel, RtSortFilterProxyModel, StockItemDelegate
 from ui.workers.scan_worker import ScanWorker
 from vcp.engine import VCPParams
 from core.event_bus import event_bus
-from core.event_types import DataEvent
-from core.task_manager import task_manager
 from core.logger import get_logger
 from ui.viewmodels.watchlist_vm import watchlist_vm
 from ui.tabs.base_stock_tab import BaseStockTab
@@ -45,12 +37,8 @@ class ScanTab(BaseStockTab):
         # 启动时自动加载上次缓存的扫描结果
         QTimer.singleShot(300, self._load_scan_cache)
         
-        event_bus.sig_data_updated.connect(self._on_global_data)
-
-    def _on_global_data(self, evt_type: str, data: object):
-        if evt_type == DataEvent.RT_QUOTES_BROADCAST.value:
-            if hasattr(self, 'source_model') and self.source_model:
-                self.source_model.update_quotes(data)
+        # 统一订阅及后台刷新
+        self.subscribe_global_quotes()
 
     def _init_settings_widgets(self):
         """初始化扫描策略的内部存储控件，从 QSettings 恢复上次参数 (#8)"""
@@ -129,7 +117,7 @@ class ScanTab(BaseStockTab):
         self.table_scan.setItemDelegate(StockItemDelegate(self.table_scan))
         
         # 表格自适应和交互设置
-        self.table_scan.verticalHeader().setVisible(True)      
+        self.table_scan.verticalHeader().setVisible(False)
         self.table_scan.setAlternatingRowColors(True)           
         self.table_scan.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows) 
         self.table_scan.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)    
@@ -161,7 +149,7 @@ class ScanTab(BaseStockTab):
         header.setStretchLastSection(False)
         header.setSectionsClickable(True)
         self.table_scan.setSortingEnabled(True)
-
+        
         scan_weights = [0.8, 0.9, 0.8, 0.8, 0.7, 1.2, 1.0, 1.0, 0.9, 1.0, 0.7, 2.5]
         for col_idx, w in enumerate(scan_weights):
             header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
@@ -170,6 +158,9 @@ class ScanTab(BaseStockTab):
 
         # 绑定防抖自动保存与恢复配置
         self.bind_header_persistence(self.table_scan, "header_state_scan_v2")
+        
+        # 强制默认按第5列（触发日期）降序排序（由近到远），覆盖掉持久化中可能记录的其他排序列
+        self.table_scan.sortByColumn(5, Qt.SortOrder.DescendingOrder)
         
         # 行高 (加强呼吸感)
         self.table_scan.verticalHeader().setDefaultSectionSize(40)
@@ -233,11 +224,11 @@ class ScanTab(BaseStockTab):
             "保守 (严筛选)": {"rps": 90, "amp": 0.30, "ma_bind": 0.03, "amount": 2.0, "high250": 0.08},
         }
         # 从 QSettings 加载用户自定义预设
-        import json
         user_presets_raw = self._settings.value("user_presets", "{}")
         try:
             user_presets = json.loads(user_presets_raw) if isinstance(user_presets_raw, str) else {}
-        except Exception:
+        except (json.JSONDecodeError, TypeError) as _e:
+            log.debug(f"[扫描参数] 用户预设解析失败: {_e}")
             user_presets = {}
         all_presets = {**_builtin_presets, **user_presets}
 
@@ -368,6 +359,7 @@ class ScanTab(BaseStockTab):
     # ==========================
     def _render_scan_table(self, results):
         if not results: return
+        import pandas as pd
         try:
             df_res = pd.DataFrame(results).sort_values('触发日期').drop_duplicates(subset=['代码'], keep='last')
             if '评分' in df_res.columns:
@@ -409,7 +401,8 @@ class ScanTab(BaseStockTab):
                 score_str = str(row_data.get('评分', ''))
                 try:
                     if float(score_str) >= 90: score_str = f"⭐ {score_str}"
-                except (ValueError, TypeError): pass
+                except (ValueError, TypeError):
+                    pass  # 评分为非数字(如 '--')时不加星标，属于正常分支
 
                 formatted_row = {
                     "代码": code_str,
@@ -438,6 +431,7 @@ class ScanTab(BaseStockTab):
             event_bus.sig_system_log.emit("error", f"渲染表格错误: {e}")
 
     def export_table_to_excel(self):
+        import pandas as pd  # 修复: pd 未在模块顶层导入，此处需局部导入
         proxy = self.proxy_model
         if proxy.rowCount() == 0:
             show_toast("当前表格为空,无法导出", "warning", self)
@@ -462,18 +456,12 @@ class ScanTab(BaseStockTab):
             show_toast(f"导出失败: {str(e)}", "error", self)
 
     # ==========================
-    # 扫描结果本地缓存
+    # 扫描结果本地缓存 (SQLite)
     # ==========================
-    def _get_scan_cache_path(self) -> str:
-        data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'data')
-        os.makedirs(data_dir, exist_ok=True)
-        return os.path.join(data_dir, 'scan_cache.json')
-
     def _save_scan_cache(self, results: list):
         if not results: return
         try:
-            cache_path = self._get_scan_cache_path()
-            # #9: 保存当时的扫描参数快照，加载时回显
+            from core.data_store import DataStore
             params_snapshot = {
                 'rps': self.spn_scan_rps.value(),
                 'amp': self.spn_scan_amp.value(),
@@ -487,20 +475,37 @@ class ScanTab(BaseStockTab):
                 'params': params_snapshot,
                 'results': results,
             }
-            with open(cache_path, 'w', encoding='utf-8') as f:
-                json.dump(cache_data, f, ensure_ascii=False, indent=2, default=str)
-            log.info(f"[扫描缓存] 已保存 {len(results)} 条结果")
+            DataStore().save_json("scan_cache", cache_data)
+            log.info(f"[扫描缓存] 已保存 {len(results)} 条结果至 SQLite")
         except Exception as e:
             log.error(f"[扫描缓存] 保存失败: {e}")
 
     def _load_scan_cache(self):
         try:
-            cache_path = self._get_scan_cache_path()
-            if not os.path.exists(cache_path): return
-            with open(cache_path, 'r', encoding='utf-8') as f:
-                cache_data = json.load(f)
+            from core.data_store import DataStore
+            cache_data = DataStore().load_json("scan_cache")
+            
+            # 如果 SQLite 没查到，尝试兼容旧的 JSON 并自动迁入
+            if not cache_data:
+                data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'data')
+                old_path = os.path.join(data_dir, 'scan_cache.json')
+                if os.path.exists(old_path):
+                    import json
+                    with open(old_path, 'r', encoding='utf-8') as f:
+                        cache_data = json.load(f)
+                    if isinstance(cache_data, dict) and cache_data:
+                        DataStore().save_json("scan_cache", cache_data)
+                        try:
+                            # 迁移完成后重命名打上印记
+                            os.rename(old_path, old_path + ".migrated")
+                            log.info("[扫描缓存] 旧版的 scan_cache.json 已自动迁移入 SQLite")
+                        except OSError as _e:
+                            log.debug(f"[扫描缓存] 迁移文件重命名失败: {_e}")
+
+            if not isinstance(cache_data, dict): return
             results = cache_data.get('results', [])
             if not results: return
+            
             saved_at = cache_data.get('saved_at', '未知')
             self._current_results = results
             self._render_scan_table(results)

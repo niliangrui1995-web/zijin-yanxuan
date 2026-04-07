@@ -15,7 +15,7 @@ from core.logger import get_logger
 log = get_logger(__name__)
 
 # 可配置的最大窗口数量
-MAX_CHART_WINDOWS = 3
+MAX_CHART_WINDOWS = 5
 
 
 class KLineWindowManager:
@@ -79,8 +79,8 @@ class KLineWindowManager:
                         main_window,
                         duration=2000,
                     )
-                except Exception:
-                    pass
+                except Exception as _e:
+                    log.debug(f"[K线管理] toast 提示发送失败: {_e}")
             except RuntimeError:
                 pass
 

@@ -55,8 +55,34 @@ Desktop.ini
 *.tmp
 *.corrupted
 diff.txt
+out.csv
 ui_backup_*/
 fix_*.py
 rewrite_*.py
 _migrate_*.py
 
+# Tool caches
+.ruff_cache/
+
+# Runtime state (auto-generated)
+data/earnings_state.json
+
+# 实验/临时脚本目录 (不进入版本控制)
+tmp/
+
+# 已完成的重构任务卡 (仅开发期使用)
+*_任务卡_*.md
+*_白皮书*.md
+
+# 迁移残留文件
+*.migrated
+
+# PyQtGraph 旧版备份 (ECharts 已替代)
+ui/kline_window_qt_pyqtgraph_backup.py
+
+# 亚洲市场 K 线缓存 (大文件，运行时生成)
+data/Cache/asian_klines_*.json
+data/Cache/asian_rt_latest.json
+
+# SQLite 数据库 (运行时生成)
+data/vcp_hunter.db

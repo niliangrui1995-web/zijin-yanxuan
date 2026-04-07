@@ -1,12 +1,11 @@
 # ui/components.py - 通用 UI 组件
 # 从 main_window_qt.py 拆分出来的独立工具类
 from PyQt6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QPushButton, QTableWidgetItem,
-    QStyleOption, QStyle, QWidget, QGraphicsOpacityEffect,
-    QGraphicsDropShadowEffect
+    QFrame, QPushButton, QTableWidgetItem,
+    QStyleOption, QStyle, QWidget
 )
 from PyQt6.QtCore import (
-    Qt, QPoint, QPropertyAnimation, QEasingCurve, QTimer,
+    Qt, QPropertyAnimation, QEasingCurve, QTimer,
     QParallelAnimationGroup, pyqtProperty
 )
 from PyQt6.QtGui import QPainter, QColor, QBrush
@@ -32,7 +31,9 @@ class NumericTableWidgetItem(QTableWidgetItem):
             val1 = self._to_float()
             val2 = other._to_float() if hasattr(other, '_to_float') else float('-inf')
             return val1 < val2
-        except Exception:
+        except Exception as _e:
+            import logging
+            logging.getLogger(__name__).debug(f"[排序] 数值比较失败，退化为字符串排序: {_e}")
             return super().__lt__(other)
 
     def _to_float(self):
@@ -67,7 +68,7 @@ class GlassPanel(QFrame):
 
 class AnimatedHoverButton(QPushButton):
     """滑动微动效按钮，提供 0.25s 弹性过渡 + 紫色光影效果"""
-    def __init__(self, text="", parent=None, icon_text=""):
+    def __init__(self, text="", parent=None):
         super().__init__(text, parent)
         self.setObjectName("animatedHoverBtn")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -236,14 +237,8 @@ class AnimatedCard(QFrame):
         self.setObjectName("moduleCard")
         self.delay = delay
         
-        # self.op_effect = QGraphicsOpacityEffect(self)
-        # self.op_effect.setOpacity(0.0)
-        # self.setGraphicsEffect(self.op_effect)
-        
-        # 不再应用 QGraphicsDropShadowEffect
+        # 不再应用 QGraphicsOpacityEffect / QGraphicsDropShadowEffect
         # 原因：在嵌套 QSplitter 布局中会触发 Qt6 底层渲染崩溃 (C++ SegFault)
-        # 设置初始值为可见状态——动画从 0 开始渐入会在 show() 前绘制透明+偏移的帧
-        # 导致 Qt6 底层渲染 access violation
         self._opacity = 1.0
         self._y_offset = 0
 
@@ -320,7 +315,7 @@ class SvgIconBuilder:
     @staticmethod
     def create_icon(svg_str: str, color: str = "#8B5CF6", size: int = 16):
         from PyQt6.QtSvg import QSvgRenderer
-        from PyQt6.QtGui import QPixmap, QIcon, QPainter, QColor
+        from PyQt6.QtGui import QPixmap, QIcon, QPainter
         from PyQt6.QtCore import Qt, QByteArray
 
         if 'currentColor' in svg_str:
@@ -391,30 +386,6 @@ class SlidingDrawer(QWidget):
             self.toggle()
 
 class SearchFilter:
-    @staticmethod
-    def filter_table(table, text, code_col=0, name_col=1):
-        """表格通用搜索过滤，支持拼音首字母检索"""
-        val = text.strip().lower()
-        if not val:
-            for r in range(table.rowCount()):
-                table.setRowHidden(r, False)
-            return
-
-        import pypinyin
-        for r in range(table.rowCount()):
-            code_item = table.item(r, code_col)
-            name_item = table.item(r, name_col)
-            if not code_item or not name_item:
-                continue
-
-            code_text = code_item.text().lower()
-            name_text = name_item.text().lower()
-
-            if SearchFilter.match_pinyin_or_text(val, code_text, name_text):
-                table.setRowHidden(r, False)
-            else:
-                table.setRowHidden(r, True)
-
     @staticmethod
     def match_pinyin_or_text(search_val, code_text, name_text):
         """辅助方法: 判断 search_val 是否匹配代码、名称或拼音首字母"""

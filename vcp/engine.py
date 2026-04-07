@@ -2,6 +2,7 @@
 # 从 vcp_hunter.pyw 提取 VCPEngine 类，零逻辑变更
 import numpy as np
 import pandas as pd
+import polars as pl
 from datetime import datetime
 
 from vcp.constants import (
@@ -53,99 +54,136 @@ class VCPEngine:
         return self._precomputed_rps_bundle
 
     @staticmethod
-    def calculate_indicators(df: pd.DataFrame, include_chart: bool = True) -> pd.DataFrame:
-        """计算技术指标
+    def calculate_indicators(df: pd.DataFrame | pl.DataFrame, include_chart: bool = True) -> pd.DataFrame | pl.DataFrame:
+        """计算技术指标 - Polars加速版
 
         参数:
-            df: K线 DataFrame
-            include_chart: 是否包含图表指标(MACD/RSI/BB)。批量预算时传 False 节省内存
+            df: K线 DataFrame (支持 Polars 也可以平滑兼容 Pandas)
+            include_chart: 是否包含图表指标(MACD/RSI/BB)
         """
+        import polars as pl
         if df is None or len(df) < 10: return df
 
-        # 检查缓存标记
-        if hasattr(df, "attrs"):
-            # 兼容旧标记：全量指标已就绪则直接返回
-            if df.attrs.get("vcp_indicators_ready", False):
+        is_pandas = isinstance(df, pd.DataFrame)
+        
+        # 将 Pandas 转为 Polars DataFrame
+        if is_pandas:
+            if hasattr(df, "attrs") and df.attrs.get("vcp_indicators_ready", False):
                 return df
-            core_done = df.attrs.get("vcp_core_ready", False)
-            chart_done = df.attrs.get("vcp_chart_ready", False)
-            if core_done and (not include_chart or chart_done):
-                return df
+                
+            if df.index.name in ('datetime', 'date') or isinstance(df.index, pd.DatetimeIndex):
+                if df.index.name is None:
+                    df.index.name = 'datetime'
+                pldf = pl.from_pandas(df.reset_index())
+            else:
+                pldf = pl.from_pandas(df)
         else:
-            core_done = False
-            chart_done = False
+            pldf = df
+
+        # 若已经有 'entangle' 这列说明核心跑完了，则跳过
+        core_done = "entangle" in pldf.columns
+        chart_done = "MACD" in pldf.columns
+
+        if core_done and (not include_chart or chart_done):
+            return df if is_pandas else pldf
 
         # ═══ 核心指标（扫描必需，常驻内存）═══
         if not core_done:
-            df['SMA50']  = df['close'].rolling(50).mean()
-            df['SMA150'] = df['close'].rolling(150).mean()
-            df['SMA200'] = df['close'].rolling(200).mean()
-            df['High_250'] = df['high'].rolling(250).max()
-            prev_close = df['close'].shift(1)
+            # 高性能 Polars 管道运算
+            pldf = pldf.with_columns([
+                pl.col("close").rolling_mean(50).alias("SMA50"),
+                pl.col("close").rolling_mean(150).alias("SMA150"),
+                pl.col("close").rolling_mean(200).alias("SMA200"),
+                pl.col("high").rolling_max(250).alias("High_250"),
+                pl.col("close").shift(1).alias("prev_close")
+            ]).with_columns([
+                pl.max_horizontal([
+                    pl.col("high") - pl.col("low"),
+                    (pl.col("high") - pl.col("prev_close")).abs(),
+                    (pl.col("low") - pl.col("prev_close")).abs()
+                ]).alias("TR")
+            ]).with_columns([
+                pl.col("TR").rolling_mean(10).alias("ATR10"),
+                pl.col("TR").rolling_mean(20).alias("ATR20"),
+                pl.col("TR").rolling_mean(60).alias("ATR60"),
+                pl.col("volume").rolling_mean(25).alias("vol_ma25"),
+                pl.col("close").rolling_mean(10).alias("ma10"),
+                pl.col("close").rolling_mean(20).alias("ma20"),
+            ])
+            
+            # Amount 填补与计算
+            if "amount" not in pldf.columns:
+                pldf = pldf.with_columns((pl.col("volume") * pl.col("close") * 100).alias("amount"))
+            else:
+                pldf = pldf.with_columns([
+                    pl.when(pl.col("amount").is_null() | (pl.col("amount") == 0))
+                    .then(pl.col("volume") * pl.col("close") * 100)
+                    .otherwise(pl.col("amount")).alias("amount")
+                ])
 
-            tr = np.maximum(df['high'] - df['low'],
-                            np.maximum((df['high'] - prev_close).abs(),
-                                       (df['low'] - prev_close).abs()))
-
-            df['ATR10'], df['ATR20'], df['ATR60'] = tr.rolling(10).mean(), tr.rolling(20).mean(), tr.rolling(60).mean()
-            df['vol_ma25'] = df['volume'].rolling(25).mean()
-            if 'amount' not in df.columns or df['amount'].isna().all() or (df['amount'] == 0).all():
-                df['amount'] = df['volume'] * df['close'] * 100
-
-            ma10 = df['close'].rolling(10).mean()
-            ma20 = df['close'].rolling(20).mean()
-            ma50 = df['SMA50']
-            max_ma = np.maximum(np.maximum(ma10, ma20), ma50)
-            min_ma = np.minimum(np.minimum(ma10, ma20), ma50)
-            df['entangle'] = (max_ma / min_ma) - 1
-
-            if hasattr(df, "attrs"):
-                df.attrs["vcp_core_ready"] = True
+            pldf = pldf.with_columns([
+                pl.max_horizontal(["ma10", "ma20", "SMA50"]).alias("max_ma"),
+                pl.min_horizontal(["ma10", "ma20", "SMA50"]).alias("min_ma")
+            ]).with_columns([
+                ((pl.col("max_ma") / pl.col("min_ma")) - 1).alias("entangle")
+            ])
 
         # ═══ 图表/诊断指标（按需计算，不常驻内存）═══
         if include_chart and not chart_done:
-            try:
-                exp1 = df['close'].ewm(span=12, adjust=False).mean()
-                exp2 = df['close'].ewm(span=26, adjust=False).mean()
-                df['MACD'] = exp1 - exp2
-                df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-                df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
-            except Exception:
-                pass
+            # MACD
+            pldf = pldf.with_columns([
+                pl.col("close").ewm_mean(span=12, adjust=False).alias("exp1"),
+                pl.col("close").ewm_mean(span=26, adjust=False).alias("exp2"),
+            ]).with_columns([
+                (pl.col("exp1") - pl.col("exp2")).alias("MACD")
+            ]).with_columns([
+                pl.col("MACD").ewm_mean(span=9, adjust=False).alias("MACD_Signal")
+            ]).with_columns([
+                (pl.col("MACD") - pl.col("MACD_Signal")).alias("MACD_Hist")
+            ])
 
-            # RSI（供本地诊断使用）
-            try:
-                delta = df['close'].diff()
-                gain = delta.clip(lower=0).rolling(14).mean()
-                loss = (-delta.clip(upper=0)).rolling(14).mean()
-                rs = gain / loss
-                df['RSI'] = 100 - (100 / (1 + rs))
-            except Exception:
-                pass
+            # RSI
+            pldf = pldf.with_columns([
+                pl.col("close").diff().alias("delta")
+            ]).with_columns([
+                pl.when(pl.col("delta") > 0).then(pl.col("delta")).otherwise(0).rolling_mean(14).alias("gain"),
+                pl.when(pl.col("delta") < 0).then(-pl.col("delta")).otherwise(0).rolling_mean(14).alias("loss")
+            ]).with_columns([
+                (pl.col("gain") / pl.col("loss")).alias("rs")
+            ]).with_columns([
+                (100 - (100 / (1 + pl.col("rs")))).alias("RSI")
+            ])
 
-            # 布林带（供本地诊断使用）
-            try:
-                sma20 = df['close'].rolling(20).mean()
-                std20 = df['close'].rolling(20).std()
-                df['BB_up'] = sma20 + 2 * std20
-                df['BB_low'] = sma20 - 2 * std20
-            except Exception:
-                pass
+            # 布林带
+            pldf = pldf.with_columns([
+                pl.col("close").rolling_std(20).alias("std20")
+            ]).with_columns([
+                (pl.col("ma20") + 2 * pl.col("std20")).alias("BB_up"),
+                (pl.col("ma20") - 2 * pl.col("std20")).alias("BB_low")
+            ])
 
-            if hasattr(df, "attrs"):
-                df.attrs["vcp_chart_ready"] = True
-                df.attrs["vcp_indicators_ready"] = True
-
-        return df
+        if is_pandas:
+            new_df = pldf.to_pandas()
+            if 'datetime' in new_df.columns:
+                new_df.set_index('datetime', inplace=True)
+            elif 'date' in new_df.columns:
+                new_df.set_index('date', inplace=True)
+            new_df.attrs["vcp_core_ready"] = True
+            if include_chart:
+                new_df.attrs["vcp_chart_ready"] = True
+                new_df.attrs["vcp_indicators_ready"] = True
+            return new_df
+        return pldf
 
     @staticmethod
     def _build_prices_matrix(data_dict: dict[str, pd.DataFrame], min_start: pd.Timestamp, end_ts: pd.Timestamp | None = None) -> pd.DataFrame:
         # ---- 加速路径：numpy 直接构建矩阵 ----
         try:
             from vcp.polars_engine import build_prices_matrix_fast
-            fast_result = build_prices_matrix_fast(data_dict, min_start, end_ts)
-            if not fast_result.empty:
-                return fast_result
+            matrix, cols, dates = build_prices_matrix_fast(data_dict, min_start, end_ts)
+            if len(cols) > 0:
+                import pandas as pd
+                return pd.DataFrame(matrix, index=dates, columns=cols)
         except ImportError:
             pass  # polars_engine 不可用，使用 pandas
         except Exception as e:
@@ -207,6 +245,11 @@ class VCPEngine:
         rps120 = prices.pct_change(120).rank(axis=1, pct=True) * 100
         rps250 = prices.pct_change(250).rank(axis=1, pct=True) * 100
         target_dates = prices.loc[start_date:end_date].index
+        
+        # 【修复】周末节假日防空
+        if len(target_dates) == 0 and not prices.empty:
+            target_dates = prices.index[-1:]
+            
         result = {}
         for d in target_dates:
             r50_d  = rps50.loc[d]
@@ -223,35 +266,38 @@ class VCPEngine:
         return result
 
     @staticmethod
-    def _calculate_flexible_peaks(df: pd.DataFrame, curr_idx: int, params: VCPParams) -> tuple[list | None, str]:
+    def _calculate_flexible_peaks(pldf: pl.DataFrame, curr_idx: int, params: VCPParams) -> tuple[list | None, str]:
         """弹性区间：计算3-4个峰"""
         search_start = max(0, curr_idx - (LOOKBACK_DAYS - 1))
         if curr_idx - EXCLUDE_DAYS_FOR_PEAKS <= search_start:
             return None, "最近3日不参与算峰，需更多历史数据"
 
-        window_peak = df.iloc[search_start : curr_idx - EXCLUDE_DAYS_FOR_PEAKS]
-        nw = len(window_peak)
-        if nw < 20:
+        window_len = (curr_idx - EXCLUDE_DAYS_FOR_PEAKS) - search_start
+        if window_len < 20:
             return None, "可用于计算峰的数据不足"
 
-        n_groups = (nw + GROUP_DAYS - 1) // GROUP_DAYS
+        window_peak = pldf.slice(search_start, window_len)
+        n_groups = (window_len + GROUP_DAYS - 1) // GROUP_DAYS
         group_peaks = []
+        
+        closes = window_peak.get_column("close").to_list()
+        
         for g in range(n_groups):
             start = g * GROUP_DAYS
-            end = min(start + GROUP_DAYS, nw)
+            end = min(start + GROUP_DAYS, window_len)
             if start >= end:
                 continue
-            sub = window_peak.iloc[start:end]
-            pos_in_window = int(sub['close'].values.argmax())
+            sub_closes = closes[start:end]
+            pos_in_window = int(np.argmax(sub_closes))
             idx_df = search_start + start + pos_in_window
-            c = float(sub['close'].iloc[pos_in_window])
+            c = float(sub_closes[pos_in_window])
             group_peaks.append((idx_df, c))
-
+            
         if len(group_peaks) < MIN_PEAKS_COUNT:
             return None, f"分组后不足{MIN_PEAKS_COUNT}个峰"
 
         group_peaks.sort(key=lambda x: x[1], reverse=True)
-        baseline = float(window_peak['close'].max())
+        baseline = max(closes)
         if baseline <= 0:
             return None, "无有效收盘价"
 
@@ -293,139 +339,145 @@ class VCPEngine:
         return final_peaks, "OK"
 
     @staticmethod
-    def _check_ma_slope(df: pd.DataFrame, curr_idx: int, params: VCPParams) -> tuple[bool, float]:
+    def _check_ma_slope(pldf: pl.DataFrame, curr_idx: int, params: VCPParams) -> tuple[bool, float]:
         if not params.enable_ma_slope:
             return True, 0
         if curr_idx < 5:
             return False, 0
-        sma50_current = df.iloc[curr_idx]['SMA50']
-        sma50_prev = df.iloc[curr_idx - 5]['SMA50']
-        if pd.isna(sma50_current) or pd.isna(sma50_prev) or sma50_prev == 0:
+            
+        sma50_current = pldf.row(curr_idx, named=True)['SMA50']
+        sma50_prev = pldf.row(curr_idx - 5, named=True)['SMA50']
+        
+        if sma50_current is None or sma50_prev is None or sma50_prev == 0:
             return False, 0
+            
         slope = (sma50_current - sma50_prev) / sma50_prev / 5
         if slope < MIN_SMA50_SLOPE:
             return False, slope
         return True, slope
 
-
-
     @staticmethod
-    def _check_observation_vs_buy(df: pd.DataFrame, curr_idx: int, final_peaks: list, row: pd.Series, params: VCPParams) -> tuple[str, str]:
-        last_peak_idx = final_peaks[-1][0]
-        days_after_last = curr_idx - last_peak_idx
-        if days_after_last < MIN_DAYS_AFTER_LAST_PEAK:
-            return "pre_observation", f"距最后一峰仅{days_after_last}日，未进入观察期"
-        if days_after_last < MIN_DAYS_AFTER_LAST_PEAK_CONFIRM:
-            return "observation", f"观察期：距最后一峰{days_after_last}日"
-        return "buy_confirmed", "建仓期确认"
-
-    @staticmethod
-    def evaluate_conditions(df: pd.DataFrame, current_day, rps120: float, rps250: float,
+    def evaluate_conditions(df: pd.DataFrame | pl.DataFrame, current_day, rps120: float, rps250: float,
                             _rps_history: dict | None = None, params: VCPParams | None = None,
                             skip_red_check: bool = False) -> tuple[bool, str, dict]:
-        """增强版选股条件判断"""
+        """增强版选股条件判断 (Polars 高性能加速版)"""
         if params is None:
             params = VCPParams()
-
-        try:
-            loc = df.index.get_loc(current_day)
-            if isinstance(loc, slice):
-                curr_idx = loc.stop - 1 if loc.stop is not None else loc.start
-            elif isinstance(loc, np.ndarray):
-                curr_idx = int(loc[-1])
+            
+        is_pandas = isinstance(df, pd.DataFrame)
+        if is_pandas:
+            if df.index.name == 'datetime':
+                pldf = pl.from_pandas(df.reset_index())
             else:
-                curr_idx = int(loc)
-        except Exception:
+                pldf = pl.from_pandas(df)
+        else:
+            pldf = df
+            
+        # 安全转换当前日期，解决 Pandas Timestamp 与 Polars Datetime 精确匹配漏掉的问题
+        cd_date = current_day.date() if hasattr(current_day, 'date') else current_day
+        
+        try:
+            # 兼容原生 Datetime 类型的提取
+            idx_query = pldf.with_row_index().filter(pl.col("datetime").cast(pl.Date) == cd_date).select("index")
+        except Exception as _e:
+            # 如果极端情况被解析成字符串等，回退到字符串匹配
+            _log.debug(f"[策略中台] 日期类型转换异常，回退字符串匹配: {_e}")
+            idx_query = pldf.with_row_index().filter(pl.col("datetime").cast(pl.Utf8).str.starts_with(str(cd_date))).select("index")
+            
+        if idx_query.height == 0:
             return False, "非交易日", {}
-
+        curr_idx = idx_query.item()
+        
         if pd.isna(rps120) or pd.isna(rps250):
             return False, "RPS数据不足", {}
-
-        if 'entangle' not in df.columns:
-            # 直接在原 df 上计算核心指标（不 copy），让结果持久化到 cache_data
-            # 避免每次 evaluate 都重复计算浪费 CPU
-            try: VCPEngine.calculate_indicators(df, include_chart=False)
-            except Exception: return False, "指标计算失败", {}
-
-        row = df.iloc[curr_idx]
-
+            
+        if 'entangle' not in pldf.columns:
+            pldf = VCPEngine.calculate_indicators(pldf, include_chart=False)
+            
+        row = pldf.row(curr_idx, named=True)
+        
         # 1. 基础防守
-        sma200_ok = not pd.isna(row['SMA200'])
+        sma200_ok = row['SMA200'] is not None and not pd.isna(row['SMA200'])
         if curr_idx < params.min_history_days - 1:
             return False, f"数据不足{params.min_history_days}天", {}
         if params.min_history_days >= 200 and not sma200_ok:
             return False, "SMA200数据不足", {}
-
-        sma_bull = bool(row['SMA50'] > row['SMA150'])
+            
+        sma50_val = row.get('SMA50')
+        sma150_val = row.get('SMA150')
+        
+        if sma50_val is None or pd.isna(sma50_val) or sma150_val is None or pd.isna(sma150_val):
+            return False, "均线数据不足(缺失SMA50或SMA150)", {}
+            
+        sma_bull = bool(sma50_val > sma150_val)
         close_above_sma200 = bool(sma200_ok and row['close'] > row['SMA200'])
         if not sma_bull or (sma200_ok and not close_above_sma200):
             return False, "均线非多头", {}
-
+            
         if not skip_red_check and row['close'] <= row['open']:
             return False, "当天K线非红盘", {}
-
-        amount_mean = df.iloc[max(0, curr_idx-19):curr_idx+1]['amount'].mean()
-        if amount_mean < params.min_amount_20d:
+            
+        amount_mean = pldf.slice(max(0, curr_idx-19), curr_idx+1 - max(0, curr_idx-19)).get_column("amount").mean()
+        if amount_mean is None or pd.isna(amount_mean) or amount_mean < params.min_amount_20d:
             return False, "日均流水不足", {}
-
-        entangle_min = df.iloc[max(0, curr_idx-4):curr_idx+1]['entangle'].min()
-        if entangle_min > params.ma_bind_threshold:
+            
+        entangle_min = pldf.slice(max(0, curr_idx-4), curr_idx+1 - max(0, curr_idx-4)).get_column("entangle").min()
+        if entangle_min is None or pd.isna(entangle_min) or entangle_min > params.ma_bind_threshold:
             return False, "短期均线不粘合", {}
-
-        # RPS 过滤
+            
         if rps250 < params.rps_threshold:
             return False, f"长线动量未达标(RPS250:{rps250:.0f} < {params.rps_threshold})", {}
         if rps250 < 90 and rps250 < rps120:
             return False, f"短线背离长线(RPS250:{rps250:.0f} < RPS120:{rps120:.0f})", {}
-
-        # 二级筛选：均线斜率（50日均线须上升）
-        ma_slope_ok, ma_slope_val = VCPEngine._check_ma_slope(df, curr_idx, params)
+            
+        ma_slope_ok, ma_slope_val = VCPEngine._check_ma_slope(pldf, curr_idx, params)
         if not ma_slope_ok:
             return False, f"50日均线斜率不足(当前{ma_slope_val:.4f} < {MIN_SMA50_SLOPE})", {}
-
-        # 弹性区间峰计算
-        final_peaks, msg = VCPEngine._calculate_flexible_peaks(df, curr_idx, params)
+            
+        final_peaks, msg = VCPEngine._calculate_flexible_peaks(pldf, curr_idx, params)
         if final_peaks is None:
             return False, msg, {}
-
+            
         peak_idx = final_peaks[0][0]
         last_peak_idx = final_peaks[-1][0]
-
+        
         if curr_idx < last_peak_idx + MIN_DAYS_AFTER_LAST_PEAK:
             return False, f"买入点须在最后一峰之后{MIN_DAYS_AFTER_LAST_PEAK}个交易日", {}
-
-        # 振幅约束
-        left_zone = df.iloc[peak_idx : last_peak_idx + 1]
-        buy_zone = df.iloc[last_peak_idx + 1 : curr_idx + 1]
-        box_low = left_zone['low'].min()
-        box_high = left_zone['high'].max()
+            
+        left_zone = pldf.slice(peak_idx, last_peak_idx + 1 - peak_idx)
+        buy_zone = pldf.slice(last_peak_idx + 1, curr_idx + 1 - (last_peak_idx + 1))
+        box_low = left_zone.get_column("low").min()
+        box_high = left_zone.get_column("high").max()
         left_amp = (box_high - box_low) / box_low if box_low > 0 else 0
-
-        if buy_zone['low'].min() > 0:
-            buy_amp = (buy_zone['high'].max() - buy_zone['low'].min()) / buy_zone['low'].min()
+        
+        buy_low = buy_zone.get_column("low").min()
+        if buy_low and buy_low > 0:
+            buy_high = buy_zone.get_column("high").max()
+            buy_amp = (buy_high - buy_low) / buy_low
             if buy_amp >= left_amp:
                 return False, "买入区振幅未小于左侧区振幅", {}
-
+                
         if left_amp > params.amp_threshold:
             return False, f"左侧区振幅超限({left_amp:.1%} > {params.amp_threshold:.0%})", {}
-
-        high_250 = row.get('High_250')
-        if pd.isna(high_250) or high_250 <= 0:
+            
+        high_250 = row.get("High_250")
+        if high_250 is None or pd.isna(high_250) or high_250 <= 0:
             return False, "无有效一年高点", {}
-        peak_high = df.iloc[peak_idx]['high']
+            
+        peak_high = pldf.row(peak_idx, named=True)['high']
         if 1 - (peak_high / high_250) > params.high_250_threshold:
             return False, "偏离一年高点超限", {}
-
+            
         if row['close'] <= box_low * 1.05:
             return False, "贴近箱底(<5%)", {}
-
+            
         prior_250_start = max(0, peak_idx - 250)
         if prior_250_start < peak_idx:
-            prior_250_max = df.iloc[prior_250_start : peak_idx]['high'].max()
-            if prior_250_max > 0 and peak_high < prior_250_max * 0.92:
+            prior_250_max = pldf.slice(prior_250_start, peak_idx - prior_250_start).get_column("high").max()
+            if prior_250_max and prior_250_max > 0 and peak_high < prior_250_max * 0.92:
                 deviation = (1 - peak_high / prior_250_max) * 100
                 return False, f"第一高点非前250日相对高点(偏离{deviation:.1f}%)", {}
-
+                
         if len(final_peaks) >= 3:
             first_to_third_days = final_peaks[2][0] - final_peaks[0][0] + 1
             if first_to_third_days < MIN_FIRST_TO_THIRD_DAYS:
@@ -434,16 +486,16 @@ class VCPEngine:
         h2_idx = final_peaks[1][0] if len(final_peaks) >= 2 else peak_idx
         h3_idx = final_peaks[2][0] if len(final_peaks) >= 3 else h2_idx
 
-        s1 = df.iloc[peak_idx : h2_idx + 1]
-        s2 = df.iloc[h2_idx : h3_idx + 1]
+        s1 = pldf.slice(peak_idx, h2_idx + 1 - peak_idx)
+        s2 = pldf.slice(h2_idx, h3_idx + 1 - h2_idx)
         r1_len = h2_idx - peak_idx + 1
         r2_len = h3_idx - h2_idx + 1
         if len(final_peaks) >= 3 and (r1_len + r2_len) <= MIN_R1_R2_DAYS:
             return False, f"R1+R2须大于{MIN_R1_R2_DAYS}个交易日(当前{r1_len + r2_len}日)", {}
 
         if len(final_peaks) >= 3:
-            r1_low = float(s1['low'].min())
-            r2_low = float(s2['low'].min())
+            r1_low = float(s1.get_column("low").min() or 0)
+            r2_low = float(s2.get_column("low").min() or 0)
             if r1_low > 0 and r2_low < r1_low:
                 drop_pct = (r1_low - r2_low) / r1_low
                 if drop_pct > MAX_R2_BELOW_R1_PCT:
@@ -452,21 +504,24 @@ class VCPEngine:
                 mid_left = (box_high + box_low) / 2
                 if r1_low > mid_left:
                     return False, f"R1最低价高于R2时须在左侧区间下50%内(当前R1低{r1_low:.2f} > 左区中点{mid_left:.2f})", {}
-
+                    
         # 评分
         score = rps250 * 0.5 + 15
-        if row['ATR10'] < row['ATR20'] < row['ATR60']:
-            score += 10
+        if row.get('ATR10') is not None and row.get('ATR20') is not None and row.get('ATR60') is not None:
+            if not pd.isna(row['ATR10']) and not pd.isna(row['ATR20']) and not pd.isna(row['ATR60']):
+                if row['ATR10'] < row['ATR20'] < row['ATR60']:
+                    score += 10
 
-        vol_baseline = df.iloc[max(0, curr_idx - 40) : curr_idx - 10]['volume'].mean()
-        vol_recent = buy_zone['volume'].mean()
+        vol_baseline = pldf.slice(max(0, curr_idx - 40), (curr_idx - 10) - max(0, curr_idx - 40)).get_column("volume").mean() or 1
+        vol_recent = buy_zone.get_column("volume").mean() or 0
         vol_ratio = vol_recent / max(1, vol_baseline)
         if vol_ratio < 0.6:
             score += 10
 
         dist = (box_high - row['close']) / row['close'] if row['close'] > 0 else 0
         if dist < 0:
-            if row['volume'] > row['vol_ma25'] * 1.5:
+            vol_ma25_val = row.get('vol_ma25')
+            if vol_ma25_val is not None and not pd.isna(vol_ma25_val) and row['volume'] > vol_ma25_val * 1.5:
                 score += 25
                 breakout_status = "放量突破"
             else:
@@ -482,16 +537,14 @@ class VCPEngine:
             score += 10
 
         peak_dates = []
+        pldf_dates = pldf.get_column("datetime")
         for idx, _ in final_peaks:
-            d = df.index[idx]
-            peak_dates.append(d.strftime(DATE_FMT) if hasattr(d, 'strftime') else str(d))
+            d = pldf_dates[idx]
+            dt_obj = d if isinstance(d, datetime) else pd.to_datetime(str(d))
+            peak_dates.append(dt_obj.strftime(DATE_FMT))
 
-        r1_len = h2_idx - peak_idx + 1
-        r2_len = h3_idx - h2_idx + 1
-        r3_len = curr_idx - last_peak_idx + 1
-
-        r1_amp = s1['high'].max() / s1['low'].min() - 1 if s1['low'].min() > 0 else 0
-        r2_amp = s2['high'].max() / s2['low'].min() - 1 if s2['low'].min() > 0 else 0
+        r1_amp = (s1.get_column("high").max() / s1.get_column("low").min() - 1) if s1.get_column("low").min() else 0
+        r2_amp = (s2.get_column("high").max() / s2.get_column("low").min() - 1) if s2.get_column("low").min() else 0
 
         m = {
             "评分": round(score, 1),
@@ -507,7 +560,7 @@ class VCPEngine:
             "VCP达标": "✓",
             "_box_amp": left_amp,
             "_hit_base": curr_idx - peak_idx,
-            "_hit_E": r3_len,
+            "_hit_E": curr_idx - last_peak_idx + 1,
             "_model_name": "150日三高",
             "_peak_dates": peak_dates,
             "_high1_idx": peak_idx,
@@ -517,7 +570,15 @@ class VCPEngine:
             "_high2_date": peak_dates[1],
             "_high3_date": peak_dates[2] if len(peak_dates) > 2 else peak_dates[-1],
         }
-        obs_status, obs_msg = VCPEngine._check_observation_vs_buy(df, curr_idx, final_peaks, row, params)
+        
+        days_after_last = curr_idx - last_peak_idx
+        if days_after_last < MIN_DAYS_AFTER_LAST_PEAK:
+            obs_msg = "pre_observation"
+        elif days_after_last < MIN_DAYS_AFTER_LAST_PEAK_CONFIRM:
+            obs_msg = "observation"
+        else:
+            obs_msg = "buy_confirmed"
+            
         m["买入阶段"] = obs_msg
         return True, "OK", m
 
@@ -546,7 +607,8 @@ class VCPEngine:
             try:
                 if api.connect(host, port, time_out=5):
                     return api
-            except Exception:
+            except Exception as _e:
+                _log.debug(f"[pytdx] 连接服务器 {host}:{port} 失败: {_e}")
                 continue
         return None
 
@@ -565,7 +627,8 @@ class VCPEngine:
             try:
                 with open(FINANCE_CACHE_FILE, 'rb') as f:
                     cache = pickle.load(f)
-            except Exception:
+            except Exception as _e:
+                _log.debug(f"[pytdx] 财务缓存文件读取异常，将重建: {_e}")
                 cache = {}
 
         results = {}
@@ -580,8 +643,8 @@ class VCPEngine:
                     if (now - cache_date).days < 30:
                         results[code] = cached['info']
                         continue
-                except Exception:
-                    pass
+                except (ValueError, KeyError) as _e:
+                    _log.debug(f"[pytdx] 缓存日期解析异常({code}): {_e}")
             need_query.append(code)
 
         if not need_query:
@@ -608,8 +671,8 @@ class VCPEngine:
                     if info:
                         results[raw_code] = info
                         cache[raw_code] = {'info': info, 'date': now.strftime('%Y-%m-%d')}
-                except Exception:
-                    pass
+                except Exception as _e:
+                    _log.debug(f"[pytdx] 获取 {raw_code} 财务信息失败: {_e}")
                 
                 # 每50个暂停一下避免断连
                 if (i + 1) % 50 == 0:
@@ -625,8 +688,8 @@ class VCPEngine:
         finally:
             try:
                 api.disconnect()
-            except Exception:
-                pass
+            except Exception as _e:
+                _log.debug(f"[pytdx] 断开服务器连接时异常（可忽略）: {_e}")
 
         return results
 
@@ -774,7 +837,8 @@ class VCPEngine:
             try:
                 with open(SHAREHOLDER_CACHE_FILE, 'rb') as f:
                     cache = pickle.load(f)
-            except Exception:
+            except Exception as _e:
+                _log.debug(f"[机构股东] 缓存文件读取异常，将重建: {_e}")
                 cache = {}
 
         results = {}
@@ -790,8 +854,8 @@ class VCPEngine:
                     if (now - cache_date).days < 90:
                         results[code] = cached
                         continue
-                except Exception:
-                    pass
+                except (ValueError, KeyError) as _e:
+                    _log.debug(f"[机构股东] 缓存日期解析异常({code}): {_e}")
             need_query.append(code)
 
         # ---- 联网查询未缓存的（东方财富 F10） ----
@@ -814,8 +878,8 @@ class VCPEngine:
             try:
                 with open(SHAREHOLDER_CACHE_FILE, 'wb') as f:
                     pickle.dump(cache, f)
-            except Exception:
-                pass
+            except Exception as _e:
+                _log.debug(f"[机构股东] 缓存保存失败: {_e}")
 
         return results
 
@@ -855,11 +919,31 @@ class VCPEngine:
                 'meta': 完整evaluate返回的m字典,
             }}
         """
+        # Parquet cache returns Polars DataFrames, but downstream code needs Pandas
+        import polars as _pl
+        _converted = 0
+        for _code in list(all_data.keys()):
+            _df = all_data[_code]
+            if isinstance(_df, _pl.DataFrame):
+                _pdf = _df.to_pandas()
+                if "datetime" in _pdf.columns:
+                    _pdf["datetime"] = pd.to_datetime(_pdf["datetime"])
+                    _pdf.set_index("datetime", inplace=True)
+                all_data[_code] = _pdf
+                _converted += 1
+        if _converted:
+            _log.info(f"[ready_pool] Polars->Pandas converted {_converted} stocks")
+
         import time as _time
         ready_pool = {}
-        processed = 0
         st_filtered = 0
         total_count = len(all_data)
+        # === 诊断计数器 ===
+        _diag_short = 0
+        _diag_rps_nan = 0
+        _diag_ind_fail = 0
+        _diag_eval_fail = 0
+        _diag_eval_err = 0
         for idx_code, (code, df) in enumerate(all_data.items()):
             # 【休眠释放 GIL】每完成几只后主动释放 CPU，防卡死
             if idx_code % 20 == 0:
@@ -869,6 +953,7 @@ class VCPEngine:
                 progress_callback(f"构建待突破池: {idx_code}/{total_count}...")
                 
             if df is None or len(df) < 250:
+                _diag_short += 1
                 continue
 
             # === ST 股过滤：ST/*ST 涨跌幅仅 5%，易伪装成 VCP 收缩形态 ===
@@ -881,6 +966,7 @@ class VCPEngine:
             r120 = rps120_series.get(code, np.nan)
             r250 = rps250_series.get(code, np.nan)
             if pd.isna(r120) or pd.isna(r250):
+                _diag_rps_nan += 1
                 continue
 
             # 确保指标已计算（一次性）
@@ -888,14 +974,18 @@ class VCPEngine:
                 try:
                     all_data[code] = VCPEngine.calculate_indicators(df.copy())
                     df = all_data[code]
-                except Exception:
+                except Exception as _e:
+                    _log.debug(f"[待突破池] {code} 指标计算异常: {_e}")
+                    _diag_ind_fail += 1
                     continue
 
             eval_day = df.index[-1]
             try:
                 ok, reason, m = VCPEngine.evaluate_conditions(
                     df, eval_day, float(r120), float(r250), None, params, skip_red_check=True)
-            except Exception:
+            except Exception as _e:
+                _log.debug(f"[待突破池] {code} 条件评估异常: {_e}")
+                _diag_eval_fail += 1
                 continue
 
             if not ok:
@@ -904,7 +994,7 @@ class VCPEngine:
             # 板块 RPS 检查
             sector_info = ""
             if sector_manager and sector_rps_dict:
-                s_ok, s_info, s_max = sector_manager.check_sector_rps(
+                s_ok, s_info, _ = sector_manager.check_sector_rps(
                     code, sector_rps_dict, sector_threshold)
                 if not s_ok:
                     continue
@@ -929,33 +1019,33 @@ class VCPEngine:
                 'institution_tag': '',  # 稍后批量填充
                 'meta': m,  # 保留完整结果用于绘图等
             }
-            processed += 1
 
         _log.info(f"[待突破池] 预计算完成 | 全量 {len(all_data)} 只 → 候选 {len(ready_pool)} 只（ST 剔除 {st_filtered} 只）")
         # ---- 批量查询机构股东（东方财富 F10 API，90天缓存） ----
+        # 改为"软标记"而非硬删除，避免误杀扫描已确认的 VCP 形态股
         if ready_pool:
             try:
                 inst_results = VCPEngine.batch_check_institution(
                     list(ready_pool.keys()))
-                no_inst_codes = []
+                inst_count = 0
+                no_inst_count = 0
                 for code, entry in ready_pool.items():
                     inst_info = inst_results.get(code, {})
                     has_inst = inst_info.get('has_institution', False)
                     detail = inst_info.get('detail', '')
                     if has_inst:
                         entry['institution_tag'] = f"✓机构:{detail}"
+                        inst_count += 1
                     else:
-                        no_inst_codes.append(code)
-                # 剔除无机构的股票
-                for code in no_inst_codes:
-                    del ready_pool[code]
-                _log.info(f"[机构股东] 筛选完成 | 有机构 {len(ready_pool)} 只，剔除无机构 {len(no_inst_codes)} 只")
+                        entry['institution_tag'] = "无机构"
+                        no_inst_count += 1
+                _log.info(f"[机构股东] 标记完成 | 有机构 {inst_count} 只，无机构 {no_inst_count} 只（均保留在池中）")
             except Exception as e:
                 _log.error(f"[机构股东] 查询异常，跳过筛选: {e}")
-        # ---- 总市值筛选：总股本×收盘价（通达信），剔除 < 40亿的股票 ----
+        # ---- 总市值标记：总股本×收盘价（通达信） ----
+        # 改为"软标记"而非硬删除，小市值股票保留在池中但打上标记
         if ready_pool:
             try:
-                # 从本地日线数据获取每只股票的最新收盘价
                 close_prices = {}
                 for code in ready_pool:
                     df = all_data.get(code)
@@ -963,20 +1053,18 @@ class VCPEngine:
                         close_prices[code] = float(df.iloc[-1]['close'])
                 cap_results = VCPEngine.batch_check_market_cap(
                     list(ready_pool.keys()), close_prices=close_prices)
-                small_cap_codes = []
+                small_cap_count = 0
                 for code, entry in ready_pool.items():
                     cap = cap_results.get(code)
                     if cap and cap > 0:
-                        cap_yi = cap / 1e8  # 转为亿
+                        cap_yi = cap / 1e8
                         entry['market_cap'] = f"{cap_yi:.0f}亿"
                         if cap < MIN_MARKET_CAP:
-                            small_cap_codes.append(code)
+                            entry['small_cap'] = True
+                            small_cap_count += 1
                     else:
                         entry['market_cap'] = '未知'
-                # 剔除小市值
-                for code in small_cap_codes:
-                    del ready_pool[code]
-                _log.info(f"[市值筛选] 完成 | 保留 {len(ready_pool)} 只，剔除小市值(<40亿) {len(small_cap_codes)} 只")
+                _log.info(f"[市值标记] 完成 | 共 {len(ready_pool)} 只，其中小市值(<40亿) {small_cap_count} 只（均保留在池中）")
             except Exception as e:
                 _log.error(f"[市值筛选] 查询异常，跳过: {e}")
         return ready_pool

@@ -10,17 +10,12 @@ import datetime
 
 from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QTableView,
-    QHeaderView, QPushButton, QLabel, QAbstractItemView, QMenu
+    QHeaderView, QPushButton, QLabel, QAbstractItemView
 )
-from PyQt6.QtCore import Qt, QTimer, QSettings
-from PyQt6.QtGui import QColor
-
-from ui.theme import COLOR_FLAT
+from PyQt6.QtCore import Qt, QTimer
 from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
 from core.event_bus import event_bus
-from core.event_types import DataEvent
 from core.logger import get_logger
-from core.task_manager import task_manager
 from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
@@ -37,49 +32,38 @@ class NADailyTab(BaseStockTab):
         # 开机延迟拉取/展现
         QTimer.singleShot(3500, self._load_na_daily_report)
 
-        # 订阅中央广播站报价（覆盖盘中/盘后/非交易日）
-        event_bus.sig_data_updated.connect(self._on_global_data)
+        # 订阅中央广播站报价及开启大一统市值更新
+        self.subscribe_global_quotes()
 
-        # 定时刷新战报增量 + 首次拉取报价市值
-        self._na_daily_schedule_timer = QTimer(self)
-        self._na_daily_schedule_timer.timeout.connect(self._check_na_daily_schedule)
-        self._na_daily_schedule_timer.start(30 * 1000)
+        # 统一巡逻定时器：每30秒检查一次（合并了增量检查 + 定时全量刷新）
+        self._patrol_timer = QTimer(self)
+        self._patrol_timer.timeout.connect(self._patrol_tick)
+        self._patrol_timer.start(30 * 1000)
         self._na_daily_fired_today = set()
-
-        # 盘中增量检查定时器（仅刷新战报文件，不再拉报价）
-        self._incremental_timer = QTimer(self)
-        self._incremental_timer.timeout.connect(self._check_incremental)
-        self._incremental_timer.start(30 * 1000)
         self._initial_quotes_done = False
 
-    def _on_global_data(self, evt_type: str, data: object):
-        """中央广播站报价 → 刷新现价/涨幅，同时补充市值"""
-        if evt_type == DataEvent.RT_QUOTES_BROADCAST.value:
-            if not getattr(self, 'model', None) or not data:
-                return
-            self.model.update_quotes(data)
-            # 市值补充：从广播数据中取 close 价格计算市值并回填
-            for row_idx, row_dict in enumerate(self.model.row_data):
-                code = row_dict.get("代码", "")
-                if code in self._cap_cache_na and row_dict.get("市值") == "--":
-                    self.model.set_cell_value(row_idx, "市值", self._cap_cache_na[code])
+    def _patrol_tick(self):
+        """统一巡逻：盘中增量检查 + 定时全量刷新 + 首次市值拉取"""
+        from core.market_calendar import MarketCalendar
+        is_active = MarketCalendar.is_market_active()
 
-    def _check_incremental(self):
-        """盘中每30秒检查战报文件增量 + 首次启动时拉取市值"""
-        # 盘中增量检查战报文件
-        from vcp.constants import MARKET_OPEN_AM, MARKET_CLOSE_PM
-        now = datetime.datetime.now()
-        h, m = now.hour, now.minute
-        in_market = (
-            (h > MARKET_OPEN_AM[0] or (h == MARKET_OPEN_AM[0] and m >= MARKET_OPEN_AM[1]))
-            and (h < MARKET_CLOSE_PM[0] or (h == MARKET_CLOSE_PM[0] and m <= 5))
-        )
-        if in_market and now.weekday() < 5:
+        # 1. 盘中：每30秒检查战报文件是否有增量
+        if is_active:
             self._load_na_daily_incremental()
 
-        # 首次启动：拉一次报价+市值（盘后也能展示收盘数据）
+        # 2. 定时全量刷新（交易日 9:25 自动拉一次完整战报）
+        now = datetime.datetime.now()
+        if now.weekday() < 5:
+            today_str = now.strftime('%Y%m%d')
+            key = f"{today_str}_0925"
+            if key not in self._na_daily_fired_today:
+                if 0 <= (now.hour * 60 + now.minute) - (9 * 60 + 25) <= 1:
+                    self._na_daily_fired_today.add(key)
+                    self._load_na_daily_report()
+
+        # 3. 首次启动：拉一次市值（盘后也能展示收盘数据）
         if not self._initial_quotes_done and self._na_daily_codes:
-            self._fetch_na_quotes_independently()
+            self.async_update_market_caps()
             self._initial_quotes_done = True
 
     def _init_ui(self):
@@ -107,8 +91,7 @@ class NADailyTab(BaseStockTab):
 
         columns = [
             "代码", "名称", "现价", "涨幅%", "市值", "细分板块",
-            "近3月落位", "量能", "股价弹性",
-            "催化剂", "风控", "评级", "操作策略与理由"
+            "股价弹性", "催化剂", "风控", "评级"
         ]
         self.na_daily_table = QTableView()
         
@@ -130,7 +113,7 @@ class NADailyTab(BaseStockTab):
 
         header = self.na_daily_table.horizontalHeader()
         header.setStretchLastSection(False)
-        default_widths = [60, 70, 60, 60, 60, 100, 130, 60, 80, 120, 50, 60, 200]
+        default_widths = [60, 70, 60, 60, 60, 100, 80, 120, 50, 60]
         for i, w in enumerate(default_widths):
             if i < len(columns):
                 header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
@@ -215,7 +198,8 @@ class NADailyTab(BaseStockTab):
                 try:
                     with open(fpath, "r", encoding="utf-8") as f:
                         content = f.read()
-                except Exception:
+                except Exception as _e:
+                    log.debug(f"[北美战报] 读取战报文件失败: {_e}")
                     continue
                 stocks = self._parse_battle_report(content)
                 rec_map = self._parse_recommendations(content)
@@ -241,14 +225,11 @@ class NADailyTab(BaseStockTab):
         for stock in all_stocks:
             code = stock.get("代码", "")
             rec_data = all_recommended.get(code, {})
-            strategy_text = rec_data.get("strategy", "")
-            reason_text = rec_data.get("reason", "")
             priority = rec_data.get("priority", "")
-            full_reason = f"【操作】{strategy_text}  【逻辑】{reason_text}" if strategy_text else reason_text
 
-            chg_3m = stock.get("近3月", "")
-            pct_250d = stock.get("分位", "")
-            pos_info = f"{chg_3m} / {pct_250d}" if chg_3m and pct_250d else (chg_3m or pct_250d)
+            
+            raw_elasticity = stock.get("弹性", "")
+            clean_elasticity = re.split(r'[（(]', raw_elasticity)[0].strip() if raw_elasticity else ""
 
             row_data = {
                 "代码": code,
@@ -257,22 +238,22 @@ class NADailyTab(BaseStockTab):
                 "涨幅%": "--",
                 "细分板块": stock.get("行业", ""),
                 "市值": "--",
-                "近3月落位": pos_info,
-                "量能": stock.get("量能", ""),
-                "股价弹性": stock.get("弹性", ""),
+                "股价弹性": clean_elasticity,
                 "催化剂": stock.get("催化剂", ""),
                 "风控": stock.get("风控", ""),
-                "评级": priority,
-                "操作策略与理由": full_reason
+                "评级": priority
             }
             final_list.append(row_data)
 
         self.model.update_data(final_list)
+        
+        # 强制清除表头的自定义排序指标，回归战报原始注入的顺序
+        self.na_daily_table.sortByColumn(-1, Qt.SortOrder.AscendingOrder)
 
         if self._na_daily_codes:
-            self._fetch_na_quotes_independently()
+            self.async_update_market_caps()
 
-    def _load_na_daily_incremental(self, tag_color="#FF9F0A"):
+    def _load_na_daily_incremental(self):
         output_dir = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(
                 os.path.dirname(os.path.abspath(__file__))
@@ -308,7 +289,7 @@ class NADailyTab(BaseStockTab):
                         stocks.append({
                             "行业": industry, "名称": t.get("name", ""), "代码": t.get("code", ""),
                             "近3月": t.get("chg_3m", ""), "分位": t.get("percentile_250d", ""),
-                            "量能": t.get("volume", ""), "弹性": t.get("弹性", ""),
+                            "量能": t.get("volume", ""), "弹性": t.get("elasticity", ""),
                             "催化剂": t.get("catalyst", ""), "风控": t.get("risk", ""),
                         })
                 for adv in data.get("today_advice", []):
@@ -318,14 +299,15 @@ class NADailyTab(BaseStockTab):
                             "strategy": adv.get("strategy", "")
                         }
                 parsed_from_json = True
-            except Exception:
-                pass
+            except Exception as _e:
+                log.debug(f"[北美战报] 增量 JSON 解析失败，回退 MD 解析: {_e}")
 
         if not parsed_from_json:
             try:
                 with open(latest_file, "r", encoding="utf-8") as f:
                     content = f.read()
-            except Exception:
+            except Exception as _e:
+                log.debug(f"[北美战报] 增量 MD 文件读取失败: {_e}")
                 return
             stocks = self._parse_battle_report(content)
             rec_map = self._parse_recommendations(content)
@@ -345,12 +327,10 @@ class NADailyTab(BaseStockTab):
         for stock in new_stocks:
             code = stock.get("代码", "")
             rec_data = rec_map.get(code, {})
-            strategy_text = rec_data.get("strategy", "")
-            reason_text = rec_data.get("reason", "")
-            full_reason = f"【操作】{strategy_text}  【逻辑】{reason_text}" if strategy_text else reason_text
-            chg_3m = stock.get("近3月", "")
-            pct_250d = stock.get("分位", "")
-            pos_info = f"{chg_3m} / {pct_250d}" if chg_3m and pct_250d else (chg_3m or pct_250d)
+
+
+            raw_elasticity = stock.get("弹性", "")
+            clean_elasticity = re.split(r'[（(]', raw_elasticity)[0].strip() if raw_elasticity else ""
 
             row_data = {
                 "细分板块": stock.get("行业", ""),
@@ -359,13 +339,10 @@ class NADailyTab(BaseStockTab):
                 "现价": "--",
                 "涨幅%": "--",
                 "市值": "--",
-                "近3月落位": pos_info,
-                "量能": stock.get("量能", ""),
-                "股价弹性": stock.get("弹性", ""),
-                "💥催化剂": stock.get("催化剂", ""),
+                "股价弹性": clean_elasticity,
+                "催化剂": stock.get("催化剂", ""),
                 "风控": stock.get("风控", ""),
-                "⭐评级": rec_data.get("priority", ""),
-                "操作策略与理由": full_reason
+                "评级": rec_data.get("priority", "")
             }
             current_list.append(row_data)
 
@@ -375,112 +352,30 @@ class NADailyTab(BaseStockTab):
             self._na_daily_codes.add(s.get("代码", ""))
 
         if self._na_daily_codes:
-            self._fetch_na_quotes_independently()
+            self.async_update_market_caps()
 
-    def _fetch_na_quotes_independently(self):
-        import time as _time
-
-        def _bg_fetch():
-            max_retries = 3
-            retry_delay = 5
-
-            for attempt in range(1, max_retries + 1):
-                try:
-                    na_codes = list(self._na_daily_codes)
-                    if not na_codes or not self.data_provider: return
-
-                    if not self.data_provider.is_online():
-                        try:
-                            if self.data_provider.test_network(timeout=3):
-                                self.data_provider.set_online_mode(True)
-                            else:
-                                if attempt < max_retries: _time.sleep(retry_delay); continue
-                                return
-                        except Exception:
-                            if attempt < max_retries: _time.sleep(retry_delay); continue
-                            return
-
-                    if not getattr(self.data_provider, 'server_pool', None):
-                        if attempt < max_retries: _time.sleep(retry_delay); continue
-                        return
-
-                    na_quotes = self.data_provider.fetch_realtime_quotes_batch(na_codes)
-                    if not na_quotes:
-                        if attempt < max_retries: _time.sleep(retry_delay); continue
-                        return
-
-                    codes_need_cap = [c for c in na_codes if c not in self._cap_cache_na]
-                    if codes_need_cap:
-                        try:
-                            from vcp.engine import VCPEngine
-                            close_prices = {c: float(na_quotes[c].get('close', 0) or 0) for c in codes_need_cap if c in na_quotes}
-                            cap_results = VCPEngine.batch_check_market_cap(codes_need_cap, close_prices=close_prices)
-                            for c in codes_need_cap:
-                                cap = cap_results.get(c)
-                                if cap and cap > 0: self._cap_cache_na[c] = f"{cap / 1e8:.0f}亿"
-                                else: self._cap_cache_na[c] = '--'
-                        except Exception: pass
-
-                    return na_quotes
-
-                except Exception:
-                    if attempt < max_retries: _time.sleep(retry_delay)
-
-        task_manager.run_in_background(
-            _bg_fetch, 
-            task_id="na_daily_quotes", 
-            on_success=self._update_na_daily_realtime
-        )
-
-    def _update_na_daily_realtime(self, quotes: dict):
-        if not quotes or not self.model.row_data: return
-
-        for i, row_data in enumerate(self.model.row_data):
-            code = row_data.get("代码", "")
-            if not code or code not in quotes: continue
-            
-            quote = quotes.get(code)
-            rt_close = float(quote.get('close', 0) or 0)
-            last_close = float(quote.get('last_close', 0) or 0)
-            
-            if rt_close <= 0 and last_close > 0:
-                rt_close = last_close 
-
-            if last_close > 0 and rt_close > 0:
-                pct = ((rt_close / last_close) - 1) * 100
-                pct_str = f"{pct:+.2f}%"
-            else:
-                pct_str = "--"
-
-            cap_str = self._cap_cache_na.get(code, "--")
-
-            self.model.set_cell_value(i, "现价", f"{rt_close:.2f}" if rt_close > 0 else "--")
-            self.model.set_cell_value(i, "涨幅%", pct_str)
-            self.model.set_cell_value(i, "市值", cap_str)
-
-    def _check_na_daily_schedule(self):
-        now = datetime.datetime.now()
-        if now.weekday() >= 5: return
-        refresh_times = [(9, 25, 'full')]
-        today_str = now.strftime('%Y%m%d')
-        for h, m, mode in refresh_times:
-            if f"{today_str}_{h:02d}{m:02d}" in self._na_daily_fired_today: continue
-            if 0 <= (now.hour * 60 + now.minute) - (h * 60 + m) <= 1:
-                self._na_daily_fired_today.add(f"{today_str}_{h:02d}{m:02d}")
-                if mode == 'full': self._load_na_daily_report()
-                else: self._load_na_daily_incremental("#32D7E0")
-                break
 
     def _on_double_click(self, index):
         if not index.isValid(): return
-        proxy_row = index.row()
         source_index = self.proxy_model.mapToSource(index)
         row = source_index.row()
         
         code = self.model.row_data[row].get("代码")
         if code:
-            code_list = [{'代码': r.get("代码", ""), '名称': r.get("名称", "")} for r in self.model.row_data]
-            event_bus.sig_show_kline_with_list.emit(code, code_list, proxy_row)
+            code_list = []
+            for r in range(self.proxy_model.rowCount()):
+                s_idx = self.proxy_model.mapToSource(self.proxy_model.index(r, 0))
+                if s_idx.row() < len(self.model.row_data):
+                    rd = self.model.row_data[s_idx.row()]
+                    code_list.append({'代码': rd.get("代码", ""), '名称': rd.get("名称", "")})
+            
+            current_idx = 0
+            for i, c in enumerate(code_list):
+                if c['代码'] == code:
+                    current_idx = i
+                    break
+                    
+            event_bus.sig_show_kline_with_list.emit(code, code_list, current_idx)
 
     def _show_context_menu(self, pos):
         index = self.na_daily_table.indexAt(pos)
@@ -492,10 +387,11 @@ class NADailyTab(BaseStockTab):
             
         code = self.model.row_data[row].get("代码", "")
         name = self.model.row_data[row].get("名称", "")
+        row_data = self.model.row_data[row]
         if not code or not name: return
 
         from ui.components.stock_context_menu import build_stock_context_menu
-        build_stock_context_menu(self, code, name)
+        build_stock_context_menu(self, code, name, vcp_data=row_data)
 
     def _parse_battle_report(self, content: str) -> list:
         stocks = []

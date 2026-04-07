@@ -3,7 +3,7 @@ import datetime
 from vcp.constants import SPECIAL_POOL_DATA_CACHE, APP_VERSION
 from ui.components.kline_window_manager import kline_manager
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTabWidget, QPushButton, QLabel, QLineEdit, QComboBox, QMenu,
     QTextEdit, QProgressBar, QSpinBox, QDoubleSpinBox, QFrame,
     QToolButton
@@ -14,39 +14,32 @@ from PyQt6.QtGui import QColor, QIcon, QShortcut, QKeySequence
 # 核心引擎与数据层
 from vcp.data_provider import TdxDataProvider
 from vcp.engine import VCPEngine
-from vcp.ai_service import KimiAIService
 from ui.kline_window_qt import KLineChartWindow
 
-from ui.components import NumericTableWidgetItem, AnimatedCard, PulsingDot, GlassPanel, AnimatedHoverButton
+from ui.components import AnimatedCard, PulsingDot, GlassPanel, AnimatedHoverButton
 from ui.tabs.scan_tab import ScanTab
-from ui.panels.ai_diag_panel import AIDiagPanel
 from ui.tabs.rt_monitor_tab import RtMonitorTab
 from ui.tabs.watchlist_tab import WatchlistTab
 from ui.tabs.na_daily_tab import NADailyTab
 from ui.tabs.foreign_block_trade_tab import ForeignBlockTradeTab
-from ui.tabs.ai_tracker_tab import AITrackerTab
 from ui.tabs.asian_market_tab import AsianMarketTab
 from core.event_bus import event_bus
 from core.event_types import DataEvent
 from core.logger import get_logger
+
+from core.cache_manager import CacheManager
+from ui.startup_loader import StartupLoader
 from core.task_manager import task_manager
-from ui.mixins.data_cache_mixin import DataCacheMixin
 
 log = get_logger(__name__)
 
 
-class MainWindowQT(DataCacheMixin, QMainWindow):
+class MainWindowQT(QMainWindow):
     """紫金研选主窗口 — 纯外壳控制器（Phase 2 重构后）"""
     _sig_f5_done = pyqtSignal(int, float)
     _sig_ui_call = pyqtSignal(object)
 
-    def _merge_and_wrap_ai_diag(self, text):
-        """将AI诊断文本截断为表格可显示的摘要"""
-        if not text:
-            return ''
-        # 取第一行或前80字作为摘要
-        first_line = text.split('\n')[0].strip()
-        return first_line[:80] if len(first_line) > 80 else first_line
+    # _merge_and_wrap_ai_diag 已删除 — AI诊断功能已移除，无调用方
 
     @pyqtSlot(object)
     def _run_ui_callback(self, callback):
@@ -67,10 +60,17 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
         self._available_screen_geo = self._get_logical_work_area()
         self.setWindowIcon(QIcon(os.path.join(os.path.dirname(os.path.dirname(__file__)), "bull_icon.ico")))
         # 注意：这里我们移除了 FramelessWindowHint，完全拥抱原生窗口！
-        self.setWindowTitle("紫金研选量化终端")
+        # setWindowTitle 已在上方 L63 设置过，不再重复
         # 强制接管最小尺寸，不让内部控件撑爆屏幕导致 resize 生效失败！
         self.setMinimumSize(1000, 600)
         self._sig_ui_call.connect(self._run_ui_callback)
+        
+        # 绑定系统级全局网络状态变更，确保所有角色的状态与UI强同步
+        event_bus.sig_network_status_changed.connect(self._update_network_ui)
+
+        self.startup_loader = StartupLoader(self)
+        self.cache_manager = CacheManager()
+        self._f5_cancelled = False
         self._settings = QSettings("VCPHunter", "MainWindowQT")
         
         self._splash_update(60, "正在构建主界面模块...")
@@ -79,8 +79,6 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
         self.engine = VCPEngine.get_instance()
         self.worker = None
         self._current_results = []
-        self._ai_diag_results = {}
-        self._kimi_service = KimiAIService()
         self._cache_date = None
 
         # 全局样式（从 ui/styles/global_qss.py 集中管理）
@@ -149,8 +147,6 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.addWidget(left_panel, 1)
         content_layout.addWidget(self.tabs_wrapper, 5)
-        self.panel_ai.setVisible(False) # 默认隐藏
-        content_layout.addWidget(self.panel_ai, 1)
         
         main_layout.addLayout(content_layout, 1)
         
@@ -199,14 +195,9 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
         # 9. 恢复之前的界面布局、列宽、表格排序
         self._restore_ui_state()
         
-        self._last_auto_rt_date = ""
-        self._auto_rt_timer = QTimer(self)
-        self._auto_rt_timer.timeout.connect(self._check_auto_rt_monitor)
-        self._auto_rt_timer.start(60000)
-
         self._splash_update(90, "正在加载数据...")
-        QTimer.singleShot(2500, self._deferred_data_load)
-        QTimer.singleShot(4500, self._smart_startup)
+        QTimer.singleShot(2500, self.startup_loader.deferred_data_load)
+        QTimer.singleShot(4500, self.startup_loader.smart_startup)
         
         self._init_central_broadcaster()
 
@@ -220,7 +211,6 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
         screen = QApplication.primaryScreen()
         return screen.availableGeometry()
 
-    # Bug#2 修复: _smart_startup 统一由 DataCacheMixin 提供，此处不再覆盖
     # 联网成功后的各 Tab 刷新逻辑由 _on_smart_startup_online_done 负责
 
     def _on_smart_startup_online_done(self):
@@ -228,15 +218,13 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
         try:
             self._update_network_ui(True)
             # 测速完成后，主动触发各表格的独立联网实时刷新(覆盖掉此前加载的本地缓存)
-            if hasattr(self, 'tab_na_daily') and getattr(self.tab_na_daily, '_na_daily_codes', None):
+            if hasattr(self, 'tab_na_daily') and hasattr(self.tab_na_daily, '_auto_refresh_realtime'):
                 self.tab_na_daily._auto_refresh_realtime(force=True)
-            if hasattr(self, 'tab_ai_tracker') and getattr(self.tab_ai_tracker, '_ai_tracker_codes', None):
-                self.tab_ai_tracker._auto_refresh_ai_tracker(force=True)
-            if hasattr(self, 'tab_foreign_block') and getattr(self.tab_foreign_block, '_block_trade_codes', None):
+            if hasattr(self, 'tab_foreign_block') and hasattr(self.tab_foreign_block, '_auto_refresh_realtime'):
                 self.tab_foreign_block._auto_refresh_realtime(force=True)
             if hasattr(self, 'tab_watchlist') and self.tab_watchlist:
                 sp_codes = [str(r.get("代码")) for r in self.tab_watchlist.model.row_data if r.get("代码")]
-                if sp_codes:
+                if sp_codes and hasattr(self.tab_watchlist, '_refresh_special_quotes'):
                     task_manager.run_in_background(
                         self.tab_watchlist._refresh_special_quotes, sp_codes,
                         on_success=lambda q: self.tab_watchlist._update_quotes_ui(q) if q else None,
@@ -245,37 +233,7 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
         except Exception as e:
             log.error(f"[智能启动] 联网后Tab刷新异常: {e}")
 
-    def _check_auto_rt_monitor(self):
-        """挂机闹钟：每天只需触发一次在盘中时间段的自动刷新开始"""
-        if not hasattr(self, 'tab_rt'):
-            return
-            
-        now = datetime.datetime.now()
-        today_str = now.strftime("%Y-%m-%d")
-        if getattr(self, '_last_auto_rt_date', "") == today_str:
-            return
-            
-        # 如果已经人工开启了，记录一下，今天就不越俎代庖了
-        if hasattr(self.tab_rt, 'rt_worker') and self.tab_rt.rt_worker and self.tab_rt.rt_worker.isRunning():
-            self._last_auto_rt_date = today_str
-            return
-            
-        from vcp.constants import MARKET_OPEN_AM, MARKET_CLOSE_PM
-        h, m = now.hour, now.minute
-        in_market = (
-            (h > MARKET_OPEN_AM[0] or (h == MARKET_OPEN_AM[0] and m >= MARKET_OPEN_AM[1]))
-            and (h < MARKET_CLOSE_PM[0] or (h == MARKET_CLOSE_PM[0] and m <= MARKET_CLOSE_PM[1]))
-        )
-        
-        if in_market:
-            # 只有当数据已经备齐，且网络通畅时才帮用户按按钮
-            if self.data_provider.cache_data and len(self.data_provider.cache_data) >= 100:
-                if self.data_provider.is_online():
-                    log.info(f"[挂机闹钟] 现在是 {h:02d}:{m:02d} 进入盘中，代替人工点击启动...")
-                    from ui.components.toast_widget import show_toast
-                    show_toast("挂机闹钟：进入盘中时段，自动拉起盘中监控！", "info", self, duration=4000)
-                    self.tab_rt._toggle_rt_monitor()
-                    self._last_auto_rt_date = today_str
+    # _check_auto_rt_monitor 已删除 — 功能已被 RtMonitorTab._check_auto_start_stop() 完全替代，0 调用方
 
     def _toggle_network(self):
         """"""
@@ -296,7 +254,7 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
             self.data_provider.set_online_mode(False)
             self._update_network_ui(False)
 
-    def _update_network_ui(self, online: bool):
+    def _update_network_ui(self, online: bool, detail: str = ""):
         """"""
         self.btn_datasource.setEnabled(True)
         if online:
@@ -348,6 +306,23 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
                 show_toast("服务器测速失败，请检查网络。", "error", self, duration=3500)
 
         task_manager.run_in_background(_reconnect_task, on_success=lambda res: self._call_in_ui(lambda: _on_done(res)), task_id="force_reconnect")
+
+    def _set_default_dates(self):
+        import datetime
+        today = datetime.date.today().strftime('%Y%m%d')
+        self.ent_start.setText(today)
+        self.ent_end.setText(today)
+
+    def _set_date_range(self, days, ytd=False):
+        import datetime
+        today = datetime.date.today()
+        ed = today.strftime('%Y%m%d')
+        if ytd:
+            sd = today.strftime('%Y0101')
+        else:
+            sd = (today - datetime.timedelta(days=days)).strftime('%Y%m%d')
+        self.ent_start.setText(sd)
+        self.ent_end.setText(ed)
 
 
     def _splash_update(self, value: int, status: str = ""):
@@ -468,9 +443,6 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
         
         self.btn_f5 = QPushButton("🔄 F5 日线预计算")
         self.btn_rt_sidebar = QPushButton("⚡ 启动盘中监控")
-        self.btn_diag = QPushButton("🤖 AI 个股诊断")
-        self.btn_diag.setEnabled(False)
-        self.btn_diag.setToolTip("AI 个股深度诊断")
         
         common_btn_qss = """
             QPushButton { 
@@ -481,21 +453,20 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
             QPushButton:pressed { background-color: #0F172A; }
             QPushButton:disabled { color: #475569; border: 1px solid #1E293B; }
         """
-        for b in (self.btn_f5, self.btn_rt_sidebar, self.btn_diag):
+        for b in (self.btn_f5, self.btn_rt_sidebar):
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.setFixedHeight(34)
             b.setStyleSheet(common_btn_qss)
             
         sec_layout.addWidget(self.btn_f5, 0, 0)
         sec_layout.addWidget(self.btn_rt_sidebar, 0, 1)
-        sec_layout.addWidget(self.btn_diag, 1, 0, 1, 2)
         
         ops_layout.addLayout(sec_layout)
         
-        self.btn_f5.clicked.connect(self._action_refresh)
+        self.btn_f5.clicked.connect(self._action_refresh_f5)
         self.btn_rt_sidebar.clicked.connect(lambda *args: hasattr(self, 'tab_rt') and self.tab_rt._toggle_rt_monitor())
         self._update_last_f5_time()
-        QShortcut(QKeySequence("F5"), self, activated=self._action_refresh)
+        QShortcut(QKeySequence("F5"), self, activated=self._action_refresh_f5)
         
         ops_layout.addSpacing(4)
         
@@ -574,7 +545,6 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
 
         # --- 右侧 AI 诊断面板(独立组件) ---
 
-        self.panel_ai = AIDiagPanel(self.data_provider, self._kimi_service, self)
         
 
         self.tab_rt = RtMonitorTab(self.data_provider, self.engine, self)
@@ -586,7 +556,7 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
 
         # Tab 3: 关注池（独立组件）
 
-        self.tab_watchlist = WatchlistTab(self.data_provider, self.panel_ai, self)
+        self.tab_watchlist = WatchlistTab(self.data_provider, self)
         self.tabs.addTab(self.tab_watchlist, '关注池')
         self.table_sp = self.tab_watchlist.table_sp  # 向下兼容引用
 
@@ -611,24 +581,15 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
         self.tab_earnings = EarningsTab(self.data_provider, self)
         self.tabs.addTab(self.tab_earnings, "业绩异动")
 
-        # Tab 8: AI产业链跟踪（独立组件）
-        from ui.tabs.ai_tracker_tab import AITrackerTab
-        self.tab_ai_tracker = AITrackerTab(self.data_provider, self)
-        self.tabs.addTab(self.tab_ai_tracker, "AI算力链")
-        self.ai_tracker_table = self.tab_ai_tracker.ai_tracker_table  # 向下兼容
-
         from ui.tabs.log_tab import LogTab
         self.tab_log = LogTab(self)
         self.tabs.addTab(self.tab_log, "系统日志")
         
-        event_bus.sig_data_updated.connect(self._on_global_data_updated)
+        event_bus.sig_rt_quotes_refreshed.connect(self._on_rt_quotes_refreshed)
         event_bus.sig_task_progress.connect(self._on_task_progress)
         event_bus.sig_show_kline.connect(self._on_show_kline)
         event_bus.sig_show_kline_with_list.connect(self._on_show_kline_with_list)
-        event_bus.sig_open_ai_diag.connect(self._on_open_ai_diag)
 
-        # AI 面板默认隐藏，通过 event_bus 信号按需显示
-        self.panel_ai.hide()
 
         # === Bug#5 修复: Ctrl+C 钩子适配 QTableView + QTableWidget 双模式 ===
         tables_to_patch = [
@@ -685,25 +646,7 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
             t.keyPressEvent = make_kp(t, original_kp)
 
 
-    def _filter_table(self, table, text, code_col=0, name_col=2):
-        import pypinyin
-        text = text.strip().lower()
-        for r in range(table.rowCount()):
-            if not text:
-                table.setRowHidden(r, False)
-                continue
-            code_item = table.item(r, code_col)
-            name_item = table.item(r, name_col)
-            code_text = code_item.text().lower() if code_item else ""
-            name_text = name_item.text().lower() if name_item else ""
-            
-            try:
-                py_initials = "".join(pypinyin.lazy_pinyin(name_text, style=pypinyin.Style.FIRST_LETTER)).lower()
-            except Exception:
-                py_initials = ""
-                
-            match = text in code_text or text in name_text or text in py_initials
-            table.setRowHidden(r, not match)
+    # _filter_table 已删除 — 各 Tab 已自行实现 proxy_model.setFilterText()，0 调用方
 
 
     # _on_table_double_click 已移除(#3)，各 Tab 自行通过 EventBus 广播 K 线请求
@@ -747,7 +690,7 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
                 self.resize(1024, 768)
 
     # F5预计算 / 缓存加载 / 智能启动 / RPS缓存 / RT缓存
-    # 已迁移至 ui.mixins.data_cache_mixin.DataCacheMixin
+    # 已迁移至 core/rps_precomputer.py + ui/startup_loader.py
 
     def _update_last_f5_time(self):
         import os, datetime
@@ -773,9 +716,7 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
         else:
             self.lbl_status.setText("F5预计算完成: 无新增数据")
 
-    def showEvent(self, event):
-        """正常显示事件"""
-        super().showEvent(event)
+    # showEvent 空覆写已删除 — 无自定义逻辑，交给 QMainWindow 默认处理
 
     def closeEvent(self, event):
         """应用关闭：广播信号让各组件自行保存，然后清理资源"""
@@ -786,7 +727,7 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
 
         # 保存盘中监控缓存（MVC兼容）
         try:
-            self._save_rt_cache()
+            if hasattr(self, 'table_rt'): self.cache_manager.save_rt_cache(self.table_rt)
         except Exception as e:
             log.error(f"[关闭] 保存盘中缓存异常: {e}")
 
@@ -813,6 +754,45 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
             self._auto_rt_timer.stop()
 
         super().closeEvent(event)
+
+    
+
+    def _action_refresh_f5(self):
+        """F5 盘后预计算界面触发层"""
+        from PyQt6.QtWidgets import QMessageBox
+        reply = QMessageBox.question(self, "盘后一键预计算",
+            "此操作将执行完整的盘后数据重建流程：\n\n"
+            "① 从通达信本地日线(vipdoc)重新读取数据\n"
+            "② 预计算全市场RPS排名(120日/250日)\n"
+            "③ 预计算板块RPS排名\n"
+            "④ 保存缓存供次日盘中监控使用\n\n"
+            "请确保已在通达信中完成【盘后数据下载】.\n是否执行?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+
+        if reply != QMessageBox.StandardButton.Yes: return
+
+        if hasattr(self, 'lbl_status'): self.lbl_status.setText("F5 盘后预计算进行中...")
+        if hasattr(self, 'btn_scan'): self.btn_scan.setEnabled(False)
+        if hasattr(self, 'btn_cancel'): self.btn_cancel.setEnabled(True)
+        self._f5_cancelled = False
+
+        from core.rps_precomputer import RPSPrecomputer
+        
+        def _set_status_cb(msg):
+            self._call_in_ui(lambda: hasattr(self, 'lbl_status') and self.lbl_status.setText(msg))
+            
+        def _done_cb(count, elapsed):
+            self._call_in_ui(lambda: self._on_f5_done(count, elapsed))
+
+        from core.task_manager import task_manager
+        task_manager.run_in_background(
+            lambda: RPSPrecomputer.run_f5_pipeline(
+                data_provider=self.data_provider,
+                engine=self.engine,
+                cancelled_checker=lambda: getattr(self, '_f5_cancelled', False),
+                set_status_callback=_set_status_cb,
+                done_callback=_done_cb
+            ), task_id="f5_precompute")
 
     def _start_scan(self):
         self.tab_scan.start_scan(self.ent_start.text(), self.ent_end.text())
@@ -841,71 +821,45 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
     # =======================================================================
     # 右键菜单委托方法
     # =======================================================================
-    def _toggle_special(self, code: str, name: str, is_fav: bool, vcp_data=None):
-        """添加/移除关注池 — 委托给 WatchlistTab 组件"""
-        if hasattr(self, 'tab_watchlist'):
-            self.tab_watchlist.toggle_special(code, name, is_fav, vcp_data=vcp_data)
-            action_text = "移出" if is_fav else "加入"
-            self.lbl_status.setText(f"{name}({code}) 已{action_text}关注池")
+    # _toggle_special 已删除 — 关注池操作已统一由 watchlist_vm.toggle_stock() 处理，0 调用方
 
 
 
-    def _export_current_tab(self):
-        """导出当前激活 Tab 的表格数据"""
-        current_idx = self.tabs.currentIndex()
-        tab_widget = self.tabs.widget(current_idx)
-        # 优先尝试调用 Tab 组件自身的导出方法
-        if hasattr(tab_widget, 'export_table_to_excel'):
-            tab_widget.export_table_to_excel()
-            return
-        if hasattr(tab_widget, '_export_to_excel'):
-            tab_widget._export_to_excel()
-            return
-        # Bug#3 修复: 兜底友好提示，不再调用不存在的方法
-        from ui.components.toast_widget import show_toast
-        tab_name = self.tabs.tabText(current_idx)
-        show_toast(f"「{tab_name}」暂不支持导出", "warning", self, duration=2500)
-        log.warning(f"[导出] Tab '{tab_name}' 未实现导出方法")
+    # _export_current_tab 已删除 — 无菜单/快捷键指向它，各 Tab 自带独立导出按钮
 
     # =======================================================================
     # [Global Event Bus] 信号中转站
     # =======================================================================
-    @pyqtSlot(str, object)
-    def _on_global_data_updated(self, data_type: str, payload: object):
-        """响应全局数据变更信号，更新状态栏与标的池计数"""
+    @pyqtSlot(object)
+    def _on_rt_quotes_refreshed(self, payload: object):
+        """响应盘中监控刷新完成"""
         try:
-            if data_type == DataEvent.RT_QUOTES_REFRESHED.value:
-                count = len(payload) if payload else 0
+            count = len(payload) if payload else 0
+            if hasattr(self, 'lbl_status'):
                 self.lbl_status.setText(f"实时报价已刷新 ({count} 条)")
-            elif data_type == "scan_results":
-                count = len(payload) if payload else 0
-                self.lbl_status.setText(f"扫描结果已更新 ({count} 条)")
-            else:
-                self.lbl_status.setText(f"数据更新: {data_type}")
-            # 同步标的池计数
-            if self.data_provider.cache_data:
+            if self.data_provider.cache_data and hasattr(self, 'lbl_code_count'):
                 total = len(self.data_provider.cache_data)
                 self.lbl_code_count.setText(f"标的池: {total}")
         except Exception as e:
-            log.error(f"[EventBus] _on_global_data_updated 异常: {e}")
+            log.error(f"[EventBus] _on_rt_quotes_refreshed 异常: {e}")
 
     @pyqtSlot(str, int, str)
     def _on_task_progress(self, module: str, pct: int, msg: str):
         """处理扫描进度更新"""
         if module == "scan":
-            self.progress_bar.setValue(pct)
-            self.lbl_status.setText(msg)
-            if msg == "start":
-                self.btn_scan.setText("⏳ 扫描中...")
-                self.btn_scan.setEnabled(False)
-                self.btn_cancel.setEnabled(True)
-            elif pct == 100 or pct == 0:
-                self.btn_scan.setText("执行全盘VCP扫描")
-                self.btn_scan.setEnabled(True)
-                self.btn_cancel.setEnabled(False)
-                # 扫描完成后主动回收内存
-                import gc
-                gc.collect()
+            if hasattr(self, 'progress_bar'): self.progress_bar.setValue(pct)
+            if hasattr(self, 'lbl_status'): self.lbl_status.setText(msg)
+            if hasattr(self, 'btn_scan'):
+                if msg == "start":
+                    self.btn_scan.setText("⏳ 扫描中...")
+                    self.btn_scan.setEnabled(False)
+                    if hasattr(self, 'btn_cancel'): self.btn_cancel.setEnabled(True)
+                elif pct == 100 or pct == 0:
+                    self.btn_scan.setText("执行全盘VCP扫描")
+                    self.btn_scan.setEnabled(True)
+                    if hasattr(self, 'btn_cancel'): self.btn_cancel.setEnabled(False)
+                    import gc
+                    gc.collect()
         elif module == "rt_monitor":
             if msg == "start":
                 self.btn_rt_sidebar.setText("⏹ 停止盘中监控")
@@ -952,7 +906,3 @@ class MainWindowQT(DataCacheMixin, QMainWindow):
             current_idx=current_idx,
         )
 
-    def _on_open_ai_diag(self, code: str, auto_start: str):
-        """响应各 Tab 的 AI 诊断请求"""
-        if hasattr(self, 'panel_ai'):
-            self.panel_ai.open_ai_diag(preset_code=code, auto_start=auto_start)

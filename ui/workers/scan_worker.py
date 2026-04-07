@@ -1,10 +1,9 @@
 # ui/workers.py - 后台工作线程
 # 从 main_window_qt.py 拆分出来的 ScanWorker 和 RtScanWorker
 import os
-import datetime
-import pandas as pd
 from PyQt6.QtCore import QThread, pyqtSignal
-from vcp.engine import VCPEngine, VCPParams
+import pandas as pd
+from vcp.engine import VCPEngine
 from core.logger import get_logger
 
 log = get_logger(__name__)
@@ -73,6 +72,7 @@ class ScanWorker(QThread):
 
             total_days = len(matrix)
             all_results = []
+            reason_stats = {}
             
             for i, (d_str, d_rps) in enumerate(matrix.items()):
                 if self._is_cancelled:
@@ -121,10 +121,23 @@ class ScanWorker(QThread):
                                     '热点板块': "-"
                                 })
                                 all_results.append(m)
-                        except Exception:
+                            else:
+                                reason_stats[reason] = reason_stats.get(reason, 0) + 1
+                        except Exception as e:
+                            log.error(f"[区间扫描] {code} 评估异常: {e}", exc_info=True)
                             continue
-            
-            log.info(f"[耗时监控] RPS第一阶段扫描完成，耗时: {_time.time() - _t1:.2f} 秒，过滤后剩余 {len(all_results)} 只")
+
+            if all_results:
+                # 按日期排序，去重保留最近一天
+                df_all = pd.DataFrame(all_results).sort_values('触发日期')
+                df_all = df_all.drop_duplicates(subset=['代码'], keep='last')
+                if '评分' in df_all.columns:
+                    df_all['评分_tmp'] = pd.to_numeric(df_all['评分'], errors='coerce')
+                    df_all = df_all.sort_values(by=['触发日期', '评分_tmp'], ascending=[False, False])
+                    df_all = df_all.drop(columns=['评分_tmp'])
+                all_results = df_all.to_dict('records')
+
+            log.info(f"[耗时监控] RPS第一阶段完成，耗时: {_time.time() - _t1:.2f} 秒，去重后剩余 {len(all_results)} 只")
             
             # ---- 二级过滤:与盘中监控对齐的机构+市值筛选 ----
             if all_results:
@@ -134,8 +147,8 @@ class ScanWorker(QThread):
                 unique_codes = df_res['代码'].unique().tolist()
                 _scan_close = {}
                 for c in unique_codes:
-                    _cd = self.data_provider.cache_data.get(c)
-                    if _cd is not None and not _cd.empty:
+                    _cd = self.data_provider.get_data(c)
+                    if _cd is not None and len(_cd) > 0:
                         _scan_close[c] = float(_cd.iloc[-1]['close'])
                         
                 # 批量查询市值

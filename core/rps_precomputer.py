@@ -1,0 +1,189 @@
+# -*- coding: utf-8 -*-
+"""
+core/rps_precomputer.py
+F5 预计算核心组件，封装 RPS大矩阵 以及 Sector板块 RPS的纯后台计算流。
+"""
+import os
+import datetime
+import time
+import pickle
+import gc
+
+
+from core.logger import get_logger
+from core.event_bus import event_bus
+
+log = get_logger(__name__)
+
+class RPSPrecomputer:
+    """封装原本在 MainWindow_DataCacheMixin 中的 _action_refresh 业务。"""
+    
+    @staticmethod
+    def run_f5_pipeline(data_provider, engine, cancelled_checker, set_status_callback, done_callback):
+        """
+        运行 F5 预计算核心流程。这是个纯阻塞方法，应由 TaskManager 在后台线程调用。
+        
+        :param data_provider: TdxDataProvider 实例
+        :param engine: VCPEngine 实例
+        :param cancelled_checker: 一个无参函数 `lambda: bool` 返回是否用户中途取消
+        :param set_status_callback: 回调，用于回传进度日记给界面
+        :param done_callback: 回调，完成后把计算耗时和股票总数传回以更新 UI
+        """
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cache_dir = os.path.join(project_root, 'data', 'Cache')
+        os.makedirs(cache_dir, exist_ok=True)
+        total_start = time.time()
+
+        def _log_and_status(msg):
+            log.info(msg)
+            if set_status_callback:
+                set_status_callback(msg)
+
+        try:
+            _log_and_status("\n" + "=" * 60)
+            _log_and_status("[F5] 盘后一键预计算 -- 开始")
+            _log_and_status("=" * 60)
+
+            # --- 阶段0: 除权除息 ---
+            _log_and_status("[F5] 阶段0: 重新解析通达信 gbbq 除权除息数据...")
+            try:
+                data_provider._load_local_gbbq(force=True)
+            except Exception as e:
+                log.error(f"[F5] gbbq 解析异常(不影响后续): {e}")
+
+            # --- 阶段1: 重读日线 ---
+            today_str = datetime.date.today().strftime('%Y%m%d')
+            skip_stage1 = False
+            try:
+                from vcp.polars_engine import load_cache_parquet
+                cached = load_cache_parquet()
+                if cached:
+                    cached_data, cached_date = cached
+                    if cached_date == today_str and len(cached_data) > 2000:
+                        data_provider.cache_data = cached_data
+                        codes_dict = data_provider._get_codes_from_vipdoc()
+                        data_provider.code2name = codes_dict
+                        _log_and_status(f"[F5] 阶段1/3: ⚡ 断点续算 — 检测到今日缓存 ({len(cached_data)} 只)，跳过重读")
+                        skip_stage1 = True
+            except Exception as e:
+                log.info(f"[F5] 断点续算检测失败(不影响全量重读): {e}")
+
+            if not skip_stage1:
+                _log_and_status("[F5] 阶段1/3: 清空缓存,开始从 vipdoc 重读...")
+                try:
+                    data_provider.cache_data = {}
+                    was_online = data_provider.is_online()
+                    data_provider.set_online_mode(False)
+                    try:
+                        codes_dict = data_provider._get_codes_from_vipdoc()
+                        _log_and_status(f"[F5] 阶段1/3: 从 vipdoc 扫描到 {len(codes_dict)} 只标的")
+
+                        def _progress(done, total, eta):
+                            if total > 0 and done % 500 == 0:
+                                _log_and_status(f"[F5] 阶段1/3: 重读本地数据 {done}/{total}")
+
+                        data_provider.sync_market_data(
+                            codes_dict, force_refresh=True, progress_callback=_progress
+                        )
+                        data_provider.code2name = codes_dict
+                    finally:
+                        if was_online:
+                            data_provider.set_online_mode(True)
+                    count = len(data_provider.cache_data)
+                    _log_and_status(f"[F5] 阶段1/3 完成 -- 共加载 {count} 只标的")
+
+                    try:
+                        from vcp.polars_engine import save_cache_parquet
+                        save_cache_parquet(data_provider.cache_data, today_str)
+                        log.info("[F5] 阶段1 断点存档完成 — 下次 F5 可跳过重读")
+                    except Exception as e:
+                        log.warning(f"[F5] 断点存档失败(不影响后续): {e}")
+
+                except Exception as e:
+                    log.error(f"[F5] ❌ 阶段1 重读本地数据异常: {e}", exc_info=True)
+                    return
+
+            if cancelled_checker and cancelled_checker():
+                _log_and_status("[F5] ⏹ 用户取消")
+                return
+
+            # --- 阶段2: RPS 矩阵 ---
+            _log_and_status("[F5] 阶段2/3: 预计算 RPS 矩阵...")
+            try:
+                all_data = {
+                    c: df for c, df in data_provider.cache_data.items()
+                    if df is not None and len(df) >= 60
+                }
+                log.info(f"[F5] 阶段2/3: 有效标的 {len(all_data)} 只(>=60根K线)")
+                today_str = datetime.date.today().strftime('%Y%m%d')
+                rps_matrix = engine.build_rps_matrix(all_data, today_str, today_str)
+
+                if rps_matrix:
+                    d_str = list(rps_matrix.keys())[-1]
+                    d_rps = rps_matrix[d_str]
+                    rps120 = d_rps.get('rps120', {})
+                    rps250 = d_rps.get('rps250', {})
+                    rps_pkg = {'date': d_str, 'rps120': rps120, 'rps250': rps250}
+                    rps_path = os.path.join(cache_dir, 'vcp_rps_precomputed.pkl')
+                    with open(rps_path, 'wb') as f:
+                        pickle.dump(rps_pkg, f, protocol=4)
+                    engine.set_precomputed_rps(d_str, rps120, rps250)
+                    # 有效排名 = 值不是 NaN 的条目数
+                    valid_count = sum(1 for v in rps120.values() if v == v)  # NaN != NaN
+                    _log_and_status(f"[F5] 阶段2/3 完成 -- RPS 已存 ({valid_count} 只有效排名)")
+                else:
+                    log.warning("[F5] ⚠ 阶段2/3: RPS 矩阵计算返回空")
+            except Exception as e:
+                log.error(f"[F5] ❌ 阶段2 RPS 计算异常: {e}", exc_info=True)
+
+            if cancelled_checker and cancelled_checker():
+                _log_and_status("[F5] ⏹ 用户取消")
+                return
+
+            # --- 阶段2.5: 板块 RPS ---
+            _log_and_status("[F5] 阶段2.5/3: 预计算板块 RPS...")
+            try:
+                from vcp.sector import SectorManager
+                from vcp.constants import SECTOR_RPS_CACHE_FILE
+                tdx_root = (
+                    os.path.dirname(data_provider.tdx_vipdoc)
+                    if data_provider.tdx_vipdoc else r'D:\HT'
+                )
+                sm = SectorManager.get_instance(tdx_root)
+                all_data_f5 = {
+                    c: df for c, df in data_provider.cache_data.items()
+                    if df is not None and len(df) >= 60
+                }
+                sector_date = datetime.date.today().strftime('%Y%m%d')
+                sector_rps = sm.build_sector_rps(all_data_f5, sector_date)
+                sector_pkg = {'date': sector_date, 'sector_rps': sector_rps}
+                with open(SECTOR_RPS_CACHE_FILE, 'wb') as f:
+                    pickle.dump(sector_pkg, f, protocol=4)
+                _log_and_status(f"[F5] 阶段2.5/3 完成 -- 板块 RPS ({len(sector_rps)} 个)")
+                del all_data_f5, sector_rps, sector_pkg
+            except Exception as e:
+                log.error(f"[F5] ❌ 阶段2.5 板块 RPS 异常: {e}", exc_info=True)
+            
+            # 内存回收
+            gc.collect()
+
+            elapsed = time.time() - total_start
+            _log_and_status(f"[F5] ✅ 全部完成 -- 耗时 {elapsed:.1f} 秒")
+
+        except Exception as e:
+            log.error(f"[F5] ❌ 预计算过程发生未预期异常: {e}", exc_info=True)
+        finally:
+            elapsed = time.time() - total_start
+            count = len(data_provider.cache_data) if data_provider.cache_data else 0
+            log.info(f"[F5] 内部流程结束 (count={count}, elapsed={elapsed:.1f}s)")
+            
+            # 收尾过期清理
+            try:
+                from core.cache_policy import cleanup_stale_caches
+                cleanup_stale_caches(project_root)
+            except Exception as e:
+                log.warning(f"[F5] 缓存清理跳过: {e}")
+            
+            # 使用回调返送给UI以脱钩
+            if done_callback:
+                done_callback(count, elapsed)

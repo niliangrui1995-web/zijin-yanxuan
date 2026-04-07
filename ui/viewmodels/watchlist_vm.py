@@ -27,33 +27,40 @@ class WatchlistViewModel:
         return cls._instance
         
     def _load_data(self):
-        """将硬盘里的数据缓存到内存中，避免每次读盘"""
-        if not os.path.exists(SPECIAL_LATEST_DATA):
-            self._cache = {}
-            return
-            
+        """将数据加载到内存中，优先读SQLite数据库，不存在则兼容读JSON"""
         try:
-            with open(SPECIAL_LATEST_DATA, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                if isinstance(data, dict):
-                    self._cache = data
-                else:
-                    self._cache = {}
+            from core.data_store import DataStore
+            data = DataStore().load_json("watchlist_special")
+            
+            if not data:
+                # 兼容旧 JSON 迁移
+                if os.path.exists(SPECIAL_LATEST_DATA):
+                    with open(SPECIAL_LATEST_DATA, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    if isinstance(data, dict):
+                        DataStore().save_json("watchlist_special", data)
+                        try:
+                            # 迁移后标记旧文件，留作备用30天后自动清除
+                            os.rename(SPECIAL_LATEST_DATA, SPECIAL_LATEST_DATA + ".migrated")
+                            log.info("[WatchlistVM] 关注池数据已自动迁移入 SQLite")
+                        except OSError as _e:
+                            log.debug(f"[WatchlistVM] 迁移旧 JSON 文件重命名失败: {_e}")
+
+            if isinstance(data, dict):
+                self._cache = data
+            else:
+                self._cache = {}
         except Exception as e:
             log.error(f"[WatchlistVM] 读取关注池失败，退化为空: {e}")
             self._cache = {}
             
     def _save_data(self):
-        """安全地将内存中的数据刷入硬盘（原子写入，防止写到一半崩溃导致文件损坏）"""
+        """安全地将内存中的数据刷入 SQLite（原子写入）"""
         try:
             with self._lock:
                 save_data = self._cache.copy()
-            os.makedirs(os.path.dirname(SPECIAL_LATEST_DATA), exist_ok=True)
-            # 先写 tmp 文件，再原子替换，避免断电/崩溃导致 JSON 损坏
-            tmp_path = SPECIAL_LATEST_DATA + '.tmp'
-            with open(tmp_path, 'w', encoding='utf-8') as f:
-                json.dump(save_data, f, ensure_ascii=False, indent=4)
-            os.replace(tmp_path, SPECIAL_LATEST_DATA)
+            from core.data_store import DataStore
+            DataStore().save_json("watchlist_special", save_data)
         except Exception as e:
             log.error(f"[WatchlistVM] 写入关注池失败: {e}")
 
@@ -101,6 +108,39 @@ class WatchlistViewModel:
         
         # 触发全局广播，让所有的 UI 界面自己去更新星星图标或重新加载数据
         event_bus.sig_watchlist_changed.emit("toggle", stock_code)
+
+    def pin_to_top(self, stock_code: str):
+        """将股票排到关注池最前排（置顶）"""
+        with self._lock:
+            if stock_code in self._cache:
+                data = self._cache.pop(stock_code)
+                new_cache = {stock_code: data}
+                new_cache.update(self._cache)
+                self._cache = new_cache
+                
+        self._save_data()
+        event_bus.sig_watchlist_changed.emit("toggle", stock_code)
+
+    def reorder(self, new_codes_list: list):
+        """
+        根据新的代码列表重新排序关注池，并持久化保存。
+        如果有新列表里没有但在旧缓存里存在的代码（防丢），会追加到末尾。
+        """
+        with self._lock:
+            new_cache = {}
+            # 1. 按照传入的新顺序依次构建
+            for code in new_codes_list:
+                if code in self._cache:
+                    new_cache[code] = self._cache[code]
+            
+            # 2. 安全兜底：如果有些在老缓存里的代码没能在新列表出现，加到最后
+            for code, data in self._cache.items():
+                if code not in new_cache:
+                    new_cache[code] = data
+            
+            self._cache = new_cache
+            
+        self._save_data()
 
 # 全局单例
 watchlist_vm = WatchlistViewModel()

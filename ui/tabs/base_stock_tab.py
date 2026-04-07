@@ -13,21 +13,9 @@ import os
 import subprocess
 import time
 
-from PyQt6.QtWidgets import (
-    QWidget, QMenu, QTableWidget, QApplication,
-)
-from PyQt6.QtGui import QColor, QCursor
-from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QWidget
 
 from core.event_bus import event_bus
-from ui.theme import (
-    COLOR_RISE, COLOR_RISE_STRONG,
-    COLOR_FALL, COLOR_FALL_STRONG,
-    COLOR_FLAT,
-    STATUS_BREAKOUT, STATUS_APPROACHING, STATUS_VCP, STATUS_INACTIVE,
-    COLOR_WARNING,
-)
-from ui.components import NumericTableWidgetItem
 
 
 class BaseStockTab(QWidget):
@@ -37,156 +25,13 @@ class BaseStockTab(QWidget):
         super().__init__(parent)
         self.data_provider = data_provider
 
-    # ================================================================
-    # 通用工具方法
-    # ================================================================
-
-    @staticmethod
-    def apply_pct_color(cell, pct_val: float):
-        """涨跌幅着色（红涨绿跌）"""
-        if pct_val > 5:
-            cell.setForeground(QColor(COLOR_RISE_STRONG))
-        elif pct_val > 0:
-            cell.setForeground(QColor(COLOR_RISE))
-        elif pct_val < -5:
-            cell.setForeground(QColor(COLOR_FALL_STRONG))
-        elif pct_val < 0:
-            cell.setForeground(QColor(COLOR_FALL))
-        else:
-            cell.setForeground(QColor(COLOR_FLAT))
-
-    @staticmethod
-    def apply_status_color(cell, status_text: str):
-        """突破状态着色"""
-        if "突破" in status_text:
-            cell.setText(f"🚀 {status_text}")
-            cell.setForeground(QColor(STATUS_BREAKOUT))
-            f = cell.font()
-            f.setBold(True)
-            cell.setFont(f)
-        elif "临近" in status_text:
-            cell.setText(f"⚠️ {status_text}")
-            cell.setForeground(QColor(COLOR_WARNING))
-            f = cell.font()
-            f.setBold(True)
-            cell.setFont(f)
-        elif "蓄力" in status_text:
-            cell.setText(f"⏳ {status_text}")
-            cell.setForeground(QColor(STATUS_APPROACHING))
-        elif "潜伏" in status_text:
-            cell.setForeground(QColor(STATUS_VCP))
-
-    def backfill_price_from_cache(self, table: QTableWidget,
-                                  code_col: int, price_col: int, pct_col: int):
-        """从 cache_data 历史数据回填现价/涨幅"""
-        if not self.data_provider:
-            return
-        for r in range(table.rowCount()):
-            code_item = table.item(r, code_col)
-            if not code_item:
-                continue
-            code = code_item.text()
-            df = self.data_provider.get_data(code)
-            if df is None or len(df) < 2:
-                continue
-            try:
-                last_close = float(df.iloc[-1]['close'])
-                prev_close = float(df.iloc[-2]['close'])
-                if last_close <= 0 or prev_close <= 0:
-                    continue
-                pct = ((last_close / prev_close) - 1) * 100
-
-                for col_idx, text in [(price_col, f"{last_close:.2f}"),
-                                      (pct_col, f"{pct:+.2f}%")]:
-                    existing = table.item(r, col_idx)
-                    if existing and existing.text() not in ('--', ''):
-                        continue
-                    if existing:
-                        existing.setText(text)
-                    else:
-                        item = NumericTableWidgetItem(text)
-                        item.setForeground(QColor(COLOR_FLAT))
-                        item.setTextAlignment(
-                            Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
-                        )
-                        table.setItem(r, col_idx, item)
-
-                    if col_idx == pct_col:
-                        cell = table.item(r, col_idx)
-                        if cell:
-                            self.apply_pct_color(cell, pct)
-            except Exception:
-                continue
-
-    def build_stock_context_menu(self, table: QTableWidget, pos,
-                                 code_col: int = 0, name_col: int = 2):
-        """构建通用右键菜单（查看K线 / 加入关注池 / 跳转通达信 / 复制代码）"""
-        row = table.rowAt(pos.y())
-        if row < 0:
-            return
-        code_item = table.item(row, code_col)
-        if not code_item:
-            return
-        code = code_item.text().strip()
-        name_item = table.item(row, name_col)
-        name = name_item.text() if name_item else code
-
-        menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: #1A1F2E;
-                color: #E2E8F0;
-                border: 1px solid rgba(255,255,255,0.08);
-                border-radius: 8px;
-                padding: 4px;
-            }
-            QMenu::item {
-                padding: 8px 24px;
-                border-radius: 4px;
-            }
-            QMenu::item:selected {
-                background-color: rgba(139,92,246,0.15);
-            }
-        """)
-
-        # 查看K线
-        act_kline = menu.addAction("📈 查看K线图")
-        act_kline.triggered.connect(
-            lambda: event_bus.sig_action_open_kline.emit(code, name)
-        )
-
-        menu.addSeparator()
-
-        # 加入/移出关注池
-        act_watch = menu.addAction("⭐ 加入关注池")
-        act_watch.triggered.connect(
-            lambda: event_bus.sig_watchlist_changed.emit("add", code)
-        )
-
-        # AI 诊断
-        act_ai = menu.addAction("🤖 AI 智能诊股")
-        act_ai.triggered.connect(
-            lambda: event_bus.sig_open_ai_diag.emit(code, "ai")
-        )
-
-        menu.addSeparator()
-
-        # 跳转通达信/东方财富
-        act_tdx = menu.addAction("🖥️ 跳转通达信")
-        act_tdx.triggered.connect(lambda: self._launch_tdx(code))
-        act_em = menu.addAction("🖥️ 跳转东方财富")
-        act_em.triggered.connect(lambda: self._launch_eastmoney(code))
-
-        # 复制代码
-        act_copy = menu.addAction("📋 复制代码")
-        act_copy.triggered.connect(
-            lambda: QApplication.clipboard().setText(code)
-        )
-
-        menu.exec(QCursor.pos())
-
     def _launch_tdx(self, code: str):
-        """跳转通达信并输入股票代码"""
+        """跳转通达信并输入股票代码（后台线程执行，不阻塞 UI）"""
+        import threading
+        threading.Thread(target=self._launch_tdx_impl, args=(code,), daemon=True).start()
+
+    def _launch_tdx_impl(self, code: str):
+        """实际跳转逻辑 —— 在后台 daemon 线程中执行"""
         try:
             import ctypes
             tdx_vipdoc = getattr(self.data_provider, 'tdx_vipdoc', '')
@@ -200,7 +45,7 @@ class BaseStockTab(QWidget):
             
             def find_tdx_window():
                 found_hwnd = ctypes.wintypes.HWND(0)
-                def callback(hwnd, lParam):
+                def callback(hwnd, _):
                     nonlocal found_hwnd
                     if not user32.IsWindowVisible(hwnd):
                         return True
@@ -225,23 +70,34 @@ class BaseStockTab(QWidget):
             hwnd = find_tdx_window()
             if not hwnd:
                 subprocess.Popen([tdx_path])
+                # 在后台线程中 sleep 不影响 UI
                 time.sleep(2)
                 hwnd = find_tdx_window()
 
-            import pyautogui
             if hwnd:
-                user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                if user32.IsIconic(hwnd):
+                    user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                else:
+                    user32.ShowWindow(hwnd, 5)  # SW_SHOW
                 user32.SetForegroundWindow(hwnd)
-                time.sleep(0.5)
-                # 输入股票代码
+                time.sleep(0.3)
+                
+                import pyautogui
+                
                 bare = code.replace('sh', '').replace('sz', '')
-                pyautogui.typewrite(bare, interval=0.05)
+                pyautogui.write(bare, interval=0.01)
+                time.sleep(0.05)
                 pyautogui.press('enter')
         except Exception as e:
             event_bus.sig_system_log.emit("error", f"[TDX] 跳转失败: {e}")
 
     def _launch_eastmoney(self, code: str):
-        """跳转东方财富并输入股票代码"""
+        """跳转东方财富并输入股票代码（后台线程执行，不阻塞 UI）"""
+        import threading
+        threading.Thread(target=self._launch_eastmoney_impl, args=(code,), daemon=True).start()
+
+    def _launch_eastmoney_impl(self, code: str):
+        """实际跳转逻辑 —— 在后台 daemon 线程中执行"""
         try:
             import ctypes
             EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
@@ -249,7 +105,7 @@ class BaseStockTab(QWidget):
             
             def find_em_window():
                 found_hwnd = ctypes.wintypes.HWND(0)
-                def callback(hwnd, lParam):
+                def callback(hwnd, _):
                     nonlocal found_hwnd
                     if not user32.IsWindowVisible(hwnd):
                         return True
@@ -271,13 +127,18 @@ class BaseStockTab(QWidget):
                 event_bus.sig_system_log.emit("warn", "[东方财富] 未检测到运行中的东方财富终端，请先启动！")
                 return
 
-            import pyautogui
-            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+            if user32.IsIconic(hwnd):
+                user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+            else:
+                user32.ShowWindow(hwnd, 5)  # SW_SHOW
             user32.SetForegroundWindow(hwnd)
-            time.sleep(0.5)
-            # 输入股票代码
+            time.sleep(0.3)
+            
+            import pyautogui
             bare = code.replace('sh', '').replace('sz', '')
-            pyautogui.typewrite(bare, interval=0.05)
+            
+            pyautogui.write(bare, interval=0.01)
+            time.sleep(0.05)
             pyautogui.press('enter')
         except Exception as e:
             event_bus.sig_system_log.emit("error", f"[东方财富] 跳转失败: {e}")
@@ -311,8 +172,10 @@ class BaseStockTab(QWidget):
             try:
                 settings.setValue(settings_key, header.saveState())
                 settings.sync()
-            except Exception as e:
-                pass
+            except Exception as _e:
+                # Why: 保存列宽配置是低优先级操作，失败不影响业务
+                import logging
+                logging.getLogger(__name__).debug(f"列宽配置保存失败: {_e}")
                 
         throttle_timer.timeout.connect(_save_state)
         
@@ -320,3 +183,99 @@ class BaseStockTab(QWidget):
         header.sectionResized.connect(lambda: throttle_timer.start())
         header.sectionMoved.connect(lambda: throttle_timer.start())
 
+    # ================================================================
+    # 统一行情与市值基础封装 (大一统机制)
+    # ================================================================
+
+    def subscribe_global_quotes(self, current_model=None):
+        """订阅中央行情站信号，自动刷新子类持有的 Model 或者通过 current_model 手动传入"""
+        if current_model:
+            self._active_model_ref = current_model
+            
+        model = getattr(self, '_active_model_ref', None) \
+             or getattr(self, 'source_model', None) \
+             or getattr(self, 'model', None)
+             
+        # 1. 尝试从 Redux Store 读取市场快照，实现秒刷 (无感知切图)
+        if model and hasattr(model, 'update_quotes'):
+            from core.global_store import global_store
+            snapshot = global_store.get_latest_quotes()
+            if snapshot:
+                model.update_quotes(snapshot)
+        
+        # 2. 为了防止多次绑定导致的连环触发，先断开(忽略不存在的情况)
+        try:
+            event_bus.sig_rt_quotes.disconnect(self._on_rt_quotes_direct)
+        except (TypeError, RuntimeError):
+            # Why: 信号从未连接过时 disconnect 报 TypeError，是正常情况
+            pass
+            
+        event_bus.sig_rt_quotes.connect(self._on_rt_quotes_direct)
+
+    def _on_rt_quotes_direct(self, quotes: dict):
+        """v4 直达信号：实时行情广播，不再需要 if-elif 路由"""
+        # 获取有效的 model (通常在子类中赋值给了 source_model 或者是 self.model)
+        model = getattr(self, '_active_model_ref', None) \
+             or getattr(self, 'source_model', None) \
+             or getattr(self, 'model', None)
+
+        if model and hasattr(model, 'update_quotes'):
+            model.update_quotes(quotes)
+
+
+
+    def async_update_market_caps(self):
+        """异步统一更新所在表格里的股票市值 (消除 weekend 或 null 的干扰)"""
+        model = getattr(self, '_active_model_ref', None) \
+             or getattr(self, 'source_model', None) \
+             or getattr(self, 'model', None)
+             
+        if not model or not hasattr(model, 'row_data'): 
+            return
+
+        # 提取需要市值的代码
+        codes_need_cap = []
+        for r_dict in model.row_data:
+            c = r_dict.get("代码")
+            if c: 
+                codes_need_cap.append(str(c))
+                
+        if not codes_need_cap:
+            return
+
+        def _bg_cap():
+            from vcp.engine import VCPEngine
+            try:
+                # 获取总股本 (zongguben) 即可，市值交由表格引擎底层根据实时现价计算
+                finance_data = VCPEngine.batch_get_finance_info(codes_need_cap)
+                return finance_data
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"[市值统一刷新] 获取股本失败: {e}")
+                return {}
+
+        def _on_cap(finance_data):
+            if not model or not finance_data: return
+            
+            for row, d in enumerate(model.row_data):
+                c = d.get("代码")
+                info = finance_data.get(c)
+                if info:
+                    zbg = info.get('zongguben', 0)
+                    if zbg > 0:
+                        # 注入到底层数据模型，以供 update_quotes 时动态计算
+                        d['_zongguben'] = zbg
+                        
+                        # 如果当前“现价”已经有了数据，立刻算一次市值刷新
+                        price_str = str(d.get("现价", "--")).replace(',', '')
+                        if price_str not in ("--", ""):
+                            try:
+                                rt_close = float(price_str)
+                                cap = zbg * rt_close
+                                model.set_cell_value(row, "市值", f"{cap / 1e8:.0f}亿")
+                            except (ValueError, TypeError) as _e:
+                                import logging
+                                logging.getLogger(__name__).debug(f"市值计算价格解析异常({price_str}): {_e}")
+
+        from core.task_manager import task_manager
+        task_manager.run_in_background(_bg_cap, task_id=f"caps_{self.__class__.__name__}", on_success=_on_cap)
