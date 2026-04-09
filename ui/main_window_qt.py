@@ -225,6 +225,7 @@ class MainWindowQT(QMainWindow):
         QTimer.singleShot(4500, self.startup_loader.smart_startup)
         
         self._init_central_broadcaster()
+        self._update_last_f5_time()
 
     def _init_central_broadcaster(self):
         from ui.workers.central_quotes_worker import CentralQuotesService
@@ -383,16 +384,11 @@ class MainWindowQT(QMainWindow):
         act_rt = sys_menu.addAction("⚡ 启动/停止盘中监控")
         act_rt.triggered.connect(lambda: hasattr(self, 'tab_rt') and self.tab_rt._toggle_rt_monitor())
 
-        act_f5 = sys_menu.addAction("🔄 盘后日线预计算 (F5)")
-        act_f5.triggered.connect(self._action_refresh_f5)
+        self.act_f5 = sys_menu.addAction("🔄 盘后日线预计算 (F5)")
+        self.act_f5.triggered.connect(self._action_refresh_f5)
         
         act_cancel = sys_menu.addAction("⏹ 中止当前后台扫描任务")
         act_cancel.triggered.connect(self._cancel_scan)
-        
-        sys_menu.addSeparator()
-        
-        act_settings = sys_menu.addAction("⚙️ 高级扫描参数与时间跨度设置...")
-        act_settings.triggered.connect(self._show_settings_dialog)
         
         sys_menu.addSeparator()
         
@@ -847,13 +843,19 @@ class MainWindowQT(QMainWindow):
         import os, datetime
         cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'Cache')
         rps_path = os.path.join(cache_dir, 'vcp_rps_precomputed.pkl')
-        if os.path.exists(rps_path) and hasattr(self, 'lbl_last_f5'):
+        if os.path.exists(rps_path):
             mtime = os.path.getmtime(rps_path)
             dt = datetime.datetime.fromtimestamp(mtime)
             # 例如展示格式：03-30 15:30
-            self.lbl_last_f5.setText(f"上次: {dt.strftime('%m-%d %H:%M')}")
-        elif hasattr(self, 'lbl_last_f5'):
-            self.lbl_last_f5.setText("上次: 无")
+            if hasattr(self, 'lbl_last_f5'):
+                self.lbl_last_f5.setText(f"上次: {dt.strftime('%m-%d %H:%M')}")
+            if hasattr(self, 'act_f5'):
+                self.act_f5.setText(f"🔄 盘后日线预计算 (F5) [{dt.strftime('%Y%m%d')}]")
+        else:
+            if hasattr(self, 'lbl_last_f5'):
+                self.lbl_last_f5.setText("上次: 无")
+            if hasattr(self, 'act_f5'):
+                self.act_f5.setText("🔄 盘后日线预计算 (F5)")
 
     def _on_f5_done(self, count, elapsed):
         """Handle the completion signal from the F5 precompute workflow."""
