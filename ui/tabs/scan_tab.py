@@ -209,7 +209,7 @@ class ScanTab(BaseStockTab):
         combo_preset.setFixedHeight(28)
         from ui.theme import theme_manager as _tm
         _t = _tm.current_theme
-        combo_preset.setStyleSheet(f"QComboBox {{ background: {_t['BG_INPUT']}; color: {_t['TEXT_PRIMARY']}; border: 1px solid {_t['BORDER_INPUT']}; }}")
+        combo_preset.setStyleSheet(f"QComboBox {{ background: {_t['BG_INPUT']}; color: {_t['TEXT_PRIMARY']}; border: 1px solid {_t['BORDER_DEFAULT']}; }}")
 
         # 内置预设
         _builtin_presets = {

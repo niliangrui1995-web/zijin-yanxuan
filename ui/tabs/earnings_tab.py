@@ -70,7 +70,7 @@ class EarningsTab(BaseStockTab):
         self.btn_manual_fetch.setStyleSheet(f"""
             QPushButton {{
                 background-color: {_t['BG_BUTTON']}; color: {_t['TEXT_SPECIAL']}; 
-                border: 1px solid {_t['BORDER_INPUT']}; border-radius: 4px; 
+                border: 1px solid {_t['BORDER_DEFAULT']}; border-radius: 4px; 
                 padding: 4px 12px; font-weight: bold;
             }}
             QPushButton:hover {{ background-color: {_t['BG_HOVER']}; border-color: {_t['COLOR_RISE']}; }}

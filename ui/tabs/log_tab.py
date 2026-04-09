@@ -33,7 +33,7 @@ class LogTab(QWidget):
                 background-color: transparent; color: {_t['TEXT_MUTED']}; 
                 font-family: 'Consolas', 'Courier New', monospace; 
                 font-size: 12px; border: none; padding: 12px;
-                border-top: 1px solid {_t['BORDER_WEAK']};
+                border-top: 1px solid {_t['BORDER_DEFAULT']};
             }}
         """)
         # 控制文档块数量，避免长时间运行后日志文本过大拖慢 UI。
@@ -71,7 +71,7 @@ class LogTab(QWidget):
         _t = _tm.current_theme
         self.level_filter.setStyleSheet(f"""
             QComboBox {{
-                background-color: {_t['BG_INPUT']}; color: {_t['TEXT_PRIMARY']}; border: 1px solid {_t['BORDER_INPUT']};
+                background-color: {_t['BG_INPUT']}; color: {_t['TEXT_PRIMARY']}; border: 1px solid {_t['BORDER_DEFAULT']};
                 border-radius: 4px; padding: 4px 8px; font-size: 12px;
             }}
             QComboBox::drop-down {{ border: none; }}

@@ -681,7 +681,7 @@ class AsianMarketTab(BaseStockTab):
         self.btn_refresh.setStyleSheet(f"""
             QPushButton {{
                 background-color: {_t['BG_BUTTON']}; color: {_t['TEXT_PRIMARY']}; 
-                border: 1px solid {_t['BORDER_INPUT']}; border-radius: 4px; 
+                border: 1px solid {_t['BORDER_DEFAULT']}; border-radius: 4px; 
                 padding: 4px 12px; font-weight: bold;
             }}
             QPushButton:hover {{ background-color: {_t['BG_HOVER']}; border-color: {_t['BORDER_STRONG']}; }}

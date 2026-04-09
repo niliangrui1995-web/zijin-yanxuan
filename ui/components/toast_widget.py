@@ -29,7 +29,7 @@ class Toast(QWidget):
             QWidget#ToastBackground {{
                 background-color: {_t['BG_GLASS']};
                 border-radius: 8px;
-                border: 1px solid {_t['BORDER_WEAK']};
+                border: 1px solid {_t['BORDER_DEFAULT']};
             }}
         """)
         
