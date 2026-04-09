@@ -29,24 +29,30 @@ from PyQt6.QtGui import QColor, QFont
 from ui.components import SearchFilter
 
 _log = logging.getLogger(__name__)
-from ui.theme import (
-    COLOR_RISE, COLOR_RISE_STRONG, COLOR_FALL, COLOR_FALL_STRONG, COLOR_FLAT,
-    COLOR_WARNING, STATUS_APPROACHING, STATUS_INACTIVE, STATUS_VCP,
-    SCORE_EXCELLENT, SCORE_GOOD, SCORE_NORMAL, SCORE_LOW
-)
+from ui.theme import theme_manager
+
+# 运行时动态获取当前主题颜色（不再用 from import 快照，否则切换主题后颜色不更新）
+def _c(token: str) -> str:
+    return theme_manager.get(token)
 
 class RtTableModel(QAbstractTableModel):
     def __init__(self, data=None):
         super().__init__()
         self._data = data or []
         self._headers = ["代码", "名称", "现价", "涨幅%", "市值", "时间", "评分", "RPS强度", "突破状态", "区间振幅", "热点板块"]
-        # Monospace font for numerical columns
+        self.base_font = QFont()
+        self.base_font.setFamilies(["SimSun", "宋体"])
+        self.base_font.setPointSize(11)
+        self.base_font.setStyleStrategy(QFont.StyleStrategy.NoAntialias)
+
         self.mono_font = QFont()
-        self.mono_font.setFamilies(["Consolas", "Microsoft YaHei UI", "monospace"])
-        self.mono_font.setPointSize(10)
-        self.mono_font.setStyleHint(QFont.StyleHint.Monospace)
+        self.mono_font.setFamilies(["SimSun", "宋体"])
+        self.mono_font.setPointSize(11) # 从10调大10%至11
+        self.mono_font.setStyleStrategy(QFont.StyleStrategy.NoAntialias)
         
         self.bold_font = QFont()
+        self.bold_font.setFamilies(["SimSun", "宋体"])
+        self.bold_font.setPointSize(11)
         self.bold_font.setBold(True)
 
     @property
@@ -176,30 +182,30 @@ class RtTableModel(QAbstractTableModel):
                 st = str(raw_val)
                 if "放量突破" in st or "缩量突破" in st:
                     return self.bold_font
-            return None
+            return self.base_font
 
         elif role == Qt.ItemDataRole.ForegroundRole:
             # Bug#4 修复: 按 header 名称匹配，不再硬编码列索引
             if "%" in key:
                 try:
                     pct = float(str(raw_val).replace('%', '').replace('+', ''))
-                    if pct >= 9.0: return QColor(COLOR_RISE_STRONG)
-                    elif pct > 0: return QColor(COLOR_RISE)
-                    elif pct <= -9.0: return QColor(COLOR_FALL_STRONG)
-                    elif pct < 0: return QColor(COLOR_FALL)
-                    else: return QColor(COLOR_FLAT)
+                    if pct >= 9.0: return QColor(_c("COLOR_RISE_STRONG"))
+                    elif pct > 0: return QColor(_c("COLOR_RISE"))
+                    elif pct <= -9.0: return QColor(_c("COLOR_FALL_STRONG"))
+                    elif pct < 0: return QColor(_c("COLOR_FALL"))
+                    else: return QColor(_c("COLOR_FLAT"))
                 except (ValueError, TypeError):
-                    return QColor(COLOR_FLAT)
+                    return QColor(_c("COLOR_FLAT"))
             elif key == "突破状态":
                 st = str(raw_val)
-                if "放量突破" in st: return QColor(COLOR_RISE_STRONG)
-                elif "缩量突破" in st: return QColor(COLOR_WARNING)
-                elif "临近" in st: return QColor(STATUS_APPROACHING)
-                elif "VCP蓄力" in st: return QColor(STATUS_VCP)
+                if "放量突破" in st: return QColor(_c("COLOR_RISE_STRONG"))
+                elif "缩量突破" in st: return QColor(_c("COLOR_WARNING"))
+                elif "临近" in st: return QColor(_c("STATUS_APPROACHING"))
+                elif "VCP蓄力" in st: return QColor(_c("STATUS_VCP"))
                 elif "非红盘" in st or "异常" in st or "一字" in st or "观望" in st:
-                    return QColor(STATUS_INACTIVE)
+                    return QColor(_c("STATUS_INACTIVE"))
                 
-            return QColor(COLOR_FLAT)
+            return QColor(_c("TEXT_PRIMARY"))
 
         elif role == Qt.ItemDataRole.UserRole:
             # specifically for sorting numerical columns
@@ -420,6 +426,7 @@ class StockItemDelegate(QStyledItemDelegate):
         
         if pill_color and text:
             rect = option.rect
+            painter.setFont(opt.font)
             fm = painter.fontMetrics()
             text_width = fm.horizontalAdvance(str(text))
             text_height = fm.height()
@@ -464,12 +471,19 @@ class StockTableModel(QAbstractTableModel):
         self._data = data or []
         self._flash_records = {} # row -> {col: {"time": stamp, "diff": val}}
 
+        self.base_font = QFont()
+        self.base_font.setFamilies(["SimSun", "宋体"])
+        self.base_font.setPointSize(11)
+        self.base_font.setStyleStrategy(QFont.StyleStrategy.NoAntialias)
+
         self.mono_font = QFont()
-        self.mono_font.setFamilies(["Consolas", "Microsoft YaHei UI", "monospace"])
-        self.mono_font.setPointSize(10)
-        self.mono_font.setStyleHint(QFont.StyleHint.Monospace)
+        self.mono_font.setFamilies(["SimSun", "宋体"])
+        self.mono_font.setPointSize(11) # 从10调大10%至11
+        self.mono_font.setStyleStrategy(QFont.StyleStrategy.NoAntialias)
         
         self.bold_font = QFont()
+        self.bold_font.setFamilies(["SimSun", "宋体"])
+        self.bold_font.setPointSize(11)
         self.bold_font.setBold(True)
 
     @property
@@ -620,6 +634,11 @@ class StockTableModel(QAbstractTableModel):
             if key == "代码" and isinstance(raw_val, str) and not raw_val.startswith("sz") and not raw_val.startswith("sh"):
                 pass 
 
+            if "日" in key or "期" in key or "时间" in key:
+                s_val = str(raw_val).split(" ")[0].replace("-", "").replace("/", "")
+                if len(s_val) == 8 and s_val.isdigit() and s_val.startswith("20"):
+                    return s_val
+                    
             if "%" in key:
                 s_val = str(raw_val)
                 if s_val == "--" or s_val == "": return s_val
@@ -645,33 +664,43 @@ class StockTableModel(QAbstractTableModel):
         elif role == Qt.ItemDataRole.FontRole:
             if key in ["现价", "涨幅%", "量比", "换手率%", "区间振幅", "市值", "流通市值", "成交额", "评分"]:
                 return self.mono_font
-            return None
+            return self.base_font
 
         elif role == Qt.ItemDataRole.ForegroundRole:
-            if "%" in key or key in ["涨跌", "净额"]:
+            if key == "名称":
+                from ui.viewmodels.watchlist_vm import watchlist_vm
+                code = str(item_dict.get("代码", ""))
+                if watchlist_vm.is_in_watchlist(code):
+                    return QColor("#E879F9")  # 醒目紫粉色，用于标示自选股
+                    
+            if "%" in key or key in ["涨跌", "净额", "现价", "收盘", "最新价"]:
                 try:
-                    pct = float(str(raw_val).replace('%', '').replace('+', '').replace(',', ''))
-                    if pct >= 9.0: return QColor(COLOR_RISE_STRONG)
-                    elif pct > 0: return QColor(COLOR_RISE)
-                    elif pct <= -9.0: return QColor(COLOR_FALL_STRONG)
-                    elif pct < 0: return QColor(COLOR_FALL)
+                    target_pct = raw_val
+                    if key in ["现价", "收盘", "最新价"]:
+                        target_pct = item_dict.get("涨幅%") or item_dict.get("涨跌") or "0"
+                        
+                    pct = float(str(target_pct).replace('%', '').replace('+', '').replace(',', ''))
+                    if pct >= 9.0: return QColor(_c("COLOR_RISE_STRONG"))
+                    elif pct > 0: return QColor(_c("COLOR_RISE"))
+                    elif pct <= -9.0: return QColor(_c("COLOR_FALL_STRONG"))
+                    elif pct < 0: return QColor(_c("COLOR_FALL"))
                 except (ValueError, TypeError):
                     pass
             elif key == "卖方营业部":
                 val_str = str(raw_val)
                 if any(kw in val_str for kw in ["高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴", "渣打", "野村", "汇丰", "星展", "大和"]):
-                    return QColor(COLOR_FALL)  # 外资卖出标为绿
+                    return QColor(_c("COLOR_FALL"))  # 外资卖出标为绿
             elif key == "买方营业部":
                 val_str = str(raw_val)
                 if any(kw in val_str for kw in ["高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴", "渣打", "野村", "汇丰", "星展", "大和"]):
-                    return QColor(COLOR_RISE)  # 外资买入标为红
+                    return QColor(_c("COLOR_RISE"))  # 外资买入标为红
             elif key == "交易详情":
                 val_str = str(raw_val)
                 if "卖出" in val_str:
-                    return QColor(COLOR_FALL)  # 卖出标为绿
+                    return QColor(_c("COLOR_FALL"))  # 卖出标为绿
                 elif "买入" in val_str:
-                    return QColor(COLOR_RISE)  # 买入标为红
-            return QColor(COLOR_FLAT)
+                    return QColor(_c("COLOR_RISE"))  # 买入标为红
+            return QColor(_c("TEXT_PRIMARY"))
 
         elif role == Qt.ItemDataRole.BackgroundRole:
             row_style = item_dict.get('_row_style', '')
@@ -689,7 +718,16 @@ class StockTableModel(QAbstractTableModel):
 
         elif role == Qt.ItemDataRole.UserRole:
             s_val = str(raw_val).replace(',', '')
-            
+
+            if key == "日报时间":
+                report_ts = int(item_dict.get("_report_ts", 0) or 0)
+                row_rank = int(item_dict.get("_report_row_rank", 0) or 0)
+                if report_ts:
+                    # 复合排序值：
+                    # 1. 战报时间戳越新越靠前
+                    # 2. 同一时间戳内，战报原始顺序越靠前越靠前
+                    return report_ts * 1000000 + max(0, 999999 - row_rank)
+             
             # 日期格式识别：YYYY-MM-DD 或 YYYYMMDD，转为整数以正确排序
             if re.fullmatch(r'\d{4}-\d{2}-\d{2}', s_val):
                 return int(s_val.replace('-', ''))
@@ -717,18 +755,18 @@ class StockTableModel(QAbstractTableModel):
         elif role == Qt.ItemDataRole.UserRole + 2:
             if key == "突破状态" and str(raw_val) != "":
                 st = str(raw_val)
-                if "放量" in st: return QColor(COLOR_RISE_STRONG)
-                elif "缩量" in st: return QColor(COLOR_WARNING)
-                elif "临近" in st: return QColor(STATUS_APPROACHING)
-                elif "VCP" in st: return QColor(STATUS_VCP)
-                else: return QColor(STATUS_INACTIVE)
+                if "放量" in st: return QColor(_c("COLOR_RISE_STRONG"))
+                elif "缩量" in st: return QColor(_c("COLOR_WARNING"))
+                elif "临近" in st: return QColor(_c("STATUS_APPROACHING"))
+                elif "VCP" in st: return QColor(_c("STATUS_VCP"))
+                else: return QColor(_c("STATUS_INACTIVE"))
             if key == "评分" and str(raw_val) != "":
                 try:
                     score = float(str(raw_val))
-                    if score >= 90: return QColor(SCORE_EXCELLENT)
-                    elif score >= 80: return QColor(SCORE_GOOD)
-                    elif score >= 60: return QColor(SCORE_NORMAL)
-                    else: return QColor(SCORE_LOW)
+                    if score >= 90: return QColor(_c("SCORE_EXCELLENT"))
+                    elif score >= 80: return QColor(_c("SCORE_GOOD"))
+                    elif score >= 60: return QColor(_c("SCORE_NORMAL"))
+                    else: return QColor(_c("SCORE_LOW"))
                 except (ValueError, TypeError):
                     pass
 

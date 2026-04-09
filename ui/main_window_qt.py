@@ -177,12 +177,12 @@ class MainWindowQT(QMainWindow):
         
         status_bar = QWidget()
         status_bar.setFixedHeight(32)
-        status_bar.setStyleSheet("""
-            background-color: #0A0C10;
-            border-top: 1px solid qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                stop:0 rgba(59, 130, 246, 0.3),
-                stop:0.5 rgba(147, 197, 253, 0.12),
-                stop:1 rgba(59, 130, 246, 0.3));
+        from ui.theme import theme_manager as _stm
+        _st = _stm.current_theme
+        self._status_bar_widget = status_bar
+        status_bar.setStyleSheet(f"""
+            background-color: {_st['BG_STATUSBAR']};
+            border-top: 1px solid {_st['STATUSBAR_BORDER']};
             padding: 0px 16px;
         """)
         status_layout = QHBoxLayout(status_bar)
@@ -193,17 +193,17 @@ class MainWindowQT(QMainWindow):
         status_layout.addWidget(self.status_dot)
 
         self.lbl_status = QLabel("---")
-        self.lbl_status.setStyleSheet("color: #6B7280; font-size: 12px; font-family: 'Consolas', 'Courier New', monospace;")
+        self.lbl_status.setStyleSheet(f"color: {_st['TEXT_MUTED']}; font-size: 12px; font-family: 'Consolas', 'Courier New', monospace;")
         status_layout.addWidget(self.lbl_status)
         
         self.lbl_code_count = QLabel("标的池: 0")
-        self.lbl_code_count.setStyleSheet("color: #6B7280; font-size: 12px; font-weight: bold;")
+        self.lbl_code_count.setStyleSheet(f"color: {_st['TEXT_MUTED']}; font-size: 12px; font-weight: bold;")
         status_layout.addWidget(self.lbl_code_count)
         
         status_layout.addStretch()
 
         self.lbl_clock = QLabel()
-        self.lbl_clock.setStyleSheet("color: #6B7280; font-size: 12px; font-family: 'Consolas', monospace;")
+        self.lbl_clock.setStyleSheet(f"color: {_st['TEXT_MUTED']}; font-size: 12px; font-family: 'Consolas', monospace;")
         status_layout.addWidget(self.lbl_clock)
         
         self._clock_timer = QTimer(self)
@@ -211,7 +211,7 @@ class MainWindowQT(QMainWindow):
         self._clock_timer.start(1000)
         
         self.lbl_version = QLabel(f"v{APP_VERSION}")
-        self.lbl_version.setStyleSheet("color: #3A3F4D; font-size: 11px;")
+        self.lbl_version.setStyleSheet(f"color: {_st['TEXT_DISABLED']}; font-size: 11px;")
         
         status_layout.addWidget(self.lbl_version)
         
@@ -354,12 +354,14 @@ class MainWindowQT(QMainWindow):
         from PyQt6.QtWidgets import QToolButton, QMenu, QDialog, QFormLayout, QDialogButtonBox, QHBoxLayout, QLabel, QPushButton, QLineEdit
         from ui.components import SvgIconBuilder
         
+        from ui.theme import theme_manager as _gtm
+        _gt = _gtm.current_theme
         self.btn_sys_menu = QToolButton()
-        self.btn_sys_menu.setIcon(SvgIconBuilder.gear("#9CA3AF"))
-        self.btn_sys_menu.setStyleSheet("""
-            QToolButton { border: none; padding: 4px 10px; background: transparent; } 
-            QToolButton:hover { background: rgba(255,255,255,0.1); }
-            QToolButton::menu-indicator{ image: none; }
+        self.btn_sys_menu.setIcon(SvgIconBuilder.gear(_gt['TEXT_MUTED']))
+        self.btn_sys_menu.setStyleSheet(f"""
+            QToolButton {{ border: none; padding: 4px 10px; background: transparent; }} 
+            QToolButton:hover {{ background: {_gt['BG_HOVER']}; }}
+            QToolButton::menu-indicator{{ image: none; }}
         """)
         self.btn_sys_menu.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         # 无边框模式：齿轮按钮放在标题栏的窗口控制按钮左侧
@@ -368,11 +370,11 @@ class MainWindowQT(QMainWindow):
         self._titlebar_layout.insertWidget(min_idx, self.btn_sys_menu)
         
         sys_menu = QMenu(self)
-        sys_menu.setStyleSheet("""
-            QMenu { background-color: #1E293B; color: #E2E8F0; border: 1px solid #334155; padding: 4px 0px; font-size: 13px; font-weight: 500;}
-            QMenu::item { padding: 8px 32px 8px 16px; }
-            QMenu::item:selected { background-color: rgba(139, 92, 246, 0.5); color: #FFF; }
-            QMenu::separator { height: 1px; background: #334155; margin: 4px 0px; }
+        sys_menu.setStyleSheet(f"""
+            QMenu {{ background-color: {_gt['BG_MENU']}; color: {_gt['TEXT_PRIMARY']}; border: 1px solid {_gt['BORDER_MENU']}; padding: 4px 0px; font-size: 13px; font-weight: 500;}}
+            QMenu::item {{ padding: 8px 32px 8px 16px; }}
+            QMenu::item:selected {{ background-color: {_gt['MENU_SELECTED_BG']}; color: {_gt['TEXT_BRIGHT']}; }}
+            QMenu::separator {{ height: 1px; background: {_gt['BORDER_MENU']}; margin: 4px 0px; }}
         """)
         
         act_scan = sys_menu.addAction("🚀 执行全盘VCP选股 (Ctrl+R)")
@@ -467,14 +469,16 @@ class MainWindowQT(QMainWindow):
         结构：[品牌文字] | [Tab导航条] <-spacer-> [⚙️] [─] [□] [✕]
         使用 DraggableTitleBar：空白区域拖拽，按钮区域正常点击。
         """
+        from ui.theme import theme_manager as _tm
+        _t = _tm.current_theme
         titlebar = DraggableTitleBar()
         titlebar.setObjectName("customTitleBar")
         titlebar.setFixedHeight(38)
-        titlebar.setStyleSheet("""
-            QWidget#customTitleBar {
-                background-color: #0A0C10;
-                border-bottom: 1px solid rgba(139, 92, 246, 0.12);
-            }
+        titlebar.setStyleSheet(f"""
+            QWidget#customTitleBar {{
+                background-color: {_t['BG_TITLEBAR']};
+                border-bottom: 1px solid {_t['TITLEBAR_BORDER']};
+            }}
         """)
 
         titlebar_layout = QHBoxLayout(titlebar)
@@ -500,7 +504,7 @@ class MainWindowQT(QMainWindow):
         sep.setFrameShape(QFrame.Shape.VLine)
         sep.setFixedWidth(1)
         sep.setFixedHeight(20)
-        sep.setStyleSheet("QFrame { color: rgba(255,255,255,0.1); }")
+        sep.setStyleSheet(f"QFrame {{ color: {_t['BORDER_STRONG']}; }}")
         titlebar_layout.addWidget(sep)
         titlebar_layout.addSpacing(4)
 
@@ -512,38 +516,40 @@ class MainWindowQT(QMainWindow):
         titlebar_layout.addStretch(1)
 
         # --- 右侧窗口控制按钮 ---
-        btn_style = """
-            QPushButton {{
+        _win_btn_color = _t['TEXT_MUTED']
+        _win_btn_hover = _t['BG_HOVER']
+        btn_style = f"""
+            QPushButton {{{{
                 background: transparent;
-                color: {color};
+                color: {{color}};
                 border: none;
-                font-size: {size}px;
+                font-size: {{size}}px;
                 font-weight: bold;
                 padding: 0 16px;
                 min-height: 38px; max-height: 38px;
-            }}
-            QPushButton:hover {{
-                background-color: {hover_bg};
-            }}
+            }}}}
+            QPushButton:hover {{{{
+                background-color: {{hover_bg}};
+            }}}}
         """
 
         self._btn_minimize = QPushButton("─")
         self._btn_minimize.setStyleSheet(btn_style.format(
-            color="#9CA3AF", size=11, hover_bg="rgba(255,255,255,0.08)"
+            color=_win_btn_color, size=11, hover_bg=_win_btn_hover
         ))
         self._btn_minimize.setFixedWidth(46)
         self._btn_minimize.clicked.connect(self.showMinimized)
 
         self._btn_maximize = QPushButton("□")
         self._btn_maximize.setStyleSheet(btn_style.format(
-            color="#9CA3AF", size=12, hover_bg="rgba(255,255,255,0.08)"
+            color=_win_btn_color, size=12, hover_bg=_win_btn_hover
         ))
         self._btn_maximize.setFixedWidth(46)
         self._btn_maximize.clicked.connect(self._toggle_maximize)
 
         self._btn_close = QPushButton("✕")
         self._btn_close.setStyleSheet(btn_style.format(
-            color="#9CA3AF", size=12, hover_bg="#C42B1C"
+            color=_win_btn_color, size=12, hover_bg="#C42B1C"
         ))
         self._btn_close.setFixedWidth(46)
         self._btn_close.clicked.connect(self.close)
@@ -574,28 +580,30 @@ class MainWindowQT(QMainWindow):
         standalone_bar = QTabBar()
         standalone_bar.setExpanding(False)
         standalone_bar.setDrawBase(False)
-        standalone_bar.setStyleSheet("""
-            QTabBar {
+        from ui.theme import theme_manager as _tm2
+        _t2 = _tm2.current_theme
+        standalone_bar.setStyleSheet(f"""
+            QTabBar {{
                 background: transparent;
                 border: none;
-            }
-            QTabBar::tab {
+            }}
+            QTabBar::tab {{
                 background: transparent;
-                color: #6B7280;
+                color: {_t2['TAB_TEXT']};
                 padding: 8px 14px;
                 margin: 0 1px;
                 border: none;
                 font-size: 12px;
                 font-family: "Microsoft YaHei UI", sans-serif;
-            }
-            QTabBar::tab:selected {
-                color: #E5E7EB;
+            }}
+            QTabBar::tab:selected {{
+                color: {_t2['TEXT_PRIMARY']};
                 border-bottom: 2px solid #EF4444;
-            }
-            QTabBar::tab:hover:!selected {
-                color: #D1D5DB;
-                background: rgba(255,255,255,0.04);
-            }
+            }}
+            QTabBar::tab:hover:!selected {{
+                color: {_t2['TAB_TEXT_HOVER']};
+                background: {_t2['TAB_HOVER_BG']};
+            }}
         """)
 
         # 复制所有 Tab 标签名
@@ -655,11 +663,13 @@ class MainWindowQT(QMainWindow):
         # 触发 Qt6 底层 access violation (Windows fatal exception)
         self.tabs_wrapper = QFrame(self)
         self.tabs_wrapper.setObjectName("tabsWrapperFrame")
-        self.tabs_wrapper.setStyleSheet("""
-            QFrame#tabsWrapperFrame {
-                background-color: rgba(18, 20, 26, 0.95);
+        from ui.theme import theme_manager as _twm
+        _tw = _twm.current_theme
+        self.tabs_wrapper.setStyleSheet(f"""
+            QFrame#tabsWrapperFrame {{
+                background-color: {_tw['BG_GLASS']};
                 border: none;
-            }
+            }}
         """)
         tabs_layout = QVBoxLayout(self.tabs_wrapper)
         tabs_layout.setContentsMargins(0, 0, 0, 0)
