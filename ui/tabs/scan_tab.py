@@ -11,7 +11,7 @@ from PyQt6.QtCore import Qt, QTimer
 # Removed unused imports from ui.theme and PyQt6
 
 from ui.models.table_models import StockTableModel, RtSortFilterProxyModel, StockItemDelegate
-from ui.components.vcp_table_view import VCPTableView
+from ui.components import VCPTableView
 from ui.workers.scan_worker import ScanWorker
 from vcp.engine import VCPParams
 from core.event_bus import event_bus
