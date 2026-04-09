@@ -19,7 +19,7 @@ from ui.theme import (
     COLOR_RISE, COLOR_FALL, COLOR_FLAT
 )
 from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
-from ui.components.vcp_table_view import VCPTableView
+from ui.components import VCPTableView
 from core.event_bus import event_bus
 
 class BlockTradeFilterProxyModel(RtSortFilterProxyModel):
@@ -275,12 +275,14 @@ class ForeignBlockTradeTab(BaseStockTab):
         # 顶部工具栏
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(8, 6, 8, 6)
+        from ui.theme import theme_manager
+        t = theme_manager.current_theme
         lbl_title = QLabel("🌐 外资大宗动向 (含机构马甲)")
-        lbl_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #C9CDD4;")
+        lbl_title.setStyleSheet(f"font-size: 15px; font-weight: bold; color: {t['TEXT_PRIMARY']};")
         header_layout.addWidget(lbl_title)
         
         self.lbl_status = QLabel("等待加载...")
-        self.lbl_status.setStyleSheet("font-size: 11px; color: #6B7280;")
+        self.lbl_status.setStyleSheet(f"font-size: 11px; color: {t['TEXT_MUTED']};")
         header_layout.addWidget(self.lbl_status)
         header_layout.addStretch()
 

@@ -4,10 +4,10 @@ import pandas as pd
 from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QTableView, QHeaderView, QPushButton, QLabel, QLineEdit, QAbstractItemView, QComboBox
 )
-from PyQt6.QtCore import Qt, pyqtSlot
+from PyQt6.QtCore import Qt, pyqtSlot, QTimer
 from ui.tabs.base_stock_tab import BaseStockTab
 from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
-from ui.components.vcp_table_view import VCPTableView
+from ui.components import VCPTableView
 from core.event_bus import event_bus
 from core.logger import get_logger
 
@@ -30,8 +30,8 @@ class EarningsTab(BaseStockTab):
         self.scheduler = EarningsScheduler(self)
         self.scheduler.sig_new_surprises_found.connect(self._on_new_data_found)
         
-        # 界面初始化完成后，立刻命令调度器开机暴走（吐缓存 + 追扫重连）
-        self.scheduler.start_patrol()
+        # 延后到事件循环空闲时再启动巡逻，避免构造阶段阻塞 UI。
+        QTimer.singleShot(0, self.scheduler.start_patrol)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -41,24 +41,26 @@ class EarningsTab(BaseStockTab):
         header = QHBoxLayout()
         header.setContentsMargins(8, 6, 8, 6)
         
+        from ui.theme import theme_manager
+        t = theme_manager.current_theme
         title = QLabel("🚀 超预期金矿：业绩预告与财报环比高增追踪")
-        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #E5E7EB;")
+        title.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {t['TEXT_PRIMARY']};")
         
         self.lbl_status = QLabel("监控挂机中...")
-        self.lbl_status.setStyleSheet("color: #10B981; font-weight: bold; font-size: 13px;")
+        self.lbl_status.setStyleSheet(f"color: {t['COLOR_SUCCESS']}; font-weight: bold; font-size: 13px;")
         
         # 时光机雷达
         self.ent_start_date = QLineEdit()
         self.ent_start_date.setPlaceholderText("起点(如2024-01-01)")
         self.ent_start_date.setText(datetime.now().strftime("%Y-%m-%d"))
         self.ent_start_date.setFixedWidth(100)
-        self.ent_start_date.setStyleSheet("background: #1F2937; color: #E5E7EB; border: 1px solid #4B5563; border-radius: 4px; padding: 2px 4px;")
+        self.ent_start_date.setStyleSheet(f"background: {t['BG_BUTTON']}; color: {t['TEXT_PRIMARY']}; border: 1px solid {t['BORDER_STRONG']}; border-radius: 4px; padding: 2px 4px;")
         
         self.ent_end_date = QLineEdit()
         self.ent_end_date.setPlaceholderText("终点(如2024-01-15)")
         self.ent_end_date.setText(datetime.now().strftime("%Y-%m-%d"))
         self.ent_end_date.setFixedWidth(100)
-        self.ent_end_date.setStyleSheet("background: #1F2937; color: #E5E7EB; border: 1px solid #4B5563; border-radius: 4px; padding: 2px 4px;")
+        self.ent_end_date.setStyleSheet(f"background: {t['BG_BUTTON']}; color: {t['TEXT_PRIMARY']}; border: 1px solid {t['BORDER_STRONG']}; border-radius: 4px; padding: 2px 4px;")
         
         self.btn_manual_fetch = QPushButton("🔄 历史更新")
         self.btn_manual_fetch.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -159,8 +161,8 @@ class EarningsTab(BaseStockTab):
             self.lbl_status.setText("❌ 日期格式错误，请使用 YYYY-MM-DD，例 2024-03-01")
             return
             
-        self.lbl_status.setText(f"🚀 数据更新启动：正在异步拉取 {start_str} 至 {end_str} ({len(date_list)}天) 的财报，详见后台日志...")
-        log.info(f"[用户操作] 触发了区间大更新查重操作，扫描时间带为: {start_str} -> {end_str}")
+        self.lbl_status.setText(f"🚀 正在拉取 {start_str} ~ {end_str} ({len(date_list)}天)...")
+        log.info(f"[业绩监控] 手动扫描: {start_str} ~ {end_str}")
         self.scheduler.force_manual_scan(date_list)
 
     def _on_type_filter_changed(self, text):
@@ -173,7 +175,7 @@ class EarningsTab(BaseStockTab):
             self.proxy_model.setColumnFilter("类型", keyword)
             
         # 记录下操作
-        log.info(f"[用户操作] 切换了视角筛选器: 当前查阅 {text}")
+        log.debug(f"[业绩监控] 筛选切换: {text}")
 
     @pyqtSlot(object)
     def _on_new_data_found(self, df: "pd.DataFrame"):
@@ -182,7 +184,7 @@ class EarningsTab(BaseStockTab):
             self.lbl_status.setText("✅ 抓取侦测完成跑通，无可推送的新增高增股")
             return
             
-        self.lbl_status.setText(f"🎉 轰炸警报：本次扫描捕获 {len(df)} 只环比高增股！")
+        self.lbl_status.setText(f"✅ 本次扫描新增 {len(df)} 只高增股")
         
         for _, row in df.iterrows():
             code = str(row.get('股票代码', '')).zfill(6)
@@ -237,9 +239,9 @@ class EarningsTab(BaseStockTab):
                         
                         # 确保如果有老的字段，也被合并到新数据上（防止旧属性丢失）
                         r.update(row_obj)
-                        log.info(f"🔄 [数据升维] 已将 {name} ({code}) {row_obj['报告期']} 的进度，刷新同步为《{row_obj['类型']}》状态。")
+                        log.debug(f"[业绩监控] {code} {row_obj['报告期']} 已覆盖为 {row_obj['类型']}")
                     else:
-                        log.info(f"🛡️ [抵挡降级] {name} ({code}) 已经存在于 UI，当前传来的旧版 {row_obj['类型']} 被拦截放弃。")
+                        log.debug(f"[业绩监控] {code} {row_obj['类型']} 已存在更新版，跳过")
                     break
                     
             if not exists:

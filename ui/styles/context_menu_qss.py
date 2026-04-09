@@ -1,30 +1,43 @@
 # -*- coding: utf-8 -*-
 """
 ui/styles/context_menu_qss.py
-右键菜单的统一 QSS 样式 — 消除四处复制粘贴的维护噩梦
-"""
+右键菜单的统一 QSS 样式 — 支持主题切换
 
-# 为什么要集中管理？
-# MainWindow / ScanTab / RtMonitorTab / WatchlistTab 四处右键菜单
-# 原先各自硬编码了完全相同的 QSS 字符串，改一处容易漏另三处。
-CONTEXT_MENU_QSS = """
-    QMenu {
-        background-color: #151820;
-        color: #C9CDD4;
-        border: 1px solid #252A36;
+为什么要集中管理？
+MainWindow / ScanTab / RtMonitorTab / WatchlistTab 四处右键菜单
+原先各自硬编码了完全相同的 QSS 字符串，改一处容易漏另三处。
+"""
+from ui.theme import theme_manager
+
+
+def generate_context_menu_qss(theme: dict = None) -> str:
+    """根据当前主题动态生成右键菜单 QSS"""
+    if theme is None:
+        theme = theme_manager.current_theme
+    t = theme
+
+    return f"""
+    QMenu {{
+        background-color: {t['BG_MENU']};
+        color: {t['TEXT_SECONDARY']};
+        border: 1px solid {t['BORDER_MENU']};
         border-radius: 8px;
         padding: 4px;
-    }
-    QMenu::item {
+    }}
+    QMenu::item {{
         padding: 6px 24px;
-    }
-    QMenu::item:selected {
-        background-color: rgba(59, 130, 246, 0.2);
-        color: white;
-    }
-    QMenu::separator {
+    }}
+    QMenu::item:selected {{
+        background-color: {t['SELECTION_BG']};
+        color: {t['TEXT_BRIGHT']};
+    }}
+    QMenu::separator {{
         height: 1px;
-        background: #252A36;
+        background: {t['BORDER_MENU']};
         margin: 4px 8px;
-    }
+    }}
 """
+
+
+# 向后兼容：保持 CONTEXT_MENU_QSS 变量名可用
+CONTEXT_MENU_QSS = generate_context_menu_qss()

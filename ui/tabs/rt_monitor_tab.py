@@ -3,6 +3,7 @@ from PyQt6.QtWidgets import (
     QHeaderView, QPushButton, QLabel, QLineEdit,
     QAbstractItemView, QDialog, QComboBox, QSpinBox, QToolButton
 )
+import re
 from ui.components.toast_widget import show_toast
 from PyQt6.QtCore import Qt, pyqtSlot, QTimer
 from ui.models.table_models import RtTableModel, RtSortFilterProxyModel
@@ -11,7 +12,7 @@ from core.event_bus import event_bus
 from core.logger import get_logger
 from core.task_manager import task_manager
 from ui.tabs.base_stock_tab import BaseStockTab
-from ui.components.vcp_table_view import VCPTableView
+from ui.components import VCPTableView
 from core.throttler import SignalThrottler
 
 log = get_logger(__name__)
@@ -40,11 +41,102 @@ class RtMonitorTab(BaseStockTab):
         self._auto_timer = QTimer(self)
         self._auto_timer.timeout.connect(self._check_auto_start_stop)
         self._auto_timer.start(30000)  # 每 30 秒检查一次
+        self._set_rt_button_state(
+            False,
+            info_text=self._format_status_text(
+                "未启动",
+                "点“启动盘中监控”开始"
+            )
+        )
+
+    def _is_rt_running(self) -> bool:
+        return hasattr(self, 'rt_worker') and self.rt_worker is not None and self.rt_worker.isRunning()
+
+    def _get_interval_seconds(self) -> int:
+        interval_text = str(self._settings.value("interval", "30秒"))
+        interval_map = {"30秒": 30, "1分钟": 60, "3分钟": 180, "5分钟": 300}
+        return interval_map.get(interval_text, 30)
+
+    def _format_status_text(self, current: str, next_step: str = "") -> str:
+        return current
+
+    def _set_status(self, current: str, next_step: str = ""):
+        self.lbl_rt_info.setText(self._format_status_text(current, next_step))
+
+    def _on_worker_progress(self, raw_msg: str):
+        msg = str(raw_msg or "").strip()
+        if not msg:
+            return
+
+        interval_sec = self._get_interval_seconds()
+
+        m_fetch = re.search(r"第(\d+)轮:拉取\s*(\d+)\s*只报价", msg)
+        if m_fetch:
+            round_no, cnt = m_fetch.groups()
+            self._set_status(
+                f"第{round_no}轮 拉取{cnt}只报价",
+                "检测突破并刷新"
+            )
+            return
+
+        m_done = re.search(r"第(\d+)轮完成\(耗时\s*([0-9\.]+)s\),等待下轮", msg)
+        if m_done:
+            round_no = int(m_done.group(1))
+            elapsed = m_done.group(2)
+            self._set_status(
+                f"第{round_no}轮 完成({elapsed}s)",
+                f"{interval_sec}s后第{round_no + 1}轮"
+            )
+            return
+
+        if "加载历史日线数据" in msg:
+            self._set_status("初始化历史数据", "计算RPS并建池")
+            return
+
+        if "计算全市场 RPS 排名" in msg:
+            self._set_status("计算RPS", "建池并拉取报价")
+            return
+
+        if msg.startswith("补全") and "市值" in msg:
+            self._set_status(msg.replace("...", ""), "收尾后进入下一轮")
+            return
+
+        if "实时报价获取失败" in msg:
+            self._set_status("拉取报价失败", f"{interval_sec}s后重试")
+            return
+
+        if msg.startswith("盘中扫描异常"):
+            self._set_status("本轮扫描异常", f"{interval_sec}s后重试")
+            return
+
+        if "无历史数据" in msg:
+            self._set_status("缺少历史数据", "先执行F5或扫描")
+            return
+
+        self._set_status(msg.replace("...", ""), "处理中")
+
+    def _set_rt_button_state(self, running: bool, info_text: str | None = None, emit_progress: bool = False):
+        """统一维护盘中监控按钮显示状态，避免 UI 与真实运行状态漂移。"""
+        if running:
+            self.btn_rt_start.setText("⏹ 停止盘中监控")
+            self.btn_rt_start.setStyleSheet(
+                "color: white; border: none; "
+                "background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #DC2626, stop:1 #EF4444);"
+            )
+        else:
+            self.btn_rt_start.setText("🚀 启动盘中监控")
+            self.btn_rt_start.setStyleSheet("")
+
+        if info_text:
+            self.lbl_rt_info.setText(info_text)
+
+        if emit_progress:
+            event_bus.sig_task_progress.emit("rt_monitor", 1 if running else 0, "start" if running else "stop")
 
     def _check_auto_start_stop(self):
         from core.market_calendar import MarketCalendar
         is_active = MarketCalendar.is_market_active()
-        is_running = hasattr(self, 'rt_worker') and self.rt_worker.isRunning()
+        is_running = self._is_rt_running()
 
         # 如果在活跃时间，没在运行，且用户没有手动强行关掉它 -> 自动启动
         if is_active and not is_running and not self._manually_toggled:
@@ -55,6 +147,14 @@ class RtMonitorTab(BaseStockTab):
             log.info("[盘中监控] 非交易时段，触发自动静默...")
             self._toggle_rt_monitor(auto=True)
             self._manually_toggled = False  # 清除人工标记，确保明早能自动启动
+
+        # 兜底：无论何种路径，按钮状态都与真实线程状态保持一致
+        if self._is_rt_running():
+            if self.btn_rt_start.text() != "⏹ 停止盘中监控":
+                self._set_rt_button_state(True)
+        else:
+            if self.btn_rt_start.text() != "🚀 启动盘中监控":
+                self._set_rt_button_state(False)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -71,8 +171,9 @@ class RtMonitorTab(BaseStockTab):
         self.btn_rt_start.clicked.connect(lambda *args: self._toggle_rt_monitor())
         tb_layout.addWidget(self.btn_rt_start)
         
-        self.lbl_rt_info = QLabel("尚未启动监控")
-        self.lbl_rt_info.setStyleSheet("color: #6B7280; font-size: 12px;")
+        self.lbl_rt_info = QLabel("未启动")
+        from ui.theme import theme_manager
+        self.lbl_rt_info.setStyleSheet(f"color: {theme_manager.get('TEXT_MUTED')}; font-size: 12px;")
         tb_layout.addWidget(self.lbl_rt_info)
         tb_layout.addStretch()
         
@@ -151,7 +252,7 @@ class RtMonitorTab(BaseStockTab):
 
     def _clear_table(self):
         self.source_model.update_data([])
-        self.lbl_rt_info.setText("记录已清空")
+        self._set_status("已清空记录", "监控可继续")
 
     def _on_search_text_changed(self, text):
         self.proxy_model.setFilterText(text)
@@ -200,17 +301,22 @@ class RtMonitorTab(BaseStockTab):
         if not auto: 
             self._manually_toggled = True
 
-        if hasattr(self, 'rt_worker') and self.rt_worker.isRunning():
+        if self._is_rt_running():
             self.rt_worker.stop()
             self.rt_worker.wait(3000)  # 3 秒超时，防止 worker 死锁卡死主线程
-            self.btn_rt_start.setText("🚀 启动盘中监控")
-            self.btn_rt_start.setStyleSheet("")
-            self.lbl_rt_info.setText("监控已停止" if not auto else "监控自动休眠(非盘中)")
-            event_bus.sig_task_progress.emit("rt_monitor", 0, "stop")
+            self._set_rt_button_state(
+                False,
+                info_text=(
+                    self._format_status_text("已停止", "点“启动盘中监控”可恢复")
+                    if not auto else
+                    self._format_status_text("已自动停止", "下个交易时段会自动启动")
+                ),
+                emit_progress=True
+            )
         else:
             # 兜底：如果内存缓存为空，先尝试从磁盘加载昨日F5的缓存
             if not self.data_provider.cache_data:
-                self.lbl_rt_info.setText("正在加载磁盘缓存...")
+                self._set_status("加载本地缓存", "就绪后连接行情")
                 try:
                     cache_date = self.data_provider.load_cache_from_disk()
                     if cache_date and self.data_provider.cache_data:
@@ -219,11 +325,11 @@ class RtMonitorTab(BaseStockTab):
                     log.error(f"[盘中监控] 磁盘缓存自动加载失败: {e}")
             if not self.data_provider.cache_data:
                 show_toast("请先执行扫描或按 F5 加载数据后再启动", "warning", self)
-                self.lbl_rt_info.setText("尚未启动监控")
+                self._set_status("无可用缓存", "先执行扫描或F5")
                 return
             
             if not self.data_provider.server_pool or not self.data_provider.is_online():
-                self.lbl_rt_info.setText("正在尝试连接行情服务器...")
+                self._set_status("连接行情服务器", "成功后自动启动")
                 self.btn_rt_start.setEnabled(False)
                 def _try_connect():
                     ok = self.data_provider.test_network(timeout=5)
@@ -251,36 +357,56 @@ class RtMonitorTab(BaseStockTab):
             self._start_rt_worker()
 
     def _start_rt_worker(self):
-        interval_text = str(self._settings.value("interval", "30秒"))
-        interval_map = {"30秒": 30, "1分钟": 60, "3分钟": 180, "5分钟": 300}
-        interval_sec = interval_map.get(interval_text, 30)
+        interval_sec = self._get_interval_seconds()
         rps_threshold = int(self._settings.value("rps", 80))
 
         self.rt_worker = RtScanWorker(self.data_provider, self.engine, interval=interval_sec, rps_threshold=rps_threshold)
         # 拦截：工作线程的高频抛出不再直接刷新界面，只喂给 throttler
         self.rt_worker.rt_result_ready.connect(lambda data: self._rt_throttler.trigger(data))
-        self.rt_worker.progress.connect(self.lbl_rt_info.setText)
+        self.rt_worker.progress.connect(self._on_worker_progress)
         self.rt_worker.scan_count.connect(lambda n, pool: event_bus.sig_system_log.emit("info", f"[监控] 第{n}轮 | 待突破池 {pool} 只"))
+        self.rt_worker.finished.connect(self._on_rt_worker_finished)
         
         self.rt_worker.start()
-        
-        self.btn_rt_start.setText("⏹ 停止盘中监控")
-        self.btn_rt_start.setStyleSheet("color: white; border: none; background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #DC2626, stop:1 #EF4444);")
-        self.lbl_rt_info.setText("正在启动盘中监控...")
-        # 发出事件告知主窗口左侧导航栏同步状态
-        event_bus.sig_task_progress.emit("rt_monitor", 1, "start")
+        self._set_rt_button_state(
+            True,
+            info_text=self._format_status_text("已启动", "正在执行首轮任务"),
+            emit_progress=True
+        )
+
+    @pyqtSlot()
+    def _on_rt_worker_finished(self):
+        # 防止线程异常退出后按钮仍显示“停止”，造成状态漂移
+        if not self._is_rt_running():
+            try:
+                from core.market_calendar import MarketCalendar
+                active = MarketCalendar.is_market_active()
+            except Exception:
+                active = False
+            next_step = (
+                "下个交易时段会自动启动"
+                if not active else "可手动重新启动"
+            )
+            self._set_rt_button_state(
+                False,
+                info_text=self._format_status_text("已停止", next_step)
+            )
 
     @pyqtSlot()
     def _on_rt_network_ready(self):
         self.btn_rt_start.setEnabled(True)
         event_bus.sig_network_status_changed.emit(True, "Online")
         event_bus.sig_system_log.emit("info", "[盘中监控] 启动前自动联网成功")
+        self._set_status("联网成功", "正在启动")
         self._start_rt_worker()
 
     @pyqtSlot()
     def _on_rt_network_failed(self):
         self.btn_rt_start.setEnabled(True)
-        self.lbl_rt_info.setText("联网失败,无法启动")
+        self._set_rt_button_state(
+            False,
+            info_text=self._format_status_text("联网失败", "检查网络后重试")
+        )
         show_toast("无法连接通达信行情服务器", "error", self)
 
     def _do_update_rt_table(self, results):
@@ -299,20 +425,66 @@ class RtMonitorTab(BaseStockTab):
     # 交互事件 (右键菜单 / 双击)
     # ================================================================
     def _on_table_double_clicked(self, idx):
-        if not idx.isValid(): return
-        proxy_row = idx.row()
-        
-        # 提取当前所有过滤后的结果构建上下文列表
+        if not idx.isValid():
+            return
+
+        source_current = self.proxy_model.mapToSource(idx)
+        if not source_current.isValid():
+            return
+
+        current_row_data = self.source_model.get_row_data(source_current.row()) or {}
+        current_code = str(current_row_data.get("代码", "")).strip()
+        if not current_code:
+            current_code = str(
+                self.proxy_model.data(
+                    self.proxy_model.index(idx.row(), 0),
+                    Qt.ItemDataRole.DisplayRole
+                ) or ""
+            ).strip()
+        if not current_code:
+            return
+
+        # 提取当前所有过滤后的结果构建完整上下文（包含区间字段）
         code_list = []
+        current_idx = -1
         for r in range(self.proxy_model.rowCount()):
-            c_idx = self.proxy_model.index(r, 0) # 代码
-            n_idx = self.proxy_model.index(r, 1) # 名称（第1列，不是第2列"现价"）
-            c = str(self.proxy_model.data(c_idx))
-            n = str(self.proxy_model.data(n_idx))
-            code_list.append({'代码': c, '名称': n})
-            
-        current_code = str(self.proxy_model.data(self.proxy_model.index(proxy_row, 0)))
-        event_bus.sig_show_kline_with_list.emit(current_code, code_list, proxy_row)
+            source_idx = self.proxy_model.mapToSource(self.proxy_model.index(r, 0))
+            if not source_idx.isValid():
+                continue
+
+            row_data = self.source_model.get_row_data(source_idx.row()) or {}
+            if not isinstance(row_data, dict):
+                row_data = {}
+
+            code = str(row_data.get("代码", "")).strip()
+            if not code:
+                code = str(
+                    self.proxy_model.data(
+                        self.proxy_model.index(r, 0),
+                        Qt.ItemDataRole.DisplayRole
+                    ) or ""
+                ).strip()
+            if not code:
+                continue
+
+            row_dict = dict(row_data)
+            row_dict["代码"] = code
+            if not row_dict.get("名称"):
+                row_dict["名称"] = str(
+                    self.proxy_model.data(
+                        self.proxy_model.index(r, 1),
+                        Qt.ItemDataRole.DisplayRole
+                    ) or ""
+                )
+            code_list.append(row_dict)
+
+            if current_idx == -1 and code == current_code:
+                current_idx = len(code_list) - 1
+
+        if code_list and current_idx != -1:
+            event_bus.sig_show_kline_with_list.emit(current_code, code_list, current_idx)
+        else:
+            event_bus.sig_show_kline.emit(current_code)
 
     def _show_context_menu(self, pos):
         """盘中监控表格右键菜单 — 委托给统一菜单工厂 (#2)"""

@@ -2,49 +2,73 @@
 import os
 import json
 import datetime
+import threading
+from contextlib import contextmanager
 from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QTableView, QHeaderView, QPushButton, QLabel, QCheckBox, QAbstractItemView
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
-from ui.components.vcp_table_view import VCPTableView
+from ui.components import VCPTableView
 
-# ==================== 黑魔法：全局劫持发包器 ====================
-# ⚠️ WARNING: 此 monkey-patch 会影响整个进程中所有使用 requests/curl_cffi 的模块！
-# 仅劫持 query1/query2.finance.yahoo.com 两个域名，不影响其它 URL。
-# 如需扩展标的源，请改用独立 Session 方案替代全局劫持。
+# ==================== 局部 CF 通道（仅在 YF 拉取窗口生效）====================
 GLOBAL_USE_CF_PROXY = True
 _CF_HIJACK_DOMAINS = ("query1.finance.yahoo.com", "query2.finance.yahoo.com")
+_CF_HIJACK_TO = "yf.niliangrui.cloud"
+_CF_PATCH_LOCK = threading.Lock()
 
-def _apply_url_rewrite(*args, **kwargs):
-    if GLOBAL_USE_CF_PROXY:
-        url = args[1] if len(args) > 1 else kwargs.get("url", "")
-        if isinstance(url, str):
-            for domain in _CF_HIJACK_DOMAINS:
-                if domain in url:
-                    url = url.replace(domain, "yf.niliangrui.cloud")
-            if len(args) > 1:
-                args = (args[0], url) + args[2:]
-            else:
-                kwargs["url"] = url
+def _apply_url_rewrite(url: str) -> str:
+    if not isinstance(url, str):
+        return url
+    for domain in _CF_HIJACK_DOMAINS:
+        if domain in url:
+            return url.replace(domain, _CF_HIJACK_TO)
+    return url
+
+def _rewrite_req_call_args(*args, **kwargs):
+    url = args[1] if len(args) > 1 else kwargs.get("url", "")
+    new_url = _apply_url_rewrite(url)
+    if len(args) > 1:
+        args = (args[0], new_url) + args[2:]
+    else:
+        kwargs["url"] = new_url
     return args, kwargs
 
-import requests
-_old_req_request = requests.Session.request
-def _cf_hijack_req(self, *args, **kwargs):
-    args, kwargs = _apply_url_rewrite(*args, **kwargs)
-    return _old_req_request(self, *args, **kwargs)
-requests.Session.request = _cf_hijack_req
+@contextmanager
+def _scoped_cf_proxy_patch(enabled: bool):
+    if not enabled:
+        yield
+        return
+    with _CF_PATCH_LOCK:
+        import requests
+        old_req_request = requests.Session.request
 
-try:
-    import curl_cffi.requests
-    _old_curl_request = curl_cffi.requests.Session.request
-    def _cf_hijack_curl(self, *args, **kwargs):
-        args, kwargs = _apply_url_rewrite(*args, **kwargs)
-        return _old_curl_request(self, *args, **kwargs)
-    curl_cffi.requests.Session.request = _cf_hijack_curl
-except ImportError:
-    pass
+        def _cf_hijack_req(self, *args, **kwargs):
+            args, kwargs = _rewrite_req_call_args(*args, **kwargs)
+            return old_req_request(self, *args, **kwargs)
+
+        requests.Session.request = _cf_hijack_req
+
+        curl_requests_mod = None
+        old_curl_request = None
+        try:
+            import curl_cffi.requests as curl_requests_mod
+            old_curl_request = curl_requests_mod.Session.request
+
+            def _cf_hijack_curl(self, *args, **kwargs):
+                args, kwargs = _rewrite_req_call_args(*args, **kwargs)
+                return old_curl_request(self, *args, **kwargs)
+
+            curl_requests_mod.Session.request = _cf_hijack_curl
+        except ImportError:
+            pass
+
+        try:
+            yield
+        finally:
+            requests.Session.request = old_req_request
+            if curl_requests_mod is not None and old_curl_request is not None:
+                curl_requests_mod.Session.request = old_curl_request
 # ================================================================
 
 import yfinance as yf
@@ -304,8 +328,12 @@ class AsianMarketWorker(QThread):
                         
                         prev_close = float(fast_info.get("previousClose", 0))
                         
-                        if prev_close <= 0 and 'Open' in df:
-                            prev_close = float(df.iloc[-1]['Open'])
+                        if prev_close <= 0:
+                            # previousClose 缺失时，优先回退到前一交易日收盘；仅剩 1 根K时退化到最后收盘
+                            if len(df) >= 2:
+                                prev_close = float(df.iloc[-2]['Close'])
+                            else:
+                                prev_close = float(df.iloc[-1]['Close'])
                             
                         pct = 0.0
                         if prev_close > 0:
@@ -323,9 +351,18 @@ class AsianMarketWorker(QThread):
                         pct_20 = get_past_pct(20)
                             
                         currency = fast_info.get('currency', 'USD')
+                        quote_date = None
+                        try:
+                            last_idx = df.index[-1]
+                            if getattr(last_idx, "tzinfo", None) is not None:
+                                last_idx = last_idx.tz_localize(None)
+                            quote_date = str(last_idx)[:10]
+                        except Exception:
+                            quote_date = None
                         
                         # Store in global cache so main kline window can access it rapidly
                         GLOBAL_ASIAN_RT_CACHE[code] = {
+                            "date": quote_date,
                             "close": close_price,
                             "open": day_open,
                             "high": day_high,
@@ -342,14 +379,15 @@ class AsianMarketWorker(QThread):
                     return code, None
                 
                 import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-                    futures = {executor.submit(_fetch, code): code for code in self.codes}
-                    for future in concurrent.futures.as_completed(futures):
-                        if not self._is_running:
-                            break
-                        res_code, res_data = future.result()
-                        if res_data:
-                            updates[res_code] = res_data
+                with _scoped_cf_proxy_patch(GLOBAL_USE_CF_PROXY):
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                        futures = {executor.submit(_fetch, code): code for code in self.codes}
+                        for future in concurrent.futures.as_completed(futures):
+                            if not self._is_running:
+                                break
+                            res_code, res_data = future.result()
+                            if res_data:
+                                updates[res_code] = res_data
                         
                 if self._is_running and updates:
                     self.result_ready.emit(updates)
@@ -388,15 +426,78 @@ class AsianCacheFetcherThread(QThread):
     
     def run(self):
         try:
-            from vcp.fetchers.asian_kline_fetcher import fetch_all_asian_klines, save_kline_data
+            from vcp.fetchers.asian_kline_fetcher import (
+                fetch_all_asian_klines,
+                save_kline_data,
+                filter_asian_tickers,
+                fetch_single_kline,
+            )
             
+            target_map = filter_asian_tickers()
+            target_tickers = set(target_map.values())
+            ticker_to_name = {tk: name for name, tk in target_map.items()}
+
+            def _to_map(rows):
+                out = {}
+                for row in rows or []:
+                    tk = str((row or {}).get("ticker", "")).strip()
+                    if tk and tk not in out:
+                        out[tk] = row
+                return out
+             
             # 使用略低于盘中的并发数跑静态缓存
             data = fetch_all_asian_klines(max_workers=4)
-            if data:
-                save_kline_data(data)
-                self.finished_sig.emit(True, "✅ 16:30 盘后自动同步完成！")
-            else:
+            if not data:
                 self.finished_sig.emit(False, "❌ 盘后缓存全量拉取失败")
+                return
+
+            row_map = _to_map(data)
+            missing = sorted(target_tickers - set(row_map.keys()))
+
+            # 保护1：对缺失标的做一次单独补抓，尽量把临时抖动补回来
+            if missing:
+                log.warning(f"[AsianTab] 盘后全量抓取缺失 {len(missing)} 只，启动单票补抓: {missing}")
+                for tk in list(missing):
+                    name = ticker_to_name.get(tk, tk)
+                    try:
+                        one = fetch_single_kline(name, tk, period="1y")
+                        if one:
+                            row_map[tk] = one
+                    except Exception as _e:
+                        log.warning(f"[AsianTab] 单票补抓失败 {tk}: {_e}")
+                missing = sorted(target_tickers - set(row_map.keys()))
+
+            # 保护2：若仍缺失，从当前 latest 回填，避免终端里“掉票”
+            reused = []
+            if missing and os.path.exists(JSON_CACHE):
+                try:
+                    with open(JSON_CACHE, 'r', encoding='utf-8') as f:
+                        old_raw = json.load(f)
+                    old_map = _to_map(old_raw.get("stocks", []))
+                    for tk in list(missing):
+                        if tk in old_map:
+                            row_map[tk] = old_map[tk]
+                            reused.append(tk)
+                    missing = sorted(target_tickers - set(row_map.keys()))
+                    if reused:
+                        log.warning(f"[AsianTab] 已从旧缓存回填 {len(reused)} 只缺失标的: {sorted(reused)}")
+                except Exception as _e:
+                    log.warning(f"[AsianTab] 旧缓存回填失败: {_e}")
+
+            # 未凑齐目标数时，不覆盖 latest，防止把完整缓存覆盖成残缺版本
+            if missing:
+                msg = f"⚠ 盘后同步部分失败：仍缺失 {len(missing)} 只({', '.join(missing)})，已保留旧缓存"
+                log.warning(f"[AsianTab] {msg}")
+                self.finished_sig.emit(False, msg)
+                return
+
+            final_data = list(row_map.values())
+            final_data.sort(key=lambda x: (x.get("market", ""), x.get("name", "")))
+            save_kline_data(final_data)
+            if reused:
+                self.finished_sig.emit(True, f"✅ 16:30 盘后自动同步完成（含旧缓存回填 {len(reused)} 只）")
+            else:
+                self.finished_sig.emit(True, "✅ 16:30 盘后自动同步完成！")
         except Exception as e:
             self.finished_sig.emit(False, f"❌ 盘后拉取异常: {e}")
 
@@ -427,40 +528,120 @@ class AsianMarketTab(BaseStockTab):
         self.auto_cache_timer.start(60000)
         QTimer.singleShot(2000, self._check_auto_cache)
 
+    def _get_cache_latest_trade_date(self):
+        try:
+            if not os.path.exists(JSON_CACHE):
+                return None
+            with open(JSON_CACHE, 'r', encoding='utf-8') as f:
+                raw = json.load(f)
+            latest_date = None
+            for item in raw.get('stocks', []):
+                klines = item.get('klines', [])
+                if not klines:
+                    continue
+                last_date_raw = str(klines[-1].get('date', '')).strip()
+                if not last_date_raw:
+                    continue
+                try:
+                    last_date = datetime.datetime.strptime(last_date_raw[:10], "%Y-%m-%d").date()
+                except Exception:
+                    continue
+                if latest_date is None or last_date > latest_date:
+                    latest_date = last_date
+            return latest_date
+        except Exception as e:
+            log.warning(f"[AsianTab] parse cache latest trade date failed: {e}")
+            return None
+
+    def _get_expected_latest_trade_date(self):
+        try:
+            from core.market_calendar import MarketCalendar
+            from datetime import timedelta
+            markets = set()
+            for row in getattr(self, 'row_data', []) or []:
+                code = str(row.get("代码", "")).strip()
+                if "." in code:
+                    markets.add(code.split(".")[-1].upper())
+            if not markets:
+                markets = {"TW", "TWO", "T", "KS", "HK"}
+
+            # 收盘缓冲时间：只有超过该时间，才把“当日”视作应落地到本地缓存的目标交易日。
+            close_cutoff_hhmm = {
+                "TW": 1400,
+                "TWO": 1400,
+                "HK": 1630,
+                "T": 1530,
+                "KS": 1600,
+            }
+
+            latest_expected = None
+            for mkt in markets:
+                now_mkt = MarketCalendar._get_market_now(mkt)
+                today_mkt = now_mkt.date()
+                hhmm = now_mkt.hour * 100 + now_mkt.minute
+                cutoff = close_cutoff_hhmm.get(mkt, 1630)
+
+                # 交易日但仍处于盘前/盘中：期望缓存仍是“上一交易日”。
+                if MarketCalendar.is_trade_day(today_mkt, market=mkt) and hhmm < cutoff:
+                    ref_date = today_mkt - timedelta(days=1)
+                else:
+                    ref_date = today_mkt
+
+                trade_date = MarketCalendar.get_latest_trade_date(market=mkt, ref_date=ref_date)
+                if trade_date is not None and (latest_expected is None or trade_date > latest_expected):
+                    latest_expected = trade_date
+            return latest_expected
+        except Exception as e:
+            log.warning(f"[AsianTab] calc expected trade date failed: {e}")
+            return None
+
     def _check_auto_cache(self):
         import os
         from datetime import datetime, timedelta
         if getattr(self, '_is_fetching_cache', False):
             return
-            
+
         now = datetime.now()
-        
-        # 寻找距离当前时间最近的“上一次收盘清算节点 (工作日 16:30)”
+
         target_dt = now.replace(hour=16, minute=30, second=0, microsecond=0)
-        
         if now < target_dt:
-            # 如果今天还没到 16:30，目标基准点后退一天
             target_dt -= timedelta(days=1)
-            
-        # 确保基准点不能落在周末（遇到周六周日，持续往前后退直到周五）
         while target_dt.weekday() >= 5:
             target_dt -= timedelta(days=1)
-            
+
         mtime = 0
         if os.path.exists(JSON_CACHE):
             mtime = os.path.getmtime(JSON_CACHE)
-        
-        cache_dt = datetime.fromtimestamp(mtime)
-        
-        # 如果冰柜里的文件比“最近的一次回波锚点”还要老，说明必须去拉新货了
-        if cache_dt < target_dt:
+        cache_dt = datetime.fromtimestamp(mtime) if mtime else datetime.min
+
+        cache_latest_trade_date = self._get_cache_latest_trade_date()
+        expected_latest_trade_date = self._get_expected_latest_trade_date()
+
+        stale_by_mtime = cache_dt < target_dt
+        stale_by_trade_date = (
+            expected_latest_trade_date is not None and (
+                cache_latest_trade_date is None or cache_latest_trade_date < expected_latest_trade_date
+            )
+        )
+
+        if stale_by_mtime or stale_by_trade_date:
             self._is_fetching_cache = True
-            log.info(f"[AsianTab] 发现陈旧的 K 线缓存 (生成于 {cache_dt.strftime('%m-%d %H:%M')})，准备拉取 {target_dt.strftime('%m-%d %H:%M')} 后的数据补缺...")
-            self.lbl_status.setText("⏳ 正在自动同步 16:30 收盘后最新 K线缓存...")
+            reason = []
+            if stale_by_mtime:
+                reason.append(f"mtime<{target_dt.strftime('%m-%d %H:%M')}")
+            if stale_by_trade_date:
+                reason.append(f"trade_date {cache_latest_trade_date} < {expected_latest_trade_date}")
+            reason_txt = ", ".join(reason) if reason else "unknown"
+            log.info(
+                f"[AsianTab] stale cache detected ({reason_txt}), "
+                f"cache_mtime={cache_dt.strftime('%m-%d %H:%M')}, "
+                f"cache_last_trade_date={cache_latest_trade_date}, "
+                f"expected_last_trade_date={expected_latest_trade_date}"
+            )
+            self.lbl_status.setText("⏳ 正在自动同步 16:30 收盘后最新K线缓存...")
             self.cache_thread = AsianCacheFetcherThread()
             self.cache_thread.finished_sig.connect(self._on_auto_cache_finished)
             self.cache_thread.start()
-                
     def _on_auto_cache_finished(self, success, msg):
         self._is_fetching_cache = False
         self.lbl_status.setText(msg)
@@ -479,14 +660,16 @@ class AsianMarketTab(BaseStockTab):
         header = QHBoxLayout()
         header.setContentsMargins(8, 6, 8, 6)
         
+        from ui.theme import theme_manager
+        t = theme_manager.current_theme
         title = QLabel("🌏 亚洲寡头核心资产监控 (由于存在日韩台港多股市，按 YF 实时接口为准)")
-        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #E5E7EB;")
+        title.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {t['TEXT_PRIMARY']};")
         self.lbl_status = QLabel("系统初始化...")
-        self.lbl_status.setStyleSheet("color: #9CA3AF; font-size: 12px;")
+        self.lbl_status.setStyleSheet(f"color: {t['TEXT_SECONDARY']}; font-size: 12px;")
         
         self.chk_cf_proxy = QCheckBox("🚀 启用免翻墙直连 (CF隧道)")
         self.chk_cf_proxy.setToolTip("打勾：关闭VPN彻底裸连；不打勾：走您的VPN全局模式直连")
-        self.chk_cf_proxy.setStyleSheet("color: #10B981; font-weight: bold; font-size: 13px; margin-right: 15px;")
+        self.chk_cf_proxy.setStyleSheet(f"color: {t['COLOR_SUCCESS']}; font-weight: bold; font-size: 13px; margin-right: 15px;")
         self.chk_cf_proxy.setChecked(True)
         self.chk_cf_proxy.toggled.connect(self._on_cf_proxy_toggled)
         
@@ -566,6 +749,8 @@ class AsianMarketTab(BaseStockTab):
 
     def _on_manual_refresh(self):
         """手动触发外网数据更新"""
+        # 先重载本地缓存并补齐缺失标的，再触发实时刷新，确保 worker 不会长期只盯着旧的 33 只
+        self._load_local_cache()
         if hasattr(self, 'worker') and self.worker.isRunning():
             self.lbl_status.setText("⏳ 强制唤醒：正在请求海外接口测速与重载...")
             self.worker.trigger_refresh()
@@ -618,6 +803,7 @@ class AsianMarketTab(BaseStockTab):
                     # 取最后一天所在的 df 填入 globals (为了让它打开 K 线图时不会空)
                     if code not in GLOBAL_ASIAN_RT_CACHE:
                         GLOBAL_ASIAN_RT_CACHE[code] = {
+                            "date": data_points[-1].get('date') if data_points else None,
                             "close": close_val,
                             "pct": pct_val,
                             "pct_5": pct_5,
@@ -648,6 +834,68 @@ class AsianMarketTab(BaseStockTab):
                         "20日涨跌%": pct_20
                     }
                     self.row_data.append(row_obj)
+
+                # 兜底保护：latest 若是“部分成功快照”（如 33/36），补齐缺失标的占位行，避免面板缩水
+                try:
+                    from vcp.fetchers.asian_kline_fetcher import filter_asian_tickers
+                    target_map = filter_asian_tickers() or {}
+                except Exception as _e:
+                    target_map = {}
+                    log.warning(f"[AsianTab] 读取亚洲目标池失败，跳过缺失补齐: {_e}")
+
+                if target_map:
+                    existing_codes = {
+                        str(r.get("代码", "")).strip()
+                        for r in self.row_data
+                        if str(r.get("代码", "")).strip()
+                    }
+                    missing_codes = []
+                    flags = {"T": "JP", "TW": "TW", "TWO": "TW", "KS": "KR", "HK": "HK"}
+
+                    for en_name, tk in target_map.items():
+                        tk = str(tk).strip()
+                        if not tk or tk in existing_codes:
+                            continue
+                        missing_codes.append(tk)
+
+                        mkt_str = tk.split('.')[-1] if '.' in tk else ''
+                        prefix = flags.get(mkt_str, "GLB")
+                        mkt_val = f"{prefix} {mkt_str}"
+                        role_desc = roles_map.get(tk, en_name)
+                        real_status = get_market_status(mkt_str)
+
+                        row_obj = {
+                            "代码": tk,
+                            "名称": f"{en_name}  ({ch_names_map.get(tk, '未录入')})" if ch_names_map.get(tk) else en_name,
+                            "现价": "--",
+                            "涨幅%": 0.0,
+                            "市场": mkt_val,
+                            "状态": real_status,
+                            "赛道": "",
+                            "角色定位": role_desc,
+                            "货币": "---",
+                            "5日涨跌%": 0.0,
+                            "10日涨跌%": 0.0,
+                            "20日涨跌%": 0.0,
+                        }
+                        self.row_data.append(row_obj)
+
+                        if tk not in GLOBAL_ASIAN_RT_CACHE:
+                            GLOBAL_ASIAN_RT_CACHE[tk] = {
+                                "date": None,
+                                "close": 0.0,
+                                "pct": 0.0,
+                                "pct_5": 0.0,
+                                "pct_10": 0.0,
+                                "pct_20": 0.0,
+                                "currency": "",
+                                "df_today": None,
+                            }
+
+                    if missing_codes:
+                        log.warning(
+                            f"[AsianTab] 本地缓存缺失 {len(missing_codes)} 只，已补齐占位行: {sorted(missing_codes)}"
+                        )
             except Exception as e:
                 log.error(f"[AsianTab] JSON 历史缓存加载失败: {e}")
 
@@ -674,8 +922,21 @@ class AsianMarketTab(BaseStockTab):
                         GLOBAL_ASIAN_RT_CACHE[code].update(info)
             except Exception as e:
                 log.error(f"[AsianTab] 恢复 RT 盘口缓存失败: {e}")
-                
+
+        self._sync_worker_codes()
         self.update_table_ui()
+
+    def _sync_worker_codes(self):
+        """让后台 worker 的轮询列表始终跟随当前表格数据，避免长期停留在旧数量。"""
+        if hasattr(self, 'worker') and self.worker is not None:
+            try:
+                self.worker.codes = [
+                    str(r.get("代码", "")).strip()
+                    for r in (self.row_data or [])
+                    if str(r.get("代码", "")).strip()
+                ]
+            except Exception as e:
+                log.warning(f"[AsianTab] 同步 worker 股票池失败: {e}")
 
     def update_table_ui(self):
         self.model.update_data(self.row_data)
@@ -711,6 +972,7 @@ class AsianMarketTab(BaseStockTab):
             cache_friendly = {}
             for k, v in GLOBAL_ASIAN_RT_CACHE.items():
                 cache_friendly[k] = {
+                    "date": v.get("date", ""),
                     "close": v.get("close", 0.0),
                     "pct": v.get("pct", 0.0),
                     "pct_5": v.get("pct_5", 0.0),

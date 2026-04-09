@@ -17,7 +17,7 @@ from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFil
 from core.event_bus import event_bus
 from core.logger import get_logger
 from ui.tabs.base_stock_tab import BaseStockTab
-from ui.components.vcp_table_view import VCPTableView
+from ui.components import VCPTableView
 
 log = get_logger(__name__)
 
@@ -26,6 +26,7 @@ class NADailyTab(BaseStockTab):
         super().__init__(data_provider=data_provider, parent=parent)
         self._na_daily_codes = set()
         self._cap_cache_na = {}
+        self._last_report_signature = ()
         self.setStyleSheet("background-color: transparent;")
 
         self._init_ui()
@@ -73,13 +74,15 @@ class NADailyTab(BaseStockTab):
 
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(8, 6, 8, 6)
+        from ui.theme import theme_manager
+        t = theme_manager.current_theme
         lbl_title = QLabel("北美战报 — P9 战报标的")
-        lbl_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #C9CDD4;")
+        lbl_title.setStyleSheet(f"font-size: 15px; font-weight: bold; color: {t['TEXT_PRIMARY']};")
         header_layout.addWidget(lbl_title)
         header_layout.addStretch()
 
         self.na_daily_source_label = QLabel("未加载")
-        self.na_daily_source_label.setStyleSheet("font-size: 11px; color: #6B7280;")
+        self.na_daily_source_label.setStyleSheet(f"font-size: 11px; color: {t['TEXT_MUTED']};")
         header_layout.addWidget(self.na_daily_source_label)
 
         btn_refresh = QPushButton("🔄 刷新战报")
@@ -91,7 +94,7 @@ class NADailyTab(BaseStockTab):
         layout.addLayout(header_layout)
 
         columns = [
-            "代码", "名称", "现价", "涨幅%", "市值", "细分板块",
+            "代码", "名称", "现价", "涨幅%", "市值", "日报时间", "细分板块",
             "股价弹性", "催化剂", "风控", "评级"
         ]
         self.na_daily_table = VCPTableView(default_row_height=28)
@@ -106,14 +109,14 @@ class NADailyTab(BaseStockTab):
 
         header = self.na_daily_table.horizontalHeader()
         header.setStretchLastSection(False)
-        default_widths = [60, 70, 60, 60, 60, 100, 80, 120, 50, 60]
+        default_widths = [60, 70, 60, 60, 70, 78, 100, 80, 120, 50, 60]
         for i, w in enumerate(default_widths):
             if i < len(columns):
                 header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
                 self.na_daily_table.setColumnWidth(i, w)
 
         # 绑定防抖自动保存与恢复配置
-        self.bind_header_persistence(self.na_daily_table, "header_state_na_daily_v2")
+        self.bind_header_persistence(self.na_daily_table, "header_state_na_daily_v3")
 
         self.na_daily_table.doubleClicked.connect(self._on_double_click)
         self.na_daily_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -121,149 +124,43 @@ class NADailyTab(BaseStockTab):
 
         layout.addWidget(self.na_daily_table, 1)
 
-    def _load_na_daily_report(self):
-        output_dir = os.path.join(
+    def _get_na_daily_output_dir(self):
+        return os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(
                 os.path.dirname(os.path.abspath(__file__))
             ))),
             "每日战报", "每日热点输出"
         )
-        pattern = os.path.join(output_dir, "**", "战报_*.md")
-        files = sorted(glob.glob(pattern, recursive=True))
 
-        if not files:
-            self.na_daily_source_label.setText("❌ 未找到战报文件")
-            return
-
-        today_prefix = "战报_" + datetime.datetime.now().strftime("%Y%m%d")
-        today_files = [f for f in files if os.path.basename(f).startswith(today_prefix)]
-        if not today_files:
-            today_files = [files[-1]]
-
-        all_stocks = []
-        seen_codes = set()
-        all_recommended = {}
-
-        for file_idx, fpath in enumerate(today_files):
-            json_path = os.path.splitext(fpath)[0] + ".json"
-            
-            stocks = []
-            rec_map = {}
-            parsed_from_json = False
-
-            if os.path.exists(json_path):
-                try:
-                    import json
-                    with open(json_path, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    
-                    for track in data.get("sniper_tables", []):
-                        raw_industry = track.get("track_name", "未知赛道")
-                        industry = re.split(r'[（(]', raw_industry)[0].strip()
-                        industry = re.sub(r'^赛道[A-Za-z0-9]+[：:\s]*', '', industry)
-                        
-                        for t in track.get("targets", []):
-                            stocks.append({
-                                "行业": industry,
-                                "名称": t.get("name", ""),
-                                "代码": t.get("code", ""),
-                                "近3月": t.get("chg_3m", ""),
-                                "分位": t.get("percentile_250d", ""),
-                                "量能": t.get("volume", ""),
-                                "弹性": t.get("elasticity", ""),
-                                "催化剂": t.get("catalyst", ""),
-                                "风控": t.get("risk", ""),
-                            })
-                    
-                    for adv in data.get("today_advice", []):
-                        if isinstance(adv, dict) and adv.get("code"):
-                            rec_map[adv["code"]] = {
-                                "priority": adv.get("priority", ""),
-                                "reason": adv.get("reason", ""),
-                                "strategy": adv.get("strategy", "")
-                            }
-                    parsed_from_json = True
-                except Exception as e:
-                    log.warning(f"解析 JSON 失败: {e}")
-
-            if not parsed_from_json:
-                try:
-                    with open(fpath, "r", encoding="utf-8") as f:
-                        content = f.read()
-                except Exception as _e:
-                    log.debug(f"[北美战报] 读取战报文件失败: {_e}")
-                    continue
-                stocks = self._parse_battle_report(content)
-                rec_map = self._parse_recommendations(content)
-
-            for s in stocks:
-                code = s.get("代码", "")
-                if code and code not in seen_codes:
-                    seen_codes.add(code)
-                    all_stocks.append(s)
-
-            for code, reason_data in rec_map.items():
-                all_recommended[code] = reason_data
-
-        fnames = [os.path.basename(f) for f in today_files]
-        if len(fnames) == 1:
-            self.na_daily_source_label.setText(f"📄 {fnames[0]}")
+    def _parse_report_identity(self, fpath: str):
+        basename = os.path.basename(fpath)
+        match = re.search(r'战报_(\d{8})(\d{0,6})', basename)
+        if match:
+            report_date = match.group(1)
+            time_part = match.group(2) or ""
+            if time_part:
+                padded_time = (time_part + "000000")[:6]
+                report_dt = datetime.datetime.strptime(report_date + padded_time, "%Y%m%d%H%M%S")
+            else:
+                report_dt = datetime.datetime.fromtimestamp(os.path.getmtime(fpath))
+                report_date = report_dt.strftime("%Y%m%d")
         else:
-            self.na_daily_source_label.setText(f"📄 {fnames[0]} +{len(fnames)-1}份增量 ({len(all_stocks)}只)")
+            report_dt = datetime.datetime.fromtimestamp(os.path.getmtime(fpath))
+            report_date = report_dt.strftime("%Y%m%d")
 
-        self._na_daily_codes = {s["代码"] for s in all_stocks}
+        report_ts = int(report_dt.strftime("%Y%m%d%H%M%S"))
+        return report_date, report_ts, basename
 
-        final_list = []
-        for stock in all_stocks:
-            code = stock.get("代码", "")
-            rec_data = all_recommended.get(code, {})
-            priority = rec_data.get("priority", "")
-
-            
-            raw_elasticity = stock.get("弹性", "")
-            clean_elasticity = re.split(r'[（(]', raw_elasticity)[0].strip() if raw_elasticity else ""
-
-            row_data = {
-                "代码": code,
-                "名称": stock.get("名称", ""),
-                "现价": "--",
-                "涨幅%": "--",
-                "细分板块": stock.get("行业", ""),
-                "市值": "--",
-                "股价弹性": clean_elasticity,
-                "催化剂": stock.get("催化剂", ""),
-                "风控": stock.get("风控", ""),
-                "评级": priority
-            }
-            final_list.append(row_data)
-
-        self.model.update_data(final_list)
-        
-        # 强制清除表头的自定义排序指标，回归战报原始注入的顺序
-        self.na_daily_table.sortByColumn(-1, Qt.SortOrder.AscendingOrder)
-
-        if self._na_daily_codes:
-            self.async_update_market_caps()
-
-    def _load_na_daily_incremental(self):
-        output_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(
-                os.path.dirname(os.path.abspath(__file__))
-            ))),
-            "每日战报", "每日热点输出"
-        )
-        pattern = os.path.join(output_dir, "**", "战报_*.md")
-        files = sorted(glob.glob(pattern, recursive=True))
+    def _list_recent_report_files(self, limit: int = 5):
+        pattern = os.path.join(self._get_na_daily_output_dir(), "**", "战报_*.md")
+        files = glob.glob(pattern, recursive=True)
         if not files:
-            return
+            return []
+        files.sort(key=lambda path: (self._parse_report_identity(path)[1], path))
+        return files[-limit:]
 
-        latest_file = files[-1]
-        mtime = os.path.getmtime(latest_file)
-        
-        if getattr(self, '_last_md_mtime', 0) == mtime:
-            return
-            
-        json_path = os.path.splitext(latest_file)[0] + ".json"
+    def _load_report_payload(self, fpath: str):
+        json_path = os.path.splitext(fpath)[0] + ".json"
         stocks = []
         rec_map = {}
         parsed_from_json = False
@@ -273,78 +170,153 @@ class NADailyTab(BaseStockTab):
                 import json
                 with open(json_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
+
                 for track in data.get("sniper_tables", []):
                     raw_industry = track.get("track_name", "未知赛道")
                     industry = re.split(r'[（(]', raw_industry)[0].strip()
                     industry = re.sub(r'^赛道[A-Za-z0-9]+[：:\s]*', '', industry)
+
                     for t in track.get("targets", []):
                         stocks.append({
-                            "行业": industry, "名称": t.get("name", ""), "代码": t.get("code", ""),
-                            "近3月": t.get("chg_3m", ""), "分位": t.get("percentile_250d", ""),
-                            "量能": t.get("volume", ""), "弹性": t.get("elasticity", ""),
-                            "催化剂": t.get("catalyst", ""), "风控": t.get("risk", ""),
+                            "行业": industry,
+                            "名称": t.get("name", ""),
+                            "代码": str(t.get("code", "") or "").strip(),
+                            "近3月": t.get("chg_3m", ""),
+                            "分位": t.get("percentile_250d", ""),
+                            "量能": t.get("volume", ""),
+                            "弹性": t.get("elasticity", ""),
+                            "催化剂": t.get("catalyst", ""),
+                            "风控": t.get("risk", ""),
                         })
+
                 for adv in data.get("today_advice", []):
                     if isinstance(adv, dict) and adv.get("code"):
-                        rec_map[adv["code"]] = {
-                            "priority": adv.get("priority", ""), "reason": adv.get("reason", ""),
+                        rec_map[str(adv["code"]).strip()] = {
+                            "priority": adv.get("priority", ""),
+                            "reason": adv.get("reason", ""),
                             "strategy": adv.get("strategy", "")
                         }
                 parsed_from_json = True
-            except Exception as _e:
-                log.debug(f"[北美战报] 增量 JSON 解析失败，回退 MD 解析: {_e}")
+            except Exception as e:
+                log.warning(f"解析 JSON 失败: {e}")
 
         if not parsed_from_json:
             try:
-                with open(latest_file, "r", encoding="utf-8") as f:
+                with open(fpath, "r", encoding="utf-8") as f:
                     content = f.read()
             except Exception as _e:
-                log.debug(f"[北美战报] 增量 MD 文件读取失败: {_e}")
-                return
+                log.debug(f"[北美战报] 读取战报文件失败: {_e}")
+                return [], {}
             stocks = self._parse_battle_report(content)
             rec_map = self._parse_recommendations(content)
 
-        existing_codes = set([r.get("代码", "") for r in self.model.row_data])
-        new_stocks = [s for s in stocks if s.get("代码", "") not in existing_codes]
-        self._last_md_mtime = mtime
-        
-        if not new_stocks:
+        return stocks, rec_map
+
+    def _build_na_daily_rows(self):
+        report_files = self._list_recent_report_files(limit=5)
+        if not report_files:
+            return [], [], ()
+
+        latest_rows = {}
+        latest_recommendations = {}
+
+        for fpath in report_files:
+            report_date, report_ts, _ = self._parse_report_identity(fpath)
+            stocks, rec_map = self._load_report_payload(fpath)
+
+            for row_rank, stock in enumerate(stocks):
+                code = str(stock.get("代码", "") or "").strip()
+                if not code:
+                    continue
+
+                raw_elasticity = stock.get("弹性", "")
+                clean_elasticity = re.split(r'[（(]', raw_elasticity)[0].strip() if raw_elasticity else ""
+
+                # 同一代码以时间最新的一次命中为准，后面的新战报覆盖旧内容。
+                latest_rows[code] = {
+                    "代码": code,
+                    "名称": stock.get("名称", ""),
+                    "现价": "--",
+                    "涨幅%": "--",
+                    "市值": "--",
+                    "日报时间": report_date,
+                    "细分板块": stock.get("行业", ""),
+                    "股价弹性": clean_elasticity,
+                    "催化剂": stock.get("催化剂", ""),
+                    "风控": stock.get("风控", ""),
+                    "评级": "",
+                    "_report_ts": report_ts,
+                    "_report_row_rank": row_rank,
+                }
+
+            for code, reason_data in rec_map.items():
+                latest_recommendations[str(code).strip()] = reason_data
+
+        final_list = []
+        for code, row_data in latest_rows.items():
+            rec_data = latest_recommendations.get(code, {})
+            row_data["评级"] = rec_data.get("priority", "")
+            final_list.append(row_data)
+
+        final_list.sort(key=lambda row: (
+            -int(row.get("日报时间", "0") or 0),
+            -int(row.get("_report_ts", 0) or 0),
+            int(row.get("_report_row_rank", 0) or 0),
+            str(row.get("代码", "") or "")
+        ))
+
+        report_signature = tuple(
+            f"{os.path.basename(path)}:{int(os.path.getmtime(path))}"
+            for path in report_files
+        )
+        return final_list, report_files, report_signature
+
+    def _apply_na_daily_rows(self, final_list, report_files, report_signature):
+        self._last_report_signature = report_signature
+
+        if not report_files:
+            self.na_daily_source_label.setText("❌ 未找到战报文件")
+            self.model.update_data([])
+            self._na_daily_codes = set()
             return
 
-        filename = os.path.basename(latest_file)
-        self.na_daily_source_label.setText(f"📄 {filename}（+{len(new_stocks)}新增）")
+        newest_file = max(report_files, key=lambda path: self._parse_report_identity(path)[1])
+        newest_name = os.path.basename(newest_file)
+        if len(report_files) == 1:
+            self.na_daily_source_label.setText(f"📄 {newest_name} ({len(final_list)}只)")
+        else:
+            self.na_daily_source_label.setText(f"📄 最近5份：{newest_name} 等{len(report_files)}份 ({len(final_list)}只)")
 
-        current_list = list(self.model.row_data)
-        
-        for stock in new_stocks:
-            code = stock.get("代码", "")
-            rec_data = rec_map.get(code, {})
+        self._na_daily_codes = {row.get("代码", "") for row in final_list if row.get("代码")}
+        self.model.update_data(final_list)
 
-
-            raw_elasticity = stock.get("弹性", "")
-            clean_elasticity = re.split(r'[（(]', raw_elasticity)[0].strip() if raw_elasticity else ""
-
-            row_data = {
-                "细分板块": stock.get("行业", ""),
-                "代码": code,
-                "名称": stock.get("名称", ""),
-                "现价": "--",
-                "涨幅%": "--",
-                "市值": "--",
-                "股价弹性": clean_elasticity,
-                "催化剂": stock.get("催化剂", ""),
-                "风控": stock.get("风控", ""),
-                "评级": rec_data.get("priority", "")
-            }
-            current_list.append(row_data)
-
-        self.model.update_data(current_list)
-
-        for s in new_stocks:
-            self._na_daily_codes.add(s.get("代码", ""))
+        try:
+            report_col = self.model.headers.index("日报时间")
+            self.na_daily_table.sortByColumn(report_col, Qt.SortOrder.DescendingOrder)
+        except ValueError:
+            pass
 
         if self._na_daily_codes:
             self.async_update_market_caps()
+
+    def _load_na_daily_report(self):
+        final_list, report_files, report_signature = self._build_na_daily_rows()
+        self._apply_na_daily_rows(final_list, report_files, report_signature)
+
+    def _load_na_daily_incremental(self):
+        report_files = self._list_recent_report_files(limit=5)
+        if not report_files:
+            return
+
+        report_signature = tuple(
+            f"{os.path.basename(path)}:{int(os.path.getmtime(path))}"
+            for path in report_files
+        )
+        if self._last_report_signature == report_signature:
+            return
+
+        final_list, report_files, report_signature = self._build_na_daily_rows()
+        self._apply_na_daily_rows(final_list, report_files, report_signature)
 
 
     def _on_double_click(self, index):

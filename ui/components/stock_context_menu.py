@@ -12,7 +12,7 @@ ui/components/stock_context_menu.py
 from PyQt6.QtWidgets import QMenu, QApplication
 from PyQt6.QtGui import QCursor
 
-from ui.styles.context_menu_qss import CONTEXT_MENU_QSS
+from ui.styles.context_menu_qss import generate_context_menu_qss
 from ui.viewmodels.watchlist_vm import watchlist_vm
 from core.event_bus import event_bus
 
@@ -42,7 +42,8 @@ def build_stock_context_menu(
         None — 菜单在内部 exec 并处理所有动作
     """
     menu = QMenu(parent)
-    menu.setStyleSheet(CONTEXT_MENU_QSS)
+    # 每次创建菜单时动态获取当前主题的 QSS（而非模块加载时的快照）
+    menu.setStyleSheet(generate_context_menu_qss())
 
     # --- 查看操作 ---
     act_chart = menu.addAction("📈 查看K线图")
@@ -52,16 +53,19 @@ def build_stock_context_menu(
     # --- 关注池操作 ---
     act_watchlist = None
     act_pin_top = None
+    act_move_bottom = None
     if show_watchlist_toggle:
         is_fav = watchlist_vm.is_in_watchlist(code)
         act_watchlist = menu.addAction("⭐ 移出关注池" if is_fav else "⭐ 加入关注池")
         if is_fav:
-            act_pin_top = menu.addAction("🔝 置顶标的")
+            act_pin_top = menu.addAction("🔝 置顶")
+            act_move_bottom = menu.addAction("🔽 置底")
         menu.addSeparator()
 
     # --- 跳转操作 ---
     act_tdx = menu.addAction("🖥️ 跳转通达信")
     act_em = menu.addAction("🖥️ 跳转东方财富")
+    act_gemini = menu.addAction("🤖 跳转 Gemini")
 
     # --- 导出 ---
     act_export = None
@@ -76,11 +80,16 @@ def build_stock_context_menu(
 
     # === 分发动作 ===
     if action == act_chart:
-        event_bus.sig_show_kline.emit(code)
+        if isinstance(vcp_data, dict) and vcp_data:
+            kline_item = dict(vcp_data)
+            kline_item.setdefault('代码', code)
+            kline_item.setdefault('名称', name)
+            event_bus.sig_show_kline_with_list.emit(code, [kline_item], 0)
+        else:
+            event_bus.sig_show_kline.emit(code)
 
     elif action == act_copy:
         QApplication.clipboard().setText(code)
-        event_bus.sig_system_log.emit("info", f"已复制: {code}")
 
     elif action == act_watchlist and show_watchlist_toggle:
         # 清理名称中的星标前缀
@@ -89,6 +98,9 @@ def build_stock_context_menu(
 
     elif action == act_pin_top and act_pin_top is not None:
         watchlist_vm.pin_to_top(code)
+        
+    elif action == act_move_bottom and act_move_bottom is not None:
+        watchlist_vm.move_to_bottom(code)
 
     elif action == act_tdx:
         # 通过基类方法跳转(parent 需要继承 BaseStockTab)
@@ -98,6 +110,15 @@ def build_stock_context_menu(
     elif action == act_em:
         if hasattr(parent, '_launch_eastmoney'):
             parent._launch_eastmoney(code)
+
+    elif action == act_gemini:
+        url = "https://gemini.google.com/u/6/app?utm_source=app_launcher&utm_medium=owned&utm_campaign=base_all&pageId=none"
+        try:
+            import subprocess
+            subprocess.Popen(['start', 'chrome', url], shell=True)
+        except Exception as e:
+            import webbrowser
+            webbrowser.open(url)
 
     elif action == act_export and show_export and export_callback:
         export_callback()

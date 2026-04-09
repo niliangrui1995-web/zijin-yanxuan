@@ -81,9 +81,12 @@ class MainWindowQT(QMainWindow):
         self._current_results = []
         self._cache_date = None
 
-        # 全局样式（从 ui/styles/global_qss.py 集中管理）
-        from ui.styles.global_qss import GLOBAL_QSS
-        self.setStyleSheet(GLOBAL_QSS)
+        # 全局样式（动态生成，支持主题切换）
+        from ui.styles.global_qss import generate_global_qss
+        self.setStyleSheet(generate_global_qss())
+        # 监听主题切换信号，实时刷新全局样式
+        from ui.theme import theme_manager
+        theme_manager.sig_theme_changed.connect(self._apply_theme)
 
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
@@ -129,6 +132,19 @@ class MainWindowQT(QMainWindow):
         status_layout.addWidget(self.btn_reconnect)
         
         cb_layout.addLayout(status_layout)
+
+        # 主题切换按钮 — 放在品牌卡片底部
+        from ui.theme import theme_manager as _tm
+        self.btn_theme_switch = AnimatedHoverButton(f"🎨 {_tm.current_theme_name}")
+        self.btn_theme_switch.setStyleSheet(
+            "font-size: 11px; color: #93C5FD; font-weight: bold; padding: 2px 6px;"
+            "border: 1px solid rgba(147, 197, 253, 0.3); border-radius: 4px;"
+            "background: rgba(147, 197, 253, 0.05);"
+        )
+        self.btn_theme_switch.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_theme_switch.clicked.connect(self._toggle_theme)
+        cb_layout.addWidget(self.btn_theme_switch)
+
         left_layout.addWidget(card_brand)
         
         self._init_left_panel_controls(left_layout)
@@ -150,47 +166,39 @@ class MainWindowQT(QMainWindow):
         
         main_layout.addLayout(content_layout, 1)
         
-        status_bar = QWidget()
-        status_bar.setFixedHeight(32)
-        status_bar.setStyleSheet("""
-            background-color: #0A0C10;
-            border-top: 1px solid qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                stop:0 rgba(59, 130, 246, 0.3),
-                stop:0.5 rgba(147, 197, 253, 0.12),
-                stop:1 rgba(59, 130, 246, 0.3));
-            padding: 0px 16px;
-        """)
-        status_layout = QHBoxLayout(status_bar)
-        status_layout.setContentsMargins(12, 0, 12, 0)
-        status_layout.setSpacing(12)
+        # 状态栏（保存引用以便主题切换时刷新样式）
+        self._status_bar_widget = QWidget()
+        self._status_bar_widget.setFixedHeight(32)
+        self._apply_status_bar_style()
+        sb_layout = QHBoxLayout(self._status_bar_widget)
+        sb_layout.setContentsMargins(12, 0, 12, 0)
+        sb_layout.setSpacing(12)
         
         self.status_dot = PulsingDot(color="#10B981")
-        status_layout.addWidget(self.status_dot)
+        sb_layout.addWidget(self.status_dot)
 
         self.lbl_status = QLabel("---")
-        self.lbl_status.setStyleSheet("color: #6B7280; font-size: 12px; font-family: 'Consolas', 'Courier New', monospace;")
-        status_layout.addWidget(self.lbl_status)
+        sb_layout.addWidget(self.lbl_status)
         
         self.lbl_code_count = QLabel("标的池: 0")
-        self.lbl_code_count.setStyleSheet("color: #6B7280; font-size: 12px; font-weight: bold;")
-        status_layout.addWidget(self.lbl_code_count)
+        sb_layout.addWidget(self.lbl_code_count)
         
-        status_layout.addStretch()
+        sb_layout.addStretch()
 
         self.lbl_clock = QLabel()
-        self.lbl_clock.setStyleSheet("color: #6B7280; font-size: 12px; font-family: 'Consolas', monospace;")
-        status_layout.addWidget(self.lbl_clock)
+        sb_layout.addWidget(self.lbl_clock)
         
         self._clock_timer = QTimer(self)
         self._clock_timer.timeout.connect(lambda: self.lbl_clock.setText(datetime.datetime.now().strftime("%H:%M:%S")))
         self._clock_timer.start(1000)
         
         self.lbl_version = QLabel(f"v{APP_VERSION}")
-        self.lbl_version.setStyleSheet("color: #3A3F4D; font-size: 11px;")
+        sb_layout.addWidget(self.lbl_version)
         
-        status_layout.addWidget(self.lbl_version)
+        # 首次设置状态栏 Label 样式
+        self._apply_status_labels_style()
         
-        main_layout.addWidget(status_bar, 0)
+        main_layout.addWidget(self._status_bar_widget, 0)
         
         # 9. 恢复之前的界面布局、列宽、表格排序
         self._restore_ui_state()
@@ -905,4 +913,105 @@ class MainWindowQT(QMainWindow):
             code_list=code_list,
             current_idx=current_idx,
         )
+
+    # ================================================================
+    # 主题切换系统
+    # ================================================================
+    def _toggle_theme(self):
+        """在墨渊/月白之间循环切换"""
+        from ui.theme import theme_manager
+        names = theme_manager.theme_names()
+        current = theme_manager.current_theme_name
+        idx = names.index(current) if current in names else 0
+        next_name = names[(idx + 1) % len(names)]
+        theme_manager.switch_theme(next_name)
+
+    def _apply_theme(self, theme_name: str = ""):
+        """主题切换时的全局刷新回调
+
+        为什么要重新生成 QSS 而不是预缓存？因为主题 token 值在切换时变了，
+        QSS 里的所有颜色插值都需要用新值重新渲染——就像换季换衣服，
+        不能只换上衣，裤子鞋子帽子全得换。
+        """
+        from ui.styles.global_qss import generate_global_qss
+        from ui.theme import theme_manager
+
+        # 1. 重新生成并应用全局 QSS
+        self.setStyleSheet(generate_global_qss())
+
+        # 2. 刷新状态栏 inline style
+        self._apply_status_bar_style()
+        self._apply_status_labels_style()
+
+        # 3. 刷新左侧 tabs_wrapper 的 inline style
+        self._apply_tabs_wrapper_style()
+
+        # 4. 刷新左侧品牌区域 inline style
+        self._apply_left_panel_styles()
+
+        # 5. 更新主题切换按钮文字
+        if hasattr(self, 'btn_theme_switch'):
+            self.btn_theme_switch.setText(f"🎨 {theme_manager.current_theme_name}")
+
+        # 6. 通知用户
+        from ui.components.toast_widget import show_toast
+        show_toast(f"已切换至「{theme_manager.current_theme_name}」主题", "success", self, duration=2000)
+
+    def _apply_status_bar_style(self):
+        """动态设置状态栏背景"""
+        from ui.theme import theme_manager
+        t = theme_manager.current_theme
+        if hasattr(self, '_status_bar_widget'):
+            self._status_bar_widget.setStyleSheet(f"""
+                background-color: {t['BG_STATUSBAR']};
+                border-top: 1px solid {t['STATUSBAR_BORDER']};
+                padding: 0px 16px;
+            """)
+
+    def _apply_status_labels_style(self):
+        """动态设置状态栏内各 Label 的颜色"""
+        from ui.theme import theme_manager
+        t = theme_manager.current_theme
+        muted = t['TEXT_MUTED']
+        for lbl in [getattr(self, 'lbl_status', None),
+                     getattr(self, 'lbl_code_count', None),
+                     getattr(self, 'lbl_clock', None)]:
+            if lbl:
+                lbl.setStyleSheet(f"color: {muted}; font-size: 12px;")
+        if hasattr(self, 'lbl_version'):
+            self.lbl_version.setStyleSheet(f"color: {t['TEXT_DISABLED']}; font-size: 11px;")
+
+    def _apply_tabs_wrapper_style(self):
+        """动态设置右侧 Tab 容器的背景色"""
+        from ui.theme import theme_manager
+        t = theme_manager.current_theme
+        if hasattr(self, 'tabs_wrapper'):
+            self.tabs_wrapper.setStyleSheet(f"""
+                QFrame#tabsWrapperFrame {{
+                    background-color: {t['BG_GLASS']};
+                    border-radius: 10px;
+                    border: 1px solid {t['BORDER_SUBTLE']};
+                }}
+            """)
+
+    def _apply_left_panel_styles(self):
+        """动态设置左侧面板品牌区域的 inline style"""
+        from ui.theme import theme_manager
+        t = theme_manager.current_theme
+        # 品牌标签颜色只在暗色时蓝色，亮色时深灰
+        brand_color = "#93C5FD" if theme_manager.is_dark() else "#1E40AF"
+        if hasattr(self, 'btn_datasource'):
+            ds_color = t['BRAND_PRIMARY']
+            self.btn_datasource.setStyleSheet(
+                f"font-size: 11px; color: {ds_color}; font-weight: bold; padding: 2px 6px;"
+                f"border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 4px;"
+                f"background: {t['BRAND_SUBTLE']};"
+            )
+        if hasattr(self, 'btn_theme_switch'):
+            accent = "#93C5FD" if theme_manager.is_dark() else "#3B82F6"
+            self.btn_theme_switch.setStyleSheet(
+                f"font-size: 11px; color: {accent}; font-weight: bold; padding: 2px 6px;"
+                f"border: 1px solid rgba(147, 197, 253, 0.3); border-radius: 4px;"
+                f"background: rgba(147, 197, 253, 0.05);"
+            )
 
