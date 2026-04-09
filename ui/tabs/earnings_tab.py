@@ -69,7 +69,7 @@ class EarningsTab(BaseStockTab):
         _t = _tm.current_theme
         self.btn_manual_fetch.setStyleSheet(f"""
             QPushButton {{
-                background-color: {_t['BG_BUTTON']}; color: {_t['TEXT_SPECIAL']}; 
+                background-color: {_t['BG_BUTTON']}; color: {_t['TEXT_PRIMARY']}; 
                 border: 1px solid {_t['BORDER_DEFAULT']}; border-radius: 4px; 
                 padding: 4px 12px; font-weight: bold;
             }}
