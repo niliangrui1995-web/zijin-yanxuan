@@ -415,7 +415,7 @@ class StockItemDelegate(QStyledItemDelegate):
             elapsed = time.time() - update_time
             if elapsed < self.flash_duration:
                 alpha = int(255 * (1.0 - (elapsed / self.flash_duration)))
-                color_hex = COLOR_RISE_STRONG if diff > 0 else COLOR_FALL_STRONG
+                color_hex = _c("COLOR_RISE_STRONG") if diff > 0 else _c("COLOR_FALL_STRONG")
                 bg_color = QColor(color_hex)
                 bg_color.setAlpha(min(80, max(0, int(alpha * 0.3))))
                 painter.fillRect(option.rect, bg_color)
