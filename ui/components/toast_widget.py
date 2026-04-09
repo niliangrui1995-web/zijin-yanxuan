@@ -23,12 +23,14 @@ class Toast(QWidget):
         self.bg_widget.setObjectName("ToastBackground")
         
         # 默认样式 (INFO)
-        self.bg_widget.setStyleSheet("""
-            QWidget#ToastBackground {
-                background-color: rgba(30, 41, 59, 0.95);
+        from ui.theme import theme_manager as _tm
+        _t = _tm.current_theme
+        self.bg_widget.setStyleSheet(f"""
+            QWidget#ToastBackground {{
+                background-color: {_t['BG_GLASS']};
                 border-radius: 8px;
-                border: 1px solid rgba(255, 255, 255, 0.1);
-            }
+                border: 1px solid {_t['BORDER_WEAK']};
+            }}
         """)
         
         bg_layout = QHBoxLayout(self.bg_widget)
@@ -39,7 +41,7 @@ class Toast(QWidget):
         bg_layout.addWidget(self.lbl_icon)
         
         self.lbl_text = QLabel()
-        self.lbl_text.setStyleSheet("color: #F8FAFC; font-size: 14px; font-weight: 500; background: transparent;")
+        self.lbl_text.setStyleSheet(f"color: {_tm.current_theme['TEXT_PRIMARY']}; font-size: 14px; font-weight: 500; background: transparent;")
         self.lbl_text.setWordWrap(True)
         bg_layout.addWidget(self.lbl_text)
         
@@ -83,9 +85,10 @@ class Toast(QWidget):
         }
         icon, border_color, text_color = styles.get(level, styles["info"])
         self.lbl_icon.setText(icon)
+        from ui.theme import theme_manager as _tm
         self.bg_widget.setStyleSheet(f"""
             QWidget#ToastBackground {{
-                background-color: rgba(30, 41, 59, 0.95);
+                background-color: {_tm.current_theme['BG_GLASS']};
                 border-radius: 8px;
                 border: 1px solid {border_color};
             }}

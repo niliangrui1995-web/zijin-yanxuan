@@ -65,14 +65,16 @@ class EarningsTab(BaseStockTab):
         self.btn_manual_fetch = QPushButton("🔄 历史更新")
         self.btn_manual_fetch.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_manual_fetch.setToolTip("手动填入日期区间，强行进行数据扫描并在本地进行去重和升级！")
-        self.btn_manual_fetch.setStyleSheet("""
-            QPushButton {
-                background-color: #374151; color: #FBBF24; 
-                border: 1px solid #4B5563; border-radius: 4px; 
+        from ui.theme import theme_manager as _tm
+        _t = _tm.current_theme
+        self.btn_manual_fetch.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {_t['BG_BUTTON']}; color: {_t['TEXT_SPECIAL']}; 
+                border: 1px solid {_t['BORDER_INPUT']}; border-radius: 4px; 
                 padding: 4px 12px; font-weight: bold;
-            }
-            QPushButton:hover { background-color: #4B5563; border-color: #F59E0B; }
-            QPushButton:pressed { background-color: #1F2937; }
+            }}
+            QPushButton:hover {{ background-color: {_t['BG_HOVER']}; border-color: {_t['COLOR_RISE']}; }}
+            QPushButton:pressed {{ background-color: {_t['BG_MENU']}; }}
         """)
         self.btn_manual_fetch.clicked.connect(self._on_manual_fetch)
         

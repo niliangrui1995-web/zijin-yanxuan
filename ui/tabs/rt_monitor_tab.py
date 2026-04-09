@@ -197,10 +197,12 @@ class RtMonitorTab(BaseStockTab):
         btn_rt_settings = QToolButton()
         btn_rt_settings.setText("⚙")
         btn_rt_settings.setFixedSize(32, 32)
-        btn_rt_settings.setStyleSheet("""
-            QToolButton { font-size: 16px; border: none; color: #6B7280; background: transparent; margin-top: 4px; }
-            QToolButton:hover { color: #A78BFA; background: rgba(139, 92, 246, 0.1); border-radius: 4px; }
-            QToolButton:pressed { color: #8B5CF6; }
+        from ui.theme import theme_manager as _tm
+        _t = _tm.current_theme
+        btn_rt_settings.setStyleSheet(f"""
+            QToolButton {{ font-size: 16px; border: none; color: {_t['TEXT_MUTED']}; background: transparent; margin-top: 4px; }}
+            QToolButton:hover {{ color: {_t['TEXT_BRIGHT']}; background: {_t['BG_HOVER']}; border-radius: 4px; }}
+            QToolButton:pressed {{ color: {_t['TEXT_PRIMARY']}; }}
         """)
         btn_rt_settings.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_rt_settings.setToolTip("盘中监控参数设置")
@@ -261,7 +263,9 @@ class RtMonitorTab(BaseStockTab):
         dlg = QDialog(self)
         dlg.setWindowTitle("⚙ 盘中监控参数")
         dlg.setFixedSize(300, 160)
-        dlg.setStyleSheet("QDialog { background-color: #151820; } QLabel { color: #C9CDD4; font-size: 13pt; }")
+        from ui.theme import theme_manager as _tm
+        _t = _tm.current_theme
+        dlg.setStyleSheet(f"QDialog {{ background-color: {_t['BG_MENU']}; }} QLabel {{ color: {_t['TEXT_PRIMARY']}; font-size: 13pt; }}")
         
         form = QVBoxLayout(dlg)
         form.setContentsMargins(20, 20, 20, 20)

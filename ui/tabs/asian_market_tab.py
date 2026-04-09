@@ -676,14 +676,16 @@ class AsianMarketTab(BaseStockTab):
         self.btn_refresh = QPushButton("🔄 网络检查与手动刷新")
         self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_refresh.setToolTip("强制跳过等待，立刻请求外网(Yahoo Finance)测速并获取最新价格")
-        self.btn_refresh.setStyleSheet("""
-            QPushButton {
-                background-color: #374151; color: #E5E7EB; 
-                border: 1px solid #4B5563; border-radius: 4px; 
+        from ui.theme import theme_manager as _tm
+        _t = _tm.current_theme
+        self.btn_refresh.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {_t['BG_BUTTON']}; color: {_t['TEXT_PRIMARY']}; 
+                border: 1px solid {_t['BORDER_INPUT']}; border-radius: 4px; 
                 padding: 4px 12px; font-weight: bold;
-            }
-            QPushButton:hover { background-color: #4B5563; border-color: #6B7280; }
-            QPushButton:pressed { background-color: #1F2937; }
+            }}
+            QPushButton:hover {{ background-color: {_t['BG_HOVER']}; border-color: {_t['BORDER_STRONG']}; }}
+            QPushButton:pressed {{ background-color: {_t['BG_MENU']}; }}
         """)
         self.btn_refresh.clicked.connect(self._on_manual_refresh)
         

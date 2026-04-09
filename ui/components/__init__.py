@@ -1,7 +1,7 @@
 # ui/components.py - 通用 UI 组件
 # 从 main_window_qt.py 拆分出来的独立工具类
 from PyQt6.QtWidgets import (
-    QFrame, QPushButton, QTableWidgetItem,
+    QFrame, QPushButton, QTableWidgetItem, QTableView, QAbstractItemView,
     QStyleOption, QStyle, QWidget
 )
 from PyQt6.QtCore import (
@@ -22,7 +22,7 @@ class NumericTableWidgetItem(QTableWidgetItem):
         font = QFont()
         # 兼容包含中文字符时的等宽显示(如市值 450亿)
         font.setFamilies(["Consolas", "Microsoft YaHei UI", "monospace"])
-        font.setPointSize(10)
+        font.setPointSize(11)
         font.setStyleHint(QFont.StyleHint.Monospace)
         self.setFont(font)
 
@@ -45,6 +45,37 @@ class NumericTableWidgetItem(QTableWidgetItem):
         if m:
             return float(m.group(1))
         return float('-inf')
+
+
+class VCPTableView(QTableView):
+    """
+    紫金研选统一表格组件 (VCPTableView)
+    """
+    def __init__(self, parent=None, default_row_height: int = None):
+        super().__init__(parent)
+        self._init_common_styles(default_row_height)
+
+    def _init_common_styles(self, default_row_height: int):
+        self.setShowGrid(False)
+        self.setAlternatingRowColors(True)
+        self.setWordWrap(False)
+        self.verticalHeader().setVisible(False)
+        self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.setSortingEnabled(True)
+
+        from PyQt6.QtWidgets import QApplication
+        screen = QApplication.primaryScreen()
+        max_w = screen.geometry().width() if screen else 1920
+        self.horizontalHeader().setMaximumSectionSize(max_w)
+        self.setMaximumWidth(max_w)
+
+        base_style = self.styleSheet()
+        self.setStyleSheet(base_style + "\nQTableView::item { padding: 0px 10px; }")
+
+        if default_row_height is not None:
+            self.verticalHeader().setDefaultSectionSize(default_row_height)
 
 
 class GlassPanel(QFrame):
@@ -84,19 +115,21 @@ class AnimatedHoverButton(QPushButton):
         self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         
         # 移除默认的样式表背景，完全由 paintEvent 接管
-        self.setStyleSheet("""
-            QPushButton#animatedHoverBtn {
+        from ui.theme import theme_manager as _tm
+        _t = _tm.current_theme
+        self.setStyleSheet(f"""
+            QPushButton#animatedHoverBtn {{
                 background: transparent;
                 border: none;
-                color: #A0AEC0;
+                color: {_t['TEXT_MUTED']};
                 font-size: 13px;
                 font-weight: 500;
                 text-align: left;
                 padding-left: 36px;
-            }
-            QPushButton#animatedHoverBtn:disabled {
-                color: #4B5563;
-            }
+            }}
+            QPushButton#animatedHoverBtn:disabled {{
+                color: {_t['TEXT_DISABLED']};
+            }}
         """)
 
     @pyqtProperty(float)
@@ -111,10 +144,26 @@ class AnimatedHoverButton(QPushButton):
     def set_active(self, active: bool):
         self._is_active = active
         # 激活状态文字颜色变亮
+        from ui.theme import theme_manager as _tm
+        _t = _tm.current_theme
         if active:
-            self.setStyleSheet(self.styleSheet().replace("color: #A0AEC0;", "color: #FFFFFF; font-weight: bold;"))
+            self.setStyleSheet(f"""
+                QPushButton#animatedHoverBtn {{
+                    background: transparent; border: none;
+                    color: {_t['TEXT_PRIMARY']}; font-size: 13px; font-weight: bold;
+                    text-align: left; padding-left: 36px;
+                }}
+                QPushButton#animatedHoverBtn:disabled {{ color: {_t['TEXT_DISABLED']}; }}
+            """)
         else:
-            self.setStyleSheet(self.styleSheet().replace("color: #FFFFFF; font-weight: bold;", "color: #A0AEC0;"))
+            self.setStyleSheet(f"""
+                QPushButton#animatedHoverBtn {{
+                    background: transparent; border: none;
+                    color: {_t['TEXT_MUTED']}; font-size: 13px; font-weight: 500;
+                    text-align: left; padding-left: 36px;
+                }}
+                QPushButton#animatedHoverBtn:disabled {{ color: {_t['TEXT_DISABLED']}; }}
+            """)
         self.update()
 
     def enterEvent(self, event):

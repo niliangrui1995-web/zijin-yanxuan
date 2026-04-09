@@ -95,10 +95,12 @@ class ScanTab(BaseStockTab):
         btn_scan_settings = QToolButton()
         btn_scan_settings.setText("⚙")
         btn_scan_settings.setFixedSize(32, 32)
-        btn_scan_settings.setStyleSheet("""
-            QToolButton { font-size: 16px; border: none; color: #6B7280; background: transparent; margin-top: 4px; }
-            QToolButton:hover { color: #A78BFA; background: rgba(139, 92, 246, 0.1); border-radius: 4px; }
-            QToolButton:pressed { color: #8B5CF6; }
+        from ui.theme import theme_manager as _tm
+        _t = _tm.current_theme
+        btn_scan_settings.setStyleSheet(f"""
+            QToolButton {{ font-size: 16px; border: none; color: {_t['TEXT_MUTED']}; background: transparent; margin-top: 4px; }}
+            QToolButton:hover {{ color: {_t['TEXT_BRIGHT']}; background: {_t['BG_HOVER']}; border-radius: 4px; }}
+            QToolButton:pressed {{ color: {_t['TEXT_PRIMARY']}; }}
         """)
         btn_scan_settings.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_scan_settings.setToolTip("扫描参数设置")
@@ -192,7 +194,9 @@ class ScanTab(BaseStockTab):
         dlg = QDialog(self)
         dlg.setWindowTitle("⚙ 扫描策略参数")
         dlg.setFixedSize(400, 390)
-        dlg.setStyleSheet("QDialog { background-color: #151820; } QLabel { color: #C9CDD4; font-size: 13pt; }")
+        from ui.theme import theme_manager as _tm
+        _t = _tm.current_theme
+        dlg.setStyleSheet(f"QDialog {{ background-color: {_t['BG_MENU']}; }} QLabel {{ color: {_t['TEXT_PRIMARY']}; font-size: 13pt; }}")
         
         form = QVBoxLayout(dlg)
         form.setContentsMargins(20, 20, 20, 20)
@@ -203,7 +207,9 @@ class ScanTab(BaseStockTab):
         preset_row.addWidget(QLabel("预设方案:"))
         combo_preset = QComboBox()
         combo_preset.setFixedHeight(28)
-        combo_preset.setStyleSheet("QComboBox { background: #1E2330; color: #C9CDD4; border: 1px solid #252A36; }")
+        from ui.theme import theme_manager as _tm
+        _t = _tm.current_theme
+        combo_preset.setStyleSheet(f"QComboBox {{ background: {_t['BG_INPUT']}; color: {_t['TEXT_PRIMARY']}; border: 1px solid {_t['BORDER_INPUT']}; }}")
 
         # 内置预设
         _builtin_presets = {
