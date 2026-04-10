@@ -194,12 +194,6 @@ class RtMonitorTab(BaseStockTab):
         lbl_title.setObjectName("tabTitle")
         tb_layout.addWidget(lbl_title)
 
-        self.btn_rt_start = QPushButton("🚀 启动盘中监控")
-        self.btn_rt_start.setObjectName("primaryButton")
-        self.btn_rt_start.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._ensure_rt_button_width()
-        self.btn_rt_start.clicked.connect(lambda *args: self._toggle_rt_monitor())
-        tb_layout.addWidget(self.btn_rt_start)
         
         self.lbl_rt_info = QLabel("未启动")
         self.lbl_rt_info.setObjectName("tabSubtitle")
@@ -213,6 +207,13 @@ class RtMonitorTab(BaseStockTab):
         self.rt_search.setFixedWidth(150)
         self.rt_search.textChanged.connect(self._on_search_text_changed)
         tb_layout.addWidget(self.rt_search)
+
+        self.btn_rt_start = QPushButton("🚀 启动盘中监控")
+        self.btn_rt_start.setObjectName("primaryButton")
+        self.btn_rt_start.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._ensure_rt_button_width()
+        self.btn_rt_start.clicked.connect(lambda *args: self._toggle_rt_monitor())
+        tb_layout.addWidget(self.btn_rt_start)
         
         # 清空盘中记录按钮
         self.btn_rt_clear = QPushButton("🗑 清空")
