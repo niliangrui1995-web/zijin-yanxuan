@@ -642,7 +642,7 @@ class MainWindowQT(QMainWindow):
 
         # Tab 6.5: 龙虎榜 (共振)
         self.tab_lhb = LhbTab(self.data_provider, self)
-        self.tabs.addTab(self.tab_lhb, "资金共振")
+        self.tabs.addTab(self.tab_lhb, "龙虎榜")
 
         # Tab 7: 业绩预告与财报爆点追踪（独立组件）
         from ui.tabs.earnings_tab import EarningsTab
