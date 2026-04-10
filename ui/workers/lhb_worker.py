@@ -102,11 +102,6 @@ def fetch_lhb_data_for_date(date_str: str) -> list[dict]:
         f_buys = list(foreign_buys.get(name, set()))
         f_sells = list(foreign_sells.get(name, set()))
         
-        # 计算共振因子
-        # ① 机构必须表现出正向态度（有净买入 或 有买方机构且净买非负巨大劣势）
-        # ② 必须有外资大额买入参与
-        is_resonance = (jg_info['机构买入净额'] > 0) and (len(f_buys) > 0)
-        
         has_jg = (jg_info['买方机构数'] > 0) or (jg_info['卖方机构数'] > 0)
         has_foreign = (len(f_buys) > 0) or (len(f_sells) > 0)
         
@@ -146,12 +141,27 @@ def fetch_lhb_data_for_date(date_str: str) -> list[dict]:
                                 final_f_sells.append(f"{matched_kw}(净卖:{abs(net_wan)}万)")
                             else:
                                 final_f_buys.append(f"{matched_kw}(0万)")
+                            
+                            foreign_net_sum += net_wan
             except Exception as e:
                 log.warning(f"[外资明细] 获取 {code} 失败: {e}")
                 # 降级：如果获取失败，至少保留关键字
                 final_f_buys = list(f_buys)
                 final_f_sells = list(f_sells)
-        
+                # 预估一个净额，供降级逻辑使用
+                foreign_net_sum = len(final_f_buys) - len(final_f_sells)
+                
+        # ================= 深度过滤与共振计算 =================
+        # 用户需求1：剔除机构和外资都是净卖出的股票（双杀陷阱）
+        if has_jg and has_foreign:
+            if (jg_info['机构买入净额'] < 0) and (foreign_net_sum < 0):
+                continue
+                
+        # 用户需求2：只有机构和外资均是净买入的情况下才标记资金共振
+        is_resonance = False
+        if has_jg and has_foreign:
+            if (jg_info['机构买入净额'] > 0) and (foreign_net_sum > 0):
+                is_resonance = True        
         # 构造给前端的平铺字典字段
         record = {
             "代码": code,
