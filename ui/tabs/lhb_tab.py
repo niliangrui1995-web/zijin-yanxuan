@@ -21,80 +21,13 @@ from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFil
 from ui.components import VCPTableView
 from core.event_bus import event_bus
 from core.logger import get_logger
+from ui.components.trade_calendar import TradeCalendarWidget
 from core.task_manager import task_manager
 
 from ui.tabs.base_stock_tab import BaseStockTab
 from ui.workers.lhb_worker import fetch_lhb_data_for_date
 from core.market_calendar import MarketCalendar
 from ui.theme import theme_manager
-
-def _c(token: str) -> str:
-    return theme_manager.get(token)
-
-log = get_logger(__name__)
-
-
-class TradeCalendarWidget(QCalendarWidget):
-    """完全自绘日历，彻底绕过 Qt 内部的颜色机制，保证在任何主题下所有日期都清晰可见"""
-
-    def paintCell(self, painter, rect, date):
-        """不调用 super()，全部由我们自己画，这样 Qt 的鬼颜色就插不进来手了"""
-        from PyQt6.QtGui import QFont, QPen
-
-        painter.save()
-        painter.setRenderHint(painter.RenderHint.Antialiasing)
-
-        current_month = self.monthShown()
-        current_year = self.yearShown()
-        is_current_month = (date.month() == current_month and date.year() == current_year)
-        is_selected = (date == self.selectedDate())
-        is_today = (date == QDate.currentDate())
-
-        # ── 1. 底色 ──
-        bg_color = QColor(_c("BG_TABLE_BASE"))
-        if is_selected:
-            bg_color = QColor(_c("BRAND_PRIMARY"))
-            bg_color.setAlpha(45)
-        elif is_today and is_current_month:
-            bg_color = QColor(_c("BG_HOVER"))
-        painter.fillRect(rect, bg_color)
-
-        # ── 2. 今日圆环标识 ──
-        if is_today and is_current_month:
-            ring_color = QColor(_c("BRAND_PRIMARY"))
-            ring_color.setAlpha(180)
-            pen = QPen(ring_color, 1.5)
-            painter.setPen(pen)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            inset = rect.adjusted(3, 3, -3, -3)
-            painter.drawRoundedRect(inset, 4, 4)
-
-        # ── 3. 文字颜色 ──
-        if is_selected:
-            text_color = QColor(_c("TEXT_BRIGHT"))
-        elif is_current_month:
-            text_color = QColor(_c("TEXT_PRIMARY"))
-        else:
-            # 非本月日期用暗淡色
-            text_color = QColor(_c("TEXT_DISABLED"))
-
-        font = QFont()
-        font.setPointSize(10)
-        if is_today and is_current_month:
-            font.setBold(True)
-        painter.setFont(font)
-        painter.setPen(text_color)
-        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, str(date.day()))
-
-        # ── 4. 非交易日底部标记线（仅对本月日期生效） ──
-        if is_current_month and not MarketCalendar.is_trade_day(date.toPyDate(), "CN"):
-            marker_color = QColor(_c("COLOR_FALL"))
-            marker_color.setAlpha(140)
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.fillRect(rect.x() + 4, rect.bottom() - 3, rect.width() - 8, 2, marker_color)
-
-        painter.restore()
-
 
 class LhbTab(BaseStockTab):
     def __init__(self, data_provider, parent=None):
@@ -132,7 +65,6 @@ class LhbTab(BaseStockTab):
         self.date_edit.setCalendarPopup(True)
         # 挂载自定义交易日历
         self.cal_widget = TradeCalendarWidget()
-        self.cal_widget.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
         self.date_edit.setCalendarWidget(self.cal_widget)
         # 默认设为今天
         self.date_edit.setDate(QDate.currentDate())
