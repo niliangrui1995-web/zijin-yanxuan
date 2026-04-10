@@ -196,9 +196,8 @@ class LhbTab(BaseStockTab):
             else:
                 row_dict["资金共振"] = ""
             
-            # 使用 base tab 的占位符（避免现价未更新被当成0），依赖大一统全局刷新
-            row_dict["现价"] = "--"
-            row_dict["涨幅%"] = "--"
+            # 去除原先的硬性"--"占位符覆盖，保留东方财富原汁原味的 End-of-Day 快照数据
+            # 如果是当天最新，大一统的 global Sina ticker 依然会实时覆盖它们
             row_data.append(row_dict)
 
         self.model.update_data(row_data)

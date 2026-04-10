@@ -112,11 +112,10 @@ class RtTableModel(QAbstractTableModel):
                 
             if last_close > 0 and rt_close > 0:
                 pct = ((rt_close / last_close) - 1) * 100
-            else:
-                pct = 0
+                item_dict["涨幅%"] = pct
                 
-            item_dict["现价"] = f"{rt_close:.2f}" if rt_close > 0 else "--"
-            item_dict["涨幅%"] = pct
+            if rt_close > 0:
+                item_dict["现价"] = f"{rt_close:.2f}"
             
             zbg = item_dict.get("_zongguben", 0)
             if zbg > 0 and rt_close > 0:
