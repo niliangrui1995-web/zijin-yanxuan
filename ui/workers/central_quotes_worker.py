@@ -2,8 +2,10 @@ from PyQt6.QtCore import QObject, QTimer, pyqtSlot
 from core.event_bus import event_bus
 from core.task_manager import task_manager
 from core.logger import get_logger
+import re
 
 log = get_logger(__name__)
+_A_SHARE_CODE_RE = re.compile(r"^\d{6}$")
 
 class CentralQuotesService(QObject):
     """
@@ -20,6 +22,8 @@ class CentralQuotesService(QObject):
         # 盘中刷新频率：10秒（兼顾基本盯盘需求与极低系统消耗）
         self._timer.start(10000)
         self._is_fetching = False
+        # 防止后台任务 hang 住导致 _is_fetching 永不释放，记录开始时间做超时保护
+        self._fetch_start_time = 0.0
 
         # 熔断器：连续失败 N 次后暂停轮询，冷却一段时间再恢复
         # 防止网络断开时每 10 秒打一次必然失败的请求，白费 CPU 和日志
@@ -36,11 +40,16 @@ class CentralQuotesService(QObject):
     def _get_all_active_codes(self) -> set:
         codes = set()
         mw = self.main_window
+
+        def _normalize_a_code(code):
+            code = str(code).strip()
+            return code if _A_SHARE_CODE_RE.match(code) else None
         
         def _extract(model_data):
             for r in model_data:
-                c = r.get("代码")
-                if c: codes.add(str(c))
+                c = _normalize_a_code(r.get("代码"))
+                if c:
+                    codes.add(c)
 
         if hasattr(mw, 'tab_scan') and mw.tab_scan.source_model:
             _extract(mw.tab_scan.source_model.row_data)
@@ -51,11 +60,11 @@ class CentralQuotesService(QObject):
         if hasattr(mw, 'tab_watchlist') and getattr(mw.tab_watchlist, 'model', None):
             _extract(mw.tab_watchlist.model.row_data)
             
-        if hasattr(mw, 'tab_ai_tracker') and hasattr(mw.tab_ai_tracker, '_ai_tracker_codes'):
-            for c in mw.tab_ai_tracker._ai_tracker_codes: codes.add(str(c))
-            
         if hasattr(mw, 'tab_foreign_block') and hasattr(mw.tab_foreign_block, '_block_trade_codes'):
-            for c in mw.tab_foreign_block._block_trade_codes: codes.add(str(c))
+            for c in mw.tab_foreign_block._block_trade_codes:
+                c_norm = _normalize_a_code(c)
+                if c_norm:
+                    codes.add(c_norm)
 
         if hasattr(mw, 'tab_na_daily') and getattr(mw.tab_na_daily, 'model', None):
             _extract(mw.tab_na_daily.model.row_data)
@@ -63,12 +72,22 @@ class CentralQuotesService(QObject):
         if hasattr(mw, 'tab_earnings') and getattr(mw.tab_earnings, 'model', None):
             _extract(mw.tab_earnings.model.row_data)
             
+        if hasattr(mw, 'tab_lhb') and getattr(mw.tab_lhb, 'model', None):
+            _extract(mw.tab_lhb.model.row_data)
+            
         return codes
 
     @pyqtSlot()
     def _trigger_fetch(self):
         if self._is_fetching:
-            return
+            # 超时保护：如果上一轮任务 hang 了超过 30 秒，强制释放锁避免报价站永久冻结
+            import time
+            if self._fetch_start_time > 0 and (time.time() - self._fetch_start_time) > 30:
+                log.warning("[报价站] _is_fetching 已持续 30s+，判定为 hang，强制释放锁")
+                self._is_fetching = False
+                self._consecutive_failures += 1
+            else:
+                return
 
         # 熔断冷却中：跳过本轮，倒计时 -1
         if self._circuit_breaker_cooldown > 0:
@@ -99,7 +118,9 @@ class CentralQuotesService(QObject):
         if not codes:
             return
 
+        import time as _t
         self._is_fetching = True
+        self._fetch_start_time = _t.time()
         
         def _bg_task():
             try:

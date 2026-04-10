@@ -101,19 +101,19 @@ def fetch_lhb_data_for_date(date_str: str) -> list[dict]:
         
         # 构造给前端的平铺字典字段
         record = {
-            "上榜日期": date_str,
             "代码": code,
             "名称": name,
             "现价": round(close_p, 2),
             "涨幅%": round(pct, 2),
+            "市值": round(mk_cap / 100000000.0, 2) if mk_cap > 0 else "--",
+            "资金共振": is_resonance,
+            "上榜日期": date_str,
             "上榜净买额(万)": round(net_buy / 10000.0, 2),
             "机构净买(万)": round(jg_info['机构买入净额'] / 10000.0, 2),
             "机构家数": f"买{jg_info['买方机构数']}/卖{jg_info['卖方机构数']}",
             "外资潜伏池": " | ".join(f_buys) if f_buys else ("卖: " + " | ".join(f_sells) if f_sells else "--"),
             "换手率%": round(turnover, 2),
-            "流通市值(亿)": round(mk_cap / 100000000.0, 2) if mk_cap > 0 else "--",
-            "上榜原因": reason,
-            "资金共振": is_resonance
+            "上榜原因": reason
         }
         results.append(record)
         

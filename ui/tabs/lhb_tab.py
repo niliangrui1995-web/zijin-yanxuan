@@ -101,8 +101,9 @@ class LhbTab(BaseStockTab):
 
         # 表格列配置
         self.columns = [
-            "上榜日期", "代码", "名称", "资金共振", "现价", "涨幅%", "上榜净买额(万)", 
-            "机构净买(万)", "外资潜伏池", "机构家数", "换手率%", "流通市值(亿)", "上榜原因"
+            "代码", "名称", "现价", "涨幅%", "市值",
+            "资金共振", "上榜日期", "上榜净买额(万)", 
+            "机构净买(万)", "外资潜伏池", "机构家数", "换手率%", "上榜原因"
         ]
         self.table = VCPTableView(default_row_height=28)
         self.model = StockTableModel(self.columns)
@@ -112,12 +113,12 @@ class LhbTab(BaseStockTab):
         self.delegate = StockItemDelegate(self.table)
         self.table.setItemDelegate(self.delegate)
         # 默认按资金共振排序 (Bool会转化为字符串 "🔥" 和 "") 这样火会排在前面
-        self.table.sortByColumn(3, Qt.SortOrder.DescendingOrder)
+        self.table.sortByColumn(5, Qt.SortOrder.DescendingOrder)
 
         # 列宽配置
         header = self.table.horizontalHeader()
         header.setStretchLastSection(True)
-        default_widths = [90, 60, 70, 70, 60, 60, 100, 90, 180, 80, 70, 90, 200]
+        default_widths = [60, 70, 60, 65, 80, 70, 90, 100, 90, 180, 80, 70, 200]
         for i, w in enumerate(default_widths):
             self.table.setColumnWidth(i, w)
 
