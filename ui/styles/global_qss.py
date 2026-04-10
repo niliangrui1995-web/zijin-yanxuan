@@ -404,7 +404,7 @@ QTextBrowser, QTextEdit {{
    QCalendarWidget - 日历模块
    ═══════════════════════════════════════════ */
 QCalendarWidget QWidget#qt_calendar_navigationbar {{
-    background-color: {t['BG_SECONDARY']};
+    background-color: {t['BG_SIDEBAR']};
 }}
 QCalendarWidget QToolButton {{
     color: {t['TEXT_PRIMARY']};
