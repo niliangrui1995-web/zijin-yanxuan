@@ -22,9 +22,13 @@ def fetch_lhb_data_for_date(date_str: str) -> list[dict]:
             return []
             
         # 智能去重：同一天某只股票可能因为多种原因上榜，合并其原因并保留唯一行
-        if '代码' in df_detail.columns and '上榜原因' in df_detail.columns:
-            df_detail['上榜原因'] = df_detail.groupby('代码')['上榜原因'].transform(lambda x: ' | '.join(x.dropna().astype(str).unique()))
-            df_detail = df_detail.drop_duplicates(subset=['代码'], keep='first')
+        # 注意：必须同时根据“代码”和“龙虎榜买卖净额”作为复合主键去重！
+        # 因为“日涨幅偏离”和“三日涨幅偏离”虽然是同一只股票，但背后买卖金额完全不同（一个是单日，一个是三日累计）。
+        # 加入资金额作为分组键，可以完美隔离三日榜和单日榜，只合并真正属于同一数据维度的上榜原因。
+        if all(c in df_detail.columns for c in ['代码', '上榜原因', '龙虎榜净买额']):
+            group_keys = ['代码', '龙虎榜净买额']
+            df_detail['上榜原因'] = df_detail.groupby(group_keys)['上榜原因'].transform(lambda x: ' | '.join(x.dropna().astype(str).unique()))
+            df_detail = df_detail.drop_duplicates(subset=group_keys, keep='first')
     except Exception as e:
         log.error(f"[龙虎榜抓取] {date_str} 基础榜单异常: {e}")
         return []
