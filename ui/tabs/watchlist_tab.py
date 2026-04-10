@@ -398,26 +398,34 @@ class WatchlistTab(BaseStockTab):
                             na_subsector_data[c] = str(r.get("细分板块", "") or "")
                         
                 if hasattr(main_win, 'tab_foreign_block') and hasattr(main_win.tab_foreign_block, 'model'):
+                    # 用于聚合单只股票下各主力席位的买卖净额: code -> { short_branch: net_amount_wan }
+                    block_aggregates = {}
+                    from ui.workers.lhb_worker import FOREIGN_KEYWORDS
+                    
                     for r in main_win.tab_foreign_block.model.row_data:
                         c = str(r.get("代码", ""))
                         if c:
                             detail = str(r.get("交易详情", ""))
                             buy = str(r.get("买方营业部", ""))
                             sell = str(r.get("卖方营业部", ""))
-                            amt = str(r.get("成交金额(万元)", ""))
+                            amt = str(r.get("成交金额(万元)", "0"))
                             
-                            from ui.workers.lhb_worker import FOREIGN_KEYWORDS
+                            try:
+                                amt_val = float(amt) if amt and amt != "--" else 0.0
+                            except:
+                                amt_val = 0.0
+                                
                             branch = ""
-                            action = ""
+                            sign = 1.0
                             if "买入" in detail:
                                 branch = buy
-                                action = "买入"
+                                sign = 1.0
                             elif "卖出" in detail:
                                 branch = sell
-                                action = "卖出"
+                                sign = -1.0
                             else:
                                 branch = buy if buy else sell
-                                action = detail
+                                sign = 1.0
                                 
                             short_branch = branch
                             for kw in FOREIGN_KEYWORDS:
@@ -425,15 +433,23 @@ class WatchlistTab(BaseStockTab):
                                     short_branch = kw
                                     break
                                     
-                            amt_str = ""
-                            try:
-                                if amt and amt != "--":
-                                    amt_str = f"{float(amt):.0f}万"
-                            except ValueError:
-                                pass
-                                
-                            memo = f"{short_branch} {action}{amt_str}".strip()
-                            block_data[c] = memo
+                            if c not in block_aggregates:
+                                block_aggregates[c] = {}
+                            block_aggregates[c][short_branch] = block_aggregates[c].get(short_branch, 0.0) + (amt_val * sign)
+                            
+                    # 将聚合的数据重组为显示串
+                    for c, branch_data in block_aggregates.items():
+                        memos = []
+                        # 降序排列，净买金额大的排前面，净卖排后面
+                        sorted_branches = sorted(branch_data.items(), key=lambda x: x[1], reverse=True)
+                        for br, total_amt in sorted_branches:
+                            if total_amt > 0:
+                                memos.append(f"{br}买入{total_amt:.0f}万")
+                            elif total_amt < 0:
+                                memos.append(f"{br}卖出{abs(total_amt):.0f}万")
+                            else:
+                                memos.append(f"{br}净买0万")
+                        block_data[c] = " | ".join(memos)
                             
                 if hasattr(main_win, 'tab_earnings') and hasattr(main_win.tab_earnings, 'model'):
                     for r in main_win.tab_earnings.model.row_data:
