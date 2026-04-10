@@ -54,18 +54,50 @@ class LhbFilterProxyModel(RtSortFilterProxyModel):
 
 
 class TradeCalendarWidget(QCalendarWidget):
-    """自定义带交易日标记的日历"""
+    """自定义带交易日标记的日历，同时修复 Qt 默认周末/非本月日期文字不可见的问题"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._apply_theme_palette()
+
+    def _apply_theme_palette(self):
+        """通过 QPalette 强制设定所有日期文字颜色，覆盖 Qt 内置的周末蓝色等默认色"""
+        from PyQt6.QtGui import QPalette
+        from PyQt6.QtCore import Qt as QtConst
+        
+        text_color = QColor(_c("TEXT_PRIMARY"))
+        muted_color = QColor(_c("TEXT_DISABLED"))
+        bg_color = QColor(_c("BG_TABLE_BASE"))
+        highlight_color = QColor(_c("SELECTION_BG"))
+        highlight_text = QColor(_c("TEXT_BRIGHT"))
+        
+        # 为周末和工作日设置相同的前景色（Qt 喜欢给周末染蓝色/红色）
+        weekend_fmt = self.weekdayTextFormat(QtConst.DayOfWeek.Saturday)
+        weekend_fmt.setForeground(text_color)
+        self.setWeekdayTextFormat(QtConst.DayOfWeek.Saturday, weekend_fmt)
+        self.setWeekdayTextFormat(QtConst.DayOfWeek.Sunday, weekend_fmt)
+        
+        # 工作日也统一（防止 Windows 系统默认色和主题冲突）
+        weekday_fmt = self.weekdayTextFormat(QtConst.DayOfWeek.Monday)
+        weekday_fmt.setForeground(text_color)
+        for day in [QtConst.DayOfWeek.Monday, QtConst.DayOfWeek.Tuesday,
+                     QtConst.DayOfWeek.Wednesday, QtConst.DayOfWeek.Thursday,
+                     QtConst.DayOfWeek.Friday]:
+            self.setWeekdayTextFormat(day, weekday_fmt)
+
     def paintCell(self, painter, rect, date):
         super().paintCell(painter, rect, date)
         
-        # 判断是否是非交易日，在格子底部画一条休市标记线
-        if not MarketCalendar.is_trade_day(date.toPyDate(), "CN"):
-            painter.save()
-            overlay_color = QColor(_c("COLOR_FALL"))
-            overlay_color.setAlpha(120)  # 保持优雅的半透明度
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.fillRect(rect.x() + 6, rect.bottom() - 3, rect.width() - 12, 2, overlay_color)
-            painter.restore()
+        # 在格子底部画一条休市标记线（仅当前显示月内的日期才画）
+        current_month = self.monthShown()
+        current_year = self.yearShown()
+        if date.month() == current_month and date.year() == current_year:
+            if not MarketCalendar.is_trade_day(date.toPyDate(), "CN"):
+                painter.save()
+                overlay_color = QColor(_c("COLOR_FALL"))
+                overlay_color.setAlpha(120)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.fillRect(rect.x() + 4, rect.bottom() - 3, rect.width() - 8, 2, overlay_color)
+                painter.restore()
 
 
 class LhbTab(BaseStockTab):

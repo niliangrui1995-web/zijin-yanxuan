@@ -401,43 +401,105 @@ QTextBrowser, QTextEdit {{
 }}
 
 /* ═══════════════════════════════════════════
-   QCalendarWidget - 日历模块
+   QDateEdit - 日期输入框（含日历弹出箭头）
    ═══════════════════════════════════════════ */
+QDateEdit {{
+    background-color: {t['BG_INPUT']};
+    color: {t['TEXT_PRIMARY']};
+    border: 1px solid {t['BORDER_STRONG']};
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 13px;
+}}
+QDateEdit::drop-down {{
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 24px;
+    border-left: 1px solid {t['BORDER_STRONG']};
+    border-top-right-radius: 6px;
+    border-bottom-right-radius: 6px;
+    background: {t['BG_BUTTON']};
+}}
+QDateEdit::down-arrow {{
+    width: 10px; height: 10px;
+    image: none;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid {t['TEXT_MUTED']};
+}}
+QDateEdit::down-arrow:hover {{
+    border-top: 5px solid {t['BRAND_PRIMARY']};
+}}
+
+/* ═══════════════════════════════════════════
+   QCalendarWidget - 日历弹窗模块
+   ═══════════════════════════════════════════ */
+QCalendarWidget {{
+    background-color: {t['BG_CARD']};
+    border: 1px solid {t['BORDER_STRONG']};
+}}
 QCalendarWidget QWidget#qt_calendar_navigationbar {{
     background-color: {t['BG_SIDEBAR']};
+    min-height: 32px;
 }}
 QCalendarWidget QToolButton {{
     color: {t['TEXT_PRIMARY']};
     background: transparent;
     border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 13px;
+    font-weight: 600;
 }}
 QCalendarWidget QToolButton:hover {{
     background-color: {t['BG_HOVER']};
+    color: {t['BRAND_HOVER']};
+}}
+QCalendarWidget QToolButton#qt_calendar_prevmonth,
+QCalendarWidget QToolButton#qt_calendar_nextmonth {{
+    qproperty-icon: none;
+    min-width: 24px;
+    font-weight: 700;
 }}
 QCalendarWidget QMenu {{
     background-color: {t['BG_MENU']};
     color: {t['TEXT_PRIMARY']};
     border: 1px solid {t['BORDER_MENU']};
 }}
+QCalendarWidget QMenu::item:selected {{
+    background-color: {t['SELECTION_BG']};
+    color: {t['TEXT_BRIGHT']};
+}}
 QCalendarWidget QSpinBox {{
     background: {t['BG_INPUT']};
     color: {t['TEXT_PRIMARY']};
     border: 1px solid {t['BORDER_DEFAULT']};
+    border-radius: 4px;
     selection-background-color: {t['SELECTION_BG']};
 }}
-QCalendarWidget QTableView {{
+/* 日历日期网格 — 统一所有日期（含周末）的文字颜色 */
+QCalendarWidget QAbstractItemView {{
     background-color: {t['BG_TABLE_BASE']};
     alternate-background-color: {t['BG_TABLE_ALT_ROW']};
     color: {t['TEXT_PRIMARY']};
     selection-background-color: {t['SELECTION_BG']};
     selection-color: {t['TEXT_BRIGHT']};
-    border: 1px solid {t['BORDER_DEFAULT']};
+    border: none;
+    outline: none;
+    font-size: 13px;
 }}
-QCalendarWidget QTableView QHeaderView::section {{
+QCalendarWidget QAbstractItemView:enabled {{
+    color: {t['TEXT_PRIMARY']};
+}}
+QCalendarWidget QAbstractItemView:disabled {{
+    color: {t['TEXT_DISABLED']};
+}}
+/* 星期几表头行 */
+QCalendarWidget QHeaderView::section {{
     background-color: {t['BG_SIDEBAR']};
     color: {t['TEXT_HEADER']};
     border: none;
     padding: 4px;
+    font-size: 11px;
 }}
 
 QGroupBox {{
