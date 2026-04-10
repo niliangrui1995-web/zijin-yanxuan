@@ -62,7 +62,6 @@ def _build_kline_theme_colors() -> dict:
         'vcp_area': t['KLINE_VCP_AREA'],
     }
 
-    # 窗口/画布基础色（墨渊保持原始硬编码值保证零变化，月白用主题 token 适配白底）
     if is_dark:
         colors.update({
             'bg_canvas': '#0A0A0A',
@@ -74,8 +73,8 @@ def _build_kline_theme_colors() -> dict:
         })
     else:
         colors.update({
-            'bg_canvas': t['BG_TABLE_BASE'],
-            'bg_toolbar': t['BG_TITLEBAR'],
+            'bg_canvas': t['BG_ELEVATED'],
+            'bg_toolbar': t['BG_ELEVATED'],
             'text_primary': t['TEXT_PRIMARY'],
             'text_secondary': t['TEXT_SECONDARY'],
             'text_muted': t['TEXT_MUTED'],
@@ -470,13 +469,13 @@ class KLineChartWindow(QWidget):
             btn_disabled_text, btn_disabled_border = "#3A3A3C", "#2A2A2C"
             chart_bg = "#0A0A0A"
         else:
-            widget_bg, widget_text = t['BG_CANVAS'], t['TEXT_PRIMARY']
-            toolbar_bg, toolbar_border = t['BG_TITLEBAR'], t['BORDER_DEFAULT']
+            widget_bg, widget_text = t['BG_ELEVATED'], t['TEXT_PRIMARY']
+            toolbar_bg, toolbar_border = t['BG_ELEVATED'], t['BORDER_DEFAULT']
             info_color = t['TEXT_MUTED']
             btn_border = t['BORDER_STRONG']
             btn_hover_bg, btn_hover_text = t['TAB_HOVER_BG'], t['TEXT_PRIMARY']
             btn_disabled_text, btn_disabled_border = t['TEXT_DISABLED'], t['BORDER_DEFAULT']
-            chart_bg = t['BG_TABLE_BASE']
+            chart_bg = t['BG_ELEVATED']
 
         self.setStyleSheet(f"""
             QWidget {{ background-color: {widget_bg}; color: {widget_text}; }}
