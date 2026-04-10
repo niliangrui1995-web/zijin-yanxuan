@@ -41,62 +41,40 @@ class EarningsTab(BaseStockTab):
         header = QHBoxLayout()
         header.setContentsMargins(8, 6, 8, 6)
         
-        from ui.theme import theme_manager
-        t = theme_manager.current_theme
+
         title = QLabel("🚀 超预期金矿：业绩预告与财报环比高增追踪")
-        title.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {t['TEXT_PRIMARY']};")
+        title.setObjectName("tabTitle")
         
         self.lbl_status = QLabel("监控挂机中...")
-        self.lbl_status.setStyleSheet(f"color: {t['COLOR_SUCCESS']}; font-weight: bold; font-size: 13px;")
+        self.lbl_status.setObjectName("tabSubtitle")
         
         # 时光机雷达
         self.ent_start_date = QLineEdit()
         self.ent_start_date.setPlaceholderText("起点(如2024-01-01)")
         self.ent_start_date.setText(datetime.now().strftime("%Y-%m-%d"))
         self.ent_start_date.setFixedWidth(100)
-        self.ent_start_date.setStyleSheet(f"background: {t['BG_BUTTON']}; color: {t['TEXT_PRIMARY']}; border: 1px solid {t['BORDER_STRONG']}; border-radius: 4px; padding: 2px 4px;")
         
         self.ent_end_date = QLineEdit()
         self.ent_end_date.setPlaceholderText("终点(如2024-01-15)")
         self.ent_end_date.setText(datetime.now().strftime("%Y-%m-%d"))
         self.ent_end_date.setFixedWidth(100)
-        self.ent_end_date.setStyleSheet(f"background: {t['BG_BUTTON']}; color: {t['TEXT_PRIMARY']}; border: 1px solid {t['BORDER_STRONG']}; border-radius: 4px; padding: 2px 4px;")
         
         self.btn_manual_fetch = QPushButton("🔄 历史更新")
         self.btn_manual_fetch.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_manual_fetch.setToolTip("手动填入日期区间，强行进行数据扫描并在本地进行去重和升级！")
-        from ui.theme import theme_manager as _tm
-        _t = _tm.current_theme
-        self.btn_manual_fetch.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {_t['BG_BUTTON']}; color: {_t['TEXT_PRIMARY']}; 
-                border: 1px solid {_t['BORDER_DEFAULT']}; border-radius: 4px; 
-                padding: 4px 12px; font-weight: bold;
-            }}
-            QPushButton:hover {{ background-color: {_t['BG_HOVER']}; border-color: {_t['COLOR_RISE']}; }}
-            QPushButton:pressed {{ background-color: {_t['BG_MENU']}; }}
-        """)
         self.btn_manual_fetch.clicked.connect(self._on_manual_fetch)
         
         # 新增 Excel 风格的分类筛选下拉框
         self.combo_type_filter = QComboBox()
         self.combo_type_filter.addItems(["全看", "仅看预告", "仅看快报", "仅看财报"])
-        self.combo_type_filter.setStyleSheet("""
-            QComboBox {
-                background: #1F2937; color: #E5E7EB; 
-                border: 1px solid #4B5563; border-radius: 4px; padding: 2px 4px;
-            }
-            QComboBox::drop-down { border-left: 1px solid #4B5563; }
-        """)
+        # Removed hardcoded inline stylesheet to rely on global responsive QSS
         self.combo_type_filter.currentTextChanged.connect(self._on_type_filter_changed)
         
         header.addWidget(title)
+        header.addWidget(self.lbl_status)
         header.addStretch()
         header.addWidget(QLabel("分类筛选:"))
         header.addWidget(self.combo_type_filter)
-        header.addSpacing(20)
-        header.addWidget(self.lbl_status)
-        header.addSpacing(20)
         header.addWidget(QLabel("更新区间倒推:"))
         header.addWidget(self.ent_start_date)
         header.addWidget(QLabel("-"))
