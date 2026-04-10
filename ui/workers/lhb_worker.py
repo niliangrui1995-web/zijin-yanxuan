@@ -66,8 +66,24 @@ def fetch_lhb_data_for_date(date_str: str) -> list[dict]:
             if not matched_kw:
                 continue
                 
-            # 使用简写名称
-            branch_name = matched_kw
+            # 提取该营业部当天的总买卖净额 (单位转换万)
+            net_amt_raw = row.get('总买卖净额', 0)
+            try:
+                net_amt = float(net_amt_raw) if pd.notna(net_amt_raw) else 0.0
+            except:
+                net_amt = 0.0
+                
+            net_amt_wan = round(net_amt / 10000.0)
+            
+            if net_amt_wan > 0:
+                suffix = f"净买:{net_amt_wan}万"
+            elif net_amt_wan < 0:
+                suffix = f"净卖:{abs(net_amt_wan)}万"
+            else:
+                suffix = "金额不明"
+                
+            # 使用简写名称 + 金额 (例: 摩根大通(净买:300万))
+            branch_display = f"{matched_kw}({suffix})"
                 
             # 解析该外资席位买入了哪些股票
             buy_stocks_str = str(row.get('买入股票', ''))
@@ -77,11 +93,11 @@ def fetch_lhb_data_for_date(date_str: str) -> list[dict]:
             # 这里先将外资席位分配给股票简称。待会合并时靠名称或者代码兜底。
             for s_name in buy_stocks_str.split():
                 if not s_name.strip(): continue
-                foreign_buys.setdefault(s_name.strip(), set()).add(branch_name)
+                foreign_buys.setdefault(s_name.strip(), set()).add(branch_display)
                 
             for s_name in sell_stocks_str.split():
                 if not s_name.strip(): continue
-                foreign_sells.setdefault(s_name.strip(), set()).add(branch_name)
+                foreign_sells.setdefault(s_name.strip(), set()).add(branch_display)
 
     # 4. 缝合主表
     results = []
