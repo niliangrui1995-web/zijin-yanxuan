@@ -112,6 +112,7 @@ def fetch_lhb_data_for_date(date_str: str) -> list[dict]:
         # 此时确认我们需要这只股票，为了计算精准的外资净买额，再单独拉取明细
         final_f_buys = []
         final_f_sells = []
+        foreign_net_sum = 0.0
         
         if has_foreign:
             try:
