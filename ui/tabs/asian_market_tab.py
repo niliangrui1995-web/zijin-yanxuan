@@ -241,42 +241,22 @@ def _get_ch_names_mapping() -> dict:
 
 
 def get_market_status(market: str) -> str:
-    import datetime
-    now_utc = datetime.datetime.utcnow()
-    
-    if market in ['T', 'KS']:  # Japan/Korea UTC+9
-        local_now = now_utc + datetime.timedelta(hours=9)
-    else: # TW, TWO, HK UTC+8
-        local_now = now_utc + datetime.timedelta(hours=8)
-        
-    today_str = local_now.strftime("%Y-%m-%d")
-    KNOWN_HOLIDAYS_2026 = {
-        'HK': ['2026-04-03', '2026-04-04', '2026-04-06', '2026-04-07', '2026-05-01', '2026-05-25', '2026-07-01'],
-        'TW': ['2026-04-03', '2026-04-04', '2026-04-05', '2026-04-06', '2026-05-01', '2026-06-19'],
-        'T':  ['2026-04-29', '2026-05-03', '2026-05-04', '2026-05-05', '2026-05-06', '2026-07-20', '2026-08-11'],
-        'KS': ['2026-03-01', '2026-04-10', '2026-05-05', '2026-05-15', '2026-06-06', '2026-08-15']
+    """委托给 MarketCalendar 的动态节假日系统，避免硬编码假日表过期导致误判。"""
+    from core.market_calendar import MarketCalendar
+
+    # MarketCalendar.normalize_market 能把 TWO 归一到 TW 等标准市场代码
+    canonical = MarketCalendar.normalize_market(market)
+    raw_status = MarketCalendar.get_market_status(canonical)
+
+    # 将 MarketCalendar 返回的纯文字状态映射为带 Emoji 的版本，保持 UI 一致性
+    status_map = {
+        "交易中": "🟢 交易中",
+        "午休":   "🟡 午休",
+        "盘前":   "🟡 盘前",
+        "盘后":   "🔴 盘后",
+        "休市":   "🔴 休市",
     }
-    
-    if market in KNOWN_HOLIDAYS_2026 and today_str in KNOWN_HOLIDAYS_2026[market]:
-        return "🔴 休市"
-        
-    if local_now.weekday() >= 5:
-        return "🔴 休市"
-        
-    time_num = local_now.hour * 100 + local_now.minute
-    
-    if market == 'T':
-        if (900 <= time_num <= 1130) or (1230 <= time_num <= 1500): return "🟢 交易中"
-        elif 1130 < time_num < 1230: return "🟡 午休"
-    elif market == 'KS':
-        if 900 <= time_num <= 1530: return "🟢 交易中"
-    elif market in ['TW', 'TWO']:
-        if 900 <= time_num <= 1330: return "🟢 交易中"
-    elif market == 'HK':
-        if (930 <= time_num <= 1200) or (1300 <= time_num <= 1600): return "🟢 交易中"
-        elif 1200 < time_num < 1300: return "🟡 午休"
-            
-    return "🔴 休市"
+    return status_map.get(raw_status, "🔴 休市")
 
 
 class AsianMarketWorker(QThread):
@@ -313,12 +293,12 @@ class AsianMarketWorker(QThread):
                 self.progress.emit(f"[{now.strftime('%H:%M:%S')}] 拉取最新报价中...")
                 updates = {}
                 
-                # We use ThreadPool to do this ultra fast 
+                # 并发拉取，但限制线程数和超时避免 VPN 断开时 OOM 或卡死
                 
                 def _fetch(code):
                     ticker = yf.Ticker(code)
                     fast_info = ticker.fast_info
-                    df = ticker.history(period="2mo", interval="1d")
+                    df = ticker.history(period="2mo", interval="1d", timeout=20)
                     if not df.empty:
                         # 优先使用 fast_info 中的实时价格，如果为空再退化到 df
                         close_price = float(fast_info.get("lastPrice") or df.iloc[-1]['Close'])
@@ -380,14 +360,25 @@ class AsianMarketWorker(QThread):
                 
                 import concurrent.futures
                 with _scoped_cf_proxy_patch(GLOBAL_USE_CF_PROXY):
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                    # 限制并发线程数为 6，降低内存和网络压力
+                    executor = concurrent.futures.ThreadPoolExecutor(max_workers=6)
+                    try:
                         futures = {executor.submit(_fetch, code): code for code in self.codes}
-                        for future in concurrent.futures.as_completed(futures):
+                        for future in concurrent.futures.as_completed(futures, timeout=60):
                             if not self._is_running:
+                                # 停止信号来了，不再等剩余 future
+                                executor.shutdown(wait=False, cancel_futures=True)
                                 break
-                            res_code, res_data = future.result()
-                            if res_data:
-                                updates[res_code] = res_data
+                            try:
+                                res_code, res_data = future.result(timeout=30)
+                                if res_data:
+                                    updates[res_code] = res_data
+                            except (concurrent.futures.TimeoutError, Exception) as _fe:
+                                log.debug(f"[AsianTab] 单票拉取超时/异常: {futures.get(future, '?')}: {_fe}")
+                    except concurrent.futures.TimeoutError:
+                        log.warning("[AsianTab] 本轮拉取整体超时(60s)，跳过剩余标的")
+                    finally:
+                        executor.shutdown(wait=False, cancel_futures=True)
                         
                 if self._is_running and updates:
                     self.result_ready.emit(updates)
@@ -659,38 +650,23 @@ class AsianMarketTab(BaseStockTab):
         
         header = QHBoxLayout()
         header.setContentsMargins(8, 6, 8, 6)
-        
-        from ui.theme import theme_manager
-        t = theme_manager.current_theme
-        title = QLabel("🌏 亚洲寡头核心资产监控 (由于存在日韩台港多股市，按 YF 实时接口为准)")
-        title.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {t['TEXT_PRIMARY']};")
+        title = QLabel("🌏 亚洲寡头核心资产监控")
+        title.setObjectName("tabTitle")
         self.lbl_status = QLabel("系统初始化...")
-        self.lbl_status.setStyleSheet(f"color: {t['TEXT_SECONDARY']}; font-size: 12px;")
+        self.lbl_status.setObjectName("tabSubtitle")
         
         self.chk_cf_proxy = QCheckBox("🚀 启用免翻墙直连 (CF隧道)")
         self.chk_cf_proxy.setToolTip("打勾：关闭VPN彻底裸连；不打勾：走您的VPN全局模式直连")
-        self.chk_cf_proxy.setStyleSheet(f"color: {t['COLOR_SUCCESS']}; font-weight: bold; font-size: 13px; margin-right: 15px;")
+        self.chk_cf_proxy.setObjectName("successStatus")
         self.chk_cf_proxy.setChecked(True)
         self.chk_cf_proxy.toggled.connect(self._on_cf_proxy_toggled)
         
         self.btn_refresh = QPushButton("🔄 网络检查与手动刷新")
         self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_refresh.setToolTip("强制跳过等待，立刻请求外网(Yahoo Finance)测速并获取最新价格")
-        from ui.theme import theme_manager as _tm
-        _t = _tm.current_theme
-        self.btn_refresh.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {_t['BG_BUTTON']}; color: {_t['TEXT_PRIMARY']}; 
-                border: 1px solid {_t['BORDER_DEFAULT']}; border-radius: 4px; 
-                padding: 4px 12px; font-weight: bold;
-            }}
-            QPushButton:hover {{ background-color: {_t['BG_HOVER']}; border-color: {_t['BORDER_STRONG']}; }}
-            QPushButton:pressed {{ background-color: {_t['BG_MENU']}; }}
-        """)
         self.btn_refresh.clicked.connect(self._on_manual_refresh)
         
         header.addWidget(title)
-        header.addStretch()
         header.addWidget(self.lbl_status)
         header.addStretch()
         header.addWidget(self.chk_cf_proxy)

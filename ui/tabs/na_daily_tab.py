@@ -27,7 +27,6 @@ class NADailyTab(BaseStockTab):
         self._na_daily_codes = set()
         self._cap_cache_na = {}
         self._last_report_signature = ()
-        self.setStyleSheet("background-color: transparent;")
 
         self._init_ui()
 
@@ -74,21 +73,17 @@ class NADailyTab(BaseStockTab):
 
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(8, 6, 8, 6)
-        from ui.theme import theme_manager
-        t = theme_manager.current_theme
-        lbl_title = QLabel("北美战报 — P9 战报标的")
-        lbl_title.setStyleSheet(f"font-size: 15px; font-weight: bold; color: {t['TEXT_PRIMARY']};")
+
+        lbl_title = QLabel("🇺🇸 北美战报 — P9 战报标的")
+        lbl_title.setObjectName("tabTitle")
         header_layout.addWidget(lbl_title)
+        self.na_daily_source_label = QLabel("未加载")
+        self.na_daily_source_label.setObjectName("tabSubtitle")
+        header_layout.addWidget(self.na_daily_source_label)
         header_layout.addStretch()
 
-        self.na_daily_source_label = QLabel("未加载")
-        self.na_daily_source_label.setStyleSheet(f"font-size: 11px; color: {t['TEXT_MUTED']};")
-        header_layout.addWidget(self.na_daily_source_label)
-
         btn_refresh = QPushButton("🔄 刷新战报")
-        btn_refresh.setObjectName("ctaButton")
         btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_refresh.setFixedWidth(120)
         btn_refresh.clicked.connect(self._load_na_daily_report)
         header_layout.addWidget(btn_refresh)
         layout.addLayout(header_layout)
@@ -278,6 +273,7 @@ class NADailyTab(BaseStockTab):
             self.na_daily_source_label.setText("❌ 未找到战报文件")
             self.model.update_data([])
             self._na_daily_codes = set()
+            event_bus.sig_na_daily_updated.emit()
             return
 
         newest_file = max(report_files, key=lambda path: self._parse_report_identity(path)[1])
@@ -298,6 +294,8 @@ class NADailyTab(BaseStockTab):
 
         if self._na_daily_codes:
             self.async_update_market_caps()
+
+        event_bus.sig_na_daily_updated.emit()
 
     def _load_na_daily_report(self):
         final_list, report_files, report_signature = self._build_na_daily_rows()
