@@ -455,7 +455,7 @@ class WatchlistTab(BaseStockTab):
                     for r in main_win.tab_earnings.model.row_data:
                         c = str(r.get("代码", ""))
                         pct = str(r.get("环比%", ""))
-                        if c and pct and pct != "--": earn_data[c] = f"环比增幅: {pct}%"
+                        if c and pct and pct != "--": earn_data[c] = f"{pct}%"
         except Exception as e:
             log.warning(f"[关注池] 提取主界面数据异常: {e}")
         return na_data, na_subsector_data, block_data, earn_data, rps_bundle
