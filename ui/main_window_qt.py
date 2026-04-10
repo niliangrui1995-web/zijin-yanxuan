@@ -392,28 +392,80 @@ class MainWindowQT(QMainWindow):
         self._update_last_f5_time()
 
     def _show_trade_calendar(self):
-        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QPushButton, QLabel
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QPushButton, QLabel, QFrame, QHBoxLayout, QToolButton
+        from PyQt6.QtCore import Qt
         from ui.components.trade_calendar import TradeCalendarWidget
         from ui.theme import theme_manager as _tm
         
         dlg = QDialog(self)
-        dlg.setWindowTitle("A股交易休市日历")
+        dlg.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        dlg.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         dlg.resize(400, 360)
         
-        layout = QVBoxLayout(dlg)
+        # 外层防锯齿透明容器
+        main_layout = QVBoxLayout(dlg)
+        main_layout.setContentsMargins(0, 0, 0, 0)
         
-        lbl = QLabel("深色红底（深色主题）或红字（浅色主题）代表非交易日，包含周末及法定节假日。")
-        lbl.setStyleSheet(f"color: {_tm.get('TEXT_SECONDARY')};")
-        lbl.setWordWrap(True)
-        layout.addWidget(lbl)
+        container = QFrame()
+        container.setObjectName("dialogContainer")
+        container.setStyleSheet(f"""
+            QFrame#dialogContainer {{
+                background-color: {_tm.get('BG_BASE')};
+                border: 1px solid {_tm.get('BORDER_DEFAULT')};
+                border-radius: 8px;
+            }}
+        """)
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(1, 1, 1, 14)
+        container_layout.setSpacing(0)
+        
+        # 顶部自定义可拖拽标题栏
+        title_bar = DraggableTitleBar(dlg)
+        title_bar.setFixedHeight(38)
+        title_bar.setStyleSheet(f"""
+            QWidget {{
+                background-color: {_tm.get('BG_TITLEBAR')};
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
+                border-bottom: 1px solid {_tm.get('TITLEBAR_BORDER')};
+            }}
+        """)
+        tb_layout = QHBoxLayout(title_bar)
+        tb_layout.setContentsMargins(14, 0, 8, 0)
+        
+        title_lbl = QLabel("A股交易休市日历")
+        title_lbl.setStyleSheet(f"color: {_tm.get('TEXT_PRIMARY')}; font-weight: bold;")
+        tb_layout.addWidget(title_lbl)
+        tb_layout.addStretch()
+        
+        btn_close = QToolButton()
+        btn_close.setText("✕")
+        btn_close.setFixedSize(32, 28)
+        btn_close.clicked.connect(dlg.reject)
+        btn_close.setStyleSheet(f"""
+            QToolButton {{
+                background: transparent;
+                border: none;
+                color: {_tm.get('TEXT_MUTED')};
+            }}
+            QToolButton:hover {{
+                background-color: #E81123;
+                color: white;
+                border-radius: 4px;
+            }}
+        """)
+        tb_layout.addWidget(btn_close)
+        container_layout.addWidget(title_bar)
+        
+        # 内容区
+        content_layout = QVBoxLayout()
+        content_layout.setContentsMargins(14, 14, 14, 0)
         
         cal = TradeCalendarWidget()
-        layout.addWidget(cal)
+        content_layout.addWidget(cal)
         
-        btn = QPushButton("我知道了")
-        btn.setProperty("class", "primaryButton")
-        btn.clicked.connect(dlg.accept)
-        layout.addWidget(btn)
+        container_layout.addLayout(content_layout)
+        main_layout.addWidget(container)
         
         dlg.exec()
 
