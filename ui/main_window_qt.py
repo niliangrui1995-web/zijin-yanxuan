@@ -289,10 +289,10 @@ class MainWindowQT(QMainWindow):
         """"""
         if hasattr(self, 'act_network'):
             if online:
-                self.act_network.setText("🌐 切换网络模式 (当前: ⚡ 联网模式)")
+                self.act_network.setText("🌐 网络状态：⚡ 联网中")
                 if hasattr(self, 'status_dot'): self.status_dot.set_color("#22C55E")
             else:
-                self.act_network.setText("🌐 切换网络模式 (当前: ❌ 离线模式)")
+                self.act_network.setText("🌐 网络状态：🚫 离线中")
                 if hasattr(self, 'status_dot'): self.status_dot.set_color("#EF4444")
 
     def _force_reconnect(self):
@@ -355,7 +355,7 @@ class MainWindowQT(QMainWindow):
         sys_menu.setObjectName("sysMenu")
         # Global QMenu style from global_qss.py will handle menu colors dynamically!
 
-        self.act_f5 = sys_menu.addAction("🔄 盘后日线预计算 (F5)")
+        self.act_f5 = sys_menu.addAction("🔄 全局数据同步 (F5)")
         self.act_f5.triggered.connect(self._action_refresh_f5)
 
         sys_menu.addSeparator()
@@ -365,17 +365,17 @@ class MainWindowQT(QMainWindow):
         
         sys_menu.addSeparator()
         
-        self.act_network = sys_menu.addAction("🌐 切换网络模式 (当前: 离线)")
+        self.act_network = sys_menu.addAction("🌐 网络状态：🚫 离线中")
         self.act_network.triggered.connect(self._toggle_network)
         
-        act_speed = sys_menu.addAction("🚀 强制主站测速与优选线路")
+        act_speed = sys_menu.addAction("🚀 测速与线路优选")
         act_speed.triggered.connect(self._force_reconnect)
 
         sys_menu.addSeparator()
 
         # 主题切换子菜单
         from ui.theme import theme_manager as _tm
-        theme_menu = sys_menu.addMenu(f"🎨 主题配色 (当前: {_tm.current_theme_name})")
+        theme_menu = sys_menu.addMenu(f"🎨 界面主题：{_tm.current_theme_name}")
         self._theme_menu = theme_menu  # 保存引用以便刷新文字
         for t_name in _tm.theme_names():
             act = theme_menu.addAction(t_name)
@@ -870,10 +870,10 @@ class MainWindowQT(QMainWindow):
             mtime = os.path.getmtime(rps_path)
             dt = datetime.datetime.fromtimestamp(mtime)
             if hasattr(self, 'act_f5'):
-                self.act_f5.setText(f"🔄 盘后日线预计算 (F5) [{dt.strftime('%Y%m%d')}]")
+                self.act_f5.setText(f"🔄 全局数据同步 (F5) [{dt.strftime('%m-%d')}]")
         else:
             if hasattr(self, 'act_f5'):
-                self.act_f5.setText("🔄 盘后日线预计算 (F5) [暂无]")
+                self.act_f5.setText("🔄 全局数据同步 (F5) [暂无]")
 
     def _on_f5_done(self, count, elapsed):
         """Handle the completion signal from the F5 precompute workflow."""

@@ -118,7 +118,6 @@ def _build_html(title: str, echarts_data: dict, echarts_js_path: str, theme_colo
 </head>
 <body>
     <div class="top-toolbar" id="toolbar">
-        <div class="stock-title">{title}</div>
         <div class="info-item">日期: <span id="v-date" class="info-val" style="color: {theme_colors['text_primary']}">-</span></div>
         <div class="info-item">开: <span id="v-open" class="info-val">-</span></div>
         <div class="info-item">高: <span id="v-high" class="info-val">-</span></div>
@@ -312,8 +311,6 @@ def _build_html(title: str, echarts_data: dict, echarts_js_path: str, theme_colo
                 ],
                 series: seriesUpdate
             }});
-            // 更新标题
-            document.querySelector('.stock-title').innerText = rawData.title || '';
             chart.dispatchAction({{ type: 'showTip', seriesIndex: 0, dataIndex: rawData.dates.length - 1 }});
         }};
     </script>
@@ -341,6 +338,8 @@ class KLineChartWindow(QWidget):
         self.time_dict = {}
 
         self.setWindowTitle(f"{name} ({code}) - K线详情")
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.resize(1100, 680)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
 
@@ -350,17 +349,44 @@ class KLineChartWindow(QWidget):
         if _os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        # 外层圆角防锯齿容器
+        from PyQt6.QtWidgets import QFrame, QToolButton
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        self.container = QFrame()
+        self.container.setObjectName("klineContainer")
+        container_layout = QVBoxLayout(self.container)
+        container_layout.setContentsMargins(1, 1, 1, 1)
+        container_layout.setSpacing(0)
+        
+        # 自定义拖拽标题栏
+        from ui.main_window_qt import DraggableTitleBar
+        self.title_bar = DraggableTitleBar(self)
+        self.title_bar.setFixedHeight(34)
+        tb_layout = QHBoxLayout(self.title_bar)
+        tb_layout.setContentsMargins(14, 0, 8, 0)
+        
+        self.title_lbl = QLabel(f"{name} ({code}) - K线详情")
+        tb_layout.addWidget(self.title_lbl)
+        tb_layout.addStretch()
 
-        # === 顶部 PyQt 原生控制栏（快捷键、按钮等都挂在这里） ===
+        self.btn_close = QToolButton()
+        self.btn_close.setText("✕")
+        self.btn_close.setFixedSize(32, 28)
+        self.btn_close.clicked.connect(self.close)
+        tb_layout.addWidget(self.btn_close)
+        
+        container_layout.addWidget(self.title_bar)
+
+        # === 顶部 PyQt 原生控制栏 ===
         self.header_widget = QWidget()
         self.header_widget.setFixedHeight(40)
         header_layout = QHBoxLayout(self.header_widget)
         header_layout.setContentsMargins(10, 0, 10, 0)
 
-        # 不再显示股票名称（ECharts 内部工具栏已有），只保留状态信息
+        # 不再显示股票名称，只保留状态信息
         self.info_lbl = QLabel("正在加载数据...")
         header_layout.addWidget(self.info_lbl)
         header_layout.addStretch()
@@ -381,11 +407,13 @@ class KLineChartWindow(QWidget):
         self.btn_fav.clicked.connect(self._toggle_fav)
         header_layout.addWidget(self.btn_fav)
 
-        layout.addWidget(self.header_widget)
+        container_layout.addWidget(self.header_widget)
 
         # === ECharts WebEngine 主图区域 ===
         self.browser = QWebEngineView()
-        layout.addWidget(self.browser)
+        container_layout.addWidget(self.browser)
+        
+        main_layout.addWidget(self.container)
 
         # 快捷键 ←/→ 切换上/下一只股票
         from PyQt6.QtGui import QKeySequence, QShortcut
@@ -452,12 +480,47 @@ class KLineChartWindow(QWidget):
 
         self.setStyleSheet(f"""
             QWidget {{ background-color: {widget_bg}; color: {widget_text}; }}
-            QLabel {{ font-weight: bold; font-family: "Microsoft YaHei UI"; }}
+            QLabel {{ font-family: "Microsoft YaHei UI"; }}
         """)
+        
+        # 外层圆角防锯齿容器
+        self.container.setStyleSheet(f"""
+            QFrame#klineContainer {{
+                background-color: {widget_bg};
+                border: 1px solid {toolbar_border};
+                border-radius: 8px;
+            }}
+        """)
+        
+        # 自定义拖拽标题栏样式
+        self.title_bar.setStyleSheet(f"""
+            QWidget {{
+                background-color: {toolbar_bg};
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
+                border-bottom: none;
+            }}
+        """)
+        self.title_lbl.setStyleSheet(f"color: {widget_text}; font-weight: bold; font-size: 13px;")
+        
+        # 关闭按钮鼠标悬浮效果
+        self.btn_close.setStyleSheet(f"""
+            QToolButton {{
+                background: transparent;
+                border: none;
+                color: {info_color};
+            }}
+            QToolButton:hover {{
+                background-color: #E81123;
+                color: white;
+                border-radius: 4px;
+            }}
+        """)
+
         self.header_widget.setStyleSheet(
             f"background-color: {toolbar_bg}; border-bottom: 1px solid {toolbar_border};"
         )
-        self.info_lbl.setStyleSheet(f"color: {info_color}; font-size: 12px;")
+        self.info_lbl.setStyleSheet(f"color: {info_color}; font-size: 12px; font-weight: bold;")
 
         nav_style = f"""
             QPushButton {{ background-color: transparent; color: {info_color}; border: 1px solid {btn_border}; border-radius: 4px; padding: 4px 10px; font-weight: bold; font-size: 12px; }}
@@ -1270,7 +1333,10 @@ class KLineChartWindow(QWidget):
             self.name = item_data.get('名称', '')
             self.vcp_data = item_data
 
-            self.setWindowTitle(f"{self.name} ({self.code}) - K线详情")
+            title = f"{self.name} ({self.code}) - K线详情"
+            self.setWindowTitle(title)
+            if hasattr(self, 'title_lbl'):
+                self.title_lbl.setText(title)
             total = len(self.code_list)
 
             # 同步选中主窗口表格行
