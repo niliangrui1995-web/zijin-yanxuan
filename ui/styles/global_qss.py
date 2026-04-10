@@ -410,6 +410,8 @@ QDateEdit {{
     border-radius: 6px;
     padding: 4px 8px;
     font-size: 13px;
+    min-height: 22px;
+    max-height: 22px;
 }}
 QDateEdit::drop-down {{
     subcontrol-origin: padding;
