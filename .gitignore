@@ -12,7 +12,7 @@ build/
 
 # Virtual Environment
 venv/
-.env/
+.env
 
 # Data Cache (large binary files, not versioned)
 data/Cache/*.pkl
@@ -67,25 +67,25 @@ _migrate_*.py
 # Runtime state (auto-generated)
 data/earnings_state.json
 
-# 实验/临时脚本目录 (不进入版本控制)
+# 实验/临时脚本目录 (不进入版本控�?
 tmp/
 
-# 已完成的重构任务卡 (仅开发期使用)
+# 已完成的重构任务�?(仅开发期使用)
 *_任务卡_*.md
-*_白皮书*.md
+*_白皮�?.md
 
 # 迁移残留文件
 *.migrated
 
-# PyQtGraph 旧版备份 (ECharts 已替代)
+# PyQtGraph 旧版备份 (ECharts 已替�?
 ui/kline_window_qt_pyqtgraph_backup.py
 
-# 亚洲市场 K 线缓存 (大文件，运行时生成)
+# 亚洲市场 K 线缓�?(大文件，运行时生�?
 data/Cache/asian_klines_*.json
 data/Cache/asian_klines_latest.json
 data/Cache/asian_rt_latest.json
 
-# SQLite 数据库 (运行时生成)
+# SQLite 数据�?(运行时生�?
 data/vcp_hunter.db
 data/vcp_hunter.db-wal
 data/vcp_hunter.db-shm
