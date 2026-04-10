@@ -173,10 +173,10 @@ def fetch_lhb_data_for_date(date_str: str) -> list[dict]:
         if not has_any_net_buy:
             continue
                 
-        # 用户需求2：只有机构和外资均是净买入的情况下才标记资金共振
+        # 用户需求2：上榜榜单合计净买入额>0，且机构和外资均是净买入(>0)的情况下才标记资金共振
         is_resonance = False
         if has_jg and has_foreign:
-            if (jg_info['机构买入净额'] > 0) and (foreign_net_sum > 0):
+            if (net_buy > 0) and (jg_info['机构买入净额'] > 0) and (foreign_net_sum > 0):
                 is_resonance = True        
         buy_str = "买：" + " | ".join(final_f_buys) if final_f_buys else ""
         sell_str = "卖：" + " | ".join(final_f_sells) if final_f_sells else ""
