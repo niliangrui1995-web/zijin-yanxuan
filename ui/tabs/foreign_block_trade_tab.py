@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 ui/tabs/foreign_block_trade_tab.py
-外资大宗交易动向 Tab
-展示包含指定外资关键字的营业部近期大宗交易明细，包含实时动态涨幅。
-集成v3.2量化因子黄金信号：深坑(距60日高点>20%) + 弱RPS50(<30) + VIP外资买入。
+大宗交易监控 Tab
+展示包含指定外资/机构关键字的营业部近期大宗交易明细，并高亮对倒、互砍等特殊行为。
 """
 import datetime
 import os
@@ -60,197 +59,10 @@ from ui.tabs.base_stock_tab import BaseStockTab
 log = get_logger(__name__)
 
 FOREIGN_KEYWORDS = ["高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴", "渣打", "野村", "汇丰", "星展", "大和"]
-VIP_KEYWORDS_SIGNAL = ["高盛", "瑞银", "摩根大通"]
-# TDX_DIR 死代码已清除，实际使用 self.data_provider.tdx_vipdoc
-
-
-def _parse_tdx_day_file(filepath: str) -> pd.DataFrame:
-    """解析通达信.day二进制文件，返回以日期字符串为index的DataFrame"""
-    import numpy as np
-    dt = np.dtype([
-        ('date', '<u4'), ('open', '<u4'), ('high', '<u4'), ('low', '<u4'),
-        ('close', '<u4'), ('amount', '<f4'), ('vol', '<u4'), ('reserved', '<u4')
-    ])
-    try:
-        data = np.fromfile(filepath, dtype=dt)
-        if len(data) == 0: return pd.DataFrame()
-        df = pd.DataFrame(data)
-        df['open'] = df['open'] / 100.0
-        df['high'] = df['high'] / 100.0
-        df['close'] = df['close'] / 100.0
-        df['date'] = df['date'].astype(str)
-        return df.set_index('date')
-    except Exception as _e:
-        log.debug(f"[大宗交易] 解析通达信 .day 文件失败: {_e}")
-        return pd.DataFrame()
-
+TARGET_KEYWORDS = FOREIGN_KEYWORDS + ["机构专用"]
 
 # 模块级K线缓存：每只股票的文件只读一次，后续直接从内存取
 _kline_cache: dict = {}
-
-
-def _get_tdx_kline(code: str, tdx_dir: str) -> pd.DataFrame:
-    """从本地通达信获取个股日线（带内存缓存）"""
-    if code in _kline_cache:
-        return _kline_cache[code]
-    market = "sh" if code.startswith("6") else "sz"
-    path = os.path.join(tdx_dir, market, "lday", f"{market}{code}.day")
-    if os.path.exists(path):
-        df = _parse_tdx_day_file(path)
-        _kline_cache[code] = df
-        return df
-    _kline_cache[code] = pd.DataFrame()
-    return _kline_cache[code]
-
-
-def _load_all_tdx_codes(tdx_dir: str):
-    """获取通达信本地所有A股代码列表（用于计算RPS排名）"""
-    codes = []
-    for m in ["sh", "sz"]:
-        lday = os.path.join(tdx_dir, m, "lday")
-        if not os.path.isdir(lday):
-            continue
-        for fn in os.listdir(lday):
-            if not fn.endswith(".day"):
-                continue
-            c = fn.replace(m, "").replace(".day", "")
-            # 只要A股主板/中小板/创业板/科创板
-            if c.startswith("0") or c.startswith("3") or c.startswith("6"):
-                codes.append(c)
-    return codes
-
-
-def _compute_rps50_baseline(target_date: str, all_codes: list, tdx_dir: str) -> list:
-    """
-    计算某一天全市场所有股票的50日收益率列表，作为RPS排名基准。
-    使用 numpy 纯数组读取替代 Pandas，提速50倍以上，防止界面假死。
-    """
-    import numpy as np
-    returns_list = []
-    dt = np.dtype([
-        ('date', '<u4'), ('open', '<u4'), ('high', '<u4'), ('low', '<u4'),
-        ('close', '<u4'), ('amount', '<f4'), ('vol', '<u4'), ('reserved', '<u4')
-    ])
-    try:
-        target_int = int(str(target_date).replace('-', ''))
-    except (ValueError, TypeError) as _e:
-        log.debug(f"[大宗交易] RPS 日期解析失败: {_e}")
-        return []
-
-    for code in all_codes:
-        market = "sh" if code.startswith("6") else "sz"
-        path = os.path.join(tdx_dir, market, "lday", f"{market}{code}.day")
-        if not os.path.exists(path):
-            continue
-            
-        try:
-            data = np.fromfile(path, dtype=dt)
-            if len(data) < 51:
-                continue
-            
-            dates = data['date']
-            # 使用 numpy 的 searchsorted 进行二分查找
-            pos = np.searchsorted(dates, target_int)
-            if pos < len(dates) and dates[pos] == target_int:
-                if pos >= 50:
-                    past_close = data['close'][pos - 50]
-                    curr_close = data['close'][pos]
-                    if past_close > 0:
-                        returns_list.append((curr_close / past_close - 1) * 100.0)
-        except Exception as _e:
-            log.debug(f"[大宗交易] {code} K线读取/计算失败: {_e}")
-            continue
-
-    returns_list.sort()
-    return returns_list
-
-
-def _get_stock_rps50(code: str, trade_date: str, baseline_returns: list, tdx_dir: str) -> float:
-    """
-    计算单只股票在指定日期的RPS50值。
-    不依赖目标股票是否在采样池中——单独计算其收益率后插入排名。
-    """
-    import bisect
-    kl = _get_tdx_kline(code, tdx_dir)
-    if kl.empty or trade_date not in kl.index:
-        return 50.0  # 无数据时默认中位
-    pos = kl.index.get_loc(trade_date)
-    if pos < 50:
-        return 50.0
-    past_close = kl.iloc[pos - 50]['close']
-    curr_close = kl.iloc[pos]['close']
-    if past_close <= 0:
-        return 50.0
-    stock_ret = (curr_close / past_close - 1) * 100
-    if not baseline_returns:
-        return 50.0
-    # 用二分查找确定该股票在全市场中的排名百分位
-    rank = bisect.bisect_left(baseline_returns, stock_ret)
-    return (rank / len(baseline_returns)) * 100
-
-
-def compute_golden_signals(records: list, tdx_dir: str) -> dict:
-    """
-    批量计算黄金信号。返回 {row_index: True/False}。
-    黄金信号三合一条件（必须同时满足）：
-    1. VIP外资席位买入（高盛/瑞银/摩根大通）
-    2. 股价距近60日最高点下跌超过20%（price_position < 0.8）
-    3. 个股RPS50 < 30（近50天涨幅排名全市场后30%）
-    """
-    if not records:
-        return {}
-
-    all_codes = _load_all_tdx_codes(tdx_dir)
-    if not all_codes:
-        log.warning(f"[黄金信号计算] 通达信目录 {tdx_dir} 下未找到任何票据，跳过计算！")
-        return {}
-
-    results = {}
-    # 按交易日缓存RPS基准数据（同一天只算一次采样基准）
-    rps_baseline_cache = {}
-
-    for idx, rec in enumerate(records):
-        code = str(rec.get('证券代码', '')).zfill(6)
-        buyer = str(rec.get('买方营业部', ''))
-        trade_date = str(rec.get('交易日期', '')).replace('-', '').split()[0]
-
-        # 条件1：VIP外资买入
-        is_vip_buy = any(kw in buyer for kw in VIP_KEYWORDS_SIGNAL)
-        if not is_vip_buy:
-            results[idx] = False
-            continue
-
-        # 取K线
-        kl = _get_tdx_kline(code, tdx_dir)
-        if kl.empty or trade_date not in kl.index:
-            results[idx] = False
-            continue
-        pos = kl.index.get_loc(trade_date)
-
-        # 条件2：距近60日高点跌>20%
-        lookback_start = max(0, pos - 60)
-        high_60 = kl.iloc[lookback_start:pos + 1]['high'].max()
-        curr_close = kl.iloc[pos]['close']
-        if high_60 <= 0:
-            results[idx] = False
-            continue
-        price_position = curr_close / high_60
-        if price_position >= 0.8:
-            results[idx] = False
-            continue
-
-        # 条件3：RPS50 < 30（单独计算目标股票的RPS，不依赖采样命中）
-        if trade_date not in rps_baseline_cache:
-            rps_baseline_cache[trade_date] = _compute_rps50_baseline(trade_date, all_codes, tdx_dir)
-        baseline = rps_baseline_cache[trade_date]
-        rps_val = _get_stock_rps50(code, trade_date, baseline, tdx_dir)
-        if rps_val >= 30:
-            results[idx] = False
-            continue
-
-        results[idx] = True
-
-    return results
 
 class ForeignBlockTradeTab(BaseStockTab):
     def __init__(self, data_provider, parent=None):
@@ -275,7 +87,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(8, 6, 8, 6)
         from ui.theme import theme_manager
-        lbl_title = QLabel("🌐 外资大宗动向")
+        lbl_title = QLabel("🌐 主力/外资大宗")
         lbl_title.setObjectName("tabTitle")
         header_layout.addWidget(lbl_title)
         
@@ -292,13 +104,13 @@ class ForeignBlockTradeTab(BaseStockTab):
         header_layout.addWidget(self.cmb_filter_date)
 
         self.cmb_filter_branch = QComboBox()
-        self.cmb_filter_branch.addItem("全部外资席位")
+        self.cmb_filter_branch.addItem("全部监控席位")
         self.cmb_filter_branch.setFixedWidth(152)
         self.cmb_filter_branch.currentIndexChanged.connect(self._filter_table_combo)
         header_layout.addWidget(self.cmb_filter_branch)
 
         self.cmb_filter_direction = QComboBox()
-        self.cmb_filter_direction.addItems(["全部动作", "外资买入", "外资卖出", "外资对倒"])
+        self.cmb_filter_direction.addItems(["全部动作", "外资买入", "外资卖出", "外资对倒", "机构买入", "机构卖出", "机构对倒", "机构买/外资卖", "外资买/机构卖"])
         self.cmb_filter_direction.setFixedWidth(128)
         self.cmb_filter_direction.currentIndexChanged.connect(self._filter_table_combo)
         header_layout.addWidget(self.cmb_filter_direction)
@@ -328,7 +140,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.columns = [
             "代码", "名称", "现价", "涨幅%", "市值", "交易日期", "交易详情", 
             "当日收盘价", "成交价格", "折/溢价率(%)", "成交数量(万股)", "成交金额(万元)", 
-            "买方营业部", "卖方营业部", "黄金信号"
+            "买方营业部", "卖方营业部"
         ]
         self.table = VCPTableView(default_row_height=28)
         self.model = StockTableModel(self.columns)
@@ -344,7 +156,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         header = self.table.horizontalHeader()
         header.setStretchLastSection(True)
         # 严格压缩默认列宽，总和约1200px以内，确保即使在小屏幕/高缩放比下也不会超过屏幕宽度产生滚动条
-        default_widths = [60, 70, 55, 55, 55, 70, 70, 65, 65, 65, 75, 75, 140, 140, 60]
+        default_widths = [60, 70, 55, 55, 55, 70, 85, 65, 65, 65, 75, 75, 140, 140]
         for i, w in enumerate(default_widths):
             header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
             self.table.setColumnWidth(i, w)
@@ -369,25 +181,44 @@ class ForeignBlockTradeTab(BaseStockTab):
         buyer_str = str(buyer) if pd.notna(buyer) else ""
         seller_str = str(seller) if pd.notna(seller) else ""
         
-        for kw in FOREIGN_KEYWORDS:
+        for kw in TARGET_KEYWORDS:
             if kw in buyer_str or kw in seller_str:
                 return True
         return False
 
     def _determine_direction(self, buyer, seller):
-        """判断是外资买入还是卖出"""
+        """判断是外资/机构的买卖动作"""
         buyer_str = str(buyer) if pd.notna(buyer) else ""
         seller_str = str(seller) if pd.notna(seller) else ""
         
-        buy_hit = any(kw in buyer_str for kw in FOREIGN_KEYWORDS)
-        sell_hit = any(kw in seller_str for kw in FOREIGN_KEYWORDS)
+        buy_foreign = any(kw in buyer_str for kw in FOREIGN_KEYWORDS)
+        sell_foreign = any(kw in seller_str for kw in FOREIGN_KEYWORDS)
         
-        if buy_hit and sell_hit:
-            return "外资对倒", "#F59E0B" # 橙色
-        elif buy_hit:
+        buy_inst = "机构专用" in buyer_str
+        sell_inst = "机构专用" in seller_str
+        
+        # 混合对倒
+        if buy_inst and sell_foreign:
+            return "机构买/外资卖", "#3B82F6"  # 混合动作标记蓝色
+        if buy_foreign and sell_inst:
+            return "外资买/机构卖", "#3B82F6"
+            
+        # 同类对倒
+        if buy_foreign and sell_foreign:
+            return "外资对倒", "#F59E0B"
+        if buy_inst and sell_inst:
+            return "机构对倒", "#F59E0B"
+            
+        # 单方动作
+        if buy_foreign:
             return "外资买入", COLOR_RISE
-        elif sell_hit:
+        if sell_foreign:
             return "外资卖出", COLOR_FALL
+        if buy_inst:
+            return "机构买入", COLOR_RISE
+        if sell_inst:
+            return "机构卖出", COLOR_FALL
+            
         return "--", COLOR_FLAT
 
     def _load_block_trade_data(self):
@@ -453,7 +284,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         if not data_list:
             self._aggregated_records = []
             self._block_trade_codes = set()
-            self.lbl_status.setText("❌ 近期未发现匹配外资的大宗交易。")
+            self.lbl_status.setText("❌ 近期未发现匹配监控席位的大宗交易。")
             event_bus.sig_block_trade_updated.emit()
             return
             
@@ -469,7 +300,7 @@ class ForeignBlockTradeTab(BaseStockTab):
             '成交额': 'sum'
         })
         df = df.sort_values(by=['交易日期', '证券代码'], ascending=[False, True])
-        # 保存聚合后的记录，用于黄金信号计算和表格行匹配
+        # 保存聚合后的记录，用于表格行匹配
         self._aggregated_records = df.to_dict('records')
         
         # 提取筛选器选项
@@ -479,7 +310,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         target_branches = set()
         for b in raw_branches:
             b_str = str(b)
-            if any(kw in b_str for kw in FOREIGN_KEYWORDS):
+            if any(kw in b_str for kw in TARGET_KEYWORDS):
                 target_branches.add(b_str)
         unique_branches = sorted(list(target_branches))
 
@@ -491,7 +322,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.cmb_filter_date.addItems([str(x) for x in unique_dates])
         
         self.cmb_filter_branch.clear()
-        self.cmb_filter_branch.addItem("全部外资席位")
+        self.cmb_filter_branch.addItem("全部监控席位")
         self.cmb_filter_branch.addItems(unique_branches)
 
         self.cmb_filter_date.blockSignals(False)
@@ -526,8 +357,6 @@ class ForeignBlockTradeTab(BaseStockTab):
             
             direction, color = self._determine_direction(buyer, seller)
 
-            # NOTE: 我们需要通过一个特殊的字段把VIP外资标出来吗？
-            # 委派给 Delegate 虽然也可以，但是这里用最简单的纯文本展示也能接受
             row_dict = {
                 "代码": code,
                 "名称": name,
@@ -542,105 +371,19 @@ class ForeignBlockTradeTab(BaseStockTab):
                 "成交数量(万股)": f"{vol_wan:.2f}",
                 "成交金额(万元)": f"{amt_wan:.2f}",
                 "买方营业部": buyer,
-                "卖方营业部": seller,
-                "黄金信号": "⏳"
+                "卖方营业部": seller
             }
             row_data.append(row_dict)
 
         self.model.update_data(row_data)
-        self.lbl_status.setText(f"✅ 加载完成，发现 {len(df)} 笔外资大宗交易。正在计算黄金信号...")
+        self.lbl_status.setText(f"✅ 加载完成，发现 {len(df)} 笔监控席位大宗交易。")
         
         # 强制应用当前的筛选状态
         self._filter_table_combo()
         event_bus.sig_block_trade_updated.emit()
         
-        # 异步计算黄金信号（涉及大量K线读取，不能阻塞UI）
-        self._compute_golden_signal_async()
-        
         # 统一异步刷新市值
         self.async_update_market_caps()
-
-    def _compute_golden_signal_async(self):
-        """在后台线程计算黄金信号，完成后回调到UI"""
-        agg_records = getattr(self, '_aggregated_records', None)
-        if not agg_records:
-            return
-
-        def _bg_compute():
-            try:
-                # 动态获取通达信目录
-                tdx_dir = getattr(self.data_provider, 'tdx_vipdoc', '') if self.data_provider else ''
-                if not tdx_dir or not os.path.exists(tdx_dir):
-                    log.warning(f"[黄金信号] 通达信目录无效，无法计算信号! 路径: {tdx_dir}")
-                    return {}
-                return compute_golden_signals(agg_records, tdx_dir)
-            except Exception as e:
-                log.error(f"[黄金信号计算] 异常: {e}")
-                return {}
-
-        task_manager.run_in_background(
-            _bg_compute,
-            task_id="golden_signal_compute",
-            on_success=self._on_golden_signal_done
-        )
-
-    def _on_golden_signal_done(self, signal_map: dict):
-        """将黄金信号结果写入表格最后一列"""
-        try:
-            self._apply_golden_signals(signal_map)
-        except Exception as e:
-            log.error(f"[黄金信号UI更新] 异常: {e}")
-            self.lbl_status.setText(
-                self.lbl_status.text().replace("正在计算黄金信号...", "⚠ 信号计算出错。")
-            )
-
-    def _apply_golden_signals(self, signal_map: dict):
-        """实际执行黄金信号写入逻辑"""
-        golden_count = 0
-
-        if not signal_map:
-            self.lbl_status.setText(
-                self.lbl_status.text().replace("正在计算黄金信号...", "黄金信号计算完成。")
-            )
-            
-        for row_idx, row_dict in enumerate(self.model.row_data):
-            td = str(row_dict.get("交易日期", "")).replace("-", "").split()[0]
-            cd = str(row_dict.get("代码", ""))
-            bu = str(row_dict.get("买方营业部", ""))
-
-            is_golden = False
-            for idx, is_sig in signal_map.items():
-                if not is_sig:
-                    continue
-                rec = self._aggregated_records[idx]
-                rec_date = str(rec.get('交易日期', '')).replace('-', '').split()[0]
-                rec_code = str(rec.get('证券代码', '')).zfill(6)
-                rec_buyer = str(rec.get('买方营业部', ''))
-                if rec_date == td and rec_code == cd and rec_buyer == bu:
-                    is_golden = True
-                    break
-
-            if is_golden:
-                golden_count += 1
-                row_dict["黄金信号"] = "✅"
-            else:
-                row_dict["黄金信号"] = ""
-
-        self.model.layoutChanged.emit()
-
-        # 更新状态栏
-        total = self.model.rowCount()
-        status_base = self.lbl_status.text().split("正在计算")[0]
-        if golden_count > 0:
-            self.lbl_status.setText(f"{status_base}🏆 发现 {golden_count} 笔黄金信号！")
-            self.lbl_status.setObjectName("warningStatus")
-            self.lbl_status.style().unpolish(self.lbl_status)
-            self.lbl_status.style().polish(self.lbl_status)
-        else:
-            self.lbl_status.setText(f"{status_base}信号计算完成，暂无黄金信号。")
-
-
-
 
     def _filter_table_combo(self):
         search_text = self.search_box.text().strip().lower()
@@ -653,7 +396,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.proxy_model.setExactFilter("交易详情", None if filter_direction == "全部动作" else filter_direction)
         
         filter_branch = self.cmb_filter_branch.currentText()
-        self.proxy_model.setExactFilter("_branch", None if filter_branch == "全部外资席位" else filter_branch)
+        self.proxy_model.setExactFilter("_branch", None if filter_branch == "全部监控席位" else filter_branch)
 
     def _on_double_click(self, index):
         if not index.isValid(): return

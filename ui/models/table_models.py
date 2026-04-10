@@ -711,18 +711,30 @@ class StockTableModel(QAbstractTableModel):
                     pass
             elif key == "卖方营业部":
                 val_str = str(raw_val)
-                if any(kw in val_str for kw in ["高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴", "渣打", "野村", "汇丰", "星展", "大和"]):
-                    return QColor(_c("COLOR_FALL"))  # 外资卖出标为绿
+                if any(kw in val_str for kw in ["高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴", "渣打", "野村", "汇丰", "星展", "大和", "机构专用"]):
+                    return QColor(_c("COLOR_FALL"))  # 外资/机构卖出标为绿
             elif key == "买方营业部":
                 val_str = str(raw_val)
-                if any(kw in val_str for kw in ["高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴", "渣打", "野村", "汇丰", "星展", "大和"]):
-                    return QColor(_c("COLOR_RISE"))  # 外资买入标为红
+                if any(kw in val_str for kw in ["高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴", "渣打", "野村", "汇丰", "星展", "大和", "机构专用"]):
+                    return QColor(_c("COLOR_RISE"))  # 外资/机构买入标为红
             elif key == "交易详情":
                 val_str = str(raw_val)
-                if "卖出" in val_str:
+                if "对倒" in val_str:
+                    return QColor("#F59E0B")
+                elif "买/" in val_str or "/卖" in val_str:
+                    return QColor("#3B82F6")
+                elif "卖出" in val_str:
                     return QColor(_c("COLOR_FALL"))  # 卖出标为绿
                 elif "买入" in val_str:
                     return QColor(_c("COLOR_RISE"))  # 买入标为红
+                    
+            elif key == "成交金额(万元)":
+                try:
+                    f_val = float(str(raw_val).replace(',', ''))
+                    if f_val >= 10000:
+                        return QColor(_c("COLOR_RISE"))
+                except (ValueError, TypeError):
+                    pass
                     
             elif key in ["上榜净买额(万)", "机构净买(万)"]:
                 try:
