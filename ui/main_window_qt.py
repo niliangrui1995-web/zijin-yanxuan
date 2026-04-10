@@ -1020,6 +1020,17 @@ class MainWindowQT(QMainWindow):
                     name = item_data.get('名称', name)
                 vcp_data = dict(item_data)
 
+        # 核心需求：全局 VCP 状态穿透投影
+        # 如果从其他 Tab (如龙虎榜、美股) 打开 K 线，只要它在当前的 VCP 扫描结果中
+        # 就自动把它在 VCP 表格中的突破点、箱体等画线数据合并进来
+        if getattr(self, 'tab_scan', None) and hasattr(self.tab_scan, '_current_results'):
+            for scan_res in self.tab_scan._current_results:
+                if isinstance(scan_res, dict) and scan_res.get('代码') == code:
+                    for k, v in scan_res.items():
+                        if k not in vcp_data or not vcp_data.get(k):
+                            vcp_data[k] = v
+                    break
+
         kline_manager.open_chart(
             main_window=self,
             code=code,
