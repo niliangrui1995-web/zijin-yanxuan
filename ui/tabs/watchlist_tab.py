@@ -68,7 +68,14 @@ class WatchlistTab(BaseStockTab):
         tb_layout = QHBoxLayout(toolbar)
         tb_layout.setContentsMargins(8, 6, 8, 6)
 
-        # 占位或省略，直接加自动伸缩
+        lbl_title = QLabel("📌 关注池")
+        lbl_title.setObjectName("tabTitle")
+        tb_layout.addWidget(lbl_title)
+
+        self.lbl_sp_status = QLabel("")
+        self.lbl_sp_status.setObjectName("tabSubtitle")
+        tb_layout.addWidget(self.lbl_sp_status)
+
         tb_layout.addStretch()
 
         # 搜索过滤
@@ -81,12 +88,10 @@ class WatchlistTab(BaseStockTab):
         tb_layout.addWidget(self.sp_search)
 
         btn_reset = QPushButton("解除列表排序")
-        btn_reset.setProperty("class", "secondary")
         btn_reset.clicked.connect(self._reset_view)
         tb_layout.addWidget(btn_reset)
 
         btn_export_sp = QPushButton("📄 导出")
-        btn_export_sp.setProperty("class", "secondary")
         btn_export_sp.clicked.connect(self._export_to_excel)
         tb_layout.addWidget(btn_export_sp)
         layout.addWidget(toolbar)

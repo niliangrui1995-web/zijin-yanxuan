@@ -2,21 +2,19 @@ import sys
 import datetime
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTextEdit,
-    QFileDialog
+    QFileDialog, QComboBox
 )
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QTimer, Qt
 from core.event_bus import event_bus
 
 class LogTab(QWidget):
     """独立的系统运行日志组件 - 负责渲染日志流并接住 stdout/stderr"""
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setStyleSheet("background-color: transparent;")
         self._init_ui()
         self._setup_log_redirect()
         
         # 挂载中心事件总线
-        from PyQt6.QtCore import Qt
         event_bus.sig_system_log.connect(self._on_log_msg, type=Qt.ConnectionType.QueuedConnection)
 
     def _init_ui(self):
@@ -26,16 +24,7 @@ class LogTab(QWidget):
         # 1. 优先初始化日志文本区 (被下方按钮事件依赖)
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
-        from ui.theme import theme_manager as _tm
-        _t = _tm.current_theme
-        self.log_text.setStyleSheet(f"""
-            QTextEdit {{ 
-                background-color: transparent; color: {_t['TEXT_MUTED']}; 
-                font-family: 'Consolas', 'Courier New', monospace; 
-                font-size: 12px; border: none; padding: 12px;
-                border-top: 1px solid {_t['BORDER_DEFAULT']};
-            }}
-        """)
+        self.log_text.setObjectName("systemLogText")
         # 控制文档块数量，避免长时间运行后日志文本过大拖慢 UI。
         self.log_text.document().setMaximumBlockCount(4000)
         
@@ -44,39 +33,25 @@ class LogTab(QWidget):
         tb_layout = QHBoxLayout(toolbar)
         tb_layout.setContentsMargins(8, 6, 8, 6)
         
-        lbl = QLabel("系统运行日志")
-        # 由全局QSS中QLabel规则覆盖
+        lbl = QLabel("📋 系统运行日志")
+        lbl.setObjectName("tabTitle")
         tb_layout.addWidget(lbl)
         tb_layout.addStretch()
         
         btn_export_log = QPushButton("📄 导出日志")
         btn_export_log.setProperty("class", "ctaSecondary")
-        btn_export_log.setFixedHeight(28)
         btn_export_log.clicked.connect(self._export_log)
         tb_layout.addWidget(btn_export_log)
         
         btn_clear_log = QPushButton("🗑 清空")
         btn_clear_log.setProperty("class", "ctaSecondary")
-        btn_clear_log.setFixedHeight(28)
         btn_clear_log.clicked.connect(self.log_text.clear)
         tb_layout.addWidget(btn_clear_log)
 
         # 日志级别过滤下拉框
-        from PyQt6.QtWidgets import QComboBox
         self.level_filter = QComboBox()
         self.level_filter.addItems(["全部", "仅 Error", "仅 Warning"])
-        self.level_filter.setFixedHeight(28)
         self.level_filter.setFixedWidth(120)
-        from ui.theme import theme_manager as _tm
-        _t = _tm.current_theme
-        self.level_filter.setStyleSheet(f"""
-            QComboBox {{
-                background-color: {_t['BG_INPUT']}; color: {_t['TEXT_PRIMARY']}; border: 1px solid {_t['BORDER_DEFAULT']};
-                border-radius: 4px; padding: 4px 8px; font-size: 12px;
-            }}
-            QComboBox::drop-down {{ border: none; }}
-            QComboBox QAbstractItemView {{ background-color: {_t['BG_MENU']}; color: {_t['TEXT_PRIMARY']}; }}
-        """)
         tb_layout.addWidget(self.level_filter)
 
         layout.addWidget(toolbar)

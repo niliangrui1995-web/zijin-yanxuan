@@ -37,7 +37,8 @@ class RtMonitorTab(BaseStockTab):
         # 盘后 Worker 停止后，model 中的数据原地保留，第二天自动覆盖
         
         # 自动化监控：交易日 9:15-16:00 自动启动
-        self._manually_toggled = False
+        self._manual_stop_requested = False
+        self._rt_stop_requested = False
         self._auto_timer = QTimer(self)
         self._auto_timer.timeout.connect(self._check_auto_start_stop)
         self._auto_timer.start(30000)  # 每 30 秒检查一次
@@ -119,13 +120,18 @@ class RtMonitorTab(BaseStockTab):
         """统一维护盘中监控按钮显示状态，避免 UI 与真实运行状态漂移。"""
         if running:
             self.btn_rt_start.setText("⏹ 停止盘中监控")
-            self.btn_rt_start.setStyleSheet(
-                "color: white; border: none; "
-                "background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #DC2626, stop:1 #EF4444);"
-            )
+            self.btn_rt_start.setProperty("monitoring", True)
+            self.btn_rt_start.setProperty("monitoring_state", "running")
+            self.btn_rt_start.setEnabled(True)
+            self.btn_rt_start.style().unpolish(self.btn_rt_start)
+            self.btn_rt_start.style().polish(self.btn_rt_start)
         else:
             self.btn_rt_start.setText("🚀 启动盘中监控")
-            self.btn_rt_start.setStyleSheet("")
+            self.btn_rt_start.setProperty("monitoring", False)
+            self.btn_rt_start.setProperty("monitoring_state", "idle")
+            self.btn_rt_start.setEnabled(True)
+            self.btn_rt_start.style().unpolish(self.btn_rt_start)
+            self.btn_rt_start.style().polish(self.btn_rt_start)
 
         if info_text:
             self.lbl_rt_info.setText(info_text)
@@ -133,23 +139,42 @@ class RtMonitorTab(BaseStockTab):
         if emit_progress:
             event_bus.sig_task_progress.emit("rt_monitor", 1 if running else 0, "start" if running else "stop")
 
+    def _ensure_rt_button_width(self):
+        texts = ["🚀 启动盘中监控", "⏹ 停止盘中监控", "正在停止..."]
+        metrics = self.btn_rt_start.fontMetrics()
+        content_width = max(metrics.horizontalAdvance(text) for text in texts)
+        self.btn_rt_start.setFixedWidth(max(178, content_width + 52))
+
+    def _set_rt_button_stopping(self, info_text: str | None = None):
+        self.btn_rt_start.setText("正在停止...")
+        self.btn_rt_start.setProperty("monitoring", True)
+        self.btn_rt_start.setProperty("monitoring_state", "stopping")
+        self.btn_rt_start.setEnabled(False)
+        self.btn_rt_start.style().unpolish(self.btn_rt_start)
+        self.btn_rt_start.style().polish(self.btn_rt_start)
+        if info_text:
+            self.lbl_rt_info.setText(info_text)
+
     def _check_auto_start_stop(self):
         from core.market_calendar import MarketCalendar
         is_active = MarketCalendar.is_market_active()
         is_running = self._is_rt_running()
 
         # 如果在活跃时间，没在运行，且用户没有手动强行关掉它 -> 自动启动
-        if is_active and not is_running and not self._manually_toggled:
+        if is_active and not is_running and not self._manual_stop_requested and not self._rt_stop_requested:
             log.info("[盘中监控] 交易时段到达，触发自动启动...")
             self._toggle_rt_monitor(auto=True)
         # 如果不在活跃时间，但它还在运行 -> 自动关掉静默
-        elif not is_active and is_running:
+        elif not is_active and is_running and not self._rt_stop_requested:
             log.info("[盘中监控] 非交易时段，触发自动静默...")
             self._toggle_rt_monitor(auto=True)
-            self._manually_toggled = False  # 清除人工标记，确保明早能自动启动
+            self._manual_stop_requested = False  # 清除人工停止标记，确保明早能自动启动
 
         # 兜底：无论何种路径，按钮状态都与真实线程状态保持一致
-        if self._is_rt_running():
+        if self._rt_stop_requested and self._is_rt_running():
+            if self.btn_rt_start.text() != "正在停止...":
+                self._set_rt_button_stopping()
+        elif self._is_rt_running():
             if self.btn_rt_start.text() != "⏹ 停止盘中监控":
                 self._set_rt_button_state(True)
         else:
@@ -164,16 +189,21 @@ class RtMonitorTab(BaseStockTab):
         toolbar = QWidget()
         tb_layout = QHBoxLayout(toolbar)
         tb_layout.setContentsMargins(8, 6, 8, 6)
+
+        lbl_title = QLabel("📡 盘中监控")
+        lbl_title.setObjectName("tabTitle")
+        tb_layout.addWidget(lbl_title)
+
         self.btn_rt_start = QPushButton("🚀 启动盘中监控")
         self.btn_rt_start.setObjectName("primaryButton")
         self.btn_rt_start.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_rt_start.setFixedWidth(150)
+        self._ensure_rt_button_width()
         self.btn_rt_start.clicked.connect(lambda *args: self._toggle_rt_monitor())
         tb_layout.addWidget(self.btn_rt_start)
         
         self.lbl_rt_info = QLabel("未启动")
-        from ui.theme import theme_manager
-        self.lbl_rt_info.setStyleSheet(f"color: {theme_manager.get('TEXT_MUTED')}; font-size: 12px;")
+        self.lbl_rt_info.setObjectName("tabSubtitle")
+        self.lbl_rt_info.setWordWrap(True)
         tb_layout.addWidget(self.lbl_rt_info)
         tb_layout.addStretch()
         
@@ -181,7 +211,6 @@ class RtMonitorTab(BaseStockTab):
         self.rt_search = QLineEdit()
         self.rt_search.setPlaceholderText("🔍 筛选...")
         self.rt_search.setFixedWidth(150)
-        self.rt_search.setFixedHeight(28)
         self.rt_search.textChanged.connect(self._on_search_text_changed)
         tb_layout.addWidget(self.rt_search)
         
@@ -189,7 +218,6 @@ class RtMonitorTab(BaseStockTab):
         self.btn_rt_clear = QPushButton("🗑 清空")
         self.btn_rt_clear.setProperty("class", "secondary")
         self.btn_rt_clear.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_rt_clear.setFixedHeight(28)
         self.btn_rt_clear.clicked.connect(self._clear_table)
         tb_layout.addWidget(self.btn_rt_clear)
         
@@ -197,13 +225,7 @@ class RtMonitorTab(BaseStockTab):
         btn_rt_settings = QToolButton()
         btn_rt_settings.setText("⚙")
         btn_rt_settings.setFixedSize(32, 32)
-        from ui.theme import theme_manager as _tm
-        _t = _tm.current_theme
-        btn_rt_settings.setStyleSheet(f"""
-            QToolButton {{ font-size: 16px; border: none; color: {_t['TEXT_MUTED']}; background: transparent; margin-top: 4px; }}
-            QToolButton:hover {{ color: {_t['TEXT_BRIGHT']}; background: {_t['BG_HOVER']}; border-radius: 4px; }}
-            QToolButton:pressed {{ color: {_t['TEXT_PRIMARY']}; }}
-        """)
+        btn_rt_settings.setObjectName("btnSysMenu")
         btn_rt_settings.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_rt_settings.setToolTip("盘中监控参数设置")
         btn_rt_settings.clicked.connect(self._show_rt_settings)
@@ -262,11 +284,8 @@ class RtMonitorTab(BaseStockTab):
     def _show_rt_settings(self):
         dlg = QDialog(self)
         dlg.setWindowTitle("⚙ 盘中监控参数")
+        dlg.setObjectName("settingsDialog")
         dlg.setFixedSize(300, 160)
-        from ui.theme import theme_manager as _tm
-        _t = _tm.current_theme
-        dlg.setStyleSheet(f"QDialog {{ background-color: {_t['BG_MENU']}; }} QLabel {{ color: {_t['TEXT_PRIMARY']}; font-size: 13pt; }}")
-        
         form = QVBoxLayout(dlg)
         form.setContentsMargins(20, 20, 20, 20)
         
@@ -291,7 +310,6 @@ class RtMonitorTab(BaseStockTab):
         form.addStretch()
         btn_ok = QPushButton("确定")
         btn_ok.setProperty("class", "secondary")
-        btn_ok.setFixedHeight(28)
         btn_ok.clicked.connect(dlg.accept)
         form.addWidget(btn_ok)
 
@@ -302,22 +320,22 @@ class RtMonitorTab(BaseStockTab):
             show_toast("盘中监控参数已保存", "success", self)
 
     def _toggle_rt_monitor(self, auto=False):
-        if not auto: 
-            self._manually_toggled = True
-
         if self._is_rt_running():
+            self._manual_stop_requested = not auto
+            self._rt_stop_requested = True
             self.rt_worker.stop()
-            self.rt_worker.wait(3000)  # 3 秒超时，防止 worker 死锁卡死主线程
-            self._set_rt_button_state(
-                False,
+            self._set_rt_button_stopping(
                 info_text=(
-                    self._format_status_text("已停止", "点“启动盘中监控”可恢复")
+                    self._format_status_text("正在停止", "稍后可重新启动")
                     if not auto else
-                    self._format_status_text("已自动停止", "下个交易时段会自动启动")
+                    self._format_status_text("自动停止中", "下个交易时段会自动启动")
                 ),
-                emit_progress=True
             )
+            return
         else:
+            if not auto:
+                self._manual_stop_requested = False
+            self._rt_stop_requested = False
             # 兜底：如果内存缓存为空，先尝试从磁盘加载昨日F5的缓存
             if not self.data_provider.cache_data:
                 self._set_status("加载本地缓存", "就绪后连接行情")
@@ -371,6 +389,7 @@ class RtMonitorTab(BaseStockTab):
         self.rt_worker.scan_count.connect(lambda n, pool: event_bus.sig_system_log.emit("info", f"[监控] 第{n}轮 | 待突破池 {pool} 只"))
         self.rt_worker.finished.connect(self._on_rt_worker_finished)
         
+        self._rt_stop_requested = False
         self.rt_worker.start()
         self._set_rt_button_state(
             True,
@@ -380,21 +399,31 @@ class RtMonitorTab(BaseStockTab):
 
     @pyqtSlot()
     def _on_rt_worker_finished(self):
-        # 防止线程异常退出后按钮仍显示“停止”，造成状态漂移
-        if not self._is_rt_running():
-            try:
-                from core.market_calendar import MarketCalendar
-                active = MarketCalendar.is_market_active()
-            except Exception:
-                active = False
-            next_step = (
-                "下个交易时段会自动启动"
-                if not active else "可手动重新启动"
-            )
-            self._set_rt_button_state(
-                False,
-                info_text=self._format_status_text("已停止", next_step)
-            )
+        self._rt_stop_requested = False
+        self.btn_rt_start.setEnabled(True)
+
+        if self.rt_worker is not None:
+            self.rt_worker.deleteLater()
+            self.rt_worker = None
+
+        try:
+            from core.market_calendar import MarketCalendar
+            active = MarketCalendar.is_market_active()
+        except Exception:
+            active = False
+
+        if self._manual_stop_requested:
+            next_step = "点“启动盘中监控”可恢复"
+        elif not active:
+            next_step = "下个交易时段会自动启动"
+        else:
+            next_step = "可手动重新启动"
+
+        self._set_rt_button_state(
+            False,
+            info_text=self._format_status_text("已停止", next_step),
+            emit_progress=True
+        )
 
     @pyqtSlot()
     def _on_rt_network_ready(self):

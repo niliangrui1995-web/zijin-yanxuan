@@ -2,9 +2,8 @@ import os
 import datetime
 import json
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTableView,
-    QHeaderView, QPushButton, QLabel, QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox,
-    QAbstractItemView, QDialog, QFileDialog, QToolButton
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QHeaderView, QPushButton, QLineEdit, QSpinBox, QDoubleSpinBox, QToolButton
 )
 from ui.components.toast_widget import show_toast
 from PyQt6.QtCore import Qt, QTimer
@@ -12,6 +11,7 @@ from PyQt6.QtCore import Qt, QTimer
 
 from ui.models.table_models import StockTableModel, RtSortFilterProxyModel, StockItemDelegate
 from ui.components import VCPTableView
+from ui.components.scan_dialogs import VCPScanRangeDialog, VCPScanSettingsDialog
 from ui.workers.scan_worker import ScanWorker
 from vcp.engine import VCPParams
 from core.event_bus import event_bus
@@ -31,6 +31,7 @@ class ScanTab(BaseStockTab):
         self.engine = engine
         self._current_results = []
         self.worker = None
+        self._scan_cancel_requested = False
 
         self._init_settings_widgets()
         self._init_ui()
@@ -70,6 +71,57 @@ class ScanTab(BaseStockTab):
         self.spn_scan_high250.setSingleStep(0.05)
         self.spn_scan_high250.setValue(self._settings.value("high_250_threshold", 0.10, type=float))
 
+    def _get_scan_params(self) -> dict:
+        return {
+            "rps": int(self.spn_scan_rps.value()),
+            "amp": float(self.spn_scan_amp.value()),
+            "ma_bind": float(self.spn_scan_ma_bind.value()),
+            "amount": float(self.spn_scan_amount.value()),
+            "high250": float(self.spn_scan_high250.value()),
+        }
+
+    def _apply_scan_params(self, params: dict):
+        self.spn_scan_rps.setValue(int(params.get("rps", 80)))
+        self.spn_scan_amp.setValue(float(params.get("amp", 0.45)))
+        self.spn_scan_ma_bind.setValue(float(params.get("ma_bind", 0.05)))
+        self.spn_scan_amount.setValue(float(params.get("amount", 0.8)))
+        self.spn_scan_high250.setValue(float(params.get("high250", 0.10)))
+
+    def _save_scan_params(self):
+        params = self._get_scan_params()
+        self._settings.setValue("rps_threshold", params["rps"])
+        self._settings.setValue("amp_threshold", params["amp"])
+        self._settings.setValue("ma_bind_threshold", params["ma_bind"])
+        self._settings.setValue("min_amount", params["amount"])
+        self._settings.setValue("high_250_threshold", params["high250"])
+        self._settings.sync()
+
+    def _load_user_presets(self) -> dict:
+        user_presets_raw = self._settings.value("user_presets", "{}")
+        try:
+            return json.loads(user_presets_raw) if isinstance(user_presets_raw, str) else {}
+        except (json.JSONDecodeError, TypeError) as exc:
+            log.debug(f"[扫描参数] 用户预设解析失败: {exc}")
+            return {}
+
+    def _save_user_presets(self, user_presets: dict):
+        self._settings.setValue("user_presets", json.dumps(user_presets, ensure_ascii=False))
+        self._settings.sync()
+
+    def _set_scan_action_state(self, state: str):
+        if state == "running":
+            self.btn_scan_action.setText("终止VCP扫描")
+            self.btn_scan_action.setEnabled(True)
+            self.lbl_scan_status.setText("正在扫描...")
+        elif state == "stopping":
+            self.btn_scan_action.setText("正在终止...")
+            self.btn_scan_action.setEnabled(False)
+            self.lbl_scan_status.setText("正在终止...")
+        else:
+            self.btn_scan_action.setText("执行VCP扫描")
+            self.btn_scan_action.setEnabled(True)
+            self.lbl_scan_status.setText("")
+
     def _init_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
@@ -79,33 +131,36 @@ class ScanTab(BaseStockTab):
         stb_layout = QHBoxLayout(scan_toolbar)
         stb_layout.setContentsMargins(8, 6, 8, 6)
         
+        lbl_title = QLabel("⚡ VCP 扫描")
+        lbl_title.setObjectName("tabTitle")
+        stb_layout.addWidget(lbl_title)
+
+        self.lbl_scan_status = QLabel("")
+        self.lbl_scan_status.setObjectName("tabSubtitle")
+        stb_layout.addWidget(self.lbl_scan_status)
+
+        stb_layout.addStretch()
+
         self.scan_search = QLineEdit()
         self.scan_search.setPlaceholderText("🔍 输入代码/名称筛选...")
-        self.scan_search.setFixedHeight(28)
+        self.scan_search.setFixedWidth(200)
         self.scan_search.textChanged.connect(self._on_search_text_changed)
         stb_layout.addWidget(self.scan_search)
-        
-        btn_export_scan = QPushButton("📄 导出 (Ctrl+E)")
-        btn_export_scan.setProperty("class", "secondary")
-        btn_export_scan.setFixedHeight(28)
-        btn_export_scan.clicked.connect(self.export_table_to_excel)
-        stb_layout.addWidget(btn_export_scan)
-        
+
+        self.btn_scan_action = QPushButton("执行VCP扫描")
+        self.btn_scan_action.setObjectName("primaryButton")
+        self.btn_scan_action.clicked.connect(self._on_scan_action_clicked)
+        stb_layout.addWidget(self.btn_scan_action)
+
         # 扫描参数设置按钮
-        btn_scan_settings = QToolButton()
-        btn_scan_settings.setText("⚙")
-        btn_scan_settings.setFixedSize(32, 32)
-        from ui.theme import theme_manager as _tm
-        _t = _tm.current_theme
-        btn_scan_settings.setStyleSheet(f"""
-            QToolButton {{ font-size: 16px; border: none; color: {_t['TEXT_MUTED']}; background: transparent; margin-top: 4px; }}
-            QToolButton:hover {{ color: {_t['TEXT_BRIGHT']}; background: {_t['BG_HOVER']}; border-radius: 4px; }}
-            QToolButton:pressed {{ color: {_t['TEXT_PRIMARY']}; }}
-        """)
-        btn_scan_settings.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_scan_settings.setToolTip("扫描参数设置")
-        btn_scan_settings.clicked.connect(self._show_scan_settings)
-        stb_layout.addWidget(btn_scan_settings)
+        self.btn_scan_settings = QToolButton()
+        self.btn_scan_settings.setText("⚙")
+        self.btn_scan_settings.setFixedSize(32, 32)
+        self.btn_scan_settings.setObjectName("btnSysMenu")
+        self.btn_scan_settings.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_scan_settings.setToolTip("VCP扫描参数设置")
+        self.btn_scan_settings.clicked.connect(self._show_scan_settings)
+        stb_layout.addWidget(self.btn_scan_settings)
         layout.addWidget(scan_toolbar)
 
         # 表格控件 (MVC)
@@ -117,10 +172,10 @@ class ScanTab(BaseStockTab):
         self.table_scan = VCPTableView(default_row_height=28)
         self.table_scan.setModel(self.proxy_model)
         self.table_scan.setItemDelegate(StockItemDelegate(self.table_scan))
-        
+
         # 绑定双击事件:广播调取K线图信号，带上前后文以便K线图能够「上一只」「下一只」滑动
         self.table_scan.doubleClicked.connect(self._handle_show_kline)
-        
+
         # 右键菜单
         self.table_scan.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table_scan.customContextMenuRequested.connect(self._show_context_menu)
@@ -174,7 +229,12 @@ class ScanTab(BaseStockTab):
             c_name = model.data(model.index(r, 1), Qt.ItemDataRole.DisplayRole)
             if c_code:
                 # Pull full user dict for that row
-                row_data = model.data(model.index(r, 0), Qt.ItemDataRole.UserRole)
+                source_idx = self.proxy_model.mapToSource(model.index(r, 0))
+                row_data = self.source_model.get_row_data(source_idx.row()) if source_idx.isValid() else None
+                if isinstance(row_data, dict):
+                    row_data = dict(row_data)
+                    row_data.setdefault('代码', c_code)
+                    row_data.setdefault('名称', c_name)
                 if not isinstance(row_data, dict):
                     row_data = {'代码': c_code, '名称': c_name}
                     
@@ -190,110 +250,27 @@ class ScanTab(BaseStockTab):
     def _on_search_text_changed(self, text):
         self.proxy_model.setFilterText(text)
 
+    def _on_scan_action_clicked(self):
+        if self.worker and self.worker.isRunning():
+            self.cancel_scan()
+            return
+
+        dlg = VCPScanRangeDialog(self)
+        if dlg.exec() != VCPScanRangeDialog.DialogCode.Accepted:
+            return
+
+        start_date, end_date = dlg.selected_range()
+        self.start_scan(start_date, end_date)
+
     def _show_scan_settings(self):
-        dlg = QDialog(self)
-        dlg.setWindowTitle("⚙ 扫描策略参数")
-        dlg.setFixedSize(400, 390)
-        from ui.theme import theme_manager as _tm
-        _t = _tm.current_theme
-        dlg.setStyleSheet(f"QDialog {{ background-color: {_t['BG_MENU']}; }} QLabel {{ color: {_t['TEXT_PRIMARY']}; font-size: 13pt; }}")
-        
-        form = QVBoxLayout(dlg)
-        form.setContentsMargins(20, 20, 20, 20)
-        form.setSpacing(12)
+        dlg = VCPScanSettingsDialog(self._get_scan_params(), self._load_user_presets(), self)
+        if dlg.exec() != VCPScanSettingsDialog.DialogCode.Accepted:
+            return
 
-        # #16: 策略预设下拉框
-        preset_row = QHBoxLayout()
-        preset_row.addWidget(QLabel("预设方案:"))
-        combo_preset = QComboBox()
-        combo_preset.setFixedHeight(28)
-        from ui.theme import theme_manager as _tm
-        _t = _tm.current_theme
-        combo_preset.setStyleSheet(f"QComboBox {{ background: {_t['BG_INPUT']}; color: {_t['TEXT_PRIMARY']}; border: 1px solid {_t['BORDER_DEFAULT']}; }}")
-
-        # 内置预设
-        _builtin_presets = {
-            "VCP 标准": {"rps": 80, "amp": 0.45, "ma_bind": 0.05, "amount": 0.8, "high250": 0.10},
-            "激进 (低门槛)": {"rps": 60, "amp": 0.60, "ma_bind": 0.08, "amount": 0.3, "high250": 0.20},
-            "保守 (严筛选)": {"rps": 90, "amp": 0.30, "ma_bind": 0.03, "amount": 2.0, "high250": 0.08},
-        }
-        # 从 QSettings 加载用户自定义预设
-        user_presets_raw = self._settings.value("user_presets", "{}")
-        try:
-            user_presets = json.loads(user_presets_raw) if isinstance(user_presets_raw, str) else {}
-        except (json.JSONDecodeError, TypeError) as _e:
-            log.debug(f"[扫描参数] 用户预设解析失败: {_e}")
-            user_presets = {}
-        all_presets = {**_builtin_presets, **user_presets}
-
-        combo_preset.addItem("-- 选择预设 --")
-        for preset_name in all_presets:
-            combo_preset.addItem(preset_name)
-        preset_row.addWidget(combo_preset)
-
-        btn_save_preset = QPushButton("💾 保存")
-        btn_save_preset.setFixedSize(60, 28)
-        btn_save_preset.setProperty("class", "secondary")
-        preset_row.addWidget(btn_save_preset)
-        form.addLayout(preset_row)
-
-        # 参数控件行
-        rows = [
-            ("RPS 阈值:", self.spn_scan_rps, ""),
-            ("振幅上限:", self.spn_scan_amp, "← 0.45=45%"),
-            ("均线粘合:", self.spn_scan_ma_bind, "← 0.05=5%"),
-            ("成交额(亿):", self.spn_scan_amount, ""),
-            ("距250日高:", self.spn_scan_high250, "← 0.10=10%")
-        ]
-        
-        for label_text, widget, hint in rows:
-            r = QHBoxLayout()
-            r.addWidget(QLabel(label_text))
-            r.addWidget(widget)
-            if hint:
-                r.addWidget(QLabel(hint))
-            form.addLayout(r)
-
-        def _on_preset_selected(idx):
-            name = combo_preset.currentText()
-            preset = all_presets.get(name)
-            if not preset:
-                return
-            self.spn_scan_rps.setValue(int(preset.get("rps", 80)))
-            self.spn_scan_amp.setValue(float(preset.get("amp", 0.45)))
-            self.spn_scan_ma_bind.setValue(float(preset.get("ma_bind", 0.05)))
-            self.spn_scan_amount.setValue(float(preset.get("amount", 0.8)))
-            self.spn_scan_high250.setValue(float(preset.get("high250", 0.10)))
-
-        combo_preset.currentIndexChanged.connect(_on_preset_selected)
-
-        def _on_save_preset():
-            from PyQt6.QtWidgets import QInputDialog
-            name, ok = QInputDialog.getText(dlg, "保存预设", "预设名称:")
-            if ok and name.strip():
-                new_preset = {
-                    "rps": self.spn_scan_rps.value(),
-                    "amp": self.spn_scan_amp.value(),
-                    "ma_bind": self.spn_scan_ma_bind.value(),
-                    "amount": self.spn_scan_amount.value(),
-                    "high250": self.spn_scan_high250.value(),
-                }
-                user_presets[name.strip()] = new_preset
-                self._settings.setValue("user_presets", json.dumps(user_presets, ensure_ascii=False))
-                # 刷新下拉列表
-                if name.strip() not in [combo_preset.itemText(i) for i in range(combo_preset.count())]:
-                    combo_preset.addItem(name.strip())
-                all_presets[name.strip()] = new_preset
-
-        btn_save_preset.clicked.connect(_on_save_preset)
-            
-        form.addStretch()
-        btn_ok = QPushButton("确定")
-        btn_ok.setProperty("class", "secondary")
-        btn_ok.setFixedHeight(28)
-        btn_ok.clicked.connect(dlg.accept)
-        form.addWidget(btn_ok)
-        dlg.exec()
+        self._apply_scan_params(dlg.values())
+        self._save_scan_params()
+        self._save_user_presets(dlg.user_presets())
+        show_toast("VCP 扫描参数已保存", "success", self)
 
     # ==========================
     # 核心引擎调度与任务生命周期
@@ -301,15 +278,17 @@ class ScanTab(BaseStockTab):
     def start_scan(self, sd: str, ed: str):
         if self.worker is not None and self.worker.isRunning():
             return
-            
+
         sd = sd.replace('-', '')
         ed = ed.replace('-', '')
         if len(sd) == 8: sd = f"{sd[:4]}-{sd[4:6]}-{sd[6:]}"
         if len(ed) == 8: ed = f"{ed[:4]}-{ed[4:6]}-{ed[6:]}"
 
-        # 广播 UI 状态更新让主窗口锁定按钮
-        event_bus.sig_task_progress.emit("scan", 0, "start")
-        
+        self._scan_cancel_requested = False
+        self._set_scan_action_state("running")
+        event_bus.sig_task_progress.emit("scan", 1, "准备扫描...")
+
+        self._current_results = []
         self.source_model.update_data([])
 
         params = VCPParams(
@@ -320,28 +299,34 @@ class ScanTab(BaseStockTab):
             min_amount_20d=self.spn_scan_amount.value() * 1e8,
         )
 
-        # #8: 持久化当前参数到 QSettings，下次启动自动恢复
-        self._settings.setValue("rps_threshold", self.spn_scan_rps.value())
-        self._settings.setValue("amp_threshold", self.spn_scan_amp.value())
-        self._settings.setValue("ma_bind_threshold", self.spn_scan_ma_bind.value())
-        self._settings.setValue("min_amount", self.spn_scan_amount.value())
-        self._settings.setValue("high_250_threshold", self.spn_scan_high250.value())
-        
+        self._save_scan_params()
+
         self.worker = ScanWorker(self.data_provider, self.engine, sd, ed, params)
         self.worker.progress.connect(lambda p, m: event_bus.sig_task_progress.emit("scan", p, m))
         self.worker.result_ready.connect(self._on_scan_results)
         self.worker.finished_scan.connect(self._on_scan_finished)
+        self.worker.finished.connect(self._on_worker_thread_finished)
         self.worker.start()
 
     def cancel_scan(self):
-        if self.worker and self.worker.isRunning():
+        if self.worker and self.worker.isRunning() and not self._scan_cancel_requested:
+            self._scan_cancel_requested = True
+            self._set_scan_action_state("stopping")
             self.worker.cancel()
             return True
         return False
 
     def _on_scan_finished(self, success, msg):
-        self._save_scan_cache(self._current_results)
+        if success:
+            self._save_scan_cache(self._current_results)
         event_bus.sig_task_progress.emit("scan", 100 if success else 0, msg)
+
+    def _on_worker_thread_finished(self):
+        if self.worker:
+            self.worker.deleteLater()
+            self.worker = None
+        self._scan_cancel_requested = False
+        self._set_scan_action_state("idle")
 
     def _on_scan_results(self, results):
         if not results: return
@@ -423,31 +408,6 @@ class ScanTab(BaseStockTab):
             self.source_model.update_data(formatted_list)
         except Exception as e:
             event_bus.sig_system_log.emit("error", f"渲染表格错误: {e}")
-
-    def export_table_to_excel(self):
-        import pandas as pd  # 修复: pd 未在模块顶层导入，此处需局部导入
-        proxy = self.proxy_model
-        if proxy.rowCount() == 0:
-            show_toast("当前表格为空,无法导出", "warning", self)
-            return
-        path, _ = QFileDialog.getSaveFileName(self, "导出扫描结果", f"扫描结果_{datetime.date.today().strftime('%Y%m%d')}.xlsx", "Excel Files (*.xlsx)")
-        if not path: return
-        try:
-            # Reconstruct table from Proxy Model
-            headers = self.columns
-            rows = []
-            for r in range(proxy.rowCount()):
-                row = []
-                for c in range(len(headers)):
-                    idx = proxy.index(r, c)
-                    val = proxy.data(idx, Qt.ItemDataRole.DisplayRole)
-                    row.append(val if val else "")
-                rows.append(row)
-            df = pd.DataFrame(rows, columns=headers)
-            df.to_excel(path, index=False, engine='openpyxl')
-            show_toast(f"✅ 已导出 {len(df)} 条扫描记录至 {path}", "success", self)
-        except Exception as e:
-            show_toast(f"导出失败: {str(e)}", "error", self)
 
     # ==========================
     # 扫描结果本地缓存 (SQLite)
@@ -547,8 +507,6 @@ class ScanTab(BaseStockTab):
         build_stock_context_menu(
             self, code, name,
             vcp_data=vcp_data,
-            show_export=True,
-            export_callback=self.export_table_to_excel,
         )
 
     # _launch_tdx 已迁移至 BaseStockTab 基类
