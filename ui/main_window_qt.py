@@ -678,7 +678,8 @@ class MainWindowQT(QMainWindow):
             getattr(self, 'ai_tracker_table', None),
             getattr(getattr(self, 'tab_foreign_block', None), 'table', None),
             getattr(getattr(self, 'tab_asian_market', None), 'asian_table', None),
-            getattr(getattr(self, 'tab_earnings', None), 'table', None)
+            getattr(getattr(self, 'tab_earnings', None), 'table', None),
+            getattr(getattr(self, 'tab_foreign_block', None), 'table', None)
         ]
         
         from PyQt6.QtWidgets import QAbstractItemView, QApplication
@@ -689,7 +690,7 @@ class MainWindowQT(QMainWindow):
             if not t: continue
             
             # 允许点选单独的单元格，并且支持按住左键拉框多选多个格子
-            t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
+            t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
             t.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
             
             # 统一 Ctrl+C 钩子：兼容 QTableView（selectionModel）和 QTableWidget（selectedRanges）
