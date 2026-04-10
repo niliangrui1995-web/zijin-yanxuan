@@ -622,6 +622,8 @@ class WatchlistTab(BaseStockTab):
                 entry["大宗交易"] = str(data['block_trade'])
             if data.get('earnings'):
                 entry["业绩异动"] = str(data['earnings'])
+            if data.get('lhb'):
+                entry["龙虎榜"] = str(data['lhb'])
 
             entry.pop("催化剂", None)
             entry.pop("热点板块", None)
