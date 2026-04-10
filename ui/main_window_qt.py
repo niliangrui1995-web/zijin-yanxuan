@@ -360,7 +360,7 @@ class MainWindowQT(QMainWindow):
 
         sys_menu.addSeparator()
 
-        self.act_trade_calendar = sys_menu.addAction("📅 查看交易休市日历")
+        self.act_trade_calendar = sys_menu.addAction("📅 交易日历")
         self.act_trade_calendar.triggered.connect(self._show_trade_calendar)
         
         sys_menu.addSeparator()
