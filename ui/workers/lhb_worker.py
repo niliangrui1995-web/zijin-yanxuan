@@ -66,38 +66,20 @@ def fetch_lhb_data_for_date(date_str: str) -> list[dict]:
             if not matched_kw:
                 continue
                 
-            # 提取该营业部当天的总买卖净额 (单位转换万)
-            net_amt_raw = row.get('总买卖净额', 0)
-            try:
-                net_amt = float(net_amt_raw) if pd.notna(net_amt_raw) else 0.0
-            except:
-                net_amt = 0.0
-                
-            net_amt_wan = round(net_amt / 10000.0)
-            
-            if net_amt_wan > 0:
-                suffix = f"净买:{net_amt_wan}万"
-            elif net_amt_wan < 0:
-                suffix = f"净卖:{abs(net_amt_wan)}万"
-            else:
-                suffix = "金额不明"
-                
-            # 使用简写名称 + 金额 (例: 摩根大通(净买:300万))
-            branch_display = f"{matched_kw}({suffix})"
+            short_branch = matched_kw
                 
             # 解析该外资席位买入了哪些股票
             buy_stocks_str = str(row.get('买入股票', ''))
             sell_stocks_str = str(row.get('卖出股票', ''))
             
-            # 由于可能只是简称，我们需要尝试从基础详情映射。不过往往名字是准的。
-            # 这里先将外资席位分配给股票简称。待会合并时靠名称或者代码兜底。
+            # 这里记录为纯净的简写，金额在后续逐票提取
             for s_name in buy_stocks_str.split():
                 if not s_name.strip(): continue
-                foreign_buys.setdefault(s_name.strip(), set()).add(branch_display)
+                foreign_buys.setdefault(s_name.strip(), set()).add(short_branch)
                 
             for s_name in sell_stocks_str.split():
                 if not s_name.strip(): continue
-                foreign_sells.setdefault(s_name.strip(), set()).add(branch_display)
+                foreign_sells.setdefault(s_name.strip(), set()).add(short_branch)
 
     # 4. 缝合主表
     results = []
@@ -131,6 +113,44 @@ def fetch_lhb_data_for_date(date_str: str) -> list[dict]:
         # 核心过滤条件: 只有 (机构参与 或 外资参与) 并且 (涨跌幅 > 0) 才抓取显示
         if not ((has_jg or has_foreign) and (pct > 0)):
             continue
+            
+        # 此时确认我们需要这只股票，为了计算精准的外资净买额，再单独拉取明细
+        final_f_buys = []
+        final_f_sells = []
+        
+        if has_foreign:
+            try:
+                # 拉取该股票当天的龙虎榜营业部明细
+                df_stock_detail = ak.stock_lhb_stock_detail_em(symbol=code, date=date_str)
+                if not df_stock_detail.empty:
+                    for _, s_row in df_stock_detail.iterrows():
+                        yyb_name = str(s_row.get("交易营业部名称", ""))
+                        # 看看是不是外资关键字
+                        matched_kw = None
+                        for kw in FOREIGN_KEYWORDS:
+                            if kw in yyb_name:
+                                matched_kw = kw
+                                break
+                                
+                        if matched_kw:
+                            net_str = str(s_row.get("净额", "0"))
+                            try:
+                                net_val = float(net_str)
+                            except:
+                                net_val = 0.0
+                                
+                            net_wan = round(net_val / 10000.0)
+                            if net_wan > 0:
+                                final_f_buys.append(f"{matched_kw}(净买:{net_wan}万)")
+                            elif net_wan < 0:
+                                final_f_sells.append(f"{matched_kw}(净卖:{abs(net_wan)}万)")
+                            else:
+                                final_f_buys.append(f"{matched_kw}(0万)")
+            except Exception as e:
+                log.warning(f"[外资明细] 获取 {code} 失败: {e}")
+                # 降级：如果获取失败，至少保留关键字
+                final_f_buys = list(f_buys)
+                final_f_sells = list(f_sells)
         
         # 构造给前端的平铺字典字段
         record = {
@@ -144,7 +164,7 @@ def fetch_lhb_data_for_date(date_str: str) -> list[dict]:
             "上榜净买额(万)": round(net_buy / 10000.0, 2),
             "机构净买(万)": round(jg_info['机构买入净额'] / 10000.0, 2),
             "机构家数": f"买{jg_info['买方机构数']}/卖{jg_info['卖方机构数']}",
-            "外资潜伏池": " | ".join(f_buys) if f_buys else ("卖: " + " | ".join(f_sells) if f_sells else "--"),
+            "外资潜伏池": " | ".join(final_f_buys) if final_f_buys else ("卖: " + " | ".join(final_f_sells) if final_f_sells else "--"),
             "换手率%": round(turnover, 2),
             "上榜原因": reason
         }
