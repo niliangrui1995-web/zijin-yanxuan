@@ -104,7 +104,7 @@ class WatchlistTab(BaseStockTab):
         # 绑定 Model 与 Delegate
         headers = [
             "代码", "名称", "现价", "涨幅%", "市值",
-            "RPS强度", "细分板块", "催化剂", "业绩异动", "大宗交易"
+            "RPS强度", "细分板块", "催化剂", "业绩异动", "大宗交易", "龙虎榜"
         ]
         self.model = StockTableModel(headers)
         self.proxy_model = RtSortFilterProxyModel(self.table_sp)
@@ -118,7 +118,7 @@ class WatchlistTab(BaseStockTab):
         self.model.sig_rows_reordered.connect(self._on_rows_reordered)
 
         # 自适应列宽
-        sp_weights = [0.75, 0.65, 1.4, 0.75, 0.9, 0.8, 1.4, 1.8, 1.2, 1.8]
+        sp_weights = [0.75, 0.65, 1.4, 0.75, 0.9, 0.8, 1.4, 1.8, 1.2, 1.8, 2.8]
         header = self.table_sp.horizontalHeader()
         header.setStretchLastSection(True)
         for col_idx, w in enumerate(sp_weights):
@@ -126,7 +126,7 @@ class WatchlistTab(BaseStockTab):
             self.table_sp.setColumnWidth(col_idx, int(w * 80))
         # 绑定防抖自动保存与恢复配置（restoreState 会连带把上次的排序列也恢复了）
         # 列结构变更（移除“时间”列），升级配置 key，避免旧列状态错位恢复
-        self.bind_header_persistence(self.table_sp, "header_state_watchlist_v6")
+        self.bind_header_persistence(self.table_sp, "header_state_watchlist_v7")
         
         # 【修复】强制抹掉任何因为 header.restoreState 还原出来的自动排序状态
         # 因为在关闭时，我们已经把当前的各种（哪怕是点击表头排出来的）视觉顺序定死并按此顺序拍扁存入硬盘了
@@ -241,6 +241,7 @@ class WatchlistTab(BaseStockTab):
                 ),
                 "大宗交易": info_new.get("大宗交易", ""),
                 "业绩异动": info_new.get("业绩异动", ""),
+                "龙虎榜": info_new.get("龙虎榜", ""),
                 "_zongguben": live_entry.get("_zongguben", 0)
             }
             final_list.append(row_data)
@@ -382,7 +383,7 @@ class WatchlistTab(BaseStockTab):
     # ================================================================
     def _gather_radar_data(self):
         """主线程快速提取 UI 数据，供后台线程使用（避免跨线程访问UI崩溃）"""
-        na_data, na_subsector_data, block_data, earn_data = {}, {}, {}, {}
+        na_data, na_subsector_data, block_data, earn_data, lhb_data = {}, {}, {}, {}, {}
         rps_bundle = None
         try:
             main_win = self.window()
@@ -456,9 +457,27 @@ class WatchlistTab(BaseStockTab):
                         c = str(r.get("代码", ""))
                         pct = str(r.get("环比%", ""))
                         if c and pct and pct != "--": earn_data[c] = f"{pct}%"
+                        
+                if hasattr(main_win, 'tab_lhb') and hasattr(main_win.tab_lhb, 'model'):
+                    for r in main_win.tab_lhb.model.row_data:
+                        c = str(r.get("代码", ""))
+                        if c:
+                            date_str = str(r.get("上榜日期", "")).split('-')
+                            date_mmdd = "-".join(date_str[-2:]) if len(date_str) >= 2 else str(r.get("上榜日期", ""))
+                            
+                            net = float(r.get("上榜净买额(万)", 0))
+                            jg = float(r.get("机构净买(万)", 0))
+                            fgn = float(r.get("外资净买(万)", 0))
+                            
+                            net_s = f"净卖:{abs(net):.0f}万" if net < 0 else f"净买:{net:.0f}万"
+                            jg_s = f"机构净卖:{abs(jg):.0f}万" if jg < 0 else f"机构净买:{jg:.0f}万"
+                            fgn_s = f"外资净卖:{abs(fgn):.0f}万" if fgn < 0 else f"外资净买:{fgn:.0f}万"
+                            
+                            lhb_data[c] = f"{date_mmdd} | {net_s} | {jg_s} | {fgn_s}"
+                            
         except Exception as e:
             log.warning(f"[关注池] 提取主界面数据异常: {e}")
-        return na_data, na_subsector_data, block_data, earn_data, rps_bundle
+        return na_data, na_subsector_data, block_data, earn_data, lhb_data, rps_bundle
 
     def _on_watchlist_changed(self, action: str, code: str):
         """外部请求关注池变更时，防抖 300ms 后再重新加载（防止快速增删导致任务堆积）"""
@@ -485,7 +504,7 @@ class WatchlistTab(BaseStockTab):
             log.debug(f"[关注池] 开始计算 {len(codes_with_rows)} 只标的附加指标")
 
             # 1. 尝试从引擎获取RPS
-            rps_bundle = radar_data_tuple[4] if radar_data_tuple else None
+            rps_bundle = radar_data_tuple[5] if radar_data_tuple and len(radar_data_tuple) > 5 else None
 
             if not rps_bundle:
                 cache_dir = os.path.join(
@@ -501,12 +520,13 @@ class WatchlistTab(BaseStockTab):
             rps250_series = rps_bundle.get('rps250') if rps_bundle else None
 
             # --- 动态扫盘：三大挂载战场的雷达数据提取 ---
-            na_data, na_subsector_data, block_data, earn_data = (
+            na_data, na_subsector_data, block_data, earn_data, lhb_data = (
                 radar_data_tuple[0],
                 radar_data_tuple[1],
                 radar_data_tuple[2],
                 radar_data_tuple[3],
-            ) if radar_data_tuple else ({}, {}, {}, {})
+                radar_data_tuple[4]
+            ) if radar_data_tuple else ({}, {}, {}, {}, {})
 
             # 剥离不再必要的重复计算市值逻辑 (由大一统机制负责)
             results = {}  # 修复局部变量未初始化的 bug
@@ -527,7 +547,8 @@ class WatchlistTab(BaseStockTab):
                         'subsector': na_subsector_data.get(code, ''),
                         'na_catalyst': na_data.get(code, ''),
                         'block_trade': block_data.get(code, ''),
-                        'earnings': earn_data.get(code, '')
+                        'earnings': earn_data.get(code, ''),
+                        'lhb': lhb_data.get(code, '')
                     }
                 except Exception as _e:
                     log.debug(f"[关注池] {code} RPS指标计算异常: {_e}")
@@ -565,6 +586,7 @@ class WatchlistTab(BaseStockTab):
                 row_dict['催化剂'] = data['na_catalyst']
             if data.get('block_trade'): row_dict['大宗交易'] = data['block_trade']
             if data.get('earnings'): row_dict['业绩异动'] = data['earnings']
+            if data.get('lhb'): row_dict['龙虎榜'] = data['lhb']
             
             # trigger row update
             self.model.dataChanged.emit(

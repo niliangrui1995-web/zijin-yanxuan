@@ -196,6 +196,7 @@ def fetch_lhb_data_for_date(date_str: str) -> list[dict]:
             "上榜日期": date_str,
             "上榜净买额(万)": round(net_buy / 10000.0, 2),
             "机构净买(万)": round(jg_info['机构买入净额'] / 10000.0, 2),
+            "外资净买(万)": round(foreign_net_sum, 2),
             "机构家数": f"买{jg_info['买方机构数']}/卖{jg_info['卖方机构数']}",
             "外资潜伏池": foreign_str,
             "换手率%": round(turnover, 2),
