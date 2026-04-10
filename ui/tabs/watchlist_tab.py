@@ -422,7 +422,7 @@ class WatchlistTab(BaseStockTab):
                             short_branch = branch
                             for kw in FOREIGN_KEYWORDS:
                                 if kw in branch:
-                               short_branch = kw
+                                    short_branch = kw
                                     break
                                     
                             amt_str = ""
