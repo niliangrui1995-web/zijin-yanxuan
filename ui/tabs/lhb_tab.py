@@ -54,50 +54,65 @@ class LhbFilterProxyModel(RtSortFilterProxyModel):
 
 
 class TradeCalendarWidget(QCalendarWidget):
-    """自定义带交易日标记的日历，同时修复 Qt 默认周末/非本月日期文字不可见的问题"""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._apply_theme_palette()
-
-    def _apply_theme_palette(self):
-        """通过 QPalette 强制设定所有日期文字颜色，覆盖 Qt 内置的周末蓝色等默认色"""
-        from PyQt6.QtGui import QPalette
-        from PyQt6.QtCore import Qt as QtConst
-        
-        text_color = QColor(_c("TEXT_PRIMARY"))
-        muted_color = QColor(_c("TEXT_DISABLED"))
-        bg_color = QColor(_c("BG_TABLE_BASE"))
-        highlight_color = QColor(_c("SELECTION_BG"))
-        highlight_text = QColor(_c("TEXT_BRIGHT"))
-        
-        # 为周末和工作日设置相同的前景色（Qt 喜欢给周末染蓝色/红色）
-        weekend_fmt = self.weekdayTextFormat(QtConst.DayOfWeek.Saturday)
-        weekend_fmt.setForeground(text_color)
-        self.setWeekdayTextFormat(QtConst.DayOfWeek.Saturday, weekend_fmt)
-        self.setWeekdayTextFormat(QtConst.DayOfWeek.Sunday, weekend_fmt)
-        
-        # 工作日也统一（防止 Windows 系统默认色和主题冲突）
-        weekday_fmt = self.weekdayTextFormat(QtConst.DayOfWeek.Monday)
-        weekday_fmt.setForeground(text_color)
-        for day in [QtConst.DayOfWeek.Monday, QtConst.DayOfWeek.Tuesday,
-                     QtConst.DayOfWeek.Wednesday, QtConst.DayOfWeek.Thursday,
-                     QtConst.DayOfWeek.Friday]:
-            self.setWeekdayTextFormat(day, weekday_fmt)
+    """完全自绘日历，彻底绕过 Qt 内部的颜色机制，保证在任何主题下所有日期都清晰可见"""
 
     def paintCell(self, painter, rect, date):
-        super().paintCell(painter, rect, date)
-        
-        # 在格子底部画一条休市标记线（仅当前显示月内的日期才画）
+        """不调用 super()，全部由我们自己画，这样 Qt 的鬼颜色就插不进来手了"""
+        from PyQt6.QtGui import QFont, QPen
+
+        painter.save()
+        painter.setRenderHint(painter.RenderHint.Antialiasing)
+
         current_month = self.monthShown()
         current_year = self.yearShown()
-        if date.month() == current_month and date.year() == current_year:
-            if not MarketCalendar.is_trade_day(date.toPyDate(), "CN"):
-                painter.save()
-                overlay_color = QColor(_c("COLOR_FALL"))
-                overlay_color.setAlpha(120)
-                painter.setPen(Qt.PenStyle.NoPen)
-                painter.fillRect(rect.x() + 4, rect.bottom() - 3, rect.width() - 8, 2, overlay_color)
-                painter.restore()
+        is_current_month = (date.month() == current_month and date.year() == current_year)
+        is_selected = (date == self.selectedDate())
+        is_today = (date == QDate.currentDate())
+
+        # ── 1. 底色 ──
+        bg_color = QColor(_c("BG_TABLE_BASE"))
+        if is_selected:
+            bg_color = QColor(_c("BRAND_PRIMARY"))
+            bg_color.setAlpha(45)
+        elif is_today and is_current_month:
+            bg_color = QColor(_c("BG_HOVER"))
+        painter.fillRect(rect, bg_color)
+
+        # ── 2. 今日圆环标识 ──
+        if is_today and is_current_month:
+            ring_color = QColor(_c("BRAND_PRIMARY"))
+            ring_color.setAlpha(180)
+            pen = QPen(ring_color, 1.5)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            inset = rect.adjusted(3, 3, -3, -3)
+            painter.drawRoundedRect(inset, 4, 4)
+
+        # ── 3. 文字颜色 ──
+        if is_selected:
+            text_color = QColor(_c("TEXT_BRIGHT"))
+        elif is_current_month:
+            text_color = QColor(_c("TEXT_PRIMARY"))
+        else:
+            # 非本月日期用暗淡色
+            text_color = QColor(_c("TEXT_DISABLED"))
+
+        font = QFont()
+        font.setPointSize(10)
+        if is_today and is_current_month:
+            font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(text_color)
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, str(date.day()))
+
+        # ── 4. 非交易日底部标记线（仅对本月日期生效） ──
+        if is_current_month and not MarketCalendar.is_trade_day(date.toPyDate(), "CN"):
+            marker_color = QColor(_c("COLOR_FALL"))
+            marker_color.setAlpha(140)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.fillRect(rect.x() + 4, rect.bottom() - 3, rect.width() - 8, 2, marker_color)
+
+        painter.restore()
 
 
 class LhbTab(BaseStockTab):
