@@ -1,0 +1,122 @@
+import akshare as ak
+import pandas as pd
+from core.logger import get_logger
+
+log = get_logger(__name__)
+
+FOREIGN_KEYWORDS = [
+    "深股通", "沪股通", "陆股通",  # 北向通
+    "高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴", 
+    "渣打", "野村", "汇丰", "星展", "大和"
+]
+
+def fetch_lhb_data_for_date(date_str: str) -> list[dict]:
+    """
+    抓取指定日期的龙虎榜数据，并将 基础详情、机构统计、外资/知名游资参与情况聚合返回。
+    """
+    try:
+        # 1. 抓取每日龙虎榜总表
+        df_detail = ak.stock_lhb_detail_em(start_date=date_str, end_date=date_str)
+        if df_detail is None or df_detail.empty:
+            log.info(f"[龙虎榜抓取] {date_str} 基础榜单为空，可能无数据或尚未发布。")
+            return []
+    except Exception as e:
+        log.error(f"[龙虎榜抓取] {date_str} 基础榜单异常: {e}")
+        return []
+
+    # 2. 抓取机构买卖追踪
+    df_jg = pd.DataFrame()
+    try:
+        df_jg = ak.stock_lhb_jgmmtj_em(start_date=date_str, end_date=date_str)
+    except Exception as e:
+        log.warning(f"[龙虎榜抓取] 机构买卖详情抓取失败: {e}")
+    
+    # 构建机构速查字典
+    jg_dict = {}
+    if not df_jg.empty:
+        for _, row in df_jg.iterrows():
+            code = str(row.get('代码', '')).zfill(6)
+            jg_dict[code] = {
+                '买方机构数': int(row.get('买方机构数', 0) if pd.notna(row.get('买方机构数')) else 0),
+                '卖方机构数': int(row.get('卖方机构数', 0) if pd.notna(row.get('卖方机构数')) else 0),
+                '机构买入净额': float(row.get('机构买入净额', 0) if pd.notna(row.get('机构买入净额')) else 0)
+            }
+
+    # 3. 抓取活跃营业部，拦截外资痕迹
+    df_yyb = pd.DataFrame()
+    try:
+        df_yyb = ak.stock_lhb_hyyyb_em(start_date=date_str, end_date=date_str)
+    except Exception as e:
+        log.warning(f"[龙虎榜抓取] 活跃营业部抓取失败: {e}")
+
+    foreign_buys = {}   # code -> [席位...]
+    foreign_sells = {}  # code -> [席位...]
+
+    if not df_yyb.empty:
+        for _, row in df_yyb.iterrows():
+            branch_name = str(row.get('营业部名称', ''))
+            is_foreign = any(kw in branch_name for kw in FOREIGN_KEYWORDS)
+            if not is_foreign:
+                continue
+                
+            # 解析该外资席位买入了哪些股票
+            buy_stocks_str = str(row.get('买入股票', ''))
+            sell_stocks_str = str(row.get('卖出股票', ''))
+            
+            # 由于可能只是简称，我们需要尝试从基础详情映射。不过往往名字是准的。
+            # 这里先将外资席位分配给股票简称。待会合并时靠名称或者代码兜底。
+            for s_name in buy_stocks_str.split():
+                if not s_name.strip(): continue
+                foreign_buys.setdefault(s_name.strip(), set()).add(branch_name)
+                
+            for s_name in sell_stocks_str.split():
+                if not s_name.strip(): continue
+                foreign_sells.setdefault(s_name.strip(), set()).add(branch_name)
+
+    # 4. 缝合主表
+    results = []
+    for _, row in df_detail.iterrows():
+        code = str(row.get('代码', '')).zfill(6)
+        name = str(row.get('名称', ''))
+        
+        # 提取基本字段
+        net_buy = float(row.get('龙虎榜净买额', 0) if pd.notna(row.get('龙虎榜净买额')) else 0)
+        close_p = float(row.get('收盘价', 0) if pd.notna(row.get('收盘价')) else 0)
+        pct = float(row.get('涨跌幅', 0) if pd.notna(row.get('涨跌幅')) else 0)
+        turnover = float(row.get('换手率', 0) if pd.notna(row.get('换手率')) else 0)
+        mk_cap = float(row.get('流通市值', 0) if pd.notna(row.get('流通市值')) else 0)
+        reason = str(row.get('上榜原因', ''))
+        
+        # 关联机构数据
+        jg_info = jg_dict.get(code, {'买方机构数': 0, '卖方机构数': 0, '机构买入净额': 0.0})
+        
+        # 关联外资数据 (通过简称匹配)
+        f_buys = list(foreign_buys.get(name, set()))
+        f_sells = list(foreign_sells.get(name, set()))
+        
+        # 计算共振因子
+        # ① 机构必须表现出正向态度（有净买入 或 有买方机构且净买非负巨大劣势）
+        # ② 必须有外资大额买入参与
+        is_resonance = (jg_info['机构买入净额'] > 0) and (len(f_buys) > 0)
+        
+        # 构造给前端的平铺字典字段
+        record = {
+            "上榜日期": date_str,
+            "代码": code,
+            "名称": name,
+            "现价": round(close_p, 2),
+            "涨幅%": round(pct, 2),
+            "上榜净买额(万)": round(net_buy / 10000.0, 2),
+            "机构净买(万)": round(jg_info['机构买入净额'] / 10000.0, 2),
+            "机构家数": f"买{jg_info['买方机构数']}/卖{jg_info['卖方机构数']}",
+            "外资潜伏池": " | ".join(f_buys) if f_buys else ("卖: " + " | ".join(f_sells) if f_sells else "--"),
+            "换手率%": round(turnover, 2),
+            "流通市值(亿)": round(mk_cap / 100000000.0, 2) if mk_cap > 0 else "--",
+            "上榜原因": reason,
+            "资金共振": is_resonance
+        }
+        results.append(record)
+        
+    log.info(f"[龙虎榜抓取] {date_str} 成功拉取 {len(results)} 条数据, 含共振 {sum([1 for x in results if x['资金共振']])} 笔")
+    return results
+

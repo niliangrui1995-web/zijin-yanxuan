@@ -8,7 +8,7 @@ from ui.components.kline_window_manager import kline_manager
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTabWidget, QTabBar, QPushButton, QLabel, QLineEdit, QComboBox, QMenu,
-    QTextEdit, QProgressBar, QSpinBox, QDoubleSpinBox, QFrame,
+    QTextEdit, QProgressBar, QSpinBox, QDoubleSpinBox, QFrame, QToolTip,
     QToolButton, QSizePolicy
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot, QSettings, QPoint
@@ -26,6 +26,7 @@ from ui.tabs.watchlist_tab import WatchlistTab
 from ui.tabs.na_daily_tab import NADailyTab
 from ui.tabs.foreign_block_trade_tab import ForeignBlockTradeTab
 from ui.tabs.asian_market_tab import AsianMarketTab
+from ui.tabs.lhb_tab import LhbTab
 from core.event_bus import event_bus
 from core.event_types import DataEvent
 from core.logger import get_logger
@@ -136,13 +137,27 @@ class MainWindowQT(QMainWindow):
         self.data_provider = TdxDataProvider(offline=True)
         self.data_provider.code2name = self.data_provider._get_codes_from_vipdoc()
         self.engine = VCPEngine.get_instance()
-        self.worker = None
-        self._current_results = []
-        self._cache_date = None
 
         # 全局样式（动态生成，支持主题切换）
         from ui.styles.global_qss import generate_global_qss
-        self.setStyleSheet(generate_global_qss())
+        qss = generate_global_qss()
+        self.setStyleSheet(qss)
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtGui import QPalette, QColor
+        if QApplication.instance():
+            pal = QApplication.style().standardPalette()
+            from ui.theme import theme_manager
+            t = theme_manager.current_theme
+            for group in (
+                QPalette.ColorGroup.Active,
+                QPalette.ColorGroup.Inactive,
+                QPalette.ColorGroup.Disabled,
+            ):
+                pal.setColor(group, QPalette.ColorRole.ToolTipBase, QColor(t['BG_ELEVATED']))
+                pal.setColor(group, QPalette.ColorRole.ToolTipText, QColor(t['TEXT_PRIMARY']))
+            QApplication.instance().setPalette(pal)
+            QApplication.instance().setStyleSheet(qss)
+            QToolTip.setPalette(pal)
         # 监听主题切换信号，实时刷新全局样式
         from ui.theme import theme_manager
         theme_manager.sig_theme_changed.connect(self._apply_theme)
@@ -158,24 +173,13 @@ class MainWindowQT(QMainWindow):
         self._init_custom_titlebar(main_layout)
         
         self._splash_update(75, "组件注册中...")
-        
-        # 兼容旧代码引用
-        from PyQt6.QtWidgets import QLineEdit, QSpinBox, QDoubleSpinBox, QPushButton
-        self.ent_start = QLineEdit()
-        self.ent_end = QLineEdit()
-        self._set_default_dates()
-        self.spn_scan_rps = QSpinBox(); self.spn_scan_rps.setValue(80)
-        self.spn_scan_amp = QDoubleSpinBox(); self.spn_scan_amp.setValue(0.45)
-        self.spn_scan_ma_bind = QDoubleSpinBox(); self.spn_scan_ma_bind.setValue(0.05)
-        self.spn_scan_amount = QDoubleSpinBox(); self.spn_scan_amount.setValue(0.8)
-        self.spn_scan_high250 = QDoubleSpinBox(); self.spn_scan_high250.setValue(0.10)
-        self.btn_scan = QPushButton()
-        self.btn_cancel = QPushButton()
-        
+
         self._init_right_panel()
         main_layout.addWidget(self.tabs_wrapper, 1)
         
         status_bar = QWidget()
+        status_bar.setObjectName("statusBarWidget")
+        status_bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         status_bar.setFixedHeight(32)
         from ui.theme import theme_manager as _stm
         _st = _stm.current_theme
@@ -327,24 +331,6 @@ class MainWindowQT(QMainWindow):
 
         task_manager.run_in_background(_reconnect_task, on_success=lambda res: self._call_in_ui(lambda: _on_done(res)), task_id="force_reconnect")
 
-    def _set_default_dates(self):
-        import datetime
-        today = datetime.date.today().strftime('%Y%m%d')
-        self.ent_start.setText(today)
-        self.ent_end.setText(today)
-
-    def _set_date_range(self, days, ytd=False):
-        import datetime
-        today = datetime.date.today()
-        ed = today.strftime('%Y%m%d')
-        if ytd:
-            sd = today.strftime('%Y0101')
-        else:
-            sd = (today - datetime.timedelta(days=days)).strftime('%Y%m%d')
-        self.ent_start.setText(sd)
-        self.ent_end.setText(ed)
-
-
     def _splash_update(self, value: int, status: str = ""):
         """update progress"""
         if self._splash:
@@ -355,15 +341,10 @@ class MainWindowQT(QMainWindow):
         from PyQt6.QtWidgets import QToolButton, QMenu, QDialog, QFormLayout, QDialogButtonBox, QHBoxLayout, QLabel, QPushButton, QLineEdit
         from ui.components import SvgIconBuilder
         
-        from ui.theme import theme_manager as _gtm
-        _gt = _gtm.current_theme
         self.btn_sys_menu = QToolButton()
-        self.btn_sys_menu.setIcon(SvgIconBuilder.gear(_gt['TEXT_MUTED']))
-        self.btn_sys_menu.setStyleSheet(f"""
-            QToolButton {{ border: none; padding: 4px 10px; background: transparent; }} 
-            QToolButton:hover {{ background: {_gt['BG_HOVER']}; }}
-            QToolButton::menu-indicator{{ image: none; }}
-        """)
+        # Keep SVG icon dynamic by refreshing it in _apply_theme, but initial is text or icon
+        self.btn_sys_menu.setText("⚙")
+        self.btn_sys_menu.setObjectName("btnSysMenu")
         self.btn_sys_menu.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         # 无边框模式：齿轮按钮放在标题栏的窗口控制按钮左侧
         # 找到最小化按钮在 titlebar_layout 中的位置，插在它前面
@@ -371,25 +352,12 @@ class MainWindowQT(QMainWindow):
         self._titlebar_layout.insertWidget(min_idx, self.btn_sys_menu)
         
         sys_menu = QMenu(self)
-        sys_menu.setStyleSheet(f"""
-            QMenu {{ background-color: {_gt['BG_MENU']}; color: {_gt['TEXT_PRIMARY']}; border: 1px solid {_gt['BORDER_MENU']}; padding: 4px 0px; font-size: 13px; font-weight: 500;}}
-            QMenu::item {{ padding: 8px 32px 8px 16px; }}
-            QMenu::item:selected {{ background-color: {_gt['MENU_SELECTED_BG']}; color: {_gt['TEXT_BRIGHT']}; }}
-            QMenu::separator {{ height: 1px; background: {_gt['BORDER_MENU']}; margin: 4px 0px; }}
-        """)
-        
-        act_scan = sys_menu.addAction("🚀 执行全盘VCP选股 (Ctrl+R)")
-        act_scan.triggered.connect(self._start_scan)
-        
-        act_rt = sys_menu.addAction("⚡ 启动/停止盘中监控")
-        act_rt.triggered.connect(lambda: hasattr(self, 'tab_rt') and self.tab_rt._toggle_rt_monitor())
+        sys_menu.setObjectName("sysMenu")
+        # Global QMenu style from global_qss.py will handle menu colors dynamically!
 
         self.act_f5 = sys_menu.addAction("🔄 盘后日线预计算 (F5)")
         self.act_f5.triggered.connect(self._action_refresh_f5)
-        
-        act_cancel = sys_menu.addAction("⏹ 中止当前后台扫描任务")
-        act_cancel.triggered.connect(self._cancel_scan)
-        
+
         sys_menu.addSeparator()
         
         self.act_network = sys_menu.addAction("🌐 切换网络模式 (当前: 离线)")
@@ -408,54 +376,19 @@ class MainWindowQT(QMainWindow):
             act = theme_menu.addAction(t_name)
             act.triggered.connect(lambda checked, n=t_name: _tm.switch_theme(n))
 
+        # 日夜自动切换开关：白天月白、晚上墨渊
+        theme_menu.addSeparator()
+        self._act_auto_theme = theme_menu.addAction("🌗 日夜自动切换 (7:00-18:00)")
+        self._act_auto_theme.setCheckable(True)
+        self._act_auto_theme.setChecked(_tm.is_auto_switch())
+        self._act_auto_theme.triggered.connect(lambda checked: _tm.set_auto_switch(checked))
+
         self.btn_sys_menu.setMenu(sys_menu)
+        self._update_last_f5_time()
 
     def _show_settings_dialog(self):
-        """弹出独立的扫描参数设置框"""
-        from PyQt6.QtWidgets import QDialog, QFormLayout, QDialogButtonBox, QLabel, QHBoxLayout, QPushButton, QLineEdit
-        dlg = QDialog(self)
-        dlg.setWindowTitle("⚙️ 扫描参数设置")
-        dlg.setFixedSize(380, 250)
-        dlg.setStyleSheet("QDialog { background-color: #0F172A; } QLabel { color: #CBD5E1; } QLineEdit, QSpinBox, QDoubleSpinBox { background: #1E293B; color: #FFF; border: 1px solid #334155; padding: 4px; }")
-        
-        layout = QFormLayout(dlg)
-        layout.setSpacing(12)
-        
-        # 日期控制
-        date_h = QHBoxLayout()
-        edit_start = QLineEdit(self.ent_start.text())
-        edit_end = QLineEdit(self.ent_end.text())
-        date_h.addWidget(QLabel("起始:")); date_h.addWidget(edit_start)
-        date_h.addWidget(QLabel("结束:")); date_h.addWidget(edit_end)
-        layout.addRow(date_h)
-        
-        # 快捷按钮
-        btn_h = QHBoxLayout()
-        def _set(d):
-            import datetime
-            td = datetime.date.today()
-            ed = td.strftime('%Y%m%d')
-            sd = td.strftime('%Y0101') if d == 'ytd' else (td - datetime.timedelta(days=d)).strftime('%Y%m%d')
-            edit_start.setText(sd)
-            edit_end.setText(ed)
-            
-        for n, v in [("YTD", 'ytd'), ("近1月", 30), ("近3月", 90), ("1Y", 365)]:
-            b = QPushButton(n)
-            b.setStyleSheet("background: #1E293B; color: #EF4444; border: none; padding: 4px; border-radius: 4px;")
-            b.clicked.connect(lambda chk, dv=v: _set(dv))
-            btn_h.addWidget(b)
-        layout.addRow("", btn_h)
-        
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(dlg.accept)
-        buttons.rejected.connect(dlg.reject)
-        layout.addRow(buttons)
-        
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            self.ent_start.setText(edit_start.text())
-            self.ent_end.setText(edit_end.text())
-            return True
-        return False
+        # Already deleted
+        pass
 
     # =====================================================================
     # 自定义标题栏：品牌 + Tab 导航 + 窗口控制，合并成一行
@@ -707,6 +640,10 @@ class MainWindowQT(QMainWindow):
         self.tab_foreign_block = ForeignBlockTradeTab(self.data_provider, self)
         self.tabs.addTab(self.tab_foreign_block, "大宗交易")
 
+        # Tab 6.5: 龙虎榜 (共振)
+        self.tab_lhb = LhbTab(self.data_provider, self)
+        self.tabs.addTab(self.tab_lhb, "资金共振")
+
         # Tab 7: 业绩预告与财报爆点追踪（独立组件）
         from ui.tabs.earnings_tab import EarningsTab
         self.tab_earnings = EarningsTab(self.data_provider, self)
@@ -846,20 +783,14 @@ class MainWindowQT(QMainWindow):
         if os.path.exists(rps_path):
             mtime = os.path.getmtime(rps_path)
             dt = datetime.datetime.fromtimestamp(mtime)
-            # 例如展示格式：03-30 15:30
-            if hasattr(self, 'lbl_last_f5'):
-                self.lbl_last_f5.setText(f"上次: {dt.strftime('%m-%d %H:%M')}")
             if hasattr(self, 'act_f5'):
                 self.act_f5.setText(f"🔄 盘后日线预计算 (F5) [{dt.strftime('%Y%m%d')}]")
         else:
-            if hasattr(self, 'lbl_last_f5'):
-                self.lbl_last_f5.setText("上次: 无")
             if hasattr(self, 'act_f5'):
-                self.act_f5.setText("🔄 盘后日线预计算 (F5)")
+                self.act_f5.setText("🔄 盘后日线预计算 (F5) [暂无]")
 
     def _on_f5_done(self, count, elapsed):
         """Handle the completion signal from the F5 precompute workflow."""
-        self.btn_scan.setEnabled(True)
         # 将倒垃圾赶出主车道：延迟 2000ms 在事件循环空闲时自动回收，完全错开 QTableView 的爆量重绘期
         import gc
         QTimer.singleShot(2000, lambda: gc.collect())
@@ -900,9 +831,13 @@ class MainWindowQT(QMainWindow):
             except Exception as e:
                 log.error(f"[关闭] 停止盘中监控线程异常: {e}")
 
-        if self.worker and self.worker.isRunning():
-            self.worker.cancel()
-            self.worker.wait(2000)
+        if hasattr(self, 'tab_scan') and getattr(self.tab_scan, 'worker', None):
+            try:
+                if self.tab_scan.worker.isRunning():
+                    self.tab_scan.cancel_scan()
+                    self.tab_scan.worker.wait(2000)
+            except Exception as e:
+                log.error(f"[关闭] 停止VCP扫描线程异常: {e}")
 
         if hasattr(self, '_auto_rt_timer'):
             self._auto_rt_timer.stop()
@@ -926,8 +861,6 @@ class MainWindowQT(QMainWindow):
         if reply != QMessageBox.StandardButton.Yes: return
 
         if hasattr(self, 'lbl_status'): self.lbl_status.setText("F5 盘后预计算进行中...")
-        if hasattr(self, 'btn_scan'): self.btn_scan.setEnabled(False)
-        if hasattr(self, 'btn_cancel'): self.btn_cancel.setEnabled(True)
         self._f5_cancelled = False
 
         from core.rps_precomputer import RPSPrecomputer
@@ -947,31 +880,6 @@ class MainWindowQT(QMainWindow):
                 set_status_callback=_set_status_cb,
                 done_callback=_done_cb
             ), task_id="f5_precompute")
-
-    def _start_scan(self):
-        if self._show_settings_dialog():
-            self.tab_scan.start_scan(self.ent_start.text(), self.ent_end.text())
-
-    def _cancel_scan(self):
-        """一键中止所有后台任务"""
-        stopped = []
-        if self.tab_scan.cancel_scan():
-            stopped.append("VCP扫描")
-
-        if getattr(self, '_f5_cancelled', None) is not None:
-            self._f5_cancelled = True
-
-        # Bug#1 修复: rt_worker 属于 tab_rt
-        if hasattr(self, 'tab_rt') and hasattr(self.tab_rt, 'rt_worker'):
-            try:
-                self.tab_rt.rt_worker.stop()
-                stopped.append("盘中监控")
-            except Exception as e:
-                log.error(f"[中止] 停止盘中监控异常: {e}")
-
-        if stopped:
-            event_bus.sig_task_progress.emit("scan", 0, "已中止")
-            log.info(f"[中止] 已停止: {', '.join(stopped)}")
 
     # =======================================================================
     # 右键菜单委托方法
@@ -1004,38 +912,9 @@ class MainWindowQT(QMainWindow):
         if module == "scan":
             if hasattr(self, 'progress_bar'): self.progress_bar.setValue(pct)
             if hasattr(self, 'lbl_status'): self.lbl_status.setText(msg)
-            if hasattr(self, 'btn_scan'):
-                if msg == "start":
-                    self.btn_scan.setText("⏳ 扫描中...")
-                    self.btn_scan.setEnabled(False)
-                    if hasattr(self, 'btn_cancel'): self.btn_cancel.setEnabled(True)
-                elif pct == 100 or pct == 0:
-                    self.btn_scan.setText("执行全盘VCP扫描")
-                    self.btn_scan.setEnabled(True)
-                    if hasattr(self, 'btn_cancel'): self.btn_cancel.setEnabled(False)
-                    # 错开扫描结束时的 UI 更新洪峰
-                    import gc
-                    QTimer.singleShot(3000, lambda: gc.collect())
-        elif module == "rt_monitor":
-            if not hasattr(self, 'btn_rt_sidebar'):
-                return
-            if msg == "start":
-                self.btn_rt_sidebar.setText("⏹ 停止盘中监控")
-                self.btn_rt_sidebar.setStyleSheet(
-                    "QPushButton { color: white; border: none; font-weight: 500; font-size: 12px; "
-                    "background-color: qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #DC2626,stop:1 #EF4444); "
-                    "border-radius: 6px; }"
-                    "QPushButton:hover { background-color: #B91C1C; }"
-                )
-            elif msg == "stop":
-                self.btn_rt_sidebar.setText("⚡ 启动盘中监控")
-                self.btn_rt_sidebar.setStyleSheet(
-                    "QPushButton { background-color: #1E293B; border: 1px solid #334155; "
-                    "border-radius: 6px; color: #CBD5E1; font-weight: 500; font-size: 12px; }"
-                    "QPushButton:hover { background-color: #2D3748; border: 1px solid #8B5CF6; color: #FFFFFF; }"
-                    "QPushButton:pressed { background-color: #0F172A; }"
-                    "QPushButton:disabled { color: #475569; border: 1px solid #1E293B; }"
-                )
+            if pct == 100 or pct == 0:
+                import gc
+                QTimer.singleShot(3000, lambda: gc.collect())
 
     # ================================================================
     # EventBus 信号处理（各 Tab 组件广播的信号）
@@ -1047,17 +926,20 @@ class MainWindowQT(QMainWindow):
     def _on_show_kline_with_list(self, code: str, code_list: list, current_idx: int):
         """响应带列表上下文的 K 线图请求 — 委托给 KLineWindowManager (#1)"""
         name = getattr(self.data_provider, 'code2name', {}).get(code, code)
+        vcp_data = {'code': code, 'name': name}
         if code_list and 0 <= current_idx < len(code_list):
             item_data = code_list[current_idx]
-            if isinstance(item_data, dict) and item_data.get('代码') == code:
-                name = item_data.get('名称', name)
+            if isinstance(item_data, dict):
+                if item_data.get('代码') == code:
+                    name = item_data.get('名称', name)
+                vcp_data = dict(item_data)
 
         kline_manager.open_chart(
             main_window=self,
             code=code,
             name=name,
             data_provider=self.data_provider,
-            vcp_data={'code': code, 'name': name},
+            vcp_data=vcp_data,
             code_list=code_list,
             current_idx=current_idx,
         )
@@ -1070,17 +952,40 @@ class MainWindowQT(QMainWindow):
         from ui.styles.global_qss import generate_global_qss
         from ui.theme import theme_manager
 
-        # 1. 重新生成并应用全局 QSS
-        self.setStyleSheet(generate_global_qss())
-
-        # 2. 刷新自定义标题栏 inline style
         t = theme_manager.current_theme
+
+        # 1. 重新生成并应用全局 QSS
+        qss = generate_global_qss()
+        self.setStyleSheet(qss)
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtGui import QPalette, QColor
+        if QApplication.instance():
+            pal = QApplication.style().standardPalette()
+            for group in (
+                QPalette.ColorGroup.Active,
+                QPalette.ColorGroup.Inactive,
+                QPalette.ColorGroup.Disabled,
+            ):
+                pal.setColor(group, QPalette.ColorRole.ToolTipBase, QColor(t['BG_ELEVATED']))
+                pal.setColor(group, QPalette.ColorRole.ToolTipText, QColor(t['TEXT_PRIMARY']))
+            QApplication.instance().setPalette(pal)
+            QApplication.instance().setStyleSheet(qss)
+            QToolTip.hideText()
+            QToolTip.setPalette(pal)
+
+        # 2. 刷新自定义标题栏和状态栏 inline style
         if hasattr(self, '_custom_titlebar'):
             self._custom_titlebar.setStyleSheet(f"""
                 QWidget#customTitleBar {{
                     background-color: {t['BG_STATUSBAR']};
                     border-bottom: 1px solid {t['BORDER_SUBTLE']};
                 }}
+            """)
+        if hasattr(self, '_status_bar_widget'):
+            self._status_bar_widget.setStyleSheet(f"""
+                background-color: {t['BG_STATUSBAR']};
+                border-top: 1px solid {t['STATUSBAR_BORDER']};
+                padding: 0px 16px;
             """)
 
         # 3. 刷新状态栏 inline style
@@ -1113,6 +1018,18 @@ class MainWindowQT(QMainWindow):
         # 6. 更新齿轮菜单中主题子菜单文字
         if hasattr(self, '_theme_menu'):
             self._theme_menu.setTitle(f"\U0001f3a8 主题配色 (当前: {theme_manager.current_theme_name})")
+
+        for widget in (
+            self,
+            getattr(self, '_custom_titlebar', None),
+            getattr(self, '_status_bar_widget', None),
+            getattr(self, '_standalone_tabbar', None),
+            getattr(self, 'tabs_wrapper', None),
+        ):
+            if widget:
+                widget.style().unpolish(widget)
+                widget.style().polish(widget)
+                widget.update()
 
         # 7. 通知用户
         from ui.components.toast_widget import show_toast
