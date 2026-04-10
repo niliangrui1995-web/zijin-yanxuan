@@ -247,6 +247,7 @@ class WatchlistTab(BaseStockTab):
                 "大宗交易": info_new.get("大宗交易", ""),
                 "业绩异动": info_new.get("业绩异动", ""),
                 "龙虎榜": info_new.get("龙虎榜", ""),
+                "龙虎榜日期": info_new.get("龙虎榜日期", ""),
                 "_zongguben": live_entry.get("_zongguben", 0)
             }
             final_list.append(row_data)
@@ -478,7 +479,10 @@ class WatchlistTab(BaseStockTab):
                             jg_s = f"机构净卖:{abs(jg):.0f}万" if jg < 0 else f"机构净买:{jg:.0f}万"
                             fgn_s = f"外资净卖:{abs(fgn):.0f}万" if fgn < 0 else f"外资净买:{fgn:.0f}万"
                             
-                            lhb_data[c] = f"{date_mmdd} | {net_s} | {jg_s} | {fgn_s}"
+                            lhb_data[c] = {
+                                "text": f"{date_mmdd} | {net_s} | {jg_s} | {fgn_s}",
+                                "date": str(r.get("上榜日期", ""))
+                            }
                             
         except Exception as e:
             log.warning(f"[关注池] 提取主界面数据异常: {e}")
@@ -591,8 +595,16 @@ class WatchlistTab(BaseStockTab):
                 row_dict['催化剂'] = data['na_catalyst']
             if data.get('block_trade'): row_dict['大宗交易'] = data['block_trade']
             if data.get('earnings'): row_dict['业绩异动'] = data['earnings']
-            if data.get('lhb'): row_dict['龙虎榜'] = data['lhb']
-            
+            if data.get('lhb'): 
+                new_lhb = data['lhb']
+                if isinstance(new_lhb, dict):
+                    new_date = new_lhb.get("date", "")
+                    new_text = new_lhb.get("text", "")
+                    old_date = row_dict.get("龙虎榜日期", "")
+                    if (not old_date) or (new_date >= old_date):
+                        row_dict["龙虎榜"] = new_text
+                        row_dict["龙虎榜日期"] = new_date
+                        
             # trigger row update
             self.model.dataChanged.emit(
                 self.model.index(row_idx, 0),
@@ -628,7 +640,14 @@ class WatchlistTab(BaseStockTab):
             if data.get('earnings'):
                 entry["业绩异动"] = str(data['earnings'])
             if data.get('lhb'):
-                entry["龙虎榜"] = str(data['lhb'])
+                new_lhb = data['lhb']
+                if isinstance(new_lhb, dict):
+                    new_date = new_lhb.get("date", "")
+                    new_text = new_lhb.get("text", "")
+                    old_date = entry.get("龙虎榜日期", "")
+                    if (not old_date) or (new_date >= old_date):
+                        entry["龙虎榜"] = str(new_text)
+                        entry["龙虎榜日期"] = str(new_date)
 
             entry.pop("催化剂", None)
             entry.pop("热点板块", None)
@@ -672,6 +691,7 @@ class WatchlistTab(BaseStockTab):
                 entry["美股日报"] = str(row_dict.get("催化剂", ""))
                 entry["大宗交易"] = str(row_dict.get("大宗交易", ""))
                 entry["业绩异动"] = str(row_dict.get("业绩异动", ""))
+                entry["龙虎榜日期"] = str(row_dict.get("龙虎榜日期", ""))
                 entry.pop("催化剂", None)
                 entry.pop("热点板块", None)
                 

@@ -131,7 +131,7 @@ class ScanTab(BaseStockTab):
         stb_layout = QHBoxLayout(scan_toolbar)
         stb_layout.setContentsMargins(8, 6, 8, 6)
         
-        lbl_title = QLabel("⚡ VCP 扫描")
+        lbl_title = QLabel("🎯 VCP 扫描")
         lbl_title.setObjectName("tabTitle")
         stb_layout.addWidget(lbl_title)
 
@@ -333,6 +333,7 @@ class ScanTab(BaseStockTab):
         self._current_results = results
         self._render_scan_table(results)
 
+
     # ==========================
     # 数据渲染逻辑
     # ==========================
@@ -358,8 +359,6 @@ class ScanTab(BaseStockTab):
             for row_idx, row_data in enumerate(final_list):
                 code_str = str(row_data.get('代码', ''))
                 name_str = str(row_data.get('名称', ''))
-                if code_str in fav_codes:
-                    name_str = f"⭐ {name_str}"
                     
                 def _safe_float_str(val, fmt="{:.2f}"):
                     try: return fmt.format(float(val))
@@ -373,7 +372,7 @@ class ScanTab(BaseStockTab):
                     row_style = "approaching"
                 elif "假突破" in status or "缩量" in status:
                     row_style = "fake_breakout"
-                elif "关注" in name_str or "⭐" in name_str:
+                elif "关注" in name_str or code_str in fav_codes:
                     row_style = "approaching"
                     
                 # Format score cleanly
@@ -495,8 +494,6 @@ class ScanTab(BaseStockTab):
         name = model.data(model.index(row, 1), Qt.ItemDataRole.DisplayRole)
         if not code or not name:
             return
-
-        name = name.replace("⭐ ", "")
 
         # 提取 VCP 数据用于关注池附带信息
         vcp_data = model.data(model.index(row, 0), Qt.ItemDataRole.UserRole)

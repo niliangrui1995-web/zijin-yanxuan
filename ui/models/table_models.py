@@ -145,15 +145,6 @@ class RtTableModel(QAbstractTableModel):
         raw_val = item_dict.get(key, '')
 
         if role == Qt.ItemDataRole.DisplayRole:
-            if col == 7: # 突破状态 custom text logic
-                st = str(raw_val)
-                if "放量突破" in st:
-                    return f"🚀 {st}"
-                elif "缩量突破" in st:
-                    return f"⚠️ {st}"
-                elif "临近" in st:
-                    return f"⏳ {st}"
-
             if "%" in key:
                 s_val = str(raw_val)
                 if s_val == "--" or s_val == "": return s_val
@@ -752,6 +743,29 @@ class StockTableModel(QAbstractTableModel):
                 except (ValueError, TypeError):
                     pass
                     
+            elif key == "突破状态" and str(raw_val) != "":
+                st = str(raw_val)
+                if "放量" in st: return QColor(_c("COLOR_RISE_STRONG"))
+                elif "缩量" in st: return QColor(_c("COLOR_WARNING"))
+                elif "临近" in st: return QColor(_c("STATUS_APPROACHING"))
+                elif "VCP" in st: return QColor(_c("STATUS_VCP"))
+                else: return QColor(_c("STATUS_INACTIVE"))
+                
+            elif key == "股价弹性" and str(raw_val) != "":
+                st = str(raw_val)
+                if "高" in st: return QColor(_c("COLOR_RISE"))
+                else: return QColor(_c("TEXT_PRIMARY"))
+                
+            elif key == "评分" and str(raw_val) != "":
+                try:
+                    score = float(str(raw_val))
+                    if score >= 90: return QColor(_c("SCORE_EXCELLENT"))
+                    elif score >= 80: return QColor(_c("SCORE_GOOD"))
+                    elif score >= 60: return QColor(_c("SCORE_NORMAL"))
+                    else: return QColor(_c("SCORE_LOW"))
+                except (ValueError, TypeError):
+                    pass
+                    
             return QColor(_c("TEXT_PRIMARY"))
 
         elif role == Qt.ItemDataRole.BackgroundRole:
@@ -803,24 +817,6 @@ class StockTableModel(QAbstractTableModel):
 
         elif role == Qt.ItemDataRole.UserRole + 1:
             return self._flash_records.get(row, {}).get(col, None)
-
-        elif role == Qt.ItemDataRole.UserRole + 2:
-            if key == "突破状态" and str(raw_val) != "":
-                st = str(raw_val)
-                if "放量" in st: return QColor(_c("COLOR_RISE_STRONG"))
-                elif "缩量" in st: return QColor(_c("COLOR_WARNING"))
-                elif "临近" in st: return QColor(_c("STATUS_APPROACHING"))
-                elif "VCP" in st: return QColor(_c("STATUS_VCP"))
-                else: return QColor(_c("STATUS_INACTIVE"))
-            if key == "评分" and str(raw_val) != "":
-                try:
-                    score = float(str(raw_val))
-                    if score >= 90: return QColor(_c("SCORE_EXCELLENT"))
-                    elif score >= 80: return QColor(_c("SCORE_GOOD"))
-                    elif score >= 60: return QColor(_c("SCORE_NORMAL"))
-                    else: return QColor(_c("SCORE_LOW"))
-                except (ValueError, TypeError):
-                    pass
 
         return None
 

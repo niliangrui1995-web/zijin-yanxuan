@@ -74,7 +74,7 @@ class NADailyTab(BaseStockTab):
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(8, 6, 8, 6)
 
-        lbl_title = QLabel("🇺🇸 北美战报")
+        lbl_title = QLabel("🗽 北美战报")
         lbl_title.setObjectName("tabTitle")
         header_layout.addWidget(lbl_title)
         self.na_daily_source_label = QLabel("未加载")
@@ -226,6 +226,11 @@ class NADailyTab(BaseStockTab):
 
                 raw_elasticity = stock.get("弹性", "")
                 clean_elasticity = re.split(r'[（(]', raw_elasticity)[0].strip() if raw_elasticity else ""
+                clean_elasticity = "".join(c for c in clean_elasticity if c.isalnum() or '\u4e00' <= c <= '\u9fa5')
+
+                # 提取红黄绿圈圈，丢弃所有文字内容
+                raw_risk = str(stock.get("风控", ""))
+                clean_risk = "".join([c for c in raw_risk if c in "🟢🔴🟡"])
 
                 # 同一代码以时间最新的一次命中为准，后面的新战报覆盖旧内容。
                 latest_rows[code] = {
@@ -238,7 +243,7 @@ class NADailyTab(BaseStockTab):
                     "细分板块": stock.get("行业", ""),
                     "股价弹性": clean_elasticity,
                     "催化剂": stock.get("催化剂", ""),
-                    "风控": stock.get("风控", ""),
+                    "风控": clean_risk,
                     "评级": "",
                     "_report_ts": report_ts,
                     "_report_row_rank": row_rank,
