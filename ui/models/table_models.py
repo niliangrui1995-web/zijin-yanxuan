@@ -35,6 +35,18 @@ from ui.theme import theme_manager
 def _c(token: str) -> str:
     return theme_manager.get(token)
 
+
+def _build_cell_tooltip(raw_val):
+    """统一表格悬浮提示文本，交给 QToolTip 自身样式渲染。"""
+    text = str(raw_val).strip()
+    if not text:
+        return None
+
+    wrapped_lines = []
+    for line in text.splitlines() or [text]:
+        wrapped_lines.append(textwrap.fill(line, width=50) if len(line) > 40 else line)
+    return "\n".join(wrapped_lines)
+
 class RtTableModel(QAbstractTableModel):
     def __init__(self, data=None):
         super().__init__()
@@ -165,12 +177,7 @@ class RtTableModel(QAbstractTableModel):
             return str(raw_val)
 
         elif role == Qt.ItemDataRole.ToolTipRole:
-            text = str(raw_val).strip()
-            if text:
-                if len(text) > 40:
-
-                    return '\n'.join([textwrap.fill(line, width=50) for line in text.split('\n')])
-                return text
+            return _build_cell_tooltip(raw_val)
 
         elif role == Qt.ItemDataRole.TextAlignmentRole:
             return int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -425,6 +432,9 @@ class StockItemDelegate(QStyledItemDelegate):
         pill_color = index.data(Qt.ItemDataRole.UserRole + 2) # Pill Color Role
         
         if pill_color and text:
+            opt_bg = QStyleOptionViewItem(opt)
+            opt_bg.text = ""
+            style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt_bg, painter, widget)
             rect = option.rect
             painter.setFont(opt.font)
             fm = painter.fontMetrics()
@@ -652,11 +662,7 @@ class StockTableModel(QAbstractTableModel):
             return str(raw_val)
 
         elif role == Qt.ItemDataRole.ToolTipRole:
-            text = str(raw_val).strip()
-            if text:
-                if len(text) > 40:
-                    return '\n'.join([textwrap.fill(line, width=50) for line in text.split('\n')])
-                return text
+            return _build_cell_tooltip(raw_val)
 
         elif role == Qt.ItemDataRole.TextAlignmentRole:
             return int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
