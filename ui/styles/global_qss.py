@@ -166,32 +166,24 @@ QPushButton:disabled {{
 }}
 
 /* CTA 主按钮 */
-QPushButton#ctaButton, QPushButton#primaryButton, QPushButton[class="primary"] {{
+QPushButton#primaryButton {{
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
         stop:0 #EF4444, stop:1 #DC2626);
     color: #FFFFFF; border: none; font-weight: 600; min-height: 32px;
 }}
-QPushButton#ctaButton:hover, QPushButton#primaryButton:hover, QPushButton[class="primary"]:hover {{
+QPushButton#primaryButton:hover {{
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
         stop:0 #F87171, stop:1 #EF4444);
 }}
-QPushButton#ctaButton:pressed, QPushButton#primaryButton:pressed, QPushButton[class="primary"]:pressed {{ background: #B91C1C; }}
-QPushButton#ctaButton:disabled, QPushButton#primaryButton:disabled, QPushButton[class="primary"]:disabled {{ background: {t['BORDER_STRONG']}; color: {t['TEXT_MUTED']}; }}
+QPushButton#primaryButton:pressed {{ background: #B91C1C; }}
+QPushButton#primaryButton:disabled {{ background: {t['BORDER_STRONG']}; color: {t['TEXT_MUTED']}; }}
 
-QPushButton[class="secondary"], QPushButton[class="ctaSecondary"] {{
+QPushButton[class="ctaSecondary"] {{
     min-height: 30px;
     padding: 0 14px;
 }}
 
-/* 危险按钮 */
-QPushButton[class="dangerGhost"] {{
-    background: transparent; color: #F87171;
-    border: 1px solid rgba(248, 113, 113, 0.3); font-weight: 500;
-}}
-QPushButton[class="dangerGhost"]:hover {{
-    background: rgba(248, 113, 113, 0.1);
-    border: 1px solid rgba(248, 113, 113, 0.5); color: #FCA5A5;
-}}
+
 
 /* 时间段控制按钮 */
 QPushButton[class="segmentControl"] {{
@@ -275,16 +267,7 @@ QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{
     border-top: 4px solid {t['ARROW_COLOR']};
 }}
 
-/* ═══════════════════════════════════════════
-   QDateEdit
-   ═══════════════════════════════════════════ */
-QDateEdit {{
-    background-color: {t['BG_INPUT']}; color: {t['TEXT_PRIMARY']};
-    border: 1px solid {t['BORDER_STRONG']}; border-radius: 6px;
-    padding: 0 10px; font-size: 12px; min-height: 30px;
-}}
-QDateEdit:hover {{ border: 1px solid rgba(239, 68, 68, 0.18); }}
-QDateEdit::drop-down {{ border: none; width: 20px; }}
+
 
 /* ═══════════════════════════════════════════
    QProgressBar
