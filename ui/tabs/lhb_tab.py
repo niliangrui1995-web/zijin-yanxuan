@@ -12,7 +12,7 @@ import json
 
 from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit,
-    QComboBox, QDateEdit, QCheckBox, QCalendarWidget
+    QDateEdit, QCalendarWidget
 )
 from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtGui import QColor
@@ -32,25 +32,6 @@ def _c(token: str) -> str:
     return theme_manager.get(token)
 
 log = get_logger(__name__)
-
-class LhbFilterProxyModel(RtSortFilterProxyModel):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.only_resonance = False
-
-    def set_resonance_filter(self, enabled: bool):
-        self.only_resonance = enabled
-        self.invalidateFilter()
-        
-    def filterAcceptsRow(self, source_row, source_parent):
-        if self.only_resonance:
-            model = self.sourceModel()
-            row_data = model.row_data[source_row]
-            # 如果只看共振，过滤掉“资金共振”单元格为空的行
-            if row_data.get("资金共振", "") != "🔥":
-                return False
-                
-        return super().filterAcceptsRow(source_row, source_parent)
 
 
 class TradeCalendarWidget(QCalendarWidget):
@@ -164,12 +145,7 @@ class LhbTab(BaseStockTab):
         self.search_box.setFixedWidth(180)
         self.search_box.textChanged.connect(self._filter_table)
         header_layout.addWidget(self.search_box)
-        
-        # 只看共振 Checkbox
-        self.chk_resonance = QCheckBox("只看 🔥内外资共振")
-        self.chk_resonance.setChecked(False)
-        self.chk_resonance.stateChanged.connect(self._on_resonance_checked)
-        header_layout.addWidget(self.chk_resonance)
+
 
         self.btn_refresh = QPushButton("⚡ 抓取榜单")
         self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -186,7 +162,7 @@ class LhbTab(BaseStockTab):
         ]
         self.table = VCPTableView(default_row_height=28)
         self.model = StockTableModel(self.columns)
-        self.proxy_model = LhbFilterProxyModel(self.table)
+        self.proxy_model = RtSortFilterProxyModel(self.table)
         self.proxy_model.setSourceModel(self.model)
         self.table.setModel(self.proxy_model)
         self.delegate = StockItemDelegate(self.table)
@@ -216,8 +192,7 @@ class LhbTab(BaseStockTab):
         search_text = self.search_box.text().strip().lower()
         self.proxy_model.setFilterText(search_text)
 
-    def _on_resonance_checked(self, state):
-        self.proxy_model.set_resonance_filter(self.chk_resonance.isChecked())
+
 
     def _load_lhb_data(self):
         date_str = self.date_edit.date().toString("yyyyMMdd")
