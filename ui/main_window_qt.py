@@ -676,10 +676,10 @@ class MainWindowQT(QMainWindow):
             getattr(self, 'table_sp', None), 
             getattr(self, 'na_daily_table', None), 
             getattr(self, 'ai_tracker_table', None),
+            getattr(getattr(self, 'tab_lhb', None), 'table', None),
             getattr(getattr(self, 'tab_foreign_block', None), 'table', None),
             getattr(getattr(self, 'tab_asian_market', None), 'asian_table', None),
-            getattr(getattr(self, 'tab_earnings', None), 'table', None),
-            getattr(getattr(self, 'tab_foreign_block', None), 'table', None)
+            getattr(getattr(self, 'tab_earnings', None), 'table', None)
         ]
         
         from PyQt6.QtWidgets import QAbstractItemView, QApplication
