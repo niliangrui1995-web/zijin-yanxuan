@@ -703,6 +703,12 @@ class MainWindowQT(QMainWindow):
                         if sel_model:
                             indexes = sel_model.selectedIndexes()
                             if indexes:
+                                current_idx = sel_model.currentIndex()
+                                # 智能剥离模式：如果因为 SelectRows 导致单行全亮，但用户只想复制自己点的那个格子，则过滤
+                                unique_rows = set(idx.row() for idx in indexes)
+                                if len(unique_rows) == 1 and current_idx.isValid():
+                                    indexes = [current_idx]
+                                    
                                 # 按行列分组，组装制表符分隔文本（兼容 Excel 粘贴）
                                 from collections import defaultdict
                                 rows_dict = defaultdict(dict)
