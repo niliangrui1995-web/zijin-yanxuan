@@ -159,6 +159,8 @@ class LhbTab(BaseStockTab):
         if not records:
             self.lbl_status.setText("❌ 该日期暂无龙虎榜数据，请确认是否为交易日，或数据暂未更新。")
             return
+        # 默认把资金共振的票排在最前面
+        records.sort(key=lambda x: 1 if x.get("资金共振") else 0, reverse=True)
             
         # 格式化 UI 展示需求
         row_data = []
