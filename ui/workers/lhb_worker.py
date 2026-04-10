@@ -20,6 +20,11 @@ def fetch_lhb_data_for_date(date_str: str) -> list[dict]:
         if df_detail is None or df_detail.empty:
             log.info(f"[龙虎榜抓取] {date_str} 基础榜单为空，可能无数据或尚未发布。")
             return []
+            
+        # 智能去重：同一天某只股票可能因为多种原因上榜，合并其原因并保留唯一行
+        if '代码' in df_detail.columns and '上榜原因' in df_detail.columns:
+            df_detail['上榜原因'] = df_detail.groupby('代码')['上榜原因'].transform(lambda x: ' | '.join(x.dropna().astype(str).unique()))
+            df_detail = df_detail.drop_duplicates(subset=['代码'], keep='first')
     except Exception as e:
         log.error(f"[龙虎榜抓取] {date_str} 基础榜单异常: {e}")
         return []
