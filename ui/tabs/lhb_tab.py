@@ -7,6 +7,8 @@ ui/tabs/lhb_tab.py
 import datetime
 import pandas as pd
 import akshare as ak
+import os
+import json
 
 from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit,
@@ -48,7 +50,13 @@ class LhbFilterProxyModel(RtSortFilterProxyModel):
 class LhbTab(BaseStockTab):
     def __init__(self, data_provider, parent=None):
         super().__init__(data_provider=data_provider, parent=parent)
+        
+        self.cache_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            'data', 'Cache', 'lhb_cache.json'
+        )
         self._init_ui()
+        self._load_local_cache()
         
         # 订阅中央广播站报价及开启大一统市值更新
         self.subscribe_global_quotes()
@@ -112,8 +120,6 @@ class LhbTab(BaseStockTab):
         self.table.setModel(self.proxy_model)
         self.delegate = StockItemDelegate(self.table)
         self.table.setItemDelegate(self.delegate)
-        # 默认按资金共振排序 (Bool会转化为字符串 "🔥" 和 "") 这样火会排在前面
-        self.table.sortByColumn(5, Qt.SortOrder.DescendingOrder)
 
         # 列宽配置
         header = self.table.horizontalHeader()
@@ -124,6 +130,9 @@ class LhbTab(BaseStockTab):
 
         # 持久化表头
         self.bind_header_persistence(self.table, "lhb_header_state_v1")
+        
+        # 强制清除 UI 表头在恢复时可能带来的默认物理排序干扰，将排序权交还给底层的物理排序逻辑
+        self.table.sortByColumn(-1, Qt.SortOrder.AscendingOrder)
 
         # 交互配置：双击K线，右键菜单
         self.table.doubleClicked.connect(self._on_double_click)
@@ -159,8 +168,20 @@ class LhbTab(BaseStockTab):
         if not records:
             self.lbl_status.setText("❌ 该日期暂无龙虎榜数据，请确认是否为交易日，或数据暂未更新。")
             return
-        # 默认把资金共振的票排在最前面
-        records.sort(key=lambda x: 1 if x.get("资金共振") else 0, reverse=True)
+            
+        # 首先对 records 进行多维排序：优先共振(True排前面)，再按涨幅%降序排列
+        def _sort_key(x):
+            is_res = 1 if x.get("资金共振") else 0
+            pct_val = 0.0
+            try:
+                pct = x.get("涨幅%")
+                if pct is not None and pct != "--":
+                    pct_val = float(str(pct).replace('%', ''))
+            except:
+                pass
+            return (is_res, pct_val)
+            
+        records.sort(key=_sort_key, reverse=True)
             
         # 格式化 UI 展示需求
         row_data = []
@@ -168,28 +189,70 @@ class LhbTab(BaseStockTab):
         for rec in records:
             # 深拷贝以便加UI专属的表情包
             row_dict = dict(rec)
+            
             if row_dict.get("资金共振"):
                 row_dict["资金共振"] = "🔥"
                 res_count += 1
             else:
                 row_dict["资金共振"] = ""
             
-            # 使用 base tab 的占位符（避免现价未更新被当成0）
+            # 使用 base tab 的占位符（避免现价未更新被当成0），依赖大一统全局刷新
             row_dict["现价"] = "--"
             row_dict["涨幅%"] = "--"
             row_data.append(row_dict)
 
         self.model.update_data(row_data)
         
+        date_str = self.date_edit.date().toString("yyyyMMdd")
+        self._save_local_cache(row_data, date_str, res_count)
+        
         # 提取完数据后，触发一次全局通知，让关注池能自动扫描到并固化新数据
         from core.event_bus import event_bus
         event_bus.sig_cache_loaded.emit()
         
-        date_str = self.date_edit.date().toString("yyyyMMdd")
         self.lbl_status.setText(f"✅ {date_str} 抓取完毕：共 {len(row_data)} 条上榜记录，其中 {res_count} 只个股达成机构外资资金共振。")
         
         # 统一异步刷新市值与现价
         self.async_update_market_caps()
+
+    def _save_local_cache(self, row_data, date_str, res_count):
+        """将当前抓取的数据落盘缓存"""
+        try:
+            os.makedirs(os.path.dirname(self.cache_path), exist_ok=True)
+            cache_obj = {
+                "date_str": date_str,
+                "res_count": res_count,
+                "rows": row_data
+            }
+            with open(self.cache_path, 'w', encoding='utf-8') as f:
+                json.dump(cache_obj, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            log.warning(f"[龙虎榜] 写入本地缓存失败: {e}")
+
+    def _load_local_cache(self):
+        """启动时加载本地缓存"""
+        if not os.path.exists(self.cache_path):
+            return
+            
+        try:
+            with open(self.cache_path, 'r', encoding='utf-8') as f:
+                cache_obj = json.load(f)
+            
+            date_str = cache_obj.get("date_str", "")
+            res_count = cache_obj.get("res_count", 0)
+            rows = cache_obj.get("rows", [])
+            
+            if rows:
+                self.model.update_data(rows)
+                self.lbl_status.setText(f"📂 缓存加载完成：{date_str} 共 {len(rows)} 条上榜记录，{res_count} 只共振。")
+                
+                if date_str and len(date_str) == 8:
+                    qdate = QDate.fromString(date_str, "yyyyMMdd")
+                    if qdate.isValid():
+                        self.date_edit.setDate(qdate)
+                        
+        except Exception as e:
+            log.warning(f"[龙虎榜] 加载本地缓存失败: {e}")
 
     def _on_double_click(self, index):
         if not index.isValid(): return
