@@ -472,6 +472,10 @@ QCalendarWidget QAbstractItemView {{
     outline: none;
     font-size: 13px;
 }}
+QCalendarWidget QTableView::item {{
+    padding: 0px;
+    border: none;
+}}
 QCalendarWidget QAbstractItemView:enabled {{
     color: {t['TEXT_PRIMARY']};
 }}
