@@ -160,6 +160,7 @@ class RtTableModel(QAbstractTableModel):
                 if s_val.endswith("%"): return s_val
                 try:
                     f_val = float(s_val.replace('%', ''))
+                    if "换手" in key: return f"{f_val:.2f}%"
                     return f"{f_val:+.2f}%"
                 except (ValueError, TypeError):
                     pass
@@ -192,7 +193,7 @@ class RtTableModel(QAbstractTableModel):
 
         elif role == Qt.ItemDataRole.ForegroundRole:
             # Bug#4 修复: 按 header 名称匹配，不再硬编码列索引
-            if "%" in key:
+            if "%" in key and "换手" not in key:
                 try:
                     pct = float(str(raw_val).replace('%', '').replace('+', ''))
                     if pct >= 9.0: return QColor(_c("COLOR_RISE_STRONG"))
@@ -670,6 +671,7 @@ class StockTableModel(QAbstractTableModel):
                 if s_val.endswith("%"): return s_val
                 try:
                     f_val = float(s_val.replace('%', ''))
+                    if "换手" in key: return f"{f_val:.2f}%"
                     return f"{f_val:+.2f}%"
                 except (ValueError, TypeError):
                     pass
@@ -694,7 +696,7 @@ class StockTableModel(QAbstractTableModel):
                 if watchlist_vm.is_in_watchlist(code):
                     return QColor("#E879F9")  # 醒目紫粉色，用于标示自选股
                     
-            if "%" in key or key in ["涨跌", "净额", "现价", "收盘", "最新价"]:
+            if ("%" in key and "换手" not in key) or key in ["涨跌", "净额", "现价", "收盘", "最新价"]:
                 try:
                     target_pct = raw_val
                     if key in ["现价", "收盘", "最新价"]:
