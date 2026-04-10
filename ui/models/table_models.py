@@ -211,6 +211,22 @@ class RtTableModel(QAbstractTableModel):
                 elif "VCP蓄力" in st: return QColor(_c("STATUS_VCP"))
                 elif "非红盘" in st or "异常" in st or "一字" in st or "观望" in st:
                     return QColor(_c("STATUS_INACTIVE"))
+                    
+            elif key in ["上榜净买额(万)", "机构净买(万)"]:
+                try:
+                    f_val = float(raw_val)
+                    if f_val > 0: return QColor(_c("COLOR_RISE"))
+                    elif f_val < 0: return QColor(_c("COLOR_FALL"))
+                except (ValueError, TypeError):
+                    pass
+                    
+            elif key == "外资潜伏池":
+                try:
+                    fz_val = float(item_dict.get("外资净买(万)", 0))
+                    if fz_val > 0: return QColor(_c("COLOR_RISE"))
+                    elif fz_val < 0: return QColor(_c("COLOR_FALL"))
+                except (ValueError, TypeError):
+                    pass
                 
             return QColor(_c("TEXT_PRIMARY"))
 
