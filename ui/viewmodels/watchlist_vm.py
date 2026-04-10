@@ -47,6 +47,11 @@ class WatchlistViewModel:
                             log.debug(f"[WatchlistVM] 迁移旧 JSON 文件重命名失败: {_e}")
 
             if isinstance(data, dict):
+                # 洗掉硬盘上的旧照片：抹除老旧的历史价格快照，全部重置为横杠 '--'
+                for code, entry in data.items():
+                    if isinstance(entry, dict):
+                        for volatile_key in ["现价", "涨幅%", "市值"]:
+                            entry[volatile_key] = "--"
                 self._cache = data
             else:
                 self._cache = {}
@@ -89,12 +94,16 @@ class WatchlistViewModel:
 
             if is_fav:
                 self._cache.pop(stock_code, None)
+                action = "remove"
                 event_bus.sig_system_log.emit("info", f"[{name}] 已移出关注池")
             else:
-                entry = {"现价": 0, "涨幅%": 0, "评分": ""}
+                entry = {"名称": name, "现价": "--", "涨幅%": "--", "市值": "--", "评分": ""}
                 # 如果有传入当时的扫描数据，把数据保留下来供以后参考
                 if vcp_data and isinstance(vcp_data, dict):
                     for k, v in vcp_data.items():
+                        # 海鲜数据不写硬盘：坚决防守，切断时效性极强的实时数据污染持久层
+                        if k in ["现价", "涨幅%", "市值", "最低", "最高", "开盘", "昨收", "成交额", "换手%"]:
+                            continue
                         if hasattr(v, 'item'):
                             entry[k] = v.item()
                         elif isinstance(v, (str, int, float, bool, list, dict, type(None))):
@@ -102,12 +111,13 @@ class WatchlistViewModel:
                         else:
                             entry[k] = str(v)
                 self._cache[stock_code] = entry
+                action = "add"
                 event_bus.sig_system_log.emit("info", f"[{name}] 已加入关注池")
 
         self._save_data()
         
         # 触发全局广播，让所有的 UI 界面自己去更新星星图标或重新加载数据
-        event_bus.sig_watchlist_changed.emit("toggle", stock_code)
+        event_bus.sig_watchlist_changed.emit(action, stock_code)
 
     def pin_to_top(self, stock_code: str):
         """将股票排到关注池最前排（置顶）"""
@@ -119,7 +129,17 @@ class WatchlistViewModel:
                 self._cache = new_cache
                 
         self._save_data()
-        event_bus.sig_watchlist_changed.emit("toggle", stock_code)
+        event_bus.sig_watchlist_changed.emit("reorder", stock_code)
+
+    def move_to_bottom(self, stock_code: str):
+        """将股票排到关注池最末尾（置底）"""
+        with self._lock:
+            if stock_code in self._cache:
+                data = self._cache.pop(stock_code)
+                self._cache[stock_code] = data
+                
+        self._save_data()
+        event_bus.sig_watchlist_changed.emit("reorder", stock_code)
 
     def reorder(self, new_codes_list: list):
         """
