@@ -125,6 +125,13 @@ def fetch_lhb_data_for_date(date_str: str) -> list[dict]:
         # ② 必须有外资大额买入参与
         is_resonance = (jg_info['机构买入净额'] > 0) and (len(f_buys) > 0)
         
+        has_jg = (jg_info['买方机构数'] > 0) or (jg_info['卖方机构数'] > 0)
+        has_foreign = (len(f_buys) > 0) or (len(f_sells) > 0)
+        
+        # 核心过滤条件: 只有 (机构参与 或 外资参与) 并且 (涨跌幅 > 0) 才抓取显示
+        if not ((has_jg or has_foreign) and (pct > 0)):
+            continue
+        
         # 构造给前端的平铺字典字段
         record = {
             "代码": code,
