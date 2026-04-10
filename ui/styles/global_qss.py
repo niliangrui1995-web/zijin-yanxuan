@@ -95,7 +95,7 @@ QTableView {{
     color: {t['TEXT_PRIMARY']};
     gridline-color: {t['BORDER_SUBTLE']};
     border: none;
-    font-family: "SimSun", "宋体";
+    font-family: "Microsoft YaHei", "微软雅黑";
     font-size: 13px;
     selection-background-color: {t['SELECTION_BG']};
     selection-color: {t['TEXT_BRIGHT']};
@@ -121,7 +121,7 @@ QTableView:focus {{
 QHeaderView::section {{
     background-color: {t['BG_SIDEBAR']};
     color: {t['TEXT_HEADER']};
-    font-family: "SimSun", "宋体";
+    font-family: "Microsoft YaHei", "微软雅黑";
     font-size: 12px;
     font-weight: 600;
     letter-spacing: 0.5px;
