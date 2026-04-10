@@ -55,8 +55,8 @@ class TradeCalendarWidget(QCalendarWidget):
             text_color = QColor(_c("TEXT_BRIGHT"))
         elif is_current_month:
             if not is_trade_day:
-                # 统一节假日颜色（不刺眼的红色/休市提示色）
-                text_color = QColor(_c("ERROR"))
+                # 统一节假日颜色（红字）
+                text_color = QColor(_c("COLOR_ERROR"))
                 text_color.setAlpha(200)
             else:
                 text_color = QColor(_c("TEXT_PRIMARY"))
