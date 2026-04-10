@@ -82,7 +82,10 @@ ui/kline_window_qt_pyqtgraph_backup.py
 
 # 亚洲市场 K 线缓存 (大文件，运行时生成)
 data/Cache/asian_klines_*.json
+data/Cache/asian_klines_latest.json
 data/Cache/asian_rt_latest.json
 
 # SQLite 数据库 (运行时生成)
 data/vcp_hunter.db
+data/vcp_hunter.db-wal
+data/vcp_hunter.db-shm

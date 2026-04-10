@@ -7,6 +7,14 @@ import faulthandler
 # 安全兜底: 重定向到日志文件
 # Redirection removed for debugging!
 
+# 启用 faulthandler：C 级段错误（Polars/NumPy/Qt 底层崩溃）时写入崩溃现场到文件
+# 为什么不输出到 stderr？因为 pythonw.exe 没有控制台，stderr 可能是 None
+_crash_log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+os.makedirs(_crash_log_dir, exist_ok=True)
+_crash_log_path = os.path.join(_crash_log_dir, 'crash_report.log')
+_crash_log_file = open(_crash_log_path, 'a', encoding='utf-8')
+faulthandler.enable(file=_crash_log_file, all_threads=True)
+
 
 def main():
     # 增加高分屏支持

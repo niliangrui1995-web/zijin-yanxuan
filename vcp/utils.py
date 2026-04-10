@@ -61,8 +61,13 @@ def _load_tdx_local_config():
 # ==========================================
 def read_tdx_day_file(filepath, price_div=100.0):
     """
-    读取通达信 .day 日线文件，返回与 pytdx 兼容的 DataFrame。
+    读取通达信 .day 日线文件，返回与 pytdx 兼容的 Pandas DataFrame。
     每 32 字节一条：日期(4)、开(4)、高(4)、低(4)、收(4)、成交额float(4)、成交量(4)、保留(4)。
+
+    为什么直接返回 Pandas 而不返回 Polars？
+    因为 sync_market_data 用 20 线程并发调此函数，Polars 的 .to_pandas()
+    底层走 PyArrow C++ 桥接，多线程并发调用时会在无 GIL 状态下触发竞态段错误。
+    直接在此函数内（单线程上下文）完成转换，彻底消除下游的并发 .to_pandas() 调用。
     """
     if not os.path.isfile(filepath):
         return None
@@ -83,24 +88,25 @@ def read_tdx_day_file(filepath, price_div=100.0):
         if not valid.any():
             return None
         dates = dates[valid]
-        import polars as pl
         o = (raw['o'][valid].astype(np.float64) / price_div).round(2)
         h = (raw['h'][valid].astype(np.float64) / price_div).round(2)
         low = (raw['low'][valid].astype(np.float64) / price_div).round(2)
         c = (raw['c'][valid].astype(np.float64) / price_div).round(2)
         amount = raw['amount'][valid].astype(np.float64)
         vol = raw['vol'][valid].astype(np.int64)
-        df = pl.DataFrame({
-            'datetime': dates.values, 
-            'open': o, 
-            'high': h, 
-            'low': low, 
-            'close': c, 
-            'amount': amount, 
-            'volume': vol
+
+        # 直接构建 Pandas DataFrame 并排序，不经过 Polars→PyArrow 桥接
+        pdf = pd.DataFrame({
+            'datetime': dates.values,
+            'open': o,
+            'high': h,
+            'low': low,
+            'close': c,
+            'amount': amount,
+            'volume': vol,
         })
-        df = df.sort('datetime')
-        return df
+        pdf = pdf.sort_values('datetime').reset_index(drop=True)
+        return pdf
     except Exception as e:
         _log.error(f"[Error] read_tdx_day_file: {str(e)}")
         return None

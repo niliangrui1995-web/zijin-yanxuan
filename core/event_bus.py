@@ -53,6 +53,14 @@ class GlobalEventBus(QObject):
     # 接收方：asian_market_tab
     sig_asian_klines_ready = pyqtSignal()
 
+    # 7. 美股日报最近5份内容更新完成
+    # 接收方：watchlist_tab
+    sig_na_daily_updated = pyqtSignal()
+
+    # 8. 大宗交易数据更新完成
+    # 接收方：watchlist_tab
+    sig_block_trade_updated = pyqtSignal()
+
     # ====== [任务控制信号] ======
 
     # 后台任务进度 — task_id (str|TaskEvent), progress_pct, status_msg

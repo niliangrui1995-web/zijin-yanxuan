@@ -18,8 +18,11 @@ from core.logger import get_logger
 _log = get_logger(__name__)
 
 class TdxDataProvider:
-    def __init__(self, is_trading_day=None, offline=False):
+    def __init__(self, is_trading_day=None, offline=False, offline_mode=None):
         from pytdx.hq import TdxHq_API
+        # Backward compatibility: keep accepting legacy keyword `offline_mode`.
+        if offline_mode is not None:
+            offline = bool(offline_mode)
         self.TdxHq_API = TdxHq_API
         self.cache_file = os.path.join(CACHE_DIR, 'vcp_tdx_cache_adj.pkl')
         self.cache_data = {}
@@ -194,11 +197,9 @@ class TdxDataProvider:
             return None
         path = self._tdx_day_path(code)
         df = read_tdx_day_file(path)
-        if df is not None:
-            if hasattr(df, 'to_pandas'):
-                df = df.to_pandas()
-                if 'datetime' in df.columns:
-                    df = df.set_index('datetime')
+        # read_tdx_day_file 已直接返回 Pandas DataFrame，无需再做 .to_pandas() 转换
+        if df is not None and 'datetime' in df.columns:
+            df = df.set_index('datetime')
         
         if df is None or df.empty:
             return None
@@ -221,7 +222,11 @@ class TdxDataProvider:
                 try:
                     if api.connect(ip, port, time_out=5) and api.get_security_count(0) > 0:
                         break
+                except (TimeoutError, OSError, ConnectionError, ValueError) as e:
+                    _log.debug(f"[网络] 测速连接节点失败 {ip}:{port} - {e}")
+                    continue
                 except Exception as e:
+                    # pytdx 会抛出自定义异常类型，按网络失败处理并尝试下一个节点
                     _log.debug(f"[网络] 测速连接节点失败 {ip}:{port} - {e}")
                     continue
             self.thread_local.api = api
@@ -258,11 +263,14 @@ class TdxDataProvider:
             if xdxr_df is None or xdxr_df.empty:
                 return df
 
-            is_pandas = isinstance(df, pd.DataFrame)
-            if is_pandas:
-                pldf = pl.from_pandas(df.reset_index() if df.index.name == 'datetime' else df)
+            # 纯 Pandas 复权（不用 Polars），避免多线程并发时 PyArrow C++ 竞态段错误
+            work_df = df.reset_index() if df.index.name == 'datetime' else df.copy()
+
+            # 将 datetime 列统一为 date 类型，用于与除权日比较
+            if 'datetime' in work_df.columns:
+                dt_col = pd.to_datetime(work_df['datetime']).dt.date
             else:
-                pldf = df
+                dt_col = None
 
             for i in range(len(xdxr_df)):
                 row = xdxr_df.iloc[i]
@@ -274,51 +282,34 @@ class TdxDataProvider:
                     # API 格式
                     sz = (float(row.get('songgu', 0) or 0) + float(row.get('houzhen', 0) or 0)) / 10.0
                     fh = float(row.get('fenhong', 0) or 0) / 10.0
-                    
+
                 dt = xdxr_df.index[i]
                 if isinstance(dt, pd.Timestamp):
                     dt = dt.date()
                 elif isinstance(dt, str):
                     from datetime import datetime as dt_sys
                     dt = dt_sys.strptime(dt, "%Y-%m-%d").date()
-                
-                dt_expr = pl.col('datetime').cast(pl.Date) if pldf.schema['datetime'] != pl.Date else pl.col('datetime')    
-                
-                # Update prices
-                cols = [c for c in ['open', 'high', 'low', 'close'] if c in pldf.columns]
-                exprs = [
-                    pl.when(dt_expr < pl.lit(dt))
-                    .then((pl.col(c) - fh) / (1 + sz))
-                    .otherwise(pl.col(c))
-                    .alias(c)
-                    for c in cols
-                ]
-                
-                if 'vol' in pldf.columns:
-                    exprs.append(
-                        pl.when(dt_expr < pl.lit(dt))
-                        .then(pl.col('vol') * (1 + sz))
-                        .otherwise(pl.col('vol'))
-                        .alias('vol')
-                    )
-                if 'volume' in pldf.columns:
-                    exprs.append(
-                        pl.when(dt_expr < pl.lit(dt))
-                        .then(pl.col('volume') * (1 + sz))
-                        .otherwise(pl.col('volume'))
-                        .alias('volume')
-                    )
-                    
-                pldf = pldf.with_columns(exprs)
 
-            # 保持返回类型与输入一致：输入 Pandas 则转回 Pandas，避免下游类型混乱
-            if is_pandas:
-                result_pdf = pldf.to_pandas()
-                if 'datetime' in result_pdf.columns:
-                    result_pdf['datetime'] = pd.to_datetime(result_pdf['datetime'])
-                    result_pdf = result_pdf.set_index('datetime')
-                return result_pdf
-            return pldf
+                if dt_col is None:
+                    continue
+
+                # 找到除权日之前的所有行，对价格做前复权
+                mask = dt_col < dt
+                if not mask.any():
+                    continue
+
+                for c in ['open', 'high', 'low', 'close']:
+                    if c in work_df.columns:
+                        work_df.loc[mask, c] = (work_df.loc[mask, c] - fh) / (1 + sz)
+                for vc in ['vol', 'volume']:
+                    if vc in work_df.columns:
+                        work_df.loc[mask, vc] = work_df.loc[mask, vc] * (1 + sz)
+
+            # 返回 Pandas DataFrame（与输入一致）
+            if 'datetime' in work_df.columns:
+                work_df['datetime'] = pd.to_datetime(work_df['datetime'])
+                work_df = work_df.set_index('datetime')
+            return work_df
         except Exception as e:
             _log.error(f"[数据中台] 前复权计算异常: {e}", exc_info=True)
             raise ValueError(f"除权除息因子计算失败: {e}") from e
@@ -353,9 +344,15 @@ class TdxDataProvider:
                                 pl.col('datetime').str.strptime(pl.Datetime, "%Y-%m-%d %H:%M", strict=False)
                                 .cast(pl.Date)
                             ).sort('datetime', descending=False)
+                    # 联网路径也需要转成 Pandas 再传给 _apply_forward_adjustment
+                    # 因为 _apply_forward_adjustment 已改为纯 Pandas 实现
+                    if hasattr(df, 'to_pandas'):
+                        df = df.to_pandas()
+                        if 'datetime' in df.columns:
+                            df = df.set_index('datetime')
                     df = self._apply_forward_adjustment(api, market, code, df)
                     if 'vol' in df.columns:
-                        df = df.rename({'vol': 'volume'})
+                        df = df.rename(columns={'vol': 'volume'})
                     return df
             except ValueError as ve: raise ve
             except Exception as e:
@@ -564,7 +561,8 @@ class TdxDataProvider:
             return True
 
         total = len(codes)
-        workers = 50 if self._offline else MARKET_SYNC_WORKERS
+        # 为什么离线只用 20 线程？50 线程同时持有 DataFrame 内存峰值太高，容易触发 Windows OOM 闪退
+        workers = 20 if self._offline else MARKET_SYNC_WORKERS
         _log.info(f"\n[数据中台] 阶段1: 同步日线 -> 目标 {total} 只 | 线程数 {workers} | {'离线本地' if self._offline else ('强制覆盖' if force_refresh else '增量/缓存')}")
         if self.tdx_vipdoc:
             _log.info(f"         数据源: 优先通达信本地 -> {self.tdx_vipdoc}")
@@ -657,14 +655,22 @@ class TdxDataProvider:
                         self.cache_data[code] = df
             return df
 
-    def get_data_fresh_for_chart(self, code):
-        """Return latest daily bars by combining local cache and online incremental data."""
+    def get_data_fresh_for_chart(self, code, force_sync=False):
+        """Return latest daily bars by combining local cache and online incremental data.
+
+        force_sync=True 时跳过盘前/盘后的缓存短路判断，强制尝试联网补全。
+        """
         from vcp.engine import VCPEngine
 
         existing_df = self.get_data(code)
-        if self._is_before_930_today():
+        if not force_sync and self._is_before_930_today():
             return existing_df
-        if self._is_after_1500_today() and existing_df is not None and len(existing_df) > 0:
+        if (
+            not force_sync
+            and self._is_after_1500_today()
+            and existing_df is not None
+            and len(existing_df) > 0
+        ):
             try:
                 if pd.Timestamp(existing_df.index.max()).date() >= datetime.now().date():
                     return existing_df
@@ -704,8 +710,10 @@ class TdxDataProvider:
                     with self.cache_lock:
                         self.cache_data[code] = full_df
                     return full_df
-        except Exception as e:
-            _log.error(f"[K线 {code}] 联网补全失败，继续使用缓存: {e}")
+        except (TimeoutError, OSError, ConnectionError) as e:
+            _log.error(f"[K线 {code}] 联网补全失败(网络层)，继续使用缓存: {e}")
+        except (ValueError, TypeError, KeyError, ArithmeticError) as e:
+            _log.error(f"[K线 {code}] 联网补全失败(数据层)，继续使用缓存: {e}")
         return existing_df
 
     def has_cache(self):
@@ -790,6 +798,11 @@ class TdxDataProvider:
                 last_row = hist_df.iloc[-1]
                 prev_row = hist_df.iloc[-2] if len(hist_df) > 1 else last_row
                 last_close = float(prev_row['close']) if len(hist_df) > 1 else float(last_row['open'])
+                quote_date = None
+                try:
+                    quote_date = pd.Timestamp(hist_df.index[-1]).strftime('%Y-%m-%d')
+                except Exception:
+                    quote_date = None
                 res[code] = {
                     'open': float(last_row.get('open', 0)),
                     'high': float(last_row.get('high', 0)),
@@ -797,7 +810,8 @@ class TdxDataProvider:
                     'close': float(last_row.get('close', 0)),
                     'volume': float(last_row.get('volume', 0)),
                     'amount': float(last_row.get('amount', 0)),
-                    'last_close': last_close
+                    'last_close': last_close,
+                    'date': quote_date,
                 }
         return res
 
@@ -813,6 +827,17 @@ class TdxDataProvider:
         if not is_active:
             # 严格依据交易日历：非交易时间段绝对不走网络，无论断网与否，直接闪回本地最后快照
             return self._build_offline_quotes(codes)
+
+        try:
+            from core.market_calendar import MarketCalendar
+            latest_trade_date = MarketCalendar.get_latest_trade_date("CN")
+            inferred_trade_date = (
+                latest_trade_date.strftime('%Y-%m-%d')
+                if latest_trade_date is not None
+                else datetime.now().strftime('%Y-%m-%d')
+            )
+        except Exception:
+            inferred_trade_date = datetime.now().strftime('%Y-%m-%d')
 
         # ====== 新增：微秒级 DataLoader 防并发堵塞机制 ======
         now = time.time()
@@ -876,6 +901,7 @@ class TdxDataProvider:
                             'volume': q.get('vol',   0),
                             'amount': q.get('amount', 0),
                             'last_close': q.get('last_close', 0),
+                            'date': inferred_trade_date,
                         }
             except Exception as _e:
                 _log.debug(f"[实时报价] 批次拉取行情失败: {_e}")
@@ -890,6 +916,26 @@ class TdxDataProvider:
                     self._rt_quote_cache[c] = q_data
                     self._rt_quote_time[c] = fetch_time
             result.update(new_fetch)
+
+        # 批量接口偶发“返回缺码”：优先回退到热缓存，再回退到本地日线，避免部分个股长期不刷新
+        missing_codes = [c for c in dedup_codes if c not in result]
+        if missing_codes:
+            stale_quotes = {}
+            with self._rt_quote_lock:
+                for c in missing_codes:
+                    cached = self._rt_quote_cache.get(c)
+                    if cached:
+                        q = dict(cached)
+                        q.setdefault('date', inferred_trade_date)
+                        stale_quotes[c] = q
+            if stale_quotes:
+                result.update(stale_quotes)
+                missing_codes = [c for c in missing_codes if c not in stale_quotes]
+
+        if missing_codes:
+            fallback_res = self._build_offline_quotes(missing_codes)
+            if fallback_res:
+                result.update(fallback_res)
 
         # 如果部分或全部批次失败进行 API 缓存清理重试
         if not new_fetch and fail_count > 0:

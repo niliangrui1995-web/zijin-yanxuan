@@ -38,9 +38,31 @@ class RtScanWorker(QThread):
         self._sector_manager = None   # 板块管理器(首轮创建后缓存)
         self._sector_rps = None       # 板块 RPS 字典(首轮计算后缓存)
         self._cap_cache = {}          # 市值缓存 {code: '71亿'} 跨轮复用
+        self._zbg_cache = {}          # 总股本缓存 {code: zongguben}，用于按最新现价动态重算市值
 
     def stop(self):
         self._is_running = False
+
+    def _cleanup_caches(self):
+        """线程退出时释放内存。
+        为什么不在 stop() 里做？stop() 是 UI 线程调用的，
+        而 _run_one_round() 可能正在 worker 线程中访问这些缓存。
+        在同一线程的 run() 退出后调用，彻底避免竞态。
+        """
+        import gc as _gc
+        self._ready_pool = None
+        self._rps120 = None
+        self._rps250 = None
+        self._all_data = None
+        self._signal_details = {}
+        self._special_details = {}
+        self._sector_rps = None
+        self._sector_manager = None
+        self._cap_cache = {}
+        self._zbg_cache = {}
+        self._seen_signals = set()
+        _gc.collect()
+        log.info("[监控] 线程结束，已释放全部缓存")
 
     def run(self):
         import time as _time
@@ -56,11 +78,19 @@ class RtScanWorker(QThread):
                 log.error(f"[盘中监控] 第{self._scan_count}轮扫描异常: {e}", exc_info=True)
 
             elapsed = _time.time() - t0
+            # 每轮结束后主动回收 Polars 转换等产生的临时对象
+            import gc as _gc
+            _gc.collect()
+            # stop() 可能在本轮执行中被调用：此时直接退出
+            if not self._is_running:
+                self._cleanup_caches()
+                return
             self.progress.emit(f"第{self._scan_count}轮完成(耗时 {elapsed:.1f}s),等待下轮...")
 
             # 等待间隔(可被中断)
             for _ in range(int(self.interval * 10)):
                 if not self._is_running:
+                    self._cleanup_caches()
                     return
                 _time.sleep(0.1)
 
@@ -84,7 +114,7 @@ class RtScanWorker(QThread):
                 self._rps120 = precomputed_bundle.get('rps120')
                 self._rps250 = precomputed_bundle.get('rps250')
                 if self._rps120 is not None and self._rps250 is not None:
-                    log.info(f"[盘中] 使用预计算 RPS(基准日 {precomputed_bundle.get('date', '?')})")
+                    log.info(f"[盘中] 加载预计算 RPS (基准日 {precomputed_bundle.get('date', '?')})")
             if self._rps120 is None or self._rps250 is None:
                 # 兜底现算 RPS（忘记跑 F5 时自动补算）— 使用已有的 Polars 引擎
                 try:
@@ -98,6 +128,7 @@ class RtScanWorker(QThread):
                     log.debug(f"[盘中] 获取最近交易日失败: {_e}")
                     today_str = datetime.date.today().strftime('%Y%m%d')
                 try:
+                    import gc
                     from vcp.polars_engine import build_rps_matrix_pl
                     rps_matrix = build_rps_matrix_pl(self._all_data, today_str, today_str)
                     if rps_matrix:
@@ -106,7 +137,12 @@ class RtScanWorker(QThread):
                         self._rps120 = d_rps.get('rps120', {})
                         self._rps250 = d_rps.get('rps250', {})
                         valid_count = sum(1 for v in self._rps120.values() if v == v)
-                        log.info(f"[盘中] 现算 RPS 完成({valid_count} 只有效排名)")
+
+                        # 现算完成后立即释放巨型中间矩阵，避免内存峰值引发 OOM 闪退
+                        del d_rps, rps_matrix
+                        gc.collect()
+
+                        log.info(f"[盘中] 现算 RPS 完成 ({valid_count} 只)，已释放中间矩阵")
 
                         # 保存到磁盘(与 F5 格式一致,下次启动可直接加载)
                         try:
@@ -118,7 +154,7 @@ class RtScanWorker(QThread):
                             with open(rps_path, 'wb') as f:
                                 pickle.dump(rps_pkg, f, protocol=4)
                             self.engine.set_precomputed_rps(today_str, self._rps120, self._rps250)
-                            log.info(f"[盘中] 现算 RPS 已保存磁盘(基准日 {today_str},{valid_count} 只)")
+                            log.debug(f"[盘中] RPS 已保存磁盘 ({today_str})")
                         except Exception as e:
                             log.error(f"[盘中] RPS 磁盘保存失败: {e}")
                     else:
@@ -128,6 +164,7 @@ class RtScanWorker(QThread):
                     log.error(f"[盘中] 兜底 RPS 计算异常: {e}")
                     self.progress.emit("❌ RPS 计算失败")
                     return
+
 
         # ===== 阶段3: 构建/刷新待突破池 =====
         need_rebuild = (self._ready_pool is None or
@@ -165,7 +202,7 @@ class RtScanWorker(QThread):
                 if added or removed:
                     log.info(f"[待突破池] 刷新: +{len(added)} 新增 / -{len(removed)} 剔除 (形态恶化)")
             self._ready_pool = new_pool
-            log.info(f"[待突破池] {label}完成: {len(self._ready_pool)} 只候选(耗时 {_time.time()-t0:.1f}s)")
+            log.info(f"[待突破池] {label}: {len(self._ready_pool)} 只 ({_time.time()-t0:.1f}s)")
 
         pool_size = len(self._ready_pool)
         self.scan_count.emit(self._scan_count, pool_size)
@@ -202,6 +239,25 @@ class RtScanWorker(QThread):
         if not quotes:
             self.progress.emit("实时报价获取失败")
             return
+
+        # 市值动态重算基础：增量缓存总股本，后续每轮按实时现价计算
+        codes_need_zbg = [c for c in quotes.keys() if c not in self._zbg_cache]
+        if codes_need_zbg:
+            try:
+                finance_data = VCPEngine.batch_get_finance_info(codes_need_zbg)
+                for c in codes_need_zbg:
+                    info = finance_data.get(c, {}) if isinstance(finance_data, dict) else {}
+                    zbg = float(info.get('zongguben', 0) or 0)
+                    if zbg > 0:
+                        self._zbg_cache[c] = zbg
+            except Exception as _e:
+                log.debug(f"[盘中] 总股本缓存刷新失败: {_e}")
+
+        def _format_dynamic_cap(code: str, rt_price: float, fallback: str = "") -> str:
+            zbg = float(self._zbg_cache.get(code, 0) or 0)
+            if zbg > 0 and rt_price > 0:
+                return f"{(zbg * rt_price) / 1e8:.0f}亿"
+            return fallback or ""
 
         # ===== 阶段5: 突破检测 =====
         new_signals = []
@@ -249,7 +305,7 @@ class RtScanWorker(QThread):
                     # 兜底:即使无法构造实时DF,也显示基本信息(不静默消失)
                     status = "○ 跟踪中"
                     m = {'评分': '--', 'RPS强度': rps_display}
-                cap = pool_entry.get('market_cap', '') if pool_entry else ''
+                cap = _format_dynamic_cap(code, rt_close, pool_entry.get('market_cap', '') if pool_entry else '')
                 sector = pool_entry.get('sector_info', '--') if pool_entry else '--'
                 sig = {
                     '时间': datetime.datetime.now().strftime('%H:%M'), '代码': code,
@@ -260,6 +316,10 @@ class RtScanWorker(QThread):
                     '区间振幅': m.get('区间振幅', ''),
                     '_is_special': True,   # 标记为关注池股票,盘中监控表格不展示
                 }
+                if isinstance(m, dict):
+                    for k, v in m.items():
+                        if k not in sig and v is not None:
+                            sig[k] = v
                 new_signals.append(sig)
                 self._special_details[code] = sig   # 关注池独立存储
                 # 不 continue ---- 关注池股票继续走下方 rt_quick_check,
@@ -281,8 +341,7 @@ class RtScanWorker(QThread):
             if sig_key not in self._seen_signals:
                 self._seen_signals.add(sig_key)
                 stock_name = self.data_provider.code2name.get(code, '')
-                log.info(f"  🔥 新信号! {code} {stock_name} "
-                      f"| 现价 {quote['close']:.2f} | {pct:+.2f}% | {breakout_status}")
+                log.info(f"[盘中] 🔥 {code} {stock_name} | {quote['close']:.2f} | {pct:+.2f}% | {breakout_status}")
                 # #15: 桌面通知 + 声音提醒，让用户即使不在终端也能感知
                 try:
                     from ui.components.notification_service import notify_breakout
@@ -294,7 +353,8 @@ class RtScanWorker(QThread):
             # 若为空则保留上一轮已经通过阶段6补全的旧值(防止覆盖)
             prev_sig = self._signal_details.get(code, {})
             _sector = pool_entry.get('sector_info', '') or prev_sig.get('热点板块', '')
-            _cap = pool_entry.get('market_cap', '') or prev_sig.get('市值', '')
+            _cap_fallback = pool_entry.get('market_cap', '') or prev_sig.get('市值', '')
+            _cap = _format_dynamic_cap(code, rt_close, _cap_fallback)
             sig = {
                 '时间': datetime.datetime.now().strftime('%H:%M'), '代码': code,
                 '名称': self.data_provider.code2name.get(code, code),
@@ -305,12 +365,30 @@ class RtScanWorker(QThread):
                 '热点板块': _sector,
                 '区间振幅': m_meta.get('区间振幅', ''),
             }
+            if isinstance(m_meta, dict):
+                for k, v in m_meta.items():
+                    if k not in sig and v is not None:
+                        sig[k] = v
             new_signals.append(sig)
             self._signal_details[code] = sig  # 盘中监控独立存储
 
         # ===== 阶段6: 补全市值与热点板块(首轮构建缓存,后续复用) =====
         # 合并盘中监控 + 关注池信号（整轮共用，避免重复构建）
         _all_sigs = {**self._signal_details, **self._special_details}
+        # 市值按最新现价动态刷新（优先于历史缓存）
+        for sig in _all_sigs.values():
+            code = sig.get('代码', '')
+            q = quotes.get(code, {}) if code else {}
+            rt_price = float(q.get('close', 0) or 0)
+            if rt_price <= 0:
+                try:
+                    rt_price = float(str(sig.get('现价', '')).replace(',', ''))
+                except (ValueError, TypeError):
+                    rt_price = 0
+            cap_val = _format_dynamic_cap(code, rt_price, sig.get('市值', ''))
+            if cap_val:
+                sig['市值'] = cap_val
+
         codes_need_cap = [sig['代码'] for sig in _all_sigs.values()
                           if not sig.get('市值') and sig['代码'] not in self._cap_cache]
         if codes_need_cap:
@@ -356,7 +434,7 @@ class RtScanWorker(QThread):
                         _cached_date = _pkg.get('date', '?')
                         if self._sector_rps:
                             _loaded = True
-                            log.info(f"[盘中] 板块 RPS 从磁盘加载(基准日 {_cached_date},{len(self._sector_rps)} 个板块)")
+                            log.info(f"[盘中] 板块 RPS 加载完成 ({len(self._sector_rps)} 个板块)")
                     except Exception as _e:
                         log.debug(f"[盘中] 板块 RPS 缓存读取失败: {_e}")
 
@@ -365,12 +443,12 @@ class RtScanWorker(QThread):
                     today_str = datetime.date.today().strftime('%Y%m%d')
                     self._sector_rps = self._sector_manager.build_sector_rps(
                         self._all_data, today_str)
-                    log.info(f"[盘中] 板块 RPS 现算完成: {len(self._sector_rps)} 个板块")
+                    log.info(f"[盘中] 板块 RPS 现算完成 ({len(self._sector_rps)} 个)")
                     try:
                         _pkg = {'date': today_str, 'sector_rps': self._sector_rps}
                         with open(SECTOR_RPS_CACHE_FILE, 'wb') as _f:
                             _pkl.dump(_pkg, _f, protocol=4)
-                        log.info("[盘中] 板块 RPS 已保存磁盘")
+                            log.debug("[盘中] 板块 RPS 已保存磁盘")
                     except Exception as _e:
                         log.error(f"[盘中] 板块 RPS 磁盘保存失败: {_e}")
             except Exception as e:
@@ -401,6 +479,5 @@ class RtScanWorker(QThread):
         # 合并盘中监控信号 + 关注池信号(两者独立存储,互不干扰)
         all_signals = list(self._signal_details.values()) + list(self._special_details.values())
 
-        log.info(f"[盘中] 第{self._scan_count}轮 | 待突破池 {pool_size} | 报价 {len(quotes)} | "
-              f"本轮新信号 {len(new_signals)} | 累计 {len(all_signals)}")
+        log.info(f"[盘中] 第{self._scan_count}轮 | 池 {pool_size} | 报价 {len(quotes)} | 新信号 {len(new_signals)} | 累计 {len(all_signals)}")
         self.rt_result_ready.emit(all_signals)

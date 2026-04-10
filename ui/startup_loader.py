@@ -135,7 +135,7 @@ class StartupLoader:
                 log.info("[智能启动] 数据不足，跳过盘中自动监控")
                 return
             if hasattr(self.mw, 'tab_rt') and hasattr(self.mw.tab_rt, '_toggle_rt_monitor'):
-                self.mw.tab_rt._toggle_rt_monitor()
+                self.mw.tab_rt._toggle_rt_monitor(auto=True)
                 log.info("[智能启动] ✅ 盘中监控已自动启动")
         except Exception as e:
             log.error(f"[智能启动] 自动监控启动异常: {e}")

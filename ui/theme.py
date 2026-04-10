@@ -7,7 +7,8 @@ ui/theme.py
 为什么用单例+信号？因为主题切换需要通知所有已创建的组件刷新样式，
 就像广播电台——发一次信号，所有收音机同时收到。
 """
-from PyQt6.QtCore import QObject, pyqtSignal, QSettings
+from PyQt6.QtCore import QObject, pyqtSignal, QSettings, QTimer
+from datetime import datetime as _datetime
 
 # ============================================================
 # 墨渊主题（暗色，即当前默认主题）
@@ -27,6 +28,7 @@ THEME_MOYUAN = {
     "BG_STATUSBAR": "#0A0C10",
     "BG_TABLE_BASE": "#12141A",
     "BG_TABLE_ALT_ROW": "#1E293B",
+    "BG_TABLE_HOVER": "rgba(239, 68, 68, 0.08)",
     "BG_BUTTON": "#1F2937",
     "BG_BUTTON_HOVER": "#374151",
     "BG_MENU": "#151820",
@@ -105,6 +107,23 @@ THEME_MOYUAN = {
 
     # 下拉箭头颜色
     "ARROW_COLOR": "#718096",
+
+    # K线图专用色 — 涨跌、均线、网格、VCP 覆盖层（值与当前硬编码完全一致，保证零变化）
+    "KLINE_UP_COLOR": "#F92855",
+    "KLINE_DOWN_COLOR": "#00FFFF",
+    "KLINE_MA10": "#FFFFFF",
+    "KLINE_MA20": "#00A2E8",
+    "KLINE_MA50": "#FF9000",
+    "KLINE_MA150": "#BF5AF2",
+    "KLINE_MA200": "#FF375F",
+    "KLINE_VOL_MA20": "#FFD700",
+    "KLINE_GRID_LINE": "rgba(255,255,255,0.05)",
+    "KLINE_AXIS_LINE": "#444444",
+    "KLINE_AXIS_LABEL": "#888888",
+    "KLINE_POINTER_BG": "#777777",
+    "KLINE_VCP_STAR": "#FFD60A",
+    "KLINE_VCP_LINE": "#FFD700",
+    "KLINE_VCP_AREA": "rgba(51, 153, 255, 0.1)",
 }
 
 # ============================================================
@@ -114,22 +133,23 @@ THEME_YUEBAI = {
     "name": "月白",
 
     # 背景色层级体系（浅 → 白）
-    "BG_CANVAS": "#F0F4F9",
-    "BG_SIDEBAR": "#E8ECF1",
-    "BG_TABLE_ALT": "#F5F7FA",
-    "BG_CARD": "#FFFFFF",
-    "BG_HOVER": "#DCE3EB",
-    "BG_INPUT": "#FFFFFF",
-    "BG_ELEVATED": "#FFFFFF",
-    "BG_TITLEBAR": "#E4E8ED",
-    "BG_STATUSBAR": "#E4E8ED",
-    "BG_TABLE_BASE": "#FFFFFF",
-    "BG_TABLE_ALT_ROW": "#F5F7FA",
-    "BG_BUTTON": "#E5E7EB",
-    "BG_BUTTON_HOVER": "#D1D5DB",
-    "BG_MENU": "#FFFFFF",
-    "BG_GLASS": "rgba(240, 244, 249, 0.95)",
-    "BG_MODULE_CARD": "#FFFFFF",
+    "BG_CANVAS": "#F7F3EC",
+    "BG_SIDEBAR": "#EEE6DA",
+    "BG_TABLE_ALT": "#F3EEE6",
+    "BG_CARD": "#FFFDF8",
+    "BG_HOVER": "#E8DFD1",
+    "BG_INPUT": "#FFFCF7",
+    "BG_ELEVATED": "#FFFCF7",
+    "BG_TITLEBAR": "#EEE7DB",
+    "BG_STATUSBAR": "#EEE7DB",
+    "BG_TABLE_BASE": "#FAF7F2",
+    "BG_TABLE_ALT_ROW": "#F3EEE6",
+    "BG_TABLE_HOVER": "#EEE7DB",
+    "BG_BUTTON": "#F0E8DD",
+    "BG_BUTTON_HOVER": "#E6DCCD",
+    "BG_MENU": "#FFFCF7",
+    "BG_GLASS": "rgba(247, 243, 236, 0.96)",
+    "BG_MODULE_CARD": "#FFFCF7",
 
     # 文字色 — 白底黑字，严格遵循 WCAG 4.5:1
     "TEXT_PRIMARY": "#0F172A",
@@ -159,11 +179,11 @@ THEME_YUEBAI = {
     "COLOR_INFO": "#3B82F6",
 
     # 边框色 — 白底用深色半透明
-    "BORDER_DEFAULT": "rgba(0, 0, 0, 0.08)",
-    "BORDER_SUBTLE": "rgba(0, 0, 0, 0.04)",
-    "BORDER_STRONG": "#D1D5DB",
+    "BORDER_DEFAULT": "rgba(93, 78, 55, 0.10)",
+    "BORDER_SUBTLE": "rgba(93, 78, 55, 0.05)",
+    "BORDER_STRONG": "#D8CDBE",
     "BORDER_BRAND": "rgba(239, 68, 68, 0.12)",
-    "BORDER_MENU": "#E5E7EB",
+    "BORDER_MENU": "#E4D8C8",
 
     # 评分着色梯度 — 不变
     "SCORE_EXCELLENT": "#FF4757",
@@ -181,13 +201,14 @@ THEME_YUEBAI = {
     "SCROLLBAR_HANDLE": "rgba(0, 0, 0, 0.12)",
     "SCROLLBAR_HANDLE_HOVER": "rgba(0, 0, 0, 0.25)",
 
-    # 选中态颜色
-    "SELECTION_BG": "rgba(239, 68, 68, 0.12)",
-    "SELECTION_HOVER_BG": "rgba(239, 68, 68, 0.06)",
+    # 选中态颜色 - 增强透明度或使用更深的底色使得在月白(白底)上移动时能明显看出悬停状态
+    "SELECTION_BG": "rgba(239, 68, 68, 0.15)",     # 加深选中色
+    "SELECTION_HOVER_BG": "#F4EDE4",               # 暖白悬停色，和米白表格及顶栏更统一
+
 
     # 标题栏分隔线
-    "TITLEBAR_BORDER": "rgba(0, 0, 0, 0.08)",
-    "STATUSBAR_BORDER": "rgba(0, 0, 0, 0.08)",
+    "TITLEBAR_BORDER": "rgba(93, 78, 55, 0.10)",
+    "STATUSBAR_BORDER": "rgba(93, 78, 55, 0.10)",
 
     # 齿轮菜单选中色
     "MENU_SELECTED_BG": "rgba(239, 68, 68, 0.12)",
@@ -199,10 +220,27 @@ THEME_YUEBAI = {
     # Tab
     "TAB_TEXT": "#6B7280",
     "TAB_TEXT_HOVER": "#0F172A",
-    "TAB_HOVER_BG": "rgba(0,0,0,0.04)",
+    "TAB_HOVER_BG": "rgba(93, 78, 55, 0.06)",
 
     # 下拉箭头颜色
     "ARROW_COLOR": "#64748B",
+
+    # K线图专用色 — 白底适配版，所有色值加深确保 WCAG 对比度
+    "KLINE_UP_COLOR": "#DC2626",
+    "KLINE_DOWN_COLOR": "#16A34A",
+    "KLINE_MA10": "#1E293B",
+    "KLINE_MA20": "#2563EB",
+    "KLINE_MA50": "#EA580C",
+    "KLINE_MA150": "#9333EA",
+    "KLINE_MA200": "#DC2626",
+    "KLINE_VOL_MA20": "#B45309",
+    "KLINE_GRID_LINE": "rgba(93,78,55,0.06)",
+    "KLINE_AXIS_LINE": "#D8CDBE",
+    "KLINE_AXIS_LABEL": "#64748B",
+    "KLINE_POINTER_BG": "#94A3B8",
+    "KLINE_VCP_STAR": "#D97706",
+    "KLINE_VCP_LINE": "#B45309",
+    "KLINE_VCP_AREA": "rgba(37, 99, 235, 0.08)",
 }
 
 
@@ -242,6 +280,16 @@ class ThemeManager(QObject):
         saved = self._settings.value("current_theme", "墨渊")
         self._current_name = saved if saved in self.THEMES else "墨渊"
 
+        # 日夜自动切换：白天月白、晚上墨渊，像手机的自动暗色模式
+        self._auto_switch = self._settings.value("auto_switch_theme", False, type=bool)
+        self._auto_timer = QTimer()
+        self._auto_timer.setInterval(60 * 1000)  # 每 60 秒检查一次
+        self._auto_timer.timeout.connect(self._check_auto_switch)
+        if self._auto_switch:
+            self._auto_timer.start()
+            # 启动时立即执行一次，不等 60 秒
+            self._check_auto_switch()
+
     @property
     def current_theme_name(self) -> str:
         return self._current_name
@@ -271,6 +319,38 @@ class ThemeManager(QObject):
 
     def theme_names(self) -> list:
         return list(self.THEMES.keys())
+
+    # ======================== 日夜自动切换 ========================
+
+    def is_auto_switch(self) -> bool:
+        """是否开启了日夜自动切换"""
+        return self._auto_switch
+
+    def set_auto_switch(self, enabled: bool):
+        """开关日夜自动切换。像手机的「自动暗色模式」——
+        开了以后系统根据时间自己决定用哪个主题，不用你手动切。
+        """
+        self._auto_switch = enabled
+        self._settings.setValue("auto_switch_theme", enabled)
+        self._settings.sync()
+        if enabled:
+            self._auto_timer.start()
+            self._check_auto_switch()  # 立即执行一次
+        else:
+            self._auto_timer.stop()
+
+    def _check_auto_switch(self):
+        """根据当前时间决定应该用哪个主题。
+        规则：7:00–18:00 → 月白（亮色），其余时段 → 墨渊（暗色）。
+        就像太阳升起开灯，太阳落山关灯。
+        """
+        if not self._auto_switch:
+            return
+        hour = _datetime.now().hour
+        # 白天 7:00 ~ 17:59 用月白，晚上用墨渊
+        target = "月白" if 7 <= hour < 18 else "墨渊"
+        if target != self._current_name:
+            self.switch_theme(target)
 
 
 # 全局实例 — 任何地方 import 即可使用

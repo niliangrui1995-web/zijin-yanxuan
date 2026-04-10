@@ -15,6 +15,16 @@ from core.event_bus import event_bus
 
 log = get_logger(__name__)
 
+
+def _get_memory_usage_mb() -> float:
+    """获取当前进程内存占用(MB)。psutil 是可选依赖，没装则返回 -1"""
+    try:
+        import psutil
+        return psutil.Process().memory_info().rss / 1024 / 1024
+    except ImportError:
+        return -1.0
+
+
 class RPSPrecomputer:
     """封装原本在 MainWindow_DataCacheMixin 中的 _action_refresh 业务。"""
     
@@ -39,10 +49,17 @@ class RPSPrecomputer:
             if set_status_callback:
                 set_status_callback(msg)
 
+        def _log_memory(stage_name: str):
+            """为什么要监控内存？F5 闪退直接原因是 Windows OOM kill，加监控能精确定位哪个阶段吃光内存"""
+            mem_mb = _get_memory_usage_mb()
+            if mem_mb > 0:
+                log.info(f"[F5] 内存快照 [{stage_name}]: {mem_mb:.0f} MB")
+
         try:
             _log_and_status("\n" + "=" * 60)
             _log_and_status("[F5] 盘后一键预计算 -- 开始")
             _log_and_status("=" * 60)
+            _log_memory("启动基线")
 
             # --- 阶段0: 除权除息 ---
             _log_and_status("[F5] 阶段0: 重新解析通达信 gbbq 除权除息数据...")
@@ -107,6 +124,11 @@ class RPSPrecomputer:
                 _log_and_status("[F5] ⏹ 用户取消")
                 return
 
+            # 阶段1→2 过渡：强制回收阶段1的临时对象（frames、中间DataFrame等）
+            # 为什么重要？如果不回收，阶段2的大矩阵+阶段1的残留同时在内存中，峰值直接翻倍
+            gc.collect()
+            _log_memory("阶段1→2 GC后")
+
             # --- 阶段2: RPS 矩阵 ---
             _log_and_status("[F5] 阶段2/3: 预计算 RPS 矩阵...")
             try:
@@ -133,12 +155,18 @@ class RPSPrecomputer:
                     _log_and_status(f"[F5] 阶段2/3 完成 -- RPS 已存 ({valid_count} 只有效排名)")
                 else:
                     log.warning("[F5] ⚠ 阶段2/3: RPS 矩阵计算返回空")
+                # 释放 rps_matrix 字典（可能上百 MB），只保留已经写入 engine 的 rps120/rps250
+                del rps_matrix
             except Exception as e:
                 log.error(f"[F5] ❌ 阶段2 RPS 计算异常: {e}", exc_info=True)
 
             if cancelled_checker and cancelled_checker():
                 _log_and_status("[F5] ⏹ 用户取消")
                 return
+
+            # 阶段2→2.5 过渡：释放 RPS 计算的大矩阵残留
+            gc.collect()
+            _log_memory("阶段2→2.5 GC后")
 
             # --- 阶段2.5: 板块 RPS ---
             _log_and_status("[F5] 阶段2.5/3: 预计算板块 RPS...")
@@ -164,8 +192,9 @@ class RPSPrecomputer:
             except Exception as e:
                 log.error(f"[F5] ❌ 阶段2.5 板块 RPS 异常: {e}", exc_info=True)
             
-            # 内存回收
+            # 全部完成后最终回收
             gc.collect()
+            _log_memory("全部完成")
 
             elapsed = time.time() - total_start
             _log_and_status(f"[F5] ✅ 全部完成 -- 耗时 {elapsed:.1f} 秒")
@@ -187,3 +216,4 @@ class RPSPrecomputer:
             # 使用回调返送给UI以脱钩
             if done_callback:
                 done_callback(count, elapsed)
+

@@ -153,6 +153,8 @@ def build_prices_matrix_fast(
         index='date',
         values='close',
     ).sort('date')
+    # 为什么在这里 del？concat 的 long_df 和 pivot 的 wide 同时存在时峰值翻倍（各约 200MB）
+    del long_df
 
     # 前向填充最多10天（替代 pd.ffill(limit=10)）
     stock_cols = [c for c in wide.columns if c != 'date']
@@ -272,8 +274,10 @@ def build_rps_matrix_pl(
         _log.warning("[加速引擎] ⚠ 无可用价格数据")
         return {}
 
-    # 保存矩阵缓存供下次增量复用
-    _save_prices_matrix(matrix, columns, dates_arr)
+    # 为什么 _save_prices_matrix 推迟到下面？在 pct_change + rank 之前保存会使得
+    # 价格矩阵（~20MB）+ Polars 序列化临时副本（~200MB）同时与后续 6 个大数组共存
+    # 推迟到 pct/rank 数组释放后再保存，峰值能降约 200MB
+    _deferred_save_data = (matrix.copy(), list(columns), dates_arr.copy())
 
     # ---- numpy 向量化 pct_change + rank ----
     t1 = time.time()
@@ -323,6 +327,16 @@ def build_rps_matrix_pl(
             'rps120': {columns[j]: float(r120[j]) for j in range(len(columns)) if valid[j]},
             'rps250': {columns[j]: float(r250[j]) for j in range(len(columns)) if valid[j]},
         }
+
+    # 释放 6 个大数组后再保存价格矩阵（推迟保存策略，降低峰值内存约 200MB）
+    del rps50_arr, rps120_arr, rps250_arr, matrix, dates_arr
+    import gc as _gc
+    _gc.collect()
+
+    # 延迟保存：此时 pct/rank 数组已释放，内存处于低谷
+    if _deferred_save_data is not None:
+        _save_prices_matrix(*_deferred_save_data)
+        del _deferred_save_data
 
     elapsed_total = time.time() - t_total
     _log.info(f"[加速引擎] RPS 矩阵构建完成(纯Polars) — 参与标的 {len(columns)} 只 | "
@@ -537,7 +551,7 @@ def build_sector_rps_pl(
             # 找到 target_date 对应的位置
             dates_col = pldf['datetime'].cast(pl.Date)
             # 找 <= target_dt 的最后一行
-            mask = dates_col <= pl.lit(target_dt)
+            mask = dates_col <= target_dt
             valid_indices = [i for i, v in enumerate(mask.to_list()) if v]
             if not valid_indices:
                 continue

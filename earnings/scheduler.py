@@ -5,6 +5,8 @@ import pandas as pd
 from core.logger import get_logger
 
 logger = get_logger()
+# 启动期断档追扫非常重，默认关闭以避免 UI 假死；手动扫描和定时巡检仍可用。
+ENABLE_STARTUP_GAP_FILL = False
 
 class FetchWorker(QThread):
     sig_finished = pyqtSignal(object) 
@@ -18,8 +20,14 @@ class FetchWorker(QThread):
 
     def run(self):
         try:
-            if self.mode == "gap_fill" and self.missing_dates:
-                logger.info(f"📡 发动机异步挂载：开始后台追扫 {len(self.missing_dates)} 天断档区间 -> {self.missing_dates}")
+            if self.mode == "warm_cache":
+                cached_df = self.engine.get_cached_records()
+                if cached_df is not None and not cached_df.empty:
+                    logger.info(f"[业绩调度] 📡 恢复缓存 {len(cached_df)} 条记录")
+                self.sig_finished.emit(cached_df if cached_df is not None else pd.DataFrame())
+            
+            elif self.mode == "gap_fill" and self.missing_dates:
+                logger.info(f"[业绩调度] 开始补扫 {len(self.missing_dates)} 天断档")
                 all_missed_dfs = []
                 for missed_day in self.missing_dates:
                     df_missed = self.engine.fetch_daily_surprises(target_publish_date=missed_day)
@@ -27,7 +35,7 @@ class FetchWorker(QThread):
                         all_missed_dfs.append(df_missed)
                 if all_missed_dfs:
                     combined_df = pd.concat(all_missed_dfs, ignore_index=True)
-                    logger.info(f"🎉 异步脱水完成！成功救回 {len(combined_df)} 条错失牛股。")
+                    logger.info(f"[业绩调度] ✅ 补扫完成，新增 {len(combined_df)} 条")
                     self.sig_finished.emit(combined_df)
                 else:
                     self.sig_finished.emit(pd.DataFrame())
@@ -40,7 +48,7 @@ class FetchWorker(QThread):
                 df_new = self.engine.fetch_daily_surprises()
                 self.sig_finished.emit(df_new)
         except Exception as e:
-            logger.error(f"[线程抛锚] 异步抓取遭遇重型异常退出: {e}")
+            logger.error(f"[业绩调度] ❌ 后台抓取异常退出: {e}")
             self.sig_finished.emit(pd.DataFrame())
 
 class EarningsScheduler(QObject):
@@ -73,11 +81,8 @@ class EarningsScheduler(QObject):
 
     def start_patrol(self):
         """开机：先吐缓存 -> 计算断档脱水回填 -> 进入战备"""
-        # 第一步：把硬盘里这 30 天内积攒的大金矿直接全量抛给前端 UI，瞬间填满界面
-        cached_df = self.engine.get_cached_records()
-        if not cached_df.empty:
-            logger.info(f"📡 开机追溯：瞬间从底盘抽调 {len(cached_df)} 条过往累积的高增名录发布给 UI")
-            self.sig_new_surprises_found.emit(cached_df)
+        # 第一步：后台吐缓存，避免在 UI 线程里做重型历史数据处理。
+        self._run_in_background("warm_cache")
             
         # 第二步：计算我们到底睡了几天，开启断档追更（无缝回填核心）
         last_sync = self.engine.last_sync_date
@@ -97,25 +102,27 @@ class EarningsScheduler(QObject):
             for i in range(1, delta_days + 1):
                 missing_dates.append((start_dt + timedelta(days=i)).strftime("%Y-%m-%d"))
         except Exception as e:
-            logger.warning(f"[巡逻] 日期解析失败，回退到仅查今天: {e}")
+            logger.warning(f"[业绩调度] 日期解析失败，回退仅查今天: {e}")
             missing_dates = [today_str] # 解析失败保底查今天
             
         # 补全中间漏掉的每一天，同时包含今天
         if today_str not in missing_dates:
              missing_dates.append(today_str)
              
-        if missing_dates:
+        if missing_dates and ENABLE_STARTUP_GAP_FILL:
             self._run_in_background("gap_fill", missing_dates=missing_dates)
+        elif missing_dates:
+            logger.info("[业绩调度] 跳过开机补扫（防卡），后续定时巡检")
 
         # 第三步：挂载日常心跳时钟（30秒对次表），今天剩下的时间交给机器打理
         self.clock_timer.start(30000) 
-        logger.info("✅ 业绩预告自动巡场机制已进入战备，严格盯防 6 个关键触发点。")
+        logger.info("[业绩调度] ✅ 定时巡检已启动 (6 个巡检时间点)")
 
     def stop_patrol(self):
         self.clock_timer.stop()
 
     def force_manual_scan(self, date_list: list):
-        logger.info(f"触发手动区间扫描（异步批量下发）: {date_list[0]} 到 {date_list[-1]}")
+        logger.info(f"[业绩调度] 手动扫描: {date_list[0]} ~ {date_list[-1]}")
         self._run_in_background("gap_fill", missing_dates=date_list)
 
     def _check_schedule(self):
@@ -130,5 +137,5 @@ class EarningsScheduler(QObject):
                 time_key = f"{t_hour}:{t_minute}"
                 if time_key not in self.triggered_today:
                     self.triggered_today.add(time_key)
-                    logger.info(f"📍 到达主线剧本节点 {time_key}，后台下发扫街任务...")
+                    logger.info(f"[业绩调度] ⏰ 触发 {time_key} 定时巡检")
                     self._run_in_background("routine")

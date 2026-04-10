@@ -1,0 +1,8 @@
+Windows fatal exception: access violation
+
+Thread 0x00002fbc (most recent call first):
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\asian_market_tab.py", line 290 in run
+
+Current thread 0x00002874 (most recent call first):
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\vcp_hunter_qt.pyw", line 110 in main
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\vcp_hunter_qt.pyw", line 116 in <module>

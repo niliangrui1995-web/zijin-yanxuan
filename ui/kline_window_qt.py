@@ -14,6 +14,7 @@ import json
 import os as _os
 import numpy as np
 from core.logger import get_logger
+from core.market_calendar import MarketCalendar
 
 log = get_logger(__name__)
 import pandas as pd
@@ -25,6 +26,7 @@ from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 
 from ui.viewmodels.watchlist_vm import watchlist_vm
+from ui.theme import theme_manager
 
 # ECharts JS 本地路径（断网也能用）
 _ECHARTS_JS_PATH = _os.path.join(
@@ -33,7 +35,57 @@ _ECHARTS_JS_PATH = _os.path.join(
 )
 
 
-def _build_html(title: str, echarts_data: dict, echarts_js_path: str) -> str:
+def _build_kline_theme_colors() -> dict:
+    """从当前主题中提取 K 线图渲染所需的全部色值。
+    为什么独立成函数？因为 HTML 模板和 Python 数据构建都需要同一套色值，
+    集中在一处避免散落各处时遗漏。
+    """
+    t = theme_manager.current_theme
+    is_dark = theme_manager.is_dark()
+
+    # K线专用色（从主题 token 读取，墨渊/月白各自定义了适配值）
+    colors = {
+        'up_color': t['KLINE_UP_COLOR'],
+        'down_color': t['KLINE_DOWN_COLOR'],
+        'ma10': t['KLINE_MA10'],
+        'ma20': t['KLINE_MA20'],
+        'ma50': t['KLINE_MA50'],
+        'ma150': t['KLINE_MA150'],
+        'ma200': t['KLINE_MA200'],
+        'vol_ma20': t['KLINE_VOL_MA20'],
+        'grid_line': t['KLINE_GRID_LINE'],
+        'axis_line': t['KLINE_AXIS_LINE'],
+        'axis_label': t['KLINE_AXIS_LABEL'],
+        'pointer_bg': t['KLINE_POINTER_BG'],
+        'vcp_star': t['KLINE_VCP_STAR'],
+        'vcp_line': t['KLINE_VCP_LINE'],
+        'vcp_area': t['KLINE_VCP_AREA'],
+    }
+
+    # 窗口/画布基础色（墨渊保持原始硬编码值保证零变化，月白用主题 token 适配白底）
+    if is_dark:
+        colors.update({
+            'bg_canvas': '#0A0A0A',
+            'bg_toolbar': '#0A0A0A',
+            'text_primary': '#FFF',
+            'text_secondary': '#D1D4DC',
+            'text_muted': '#A0A0A0',
+            'border': '#222',
+        })
+    else:
+        colors.update({
+            'bg_canvas': t['BG_TABLE_BASE'],
+            'bg_toolbar': t['BG_TITLEBAR'],
+            'text_primary': t['TEXT_PRIMARY'],
+            'text_secondary': t['TEXT_SECONDARY'],
+            'text_muted': t['TEXT_MUTED'],
+            'border': t['BORDER_DEFAULT'],
+        })
+
+    return colors
+
+
+def _build_html(title: str, echarts_data: dict, echarts_js_path: str, theme_colors: dict) -> str:
     """
     构建完整的 ECharts HTML 页面。
     为什么把 HTML 模板放在函数里而不是外部文件：因为需要动态嵌入 JSON 数据和 JS 路径，
@@ -49,25 +101,25 @@ def _build_html(title: str, echarts_data: dict, echarts_js_path: str) -> str:
     <meta charset="utf-8">
     <script src="{js_url}"></script>
     <style>
-        body {{ margin: 0; padding: 0; background-color: #0A0A0A; color: #D1D4DC; font-family: "Microsoft YaHei", sans-serif; overflow: hidden; }}
+        body {{ margin: 0; padding: 0; background-color: {theme_colors['bg_canvas']}; color: {theme_colors['text_secondary']}; font-family: "Microsoft YaHei", sans-serif; overflow: hidden; }}
         #chart {{ width: 100vw; height: calc(100vh - 35px); margin-top: 35px; }}
 
-        .top-toolbar {{ position: absolute; top: 0; left: 0; right: 0; height: 35px; background: #0A0A0A; border-bottom: 1px solid #222; display: flex; align-items: center; padding: 0 15px; z-index: 100; }}
-        .stock-title {{ font-size: 15px; font-weight: bold; color: #FFF; margin-right: 15px; }}
-        .info-item {{ font-size: 12px; color: #A0A0A0; margin-right: 8px; }}
+        .top-toolbar {{ position: absolute; top: 0; left: 0; right: 0; height: 35px; background: {theme_colors['bg_toolbar']}; border-bottom: 1px solid {theme_colors['border']}; display: flex; align-items: center; padding: 0 15px; z-index: 100; }}
+        .stock-title {{ font-size: 15px; font-weight: bold; color: {theme_colors['text_primary']}; margin-right: 15px; }}
+        .info-item {{ font-size: 12px; color: {theme_colors['text_muted']}; margin-right: 8px; }}
         .info-val {{ font-size: 12px; font-weight: bold; margin-left: 2px; }}
         .ma-display {{ margin-left: 5px; font-size: 11px; font-weight: bold; display: flex; gap: 8px; flex-wrap: nowrap; }}
-        .ma-display span.ma10 {{ color: #FFFFFF; }}
-        .ma-display span.ma20 {{ color: #00A2E8; }}
-        .ma-display span.ma50 {{ color: #FF9000; }}
-        .ma-display span.ma150 {{ color: #BF5AF2; }}
-        .ma-display span.ma200 {{ color: #FF375F; }}
+        .ma-display span.ma10 {{ color: {theme_colors['ma10']}; }}
+        .ma-display span.ma20 {{ color: {theme_colors['ma20']}; }}
+        .ma-display span.ma50 {{ color: {theme_colors['ma50']}; }}
+        .ma-display span.ma150 {{ color: {theme_colors['ma150']}; }}
+        .ma-display span.ma200 {{ color: {theme_colors['ma200']}; }}
     </style>
 </head>
 <body>
     <div class="top-toolbar" id="toolbar">
         <div class="stock-title">{title}</div>
-        <div class="info-item">日期: <span id="v-date" class="info-val" style="color: #fff">-</span></div>
+        <div class="info-item">日期: <span id="v-date" class="info-val" style="color: {theme_colors['text_primary']}">-</span></div>
         <div class="info-item">开: <span id="v-open" class="info-val">-</span></div>
         <div class="info-item">高: <span id="v-high" class="info-val">-</span></div>
         <div class="info-item">低: <span id="v-low" class="info-val">-</span></div>
@@ -88,8 +140,8 @@ def _build_html(title: str, echarts_data: dict, echarts_js_path: str) -> str:
     <script>
         const rawData = {data_json};
 
-        const upColor = '#F92855';
-        const downColor = '#00FFFF';
+        const upColor = '{theme_colors['up_color']}';
+        const downColor = '{theme_colors['down_color']}';
 
         const chart = echarts.init(document.getElementById('chart'));
 
@@ -135,46 +187,46 @@ def _build_html(title: str, echarts_data: dict, echarts_js_path: str) -> str:
         }});
 
         const option = {{
-            backgroundColor: '#0A0A0A',
+            backgroundColor: '{theme_colors['bg_canvas']}',
             animation: false,
             tooltip: {{ trigger: 'axis', axisPointer: {{ type: 'cross' }}, showContent: false }},
-            axisPointer: {{ link: [{{ xAxisIndex: 'all' }}], label: {{ backgroundColor: '#777' }} }},
+            axisPointer: {{ link: [{{ xAxisIndex: 'all' }}], label: {{ backgroundColor: '{theme_colors['pointer_bg']}' }} }},
             grid: [
                 {{ left: '3%', right: '3%', top: '4%', height: '60%' }},
                 {{ left: '3%', right: '3%', top: '65%', height: '14%' }},
                 {{ left: '3%', right: '3%', top: '82%', height: '15%' }}
             ],
             xAxis: [
-                {{ type: 'category', data: rawData.dates, gridIndex: 0, boundaryGap: false, axisLine: {{ onZero: false }}, splitLine: {{ show: true, lineStyle: {{ color: 'rgba(255,255,255,0.05)', type: 'dashed' }} }}, axisLabel: {{ show: false }} }},
-                {{ type: 'category', data: rawData.dates, gridIndex: 1, boundaryGap: false, axisLine: {{ onZero: false }}, splitLine: {{ show: true, lineStyle: {{ color: 'rgba(255,255,255,0.05)', type: 'dashed' }} }}, axisLabel: {{ show: false }} }},
-                {{ type: 'category', data: rawData.dates, gridIndex: 2, boundaryGap: false, axisLine: {{ onZero: false, lineStyle: {{ color: '#444' }} }}, splitLine: {{ show: true, lineStyle: {{ color: 'rgba(255,255,255,0.05)', type: 'dashed' }} }}, axisLabel: {{ color: '#888' }} }}
+                {{ type: 'category', data: rawData.dates, gridIndex: 0, boundaryGap: false, axisLine: {{ onZero: false }}, splitLine: {{ show: true, lineStyle: {{ color: '{theme_colors['grid_line']}', type: 'dashed' }} }}, axisLabel: {{ show: false }} }},
+                {{ type: 'category', data: rawData.dates, gridIndex: 1, boundaryGap: false, axisLine: {{ onZero: false }}, splitLine: {{ show: true, lineStyle: {{ color: '{theme_colors['grid_line']}', type: 'dashed' }} }}, axisLabel: {{ show: false }} }},
+                {{ type: 'category', data: rawData.dates, gridIndex: 2, boundaryGap: false, axisLine: {{ onZero: false, lineStyle: {{ color: '{theme_colors['axis_line']}' }} }}, splitLine: {{ show: true, lineStyle: {{ color: '{theme_colors['grid_line']}', type: 'dashed' }} }}, axisLabel: {{ color: '{theme_colors['axis_label']}' }} }}
             ],
             yAxis: [
-                {{ gridIndex: 0, scale: true, splitLine: {{ show: true, lineStyle: {{ color: 'rgba(255,255,255,0.05)', type: 'dashed' }} }}, position: 'right', axisLabel: {{ color: '#888' }} }},
-                {{ gridIndex: 1, scale: true, splitLine: {{ show: false }}, position: 'left', axisLabel: {{ color: '#888', formatter: function(val) {{ return val >= 1e8 ? (val/1e8).toFixed(0)+'亿' : val >= 1e4 ? (val/1e4).toFixed(0)+'万' : val; }} }} }},
-                {{ gridIndex: 2, scale: true, splitLine: {{ show: false }}, position: 'left', axisLabel: {{ color: '#888' }} }}
+                {{ gridIndex: 0, scale: true, splitLine: {{ show: true, lineStyle: {{ color: '{theme_colors['grid_line']}', type: 'dashed' }} }}, position: 'right', axisLabel: {{ color: '{theme_colors['axis_label']}' }} }},
+                {{ gridIndex: 1, scale: true, splitLine: {{ show: false }}, position: 'left', axisLabel: {{ color: '{theme_colors['axis_label']}', formatter: function(val) {{ return val >= 1e8 ? (val/1e8).toFixed(0)+'亿' : val >= 1e4 ? (val/1e4).toFixed(0)+'万' : val; }} }} }},
+                {{ gridIndex: 2, scale: true, splitLine: {{ show: false }}, position: 'left', axisLabel: {{ color: '{theme_colors['axis_label']}' }} }}
             ],
             series: [
                 {{
                     name: 'KLine', type: 'candlestick',
                     xAxisIndex: 0, yAxisIndex: 0, data: rawData.klines,
                     itemStyle: {{ color: upColor, color0: downColor, borderColor: upColor, borderColor0: downColor }},
-                    markPoint: rawData.vcpMarkers ? {{ data: rawData.vcpMarkers, symbol: 'pin', symbolSize: 1, label: {{ show: true, formatter: '⭐ 突破', color: '#FFD60A', offset: [0, -15] }} }} : null,
-                    markLine: rawData.vcpLines ? {{ data: rawData.vcpLines, symbol: 'none', label: {{ show: false }}, lineStyle: {{ color: '#FFD700', type: 'dashed' }} }} : null,
-                    markArea: rawData.vcpArea ? {{ data: rawData.vcpArea, itemStyle: {{ color: 'rgba(51, 153, 255, 0.1)' }} }} : null
+                    markPoint: rawData.vcpMarkers ? {{ data: rawData.vcpMarkers, symbol: 'pin', symbolSize: 1, label: {{ show: true, formatter: '⭐ 突破', color: '{theme_colors['vcp_star']}', offset: [0, -15] }} }} : null,
+                    markLine: rawData.vcpLines ? {{ data: rawData.vcpLines, symbol: 'none', label: {{ show: false }}, lineStyle: {{ color: '{theme_colors['vcp_line']}', type: 'dashed' }} }} : null,
+                    markArea: rawData.vcpArea ? {{ data: rawData.vcpArea, itemStyle: {{ color: '{theme_colors['vcp_area']}' }} }} : null
                 }},
-                {{ name: 'MA10', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: rawData.ma10, symbol: 'none', lineStyle: {{ color: '#FFFFFF', width: 1.5 }} }},
-                {{ name: 'MA20', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: rawData.ma20, symbol: 'none', lineStyle: {{ color: '#00A2E8', width: 1.5 }} }},
-                {{ name: 'MA50', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: rawData.ma50, symbol: 'none', lineStyle: {{ color: '#FF9000', width: 1.5 }} }},
-                {{ name: 'MA150', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: rawData.ma150, symbol: 'none', lineStyle: {{ color: '#BF5AF2', width: 1 }} }},
-                {{ name: 'MA200', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: rawData.ma200, symbol: 'none', lineStyle: {{ color: '#FF375F', width: 1 }} }},
+                {{ name: 'MA10', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: rawData.ma10, symbol: 'none', lineStyle: {{ color: '{theme_colors['ma10']}', width: 1.5 }} }},
+                {{ name: 'MA20', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: rawData.ma20, symbol: 'none', lineStyle: {{ color: '{theme_colors['ma20']}', width: 1.5 }} }},
+                {{ name: 'MA50', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: rawData.ma50, symbol: 'none', lineStyle: {{ color: '{theme_colors['ma50']}', width: 1.5 }} }},
+                {{ name: 'MA150', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: rawData.ma150, symbol: 'none', lineStyle: {{ color: '{theme_colors['ma150']}', width: 1 }} }},
+                {{ name: 'MA200', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: rawData.ma200, symbol: 'none', lineStyle: {{ color: '{theme_colors['ma200']}', width: 1 }} }},
 
                 {{ name: 'Volume', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: rawData.vols }},
-                {{ name: 'VolMA20', type: 'line', xAxisIndex: 1, yAxisIndex: 1, data: rawData.volMa20, symbol: 'none', lineStyle: {{ color: '#FFD700', width: 1.2 }}, z: 10 }},
+                {{ name: 'VolMA20', type: 'line', xAxisIndex: 1, yAxisIndex: 1, data: rawData.volMa20, symbol: 'none', lineStyle: {{ color: '{theme_colors['vol_ma20']}', width: 1.2 }}, z: 10 }},
 
                 {{ name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2, data: rawData.macd }},
-                {{ name: 'DIFF', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: rawData.diff, symbol: 'none', lineStyle: {{ color: '#FF9000', width: 1 }} }},
-                {{ name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: rawData.dea, symbol: 'none', lineStyle: {{ color: '#00A2E8', width: 1 }} }}
+                {{ name: 'DIFF', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: rawData.diff, symbol: 'none', lineStyle: {{ color: '{theme_colors['ma50']}', width: 1 }} }},
+                {{ name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: rawData.dea, symbol: 'none', lineStyle: {{ color: '{theme_colors['ma20']}', width: 1 }} }}
             ]
         }};
 
@@ -237,9 +289,9 @@ def _build_html(title: str, echarts_data: dict, echarts_js_path: str) -> str:
             const seriesUpdate = [
                 {{
                     data: rawData.klines,
-                    markPoint: rawData.vcpMarkers ? {{ data: rawData.vcpMarkers, symbol: 'pin', symbolSize: 1, label: {{ show: true, formatter: '⭐ 突破', color: '#FFD60A', offset: [0, -15] }} }} : null,
-                    markLine: rawData.vcpLines ? {{ data: rawData.vcpLines, symbol: 'none', label: {{ show: false }}, lineStyle: {{ color: '#FFD700', type: 'dashed' }} }} : null,
-                    markArea: rawData.vcpArea ? {{ data: rawData.vcpArea, itemStyle: {{ color: 'rgba(51, 153, 255, 0.1)' }} }} : null
+                    markPoint: rawData.vcpMarkers ? {{ data: rawData.vcpMarkers, symbol: 'pin', symbolSize: 1, label: {{ show: true, formatter: '⭐ 突破', color: '{theme_colors['vcp_star']}', offset: [0, -15] }} }} : null,
+                    markLine: rawData.vcpLines ? {{ data: rawData.vcpLines, symbol: 'none', label: {{ show: false }}, lineStyle: {{ color: '{theme_colors['vcp_line']}', type: 'dashed' }} }} : null,
+                    markArea: rawData.vcpArea ? {{ data: rawData.vcpArea, itemStyle: {{ color: '{theme_colors['vcp_area']}' }} }} : null
                 }},
                 {{ data: rawData.ma10 }},
                 {{ data: rawData.ma20 }},
@@ -298,61 +350,41 @@ class KLineChartWindow(QWidget):
         if _os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
-        # 深色主题
-        self.setStyleSheet("""
-            QWidget { background-color: #0B0B0E; color: #F5F5F7; }
-            QLabel { font-weight: bold; font-family: "Microsoft YaHei UI"; }
-        """)
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
         # === 顶部 PyQt 原生控制栏（快捷键、按钮等都挂在这里） ===
-        header_widget = QWidget()
-        header_widget.setFixedHeight(40)
-        header_widget.setStyleSheet("background-color: #0B0B0E; border-bottom: 1px solid #222;")
-        header_layout = QHBoxLayout(header_widget)
+        self.header_widget = QWidget()
+        self.header_widget.setFixedHeight(40)
+        header_layout = QHBoxLayout(self.header_widget)
         header_layout.setContentsMargins(10, 0, 10, 0)
 
         # 不再显示股票名称（ECharts 内部工具栏已有），只保留状态信息
         self.info_lbl = QLabel("正在加载数据...")
-        self.info_lbl.setStyleSheet("color: #86868B; font-size: 12px;")
         header_layout.addWidget(self.info_lbl)
         header_layout.addStretch()
 
         # 导航按钮
-        nav_btn_style = """
-            QPushButton { background-color: transparent; color: #86868B; border: 1px solid #3A3A3C; border-radius: 4px; padding: 4px 10px; font-weight: bold; font-size: 12px; }
-            QPushButton:hover { background-color: rgba(255,255,255,0.05); color: #F5F5F7; }
-            QPushButton:disabled { color: #3A3A3C; border-color: #2A2A2C; }
-        """
         self.btn_prev = QPushButton("◀ 上一只")
         self.btn_prev.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_prev.setStyleSheet(nav_btn_style)
         self.btn_prev.clicked.connect(lambda: self._nav_stock(-1))
         header_layout.addWidget(self.btn_prev)
 
         self.btn_next = QPushButton("下一只 ▶")
         self.btn_next.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_next.setStyleSheet(nav_btn_style)
         self.btn_next.clicked.connect(lambda: self._nav_stock(1))
         header_layout.addWidget(self.btn_next)
 
         self.btn_fav = QPushButton("☆ 移入关注池")
         self.btn_fav.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_fav.setStyleSheet("""
-            QPushButton { background-color: transparent; color: #FFD60A; border: 1px solid #FFD60A; border-radius: 4px; padding: 4px 12px; font-weight: bold; font-size: 12px; }
-            QPushButton:hover { background-color: rgba(255, 214, 10, 0.1); }
-        """)
         self.btn_fav.clicked.connect(self._toggle_fav)
         header_layout.addWidget(self.btn_fav)
 
-        layout.addWidget(header_widget)
+        layout.addWidget(self.header_widget)
 
         # === ECharts WebEngine 主图区域 ===
         self.browser = QWebEngineView()
-        self.browser.setStyleSheet("background-color: #0A0A0A;")
         layout.addWidget(self.browser)
 
         # 快捷键 ←/→ 切换上/下一只股票
@@ -361,8 +393,14 @@ class KLineChartWindow(QWidget):
         QShortcut(QKeySequence(Qt.Key.Key_Right), self, activated=lambda: self._nav_stock(1))
         self._update_nav_buttons()
 
+        # 初始化主题样式（必须在所有控件创建完成后调用）
+        self._apply_qt_theme()
+
         self._check_fav_status()
         self._load_and_draw()
+
+        # 监听全局主题切换 → 重新渲染 K 线图
+        theme_manager.sig_theme_changed.connect(self._on_theme_changed)
 
     # ======================== 关注池 ========================
     def _check_fav_status(self):
@@ -370,7 +408,7 @@ class KLineChartWindow(QWidget):
             self.is_fav = watchlist_vm.is_in_watchlist(self.code)
             self.btn_fav.setText("⭐ 移出关注池" if self.is_fav else "☆ 移入关注池")
         except Exception as e:
-            print(f"[K线窗口] 检查关注状态失败: {e}")
+            log.debug(f"[K线] 检查关注状态失败: {e}")
             self.is_fav = False
 
     def _toggle_fav(self):
@@ -378,7 +416,171 @@ class KLineChartWindow(QWidget):
             watchlist_vm.toggle_stock(self.code, self.name, self.vcp_data)
             self._check_fav_status()
         except Exception as e:
-            print(f"[K线窗口] 切换关注状态失败: {e}")
+            log.debug(f"[K线] 切换关注状态失败: {e}")
+
+    # ======================== 主题切换 ========================
+    def _on_theme_changed(self, _theme_name: str):
+        """主题切换时重新渲染整个 K 线图——换衣服，不是染色"""
+        self._apply_qt_theme()
+        if self.df is not None and len(self.df) > 0:
+            self._render_chart(self.df, loading=False)
+
+    def _apply_qt_theme(self):
+        """根据当前主题刷新 PyQt 原生层样式（窗口容器、按钮、信息栏）。
+        为什么暗色主题硬编码不读 token？K 线窗口在墨渊下使用独有配色
+        （#0B0B0E 而非全局 #0F1117），直接写死保证零变化。
+        """
+        t = theme_manager.current_theme
+        is_dark = theme_manager.is_dark()
+
+        if is_dark:
+            widget_bg, widget_text = "#0B0B0E", "#F5F5F7"
+            toolbar_bg, toolbar_border = "#0B0B0E", "#222"
+            info_color = "#86868B"
+            btn_border = "#3A3A3C"
+            btn_hover_bg, btn_hover_text = "rgba(255,255,255,0.05)", "#F5F5F7"
+            btn_disabled_text, btn_disabled_border = "#3A3A3C", "#2A2A2C"
+            chart_bg = "#0A0A0A"
+        else:
+            widget_bg, widget_text = t['BG_CANVAS'], t['TEXT_PRIMARY']
+            toolbar_bg, toolbar_border = t['BG_TITLEBAR'], t['BORDER_DEFAULT']
+            info_color = t['TEXT_MUTED']
+            btn_border = t['BORDER_STRONG']
+            btn_hover_bg, btn_hover_text = t['TAB_HOVER_BG'], t['TEXT_PRIMARY']
+            btn_disabled_text, btn_disabled_border = t['TEXT_DISABLED'], t['BORDER_DEFAULT']
+            chart_bg = t['BG_TABLE_BASE']
+
+        self.setStyleSheet(f"""
+            QWidget {{ background-color: {widget_bg}; color: {widget_text}; }}
+            QLabel {{ font-weight: bold; font-family: "Microsoft YaHei UI"; }}
+        """)
+        self.header_widget.setStyleSheet(
+            f"background-color: {toolbar_bg}; border-bottom: 1px solid {toolbar_border};"
+        )
+        self.info_lbl.setStyleSheet(f"color: {info_color}; font-size: 12px;")
+
+        nav_style = f"""
+            QPushButton {{ background-color: transparent; color: {info_color}; border: 1px solid {btn_border}; border-radius: 4px; padding: 4px 10px; font-weight: bold; font-size: 12px; }}
+            QPushButton:hover {{ background-color: {btn_hover_bg}; color: {btn_hover_text}; }}
+            QPushButton:disabled {{ color: {btn_disabled_text}; border-color: {btn_disabled_border}; }}
+        """
+        self.btn_prev.setStyleSheet(nav_style)
+        self.btn_next.setStyleSheet(nav_style)
+
+        vcp_star = t.get('KLINE_VCP_STAR', '#FFD60A')
+        fav_hover = 'rgba(255, 214, 10, 0.1)' if is_dark else 'rgba(217, 119, 6, 0.1)'
+        self.btn_fav.setStyleSheet(f"""
+            QPushButton {{ background-color: transparent; color: {vcp_star}; border: 1px solid {vcp_star}; border-radius: 4px; padding: 4px 12px; font-weight: bold; font-size: 12px; }}
+            QPushButton:hover {{ background-color: {fav_hover}; }}
+        """)
+
+        self.browser.setStyleSheet(f"background-color: {chart_bg};")
+
+    def _get_market(self) -> str:
+        return MarketCalendar.infer_market(self.code)
+
+    def _get_cn_target_trade_date(self):
+        """CN 专用：盘前按上一交易日，盘中/盘后按当日交易日。"""
+        from datetime import timedelta
+
+        now_cn = MarketCalendar._get_market_now("CN")
+        today = now_cn.date()
+        latest = MarketCalendar.get_latest_trade_date("CN", ref_date=today)
+        if latest is None:
+            return None
+
+        if (not MarketCalendar.is_trade_day(today, market="CN")):
+            return latest
+
+        hhmm = now_cn.hour * 100 + now_cn.minute
+        if hhmm < 915:
+            return MarketCalendar.get_latest_trade_date("CN", ref_date=today - timedelta(days=1))
+
+        return latest
+
+    def _build_asian_rt_quote(self):
+        from ui.tabs.asian_market_tab import GLOBAL_ASIAN_RT_CACHE
+
+        market = self._get_market()
+        latest_trade_date = MarketCalendar.get_latest_trade_date(market)
+        quote = GLOBAL_ASIAN_RT_CACHE.get(self.code) or {}
+        if latest_trade_date is None or not quote:
+            return None
+
+        df_today = quote.get('df_today')
+        if df_today is not None and not df_today.empty:
+            try:
+                last_row = df_today.iloc[-1]
+                last_dt = pd.Timestamp(last_row.name)
+                if last_dt.tzinfo is not None:
+                    last_dt = last_dt.tz_localize(None)
+                if last_dt.date() == latest_trade_date:
+                    return {
+                        'date': latest_trade_date.strftime('%Y-%m-%d'),
+                        'open': float(last_row.get('Open', 0) or 0),
+                        'high': float(last_row.get('High', 0) or 0),
+                        'low': float(last_row.get('Low', 0) or 0),
+                        'close': float(last_row.get('Close', 0) or 0),
+                        'volume': float(last_row.get('Volume', 0) or 0),
+                    }
+            except Exception as _e:
+                log.debug(f"[K线] 组装亚洲实时 df_today 失败: {_e}")
+
+        rt_close = float(quote.get('close', 0) or 0)
+        rt_open = float(quote.get('open', rt_close) or 0)
+        if rt_close <= 0 or rt_open <= 0:
+            return None
+        quote_trade_date = None
+        raw_quote_date = quote.get('date')
+        if raw_quote_date:
+            try:
+                quote_trade_date = pd.Timestamp(raw_quote_date).date()
+            except Exception:
+                quote_trade_date = None
+        if quote_trade_date is None:
+            return None
+        if latest_trade_date is not None and quote_trade_date > latest_trade_date:
+            quote_trade_date = latest_trade_date
+        if not MarketCalendar.is_trade_day(quote_trade_date, market=market):
+            return None
+
+        rt_high = float(quote.get('high', max(rt_open, rt_close)) or 0)
+        rt_low = float(quote.get('low', min(rt_open, rt_close)) or 0)
+        if rt_high <= 0:
+            rt_high = max(rt_open, rt_close)
+        if rt_low <= 0:
+            rt_low = min(rt_open, rt_close)
+
+        return {
+            'date': quote_trade_date.strftime('%Y-%m-%d'),
+            'open': rt_open,
+            'high': rt_high,
+            'low': rt_low,
+            'close': rt_close,
+            'volume': float(quote.get('volume', 0) or 0),
+        }
+
+    def _normalize_daily_df_index(self, df):
+        """统一到按交易日去重的 DatetimeIndex，避免同一天重复K线。"""
+        if df is None or len(df) == 0:
+            return df
+        try:
+            df = df.copy()
+            idx = pd.to_datetime(df.index, errors='coerce')
+            valid = ~idx.isna()
+            if not valid.all():
+                df = df.loc[valid].copy()
+                idx = idx[valid]
+            if len(idx) == 0:
+                return df
+            if isinstance(idx, pd.DatetimeIndex) and idx.tz is not None:
+                idx = idx.tz_localize(None)
+            df.index = idx.normalize()
+            df = df[~df.index.duplicated(keep='last')].sort_index()
+            return df
+        except Exception as _e:
+            log.debug(f"[K线] 日线索引归一化失败: {_e}")
+            return df
 
     # ======================== 数据加载 ========================
     def _load_and_draw(self):
@@ -397,72 +599,128 @@ class KLineChartWindow(QWidget):
 
         # 2. 异步拉取最新日线 + 盘中实时
         def _bg_fetch():
-            from datetime import datetime
-            fresh_df = self.data_provider.get_data_fresh_for_chart(self.code)
-
-            now = datetime.now()
             quote_to_apply = None
+            target_trade_date = self._get_cn_target_trade_date()
 
-            if not getattr(self.data_provider, '_offline', False):
-                already_has_latest = False
+            local_df = self._normalize_daily_df_index(self.data_provider.get_data(self.code))
+            last_local_date = None
+            if local_df is not None and not local_df.empty:
+                last_local_date = pd.Timestamp(local_df.index[-1]).date()
+
+            need_sync = (
+                target_trade_date is None
+                or last_local_date is None
+                or last_local_date < target_trade_date
+            )
+
+            if need_sync:
+                # 兼容旧数据中台签名：有的版本不支持 force_sync 关键字参数
+                try:
+                    fresh_df = self.data_provider.get_data_fresh_for_chart(self.code, force_sync=True)
+                except TypeError:
+                    fresh_df = self.data_provider.get_data_fresh_for_chart(self.code)
+                fresh_df = self._normalize_daily_df_index(fresh_df)
+            else:
+                fresh_df = local_df
+
+            if (
+                not getattr(self.data_provider, '_offline', False)
+                and target_trade_date is not None
+                and MarketCalendar.is_market_active("CN")
+            ):
+                last_dt = None
                 if fresh_df is not None and not fresh_df.empty:
                     last_dt = pd.Timestamp(fresh_df.index[-1]).date()
-                    if now.hour > 15 or (now.hour == 15 and now.minute > 5):
-                        if last_dt >= now.date():
-                            already_has_latest = True
 
-                is_pre_market = now.weekday() < 5 and (now.hour < 9 or (now.hour == 9 and now.minute < 25))
-                is_weekend = now.weekday() >= 5
-
-                if not already_has_latest and not is_pre_market and not is_weekend:
+                already_has_latest = last_dt is not None and last_dt >= target_trade_date
+                if not already_has_latest:
                     try:
                         quotes = self.data_provider.fetch_realtime_quotes_batch([self.code])
                         if quotes and self.code in quotes:
                             quote_to_apply = quotes[self.code]
                     except Exception as e:
-                        print(f"[K线] 盘中实时拼接失败: {e}")
-            return fresh_df, quote_to_apply
+                        log.warning(f"[K线] {self.code} 实时行情合并失败: {e}")
+            return fresh_df, quote_to_apply, target_trade_date
 
         def _on_fetch_success(result):
             try:
                 if result:
-                    fresh_df, quote_to_apply = result
-                    if fresh_df is not None:
-                        # 在渲染前将今日最新报价合并到 df，这样算出来的 MA 和 MACD 对最后一根 K 也是准确的
-                        if quote_to_apply is not None:
-                            from datetime import datetime
-                            # 计算正确的最新日期
-                            today_date = datetime.now().date()
-                            
-                            rt_open = float(quote_to_apply.get('open', 0) or 0)
-                            if rt_open > 0:
-                                rt_close = float(quote_to_apply.get('close', 0) or 0)
-                                rt_high = float(quote_to_apply.get('high', 0) or 0)
-                                rt_low = float(quote_to_apply.get('low', 0) or 0)
-                                rt_vol = float(quote_to_apply.get('volume', 0) or 0)
-                                
-                                last_date = pd.Timestamp(fresh_df.index[-1]).date()
-                                
-                                # 如果是同一天，就覆盖最后一行
-                                if last_date >= today_date:
-                                    fresh_df.iloc[-1, fresh_df.columns.get_loc('open')] = rt_open
-                                    fresh_df.iloc[-1, fresh_df.columns.get_loc('high')] = max(float(fresh_df.iloc[-1]['high']), rt_high)
-                                    fresh_df.iloc[-1, fresh_df.columns.get_loc('low')] = min(float(fresh_df.iloc[-1]['low']), rt_low)
-                                    fresh_df.iloc[-1, fresh_df.columns.get_loc('close')] = rt_close
-                                    if 'volume' in fresh_df.columns:
-                                        fresh_df.iloc[-1, fresh_df.columns.get_loc('volume')] = rt_vol
+                    fresh_df, quote_to_apply, target_trade_date = result
+                    if fresh_df is None or len(fresh_df) == 0:
+                        self.info_lbl.setText("⚠ 本地无K线，联网补齐失败，请检查网络后重试")
+                        return
+
+                    fresh_df = self._normalize_daily_df_index(fresh_df)
+
+                    if quote_to_apply is not None:
+                        rt_open = float(quote_to_apply.get('open', 0) or 0)
+                        if rt_open > 0 and target_trade_date is not None:
+                            rt_close = float(quote_to_apply.get('close', 0) or 0)
+                            rt_high = float(quote_to_apply.get('high', 0) or 0)
+                            rt_low = float(quote_to_apply.get('low', 0) or 0)
+                            rt_vol = float(quote_to_apply.get('volume', 0) or 0)
+
+                            last_date = pd.Timestamp(fresh_df.index[-1]).date()
+                            quote_trade_date = None
+                            raw_quote_date = quote_to_apply.get('date')
+                            if raw_quote_date:
+                                try:
+                                    quote_trade_date = pd.Timestamp(raw_quote_date).date()
+                                except Exception:
+                                    quote_trade_date = None
+                            if quote_trade_date is None:
+                                # 通达信实时接口不带交易日：按交易日历+交易时段推断该归属哪一日
+                                if (
+                                    MarketCalendar.is_market_active("CN")
+                                    and target_trade_date is not None
+                                    and last_date < target_trade_date
+                                ):
+                                    quote_trade_date = target_trade_date
                                 else:
-                                    # 如果是新交易日，追加一行
+                                    quote_trade_date = last_date
+                            if quote_trade_date > target_trade_date:
+                                quote_trade_date = target_trade_date
+
+                            if quote_trade_date == last_date:
+                                fresh_df.iloc[-1, fresh_df.columns.get_loc('open')] = rt_open
+                                if rt_high > 0:
+                                    fresh_df.iloc[-1, fresh_df.columns.get_loc('high')] = max(float(fresh_df.iloc[-1]['high']), rt_high)
+                                if rt_low > 0:
+                                    fresh_df.iloc[-1, fresh_df.columns.get_loc('low')] = min(float(fresh_df.iloc[-1]['low']), rt_low)
+                                if rt_close > 0:
+                                    fresh_df.iloc[-1, fresh_df.columns.get_loc('close')] = rt_close
+                                if 'volume' in fresh_df.columns:
+                                    fresh_df.iloc[-1, fresh_df.columns.get_loc('volume')] = rt_vol
+                            elif (
+                                quote_trade_date > last_date
+                                and quote_trade_date <= target_trade_date
+                                and MarketCalendar.is_market_active("CN")
+                                and rt_close > 0
+                            ):
+                                prev_row = fresh_df.iloc[-1]
+                                tol = 1e-8
+                                same_as_prev = (
+                                    abs(float(prev_row.get('open', 0)) - rt_open) <= tol
+                                    and abs(float(prev_row.get('high', 0)) - rt_high) <= tol
+                                    and abs(float(prev_row.get('low', 0)) - rt_low) <= tol
+                                    and abs(float(prev_row.get('close', 0)) - rt_close) <= tol
+                                )
+                                if not same_as_prev:
+                                    sim_high = rt_high if rt_high > 0 else max(rt_open, rt_close)
+                                    sim_low = rt_low if rt_low > 0 else min(rt_open, rt_close)
                                     new_row = pd.DataFrame({
-                                        'open': [rt_open], 'high': [rt_high], 'low': [rt_low],
-                                        'close': [rt_close], 'volume': [rt_vol]
-                                    }, index=[pd.Timestamp(today_date)])
+                                        'open': [rt_open],
+                                        'high': [sim_high],
+                                        'low': [sim_low],
+                                        'close': [rt_close],
+                                        'volume': [rt_vol],
+                                    }, index=[pd.Timestamp(quote_trade_date)])
+                                    fresh_df = fresh_df[fresh_df.index != pd.Timestamp(quote_trade_date)]
                                     fresh_df = pd.concat([fresh_df, new_row])
-                                    
-                        # 现在包含最新的K线，统一交给 _render_chart 去计算所有指标
-                        self._render_chart(fresh_df, loading=False)
+                                    fresh_df = self._normalize_daily_df_index(fresh_df)
+
+                    self._render_chart(fresh_df, loading=False)
             except RuntimeError:
-                # 窗口已被用户关闭
                 pass
 
         from core.task_manager import task_manager
@@ -484,11 +742,11 @@ class KLineChartWindow(QWidget):
                     if data:
                         df = pd.DataFrame(data)
                         if 'date' in df.columns:
-                            df['date'] = pd.to_datetime(df['date'])
+                            df['date'] = pd.to_datetime(df['date']).dt.normalize()
                             df.set_index('date', inplace=True)
                         for col in ['open', 'high', 'low', 'close', 'volume']:
                             if col in df.columns:
-                                df[col] = df[col].astype(float)
+                                df[col] = pd.to_numeric(df[col], errors='coerce').astype(float)
 
         if df is not None:
             if self.code in GLOBAL_ASIAN_RT_CACHE:
@@ -516,26 +774,34 @@ class KLineChartWindow(QWidget):
                     df = pd.concat([df[~overlap_mask], rt_df]).sort_index()
                     df = df[~df.index.duplicated(keep='last')]
                 
-                # --- 用 fast_info 实时 OHLC 强刷最后一根 K 线 ---
-                from datetime import datetime
-                from ui.tabs.asian_market_tab import get_market_status
-                
-                market_suffix = "TW"
-                if '.' in self.code:
-                    market_suffix = self.code.split('.')[-1]
-                    
-                status = get_market_status(market_suffix)
-                today_date = datetime.now().date()
+                # --- 用 fast_info / df_today 实时 OHLC 强刷最后一根 K 线 ---
+                market = self._get_market()
+                latest_trade_date = MarketCalendar.get_latest_trade_date(market)
                 last_date = pd.Timestamp(df.index[-1]).date()
                 
                 rt_close = quote.get('close')
                 rt_open = quote.get('open')
                 rt_high = quote.get('high')
                 rt_low = quote.get('low')
+                quote_trade_date = None
+                raw_quote_date = quote.get('date')
+                if raw_quote_date:
+                    try:
+                        quote_trade_date = pd.Timestamp(raw_quote_date).date()
+                    except Exception:
+                        quote_trade_date = None
+                if quote_trade_date is None and df_today is not None and not df_today.empty:
+                    try:
+                        last_dt = pd.Timestamp(df_today.index[-1])
+                        if getattr(last_dt, "tzinfo", None) is not None:
+                            last_dt = last_dt.tz_localize(None)
+                        quote_trade_date = last_dt.date()
+                    except Exception:
+                        quote_trade_date = None
                 
-                if rt_close is not None:
-                    if last_date >= today_date:
-                        # 今天的行已存在，用 fast_info 强刷全部 OHLC（包括开盘价！）
+                if rt_close is not None and latest_trade_date is not None and quote_trade_date is not None:
+                    if quote_trade_date == last_date:
+                        # 报价日期与最后一根一致，仅覆盖，避免将旧报价误追加为新交易日
                         if rt_open:
                             df.iloc[-1, df.columns.get_loc('open')] = float(rt_open)
                         if rt_high:
@@ -543,21 +809,27 @@ class KLineChartWindow(QWidget):
                         if rt_low:
                             df.iloc[-1, df.columns.get_loc('low')] = min(float(df.iloc[-1]['low']), float(rt_low))
                         df.iloc[-1, df.columns.get_loc('close')] = float(rt_close)
-                    elif "休市" not in status:
-                        # 交易日但 history 没给今天的行，强行造一根
-                        sim_open = float(rt_open or rt_close)
-                        sim_high = float(rt_high or max(sim_open, float(rt_close)))
-                        sim_low = float(rt_low or min(sim_open, float(rt_close)))
+                    elif (
+                        quote_trade_date > last_date
+                        and quote_trade_date <= latest_trade_date
+                        and MarketCalendar.is_market_active(market)
+                    ):
+                        # 只有报价自身日期前进到了新交易日，才允许补新 bar
+                        rt_close_val = float(rt_close) if rt_close else 0.0
                         
-                        new_row = pd.DataFrame({
-                            'open': [sim_open], 
-                            'high': [sim_high], 
-                            'low': [sim_low],
-                            'close': [float(rt_close)], 
-                            'volume': [0.0]
-                        }, index=[pd.Timestamp(today_date)])
-                        df = pd.concat([df, new_row])
-
+                        sim_open = float(rt_open) if rt_open else rt_close_val
+                        sim_high = float(rt_high) if rt_high else max(sim_open, rt_close_val)
+                        sim_low = float(rt_low) if rt_low else min(sim_open, rt_close_val)
+                        
+                        if rt_close_val > 0:
+                            new_row = pd.DataFrame({
+                                'open': [sim_open], 
+                                'high': [sim_high], 
+                                'low': [sim_low],
+                                'close': [rt_close_val], 
+                                'volume': [0.0]
+                            }, index=[pd.Timestamp(quote_trade_date)])
+                            df = pd.concat([df, new_row])
 
             # 统一交由 _render_chart() 去计算指标并生成完整 ECharts，此时必然包含最新日期
             self._render_chart(df, loading=False)
@@ -577,15 +849,15 @@ class KLineChartWindow(QWidget):
         if 'date' in df.columns and not isinstance(df.index, pd.DatetimeIndex):
             df['date'] = pd.to_datetime(df['date'].astype(str))
             df.set_index('date', inplace=True)
+        df = self._normalize_daily_df_index(df)
 
-        if df is None or len(df) < 60:
+        if df is None or len(df) < 5:
             if not loading:
                 self.info_lbl.setText("⚠ 数据不足，无法绘图")
             return
 
-        # 确保有 MACD 指标
-        if 'MACD' not in df.columns or df['MACD'].isna().all():
-            df = VCPEngine.calculate_indicators(df)
+        # 始终要求重算完整指标，避免合并了今天盘中的新K线后由于缺少最新日期的MACD导致JS渲染因含有NaN而雪崩不画K线
+        df = VCPEngine.calculate_indicators(df)
 
         if not loading:
             self.info_lbl.setText(f"✅ 数据拉取成功 (缓存行数: {len(df)})")
@@ -608,7 +880,8 @@ class KLineChartWindow(QWidget):
         html_content = _build_html(
             title=f"{self.name} ({self.code}) 日线",
             echarts_data=echarts_data,
-            echarts_js_path=_ECHARTS_JS_PATH
+            echarts_js_path=_ECHARTS_JS_PATH,
+            theme_colors=_build_kline_theme_colors()
         )
 
         # 用 baseUrl 确保本地 file:// 引用正常
@@ -629,8 +902,10 @@ class KLineChartWindow(QWidget):
         vols = []
         self.time_dict = {}
 
-        up_color = '#F92855'
-        down_color = '#00FFFF'
+        # 涨跌色从主题 token 读取，墨渊/月白各自有对应的色值
+        _t = theme_manager.current_theme
+        up_color = _t['KLINE_UP_COLOR']
+        down_color = _t['KLINE_DOWN_COLOR']
 
         for i, (dt, row) in enumerate(self.df.iterrows()):
             o = float(row['open'])
@@ -716,7 +991,20 @@ class KLineChartWindow(QWidget):
 
     def _inject_vcp_overlays(self, data: dict, dates: list):
         """将 VCP 买点信号注入 ECharts 的 markPoint / markLine / markArea"""
-        trigger_date = self.vcp_data.get('触发日期', '')
+        def _pick(*keys, default=''):
+            for key in keys:
+                value = self.vcp_data.get(key)
+                if value not in (None, ''):
+                    return value
+            return default
+
+        def _to_float(value, default=0.0):
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
+        trigger_date = str(_pick('触发日期', '日期', '时间', 'trigger_date', default=''))[:10]
         trigger_idx = -1
 
         date_to_idx = {d: i for i, d in enumerate(dates)}
@@ -734,14 +1022,16 @@ class KLineChartWindow(QWidget):
                 "coord": [trigger_idx, kline[3]],  # kline[3] = high
                 "symbol": "pin",
                 "symbolSize": 40,
-                "label": {"show": True, "formatter": "⭐ 突破", "color": "#FFD60A", "fontSize": 11}
+                "label": {"show": True, "formatter": "⭐ 突破", "color": theme_manager.current_theme['KLINE_VCP_STAR'], "fontSize": 11}
             }]
 
         # 箱体与高点连线
-        box_high = self.vcp_data.get('区间最高价', 0)
-        box_low = self.vcp_data.get('区间最低点', 0)
+        box_high = _to_float(_pick('区间最高价', 'box_high', default=0))
+        box_low = _to_float(_pick('区间最低点', 'box_low', default=0))
 
-        peak_dates = self.vcp_data.get('_peak_dates', [])
+        peak_dates = _pick('_peak_dates', 'peak_dates', default=[]) or []
+        if isinstance(peak_dates, str):
+            peak_dates = [peak_dates]
         if not peak_dates:
             for key in ['_high1_date', '_high2_date', '_high3_date']:
                 if self.vcp_data.get(key):
@@ -764,6 +1054,7 @@ class KLineChartWindow(QWidget):
             if valid_indices:
                 x_start = min(valid_indices)
                 x_end = trigger_idx if trigger_idx != -1 else len(dates) - 1
+                x_end = max(x_start, x_end)
 
                 # 箱体区域
                 data["vcpArea"] = [[
@@ -778,60 +1069,71 @@ class KLineChartWindow(QWidget):
                         {"xAxis": dates[xi], "yAxis": box_low},
                         {"xAxis": dates[xi], "yAxis": box_high}
                     ])
+
+                # 箱体上下沿水平线
+                vcp_lines.append([
+                    {"xAxis": dates[x_start], "yAxis": box_high},
+                    {"xAxis": dates[x_end], "yAxis": box_high}
+                ])
+                vcp_lines.append([
+                    {"xAxis": dates[x_start], "yAxis": box_low},
+                    {"xAxis": dates[x_end], "yAxis": box_low}
+                ])
                 data["vcpLines"] = vcp_lines
 
     # ======================== 盘中增量更新 ========================
     def _start_rt_timer(self):
         """启动盘中实时刷新定时器（60秒间隔），只在交易时段运行"""
-        from datetime import datetime
-        now = datetime.now()
-        is_trading_hours = (now.weekday() < 5 and
-                           ((now.hour == 9 and now.minute >= 25) or
-                            (10 <= now.hour <= 14) or
-                            (now.hour == 15 and now.minute <= 5)))
-
-        if not is_trading_hours or getattr(self.data_provider, '_offline', False):
+        market = self._get_market()
+        if not MarketCalendar.is_market_active(market):
+            if self._rt_timer is not None:
+                self._rt_timer.stop()
+            return
+        if market == "CN" and getattr(self.data_provider, '_offline', False):
             return
 
         if self._rt_timer is None:
             self._rt_timer = QTimer(self)
             self._rt_timer.timeout.connect(self._on_rt_timer)
         self._rt_timer.start(60 * 1000)
-        print(f"[K线] {self.code} 盘中实时刷新已启动（间隔 60s）")
+        log.debug(f"[K线] {self.code} 实时刷新已启动 (60s)")
 
     def _on_rt_timer(self):
         """定时器回调：拉取最新实时报价，通过 JS 增量更新最后一根 K 线"""
-        from datetime import datetime
-        now = datetime.now()
-
-        if now.hour >= 15 and now.minute > 5:
+        market = self._get_market()
+        if not MarketCalendar.is_market_active(market):
             if self._rt_timer:
                 self._rt_timer.stop()
-                print(f"[K线] {self.code} 已收盘，停止实时刷新")
+                log.debug(f"[K线] {self.code} 已收盘，停止实时刷新")
             return
 
         try:
-            if '.' in self.code:
-                import yfinance as yf
-                rt_df = yf.Ticker(self.code).history(period="1d", interval="1d")
-                if not rt_df.empty:
-                    last_row = rt_df.iloc[-1]
-                    rt_date = pd.Timestamp(last_row.name).strftime('%Y-%m-%d')
-                    quote = {
-                        'date': rt_date,
-                        'open': float(last_row['Open']),
-                        'high': float(last_row['High']),
-                        'low': float(last_row['Low']),
-                        'close': float(last_row['Close']),
-                        'volume': float(last_row.get('Volume', 0))
-                    }
+            if market != "CN":
+                quote = self._build_asian_rt_quote()
+                if quote is None:
+                    import yfinance as yf
+                    rt_df = yf.Ticker(self.code).history(period="5d", interval="1d")
+                    if not rt_df.empty:
+                        last_row = rt_df.iloc[-1]
+                        rt_date = pd.Timestamp(last_row.name)
+                        if rt_date.tzinfo is not None:
+                            rt_date = rt_date.tz_localize(None)
+                        quote = {
+                            'date': rt_date.strftime('%Y-%m-%d'),
+                            'open': float(last_row['Open']),
+                            'high': float(last_row['High']),
+                            'low': float(last_row['Low']),
+                            'close': float(last_row['Close']),
+                            'volume': float(last_row.get('Volume', 0))
+                        }
+                if quote is not None:
                     self._refresh_last_bar(quote)
             else:
                 quotes = self.data_provider.fetch_realtime_quotes_batch([self.code])
                 if quotes and self.code in quotes:
                     self._refresh_last_bar(quotes[self.code])
         except Exception as e:
-            print(f"[K线] {self.code} 实时刷新异常: {e}")
+            log.warning(f"[K线] {self.code} 实时刷新异常: {e}")
 
     def _refresh_last_bar(self, quote):
         """通过 JS 注入实现无闪烁增量更新最后一根 K 线"""
@@ -849,46 +1151,60 @@ class KLineChartWindow(QWidget):
 
         from datetime import datetime
 
+        market = self._get_market()
+        latest_trade_date = MarketCalendar.get_latest_trade_date(market)
         rt_date_str = quote.get('date')
         last_date = pd.Timestamp(self.df.index[-1]).date()
 
         if rt_date_str:
-            rt_date = pd.Timestamp(rt_date_str).date()
-        else:
-            from core.market_calendar import MarketCalendar
-            today_date = datetime.now().date()
-            is_trade = True
             try:
-                trade_dates = MarketCalendar._trade_dates
-                if trade_dates is None:
-                    trade_dates = MarketCalendar.load_trade_dates()
-                if trade_dates:
-                    is_trade = today_date.strftime("%Y-%m-%d") in trade_dates
-                else:
-                    is_trade = today_date.weekday() < 5
-            except Exception as _e:
-                log.debug(f"[K线] 交易日历查询失败，按周末判断: {_e}")
-                is_trade = today_date.weekday() < 5
+                rt_date = pd.Timestamp(rt_date_str).date()
+            except Exception:
+                rt_date = None
+        else:
+            if (
+                market == "CN"
+                and latest_trade_date is not None
+                and MarketCalendar.is_market_active(market)
+                and last_date < latest_trade_date
+            ):
+                rt_date = latest_trade_date
+            else:
+                rt_date = last_date
 
-            rt_date = pd.Timestamp(today_date).date() if is_trade else last_date
+        if latest_trade_date is None:
+            rt_date = last_date
+        elif rt_date is None:
+            rt_date = last_date
+        elif not MarketCalendar.is_trade_day(rt_date, market=market):
+            rt_date = last_date
+        elif rt_date > latest_trade_date:
+            rt_date = latest_trade_date
+
+        if rt_date is None:
+            rt_date = last_date
 
         # 更新本地 df 缓存
         if last_date >= rt_date:
             # 覆盖更新最后一根
             self.df.iloc[-1, self.df.columns.get_loc('open')] = rt_open
-            self.df.iloc[-1, self.df.columns.get_loc('high')] = max(
-                self.df.iloc[-1, self.df.columns.get_loc('high')], rt_high
-            )
-            self.df.iloc[-1, self.df.columns.get_loc('low')] = min(
-                self.df.iloc[-1, self.df.columns.get_loc('low')], rt_low
-            )
+            if rt_high > 0:
+                self.df.iloc[-1, self.df.columns.get_loc('high')] = max(
+                    self.df.iloc[-1, self.df.columns.get_loc('high')], rt_high
+                )
+            if rt_low > 0:
+                self.df.iloc[-1, self.df.columns.get_loc('low')] = min(
+                    self.df.iloc[-1, self.df.columns.get_loc('low')], rt_low
+                )
             self.df.iloc[-1, self.df.columns.get_loc('close')] = rt_close
             if 'volume' in self.df.columns:
                 self.df.iloc[-1, self.df.columns.get_loc('volume')] = rt_vol
         else:
             # 新增一根 K 线
+            sim_high = rt_high if rt_high > 0 else max(rt_open, rt_close)
+            sim_low = rt_low if rt_low > 0 else min(rt_open, rt_close)
             new_row = pd.DataFrame({
-                'open': [rt_open], 'high': [rt_high], 'low': [rt_low],
+                'open': [rt_open], 'high': [sim_high], 'low': [sim_low],
                 'close': [rt_close], 'volume': [rt_vol]
             }, index=[pd.Timestamp(rt_date)])
             self.df = pd.concat([self.df, new_row])
@@ -910,7 +1226,7 @@ class KLineChartWindow(QWidget):
             pre_close = float(self.df.iloc[-2]['close'])
 
         pct = ((rt_close - pre_close) / pre_close * 100) if pre_close > 0 else 0
-        color = '#E85D5D' if rt_close >= pre_close else '#3CC68A'
+        color = theme_manager.current_theme['COLOR_RISE_STRONG'] if rt_close >= pre_close else theme_manager.current_theme['COLOR_FALL_STRONG']
         sign = '+' if rt_close >= pre_close else ''
         now_str = datetime.now().strftime('%H:%M:%S')
         self.info_lbl.setText(
@@ -973,6 +1289,12 @@ class KLineChartWindow(QWidget):
     # ======================== 资源释放 ========================
     def closeEvent(self, event):
         """窗口关闭时彻底释放 WebEngine 资源，防止内存泄漏"""
+        # 断开主题切换信号，防止信号调用已销毁的窗口
+        try:
+            theme_manager.sig_theme_changed.disconnect(self._on_theme_changed)
+        except TypeError:
+            pass
+
         # 停止定时器
         if self._rt_timer is not None:
             self._rt_timer.stop()
@@ -988,5 +1310,5 @@ class KLineChartWindow(QWidget):
         except Exception as _e:
             log.debug(f"[K线] WebEngine 释放异常: {_e}")
 
-        print(f"[K线] {self.code} 窗口关闭，WebEngine 资源已释放")
+        log.debug(f"[K线] {self.code} 窗口关闭")
         super().closeEvent(event)

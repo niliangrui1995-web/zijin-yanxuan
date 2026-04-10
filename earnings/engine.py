@@ -27,7 +27,7 @@ try:
         total = getattr(self, 'total', None) or '?'
         # 逢 5 倍数或者最后一页，向 UI 广播一声心跳
         if self._my_n % 5 == 0 or self._my_n == total:
-            _hijack_logger.info(f"   [底层心跳] 正在拼命下钻网线... 挖掘深层文件柜 第 {self._my_n}/{total} 页")
+            _hijack_logger.info(f"[业绩引擎] 分页抓取中 {self._my_n}/{total}")
             
     tqdm.tqdm.__init__ = _silent_tqdm_init
     tqdm.tqdm.update = _my_tqdm_update
@@ -42,6 +42,31 @@ import json
 logger = get_logger()
 
 _POOL_CACHE = {}
+
+
+def _parse_amount(value):
+    """把财务字段统一转成元，兼容字符串中的 万/亿 单位。"""
+    if pd.isna(value):
+        return np.nan
+    value_str = str(value).strip()
+    if not value_str:
+        return np.nan
+
+    multiplier = 1.0
+    if '万' in value_str:
+        multiplier = 10000.0
+        value_str = value_str.replace('万', '')
+    elif '亿' in value_str:
+        multiplier = 100000000.0
+        value_str = value_str.replace('亿', '')
+
+    digits = ''.join(filter(lambda x: x.isdigit() or x in '.-', value_str))
+    if not digits or digits in ('.', '-', '-.'):
+        return np.nan
+    try:
+        return float(digits) * multiplier
+    except (ValueError, TypeError):
+        return np.nan
 
 def safe_ak_fetch(fetch_func, *args, **kwargs):
     """带退避的强力护甲 + 大白话进度解说"""
@@ -73,12 +98,12 @@ def safe_ak_fetch(fetch_func, *args, **kwargs):
         try:
             # 只有抓历史底稿时过于频繁，为了不刷屏少打印开始。大型池子打印。
             if "financial_benefit" not in fname:
-                logger.info(f"⏳ 正在派人前往底层捞取 [{param_str}] 的 {func_cn} 数据，请稍候...")
+                logger.info(f"[业绩引擎] 拉取 {func_cn} ({param_str})...")
                 
             res = fetch_func(*args, **kwargs)
                 
             if "financial_benefit" not in fname:
-                logger.info(f"✅ 捞取大丰收！[{param_str}] 的 {func_cn} 已经全部安全拖回库中。")
+                logger.info(f"[业绩引擎] ✅ {func_cn} ({param_str}) 拉取完成")
                 _POOL_CACHE[f"{fname}_{param_str}"] = (time.time(), res.copy() if not res.empty else res)
                 
             return res
@@ -87,14 +112,14 @@ def safe_ak_fetch(fetch_func, *args, **kwargs):
             error_msg = str(e)
             if "NoneType" in error_msg or "not subscriptable" in error_msg:
                 if "financial_benefit" not in fname:
-                    logger.info(f"🈳 [空军警报] 源站表示 [{param_str}] 的 {func_cn} 目前还是真空状态（暂时没人发/没出炉），本模块直接放行。")
+                    logger.info(f"[业绩引擎] {func_cn} ({param_str}) 暂无数据，跳过")
                 return pd.DataFrame()
                 
             if i == retries - 1:
-                logger.error(f"❌ [彻底断联] 抱歉，连吃 {retries} 把闭门羹，[{param_str}] {func_cn} 抓取失败: {e}")
+                logger.error(f"[业绩引擎] ❌ {func_cn} ({param_str}) 重试 {retries} 次后仍失败: {e}")
                 raise e
                 
-            logger.warning(f"⚠️ [网络抗劫] 捞取 {func_cn} 时网卡了一下下({e})，喘口气 {delay} 秒后发起第 {i+2} 次猛攻...")
+            logger.warning(f"[业绩引擎] ⚠️ {func_cn} 请求失败({e})，{delay:.0f}s 后第 {i+2} 次重试")
             time.sleep(delay)
             delay *= 1.5
 
@@ -120,7 +145,52 @@ class EarningsEngine:
         self.seen_fingerprints = set()
         self.local_records = []
         self.last_sync_date = datetime.now().strftime("%Y-%m-%d")
+        self._quick_report_profit_cache = {}
         self._load_cache()
+
+    @staticmethod
+    def _build_fingerprint(code: str, report_date: str, data_type: str) -> str:
+        return f"SHOCK_{str(code).zfill(6)}_{report_date}_{data_type}"
+
+    def _record_to_fingerprint(self, record: dict):
+        code = str(record.get("股票代码") or record.get("代码") or "").zfill(6)
+        report_date = str(record.get("报告期", "") or "")
+        data_type = str(record.get("数据类型") or record.get("类型") or "")
+        if not code or not report_date or not data_type:
+            return None
+        return self._build_fingerprint(code, report_date, data_type)
+
+    def _prune_retryable_seen_fingerprints(self) -> bool:
+        """
+        清理可重试的旧预告指纹：
+        - 当前活跃报告期内的“预告”指纹
+        - 但本地有效记录里并没有对应落表结果
+        这类指纹通常来自旧逻辑下的“缺记录/空值”等失败计算，不应永久阻断重试。
+        """
+        active_report_dates = set(current_active_report_dates())
+        persisted_success = {
+            fp for fp in (self._record_to_fingerprint(r) for r in self.local_records) if fp
+        }
+
+        cleaned = 0
+        kept = set()
+        for fp in self.seen_fingerprints:
+            parts = fp.split("_", 3)
+            if len(parts) != 4 or parts[0] != "SHOCK":
+                kept.add(fp)
+                continue
+
+            _, code, report_date, data_type = parts
+            if data_type == "预告" and report_date in active_report_dates and fp not in persisted_success:
+                cleaned += 1
+                continue
+            kept.add(fp)
+
+        if cleaned:
+            self.seen_fingerprints = kept
+            logger.info(f"[业绩引擎] 清理 {cleaned} 条过期预告指纹")
+            return True
+        return False
 
     def _load_cache(self):
         """恢复全天候账本。清理超过 `keep_days` 天的老账"""
@@ -174,10 +244,12 @@ class EarningsEngine:
                     pass
 
             self.local_records = valid_records
+            cache_changed = self._prune_retryable_seen_fingerprints()
+            if cache_changed:
+                self._save_cache()
             logger.info(
-                f"💾 从 SQLite 恢复了最近 {self.keep_days} 天内的 "
-                f"{len(self.local_records)} 条超预期牛股，"
-                f"最后一次开机点为: {self.last_sync_date}"
+                f"[业绩引擎] 💾 已加载近 {self.keep_days} 天 {len(self.local_records)} 条记录，"
+                f"上次同步: {self.last_sync_date}"
             )
         else:
             os.makedirs(os.path.dirname(self.cache_file), exist_ok=True)
@@ -193,6 +265,41 @@ class EarningsEngine:
             )
         except Exception as e:
             logger.error(f"[业绩引擎] SQLite 持久化失败: {e}")
+
+    def _get_quick_report_cum_profit(self, target_code: str, report_date: str) -> float:
+        """
+        当正式财报尚未落到同花顺历史底稿时，尝试用同报告期的业绩快报净利润回填累计值。
+        注意：快报口径只有“净利润-净利润”，并不提供扣非净利润字段。
+        """
+        cache = getattr(self, "_quick_report_profit_cache", None)
+        if cache is None:
+            cache = {}
+            self._quick_report_profit_cache = cache
+
+        if report_date not in cache:
+            quick_profit_map = {}
+            try:
+                df_kb = safe_ak_fetch(ak.stock_yjkb_em, date=report_date)
+            except Exception as _e:
+                logger.debug(f"[业绩引擎] 快报回填抓取失败({report_date}): {_e}")
+                df_kb = pd.DataFrame()
+
+            if not df_kb.empty and '股票代码' in df_kb.columns and '净利润-净利润' in df_kb.columns:
+                df_work = df_kb.copy()
+                if '公告日期' in df_work.columns:
+                    df_work['公告日期'] = pd.to_datetime(df_work['公告日期'], errors='coerce')
+                    df_work = df_work.sort_values(by='公告日期', ascending=True, na_position='first')
+                for _, row in df_work.iterrows():
+                    code = str(row.get('股票代码', '')).zfill(6)
+                    if not code:
+                        continue
+                    profit = _parse_amount(row.get('净利润-净利润', np.nan))
+                    if pd.notna(profit):
+                        # 同一只股票若存在多次快报修订，保留最新一次公告的净利润。
+                        quick_profit_map[code] = float(profit)
+            cache[report_date] = quick_profit_map
+
+        return cache[report_date].get(str(target_code).zfill(6), np.nan)
 
     def _inject_sectors(self, records: list) -> list:
         if not records:
@@ -228,7 +335,7 @@ class EarningsEngine:
                 
                 rec['所属行业与概念'] = " ".join(parts) if parts else '--'
         except Exception as e:
-            logger.error(f"[基因注入失败] 无法连通本地 D:\\HT 底层库: {e}")
+            logger.error(f"[业绩引擎] 板块数据加载失败: {e}")
             for rec in records:
                 if '所属行业与概念' not in rec:
                     rec['所属行业与概念'] = '--'
@@ -247,7 +354,7 @@ class EarningsEngine:
         if target_publish_date is None:
             target_publish_date = datetime.now().strftime("%Y-%m-%d")
             
-        logger.info(f"雷达扫射指定日期: {target_publish_date}")
+        logger.info(f"[业绩引擎] 扫描目标日期: {target_publish_date}")
         
         sync_date_advanced = False
         should_advance_sync_date = False
@@ -295,7 +402,7 @@ class EarningsEngine:
                             "is_koufei": is_koufei
                         })
             except Exception as e:
-                logger.error(f"[残局战损] 抓取业绩预告({r_date})彻底断联: {e}")
+                logger.error(f"[业绩引擎] 业绩预告({r_date})拉取失败: {e}")
                 has_critical_error = True
 
         for r_date in report_dates:
@@ -313,7 +420,7 @@ class EarningsEngine:
                                 "is_koufei": False
                             })
             except Exception as e:
-                logger.error(f"[残局战损] 抓取财报({r_date})彻底断联: {e}")
+                logger.error(f"[业绩引擎] 财报({r_date})拉取失败: {e}")
                 has_critical_error = True
             
             try:
@@ -330,7 +437,7 @@ class EarningsEngine:
                                 "is_koufei": False
                             })
             except Exception as e:
-                logger.error(f"[残局战损] 抓取业绩快报({r_date})彻底断联: {e}")
+                logger.error(f"[业绩引擎] 业绩快报({r_date})拉取失败: {e}")
                 has_critical_error = True
 
         valid_records = []
@@ -344,13 +451,13 @@ class EarningsEngine:
         for cand in all_candidates:
             code = cand['股票代码']
             if not (code.startswith('0') or code.startswith('3') or code.startswith('6')): continue
-            fingerprint = f"SHOCK_{code}_{cand['报告期']}_{cand['数据类型']}"
+            fingerprint = self._build_fingerprint(code, cand['报告期'], cand['数据类型'])
             if fingerprint in self.seen_fingerprints: continue
             pending_candidates.append(cand)
             
         total_pending = len(pending_candidates)
         if total_pending > 0:
-            logger.info(f"🔍 [深潜警报] 落包完毕，立刻切入第二阶段！筛选出 {total_pending} 只存活股票，准备逐一联网连根拔起它们的历史扣非利润...")
+            logger.info(f"[业绩引擎] 🔍 初筛完成，{total_pending} 只待深度验证")
             
         processed_count = 0
         import concurrent.futures
@@ -362,7 +469,7 @@ class EarningsEngine:
             dtype_ = cand['数据类型']
             is_koufei_ = cand.pop('is_koufei', True)
             must_wait_ = (dtype_ in ['财报', '快报'])
-            fingerprint_ = f"SHOCK_{code_}_{r_date_}_{dtype_}"
+            fingerprint_ = self._build_fingerprint(code_, r_date_, dtype_)
             
             res_ = self.compute_single_quarter_qoq(code_, cand['累计期末利润估算_元'], r_date_, is_koufei_, must_wait_)
             return (cand, fingerprint_, res_)
@@ -379,22 +486,25 @@ class EarningsEngine:
                         
                         # --- 节奏感极强的白话心跳 ---
                         if total_pending >= 50 and processed_count % 20 == 0:
-                            logger.info(f"   [体检心跳] 正在高压电击测算历史财报... 已贯穿 {processed_count}/{total_pending} 只标的！")
+                            logger.info(f"[业绩引擎] 验证进度 {processed_count}/{total_pending}")
                         elif 10 < total_pending < 50 and processed_count % 10 == 0:
-                            logger.info(f"   [体检心跳] 正在单点狙击验证... 已拔出 {processed_count}/{total_pending} 只标的骨架数据！")
+                            logger.info(f"[业绩引擎] 验证进度 {processed_count}/{total_pending}")
                         elif 0 < total_pending <= 10:
-                            logger.info(f"   [体检心跳] 精确锁定！正在深度检验仅存的 {processed_count}/{total_pending} 号嫌疑人: {code} {cand.get('股票名称', '')}...")
+                            logger.info(f"[业绩引擎] 验证 {processed_count}/{total_pending}: {code} {cand.get('股票名称', '')}")
                         
                         error_code = res.get('error')
                         if error_code in ["THS_PENDING", "抛锚"]:
                             continue  
-                            
+
+                        if error_code is not None:
+                            continue
+
                         self.seen_fingerprints.add(fingerprint)
                         new_found_flag = True
                         
                         # 三重硬门槛：① 单季利润为正 ② 环比>=15% ③ 同比为正（扣非同比增长）
                         yoy_pct = res.get('同比增速_百分比', -1)
-                        if error_code is None and res.get('环比增速_百分比', -1) >= 15 and res.get('单季净利润_新增', -1) > 0 and yoy_pct > 0:
+                        if res.get('环比增速_百分比', -1) >= 15 and res.get('单季净利润_新增', -1) > 0 and yoy_pct > 0:
                             cand.update(res)
                             valid_records.append(cand)
                             self.local_records.append(cand)
@@ -462,30 +572,7 @@ class EarningsEngine:
             if not cols: return {"error": "无利润字段"}
             kf_col = cols[0]
             
-            # 【性能优化】彻底拔除 pd.eval！对于几百行财报调用 eval 会吃掉几秒的纯 CPU 计算时间，直接换成 C 底层的原生 float 解析
-            def safe_parse(v):
-                if pd.isna(v): return np.nan
-                v_str = str(v).strip()
-                if not v_str: return np.nan
-                
-                multiplier = 1.0
-                if '万' in v_str:
-                    multiplier = 10000.0
-                    v_str = v_str.replace('万', '')
-                elif '亿' in v_str:
-                    multiplier = 100000000.0
-                    v_str = v_str.replace('亿', '')
-                    
-                digits = ''.join(filter(lambda x: x.isdigit() or x in '.-', v_str))
-                if not digits or digits in ('.', '-', '-.'): 
-                    return np.nan
-                try:
-                    return float(digits) * multiplier
-                except (ValueError, TypeError) as _e:
-                    logger.debug(f"[业绩引擎] 财务数据数字解析失败({v_str}): {_e}")
-                    return np.nan
-
-            df_fin['累计扣非_元'] = df_fin[kf_col].apply(safe_parse)
+            df_fin['累计扣非_元'] = df_fin[kf_col].apply(_parse_amount)
             
             r_datetime = pd.to_datetime(report_date)
             year, month = r_datetime.year, r_datetime.month
@@ -499,49 +586,79 @@ class EarningsEngine:
                     return df_fin.at[td, '累计扣非_元']
                 return np.nan
 
+            def get_cum_profit_with_quick(target_date, basis_desc):
+                value = get_cum_profit(target_date)
+                if pd.notna(value):
+                    return value, False
+
+                quick_report_period = pd.to_datetime(target_date).strftime("%Y%m%d")
+                quick_report_cum = self._get_quick_report_cum_profit(target_code, quick_report_period)
+                if pd.notna(quick_report_cum):
+                    logger.info(
+                        f"[业绩引擎] {target_code} 缺 {target_date} 财报，"
+                        f"回退用快报 {quick_report_period} 估算{basis_desc}"
+                    )
+                    return quick_report_cum, True
+                return np.nan, False
+
             q3_date, q2_date, q1_date = f"{year}-09-30", f"{year}-06-30", f"{year}-03-31"
             last_q4_date, last_q3_date = f"{year-1}-12-31", f"{year-1}-09-30"
             # 去年同期需要的日期（用于计算单季度同比）
             last_q2_date, last_q1_date = f"{year-1}-06-30", f"{year-1}-03-31"
             prev_year_q4_date, prev_year_q3_date = f"{year-2}-12-31", f"{year-2}-09-30"
             current_single, last_single = np.nan, np.nan
+            last_single_basis = "财报"
             # yoy_base_single: 去年同一季度的单季利润，用来算同比
             yoy_base_single = np.nan
 
             if month == 12:
-                q3_cum, q2_cum = get_cum_profit(q3_date), get_cum_profit(q2_date)
+                q3_cum, q3_quick = get_cum_profit_with_quick(q3_date, "本期累计基数")
+                q2_cum, q2_quick = get_cum_profit_with_quick(q2_date, "上一季基数")
                 if pd.isna(q3_cum) or pd.isna(q2_cum): return {"error": "缺记录"}
                 current_single = target_est_cum_profit - q3_cum
                 last_single = q3_cum - q2_cum
+                if q3_quick or q2_quick:
+                    last_single_basis = "快报净利润回填"
                 # 去年Q4单季 = 去年全年累计 - 去年Q3累计
-                ly_q4_cum, ly_q3_cum = get_cum_profit(last_q4_date), get_cum_profit(last_q3_date)
+                ly_q4_cum, _ = get_cum_profit_with_quick(last_q4_date, "去年同期基数")
+                ly_q3_cum, _ = get_cum_profit_with_quick(last_q3_date, "去年同期基数")
                 if pd.notna(ly_q4_cum) and pd.notna(ly_q3_cum):
                     yoy_base_single = ly_q4_cum - ly_q3_cum
             elif month == 9:
-                q2_cum, q1_cum = get_cum_profit(q2_date), get_cum_profit(q1_date)
+                q2_cum, q2_quick = get_cum_profit_with_quick(q2_date, "本期累计基数")
+                q1_cum, q1_quick = get_cum_profit_with_quick(q1_date, "上一季基数")
                 if pd.isna(q2_cum) or pd.isna(q1_cum): return {"error": "缺记录"}
                 current_single = target_est_cum_profit - q2_cum
                 last_single = q2_cum - q1_cum
+                if q2_quick or q1_quick:
+                    last_single_basis = "快报净利润回填"
                 # 去年Q3单季 = 去年Q3累计 - 去年Q2累计
-                ly_q3_cum, ly_q2_cum = get_cum_profit(last_q3_date), get_cum_profit(last_q2_date)
+                ly_q3_cum, _ = get_cum_profit_with_quick(last_q3_date, "去年同期基数")
+                ly_q2_cum, _ = get_cum_profit_with_quick(last_q2_date, "去年同期基数")
                 if pd.notna(ly_q3_cum) and pd.notna(ly_q2_cum):
                     yoy_base_single = ly_q3_cum - ly_q2_cum
             elif month == 6:
-                q1_cum = get_cum_profit(q1_date)
+                q1_cum, q1_quick = get_cum_profit_with_quick(q1_date, "上一季基数")
                 if pd.isna(q1_cum): return {"error": "缺记录"}
                 current_single = target_est_cum_profit - q1_cum
                 last_single = q1_cum
+                if q1_quick:
+                    last_single_basis = "快报净利润回填"
                 # 去年Q2单季 = 去年Q2累计 - 去年Q1累计
-                ly_q2_cum, ly_q1_cum = get_cum_profit(last_q2_date), get_cum_profit(last_q1_date)
+                ly_q2_cum, _ = get_cum_profit_with_quick(last_q2_date, "去年同期基数")
+                ly_q1_cum, _ = get_cum_profit_with_quick(last_q1_date, "去年同期基数")
                 if pd.notna(ly_q2_cum) and pd.notna(ly_q1_cum):
                     yoy_base_single = ly_q2_cum - ly_q1_cum
             elif month == 3:
                 current_single = target_est_cum_profit
-                last_q4_cum, last_q3_cum = get_cum_profit(last_q4_date), get_cum_profit(last_q3_date)
+                last_q4_cum, q4_quick = get_cum_profit_with_quick(last_q4_date, "上一季基数")
+                last_q3_cum, q3_quick = get_cum_profit_with_quick(last_q3_date, "上一季基数")
+                if q4_quick or q3_quick:
+                    last_single_basis = "快报净利润回填"
                 if pd.isna(last_q4_cum) or pd.isna(last_q3_cum): return {"error": "缺记录"}
                 last_single = last_q4_cum - last_q3_cum
                 # 去年Q1单季 = 去年Q1的累计值（Q1本身就是单季）
-                ly_q1_cum = get_cum_profit(last_q1_date)
+                ly_q1_cum, _ = get_cum_profit_with_quick(last_q1_date, "去年同期基数")
                 if pd.notna(ly_q1_cum):
                     yoy_base_single = ly_q1_cum
 
@@ -555,13 +672,16 @@ class EarningsEngine:
             if pd.notna(yoy_base_single) and yoy_base_single != 0:
                 yoy = (current_single - yoy_base_single) / abs(yoy_base_single) * 100
             
-            return {
+            result = {
                 "单季净利润_新增": current_single, "单季净利润_上期": last_single,
                 "单季净利润_去年同期": yoy_base_single if pd.notna(yoy_base_single) else 0.0,
                 "环比增速_百分比": round(qoq, 2),
                 "同比增速_百分比": round(yoy, 2) if pd.notna(yoy) else 0.0,
                 "error": None
             }
+            if last_single_basis != "财报":
+                result["上季基数口径"] = last_single_basis
+            return result
         except Exception as e:
             logger.error(f"[业绩预告] 获取失败: {e}")
             return {"error": "抛锚"}

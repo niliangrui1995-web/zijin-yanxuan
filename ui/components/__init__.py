@@ -2,13 +2,13 @@
 # 从 main_window_qt.py 拆分出来的独立工具类
 from PyQt6.QtWidgets import (
     QFrame, QPushButton, QTableWidgetItem, QTableView, QAbstractItemView,
-    QStyleOption, QStyle, QWidget
+    QStyleOption, QStyle, QWidget, QToolTip
 )
 from PyQt6.QtCore import (
-    Qt, QPropertyAnimation, QEasingCurve, QTimer,
+    Qt, QPropertyAnimation, QEasingCurve, QTimer, QEvent,
     QParallelAnimationGroup, pyqtProperty
 )
-from PyQt6.QtGui import QPainter, QColor, QBrush
+from PyQt6.QtGui import QPainter, QColor, QBrush, QPalette
 
 
 class NumericTableWidgetItem(QTableWidgetItem):
@@ -54,6 +54,8 @@ class VCPTableView(QTableView):
     def __init__(self, parent=None, default_row_height: int = None):
         super().__init__(parent)
         self._init_common_styles(default_row_height)
+        from ui.theme import theme_manager
+        theme_manager.sig_theme_changed.connect(self._on_theme_changed)
 
     def _init_common_styles(self, default_row_height: int):
         self.setShowGrid(False)
@@ -71,11 +73,58 @@ class VCPTableView(QTableView):
         self.horizontalHeader().setMaximumSectionSize(max_w)
         self.setMaximumWidth(max_w)
 
-        base_style = self.styleSheet()
-        self.setStyleSheet(base_style + "\nQTableView::item { padding: 0px 10px; }")
+        self._apply_runtime_style()
 
         if default_row_height is not None:
             self.verticalHeader().setDefaultSectionSize(default_row_height)
+
+    def _tooltip_qss(self) -> str:
+        from ui.theme import theme_manager
+        t = theme_manager.current_theme
+        return (
+            "QTableView::item { padding: 0px 10px; }\n"
+            "QToolTip {"
+            f" background-color: {t['BG_ELEVATED']};"
+            f" color: {t['TEXT_PRIMARY']};"
+            f" border: 1px solid {t['BORDER_DEFAULT']};"
+            " border-radius: 6px;"
+            " padding: 6px 10px;"
+            " margin: 0px;"
+            " }"
+        )
+
+    def _apply_runtime_style(self):
+        self.setStyleSheet(self._tooltip_qss())
+
+    def _on_theme_changed(self, _theme_name: str):
+        self._apply_runtime_style()
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.viewport().update()
+
+    def viewportEvent(self, event):
+        if event.type() == QEvent.Type.ToolTip:
+            index = self.indexAt(event.pos())
+            if index.isValid():
+                tooltip_text = index.data(Qt.ItemDataRole.ToolTipRole)
+                if tooltip_text:
+                    from ui.theme import theme_manager
+                    t = theme_manager.current_theme
+                    pal = QPalette(QToolTip.palette())
+                    for group in (
+                        QPalette.ColorGroup.Active,
+                        QPalette.ColorGroup.Inactive,
+                        QPalette.ColorGroup.Disabled,
+                    ):
+                        pal.setColor(group, QPalette.ColorRole.ToolTipBase, QColor(t["BG_ELEVATED"]))
+                        pal.setColor(group, QPalette.ColorRole.ToolTipText, QColor(t["TEXT_PRIMARY"]))
+                    QToolTip.setPalette(pal)
+                    QToolTip.showText(event.globalPos(), str(tooltip_text), self.viewport(), self.visualRect(index))
+                    return True
+            QToolTip.hideText()
+            event.ignore()
+            return True
+        return super().viewportEvent(event)
 
 
 class GlassPanel(QFrame):

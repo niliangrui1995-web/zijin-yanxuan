@@ -1,6 +1,7 @@
 # ui/workers.py - 后台工作线程
 # 从 main_window_qt.py 拆分出来的 ScanWorker 和 RtScanWorker
 import os
+import gc
 from PyQt6.QtCore import QThread, pyqtSignal
 import pandas as pd
 from vcp.engine import VCPEngine
@@ -29,15 +30,16 @@ class ScanWorker(QThread):
         import time as _time
         _total_start = _time.time()
         
-        # 为了避免 0% 导致 UI 立即释放按钮状态，改为发 'start'
-        self.progress.emit(1, "start")
+        # 起始阶段发送正常状态文本，避免 UI 依赖特殊占位字符串
+        self.progress.emit(1, "准备扫描...")
 
         try:
-            # 1. 重建除权除息数据（强制保证历史计算准确）
-            self.progress.emit(5, "正在更新除权除息数据 (gbbq)...")
-            _t0 = _time.time()
-            self.data_provider._load_local_gbbq(force=True)
-            log.info(f"[耗时监控] gbbq加载完成，耗时: {_time.time() - _t0:.2f} 秒")
+            # 1. 确保 gbbq 除权除息数据可用（F5 或应用启动时已加载，无需重复解析）
+            if not getattr(self.data_provider, "_local_gbbq", None):
+                self.progress.emit(5, "正在加载除权除息数据 (gbbq)...")
+                _t0 = _time.time()
+                self.data_provider._load_local_gbbq(force=False)
+                log.info(f"[区间扫描] gbbq加载完成 ({_time.time() - _t0:.1f}s)")
 
             self.progress.emit(1, "正在查询数据...")
             # 首次运行:需要读取由vipdoc目录结构提取的股票名称和预缓存数据
@@ -137,7 +139,11 @@ class ScanWorker(QThread):
                     df_all = df_all.drop(columns=['评分_tmp'])
                 all_results = df_all.to_dict('records')
 
-            log.info(f"[耗时监控] RPS第一阶段完成，耗时: {_time.time() - _t1:.2f} 秒，去重后剩余 {len(all_results)} 只")
+            # 释放 RPS 矩阵内存（可能占用几十MB，后续步骤不再需要）
+            del matrix
+            gc.collect()
+
+            log.info(f"[区间扫描] RPS筛选完成 ({_time.time() - _t1:.1f}s)，命中 {len(all_results)} 只")
             
             # ---- 二级过滤:与盘中监控对齐的机构+市值筛选 ----
             if all_results:
@@ -164,7 +170,7 @@ class ScanWorker(QThread):
                         res['市值'] = "--"
                         res['_cap_raw'] = 0
                         
-                log.info(f"[耗时监控] 批量查询市值完成，耗时: {_time.time() - _t2:.2f} 秒")
+                log.info(f"[区间扫描] 市值查询完成 ({_time.time() - _t2:.1f}s)")
 
             # 因用户要求区间扫描需全面、不漏票，此处取消剔除市值<40亿的盘中监控硬过滤机制
             # 让区间扫描忠于技术形态，展示所有满足 VCP 的股票。
@@ -178,7 +184,7 @@ class ScanWorker(QThread):
             if all_results:
                 all_results.sort(key=lambda x: x.get('评分', 0), reverse=True)
 
-            log.info(f"[耗时监控] 区间扫描总计耗时: {_time.time() - _total_start:.2f} 秒，最终产生 {len(all_results)} 条结果")
+            log.info(f"[区间扫描] ✅ 完成 ({_time.time() - _total_start:.1f}s)，产生 {len(all_results)} 条结果")
 
             # 清理内部临时字段
             for r in all_results:
@@ -191,10 +197,26 @@ class ScanWorker(QThread):
                     from vcp.sector import SectorManager
                     tdx_root = os.path.dirname(self.data_provider.tdx_vipdoc) if self.data_provider.tdx_vipdoc else r'D:\\HT'
                     sm = SectorManager.get_instance(tdx_root)
-                    # 取最后一个扫描日作为板块 RPS 基准日
-                    last_date = all_results[-1].get('触发日期', '')
-                    if last_date:
-                        sector_rps = sm.build_sector_rps(self.data_provider.cache_data, last_date)
+                    # 优先加载 F5 预计算的板块 RPS 缓存，避免重复计算
+                    import pickle as _pkl
+                    from vcp.constants import SECTOR_RPS_CACHE_FILE
+                    sector_rps = None
+                    if os.path.exists(SECTOR_RPS_CACHE_FILE):
+                        try:
+                            with open(SECTOR_RPS_CACHE_FILE, "rb") as _f:
+                                _pkg = _pkl.load(_f)
+                            sector_rps = _pkg.get("sector_rps", {})
+                            log.info(f"[区间扫描] 板块 RPS 命中 F5 缓存 ({len(sector_rps)} 个板块)")
+                        except Exception as _e:
+                            log.debug(f"[区间扫描] 板块 RPS 缓存读取失败: {_e}")
+                    # 缓存不可用时才现算
+                    if not sector_rps:
+                        last_date = all_results[-1].get('触发日期', '')
+                        if last_date:
+                            sector_rps = sm.build_sector_rps(self.data_provider.cache_data, last_date)
+                    
+                    # 无论印章是从 F5 缓存拿到的，还是现场重刻的，都要执行全员盖章操作
+                    if sector_rps:
                         for res in all_results:
                             code = res['代码']
                             passed, info_str, _ = sm.check_sector_rps(code, sector_rps, threshold=0)
@@ -202,6 +224,9 @@ class ScanWorker(QThread):
                 except Exception as e:
                     log.error(f"[板块查询] 异常: {e}")
             
+            # 扫描完成，主动回收中间对象（Polars 转换等产生的临时 DataFrame）
+            gc.collect()
+
             self.result_ready.emit(all_results)
             self.finished_scan.emit(True, f"扫描完成,捕获 {len(all_results)} 条信号")
 
