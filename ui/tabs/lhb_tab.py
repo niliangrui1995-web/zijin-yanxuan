@@ -12,9 +12,10 @@ import json
 
 from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit,
-    QComboBox, QDateEdit, QCheckBox
+    QComboBox, QDateEdit, QCheckBox, QCalendarWidget
 )
 from PyQt6.QtCore import Qt, QDate
+from PyQt6.QtGui import QColor
 
 from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
 from ui.components import VCPTableView
@@ -24,6 +25,11 @@ from core.task_manager import task_manager
 
 from ui.tabs.base_stock_tab import BaseStockTab
 from ui.workers.lhb_worker import fetch_lhb_data_for_date
+from core.market_calendar import MarketCalendar
+from ui.theme import theme_manager
+
+def _c(token: str) -> str:
+    return theme_manager.get(token)
 
 log = get_logger(__name__)
 
@@ -45,6 +51,21 @@ class LhbFilterProxyModel(RtSortFilterProxyModel):
                 return False
                 
         return super().filterAcceptsRow(source_row, source_parent)
+
+
+class TradeCalendarWidget(QCalendarWidget):
+    """自定义带交易日标记的日历"""
+    def paintCell(self, painter, rect, date):
+        super().paintCell(painter, rect, date)
+        
+        # 判断是否是非交易日，在格子底部画一条休市标记线
+        if not MarketCalendar.is_trade_day(date.toPyDate(), "CN"):
+            painter.save()
+            overlay_color = QColor(_c("COLOR_FALL"))
+            overlay_color.setAlpha(120)  # 保持优雅的半透明度
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.fillRect(rect.x() + 6, rect.bottom() - 3, rect.width() - 12, 2, overlay_color)
+            painter.restore()
 
 
 class LhbTab(BaseStockTab):
@@ -81,6 +102,9 @@ class LhbTab(BaseStockTab):
         # 日期选择器
         self.date_edit = QDateEdit()
         self.date_edit.setCalendarPopup(True)
+        # 挂载自定义交易日历
+        self.cal_widget = TradeCalendarWidget()
+        self.date_edit.setCalendarWidget(self.cal_widget)
         # 默认设为今天
         self.date_edit.setDate(QDate.currentDate())
         self.date_edit.setFixedWidth(130)

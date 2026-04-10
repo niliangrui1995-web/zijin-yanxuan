@@ -400,6 +400,46 @@ QTextBrowser, QTextEdit {{
     font-size: 13px; selection-background-color: rgba(239, 68, 68, 0.25);
 }}
 
+/* ═══════════════════════════════════════════
+   QCalendarWidget - 日历模块
+   ═══════════════════════════════════════════ */
+QCalendarWidget QWidget#qt_calendar_navigationbar {{
+    background-color: {t['BG_SECONDARY']};
+}}
+QCalendarWidget QToolButton {{
+    color: {t['TEXT_PRIMARY']};
+    background: transparent;
+    border-radius: 4px;
+}}
+QCalendarWidget QToolButton:hover {{
+    background-color: {t['BG_HOVER']};
+}}
+QCalendarWidget QMenu {{
+    background-color: {t['BG_MENU']};
+    color: {t['TEXT_PRIMARY']};
+    border: 1px solid {t['BORDER_MENU']};
+}}
+QCalendarWidget QSpinBox {{
+    background: {t['BG_INPUT']};
+    color: {t['TEXT_PRIMARY']};
+    border: 1px solid {t['BORDER_DEFAULT']};
+    selection-background-color: {t['SELECTION_BG']};
+}}
+QCalendarWidget QTableView {{
+    background-color: {t['BG_TABLE_BASE']};
+    alternate-background-color: {t['BG_TABLE_ALT_ROW']};
+    color: {t['TEXT_PRIMARY']};
+    selection-background-color: {t['SELECTION_BG']};
+    selection-color: {t['TEXT_BRIGHT']};
+    border: 1px solid {t['BORDER_DEFAULT']};
+}}
+QCalendarWidget QTableView QHeaderView::section {{
+    background-color: {t['BG_SIDEBAR']};
+    color: {t['TEXT_HEADER']};
+    border: none;
+    padding: 4px;
+}}
+
 QGroupBox {{
     background-color: transparent; border: 1px solid {t['BG_BUTTON']};
     border-radius: 8px; margin-top: 12px; padding-top: 16px;
