@@ -146,9 +146,9 @@ def fetch_lhb_data_for_date(date_str: str) -> list[dict]:
                                 
                             net_wan = round(net_val / 10000.0)
                             if net_wan > 0:
-                                final_f_buys.append(f"{matched_kw}(净买:{net_wan}万)")
+                                final_f_buys.append(f"{matched_kw}({net_wan}万)")
                             elif net_wan < 0:
-                                final_f_sells.append(f"{matched_kw}(净卖:{abs(net_wan)}万)")
+                                final_f_sells.append(f"{matched_kw}({abs(net_wan)}万)")
                             else:
                                 final_f_buys.append(f"{matched_kw}(0万)")
                             
@@ -178,6 +178,13 @@ def fetch_lhb_data_for_date(date_str: str) -> list[dict]:
         if has_jg and has_foreign:
             if (jg_info['机构买入净额'] > 0) and (foreign_net_sum > 0):
                 is_resonance = True        
+        buy_str = "买：" + " | ".join(final_f_buys) if final_f_buys else ""
+        sell_str = "卖：" + " | ".join(final_f_sells) if final_f_sells else ""
+        if buy_str and sell_str:
+            foreign_str = f"{buy_str}   {sell_str}"
+        else:
+            foreign_str = buy_str or sell_str or "--"
+            
         # 构造给前端的平铺字典字段
         record = {
             "代码": code,
@@ -190,7 +197,7 @@ def fetch_lhb_data_for_date(date_str: str) -> list[dict]:
             "上榜净买额(万)": round(net_buy / 10000.0, 2),
             "机构净买(万)": round(jg_info['机构买入净额'] / 10000.0, 2),
             "机构家数": f"买{jg_info['买方机构数']}/卖{jg_info['卖方机构数']}",
-            "外资潜伏池": " | ".join(final_f_buys) if final_f_buys else ("卖: " + " | ".join(final_f_sells) if final_f_sells else "--"),
+            "外资潜伏池": foreign_str,
             "换手率%": round(turnover, 2),
             "上榜原因": reason
         }
