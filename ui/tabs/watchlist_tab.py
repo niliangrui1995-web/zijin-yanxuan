@@ -6,7 +6,7 @@ import pickle
 import datetime
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QHeaderView, QPushButton, QLineEdit, QAbstractItemView,
     QFileDialog
 )
