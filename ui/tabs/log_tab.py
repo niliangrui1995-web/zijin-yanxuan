@@ -1,8 +1,7 @@
 import sys
-import datetime
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTextEdit,
-    QFileDialog, QComboBox
+    QComboBox
 )
 from PyQt6.QtCore import QTimer, Qt
 from core.event_bus import event_bus
@@ -37,11 +36,6 @@ class LogTab(QWidget):
         lbl.setObjectName("tabTitle")
         tb_layout.addWidget(lbl)
         tb_layout.addStretch()
-        
-        btn_export_log = QPushButton("📄 导出日志")
-        btn_export_log.setProperty("class", "ctaSecondary")
-        btn_export_log.clicked.connect(self._export_log)
-        tb_layout.addWidget(btn_export_log)
         
         btn_clear_log = QPushButton("🗑 清空")
         btn_clear_log.setProperty("class", "ctaSecondary")
@@ -178,10 +172,3 @@ class LogTab(QWidget):
             sb = self.log_text.verticalScrollBar()
             sb.setValue(sb.maximum())
 
-    def _export_log(self):
-        path, _ = QFileDialog.getSaveFileName(self, "导出日志", f"系统日志_{datetime.date.today().strftime('%Y%m%d')}.txt", "Text Files (*.txt)")
-        if path:
-            with open(path, 'w', encoding='utf-8') as f:
-                f.write(self.log_text.toPlainText())
-            # 组件解耦，不能直接调主窗口状态栏，用总线发射
-            event_bus.sig_system_log.emit("info", f"✅ 日志已导出到 {path}")
