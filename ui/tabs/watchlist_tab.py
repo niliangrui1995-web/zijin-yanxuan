@@ -2,7 +2,6 @@
 # ui/tabs/watchlist_tab.py
 # 关注池独立组件 — 从 WatchlistMixin 解耦重构为完全自治的 QWidget
 import os
-import time
 import pickle
 import datetime
 
@@ -16,7 +15,7 @@ from PyQt6.QtCore import Qt, QTimer
 
 from ui.viewmodels.watchlist_vm import watchlist_vm
 from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
-from ui.components.vcp_table_view import VCPTableView
+from ui.components import VCPTableView
 from core.event_bus import event_bus
 from core.logger import get_logger
 from core.task_manager import task_manager
@@ -34,7 +33,6 @@ class WatchlistTab(BaseStockTab):
 
     def __init__(self, data_provider, parent=None):
         super().__init__(data_provider=data_provider, parent=parent)
-        self.setStyleSheet("background-color: transparent;")
 
         self._init_ui()
 
@@ -48,10 +46,14 @@ class WatchlistTab(BaseStockTab):
         # v4: 使用精准专用信道
         event_bus.sig_cache_loaded.connect(self._on_cache_or_earnings_updated)
         event_bus.sig_earnings_updated.connect(self._on_cache_or_earnings_updated)
+        event_bus.sig_na_daily_updated.connect(self._on_na_daily_updated)
+        event_bus.sig_block_trade_updated.connect(self._on_block_trade_updated)
         event_bus.sig_vcp_watchlist_ready.connect(self._on_vcp_watchlist_ready)
         self._cache_backfill_done = False
 
-        # 延迟加载数据
+        # 先立即回填一次，避免启动期 UI 忙时定时器延后导致“关注池长期空白”。
+        self._load_special_data()
+        # 再做一次延迟回填，兜住启动后缓存/名称映射后到位的场景。
         QTimer.singleShot(3500, self._load_special_data)
 
     # ================================================================
@@ -73,7 +75,6 @@ class WatchlistTab(BaseStockTab):
         self.sp_search = QLineEdit()
         self.sp_search.setPlaceholderText("🔍 搜索关注池...")
         self.sp_search.setFixedWidth(150)
-        self.sp_search.setFixedHeight(28)
         self.sp_search.textChanged.connect(
             lambda t: self._filter_table(t)
         )
@@ -81,13 +82,11 @@ class WatchlistTab(BaseStockTab):
 
         btn_reset = QPushButton("解除列表排序")
         btn_reset.setProperty("class", "secondary")
-        btn_reset.setFixedHeight(28)
         btn_reset.clicked.connect(self._reset_view)
         tb_layout.addWidget(btn_reset)
 
         btn_export_sp = QPushButton("📄 导出")
         btn_export_sp.setProperty("class", "secondary")
-        btn_export_sp.setFixedHeight(28)
         btn_export_sp.clicked.connect(self._export_to_excel)
         tb_layout.addWidget(btn_export_sp)
         layout.addWidget(toolbar)
@@ -104,8 +103,8 @@ class WatchlistTab(BaseStockTab):
         
         # 绑定 Model 与 Delegate
         headers = [
-            "代码", "名称", "现价", "涨幅%", "市值", "时间",
-            "RPS强度", "热点板块", "美股日报", "业绩异动", "大宗交易"
+            "代码", "名称", "现价", "涨幅%", "市值",
+            "RPS强度", "细分板块", "催化剂", "业绩异动", "大宗交易"
         ]
         self.model = StockTableModel(headers)
         self.proxy_model = RtSortFilterProxyModel(self.table_sp)
@@ -119,14 +118,15 @@ class WatchlistTab(BaseStockTab):
         self.model.sig_rows_reordered.connect(self._on_rows_reordered)
 
         # 自适应列宽
-        sp_weights = [0.75, 0.65, 1.4, 0.75, 0.9, 0.7, 0.8, 1.4, 1.8, 1.2, 1.8]
+        sp_weights = [0.75, 0.65, 1.4, 0.75, 0.9, 0.8, 1.4, 1.8, 1.2, 1.8]
         header = self.table_sp.horizontalHeader()
         header.setStretchLastSection(True)
         for col_idx, w in enumerate(sp_weights):
             header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
             self.table_sp.setColumnWidth(col_idx, int(w * 80))
         # 绑定防抖自动保存与恢复配置（restoreState 会连带把上次的排序列也恢复了）
-        self.bind_header_persistence(self.table_sp, "header_state_watchlist_v3")
+        # 列结构变更（移除“时间”列），升级配置 key，避免旧列状态错位恢复
+        self.bind_header_persistence(self.table_sp, "header_state_watchlist_v6")
         
         # 【修复】强制抹掉任何因为 header.restoreState 还原出来的自动排序状态
         # 因为在关闭时，我们已经把当前的各种（哪怕是点击表头排出来的）视觉顺序定死并按此顺序拍扁存入硬盘了
@@ -145,7 +145,7 @@ class WatchlistTab(BaseStockTab):
     # ================================================================
     # 数据加载
     # ================================================================
-    def _load_special_data(self):
+    def _load_special_data(self, refresh_delay_ms: int = 500):
         """加载关注池数据：新UI JSON + 老UI pkl 兼容 + AI诊断缓存"""
         data_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 
@@ -178,7 +178,7 @@ class WatchlistTab(BaseStockTab):
         if all_codes:
             self.async_update_market_caps()
 
-        # 主动触发 VCP 指标刷新（热点板块/RPS/业绩异动等）
+        # 主动触发 VCP 指标刷新（细分板块/RPS/业绩异动等）
         # 为什么不依赖 CACHE_LOADED 事件：因为存在时序竞态——
         # 缓存可能在 3.5s 延迟前就加载完了，那时 model.row_data 还是空的
         # 引入 _request_vcp_calc 防抖 500ms 重复合并
@@ -216,8 +216,12 @@ class WatchlistTab(BaseStockTab):
             cap = live_entry.get("市值") if live_entry.get("市值", "--") != "--" else info_new.get("市值", '--')
 
             rps = info_new.get("RPS强度", '--')
-            sector = info_new.get("热点板块", '--')
-            ts = info_new.get('时间', time.strftime("%H:%M:%S"))
+            subsector = (
+                info_new.get("细分板块")
+                or info_old.get("细分板块")
+                or info_new.get("subsector", "")
+                or ""
+            )
             cap_display = cap if cap and cap != '--' else ''
 
             row_data = {
@@ -225,11 +229,16 @@ class WatchlistTab(BaseStockTab):
                 "名称": name,
                 "现价": str(cur_price),
                 "涨幅%": str(pct_str),
-                "时间": ts,
                 "市值": str(cap_display),
                 "RPS强度": str(rps),
-                "热点板块": str(sector),
-                "美股日报": info_new.get("美股日报", ""),
+                "细分板块": str(subsector),
+                "催化剂": (
+                    info_new.get("美股日报")
+                    or info_new.get("催化剂")
+                    or info_old.get("美股日报", "")
+                    or info_old.get("催化剂", "")
+                    or ""
+                ),
                 "大宗交易": info_new.get("大宗交易", ""),
                 "业绩异动": info_new.get("业绩异动", ""),
                 "_zongguben": live_entry.get("_zongguben", 0)
@@ -373,7 +382,7 @@ class WatchlistTab(BaseStockTab):
     # ================================================================
     def _gather_radar_data(self):
         """主线程快速提取 UI 数据，供后台线程使用（避免跨线程访问UI崩溃）"""
-        na_data, block_data, earn_data = {}, {}, {}
+        na_data, na_subsector_data, block_data, earn_data = {}, {}, {}, {}
         rps_bundle = None
         try:
             main_win = self.window()
@@ -384,7 +393,9 @@ class WatchlistTab(BaseStockTab):
                 if hasattr(main_win, 'tab_na_daily') and hasattr(main_win.tab_na_daily, 'model'):
                     for r in main_win.tab_na_daily.model.row_data:
                         c = str(r.get("代码", ""))
-                        if c: na_data[c] = str(r.get("催化剂", "") or r.get("💥催化剂", ""))
+                        if c:
+                            na_data[c] = str(r.get("催化剂", "") or r.get("💥催化剂", ""))
+                            na_subsector_data[c] = str(r.get("细分板块", "") or "")
                         
                 if hasattr(main_win, 'tab_foreign_block') and hasattr(main_win.tab_foreign_block, 'model'):
                     for r in main_win.tab_foreign_block.model.row_data:
@@ -393,11 +404,35 @@ class WatchlistTab(BaseStockTab):
                             detail = str(r.get("交易详情", ""))
                             buy = str(r.get("买方营业部", ""))
                             sell = str(r.get("卖方营业部", ""))
-                            memo = detail
+                            amt = str(r.get("成交金额(万元)", ""))
+                            
+                            from ui.workers.lhb_worker import FOREIGN_KEYWORDS
+                            branch = ""
+                            action = ""
                             if "买入" in detail:
-                                memo = f"{detail}: {buy}"
+                                branch = buy
+                                action = "买入"
                             elif "卖出" in detail:
-                                memo = f"{detail}: {sell}"
+                                branch = sell
+                                action = "卖出"
+                            else:
+                                branch = buy if buy else sell
+                                action = detail
+                                
+                            short_branch = branch
+                            for kw in FOREIGN_KEYWORDS:
+                                if kw in branch:
+                               short_branch = kw
+                                    break
+                                    
+                            amt_str = ""
+                            try:
+                                if amt and amt != "--":
+                                    amt_str = f"{float(amt):.0f}万"
+                            except ValueError:
+                                pass
+                                
+                            memo = f"{short_branch} {action}{amt_str}".strip()
                             block_data[c] = memo
                             
                 if hasattr(main_win, 'tab_earnings') and hasattr(main_win.tab_earnings, 'model'):
@@ -407,7 +442,7 @@ class WatchlistTab(BaseStockTab):
                         if c and pct and pct != "--": earn_data[c] = f"环比增幅: {pct}%"
         except Exception as e:
             log.warning(f"[关注池] 提取主界面数据异常: {e}")
-        return na_data, block_data, earn_data, rps_bundle
+        return na_data, na_subsector_data, block_data, earn_data, rps_bundle
 
     def _on_watchlist_changed(self, action: str, code: str):
         """外部请求关注池变更时，防抖 300ms 后再重新加载（防止快速增删导致任务堆积）"""
@@ -415,24 +450,26 @@ class WatchlistTab(BaseStockTab):
             self._debounce_timer = QTimer(self)
             self._debounce_timer.setSingleShot(True)
             self._debounce_timer.timeout.connect(self._do_watchlist_reload)
+        self._pending_watchlist_action = action
         # 每次新信号进来都重置计时器，只有最后一次 300ms 后才真正触发
-        self._debounce_timer.start(300)
+        self._debounce_timer.start(80 if action == "add" else 300)
 
     def _do_watchlist_reload(self):
         """防抖后的实际重载逻辑"""
-        self._load_special_data()
+        action = getattr(self, '_pending_watchlist_action', "")
+        self._pending_watchlist_action = ""
+        self._load_special_data(refresh_delay_ms=120 if action == "add" else 500)
 
     def _refresh_vcp_indicators(self, codes_with_rows, radar_data_tuple=None):
-        """后台线程：计算关注池标的的 VCP 评分、RPS、突破状态、市值"""
+        """后台线程：计算关注池标的的 RPS 和跨 Tab 附加字段。"""
         try:
-            from vcp.models import VCPParams
             import pickle
             import os
 
-            log.info(f"[关注池] 开始计算 {len(codes_with_rows)} 只标的附加指标...")
+            log.debug(f"[关注池] 开始计算 {len(codes_with_rows)} 只标的附加指标")
 
             # 1. 尝试从引擎获取RPS
-            rps_bundle = radar_data_tuple[3] if radar_data_tuple else None
+            rps_bundle = radar_data_tuple[4] if radar_data_tuple else None
 
             if not rps_bundle:
                 cache_dir = os.path.join(
@@ -447,42 +484,18 @@ class WatchlistTab(BaseStockTab):
             rps120_series = rps_bundle.get('rps120') if rps_bundle else None
             rps250_series = rps_bundle.get('rps250') if rps_bundle else None
 
-            # 2. 从本地缓存获取数据并处理
-            sector_info = {}
-            try:
-                from core.app_config import app_config
-                from vcp.sector import SectorManager
-                # 统一从全局单例获取通达信路径（与 earnings/engine.py 保持一致）
-                tdx_vipdoc = app_config.get('scan/tdx_vipdoc', getattr(self.data_provider, 'tdx_vipdoc', r'D:\HT\vipdoc'))
-                tdx_root = os.path.dirname(tdx_vipdoc) if tdx_vipdoc else r'D:\HT'
-                sm = SectorManager.get_instance(tdx_root)
-                for _, code in codes_with_rows:
-                    sectors = sm.get_sectors(code)
-                    if sectors:
-                        short = [s.replace('GN_', '').replace('行业_', '')[:6] for s in sectors[:2]]
-                        sector_info[code] = ' | '.join(short)
-            except Exception as e:
-                log.warning(f"[关注池] 板块数据加载失败(通达信路径是否正确?): {e}")
-
-            try:
-                from vcp.models import VCPParams
-                params = VCPParams()
-                params.rps_threshold = 0
-                params.amp_threshold = 2.0
-                params.ma_bind_threshold = 0.30
-                params.high_250_threshold = 0.50
-                params.min_amount_20d = 0
-                params.min_history_days = 60
-            except ImportError as _e:
-                log.debug(f"[关注池] VCPParams 导入失败，跳过参数初始化: {_e}")
             # --- 动态扫盘：三大挂载战场的雷达数据提取 ---
-            na_data, block_data, earn_data = (radar_data_tuple[0], radar_data_tuple[1], radar_data_tuple[2]) if radar_data_tuple else ({}, {}, {})
+            na_data, na_subsector_data, block_data, earn_data = (
+                radar_data_tuple[0],
+                radar_data_tuple[1],
+                radar_data_tuple[2],
+                radar_data_tuple[3],
+            ) if radar_data_tuple else ({}, {}, {}, {})
 
             # 剥离不再必要的重复计算市值逻辑 (由大一统机制负责)
-            ok_count = err_count = 0
             results = {}  # 修复局部变量未初始化的 bug
             
-            for row_idx, code in codes_with_rows:
+            for _, code in codes_with_rows:
                 try:
                     rps120_val = float(rps120_series.get(code, 0)) if rps120_series is not None and code in rps120_series else 0
                     rps250_val = float(rps250_series.get(code, 0)) if rps250_series is not None and code in rps250_series else 0
@@ -495,20 +508,18 @@ class WatchlistTab(BaseStockTab):
                             
                     results[code] = {
                         'rps': rps_display,
-                        'sector': sector_info.get(code, '--'),
+                        'subsector': na_subsector_data.get(code, ''),
                         'na_catalyst': na_data.get(code, ''),
                         'block_trade': block_data.get(code, ''),
                         'earnings': earn_data.get(code, '')
                     }
-                    ok_count += 1
                 except Exception as _e:
                     log.debug(f"[关注池] {code} RPS指标计算异常: {_e}")
-                    err_count += 1
                     continue
             
             if results:
                 event_bus.sig_vcp_watchlist_ready.emit(results)
-                log.info(f"[关注池] {len(results)} 只标的附加指标计算完成")
+                log.info(f"[关注池] {len(results)} 只标的附加指标已就绪")
 
         except Exception as e:
             log.error(f"[关注池] 附加指标批量计算异常: {e}")
@@ -530,10 +541,12 @@ class WatchlistTab(BaseStockTab):
             
             row_dict = self.model.row_data[row_idx]
             row_dict['RPS强度'] = data.get('rps', '--')
-            row_dict['热点板块'] = data.get('sector', '--')
+            if data.get('subsector'):
+                row_dict['细分板块'] = data['subsector']
             
             # 三大阵营的数据注入 (如果原本有数据但不为空，我们不覆盖；如果本次扫到了，坚决覆盖)
-            if data.get('na_catalyst'): row_dict['美股日报'] = data['na_catalyst']
+            if data.get('na_catalyst'):
+                row_dict['催化剂'] = data['na_catalyst']
             if data.get('block_trade'): row_dict['大宗交易'] = data['block_trade']
             if data.get('earnings'): row_dict['业绩异动'] = data['earnings']
             
@@ -542,8 +555,45 @@ class WatchlistTab(BaseStockTab):
                 self.model.index(row_idx, 0),
                 self.model.index(row_idx, len(self.model._headers)-1)
             )
-            
-        event_bus.sig_system_log.emit("info", "[关注池] 附加指标已更新")
+
+        self._persist_watchlist_metrics(results)
+
+    def _persist_watchlist_metrics(self, results: dict):
+        if not results:
+            return
+
+        current_cache = watchlist_vm.get_watchlist_data()
+        if not current_cache:
+            return
+
+        cache_dirty = False
+        for code, data in results.items():
+            entry = current_cache.get(code)
+            if not entry:
+                continue
+
+            entry["RPS强度"] = str(data.get('rps', entry.get("RPS强度", "")))
+            if data.get('subsector'):
+                entry["细分板块"] = str(data['subsector'])
+            else:
+                entry.setdefault("细分板块", entry.get("细分板块", ""))
+
+            if data.get('na_catalyst'):
+                entry["美股日报"] = str(data['na_catalyst'])
+            if data.get('block_trade'):
+                entry["大宗交易"] = str(data['block_trade'])
+            if data.get('earnings'):
+                entry["业绩异动"] = str(data['earnings'])
+
+            entry.pop("催化剂", None)
+            entry.pop("热点板块", None)
+            current_cache[code] = entry
+            cache_dirty = True
+
+        if cache_dirty:
+            watchlist_vm._cache = current_cache
+            watchlist_vm._save_data()
+
 
     def _on_app_closing(self):
         """应用关闭前保存缓存"""
@@ -573,10 +623,12 @@ class WatchlistTab(BaseStockTab):
                 entry = current_cache[code]
                 entry["RPS强度"] = str(row_dict.get("RPS强度", ""))
                 entry["AI结论"] = str(row_dict.get("AI结论", ""))
-                entry["热点板块"] = str(row_dict.get("热点板块", ""))
-                entry["美股日报"] = str(row_dict.get("美股日报", ""))
+                entry["细分板块"] = str(row_dict.get("细分板块", ""))
+                entry["美股日报"] = str(row_dict.get("催化剂", ""))
                 entry["大宗交易"] = str(row_dict.get("大宗交易", ""))
                 entry["业绩异动"] = str(row_dict.get("业绩异动", ""))
+                entry.pop("催化剂", None)
+                entry.pop("热点板块", None)
                 
                 # 按视觉顺序保存
                 new_cache[code] = entry
@@ -598,18 +650,26 @@ class WatchlistTab(BaseStockTab):
         # 合并启动后期的重复触发
         self._request_vcp_calc()
 
+    def _on_na_daily_updated(self):
+        """美股日报最近5份内容刷新后，同步关注池的细分板块/催化剂缓存。"""
+        self._request_vcp_calc()
+
+    def _on_block_trade_updated(self):
+        """大宗交易数据刷新后，同步关注池的大宗交易缓存。"""
+        self._request_vcp_calc()
+
     def _on_vcp_watchlist_ready(self, payload: object):
         if payload:
-            log.info(f"[关注池] 附加指标已就绪，正在写入 {len(payload)} 条结果到表格...")
+            log.debug(f"[关注池] 写入 {len(payload)} 条附加指标")
             self._apply_vcp_indicators_ui(payload)
 
-    def _request_vcp_calc(self):
+    def _request_vcp_calc(self, delay_ms: int = 500):
         """请求计算 VCP 附加指标，带有防抖功能，防止启动时多次触发"""
         if not hasattr(self, '_vcp_calc_timer'):
             self._vcp_calc_timer = QTimer(self)
             self._vcp_calc_timer.setSingleShot(True)
             self._vcp_calc_timer.timeout.connect(self._do_vcp_calc)
-        self._vcp_calc_timer.start(500)
+        self._vcp_calc_timer.start(max(0, int(delay_ms)))
 
     def _do_vcp_calc(self):
         """实际计算"""
