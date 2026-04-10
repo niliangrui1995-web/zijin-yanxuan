@@ -55,9 +55,19 @@ def fetch_lhb_data_for_date(date_str: str) -> list[dict]:
     if not df_yyb.empty:
         for _, row in df_yyb.iterrows():
             branch_name = str(row.get('营业部名称', ''))
-            is_foreign = any(kw in branch_name for kw in FOREIGN_KEYWORDS)
-            if not is_foreign:
+            
+            # --- 简写外资营业部名称 (例如: 摩根大通证券(中国)有限公司 -> 摩根大通) ---
+            matched_kw = None
+            for kw in FOREIGN_KEYWORDS:
+                if kw in branch_name:
+                    matched_kw = kw
+                    break
+                    
+            if not matched_kw:
                 continue
+                
+            # 使用简写名称
+            branch_name = matched_kw
                 
             # 解析该外资席位买入了哪些股票
             buy_stocks_str = str(row.get('买入股票', ''))
