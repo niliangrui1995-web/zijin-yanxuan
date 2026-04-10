@@ -181,7 +181,7 @@ class LhbTab(BaseStockTab):
         
         # 提取完数据后，触发一次全局通知，让关注池能自动扫描到并固化新数据
         from core.event_bus import event_bus
-        event_bus.sig_cache_loaded.emit("lhb_ready")
+        event_bus.sig_cache_loaded.emit()
         
         date_str = self.date_edit.date().toString("yyyyMMdd")
         self.lbl_status.setText(f"✅ {date_str} 抓取完毕：共 {len(row_data)} 条上榜记录，其中 {res_count} 只个股达成机构外资资金共振。")
