@@ -74,7 +74,7 @@ class NADailyTab(BaseStockTab):
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(8, 6, 8, 6)
 
-        lbl_title = QLabel("🇺🇸 北美战报 — P9 战报标的")
+        lbl_title = QLabel("🇺🇸 北美战报")
         lbl_title.setObjectName("tabTitle")
         header_layout.addWidget(lbl_title)
         self.na_daily_source_label = QLabel("未加载")

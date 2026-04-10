@@ -118,7 +118,7 @@ class LhbTab(BaseStockTab):
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(8, 6, 8, 6)
         
-        lbl_title = QLabel("🔥 龙虎榜 (内资与外资共振)")
+        lbl_title = QLabel("🔥 龙虎榜")
         lbl_title.setObjectName("tabTitle")
         header_layout.addWidget(lbl_title)
         

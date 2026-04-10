@@ -257,7 +257,6 @@ class ForeignBlockTradeTab(BaseStockTab):
         super().__init__(data_provider=data_provider, parent=parent)
         self._block_trade_codes = set()
         self._cap_cache = {}
-        self.setStyleSheet("background-color: transparent;")
         
         self.days_to_fetch = 20  # 默认拉取最近20个交易日
         self._init_ui()
@@ -276,49 +275,37 @@ class ForeignBlockTradeTab(BaseStockTab):
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(8, 6, 8, 6)
         from ui.theme import theme_manager
-        t = theme_manager.current_theme
-        lbl_title = QLabel("🌐 外资大宗动向 (含机构马甲)")
-        lbl_title.setStyleSheet(f"font-size: 15px; font-weight: bold; color: {t['TEXT_PRIMARY']};")
+        lbl_title = QLabel("🌐 外资大宗动向")
+        lbl_title.setObjectName("tabTitle")
         header_layout.addWidget(lbl_title)
         
         self.lbl_status = QLabel("等待加载...")
-        self.lbl_status.setStyleSheet(f"font-size: 11px; color: {t['TEXT_MUTED']};")
+        self.lbl_status.setObjectName("tabSubtitle")
         header_layout.addWidget(self.lbl_status)
         header_layout.addStretch()
 
         # ── 筛选器组：按数据维度从大到小排列 ──
         self.cmb_filter_date = QComboBox()
         self.cmb_filter_date.addItem("全部日期")
-        self.cmb_filter_date.setFixedHeight(28)
-        self.cmb_filter_date.setFixedWidth(110)
+        self.cmb_filter_date.setFixedWidth(128)
         self.cmb_filter_date.currentIndexChanged.connect(self._filter_table_combo)
         header_layout.addWidget(self.cmb_filter_date)
 
-        self.cmb_filter_stock = QComboBox()
-        self.cmb_filter_stock.addItem("全部股票")
-        self.cmb_filter_stock.setFixedHeight(28)
-        self.cmb_filter_stock.setFixedWidth(110)
-        self.cmb_filter_stock.currentIndexChanged.connect(self._filter_table_combo)
-        header_layout.addWidget(self.cmb_filter_stock)
-
         self.cmb_filter_branch = QComboBox()
         self.cmb_filter_branch.addItem("全部外资席位")
-        self.cmb_filter_branch.setFixedHeight(28)
-        self.cmb_filter_branch.setFixedWidth(140)
+        self.cmb_filter_branch.setFixedWidth(152)
         self.cmb_filter_branch.currentIndexChanged.connect(self._filter_table_combo)
         header_layout.addWidget(self.cmb_filter_branch)
 
         self.cmb_filter_direction = QComboBox()
         self.cmb_filter_direction.addItems(["全部动作", "外资买入", "外资卖出", "外资对倒"])
-        self.cmb_filter_direction.setFixedHeight(28)
-        self.cmb_filter_direction.setFixedWidth(100)
+        self.cmb_filter_direction.setFixedWidth(128)
         self.cmb_filter_direction.currentIndexChanged.connect(self._filter_table_combo)
         header_layout.addWidget(self.cmb_filter_direction)
 
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("🔍 搜索代码/名称/任意词...")
-        self.search_box.setFixedWidth(180)
-        self.search_box.setFixedHeight(28)
+        self.search_box.setFixedWidth(240)
         self.search_box.textChanged.connect(self._filter_table_combo)
         header_layout.addWidget(self.search_box)
 
@@ -327,15 +314,12 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.cmb_days.addItems(["近 10 交易日", "近 20 交易日", "近 40 交易日", "近 60 交易日"])
         # 默认选中 20 交易日，与 self.days_to_fetch 初始值保持一致
         self.cmb_days.setCurrentIndex(1)
-        self.cmb_days.setFixedHeight(28)
+        self.cmb_days.setFixedWidth(148)
         self.cmb_days.currentIndexChanged.connect(self._on_days_changed)
         header_layout.addWidget(self.cmb_days)
 
         self.btn_refresh = QPushButton("🔄 抓取数据")
-        self.btn_refresh.setObjectName("ctaButton")
         self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_refresh.setFixedWidth(100)
-        self.btn_refresh.setFixedHeight(28)
         self.btn_refresh.clicked.connect(self._load_block_trade_data)
         header_layout.addWidget(self.btn_refresh)
         layout.addLayout(header_layout)
@@ -467,7 +451,10 @@ class ForeignBlockTradeTab(BaseStockTab):
 
     def _on_data_fetched(self, data_list):
         if not data_list:
+            self._aggregated_records = []
+            self._block_trade_codes = set()
             self.lbl_status.setText("❌ 近期未发现匹配外资的大宗交易。")
+            event_bus.sig_block_trade_updated.emit()
             return
             
         df = pd.DataFrame(data_list)
@@ -487,7 +474,6 @@ class ForeignBlockTradeTab(BaseStockTab):
         
         # 提取筛选器选项
         unique_dates = sorted(df['交易日期'].dropna().unique().tolist(), key=lambda x: str(x), reverse=True)
-        unique_stocks = sorted(df['证券简称'].dropna().unique().tolist(), key=lambda x: str(x))
         # 提取相关外资席位
         raw_branches = set(df['买方营业部'].dropna().tolist() + df['卖方营业部'].dropna().tolist())
         target_branches = set()
@@ -498,23 +484,17 @@ class ForeignBlockTradeTab(BaseStockTab):
         unique_branches = sorted(list(target_branches))
 
         self.cmb_filter_date.blockSignals(True)
-        self.cmb_filter_stock.blockSignals(True)
         self.cmb_filter_branch.blockSignals(True)
         
         self.cmb_filter_date.clear()
         self.cmb_filter_date.addItem("全部日期")
         self.cmb_filter_date.addItems([str(x) for x in unique_dates])
         
-        self.cmb_filter_stock.clear()
-        self.cmb_filter_stock.addItem("全部股票")
-        self.cmb_filter_stock.addItems([str(x) for x in unique_stocks])
-        
         self.cmb_filter_branch.clear()
         self.cmb_filter_branch.addItem("全部外资席位")
         self.cmb_filter_branch.addItems(unique_branches)
 
         self.cmb_filter_date.blockSignals(False)
-        self.cmb_filter_stock.blockSignals(False)
         self.cmb_filter_branch.blockSignals(False)
         
         self._block_trade_codes = set([str(x).zfill(6) for x in df['证券代码'].tolist()])
@@ -572,6 +552,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         
         # 强制应用当前的筛选状态
         self._filter_table_combo()
+        event_bus.sig_block_trade_updated.emit()
         
         # 异步计算黄金信号（涉及大量K线读取，不能阻塞UI）
         self._compute_golden_signal_async()
@@ -652,7 +633,9 @@ class ForeignBlockTradeTab(BaseStockTab):
         status_base = self.lbl_status.text().split("正在计算")[0]
         if golden_count > 0:
             self.lbl_status.setText(f"{status_base}🏆 发现 {golden_count} 笔黄金信号！")
-            self.lbl_status.setStyleSheet("font-size: 11px; color: #F59E0B; font-weight: bold;")
+            self.lbl_status.setObjectName("warningStatus")
+            self.lbl_status.style().unpolish(self.lbl_status)
+            self.lbl_status.style().polish(self.lbl_status)
         else:
             self.lbl_status.setText(f"{status_base}信号计算完成，暂无黄金信号。")
 
@@ -665,10 +648,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         
         filter_date = self.cmb_filter_date.currentText()
         self.proxy_model.setExactFilter("交易日期", None if filter_date == "全部日期" else filter_date)
-        
-        filter_stock = self.cmb_filter_stock.currentText()
-        self.proxy_model.setExactFilter("名称", None if filter_stock == "全部股票" else filter_stock)
-        
+
         filter_direction = self.cmb_filter_direction.currentText()
         self.proxy_model.setExactFilter("交易详情", None if filter_direction == "全部动作" else filter_direction)
         

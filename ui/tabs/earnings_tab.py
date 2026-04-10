@@ -42,7 +42,7 @@ class EarningsTab(BaseStockTab):
         header.setContentsMargins(8, 6, 8, 6)
         
 
-        title = QLabel("🚀 超预期金矿：业绩预告与财报环比高增追踪")
+        title = QLabel("🚀 业绩高增追踪")
         title.setObjectName("tabTitle")
         
         self.lbl_status = QLabel("监控挂机中...")
