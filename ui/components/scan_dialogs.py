@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QVBoxLayout,
     QComboBox,
+    QCalendarWidget,
 )
 
 from core.market_calendar import MarketCalendar
@@ -138,12 +139,12 @@ class VCPScanRangeDialog(QDialog):
 
         self.start_date_edit = QDateEdit()
         self.start_date_edit.setCalendarPopup(True)
-        self.start_date_edit.calendarWidget().setVerticalHeaderFormat(0)
+        self.start_date_edit.calendarWidget().setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
         self.start_date_edit.setDisplayFormat("yyyy-MM-dd")
 
         self.end_date_edit = QDateEdit()
         self.end_date_edit.setCalendarPopup(True)
-        self.end_date_edit.calendarWidget().setVerticalHeaderFormat(0)
+        self.end_date_edit.calendarWidget().setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
         self.end_date_edit.setDisplayFormat("yyyy-MM-dd")
         self.end_date_edit.setDate(QDate(latest_trade_date.year, latest_trade_date.month, latest_trade_date.day))
 

@@ -132,7 +132,7 @@ class LhbTab(BaseStockTab):
         self.date_edit.setCalendarPopup(True)
         # 挂载自定义交易日历
         self.cal_widget = TradeCalendarWidget()
-        self.cal_widget.setVerticalHeaderFormat(0)
+        self.cal_widget.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
         self.date_edit.setCalendarWidget(self.cal_widget)
         # 默认设为今天
         self.date_edit.setDate(QDate.currentDate())
