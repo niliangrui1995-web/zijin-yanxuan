@@ -359,6 +359,11 @@ class MainWindowQT(QMainWindow):
         self.act_f5.triggered.connect(self._action_refresh_f5)
 
         sys_menu.addSeparator()
+
+        self.act_trade_calendar = sys_menu.addAction("📅 查看交易休市日历")
+        self.act_trade_calendar.triggered.connect(self._show_trade_calendar)
+        
+        sys_menu.addSeparator()
         
         self.act_network = sys_menu.addAction("🌐 切换网络模式 (当前: 离线)")
         self.act_network.triggered.connect(self._toggle_network)
@@ -386,9 +391,31 @@ class MainWindowQT(QMainWindow):
         self.btn_sys_menu.setMenu(sys_menu)
         self._update_last_f5_time()
 
-    def _show_settings_dialog(self):
-        # Already deleted
-        pass
+    def _show_trade_calendar(self):
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QPushButton, QLabel
+        from ui.components.trade_calendar import TradeCalendarWidget
+        from ui.theme import theme_manager as _tm
+        
+        dlg = QDialog(self)
+        dlg.setWindowTitle("A股交易休市日历")
+        dlg.resize(400, 360)
+        
+        layout = QVBoxLayout(dlg)
+        
+        lbl = QLabel("深色红底（深色主题）或红字（浅色主题）代表非交易日，包含周末及法定节假日。")
+        lbl.setStyleSheet(f"color: {_tm.get('TEXT_SECONDARY')};")
+        lbl.setWordWrap(True)
+        layout.addWidget(lbl)
+        
+        cal = TradeCalendarWidget()
+        layout.addWidget(cal)
+        
+        btn = QPushButton("我知道了")
+        btn.setProperty("class", "primaryButton")
+        btn.clicked.connect(dlg.accept)
+        layout.addWidget(btn)
+        
+        dlg.exec()
 
     # =====================================================================
     # 自定义标题栏：品牌 + Tab 导航 + 窗口控制，合并成一行
