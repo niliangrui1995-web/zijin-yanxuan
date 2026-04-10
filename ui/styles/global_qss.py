@@ -125,7 +125,7 @@ QHeaderView::section {{
     font-size: 12px;
     font-weight: 600;
     letter-spacing: 0.5px;
-    padding: 8px 8px;
+    padding: 4px 8px;
     border: none;
     border-bottom: 1px solid {t['BORDER_BRAND']};
     border-right: 1px solid {t['BORDER_SUBTLE']};
