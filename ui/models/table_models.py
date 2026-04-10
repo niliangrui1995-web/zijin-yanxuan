@@ -721,6 +721,23 @@ class StockTableModel(QAbstractTableModel):
                     return QColor(_c("COLOR_FALL"))  # 卖出标为绿
                 elif "买入" in val_str:
                     return QColor(_c("COLOR_RISE"))  # 买入标为红
+                    
+            elif key in ["上榜净买额(万)", "机构净买(万)"]:
+                try:
+                    f_val = float(raw_val)
+                    if f_val > 0: return QColor(_c("COLOR_RISE"))
+                    elif f_val < 0: return QColor(_c("COLOR_FALL"))
+                except (ValueError, TypeError):
+                    pass
+                    
+            elif key == "外资潜伏池":
+                try:
+                    fz_val = float(item_dict.get("外资净买(万)", 0))
+                    if fz_val > 0: return QColor(_c("COLOR_RISE"))
+                    elif fz_val < 0: return QColor(_c("COLOR_FALL"))
+                except (ValueError, TypeError):
+                    pass
+                    
             return QColor(_c("TEXT_PRIMARY"))
 
         elif role == Qt.ItemDataRole.BackgroundRole:
