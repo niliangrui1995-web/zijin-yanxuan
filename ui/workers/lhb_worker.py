@@ -152,10 +152,17 @@ def fetch_lhb_data_for_date(date_str: str) -> list[dict]:
                 foreign_net_sum = len(final_f_buys) - len(final_f_sells)
                 
         # ================= 深度过滤与共振计算 =================
-        # 用户需求1：剔除机构和外资都是净卖出的股票（双杀陷阱）
-        if has_jg and has_foreign:
-            if (jg_info['机构买入净额'] < 0) and (foreign_net_sum < 0):
-                continue
+        # 用户需求1：只要在此股露脸的主力资金（不管是单机构、单外资、还是两者皆有）
+        # 如果它们全部都在净卖出逃跑，一律无情剔除！
+        is_all_present_dumping = True
+        
+        if has_jg and (jg_info['机构买入净额'] >= 0):
+            is_all_present_dumping = False
+        if has_foreign and (foreign_net_sum >= 0):
+            is_all_present_dumping = False
+            
+        if is_all_present_dumping:
+            continue
                 
         # 用户需求2：只有机构和外资均是净买入的情况下才标记资金共振
         is_resonance = False
