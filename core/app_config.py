@@ -7,9 +7,6 @@
 # 现在统一为一个入口，用 section/key 命名空间管理。
 # ================================================================================
 from PyQt6.QtCore import QSettings
-import logging
-
-_log = logging.getLogger(__name__)
 
 
 class AppConfig:
@@ -136,43 +133,6 @@ class AppConfig:
     @network_offline_mode.setter
     def network_offline_mode(self, value: bool):
         self.set("network/offline_mode", value)
-
-    # ======================== 表头持久化专用 ========================
-
-    def get_header_state(self, tab_name: str):
-        """获取指定 Tab 的列宽持久化数据"""
-        return self.get(f"header/{tab_name}")
-
-    def set_header_state(self, tab_name: str, state):
-        """保存指定 Tab 的列宽持久化数据"""
-        self.set(f"header/{tab_name}", state)
-
-    # ======================== 扫描预设管理 ========================
-
-    def get_scan_presets(self) -> dict:
-        """获取用户自定义扫描预设"""
-        import json
-        raw = self.get("scan/user_presets", "{}")
-        try:
-            return json.loads(raw) if isinstance(raw, str) else {}
-        except (json.JSONDecodeError, TypeError, ValueError) as _e:
-            _log.debug(f"[AppConfig] 扫描预设解析失败: {_e}")
-            return {}
-
-    def save_scan_presets(self, presets: dict):
-        """保存用户自定义扫描预设"""
-        import json
-        self.set("scan/user_presets", json.dumps(presets, ensure_ascii=False))
-
-    # ======================== 调试 ========================
-
-    def dump_all(self) -> dict:
-        """列出所有已保存的配置项（调试用）"""
-        result = {}
-        for key in self._settings.allKeys():
-            result[key] = self._settings.value(key)
-        return result
-
 
 # 全局单例
 app_config = AppConfig()

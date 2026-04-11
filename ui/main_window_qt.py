@@ -1,25 +1,19 @@
 import os
-import sys
-import ctypes
-import ctypes.wintypes
 import datetime
-from vcp.constants import SPECIAL_POOL_DATA_CACHE, APP_VERSION
+from vcp.constants import APP_VERSION
 from ui.components.kline_window_manager import kline_manager
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QTabWidget, QTabBar, QPushButton, QLabel, QLineEdit, QComboBox, QMenu,
-    QTextEdit, QProgressBar, QSpinBox, QDoubleSpinBox, QFrame, QToolTip,
-    QToolButton, QSizePolicy
+    QTabWidget, QTabBar, QPushButton, QLabel, QFrame, QToolTip
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot, QSettings, QPoint
-from PyQt6.QtGui import QColor, QIcon, QShortcut, QKeySequence, QMouseEvent
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot, QSettings
+from PyQt6.QtGui import QIcon
 
 # 核心引擎与数据层
 from vcp.data_provider import TdxDataProvider
 from vcp.engine import VCPEngine
-from ui.kline_window_qt import KLineChartWindow
 
-from ui.components import AnimatedCard, PulsingDot, GlassPanel, AnimatedHoverButton
+from ui.components import PulsingDot
 from ui.tabs.scan_tab import ScanTab
 from ui.tabs.rt_monitor_tab import RtMonitorTab
 from ui.tabs.watchlist_tab import WatchlistTab
@@ -28,7 +22,6 @@ from ui.tabs.foreign_block_trade_tab import ForeignBlockTradeTab
 from ui.tabs.asian_market_tab import AsianMarketTab
 from ui.tabs.lhb_tab import LhbTab
 from core.event_bus import event_bus
-from core.event_types import DataEvent
 from core.logger import get_logger
 
 from core.cache_manager import CacheManager
@@ -119,7 +112,6 @@ class MainWindowQT(QMainWindow):
         self.setWindowTitle('紫金研选量化终端')
 
         # 记录默认逻辑工作区
-        self._available_screen_geo = self._get_logical_work_area()
         self.setWindowIcon(QIcon(os.path.join(os.path.dirname(os.path.dirname(__file__)), "bull_icon.ico")))
         # 无边框改造：去掉原生标题栏，由自定义标题栏接管
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
@@ -340,8 +332,7 @@ class MainWindowQT(QMainWindow):
 
     def _init_gear_menu(self):
         """在系统Tab右上角注入通达信风格的配置齿轮菜单"""
-        from PyQt6.QtWidgets import QToolButton, QMenu, QDialog, QFormLayout, QDialogButtonBox, QHBoxLayout, QLabel, QPushButton, QLineEdit
-        from ui.components import SvgIconBuilder
+        from PyQt6.QtWidgets import QToolButton, QMenu
         
         self.btn_sys_menu = QToolButton()
         # Keep SVG icon dynamic by refreshing it in _apply_theme, but initial is text or icon
@@ -394,7 +385,7 @@ class MainWindowQT(QMainWindow):
         self._update_last_f5_time()
 
     def _show_trade_calendar(self):
-        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QPushButton, QLabel, QFrame, QHBoxLayout, QToolButton
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QFrame, QHBoxLayout, QToolButton
         from PyQt6.QtCore import Qt
         from ui.components.trade_calendar import TradeCalendarWidget
         from ui.theme import theme_manager as _tm
@@ -529,7 +520,7 @@ class MainWindowQT(QMainWindow):
         # --- 右侧窗口控制按钮 ---
         _win_btn_color = _t['TEXT_MUTED']
         _win_btn_hover = _t['BG_HOVER']
-        btn_style = f"""
+        btn_style = """
             QPushButton {{{{
                 background: transparent;
                 color: {{color}};
@@ -1067,7 +1058,7 @@ class MainWindowQT(QMainWindow):
     # ================================================================
     # 主题切换系统
     # ================================================================
-    def _apply_theme(self, theme_name: str = ""):
+    def _apply_theme(self, _theme_name: str = ""):
         """主题切换时的全局刷新回调"""
         from ui.styles.global_qss import generate_global_qss
         from ui.theme import theme_manager

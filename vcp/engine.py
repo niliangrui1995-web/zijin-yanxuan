@@ -944,7 +944,6 @@ class VCPEngine:
         _diag_rps_nan = 0
         _diag_ind_fail = 0
         _diag_eval_fail = 0
-        _diag_eval_err = 0
         for idx_code, (code, df) in enumerate(all_data.items()):
             if cancelled_checker and cancelled_checker():
                 raise InterruptedError("盘中监控已停止")

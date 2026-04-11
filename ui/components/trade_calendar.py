@@ -28,7 +28,6 @@ class TradeCalendarWidget(QCalendarWidget):
         paintCell 覆盖不到它。必须通过 QSS 给表头单独设背景色和文字色。
         """
         bg = _c("BG_TABLE_BASE")
-        text = _c("TEXT_PRIMARY")
         text_dim = _c("TEXT_DISABLED")
         self.setStyleSheet(f"""
             QCalendarWidget QWidget {{

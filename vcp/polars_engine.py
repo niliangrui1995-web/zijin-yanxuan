@@ -490,48 +490,6 @@ def load_cache_parquet() -> tuple[dict, str] | None:
 
 
 # ================================================================
-# 技术指标批量预算 — 多线程 Polars
-# ================================================================
-
-def calculate_indicators_batch_pl(cache_data: dict) -> None:
-    """多线程指标预算 — 兼容 Polars 和 Pandas 输入"""
-    from vcp.engine import VCPEngine
-    import concurrent.futures
-
-    t0 = time.time()
-
-    def _calc_one(item):
-        _code, _df = item
-        if _df is None or len(_df) < 10:
-            return 'skip'
-        # Polars DataFrame 用 columns metadata 判断是否已算
-        if isinstance(_df, pl.DataFrame):
-            if 'sma10' in _df.columns:
-                return 'skip'
-        elif hasattr(_df, 'attrs') and (_df.attrs.get('vcp_indicators_ready', False) or _df.attrs.get('vcp_core_ready', False)):
-            return 'skip'
-        try:
-            # 批量预算仅计算核心指标，跳过 MACD/RSI/BB 节省约 400MB 内存
-            VCPEngine.calculate_indicators(_df, include_chart=False)
-            return 'ok'
-        except Exception as _e:
-            _log.debug(f"[加速引擎] 指标计算失败: {_e}")
-            return 'fail'
-
-    items = list(cache_data.items())
-    max_workers = min(8, (os.cpu_count() or 4))
-
-    results = {'ok': 0, 'skip': 0, 'fail': 0}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
-        for status in ex.map(_calc_one, items):
-            results[status] = results.get(status, 0) + 1
-
-    elapsed = time.time() - t0
-    _log.info(f"[加速引擎] 批量指标预算完成: {results['ok']} 只计算 | "
-          f"{results['skip']} 只跳过 | {results['fail']} 只失败 | 耗时 {elapsed:.2f}s")
-
-
-# ================================================================
 # 板块 RPS 加速 — 纯 Polars join/groupby
 # ================================================================
 

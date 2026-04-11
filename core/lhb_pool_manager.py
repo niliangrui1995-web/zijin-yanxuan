@@ -262,8 +262,6 @@ class LhbPoolManager:
                         try:
                             df_k = data_provider.get_data(code)
                             if df_k is not None and not df_k.empty and len(df_k) >= 20:
-                                import datetime
-                                
                                 # 处理日期列
                                 if 'date' in df_k.columns:
                                     last_date = str(df_k['date'].iloc[-1])[:10]

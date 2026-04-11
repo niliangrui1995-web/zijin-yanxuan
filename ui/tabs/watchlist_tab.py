@@ -49,7 +49,6 @@ class WatchlistTab(BaseStockTab):
         event_bus.sig_na_daily_updated.connect(self._on_na_daily_updated)
         event_bus.sig_block_trade_updated.connect(self._on_block_trade_updated)
         event_bus.sig_vcp_watchlist_ready.connect(self._on_vcp_watchlist_ready)
-        self._cache_backfill_done = False
 
         # 先立即回填一次，避免启动期 UI 忙时定时器延后导致“关注池长期空白”。
         self._load_special_data()
@@ -150,10 +149,8 @@ class WatchlistTab(BaseStockTab):
     # ================================================================
     # 数据加载
     # ================================================================
-    def _load_special_data(self, refresh_delay_ms: int = 500):
+    def _load_special_data(self):
         """加载关注池数据：新UI JSON + 老UI pkl 兼容 + AI诊断缓存"""
-        data_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-
         # 1. 统一由 ViewModel 管理的数据
         data_dict = watchlist_vm.get_watchlist_data()
 
@@ -527,21 +524,18 @@ class WatchlistTab(BaseStockTab):
             log.warning(f"[关注池] 提取主界面数据异常: {e}")
         return na_data, na_subsector_data, block_data, earn_data, lhb_data, rps_bundle
 
-    def _on_watchlist_changed(self, action: str, code: str):
+    def _on_watchlist_changed(self, action: str, _code: str):
         """外部请求关注池变更时，防抖 300ms 后再重新加载（防止快速增删导致任务堆积）"""
         if not hasattr(self, '_debounce_timer'):
             self._debounce_timer = QTimer(self)
             self._debounce_timer.setSingleShot(True)
             self._debounce_timer.timeout.connect(self._do_watchlist_reload)
-        self._pending_watchlist_action = action
         # 每次新信号进来都重置计时器，只有最后一次 300ms 后才真正触发
         self._debounce_timer.start(80 if action == "add" else 300)
 
     def _do_watchlist_reload(self):
         """防抖后的实际重载逻辑"""
-        action = getattr(self, '_pending_watchlist_action', "")
-        self._pending_watchlist_action = ""
-        self._load_special_data(refresh_delay_ms=120 if action == "add" else 500)
+        self._load_special_data()
 
     def _refresh_vcp_indicators(self, codes_with_rows, radar_data_tuple=None):
         """后台线程：计算关注池标的的 RPS 和跨 Tab 附加字段。"""

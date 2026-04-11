@@ -2,15 +2,11 @@
 # 从 vcp_hunter.pyw 提取，零逻辑变更
 import os
 import json
-import re
 import numpy as np
 from datetime import datetime
 import pandas as pd
 
-from vcp.constants import (
-    MARKET_OPEN_AM, MARKET_CLOSE_AM, MARKET_OPEN_PM, MARKET_CLOSE_PM,
-    PROJECT_ROOT,
-)
+from vcp.constants import PROJECT_ROOT
 
 from core.logger import get_logger
 _log = get_logger(__name__)
@@ -121,30 +117,4 @@ def is_trading_day(date=None):
     """
     d = date if date else datetime.now()
     return d.weekday() < 5
-
-def is_market_hours_now():
-    """当前是否在 A 股交易时间内"""
-    now = datetime.now()
-    h, m = now.hour, now.minute
-    t = h * 60 + m
-    am_open  = MARKET_OPEN_AM[0]  * 60 + MARKET_OPEN_AM[1]
-    am_close = MARKET_CLOSE_AM[0] * 60 + MARKET_CLOSE_AM[1]
-    pm_open  = MARKET_OPEN_PM[0]  * 60 + MARKET_OPEN_PM[1]
-    pm_close = MARKET_CLOSE_PM[0] * 60 + MARKET_CLOSE_PM[1]
-    return (am_open <= t <= am_close) or (pm_open <= t <= pm_close)
-
-def is_after_930_today():
-    """当日是否已过 9:30"""
-    now = datetime.now()
-    return now.hour > 9 or (now.hour == 9 and now.minute >= 30)
-
-def is_after_market_close_today():
-    """当日是否已过 15:00"""
-    return datetime.now().hour >= 15
-
-def fmt_date(s):
-    """将日期字符串格式化为 YYYYMMDD"""
-    s = str(s).strip().replace('-', '').replace('/', '')
-    m = re.search(r'\d{8}', s)
-    return m.group(0) if m else s
 

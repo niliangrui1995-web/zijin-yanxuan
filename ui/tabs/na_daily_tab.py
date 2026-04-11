@@ -10,7 +10,7 @@ import datetime
 
 from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout,
-    QHeaderView, QPushButton, QLabel, QAbstractItemView
+    QHeaderView, QPushButton, QLabel
 )
 from PyQt6.QtCore import Qt, QTimer
 from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
@@ -25,7 +25,6 @@ class NADailyTab(BaseStockTab):
     def __init__(self, data_provider, parent=None):
         super().__init__(data_provider=data_provider, parent=parent)
         self._na_daily_codes = set()
-        self._cap_cache_na = {}
         self._last_report_signature = ()
 
         self._init_ui()

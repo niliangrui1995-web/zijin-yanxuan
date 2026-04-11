@@ -12,7 +12,7 @@ import sys
 import pandas as pd
 
 from PyQt6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QTableView, QHeaderView, QPushButton, QLabel, QAbstractItemView, QLineEdit, QComboBox
+    QVBoxLayout, QHBoxLayout, QHeaderView, QPushButton, QLabel, QLineEdit, QComboBox
 )
 from PyQt6.QtCore import Qt, QTimer
 
@@ -203,7 +203,6 @@ class ForeignBlockTradeTab(BaseStockTab):
         # 顶部工具栏
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(8, 6, 8, 6)
-        from ui.theme import theme_manager
         lbl_title = QLabel("主力/外资大宗")
         lbl_title.setObjectName("tabTitle")
         header_layout.addWidget(lbl_title)
@@ -469,7 +468,6 @@ class ForeignBlockTradeTab(BaseStockTab):
             failed_chunks = []
 
         if not data_list:
-            self._aggregated_records = []
             self._block_trade_codes = set()
             if timeout_chunks or failed_chunks:
                 self.lbl_status.setText(
@@ -495,9 +493,6 @@ class ForeignBlockTradeTab(BaseStockTab):
             '成交额': 'sum'
         })
         df = df.sort_values(by=['交易日期', '证券代码'], ascending=[False, True])
-        # 保存聚合后的记录，用于表格行匹配
-        self._aggregated_records = df.to_dict('records')
-        
         # 提取筛选器选项
         unique_dates = sorted(df['交易日期'].dropna().unique().tolist(), key=lambda x: str(x), reverse=True)
         # 提取相关外资席位

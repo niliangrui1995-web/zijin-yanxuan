@@ -11,8 +11,6 @@ import gc
 
 
 from core.logger import get_logger
-from core.event_bus import event_bus
-
 log = get_logger(__name__)
 
 

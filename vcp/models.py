@@ -14,9 +14,4 @@ class VCPParams:
     min_amount_20d: float = 8e7   # 默认 8000 万
     min_history_days: int = 250
     target_code: str = ""
-    # 弹性区间参数
-    enable_flexible_peaks: bool = True
-    enable_rps_stability: bool = True
     enable_ma_slope: bool = True
-    enable_volatility_filter: bool = True
-    enable_pre_spread: bool = True

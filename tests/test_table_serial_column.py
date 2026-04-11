@@ -36,3 +36,18 @@ def test_hot_sector_display_keeps_full_text():
     idx = model.index(0, model.headers.index("热点板块"))
     assert model.data(idx, Qt.ItemDataRole.DisplayRole) == full_text
     assert model.data(idx, Qt.ItemDataRole.ToolTipRole) is not None
+
+
+def test_only_serial_column_is_center_aligned():
+    model = StockTableModel(["代码", "名称", "现价", "时间", "涨幅%"])
+    model.update_data([{"代码": "000001", "名称": "平安银行", "现价": "10.00", "时间": "09:35", "涨幅%": "1.23"}])
+
+    serial_align = model.data(model.index(0, 0), Qt.ItemDataRole.TextAlignmentRole)
+    price_align = model.data(model.index(0, model.headers.index("现价")), Qt.ItemDataRole.TextAlignmentRole)
+    time_align = model.data(model.index(0, model.headers.index("时间")), Qt.ItemDataRole.TextAlignmentRole)
+    pct_align = model.data(model.index(0, model.headers.index("涨幅%")), Qt.ItemDataRole.TextAlignmentRole)
+
+    assert serial_align & Qt.AlignmentFlag.AlignCenter.value
+    assert price_align & Qt.AlignmentFlag.AlignLeft.value
+    assert time_align & Qt.AlignmentFlag.AlignLeft.value
+    assert pct_align & Qt.AlignmentFlag.AlignLeft.value

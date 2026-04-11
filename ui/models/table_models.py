@@ -73,14 +73,6 @@ def _summarize_long_text(header: str, raw_val):
 def _alignment_for_header(header: str):
     if header == SERIAL_HEADER:
         return int(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-    if header in {"代码", "时间", "突破状态", "RPS强度", "买点", "外资潜伏池"}:
-        return int(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-    if header in {"现价", "市价", "最新价", "收盘", "市值", "流通市值", "成交额", "成交金额(万元)", "评分", "区间振幅"}:
-        return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-    if "%" in header or "净买" in header or "净额" in header:
-        return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-    if "日" in header or "期" in header or "时间" in header:
-        return int(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
     return int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
 
@@ -553,8 +545,6 @@ class StockItemDelegate(QStyledItemDelegate):
             # 胶囊边界框
             pad_x = 12
             pad_y = 6
-            pill_rect = option.rect.adjusted(2, 2, -2, -2)
-            
             # 计算剧中或靠左的绘制位置
             align = index.data(Qt.ItemDataRole.TextAlignmentRole)
             draw_rect = QRect(0, 0, text_width + pad_x, text_height + pad_y)

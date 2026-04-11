@@ -605,7 +605,6 @@ class EarningsEngine:
             last_q4_date, last_q3_date = f"{year-1}-12-31", f"{year-1}-09-30"
             # 去年同期需要的日期（用于计算单季度同比）
             last_q2_date, last_q1_date = f"{year-1}-06-30", f"{year-1}-03-31"
-            prev_year_q4_date, prev_year_q3_date = f"{year-2}-12-31", f"{year-2}-09-30"
             current_single, last_single = np.nan, np.nan
             last_single_basis = "财报"
             # yoy_base_single: 去年同一季度的单季利润，用来算同比

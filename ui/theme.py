@@ -33,7 +33,6 @@ THEME_MOYUAN = {
     "BG_BUTTON_HOVER": "#202835",
     "BG_MENU": "#11161E",
     "BG_GLASS": "rgba(14, 17, 22, 0.96)",
-    "BG_MODULE_CARD": "#161C25",
 
     # 文字色
     "TEXT_PRIMARY": "#E5E7EB",
@@ -152,7 +151,6 @@ THEME_YUEBAI = {
     "BG_BUTTON_HOVER": "#E7DDCF",
     "BG_MENU": "#FFFDF8",
     "BG_GLASS": "rgba(245, 241, 234, 0.97)",
-    "BG_MODULE_CARD": "#FFFDF8",
 
     # 文字色 — 白底黑字，严格遵循 WCAG 4.5:1
     "TEXT_PRIMARY": "#172033",
@@ -411,35 +409,3 @@ theme_manager.sig_theme_changed.connect(lambda _: _refresh_compat_vars())
 # ============================================================
 # 字体（不随主题变化）
 # ============================================================
-FONT_FAMILY = '"Microsoft YaHei UI", "Inter", "Segoe UI", sans-serif'
-FONT_MONO = '"JetBrains Mono", "Cascadia Code", "Consolas", monospace'
-FONT_SIZE_NORMAL = 13
-FONT_SIZE_SMALL = 12
-FONT_SIZE_HEADER = 11
-FONT_SIZE_TITLE = 15
-
-
-def apply_rise_fall_color(pct_val: float) -> str:
-    """根据涨跌幅返回颜色字符串（动态取当前主题）"""
-    t = theme_manager.current_theme
-    if pct_val > 5:
-        return t["COLOR_RISE_STRONG"]
-    elif pct_val > 0:
-        return t["COLOR_RISE"]
-    elif pct_val < -5:
-        return t["COLOR_FALL_STRONG"]
-    elif pct_val < 0:
-        return t["COLOR_FALL"]
-    return t["COLOR_FLAT"]
-
-
-def apply_score_color(score_val: float) -> str:
-    """根据评分返回颜色字符串（动态取当前主题）"""
-    t = theme_manager.current_theme
-    if score_val >= 90:
-        return t["SCORE_EXCELLENT"]
-    elif score_val >= 80:
-        return t["SCORE_GOOD"]
-    elif score_val >= 60:
-        return t["SCORE_NORMAL"]
-    return t["SCORE_LOW"]

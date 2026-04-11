@@ -116,7 +116,7 @@ def build_stock_context_menu(
         try:
             import subprocess
             subprocess.Popen(['start', 'chrome', url], shell=True)
-        except Exception as e:
+        except Exception:
             import webbrowser
             webbrowser.open(url)
 

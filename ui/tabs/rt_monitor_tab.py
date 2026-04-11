@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTableView,
+    QWidget, QVBoxLayout, QHBoxLayout,
     QHeaderView, QPushButton, QLabel, QLineEdit,
-    QAbstractItemView, QDialog, QComboBox, QSpinBox, QToolButton
+    QDialog, QComboBox, QSpinBox, QToolButton
 )
 import re
 from ui.components.toast_widget import show_toast

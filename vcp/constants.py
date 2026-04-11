@@ -13,31 +13,6 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 
 # ==========================================
-# 主界面字体等比例放大（约 1.2 倍），供全局使用
-# ==========================================
-UI_FONT_SMALL = 11   # 状态栏等
-UI_FONT = 12         # 主界面正文
-UI_FONT_MED = 13     # 小节标题
-UI_FONT_TITLE = 19   # 大标题
-UI_FONT_LOG = 14     # 日志/等宽
-
-# ==========================================
-# K 线图统一配色：深蓝底 + 高对比，彭博终端专业风格
-# ==========================================
-CHART_BG = '#0A0E17'
-CHART_PANEL = '#0F1621'
-CHART_GRID = '#1E293B'
-CHART_UP = '#EF4444'
-CHART_DN = '#22D3EE'
-CHART_ACCENT = '#3B82F6'
-CHART_FG = '#F1F5F9'
-CHART_FG_SEC = '#94A3B8'
-CHART_WARN = '#F59E0B'
-CHART_SUCCESS = '#10B981'
-
-
-
-# ==========================================
 # 日期格式常量
 # ==========================================
 DATE_FMT = '%Y%m%d'
@@ -62,11 +37,9 @@ def get_data_dir(sub_folder="Cache"):
     return target_dir
 
 CACHE_DIR  = get_data_dir("Cache")
-EXPORT_DIR = get_data_dir("Export")
 
 
 SPECIAL_POOL_DATA_CACHE = os.path.join(CACHE_DIR, "vcp_special_pool_data.pkl")
-RPS_CACHE_FILE = os.path.join(CACHE_DIR, "vcp_rps_precomputed.pkl")        # F5预算RPS矩阵
 SECTOR_RPS_CACHE_FILE = os.path.join(CACHE_DIR, "vcp_sector_rps_precomputed.pkl")  # F5预算板块RPS
 SHAREHOLDER_CACHE_FILE = os.path.join(CACHE_DIR, "vcp_shareholder_cache.pkl")       # 十大流通股东缓存
 FINANCE_CACHE_FILE = os.path.join(CACHE_DIR, "vcp_finance_cache.pkl")               # 财务股本缓存(防服务器断连)
@@ -91,7 +64,6 @@ DEFAULT_AMP_THRESHOLD = 0.45   # 左区区间振幅上限，默认不超过 45%
 # 全局运行/缓存配置常量
 # ==========================================
 CACHE_VERSION       = 3      # 本地缓存结构版本号
-RT_CACHE_VERSION    = 2      # 盘中监控缓存结构版本号
 MAX_HISTORY_BARS    = 500    # 全量历史下载长度
 INCREMENTAL_BARS    = 30     # 增量更新长度
 MARKET_SYNC_WORKERS = 15     # 同步市场数据线程数
@@ -106,7 +78,6 @@ PEAKS_FROM_GROUPS       = 5
 PCT_BASELINE            = 0.93
 MERGE_WITHIN_DAYS       = 15
 EXCLUDE_DAYS_FOR_PEAKS  = 3
-MIN_DAYS_BETWEEN_PEAKS  = 10
 
 # ==========================================
 # 弹性区间参数
@@ -120,12 +91,6 @@ MIN_DAYS_AFTER_LAST_PEAK_CONFIRM = 3
 MAX_R2_BELOW_R1_PCT     = 0.15
 MIN_FIRST_TO_THIRD_DAYS = 50
 MIN_R1_R2_DAYS         = 50
-
-# ==========================================
-# RPS稳定性参数
-# ==========================================
-RPS_STABILITY_DAYS      = 5
-RPS_STABILITY_THRESHOLD = 80
 
 # ==========================================
 # 均线斜率参数

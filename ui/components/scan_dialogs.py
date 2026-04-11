@@ -17,7 +17,6 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QVBoxLayout,
     QComboBox,
-    QCalendarWidget,
 )
 
 from core.market_calendar import MarketCalendar

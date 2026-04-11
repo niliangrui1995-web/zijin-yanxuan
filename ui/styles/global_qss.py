@@ -35,23 +35,6 @@ QWidget#leftPanel {{
     border-right: 1px solid {t['BRAND_SUBTLE']};
 }}
 
-/* --- AnimatedCard 模块卡片 --- */
-QFrame#moduleCard {{
-    background-color: {t['BG_MODULE_CARD']};
-    border: 1px solid {t['BORDER_DEFAULT']};
-    border-radius: 12px;
-}}
-QFrame#moduleCard:hover {{
-    border: 1px solid rgba(239, 68, 68, 0.2);
-}}
-
-/* --- GlassPanel 毛玻璃面板 --- */
-QFrame#glassPanel {{
-    background-color: {t['BG_GLASS']};
-    border-radius: 10px;
-    border: 1px solid {t['BORDER_SUBTLE']};
-}}
-
 /* ═══════════════════════════════════════════
    QTabWidget - 现代标签页
    ═══════════════════════════════════════════ */

@@ -281,7 +281,6 @@ class TdxDataProvider:
     def _apply_forward_adjustment(self, api, market, code, df):
         """Apply forward adjustment using local gbbq data first, then fall back to online API."""
         try:
-            import polars as pl
             xdxr_df = None
             # 优先使用本地 gbbq 数据(无需联网)
             if code in self._local_gbbq:
@@ -762,10 +761,6 @@ class TdxDataProvider:
             _log.error(f"[K线 {code}] 联网补全失败(数据层)，继续使用缓存: {e}")
         return existing_df
 
-    def has_cache(self):
-        with self.cache_lock:
-            return len(self.cache_data) > 0
-
     def is_online(self):
         return not self._offline
 
@@ -1021,48 +1016,6 @@ class TdxDataProvider:
             self._circuit_breaker_fails = 0
 
         return result
-
-    def get_realtime_quotes(self, codes):
-        """Return a higher-level realtime quote DataFrame for the given symbols."""
-        import pandas as pd
-        raw_res = self.fetch_realtime_quotes_batch(codes)
-        
-        data_list = []
-        for code in codes:
-            if code in raw_res:
-                q = raw_res[code]
-                cur = float(q.get('close', 0) or 0)
-                last_close = float(q.get('last_close', 0) or 0)
-                op = float(q.get('open', 0) or 0)
-                
-                # --- 兜底检查：防御 Pytdx 零值Bug (停牌/未开盘/断流) ---
-                if last_close <= 0:
-                    hist_df = self.get_data(code)
-                    if hist_df is not None and len(hist_df) > 0:
-                        last_close = float(hist_df.iloc[-1]['close'])
-                        
-                if cur <= 0 and last_close > 0:
-                    cur = last_close
-
-                # 【修复】涨幅: 使用标准算法 (现价 - 昨收) / 昨收 * 100
-                if last_close > 0:
-                    pct = ((cur - last_close) / last_close * 100)
-                elif op > 0:
-                    pct = ((cur - op) / op * 100)
-                else:
-                    pct = 0
-                data_list.append({
-                    'code': code, 'current': cur, 'pct_change': pct,
-                    'open': op, 'high': q.get('high', cur), 'low': q.get('low', cur)
-                })
-            # 【修复】移除假数据生成逻辑 — 取不到实时数据的股票直接跳过
-                
-        if not data_list:
-            return pd.DataFrame()
-            
-        df = pd.DataFrame(data_list)
-        df.set_index('code', inplace=True)
-        return df
 
     def build_realtime_df(self, code, quote):
         """Merge a realtime quote into the latest historical bars and return a DataFrame."""

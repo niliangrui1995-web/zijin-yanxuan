@@ -2,7 +2,7 @@
 from datetime import datetime
 import pandas as pd
 from PyQt6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QTableView, QHeaderView, QPushButton, QLabel, QLineEdit, QAbstractItemView, QComboBox
+    QVBoxLayout, QHBoxLayout, QHeaderView, QPushButton, QLabel, QLineEdit, QComboBox
 )
 from PyQt6.QtCore import Qt, pyqtSlot, QTimer
 from ui.tabs.base_stock_tab import BaseStockTab
@@ -237,7 +237,7 @@ class EarningsTab(BaseStockTab):
         self.model.update_data(self.row_data)
         
         # 通知关注池：业绩数据已就绪，重新拉取"业绩异动"列
-        # event_types DataEvent.EARNINGS_UPDATED 已经废弃，走专属通道
+        # 旧事件枚举链路已废弃，这里走专属刷新通道。
         event_bus.sig_earnings_updated.emit()
         
         # 统一异步刷新市值

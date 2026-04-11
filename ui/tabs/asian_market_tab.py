@@ -5,7 +5,7 @@ import datetime
 import threading
 from contextlib import contextmanager
 from PyQt6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QTableView, QHeaderView, QPushButton, QLabel, QCheckBox, QAbstractItemView
+    QVBoxLayout, QHBoxLayout, QHeaderView, QPushButton, QLabel, QCheckBox
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
@@ -85,47 +85,6 @@ RT_JSON_CACHE = os.path.join(CACHE_DIR, "asian_rt_latest.json")
 
 # Global dict to store the realtime prices and today's mini-df for kline patching
 GLOBAL_ASIAN_RT_CACHE = {}
-
-def get_track_mapping():
-    # 彻底覆盖底层 JSON 解析中因为注释空行换行等引起的断档漏网之鱼
-    return {
-        '3661.TW': '定制化ASIC与代工',
-        '3711.TW': '先进封装与混合键合',
-        '3037.TW': '核心基板与封装材料',
-        '8046.TW': '核心基板与封装材料',
-        '2383.TW': '高频PCB与覆铜板材料',
-        '6213.TW': '高频PCB与覆铜板材料',
-        '1303.TW': '核心基板与封装材料',
-        '2313.TW': '高频PCB与覆铜板材料',
-        '3044.TW': '高频PCB与覆铜板材料',
-        '2308.TW': 'AI服务器基建与温控',
-        '3324.TWO': 'AI服务器基建与温控',
-        '3017.TW': 'AI服务器基建与温控',
-        '2449.TW': '测试/老化与探针卡',
-        '6223.TWO': '测试/老化与探针卡',
-        '2454.TW': '边缘AI与具身智能',
-        '8035.T': '晶圆制造与材料设备',
-        '4062.T': '核心基板与封装材料',
-        '2802.T': '核心基板与封装材料',
-        '5802.T': '光模块/光纤与CPO',  
-        '6752.T': '高频PCB与覆铜板材料',
-        '3110.T': '高频PCB与覆铜板材料',
-        '3407.T': '高频PCB与覆铜板材料',
-        '4004.T': '高频PCB与覆铜板材料',
-        '4182.T': '高频PCB与覆铜板材料',
-        '5706.T': '高频PCB与覆铜板材料',
-        '5801.T': '高频PCB与覆铜板材料',
-        '5201.T': 'AI服务器基建与温控',
-        '6594.T': 'AI服务器基建与温控',
-        '6857.T': '测试/老化与探针卡',
-        '6146.T': '测试/老化与探针卡',
-        '000660.KS': 'HBM与核心存储矩阵',
-        '005930.KS': 'HBM与核心存储矩阵',
-        '042700.KS': 'HBM与核心存储矩阵',
-        '009150.KS': '核心基板与封装材料',
-        '000150.KS': '高频PCB与覆铜板材料',
-        '0522.HK': '先进封装与混合键合',
-    }
 
 def get_role_mapping():
     # 结合之前 Markdown 文件提炼的高品质角色定位，我们作为第一梯队直接嵌入，

@@ -64,7 +64,6 @@ class StartupLoader:
             try:
                 cache_date = self.mw.data_provider.load_cache_from_disk()
                 if cache_date and self._alive():
-                    self.mw._cache_date = cache_date
                     count = len(self.mw.data_provider.cache_data)
                     self._safe_call_in_ui(
                         lambda: getattr(self.mw, 'lbl_code_count') and self.mw.lbl_code_count.setText(f"标的池: {count}") if hasattr(self.mw, 'lbl_code_count') else None
