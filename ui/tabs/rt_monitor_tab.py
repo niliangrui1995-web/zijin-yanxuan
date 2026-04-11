@@ -238,7 +238,7 @@ class RtMonitorTab(BaseStockTab):
         self.proxy_model = RtSortFilterProxyModel(self)
         self.proxy_model.setSourceModel(self.source_model)
         
-        self.table_rt = VCPTableView(default_row_height=28)
+        self.table_rt = VCPTableView(default_row_height=30)
         self.table_rt.setModel(self.proxy_model)
         
         header = self.table_rt.horizontalHeader()

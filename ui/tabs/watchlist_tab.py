@@ -96,7 +96,7 @@ class WatchlistTab(BaseStockTab):
         layout.addWidget(toolbar)
 
         # 表格控件
-        self.table_sp = VCPTableView(default_row_height=28)
+        self.table_sp = VCPTableView(default_row_height=30)
         
         # 拖拽排序设置 (只有在默认排序状态下才可用)
         self.table_sp.setDragEnabled(True)

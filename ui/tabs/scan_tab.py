@@ -171,7 +171,7 @@ class ScanTab(BaseStockTab):
         self.proxy_model = RtSortFilterProxyModel(self)
         self.proxy_model.setSourceModel(self.source_model)
 
-        self.table_scan = VCPTableView(default_row_height=28)
+        self.table_scan = VCPTableView(default_row_height=30)
         self.table_scan.setModel(self.proxy_model)
         self.table_scan.setItemDelegate(StockItemDelegate(self.table_scan))
 

@@ -91,7 +91,7 @@ class NADailyTab(BaseStockTab):
             "代码", "名称", "现价", "涨幅%", "市值", "日报时间", "细分板块",
             "股价弹性", "催化剂", "风控", "评级"
         ]
-        self.na_daily_table = VCPTableView(default_row_height=28)
+        self.na_daily_table = VCPTableView(default_row_height=30)
         
         self.model = StockTableModel(columns)
         self.proxy_model = RtSortFilterProxyModel(self)

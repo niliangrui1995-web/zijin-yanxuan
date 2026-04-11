@@ -114,7 +114,7 @@ class LhbTab(BaseStockTab):
             "上榜次数", "最近上榜", "上榜净买额(万)",
             "机构净买(万)", "外资净买入", "换手率%", "上榜原因",
         ]
-        self.table = VCPTableView(default_row_height=28)
+        self.table = VCPTableView(default_row_height=30)
         self.model = StockTableModel(self.columns)
         self.proxy_model = RtSortFilterProxyModel(self.table)
         self.proxy_model.setSourceModel(self.model)

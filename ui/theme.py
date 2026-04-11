@@ -28,7 +28,7 @@ THEME_MOYUAN = {
     "BG_STATUSBAR": "#0C1016",
     "BG_TABLE_BASE": "#10151D",
     "BG_TABLE_ALT_ROW": "#141B24",
-    "BG_TABLE_HOVER": "rgba(239, 68, 68, 0.06)",
+    "BG_TABLE_HOVER": "rgba(148, 163, 184, 0.10)",
     "BG_BUTTON": "#18202A",
     "BG_BUTTON_HOVER": "#202835",
     "BG_MENU": "#11161E",
@@ -85,7 +85,7 @@ THEME_MOYUAN = {
     "SCROLLBAR_HANDLE_HOVER": "rgba(239, 68, 68, 0.45)",
 
     # 选中态颜色
-    "SELECTION_BG": "rgba(239, 68, 68, 0.18)",
+    "SELECTION_BG": "rgba(239, 68, 68, 0.14)",
     "SELECTION_HOVER_BG": "rgba(239, 68, 68, 0.08)",
 
     # 标题栏分隔线颜色

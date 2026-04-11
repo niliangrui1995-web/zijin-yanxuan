@@ -22,10 +22,12 @@ def generate_context_menu_qss(theme: dict = None) -> str:
         color: {t['TEXT_SECONDARY']};
         border: 1px solid {t['BORDER_MENU']};
         border-radius: 8px;
-        padding: 4px;
+        padding: 6px;
     }}
     QMenu::item {{
+        font-size: 12px;
         padding: 6px 24px;
+        min-height: 20px;
     }}
     QMenu::item:selected {{
         background-color: {t['SELECTION_BG']};

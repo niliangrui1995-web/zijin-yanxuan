@@ -78,10 +78,10 @@ class Toast(QWidget):
         
         # 根据级别换图标和边框色
         styles = {
-            "info": ("ℹ️", "rgba(59, 130, 246, 0.5)", "#3B82F6"),
-            "success": ("✅", "rgba(34, 197, 94, 0.5)", "#22C55E"),
-            "warning": ("⚠️", "rgba(245, 158, 11, 0.5)", "#F59E0B"),
-            "error": ("❌", "rgba(239, 68, 68, 0.6)", "#EF4444")
+            "info": ("i", "rgba(59, 130, 246, 0.5)", "#3B82F6"),
+            "success": ("OK", "rgba(34, 197, 94, 0.5)", "#22C55E"),
+            "warning": ("!", "rgba(245, 158, 11, 0.5)", "#F59E0B"),
+            "error": ("x", "rgba(239, 68, 68, 0.6)", "#EF4444")
         }
         icon, border_color, text_color = styles.get(level, styles["info"])
         self.lbl_icon.setText(icon)

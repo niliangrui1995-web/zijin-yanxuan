@@ -633,7 +633,7 @@ class AsianMarketTab(BaseStockTab):
         
         layout.addLayout(header)
 
-        self.asian_table = VCPTableView(default_row_height=28)
+        self.asian_table = VCPTableView(default_row_height=30)
         layout.addWidget(self.asian_table)
         
         self.header_labels = ["代码", "名称", "现价", "涨幅%", "市场", "状态", "赛道", "角色定位", "货币", "5日涨跌%", "10日涨跌%", "20日涨跌%"]

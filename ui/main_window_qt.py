@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTabWidget, QTabBar, QPushButton, QLabel, QFrame, QToolTip
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot, QSettings
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot, QSettings, QEvent
 from PyQt6.QtGui import QIcon
 
 # 核心引擎与数据层
@@ -333,11 +333,13 @@ class MainWindowQT(QMainWindow):
     def _init_gear_menu(self):
         """在系统Tab右上角注入通达信风格的配置齿轮菜单"""
         from PyQt6.QtWidgets import QToolButton, QMenu
+        from ui.styles.context_menu_qss import generate_context_menu_qss
         
         self.btn_sys_menu = QToolButton()
         # Keep SVG icon dynamic by refreshing it in _apply_theme, but initial is text or icon
         self.btn_sys_menu.setText("⚙")
         self.btn_sys_menu.setObjectName("btnSysMenu")
+        self.btn_sys_menu.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_sys_menu.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         # 无边框模式：齿轮按钮放在标题栏的窗口控制按钮左侧
         # 找到最小化按钮在 titlebar_layout 中的位置，插在它前面
@@ -345,6 +347,15 @@ class MainWindowQT(QMainWindow):
         self._titlebar_layout.insertWidget(min_idx, self.btn_sys_menu)
         
         sys_menu = QMenu(self)
+        sys_menu.setStyleSheet(generate_context_menu_qss())
+        sys_menu.setCursor(Qt.CursorShape.PointingHandCursor)
+        try:
+            from PyQt6.QtWidgets import QApplication
+            sys_menu.aboutToShow.connect(lambda: QApplication.restoreOverrideCursor())
+            sys_menu.aboutToHide.connect(lambda: QApplication.restoreOverrideCursor())
+        except Exception:
+            pass
+        
         sys_menu.setObjectName("sysMenu")
         # Global QMenu style from global_qss.py will handle menu colors dynamically!
 
@@ -360,7 +371,9 @@ class MainWindowQT(QMainWindow):
         
         self.act_network = sys_menu.addAction("网络状态：离线")
         self.act_network.triggered.connect(self._toggle_network)
-        
+
+        sys_menu.addSeparator()
+
         act_speed = sys_menu.addAction("测速与线路优选")
         act_speed.triggered.connect(self._force_reconnect)
 
@@ -381,8 +394,35 @@ class MainWindowQT(QMainWindow):
         self._act_auto_theme.setChecked(_tm.is_auto_switch())
         self._act_auto_theme.triggered.connect(lambda checked: _tm.set_auto_switch(checked))
 
+        self._sys_menu = sys_menu
+        self.btn_sys_menu.installEventFilter(self)
+        sys_menu.installEventFilter(self)
+        theme_menu.installEventFilter(self)
+
         self.btn_sys_menu.setMenu(sys_menu)
         self._update_last_f5_time()
+
+
+    def eventFilter(self, obj, event):
+        target_objects = (
+            getattr(self, 'btn_sys_menu', None),
+            getattr(self, '_sys_menu', None),
+            getattr(self, '_theme_menu', None),
+        )
+        if obj in target_objects:
+            if event.type() in (
+                QEvent.Type.Enter,
+                QEvent.Type.HoverEnter,
+                QEvent.Type.HoverMove,
+                QEvent.Type.MouseMove,
+            ):
+                try:
+                    from PyQt6.QtWidgets import QApplication
+                    QApplication.restoreOverrideCursor()
+                except Exception:
+                    pass
+                obj.setCursor(Qt.CursorShape.PointingHandCursor)
+        return super().eventFilter(obj, event)
 
     def _show_trade_calendar(self):
         from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QFrame, QHBoxLayout, QToolButton

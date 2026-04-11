@@ -258,7 +258,7 @@ class ForeignBlockTradeTab(BaseStockTab):
             "当日收盘价", "成交价格", "折/溢价率(%)", "成交数量(万股)", "成交金额(万元)", 
             "买方营业部", "卖方营业部"
         ]
-        self.table = VCPTableView(default_row_height=28)
+        self.table = VCPTableView(default_row_height=30)
         self.model = StockTableModel(self.columns)
         self.proxy_model = BlockTradeFilterProxyModel(self.table)
         self.proxy_model.setSourceModel(self.model)

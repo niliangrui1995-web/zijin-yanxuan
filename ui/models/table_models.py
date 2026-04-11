@@ -94,18 +94,18 @@ class RtTableModel(QAbstractTableModel):
         self._data = data or []
         self._headers = _with_serial_header(["代码", "名称", "现价", "涨幅%", "市值", "时间", "评分", "RPS强度", "突破状态", "区间振幅", "热点板块"])
         self.base_font = QFont()
-        self.base_font.setFamilies(["SimSun", "宋体"])
-        self.base_font.setPointSize(11)
-        self.base_font.setStyleStrategy(QFont.StyleStrategy.NoAntialias)
+        self.base_font.setFamilies(["Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "SimSun"])
+        self.base_font.setPointSize(12)
+        self.base_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
 
         self.mono_font = QFont()
-        self.mono_font.setFamilies(["SimSun", "宋体"])
-        self.mono_font.setPointSize(11) # 从10调大10%至11
-        self.mono_font.setStyleStrategy(QFont.StyleStrategy.NoAntialias)
+        self.mono_font.setFamilies(["Consolas", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "SimSun"])
+        self.mono_font.setPointSize(12) # 从10调大10%至11
+        self.mono_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
         
         self.bold_font = QFont()
-        self.bold_font.setFamilies(["SimSun", "宋体"])
-        self.bold_font.setPointSize(11)
+        self.bold_font.setFamilies(["Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "SimSun"])
+        self.bold_font.setPointSize(12)
         self.bold_font.setBold(True)
 
     @property
@@ -581,18 +581,18 @@ class StockTableModel(QAbstractTableModel):
         self._flash_records = {} # row -> {col: {"time": stamp, "diff": val}}
 
         self.base_font = QFont()
-        self.base_font.setFamilies(["SimSun", "宋体"])
-        self.base_font.setPointSize(11)
-        self.base_font.setStyleStrategy(QFont.StyleStrategy.NoAntialias)
+        self.base_font.setFamilies(["Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "SimSun"])
+        self.base_font.setPointSize(12)
+        self.base_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
 
         self.mono_font = QFont()
-        self.mono_font.setFamilies(["SimSun", "宋体"])
-        self.mono_font.setPointSize(11) # 从10调大10%至11
-        self.mono_font.setStyleStrategy(QFont.StyleStrategy.NoAntialias)
+        self.mono_font.setFamilies(["Consolas", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "SimSun"])
+        self.mono_font.setPointSize(12) # 从10调大10%至11
+        self.mono_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
         
         self.bold_font = QFont()
-        self.bold_font.setFamilies(["SimSun", "宋体"])
-        self.bold_font.setPointSize(11)
+        self.bold_font.setFamilies(["Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "SimSun"])
+        self.bold_font.setPointSize(12)
         self.bold_font.setBold(True)
 
     @property

@@ -84,7 +84,7 @@ class EarningsTab(BaseStockTab):
         layout.addLayout(header)
 
         # --- 表格显示区 ---
-        self.table = VCPTableView(default_row_height=28)
+        self.table = VCPTableView(default_row_height=30)
         layout.addWidget(self.table)
         
         # 字段映射表：前四列必须是标准列（代码/名称/现价/涨幅%），以便接收盘中广播
