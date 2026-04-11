@@ -200,57 +200,50 @@ class ForeignBlockTradeTab(BaseStockTab):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
 
-        # 顶部工具栏
-        header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(8, 6, 8, 6)
-        lbl_title = QLabel("主力/外资大宗")
-        lbl_title.setObjectName("tabTitle")
-        header_layout.addWidget(lbl_title)
-        
+        # 统一工具条：标题 + 副标题 + 过滤区 + 主操作
         self.lbl_status = QLabel("等待加载...")
-        self.lbl_status.setObjectName("tabSubtitle")
-        header_layout.addWidget(self.lbl_status)
-        header_layout.addStretch()
 
         # ── 筛选器组：按数据维度从大到小排列 ──
         self.cmb_filter_date = QComboBox()
         self.cmb_filter_date.addItem("全部日期")
         self.cmb_filter_date.setFixedWidth(128)
         self.cmb_filter_date.currentIndexChanged.connect(self._filter_table_combo)
-        header_layout.addWidget(self.cmb_filter_date)
 
         self.cmb_filter_branch = QComboBox()
         self.cmb_filter_branch.addItem("全部监控席位")
         self.cmb_filter_branch.setFixedWidth(152)
         self.cmb_filter_branch.currentIndexChanged.connect(self._filter_table_combo)
-        header_layout.addWidget(self.cmb_filter_branch)
 
         self.cmb_filter_direction = QComboBox()
         self.cmb_filter_direction.addItems(["全部动作", "外资买入", "外资卖出", "外资对倒", "机构买入", "机构卖出", "机构对倒", "机构买/外资卖", "外资买/机构卖"])
         self.cmb_filter_direction.setFixedWidth(128)
         self.cmb_filter_direction.currentIndexChanged.connect(self._filter_table_combo)
-        header_layout.addWidget(self.cmb_filter_direction)
 
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("筛选代码、名称或关键词...")
         self.search_box.setFixedWidth(240)
         self.search_box.textChanged.connect(self._filter_table_combo)
-        header_layout.addWidget(self.search_box)
 
-        # ── 数据拉取范围 + 操作按钮（合并后唯一一组） ──
+        # ── 数据拉取范围 ──
         self.cmb_days = QComboBox()
         self.cmb_days.addItems(["近 10 交易日", "近 20 交易日", "近 40 交易日", "近 60 交易日"])
         # 默认选中 20 交易日，与 self.days_to_fetch 初始值保持一致
         self.cmb_days.setCurrentIndex(1)
         self.cmb_days.setFixedWidth(148)
         self.cmb_days.currentIndexChanged.connect(self._on_days_changed)
-        header_layout.addWidget(self.cmb_days)
+
+        filter_widgets = [
+            self.cmb_filter_date, self.cmb_filter_branch,
+            self.cmb_filter_direction, self.search_box, self.cmb_days
+        ]
 
         self.btn_refresh = QPushButton("刷新数据")
         self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_refresh.clicked.connect(self._load_block_trade_data)
-        header_layout.addWidget(self.btn_refresh)
-        layout.addLayout(header_layout)
+
+        action_widgets = [self.btn_refresh]
+        toolbar = self.build_tab_toolbar("主力/外资大宗", self.lbl_status, filter_widgets, action_widgets)
+        layout.addWidget(toolbar)
 
         # 表格
         self.columns = [
@@ -265,6 +258,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.table.setModel(self.proxy_model)
         self.delegate = StockItemDelegate(self.table)
         self.table.setItemDelegate(self.delegate)
+
         # 大宗交易默认按时间排序 由近到远
         self.table.sortByColumn(self.model.headers.index("交易日期"), Qt.SortOrder.DescendingOrder)
 
@@ -587,7 +581,6 @@ class ForeignBlockTradeTab(BaseStockTab):
         elif not msg.startswith(("抓取超时", "抓取失败")):
             msg = f"大宗交易抓取失败：{msg}"
         self.lbl_status.setText(msg)
-
     def _filter_table_combo(self):
         search_text = self.search_box.text().strip().lower()
         self.proxy_model.setFilterText(search_text)

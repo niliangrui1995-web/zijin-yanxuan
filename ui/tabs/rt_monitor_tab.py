@@ -185,43 +185,29 @@ class RtMonitorTab(BaseStockTab):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
         
-        # Toolbar
-        toolbar = QWidget()
-        tb_layout = QHBoxLayout(toolbar)
-        tb_layout.setContentsMargins(8, 6, 8, 6)
-
-        lbl_title = QLabel("盘中监控")
-        lbl_title.setObjectName("tabTitle")
-        tb_layout.addWidget(lbl_title)
-
-        
+        # 统一工具条：标题 + 副标题 + 过滤区 + 主操作
         self.lbl_rt_info = QLabel("未启动")
-        self.lbl_rt_info.setObjectName("tabSubtitle")
         self.lbl_rt_info.setWordWrap(True)
-        tb_layout.addWidget(self.lbl_rt_info)
-        tb_layout.addStretch()
-        
-        # 搜索过滤
+
         self.rt_search = QLineEdit()
         self.rt_search.setPlaceholderText("筛选代码或名称...")
         self.rt_search.setFixedWidth(180)
         self.rt_search.textChanged.connect(self._on_search_text_changed)
-        tb_layout.addWidget(self.rt_search)
+
+        filter_widgets = [self.rt_search]
 
         self.btn_rt_start = QPushButton("启动监控")
         self.btn_rt_start.setObjectName("primaryButton")
         self.btn_rt_start.setCursor(Qt.CursorShape.PointingHandCursor)
         self._ensure_rt_button_width()
         self.btn_rt_start.clicked.connect(lambda *args: self._toggle_rt_monitor())
-        tb_layout.addWidget(self.btn_rt_start)
-        
+
         # 清空盘中记录按钮
         self.btn_rt_clear = QPushButton("清空")
         self.btn_rt_clear.setProperty("class", "secondary")
         self.btn_rt_clear.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_rt_clear.clicked.connect(self._clear_table)
-        tb_layout.addWidget(self.btn_rt_clear)
-        
+
         # 盘中监控参数设置按钮
         btn_rt_settings = QToolButton()
         btn_rt_settings.setText("⚙")
@@ -230,7 +216,9 @@ class RtMonitorTab(BaseStockTab):
         btn_rt_settings.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_rt_settings.setToolTip("盘中监控参数设置")
         btn_rt_settings.clicked.connect(self._show_rt_settings)
-        tb_layout.addWidget(btn_rt_settings)
+
+        action_widgets = [self.btn_rt_start, self.btn_rt_clear, btn_rt_settings]
+        toolbar = self.build_tab_toolbar("盘中监控", self.lbl_rt_info, filter_widgets, action_widgets)
         layout.addWidget(toolbar)
 
         # 表格控件 MVC

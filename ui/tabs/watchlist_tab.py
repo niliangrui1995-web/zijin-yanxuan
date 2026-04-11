@@ -62,37 +62,24 @@ class WatchlistTab(BaseStockTab):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
 
-        # 工具栏
-        toolbar = QWidget()
-        tb_layout = QHBoxLayout(toolbar)
-        tb_layout.setContentsMargins(8, 6, 8, 6)
-
-        lbl_title = QLabel("关注池")
-        lbl_title.setObjectName("tabTitle")
-        tb_layout.addWidget(lbl_title)
-
+        # 统一工具条：标题 + 副标题 + 过滤区 + 主操作
         self.lbl_sp_status = QLabel("")
-        self.lbl_sp_status.setObjectName("tabSubtitle")
-        tb_layout.addWidget(self.lbl_sp_status)
 
-        tb_layout.addStretch()
-
-        # 搜索过滤
         self.sp_search = QLineEdit()
         self.sp_search.setPlaceholderText("筛选关注池...")
         self.sp_search.setFixedWidth(150)
-        self.sp_search.textChanged.connect(
-            lambda t: self._filter_table(t)
-        )
-        tb_layout.addWidget(self.sp_search)
+        self.sp_search.textChanged.connect(self._filter_table)
+
+        filter_widgets = [self.sp_search]
 
         btn_reset = QPushButton("解除列表排序")
         btn_reset.clicked.connect(self._reset_view)
-        tb_layout.addWidget(btn_reset)
 
         btn_export_sp = QPushButton("📄 导出")
         btn_export_sp.clicked.connect(self._export_to_excel)
-        tb_layout.addWidget(btn_export_sp)
+
+        action_widgets = [btn_reset, btn_export_sp]
+        toolbar = self.build_tab_toolbar("关注池", self.lbl_sp_status, filter_widgets, action_widgets)
         layout.addWidget(toolbar)
 
         # 表格控件
@@ -117,7 +104,7 @@ class WatchlistTab(BaseStockTab):
         
         self.delegate = StockItemDelegate(self.table_sp)
         self.table_sp.setItemDelegate(self.delegate)
-        
+
         # 接收模型发出的手动排序完成信号
         self.model.sig_rows_reordered.connect(self._on_rows_reordered)
 

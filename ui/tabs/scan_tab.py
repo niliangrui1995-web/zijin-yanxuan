@@ -126,31 +126,19 @@ class ScanTab(BaseStockTab):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
 
-        # 搜索过滤工具栏
-        scan_toolbar = QWidget()
-        stb_layout = QHBoxLayout(scan_toolbar)
-        stb_layout.setContentsMargins(8, 6, 8, 6)
-        
-        lbl_title = QLabel("VCP 扫描")
-        lbl_title.setObjectName("tabTitle")
-        stb_layout.addWidget(lbl_title)
-
+        # 统一工具条：标题 + 副标题 + 过滤区 + 主操作
         self.lbl_scan_status = QLabel("")
-        self.lbl_scan_status.setObjectName("tabSubtitle")
-        stb_layout.addWidget(self.lbl_scan_status)
-
-        stb_layout.addStretch()
 
         self.scan_search = QLineEdit()
         self.scan_search.setPlaceholderText("筛选代码或名称...")
         self.scan_search.setFixedWidth(200)
         self.scan_search.textChanged.connect(self._on_search_text_changed)
-        stb_layout.addWidget(self.scan_search)
+
+        filter_widgets = [self.scan_search]
 
         self.btn_scan_action = QPushButton("执行VCP扫描")
         self.btn_scan_action.setObjectName("primaryButton")
         self.btn_scan_action.clicked.connect(self._on_scan_action_clicked)
-        stb_layout.addWidget(self.btn_scan_action)
 
         # 扫描参数设置按钮
         self.btn_scan_settings = QToolButton()
@@ -162,8 +150,10 @@ class ScanTab(BaseStockTab):
         self.btn_scan_settings.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_scan_settings.setToolTip("VCP扫描参数设置")
         self.btn_scan_settings.clicked.connect(self._show_scan_settings)
-        stb_layout.addWidget(self.btn_scan_settings)
-        layout.addWidget(scan_toolbar)
+
+        action_widgets = [self.btn_scan_action, self.btn_scan_settings]
+        toolbar = self.build_tab_toolbar("VCP 扫描", self.lbl_scan_status, filter_widgets, action_widgets)
+        layout.addWidget(toolbar)
 
         # 表格控件 (MVC)
         self.columns = ["代码", "名称", "现价", "涨幅%", "市值", "触发日期", "评分", "RPS强度", "距突破", "突破状态", "区间振幅", "热门板块"]

@@ -5,7 +5,7 @@ import datetime
 import threading
 from contextlib import contextmanager
 from PyQt6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QHeaderView, QPushButton, QLabel, QCheckBox
+    QVBoxLayout, QHeaderView, QPushButton, QLabel, QCheckBox
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
@@ -605,15 +605,10 @@ class AsianMarketTab(BaseStockTab):
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        
-        header = QHBoxLayout()
-        header.setContentsMargins(8, 6, 8, 6)
-        title = QLabel("亚洲寡头核心资产监控")
-        title.setObjectName("tabTitle")
+        layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
+
+        # 统一工具条：标题 + 副标题 + 过滤区 + 主操作
         self.lbl_status = QLabel("系统初始化...")
-        self.lbl_status.setObjectName("tabSubtitle")
-        
         self.chk_cf_proxy = QCheckBox("启用直连通道 (CF隧道)")
         self.chk_cf_proxy.setToolTip("打勾：关闭VPN彻底裸连；不打勾：走您的VPN全局模式直连")
         self.chk_cf_proxy.setObjectName("successStatus")
@@ -624,14 +619,11 @@ class AsianMarketTab(BaseStockTab):
         self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_refresh.setToolTip("强制跳过等待，立刻请求外网(Yahoo Finance)测速并获取最新价格")
         self.btn_refresh.clicked.connect(self._on_manual_refresh)
-        
-        header.addWidget(title)
-        header.addWidget(self.lbl_status)
-        header.addStretch()
-        header.addWidget(self.chk_cf_proxy)
-        header.addWidget(self.btn_refresh)
-        
-        layout.addLayout(header)
+
+        filter_widgets = [self.chk_cf_proxy]
+        action_widgets = [self.btn_refresh]
+        toolbar = self.build_tab_toolbar("亚洲寡头核心资产监控", self.lbl_status, filter_widgets, action_widgets)
+        layout.addWidget(toolbar)
 
         self.asian_table = VCPTableView(default_row_height=30)
         layout.addWidget(self.asian_table)

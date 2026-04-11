@@ -9,7 +9,7 @@ import glob
 import datetime
 
 from PyQt6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout,
+    QVBoxLayout,
     QHeaderView, QPushButton, QLabel
 )
 from PyQt6.QtCore import Qt, QTimer
@@ -70,22 +70,16 @@ class NADailyTab(BaseStockTab):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
 
-        header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(8, 6, 8, 6)
-
-        lbl_title = QLabel("北美战报")
-        lbl_title.setObjectName("tabTitle")
-        header_layout.addWidget(lbl_title)
+        # 统一工具条：标题 + 副标题 + 过滤区 + 主操作
         self.na_daily_source_label = QLabel("未加载")
-        self.na_daily_source_label.setObjectName("tabSubtitle")
-        header_layout.addWidget(self.na_daily_source_label)
-        header_layout.addStretch()
-
         btn_refresh = QPushButton("刷新战报")
         btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_refresh.clicked.connect(self._load_na_daily_report)
-        header_layout.addWidget(btn_refresh)
-        layout.addLayout(header_layout)
+
+        filter_widgets = []
+        action_widgets = [btn_refresh]
+        toolbar = self.build_tab_toolbar("北美战报", self.na_daily_source_label, filter_widgets, action_widgets)
+        layout.addWidget(toolbar)
 
         columns = [
             "代码", "名称", "现价", "涨幅%", "市值", "日报时间", "细分板块",

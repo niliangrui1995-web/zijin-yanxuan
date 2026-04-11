@@ -80,33 +80,23 @@ class LhbTab(BaseStockTab):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # 顶部工具栏
-        header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(8, 6, 8, 6)
-
-        lbl_title = QLabel("龙虎榜")
-        lbl_title.setObjectName("tabTitle")
-        header_layout.addWidget(lbl_title)
-
+        # 统一工具条：标题 + 副标题 + 过滤区 + 主操作
         self.lbl_status = QLabel("加载中...")
-        self.lbl_status.setObjectName("tabSubtitle")
-        header_layout.addWidget(self.lbl_status)
-        header_layout.addStretch()
 
-        # 搜索框
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("筛选代码或名称...")
         self.search_box.setFixedWidth(180)
         self.search_box.textChanged.connect(self._filter_table)
-        header_layout.addWidget(self.search_box)
 
-        # 手动刷新关注池
+        filter_widgets = [self.search_box]
+
         self.btn_refresh = QPushButton("刷新关注池")
         self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_refresh.clicked.connect(self._manual_refresh)
-        header_layout.addWidget(self.btn_refresh)
 
-        layout.addLayout(header_layout)
+        action_widgets = [self.btn_refresh]
+        toolbar = self.build_tab_toolbar("龙虎榜", self.lbl_status, filter_widgets, action_widgets)
+        layout.addWidget(toolbar)
 
         # 表格列配置
         self.columns = [

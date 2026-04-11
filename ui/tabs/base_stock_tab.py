@@ -15,8 +15,8 @@ import subprocess
 import time
 import webbrowser
 
-from PyQt6.QtCore import QCoreApplication
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtCore import QCoreApplication, Qt
+from PyQt6.QtWidgets import QWidget, QLabel, QHBoxLayout, QVBoxLayout
 
 from core.event_bus import event_bus
 
@@ -27,6 +27,54 @@ class BaseStockTab(QWidget):
     def __init__(self, data_provider=None, parent=None):
         super().__init__(parent)
         self.data_provider = data_provider
+
+    # ================================================================
+    # UI 结构辅助：统一工具条 + 摘要条 + 列预设
+    # ================================================================
+    def build_tab_toolbar(self, title: str, subtitle_label: QLabel | None,
+                          filter_widgets: list[QWidget] | None,
+                          action_widgets: list[QWidget] | None) -> QWidget:
+        """统一工具条结构：标题 + 副标题 + 过滤区 + 主操作"""
+        toolbar = QWidget()
+        tb_layout = QHBoxLayout(toolbar)
+        tb_layout.setContentsMargins(8, 6, 8, 6)
+        tb_layout.setSpacing(8)
+
+        left_wrap = QWidget()
+        left_layout = QVBoxLayout(left_wrap)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(2)
+
+        lbl_title = QLabel(title)
+        lbl_title.setObjectName("tabTitle")
+        left_layout.addWidget(lbl_title)
+
+        if subtitle_label is not None:
+            subtitle_label.setObjectName("tabSubtitle")
+            left_layout.addWidget(subtitle_label)
+
+        tb_layout.addWidget(left_wrap, 0, Qt.AlignmentFlag.AlignLeft)
+        tb_layout.addStretch(1)
+
+        if filter_widgets:
+            filter_wrap = QWidget()
+            filter_layout = QHBoxLayout(filter_wrap)
+            filter_layout.setContentsMargins(0, 0, 0, 0)
+            filter_layout.setSpacing(6)
+            for w in filter_widgets:
+                filter_layout.addWidget(w)
+            tb_layout.addWidget(filter_wrap, 0, Qt.AlignmentFlag.AlignRight)
+
+        if action_widgets:
+            action_wrap = QWidget()
+            action_layout = QHBoxLayout(action_wrap)
+            action_layout.setContentsMargins(0, 0, 0, 0)
+            action_layout.setSpacing(6)
+            for w in action_widgets:
+                action_layout.addWidget(w)
+            tb_layout.addWidget(action_wrap, 0, Qt.AlignmentFlag.AlignRight)
+
+        return toolbar
 
     def _launch_tdx(self, code: str):
         """跳转通达信并输入股票代码（后台线程执行，不阻塞 UI）"""

@@ -2,7 +2,7 @@
 from datetime import datetime
 import pandas as pd
 from PyQt6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QHeaderView, QPushButton, QLabel, QLineEdit, QComboBox
+    QVBoxLayout, QHeaderView, QPushButton, QLabel, QLineEdit, QComboBox
 )
 from PyQt6.QtCore import Qt, pyqtSlot, QTimer
 from ui.tabs.base_stock_tab import BaseStockTab
@@ -35,19 +35,11 @@ class EarningsTab(BaseStockTab):
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        
-        # --- 头部控制栏 ---
-        header = QHBoxLayout()
-        header.setContentsMargins(8, 6, 8, 6)
-        
+        layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
 
-        title = QLabel("业绩高增追踪")
-        title.setObjectName("tabTitle")
-        
+        # 统一工具条：标题 + 副标题 + 过滤区 + 主操作
         self.lbl_status = QLabel("监控挂机中...")
-        self.lbl_status.setObjectName("tabSubtitle")
-        
+
         # 时光机雷达
         self.ent_start_date = QLineEdit()
         self.ent_start_date.setPlaceholderText("起点(如2024-01-01)")
@@ -69,19 +61,14 @@ class EarningsTab(BaseStockTab):
         self.combo_type_filter.addItems(["全看", "仅看预告", "仅看快报", "仅看财报"])
         # Removed hardcoded inline stylesheet to rely on global responsive QSS
         self.combo_type_filter.currentTextChanged.connect(self._on_type_filter_changed)
-        
-        header.addWidget(title)
-        header.addWidget(self.lbl_status)
-        header.addStretch()
-        header.addWidget(QLabel("分类筛选:"))
-        header.addWidget(self.combo_type_filter)
-        header.addWidget(QLabel("更新区间倒推:"))
-        header.addWidget(self.ent_start_date)
-        header.addWidget(QLabel("-"))
-        header.addWidget(self.ent_end_date)
-        header.addWidget(self.btn_manual_fetch)
-        
-        layout.addLayout(header)
+
+        filter_widgets = [
+            QLabel("分类筛选:"), self.combo_type_filter,
+            QLabel("更新区间倒推:"), self.ent_start_date, QLabel("-"), self.ent_end_date
+        ]
+        action_widgets = [self.btn_manual_fetch]
+        toolbar = self.build_tab_toolbar("业绩高增追踪", self.lbl_status, filter_widgets, action_widgets)
+        layout.addWidget(toolbar)
 
         # --- 表格显示区 ---
         self.table = VCPTableView(default_row_height=30)
