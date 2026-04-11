@@ -99,7 +99,10 @@ def _build_kline_theme_colors() -> dict:
         'pointer_bg': t['KLINE_POINTER_BG'],
         'vcp_star': t['KLINE_VCP_STAR'],
         'vcp_line': t['KLINE_VCP_LINE'],
+        'vcp_line_soft': t['KLINE_VCP_LINE_SOFT'],
         'vcp_area': t['KLINE_VCP_AREA'],
+        'vcp_guide': t['KLINE_VCP_GUIDE'],
+        'vcp_breakout_bg': t['KLINE_VCP_BREAKOUT_BG'],
     }
 
     if is_dark:
@@ -296,9 +299,9 @@ def _build_html(title: str, echarts_data: dict, echarts_js_path: str, theme_colo
                     name: 'KLine', type: 'candlestick',
                     xAxisIndex: 0, yAxisIndex: 0, data: rawData.klines,
                     itemStyle: {{ color: upColor, color0: downColor, borderColor: upColor, borderColor0: downColor }},
-                    markPoint: rawData.vcpMarkers ? {{ data: rawData.vcpMarkers, symbol: 'pin', symbolSize: 1, label: {{ show: true, formatter: '⭐ 突破', color: '{theme_colors['vcp_star']}', offset: [0, -15] }} }} : null,
-                    markLine: rawData.vcpLines ? {{ data: rawData.vcpLines, symbol: 'none', label: {{ show: false }}, lineStyle: {{ color: '{theme_colors['vcp_line']}', type: 'dashed' }} }} : null,
-                    markArea: rawData.vcpArea ? {{ data: rawData.vcpArea, itemStyle: {{ color: '{theme_colors['vcp_area']}' }} }} : null
+                    markPoint: rawData.vcpMarkers ? {{ data: rawData.vcpMarkers, animation: false, silent: true }} : null,
+                    markLine: rawData.vcpLines ? {{ data: rawData.vcpLines, symbol: 'none', label: {{ show: false }}, animation: false, silent: true, lineStyle: {{ color: '{theme_colors['vcp_line']}', type: 'solid', width: 1.3 }} }} : null,
+                    markArea: rawData.vcpArea ? {{ data: rawData.vcpArea, silent: true, itemStyle: {{ color: '{theme_colors['vcp_area']}' }} }} : null
                 }},
                 {{ name: 'MA10', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: rawData.ma10, symbol: 'none', lineStyle: {{ color: '{theme_colors['ma10']}', width: 1.5 }} }},
                 {{ name: 'MA20', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: rawData.ma20, symbol: 'none', lineStyle: {{ color: '{theme_colors['ma20']}', width: 1.5 }} }},
@@ -374,9 +377,9 @@ def _build_html(title: str, echarts_data: dict, echarts_js_path: str, theme_colo
             const seriesUpdate = [
                 {{
                     data: rawData.klines,
-                    markPoint: rawData.vcpMarkers ? {{ data: rawData.vcpMarkers, symbol: 'pin', symbolSize: 1, label: {{ show: true, formatter: '⭐ 突破', color: '{theme_colors['vcp_star']}', offset: [0, -15] }} }} : null,
-                    markLine: rawData.vcpLines ? {{ data: rawData.vcpLines, symbol: 'none', label: {{ show: false }}, lineStyle: {{ color: '{theme_colors['vcp_line']}', type: 'dashed' }} }} : null,
-                    markArea: rawData.vcpArea ? {{ data: rawData.vcpArea, itemStyle: {{ color: '{theme_colors['vcp_area']}' }} }} : null
+                    markPoint: rawData.vcpMarkers ? {{ data: rawData.vcpMarkers, animation: false, silent: true }} : null,
+                    markLine: rawData.vcpLines ? {{ data: rawData.vcpLines, symbol: 'none', label: {{ show: false }}, animation: false, silent: true, lineStyle: {{ color: '{theme_colors['vcp_line']}', type: 'solid', width: 1.3 }} }} : null,
+                    markArea: rawData.vcpArea ? {{ data: rawData.vcpArea, silent: true, itemStyle: {{ color: '{theme_colors['vcp_area']}' }} }} : null
                 }},
                 {{ data: rawData.ma10 }},
                 {{ data: rawData.ma20 }},
@@ -1319,6 +1322,7 @@ class KLineChartWindow(QWidget):
 
         trigger_date = str(_pick('触发日期', '日期', '时间', 'trigger_date', default=''))[:10]
         trigger_idx = -1
+        theme = theme_manager.current_theme
 
         date_to_idx = {d: i for i, d in enumerate(dates)}
 
@@ -1331,12 +1335,34 @@ class KLineChartWindow(QWidget):
         # 金星突破标记
         if trigger_idx != -1:
             kline = data["klines"][trigger_idx]
-            data["vcpMarkers"] = [{
+            markers = [{
                 "coord": [trigger_idx, kline[3]],  # kline[3] = high
-                "symbol": "pin",
-                "symbolSize": 40,
-                "label": {"show": True, "formatter": "⭐ 突破", "color": theme_manager.current_theme['KLINE_VCP_STAR'], "fontSize": 11}
+                "symbol": "circle",
+                "symbolSize": 10,
+                "symbolOffset": [0, -10],
+                "itemStyle": {
+                    "color": theme['KLINE_VCP_STAR'],
+                    "borderColor": theme['KLINE_VCP_LINE'],
+                    "borderWidth": 1,
+                    "shadowBlur": 0,
+                },
+                "label": {
+                    "show": True,
+                    "formatter": "VCP",
+                    "position": "top",
+                    "distance": 6,
+                    "padding": [2, 6],
+                    "borderRadius": 6,
+                    "backgroundColor": theme.get('KLINE_VCP_BREAKOUT_BG', 'rgba(217, 163, 74, 0.14)'),
+                    "borderColor": theme['KLINE_VCP_LINE'],
+                    "borderWidth": 1,
+                    "color": theme['KLINE_VCP_STAR'],
+                    "fontSize": 10,
+                    "fontWeight": 700,
+                }
             }]
+        else:
+            markers = []
 
         # 箱体与高点连线
         box_high = _to_float(_pick('区间最高价', 'box_high', default=0))
@@ -1375,15 +1401,19 @@ class KLineChartWindow(QWidget):
                     {"xAxis": dates[x_end], "yAxis": box_high}
                 ]]
 
-                # 高点垂直虚线
                 vcp_lines = []
+
+                peak_seen = set()
                 for xi in valid_indices:
+                    if xi in peak_seen or xi < 0 or xi >= len(data["klines"]):
+                        continue
+                    peak_seen.add(xi)
                     vcp_lines.append([
                         {"xAxis": dates[xi], "yAxis": box_low},
                         {"xAxis": dates[xi], "yAxis": box_high}
                     ])
 
-                # 箱体上下沿水平线
+                # 使用 ECharts 最稳的双点数组结构，避免覆盖层把整张图拖空白
                 vcp_lines.append([
                     {"xAxis": dates[x_start], "yAxis": box_high},
                     {"xAxis": dates[x_end], "yAxis": box_high}
@@ -1393,6 +1423,9 @@ class KLineChartWindow(QWidget):
                     {"xAxis": dates[x_end], "yAxis": box_low}
                 ])
                 data["vcpLines"] = vcp_lines
+
+        if markers:
+            data["vcpMarkers"] = markers
 
     # ======================== 盘中增量更新 ========================
     def _start_rt_timer(self):

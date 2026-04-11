@@ -74,7 +74,7 @@ class NADailyTab(BaseStockTab):
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(8, 6, 8, 6)
 
-        lbl_title = QLabel("🗽 北美战报")
+        lbl_title = QLabel("北美战报")
         lbl_title.setObjectName("tabTitle")
         header_layout.addWidget(lbl_title)
         self.na_daily_source_label = QLabel("未加载")
@@ -275,7 +275,7 @@ class NADailyTab(BaseStockTab):
         self._last_report_signature = report_signature
 
         if not report_files:
-            self.na_daily_source_label.setText("❌ 未找到战报文件")
+            self.na_daily_source_label.setText("未找到战报文件")
             self.model.update_data([])
             self._na_daily_codes = set()
             event_bus.sig_na_daily_updated.emit()
@@ -284,9 +284,9 @@ class NADailyTab(BaseStockTab):
         newest_file = max(report_files, key=lambda path: self._parse_report_identity(path)[1])
         newest_name = os.path.basename(newest_file)
         if len(report_files) == 1:
-            self.na_daily_source_label.setText(f"📄 {newest_name} ({len(final_list)}只)")
+            self.na_daily_source_label.setText(f"{newest_name} ({len(final_list)}只)")
         else:
-            self.na_daily_source_label.setText(f"📄 最近5份：{newest_name} 等{len(report_files)}份 ({len(final_list)}只)")
+            self.na_daily_source_label.setText(f"最近5份：{newest_name} 等{len(report_files)}份 ({len(final_list)}只)")
 
         self._na_daily_codes = {row.get("代码", "") for row in final_list if row.get("代码")}
         self.model.update_data(final_list)

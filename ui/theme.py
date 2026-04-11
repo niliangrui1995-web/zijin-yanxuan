@@ -122,8 +122,11 @@ THEME_MOYUAN = {
     "KLINE_AXIS_LABEL": "#888888",
     "KLINE_POINTER_BG": "#777777",
     "KLINE_VCP_STAR": "#FFD60A",
-    "KLINE_VCP_LINE": "#FFD700",
-    "KLINE_VCP_AREA": "rgba(51, 153, 255, 0.1)",
+    "KLINE_VCP_LINE": "rgba(245, 198, 92, 0.96)",
+    "KLINE_VCP_LINE_SOFT": "rgba(245, 198, 92, 0.72)",
+    "KLINE_VCP_AREA": "rgba(245, 198, 92, 0.11)",
+    "KLINE_VCP_GUIDE": "rgba(245, 198, 92, 0.62)",
+    "KLINE_VCP_BREAKOUT_BG": "rgba(245, 198, 92, 0.18)",
 }
 
 # ============================================================
@@ -239,8 +242,11 @@ THEME_YUEBAI = {
     "KLINE_AXIS_LABEL": "#64748B",
     "KLINE_POINTER_BG": "#94A3B8",
     "KLINE_VCP_STAR": "#D97706",
-    "KLINE_VCP_LINE": "#B45309",
-    "KLINE_VCP_AREA": "rgba(37, 99, 235, 0.08)",
+    "KLINE_VCP_LINE": "rgba(180, 120, 24, 0.94)",
+    "KLINE_VCP_LINE_SOFT": "rgba(180, 120, 24, 0.66)",
+    "KLINE_VCP_AREA": "rgba(180, 120, 24, 0.10)",
+    "KLINE_VCP_GUIDE": "rgba(180, 120, 24, 0.52)",
+    "KLINE_VCP_BREAKOUT_BG": "rgba(217, 119, 6, 0.16)",
 }
 
 

@@ -215,6 +215,30 @@ QPushButton[class="ctaSecondary"] {{
     padding: 0 14px;
 }}
 
+QToolButton[class="toolbarGhost"] {{
+    background-color: {t['BG_BUTTON']};
+    color: {t['TEXT_SECONDARY']};
+    border: 1px solid {t['BORDER_STRONG']};
+    border-radius: 8px;
+    padding: 0 14px;
+    font-size: 12px;
+    font-weight: 500;
+    min-height: 32px;
+}}
+QToolButton[class="toolbarGhost"]:hover {{
+    background-color: {t['BG_BUTTON_HOVER']};
+    color: {t['TEXT_PRIMARY']};
+    border: 1px solid {t['BORDER_BRAND']};
+}}
+QToolButton[class="toolbarGhost"]:pressed {{
+    background-color: {t['BG_HOVER']};
+}}
+QToolButton[class="toolbarGhost"]:disabled {{
+    background-color: {t['BG_BUTTON']};
+    color: {t['TEXT_DISABLED']};
+    border: 1px solid {t['BG_BUTTON']};
+}}
+
 
 
 /* 时间段控制按钮 */

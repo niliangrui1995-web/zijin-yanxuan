@@ -32,7 +32,7 @@ class LogTab(QWidget):
         tb_layout = QHBoxLayout(toolbar)
         tb_layout.setContentsMargins(8, 6, 8, 6)
         
-        lbl = QLabel("📋 系统运行日志")
+        lbl = QLabel("系统运行日志")
         lbl.setObjectName("tabTitle")
         tb_layout.addWidget(lbl)
         tb_layout.addStretch()

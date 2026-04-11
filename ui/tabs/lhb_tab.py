@@ -84,7 +84,7 @@ class LhbTab(BaseStockTab):
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(8, 6, 8, 6)
 
-        lbl_title = QLabel("🔥 龙虎榜")
+        lbl_title = QLabel("龙虎榜")
         lbl_title.setObjectName("tabTitle")
         header_layout.addWidget(lbl_title)
 
@@ -101,7 +101,7 @@ class LhbTab(BaseStockTab):
         header_layout.addWidget(self.search_box)
 
         # 手动刷新关注池
-        self.btn_refresh = QPushButton("⚡ 刷新关注池")
+        self.btn_refresh = QPushButton("刷新关注池")
         self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_refresh.clicked.connect(self._manual_refresh)
         header_layout.addWidget(self.btn_refresh)
@@ -151,10 +151,10 @@ class LhbTab(BaseStockTab):
         if not trade_dates:
             self._calendar_retry_count += 1
             if self._calendar_retry_count <= 3:
-                self.lbl_status.setText(f"⚠️ 交易日历尚未就绪，第{self._calendar_retry_count}次重试...")
+                self.lbl_status.setText(f"交易日历尚未就绪，第{self._calendar_retry_count}次重试...")
                 QTimer.singleShot(5000, self._load_and_display_pool)
             else:
-                self.lbl_status.setText("⚠️ 交易日历加载失败，请点击【刷新关注池】手动重试")
+                self.lbl_status.setText("交易日历加载失败，请点击“刷新关注池”手动重试")
             return
         self._calendar_retry_count = 0
 
@@ -171,7 +171,7 @@ class LhbTab(BaseStockTab):
         if missing:
             self._start_backfill(missing)
         elif not pool:
-            self.lbl_status.setText("📂 暂无数据，请点击【刷新关注池】抓取")
+            self.lbl_status.setText("暂无数据，请点击“刷新关注池”抓取")
 
     def _display_pool(self, pool: list[dict]):
         """将池数据渲染到表格"""
@@ -188,7 +188,7 @@ class LhbTab(BaseStockTab):
 
         cached_days = len(self.pool_manager.get_cached_dates())
         self.lbl_status.setText(
-            f"💡 {POOL_WINDOW}日关注池：{len(pool)} 只标的入池（已覆盖 {cached_days} 个交易日）"
+            f"{POOL_WINDOW}日关注池：{len(pool)} 只标的入池（已覆盖 {cached_days} 个交易日）"
         )
 
         # 触发全局通知，让关注池 Tab 能扫描到龙虎榜数据
@@ -219,7 +219,7 @@ class LhbTab(BaseStockTab):
         # 从远到近排列，先拉最老的（这样最后拉到最新的，latest record 最准）
         missing_sorted = sorted(missing_dates)
         total = len(missing_sorted)
-        self.lbl_status.setText(f"⏳ 正在抓取 {total} 天龙虎榜数据...")
+        self.lbl_status.setText(f"正在抓取 {total} 天龙虎榜数据...")
         _safe_log_emit("info", f"[龙虎榜池] 开始抓取 {total} 个交易日数据...")
 
         def _bg_backfill():
@@ -251,7 +251,7 @@ class LhbTab(BaseStockTab):
             self.btn_refresh.setEnabled(True)
 
             if not results:
-                self.lbl_status.setText("⚠️ 抓取失败，请稍后重试")
+                self.lbl_status.setText("抓取失败，请稍后重试")
                 event_bus.sig_system_log.emit("error", "[龙虎榜池] 全部交易日抓取失败")
                 return
 
@@ -271,7 +271,7 @@ class LhbTab(BaseStockTab):
         def _on_backfill_error(error_message: str):
             self._backfill_in_progress = False
             self.btn_refresh.setEnabled(True)
-            self.lbl_status.setText(f"⚠️ 抓取异常: {error_message}")
+            self.lbl_status.setText(f"抓取异常: {error_message}")
             event_bus.sig_system_log.emit("error", f"[龙虎榜池] 抓取任务异常: {error_message}")
 
         task_manager.run_in_background(
@@ -353,7 +353,7 @@ class LhbTab(BaseStockTab):
     def _fetch_single_day(self, date_str: str):
         """抓取单天数据并刷新池"""
         self.btn_refresh.setEnabled(False)
-        self.lbl_status.setText(f"⏳ 正在抓取 {date_str} 龙虎榜数据...")
+        self.lbl_status.setText(f"正在抓取 {date_str} 龙虎榜数据...")
 
         def _bg_fetch():
             from ui.workers.lhb_worker import fetch_lhb_pool_for_date
@@ -382,7 +382,7 @@ class LhbTab(BaseStockTab):
 
         def _on_error(error_message: str):
             self.btn_refresh.setEnabled(True)
-            self.lbl_status.setText(f"⚠️ 抓取 {date_str} 失败: {error_message}")
+            self.lbl_status.setText(f"抓取 {date_str} 失败: {error_message}")
             event_bus.sig_system_log.emit("error", f"[龙虎榜池] 自动抓取失败: {error_message}")
 
         task_manager.run_in_background(

@@ -204,7 +204,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(8, 6, 8, 6)
         from ui.theme import theme_manager
-        lbl_title = QLabel("🏦 主力/外资大宗")
+        lbl_title = QLabel("主力/外资大宗")
         lbl_title.setObjectName("tabTitle")
         header_layout.addWidget(lbl_title)
         
@@ -473,11 +473,11 @@ class ForeignBlockTradeTab(BaseStockTab):
             self._block_trade_codes = set()
             if timeout_chunks or failed_chunks:
                 self.lbl_status.setText(
-                    "⚠️ 大宗交易抓取不完整，未返回有效结果"
+                    "大宗交易抓取不完整，未返回有效结果"
                     f"{_format_incomplete_message(timeout_chunks, failed_chunks)}"
                 )
             else:
-                self.lbl_status.setText("❌ 近期未发现匹配监控席位的大宗交易。")
+                self.lbl_status.setText("近期未发现匹配监控席位的大宗交易。")
             event_bus.sig_block_trade_updated.emit()
             return
             
@@ -572,7 +572,7 @@ class ForeignBlockTradeTab(BaseStockTab):
 
         self.model.update_data(row_data)
         self.lbl_status.setText(
-            f"✅ 加载完成，发现 {len(df)} 笔监控席位大宗交易。"
+            f"加载完成，发现 {len(df)} 笔监控席位大宗交易。"
             f"{_format_incomplete_message(timeout_chunks, failed_chunks)}"
         )
         

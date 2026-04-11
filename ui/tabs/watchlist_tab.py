@@ -68,7 +68,7 @@ class WatchlistTab(BaseStockTab):
         tb_layout = QHBoxLayout(toolbar)
         tb_layout.setContentsMargins(8, 6, 8, 6)
 
-        lbl_title = QLabel("📌 关注池")
+        lbl_title = QLabel("关注池")
         lbl_title.setObjectName("tabTitle")
         tb_layout.addWidget(lbl_title)
 

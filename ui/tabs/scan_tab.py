@@ -131,7 +131,7 @@ class ScanTab(BaseStockTab):
         stb_layout = QHBoxLayout(scan_toolbar)
         stb_layout.setContentsMargins(8, 6, 8, 6)
         
-        lbl_title = QLabel("🎯 VCP 扫描")
+        lbl_title = QLabel("VCP 扫描")
         lbl_title.setObjectName("tabTitle")
         stb_layout.addWidget(lbl_title)
 
@@ -154,9 +154,11 @@ class ScanTab(BaseStockTab):
 
         # 扫描参数设置按钮
         self.btn_scan_settings = QToolButton()
-        self.btn_scan_settings.setText("⚙")
-        self.btn_scan_settings.setFixedSize(32, 32)
-        self.btn_scan_settings.setObjectName("btnSysMenu")
+        self.btn_scan_settings.setText("设置")
+        self.btn_scan_settings.setProperty("class", "toolbarGhost")
+        self.btn_scan_settings.setFixedHeight(32)
+        self.btn_scan_settings.setMinimumWidth(56)
+        self.btn_scan_settings.setAutoRaise(False)
         self.btn_scan_settings.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_scan_settings.setToolTip("VCP扫描参数设置")
         self.btn_scan_settings.clicked.connect(self._show_scan_settings)

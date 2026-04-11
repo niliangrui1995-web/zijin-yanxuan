@@ -1,4 +1,5 @@
 from ui.kline_window_qt import (
+    _build_kline_theme_colors,
     _build_kline_summary_items,
     _format_kline_market_badge,
     resolve_kline_vcp_context,
@@ -63,3 +64,13 @@ def test_build_kline_summary_items_formats_range_and_rps():
     assert summary["振幅"] == "17.7%"
     assert summary["RPS"] == "98/99"
     assert summary["关注"] == "已关注"
+
+
+def test_kline_theme_colors_include_vcp_overlay_tokens():
+    colors = _build_kline_theme_colors()
+
+    assert colors["vcp_line"]
+    assert colors["vcp_line_soft"]
+    assert colors["vcp_area"]
+    assert colors["vcp_guide"]
+    assert colors["vcp_breakout_bg"]
