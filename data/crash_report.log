@@ -6,3 +6,275 @@ Thread 0x00002fbc (most recent call first):
 Current thread 0x00002874 (most recent call first):
   File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\vcp_hunter_qt.pyw", line 110 in main
   File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\vcp_hunter_qt.pyw", line 116 in <module>
+Windows fatal exception: access violationWindows fatal exception: access violationWindows fatal exception: access violation
+
+
+
+Thread 0x
+
+000023e4 (most recent call first):
+  <no Python frame>
+
+Thread 0x000049ec (most recent call first):
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\vcp\engine.py", line 629 in batch_get_finance_info
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\base_stock_tab.py", line 250 in _bg_cap
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\core\task_maWindows fatal exception: access violationna
+
+ger.py", line 41 in run
+
+Thread 0x00005638 (most recent call first):
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\vcp\engine.py", line 629 in batch_get_finance_info
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\base_stock_tab.py", line 250 in _bg_cap
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\core\task_manager.py", line 41 in run
+
+Thread 0x00004310 (most recent call first):
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\vcp\engine.py", line 629 in batch_get_finance_info
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\base_stock_tab.py", line 250 in _bg_cap
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\core\task_manager.py", line 41 in run
+
+Thread 0x00005500 (most recent call first):
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\asian_market_tab.py", line 290 in run
+
+Thread 0x00005698 (most recent call first):
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\core\task_manager.py", line 135 in run_in_background
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\base_stock_tab.py", line 281 in async_update_market_caps
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 185 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  ...
+Windows fatal exception: access violation
+
+Thread 0x000042b0 (most recent call first):
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python310\lib\genericpath.py", line 19 in exists
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\Fatal Python error: Abortedv
+
+cp\engine.py", line 626 in batch_get_finance_info
+
+Extension modules:   File PyQt6.QtCore", DPyQt6.QtGui:, \PyQt6.QtWidgetsvc, pPyQt6.QtNetwork_, hPyQt6.QtPrintSupportu, nPyQt6.QtWebChannelt, ePyQt6.QtWebEngineCorer, \PyQt6.QtWebEngineWidgets\u7d2b\u, 91d1PyQt6.QtOpenGL\u7814\u9009\ui\, tnumpy._core._multiarray_umathab, snumpy.linalg._umath_linalg\ba, spyarrow.libe_, snumpy.random._commontock, _numpy.random.bit_generatort, anumpy.random._bounded_integersb, .numpy.random._mt19937p, ynumpy.random.mtrand", , line numpy.random._philox250,  in numpy.random._pcg64_bg_cap, 
+numpy.random._sfc64  File , "numpy.random._generatorD:, \pandas._libs.tslibs.ccalendarv, cpandas._libs.tslibs.np_datetimep, _pandas._libs.tslibs.dtypesh, upandas._libs.tslibs.basen, tpandas._libs.tslibs.nattypeer, \pandas._libs.tslibs.timezones\u, 7d2bpandas._libs.tslibs.fields\u, 91d1pandas._libs.tslibs.timedeltas\u, 7814pandas._libs.tslibs.tzconversion\u, 9009pandas._libs.tslibs.timestamps\, cpandas._libs.propertieso, rpandas._libs.tslibs.offsetse, \pandas._libs.tslibs.strptimet, apandas._libs.tslibs.parsings, kpandas._libs.tslibs.conversion_, mpandas._libs.tslibs.perioda, npandas._libs.tslibs.vectorizeda, gpandas._libs.ops_dispatche, rpandas._libs.missing., ppandas._libs.hashtabley, "pandas._libs.algos, line , 41pandas._libs.interval in , runpandas._libs.lib
+
+, Thread 0xpyarrow._compute000033b4 (most recent call first):
+,   File pandas._libs.ops", Dpandas._libs.hashing:, \pandas._libs.arraysvc, ppandas._libs.tslib_, hpandas._libs.sparseu, npandas._libs.internalst, epandas._libs.indexingr, \pandas._libs.index\u, 7d2bpandas._libs.writers\u, 91d1pandas._libs.join\u7814, \upandas._libs.window.aggregations9009, \pandas._libs.window.indexersv, cpandas._libs.reshapep, \pandas._libs.groupbye, npandas._libs.jsong, ipandas._libs.parsersne, .pandas._libs.testingpy", line 629,  in _brotlibatch_get_finance_info
+,   File charset_normalizer.md"D, :simplejson._speedups\v, crequests.packages.charset_normalizer.mdp, _requests.packages.chardet.mdhunt, elxml._elementpathr, \lxml.etree\u7d2b\u, 91d1_cffi_backend\u7814\u9009\, uwebsockets.speedupsi\, tgoogle._upb._messagea (total: b72s)\
+basWindows fatal exception: access violation
+
+Thread 0x00005a94 (most recent call first):
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python310\lib\genericpath.py", line 19 in exists
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\vcp\engine.py", line 626 in batch_get_finance_info
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\base_stock_tab.py", line 250 in _bg_cap
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\core\task_manager.py", line 41 in run
+
+Current thread 0x00005390 (most recent call first):
+  <no Python frame>
+
+Thread 0x0000462c (most recent call first):
+  File "C:\Users\Administrator\AppData\Local\Programs\Python\Python310\lib\genericpath.py", line 19 in exists
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\vcp\engine.py", line 626 in batch_get_finance_info
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\base_stock_tab.py", line 250 in _bg_cap
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\core\task_manager.py", line 41 in run
+
+Thread 0x00005204 (most recent call first):
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\vcp\engine.py", line 629 in batch_get_finance_info
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\base_stock_tab.py", line 250 in _bg_cap
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\core\task_manager.py", line 41 in run
+
+Thread 0x000032c8 (most recent call first):
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\asian_market_tab.py", line 290 in run
+
+Thread 0x0000519c (most recent call first):
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\core\task_manager.py", line 135 in run_in_background
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\base_stock_tab.py", line 281 in async_update_market_caps
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 185 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 182 in _display_pool
+  File "D:\vcp_hunter\\u7d2b\u91d1\u7814\u9009\ui\tabs\lhb_tab.py", line 154 in _load_and_display_pool
+  ...

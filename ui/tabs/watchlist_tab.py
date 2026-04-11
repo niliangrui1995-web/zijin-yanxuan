@@ -407,8 +407,7 @@ class WatchlistTab(BaseStockTab):
                 if hasattr(main_win, 'tab_foreign_block') and hasattr(main_win.tab_foreign_block, 'model'):
                     # 用于聚合单只股票下各主力席位的买卖净额: code -> { short_branch: net_amount_wan }
                     block_aggregates = {}
-                    from ui.workers.lhb_worker import FOREIGN_KEYWORDS
-                    
+                    from ui.tabs.foreign_block_trade_tab import FOREIGN_KEYWORDS
                     for r in main_win.tab_foreign_block.model.row_data:
                         c = str(r.get("代码", ""))
                         if c:
@@ -468,8 +467,15 @@ class WatchlistTab(BaseStockTab):
                     for r in main_win.tab_lhb.model.row_data:
                         c = str(r.get("代码", ""))
                         if c:
-                            date_str = str(r.get("上榜日期", "")).split('-')
-                            date_mmdd = "-".join(date_str[-2:]) if len(date_str) >= 2 else str(r.get("上榜日期", ""))
+                            # 日期格式兼容：lhb_worker输出的是 "20260410" 纯数字格式
+                            raw_date = str(r.get("上榜日期", ""))
+                            if len(raw_date) == 8:
+                                date_mmdd = f"{raw_date[4:6]}-{raw_date[6:8]}"
+                            elif '-' in raw_date:
+                                parts = raw_date.split('-')
+                                date_mmdd = "-".join(parts[-2:]) if len(parts) >= 2 else raw_date
+                            else:
+                                date_mmdd = raw_date
                             
                             net = float(r.get("上榜净买额(万)", 0))
                             jg = float(r.get("机构净买(万)", 0))
@@ -600,10 +606,9 @@ class WatchlistTab(BaseStockTab):
                 if isinstance(new_lhb, dict):
                     new_date = new_lhb.get("date", "")
                     new_text = new_lhb.get("text", "")
-                    old_date = row_dict.get("龙虎榜日期", "")
-                    if (not old_date) or (new_date >= old_date):
-                        row_dict["龙虎榜"] = new_text
-                        row_dict["龙虎榜日期"] = new_date
+                    # 【逻辑变更】：根据龙虎榜表信息无条件刷新，不考虑历史日期锁定
+                    row_dict["龙虎榜"] = new_text
+                    row_dict["龙虎榜日期"] = new_date
                         
             # trigger row update
             self.model.dataChanged.emit(
@@ -644,10 +649,8 @@ class WatchlistTab(BaseStockTab):
                 if isinstance(new_lhb, dict):
                     new_date = new_lhb.get("date", "")
                     new_text = new_lhb.get("text", "")
-                    old_date = entry.get("龙虎榜日期", "")
-                    if (not old_date) or (new_date >= old_date):
-                        entry["龙虎榜"] = str(new_text)
-                        entry["龙虎榜日期"] = str(new_date)
+                    entry["龙虎榜"] = str(new_text)
+                    entry["龙虎榜日期"] = str(new_date)
 
             entry.pop("催化剂", None)
             entry.pop("热点板块", None)

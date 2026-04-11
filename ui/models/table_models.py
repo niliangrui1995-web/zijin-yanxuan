@@ -635,6 +635,50 @@ class StockTableModel(QAbstractTableModel):
                 if zbg > 0 and rt_close > 0:
                     cap = zbg * rt_close
                     self.set_cell_value(row, "市值", f"{cap / 1e8:.0f}亿")
+                    
+            if "买点" in self._headers and rt_close > 0:
+                history = item_dict.get("_history_20", [])
+                history_date = item_dict.get("_history_date", "")
+                pos_str = ""
+                
+                if history:
+                    import datetime
+                    today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+                    now_time = datetime.datetime.now().strftime("%H:%M")
+                    
+                    if history_date == today_str:
+                        # 内存里已经是最新的未完成 K 线（说明早上开盘后拉取过） -> 用现价替换最后一根
+                        temp_hist = history[:-1] + [rt_close]
+                    else:
+                        # 内存里 K 线停留在昨天或更早
+                        from core.market_calendar import MarketCalendar
+                        # 如果是今天早盘 09:15 分以后，并且今天正是法定交易日，说明进入了新的一天，现价是“新长出来”的第 21 根 K 线
+                        # 如果不是，说明系统停在盘中或非交易日（如双休日），仅仅作为静态复盘的实时跳动预览（替换最后一根避免复制叠加）
+                        if now_time >= "09:15" and MarketCalendar.is_trade_day(today_str):
+                            temp_hist = history[1:] + [rt_close]
+                        else:
+                            # e.g 凌晨，或者周末，现价仅仅用于代替最后一根避免K线叠加
+                            temp_hist = history[:-1] + [rt_close]
+                            
+                    dyn_ma10 = sum(temp_hist[-10:]) / 10 if len(temp_hist) >= 10 else 0
+                    dyn_ma20 = sum(temp_hist[-20:]) / 20 if len(temp_hist) >= 20 else 0
+                    
+                    
+                    # 获取当天的开盘价
+                    rt_open = float(q.get('open') or rt_close)
+                    
+                    is_red_candle = (rt_close >= rt_open)
+                    
+                    # 新版买点定义：
+                    # 1. 多头或纠缠准备金叉状态：MA10 > MA20
+                    # 2. 开盘价被强行砸在均线以下吸筹：rt_open < ma10
+                    # 3. 终盘/现价必须收稳、守住均线支撑：rt_close > ma20 * 0.95
+                    # 4. 当天必须是红 K 线：rt_close >= rt_open
+                    if is_red_candle and (dyn_ma10 > dyn_ma20) and (rt_open < dyn_ma10) and (rt_close > dyn_ma20 * 0.95):
+                        pos_str = "✅"
+                        
+                if pos_str != item_dict.get("买点", ""):
+                    self.set_cell_value(row, "买点", pos_str)
 
 
     def data(self, index, role):

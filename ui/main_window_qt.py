@@ -421,9 +421,10 @@ class MainWindowQT(QMainWindow):
         
         # 顶部自定义可拖拽标题栏
         title_bar = DraggableTitleBar(dlg)
+        title_bar.setObjectName("calendarTitleBar")
         title_bar.setFixedHeight(38)
         title_bar.setStyleSheet(f"""
-            QWidget {{
+            QWidget#calendarTitleBar {{
                 background-color: {_tm.get('BG_TITLEBAR')};
                 border-top-left-radius: 8px;
                 border-top-right-radius: 8px;
@@ -434,7 +435,7 @@ class MainWindowQT(QMainWindow):
         tb_layout.setContentsMargins(14, 0, 8, 0)
         
         title_lbl = QLabel("A股交易休市日历")
-        title_lbl.setStyleSheet(f"color: {_tm.get('TEXT_PRIMARY')}; font-weight: bold;")
+        title_lbl.setStyleSheet(f"color: {_tm.get('TEXT_PRIMARY')}; font-weight: bold; background: transparent;")
         tb_layout.addWidget(title_lbl)
         tb_layout.addStretch()
         
@@ -696,6 +697,10 @@ class MainWindowQT(QMainWindow):
         self.tabs.addTab(self.tab_watchlist, '关注池')
         self.table_sp = self.tab_watchlist.table_sp  # 向下兼容引用
 
+        # Tab 3.5: 龙虎榜（紧跟关注池）
+        self.tab_lhb = LhbTab(self.data_provider, self)
+        self.tabs.addTab(self.tab_lhb, "龙虎榜")
+
         # Tab 4: 北美战报（独立组件）
 
         self.tab_na_daily = NADailyTab(self.data_provider, self)
@@ -719,9 +724,7 @@ class MainWindowQT(QMainWindow):
         self.tab_foreign_block = ForeignBlockTradeTab(self.data_provider, self)
         self.tabs.addTab(self.tab_foreign_block, "大宗交易")
 
-        # Tab 6.5: 龙虎榜 (共振)
-        self.tab_lhb = LhbTab(self.data_provider, self)
-        self.tabs.addTab(self.tab_lhb, "龙虎榜")
+        # (龙虎榜已移至关注池后方)
 
         # Tab 7: 业绩预告与财报爆点追踪（独立组件）
         from ui.tabs.earnings_tab import EarningsTab

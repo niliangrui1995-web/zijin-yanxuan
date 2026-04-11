@@ -1,8 +1,12 @@
+import gc
+
 import akshare as ak
 import pandas as pd
 from core.logger import get_logger
 
 log = get_logger(__name__)
+
+
 
 FOREIGN_KEYWORDS = [
     "深股通", "沪股通", "陆股通",  # 北向通
@@ -10,7 +14,7 @@ FOREIGN_KEYWORDS = [
     "渣打", "野村", "汇丰", "星展", "大和"
 ]
 
-def fetch_lhb_data_for_date(date_str: str) -> list[dict]:
+def fetch_lhb_data_for_date(date_str: str, strict_filter: bool = True) -> list[dict]:
     """
     抓取指定日期的龙虎榜数据，并将 基础详情、机构统计、外资/知名游资参与情况聚合返回。
     """
@@ -51,6 +55,8 @@ def fetch_lhb_data_for_date(date_str: str) -> list[dict]:
                 '机构买入净额': float(row.get('机构买入净额', 0) if pd.notna(row.get('机构买入净额')) else 0)
             }
 
+
+
     # 3. 抓取活跃营业部，拦截外资痕迹
     df_yyb = pd.DataFrame()
     try:
@@ -65,7 +71,7 @@ def fetch_lhb_data_for_date(date_str: str) -> list[dict]:
         for _, row in df_yyb.iterrows():
             branch_name = str(row.get('营业部名称', ''))
             
-            # --- 简写外资营业部名称 (例如: 摩根大通证券(中国)有限公司 -> 摩根大通) ---
+            # --- 简写外资营业部名称 ---
             matched_kw = None
             for kw in FOREIGN_KEYWORDS:
                 if kw in branch_name:
@@ -81,7 +87,6 @@ def fetch_lhb_data_for_date(date_str: str) -> list[dict]:
             buy_stocks_str = str(row.get('买入股票', ''))
             sell_stocks_str = str(row.get('卖出股票', ''))
             
-            # 这里记录为纯净的简写，金额在后续逐票提取
             for s_name in buy_stocks_str.split():
                 if not s_name.strip(): continue
                 foreign_buys.setdefault(s_name.strip(), set()).add(short_branch)
@@ -106,84 +111,79 @@ def fetch_lhb_data_for_date(date_str: str) -> list[dict]:
         
         # 关联机构数据
         jg_info = jg_dict.get(code, {'买方机构数': 0, '卖方机构数': 0, '机构买入净额': 0.0})
+        has_jg = (jg_info['买方机构数'] > 0) or (jg_info['卖方机构数'] > 0)
         
         # 关联外资数据 (通过简称匹配)
         f_buys = list(foreign_buys.get(name, set()))
         f_sells = list(foreign_sells.get(name, set()))
-        
-        has_jg = (jg_info['买方机构数'] > 0) or (jg_info['卖方机构数'] > 0)
         has_foreign = (len(f_buys) > 0) or (len(f_sells) > 0)
         
         # 核心过滤条件: 只有 (机构参与 或 外资参与) 并且 (涨跌幅 > 0) 才抓取显示
-        if not ((has_jg or has_foreign) and (pct > 0)):
-            continue
-            
-        # 此时确认我们需要这只股票，为了计算精准的外资净买额，再单独拉取明细
-        final_f_buys = []
-        final_f_sells = []
+        if strict_filter:
+            if not ((has_jg or has_foreign) and (pct > 0)):
+                continue
+                
+        # 此时确认我们需要这只股票，为了计算精准的外资净买额，再单独拉取双边明细
+        branch_details_map = {}  # 记录 kw -> net_amount(万)
         foreign_net_sum = 0.0
         
         if has_foreign:
+            dfs = []
             try:
-                # 拉取该股票当天的龙虎榜营业部明细
-                df_stock_detail = ak.stock_lhb_stock_detail_em(symbol=code, date=date_str)
-                if not df_stock_detail.empty:
-                    for _, s_row in df_stock_detail.iterrows():
-                        yyb_name = str(s_row.get("交易营业部名称", ""))
-                        # 看看是不是外资关键字
-                        matched_kw = None
-                        for kw in FOREIGN_KEYWORDS:
-                            if kw in yyb_name:
-                                matched_kw = kw
-                                break
-                                
-                        if matched_kw:
-                            net_str = str(s_row.get("净额", "0"))
-                            try:
-                                net_val = float(net_str)
-                            except:
-                                net_val = 0.0
-                                
-                            net_wan = round(net_val / 10000.0)
-                            if net_wan > 0:
-                                final_f_buys.append(f"{matched_kw}({net_wan}万)")
-                            elif net_wan < 0:
-                                final_f_sells.append(f"{matched_kw}({abs(net_wan)}万)")
-                            else:
-                                final_f_buys.append(f"{matched_kw}(0万)")
-                            
-                            foreign_net_sum += net_wan
-            except Exception as e:
-                log.warning(f"[外资明细] 获取 {code} 失败: {e}")
-                # 降级：如果获取失败，至少保留关键字
-                final_f_buys = list(f_buys)
-                final_f_sells = list(f_sells)
-                # 预估一个净额，供降级逻辑使用
-                foreign_net_sum = len(final_f_buys) - len(final_f_sells)
+                df_buy = ak.stock_lhb_stock_detail_em(symbol=code, date=date_str, flag="买入")
+                if df_buy is not None and not df_buy.empty:
+                    dfs.append(df_buy)
+            except Exception: pass
+            
+            try:
+                df_sell = ak.stock_lhb_stock_detail_em(symbol=code, date=date_str, flag="卖出")
+                if df_sell is not None and not df_sell.empty:
+                    dfs.append(df_sell)
+            except Exception: pass
+            
+            if dfs:
+                df_concat = pd.concat(dfs, ignore_index=True)
+                for _, s_row in df_concat.iterrows():
+                    yyb_name = str(s_row.get("交易营业部名称", ""))
+                    matched_kw = next((kw for kw in FOREIGN_KEYWORDS if kw in yyb_name), None)
+                    if matched_kw:
+                        net_str = str(s_row.get("净额", "0"))
+                        try:
+                            net_val = float(net_str)
+                        except Exception:
+                            net_val = 0.0
+                        net_wan = net_val / 10000.0
+                        branch_details_map[matched_kw] = branch_details_map.get(matched_kw, 0.0) + net_wan
+                        
+                for amt in branch_details_map.values():
+                    foreign_net_sum += amt
+            else:
+                # 降级保底：API完全拉不出买卖明细，无法计算净额，归零并标注失败
+                foreign_net_sum = 0.0
                 
         # ================= 深度过滤与共振计算 =================
-        # 用户需求1：总之一句话 至少有一个 是净买入(>0)的情况下 才抓取
+        # 用户需求1：至少有一方净买入(>0)的情况下才抓取
         has_any_net_buy = False
-        
         if has_jg and (jg_info['机构买入净额'] > 0):
             has_any_net_buy = True
         if has_foreign and (foreign_net_sum > 0):
             has_any_net_buy = True
             
-        if not has_any_net_buy:
-            continue
+        if strict_filter:
+            if not has_any_net_buy:
+                continue
                 
-        # 用户需求2：上榜榜单合计净买入额>0，且机构和外资均是净买入(>0)的情况下才标记资金共振
+        # 用户需求2：上榜榜单合计净买入额>0，且机构强力净买(>0)，且外资不拖后腿(>=0) 的情况下标记为“资金共振”
         is_resonance = False
         if has_jg and has_foreign:
-            if (net_buy > 0) and (jg_info['机构买入净额'] > 0) and (foreign_net_sum > 0):
+            if (net_buy > 0) and (jg_info['机构买入净额'] > 0) and (foreign_net_sum >= 0):
                 is_resonance = True        
-        buy_str = "买：" + " | ".join(final_f_buys) if final_f_buys else ""
-        sell_str = "卖：" + " | ".join(final_f_sells) if final_f_sells else ""
-        if buy_str and sell_str:
-            foreign_str = f"{buy_str}   {sell_str}"
+                
+        if has_foreign and branch_details_map:
+            parts = [f"{k}：{round(v)}万" for k, v in branch_details_map.items()]
+            foreign_str = f"净额：{round(foreign_net_sum)}万   " + "   ".join(parts)
         else:
-            foreign_str = buy_str or sell_str or "--"
+            foreign_str = "--"
             
         # 构造给前端的平铺字典字段
         record = {
@@ -198,12 +198,28 @@ def fetch_lhb_data_for_date(date_str: str) -> list[dict]:
             "机构净买(万)": round(jg_info['机构买入净额'] / 10000.0, 2),
             "外资净买(万)": round(foreign_net_sum, 2),
             "机构家数": f"买{jg_info['买方机构数']}/卖{jg_info['卖方机构数']}",
-            "外资潜伏池": foreign_str,
+            "外资净买入": foreign_str,
             "换手率%": round(turnover, 2),
             "上榜原因": reason
         }
         results.append(record)
         
     log.info(f"[龙虎榜抓取] {date_str} 成功拉取 {len(results)} 条数据, 含共振 {sum([1 for x in results if x['资金共振']])} 笔")
+    
+    # 挂机防漏：显式销毁 Pandas 大体积 DataFrame 对象并强制回收内存
+    try:
+        del df_detail, df_jg, df_yyb
+    except Exception:
+        pass
+    gc.collect()
+    
     return results
+
+
+def fetch_lhb_pool_for_date(date_str: str) -> list[dict]:
+    """为 20 日关注池抓取指定日期的龙虎榜数据。
+    现在直接复用完整提取器（strict_filter=False），彻底解决旧版历史记录外资和共振数据全部强行涂 0 的重大 BUG。
+    """
+    return fetch_lhb_data_for_date(date_str, strict_filter=False)
+
 

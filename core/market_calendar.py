@@ -661,6 +661,43 @@ class MarketCalendar:
         return cursor
 
     @classmethod
+    def get_recent_trade_dates(cls, n: int = 20, ref_date: Any = None) -> list[str]:
+        """获取最近 n 个交易日（含 ref_date 当天如果是交易日），返回 yyyyMMdd 格式列表（从近到远）。
+
+        为什么要独立实现而不循环调用 is_trade_day：
+        批量查询时直接在已排序的交易日历集合上切片，比逐日判断快得多。
+        """
+        market = "CN"
+        try:
+            today = cls._coerce_date(ref_date, market)
+        except DataFormatError:
+            today = cls._get_market_now(market).date()
+
+        # 优先使用精确交易日历
+        if cls._trade_dates is None:
+            cls._trade_dates = cls.load_trade_dates()
+
+        if cls._trade_dates:
+            # _trade_dates 里是 ISO 格式 "YYYY-MM-DD"
+            candidates = sorted(
+                [d for d in cls._trade_dates if d <= today.isoformat()],
+                reverse=True,
+            )
+            return [d.replace("-", "") for d in candidates[:n]]
+
+        # 回退方案：跳过周末，近似估算（不含节假日修正）
+        result: list[str] = []
+        cursor = today
+        # 安全上限：最多回溯 n*3 天，避免无限循环
+        for _ in range(n * 3):
+            if cursor.weekday() < 5:
+                result.append(cursor.strftime("%Y%m%d"))
+                if len(result) >= n:
+                    break
+            cursor -= datetime.timedelta(days=1)
+        return result
+
+    @classmethod
     def get_market_status(cls, market: str = "CN") -> str:
         market = cls.normalize_market(market)
         now = cls._get_market_now(market)

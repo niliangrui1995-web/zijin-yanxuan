@@ -14,9 +14,40 @@ class TradeCalendarWidget(QCalendarWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setStyleSheet("QCalendarWidget QWidget { alternate-background-color: transparent; }")
+        self._apply_theme_stylesheet()
         # 隐藏周数侧边栏，释放水平空间解决 "..." 折叠问题
         self.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
+        # 主题切换时动态刷新样式
+        theme_manager.sig_theme_changed.connect(self._apply_theme_stylesheet)
+
+    def _apply_theme_stylesheet(self):
+        """动态应用主题色，消除表头行（周一~周日）与日历网格的色差
+
+        为什么需要单独处理表头行：
+        QCalendarWidget 内部用 QTableView 渲染，表头行是独立的 QHeaderView，
+        paintCell 覆盖不到它。必须通过 QSS 给表头单独设背景色和文字色。
+        """
+        bg = _c("BG_TABLE_BASE")
+        text = _c("TEXT_PRIMARY")
+        text_dim = _c("TEXT_DISABLED")
+        self.setStyleSheet(f"""
+            QCalendarWidget QWidget {{
+                alternate-background-color: transparent;
+            }}
+            QCalendarWidget QAbstractItemView {{
+                background-color: {bg};
+            }}
+            QCalendarWidget QAbstractItemView::item:disabled {{
+                color: {text_dim};
+            }}
+            /* 表头行（周一~周日）：统一底色消除色差 */
+            QCalendarWidget QWidget#qt_calendar_calendarview {{
+                background-color: {bg};
+            }}
+            QCalendarWidget QWidget#qt_calendar_navigationbar {{
+                background-color: {bg};
+            }}
+        """)
 
     def paintCell(self, painter, rect, date):
         """完全接管单元格的绘制"""
