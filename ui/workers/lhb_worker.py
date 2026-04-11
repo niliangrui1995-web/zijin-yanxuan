@@ -161,8 +161,8 @@ def fetch_lhb_data_for_date(date_str: str, strict_filter: bool = True) -> list[d
                 # 降级保底：API完全拉不出买卖明细，无法计算净额，归零并标注失败
                 foreign_net_sum = 0.0
                 
-        # ================= 深度过滤与共振计算 =================
-        # 用户需求1：至少有一方净买入(>0)的情况下才抓取
+        # ================= 深度过滤 =================
+        # 至少有一方净买入(>0)的情况下才抓取
         has_any_net_buy = False
         if has_jg and (jg_info['机构买入净额'] > 0):
             has_any_net_buy = True
@@ -172,12 +172,6 @@ def fetch_lhb_data_for_date(date_str: str, strict_filter: bool = True) -> list[d
         if strict_filter:
             if not has_any_net_buy:
                 continue
-                
-        # 用户需求2：上榜榜单合计净买入额>0，且机构强力净买(>0)，且外资不拖后腿(>=0) 的情况下标记为“资金共振”
-        is_resonance = False
-        if has_jg and has_foreign:
-            if (net_buy > 0) and (jg_info['机构买入净额'] > 0) and (foreign_net_sum >= 0):
-                is_resonance = True        
                 
         if has_foreign and branch_details_map:
             parts = [f"{k}：{round(v)}万" for k, v in branch_details_map.items()]
@@ -192,19 +186,17 @@ def fetch_lhb_data_for_date(date_str: str, strict_filter: bool = True) -> list[d
             "现价": round(close_p, 2),
             "涨幅%": round(pct, 2),
             "市值": round(mk_cap / 100000000.0, 2) if mk_cap > 0 else "--",
-            "资金共振": is_resonance,
             "上榜日期": date_str,
             "上榜净买额(万)": round(net_buy / 10000.0, 2),
             "机构净买(万)": round(jg_info['机构买入净额'] / 10000.0, 2),
             "外资净买(万)": round(foreign_net_sum, 2),
-            "机构家数": f"买{jg_info['买方机构数']}/卖{jg_info['卖方机构数']}",
             "外资净买入": foreign_str,
             "换手率%": round(turnover, 2),
             "上榜原因": reason
         }
         results.append(record)
         
-    log.info(f"[龙虎榜抓取] {date_str} 成功拉取 {len(results)} 条数据, 含共振 {sum([1 for x in results if x['资金共振']])} 笔")
+    log.info(f"[龙虎榜抓取] {date_str} 成功拉取 {len(results)} 条数据")
     
     # 挂机防漏：显式销毁 Pandas 大体积 DataFrame 对象并强制回收内存
     try:

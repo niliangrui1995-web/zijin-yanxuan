@@ -24,7 +24,7 @@ from core.event_bus import event_bus
 from core.logger import get_logger
 from core.task_manager import task_manager
 from ui.tabs.base_stock_tab import BaseStockTab
-from core.lhb_pool_manager import LhbPoolManager
+from core.lhb_pool_manager import LhbPoolManager, POOL_WINDOW
 from core.market_calendar import MarketCalendar
 
 log = get_logger(__name__)
@@ -147,7 +147,7 @@ class LhbTab(BaseStockTab):
     # ================================================================
     def _load_and_display_pool(self):
         """启动时执行：用缓存计算池 → 展示 → 检查缺失天数 → 后台回填"""
-        trade_dates = MarketCalendar.get_recent_trade_dates(20)
+        trade_dates = MarketCalendar.get_recent_trade_dates(POOL_WINDOW)
         if not trade_dates:
             self._calendar_retry_count += 1
             if self._calendar_retry_count <= 3:
@@ -188,7 +188,7 @@ class LhbTab(BaseStockTab):
 
         cached_days = len(self.pool_manager.get_cached_dates())
         self.lbl_status.setText(
-            f"💡 20日关注池：{len(pool)} 只标的入池（已覆盖 {cached_days} 个交易日）"
+            f"💡 {POOL_WINDOW}日关注池：{len(pool)} 只标的入池（已覆盖 {cached_days} 个交易日）"
         )
 
         # 触发全局通知，让关注池 Tab 能扫描到龙虎榜数据
@@ -282,7 +282,7 @@ class LhbTab(BaseStockTab):
             show_toast("正在抓取中，请稍候...", "warning", self)
             return
 
-        trade_dates = MarketCalendar.get_recent_trade_dates(20)
+        trade_dates = MarketCalendar.get_recent_trade_dates(POOL_WINDOW)
         if not trade_dates:
             from ui.components.toast_widget import show_toast
             show_toast("交易日历尚未就绪", "warning", self)
@@ -359,7 +359,7 @@ class LhbTab(BaseStockTab):
             self._today_auto_fetched = True
 
             # 裁剪并重算
-            trade_dates = MarketCalendar.get_recent_trade_dates(20)
+            trade_dates = MarketCalendar.get_recent_trade_dates(POOL_WINDOW)
             if trade_dates:
                 self.pool_manager.prune(trade_dates)
             self.pool_manager.save()

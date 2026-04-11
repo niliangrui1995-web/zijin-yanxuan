@@ -78,15 +78,10 @@ class LhbPoolManager:
             date_str = old.get("date_str", "")
             rows = old.get("rows", [])
             if date_str and rows and date_str not in self._data:
-                # 旧缓存的 "资金共振" 字段是 emoji 字符串 "🔥" 或 ""，需要转回 bool
-                clean_rows = []
-                for r in rows:
-                    rec = dict(r)
-                    rec["资金共振"] = bool(rec.get("资金共振") == "🔥")
-                    clean_rows.append(rec)
-                self._data[date_str] = clean_rows
+                # 旧缓存直接平移，不再做格式转换（资金共振字段已废弃）
+                self._data[date_str] = rows
                 self.save()
-                log.info(f"[龙虎榜池] 成功迁移旧缓存 {date_str}，{len(clean_rows)} 条记录")
+                log.info(f"[龙虎榜池] 成功迁移旧缓存 {date_str}，{len(rows)} 条记录")
             # 清理旧缓存文件
             os.remove(self._old_cache_path)
             log.info("[龙虎榜池] 旧缓存 lhb_cache.json 已删除")
@@ -162,7 +157,7 @@ class LhbPoolManager:
                            用于通过 K 线缓存行数判断上市天数。
                            没有传入则跳过次新股过滤。
 
-        返回：按 上榜次数降序 → 机构净买降序 排列的列表
+        返回：按 买点✅优先 → 最近上榜日降序 → 涨幅%降序 排列的列表
         """
         if not self._data:
             return []
