@@ -142,7 +142,7 @@ class ScanTab(BaseStockTab):
         stb_layout.addStretch()
 
         self.scan_search = QLineEdit()
-        self.scan_search.setPlaceholderText("🔍 输入代码/名称筛选...")
+        self.scan_search.setPlaceholderText("筛选代码或名称...")
         self.scan_search.setFixedWidth(200)
         self.scan_search.textChanged.connect(self._on_search_text_changed)
         stb_layout.addWidget(self.scan_search)
@@ -198,17 +198,17 @@ class ScanTab(BaseStockTab):
         header.setSectionsClickable(True)
         self.table_scan.setSortingEnabled(True)
         
-        scan_weights = [0.8, 0.9, 0.8, 0.8, 0.7, 1.2, 1.0, 1.0, 0.9, 1.0, 0.7, 2.5]
+        scan_weights = [0.55, 0.8, 0.9, 0.8, 0.8, 0.7, 1.2, 1.0, 1.0, 0.9, 1.0, 0.7, 2.5]
         for col_idx, w in enumerate(scan_weights):
             header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
             self.table_scan.setColumnWidth(col_idx, int(w * 80))
-        header.setSectionResizeMode(11, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(self.source_model.columnCount() - 1, QHeaderView.ResizeMode.Stretch)
 
         # 绑定防抖自动保存与恢复配置
-        self.bind_header_persistence(self.table_scan, "header_state_scan_v2")
+        self.bind_header_persistence(self.table_scan, "header_state_scan_v3")
         
         # 强制默认按第5列（触发日期）降序排序（由近到远），覆盖掉持久化中可能记录的其他排序列
-        self.table_scan.sortByColumn(5, Qt.SortOrder.DescendingOrder)
+        self.table_scan.sortByColumn(self.source_model.headers.index("触发日期"), Qt.SortOrder.DescendingOrder)
         
         layout.addWidget(self.table_scan)
 
@@ -216,7 +216,9 @@ class ScanTab(BaseStockTab):
         if index is None or not index.isValid(): return
         model = index.model()
         row = index.row()
-        code_idx = model.index(row, 0)
+        code_col = self.source_model.headers.index("代码")
+        name_col = self.source_model.headers.index("名称")
+        code_idx = model.index(row, code_col)
         current_code = model.data(code_idx, Qt.ItemDataRole.DisplayRole)
         if not current_code: return
         
@@ -225,11 +227,11 @@ class ScanTab(BaseStockTab):
         
         # 构建当前经过筛选后(未隐藏)的股票列表，支持在K线中翻页
         for r in range(model.rowCount()):
-            c_code = model.data(model.index(r, 0), Qt.ItemDataRole.DisplayRole)
-            c_name = model.data(model.index(r, 1), Qt.ItemDataRole.DisplayRole)
+            c_code = model.data(model.index(r, code_col), Qt.ItemDataRole.DisplayRole)
+            c_name = model.data(model.index(r, name_col), Qt.ItemDataRole.DisplayRole)
             if c_code:
                 # Pull full user dict for that row
-                source_idx = self.proxy_model.mapToSource(model.index(r, 0))
+                source_idx = self.proxy_model.mapToSource(model.index(r, code_col))
                 row_data = self.source_model.get_row_data(source_idx.row()) if source_idx.isValid() else None
                 if isinstance(row_data, dict):
                     row_data = dict(row_data)
@@ -287,9 +289,7 @@ class ScanTab(BaseStockTab):
         self._scan_cancel_requested = False
         self._set_scan_action_state("running")
         event_bus.sig_task_progress.emit("scan", 1, "准备扫描...")
-
-        self._current_results = []
-        self.source_model.update_data([])
+        self._pending_scan_results = None
 
         params = VCPParams(
             rps_threshold=self.spn_scan_rps.value(),
@@ -318,7 +318,7 @@ class ScanTab(BaseStockTab):
 
     def _on_scan_finished(self, success, msg):
         if success:
-            self._save_scan_cache(self._current_results)
+            self._save_scan_cache(self._pending_scan_results or [])
         event_bus.sig_task_progress.emit("scan", 100 if success else 0, msg)
 
     def _on_worker_thread_finished(self):
@@ -329,16 +329,19 @@ class ScanTab(BaseStockTab):
         self._set_scan_action_state("idle")
 
     def _on_scan_results(self, results):
-        if not results: return
-        self._current_results = results
-        self._render_scan_table(results)
+        self._pending_scan_results = results or []
+        self._current_results = self._pending_scan_results
+        self._render_scan_table(self._pending_scan_results)
 
 
     # ==========================
     # 数据渲染逻辑
     # ==========================
     def _render_scan_table(self, results):
-        if not results: return
+        if not results:
+            self._current_results = []
+            self.source_model.update_data([])
+            return
         import pandas as pd
         try:
             df_res = pd.DataFrame(results).sort_values('触发日期').drop_duplicates(subset=['代码'], keep='last')
@@ -412,9 +415,13 @@ class ScanTab(BaseStockTab):
     # 扫描结果本地缓存 (SQLite)
     # ==========================
     def _save_scan_cache(self, results: list):
-        if not results: return
         try:
             from core.data_store import DataStore
+            store = DataStore()
+            if not results:
+                store.delete_key("scan_cache")
+                log.info("[扫描缓存] 本次扫描无结果，已清空旧缓存")
+                return
             params_snapshot = {
                 'rps': self.spn_scan_rps.value(),
                 'amp': self.spn_scan_amp.value(),
@@ -428,7 +435,7 @@ class ScanTab(BaseStockTab):
                 'params': params_snapshot,
                 'results': results,
             }
-            DataStore().save_json("scan_cache", cache_data)
+            store.save_json("scan_cache", cache_data)
             log.info(f"[扫描缓存] 已保存 {len(results)} 条结果至 SQLite")
         except Exception as e:
             log.error(f"[扫描缓存] 保存失败: {e}")
@@ -490,13 +497,16 @@ class ScanTab(BaseStockTab):
             
         model = index.model()
         row = index.row()
-        code = model.data(model.index(row, 0), Qt.ItemDataRole.DisplayRole)
-        name = model.data(model.index(row, 1), Qt.ItemDataRole.DisplayRole)
+        code_col = self.source_model.headers.index("代码")
+        name_col = self.source_model.headers.index("名称")
+        code = model.data(model.index(row, code_col), Qt.ItemDataRole.DisplayRole)
+        name = model.data(model.index(row, name_col), Qt.ItemDataRole.DisplayRole)
         if not code or not name:
             return
 
         # 提取 VCP 数据用于关注池附带信息
-        vcp_data = model.data(model.index(row, 0), Qt.ItemDataRole.UserRole)
+        source_idx = self.proxy_model.mapToSource(model.index(row, code_col))
+        vcp_data = self.source_model.get_row_data(source_idx.row()) if source_idx.isValid() else None
         if not isinstance(vcp_data, dict):
             vcp_data = None
 

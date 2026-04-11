@@ -82,7 +82,7 @@ class NADailyTab(BaseStockTab):
         header_layout.addWidget(self.na_daily_source_label)
         header_layout.addStretch()
 
-        btn_refresh = QPushButton("🔄 刷新战报")
+        btn_refresh = QPushButton("刷新战报")
         btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_refresh.clicked.connect(self._load_na_daily_report)
         header_layout.addWidget(btn_refresh)
@@ -104,14 +104,14 @@ class NADailyTab(BaseStockTab):
 
         header = self.na_daily_table.horizontalHeader()
         header.setStretchLastSection(False)
-        default_widths = [60, 70, 60, 60, 70, 78, 100, 80, 120, 50, 60]
+        default_widths = [52, 60, 70, 60, 60, 70, 78, 100, 80, 120, 50, 60]
         for i, w in enumerate(default_widths):
-            if i < len(columns):
+            if i < len(self.model.headers):
                 header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
                 self.na_daily_table.setColumnWidth(i, w)
 
         # 绑定防抖自动保存与恢复配置
-        self.bind_header_persistence(self.na_daily_table, "header_state_na_daily_v3")
+        self.bind_header_persistence(self.na_daily_table, "header_state_na_daily_v4")
 
         self.na_daily_table.doubleClicked.connect(self._on_double_click)
         self.na_daily_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)

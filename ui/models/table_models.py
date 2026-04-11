@@ -31,6 +31,8 @@ from ui.components import SearchFilter
 _log = logging.getLogger(__name__)
 from ui.theme import theme_manager
 
+SERIAL_HEADER = "序号"
+
 # 运行时动态获取当前主题颜色（不再用 from import 快照，否则切换主题后颜色不更新）
 def _c(token: str) -> str:
     return theme_manager.get(token)
@@ -47,11 +49,58 @@ def _build_cell_tooltip(raw_val):
         wrapped_lines.append(textwrap.fill(line, width=50) if len(line) > 40 else line)
     return "\n".join(wrapped_lines)
 
+
+def _summarize_long_text(header: str, raw_val):
+    text = str(raw_val or "").strip()
+    if not text:
+        return text
+
+    if header not in {
+        "外资净买入",
+        "买方营业部",
+        "卖方营业部",
+        "交易详情",
+        "角色定位",
+        "产业链地位",
+    }:
+        return text
+
+    normalized = " | ".join(part.strip() for part in text.splitlines() if part.strip()) or text
+    max_len = 24 if header == "外资净买入" else 30
+    return normalized if len(normalized) <= max_len else normalized[: max_len - 1] + "…"
+
+
+def _alignment_for_header(header: str):
+    if header == SERIAL_HEADER:
+        return int(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+    if header in {"代码", "时间", "突破状态", "RPS强度", "买点", "外资潜伏池"}:
+        return int(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+    if header in {"现价", "市价", "最新价", "收盘", "市值", "流通市值", "成交额", "成交金额(万元)", "评分", "区间振幅"}:
+        return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    if "%" in header or "净买" in header or "净额" in header:
+        return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    if "日" in header or "期" in header or "时间" in header:
+        return int(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+    return int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+
+def _with_serial_header(headers):
+    header_list = list(headers or [])
+    if not header_list or header_list[0] != SERIAL_HEADER:
+        header_list.insert(0, SERIAL_HEADER)
+    return header_list
+
+
+def _sync_serial_values(rows):
+    for idx, item in enumerate(rows or [], 1):
+        if isinstance(item, dict):
+            item[SERIAL_HEADER] = idx
+
 class RtTableModel(QAbstractTableModel):
     def __init__(self, data=None):
         super().__init__()
         self._data = data or []
-        self._headers = ["代码", "名称", "现价", "涨幅%", "市值", "时间", "评分", "RPS强度", "突破状态", "区间振幅", "热点板块"]
+        self._headers = _with_serial_header(["代码", "名称", "现价", "涨幅%", "市值", "时间", "评分", "RPS强度", "突破状态", "区间振幅", "热点板块"])
         self.base_font = QFont()
         self.base_font.setFamilies(["SimSun", "宋体"])
         self.base_font.setPointSize(11)
@@ -84,6 +133,7 @@ class RtTableModel(QAbstractTableModel):
     def update_data(self, new_data):
         self.beginResetModel()
         self._data = new_data
+        _sync_serial_values(self._data)
         self.endResetModel()
 
     def get_row_data(self, row):
@@ -145,6 +195,8 @@ class RtTableModel(QAbstractTableModel):
         raw_val = item_dict.get(key, '')
 
         if role == Qt.ItemDataRole.DisplayRole:
+            if key == SERIAL_HEADER:
+                return str(row + 1)
             if "%" in key:
                 s_val = str(raw_val)
                 if s_val == "--" or s_val == "": return s_val
@@ -164,25 +216,35 @@ class RtTableModel(QAbstractTableModel):
                     return f"{f_val:.3f}" if f_val < 10 else f"{f_val:.2f}"
                 except (ValueError, TypeError):
                     pass
-                    
-            return str(raw_val)
+
+            return _summarize_long_text(key, raw_val)
 
         elif role == Qt.ItemDataRole.ToolTipRole:
+            if key == SERIAL_HEADER:
+                return None
+            if key == "外资净买入":
+                custom_tip = item_dict.get("_外资净买入_tooltip")
+                if custom_tip:
+                    return custom_tip
             return _build_cell_tooltip(raw_val)
 
         elif role == Qt.ItemDataRole.TextAlignmentRole:
-            return int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            return _alignment_for_header(key)
 
         elif role == Qt.ItemDataRole.FontRole:
-            if col in [3, 4, 5, 6, 8, 9]:
+            if key == SERIAL_HEADER:
                 return self.mono_font
-            if col == 7:
+            if key in ["涨幅%", "市值", "时间", "评分", "突破状态", "区间振幅"]:
+                return self.mono_font
+            if key == "突破状态":
                 st = str(raw_val)
                 if "放量突破" in st or "缩量突破" in st:
                     return self.bold_font
             return self.base_font
 
         elif role == Qt.ItemDataRole.ForegroundRole:
+            if key == SERIAL_HEADER:
+                return QColor(_c("TEXT_SECONDARY"))
             # Bug#4 修复: 按 header 名称匹配，不再硬编码列索引
             if "%" in key and "换手" not in key:
                 try:
@@ -210,7 +272,18 @@ class RtTableModel(QAbstractTableModel):
                     elif f_val < 0: return QColor(_c("COLOR_FALL"))
                 except (ValueError, TypeError):
                     pass
-                    
+
+            elif key == "外资净买入":
+                try:
+                    f_val = float(item_dict.get("外资净买(万)", 0) or 0)
+                    if f_val > 0:
+                        return QColor(_c("COLOR_RISE"))
+                    if f_val < 0:
+                        return QColor(_c("COLOR_FALL"))
+                    return QColor(_c("TEXT_SECONDARY"))
+                except (ValueError, TypeError):
+                    pass
+                     
             elif key == "外资潜伏池":
                 try:
                     fz_val = float(item_dict.get("外资净买(万)", 0))
@@ -223,9 +296,11 @@ class RtTableModel(QAbstractTableModel):
 
         elif role == Qt.ItemDataRole.UserRole:
             # specifically for sorting numerical columns
+            if key == SERIAL_HEADER:
+                return row + 1
 
             s_val = str(raw_val).replace(',', '')
-            if col in [4, 6] or "万" in s_val or "亿" in s_val:
+            if key in ["市值", "评分"] or "万" in s_val or "亿" in s_val:
                 if '万' in s_val:
                     m = re.search(r'([-+]?\d*\.?\d+)', s_val)
                     if m: return float(m.group(1)) * 10000
@@ -259,6 +334,33 @@ class RtSortFilterProxyModel(QSortFilterProxyModel):
         else:
             self._exact_column_filters.pop(col_name, None)
         self.invalidateFilter()
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if not index.isValid():
+            return None
+
+        source = self.sourceModel()
+        header = source.headerData(index.column(), Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) if source else None
+        if header == SERIAL_HEADER:
+            if role == Qt.ItemDataRole.DisplayRole:
+                return str(index.row() + 1)
+            if role == Qt.ItemDataRole.UserRole:
+                return index.row() + 1
+            if role == Qt.ItemDataRole.ToolTipRole:
+                return None
+            if role == Qt.ItemDataRole.TextAlignmentRole:
+                return int(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+            if role == Qt.ItemDataRole.ForegroundRole:
+                return QColor(_c("TEXT_SECONDARY"))
+        return super().data(index, role)
+
+    def sort(self, column, order=Qt.SortOrder.AscendingOrder):
+        if column >= 0:
+            source = self.sourceModel()
+            header = source.headerData(column, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) if source else None
+            if header == SERIAL_HEADER:
+                return
+        super().sort(column, order)
 
     def lessThan(self, left, right):
         leftData = self.sourceModel().data(left, Qt.ItemDataRole.UserRole)
@@ -484,7 +586,7 @@ class StockTableModel(QAbstractTableModel):
 
     def __init__(self, headers, data=None):
         super().__init__()
-        self._headers = headers
+        self._headers = _with_serial_header(headers)
         self._data = data or []
         self._flash_records = {} # row -> {col: {"time": stamp, "diff": val}}
 
@@ -525,6 +627,7 @@ class StockTableModel(QAbstractTableModel):
     def update_data(self, new_data):
         self.beginResetModel()
         self._data = new_data
+        _sync_serial_values(self._data)
         self._flash_records.clear()
         self.endResetModel()
 
@@ -692,6 +795,8 @@ class StockTableModel(QAbstractTableModel):
         raw_val = item_dict.get(key, '')
 
         if role == Qt.ItemDataRole.DisplayRole:
+            if key == SERIAL_HEADER:
+                return str(row + 1)
             if key == "代码" and isinstance(raw_val, str) and not raw_val.startswith("sz") and not raw_val.startswith("sh"):
                 pass 
 
@@ -710,21 +815,31 @@ class StockTableModel(QAbstractTableModel):
                     return f"{f_val:+.2f}%"
                 except (ValueError, TypeError):
                     pass
-                    
-            return str(raw_val)
+
+            return _summarize_long_text(key, raw_val)
 
         elif role == Qt.ItemDataRole.ToolTipRole:
+            if key == SERIAL_HEADER:
+                return None
+            if key == "外资净买入":
+                custom_tip = item_dict.get("_外资净买入_tooltip")
+                if custom_tip:
+                    return custom_tip
             return _build_cell_tooltip(raw_val)
 
         elif role == Qt.ItemDataRole.TextAlignmentRole:
-            return int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            return _alignment_for_header(key)
 
         elif role == Qt.ItemDataRole.FontRole:
+            if key == SERIAL_HEADER:
+                return self.mono_font
             if key in ["现价", "涨幅%", "量比", "换手率%", "区间振幅", "市值", "流通市值", "成交额", "评分"]:
                 return self.mono_font
             return self.base_font
 
         elif role == Qt.ItemDataRole.ForegroundRole:
+            if key == SERIAL_HEADER:
+                return QColor(_c("TEXT_SECONDARY"))
             if key == "名称":
                 from ui.viewmodels.watchlist_vm import watchlist_vm
                 code = str(item_dict.get("代码", ""))
@@ -778,7 +893,18 @@ class StockTableModel(QAbstractTableModel):
                     elif f_val < 0: return QColor(_c("COLOR_FALL"))
                 except (ValueError, TypeError):
                     pass
-                    
+
+            elif key == "外资净买入":
+                try:
+                    f_val = float(item_dict.get("外资净买(万)", 0) or 0)
+                    if f_val > 0:
+                        return QColor(_c("COLOR_RISE"))
+                    if f_val < 0:
+                        return QColor(_c("COLOR_FALL"))
+                    return QColor(_c("TEXT_SECONDARY"))
+                except (ValueError, TypeError):
+                    pass
+                     
             elif key == "外资潜伏池":
                 try:
                     fz_val = float(item_dict.get("外资净买(万)", 0))
@@ -827,6 +953,13 @@ class StockTableModel(QAbstractTableModel):
             return None
 
         elif role == Qt.ItemDataRole.UserRole:
+            if key == SERIAL_HEADER:
+                return row + 1
+            if key == "外资净买入":
+                try:
+                    return float(item_dict.get("外资净买(万)", 0) or 0)
+                except (ValueError, TypeError):
+                    return 0.0
             s_val = str(raw_val).replace(',', '')
 
             if key == "日报时间":

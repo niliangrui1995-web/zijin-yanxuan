@@ -3,6 +3,8 @@
 
 import os
 import time
+import threading
+import uuid
 from datetime import datetime, timedelta
 import numpy as np
 import polars as pl
@@ -11,6 +13,22 @@ from vcp.constants import DATE_FMT, RPS_BUFFER_DAYS, CACHE_DIR
 
 from core.logger import get_logger
 _log = get_logger(__name__)
+_PRICES_MATRIX_LOCK = threading.Lock()
+_PARQUET_CACHE_LOCK = threading.Lock()
+
+
+def _atomic_parquet_write(df: pl.DataFrame, final_path: str, compression: str = "zstd") -> None:
+    os.makedirs(os.path.dirname(final_path), exist_ok=True)
+    tmp_path = f"{final_path}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+    try:
+        df.write_parquet(tmp_path, compression=compression)
+        os.replace(tmp_path, final_path)
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
 
 # ================================================================
@@ -186,8 +204,8 @@ def _save_prices_matrix(matrix: np.ndarray, columns: list[str], dates: np.ndarra
         for i, col_name in enumerate(columns):
             data_dict[col_name] = matrix[:, i]
         save_df = pl.DataFrame(data_dict)
-        os.makedirs(os.path.dirname(_PRICES_MATRIX_CACHE), exist_ok=True)
-        save_df.write_parquet(_PRICES_MATRIX_CACHE, compression='zstd')
+        with _PRICES_MATRIX_LOCK:
+            _atomic_parquet_write(save_df, _PRICES_MATRIX_CACHE, compression='zstd')
     except Exception as e:
         _log.error(f"[加速引擎] 价格矩阵缓存保存失败: {e}")
 
@@ -197,7 +215,8 @@ def _load_prices_matrix() -> tuple[np.ndarray, list[str], np.ndarray] | None:
     if not os.path.exists(_PRICES_MATRIX_CACHE):
         return None
     try:
-        df = pl.read_parquet(_PRICES_MATRIX_CACHE)
+        with _PRICES_MATRIX_LOCK:
+            df = pl.read_parquet(_PRICES_MATRIX_CACHE)
         if df.height == 0:
             return None
         dates = df['date'].to_numpy()
@@ -404,17 +423,16 @@ def save_cache_parquet(cache_data: dict, date_str: str) -> bool:
     del frames
     _gc.collect()
 
-    pl_df.write_parquet(parquet_path, compression='zstd')
+    with _PARQUET_CACHE_LOCK:
+        _atomic_parquet_write(pl_df, parquet_path, compression='zstd')
+        meta = pl.DataFrame({
+            'date': [date_str],
+            'n_stocks': [len(cache_data)],
+            'version': [3],
+        })
+        _atomic_parquet_write(meta, meta_path, compression='zstd')
     del pl_df
     _gc.collect()
-
-    # 保存元信息
-    meta = pl.DataFrame({
-        'date': [date_str],
-        'n_stocks': [len(cache_data)],
-        'version': [3],
-    })
-    meta.write_parquet(meta_path, compression='zstd')
 
     elapsed = time.time() - t0
     file_mb = os.path.getsize(parquet_path) / 1024 / 1024
@@ -442,16 +460,17 @@ def load_cache_parquet() -> tuple[dict, str] | None:
     try:
         # 读取元信息
         date_str = ''
-        if os.path.exists(meta_path):
-            meta = pl.read_parquet(meta_path)
-            date_str = str(meta['date'][0])
-            version = int(meta['version'][0])
-            if version != 3:
-                _log.warning(f"[加速引擎] Parquet 缓存版本不匹配 (期望 3, 实际 {version})")
-                return None
+        with _PARQUET_CACHE_LOCK:
+            if os.path.exists(meta_path):
+                meta = pl.read_parquet(meta_path)
+                date_str = str(meta['date'][0])
+                version = int(meta['version'][0])
+                if version != 3:
+                    _log.warning(f"[加速引擎] Parquet 缓存版本不匹配 (期望 3, 实际 {version})")
+                    return None
 
-        # 读取数据 — 用 Polars partition_by 高效分组
-        pl_df = pl.read_parquet(parquet_path)
+            # 读取数据 — 用 Polars partition_by 高效分组
+            pl_df = pl.read_parquet(parquet_path)
 
         cache_data = {}
         if '_code' in pl_df.columns:

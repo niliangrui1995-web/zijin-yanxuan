@@ -14,6 +14,60 @@ FOREIGN_KEYWORDS = [
     "渣打", "野村", "汇丰", "星展", "大和"
 ]
 
+
+def _format_wan_amount(amount_wan: float) -> str:
+    amount = abs(float(amount_wan or 0))
+    if amount >= 10000:
+        text = f"{amount / 10000:.2f}".rstrip("0").rstrip(".")
+        return f"{text}亿"
+    if amount >= 100:
+        return f"{amount:.0f}万"
+    if amount >= 10:
+        return f"{amount:.1f}万"
+    return f"{amount:.2f}万"
+
+
+def _build_foreign_display(branch_details_map: dict[str, float]) -> tuple[str, str]:
+    if not branch_details_map:
+        return "未现身", "当日未发现外资席位上榜"
+
+    sorted_items = sorted(branch_details_map.items(), key=lambda item: (-abs(item[1]), item[0]))
+    total = sum(amount for _, amount in sorted_items)
+
+    if total > 0.01:
+        summary = f"净买{_format_wan_amount(total)}"
+    elif total < -0.01:
+        summary = f"净卖{_format_wan_amount(total)}"
+    else:
+        summary = "平衡"
+
+    short_parts = []
+    for branch, amount in sorted_items[:2]:
+        if amount > 0.01:
+            short_parts.append(f"{branch}+{_format_wan_amount(amount)}")
+        elif amount < -0.01:
+            short_parts.append(f"{branch}-{_format_wan_amount(amount)}")
+        else:
+            short_parts.append(f"{branch}±0")
+
+    display = summary
+    if short_parts:
+        display = f"{summary} | {' / '.join(short_parts)}"
+        if len(sorted_items) > 2:
+            display += f" 等{len(sorted_items)}席"
+
+    tooltip_lines = [f"外资合计：{summary}"]
+    for branch, amount in sorted_items:
+        if amount > 0.01:
+            direction = "净买"
+        elif amount < -0.01:
+            direction = "净卖"
+        else:
+            direction = "平衡"
+        tooltip_lines.append(f"{branch}：{direction}{_format_wan_amount(amount)}")
+
+    return display, "\n".join(tooltip_lines)
+
 def fetch_lhb_data_for_date(date_str: str, strict_filter: bool = True) -> list[dict]:
     """
     抓取指定日期的龙虎榜数据，并将 基础详情、机构统计、外资/知名游资参与情况聚合返回。
@@ -173,12 +227,8 @@ def fetch_lhb_data_for_date(date_str: str, strict_filter: bool = True) -> list[d
             if not has_any_net_buy:
                 continue
                 
-        if has_foreign and branch_details_map:
-            parts = [f"{k}：{round(v)}万" for k, v in branch_details_map.items()]
-            foreign_str = f"净额：{round(foreign_net_sum)}万   " + "   ".join(parts)
-        else:
-            foreign_str = "--"
-            
+        foreign_str, foreign_tooltip = _build_foreign_display(branch_details_map)
+             
         # 构造给前端的平铺字典字段
         record = {
             "代码": code,
@@ -191,6 +241,7 @@ def fetch_lhb_data_for_date(date_str: str, strict_filter: bool = True) -> list[d
             "机构净买(万)": round(jg_info['机构买入净额'] / 10000.0, 2),
             "外资净买(万)": round(foreign_net_sum, 2),
             "外资净买入": foreign_str,
+            "_外资净买入_tooltip": foreign_tooltip,
             "换手率%": round(turnover, 2),
             "上榜原因": reason
         }

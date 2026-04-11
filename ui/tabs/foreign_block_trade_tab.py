@@ -5,9 +5,11 @@ ui/tabs/foreign_block_trade_tab.py
 展示包含指定外资/机构关键字的营业部近期大宗交易明细，并高亮对倒、互砍等特殊行为。
 """
 import datetime
+import json
 import os
+import subprocess
+import sys
 import pandas as pd
-import akshare as ak
 
 from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QTableView, QHeaderView, QPushButton, QLabel, QAbstractItemView, QLineEdit, QComboBox
@@ -53,7 +55,7 @@ class BlockTradeFilterProxyModel(RtSortFilterProxyModel):
         return super().filterAcceptsRow(source_row, source_parent)
 
 from core.logger import get_logger
-from core.task_manager import task_manager
+from core.task_manager import UserFacingTaskError, task_manager
 from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
@@ -63,12 +65,127 @@ TARGET_KEYWORDS = FOREIGN_KEYWORDS + ["机构专用"]
 
 # 模块级K线缓存：每只股票的文件只读一次，后续直接从内存取
 _kline_cache: dict = {}
+_PROXY_ENV_KEYS = [
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+    "http_proxy", "https_proxy", "all_proxy",
+]
+_BLOCK_TRADE_CHUNK_TIMEOUT = 15
+_BLOCK_TRADE_CALENDAR_TIMEOUT = 10
+_BLOCK_TRADE_MAX_RETRIES = 2
+_BLOCK_TRADE_TOTAL_TIMEOUT = 45
+_BLOCK_TRADE_TIMEOUT_USER_MESSAGE = (
+    "抓取超时：45秒内未拿到完整结果。通常是当前网络较慢，"
+    "或 VPN/代理影响了国内数据源；可稍后重试，必要时临时关闭 VPN 后再刷新。"
+)
+_AKSHARE_FETCH_SNIPPET = r"""
+import json
+import sys
+import pandas as pd
+import akshare as ak
+
+sys.stdout.reconfigure(encoding="utf-8")
+sys.stderr.reconfigure(encoding="utf-8")
+
+mode = sys.argv[1]
+if mode == "calendar":
+    df = ak.tool_trade_date_hist_sina()
+    df['trade_date'] = pd.to_datetime(df['trade_date']).dt.strftime('%Y-%m-%d')
+    print(json.dumps(df['trade_date'].tolist(), ensure_ascii=False))
+elif mode == "block_trade":
+    start_date = sys.argv[2]
+    end_date = sys.argv[3]
+    df = ak.stock_dzjy_mrmx(symbol="A股", start_date=start_date, end_date=end_date)
+    if df is None or df.empty:
+        print("[]")
+    else:
+        print(df.to_json(orient="records", force_ascii=False, date_format="iso"))
+"""
+
+
+def _run_domestic_akshare(mode: str, *args, timeout: int = 15):
+    env = os.environ.copy()
+    for key in _PROXY_ENV_KEYS:
+        env.pop(key, None)
+    env["NO_PROXY"] = "*"
+    env["no_proxy"] = "*"
+    env["PYTHONIOENCODING"] = "utf-8"
+    creationflags = 0x08000000 if os.name == "nt" else 0
+    cmd = [sys.executable, "-c", _AKSHARE_FETCH_SNIPPET, mode, *args]
+    proc = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="ignore",
+        timeout=timeout,
+        env=env,
+        creationflags=creationflags,
+        check=True,
+    )
+    payload = (proc.stdout or "").strip()
+    if not payload:
+        return []
+    return json.loads(payload)
+
+
+def _raise_block_trade_timeout(stage: str, detail: str = ""):
+    extra = f"（{detail}）" if detail else ""
+    raise UserFacingTaskError(
+        _BLOCK_TRADE_TIMEOUT_USER_MESSAGE,
+        f"大宗交易抓取超时：{stage}{extra}，45秒内未完成全部请求，"
+        "可能是国内数据源响应慢或网络代理影响。",
+    )
+
+
+def _format_incomplete_message(timeout_chunks, failed_chunks):
+    parts = []
+    if timeout_chunks:
+        parts.append(f"{len(timeout_chunks)} 个区间超时")
+    if failed_chunks:
+        parts.append(f"{len(failed_chunks)} 个区间失败")
+    if not parts:
+        return ""
+    return "；" + "，".join(parts) + "，结果可能不完整"
+
+
+def _normalize_trade_date_value(value) -> str:
+    if value is None or pd.isna(value):
+        return ""
+
+    if isinstance(value, (datetime.date, datetime.datetime, pd.Timestamp)):
+        return pd.Timestamp(value).strftime("%Y-%m-%d")
+
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "nat", "none"}:
+        return ""
+
+    if text.isdigit():
+        parsed = pd.NaT
+        if len(text) == 13:
+            parsed = pd.to_datetime(int(text), unit="ms", errors="coerce")
+        elif len(text) == 10:
+            parsed = pd.to_datetime(int(text), unit="s", errors="coerce")
+        elif len(text) == 8:
+            parsed = pd.to_datetime(text, format="%Y%m%d", errors="coerce")
+        if pd.notna(parsed):
+            return parsed.strftime("%Y-%m-%d")
+        return text
+
+    parsed = pd.to_datetime(text, errors="coerce")
+    if pd.notna(parsed):
+        return parsed.strftime("%Y-%m-%d")
+    return text
+
+
+def _normalize_trade_date_series(series: pd.Series) -> pd.Series:
+    return series.apply(_normalize_trade_date_value)
 
 class ForeignBlockTradeTab(BaseStockTab):
     def __init__(self, data_provider, parent=None):
         super().__init__(data_provider=data_provider, parent=parent)
         self._block_trade_codes = set()
         self._cap_cache = {}
+        self._is_loading = False
         
         self.days_to_fetch = 20  # 默认拉取最近20个交易日
         self._init_ui()
@@ -116,7 +233,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         header_layout.addWidget(self.cmb_filter_direction)
 
         self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("🔍 搜索代码/名称/任意词...")
+        self.search_box.setPlaceholderText("筛选代码、名称或关键词...")
         self.search_box.setFixedWidth(240)
         self.search_box.textChanged.connect(self._filter_table_combo)
         header_layout.addWidget(self.search_box)
@@ -130,7 +247,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.cmb_days.currentIndexChanged.connect(self._on_days_changed)
         header_layout.addWidget(self.cmb_days)
 
-        self.btn_refresh = QPushButton("🔄 抓取数据")
+        self.btn_refresh = QPushButton("刷新数据")
         self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_refresh.clicked.connect(self._load_block_trade_data)
         header_layout.addWidget(self.btn_refresh)
@@ -150,19 +267,19 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.delegate = StockItemDelegate(self.table)
         self.table.setItemDelegate(self.delegate)
         # 大宗交易默认按时间排序 由近到远
-        self.table.sortByColumn(5, Qt.SortOrder.DescendingOrder)
+        self.table.sortByColumn(self.model.headers.index("交易日期"), Qt.SortOrder.DescendingOrder)
 
         # 列宽
         header = self.table.horizontalHeader()
         header.setStretchLastSection(True)
         # 严格压缩默认列宽，总和约1200px以内，确保即使在小屏幕/高缩放比下也不会超过屏幕宽度产生滚动条
-        default_widths = [60, 70, 55, 55, 55, 70, 85, 65, 65, 65, 75, 75, 140, 140]
+        default_widths = [52, 60, 70, 55, 55, 55, 70, 85, 65, 65, 65, 75, 75, 140, 140]
         for i, w in enumerate(default_widths):
             header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
             self.table.setColumnWidth(i, w)
 
         # 绑定防抖自动保存与恢复配置 (v4 强制刷新新布局)
-        self.bind_header_persistence(self.table, "block_trade_header_state_v4")
+        self.bind_header_persistence(self.table, "block_trade_header_state_v5")
 
         # 双击 → K线图
         self.table.doubleClicked.connect(self._on_double_click)
@@ -222,19 +339,32 @@ class ForeignBlockTradeTab(BaseStockTab):
         return "--", COLOR_FLAT
 
     def _load_block_trade_data(self):
-        self.lbl_status.setText("拼命拉取大宗交易数据中...")
+        if self._is_loading or task_manager.is_active_task("foreign_block_trade"):
+            self.lbl_status.setText("大宗交易仍在抓取中，请稍候...")
+            return
+        self._is_loading = True
+        self.btn_refresh.setEnabled(False)
+        self.lbl_status.setText("正在抓取大宗交易数据...")
         self.model.update_data([])
         # 清空上一轮的K线缓存，防止跨交易日窗口后内存只增不减
         _kline_cache.clear()
         
         def _fetch_task():
+            import time
+
             end_dt = datetime.datetime.now()
+            deadline = time.monotonic() + _BLOCK_TRADE_TOTAL_TIMEOUT
             
             # 使用交易日历倒推 start_dt
             try:
-                trade_cal = ak.tool_trade_date_hist_sina()
-                trade_cal['trade_date'] = pd.to_datetime(trade_cal['trade_date']).dt.date
-                dates = trade_cal['trade_date'].tolist()
+                remaining = max(5, int(deadline - time.monotonic()))
+                dates = [
+                    pd.to_datetime(d).date()
+                    for d in _run_domestic_akshare(
+                        "calendar",
+                        timeout=min(_BLOCK_TRADE_CALENDAR_TIMEOUT, remaining)
+                    )
+                ]
                 today_date = end_dt.date()
                 past_dates = [d for d in dates if d <= today_date]
                 if len(past_dates) >= self.days_to_fetch:
@@ -242,53 +372,118 @@ class ForeignBlockTradeTab(BaseStockTab):
                 else:
                     start_date_val = past_dates[0] if past_dates else (today_date - datetime.timedelta(days=self.days_to_fetch))
                 start_dt = datetime.datetime.combine(start_date_val, datetime.time())
+            except subprocess.TimeoutExpired:
+                log.warning("[大宗交易] 获取交易日历超时，回退到自然日估算")
+                start_dt = end_dt - datetime.timedelta(days=int(self.days_to_fetch * 1.5))
             except Exception as e:
                 log.warning(f"获取交易日历失败，使用自然日重估: {e}")
                 start_dt = end_dt - datetime.timedelta(days=int(self.days_to_fetch * 1.5))
 
             results = []
+            timeout_chunks = []
+            failed_chunks = []
+            finished_chunks = 0
             
             # 分段拉取：东财接口对大日期范围会截断或断连，每次只拉15天
-            import time
             CHUNK_DAYS = 15
             cursor = start_dt
             while cursor < end_dt:
+                if time.monotonic() >= deadline:
+                    _raise_block_trade_timeout("总耗时超限")
+
                 chunk_end = min(cursor + datetime.timedelta(days=CHUNK_DAYS), end_dt)
                 s_str = cursor.strftime("%Y%m%d")
                 e_str = chunk_end.strftime("%Y%m%d")
+                chunk_key = f"{s_str}-{e_str}"
+                chunk_done = False
+                chunk_timed_out = False
                 
-                for attempt in range(3):
+                for attempt in range(_BLOCK_TRADE_MAX_RETRIES):
+                    remaining = int(deadline - time.monotonic())
+                    if remaining <= 0:
+                        _raise_block_trade_timeout("分段抓取", chunk_key)
                     try:
-                        df = ak.stock_dzjy_mrmx(symbol="A股", start_date=s_str, end_date=e_str)
+                        records = _run_domestic_akshare(
+                            "block_trade",
+                            s_str,
+                            e_str,
+                            timeout=min(_BLOCK_TRADE_CHUNK_TIMEOUT, remaining),
+                        )
+                        df = pd.DataFrame(records) if records else pd.DataFrame()
                         if df is not None and not df.empty:
                             for _, row in df.iterrows():
                                 if self._should_include_row(row.get('买方营业部'), row.get('卖方营业部')):
                                     results.append(row.to_dict())
-                        break  # 成功就跳出重试
-                    except Exception as e:
-                        log.warning(f"[大宗交易] {s_str}-{e_str} 第{attempt+1}次失败: {e}")
-                        if attempt < 2:
+                        chunk_done = True
+                        finished_chunks += 1
+                        break
+                    except subprocess.TimeoutExpired:
+                        chunk_timed_out = True
+                        log.warning(f"[大宗交易] {chunk_key} 请求超时，可能是国内数据源响应慢或当前网络代理影响")
+                        if attempt < _BLOCK_TRADE_MAX_RETRIES - 1:
                             time.sleep(1)
-                
+                    except Exception as e:
+                        log.warning(f"[大宗交易] {chunk_key} 第{attempt+1}次失败: {e}")
+                        if attempt < _BLOCK_TRADE_MAX_RETRIES - 1:
+                            time.sleep(1)
+
+                if not chunk_done:
+                    if time.monotonic() >= deadline:
+                        _raise_block_trade_timeout("分段重试后仍未完成", chunk_key)
+                    if chunk_timed_out:
+                        timeout_chunks.append(chunk_key)
+                    else:
+                        failed_chunks.append(chunk_key)
+
                 cursor = chunk_end + datetime.timedelta(days=1)
-            
-            return results
+
+            if not results and failed_chunks and finished_chunks == 0:
+                raise UserFacingTaskError(
+                    "抓取失败：本轮未拿到有效结果。通常是国内数据源响应慢或网络较差；可稍后重试。",
+                    "大宗交易抓取失败：所有分段均未返回有效结果。",
+                )
+
+            return {
+                "records": results,
+                "timeout_chunks": timeout_chunks,
+                "failed_chunks": failed_chunks,
+            }
             
         task_manager.run_in_background(
             _fetch_task, 
             task_id="foreign_block_trade",
-            on_success=self._on_data_fetched
+            on_success=self._on_data_fetched,
+            on_error=self._on_data_fetch_failed
         )
 
-    def _on_data_fetched(self, data_list):
+    def _on_data_fetched(self, payload):
+        self._is_loading = False
+        self.btn_refresh.setEnabled(True)
+        if isinstance(payload, dict):
+            data_list = payload.get("records", [])
+            timeout_chunks = payload.get("timeout_chunks", [])
+            failed_chunks = payload.get("failed_chunks", [])
+        else:
+            data_list = payload
+            timeout_chunks = []
+            failed_chunks = []
+
         if not data_list:
             self._aggregated_records = []
             self._block_trade_codes = set()
-            self.lbl_status.setText("❌ 近期未发现匹配监控席位的大宗交易。")
+            if timeout_chunks or failed_chunks:
+                self.lbl_status.setText(
+                    "⚠️ 大宗交易抓取不完整，未返回有效结果"
+                    f"{_format_incomplete_message(timeout_chunks, failed_chunks)}"
+                )
+            else:
+                self.lbl_status.setText("❌ 近期未发现匹配监控席位的大宗交易。")
             event_bus.sig_block_trade_updated.emit()
             return
             
         df = pd.DataFrame(data_list)
+        if '交易日期' in df.columns:
+            df['交易日期'] = _normalize_trade_date_series(df['交易日期'])
         
         # 按照 (交易日期, 股票代码, 买方营业部, 卖方营业部) 分组汇总，合并拆单金额和数量
         # 对于数值类型去求和或者均值，字符去第一条
@@ -376,7 +571,10 @@ class ForeignBlockTradeTab(BaseStockTab):
             row_data.append(row_dict)
 
         self.model.update_data(row_data)
-        self.lbl_status.setText(f"✅ 加载完成，发现 {len(df)} 笔监控席位大宗交易。")
+        self.lbl_status.setText(
+            f"✅ 加载完成，发现 {len(df)} 笔监控席位大宗交易。"
+            f"{_format_incomplete_message(timeout_chunks, failed_chunks)}"
+        )
         
         # 强制应用当前的筛选状态
         self._filter_table_combo()
@@ -384,6 +582,16 @@ class ForeignBlockTradeTab(BaseStockTab):
         
         # 统一异步刷新市值
         self.async_update_market_caps()
+
+    def _on_data_fetch_failed(self, error_message: str):
+        self._is_loading = False
+        self.btn_refresh.setEnabled(True)
+        msg = str(error_message or "").strip()
+        if not msg:
+            msg = "大宗交易抓取失败，请稍后重试。"
+        elif not msg.startswith(("抓取超时", "抓取失败")):
+            msg = f"大宗交易抓取失败：{msg}"
+        self.lbl_status.setText(msg)
 
     def _filter_table_combo(self):
         search_text = self.search_box.text().strip().lower()

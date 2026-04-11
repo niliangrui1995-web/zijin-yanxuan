@@ -642,7 +642,7 @@ class AsianMarketTab(BaseStockTab):
 
     def _on_asian_klines_ready(self):
         self._load_local_cache()
-        self.lbl_status.setText("✅ 亚洲市场后台静默更新已就绪，K线已应用最新数据")
+        self.lbl_status.setText("亚洲市场后台静默更新已就绪，K线已应用最新数据")
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -650,18 +650,18 @@ class AsianMarketTab(BaseStockTab):
         
         header = QHBoxLayout()
         header.setContentsMargins(8, 6, 8, 6)
-        title = QLabel("🌏 亚洲寡头核心资产监控")
+        title = QLabel("亚洲寡头核心资产监控")
         title.setObjectName("tabTitle")
         self.lbl_status = QLabel("系统初始化...")
         self.lbl_status.setObjectName("tabSubtitle")
         
-        self.chk_cf_proxy = QCheckBox("🚀 启用免翻墙直连 (CF隧道)")
+        self.chk_cf_proxy = QCheckBox("启用直连通道 (CF隧道)")
         self.chk_cf_proxy.setToolTip("打勾：关闭VPN彻底裸连；不打勾：走您的VPN全局模式直连")
         self.chk_cf_proxy.setObjectName("successStatus")
         self.chk_cf_proxy.setChecked(True)
         self.chk_cf_proxy.toggled.connect(self._on_cf_proxy_toggled)
         
-        self.btn_refresh = QPushButton("🔄 网络检查与手动刷新")
+        self.btn_refresh = QPushButton("网络检查与手动刷新")
         self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_refresh.setToolTip("强制跳过等待，立刻请求外网(Yahoo Finance)测速并获取最新价格")
         self.btn_refresh.clicked.connect(self._on_manual_refresh)
@@ -698,13 +698,13 @@ class AsianMarketTab(BaseStockTab):
         header_view = self.asian_table.horizontalHeader()
         header_view.setStretchLastSection(False)
         
-        default_widths = [70, 140, 90, 90, 80, 80, 120, 250, 60, 80, 80, 80]
+        default_widths = [52, 70, 140, 90, 90, 80, 80, 120, 250, 60, 80, 80, 80]
         for i, w in enumerate(default_widths):
             header_view.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
             self.asian_table.setColumnWidth(i, w)
             
         # 绑定防抖自动保存与恢复配置
-        self.bind_header_persistence(self.asian_table, "header_state_asian_v2")
+        self.bind_header_persistence(self.asian_table, "header_state_asian_v3")
 
     def _show_context_menu(self, pos):
         index = self.asian_table.indexAt(pos)
@@ -717,7 +717,7 @@ class AsianMarketTab(BaseStockTab):
         name = self.model.row_data[row].get("名称", "")
         if code and name:
             from ui.components.stock_context_menu import build_stock_context_menu
-            build_stock_context_menu(self.asian_table, code, name)
+            build_stock_context_menu(self, code, name)
 
     def _on_cf_proxy_toggled(self, checked):
         global GLOBAL_USE_CF_PROXY

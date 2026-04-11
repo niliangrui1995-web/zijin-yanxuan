@@ -35,6 +35,46 @@ _ECHARTS_JS_PATH = _os.path.join(
 )
 
 
+def _merge_kline_context(base: dict, extra: dict, *, overwrite: bool = False) -> dict:
+    if not isinstance(extra, dict):
+        return base
+
+    for key, value in extra.items():
+        if value in (None, "", [], {}):
+            continue
+        if overwrite or key not in base or base.get(key) in (None, "", [], {}):
+            base[key] = value
+    return base
+
+
+def resolve_kline_vcp_context(
+    code: str,
+    name: str,
+    item_data: dict = None,
+    watchlist_entry: dict = None,
+    scan_results: list = None,
+) -> dict:
+    resolved = {
+        "代码": code,
+        "名称": name,
+        "code": code,
+        "name": name,
+    }
+    _merge_kline_context(resolved, item_data or {}, overwrite=True)
+    _merge_kline_context(resolved, watchlist_entry or {}, overwrite=False)
+
+    for scan_res in scan_results or []:
+        if isinstance(scan_res, dict) and str(scan_res.get("代码", "")).strip() == str(code).strip():
+            _merge_kline_context(resolved, scan_res, overwrite=True)
+            break
+
+    resolved["代码"] = str(resolved.get("代码") or code)
+    resolved["名称"] = str(resolved.get("名称") or name or code)
+    resolved["code"] = resolved["代码"]
+    resolved["name"] = resolved["名称"]
+    return resolved
+
+
 def _build_kline_theme_colors() -> dict:
     """从当前主题中提取 K 线图渲染所需的全部色值。
     为什么独立成函数？因为 HTML 模板和 Python 数据构建都需要同一套色值，
@@ -84,6 +124,57 @@ def _build_kline_theme_colors() -> dict:
     return colors
 
 
+def _format_kline_market_badge(code: str) -> str:
+    market = MarketCalendar.infer_market(code)
+    return {
+        "CN": "A股",
+        "HK": "港股",
+        "TW": "台股",
+        "TWO": "台股",
+        "T": "日股",
+        "JP": "日股",
+        "KS": "韩股",
+        "US": "美股",
+    }.get(market, market or "市场")
+
+
+def _build_kline_summary_items(vcp_data: dict | None, is_fav: bool = False) -> dict:
+    payload = vcp_data or {}
+
+    def _pick(*keys, default="--"):
+        for key in keys:
+            value = payload.get(key)
+            if value not in (None, "", [], {}):
+                return value
+        return default
+
+    def _to_float(value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    box_high = _to_float(_pick("区间最高价", "box_high", default=None))
+    box_low = _to_float(_pick("区间最低点", "box_low", "box_low_price", default=None))
+    if box_high is not None and box_low is not None:
+        range_text = f"{box_low:.2f} - {box_high:.2f}"
+    else:
+        range_text = "--"
+
+    rps_raw = str(_pick("RPS强度", "rps_str", default="--")).strip()
+    if rps_raw in {"", "-", "nan/nan"}:
+        rps_raw = "--"
+
+    return {
+        "形态": str(_pick("突破状态", "状态", default="--")),
+        "触发": str(_pick("触发日期", "日期", "trigger_date", default="--"))[:10] or "--",
+        "区间": range_text,
+        "振幅": str(_pick("区间振幅", "振幅", default="--")),
+        "RPS": rps_raw,
+        "关注": "已关注" if is_fav else "未关注",
+    }
+
+
 def _build_html(title: str, echarts_data: dict, echarts_js_path: str, theme_colors: dict) -> str:
     """
     构建完整的 ECharts HTML 页面。
@@ -100,14 +191,13 @@ def _build_html(title: str, echarts_data: dict, echarts_js_path: str, theme_colo
     <meta charset="utf-8">
     <script src="{js_url}"></script>
     <style>
-        body {{ margin: 0; padding: 0; background-color: {theme_colors['bg_canvas']}; color: {theme_colors['text_secondary']}; font-family: "Microsoft YaHei", sans-serif; overflow: hidden; }}
-        #chart {{ width: 100vw; height: calc(100vh - 35px); margin-top: 35px; }}
+        body {{ margin: 0; padding: 0; background-color: {theme_colors['bg_canvas']}; color: {theme_colors['text_secondary']}; font-family: "Microsoft YaHei UI", sans-serif; overflow: hidden; }}
+        #chart {{ width: 100vw; height: calc(100vh - 30px); margin-top: 30px; }}
 
-        .top-toolbar {{ position: absolute; top: 0; left: 0; right: 0; height: 35px; background: {theme_colors['bg_toolbar']}; border-bottom: 1px solid {theme_colors['border']}; display: flex; align-items: center; padding: 0 15px; z-index: 100; }}
-        .stock-title {{ font-size: 15px; font-weight: bold; color: {theme_colors['text_primary']}; margin-right: 15px; }}
-        .info-item {{ font-size: 12px; color: {theme_colors['text_muted']}; margin-right: 8px; }}
-        .info-val {{ font-size: 12px; font-weight: bold; margin-left: 2px; }}
-        .ma-display {{ margin-left: 5px; font-size: 11px; font-weight: bold; display: flex; gap: 8px; flex-wrap: nowrap; }}
+        .top-toolbar {{ position: absolute; top: 0; left: 0; right: 0; height: 30px; background: {theme_colors['bg_toolbar']}; border-bottom: 1px solid {theme_colors['border']}; display: flex; align-items: center; padding: 0 12px; z-index: 100; gap: 10px; }}
+        .info-item {{ font-size: 11px; color: {theme_colors['text_muted']}; white-space: nowrap; }}
+        .info-val {{ font-size: 11px; font-weight: 700; margin-left: 2px; color: {theme_colors['text_secondary']}; }}
+        .ma-display {{ margin-left: auto; font-size: 11px; font-weight: 700; display: flex; gap: 8px; flex-wrap: nowrap; white-space: nowrap; }}
         .ma-display span.ma10 {{ color: {theme_colors['ma10']}; }}
         .ma-display span.ma20 {{ color: {theme_colors['ma20']}; }}
         .ma-display span.ma50 {{ color: {theme_colors['ma50']}; }}
@@ -161,9 +251,6 @@ def _build_html(title: str, echarts_data: dict, echarts_js_path: str, theme_colo
                     let prevClose = idx > 0 ? rawData.klines[idx-1][1] : kline[0];
                     let pct = ((kline[1] - prevClose) / prevClose * 100);
                     let pctStr = pct >= 0 ? '+' + pct.toFixed(2) + '%' : pct.toFixed(2) + '%';
-
-                    if (pct > 9.0) {{ pctStr = '🔥涨停 ' + pctStr; }}
-                    else if (pct < -9.0) {{ pctStr = '💦跌停 ' + pctStr; }}
 
                     document.getElementById('v-pct').innerText = pctStr;
                     document.getElementById('v-pct').style.color = pct >= 0 ? upColor : downColor;
@@ -326,7 +413,7 @@ class KLineChartWindow(QWidget):
         self.code = code
         self.name = name
         self.data_provider = data_provider
-        self.vcp_data = vcp_data or {}
+        self.vcp_data = self._resolve_vcp_context(code, name, vcp_data or {})
         self.code_list = code_list or []
         self.current_idx = current_idx
 
@@ -336,7 +423,7 @@ class KLineChartWindow(QWidget):
         self.df = None
         self.time_dict = {}
 
-        self.setWindowTitle(f"{name} ({code}) - K线详情")
+        self.setWindowTitle(f"{name} ({code}) - K线图")
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.resize(1100, 680)
@@ -363,11 +450,11 @@ class KLineChartWindow(QWidget):
         # 自定义拖拽标题栏
         from ui.main_window_qt import DraggableTitleBar
         self.title_bar = DraggableTitleBar(self)
-        self.title_bar.setFixedHeight(34)
+        self.title_bar.setFixedHeight(36)
         tb_layout = QHBoxLayout(self.title_bar)
         tb_layout.setContentsMargins(14, 0, 8, 0)
         
-        self.title_lbl = QLabel(f"{name} ({code}) - K线详情")
+        self.title_lbl = QLabel("K线图")
         tb_layout.addWidget(self.title_lbl)
         tb_layout.addStretch()
 
@@ -379,34 +466,78 @@ class KLineChartWindow(QWidget):
         
         container_layout.addWidget(self.title_bar)
 
-        # === 顶部 PyQt 原生控制栏 ===
+        # === 顶部主信息区 ===
         self.header_widget = QWidget()
-        self.header_widget.setFixedHeight(40)
+        self.header_widget.setFixedHeight(62)
         header_layout = QHBoxLayout(self.header_widget)
-        header_layout.setContentsMargins(10, 0, 10, 0)
+        header_layout.setContentsMargins(14, 9, 14, 9)
+        header_layout.setSpacing(12)
 
-        # 不再显示股票名称，只保留状态信息
-        self.info_lbl = QLabel("正在加载数据...")
-        header_layout.addWidget(self.info_lbl)
-        header_layout.addStretch()
+        left_group = QVBoxLayout()
+        left_group.setContentsMargins(0, 0, 0, 0)
+        left_group.setSpacing(4)
 
-        # 导航按钮
-        self.btn_prev = QPushButton("◀ 上一只")
+        identity_layout = QHBoxLayout()
+        identity_layout.setContentsMargins(0, 0, 0, 0)
+        identity_layout.setSpacing(8)
+        self.identity_lbl = QLabel()
+        identity_layout.addWidget(self.identity_lbl)
+        self.market_badge_lbl = QLabel()
+        self.market_badge_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        identity_layout.addWidget(self.market_badge_lbl)
+        identity_layout.addStretch()
+        left_group.addLayout(identity_layout)
+
+        self.info_lbl = QLabel("正在准备图表...")
+        self.info_lbl.setMinimumHeight(24)
+        self.info_lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+        left_group.addWidget(self.info_lbl)
+        header_layout.addLayout(left_group, 1)
+
+        right_group = QHBoxLayout()
+        right_group.setContentsMargins(0, 0, 0, 0)
+        right_group.setSpacing(8)
+
+        self.btn_prev = QPushButton("上一只")
         self.btn_prev.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_prev.clicked.connect(lambda: self._nav_stock(-1))
-        header_layout.addWidget(self.btn_prev)
+        right_group.addWidget(self.btn_prev)
 
-        self.btn_next = QPushButton("下一只 ▶")
+        self.nav_index_lbl = QLabel("-- / --")
+        self.nav_index_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        right_group.addWidget(self.nav_index_lbl)
+
+        self.btn_next = QPushButton("下一只")
         self.btn_next.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_next.clicked.connect(lambda: self._nav_stock(1))
-        header_layout.addWidget(self.btn_next)
+        right_group.addWidget(self.btn_next)
 
-        self.btn_fav = QPushButton("☆ 移入关注池")
+        self.btn_fav = QPushButton("加入关注")
         self.btn_fav.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_fav.clicked.connect(self._toggle_fav)
-        header_layout.addWidget(self.btn_fav)
+        right_group.addWidget(self.btn_fav)
+
+        header_layout.addLayout(right_group)
 
         container_layout.addWidget(self.header_widget)
+
+        # === VCP 摘要带 ===
+        self.summary_widget = QWidget()
+        self.summary_widget.setFixedHeight(42)
+        summary_layout = QHBoxLayout(self.summary_widget)
+        summary_layout.setContentsMargins(14, 7, 14, 7)
+        summary_layout.setSpacing(10)
+
+        self.summary_labels = {}
+        for key in ("形态", "触发", "区间", "振幅", "RPS", "关注"):
+            label = QLabel("--")
+            label.setMinimumHeight(26)
+            label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+            self.summary_labels[key] = label
+            summary_layout.addWidget(label)
+        summary_layout.addStretch()
+
+        container_layout.addWidget(self.summary_widget)
 
         # === ECharts WebEngine 主图区域 ===
         self.browser = QWebEngineView()
@@ -424,6 +555,7 @@ class KLineChartWindow(QWidget):
         self._apply_qt_theme()
 
         self._check_fav_status()
+        self._refresh_header_context()
         self._load_and_draw()
 
         # 监听全局主题切换 → 重新渲染 K 线图
@@ -433,7 +565,9 @@ class KLineChartWindow(QWidget):
     def _check_fav_status(self):
         try:
             self.is_fav = watchlist_vm.is_in_watchlist(self.code)
-            self.btn_fav.setText("⭐ 移出关注池" if self.is_fav else "☆ 移入关注池")
+            self.btn_fav.setText("已关注" if self.is_fav else "加入关注")
+            if hasattr(self, "summary_labels"):
+                self._refresh_header_context()
         except Exception as e:
             log.debug(f"[K线] 检查关注状态失败: {e}")
             self.is_fav = False
@@ -444,6 +578,52 @@ class KLineChartWindow(QWidget):
             self._check_fav_status()
         except Exception as e:
             log.debug(f"[K线] 切换关注状态失败: {e}")
+
+    def _set_status_message(self, text: str, tone: str = "info"):
+        self._info_tone = tone
+        if hasattr(self, "info_lbl"):
+            self.info_lbl.setText(str(text or "").strip())
+        if hasattr(self, "info_lbl"):
+            self._apply_info_styles()
+
+    def _refresh_header_context(self):
+        market_badge = _format_kline_market_badge(self.code)
+        if hasattr(self, "identity_lbl"):
+            self.identity_lbl.setText(f"{self.name}  {self.code}")
+        if hasattr(self, "market_badge_lbl"):
+            self.market_badge_lbl.setText(market_badge)
+        if hasattr(self, "nav_index_lbl"):
+            total = len(self.code_list)
+            self.nav_index_lbl.setText(
+                f"{self.current_idx + 1} / {total}" if total else "单票"
+            )
+        if hasattr(self, "summary_labels"):
+            summary = _build_kline_summary_items(self.vcp_data, getattr(self, "is_fav", False))
+            for key, label in self.summary_labels.items():
+                value = summary.get(key, "--")
+                label.setText(f"{key}  {value}")
+
+    def _resolve_vcp_context(self, code: str, name: str, item_data: dict = None) -> dict:
+        try:
+            watchlist_entry = watchlist_vm.get_watchlist_data().get(code, {})
+        except Exception as e:
+            log.debug(f"[K线] 读取关注池上下文失败: {e}")
+            watchlist_entry = {}
+
+        scan_results = []
+        try:
+            tab_scan = getattr(self.main_window, "tab_scan", None)
+            scan_results = getattr(tab_scan, "_current_results", []) or []
+        except Exception as e:
+            log.debug(f"[K线] 读取扫描上下文失败: {e}")
+
+        return resolve_kline_vcp_context(
+            code=code,
+            name=name,
+            item_data=item_data,
+            watchlist_entry=watchlist_entry,
+            scan_results=scan_results,
+        )
 
     # ======================== 主题切换 ========================
     def _on_theme_changed(self, _theme_name: str):
@@ -461,21 +641,31 @@ class KLineChartWindow(QWidget):
         is_dark = theme_manager.is_dark()
 
         if is_dark:
-            widget_bg, widget_text = "#0B0B0E", "#F5F5F7"
-            toolbar_bg, toolbar_border = "#0B0B0E", "#222"
-            info_color = "#86868B"
-            btn_border = "#3A3A3C"
-            btn_hover_bg, btn_hover_text = "rgba(255,255,255,0.05)", "#F5F5F7"
-            btn_disabled_text, btn_disabled_border = "#3A3A3C", "#2A2A2C"
-            chart_bg = "#0A0A0A"
+            widget_bg, widget_text = "#0C1016", "#F5F7FA"
+            toolbar_bg, toolbar_border = "#11161D", "#222A33"
+            summary_bg = "#0F141B"
+            info_color = "#8B98A8"
+            btn_border = "#303947"
+            btn_hover_bg, btn_hover_text = "rgba(255,255,255,0.05)", "#F5F7FA"
+            btn_disabled_text, btn_disabled_border = "#5A6573", "#262E39"
+            chart_bg = "#0B0F14"
+            nav_bg = "rgba(255,255,255,0.04)"
+            badge_bg = "rgba(239, 68, 68, 0.10)"
+            badge_fg = "#FCA5A5"
+            summary_border = "rgba(148, 163, 184, 0.10)"
         else:
             widget_bg, widget_text = t['BG_ELEVATED'], t['TEXT_PRIMARY']
-            toolbar_bg, toolbar_border = t['BG_ELEVATED'], t['BORDER_DEFAULT']
+            toolbar_bg, toolbar_border = t['BG_CARD'], t['BORDER_DEFAULT']
+            summary_bg = t['BG_ELEVATED']
             info_color = t['TEXT_MUTED']
             btn_border = t['BORDER_STRONG']
             btn_hover_bg, btn_hover_text = t['TAB_HOVER_BG'], t['TEXT_PRIMARY']
             btn_disabled_text, btn_disabled_border = t['TEXT_DISABLED'], t['BORDER_DEFAULT']
             chart_bg = t['BG_ELEVATED']
+            nav_bg = t['BG_BUTTON']
+            badge_bg = "rgba(239, 68, 68, 0.10)"
+            badge_fg = t['BRAND_DEEP']
+            summary_border = t['BORDER_SUBTLE']
 
         self.setStyleSheet(f"""
             QWidget {{ background-color: {widget_bg}; color: {widget_text}; }}
@@ -500,7 +690,7 @@ class KLineChartWindow(QWidget):
                 border-bottom: none;
             }}
         """)
-        self.title_lbl.setStyleSheet(f"color: {widget_text}; font-weight: bold; font-size: 13px;")
+        self.title_lbl.setStyleSheet(f"color: {widget_text}; font-weight: 700; font-size: 13px;")
         
         # 关闭按钮鼠标悬浮效果
         self.btn_close.setStyleSheet(f"""
@@ -519,10 +709,27 @@ class KLineChartWindow(QWidget):
         self.header_widget.setStyleSheet(
             f"background-color: {toolbar_bg}; border-bottom: 1px solid {toolbar_border};"
         )
-        self.info_lbl.setStyleSheet(f"color: {info_color}; font-size: 12px; font-weight: bold;")
+        self.identity_lbl.setStyleSheet(f"color: {widget_text}; font-weight: 700; font-size: 14px;")
+        self.market_badge_lbl.setStyleSheet(
+            f"background-color: {badge_bg}; color: {badge_fg}; border: 1px solid {badge_bg};"
+            "border-radius: 11px; padding: 1px 9px; font-size: 11px; font-weight: 600;"
+        )
+        self.nav_index_lbl.setStyleSheet(
+            f"background-color: {nav_bg}; color: {info_color}; border: 1px solid {btn_border};"
+            "border-radius: 11px; padding: 1px 10px; font-size: 11px; font-weight: 600;"
+        )
 
         nav_style = f"""
-            QPushButton {{ background-color: transparent; color: {info_color}; border: 1px solid {btn_border}; border-radius: 4px; padding: 4px 10px; font-weight: bold; font-size: 12px; }}
+            QPushButton {{
+                background-color: transparent;
+                color: {info_color};
+                border: 1px solid {btn_border};
+                border-radius: 8px;
+                padding: 5px 12px;
+                font-weight: 600;
+                font-size: 12px;
+                min-height: 30px;
+            }}
             QPushButton:hover {{ background-color: {btn_hover_bg}; color: {btn_hover_text}; }}
             QPushButton:disabled {{ color: {btn_disabled_text}; border-color: {btn_disabled_border}; }}
         """
@@ -532,11 +739,53 @@ class KLineChartWindow(QWidget):
         vcp_star = t.get('KLINE_VCP_STAR', '#FFD60A')
         fav_hover = 'rgba(255, 214, 10, 0.1)' if is_dark else 'rgba(217, 119, 6, 0.1)'
         self.btn_fav.setStyleSheet(f"""
-            QPushButton {{ background-color: transparent; color: {vcp_star}; border: 1px solid {vcp_star}; border-radius: 4px; padding: 4px 12px; font-weight: bold; font-size: 12px; }}
+            QPushButton {{
+                background-color: transparent;
+                color: {vcp_star};
+                border: 1px solid {vcp_star};
+                border-radius: 8px;
+                padding: 5px 12px;
+                font-weight: 600;
+                font-size: 12px;
+                min-height: 30px;
+            }}
             QPushButton:hover {{ background-color: {fav_hover}; }}
         """)
 
+        self.summary_widget.setStyleSheet(
+            f"background-color: {summary_bg}; border-bottom: 1px solid {summary_border};"
+        )
+        for label in self.summary_labels.values():
+            label.setStyleSheet(
+                f"background-color: {nav_bg}; color: {info_color}; border: 1px solid {summary_border};"
+                "border-radius: 11px; padding: 4px 10px; font-size: 11px; font-weight: 600;"
+            )
+
+        self._apply_info_styles(widget_text=widget_text, info_color=info_color, is_dark=is_dark)
         self.browser.setStyleSheet(f"background-color: {chart_bg};")
+
+    def _apply_info_styles(self, widget_text: str | None = None, info_color: str | None = None, is_dark: bool | None = None):
+        t = theme_manager.current_theme
+        if widget_text is None or info_color is None or is_dark is None:
+            widget_text = "#F5F7FA" if theme_manager.is_dark() else t["TEXT_PRIMARY"]
+            info_color = "#8B98A8" if theme_manager.is_dark() else t["TEXT_MUTED"]
+            is_dark = theme_manager.is_dark()
+
+        tone = getattr(self, "_info_tone", "info")
+        tone_map = {
+            "info": (t["BRAND_SUBTLE"], widget_text),
+            "loading": ("rgba(245, 158, 11, 0.14)", t["COLOR_WARNING"]),
+            "success": ("rgba(16, 185, 129, 0.14)", t["COLOR_SUCCESS"]),
+            "warning": ("rgba(245, 158, 11, 0.14)", t["COLOR_WARNING"]),
+            "error": ("rgba(239, 68, 68, 0.14)", t["COLOR_ERROR"]),
+            "realtime": ("rgba(59, 130, 246, 0.14)", t["COLOR_INFO"]),
+        }
+        bg_color, fg_color = tone_map.get(tone, (t["BRAND_SUBTLE"], widget_text))
+        border_color = "rgba(148, 163, 184, 0.10)" if is_dark else t["BORDER_SUBTLE"]
+        self.info_lbl.setStyleSheet(
+            f"background-color: {bg_color}; color: {fg_color}; border: 1px solid {border_color};"
+            "border-radius: 11px; padding: 5px 10px; font-size: 12px; font-weight: 600;"
+        )
 
     def _get_market(self) -> str:
         return MarketCalendar.infer_market(self.code)
@@ -657,7 +906,7 @@ class KLineChartWindow(QWidget):
         if df is not None and len(df) >= 60:
             self._render_chart(df, loading=True)
         else:
-            self.info_lbl.setText("📡 正在获取完整 K 线数据...")
+            self._set_status_message("正在获取完整 K 线数据...", tone="loading")
 
         # 2. 异步拉取最新日线 + 盘中实时
         def _bg_fetch():
@@ -709,7 +958,7 @@ class KLineChartWindow(QWidget):
                 if result:
                     fresh_df, quote_to_apply, target_trade_date = result
                     if fresh_df is None or len(fresh_df) == 0:
-                        self.info_lbl.setText("⚠ 本地无K线，联网补齐失败，请检查网络后重试")
+                        self._set_status_message("本地无 K 线，联网补齐失败，请检查网络后重试", tone="error")
                         return
 
                     fresh_df = self._normalize_daily_df_index(fresh_df)
@@ -896,7 +1145,7 @@ class KLineChartWindow(QWidget):
             # 统一交由 _render_chart() 去计算指标并生成完整 ECharts，此时必然包含最新日期
             self._render_chart(df, loading=False)
         else:
-            self.info_lbl.setText("⚠ 暂无该亚洲标的历史数据")
+            self._set_status_message("暂无该亚洲标的历史数据", tone="warning")
 
     # ======================== 图表渲染 ========================
     def _render_chart(self, df, loading=False):
@@ -915,14 +1164,16 @@ class KLineChartWindow(QWidget):
 
         if df is None or len(df) < 5:
             if not loading:
-                self.info_lbl.setText("⚠ 数据不足，无法绘图")
+                self._set_status_message("数据不足，无法绘图", tone="warning")
             return
 
         # 始终要求重算完整指标，避免合并了今天盘中的新K线后由于缺少最新日期的MACD导致JS渲染因含有NaN而雪崩不画K线
         df = VCPEngine.calculate_indicators(df)
 
-        if not loading:
-            self.info_lbl.setText(f"✅ 数据拉取成功 (缓存行数: {len(df)})")
+        if loading:
+            self._set_status_message(f"已载入本地缓存 · {len(df)} 条日线", tone="info")
+        else:
+            self._set_status_message(f"图表已更新 · {len(df)} 条日线", tone="success")
 
         # 截取最后 250 根 K 线
         self.df = df.iloc[-250:].copy()
@@ -1288,14 +1539,11 @@ class KLineChartWindow(QWidget):
             pre_close = float(self.df.iloc[-2]['close'])
 
         pct = ((rt_close - pre_close) / pre_close * 100) if pre_close > 0 else 0
-        color = theme_manager.current_theme['COLOR_RISE_STRONG'] if rt_close >= pre_close else theme_manager.current_theme['COLOR_FALL_STRONG']
         sign = '+' if rt_close >= pre_close else ''
         now_str = datetime.now().strftime('%H:%M:%S')
-        self.info_lbl.setText(
-            f"🔴 实时 {now_str} | "
-            f"现价: {rt_close:.2f}  "
-            f"涨幅: <span style='color:{color}; font-weight:bold;'>{sign}{pct:.2f}%</span>  "
-            f"成交量: {rt_vol/10000:.0f}万"
+        self._set_status_message(
+            f"实时更新 {now_str} · {rt_close:.2f} · {sign}{pct:.2f}% · 成交量 {rt_vol/10000:.0f}万",
+            tone="realtime",
         )
 
     # ======================== 导航 ========================
@@ -1330,13 +1578,11 @@ class KLineChartWindow(QWidget):
             self.current_idx = new_idx
             self.code = item_data.get('代码', '')
             self.name = item_data.get('名称', '')
-            self.vcp_data = item_data
+            self.vcp_data = self._resolve_vcp_context(self.code, self.name, item_data)
 
-            title = f"{self.name} ({self.code}) - K线详情"
+            title = f"{self.name} ({self.code}) - K线图"
             self.setWindowTitle(title)
-            if hasattr(self, 'title_lbl'):
-                self.title_lbl.setText(title)
-            total = len(self.code_list)
+            self._refresh_header_context()
 
             # 同步选中主窗口表格行
             if self.main_window and hasattr(self.main_window, 'table_scan'):
@@ -1344,9 +1590,6 @@ class KLineChartWindow(QWidget):
 
             self._check_fav_status()
             self._load_and_draw()
-
-            curr_text = self.info_lbl.text()
-            self.info_lbl.setText(f"[{new_idx+1}/{total}] " + curr_text)
         finally:
             self._switching = False
             self._update_nav_buttons()

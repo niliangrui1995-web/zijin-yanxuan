@@ -95,7 +95,7 @@ class LhbTab(BaseStockTab):
 
         # 搜索框
         self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("🔍 搜索代码/名称...")
+        self.search_box.setPlaceholderText("筛选代码或名称...")
         self.search_box.setFixedWidth(180)
         self.search_box.textChanged.connect(self._filter_table)
         header_layout.addWidget(self.search_box)
@@ -125,13 +125,13 @@ class LhbTab(BaseStockTab):
         # 列宽配置
         header = self.table.horizontalHeader()
         header.setStretchLastSection(True)
-        default_widths = [60, 70, 60, 65, 80, 80, 60, 90, 100, 90, 180, 70, 200]
+        default_widths = [52, 60, 70, 60, 65, 80, 80, 60, 90, 100, 90, 220, 70, 200]
         for i, w in enumerate(default_widths):
-            if i < len(self.columns):
+            if i < len(self.model.headers):
                 self.table.setColumnWidth(i, w)
 
-        # 持久化表头（v7: 重铸外资净买入列双向统计完美版）
-        self.bind_header_persistence(self.table, "lhb_header_state_v7")
+        # 持久化表头（v9: 外资净买入列摘要+tooltip重构版）
+        self.bind_header_persistence(self.table, "lhb_header_state_v9")
         # 清除 restoreState 带来的默认排序干扰
         self.table.sortByColumn(-1, Qt.SortOrder.AscendingOrder)
 
@@ -207,11 +207,20 @@ class LhbTab(BaseStockTab):
         self._backfill_in_progress = True
         self.btn_refresh.setEnabled(False)
 
+        def _safe_log_emit(level: str, message: str):
+            try:
+                main_win = self.window()
+                if main_win and getattr(main_win, "_is_closing", False):
+                    return
+                event_bus.sig_system_log.emit(level, message)
+            except RuntimeError:
+                pass
+
         # 从远到近排列，先拉最老的（这样最后拉到最新的，latest record 最准）
         missing_sorted = sorted(missing_dates)
         total = len(missing_sorted)
         self.lbl_status.setText(f"⏳ 正在抓取 {total} 天龙虎榜数据...")
-        event_bus.sig_system_log.emit("info", f"[龙虎榜池] 开始抓取 {total} 个交易日数据...")
+        _safe_log_emit("info", f"[龙虎榜池] 开始抓取 {total} 个交易日数据...")
 
         def _bg_backfill():
             """后台线程：逐日抓取缺失天数的龙虎榜数据"""
@@ -223,13 +232,13 @@ class LhbTab(BaseStockTab):
                     records = fetch_lhb_pool_for_date(date_str)
                     results[date_str] = records
                     # 逐日进度广播到日志 Tab（在后台线程中 emit 是线程安全的）
-                    event_bus.sig_system_log.emit(
+                    _safe_log_emit(
                         "info",
                         f"[龙虎榜池] ({i+1}/{total}) {date_str} 抓取完成，{len(records)} 条记录"
                     )
                 except Exception as e:
                     log.warning(f"[龙虎榜池] 回填 {date_str} 失败: {e}")
-                    event_bus.sig_system_log.emit("warn", f"[龙虎榜池] {date_str} 抓取失败: {e}")
+                    _safe_log_emit("warn", f"[龙虎榜池] {date_str} 抓取失败: {e}")
                     results[date_str] = []
 
                 # 限速保护：避免短时间内大量请求被东方财富限流

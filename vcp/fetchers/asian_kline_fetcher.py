@@ -18,6 +18,7 @@ import logging
 import os
 import sys
 import time
+import uuid
 from datetime import datetime
 
 import yfinance as yf
@@ -275,15 +276,19 @@ def save_kline_data(data: list[dict], output_dir: str | None = None) -> str:
         "stocks": data,
     }
 
-    with open(filepath, "w", encoding="utf-8") as f:
+    tmp_filepath = f"{filepath}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+    with open(tmp_filepath, "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_filepath, filepath)
 
     logging.info(f"💾 K 线数据已保存: {filepath} ({os.path.getsize(filepath) / 1024:.0f} KB)")
 
     # Why: 同时生成一份 latest.json 供看板前端固定路径读取
     latest_path = os.path.join(output_dir, "asian_klines_latest.json")
-    with open(latest_path, "w", encoding="utf-8") as f:
+    tmp_latest_path = f"{latest_path}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+    with open(tmp_latest_path, "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_latest_path, latest_path)
     logging.info(f"💾 最新快照已更新: {latest_path}")
 
     return filepath

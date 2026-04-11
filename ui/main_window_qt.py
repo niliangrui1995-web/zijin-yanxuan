@@ -105,6 +105,8 @@ class MainWindowQT(QMainWindow):
             log.error(f"[UI回调] 异常: {e}")
 
     def _call_in_ui(self, callback):
+        if getattr(self, '_is_closing', False):
+            return
         self._sig_ui_call.emit(callback)
 
     # nativeEvent 已移除：PyQt6 的 sip.voidptr 与 ctypes 内存布局不兼容，
@@ -112,6 +114,7 @@ class MainWindowQT(QMainWindow):
 
     def __init__(self, splash=None):
         super().__init__()
+        self._is_closing = False
         self._splash = splash
         self.setWindowTitle('紫金研选量化终端')
 
@@ -225,8 +228,7 @@ class MainWindowQT(QMainWindow):
         self._restore_ui_state()
         
         self._splash_update(90, "正在加载数据...")
-        QTimer.singleShot(2500, self.startup_loader.deferred_data_load)
-        QTimer.singleShot(4500, self.startup_loader.smart_startup)
+        self.startup_loader.schedule_startup()
         
         self._init_central_broadcaster()
         self._update_last_f5_time()
@@ -289,10 +291,10 @@ class MainWindowQT(QMainWindow):
         """"""
         if hasattr(self, 'act_network'):
             if online:
-                self.act_network.setText("🌐 网络状态：⚡ 联网中")
+                self.act_network.setText("网络状态：在线")
                 if hasattr(self, 'status_dot'): self.status_dot.set_color("#22C55E")
             else:
-                self.act_network.setText("🌐 网络状态：🚫 离线中")
+                self.act_network.setText("网络状态：离线")
                 if hasattr(self, 'status_dot'): self.status_dot.set_color("#EF4444")
 
     def _force_reconnect(self):
@@ -355,27 +357,27 @@ class MainWindowQT(QMainWindow):
         sys_menu.setObjectName("sysMenu")
         # Global QMenu style from global_qss.py will handle menu colors dynamically!
 
-        self.act_f5 = sys_menu.addAction("🔄 全局数据同步 (F5)")
+        self.act_f5 = sys_menu.addAction("全局数据同步 (F5)")
         self.act_f5.triggered.connect(self._action_refresh_f5)
 
         sys_menu.addSeparator()
 
-        self.act_trade_calendar = sys_menu.addAction("📅 交易日历")
+        self.act_trade_calendar = sys_menu.addAction("交易日历")
         self.act_trade_calendar.triggered.connect(self._show_trade_calendar)
         
         sys_menu.addSeparator()
         
-        self.act_network = sys_menu.addAction("🌐 网络状态：🚫 离线中")
+        self.act_network = sys_menu.addAction("网络状态：离线")
         self.act_network.triggered.connect(self._toggle_network)
         
-        act_speed = sys_menu.addAction("🚀 测速与线路优选")
+        act_speed = sys_menu.addAction("测速与线路优选")
         act_speed.triggered.connect(self._force_reconnect)
 
         sys_menu.addSeparator()
 
         # 主题切换子菜单
         from ui.theme import theme_manager as _tm
-        theme_menu = sys_menu.addMenu(f"🎨 界面主题：{_tm.current_theme_name}")
+        theme_menu = sys_menu.addMenu(f"界面主题：{_tm.current_theme_name}")
         self._theme_menu = theme_menu  # 保存引用以便刷新文字
         for t_name in _tm.theme_names():
             act = theme_menu.addAction(t_name)
@@ -383,7 +385,7 @@ class MainWindowQT(QMainWindow):
 
         # 日夜自动切换开关：白天月白、晚上墨渊
         theme_menu.addSeparator()
-        self._act_auto_theme = theme_menu.addAction("🌗 日夜自动切换 (7:00-18:00)")
+        self._act_auto_theme = theme_menu.addAction("日夜自动切换 (7:00-18:00)")
         self._act_auto_theme.setCheckable(True)
         self._act_auto_theme.setChecked(_tm.is_auto_switch())
         self._act_auto_theme.triggered.connect(lambda checked: _tm.set_auto_switch(checked))
@@ -482,7 +484,7 @@ class MainWindowQT(QMainWindow):
         _t = _tm.current_theme
         titlebar = DraggableTitleBar()
         titlebar.setObjectName("customTitleBar")
-        titlebar.setFixedHeight(38)
+        titlebar.setFixedHeight(40)
         titlebar.setStyleSheet(f"""
             QWidget#customTitleBar {{
                 background-color: {_t['BG_TITLEBAR']};
@@ -491,7 +493,7 @@ class MainWindowQT(QMainWindow):
         """)
 
         titlebar_layout = QHBoxLayout(titlebar)
-        titlebar_layout.setContentsMargins(14, 0, 0, 0)
+        titlebar_layout.setContentsMargins(16, 0, 0, 0)
         titlebar_layout.setSpacing(0)
 
         # --- 左侧品牌文字 ---
@@ -535,7 +537,7 @@ class MainWindowQT(QMainWindow):
                 font-size: {{size}}px;
                 font-weight: bold;
                 padding: 0 16px;
-                min-height: 38px; max-height: 38px;
+                min-height: 40px; max-height: 40px;
             }}}}
             QPushButton:hover {{{{
                 background-color: {{hover_bg}};
@@ -600,13 +602,16 @@ class MainWindowQT(QMainWindow):
                 background: transparent;
                 color: {_t2['TAB_TEXT']};
                 padding: 8px 14px;
-                margin: 0 1px;
+                margin: 0 4px 0 0;
                 border: none;
                 font-size: 12px;
+                font-weight: 600;
+                border-radius: 8px;
                 font-family: "Microsoft YaHei UI", sans-serif;
             }}
             QTabBar::tab:selected {{
                 color: {_t2['TEXT_PRIMARY']};
+                background: {_t2['BRAND_SUBTLE']};
                 border-bottom: 2px solid #EF4444;
             }}
             QTabBar::tab:hover:!selected {{
@@ -873,10 +878,10 @@ class MainWindowQT(QMainWindow):
             mtime = os.path.getmtime(rps_path)
             dt = datetime.datetime.fromtimestamp(mtime)
             if hasattr(self, 'act_f5'):
-                self.act_f5.setText(f"🔄 全局数据同步 (F5) [{dt.strftime('%m-%d')}]")
+                self.act_f5.setText(f"全局数据同步 (F5) [{dt.strftime('%m-%d')}]")
         else:
             if hasattr(self, 'act_f5'):
-                self.act_f5.setText("🔄 全局数据同步 (F5) [暂无]")
+                self.act_f5.setText("全局数据同步 (F5) [暂无]")
 
     def _on_f5_done(self, count, elapsed):
         """Handle the completion signal from the F5 precompute workflow."""
@@ -894,6 +899,16 @@ class MainWindowQT(QMainWindow):
 
     def closeEvent(self, event):
         """应用关闭：广播信号让各组件自行保存，然后清理资源"""
+        self._is_closing = True
+        self._f5_cancelled = True
+        if hasattr(self, 'startup_loader'):
+            self.startup_loader.shutdown()
+        if hasattr(self, 'central_quotes_svc'):
+            try:
+                self.central_quotes_svc.shutdown()
+            except Exception as e:
+                log.error(f"[关闭] 停止中央报价服务异常: {e}")
+
         try:
             self._save_ui_state()
         except Exception as e:
@@ -930,6 +945,11 @@ class MainWindowQT(QMainWindow):
 
         if hasattr(self, '_auto_rt_timer'):
             self._auto_rt_timer.stop()
+
+        try:
+            task_manager.shutdown()
+        except Exception as e:
+            log.error(f"[关闭] TaskManager 关停异常: {e}")
 
         super().closeEvent(event)
 
@@ -1104,8 +1124,8 @@ class MainWindowQT(QMainWindow):
             hover_color = t['TEXT_SECONDARY']
             self._standalone_tabbar.setStyleSheet(f"""
                 QTabBar {{ background: transparent; border: none; }}
-                QTabBar::tab {{ background: transparent; color: {muted_color}; padding: 8px 14px; margin: 0 1px; border: none; font-size: 12px; font-family: "Microsoft YaHei UI", sans-serif; }}
-                QTabBar::tab:selected {{ color: {selected_color}; border-bottom: 2px solid #EF4444; }}
+                QTabBar::tab {{ background: transparent; color: {muted_color}; padding: 8px 14px; margin: 0 4px 0 0; border: none; border-radius: 8px; font-size: 12px; font-weight: 600; font-family: "Microsoft YaHei UI", sans-serif; }}
+                QTabBar::tab:selected {{ color: {selected_color}; background: {t['BRAND_SUBTLE']}; border-bottom: 2px solid #EF4444; }}
                 QTabBar::tab:hover:!selected {{ color: {hover_color}; background: {t['BORDER_SUBTLE']}; }}
             """)
 
@@ -1117,7 +1137,7 @@ class MainWindowQT(QMainWindow):
 
         # 6. 更新齿轮菜单中主题子菜单文字
         if hasattr(self, '_theme_menu'):
-            self._theme_menu.setTitle(f"\U0001f3a8 主题配色 (当前: {theme_manager.current_theme_name})")
+            self._theme_menu.setTitle(f"界面主题：{theme_manager.current_theme_name}")
 
         for widget in (
             self,

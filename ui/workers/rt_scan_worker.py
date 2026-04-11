@@ -6,6 +6,8 @@ import datetime
 from PyQt6.QtCore import QThread, pyqtSignal
 from vcp.engine import VCPEngine, VCPParams
 from core.logger import get_logger
+from core.market_calendar import MarketCalendar
+from core.sector_rps_helper import enrich_hot_sector_rows, load_sector_rps_snapshot
 
 log = get_logger(__name__)
 
@@ -73,6 +75,10 @@ class RtScanWorker(QThread):
             t0 = _time.time()
             try:
                 self._run_one_round(np)
+            except InterruptedError:
+                if not self._is_running:
+                    self._cleanup_caches()
+                    return
             except Exception as e:
                 self.progress.emit(f"盘中扫描异常: {e}")
                 log.error(f"[盘中监控] 第{self._scan_count}轮扫描异常: {e}", exc_info=True)
@@ -100,7 +106,8 @@ class RtScanWorker(QThread):
         # ===== 阶段1: 确保有历史数据 =====
         if self._all_data is None:
             self.progress.emit("加载历史日线数据...")
-            self._all_data = {c: df for c, df in self.data_provider.cache_data.items()
+            cache_snapshot = self.data_provider.get_all_valid_data()
+            self._all_data = {c: df for c, df in cache_snapshot.items()
                               if df is not None and len(df) >= 60}
             if not self._all_data:
                 self.progress.emit("❌ 无历史数据,请先执行 F5 或扫描")
@@ -118,7 +125,6 @@ class RtScanWorker(QThread):
             if self._rps120 is None or self._rps250 is None:
                 # 兜底现算 RPS（忘记跑 F5 时自动补算）— 使用已有的 Polars 引擎
                 try:
-                    from core.market_calendar import MarketCalendar
                     trade_dt = MarketCalendar.get_latest_trade_date()
                     if trade_dt:
                         today_str = trade_dt.strftime('%Y%m%d')
@@ -184,15 +190,17 @@ class RtScanWorker(QThread):
             new_pool = VCPEngine.precompute_ready_pool(
                 self._all_data, self._rps120, self._rps250, rt_params,
                 code2name=self.data_provider.code2name,
-                progress_callback=lambda msg: self.progress.emit(msg))
-                
+                progress_callback=lambda msg: self.progress.emit(msg),
+                cancelled_checker=lambda: not self._is_running)
+
             # 【缓存同步】将盘中算出的带有技术指标的 DataFrame 同步回全局字典
             # 防止取消监控后再次进入盘中监控或区间扫描时发生 80 秒的重复初次计算
             for _code, _df in self._all_data.items():
                 if 'entangle' in _df.columns:
                     _orig = self.data_provider.cache_data.get(_code)
                     if _orig is not None and 'entangle' not in _orig.columns:
-                        self.data_provider.cache_data[_code] = _df
+                        with self.data_provider.cache_lock:
+                            self.data_provider.cache_data[_code] = _df
 
             if self._ready_pool is not None:
                 old_codes = set(self._ready_pool.keys())
@@ -415,42 +423,22 @@ class RtScanWorker(QThread):
             except Exception as e:
                 log.error(f"[盘中] 市值补全异常: {e}")
 
+        latest_trade_date = MarketCalendar.get_latest_trade_date().strftime("%Y%m%d")
+
         # 构建板块管理器(仅首轮,后续复用)
         if self._sector_manager is None:
             try:
-                from vcp.sector import SectorManager
-                import pickle as _pkl
-                tdx_root = os.path.dirname(self.data_provider.tdx_vipdoc) if self.data_provider.tdx_vipdoc else r'D:\HT'
-                self._sector_manager = SectorManager.get_instance(tdx_root)
-
-                # 优先从磁盘加载板块 RPS 缓存(F5 或上次盘中监控保存的)
-                from vcp.constants import SECTOR_RPS_CACHE_FILE
-                _loaded = False
-                if os.path.exists(SECTOR_RPS_CACHE_FILE):
-                    try:
-                        with open(SECTOR_RPS_CACHE_FILE, 'rb') as _f:
-                            _pkg = _pkl.load(_f)
-                        self._sector_rps = _pkg.get('sector_rps', {})
-                        _cached_date = _pkg.get('date', '?')
-                        if self._sector_rps:
-                            _loaded = True
-                            log.info(f"[盘中] 板块 RPS 加载完成 ({len(self._sector_rps)} 个板块)")
-                    except Exception as _e:
-                        log.debug(f"[盘中] 板块 RPS 缓存读取失败: {_e}")
-
-                # 磁盘无缓存则现算 + 保存
-                if not _loaded:
-                    today_str = datetime.date.today().strftime('%Y%m%d')
-                    self._sector_rps = self._sector_manager.build_sector_rps(
-                        self._all_data, today_str)
-                    log.info(f"[盘中] 板块 RPS 现算完成 ({len(self._sector_rps)} 个)")
-                    try:
-                        _pkg = {'date': today_str, 'sector_rps': self._sector_rps}
-                        with open(SECTOR_RPS_CACHE_FILE, 'wb') as _f:
-                            _pkl.dump(_pkg, _f, protocol=4)
-                            log.debug("[盘中] 板块 RPS 已保存磁盘")
-                    except Exception as _e:
-                        log.error(f"[盘中] 板块 RPS 磁盘保存失败: {_e}")
+                self._sector_manager, self._sector_rps, _, source = load_sector_rps_snapshot(
+                    self.data_provider,
+                    self._all_data,
+                    target_date=latest_trade_date,
+                    logger=log,
+                )
+                if self._sector_manager and self._sector_rps:
+                    log.info(f"[盘中] 热点板块补全就绪 ({source})")
+                else:
+                    self._sector_manager = False
+                    self._sector_rps = {}
             except Exception as e:
                 log.error(f"[盘中] 板块管理器创建异常: {e}")
                 self._sector_manager = False  # 标记为失败,不再重试
@@ -462,19 +450,18 @@ class RtScanWorker(QThread):
                 # 补全市值
                 if not sig.get('市值') and code in self._cap_cache:
                     sig['市值'] = self._cap_cache[code]
-                # 补全热点板块
-                if not sig.get('热点板块') or sig['热点板块'] in ('', '--', '-'):
-                    try:
-                        _, info_str, _ = self._sector_manager.check_sector_rps(
-                            code, self._sector_rps, threshold=0)
-                        sig['热点板块'] = info_str if info_str else '--'
-                    except Exception as _e:
-                        log.debug(f"[盘中] {code} 板块RPS查询失败: {_e}")
+            enrich_hot_sector_rows(
+                _all_sigs.values(),
+                self._sector_manager,
+                self._sector_rps,
+                logger=log,
+            )
         else:
             # 仅补全市值(板块管理器不可用时)
             for sig in _all_sigs.values():
                 if not sig.get('市值') and sig['代码'] in self._cap_cache:
                     sig['市值'] = self._cap_cache[sig['代码']]
+                sig['热点板块'] = sig.get('热点板块') or '--'
 
         # 合并盘中监控信号 + 关注池信号(两者独立存储,互不干扰)
         all_signals = list(self._signal_details.values()) + list(self._special_details.values())

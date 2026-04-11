@@ -17,30 +17,30 @@ THEME_MOYUAN = {
     "name": "墨渊",
 
     # 背景色层级体系（深 → 浅）
-    "BG_CANVAS": "#0F1117",
-    "BG_SIDEBAR": "#161B26",
-    "BG_TABLE_ALT": "#161B26",
-    "BG_CARD": "#1A1F2E",
-    "BG_HOVER": "#1C212B",
-    "BG_INPUT": "#0D1117",
-    "BG_ELEVATED": "#252A36",
-    "BG_TITLEBAR": "#0A0C10",
-    "BG_STATUSBAR": "#0A0C10",
-    "BG_TABLE_BASE": "#12141A",
-    "BG_TABLE_ALT_ROW": "#1E293B",
-    "BG_TABLE_HOVER": "rgba(239, 68, 68, 0.08)",
-    "BG_BUTTON": "#1F2937",
-    "BG_BUTTON_HOVER": "#374151",
-    "BG_MENU": "#151820",
-    "BG_GLASS": "rgba(18, 20, 26, 0.92)",
-    "BG_MODULE_CARD": "#1E293B",
+    "BG_CANVAS": "#0E1116",
+    "BG_SIDEBAR": "#131820",
+    "BG_TABLE_ALT": "#151B23",
+    "BG_CARD": "#171C24",
+    "BG_HOVER": "#1B212B",
+    "BG_INPUT": "#10151D",
+    "BG_ELEVATED": "#1C232E",
+    "BG_TITLEBAR": "#0C1016",
+    "BG_STATUSBAR": "#0C1016",
+    "BG_TABLE_BASE": "#10151D",
+    "BG_TABLE_ALT_ROW": "#141B24",
+    "BG_TABLE_HOVER": "rgba(239, 68, 68, 0.06)",
+    "BG_BUTTON": "#18202A",
+    "BG_BUTTON_HOVER": "#202835",
+    "BG_MENU": "#11161E",
+    "BG_GLASS": "rgba(14, 17, 22, 0.96)",
+    "BG_MODULE_CARD": "#161C25",
 
     # 文字色
-    "TEXT_PRIMARY": "#E2E8F0",
-    "TEXT_SECONDARY": "#A0AEC0",
-    "TEXT_MUTED": "#718096",
+    "TEXT_PRIMARY": "#E5E7EB",
+    "TEXT_SECONDARY": "#A8B3C2",
+    "TEXT_MUTED": "#7B8794",
     "TEXT_DISABLED": "#4B5563",
-    "TEXT_HEADER": "#718096",
+    "TEXT_HEADER": "#8A96A8",
     "TEXT_BRIGHT": "#F9FAFB",
 
     # 品牌色
@@ -63,11 +63,11 @@ THEME_MOYUAN = {
     "COLOR_INFO": "#3B82F6",
 
     # 边框色
-    "BORDER_DEFAULT": "rgba(255, 255, 255, 0.05)",
-    "BORDER_SUBTLE": "rgba(255, 255, 255, 0.03)",
-    "BORDER_STRONG": "#374151",
-    "BORDER_BRAND": "rgba(239, 68, 68, 0.15)",
-    "BORDER_MENU": "#252A36",
+    "BORDER_DEFAULT": "rgba(148, 163, 184, 0.12)",
+    "BORDER_SUBTLE": "rgba(148, 163, 184, 0.08)",
+    "BORDER_STRONG": "#2A3342",
+    "BORDER_BRAND": "rgba(239, 68, 68, 0.18)",
+    "BORDER_MENU": "#232B36",
 
     # 评分着色梯度
     "SCORE_EXCELLENT": "#FF4757",
@@ -90,20 +90,20 @@ THEME_MOYUAN = {
     "SELECTION_HOVER_BG": "rgba(239, 68, 68, 0.08)",
 
     # 标题栏分隔线颜色
-    "TITLEBAR_BORDER": "rgba(139, 92, 246, 0.12)",
-    "STATUSBAR_BORDER": "rgba(59, 130, 246, 0.3)",
+    "TITLEBAR_BORDER": "rgba(148, 163, 184, 0.10)",
+    "STATUSBAR_BORDER": "rgba(148, 163, 184, 0.10)",
 
     # 齿轮菜单选中色
-    "MENU_SELECTED_BG": "rgba(139, 92, 246, 0.5)",
+    "MENU_SELECTED_BG": "rgba(239, 68, 68, 0.12)",
 
     # Splitter
     "SPLITTER_BG": "rgba(239, 68, 68, 0.08)",
     "SPLITTER_HOVER": "rgba(239, 68, 68, 0.25)",
 
     # Tab
-    "TAB_TEXT": "#6B7280",
-    "TAB_TEXT_HOVER": "#D1D5DB",
-    "TAB_HOVER_BG": "rgba(255,255,255,0.04)",
+    "TAB_TEXT": "#7B8794",
+    "TAB_TEXT_HOVER": "#E5E7EB",
+    "TAB_HOVER_BG": "rgba(255,255,255,0.05)",
 
     # 下拉箭头颜色
     "ARROW_COLOR": "#718096",
@@ -133,31 +133,31 @@ THEME_YUEBAI = {
     "name": "月白",
 
     # 背景色层级体系（浅 → 白）
-    "BG_CANVAS": "#F7F3EC",
-    "BG_SIDEBAR": "#EEE6DA",
-    "BG_TABLE_ALT": "#F3EEE6",
-    "BG_CARD": "#FFFDF8",
-    "BG_HOVER": "#E8DFD1",
-    "BG_INPUT": "#FFFCF7",
-    "BG_ELEVATED": "#FFFCF7",
-    "BG_TITLEBAR": "#EEE7DB",
-    "BG_STATUSBAR": "#EEE7DB",
-    "BG_TABLE_BASE": "#FAF7F2",
-    "BG_TABLE_ALT_ROW": "#F3EEE6",
-    "BG_TABLE_HOVER": "#EEE7DB",
-    "BG_BUTTON": "#F0E8DD",
-    "BG_BUTTON_HOVER": "#E6DCCD",
-    "BG_MENU": "#FFFCF7",
-    "BG_GLASS": "rgba(247, 243, 236, 0.96)",
-    "BG_MODULE_CARD": "#FFFCF7",
+    "BG_CANVAS": "#F5F1EA",
+    "BG_SIDEBAR": "#ECE5D9",
+    "BG_TABLE_ALT": "#F2ECE3",
+    "BG_CARD": "#FFFDFC",
+    "BG_HOVER": "#E8E0D4",
+    "BG_INPUT": "#FFFCF8",
+    "BG_ELEVATED": "#FBF7F0",
+    "BG_TITLEBAR": "#F0E9DD",
+    "BG_STATUSBAR": "#F0E9DD",
+    "BG_TABLE_BASE": "#FFFCF8",
+    "BG_TABLE_ALT_ROW": "#F5EFE6",
+    "BG_TABLE_HOVER": "#F1E8DC",
+    "BG_BUTTON": "#F3EBE0",
+    "BG_BUTTON_HOVER": "#E7DDCF",
+    "BG_MENU": "#FFFDF8",
+    "BG_GLASS": "rgba(245, 241, 234, 0.97)",
+    "BG_MODULE_CARD": "#FFFDF8",
 
     # 文字色 — 白底黑字，严格遵循 WCAG 4.5:1
-    "TEXT_PRIMARY": "#0F172A",
-    "TEXT_SECONDARY": "#475569",
-    "TEXT_MUTED": "#64748B",
-    "TEXT_DISABLED": "#94A3B8",
-    "TEXT_HEADER": "#475569",
-    "TEXT_BRIGHT": "#0F172A",
+    "TEXT_PRIMARY": "#172033",
+    "TEXT_SECONDARY": "#516074",
+    "TEXT_MUTED": "#708196",
+    "TEXT_DISABLED": "#97A3B3",
+    "TEXT_HEADER": "#5A6778",
+    "TEXT_BRIGHT": "#172033",
 
     # 品牌色 — 不变
     "BRAND_PRIMARY": "#EF4444",
@@ -179,11 +179,11 @@ THEME_YUEBAI = {
     "COLOR_INFO": "#3B82F6",
 
     # 边框色 — 白底用深色半透明
-    "BORDER_DEFAULT": "rgba(93, 78, 55, 0.10)",
-    "BORDER_SUBTLE": "rgba(93, 78, 55, 0.05)",
-    "BORDER_STRONG": "#D8CDBE",
+    "BORDER_DEFAULT": "rgba(93, 78, 55, 0.12)",
+    "BORDER_SUBTLE": "rgba(93, 78, 55, 0.07)",
+    "BORDER_STRONG": "#D4C6B5",
     "BORDER_BRAND": "rgba(239, 68, 68, 0.12)",
-    "BORDER_MENU": "#E4D8C8",
+    "BORDER_MENU": "#E1D4C3",
 
     # 评分着色梯度 — 不变
     "SCORE_EXCELLENT": "#FF4757",
@@ -218,9 +218,9 @@ THEME_YUEBAI = {
     "SPLITTER_HOVER": "rgba(0, 0, 0, 0.15)",
 
     # Tab
-    "TAB_TEXT": "#6B7280",
-    "TAB_TEXT_HOVER": "#0F172A",
-    "TAB_HOVER_BG": "rgba(93, 78, 55, 0.06)",
+    "TAB_TEXT": "#708196",
+    "TAB_TEXT_HOVER": "#172033",
+    "TAB_HOVER_BG": "rgba(93, 78, 55, 0.07)",
 
     # 下拉箭头颜色
     "ARROW_COLOR": "#64748B",
@@ -242,6 +242,29 @@ THEME_YUEBAI = {
     "KLINE_VCP_LINE": "#B45309",
     "KLINE_VCP_AREA": "rgba(37, 99, 235, 0.08)",
 }
+
+
+def _with_alias_tokens(theme: dict) -> dict:
+    """为新旧样式系统补齐别名 token，避免局部组件各写各的。"""
+    enriched = dict(theme)
+    enriched.setdefault("BG_BASE", enriched.get("BG_CARD", enriched.get("BG_CANVAS", "")))
+    enriched.setdefault("SURFACE_BASE", enriched.get("BG_CANVAS", ""))
+    enriched.setdefault("SURFACE_PANEL", enriched.get("BG_CARD", ""))
+    enriched.setdefault("SURFACE_ELEVATED", enriched.get("BG_ELEVATED", ""))
+    enriched.setdefault("SURFACE_INPUT", enriched.get("BG_INPUT", ""))
+    enriched.setdefault("ACCENT_PRIMARY", enriched.get("BRAND_PRIMARY", ""))
+    enriched.setdefault("ACCENT_HOVER", enriched.get("BRAND_HOVER", ""))
+    enriched.setdefault("ACCENT_SUBTLE", enriched.get("BRAND_SUBTLE", ""))
+    enriched.setdefault("STATE_SUCCESS", enriched.get("COLOR_SUCCESS", ""))
+    enriched.setdefault("STATE_WARNING", enriched.get("COLOR_WARNING", ""))
+    enriched.setdefault("STATE_DANGER", enriched.get("COLOR_ERROR", ""))
+    enriched.setdefault("STATE_INFO", enriched.get("COLOR_INFO", ""))
+    enriched.setdefault("TEXT_ON_ACCENT", "#FFFFFF")
+    return enriched
+
+
+THEME_MOYUAN = _with_alias_tokens(THEME_MOYUAN)
+THEME_YUEBAI = _with_alias_tokens(THEME_YUEBAI)
 
 
 class ThemeManager(QObject):

@@ -46,7 +46,7 @@ class RtMonitorTab(BaseStockTab):
             False,
             info_text=self._format_status_text(
                 "未启动",
-                "点“启动盘中监控”开始"
+                "点“启动监控”开始"
             )
         )
 
@@ -119,14 +119,14 @@ class RtMonitorTab(BaseStockTab):
     def _set_rt_button_state(self, running: bool, info_text: str | None = None, emit_progress: bool = False):
         """统一维护盘中监控按钮显示状态，避免 UI 与真实运行状态漂移。"""
         if running:
-            self.btn_rt_start.setText("⏹ 停止盘中监控")
+            self.btn_rt_start.setText("停止监控")
             self.btn_rt_start.setProperty("monitoring", True)
             self.btn_rt_start.setProperty("monitoring_state", "running")
             self.btn_rt_start.setEnabled(True)
             self.btn_rt_start.style().unpolish(self.btn_rt_start)
             self.btn_rt_start.style().polish(self.btn_rt_start)
         else:
-            self.btn_rt_start.setText("🚀 启动盘中监控")
+            self.btn_rt_start.setText("启动监控")
             self.btn_rt_start.setProperty("monitoring", False)
             self.btn_rt_start.setProperty("monitoring_state", "idle")
             self.btn_rt_start.setEnabled(True)
@@ -140,10 +140,10 @@ class RtMonitorTab(BaseStockTab):
             event_bus.sig_task_progress.emit("rt_monitor", 1 if running else 0, "start" if running else "stop")
 
     def _ensure_rt_button_width(self):
-        texts = ["🚀 启动盘中监控", "⏹ 停止盘中监控", "正在停止..."]
+        texts = ["启动监控", "停止监控", "正在停止..."]
         metrics = self.btn_rt_start.fontMetrics()
         content_width = max(metrics.horizontalAdvance(text) for text in texts)
-        self.btn_rt_start.setFixedWidth(max(178, content_width + 52))
+        self.btn_rt_start.setFixedWidth(max(124, content_width + 36))
 
     def _set_rt_button_stopping(self, info_text: str | None = None):
         self.btn_rt_start.setText("正在停止...")
@@ -175,10 +175,10 @@ class RtMonitorTab(BaseStockTab):
             if self.btn_rt_start.text() != "正在停止...":
                 self._set_rt_button_stopping()
         elif self._is_rt_running():
-            if self.btn_rt_start.text() != "⏹ 停止盘中监控":
+            if self.btn_rt_start.text() != "停止监控":
                 self._set_rt_button_state(True)
         else:
-            if self.btn_rt_start.text() != "🚀 启动盘中监控":
+            if self.btn_rt_start.text() != "启动监控":
                 self._set_rt_button_state(False)
 
     def _init_ui(self):
@@ -190,7 +190,7 @@ class RtMonitorTab(BaseStockTab):
         tb_layout = QHBoxLayout(toolbar)
         tb_layout.setContentsMargins(8, 6, 8, 6)
 
-        lbl_title = QLabel("📡 盘中监控")
+        lbl_title = QLabel("盘中监控")
         lbl_title.setObjectName("tabTitle")
         tb_layout.addWidget(lbl_title)
 
@@ -203,12 +203,12 @@ class RtMonitorTab(BaseStockTab):
         
         # 搜索过滤
         self.rt_search = QLineEdit()
-        self.rt_search.setPlaceholderText("🔍 筛选...")
-        self.rt_search.setFixedWidth(150)
+        self.rt_search.setPlaceholderText("筛选代码或名称...")
+        self.rt_search.setFixedWidth(180)
         self.rt_search.textChanged.connect(self._on_search_text_changed)
         tb_layout.addWidget(self.rt_search)
 
-        self.btn_rt_start = QPushButton("🚀 启动盘中监控")
+        self.btn_rt_start = QPushButton("启动监控")
         self.btn_rt_start.setObjectName("primaryButton")
         self.btn_rt_start.setCursor(Qt.CursorShape.PointingHandCursor)
         self._ensure_rt_button_width()
@@ -216,7 +216,7 @@ class RtMonitorTab(BaseStockTab):
         tb_layout.addWidget(self.btn_rt_start)
         
         # 清空盘中记录按钮
-        self.btn_rt_clear = QPushButton("🗑 清空")
+        self.btn_rt_clear = QPushButton("清空")
         self.btn_rt_clear.setProperty("class", "secondary")
         self.btn_rt_clear.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_rt_clear.clicked.connect(self._clear_table)
@@ -241,30 +241,36 @@ class RtMonitorTab(BaseStockTab):
         self.table_rt = VCPTableView(default_row_height=28)
         self.table_rt.setModel(self.proxy_model)
         
-        # 自适应列宽 (匹配 headers=["代码","名称","现价","涨幅%","市值","时间","评分","RPS强度","突破状态","区间振幅","热点板块"])
-        rt_weights = [0.8, 1.4, 0.8, 0.8, 0.7, 0.7, 0.6, 0.8, 1.5, 0.8, 2.0]
         header = self.table_rt.horizontalHeader()
         header.setStretchLastSection(False)
-        for col_idx, w in enumerate(rt_weights):
-            header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
+        header.setMinimumSectionSize(52)
         
         try:
-            col_count = self.source_model.columnCount()
-            # Bug#6 修复: 使用固定基准宽度，避免未定义 base_w
-            base_width = 100  # 基准列宽 100px
-            for col_idx in range(col_count):
+            width_map = {
+                "序号": 58,
+                "代码": 84,
+                "名称": 132,
+                "现价": 90,
+                "涨幅%": 90,
+                "市值": 90,
+                "时间": 76,
+                "评分": 78,
+                "RPS强度": 98,
+                "突破状态": 168,
+                "区间振幅": 96,
+                "热点板块": 240,
+            }
+            for col_idx, header_name in enumerate(self.source_model.headers):
                 header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
-                if col_idx < len(rt_weights):
-                    w = int(base_width * rt_weights[col_idx])
-                    self.table_rt.setColumnWidth(col_idx, w)
+                if header_name in width_map:
+                    self.table_rt.setColumnWidth(col_idx, width_map[header_name])
         except Exception as e:
             log.warning(f"[盘中监控] 列宽初始化异常: {e}")
-        header.setSectionResizeMode(10, QHeaderView.ResizeMode.Stretch)
         self.table_rt.setSortingEnabled(True)
         self.table_rt.horizontalHeader().setSortIndicatorShown(True)
         
         # 绑定防抖自动保存与恢复配置
-        self.bind_header_persistence(self.table_rt, "header_state_rt_v4")
+        self.bind_header_persistence(self.table_rt, "header_state_rt_v5")
         
         # 绑定双击事件，广播K线上下文
         self.table_rt.doubleClicked.connect(self._on_table_double_clicked)
@@ -284,7 +290,7 @@ class RtMonitorTab(BaseStockTab):
 
     def _show_rt_settings(self):
         dlg = QDialog(self)
-        dlg.setWindowTitle("⚙ 盘中监控参数")
+        dlg.setWindowTitle("盘中监控参数")
         dlg.setObjectName("settingsDialog")
         dlg.setFixedSize(300, 160)
         form = QVBoxLayout(dlg)
@@ -468,10 +474,12 @@ class RtMonitorTab(BaseStockTab):
 
         current_row_data = self.source_model.get_row_data(source_current.row()) or {}
         current_code = str(current_row_data.get("代码", "")).strip()
+        code_col = self.source_model.headers.index("代码")
+        name_col = self.source_model.headers.index("名称")
         if not current_code:
             current_code = str(
                 self.proxy_model.data(
-                    self.proxy_model.index(idx.row(), 0),
+                    self.proxy_model.index(idx.row(), code_col),
                     Qt.ItemDataRole.DisplayRole
                 ) or ""
             ).strip()
@@ -482,7 +490,7 @@ class RtMonitorTab(BaseStockTab):
         code_list = []
         current_idx = -1
         for r in range(self.proxy_model.rowCount()):
-            source_idx = self.proxy_model.mapToSource(self.proxy_model.index(r, 0))
+            source_idx = self.proxy_model.mapToSource(self.proxy_model.index(r, code_col))
             if not source_idx.isValid():
                 continue
 
@@ -494,7 +502,7 @@ class RtMonitorTab(BaseStockTab):
             if not code:
                 code = str(
                     self.proxy_model.data(
-                        self.proxy_model.index(r, 0),
+                        self.proxy_model.index(r, code_col),
                         Qt.ItemDataRole.DisplayRole
                     ) or ""
                 ).strip()
@@ -506,7 +514,7 @@ class RtMonitorTab(BaseStockTab):
             if not row_dict.get("名称"):
                 row_dict["名称"] = str(
                     self.proxy_model.data(
-                        self.proxy_model.index(r, 1),
+                        self.proxy_model.index(r, name_col),
                         Qt.ItemDataRole.DisplayRole
                     ) or ""
                 )

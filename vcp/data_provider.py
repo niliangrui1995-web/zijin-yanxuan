@@ -17,6 +17,38 @@ from vcp.utils import _load_tdx_local_config, read_tdx_day_file
 from core.logger import get_logger
 _log = get_logger(__name__)
 
+
+def _run_blocking_call_with_timeout(fn, timeout_sec: float, timeout_message: str):
+    """用守护线程包裹阻塞网络调用，超时后快速失败，避免整条链路卡死。"""
+    if timeout_sec is None or timeout_sec <= 0:
+        return fn()
+
+    done = threading.Event()
+    state = {}
+
+    def _runner():
+        try:
+            state["result"] = fn()
+        except Exception as exc:
+            state["error"] = exc
+        finally:
+            done.set()
+
+    worker = threading.Thread(
+        target=_runner,
+        daemon=True,
+        name="tdx-blocking-call-guard",
+    )
+    worker.start()
+
+    if not done.wait(timeout_sec):
+        raise TimeoutError(timeout_message)
+
+    if "error" in state:
+        raise state["error"]
+    return state.get("result")
+
+
 class TdxDataProvider:
     def __init__(self, is_trading_day=None, offline=False, offline_mode=None):
         from pytdx.hq import TdxHq_API
@@ -32,6 +64,7 @@ class TdxDataProvider:
         self._rt_quote_cache = {}
         self._rt_quote_time = {}
         self._rt_quote_lock = threading.Lock()
+        self._rt_api_call_timeout_sec = 8.0
         self.code2name = {}
         self._offline = offline
         self._is_trading_day = is_trading_day if callable(is_trading_day) else (lambda d=None: datetime.now().weekday() < 5)
@@ -231,6 +264,19 @@ class TdxDataProvider:
                     continue
             self.thread_local.api = api
         return self.thread_local.api
+
+    def _reset_thread_api(self, reason: str = ""):
+        if hasattr(self.thread_local, 'api'):
+            try:
+                self.thread_local.api.disconnect()
+            except Exception as _e:
+                _log.debug(f"[网络] 断开旧 API 连接时异常: {_e}")
+            try:
+                delattr(self.thread_local, 'api')
+            except Exception:
+                pass
+        if reason:
+            _log.warning(f"[网络] {reason}")
 
     def _apply_forward_adjustment(self, api, market, code, df):
         """Apply forward adjustment using local gbbq data first, then fall back to online API."""
@@ -882,11 +928,16 @@ class TdxDataProvider:
         api = self._get_thread_api()
         fail_count = 0
         new_fetch = {}
+        batch_timeout_sec = float(getattr(self, '_rt_api_call_timeout_sec', 8.0) or 8.0)
         for i in range(0, len(dedup_codes), 80):
             batch = dedup_codes[i:i+80]
             params_list = [(self._get_market_code(c), c) for c in batch]
             try:
-                quotes = api.get_security_quotes(params_list)
+                quotes = _run_blocking_call_with_timeout(
+                    lambda api_ref=api, payload=params_list: api_ref.get_security_quotes(payload),
+                    batch_timeout_sec,
+                    f"实时报价批次超时({batch_timeout_sec:.0f}s, {len(batch)}只)",
+                )
                 if not quotes:
                     fail_count += 1
                     continue
@@ -903,9 +954,17 @@ class TdxDataProvider:
                             'last_close': q.get('last_close', 0),
                             'date': inferred_trade_date,
                         }
+            except TimeoutError as _e:
+                _log.warning(f"[实时报价] 批次拉取超时: {_e}")
+                fail_count += 1
+                self._reset_thread_api("实时报价批次超时，已重建连接")
+                api = self._get_thread_api()
+                continue
             except Exception as _e:
                 _log.debug(f"[实时报价] 批次拉取行情失败: {_e}")
                 fail_count += 1
+                self._reset_thread_api("实时报价批次异常，已重建连接")
+                api = self._get_thread_api()
                 continue
 
         # 将新拉取的数据更新到全局热缓存
@@ -939,12 +998,7 @@ class TdxDataProvider:
 
         # 如果部分或全部批次失败进行 API 缓存清理重试
         if not new_fetch and fail_count > 0:
-            if hasattr(self.thread_local, 'api'):
-                try:
-                    self.thread_local.api.disconnect()
-                except Exception as _e:
-                    _log.debug(f"[实时报价] 断开旧 API 连接时异常: {_e}")
-                delattr(self.thread_local, 'api')
+            self._reset_thread_api()
                 
             self._circuit_breaker_fails = getattr(self, '_circuit_breaker_fails', 0) + 1
             if getattr(self, '_circuit_breaker_fails', 0) >= 3:

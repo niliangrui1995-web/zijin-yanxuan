@@ -42,7 +42,7 @@ class EarningsTab(BaseStockTab):
         header.setContentsMargins(8, 6, 8, 6)
         
 
-        title = QLabel("🚀 业绩高增追踪")
+        title = QLabel("业绩高增追踪")
         title.setObjectName("tabTitle")
         
         self.lbl_status = QLabel("监控挂机中...")
@@ -59,7 +59,7 @@ class EarningsTab(BaseStockTab):
         self.ent_end_date.setText(datetime.now().strftime("%Y-%m-%d"))
         self.ent_end_date.setFixedWidth(100)
         
-        self.btn_manual_fetch = QPushButton("🔄 历史更新")
+        self.btn_manual_fetch = QPushButton("历史更新")
         self.btn_manual_fetch.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_manual_fetch.setToolTip("手动填入日期区间，强行进行数据扫描并在本地进行去重和升级！")
         self.btn_manual_fetch.clicked.connect(self._on_manual_fetch)
@@ -102,7 +102,7 @@ class EarningsTab(BaseStockTab):
         self.delegate = StockItemDelegate(self.table)
         self.table.setItemDelegate(self.delegate)
         # 默认按第12列（“揭晓日”）由近到远（降序）排列，让最新鲜的情报自动顶在最上面
-        self.table.sortByColumn(12, Qt.SortOrder.DescendingOrder)
+        self.table.sortByColumn(self.model.headers.index("揭晓日"), Qt.SortOrder.DescendingOrder)
 
         # 右键菜单与双击看K线
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -112,12 +112,12 @@ class EarningsTab(BaseStockTab):
         # 持久化列宽
         header_view = self.table.horizontalHeader()
         header_view.setStretchLastSection(False)
-        default_widths = [70, 80, 70, 70, 70, 70, 80, 80, 120, 120, 80, 70, 90, 80, 250]
+        default_widths = [52, 70, 80, 70, 70, 70, 70, 80, 80, 120, 120, 80, 70, 90, 80, 250]
         for i, w in enumerate(default_widths):
             header_view.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
             self.table.setColumnWidth(i, w)
             
-        self.bind_header_persistence(self.table, "earnings_header_state_v4")
+        self.bind_header_persistence(self.table, "earnings_header_state_v5")
 
     def _on_manual_fetch(self):
         start_str = self.ent_start_date.text().strip()
@@ -138,10 +138,10 @@ class EarningsTab(BaseStockTab):
             date_list = [(start_dt + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(delta_days + 1)]
         except (ValueError, OverflowError) as _e:
             log.debug(f"[业绩监控] 日期解析失败: {_e}")
-            self.lbl_status.setText("❌ 日期格式错误，请使用 YYYY-MM-DD，例 2024-03-01")
+            self.lbl_status.setText("日期格式错误，请使用 YYYY-MM-DD，例如 2024-03-01")
             return
             
-        self.lbl_status.setText(f"🚀 正在拉取 {start_str} ~ {end_str} ({len(date_list)}天)...")
+        self.lbl_status.setText(f"正在拉取 {start_str} ~ {end_str} ({len(date_list)}天)...")
         log.info(f"[业绩监控] 手动扫描: {start_str} ~ {end_str}")
         self.scheduler.force_manual_scan(date_list)
 
@@ -157,14 +157,20 @@ class EarningsTab(BaseStockTab):
         # 记录下操作
         log.debug(f"[业绩监控] 筛选切换: {text}")
 
-    @pyqtSlot(object)
-    def _on_new_data_found(self, df: "pd.DataFrame"):
+    @pyqtSlot(object, str)
+    def _on_new_data_found(self, df: "pd.DataFrame", mode: str = "routine"):
         """当底层推上来新的 DataFrame 时，转成本地字典并无缝合并展示"""
         if df.empty:
-            self.lbl_status.setText("✅ 抓取侦测完成跑通，无可推送的新增高增股")
+            if mode == "warm_cache":
+                self.lbl_status.setText("已恢复缓存，但当前没有可展示的高增股")
+            else:
+                self.lbl_status.setText("抓取完成，本轮无新增高增股")
             return
-            
-        self.lbl_status.setText(f"✅ 本次扫描新增 {len(df)} 只高增股")
+
+        if mode == "warm_cache":
+            self.lbl_status.setText(f"已恢复缓存 {len(df)} 只高增股")
+        else:
+            self.lbl_status.setText(f"本次扫描新增 {len(df)} 只高增股")
         
         for _, row in df.iterrows():
             code = str(row.get('股票代码', '')).zfill(6)
@@ -249,7 +255,7 @@ class EarningsTab(BaseStockTab):
         row_data = self.model.row_data[row]
         if code and name:
             from ui.components.stock_context_menu import build_stock_context_menu
-            build_stock_context_menu(self.table, code, name, vcp_data=row_data)
+            build_stock_context_menu(self, code, name, vcp_data=row_data)
 
     def _on_double_click(self, index):
         if not index.isValid(): return

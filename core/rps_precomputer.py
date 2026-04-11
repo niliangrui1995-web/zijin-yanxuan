@@ -77,7 +77,8 @@ class RPSPrecomputer:
                 if cached:
                     cached_data, cached_date = cached
                     if cached_date == today_str and len(cached_data) > 2000:
-                        data_provider.cache_data = cached_data
+                        with data_provider.cache_lock:
+                            data_provider.cache_data = cached_data
                         codes_dict = data_provider._get_codes_from_vipdoc()
                         data_provider.code2name = codes_dict
                         _log_and_status(f"[F5] 阶段1/3: ⚡ 断点续算 — 检测到今日缓存 ({len(cached_data)} 只)，跳过重读")
@@ -88,7 +89,8 @@ class RPSPrecomputer:
             if not skip_stage1:
                 _log_and_status("[F5] 阶段1/3: 清空缓存,开始从 vipdoc 重读...")
                 try:
-                    data_provider.cache_data = {}
+                    with data_provider.cache_lock:
+                        data_provider.cache_data = {}
                     was_online = data_provider.is_online()
                     data_provider.set_online_mode(False)
                     try:
@@ -216,4 +218,3 @@ class RPSPrecomputer:
             # 使用回调返送给UI以脱钩
             if done_callback:
                 done_callback(count, elapsed)
-

@@ -1,5 +1,7 @@
 # ui/components.py - 通用 UI 组件
 # 从 main_window_qt.py 拆分出来的独立工具类
+from functools import lru_cache
+
 from PyQt6.QtWidgets import (
     QFrame, QPushButton, QTableWidgetItem, QTableView, QAbstractItemView,
     QStyleOption, QStyle, QWidget, QToolTip
@@ -87,8 +89,8 @@ class VCPTableView(QTableView):
             f" background-color: {t['BG_ELEVATED']};"
             f" color: {t['TEXT_PRIMARY']};"
             f" border: 1px solid {t['BORDER_DEFAULT']};"
-            " border-radius: 6px;"
-            " padding: 6px 10px;"
+            " border-radius: 8px;"
+            " padding: 7px 10px;"
             " margin: 0px;"
             " }"
         )
@@ -136,15 +138,22 @@ class GlassPanel(QFrame):
         self._alpha = alpha
         # 让样式表背景生效
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(f"""
-            QFrame#glassPanel {{
-                background-color: rgba(18, 20, 26, {self._alpha});
-                border-radius: {self._radius}px;
-                border: 1px solid rgba(255, 255, 255, 0.04);
-            }}
-        """)
+        from ui.theme import theme_manager
+        self._theme_manager = theme_manager
+        self._theme_manager.sig_theme_changed.connect(self._apply_style)
+        self._apply_style()
         # 不再应用 QGraphicsDropShadowEffect
         # 原因：在嵌套 QSplitter 布局中会触发 Qt6 底层渲染崩溃 (C++ SegFault)
+
+    def _apply_style(self, *_args):
+        t = self._theme_manager.current_theme
+        self.setStyleSheet(f"""
+            QFrame#glassPanel {{
+                background-color: {t['BG_GLASS']};
+                border-radius: {self._radius}px;
+                border: 1px solid {t['BORDER_SUBTLE']};
+            }}
+        """)
 
 class AnimatedHoverButton(QPushButton):
     """滑动微动效按钮，提供 0.25s 弹性过渡 + 紫色光影效果"""
@@ -485,13 +494,50 @@ class SlidingDrawer(QWidget):
 
 class SearchFilter:
     @staticmethod
+    @lru_cache(maxsize=4096)
+    def _build_initial_options(name_text: str):
+        import pypinyin
+
+        options = []
+        heteronym_groups = pypinyin.pinyin(
+            name_text,
+            style=pypinyin.Style.FIRST_LETTER,
+            heteronym=True,
+            errors=lambda item: list(str(item).lower()),
+        )
+        for group in heteronym_groups:
+            normalized = {
+                str(val).strip().lower()
+                for val in group
+                if str(val).strip()
+            }
+            if normalized:
+                options.append(normalized)
+        return tuple(options)
+
+    @classmethod
+    def _match_pinyin_initials(cls, search_val: str, name_text: str) -> bool:
+        if not search_val or not name_text:
+            return False
+
+        initial_options = cls._build_initial_options(name_text)
+        query = str(search_val).strip().lower()
+        query_len = len(query)
+        total = len(initial_options)
+        if query_len == 0 or total == 0 or query_len > total:
+            return False
+
+        for start in range(total - query_len + 1):
+            if all(query[offset] in initial_options[start + offset] for offset in range(query_len)):
+                return True
+        return False
+
+    @staticmethod
     def match_pinyin_or_text(search_val, code_text, name_text):
         """辅助方法: 判断 search_val 是否匹配代码、名称或拼音首字母"""
         if not search_val:
             return True
         if search_val in code_text or search_val in name_text:
             return True
-            
-        import pypinyin
-        py_initials = "".join(pypinyin.lazy_pinyin(name_text, style=pypinyin.Style.FIRST_LETTER)).lower()
-        return search_val in py_initials
+
+        return SearchFilter._match_pinyin_initials(search_val, name_text)

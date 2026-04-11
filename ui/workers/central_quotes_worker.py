@@ -17,6 +17,7 @@ class CentralQuotesService(QObject):
         super().__init__(main_window)
         self.main_window = main_window
         self.data_provider = data_provider
+        self._closed = False
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._trigger_fetch)
         # 盘中刷新频率：10秒（兼顾基本盯盘需求与极低系统消耗）
@@ -31,6 +32,7 @@ class CentralQuotesService(QObject):
         self._circuit_breaker_cooldown = 0
         self._FAILURE_THRESHOLD = 3   # 连续失败 3 次后触发熔断
         self._COOLDOWN_TICKS = 3      # 熔断后跳过 3 个周期（约 30 秒）
+        self._fetch_generation = 0
 
     @property
     def _is_market_active(self):
@@ -77,15 +79,31 @@ class CentralQuotesService(QObject):
             
         return codes
 
+    def _record_failure(self, reason: str):
+        self._consecutive_failures += 1
+        if self._consecutive_failures >= self._FAILURE_THRESHOLD:
+            self._circuit_breaker_cooldown = self._COOLDOWN_TICKS
+            log.warning(
+                f"[报价站] {reason}，连续失败 {self._consecutive_failures} 次，"
+                f"暂停轮询 {self._COOLDOWN_TICKS * 10} 秒后自动恢复"
+            )
+
     @pyqtSlot()
     def _trigger_fetch(self):
+        if self._closed:
+            return
         if self._is_fetching:
             # 超时保护：如果上一轮任务 hang 了超过 30 秒，强制释放锁避免报价站永久冻结
             import time
             if self._fetch_start_time > 0 and (time.time() - self._fetch_start_time) > 30:
-                log.warning("[报价站] _is_fetching 已持续 30s+，判定为 hang，强制释放锁")
+                task_abandoned = task_manager.abandon_task("central_quotes")
+                log.warning(
+                    "[报价站] _is_fetching 已持续 30s+，判定为 hang，"
+                    f"已强制释放锁并{'清理' if task_abandoned else '跳过'}旧任务占位"
+                )
                 self._is_fetching = False
-                self._consecutive_failures += 1
+                self._fetch_start_time = 0.0
+                self._record_failure("后台拉取超时")
             else:
                 return
 
@@ -121,6 +139,8 @@ class CentralQuotesService(QObject):
         import time as _t
         self._is_fetching = True
         self._fetch_start_time = _t.time()
+        self._fetch_generation += 1
+        fetch_token = self._fetch_generation
         
         def _bg_task():
             try:
@@ -174,7 +194,13 @@ class CentralQuotesService(QObject):
                 return None
 
         def _on_result(quotes):
+            if fetch_token != self._fetch_generation:
+                log.debug("[报价站] 忽略过期报价任务回调(result)")
+                return
             self._is_fetching = False
+            self._fetch_start_time = 0.0
+            if self._closed:
+                return
             # 成功一次立即重置熔断计数器
             self._consecutive_failures = 0
             if quotes:
@@ -183,19 +209,23 @@ class CentralQuotesService(QObject):
                     event_bus.sig_rt_quotes.emit(quotes)
 
         def _on_error(err_msg):
+            if fetch_token != self._fetch_generation:
+                log.debug("[报价站] 忽略过期报价任务回调(error)")
+                return
             # 关键兜底：无论后台发生什么异常，都必须释放锁，否则行情永久冻结
             self._is_fetching = False
-            self._consecutive_failures += 1
-            log.error(f"[报价站] 后台拉取异常(连续第{self._consecutive_failures}次)，已释放锁: {err_msg}")
-
-            # 熔断触发：连续失败达到阈值，进入冷却
-            if self._consecutive_failures >= self._FAILURE_THRESHOLD:
-                self._circuit_breaker_cooldown = self._COOLDOWN_TICKS
-                log.warning(
-                    f"[报价站] ⚡ 熔断触发：连续失败 {self._consecutive_failures} 次，"
-                    f"暂停轮询 {self._COOLDOWN_TICKS * 10} 秒后自动恢复"
-                )
+            self._fetch_start_time = 0.0
+            if self._closed:
+                return
+            next_failure = self._consecutive_failures + 1
+            log.error(f"[报价站] 后台拉取异常(连续第{next_failure}次)，已释放锁: {err_msg}")
+            self._record_failure("后台拉取异常")
 
         task_manager.run_in_background(
             _bg_task, on_success=_on_result, on_error=_on_error, task_id="central_quotes"
         )
+
+    def shutdown(self):
+        self._closed = True
+        self._timer.stop()
+        task_manager.abandon_task("central_quotes")

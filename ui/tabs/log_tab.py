@@ -37,7 +37,7 @@ class LogTab(QWidget):
         tb_layout.addWidget(lbl)
         tb_layout.addStretch()
         
-        btn_clear_log = QPushButton("🗑 清空")
+        btn_clear_log = QPushButton("清空")
         btn_clear_log.setProperty("class", "ctaSecondary")
         btn_clear_log.clicked.connect(self.log_text.clear)
         tb_layout.addWidget(btn_clear_log)
@@ -171,4 +171,3 @@ class LogTab(QWidget):
             # 自动滚动到底端
             sb = self.log_text.verticalScrollBar()
             sb.setValue(sb.maximum())
-

@@ -80,7 +80,7 @@ class WatchlistTab(BaseStockTab):
 
         # 搜索过滤
         self.sp_search = QLineEdit()
-        self.sp_search.setPlaceholderText("🔍 搜索关注池...")
+        self.sp_search.setPlaceholderText("筛选关注池...")
         self.sp_search.setFixedWidth(150)
         self.sp_search.textChanged.connect(
             lambda t: self._filter_table(t)
@@ -123,7 +123,7 @@ class WatchlistTab(BaseStockTab):
         self.model.sig_rows_reordered.connect(self._on_rows_reordered)
 
         # 自适应列宽
-        sp_weights = [0.75, 0.65, 1.4, 0.75, 0.9, 0.8, 1.4, 1.8, 1.2, 1.8, 2.8]
+        sp_weights = [0.55, 0.75, 0.65, 1.4, 0.75, 0.9, 0.8, 1.4, 1.8, 1.2, 1.8, 2.8]
         header = self.table_sp.horizontalHeader()
         header.setStretchLastSection(True)
         for col_idx, w in enumerate(sp_weights):
@@ -131,7 +131,7 @@ class WatchlistTab(BaseStockTab):
             self.table_sp.setColumnWidth(col_idx, int(w * 80))
         # 绑定防抖自动保存与恢复配置（restoreState 会连带把上次的排序列也恢复了）
         # 列结构变更（移除“时间”列），升级配置 key，避免旧列状态错位恢复
-        self.bind_header_persistence(self.table_sp, "header_state_watchlist_v7")
+        self.bind_header_persistence(self.table_sp, "header_state_watchlist_v8")
         
         # 【修复】强制抹掉任何因为 header.restoreState 还原出来的自动排序状态
         # 因为在关闭时，我们已经把当前的各种（哪怕是点击表头排出来的）视觉顺序定死并按此顺序拍扁存入硬盘了
@@ -253,6 +253,28 @@ class WatchlistTab(BaseStockTab):
             final_list.append(row_data)
 
         self.model.update_data(final_list)
+        self._update_status_summary()
+
+    def _update_status_summary(self):
+        rows = list(getattr(self.model, "row_data", []) or [])
+        total = len(rows)
+        if total == 0:
+            self.lbl_sp_status.setText("暂无标的")
+            return
+
+        def _filled(row, key):
+            val = str(row.get(key, "") or "").strip()
+            return val not in ("", "--")
+
+        rps_count = sum(_filled(r, "RPS强度") for r in rows)
+        catalyst_count = sum(_filled(r, "催化剂") for r in rows)
+        earnings_count = sum(_filled(r, "业绩异动") for r in rows)
+        block_count = sum(_filled(r, "大宗交易") for r in rows)
+        lhb_count = sum(_filled(r, "龙虎榜") for r in rows)
+
+        self.lbl_sp_status.setText(
+            f"{total}只 | RPS {rps_count} | 催化 {catalyst_count} | 业绩 {earnings_count} | 大宗 {block_count} | 龙虎 {lhb_count}"
+        )
 
     def _on_rows_reordered(self, new_codes_list):
         """当用户在表格手动拖拽重排后，更新VM字典保存并重新渲染"""
@@ -311,12 +333,23 @@ class WatchlistTab(BaseStockTab):
         # 非备注列 → K 线图
         code = self.model.row_data[row].get("代码")
         if code:
+            watchlist_data = watchlist_vm.get_watchlist_data()
             code_list = []
             for r in range(self.proxy_model.rowCount()):
                 s_idx = self.proxy_model.mapToSource(self.proxy_model.index(r, 0))
                 if s_idx.row() < len(self.model.row_data):
-                    rd = self.model.row_data[s_idx.row()]
-                    code_list.append({'代码': rd.get("代码", ""), '名称': rd.get("名称", "")})
+                    rd = dict(self.model.row_data[s_idx.row()] or {})
+                    code_key = str(rd.get("代码", "")).strip()
+                    merged = {"代码": code_key, "名称": rd.get("名称", "")}
+                    persisted = watchlist_data.get(code_key, {})
+                    if isinstance(persisted, dict):
+                        for k, v in persisted.items():
+                            if v not in (None, "", [], {}):
+                                merged[k] = v
+                    for k, v in rd.items():
+                        if v not in (None, "", [], {}):
+                            merged[k] = v
+                    code_list.append(merged)
             
             current_idx = 0
             for i, c in enumerate(code_list):
@@ -617,6 +650,7 @@ class WatchlistTab(BaseStockTab):
             )
 
         self._persist_watchlist_metrics(results)
+        self._update_status_summary()
 
     def _persist_watchlist_metrics(self, results: dict):
         if not results:

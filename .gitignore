@@ -89,3 +89,7 @@ data/Cache/asian_rt_latest.json
 data/vcp_hunter.db
 data/vcp_hunter.db-wal
 data/vcp_hunter.db-shm
+
+data/crash_report.log
+data/Cache/lhb_pool_20d.json
+data/Cache/trade_dates.json

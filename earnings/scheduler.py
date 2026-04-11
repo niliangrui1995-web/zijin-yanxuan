@@ -9,7 +9,7 @@ logger = get_logger()
 ENABLE_STARTUP_GAP_FILL = False
 
 class FetchWorker(QThread):
-    sig_finished = pyqtSignal(object) 
+    sig_finished = pyqtSignal(object, str)
 
     def __init__(self, engine, mode, missing_dates=None, target_date=None, parent=None):
         super().__init__(parent)
@@ -24,7 +24,7 @@ class FetchWorker(QThread):
                 cached_df = self.engine.get_cached_records()
                 if cached_df is not None and not cached_df.empty:
                     logger.info(f"[业绩调度] 📡 恢复缓存 {len(cached_df)} 条记录")
-                self.sig_finished.emit(cached_df if cached_df is not None else pd.DataFrame())
+                self.sig_finished.emit(cached_df if cached_df is not None else pd.DataFrame(), self.mode)
             
             elif self.mode == "gap_fill" and self.missing_dates:
                 logger.info(f"[业绩调度] 开始补扫 {len(self.missing_dates)} 天断档")
@@ -36,23 +36,23 @@ class FetchWorker(QThread):
                 if all_missed_dfs:
                     combined_df = pd.concat(all_missed_dfs, ignore_index=True)
                     logger.info(f"[业绩调度] ✅ 补扫完成，新增 {len(combined_df)} 条")
-                    self.sig_finished.emit(combined_df)
+                    self.sig_finished.emit(combined_df, self.mode)
                 else:
-                    self.sig_finished.emit(pd.DataFrame())
+                    self.sig_finished.emit(pd.DataFrame(), self.mode)
             
             elif self.mode == "single" and self.target_date:
                 df_new = self.engine.fetch_daily_surprises(target_publish_date=self.target_date)
-                self.sig_finished.emit(df_new)
+                self.sig_finished.emit(df_new, self.mode)
                 
             elif self.mode == "routine":
                 df_new = self.engine.fetch_daily_surprises()
-                self.sig_finished.emit(df_new)
+                self.sig_finished.emit(df_new, self.mode)
         except Exception as e:
             logger.error(f"[业绩调度] ❌ 后台抓取异常退出: {e}")
-            self.sig_finished.emit(pd.DataFrame())
+            self.sig_finished.emit(pd.DataFrame(), self.mode)
 
 class EarningsScheduler(QObject):
-    sig_new_surprises_found = pyqtSignal(object) 
+    sig_new_surprises_found = pyqtSignal(object, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -75,9 +75,9 @@ class EarningsScheduler(QObject):
         worker.finished.connect(lambda w=worker: (self.active_workers.discard(w), w.deleteLater()))
         worker.start()
 
-    def _on_worker_finished(self, df):
+    def _on_worker_finished(self, df, mode):
         # 无论是否有新增数据，都必须通知 UI 结束加载状态
-        self.sig_new_surprises_found.emit(df)
+        self.sig_new_surprises_found.emit(df, mode)
 
     def start_patrol(self):
         """开机：先吐缓存 -> 计算断档脱水回填 -> 进入战备"""

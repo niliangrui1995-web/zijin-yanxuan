@@ -891,7 +891,8 @@ class VCPEngine:
     @staticmethod
     def precompute_ready_pool(all_data, rps120_series, rps250_series, params,
                               sector_manager=None, sector_rps_dict=None, sector_threshold=70,
-                              server_pool=None, code2name=None, progress_callback=None):
+                              server_pool=None, code2name=None, progress_callback=None,
+                              cancelled_checker=None):
         """收盘后一次性预计算"待突破池"
 
         用昨日 EOD 数据对全量股票执行完整 evaluate_conditions，
@@ -945,6 +946,8 @@ class VCPEngine:
         _diag_eval_fail = 0
         _diag_eval_err = 0
         for idx_code, (code, df) in enumerate(all_data.items()):
+            if cancelled_checker and cancelled_checker():
+                raise InterruptedError("盘中监控已停止")
             # 【休眠释放 GIL】每完成几只后主动释放 CPU，防卡死
             if idx_code % 20 == 0:
                 _time.sleep(0.001)
@@ -1024,6 +1027,8 @@ class VCPEngine:
         # ---- 批量查询机构股东（东方财富 F10 API，90天缓存） ----
         # 改为"软标记"而非硬删除，避免误杀扫描已确认的 VCP 形态股
         if ready_pool:
+            if cancelled_checker and cancelled_checker():
+                raise InterruptedError("盘中监控已停止")
             try:
                 inst_results = VCPEngine.batch_check_institution(
                     list(ready_pool.keys()))
@@ -1045,6 +1050,8 @@ class VCPEngine:
         # ---- 总市值标记：总股本×收盘价（通达信） ----
         # 改为"软标记"而非硬删除，小市值股票保留在池中但打上标记
         if ready_pool:
+            if cancelled_checker and cancelled_checker():
+                raise InterruptedError("盘中监控已停止")
             try:
                 close_prices = {}
                 for code in ready_pool:

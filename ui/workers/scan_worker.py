@@ -1,11 +1,11 @@
 # ui/workers.py - 后台工作线程
 # 从 main_window_qt.py 拆分出来的 ScanWorker 和 RtScanWorker
-import os
 import gc
 from PyQt6.QtCore import QThread, pyqtSignal
 import pandas as pd
 from vcp.engine import VCPEngine
 from core.logger import get_logger
+from core.sector_rps_helper import enrich_hot_sector_rows, load_sector_rps_snapshot
 
 log = get_logger(__name__)
 
@@ -66,7 +66,8 @@ class ScanWorker(QThread):
 
             self.progress.emit(50, "计算 RPS 相对强度矩阵...")
             _t1 = _time.time()
-            matrix = self.engine.build_rps_matrix(self.data_provider.cache_data, self.sd, self.ed)
+            market_cache = self.data_provider.get_all_valid_data()
+            matrix = self.engine.build_rps_matrix(market_cache, self.sd, self.ed)
             
             if not matrix:
                 self.finished_scan.emit(False, "区间无效或无通达信本地数据")
@@ -104,7 +105,8 @@ class ScanWorker(QThread):
                             # 先在 copy 上计算以保障安全，然后通过 dict 更新覆盖缓存，一劳永逸。
                             if 'entangle' not in df.columns:
                                 df = VCPEngine.calculate_indicators(df.copy())
-                                self.data_provider.cache_data[code] = df
+                                with self.data_provider.cache_lock:
+                                    self.data_provider.cache_data[code] = df
                             df_safe = df
 
                             # 【与盘中一致】skip_red_check=True，
@@ -194,33 +196,16 @@ class ScanWorker(QThread):
             if all_results:
                 self.progress.emit(99, "查询热点板块...")
                 try:
-                    from vcp.sector import SectorManager
-                    tdx_root = os.path.dirname(self.data_provider.tdx_vipdoc) if self.data_provider.tdx_vipdoc else r'D:\\HT'
-                    sm = SectorManager.get_instance(tdx_root)
-                    # 优先加载 F5 预计算的板块 RPS 缓存，避免重复计算
-                    import pickle as _pkl
-                    from vcp.constants import SECTOR_RPS_CACHE_FILE
-                    sector_rps = None
-                    if os.path.exists(SECTOR_RPS_CACHE_FILE):
-                        try:
-                            with open(SECTOR_RPS_CACHE_FILE, "rb") as _f:
-                                _pkg = _pkl.load(_f)
-                            sector_rps = _pkg.get("sector_rps", {})
-                            log.info(f"[区间扫描] 板块 RPS 命中 F5 缓存 ({len(sector_rps)} 个板块)")
-                        except Exception as _e:
-                            log.debug(f"[区间扫描] 板块 RPS 缓存读取失败: {_e}")
-                    # 缓存不可用时才现算
-                    if not sector_rps:
-                        last_date = all_results[-1].get('触发日期', '')
-                        if last_date:
-                            sector_rps = sm.build_sector_rps(self.data_provider.cache_data, last_date)
-                    
-                    # 无论印章是从 F5 缓存拿到的，还是现场重刻的，都要执行全员盖章操作
-                    if sector_rps:
-                        for res in all_results:
-                            code = res['代码']
-                            passed, info_str, _ = sm.check_sector_rps(code, sector_rps, threshold=0)
-                            res['热点板块'] = info_str if info_str else "-"
+                    target_date = all_results[-1].get('触发日期', '')
+                    sector_manager, sector_rps, _, source = load_sector_rps_snapshot(
+                        self.data_provider,
+                        self.data_provider.get_all_valid_data(),
+                        target_date=target_date,
+                        logger=log,
+                    )
+                    if sector_manager and sector_rps:
+                        log.info(f"[区间扫描] 热点板块补全就绪 ({source})")
+                        enrich_hot_sector_rows(all_results, sector_manager, sector_rps, logger=log)
                 except Exception as e:
                     log.error(f"[板块查询] 异常: {e}")
             
