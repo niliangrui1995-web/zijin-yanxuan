@@ -125,6 +125,15 @@ class AppConfig:
     def last_active_tab(self, value: int):
         self.set("window/last_active_tab", value)
 
+    # --- UI 设置 ---
+    @property
+    def table_density(self) -> str:
+        return self.get("ui/table_density", "舒适", str)
+
+    @table_density.setter
+    def table_density(self, value: str):
+        self.set("ui/table_density", value)
+
     # --- 网络配置 ---
     @property
     def network_offline_mode(self) -> bool:

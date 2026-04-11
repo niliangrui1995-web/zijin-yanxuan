@@ -5,11 +5,11 @@ import datetime
 import threading
 from contextlib import contextmanager
 from PyQt6.QtWidgets import (
-    QVBoxLayout, QHeaderView, QPushButton, QLabel, QCheckBox
+    QVBoxLayout, QHeaderView, QPushButton, QLabel, QCheckBox, QLineEdit
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
-from ui.components import VCPTableView
+from ui.components import VCPTableView, TableStateWrapper
 
 # ==================== 局部 CF 通道（仅在 YF 拉取窗口生效）====================
 GLOBAL_USE_CF_PROXY = True
@@ -609,6 +609,10 @@ class AsianMarketTab(BaseStockTab):
 
         # 统一工具条：标题 + 副标题 + 过滤区 + 主操作
         self.lbl_status = QLabel("系统初始化...")
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText("筛选代码或名称...")
+        self.search_box.setFixedWidth(180)
+        self.search_box.textChanged.connect(self._on_search_text_changed)
         self.chk_cf_proxy = QCheckBox("启用直连通道 (CF隧道)")
         self.chk_cf_proxy.setToolTip("打勾：关闭VPN彻底裸连；不打勾：走您的VPN全局模式直连")
         self.chk_cf_proxy.setObjectName("successStatus")
@@ -620,13 +624,14 @@ class AsianMarketTab(BaseStockTab):
         self.btn_refresh.setToolTip("强制跳过等待，立刻请求外网(Yahoo Finance)测速并获取最新价格")
         self.btn_refresh.clicked.connect(self._on_manual_refresh)
 
-        filter_widgets = [self.chk_cf_proxy]
+        filter_widgets = [self.search_box, self.chk_cf_proxy]
         action_widgets = [self.btn_refresh]
         toolbar = self.build_tab_toolbar("亚洲寡头核心资产监控", self.lbl_status, filter_widgets, action_widgets)
         layout.addWidget(toolbar)
 
         self.asian_table = VCPTableView(default_row_height=30)
-        layout.addWidget(self.asian_table)
+        self.table_state = TableStateWrapper(self.asian_table, empty_title="暂无亚洲数据", loading_title="加载中...")
+        layout.addWidget(self.table_state)
         
         self.header_labels = ["代码", "名称", "现价", "涨幅%", "市场", "状态", "赛道", "角色定位", "货币", "5日涨跌%", "10日涨跌%", "20日涨跌%"]
         
@@ -676,6 +681,9 @@ class AsianMarketTab(BaseStockTab):
         if hasattr(self, 'lbl_status'):
             self.lbl_status.setText(f"🔌 {'已切换为 CF 免翻墙专线' if checked else '已切换为 VPN 本地直连'}，下次刷新生效")
 
+    def _on_search_text_changed(self, text):
+        self.proxy_model.setFilterText(text)
+
     def _on_manual_refresh(self):
         """手动触发外网数据更新"""
         # 先重载本地缓存并补齐缺失标的，再触发实时刷新，确保 worker 不会长期只盯着旧的 33 只
@@ -687,6 +695,8 @@ class AsianMarketTab(BaseStockTab):
             self.lbl_status.setText("⚠ 后台网关未连接或已断开")
 
     def _load_local_cache(self):
+        if hasattr(self, "table_state"):
+            self.table_state.show_loading("正在加载本地缓存...", "请稍候")
         self.row_data = []
         if os.path.exists(JSON_CACHE):
             try:
@@ -869,6 +879,11 @@ class AsianMarketTab(BaseStockTab):
 
     def update_table_ui(self):
         self.model.update_data(self.row_data)
+        if hasattr(self, "table_state"):
+            if self.row_data:
+                self.table_state.show_table()
+            else:
+                self.table_state.show_empty("暂无亚洲数据")
 
     def _on_rt_update(self, updates: dict):
         """Worker 传回最新报价时无损更新界面，保持排序和滚动条位置"""

@@ -12,7 +12,7 @@ from core.event_bus import event_bus
 from core.logger import get_logger
 from core.task_manager import task_manager
 from ui.tabs.base_stock_tab import BaseStockTab
-from ui.components import VCPTableView
+from ui.components import VCPTableView, TableStateWrapper
 from core.throttler import SignalThrottler
 
 log = get_logger(__name__)
@@ -210,9 +210,11 @@ class RtMonitorTab(BaseStockTab):
 
         # 盘中监控参数设置按钮
         btn_rt_settings = QToolButton()
-        btn_rt_settings.setText("⚙")
-        btn_rt_settings.setFixedSize(32, 32)
-        btn_rt_settings.setObjectName("btnSysMenu")
+        btn_rt_settings.setText("设置")
+        btn_rt_settings.setProperty("class", "toolbarGhost")
+        btn_rt_settings.setFixedHeight(32)
+        btn_rt_settings.setMinimumWidth(56)
+        btn_rt_settings.setAutoRaise(False)
         btn_rt_settings.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_rt_settings.setToolTip("盘中监控参数设置")
         btn_rt_settings.clicked.connect(self._show_rt_settings)
@@ -228,6 +230,7 @@ class RtMonitorTab(BaseStockTab):
         
         self.table_rt = VCPTableView(default_row_height=30)
         self.table_rt.setModel(self.proxy_model)
+        self.table_state = TableStateWrapper(self.table_rt, empty_title="暂无监控记录", loading_title="加载中...")
         
         header = self.table_rt.horizontalHeader()
         header.setStretchLastSection(False)
@@ -267,11 +270,13 @@ class RtMonitorTab(BaseStockTab):
         self.table_rt.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table_rt.customContextMenuRequested.connect(self._show_context_menu)
 
-        layout.addWidget(self.table_rt)
+        layout.addWidget(self.table_state)
 
     def _clear_table(self):
         self.source_model.update_data([])
         self._set_status("已清空记录", "监控可继续")
+        if hasattr(self, "table_state"):
+            self.table_state.show_empty("暂无监控记录")
 
     def _on_search_text_changed(self, text):
         self.proxy_model.setFilterText(text)
@@ -442,6 +447,11 @@ class RtMonitorTab(BaseStockTab):
         rt_only = [r for r in results if not r.get('_is_special')]
         try:
             self.source_model.update_data(rt_only)
+            if hasattr(self, "table_state"):
+                if rt_only:
+                    self.table_state.show_table()
+                else:
+                    self.table_state.show_empty("暂无监控记录")
         except Exception as e:
             log.error(f"Failed to update rt table: {e}")
 

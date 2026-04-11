@@ -1,7 +1,7 @@
 import sys
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTextEdit,
-    QComboBox
+    QComboBox, QLineEdit
 )
 from PyQt6.QtCore import QTimer, Qt
 from core.event_bus import event_bus
@@ -10,6 +10,7 @@ class LogTab(QWidget):
     """独立的系统运行日志组件 - 负责渲染日志流并接住 stdout/stderr"""
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._log_history = []
         self._init_ui()
         self._setup_log_redirect()
         
@@ -42,10 +43,18 @@ class LogTab(QWidget):
         btn_clear_log.clicked.connect(self.log_text.clear)
         tb_layout.addWidget(btn_clear_log)
 
+        # 日志搜索框
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText("搜索日志...")
+        self.search_box.setFixedWidth(160)
+        self.search_box.textChanged.connect(self._apply_log_filter)
+        tb_layout.addWidget(self.search_box)
+
         # 日志级别过滤下拉框
         self.level_filter = QComboBox()
         self.level_filter.addItems(["全部", "仅 Error", "仅 Warning"])
         self.level_filter.setFixedWidth(120)
+        self.level_filter.currentIndexChanged.connect(self._apply_log_filter)
         tb_layout.addWidget(self.level_filter)
 
         layout.addWidget(toolbar)
@@ -144,9 +153,34 @@ class LogTab(QWidget):
     def _on_log_msg(self, level, text):
         # 保存 (级别, 文本) 以支持客户端侧过滤
         self._log_buffer.append((level, text))
+        self._log_history.append((level, text))
+        if len(self._log_history) > self._log_buffer_max:
+            overflow = len(self._log_history) - self._log_buffer_max
+            del self._log_history[:overflow]
         if len(self._log_buffer) > self._log_buffer_max:
             overflow = len(self._log_buffer) - self._log_buffer_max
             del self._log_buffer[:overflow]
+
+    def _apply_log_filter(self):
+        # 清空未刷新缓冲，避免重复叠加
+        self._log_buffer.clear()
+
+        filter_idx = self.level_filter.currentIndex() if hasattr(self, 'level_filter') else 0
+        search_text = self.search_box.text().strip().lower() if hasattr(self, 'search_box') else ""
+
+        filtered_texts = []
+        for level, text in self._log_history:
+            if filter_idx == 1 and level != 'error':
+                continue
+            if filter_idx == 2 and level not in ('warn', 'warning'):
+                continue
+            if search_text and search_text not in str(text).lower():
+                continue
+            filtered_texts.append(text)
+
+        self.log_text.setPlainText(''.join(filtered_texts).rstrip())
+        sb = self.log_text.verticalScrollBar()
+        sb.setValue(sb.maximum())
 
     def _flush_log_buffer(self):
         if not self._log_buffer:
@@ -154,12 +188,15 @@ class LogTab(QWidget):
 
         # 读取当前过滤级别
         filter_idx = self.level_filter.currentIndex() if hasattr(self, 'level_filter') else 0
+        search_text = self.search_box.text().strip().lower() if hasattr(self, 'search_box') else ""
 
         filtered_texts = []
         for level, text in self._log_buffer:
             if filter_idx == 1 and level != 'error':
                 continue
             if filter_idx == 2 and level not in ('warn', 'warning'):
+                continue
+            if search_text and search_text not in str(text).lower():
                 continue
             filtered_texts.append(text)
 

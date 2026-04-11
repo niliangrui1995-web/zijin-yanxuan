@@ -76,6 +76,7 @@ class BaseStockTab(QWidget):
 
         return toolbar
 
+
     def _launch_tdx(self, code: str):
         """跳转通达信并输入股票代码（后台线程执行，不阻塞 UI）"""
         import threading

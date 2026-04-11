@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 
 from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
-from ui.components import VCPTableView
+from ui.components import VCPTableView, TableStateWrapper
 from core.event_bus import event_bus
 from core.logger import get_logger
 from core.task_manager import task_manager
@@ -111,6 +111,7 @@ class LhbTab(BaseStockTab):
         self.table.setModel(self.proxy_model)
         self.delegate = StockItemDelegate(self.table)
         self.table.setItemDelegate(self.delegate)
+        self.table_state = TableStateWrapper(self.table, empty_title="暂无龙虎榜数据", loading_title="加载中...")
 
         # 列宽配置
         header = self.table.horizontalHeader()
@@ -130,7 +131,7 @@ class LhbTab(BaseStockTab):
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
 
-        layout.addWidget(self.table, 1)
+        layout.addWidget(self.table_state, 1)
 
     # ================================================================
     # 池加载与展示
@@ -162,6 +163,8 @@ class LhbTab(BaseStockTab):
             self._start_backfill(missing)
         elif not pool:
             self.lbl_status.setText("暂无数据，请点击“刷新关注池”抓取")
+            if hasattr(self, "table_state"):
+                self.table_state.show_empty("暂无龙虎榜数据")
 
     def _display_pool(self, pool: list[dict]):
         """将池数据渲染到表格"""
@@ -180,6 +183,11 @@ class LhbTab(BaseStockTab):
         self.lbl_status.setText(
             f"{POOL_WINDOW}日关注池：{len(pool)} 只标的入池（已覆盖 {cached_days} 个交易日）"
         )
+        if hasattr(self, "table_state"):
+            if row_data:
+                self.table_state.show_table()
+            else:
+                self.table_state.show_empty("暂无龙虎榜数据")
 
         # 触发全局通知，让关注池 Tab 能扫描到龙虎榜数据
         event_bus.sig_cache_loaded.emit()

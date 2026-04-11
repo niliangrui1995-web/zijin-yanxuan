@@ -15,7 +15,7 @@ from PyQt6.QtCore import Qt, QTimer
 
 from ui.viewmodels.watchlist_vm import watchlist_vm
 from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
-from ui.components import VCPTableView
+from ui.components import VCPTableView, TableStateWrapper
 from core.event_bus import event_bus
 from core.logger import get_logger
 from core.task_manager import task_manager
@@ -104,6 +104,7 @@ class WatchlistTab(BaseStockTab):
         
         self.delegate = StockItemDelegate(self.table_sp)
         self.table_sp.setItemDelegate(self.delegate)
+        self.table_state = TableStateWrapper(self.table_sp, empty_title="暂无关注池数据", loading_title="加载中...")
 
         # 接收模型发出的手动排序完成信号
         self.model.sig_rows_reordered.connect(self._on_rows_reordered)
@@ -131,7 +132,7 @@ class WatchlistTab(BaseStockTab):
         self.table_sp.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table_sp.customContextMenuRequested.connect(self._show_context_menu)
 
-        layout.addWidget(self.table_sp)
+        layout.addWidget(self.table_state)
 
     # ================================================================
     # 数据加载
@@ -244,6 +245,8 @@ class WatchlistTab(BaseStockTab):
         total = len(rows)
         if total == 0:
             self.lbl_sp_status.setText("暂无标的")
+            if hasattr(self, "table_state"):
+                self.table_state.show_empty("暂无关注池数据")
             return
 
         def _filled(row, key):
@@ -259,6 +262,8 @@ class WatchlistTab(BaseStockTab):
         self.lbl_sp_status.setText(
             f"{total}只 | RPS {rps_count} | 催化 {catalyst_count} | 业绩 {earnings_count} | 大宗 {block_count} | 龙虎 {lhb_count}"
         )
+        if hasattr(self, "table_state"):
+            self.table_state.show_table()
 
     def _on_rows_reordered(self, new_codes_list):
         """当用户在表格手动拖拽重排后，更新VM字典保存并重新渲染"""

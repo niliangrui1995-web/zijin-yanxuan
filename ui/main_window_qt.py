@@ -333,6 +333,7 @@ class MainWindowQT(QMainWindow):
     def _init_gear_menu(self):
         """在系统Tab右上角注入通达信风格的配置齿轮菜单"""
         from PyQt6.QtWidgets import QToolButton, QMenu
+        from PyQt6.QtGui import QActionGroup
         from ui.styles.context_menu_qss import generate_context_menu_qss
         
         self.btn_sys_menu = QToolButton()
@@ -341,6 +342,31 @@ class MainWindowQT(QMainWindow):
         self.btn_sys_menu.setObjectName("btnSysMenu")
         self.btn_sys_menu.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_sys_menu.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.btn_sys_menu.setAutoRaise(False)
+        self.btn_sys_menu.setFixedWidth(46)
+        self.btn_sys_menu.setFixedHeight(40)
+        from ui.theme import theme_manager as _tm_btn
+        _btn_t = _tm_btn.current_theme
+        _win_btn_color = _btn_t['TEXT_MUTED']
+        _win_btn_hover = _btn_t['BG_HOVER']
+        self.btn_sys_menu.setStyleSheet(f"""
+            QToolButton {{
+                background: transparent;
+                color: {_win_btn_color};
+                border: none;
+                font-size: 12px;
+                font-weight: bold;
+                padding: 0 16px;
+                min-height: 40px; max-height: 40px;
+            }}
+            QToolButton:hover {{
+                background-color: {_win_btn_hover};
+            }}
+            QToolButton::menu-indicator {{
+                image: none;
+                width: 0px;
+            }}
+        """)
         # 无边框模式：齿轮按钮放在标题栏的窗口控制按钮左侧
         # 找到最小化按钮在 titlebar_layout 中的位置，插在它前面
         min_idx = self._titlebar_layout.indexOf(self._btn_minimize)
@@ -379,6 +405,27 @@ class MainWindowQT(QMainWindow):
 
         sys_menu.addSeparator()
 
+        # 表格密度切换（全局）
+        from core.app_config import app_config
+        density_menu = sys_menu.addMenu("表格密度")
+        density_group = QActionGroup(self)
+        density_group.setExclusive(True)
+
+        self._act_density_compact = density_menu.addAction("紧凑")
+        self._act_density_compact.setCheckable(True)
+        density_group.addAction(self._act_density_compact)
+        self._act_density_compact.triggered.connect(lambda: self._apply_table_density("紧凑"))
+
+        self._act_density_comfort = density_menu.addAction("舒适")
+        self._act_density_comfort.setCheckable(True)
+        density_group.addAction(self._act_density_comfort)
+        self._act_density_comfort.triggered.connect(lambda: self._apply_table_density("舒适"))
+
+        self._density_menu = density_menu
+        self._apply_table_density(app_config.table_density, persist=False)
+
+        sys_menu.addSeparator()
+
         # 主题切换子菜单
         from ui.theme import theme_manager as _tm
         theme_menu = sys_menu.addMenu(f"界面主题：{_tm.current_theme_name}")
@@ -397,16 +444,40 @@ class MainWindowQT(QMainWindow):
         self._sys_menu = sys_menu
         self.btn_sys_menu.installEventFilter(self)
         sys_menu.installEventFilter(self)
+        density_menu.installEventFilter(self)
         theme_menu.installEventFilter(self)
 
         self.btn_sys_menu.setMenu(sys_menu)
         self._update_last_f5_time()
 
 
+    def _apply_table_density(self, mode: str, persist: bool = True):
+        from core.app_config import app_config
+        from PyQt6.QtWidgets import QApplication
+        from ui.components import VCPTableView
+
+        if mode not in ("紧凑", "舒适"):
+            mode = "舒适"
+
+        if persist:
+            app_config.table_density = mode
+            app_config.sync()
+
+        if hasattr(self, "_act_density_compact"):
+            self._act_density_compact.setChecked(mode == "紧凑")
+        if hasattr(self, "_act_density_comfort"):
+            self._act_density_comfort.setChecked(mode == "舒适")
+
+        for widget in QApplication.allWidgets():
+            if isinstance(widget, VCPTableView):
+                widget.apply_density(mode)
+
+
     def eventFilter(self, obj, event):
         target_objects = (
             getattr(self, 'btn_sys_menu', None),
             getattr(self, '_sys_menu', None),
+            getattr(self, '_density_menu', None),
             getattr(self, '_theme_menu', None),
         )
         if obj in target_objects:

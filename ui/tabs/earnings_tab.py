@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSlot, QTimer
 from ui.tabs.base_stock_tab import BaseStockTab
 from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
-from ui.components import VCPTableView
+from ui.components import VCPTableView, TableStateWrapper
 from core.event_bus import event_bus
 from core.logger import get_logger
 
@@ -40,6 +40,11 @@ class EarningsTab(BaseStockTab):
         # 统一工具条：标题 + 副标题 + 过滤区 + 主操作
         self.lbl_status = QLabel("监控挂机中...")
 
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText("筛选代码或名称...")
+        self.search_box.setFixedWidth(160)
+        self.search_box.textChanged.connect(self._on_search_text_changed)
+
         # 时光机雷达
         self.ent_start_date = QLineEdit()
         self.ent_start_date.setPlaceholderText("起点(如2024-01-01)")
@@ -63,7 +68,7 @@ class EarningsTab(BaseStockTab):
         self.combo_type_filter.currentTextChanged.connect(self._on_type_filter_changed)
 
         filter_widgets = [
-            QLabel("分类筛选:"), self.combo_type_filter,
+            self.search_box, QLabel("分类筛选:"), self.combo_type_filter,
             QLabel("更新区间倒推:"), self.ent_start_date, QLabel("-"), self.ent_end_date
         ]
         action_widgets = [self.btn_manual_fetch]
@@ -72,7 +77,8 @@ class EarningsTab(BaseStockTab):
 
         # --- 表格显示区 ---
         self.table = VCPTableView(default_row_height=30)
-        layout.addWidget(self.table)
+        self.table_state = TableStateWrapper(self.table, empty_title="暂无业绩数据", loading_title="加载中...")
+        layout.addWidget(self.table_state)
         
         # 字段映射表：前四列必须是标准列（代码/名称/现价/涨幅%），以便接收盘中广播
         self.header_labels = [
@@ -129,6 +135,8 @@ class EarningsTab(BaseStockTab):
             return
             
         self.lbl_status.setText(f"正在拉取 {start_str} ~ {end_str} ({len(date_list)}天)...")
+        if hasattr(self, "table_state"):
+            self.table_state.show_loading("正在拉取业绩数据...", "请稍候")
         log.info(f"[业绩监控] 手动扫描: {start_str} ~ {end_str}")
         self.scheduler.force_manual_scan(date_list)
 
@@ -144,6 +152,9 @@ class EarningsTab(BaseStockTab):
         # 记录下操作
         log.debug(f"[业绩监控] 筛选切换: {text}")
 
+    def _on_search_text_changed(self, text):
+        self.proxy_model.setFilterText(text)
+
     @pyqtSlot(object, str)
     def _on_new_data_found(self, df: "pd.DataFrame", mode: str = "routine"):
         """当底层推上来新的 DataFrame 时，转成本地字典并无缝合并展示"""
@@ -152,6 +163,8 @@ class EarningsTab(BaseStockTab):
                 self.lbl_status.setText("已恢复缓存，但当前没有可展示的高增股")
             else:
                 self.lbl_status.setText("抓取完成，本轮无新增高增股")
+            if hasattr(self, "table_state"):
+                self.table_state.show_empty("暂无业绩数据")
             return
 
         if mode == "warm_cache":
@@ -222,6 +235,8 @@ class EarningsTab(BaseStockTab):
                 
         # 刷新视图
         self.model.update_data(self.row_data)
+        if hasattr(self, "table_state"):
+            self.table_state.show_table()
         
         # 通知关注池：业绩数据已就绪，重新拉取"业绩异动"列
         # 旧事件枚举链路已废弃，这里走专属刷新通道。

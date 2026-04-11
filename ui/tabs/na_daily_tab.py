@@ -10,14 +10,14 @@ import datetime
 
 from PyQt6.QtWidgets import (
     QVBoxLayout,
-    QHeaderView, QPushButton, QLabel
+    QHeaderView, QPushButton, QLabel, QLineEdit
 )
 from PyQt6.QtCore import Qt, QTimer
 from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
 from core.event_bus import event_bus
 from core.logger import get_logger
 from ui.tabs.base_stock_tab import BaseStockTab
-from ui.components import VCPTableView
+from ui.components import VCPTableView, TableStateWrapper
 
 log = get_logger(__name__)
 
@@ -72,11 +72,15 @@ class NADailyTab(BaseStockTab):
 
         # 统一工具条：标题 + 副标题 + 过滤区 + 主操作
         self.na_daily_source_label = QLabel("未加载")
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText("筛选代码或名称...")
+        self.search_box.setFixedWidth(160)
+        self.search_box.textChanged.connect(self._on_search_text_changed)
         btn_refresh = QPushButton("刷新战报")
         btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_refresh.clicked.connect(self._load_na_daily_report)
 
-        filter_widgets = []
+        filter_widgets = [self.search_box]
         action_widgets = [btn_refresh]
         toolbar = self.build_tab_toolbar("北美战报", self.na_daily_source_label, filter_widgets, action_widgets)
         layout.addWidget(toolbar)
@@ -86,6 +90,7 @@ class NADailyTab(BaseStockTab):
             "股价弹性", "催化剂", "风控", "评级"
         ]
         self.na_daily_table = VCPTableView(default_row_height=30)
+        self.table_state = TableStateWrapper(self.na_daily_table, empty_title="暂无战报数据", loading_title="加载中...")
         
         self.model = StockTableModel(columns)
         self.proxy_model = RtSortFilterProxyModel(self)
@@ -110,7 +115,10 @@ class NADailyTab(BaseStockTab):
         self.na_daily_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.na_daily_table.customContextMenuRequested.connect(self._show_context_menu)
 
-        layout.addWidget(self.na_daily_table, 1)
+        layout.addWidget(self.table_state, 1)
+
+    def _on_search_text_changed(self, text):
+        self.proxy_model.setFilterText(text)
 
     def _get_na_daily_output_dir(self):
         return os.path.join(
@@ -272,6 +280,8 @@ class NADailyTab(BaseStockTab):
             self.model.update_data([])
             self._na_daily_codes = set()
             event_bus.sig_na_daily_updated.emit()
+            if hasattr(self, "table_state"):
+                self.table_state.show_empty("暂无战报数据")
             return
 
         newest_file = max(report_files, key=lambda path: self._parse_report_identity(path)[1])
@@ -283,6 +293,11 @@ class NADailyTab(BaseStockTab):
 
         self._na_daily_codes = {row.get("代码", "") for row in final_list if row.get("代码")}
         self.model.update_data(final_list)
+        if hasattr(self, "table_state"):
+            if final_list:
+                self.table_state.show_table()
+            else:
+                self.table_state.show_empty("暂无战报数据")
 
         try:
             report_col = self.model.headers.index("日报时间")
@@ -296,6 +311,8 @@ class NADailyTab(BaseStockTab):
         event_bus.sig_na_daily_updated.emit()
 
     def _load_na_daily_report(self):
+        if hasattr(self, "table_state"):
+            self.table_state.show_loading("正在加载战报...", "请稍候")
         final_list, report_files, report_signature = self._build_na_daily_rows()
         self._apply_na_daily_rows(final_list, report_files, report_signature)
 

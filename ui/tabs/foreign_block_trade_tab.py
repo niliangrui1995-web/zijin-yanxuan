@@ -20,7 +20,7 @@ from ui.theme import (
     COLOR_RISE, COLOR_FALL, COLOR_FLAT
 )
 from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
-from ui.components import VCPTableView
+from ui.components import VCPTableView, TableStateWrapper
 from core.event_bus import event_bus
 
 class BlockTradeFilterProxyModel(RtSortFilterProxyModel):
@@ -258,6 +258,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.table.setModel(self.proxy_model)
         self.delegate = StockItemDelegate(self.table)
         self.table.setItemDelegate(self.delegate)
+        self.table_state = TableStateWrapper(self.table, empty_title="暂无大宗交易数据", loading_title="抓取中...")
 
         # 大宗交易默认按时间排序 由近到远
         self.table.sortByColumn(self.model.headers.index("交易日期"), Qt.SortOrder.DescendingOrder)
@@ -280,7 +281,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
 
-        layout.addWidget(self.table, 1)
+        layout.addWidget(self.table_state, 1)
         
     def _on_days_changed(self, idx):
         days_map = {0: 10, 1: 20, 2: 40, 3: 60}
@@ -338,6 +339,8 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._is_loading = True
         self.btn_refresh.setEnabled(False)
         self.lbl_status.setText("正在抓取大宗交易数据...")
+        if hasattr(self, "table_state"):
+            self.table_state.show_loading("正在抓取大宗交易...", "请稍候")
         self.model.update_data([])
         # 清空上一轮的K线缓存，防止跨交易日窗口后内存只增不减
         _kline_cache.clear()
@@ -471,6 +474,8 @@ class ForeignBlockTradeTab(BaseStockTab):
             else:
                 self.lbl_status.setText("近期未发现匹配监控席位的大宗交易。")
             event_bus.sig_block_trade_updated.emit()
+            if hasattr(self, "table_state"):
+                self.table_state.show_empty("暂无大宗交易数据")
             return
             
         df = pd.DataFrame(data_list)
@@ -564,6 +569,8 @@ class ForeignBlockTradeTab(BaseStockTab):
             f"加载完成，发现 {len(df)} 笔监控席位大宗交易。"
             f"{_format_incomplete_message(timeout_chunks, failed_chunks)}"
         )
+        if hasattr(self, "table_state"):
+            self.table_state.show_table()
         
         # 强制应用当前的筛选状态
         self._filter_table_combo()
@@ -581,6 +588,8 @@ class ForeignBlockTradeTab(BaseStockTab):
         elif not msg.startswith(("抓取超时", "抓取失败")):
             msg = f"大宗交易抓取失败：{msg}"
         self.lbl_status.setText(msg)
+        if hasattr(self, "table_state"):
+            self.table_state.show_empty("暂无大宗交易数据")
     def _filter_table_combo(self):
         search_text = self.search_box.text().strip().lower()
         self.proxy_model.setFilterText(search_text)

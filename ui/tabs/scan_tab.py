@@ -10,7 +10,7 @@ from PyQt6.QtCore import Qt, QTimer
 # Removed unused imports from ui.theme and PyQt6
 
 from ui.models.table_models import StockTableModel, RtSortFilterProxyModel, StockItemDelegate
-from ui.components import VCPTableView
+from ui.components import VCPTableView, TableStateWrapper
 from ui.components.scan_dialogs import VCPScanRangeDialog, VCPScanSettingsDialog
 from ui.workers.scan_worker import ScanWorker
 from vcp.engine import VCPParams
@@ -113,14 +113,23 @@ class ScanTab(BaseStockTab):
             self.btn_scan_action.setText("终止VCP扫描")
             self.btn_scan_action.setEnabled(True)
             self.lbl_scan_status.setText("正在扫描...")
+            if hasattr(self, "table_state"):
+                self.table_state.show_loading("扫描中...", "正在计算候选信号")
         elif state == "stopping":
             self.btn_scan_action.setText("正在终止...")
             self.btn_scan_action.setEnabled(False)
             self.lbl_scan_status.setText("正在终止...")
+            if hasattr(self, "table_state"):
+                self.table_state.show_loading("正在终止...", "正在收尾")
         else:
             self.btn_scan_action.setText("执行VCP扫描")
             self.btn_scan_action.setEnabled(True)
             self.lbl_scan_status.setText("")
+            if hasattr(self, "table_state"):
+                if self.source_model.rowCount() > 0:
+                    self.table_state.show_table()
+                else:
+                    self.table_state.show_empty("暂无扫描结果")
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -164,6 +173,7 @@ class ScanTab(BaseStockTab):
         self.table_scan = VCPTableView(default_row_height=30)
         self.table_scan.setModel(self.proxy_model)
         self.table_scan.setItemDelegate(StockItemDelegate(self.table_scan))
+        self.table_state = TableStateWrapper(self.table_scan, empty_title="暂无扫描结果", loading_title="扫描中...")
 
         # 绑定双击事件:广播调取K线图信号，带上前后文以便K线图能够「上一只」「下一只」滑动
         self.table_scan.doubleClicked.connect(self._handle_show_kline)
@@ -202,7 +212,7 @@ class ScanTab(BaseStockTab):
         # 强制默认按第5列（触发日期）降序排序（由近到远），覆盖掉持久化中可能记录的其他排序列
         self.table_scan.sortByColumn(self.source_model.headers.index("触发日期"), Qt.SortOrder.DescendingOrder)
         
-        layout.addWidget(self.table_scan)
+        layout.addWidget(self.table_state)
 
     def _handle_show_kline(self, index=None):
         if index is None or not index.isValid(): return
@@ -333,6 +343,8 @@ class ScanTab(BaseStockTab):
         if not results:
             self._current_results = []
             self.source_model.update_data([])
+            if hasattr(self, "table_state"):
+                self.table_state.show_empty("暂无扫描结果")
             return
         import pandas as pd
         try:
@@ -400,6 +412,8 @@ class ScanTab(BaseStockTab):
                 formatted_list.append(formatted_row)
                 
             self.source_model.update_data(formatted_list)
+            if hasattr(self, "table_state"):
+                self.table_state.show_table()
         except Exception as e:
             event_bus.sig_system_log.emit("error", f"渲染表格错误: {e}")
 

@@ -2,7 +2,9 @@
 # 从 main_window_qt.py 拆分出来的独立工具类
 from functools import lru_cache
 
-from PyQt6.QtWidgets import QTableView, QAbstractItemView, QWidget, QToolTip
+from PyQt6.QtWidgets import (
+    QTableView, QAbstractItemView, QWidget, QToolTip, QVBoxLayout, QStackedLayout, QLabel
+)
 from PyQt6.QtCore import Qt, QTimer, QEvent, QPropertyAnimation, QEasingCurve, pyqtProperty
 from PyQt6.QtGui import QPainter, QColor, QBrush, QPalette
 
@@ -14,6 +16,7 @@ class VCPTableView(QTableView):
 
     def __init__(self, parent=None, default_row_height: int = None):
         super().__init__(parent)
+        self._base_row_height = None
         self._init_common_styles(default_row_height)
         from ui.theme import theme_manager
         theme_manager.sig_theme_changed.connect(self._on_theme_changed)
@@ -36,8 +39,25 @@ class VCPTableView(QTableView):
 
         self._apply_runtime_style()
 
-        if default_row_height is not None:
-            self.verticalHeader().setDefaultSectionSize(default_row_height)
+        if default_row_height is None:
+            default_row_height = self.verticalHeader().defaultSectionSize()
+        self._base_row_height = default_row_height
+        self.apply_density()
+
+    def apply_density(self, mode: str | None = None):
+        from core.app_config import app_config
+
+        if mode is None:
+            mode = app_config.table_density
+        if mode not in ("紧凑", "舒适"):
+            mode = "舒适"
+
+        base_height = self._base_row_height or self.verticalHeader().defaultSectionSize()
+        if mode == "紧凑":
+            row_height = max(20, base_height - 6)
+        else:
+            row_height = base_height
+        self.verticalHeader().setDefaultSectionSize(row_height)
 
     def _tooltip_qss(self) -> str:
         from ui.theme import theme_manager
@@ -136,6 +156,88 @@ class PulsingDot(QWidget):
         painter.drawEllipse(self.rect().center(), int(self._radius), int(self._radius))
 
         painter.end()
+
+
+class TableStateOverlay(QWidget):
+    """统一空/加载状态覆盖层"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._mode = "empty"
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self._dot = PulsingDot(parent=self)
+        self._dot.setVisible(False)
+
+        self._title = QLabel("")
+        self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self._subtitle = QLabel("")
+        self._subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        layout.addWidget(self._dot, 0, Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._title)
+        layout.addWidget(self._subtitle)
+
+        from ui.theme import theme_manager
+        theme_manager.sig_theme_changed.connect(lambda _name: self._apply_style())
+        self._apply_style()
+
+    def _apply_style(self):
+        from ui.theme import theme_manager
+        t = theme_manager.current_theme
+        self._title.setStyleSheet(
+            f"color: {t['TEXT_PRIMARY']}; font-size: 13px; font-weight: 600;"
+        )
+        self._subtitle.setStyleSheet(
+            f"color: {t['TEXT_SECONDARY']}; font-size: 11px;"
+        )
+        self._dot.set_color(t.get("COLOR_INFO", "#3B82F6"))
+
+    def set_state(self, mode: str, title: str, subtitle: str = ""):
+        self._mode = mode
+        self._title.setText(title)
+        self._subtitle.setText(subtitle or "")
+        self._dot.setVisible(mode == "loading")
+
+
+class TableStateWrapper(QWidget):
+    """表格 + 状态覆盖层容器"""
+
+    def __init__(self, table: QTableView, empty_title: str = "暂无数据", loading_title: str = "加载中..."):
+        super().__init__(table.parent())
+        self._table = table
+        self._empty_title = empty_title
+        self._loading_title = loading_title
+
+        self._overlay = TableStateOverlay(self)
+
+        stack = QStackedLayout(self)
+        stack.setContentsMargins(0, 0, 0, 0)
+        stack.addWidget(self._table)
+        stack.addWidget(self._overlay)
+        self._stack = stack
+
+        self.show_table()
+
+    @property
+    def table(self):
+        return self._table
+
+    def show_table(self):
+        self._stack.setCurrentWidget(self._table)
+
+    def show_empty(self, title: str | None = None, subtitle: str = ""):
+        self._overlay.set_state("empty", title or self._empty_title, subtitle)
+        self._stack.setCurrentWidget(self._overlay)
+
+    def show_loading(self, title: str | None = None, subtitle: str = ""):
+        self._overlay.set_state("loading", title or self._loading_title, subtitle)
+        self._stack.setCurrentWidget(self._overlay)
 
 
 class SearchFilter:

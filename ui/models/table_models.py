@@ -70,8 +70,23 @@ def _summarize_long_text(header: str, raw_val):
     return normalized if len(normalized) <= max_len else normalized[: max_len - 1] + "…"
 
 
+def _status_badge_color(text: str):
+    st = str(text or "").strip()
+    if not st or st in ("--", "-"):
+        return None
+    if "假突破" in st or "缩量" in st:
+        return _c("COLOR_ERROR")
+    if "临近" in st or "关注" in st:
+        return _c("COLOR_WARNING")
+    if "突破" in st:
+        return _c("COLOR_SUCCESS")
+    return None
+
+
 def _alignment_for_header(header: str):
     if header == SERIAL_HEADER:
+        return int(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+    if header in {"突破状态"}:
         return int(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
     return int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
@@ -285,6 +300,12 @@ class RtTableModel(QAbstractTableModel):
                     pass
                 
             return QColor(_c("TEXT_PRIMARY"))
+
+        elif role == Qt.ItemDataRole.UserRole + 2:
+            if key == "突破状态":
+                badge = _status_badge_color(raw_val)
+                if badge:
+                    return badge
 
         elif role == Qt.ItemDataRole.UserRole:
             # specifically for sorting numerical columns
