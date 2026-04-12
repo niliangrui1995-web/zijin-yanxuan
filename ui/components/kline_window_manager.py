@@ -98,6 +98,13 @@ class KLineWindowManager:
             current_idx=current_idx,
         )
         chart.show()
+        try:
+            chart.raise_()
+            chart.activateWindow()
+        except RuntimeError:
+            pass
+        except Exception as _e:
+            log.debug(f"[K线管理] 置前激活窗口失败: {_e}")
         self._charts.append(chart)
         return chart
 
