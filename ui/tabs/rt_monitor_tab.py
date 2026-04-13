@@ -59,7 +59,9 @@ class RtMonitorTab(BaseStockTab):
         return interval_map.get(interval_text, 30)
 
     def _format_status_text(self, current: str, next_step: str = "") -> str:
-        return current
+        if not next_step:
+            return self.format_status_summary(f"状态 {current}")
+        return self.format_status_summary(f"状态 {current}", f"下一步 {next_step}")
 
     def _set_status(self, current: str, next_step: str = ""):
         self.lbl_rt_info.setText(self._format_status_text(current, next_step))

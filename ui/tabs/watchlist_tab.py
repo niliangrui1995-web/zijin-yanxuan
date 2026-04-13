@@ -227,7 +227,7 @@ class WatchlistTab(BaseStockTab):
         rows = list(getattr(self.model, "row_data", []) or [])
         total = len(rows)
         if total == 0:
-            self.lbl_sp_status.setText("暂无标的")
+            self.lbl_sp_status.setText("关注池 | 池内0只")
             if hasattr(self, "table_state"):
                 self.table_state.show_empty("暂无关注池数据")
             return
@@ -243,7 +243,14 @@ class WatchlistTab(BaseStockTab):
         lhb_count = sum(_filled(r, "龙虎榜") for r in rows)
 
         self.lbl_sp_status.setText(
-            f"{total}只 | RPS {rps_count} | 催化 {catalyst_count} | 业绩 {earnings_count} | 大宗 {block_count} | 龙虎 {lhb_count}"
+            self.format_status_summary(
+                self._status_metric("池内", total, "只"),
+                self._status_metric("RPS就绪 ", rps_count),
+                self._status_metric("催化 ", catalyst_count),
+                self._status_metric("业绩 ", earnings_count),
+                self._status_metric("大宗 ", block_count),
+                self._status_metric("龙虎 ", lhb_count),
+            )
         )
         if hasattr(self, "table_state"):
             self.table_state.show_table()

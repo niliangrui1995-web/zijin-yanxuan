@@ -51,34 +51,36 @@ QWidget#leftPanel {{
 QTabWidget::pane {{
     background-color: {t['BG_CARD']};
     border: 1px solid {t['BORDER_DEFAULT']};
-    border-radius: 0;
+    border-radius: {radius['lg']}px;
     top: -1px;
 }}
 QTabBar {{
     background: transparent;
 }}
 QTabBar::tab {{
-    background: transparent;
+    background: {surface['soft']};
     color: {t['TEXT_MUTED']};
     padding: {control['tab_padding_y']}px {control['tab_padding_x']}px;
-    margin-right: 4px;
+    margin-right: 6px;
     font-size: {font['size_md']}px;
     font-weight: {font['weight_medium']};
-    border: none;
-    border-bottom: 2px solid transparent;
-    border-top-left-radius: {radius['md']}px;
-    border-top-right-radius: {radius['md']}px;
+    border: 1px solid {border['default']};
+    border-top: 2px solid transparent;
+    border-top-left-radius: {radius['lg']}px;
+    border-top-right-radius: {radius['lg']}px;
     min-width: 50px;
 }}
 QTabBar::tab:hover {{
     color: {t['TEXT_PRIMARY']};
     background: {t['TAB_HOVER_BG']};
+    border-color: {border['strong']};
 }}
 QTabBar::tab:selected {{
     color: {t['TEXT_PRIMARY']};
     font-weight: {font['weight_semibold']};
     background: {t['BRAND_SUBTLE']};
-    border-bottom: 2px solid {t['BRAND_PRIMARY']};
+    border-color: {border['accent']};
+    border-top: 2px solid {t['BRAND_PRIMARY']};
 }}
 
 /* ═══════════════════════════════════════════
@@ -111,6 +113,12 @@ QTableView:focus {{
     border: 1px solid {border['focus']};
     border-radius: {table['focus_radius']}px;
 }}
+QTableCornerButton::section {{
+    background-color: {surface['elevated']};
+    border: none;
+    border-bottom: 1px solid {border['default']};
+    border-right: 1px solid {border['subtle']};
+}}
 
 /* 表头 */
 QHeaderView::section {{
@@ -121,6 +129,7 @@ QHeaderView::section {{
     font-weight: {font['weight_semibold']};
     letter-spacing: 0.2px;
     padding: {table['header_padding_y']}px {table['header_padding_x']}px;
+    min-height: {table['header_min_height']}px;
     border: none;
     border-bottom: 1px solid {border['default']};
     border-right: 1px solid {border['subtle']};
@@ -335,12 +344,15 @@ QProgressBar::chunk {{
    QLabel / QLineEdit
    ═══════════════════════════════════════════ */
 QWidget#tabToolbar {{
-    background-color: {surface['toolbar']};
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 {surface['toolbar']}, stop:1 {surface['panel']});
     border-bottom: 1px solid {border['default']};
     min-height: {shell['toolbar_min_height']}px;
 }}
 QFrame#tabToolbarTitleWrap {{
-    background: transparent;
+    background-color: {surface['panel']};
+    border: 1px solid {border['subtle']};
+    border-radius: {shell['toolbar_card_radius']}px;
 }}
 QWidget#tabToolbarFilters, QWidget#tabToolbarActions {{
     background: transparent;
@@ -350,10 +362,19 @@ QLabel#tabStatusLabel {{
     color: {text['secondary']};
     border: 1px solid {border['subtle']};
     border-radius: {radius['pill']}px;
-    padding: 0 {shell['status_pill_padding_x']}px;
-    min-height: {shell['status_pill_min_height']}px;
+    padding: 0 {control['toolbar_chip_padding_x']}px;
+    min-height: {control['toolbar_chip_height']}px;
     font-size: {font['size_sm']}px;
     font-weight: {font['weight_semibold']};
+    font-family: {font['mono_family']};
+}}
+QLabel[toolbarRole="meta"] {{
+    color: {text['muted']};
+    font-size: {font['size_sm']}px;
+    padding: 0 2px;
+}}
+QLabel[toolbarRole="status"] {{
+    color: {text['secondary']};
 }}
 
 QLabel {{ color: {t['TEXT_SECONDARY']}; background: transparent; }}
@@ -404,6 +425,17 @@ QLabel#dialogFieldLabel {{
 }}
 QLabel#dialogHint {{
     color: {t['TEXT_MUTED']};
+    font-size: {font['size_sm']}px;
+}}
+QTextEdit#systemLogText {{
+    background-color: {surface['panel']};
+    color: {text['primary']};
+    border: none;
+    border-top: 1px solid {border['subtle']};
+    padding: 10px 12px;
+    selection-background-color: {table['selected_bg']};
+    selection-color: {text['bright']};
+    font-family: {font['mono_family']};
     font-size: {font['size_sm']}px;
 }}
 

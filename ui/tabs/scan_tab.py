@@ -108,23 +108,57 @@ class ScanTab(BaseStockTab):
         self._settings.setValue("user_presets", json.dumps(user_presets, ensure_ascii=False))
         self._settings.sync()
 
+    def _scan_param_segments(self) -> tuple[str, str, str]:
+        params = self._get_scan_params()
+        return (
+            f"RPS≥{params['rps']}",
+            f"振幅≤{int(params['amp'] * 100)}%",
+            f"均线≤{int(params['ma_bind'] * 100)}%",
+        )
+
+    def _latest_scan_trigger_date(self) -> str:
+        dates = [
+            str(item.get("触发日期", "")).strip()
+            for item in (self._current_results or [])
+            if isinstance(item, dict)
+        ]
+        dates = [item for item in dates if item]
+        return max(dates) if dates else ""
+
+    def _refresh_scan_status(self, primary: str | None = None):
+        if self._current_results:
+            latest_date = self._latest_scan_trigger_date()
+            self.lbl_scan_status.setText(
+                self.format_status_summary(
+                    primary or f"结果 {len(self._current_results)}只",
+                    self._status_metric("最近 ", latest_date),
+                )
+            )
+            return
+
+        self.lbl_scan_status.setText(
+            self.format_status_summary(primary or "待扫描", *self._scan_param_segments())
+        )
+
     def _set_scan_action_state(self, state: str):
         if state == "running":
             self.btn_scan_action.setText("终止VCP扫描")
             self.btn_scan_action.setEnabled(True)
-            self.lbl_scan_status.setText("正在扫描...")
+            self.lbl_scan_status.setText(
+                self.format_status_summary("正在扫描", *self._scan_param_segments())
+            )
             if hasattr(self, "table_state"):
                 self.table_state.show_loading("扫描中...", "正在计算候选信号")
         elif state == "stopping":
             self.btn_scan_action.setText("正在终止...")
             self.btn_scan_action.setEnabled(False)
-            self.lbl_scan_status.setText("正在终止...")
+            self.lbl_scan_status.setText(self.format_status_summary("正在终止", "保留已完成结果"))
             if hasattr(self, "table_state"):
                 self.table_state.show_loading("正在终止...", "正在收尾")
         else:
             self.btn_scan_action.setText("执行VCP扫描")
             self.btn_scan_action.setEnabled(True)
-            self.lbl_scan_status.setText("")
+            self._refresh_scan_status()
             if hasattr(self, "table_state"):
                 if self.source_model.rowCount() > 0:
                     self.table_state.show_table()
@@ -136,7 +170,7 @@ class ScanTab(BaseStockTab):
         layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
 
         # 统一工具条：标题 + 副标题 + 过滤区 + 主操作
-        self.lbl_scan_status = QLabel("")
+        self.lbl_scan_status = QLabel()
 
         self.scan_search = QLineEdit()
         self.scan_search.setPlaceholderText("筛选代码或名称...")
@@ -163,6 +197,7 @@ class ScanTab(BaseStockTab):
         action_widgets = [self.btn_scan_action, self.btn_scan_settings]
         toolbar = self.build_tab_toolbar("VCP 扫描", self.lbl_scan_status, filter_widgets, action_widgets)
         layout.addWidget(toolbar)
+        self._refresh_scan_status()
 
         # 表格控件 (MVC)
         self.columns = ["代码", "名称", "现价", "涨幅%", "市值", "触发日期", "评分", "RPS强度", "距突破", "突破状态", "区间振幅", "热门板块"]
@@ -276,6 +311,8 @@ class ScanTab(BaseStockTab):
         self._save_scan_params()
         self._save_user_presets(dlg.user_presets())
         show_toast("VCP 扫描参数已保存", "success", self)
+        if not (self.worker and self.worker.isRunning()):
+            self._refresh_scan_status()
 
     # ==========================
     # 核心引擎调度与任务生命周期
@@ -346,6 +383,7 @@ class ScanTab(BaseStockTab):
             self.source_model.update_data([])
             if hasattr(self, "table_state"):
                 self.table_state.show_empty("暂无扫描结果")
+            self._refresh_scan_status("本次无结果")
             return
         import pandas as pd
         try:
@@ -415,6 +453,7 @@ class ScanTab(BaseStockTab):
             self.source_model.update_data(formatted_list)
             if hasattr(self, "table_state"):
                 self.table_state.show_table()
+            self._refresh_scan_status()
         except Exception as e:
             event_bus.sig_system_log.emit("error", f"渲染表格错误: {e}")
 

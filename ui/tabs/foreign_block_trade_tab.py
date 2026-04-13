@@ -289,6 +289,9 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.days_to_fetch = days_map.get(idx, 10)
         self._load_block_trade_data()
 
+    def _set_fetch_status(self, primary: str, *segments: str):
+        self.lbl_status.setText(self.format_status_summary(primary, *segments))
+
     def _should_include_row(self, buyer, seller):
         buyer_str = str(buyer) if pd.notna(buyer) else ""
         seller_str = str(seller) if pd.notna(seller) else ""
@@ -335,11 +338,11 @@ class ForeignBlockTradeTab(BaseStockTab):
 
     def _load_block_trade_data(self):
         if self._is_loading or task_manager.is_active_task("foreign_block_trade"):
-            self.lbl_status.setText("大宗交易仍在抓取中，请稍候...")
+            self._set_fetch_status("大宗抓取中", "上一轮任务尚未结束")
             return
         self._is_loading = True
         self.btn_refresh.setEnabled(False)
-        self.lbl_status.setText("正在抓取大宗交易数据...")
+        self._set_fetch_status("正在抓取大宗交易", self._status_metric("窗口 ", self.days_to_fetch, "交易日"))
         if hasattr(self, "table_state"):
             self.table_state.show_loading("正在抓取大宗交易...", "请稍候")
         self.model.update_data([])
@@ -468,12 +471,13 @@ class ForeignBlockTradeTab(BaseStockTab):
         if not data_list:
             self._block_trade_codes = set()
             if timeout_chunks or failed_chunks:
-                self.lbl_status.setText(
-                    "大宗交易抓取不完整，未返回有效结果"
-                    f"{_format_incomplete_message(timeout_chunks, failed_chunks)}"
+                self._set_fetch_status(
+                    "大宗抓取未完成",
+                    "本轮无有效结果",
+                    _format_incomplete_message(timeout_chunks, failed_chunks).lstrip("；"),
                 )
             else:
-                self.lbl_status.setText("近期未发现匹配监控席位的大宗交易。")
+                self._set_fetch_status("近期无命中", self._status_metric("窗口 ", self.days_to_fetch, "交易日"))
             event_bus.sig_block_trade_updated.emit()
             if hasattr(self, "table_state"):
                 self.table_state.show_empty("暂无大宗交易数据")
@@ -566,9 +570,12 @@ class ForeignBlockTradeTab(BaseStockTab):
             row_data.append(row_dict)
 
         self.model.update_data(row_data)
-        self.lbl_status.setText(
-            f"加载完成，发现 {len(df)} 笔监控席位大宗交易。"
-            f"{_format_incomplete_message(timeout_chunks, failed_chunks)}"
+        self._set_fetch_status(
+            self._status_metric("命中 ", len(df), "笔"),
+            self._status_metric("日期 ", len(unique_dates)),
+            self._status_metric("席位 ", len(unique_branches)),
+            self._status_metric("窗口 ", self.days_to_fetch, "交易日"),
+            _format_incomplete_message(timeout_chunks, failed_chunks).lstrip("；"),
         )
         if hasattr(self, "table_state"):
             self.table_state.show_table()
@@ -588,7 +595,7 @@ class ForeignBlockTradeTab(BaseStockTab):
             msg = "大宗交易抓取失败，请稍后重试。"
         elif not msg.startswith(("抓取超时", "抓取失败")):
             msg = f"大宗交易抓取失败：{msg}"
-        self.lbl_status.setText(msg)
+        self._set_fetch_status(msg)
         if hasattr(self, "table_state"):
             self.table_state.show_empty("暂无大宗交易数据")
     def _filter_table_combo(self):

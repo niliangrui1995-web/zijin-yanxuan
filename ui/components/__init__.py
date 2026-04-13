@@ -24,6 +24,7 @@ class VCPTableView(QTableView):
         theme_manager.sig_theme_changed.connect(self._on_theme_changed)
 
     def _init_common_styles(self, default_row_height: int):
+        header = self.horizontalHeader()
         self.setShowGrid(False)
         self.setAlternatingRowColors(True)
         self.setWordWrap(False)
@@ -34,10 +35,15 @@ class VCPTableView(QTableView):
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.setSortingEnabled(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setCornerButtonEnabled(False)
         self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self._sorted_column = -1
-        self.horizontalHeader().sortIndicatorChanged.connect(self._on_sort_indicator_changed)
+        header.setHighlightSections(False)
+        header.setSectionsClickable(True)
+        header.setDefaultAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+        header.sortIndicatorChanged.connect(self._on_sort_indicator_changed)
         self._apply_screen_width_limit()
 
         self._apply_runtime_style()
@@ -89,6 +95,7 @@ class VCPTableView(QTableView):
         else:
             row_height = comfort_height
         self.verticalHeader().setDefaultSectionSize(row_height)
+        self.horizontalHeader().setMinimumHeight(tokens["table"]["header_min_height"])
 
     def _tooltip_qss(self) -> str:
         tokens = build_ui_tokens()

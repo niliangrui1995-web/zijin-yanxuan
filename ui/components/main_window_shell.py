@@ -97,24 +97,28 @@ def _standalone_tabbar_qss(theme: dict) -> str:
             border: none;
         }}
         QTabBar::tab {{
-            background: transparent;
+            background: {theme['BG_BUTTON']};
             color: {theme['TAB_TEXT']};
-            padding: {tokens['control']['tab_padding_y']}px {max(12, tokens['control']['tab_padding_x'] - 2)}px;
-            margin: 0 4px 0 0;
-            border: none;
+            padding: {tokens['control']['tab_padding_y']}px {max(12, tokens['control']['tab_padding_x'] - 1)}px;
+            margin: 0 6px 0 0;
+            border: 1px solid {theme['BORDER_DEFAULT']};
+            border-top: 2px solid transparent;
             font-size: {tokens['font']['size_sm']}px;
             font-weight: {tokens['font']['weight_semibold']};
-            border-radius: {tokens['radius']['md']}px;
+            min-height: {tokens['shell']['tabbar_height']}px;
+            border-radius: {tokens['radius']['lg']}px;
             font-family: {tokens['font']['family']};
         }}
         QTabBar::tab:selected {{
             color: {theme['TEXT_PRIMARY']};
             background: {theme['BRAND_SUBTLE']};
-            border-bottom: 2px solid {theme['BRAND_PRIMARY']};
+            border-color: {theme['BORDER_BRAND']};
+            border-top: 2px solid {theme['BRAND_PRIMARY']};
         }}
         QTabBar::tab:hover:!selected {{
             color: {theme['TAB_TEXT_HOVER']};
             background: {theme['TAB_HOVER_BG']};
+            border-color: {theme['BORDER_STRONG']};
         }}
     """
 
@@ -176,20 +180,23 @@ class MainWindowStatusBar(QFrame):
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(14, 0, 14, 0)
-        layout.setSpacing(12)
+        layout.setSpacing(10)
 
         self.status_dot = PulsingDot(color="#10B981")
         layout.addWidget(self.status_dot)
 
         self.lbl_status = QLabel("---")
+        self.lbl_status.setMinimumWidth(140)
         layout.addWidget(self.lbl_status)
 
         self.lbl_code_count = QLabel("标的池: 0")
+        self.lbl_code_count.setMinimumWidth(96)
         layout.addWidget(self.lbl_code_count)
 
         layout.addStretch()
 
         self.lbl_clock = QLabel()
+        self.lbl_clock.setMinimumWidth(76)
         layout.addWidget(self.lbl_clock)
 
         self.lbl_version = QLabel(version_text)
@@ -340,6 +347,8 @@ def inject_standalone_tabbar(window) -> QTabBar:
     standalone_bar = QTabBar()
     standalone_bar.setExpanding(False)
     standalone_bar.setDrawBase(False)
+    standalone_bar.setUsesScrollButtons(True)
+    standalone_bar.setElideMode(Qt.TextElideMode.ElideNone)
     standalone_bar.setStyleSheet(_standalone_tabbar_qss(theme_manager.current_theme))
 
     for i in range(window.tabs.count()):

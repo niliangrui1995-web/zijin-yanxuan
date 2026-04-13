@@ -88,6 +88,9 @@ class LhbTab(BaseStockTab):
             return "info", f"{prefix} 无可用数据"
         return "info", f"{prefix} 完成 | {count}条"
 
+    def _set_pool_status(self, primary: str, *segments: str):
+        self.lbl_status.setText(self.format_status_summary(primary, *segments))
+
     # ================================================================
     # UI 构建
     # ================================================================
@@ -158,10 +161,10 @@ class LhbTab(BaseStockTab):
         if not trade_dates:
             self._calendar_retry_count += 1
             if self._calendar_retry_count <= 3:
-                self.lbl_status.setText(f"交易日历尚未就绪，第{self._calendar_retry_count}次重试...")
+                self._set_pool_status("交易日历未就绪", f"第{self._calendar_retry_count}次重试")
                 QTimer.singleShot(5000, self._load_and_display_pool)
             else:
-                self.lbl_status.setText("交易日历加载失败，请点击“刷新关注池”手动重试")
+                self._set_pool_status("交易日历加载失败", "请手动刷新")
             return
         self._calendar_retry_count = 0
 
@@ -178,7 +181,7 @@ class LhbTab(BaseStockTab):
         if missing:
             self._start_backfill(missing)
         elif not pool:
-            self.lbl_status.setText("暂无数据，请点击“刷新关注池”抓取")
+            self._set_pool_status("暂无龙虎榜数据", "点击“刷新关注池”开始抓取")
             if hasattr(self, "table_state"):
                 self.table_state.show_empty("暂无龙虎榜数据")
 
@@ -226,8 +229,10 @@ class LhbTab(BaseStockTab):
         self.model.update_data(row_data)
 
         cached_days = len(self.pool_manager.get_cached_dates())
-        self.lbl_status.setText(
-            f"{POOL_WINDOW}日关注池：{len(pool)} 只标的入池（已覆盖 {cached_days} 个交易日）"
+        self._set_pool_status(
+            self._status_metric("入池 ", len(pool), "只"),
+            self._status_metric("覆盖 ", cached_days, "个交易日"),
+            self._status_metric("窗口 ", POOL_WINDOW, "日"),
         )
         if hasattr(self, "table_state"):
             if row_data:
@@ -263,7 +268,7 @@ class LhbTab(BaseStockTab):
         # 从远到近排列，先拉最老的（这样最后拉到最新的，latest record 最准）
         missing_sorted = sorted(missing_dates)
         total = len(missing_sorted)
-        self.lbl_status.setText(f"正在抓取 {total} 天龙虎榜数据...")
+        self._set_pool_status("正在回填龙虎榜", self._status_metric("天数 ", total), f"{missing_sorted[0]}→{missing_sorted[-1]}")
         _safe_log_emit(
             "info",
             f"[龙虎榜池] 开始回填 {total} 个交易日 | {missing_sorted[0]} -> {missing_sorted[-1]}",
@@ -299,7 +304,7 @@ class LhbTab(BaseStockTab):
             self.btn_refresh.setEnabled(True)
 
             if not results:
-                self.lbl_status.setText("抓取失败，请稍后重试")
+                self._set_pool_status("抓取失败", "请稍后重试")
                 event_bus.sig_system_log.emit("error", self._ensure_log_line("[龙虎榜池] 全部交易日抓取失败"))
                 return
 
@@ -320,7 +325,7 @@ class LhbTab(BaseStockTab):
         def _on_backfill_error(error_message: str):
             self._backfill_in_progress = False
             self.btn_refresh.setEnabled(True)
-            self.lbl_status.setText(f"抓取异常: {error_message}")
+            self._set_pool_status("抓取异常", error_message)
             event_bus.sig_system_log.emit("error", self._ensure_log_line(f"[龙虎榜池] 抓取任务异常: {error_message}"))
 
         task_manager.run_in_background(
@@ -402,7 +407,7 @@ class LhbTab(BaseStockTab):
     def _fetch_single_day(self, date_str: str):
         """抓取单天数据并刷新池"""
         self.btn_refresh.setEnabled(False)
-        self.lbl_status.setText(f"正在抓取 {date_str} 龙虎榜数据...")
+        self._set_pool_status("正在抓取单日龙虎榜", date_str)
 
         def _bg_fetch():
             from ui.workers.lhb_worker import fetch_lhb_pool_for_date
@@ -436,7 +441,7 @@ class LhbTab(BaseStockTab):
 
         def _on_error(error_message: str):
             self.btn_refresh.setEnabled(True)
-            self.lbl_status.setText(f"抓取 {date_str} 失败: {error_message}")
+            self._set_pool_status(f"抓取 {date_str} 失败", error_message)
             event_bus.sig_system_log.emit("error", self._ensure_log_line(f"[龙虎榜池] 自动抓取失败: {error_message}"))
 
         task_manager.run_in_background(

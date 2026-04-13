@@ -122,8 +122,10 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "input_height": 30 if compact else 32,
         "toolbar_button_height": 38 if compact else 40,
         "button_padding_x": 12 if compact else 14,
-        "tab_padding_y": 7 if compact else 8,
-        "tab_padding_x": 12 if compact else 16,
+        "toolbar_chip_height": 22 if compact else 24,
+        "toolbar_chip_padding_x": 10 if compact else 12,
+        "tab_padding_y": 3 if compact else 4,
+        "tab_padding_x": 10 if compact else 13,
         "segment_height": 26 if compact else 28,
     }
 
@@ -135,9 +137,11 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "header_padding_y": 5 if compact else 6,
         "header_padding_x": 9 if compact else 10,
         "header_font_size": 11 if compact else 12,
+        "header_min_height": 30 if compact else 32,
         "focus_radius": radius["xs"],
         "selected_bg": theme["SELECTION_BG"],
         "selected_hover_bg": theme["SELECTION_HOVER_BG"],
+        "selected_rail_width": 3 if compact else 4,
         "sorted_column_bg": _hex_to_rgba(theme["COLOR_INFO"], 0.08 if is_dark else 0.06),
         "sorted_header_bg": _hex_to_rgba(theme["COLOR_INFO"], 0.14 if is_dark else 0.08),
         "status_pill_radius": radius["sm"],
@@ -151,7 +155,13 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "status_height": 32 if compact else 34,
         "status_pill_min_height": 24 if compact else 26,
         "status_pill_padding_x": 10 if compact else 12,
-        "toolbar_min_height": 54 if compact else 58,
+        "toolbar_min_height": 48 if compact else 52,
+        "toolbar_padding_x": 12 if compact else 14,
+        "toolbar_padding_y": 6 if compact else 7,
+        "toolbar_section_gap": 10 if compact else 12,
+        "toolbar_group_gap": 6 if compact else 8,
+        "toolbar_card_radius": radius["lg"],
+        "tabbar_height": 26 if compact else 28,
     }
 
     surface = {

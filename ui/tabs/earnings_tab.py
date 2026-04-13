@@ -114,6 +114,9 @@ class EarningsTab(BaseStockTab):
             
         self.bind_header_persistence(self.table, "earnings_header_state_v5")
 
+    def _set_window_status(self, primary: str, *segments: str):
+        self.lbl_status.setText(self.format_status_summary(primary, *segments))
+
     def _on_manual_fetch(self):
         start_str = self.ent_start_date.text().strip()
         end_str = self.ent_end_date.text().strip()
@@ -133,10 +136,10 @@ class EarningsTab(BaseStockTab):
             date_list = [(start_dt + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(delta_days + 1)]
         except (ValueError, OverflowError) as _e:
             log.debug(f"[业绩监控] 日期解析失败: {_e}")
-            self.lbl_status.setText("日期格式错误，请使用 YYYY-MM-DD，例如 2024-03-01")
+            self._set_window_status("日期格式错误", "请使用 YYYY-MM-DD")
             return
             
-        self.lbl_status.setText(f"正在拉取 {start_str} ~ {end_str} ({len(date_list)}天)...")
+        self._set_window_status("正在拉取业绩数据", f"{start_str}→{end_str}", self._status_metric("区间 ", len(date_list), "天"))
         if hasattr(self, "table_state"):
             self.table_state.show_loading("正在拉取业绩数据...", "请稍候")
         log.info(f"[业绩监控] 手动扫描: {start_str} ~ {end_str}")
@@ -219,26 +222,30 @@ class EarningsTab(BaseStockTab):
             rows_changed = self._apply_display_trade_window(force_refresh=False)
             if mode == "warm_cache":
                 if self.row_data:
-                    self.lbl_status.setText(
-                        f"已恢复近 {EARNINGS_DISPLAY_TRADE_DAYS} 个交易日缓存，共 {len(self.row_data)} 只高增股"
+                    self._set_window_status(
+                        "缓存恢复完成",
+                        self._status_metric("展示 ", len(self.row_data), "只"),
+                        self._status_metric("窗口 ", EARNINGS_DISPLAY_TRADE_DAYS, "交易日"),
                     )
                 else:
-                    self.lbl_status.setText("已恢复缓存，但当前没有可展示的高增股")
+                    self._set_window_status("缓存恢复完成", "当前无可展示数据")
             else:
                 if self.row_data:
-                    self.lbl_status.setText(
-                        f"抓取完成，本轮无新增高增股，当前展示近 {EARNINGS_DISPLAY_TRADE_DAYS} 个交易日数据"
+                    self._set_window_status(
+                        "本轮无新增高增股",
+                        self._status_metric("展示 ", len(self.row_data), "只"),
+                        self._status_metric("窗口 ", EARNINGS_DISPLAY_TRADE_DAYS, "交易日"),
                     )
                 else:
-                    self.lbl_status.setText("抓取完成，本轮无新增高增股")
+                    self._set_window_status("本轮无新增高增股")
             if rows_changed:
                 event_bus.sig_earnings_updated.emit()
             return
 
         if mode == "warm_cache":
-            self.lbl_status.setText(f"已恢复缓存 {len(df)} 只高增股")
+            self._set_window_status("缓存恢复中", self._status_metric("新增 ", len(df), "只"))
         else:
-            self.lbl_status.setText(f"本次扫描新增 {len(df)} 只高增股")
+            self._set_window_status("本次扫描命中", self._status_metric("新增 ", len(df), "只"))
         
         for _, row in df.iterrows():
             code = str(row.get('股票代码', '')).zfill(6)
@@ -303,6 +310,11 @@ class EarningsTab(BaseStockTab):
                 
         # 只展示近 21 个交易日窗口，避免自然日累计导致表格越来越重。
         self._apply_display_trade_window(force_refresh=True)
+        self._set_window_status(
+            "业绩异动已刷新",
+            self._status_metric("展示 ", len(self.row_data), "只"),
+            self._status_metric("窗口 ", EARNINGS_DISPLAY_TRADE_DAYS, "交易日"),
+        )
         
         # 通知关注池：业绩数据已就绪，重新拉取"业绩异动"列
         # 旧事件枚举链路已废弃，这里走专属刷新通道。

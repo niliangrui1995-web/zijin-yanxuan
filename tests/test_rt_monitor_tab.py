@@ -34,5 +34,6 @@ def test_rt_monitor_last_columns_are_interactive(monkeypatch):
         assert captured["settings_key"] == "header_state_rt_v5"
         assert tab.table_rt.columnWidth(tab.source_model.headers.index("热点板块")) >= 220
         assert tab.btn_rt_start.text() == "启动监控"
+        assert tab._format_status_text("已启动", "拉取报价") == "状态 已启动 | 下一步 拉取报价"
     finally:
         tab.deleteLater()

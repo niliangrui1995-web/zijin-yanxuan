@@ -1,11 +1,12 @@
 import sys
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTextEdit,
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTextEdit, QFrame,
     QComboBox, QLineEdit
 )
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QTextCursor
 from core.event_bus import event_bus
+from ui.theme_tokens import build_ui_tokens
 
 class LogTab(QWidget):
     """独立的系统运行日志组件 - 负责渲染日志流并接住 stdout/stderr"""
@@ -20,44 +21,78 @@ class LogTab(QWidget):
         event_bus.sig_system_log.connect(self._on_log_msg, type=Qt.ConnectionType.QueuedConnection)
 
     def _init_ui(self):
+        tokens = build_ui_tokens()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
-        
+
         # 1. 优先初始化日志文本区 (被下方按钮事件依赖)
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
         self.log_text.setObjectName("systemLogText")
+        self.log_text.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
         # 控制文档块数量，避免长时间运行后日志文本过大拖慢 UI。
         self.log_text.document().setMaximumBlockCount(2500)
-        
+
         # 2. 工具栏
         toolbar = QWidget()
+        toolbar.setObjectName("tabToolbar")
+        toolbar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         tb_layout = QHBoxLayout(toolbar)
-        tb_layout.setContentsMargins(8, 6, 8, 6)
-        
+        tb_layout.setContentsMargins(
+            tokens["shell"]["toolbar_padding_x"],
+            tokens["shell"]["toolbar_padding_y"],
+            tokens["shell"]["toolbar_padding_x"],
+            tokens["shell"]["toolbar_padding_y"],
+        )
+        tb_layout.setSpacing(tokens["shell"]["toolbar_section_gap"])
+
+        title_wrap = QFrame()
+        title_wrap.setObjectName("tabToolbarTitleWrap")
+        title_wrap.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        title_layout = QVBoxLayout(title_wrap)
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setSpacing(2)
+
         lbl = QLabel("系统运行日志")
         lbl.setObjectName("tabTitle")
-        tb_layout.addWidget(lbl)
+        title_layout.addWidget(lbl)
+
+        self.lbl_status = QLabel("日志 0条")
+        self.lbl_status.setObjectName("tabStatusLabel")
+        self.lbl_status.setProperty("toolbarRole", "status")
+        title_layout.addWidget(self.lbl_status)
+
+        tb_layout.addWidget(title_wrap)
         tb_layout.addStretch()
-        
-        btn_clear_log = QPushButton("清空")
-        btn_clear_log.setProperty("class", "ctaSecondary")
-        btn_clear_log.clicked.connect(self._clear_logs)
-        tb_layout.addWidget(btn_clear_log)
+
+        action_wrap = QWidget()
+        action_wrap.setObjectName("tabToolbarActions")
+        action_layout = QHBoxLayout(action_wrap)
+        action_layout.setContentsMargins(0, 0, 0, 0)
+        action_layout.setSpacing(6)
+
+        self.btn_clear_log = QPushButton("清空")
+        self.btn_clear_log.setProperty("class", "ctaSecondary")
+        self.btn_clear_log.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_clear_log.setFixedWidth(58)
+        self.btn_clear_log.clicked.connect(self._clear_logs)
+        action_layout.addWidget(self.btn_clear_log)
 
         # 日志搜索框
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("搜索日志...")
         self.search_box.setFixedWidth(160)
         self.search_box.textChanged.connect(self._apply_log_filter)
-        tb_layout.addWidget(self.search_box)
+        action_layout.addWidget(self.search_box)
 
         # 日志级别过滤下拉框
         self.level_filter = QComboBox()
         self.level_filter.addItems(["全部", "仅 Error", "仅 Warning"])
         self.level_filter.setFixedWidth(120)
         self.level_filter.currentIndexChanged.connect(self._apply_log_filter)
-        tb_layout.addWidget(self.level_filter)
+        action_layout.addWidget(self.level_filter)
+
+        tb_layout.addWidget(action_wrap)
 
         layout.addWidget(toolbar)
         
@@ -69,11 +104,41 @@ class LogTab(QWidget):
         if self._refresh_from_history_pending:
             self._refresh_from_history_pending = False
             self._apply_log_filter()
+        else:
+            self._refresh_status_summary()
 
     def _clear_logs(self):
         self._log_buffer.clear()
         self._log_history.clear()
         self.log_text.clear()
+        self._refresh_status_summary(0)
+
+    def _refresh_status_summary(self, visible_count: int | None = None):
+        total = len(getattr(self, "_log_history", []) or [])
+        if visible_count is None:
+            visible_count = self._count_visible_logs()
+
+        filter_text = self.level_filter.currentText() if hasattr(self, "level_filter") else "全部"
+        search_text = self.search_box.text().strip() if hasattr(self, "search_box") else ""
+        primary = f"日志 {visible_count}条" if visible_count == total else f"可见 {visible_count}/{total}条"
+        segments = [f"级别 {filter_text}"]
+        if search_text:
+            segments.append(f"检索 {search_text[:18]}")
+        self.lbl_status.setText(" | ".join([primary, *segments]))
+
+    def _count_visible_logs(self) -> int:
+        filter_idx = self.level_filter.currentIndex() if hasattr(self, "level_filter") else 0
+        search_text = self.search_box.text().strip().lower() if hasattr(self, "search_box") else ""
+        visible_count = 0
+        for level, text in self._log_history:
+            if filter_idx == 1 and level != 'error':
+                continue
+            if filter_idx == 2 and level not in ('warn', 'warning'):
+                continue
+            if search_text and search_text not in str(text).lower():
+                continue
+            visible_count += 1
+        return visible_count
 
     def _setup_log_redirect(self):
         """将当前进程的 stdout/stderr 重置，统一往 event_bus 发送"""
@@ -194,6 +259,7 @@ class LogTab(QWidget):
         self.log_text.setPlainText(''.join(filtered_texts).rstrip())
         sb = self.log_text.verticalScrollBar()
         sb.setValue(sb.maximum())
+        self._refresh_status_summary(len(filtered_texts))
 
     def _flush_log_buffer(self):
         if not self._log_buffer:
@@ -229,3 +295,4 @@ class LogTab(QWidget):
             # 自动滚动到底端
             sb = self.log_text.verticalScrollBar()
             sb.setValue(sb.maximum())
+        self._refresh_status_summary()

@@ -19,6 +19,7 @@ from PyQt6.QtCore import QCoreApplication, Qt
 from PyQt6.QtWidgets import QWidget, QLabel, QHBoxLayout, QVBoxLayout, QFrame, QToolButton
 
 from core.event_bus import event_bus
+from ui.theme_tokens import build_ui_tokens
 
 
 class BaseStockTab(QWidget):
@@ -44,8 +45,30 @@ class BaseStockTab(QWidget):
         if widget is None:
             return
         widget.setProperty("inToolbar", True)
+        if isinstance(widget, QLabel) and widget.property("toolbarRole") is None:
+            widget.setProperty("toolbarRole", "meta")
         if isinstance(widget, QToolButton) and widget.property("class") is None:
             widget.setProperty("class", "toolbarGhost")
+
+    @staticmethod
+    def _status_metric(label: str, value, suffix: str = "") -> str:
+        if value is None:
+            return ""
+        text = str(value).strip()
+        if not text:
+            return ""
+        return f"{label}{text}{suffix}"
+
+    @classmethod
+    def format_status_summary(cls, primary: str, *segments: str) -> str:
+        parts = []
+        if primary:
+            parts.append(str(primary).strip())
+        for segment in segments:
+            text = str(segment or "").strip()
+            if text:
+                parts.append(text)
+        return " | ".join(parts)
 
     # ================================================================
     # UI 结构辅助：统一工具条 + 摘要条 + 列预设
@@ -54,17 +77,29 @@ class BaseStockTab(QWidget):
                           filter_widgets: list[QWidget] | None,
                           action_widgets: list[QWidget] | None) -> QWidget:
         """统一工具条结构：标题 + 副标题 + 过滤区 + 主操作"""
+        tokens = build_ui_tokens()
         toolbar = QWidget()
         toolbar.setObjectName("tabToolbar")
         toolbar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         tb_layout = QHBoxLayout(toolbar)
-        tb_layout.setContentsMargins(8, 6, 8, 6)
-        tb_layout.setSpacing(8)
+        tb_layout.setContentsMargins(
+            tokens["shell"]["toolbar_padding_x"],
+            tokens["shell"]["toolbar_padding_y"],
+            tokens["shell"]["toolbar_padding_x"],
+            tokens["shell"]["toolbar_padding_y"],
+        )
+        tb_layout.setSpacing(tokens["shell"]["toolbar_section_gap"])
 
         left_wrap = QFrame()
         left_wrap.setObjectName("tabToolbarTitleWrap")
+        left_wrap.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         left_layout = QVBoxLayout(left_wrap)
-        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setContentsMargins(
+            tokens["shell"]["toolbar_padding_x"],
+            max(3, tokens["shell"]["toolbar_padding_y"] - 3),
+            tokens["shell"]["toolbar_padding_x"],
+            max(3, tokens["shell"]["toolbar_padding_y"] - 3),
+        )
         left_layout.setSpacing(2)
 
         lbl_title = QLabel(title)
@@ -73,6 +108,8 @@ class BaseStockTab(QWidget):
 
         if subtitle_label is not None:
             subtitle_label.setObjectName("tabStatusLabel")
+            subtitle_label.setProperty("toolbarRole", "status")
+            subtitle_label.setWordWrap(False)
             left_layout.addWidget(subtitle_label)
 
         tb_layout.addWidget(left_wrap, 0, Qt.AlignmentFlag.AlignLeft)
@@ -83,7 +120,7 @@ class BaseStockTab(QWidget):
             filter_wrap.setObjectName("tabToolbarFilters")
             filter_layout = QHBoxLayout(filter_wrap)
             filter_layout.setContentsMargins(0, 0, 0, 0)
-            filter_layout.setSpacing(6)
+            filter_layout.setSpacing(tokens["shell"]["toolbar_group_gap"])
             for w in filter_widgets:
                 self._prepare_toolbar_widget(w)
                 filter_layout.addWidget(w)
@@ -94,7 +131,7 @@ class BaseStockTab(QWidget):
             action_wrap.setObjectName("tabToolbarActions")
             action_layout = QHBoxLayout(action_wrap)
             action_layout.setContentsMargins(0, 0, 0, 0)
-            action_layout.setSpacing(6)
+            action_layout.setSpacing(tokens["shell"]["toolbar_group_gap"])
             for w in action_widgets:
                 self._prepare_toolbar_widget(w)
                 action_layout.addWidget(w)
