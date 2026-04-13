@@ -17,6 +17,29 @@ from core.task_manager import task_manager
 log = get_logger(__name__)
 ASIAN_DATA_SYNC_TIMEOUT_SEC = 120
 
+
+def _normalize_log_detail(text: str, limit: int = 120) -> str:
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    compact = " | ".join(part.strip() for part in raw.splitlines() if part.strip()) or raw
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 1] + "…"
+
+
+def _format_subprocess_failure(exc: Exception) -> tuple[str, str]:
+    if isinstance(exc, subprocess.CalledProcessError):
+        raw_detail = str(exc.stderr or "").strip() or str(exc.stdout or "").strip()
+        summary = f"退出码 {exc.returncode}"
+        summary_detail = _normalize_log_detail(raw_detail)
+        if summary_detail:
+            summary = f"{summary}：{summary_detail}"
+        return summary, raw_detail
+
+    message = str(exc or "").strip() or exc.__class__.__name__
+    return message, message
+
 class StartupLoader:
     """接管主窗口的加载流程"""
     def __init__(self, main_window):
@@ -127,6 +150,11 @@ class StartupLoader:
                     subprocess.run(
                         [sys.executable, script_path, "--output-dir", output_dir],
                         check=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        encoding="utf-8",
+                        errors="ignore",
                         creationflags=creationflags,
                         timeout=ASIAN_DATA_SYNC_TIMEOUT_SEC,
                     )
@@ -137,7 +165,10 @@ class StartupLoader:
                         f"[启动] 亚洲市场后台静默更新超时({ASIAN_DATA_SYNC_TIMEOUT_SEC}s)，已跳过本次同步"
                     )
                 except Exception as e:
-                    log.error(f"[启动] 亚洲市场后台静默更新失败: {e}")
+                    summary, raw_detail = _format_subprocess_failure(e)
+                    log.warning(f"[启动] 亚洲市场静默同步失败，已跳过本次更新（{summary}）")
+                    if raw_detail:
+                        log.debug(f"[启动] 亚洲市场静默同步原始输出: {raw_detail}")
 
         task_manager.run_in_background(_check_asian_data_bg, task_id="asian_data_sync_bg")
 

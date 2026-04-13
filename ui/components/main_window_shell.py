@@ -91,6 +91,8 @@ def _system_button_style(theme: dict, text_color: str, hover_bg: str) -> str:
 
 def _standalone_tabbar_qss(theme: dict) -> str:
     tokens = build_ui_tokens(theme)
+    tab_gap = 1
+    tab_padding_x = max(8, tokens["control"]["tab_padding_x"] - 1)
     return f"""
         QTabBar {{
             background: transparent;
@@ -99,8 +101,8 @@ def _standalone_tabbar_qss(theme: dict) -> str:
         QTabBar::tab {{
             background: {theme['BG_BUTTON']};
             color: {theme['TAB_TEXT']};
-            padding: {tokens['control']['tab_padding_y']}px {max(12, tokens['control']['tab_padding_x'] - 1)}px;
-            margin: 0 6px 0 0;
+            padding: {tokens['control']['tab_padding_y']}px {tab_padding_x}px;
+            margin: 0 {tab_gap}px 0 0;
             border: 1px solid {theme['BORDER_DEFAULT']};
             border-top: 2px solid transparent;
             font-size: {tokens['font']['size_sm']}px;
@@ -113,7 +115,7 @@ def _standalone_tabbar_qss(theme: dict) -> str:
             color: {theme['TEXT_PRIMARY']};
             background: {theme['BRAND_SUBTLE']};
             border-color: {theme['BORDER_BRAND']};
-            border-top: 2px solid {theme['BRAND_PRIMARY']};
+            border-top: 2px solid transparent;
         }}
         QTabBar::tab:hover:!selected {{
             color: {theme['TAB_TEXT_HOVER']};

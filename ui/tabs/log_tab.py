@@ -1,7 +1,7 @@
 import sys
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTextEdit, QFrame,
-    QComboBox, QLineEdit
+    QComboBox, QLineEdit, QSizePolicy
 )
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QTextCursor
@@ -67,32 +67,34 @@ class LogTab(QWidget):
 
         action_wrap = QWidget()
         action_wrap.setObjectName("tabToolbarActions")
+        action_wrap.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         action_layout = QHBoxLayout(action_wrap)
         action_layout.setContentsMargins(0, 0, 0, 0)
-        action_layout.setSpacing(6)
+        action_layout.setSpacing(4)
+        action_layout.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         self.btn_clear_log = QPushButton("清空")
         self.btn_clear_log.setProperty("class", "ctaSecondary")
         self.btn_clear_log.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_clear_log.setFixedWidth(58)
+        self.btn_clear_log.setFixedWidth(54)
         self.btn_clear_log.clicked.connect(self._clear_logs)
         action_layout.addWidget(self.btn_clear_log)
 
         # 日志搜索框
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("搜索日志...")
-        self.search_box.setFixedWidth(160)
+        self.search_box.setFixedWidth(132)
         self.search_box.textChanged.connect(self._apply_log_filter)
         action_layout.addWidget(self.search_box)
 
         # 日志级别过滤下拉框
         self.level_filter = QComboBox()
         self.level_filter.addItems(["全部", "仅 Error", "仅 Warning"])
-        self.level_filter.setFixedWidth(120)
+        self.level_filter.setFixedWidth(96)
         self.level_filter.currentIndexChanged.connect(self._apply_log_filter)
         action_layout.addWidget(self.level_filter)
 
-        tb_layout.addWidget(action_wrap)
+        tb_layout.addWidget(action_wrap, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         layout.addWidget(toolbar)
         

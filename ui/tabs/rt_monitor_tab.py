@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
 import re
 from ui.components.toast_widget import show_toast
 from PyQt6.QtCore import Qt, pyqtSlot, QTimer
-from ui.models.table_models import RtTableModel, RtSortFilterProxyModel
+from ui.models.table_models import RtTableModel, RtSortFilterProxyModel, StockItemDelegate
 from ui.workers.rt_scan_worker import RtScanWorker
 from core.event_bus import event_bus
 from core.logger import get_logger
@@ -232,6 +232,8 @@ class RtMonitorTab(BaseStockTab):
         
         self.table_rt = VCPTableView(default_row_height=30)
         self.table_rt.setModel(self.proxy_model)
+        self.delegate = StockItemDelegate(self.table_rt)
+        self.table_rt.setItemDelegate(self.delegate)
         self.table_state = TableStateWrapper(self.table_rt, empty_title="暂无监控记录", loading_title="加载中...")
         
         header = self.table_rt.horizontalHeader()

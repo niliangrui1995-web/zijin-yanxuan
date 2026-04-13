@@ -84,6 +84,10 @@ def test_main_window_shell_builders_wire_titlebar_menu_and_tabs():
         assert window._theme_menu.title().startswith("界面主题：")
         assert window.last_density is not None
         assert window.last_density[1] is False
+        tabbar_style = window._standalone_tabbar.styleSheet()
+        assert "margin: 0 1px 0 0;" in tabbar_style
+        assert "QTabBar::tab:selected" in tabbar_style
+        assert "border-top: 2px solid transparent;" in tabbar_style
 
         window.tabs.setCurrentIndex(1)
         assert window._standalone_tabbar.currentIndex() == 1

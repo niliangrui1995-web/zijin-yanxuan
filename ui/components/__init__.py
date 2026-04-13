@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QApplication, QTableView, QAbstractItemView, QWidget, QToolTip, QVBoxLayout, QStackedLayout, QLabel, QFrame
 )
 from PyQt6.QtCore import Qt, QSize, QTimer, QEvent, QPropertyAnimation, QEasingCurve, pyqtProperty
-from PyQt6.QtGui import QPainter, QColor, QBrush, QPalette
+from PyQt6.QtGui import QPainter, QColor, QBrush, QPalette, QFont, QFontMetrics
 
 from ui.theme_tokens import build_ui_tokens, get_state_tone
 
@@ -106,8 +106,10 @@ class VCPTableView(QTableView):
             f" background-color: {t['BG_ELEVATED']};"
             f" color: {t['TEXT_PRIMARY']};"
             f" border: 1px solid {t['BORDER_DEFAULT']};"
-            f" border-radius: {tokens['radius']['md']}px;"
+            f" border-radius: 0px;"
             f" padding: {tokens['space']['sm']}px {tokens['space']['md']}px;"
+            f" font-size: {tokens['font']['size_lg']}px;"
+            f" font-family: {tokens['font']['family']};"
             " margin: 0px;"
             " }"
         )
@@ -126,12 +128,47 @@ class VCPTableView(QTableView):
         self._apply_screen_width_limit()
         super().showEvent(event)
 
+    def _display_font_for_index(self, index):
+        font = index.data(Qt.ItemDataRole.FontRole)
+        if isinstance(font, QFont):
+            return font
+        return self.font()
+
+    def _should_show_tooltip_for_index(self, index) -> bool:
+        if not index.isValid():
+            return False
+
+        tooltip_text = index.data(Qt.ItemDataRole.ToolTipRole)
+        if not tooltip_text:
+            return False
+
+        display_text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+        if not display_text:
+            return False
+
+        fm = QFontMetrics(self._display_font_for_index(index))
+        available_width = max(0, self.columnWidth(index.column()) - 16)
+        if available_width <= 0:
+            return False
+
+        pill_color = index.data(Qt.ItemDataRole.UserRole + 2)
+        if pill_color:
+            required_width = fm.horizontalAdvance(display_text) + 12
+            return required_width > available_width
+
+        elided_text = fm.elidedText(
+            display_text,
+            Qt.TextElideMode.ElideRight,
+            max(0, available_width - 2),
+        )
+        return elided_text != display_text
+
     def viewportEvent(self, event):
         if event.type() == QEvent.Type.ToolTip:
             index = self.indexAt(event.pos())
             if index.isValid():
                 tooltip_text = index.data(Qt.ItemDataRole.ToolTipRole)
-                if tooltip_text:
+                if tooltip_text and self._should_show_tooltip_for_index(index):
                     from ui.theme import theme_manager
                     t = theme_manager.current_theme
                     pal = QPalette(QToolTip.palette())

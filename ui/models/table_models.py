@@ -226,29 +226,23 @@ def _build_cell_tooltip(raw_val):
     return _build_cell_tooltip_cached(text)
 
 
-@lru_cache(maxsize=4096)
-def _summarize_long_text_cached(header: str, text: str):
-    if not text:
-        return text
-
-    if header not in {
-        "外资净买入",
-        "买方营业部",
-        "卖方营业部",
-        "交易详情",
-        "角色定位",
-        "产业链地位",
-    }:
-        return text
-
-    normalized = " | ".join(part.strip() for part in text.splitlines() if part.strip()) or text
-    max_len = 24 if header == "外资净买入" else 30
-    return normalized if len(normalized) <= max_len else normalized[: max_len - 1] + "…"
+_DYNAMIC_ELIDE_HEADERS = {
+    "\u5916\u8d44\u51c0\u4e70\u5165",
+    "\u4e70\u65b9\u8425\u4e1a\u90e8",
+    "\u5356\u65b9\u8425\u4e1a\u90e8",
+    "\u4ea4\u6613\u8be6\u60c5",
+    "\u89d2\u8272\u5b9a\u4f4d",
+    "\u4ea7\u4e1a\u94fe\u5730\u4f4d",
+}
 
 
 def _summarize_long_text(header: str, raw_val):
     text = str(raw_val or "").strip()
-    return _summarize_long_text_cached(str(header), text)
+    if not text:
+        return text
+    if str(header) not in _DYNAMIC_ELIDE_HEADERS:
+        return text
+    return " | ".join(part.strip() for part in text.splitlines() if part.strip()) or text
 
 
 def _status_badge_color(text: str, header: str | None = None):

@@ -2,6 +2,7 @@
 from PyQt6.QtWidgets import QApplication
 
 from ui.components import VCPTableView
+from ui.models.table_models import StockTableModel
 from ui.styles.global_qss import generate_global_qss
 from ui.theme import THEME_MOYUAN, THEME_YUEBAI
 from ui.theme_tokens import build_ui_tokens, get_state_tone
@@ -30,7 +31,7 @@ def test_theme_tokens_expose_state_tones_for_terminal_statuses():
 
 
 def test_theme_tokens_expose_terminal_layers_and_toolbar_metrics():
-    tokens = build_ui_tokens(THEME_YUEBAI)
+    tokens = build_ui_tokens(THEME_YUEBAI, density="紧凑")
 
     assert "motion" in tokens
     assert "z_index" in tokens
@@ -38,6 +39,8 @@ def test_theme_tokens_expose_terminal_layers_and_toolbar_metrics():
     assert tokens["table"]["selected_rail_width"] > 0
     assert tokens["table"]["numeric_heat_max_alpha"] >= 32
     assert tokens["shell"]["toolbar_min_height"] >= tokens["control"]["button_height"]
+    assert tokens["shell"]["toolbar_min_height"] < 48
+    assert tokens["shell"]["toolbar_group_gap"] <= 4
 
 
 def test_global_qss_uses_density_tokens_for_table_and_controls():
@@ -50,6 +53,14 @@ def test_global_qss_uses_density_tokens_for_table_and_controls():
     assert "QWidget#tabToolbar" in compact_qss
     assert "QLabel#tabStatusLabel" in compact_qss
     assert compact_tokens["control"]["button_height"] < comfort_tokens["control"]["button_height"]
+
+
+def test_global_qss_selected_tab_does_not_use_brand_top_rule():
+    qss = generate_global_qss(THEME_YUEBAI, density="紧凑")
+
+    assert "QTabBar::tab:selected" in qss
+    assert "border-top: 2px solid transparent;" in qss
+    assert f"border-top: 2px solid {THEME_YUEBAI['BRAND_PRIMARY']};" not in qss
 
 
 def test_vcp_table_view_apply_density_updates_row_height():
@@ -75,5 +86,40 @@ def test_vcp_table_view_width_is_capped_by_available_screen():
         assert table.maximumWidth() <= available_width
         assert table.sizeHint().width() <= available_width
         assert table.minimumSizeHint().width() <= available_width
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_tooltip_style_uses_larger_font_without_rounded_corners():
+    table = VCPTableView()
+    try:
+        style = table.styleSheet()
+        assert "QToolTip" in style
+        assert "font-size: 14px;" in style
+        assert "border-radius: 0px;" in style
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_tooltip_only_shows_when_text_is_elided():
+    table = VCPTableView()
+    try:
+        model = StockTableModel(["代码", "名称", "热点板块"])
+        model.update_data([
+            {
+                "代码": "000001",
+                "名称": "平安银行",
+                "热点板块": "光通信(15d=100) | CPO概念(15d=96) | 铜连接(20d=93)",
+            }
+        ])
+        table.setModel(model)
+        target_col = model.headers.index("热点板块")
+        idx = model.index(0, target_col)
+
+        table.setColumnWidth(target_col, 120)
+        assert table._should_show_tooltip_for_index(idx) is True
+
+        table.setColumnWidth(target_col, 520)
+        assert table._should_show_tooltip_for_index(idx) is False
     finally:
         table.deleteLater()

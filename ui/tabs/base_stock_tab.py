@@ -95,12 +95,12 @@ class BaseStockTab(QWidget):
         left_wrap.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         left_layout = QVBoxLayout(left_wrap)
         left_layout.setContentsMargins(
-            tokens["shell"]["toolbar_padding_x"],
-            max(3, tokens["shell"]["toolbar_padding_y"] - 3),
-            tokens["shell"]["toolbar_padding_x"],
-            max(3, tokens["shell"]["toolbar_padding_y"] - 3),
+            max(8, tokens["shell"]["toolbar_padding_x"] - 2),
+            2,
+            max(8, tokens["shell"]["toolbar_padding_x"] - 2),
+            2,
         )
-        left_layout.setSpacing(2)
+        left_layout.setSpacing(1)
 
         lbl_title = QLabel(title)
         lbl_title.setObjectName("tabTitle")

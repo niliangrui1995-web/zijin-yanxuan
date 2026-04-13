@@ -80,7 +80,7 @@ QTabBar::tab:selected {{
     font-weight: {font['weight_semibold']};
     background: {t['BRAND_SUBTLE']};
     border-color: {border['accent']};
-    border-top: 2px solid {t['BRAND_PRIMARY']};
+    border-top: 2px solid transparent;
 }}
 
 /* ═══════════════════════════════════════════

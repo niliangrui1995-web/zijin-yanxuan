@@ -106,6 +106,20 @@ def test_stock_table_model_keeps_foreign_net_buy_left_aligned():
     assert foreign_align & Qt.AlignmentFlag.AlignLeft.value
 
 
+def test_stock_table_model_foreign_net_buy_display_keeps_full_normalized_text():
+    model = StockTableModel(["\u4ee3\u7801", "\u540d\u79f0", "\u5916\u8d44\u51c0\u4e70\u5165"])
+    raw_text = "\u51c0\u4e701.4\u4ebf\n\u6df1\u80a1\u901a+1.4\u4ebf\n\u6469\u6839\u58eb\u4e39\u5229+3200\u4e07"
+    normalized_text = "\u51c0\u4e701.4\u4ebf | \u6df1\u80a1\u901a+1.4\u4ebf | \u6469\u6839\u58eb\u4e39\u5229+3200\u4e07"
+    model.update_data([
+        {"\u4ee3\u7801": "000001", "\u540d\u79f0": "\u5e73\u5b89\u94f6\u884c", "\u5916\u8d44\u51c0\u4e70\u5165": raw_text}
+    ])
+
+    idx = model.index(0, model.headers.index("\u5916\u8d44\u51c0\u4e70\u5165"))
+
+    assert model.data(idx, Qt.ItemDataRole.DisplayRole) == normalized_text
+    assert model.data(idx, Qt.ItemDataRole.ToolTipRole) == raw_text
+
+
 def test_stock_table_model_dates_use_center_alignment_and_secondary_text():
     model = StockTableModel(["代码", "名称", "日报时间", "交易日期", "揭晓日", "触发日期"])
     model.update_data([

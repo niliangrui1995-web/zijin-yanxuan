@@ -120,12 +120,12 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
     control = {
         "button_height": 30 if compact else 32,
         "input_height": 30 if compact else 32,
-        "toolbar_button_height": 38 if compact else 40,
+        "toolbar_button_height": 34 if compact else 38,
         "button_padding_x": 12 if compact else 14,
-        "toolbar_chip_height": 22 if compact else 24,
-        "toolbar_chip_padding_x": 10 if compact else 12,
+        "toolbar_chip_height": 20 if compact else 22,
+        "toolbar_chip_padding_x": 9 if compact else 11,
         "tab_padding_y": 3 if compact else 4,
-        "tab_padding_x": 10 if compact else 13,
+        "tab_padding_x": 9 if compact else 12,
         "segment_height": 26 if compact else 28,
     }
 
@@ -155,11 +155,11 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "status_height": 32 if compact else 34,
         "status_pill_min_height": 24 if compact else 26,
         "status_pill_padding_x": 10 if compact else 12,
-        "toolbar_min_height": 48 if compact else 52,
+        "toolbar_min_height": 42 if compact else 48,
         "toolbar_padding_x": 12 if compact else 14,
-        "toolbar_padding_y": 6 if compact else 7,
-        "toolbar_section_gap": 10 if compact else 12,
-        "toolbar_group_gap": 6 if compact else 8,
+        "toolbar_padding_y": 4 if compact else 6,
+        "toolbar_section_gap": 8 if compact else 10,
+        "toolbar_group_gap": 4 if compact else 6,
         "toolbar_card_radius": radius["lg"],
         "tabbar_height": 26 if compact else 28,
     }
