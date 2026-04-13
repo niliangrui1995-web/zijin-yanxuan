@@ -3,8 +3,8 @@ import datetime
 from vcp.constants import APP_VERSION, RPS_CACHE_FILE
 from ui.components.kline_window_manager import kline_manager
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QTabWidget, QTabBar, QPushButton, QLabel, QFrame, QToolTip
+    QMainWindow, QWidget, QVBoxLayout, QFrame,
+    QTabWidget, QToolTip
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot, QSettings, QEvent
 from PyQt6.QtGui import QIcon
@@ -13,7 +13,6 @@ from PyQt6.QtGui import QIcon
 from vcp.data_provider import TdxDataProvider
 from vcp.engine import VCPEngine
 
-from ui.components import PulsingDot
 from ui.tabs.scan_tab import ScanTab
 from ui.tabs.rt_monitor_tab import RtMonitorTab
 from ui.tabs.watchlist_tab import WatchlistTab
@@ -23,64 +22,21 @@ from ui.tabs.asian_market_tab import AsianMarketTab
 from ui.tabs.lhb_tab import LhbTab
 from core.event_bus import event_bus
 from core.logger import get_logger
+from ui.components.main_window_shell import (
+    DraggableTitleBar,
+    MainWindowStatusBar,
+    apply_chrome_theme,
+    inject_standalone_tabbar,
+    refresh_system_menu_theme,
+    setup_custom_titlebar,
+    setup_system_menu,
+)
 
 from core.cache_manager import CacheManager
 from ui.startup_loader import StartupLoader
 from core.task_manager import task_manager
 
 log = get_logger(__name__)
-
-
-class DraggableTitleBar(QWidget):
-    """可拖拽标题栏：只在空白区域触发窗口拖拽，子控件（按钮/Tab）正常响应点击
-
-    原理：Qt 的事件分发机制是"从子到父"——点在按钮上，按钮先吃掉事件，
-    只有点在空白处才会触发这个 Widget 的 mousePressEvent，就像一扇门：
-    门把手（按钮）自己处理转动，门板（空白）才处理推拉（拖拽）。
-    """
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._drag_pos = None
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_pos = event.globalPosition().toPoint() - self.window().frameGeometry().topLeft()
-            event.accept()
-        else:
-            super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event):
-        if self._drag_pos and event.buttons() & Qt.MouseButton.LeftButton:
-            win = self.window()
-            if win.isMaximized():
-                # 最大化状态下拖拽先还原，模拟 Windows 原生行为
-                ratio = event.position().x() / win.width()
-                win.showNormal()
-                new_x = int(event.globalPosition().x() - win.width() * ratio)
-                new_y = int(event.globalPosition().y() - self.height() // 2)
-                win.move(new_x, new_y)
-                self._drag_pos = event.globalPosition().toPoint() - win.frameGeometry().topLeft()
-            else:
-                win.move(event.globalPosition().toPoint() - self._drag_pos)
-            event.accept()
-        else:
-            super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        self._drag_pos = None
-        super().mouseReleaseEvent(event)
-
-    def mouseDoubleClickEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            win = self.window()
-            if win.isMaximized():
-                win.showNormal()
-            else:
-                win.showMaximized()
-            event.accept()
-        else:
-            super().mouseDoubleClickEvent(event)
 
 
 class MainWindowQT(QMainWindow):
@@ -171,50 +127,14 @@ class MainWindowQT(QMainWindow):
 
         self._init_right_panel()
         main_layout.addWidget(self.tabs_wrapper, 1)
-        
-        status_bar = QWidget()
-        status_bar.setObjectName("statusBarWidget")
-        status_bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        status_bar.setFixedHeight(32)
-        from ui.theme import theme_manager as _stm
-        _st = _stm.current_theme
-        self._status_bar_widget = status_bar
-        status_bar.setStyleSheet(f"""
-            background-color: {_st['BG_STATUSBAR']};
-            border-top: 1px solid {_st['STATUSBAR_BORDER']};
-            padding: 0px 16px;
-        """)
-        status_layout = QHBoxLayout(status_bar)
-        status_layout.setContentsMargins(12, 0, 12, 0)
-        status_layout.setSpacing(12)
-        
-        self.status_dot = PulsingDot(color="#10B981")
-        status_layout.addWidget(self.status_dot)
 
-        self.lbl_status = QLabel("---")
-        self.lbl_status.setStyleSheet(f"color: {_st['TEXT_MUTED']}; font-size: 12px; font-family: 'Consolas', 'Courier New', monospace;")
-        status_layout.addWidget(self.lbl_status)
-        
-        self.lbl_code_count = QLabel("标的池: 0")
-        self.lbl_code_count.setStyleSheet(f"color: {_st['TEXT_MUTED']}; font-size: 12px; font-weight: bold;")
-        status_layout.addWidget(self.lbl_code_count)
-        
-        status_layout.addStretch()
-
-        self.lbl_clock = QLabel()
-        self.lbl_clock.setStyleSheet(f"color: {_st['TEXT_MUTED']}; font-size: 12px; font-family: 'Consolas', monospace;")
-        status_layout.addWidget(self.lbl_clock)
-        
-        self._clock_timer = QTimer(self)
-        self._clock_timer.timeout.connect(lambda: self.lbl_clock.setText(datetime.datetime.now().strftime("%H:%M:%S")))
-        self._clock_timer.start(1000)
-        
-        self.lbl_version = QLabel(f"v{APP_VERSION}")
-        self.lbl_version.setStyleSheet(f"color: {_st['TEXT_DISABLED']}; font-size: 11px;")
-        
-        status_layout.addWidget(self.lbl_version)
-        
-        main_layout.addWidget(status_bar, 0)
+        self._status_bar_widget = MainWindowStatusBar(f"v{APP_VERSION}", self)
+        self.status_dot = self._status_bar_widget.status_dot
+        self.lbl_status = self._status_bar_widget.lbl_status
+        self.lbl_code_count = self._status_bar_widget.lbl_code_count
+        self.lbl_clock = self._status_bar_widget.lbl_clock
+        self.lbl_version = self._status_bar_widget.lbl_version
+        main_layout.addWidget(self._status_bar_widget, 0)
         
         # 9. 恢复之前的界面布局、列宽、表格排序
         self._restore_ui_state()
@@ -262,10 +182,6 @@ class MainWindowQT(QMainWindow):
     def _toggle_network(self):
         """"""
         if self.data_provider._offline:
-            if hasattr(self, 'btn_datasource'):
-                self.btn_datasource.setText("正在切换...")
-                self.btn_datasource.setEnabled(False)
-
             def _go_online():
                 try:
                     self.data_provider.set_online_mode(True)
@@ -293,15 +209,6 @@ class MainWindowQT(QMainWindow):
         """主站强制重新测速方法"""
         if not self.data_provider.is_online():
             return
-            
-        self.btn_reconnect.setEnabled(False) if hasattr(self, 'btn_reconnect') else None
-        if hasattr(self, 'btn_datasource'):
-            self.btn_datasource.setText("测速中...")
-            self.btn_datasource.setStyleSheet(
-                 self.btn_datasource.styleSheet().replace("#22C55E", "#F59E0B")
-                 if "#22C55E" in self.btn_datasource.styleSheet() 
-                 else self.btn_datasource.styleSheet()
-            )
         if hasattr(self, 'status_dot'): self.status_dot.set_color("#F59E0B")
         
         def _reconnect_task():
@@ -314,8 +221,6 @@ class MainWindowQT(QMainWindow):
                 return False
 
         def _on_done(ok):
-            if hasattr(self, 'btn_reconnect'):
-                self.btn_reconnect.setEnabled(True)
             self._update_network_ui(True)
             from ui.components.toast_widget import show_toast
             if ok:
@@ -332,135 +237,11 @@ class MainWindowQT(QMainWindow):
 
     def _refresh_gear_menu_theme(self):
         """同步刷新齿轮按钮与设置菜单的主题样式。"""
-        from ui.theme import theme_manager
-        from ui.styles.context_menu_qss import generate_context_menu_qss
-
-        t = theme_manager.current_theme
-
-        if hasattr(self, "btn_sys_menu") and self.btn_sys_menu:
-            self.btn_sys_menu.setStyleSheet(f"""
-                QToolButton {{
-                    background: transparent;
-                    color: {t['TEXT_MUTED']};
-                    border: none;
-                    font-size: 12px;
-                    font-weight: bold;
-                    padding: 0 16px;
-                    min-height: 40px; max-height: 40px;
-                }}
-                QToolButton:hover {{
-                    background-color: {t['BG_HOVER']};
-                }}
-                QToolButton::menu-indicator {{
-                    image: none;
-                    width: 0px;
-                }}
-            """)
-
-        menu_qss = generate_context_menu_qss(t)
-        for attr_name in ("_sys_menu", "_density_menu", "_theme_menu"):
-            menu = getattr(self, attr_name, None)
-            if menu:
-                menu.setStyleSheet(menu_qss)
-                menu.setCursor(Qt.CursorShape.PointingHandCursor)
-
-        if hasattr(self, "_theme_menu") and self._theme_menu:
-            self._theme_menu.setTitle(f"界面主题：{theme_manager.current_theme_name}")
+        refresh_system_menu_theme(self)
 
     def _init_gear_menu(self):
-        """在系统Tab右上角注入通达信风格的配置齿轮菜单"""
-        from PyQt6.QtWidgets import QToolButton, QMenu
-        from PyQt6.QtGui import QActionGroup
-        
-        self.btn_sys_menu = QToolButton()
-        # Keep SVG icon dynamic by refreshing it in _apply_theme, but initial is text or icon
-        self.btn_sys_menu.setText("⚙")
-        self.btn_sys_menu.setObjectName("btnSysMenu")
-        self.btn_sys_menu.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_sys_menu.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self.btn_sys_menu.setAutoRaise(False)
-        self.btn_sys_menu.setFixedWidth(46)
-        self.btn_sys_menu.setFixedHeight(40)
-        # 无边框模式：齿轮按钮放在标题栏的窗口控制按钮左侧
-        # 找到最小化按钮在 titlebar_layout 中的位置，插在它前面
-        min_idx = self._titlebar_layout.indexOf(self._btn_minimize)
-        self._titlebar_layout.insertWidget(min_idx, self.btn_sys_menu)
-        
-        sys_menu = QMenu(self)
-        try:
-            from PyQt6.QtWidgets import QApplication
-            sys_menu.aboutToShow.connect(lambda: QApplication.restoreOverrideCursor())
-            sys_menu.aboutToHide.connect(lambda: QApplication.restoreOverrideCursor())
-        except Exception:
-            pass
-        
-        sys_menu.setObjectName("sysMenu")
-        # Global QMenu style from global_qss.py will handle menu colors dynamically!
-
-        self.act_f5 = sys_menu.addAction("全局数据同步 (F5)")
-        self.act_f5.triggered.connect(self._action_refresh_f5)
-
-        sys_menu.addSeparator()
-
-        self.act_trade_calendar = sys_menu.addAction("交易日历")
-        self.act_trade_calendar.triggered.connect(self._show_trade_calendar)
-        
-        sys_menu.addSeparator()
-        
-        self.act_network = sys_menu.addAction("网络状态：离线")
-        self.act_network.triggered.connect(self._toggle_network)
-
-        sys_menu.addSeparator()
-
-        act_speed = sys_menu.addAction("测速与线路优选")
-        act_speed.triggered.connect(self._force_reconnect)
-
-        sys_menu.addSeparator()
-
-        # 表格密度切换（全局）
-        from core.app_config import app_config
-        density_menu = sys_menu.addMenu("表格密度")
-        density_group = QActionGroup(self)
-        density_group.setExclusive(True)
-
-        self._act_density_compact = density_menu.addAction("紧凑")
-        self._act_density_compact.setCheckable(True)
-        density_group.addAction(self._act_density_compact)
-        self._act_density_compact.triggered.connect(lambda: self._apply_table_density("紧凑"))
-
-        self._act_density_comfort = density_menu.addAction("舒适")
-        self._act_density_comfort.setCheckable(True)
-        density_group.addAction(self._act_density_comfort)
-        self._act_density_comfort.triggered.connect(lambda: self._apply_table_density("舒适"))
-
-        self._density_menu = density_menu
-        self._apply_table_density(app_config.table_density, persist=False)
-
-        sys_menu.addSeparator()
-
-        # 主题切换子菜单
-        from ui.theme import theme_manager as _tm
-        theme_menu = sys_menu.addMenu(f"界面主题：{_tm.current_theme_name}")
-        self._theme_menu = theme_menu  # 保存引用以便刷新文字
-        for t_name in _tm.theme_names():
-            act = theme_menu.addAction(t_name)
-            act.triggered.connect(lambda checked, n=t_name: _tm.switch_theme(n))
-
-        # 日夜自动切换开关：白天月白、晚上墨渊
-        theme_menu.addSeparator()
-        self._act_auto_theme = theme_menu.addAction("日夜自动切换 (7:00-18:00)")
-        self._act_auto_theme.setCheckable(True)
-        self._act_auto_theme.setChecked(_tm.is_auto_switch())
-        self._act_auto_theme.triggered.connect(lambda checked: _tm.set_auto_switch(checked))
-
-        self._sys_menu = sys_menu
-        self._refresh_gear_menu_theme()
-        self.btn_sys_menu.installEventFilter(self)
-        sys_menu.installEventFilter(self)
-        density_menu.installEventFilter(self)
-        theme_menu.installEventFilter(self)
-
-        self.btn_sys_menu.setMenu(sys_menu)
+        """在标题栏右侧注入系统菜单。"""
+        setup_system_menu(self)
         self._update_last_f5_time()
 
 
@@ -591,182 +372,18 @@ class MainWindowQT(QMainWindow):
     # 自定义标题栏：品牌 + Tab 导航 + 窗口控制，合并成一行
     # =====================================================================
     def _init_custom_titlebar(self, parent_layout):
-        """构建无边框窗口的自定义标题栏
-        结构：[品牌文字] | [Tab导航条] <-spacer-> [⚙️] [─] [□] [✕]
-        使用 DraggableTitleBar：空白区域拖拽，按钮区域正常点击。
-        """
-        from ui.theme import theme_manager as _tm
-        _t = _tm.current_theme
-        titlebar = DraggableTitleBar()
-        titlebar.setObjectName("customTitleBar")
-        titlebar.setFixedHeight(40)
-        titlebar.setStyleSheet(f"""
-            QWidget#customTitleBar {{
-                background-color: {_t['BG_TITLEBAR']};
-                border-bottom: 1px solid {_t['TITLEBAR_BORDER']};
-            }}
-        """)
-
-        titlebar_layout = QHBoxLayout(titlebar)
-        titlebar_layout.setContentsMargins(16, 0, 0, 0)
-        titlebar_layout.setSpacing(0)
-
-        # --- 左侧品牌文字 ---
-        brand_label = QLabel("紫金研选")
-        brand_label.setStyleSheet("""
-            QLabel {
-                color: #EF4444;
-                font-size: 13px;
-                font-weight: 700;
-                font-family: "Microsoft YaHei UI", sans-serif;
-                background: transparent;
-                padding-right: 8px;
-            }
-        """)
-        titlebar_layout.addWidget(brand_label)
-
-        # 品牌与Tab之间加竖线分隔
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setFixedWidth(1)
-        sep.setFixedHeight(20)
-        sep.setStyleSheet(f"QFrame {{ color: {_t['BORDER_STRONG']}; }}")
-        titlebar_layout.addWidget(sep)
-        titlebar_layout.addSpacing(4)
-
-        # --- 中间占位（等 self.tabs 创建后再把 TabBar 换进来）---
-        self._titlebar_tab_placeholder = QWidget()
-        titlebar_layout.addWidget(self._titlebar_tab_placeholder)
-
-        # 弹性空间：把右侧按钮推到最右边
-        titlebar_layout.addStretch(1)
-
-        # --- 右侧窗口控制按钮 ---
-        _win_btn_color = _t['TEXT_MUTED']
-        _win_btn_hover = _t['BG_HOVER']
-        btn_style = """
-            QPushButton {{{{
-                background: transparent;
-                color: {{color}};
-                border: none;
-                font-size: {{size}}px;
-                font-weight: bold;
-                padding: 0 16px;
-                min-height: 40px; max-height: 40px;
-            }}}}
-            QPushButton:hover {{{{
-                background-color: {{hover_bg}};
-            }}}}
-        """
-
-        self._btn_minimize = QPushButton("─")
-        self._btn_minimize.setStyleSheet(btn_style.format(
-            color=_win_btn_color, size=11, hover_bg=_win_btn_hover
-        ))
-        self._btn_minimize.setFixedWidth(46)
-        self._btn_minimize.clicked.connect(self.showMinimized)
-
-        self._btn_maximize = QPushButton("□")
-        self._btn_maximize.setStyleSheet(btn_style.format(
-            color=_win_btn_color, size=12, hover_bg=_win_btn_hover
-        ))
-        self._btn_maximize.setFixedWidth(46)
-        self._btn_maximize.clicked.connect(self._toggle_maximize)
-
-        self._btn_close = QPushButton("✕")
-        self._btn_close.setStyleSheet(btn_style.format(
-            color=_win_btn_color, size=12, hover_bg="#C42B1C"
-        ))
-        self._btn_close.setFixedWidth(46)
-        self._btn_close.clicked.connect(self.close)
-
-        titlebar_layout.addWidget(self._btn_minimize)
-        titlebar_layout.addWidget(self._btn_maximize)
-        titlebar_layout.addWidget(self._btn_close)
-
-        parent_layout.addWidget(titlebar, 0)
-
-        # 保存引用
-        self._custom_titlebar = titlebar
-        self._titlebar_layout = titlebar_layout
+        """构建无边框窗口的自定义标题栏。"""
+        refs = setup_custom_titlebar(self, parent_layout)
+        self._custom_titlebar = refs.titlebar
+        self._titlebar_layout = refs.layout
+        self._titlebar_tab_placeholder = refs.placeholder
+        self._btn_minimize = refs.btn_minimize
+        self._btn_maximize = refs.btn_maximize
+        self._btn_close = refs.btn_close
 
     def _inject_tabbar_into_titlebar(self):
-        """在标题栏创建独立 TabBar 并与 QTabWidget 双向同步
-
-        不再强行 reparent QTabWidget 内部的 TabBar（QTabWidget 会内部
-        重置位置导致布局失效），而是：
-        1. 隐藏 QTabWidget 自带的原生 TabBar
-        2. 创建一个全新 QTabBar 放入标题栏布局
-        3. 通过 currentChanged 信号双向同步选中状态
-        """
-        # 隐藏 QTabWidget 原生 TabBar
-        self.tabs.tabBar().setVisible(False)
-
-        # 创建独立 TabBar
-        standalone_bar = QTabBar()
-        standalone_bar.setExpanding(False)
-        standalone_bar.setDrawBase(False)
-        from ui.theme import theme_manager as _tm2
-        _t2 = _tm2.current_theme
-        standalone_bar.setStyleSheet(f"""
-            QTabBar {{
-                background: transparent;
-                border: none;
-            }}
-            QTabBar::tab {{
-                background: transparent;
-                color: {_t2['TAB_TEXT']};
-                padding: 8px 14px;
-                margin: 0 4px 0 0;
-                border: none;
-                font-size: 12px;
-                font-weight: 600;
-                border-radius: 8px;
-                font-family: "Microsoft YaHei UI", sans-serif;
-            }}
-            QTabBar::tab:selected {{
-                color: {_t2['TEXT_PRIMARY']};
-                background: {_t2['BRAND_SUBTLE']};
-                border-bottom: 2px solid #EF4444;
-            }}
-            QTabBar::tab:hover:!selected {{
-                color: {_t2['TAB_TEXT_HOVER']};
-                background: {_t2['TAB_HOVER_BG']};
-            }}
-        """)
-
-        # 复制所有 Tab 标签名
-        for i in range(self.tabs.count()):
-            standalone_bar.addTab(self.tabs.tabText(i))
-        standalone_bar.setCurrentIndex(self.tabs.currentIndex())
-
-        # 双向同步：点标题栏 Tab -> 切换内容，切换内容 -> 高亮标题栏 Tab
-        self._syncing_tabs = False  # 防止递归同步
-
-        def on_bar_changed(index: int):
-            if not self._syncing_tabs:
-                self._syncing_tabs = True
-                self.tabs.setCurrentIndex(index)
-                self._syncing_tabs = False
-
-        def on_tabs_changed(index: int):
-            if not self._syncing_tabs:
-                self._syncing_tabs = True
-                standalone_bar.setCurrentIndex(index)
-                self._syncing_tabs = False
-
-        standalone_bar.currentChanged.connect(on_bar_changed)
-        self.tabs.currentChanged.connect(on_tabs_changed)
-
-        # 替换占位 Widget
-        old = self._titlebar_tab_placeholder
-        idx = self._titlebar_layout.indexOf(old)
-        self._titlebar_layout.removeWidget(old)
-        old.deleteLater()
-        self._titlebar_layout.insertWidget(idx, standalone_bar)
-
-        # 保存引用
-        self._standalone_tabbar = standalone_bar
+        """在标题栏创建独立 TabBar 并与 QTabWidget 双向同步。"""
+        self._standalone_tabbar = inject_standalone_tabbar(self)
 
     def _toggle_maximize(self):
         """切换最大化/还原"""
@@ -1206,50 +823,10 @@ class MainWindowQT(QMainWindow):
             QToolTip.hideText()
             QToolTip.setPalette(pal)
 
-        # 2. 刷新自定义标题栏和状态栏 inline style
-        if hasattr(self, '_custom_titlebar'):
-            self._custom_titlebar.setStyleSheet(f"""
-                QWidget#customTitleBar {{
-                    background-color: {t['BG_STATUSBAR']};
-                    border-bottom: 1px solid {t['BORDER_SUBTLE']};
-                }}
-            """)
-        if hasattr(self, '_status_bar_widget'):
-            self._status_bar_widget.setStyleSheet(f"""
-                background-color: {t['BG_STATUSBAR']};
-                border-top: 1px solid {t['STATUSBAR_BORDER']};
-                padding: 0px 16px;
-            """)
-
-        # 3. 刷新状态栏 inline style
-        if hasattr(self, 'lbl_status'):
-            muted = t['TEXT_MUTED']
-            for lbl in [self.lbl_status, self.lbl_code_count, self.lbl_clock]:
-                if lbl:
-                    lbl.setStyleSheet(f"color: {muted}; font-size: 12px;")
-            if hasattr(self, 'lbl_version'):
-                self.lbl_version.setStyleSheet(f"color: {t['TEXT_DISABLED']}; font-size: 11px;")
-
-        # 4. 刷新独立 TabBar 样式
-        if hasattr(self, '_standalone_tabbar'):
-            selected_color = t['TEXT_PRIMARY']
-            muted_color = t['TEXT_MUTED']
-            hover_color = t['TEXT_SECONDARY']
-            self._standalone_tabbar.setStyleSheet(f"""
-                QTabBar {{ background: transparent; border: none; }}
-                QTabBar::tab {{ background: transparent; color: {muted_color}; padding: 8px 14px; margin: 0 4px 0 0; border: none; border-radius: 8px; font-size: 12px; font-weight: 600; font-family: "Microsoft YaHei UI", sans-serif; }}
-                QTabBar::tab:selected {{ color: {selected_color}; background: {t['BRAND_SUBTLE']}; border-bottom: 2px solid #EF4444; }}
-                QTabBar::tab:hover:!selected {{ color: {hover_color}; background: {t['BORDER_SUBTLE']}; }}
-            """)
-
-        # 5. 刷新 tabs_wrapper 背景
-        if hasattr(self, 'tabs_wrapper'):
-            self.tabs_wrapper.setStyleSheet(f"""
-                QFrame#tabsWrapperFrame {{ background-color: {t['BG_GLASS']}; border: none; }}
-            """)
-
-        # 6. 刷新齿轮按钮和设置菜单主题
-        self._refresh_gear_menu_theme()
+        # 2. 刷新壳层与状态栏
+        apply_chrome_theme(self)
+        if hasattr(self, '_status_bar_widget') and self._status_bar_widget:
+            self._status_bar_widget.apply_theme()
 
         for widget in (
             self,
@@ -1257,13 +834,14 @@ class MainWindowQT(QMainWindow):
             getattr(self, '_status_bar_widget', None),
             getattr(self, '_standalone_tabbar', None),
             getattr(self, 'tabs_wrapper', None),
+            getattr(self, 'btn_sys_menu', None),
         ):
             if widget:
                 widget.style().unpolish(widget)
                 widget.style().polish(widget)
                 widget.update()
 
-        # 7. 通知用户
+        # 3. 通知用户
         from ui.components.toast_widget import show_toast
         show_toast(f"已切换至「{theme_manager.current_theme_name}」主题", "success", self, duration=2000)
 
