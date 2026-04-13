@@ -61,7 +61,7 @@ QTabBar::tab {{
     background: {surface['soft']};
     color: {t['TEXT_MUTED']};
     padding: {control['tab_padding_y']}px {control['tab_padding_x']}px;
-    margin-right: 6px;
+    margin-right: 4px;
     font-size: {font['size_md']}px;
     font-weight: {font['weight_medium']};
     border: 1px solid {border['default']};
@@ -103,11 +103,15 @@ QTableView::item {{
     border-bottom: 1px solid {t['BORDER_SUBTLE']};
 }}
 QTableView::item:hover {{
-    background-color: {t['BG_TABLE_HOVER']};
+    background-color: {surface['hover']};
 }}
 QTableView::item:selected {{
     background-color: {table['selected_bg']};
     color: {t['TEXT_BRIGHT']};
+    border-bottom: 1px solid {border['accent']};
+}}
+QTableView::item:selected:hover {{
+    background-color: {table['selected_hover_bg']};
 }}
 QTableView:focus {{
     border: 1px solid {border['focus']};
@@ -122,7 +126,7 @@ QTableCornerButton::section {{
 
 /* 表头 */
 QHeaderView::section {{
-    background-color: {surface['elevated']};
+    background-color: {surface['toolbar']};
     color: {text['header']};
     font-family: "Microsoft YaHei", "微软雅黑";
     font-size: {table['header_font_size']}px;
@@ -131,11 +135,11 @@ QHeaderView::section {{
     padding: {table['header_padding_y']}px {table['header_padding_x']}px;
     min-height: {table['header_min_height']}px;
     border: none;
-    border-bottom: 1px solid {border['default']};
+    border-bottom: 1px solid {border['strong']};
     border-right: 1px solid {border['subtle']};
 }}
 QHeaderView::section:hover {{
-    background-color: {surface['panel']};
+    background-color: {surface['elevated']};
     color: {text['primary']};
 }}
 QHeaderView::section:pressed {{
@@ -344,23 +348,44 @@ QProgressBar::chunk {{
    QLabel / QLineEdit
    ═══════════════════════════════════════════ */
 QWidget#tabToolbar {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 {surface['toolbar']}, stop:1 {surface['panel']});
+    background-color: {surface['toolbar']};
     border-bottom: 1px solid {border['default']};
     min-height: {shell['toolbar_min_height']}px;
 }}
 QFrame#tabToolbarTitleWrap {{
-    background-color: {surface['panel']};
-    border: 1px solid {border['subtle']};
-    border-radius: {shell['toolbar_card_radius']}px;
+    background-color: {surface['toolbar_card']};
+    border: 1px solid {border['default']};
+    border-radius: {radius['xl']}px;
 }}
 QWidget#tabToolbarFilters, QWidget#tabToolbarActions {{
     background: transparent;
 }}
+QPushButton[inToolbar="true"],
+QToolButton[inToolbar="true"],
+QLineEdit[inToolbar="true"],
+QComboBox[inToolbar="true"],
+QSpinBox[inToolbar="true"],
+QDoubleSpinBox[inToolbar="true"] {{
+    min-height: {control['toolbar_button_height']}px;
+    max-height: {control['toolbar_button_height']}px;
+}}
+QPushButton[inToolbar="true"],
+QToolButton[inToolbar="true"] {{
+    padding: 0 {max(10, control['button_padding_x'] - 1)}px;
+}}
+QLineEdit[inToolbar="true"] {{
+    padding: 0 10px;
+}}
+QComboBox[inToolbar="true"] {{
+    padding: 0 26px 0 10px;
+}}
+QSpinBox[inToolbar="true"], QDoubleSpinBox[inToolbar="true"] {{
+    padding: 0 8px;
+}}
 QLabel#tabStatusLabel {{
     background-color: {surface['toolbar_chip']};
     color: {text['secondary']};
-    border: 1px solid {border['subtle']};
+    border: 1px solid {border['default']};
     border-radius: {radius['pill']}px;
     padding: 0 {control['toolbar_chip_padding_x']}px;
     min-height: {control['toolbar_chip_height']}px;
@@ -380,7 +405,7 @@ QLabel[toolbarRole="status"] {{
 QLabel {{ color: {t['TEXT_SECONDARY']}; background: transparent; }}
 
 QLabel#tabTitle {{
-    font-size: 15px; font-weight: {font['weight_bold']}; color: {t['TEXT_PRIMARY']};
+    font-size: {font['size_lg']}px; font-weight: {font['weight_bold']}; color: {t['TEXT_PRIMARY']};
 }}
 QLabel#tabSubtitle {{
     font-size: {font['size_sm']}px; color: {t['TEXT_MUTED']};

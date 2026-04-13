@@ -37,7 +37,7 @@ def _titlebar_shell_style(theme: dict) -> str:
             font-weight: {tokens['font']['weight_bold']};
             font-family: {tokens['font']['family']};
             background: transparent;
-            padding-right: 8px;
+            padding-right: 6px;
         }}
         QFrame#titleBarSeparator {{
             color: {theme['BORDER_STRONG']};
@@ -91,8 +91,9 @@ def _system_button_style(theme: dict, text_color: str, hover_bg: str) -> str:
 
 def _standalone_tabbar_qss(theme: dict) -> str:
     tokens = build_ui_tokens(theme)
-    tab_gap = 1
-    tab_padding_x = max(8, tokens["control"]["tab_padding_x"] - 1)
+    tab_gap = 0
+    tab_padding_x = max(7, tokens["control"]["tab_padding_x"] - 2)
+    tab_radius = max(8, tokens["radius"]["lg"] - 2)
     return f"""
         QTabBar {{
             background: transparent;
@@ -108,7 +109,7 @@ def _standalone_tabbar_qss(theme: dict) -> str:
             font-size: {tokens['font']['size_sm']}px;
             font-weight: {tokens['font']['weight_semibold']};
             min-height: {tokens['shell']['tabbar_height']}px;
-            border-radius: {tokens['radius']['lg']}px;
+            border-radius: {tab_radius}px;
             font-family: {tokens['font']['family']};
         }}
         QTabBar::tab:selected {{

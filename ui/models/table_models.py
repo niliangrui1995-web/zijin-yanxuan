@@ -846,6 +846,8 @@ class StockItemDelegate(QStyledItemDelegate):
         widget = option.widget
         style = widget.style() if widget else QApplication.style()
         is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        show_selected_rail = is_selected and index.column() == 0
+        selected_rail_width = table_tokens["selected_rail_width"] if show_selected_rail else 0
         plain_style_cell = bool(index.data(Qt.ItemDataRole.UserRole + 3))
         sorted_column = widget.sorted_column() if widget and hasattr(widget, "sorted_column") else -1
         sorted_overlay = None
@@ -875,6 +877,14 @@ class StockItemDelegate(QStyledItemDelegate):
             style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt_bg, painter, widget)
             if sorted_overlay is not None:
                 painter.fillRect(option.rect, sorted_overlay)
+            if show_selected_rail:
+                rail_rect = QRect(
+                    option.rect.left(),
+                    option.rect.top() + 1,
+                    selected_rail_width,
+                    max(0, option.rect.height() - 2),
+                )
+                painter.fillRect(rail_rect, QColor(_c("BRAND_PRIMARY")))
             rect = option.rect
             painter.setFont(opt.font)
             fm = painter.fontMetrics()
@@ -889,7 +899,7 @@ class StockItemDelegate(QStyledItemDelegate):
             draw_rect = QRect(0, 0, text_width + pad_x, text_height + pad_y)
             if align and (align & Qt.AlignmentFlag.AlignLeft.value):
                 draw_rect.moveCenter(rect.center())
-                draw_rect.moveLeft(rect.left() + 8)
+                draw_rect.moveLeft(rect.left() + 8 + selected_rail_width + (4 if show_selected_rail else 0))
             else:
                 draw_rect.moveCenter(rect.center())
 
@@ -910,7 +920,15 @@ class StockItemDelegate(QStyledItemDelegate):
             style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt_bg, painter, widget)
             if sorted_overlay is not None:
                 painter.fillRect(option.rect, sorted_overlay)
-            left_padding = 8
+            if show_selected_rail:
+                rail_rect = QRect(
+                    option.rect.left(),
+                    option.rect.top() + 1,
+                    selected_rail_width,
+                    max(0, option.rect.height() - 2),
+                )
+                painter.fillRect(rail_rect, QColor(_c("BRAND_PRIMARY")))
+            left_padding = 8 + selected_rail_width + (4 if show_selected_rail else 0)
             text_rect = option.rect.adjusted(left_padding, 0, -8, 0)
 
             font = index.data(Qt.ItemDataRole.FontRole)

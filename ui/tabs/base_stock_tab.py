@@ -93,24 +93,24 @@ class BaseStockTab(QWidget):
         left_wrap = QFrame()
         left_wrap.setObjectName("tabToolbarTitleWrap")
         left_wrap.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        left_layout = QVBoxLayout(left_wrap)
+        left_layout = QHBoxLayout(left_wrap)
         left_layout.setContentsMargins(
-            max(8, tokens["shell"]["toolbar_padding_x"] - 2),
-            2,
-            max(8, tokens["shell"]["toolbar_padding_x"] - 2),
-            2,
+            max(8, tokens["shell"]["toolbar_padding_x"] - 4),
+            0,
+            max(8, tokens["shell"]["toolbar_padding_x"] - 4),
+            0,
         )
-        left_layout.setSpacing(1)
+        left_layout.setSpacing(tokens["shell"]["toolbar_group_gap"] + 1)
 
         lbl_title = QLabel(title)
         lbl_title.setObjectName("tabTitle")
-        left_layout.addWidget(lbl_title)
+        left_layout.addWidget(lbl_title, 0, Qt.AlignmentFlag.AlignVCenter)
 
         if subtitle_label is not None:
             subtitle_label.setObjectName("tabStatusLabel")
             subtitle_label.setProperty("toolbarRole", "status")
             subtitle_label.setWordWrap(False)
-            left_layout.addWidget(subtitle_label)
+            left_layout.addWidget(subtitle_label, 0, Qt.AlignmentFlag.AlignVCenter)
 
         tb_layout.addWidget(left_wrap, 0, Qt.AlignmentFlag.AlignLeft)
         tb_layout.addStretch(1)

@@ -17,7 +17,9 @@ def test_base_stock_toolbar_applies_shell_object_names_and_toolbutton_style():
         assert subtitle.objectName() == "tabStatusLabel"
         assert subtitle.property("toolbarRole") == "status"
         assert filter_label.property("toolbarRole") == "meta"
+        assert filter_input.property("inToolbar") is True
         assert action_btn.property("class") == "toolbarGhost"
+        assert action_btn.property("inToolbar") is True
         assert toolbar.findChild(QWidget, "tabToolbarFilters") is not None
         assert toolbar.findChild(QWidget, "tabToolbarActions") is not None
     finally:

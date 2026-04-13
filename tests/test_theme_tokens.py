@@ -32,15 +32,22 @@ def test_theme_tokens_expose_state_tones_for_terminal_statuses():
 
 def test_theme_tokens_expose_terminal_layers_and_toolbar_metrics():
     tokens = build_ui_tokens(THEME_YUEBAI, density="紧凑")
+    dark_tokens = build_ui_tokens(THEME_MOYUAN, density="紧凑")
 
     assert "motion" in tokens
     assert "z_index" in tokens
     assert "chart" in tokens
+    assert "toolbar_card" in tokens["surface"]
     assert tokens["table"]["selected_rail_width"] > 0
     assert tokens["table"]["numeric_heat_max_alpha"] >= 32
     assert tokens["shell"]["toolbar_min_height"] >= tokens["control"]["button_height"]
     assert tokens["shell"]["toolbar_min_height"] < 48
     assert tokens["shell"]["toolbar_group_gap"] <= 4
+    assert tokens["surface"]["toolbar"] == THEME_YUEBAI["BG_CARD"]
+    assert tokens["surface"]["toolbar_card"] != tokens["surface"]["toolbar"]
+    assert tokens["surface"]["toolbar_chip"] != THEME_YUEBAI["BG_BUTTON"]
+    assert dark_tokens["surface"]["toolbar"] == THEME_MOYUAN["BG_ELEVATED"]
+    assert dark_tokens["surface"]["toolbar_chip"] == THEME_MOYUAN["BG_BUTTON"]
 
 
 def test_global_qss_uses_density_tokens_for_table_and_controls():
@@ -52,6 +59,11 @@ def test_global_qss_uses_density_tokens_for_table_and_controls():
     assert f"padding: {compact_tokens['table']['cell_padding_y']}px {compact_tokens['table']['cell_padding_x']}px;" in compact_qss
     assert "QWidget#tabToolbar" in compact_qss
     assert "QLabel#tabStatusLabel" in compact_qss
+    assert 'QPushButton[inToolbar="true"]' in compact_qss
+    assert 'QLineEdit[inToolbar="true"]' in compact_qss
+    assert f"background-color: {compact_tokens['surface']['toolbar']};" in compact_qss
+    assert f"background-color: {compact_tokens['surface']['toolbar_card']};" in compact_qss
+    assert f"background-color: {compact_tokens['surface']['toolbar_chip']};" in compact_qss
     assert compact_tokens["control"]["button_height"] < comfort_tokens["control"]["button_height"]
 
 

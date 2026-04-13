@@ -259,10 +259,11 @@ class TableStateOverlay(QWidget):
         self._card = QFrame(self)
         self._card.setObjectName("tableStateCard")
         self._card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._card.setMinimumWidth(280)
 
         card_layout = QVBoxLayout(self._card)
-        card_layout.setContentsMargins(16, 14, 16, 14)
-        card_layout.setSpacing(6)
+        card_layout.setContentsMargins(18, 16, 18, 16)
+        card_layout.setSpacing(8)
         card_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self._dot = PulsingDot(parent=self)
@@ -270,10 +271,12 @@ class TableStateOverlay(QWidget):
 
         self._title = QLabel("")
         self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._title.setWordWrap(True)
 
         self._subtitle = QLabel("")
         self._subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._subtitle.setWordWrap(True)
+        self._subtitle.setMaximumWidth(320)
 
         card_layout.addWidget(self._dot, 0, Qt.AlignmentFlag.AlignCenter)
         card_layout.addWidget(self._title)
@@ -295,16 +298,16 @@ class TableStateOverlay(QWidget):
             QFrame#tableStateCard {{
                 background-color: {card_bg};
                 border: 1px solid {card_border};
-                border-radius: {tokens['radius']['lg']}px;
+                border-radius: {tokens['radius']['xl']}px;
             }}
             """
         )
         self._title.setStyleSheet(
             f"color: {tone['fg'] if self._mode != 'empty' else t['TEXT_PRIMARY']};"
-            f" font-size: {tokens['font']['size_md']}px; font-weight: {tokens['font']['weight_semibold']};"
+            f" font-size: {tokens['font']['size_lg']}px; font-weight: {tokens['font']['weight_bold']};"
         )
         self._subtitle.setStyleSheet(
-            f"color: {t['TEXT_SECONDARY']}; font-size: {tokens['font']['size_xs']}px;"
+            f"color: {t['TEXT_SECONDARY']}; font-size: {tokens['font']['size_sm']}px;"
         )
         dot_color = tone["fg"] if self._mode in ("loading", "success", "warning", "error", "info") else t.get("COLOR_INFO", "#3B82F6")
         self._dot.set_color(dot_color)
