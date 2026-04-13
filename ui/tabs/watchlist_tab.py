@@ -376,7 +376,7 @@ class WatchlistTab(BaseStockTab):
             df = pd.DataFrame(rows, columns=headers)
             df.to_excel(path, index=False, engine='openpyxl')
             event_bus.sig_system_log.emit(
-                "info", f"✅ 已导出 {len(rows)} 条关注池记录至 {path}"
+                "info", f"已导出 {len(rows)} 条关注池记录至 {path}"
             )
             show_toast("自选股导出成功!", "success", self)
         except Exception as e:

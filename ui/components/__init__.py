@@ -3,10 +3,12 @@
 from functools import lru_cache
 
 from PyQt6.QtWidgets import (
-    QTableView, QAbstractItemView, QWidget, QToolTip, QVBoxLayout, QStackedLayout, QLabel
+    QApplication, QTableView, QAbstractItemView, QWidget, QToolTip, QVBoxLayout, QStackedLayout, QLabel, QFrame
 )
-from PyQt6.QtCore import Qt, QTimer, QEvent, QPropertyAnimation, QEasingCurve, pyqtProperty
+from PyQt6.QtCore import Qt, QSize, QTimer, QEvent, QPropertyAnimation, QEasingCurve, pyqtProperty
 from PyQt6.QtGui import QPainter, QColor, QBrush, QPalette
+
+from ui.theme_tokens import build_ui_tokens, get_state_tone
 
 
 class VCPTableView(QTableView):
@@ -30,12 +32,9 @@ class VCPTableView(QTableView):
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.setSortingEnabled(True)
-
-        from PyQt6.QtWidgets import QApplication
-        screen = QApplication.primaryScreen()
-        max_w = screen.geometry().width() if screen else 1920
-        self.horizontalHeader().setMaximumSectionSize(max_w)
-        self.setMaximumWidth(max_w)
+        self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self._apply_screen_width_limit()
 
         self._apply_runtime_style()
 
@@ -44,32 +43,53 @@ class VCPTableView(QTableView):
         self._base_row_height = default_row_height
         self.apply_density()
 
+    def _screen_width_limit(self) -> int:
+        screen = self.screen()
+        if screen is None:
+            window = self.window()
+            handle = window.windowHandle() if window is not None else None
+            screen = handle.screen() if handle is not None else None
+        if screen is None:
+            screen = QApplication.primaryScreen()
+        if screen is None:
+            return 1920
+        return max(320, screen.availableGeometry().width())
+
+    def _apply_screen_width_limit(self):
+        max_w = self._screen_width_limit()
+        self.horizontalHeader().setMaximumSectionSize(max_w)
+        self.setMaximumWidth(max_w)
+        self.updateGeometry()
+
+    def sizeHint(self) -> QSize:
+        hint = super().sizeHint()
+        return QSize(min(hint.width(), self._screen_width_limit()), hint.height())
+
+    def minimumSizeHint(self) -> QSize:
+        hint = super().minimumSizeHint()
+        return QSize(min(hint.width(), self._screen_width_limit()), hint.height())
+
     def apply_density(self, mode: str | None = None):
-        from core.app_config import app_config
-
-        if mode is None:
-            mode = app_config.table_density
-        if mode not in ("紧凑", "舒适"):
-            mode = "舒适"
-
+        tokens = build_ui_tokens(density=mode)
         base_height = self._base_row_height or self.verticalHeader().defaultSectionSize()
-        if mode == "紧凑":
-            row_height = max(20, base_height - 6)
+        comfort_height = max(base_height, tokens["table"]["row_height_base"])
+        if tokens["density"] == "紧凑":
+            row_height = max(20, comfort_height - tokens["table"]["row_height_delta"])
         else:
-            row_height = base_height
+            row_height = comfort_height
         self.verticalHeader().setDefaultSectionSize(row_height)
 
     def _tooltip_qss(self) -> str:
-        from ui.theme import theme_manager
-        t = theme_manager.current_theme
+        tokens = build_ui_tokens()
+        t = tokens["theme"]
         return (
-            "QTableView::item { padding: 0px 10px; }\n"
+            f"QTableView::item {{ padding: {tokens['table']['cell_padding_y']}px {tokens['table']['cell_padding_x']}px; }}\n"
             "QToolTip {"
             f" background-color: {t['BG_ELEVATED']};"
             f" color: {t['TEXT_PRIMARY']};"
             f" border: 1px solid {t['BORDER_DEFAULT']};"
-            " border-radius: 8px;"
-            " padding: 7px 10px;"
+            f" border-radius: {tokens['radius']['md']}px;"
+            f" padding: {tokens['space']['sm']}px {tokens['space']['md']}px;"
             " margin: 0px;"
             " }"
         )
@@ -78,10 +98,15 @@ class VCPTableView(QTableView):
         self.setStyleSheet(self._tooltip_qss())
 
     def _on_theme_changed(self, _theme_name: str):
+        self._apply_screen_width_limit()
         self._apply_runtime_style()
         self.style().unpolish(self)
         self.style().polish(self)
         self.viewport().update()
+
+    def showEvent(self, event):
+        self._apply_screen_width_limit()
+        super().showEvent(event)
 
     def viewportEvent(self, event):
         if event.type() == QEvent.Type.ToolTip:
@@ -161,14 +186,29 @@ class PulsingDot(QWidget):
 class TableStateOverlay(QWidget):
     """统一空/加载状态覆盖层"""
 
+    _DEFAULT_SUBTITLES = {
+        "empty": "当前条件下暂无可显示内容，可调整筛选条件或稍后刷新。",
+        "loading": "正在同步最新数据，请稍候。",
+        "offline": "当前处于离线模式，仅展示本地缓存。",
+    }
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._mode = "empty"
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        layout.setSpacing(0)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self._card = QFrame(self)
+        self._card.setObjectName("tableStateCard")
+        self._card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
+        card_layout = QVBoxLayout(self._card)
+        card_layout.setContentsMargins(16, 14, 16, 14)
+        card_layout.setSpacing(6)
+        card_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self._dot = PulsingDot(parent=self)
         self._dot.setVisible(False)
@@ -178,31 +218,48 @@ class TableStateOverlay(QWidget):
 
         self._subtitle = QLabel("")
         self._subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._subtitle.setWordWrap(True)
 
-        layout.addWidget(self._dot, 0, Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self._title)
-        layout.addWidget(self._subtitle)
+        card_layout.addWidget(self._dot, 0, Qt.AlignmentFlag.AlignCenter)
+        card_layout.addWidget(self._title)
+        card_layout.addWidget(self._subtitle)
+        layout.addWidget(self._card, 0, Qt.AlignmentFlag.AlignCenter)
 
         from ui.theme import theme_manager
         theme_manager.sig_theme_changed.connect(lambda _name: self._apply_style())
         self._apply_style()
 
     def _apply_style(self):
-        from ui.theme import theme_manager
-        t = theme_manager.current_theme
+        tokens = build_ui_tokens()
+        t = tokens["theme"]
+        tone = get_state_tone(self._mode)
+        card_border = tone["border"] if self._mode != "empty" else t["BORDER_DEFAULT"]
+        card_bg = tone["bg"] if self._mode != "empty" else t["BG_ELEVATED"]
+        self._card.setStyleSheet(
+            f"""
+            QFrame#tableStateCard {{
+                background-color: {card_bg};
+                border: 1px solid {card_border};
+                border-radius: {tokens['radius']['lg']}px;
+            }}
+            """
+        )
         self._title.setStyleSheet(
-            f"color: {t['TEXT_PRIMARY']}; font-size: 13px; font-weight: 600;"
+            f"color: {tone['fg'] if self._mode != 'empty' else t['TEXT_PRIMARY']};"
+            f" font-size: {tokens['font']['size_md']}px; font-weight: {tokens['font']['weight_semibold']};"
         )
         self._subtitle.setStyleSheet(
-            f"color: {t['TEXT_SECONDARY']}; font-size: 11px;"
+            f"color: {t['TEXT_SECONDARY']}; font-size: {tokens['font']['size_xs']}px;"
         )
-        self._dot.set_color(t.get("COLOR_INFO", "#3B82F6"))
+        dot_color = tone["fg"] if self._mode in ("loading", "success", "warning", "error", "info") else t.get("COLOR_INFO", "#3B82F6")
+        self._dot.set_color(dot_color)
 
     def set_state(self, mode: str, title: str, subtitle: str = ""):
         self._mode = mode
         self._title.setText(title)
-        self._subtitle.setText(subtitle or "")
+        self._subtitle.setText(subtitle or self._DEFAULT_SUBTITLES.get(mode, ""))
         self._dot.setVisible(mode == "loading")
+        self._apply_style()
 
 
 class TableStateWrapper(QWidget):
@@ -224,6 +281,24 @@ class TableStateWrapper(QWidget):
 
         self.show_table()
 
+    def _width_limit(self) -> int:
+        limit = self._table.maximumWidth()
+        return limit if limit and limit < 16777215 else self._table.sizeHint().width()
+
+    def sizeHint(self) -> QSize:
+        table_hint = self._table.sizeHint()
+        overlay_hint = self._overlay.sizeHint()
+        width = min(max(table_hint.width(), overlay_hint.width()), self._width_limit())
+        height = max(table_hint.height(), overlay_hint.height())
+        return QSize(width, height)
+
+    def minimumSizeHint(self) -> QSize:
+        table_hint = self._table.minimumSizeHint()
+        overlay_hint = self._overlay.minimumSizeHint()
+        width = min(max(table_hint.width(), overlay_hint.width()), self._width_limit())
+        height = max(table_hint.height(), overlay_hint.height())
+        return QSize(width, height)
+
     @property
     def table(self):
         return self._table
@@ -237,6 +312,10 @@ class TableStateWrapper(QWidget):
 
     def show_loading(self, title: str | None = None, subtitle: str = ""):
         self._overlay.set_state("loading", title or self._loading_title, subtitle)
+        self._stack.setCurrentWidget(self._overlay)
+
+    def show_offline(self, title: str = "离线模式", subtitle: str = ""):
+        self._overlay.set_state("offline", title, subtitle)
         self._stack.setCurrentWidget(self._overlay)
 
 

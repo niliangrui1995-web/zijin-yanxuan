@@ -789,7 +789,7 @@ class StockTableModel(QAbstractTableModel):
                     # 3. 终盘/现价必须收稳、守住均线支撑：rt_close > ma20 * 0.95
                     # 4. 当天必须是红 K 线：rt_close >= rt_open
                     if is_red_candle and (dyn_ma10 > dyn_ma20) and (rt_open < dyn_ma10) and (rt_close > dyn_ma20 * 0.95):
-                        pos_str = "✅"
+                        pos_str = "触发"
                         
                 if pos_str != item_dict.get("买点", ""):
                     self.set_cell_value(row, "买点", pos_str)

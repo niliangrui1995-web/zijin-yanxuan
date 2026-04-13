@@ -10,6 +10,7 @@ K 线图窗口 — ECharts 5.5.0 + QWebEngineView 高性能版
 - 盘中 60 秒增量热更新（无闪烁）
 - 十字光标 + 顶部工具栏实时联动
 """
+import html
 import json
 import os as _os
 from core.logger import get_logger
@@ -35,241 +36,13 @@ from ui.kline_chart_payload import (
     format_kline_market_badge,
     resolve_kline_vcp_context,
 )
+from ui.theme_tokens import build_ui_tokens, get_state_tone
 
 # ECharts JS 本地路径（断网也能用）
 _ECHARTS_JS_PATH = _os.path.join(
     _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
     "assets", "echarts.min.js"
 )
-
-
-def _build_html(title: str, echarts_data: dict, echarts_js_path: str, theme_colors: dict) -> str:
-    """
-    构建完整的 ECharts HTML 页面。
-    为什么把 HTML 模板放在函数里而不是外部文件：因为需要动态嵌入 JSON 数据和 JS 路径，
-    放在 Python 里能保证数据注入安全且不依赖额外文件。
-    """
-    # 将本地 JS 文件路径转成 file:// URL（Windows 路径反斜杠需要处理）
-    js_url = QUrl.fromLocalFile(echarts_js_path).toString()
-    data_json = json.dumps(echarts_data, ensure_ascii=False)
-
-    return f'''<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <script src="{js_url}"></script>
-    <style>
-        body {{ margin: 0; padding: 0; background-color: {theme_colors['bg_canvas']}; color: {theme_colors['text_secondary']}; font-family: "Microsoft YaHei UI", sans-serif; overflow: hidden; }}
-        #chart {{ width: 100vw; height: calc(100vh - 30px); margin-top: 30px; }}
-
-        .top-toolbar {{ position: absolute; top: 0; left: 0; right: 0; height: 30px; background: {theme_colors['bg_toolbar']}; border-bottom: 1px solid {theme_colors['border']}; display: flex; align-items: center; padding: 0 12px; z-index: 100; gap: 10px; }}
-        .info-item {{ font-size: 11px; color: {theme_colors['text_muted']}; white-space: nowrap; }}
-        .info-val {{ font-size: 11px; font-weight: 700; margin-left: 2px; color: {theme_colors['text_secondary']}; }}
-        .ma-display {{ margin-left: auto; font-size: 11px; font-weight: 700; display: flex; gap: 8px; flex-wrap: nowrap; white-space: nowrap; }}
-        .ma-display span.ma10 {{ color: {theme_colors['ma10']}; }}
-        .ma-display span.ma20 {{ color: {theme_colors['ma20']}; }}
-        .ma-display span.ma50 {{ color: {theme_colors['ma50']}; }}
-        .ma-display span.ma150 {{ color: {theme_colors['ma150']}; }}
-        .ma-display span.ma200 {{ color: {theme_colors['ma200']}; }}
-    </style>
-</head>
-<body>
-    <div class="top-toolbar" id="toolbar">
-        <div class="info-item">日期: <span id="v-date" class="info-val" style="color: {theme_colors['text_primary']}">-</span></div>
-        <div class="info-item">开: <span id="v-open" class="info-val">-</span></div>
-        <div class="info-item">高: <span id="v-high" class="info-val">-</span></div>
-        <div class="info-item">低: <span id="v-low" class="info-val">-</span></div>
-        <div class="info-item">收: <span id="v-close" class="info-val">-</span></div>
-        <div class="info-item">涨幅: <span id="v-pct" class="info-val">-</span></div>
-        <div class="info-item">成交量: <span id="v-vol" class="info-val">-</span></div>
-
-        <div class="ma-display">
-            <span class="ma10">MA10: <span id="v-ma10">-</span></span>
-            <span class="ma20">MA20: <span id="v-ma20">-</span></span>
-            <span class="ma50">MA50: <span id="v-ma50">-</span></span>
-            <span class="ma150">MA150: <span id="v-ma150">-</span></span>
-            <span class="ma200">MA200: <span id="v-ma200">-</span></span>
-        </div>
-    </div>
-    <div id="chart"></div>
-
-    <script>
-        const rawData = {data_json};
-
-        const upColor = '{theme_colors['up_color']}';
-        const downColor = '{theme_colors['down_color']}';
-
-        const chart = echarts.init(document.getElementById('chart'));
-
-        // 十字光标联动顶部工具栏
-        chart.on('updateAxisPointer', function (event) {{
-            const axisInfo = event.axesInfo[0];
-            if (axisInfo) {{
-                const idx = axisInfo.value;
-                if (idx >= 0 && idx < rawData.dates.length) {{
-                    const dt = rawData.dates[idx];
-                    const kline = rawData.klines[idx];
-
-                    document.getElementById('v-date').innerText = dt;
-                    document.getElementById('v-open').innerText = kline[0].toFixed(2);
-                    document.getElementById('v-close').innerText = kline[1].toFixed(2);
-                    document.getElementById('v-low').innerText = kline[2].toFixed(2);
-                    document.getElementById('v-high').innerText = kline[3].toFixed(2);
-
-                    let prevClose = idx > 0 ? rawData.klines[idx-1][1] : kline[0];
-                    let pct = ((kline[1] - prevClose) / prevClose * 100);
-                    let pctStr = pct >= 0 ? '+' + pct.toFixed(2) + '%' : pct.toFixed(2) + '%';
-
-                    document.getElementById('v-pct').innerText = pctStr;
-                    document.getElementById('v-pct').style.color = pct >= 0 ? upColor : downColor;
-
-                    const vol = rawData.vols[idx].value || rawData.vols[idx];
-                    document.getElementById('v-vol').innerText = (vol / 10000).toFixed(0) + '万';
-
-                    // 更新 MA 数值显示
-                    const maKeys = ['ma10', 'ma20', 'ma50', 'ma150', 'ma200'];
-                    for (const key of maKeys) {{
-                        const el = document.getElementById('v-' + key);
-                        if (el && rawData[key]) {{
-                            const val = rawData[key][idx];
-                            el.innerText = val !== null && val !== undefined ? val.toFixed(2) : '-';
-                        }}
-                    }}
-                }}
-            }}
-        }});
-
-        const option = {{
-            backgroundColor: '{theme_colors['bg_canvas']}',
-            animation: false,
-            tooltip: {{ trigger: 'axis', axisPointer: {{ type: 'cross' }}, showContent: false }},
-            axisPointer: {{ link: [{{ xAxisIndex: 'all' }}], label: {{ backgroundColor: '{theme_colors['pointer_bg']}' }} }},
-            grid: [
-                {{ left: '3%', right: '3%', top: '4%', height: '60%' }},
-                {{ left: '3%', right: '3%', top: '65%', height: '14%' }},
-                {{ left: '3%', right: '3%', top: '82%', height: '15%' }}
-            ],
-            xAxis: [
-                {{ type: 'category', data: rawData.dates, gridIndex: 0, boundaryGap: false, axisLine: {{ onZero: false }}, splitLine: {{ show: true, lineStyle: {{ color: '{theme_colors['grid_line']}', type: 'dashed' }} }}, axisLabel: {{ show: false }} }},
-                {{ type: 'category', data: rawData.dates, gridIndex: 1, boundaryGap: false, axisLine: {{ onZero: false }}, splitLine: {{ show: true, lineStyle: {{ color: '{theme_colors['grid_line']}', type: 'dashed' }} }}, axisLabel: {{ show: false }} }},
-                {{ type: 'category', data: rawData.dates, gridIndex: 2, boundaryGap: false, axisLine: {{ onZero: false, lineStyle: {{ color: '{theme_colors['axis_line']}' }} }}, splitLine: {{ show: true, lineStyle: {{ color: '{theme_colors['grid_line']}', type: 'dashed' }} }}, axisLabel: {{ color: '{theme_colors['axis_label']}' }} }}
-            ],
-            yAxis: [
-                {{ gridIndex: 0, scale: true, splitLine: {{ show: true, lineStyle: {{ color: '{theme_colors['grid_line']}', type: 'dashed' }} }}, position: 'right', axisLabel: {{ color: '{theme_colors['axis_label']}' }} }},
-                {{ gridIndex: 1, scale: true, splitLine: {{ show: false }}, position: 'left', axisLabel: {{ color: '{theme_colors['axis_label']}', formatter: function(val) {{ return val >= 1e8 ? (val/1e8).toFixed(0)+'亿' : val >= 1e4 ? (val/1e4).toFixed(0)+'万' : val; }} }} }},
-                {{ gridIndex: 2, scale: true, splitLine: {{ show: false }}, position: 'left', axisLabel: {{ color: '{theme_colors['axis_label']}' }} }}
-            ],
-            series: [
-                {{
-                    name: 'KLine', type: 'candlestick',
-                    xAxisIndex: 0, yAxisIndex: 0, data: rawData.klines,
-                    itemStyle: {{ color: upColor, color0: downColor, borderColor: upColor, borderColor0: downColor }},
-                    markPoint: rawData.vcpMarkers ? {{ data: rawData.vcpMarkers, animation: false, silent: true }} : null,
-                    markLine: rawData.vcpLines ? {{ data: rawData.vcpLines, symbol: 'none', label: {{ show: false }}, animation: false, silent: true, lineStyle: {{ color: '{theme_colors['vcp_line']}', type: 'solid', width: 1.3 }} }} : null,
-                    markArea: rawData.vcpArea ? {{ data: rawData.vcpArea, silent: true, itemStyle: {{ color: '{theme_colors['vcp_area']}' }} }} : null
-                }},
-                {{ name: 'MA10', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: rawData.ma10, symbol: 'none', lineStyle: {{ color: '{theme_colors['ma10']}', width: 1.5 }} }},
-                {{ name: 'MA20', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: rawData.ma20, symbol: 'none', lineStyle: {{ color: '{theme_colors['ma20']}', width: 1.5 }} }},
-                {{ name: 'MA50', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: rawData.ma50, symbol: 'none', lineStyle: {{ color: '{theme_colors['ma50']}', width: 1.5 }} }},
-                {{ name: 'MA150', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: rawData.ma150, symbol: 'none', lineStyle: {{ color: '{theme_colors['ma150']}', width: 1 }} }},
-                {{ name: 'MA200', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: rawData.ma200, symbol: 'none', lineStyle: {{ color: '{theme_colors['ma200']}', width: 1 }} }},
-
-                {{ name: 'Volume', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: rawData.vols }},
-                {{ name: 'VolMA20', type: 'line', xAxisIndex: 1, yAxisIndex: 1, data: rawData.volMa20, symbol: 'none', lineStyle: {{ color: '{theme_colors['vol_ma20']}', width: 1.2 }}, z: 10 }},
-
-                {{ name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2, data: rawData.macd }},
-                {{ name: 'DIFF', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: rawData.diff, symbol: 'none', lineStyle: {{ color: '{theme_colors['ma50']}', width: 1 }} }},
-                {{ name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: rawData.dea, symbol: 'none', lineStyle: {{ color: '{theme_colors['ma20']}', width: 1 }} }}
-            ]
-        }};
-
-        chart.setOption(option);
-        window.addEventListener('resize', function () {{ chart.resize(); }});
-
-        // 严格禁用鼠标滚轮缩放和拖拽（任务卡明确要求锁死视图）
-        document.getElementById('chart').addEventListener('wheel', function(e) {{ e.preventDefault(); }}, {{ passive: false }});
-        document.getElementById('chart').addEventListener('mousedown', function(e) {{
-            if (e.button === 0) {{ e.stopPropagation(); }}
-        }}, true);
-
-        // 默认展示最后一根 K 线的信息
-        chart.dispatchAction({{ type: 'showTip', seriesIndex: 0, dataIndex: rawData.dates.length - 1 }});
-
-        // === 盘中增量热更新接口 ===
-        window.updateLastBar = function(newQuote) {{
-            const lastIdx = rawData.dates.length - 1;
-            const lastDt = rawData.dates[lastIdx];
-            
-            if (newQuote.date && newQuote.date > lastDt) {{
-                // 如果出现跨日新增（极罕见），最好交给全量替换或主动刷新，暂时用兜底填充
-                rawData.dates.push(newQuote.date);
-                rawData.klines.push([newQuote.open, newQuote.close, newQuote.low, newQuote.high]);
-                const isUp = newQuote.close >= newQuote.open;
-                rawData.vols.push({{ value: newQuote.vol, itemStyle: {{ color: isUp ? upColor : downColor }} }});
-                
-                chart.setOption({{
-                    xAxis: [ {{ data: rawData.dates }}, {{ data: rawData.dates }}, {{ data: rawData.dates }} ],
-                    series: [
-                        {{ data: rawData.klines }}, {{}}, {{}}, {{}}, {{}}, {{}},
-                        {{ data: rawData.vols }}, {{}}
-                    ]
-                }});
-                chart.dispatchAction({{ type: 'showTip', seriesIndex: 0, dataIndex: rawData.dates.length - 1 }});
-            }} else {{
-                // 同日更新最后一条
-                rawData.klines[lastIdx] = [newQuote.open, newQuote.close, newQuote.low, newQuote.high];
-                const isUp = newQuote.close >= newQuote.open;
-                rawData.vols[lastIdx] = {{ value: newQuote.vol, itemStyle: {{ color: isUp ? upColor : downColor }} }};
-
-                chart.setOption({{
-                    series: [
-                        {{ data: rawData.klines }},
-                        {{}}, {{}}, {{}}, {{}}, {{}},  // 跳过 MA 线
-                        {{ data: rawData.vols }},
-                        {{}}  // 跳过 VolMA20（盘中不重算均量线）
-                    ]
-                }}, {{ lazyUpdate: true }});
-                chart.dispatchAction({{ type: 'showTip', seriesIndex: 0, dataIndex: lastIdx }});
-            }}
-        }};
-
-        // === 全量替换接口（切换股票时用） ===
-        window.replaceAllData = function(newData) {{
-            for (const key of Object.keys(newData)) {{
-                rawData[key] = newData[key];
-            }}
-            // 重建 markPoint / markLine / markArea
-            const seriesUpdate = [
-                {{
-                    data: rawData.klines,
-                    markPoint: rawData.vcpMarkers ? {{ data: rawData.vcpMarkers, animation: false, silent: true }} : null,
-                    markLine: rawData.vcpLines ? {{ data: rawData.vcpLines, symbol: 'none', label: {{ show: false }}, animation: false, silent: true, lineStyle: {{ color: '{theme_colors['vcp_line']}', type: 'solid', width: 1.3 }} }} : null,
-                    markArea: rawData.vcpArea ? {{ data: rawData.vcpArea, silent: true, itemStyle: {{ color: '{theme_colors['vcp_area']}' }} }} : null
-                }},
-                {{ data: rawData.ma10 }},
-                {{ data: rawData.ma20 }},
-                {{ data: rawData.ma50 }},
-                {{ data: rawData.ma150 }},
-                {{ data: rawData.ma200 }},
-                {{ data: rawData.vols }},
-                {{ data: rawData.volMa20 }},
-                {{ data: rawData.macd }},
-                {{ data: rawData.diff }},
-                {{ data: rawData.dea }}
-            ];
-            chart.setOption({{
-                xAxis: [
-                    {{ data: rawData.dates }},
-                    {{ data: rawData.dates }},
-                    {{ data: rawData.dates }}
-                ],
-                series: seriesUpdate
-            }});
-            chart.dispatchAction({{ type: 'showTip', seriesIndex: 0, dataIndex: rawData.dates.length - 1 }});
-        }};
-    </script>
-</body>
-</html>'''
 
 
 class KLineChartWindow(QWidget):
@@ -335,9 +108,9 @@ class KLineChartWindow(QWidget):
 
         # === 顶部主信息区 ===
         self.header_widget = QWidget()
-        self.header_widget.setFixedHeight(62)
+        self.header_widget.setFixedHeight(72)
         header_layout = QHBoxLayout(self.header_widget)
-        header_layout.setContentsMargins(14, 9, 14, 9)
+        header_layout.setContentsMargins(14, 10, 14, 10)
         header_layout.setSpacing(12)
 
         left_group = QVBoxLayout()
@@ -367,6 +140,7 @@ class KLineChartWindow(QWidget):
 
         self.btn_prev = QPushButton("上一只")
         self.btn_prev.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_prev.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.btn_prev.clicked.connect(lambda: self._nav_stock(-1))
         right_group.addWidget(self.btn_prev)
 
@@ -376,11 +150,13 @@ class KLineChartWindow(QWidget):
 
         self.btn_next = QPushButton("下一只")
         self.btn_next.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_next.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.btn_next.clicked.connect(lambda: self._nav_stock(1))
         right_group.addWidget(self.btn_next)
 
         self.btn_fav = QPushButton("加入关注")
         self.btn_fav.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_fav.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.btn_fav.clicked.connect(self._toggle_fav)
         right_group.addWidget(self.btn_fav)
 
@@ -390,19 +166,48 @@ class KLineChartWindow(QWidget):
 
         # === VCP 摘要带 ===
         self.summary_widget = QWidget()
-        self.summary_widget.setFixedHeight(42)
+        self.summary_widget.setFixedHeight(92)
         summary_layout = QHBoxLayout(self.summary_widget)
-        summary_layout.setContentsMargins(14, 7, 14, 7)
+        summary_layout.setContentsMargins(14, 8, 14, 10)
         summary_layout.setSpacing(10)
 
+        self.summary_cards = []
         self.summary_labels = {}
-        for key in ("形态", "触发", "区间", "振幅", "RPS", "关注"):
-            label = QLabel("--")
-            label.setMinimumHeight(26)
-            label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
-            self.summary_labels[key] = label
-            summary_layout.addWidget(label)
-        summary_layout.addStretch()
+        self._summary_key_color = ""
+        self._summary_value_color = ""
+        self._summary_highlight_color = ""
+        summary_groups = (
+            ("形态概览", ("形态", "触发")),
+            ("区间结构", ("区间", "振幅")),
+            ("强度跟踪", ("RPS", "关注")),
+        )
+        for title, keys in summary_groups:
+            card = QFrame()
+            card.setObjectName("klineSummaryCard")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(12, 10, 12, 10)
+            card_layout.setSpacing(6)
+
+            title_lbl = QLabel(title)
+            title_lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+            card_layout.addWidget(title_lbl)
+
+            value_labels = []
+            for key in keys:
+                label = QLabel("--")
+                label.setMinimumHeight(22)
+                label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+                label.setTextFormat(Qt.TextFormat.RichText)
+                self.summary_labels[key] = label
+                value_labels.append(label)
+                card_layout.addWidget(label)
+
+            summary_layout.addWidget(card, 1)
+            self.summary_cards.append({
+                "frame": card,
+                "title": title_lbl,
+                "labels": value_labels,
+            })
 
         container_layout.addWidget(self.summary_widget)
 
@@ -467,8 +272,12 @@ class KLineChartWindow(QWidget):
         if hasattr(self, "summary_labels"):
             summary = build_kline_summary_items(self.vcp_data, getattr(self, "is_fav", False))
             for key, label in self.summary_labels.items():
-                value = summary.get(key, "--")
-                label.setText(f"{key}  {value}")
+                value = html.escape(str(summary.get(key, "--")))
+                value_color = self._summary_highlight_color if key == "关注" and value == "已关注" else self._summary_value_color
+                label.setText(
+                    f"<span style='color:{self._summary_key_color};'>{key}</span>"
+                    f"&nbsp;&nbsp;<span style='color:{value_color}; font-weight:600;'>{value}</span>"
+                )
 
     def _resolve_vcp_context(self, code: str, name: str, item_data: dict = None) -> dict:
         try:
@@ -505,7 +314,8 @@ class KLineChartWindow(QWidget):
         （#0B0B0E 而非全局 #0F1117），直接写死保证零变化。
         """
         t = theme_manager.current_theme
-        is_dark = theme_manager.is_dark()
+        tokens = build_ui_tokens(t)
+        is_dark = tokens["is_dark"]
         palette = build_kline_window_palette(t, is_dark)
         widget_bg = palette["widget_bg"]
         widget_text = palette["widget_text"]
@@ -523,32 +333,39 @@ class KLineChartWindow(QWidget):
         badge_bg = palette["badge_bg"]
         badge_fg = palette["badge_fg"]
         summary_border = palette["summary_border"]
+        radius = tokens["radius"]
+        font = tokens["font"]
+        control = tokens["control"]
+        neutral_tone = tokens["state"]["neutral"]
+        action_height = control["button_height"]
 
         self.setStyleSheet(f"""
             QWidget {{ background-color: {widget_bg}; color: {widget_text}; }}
-            QLabel {{ font-family: "Microsoft YaHei UI"; }}
+            QLabel {{ font-family: {font['family']}; }}
         """)
-        
+
         # 外层圆角防锯齿容器
         self.container.setStyleSheet(f"""
             QFrame#klineContainer {{
                 background-color: {widget_bg};
                 border: 1px solid {toolbar_border};
-                border-radius: 8px;
+                border-radius: {radius['md']}px;
             }}
         """)
-        
+
         # 自定义拖拽标题栏样式
         self.title_bar.setStyleSheet(f"""
             QWidget {{
                 background-color: {toolbar_bg};
-                border-top-left-radius: 8px;
-                border-top-right-radius: 8px;
+                border-top-left-radius: {radius['md']}px;
+                border-top-right-radius: {radius['md']}px;
                 border-bottom: none;
             }}
         """)
-        self.title_lbl.setStyleSheet(f"color: {widget_text}; font-weight: 700; font-size: 13px;")
-        
+        self.title_lbl.setStyleSheet(
+            f"color: {widget_text}; font-weight: {font['weight_bold']}; font-size: {font['size_md']}px;"
+        )
+
         # 关闭按钮鼠标悬浮效果
         self.btn_close.setStyleSheet(f"""
             QToolButton {{
@@ -559,33 +376,41 @@ class KLineChartWindow(QWidget):
             QToolButton:hover {{
                 background-color: #E81123;
                 color: white;
-                border-radius: 4px;
+                border-radius: {radius['xs']}px;
             }}
         """)
 
         self.header_widget.setStyleSheet(
             f"background-color: {toolbar_bg}; border-bottom: 1px solid {toolbar_border};"
         )
-        self.identity_lbl.setStyleSheet(f"color: {widget_text}; font-weight: 700; font-size: 14px;")
+        self.identity_lbl.setStyleSheet(
+            f"color: {widget_text}; font-weight: {font['weight_bold']}; font-size: {font['size_lg']}px;"
+        )
         self.market_badge_lbl.setStyleSheet(
             f"background-color: {badge_bg}; color: {badge_fg}; border: 1px solid {badge_bg};"
-            "border-radius: 11px; padding: 1px 9px; font-size: 11px; font-weight: 600;"
+            f"border-radius: {radius['pill']}px; padding: 1px 9px;"
+            f" font-size: {font['size_xs']}px; font-weight: {font['weight_semibold']};"
         )
+        self.btn_prev.setFixedHeight(action_height)
+        self.btn_next.setFixedHeight(action_height)
+        self.btn_fav.setFixedHeight(action_height)
+        self.nav_index_lbl.setFixedHeight(action_height)
+        self.nav_index_lbl.setMinimumWidth(72)
         self.nav_index_lbl.setStyleSheet(
-            f"background-color: {nav_bg}; color: {info_color}; border: 1px solid {btn_border};"
-            "border-radius: 11px; padding: 1px 10px; font-size: 11px; font-weight: 600;"
+            f"background-color: {neutral_tone['bg']}; color: {info_color}; border: 1px solid {btn_border};"
+            f"border-radius: {radius['pill']}px; padding: 0 10px; font-size: {font['size_xs']}px;"
+            f" font-weight: {font['weight_semibold']}; font-family: {font['mono_family']};"
         )
 
         nav_style = f"""
             QPushButton {{
-                background-color: transparent;
+                background-color: {neutral_tone['bg']};
                 color: {info_color};
                 border: 1px solid {btn_border};
-                border-radius: 8px;
-                padding: 5px 12px;
-                font-weight: 600;
-                font-size: 12px;
-                min-height: 30px;
+                border-radius: {radius['md']}px;
+                padding: 0 12px;
+                font-weight: {font['weight_semibold']};
+                font-size: {font['size_sm']}px;
             }}
             QPushButton:hover {{ background-color: {btn_hover_bg}; color: {btn_hover_text}; }}
             QPushButton:disabled {{ color: {btn_disabled_text}; border-color: {btn_disabled_border}; }}
@@ -597,14 +422,13 @@ class KLineChartWindow(QWidget):
         fav_hover = 'rgba(255, 214, 10, 0.1)' if is_dark else 'rgba(217, 119, 6, 0.1)'
         self.btn_fav.setStyleSheet(f"""
             QPushButton {{
-                background-color: transparent;
+                background-color: {neutral_tone['bg']};
                 color: {vcp_star};
                 border: 1px solid {vcp_star};
-                border-radius: 8px;
-                padding: 5px 12px;
-                font-weight: 600;
-                font-size: 12px;
-                min-height: 30px;
+                border-radius: {radius['md']}px;
+                padding: 0 12px;
+                font-weight: {font['weight_semibold']};
+                font-size: {font['size_sm']}px;
             }}
             QPushButton:hover {{ background-color: {fav_hover}; }}
         """)
@@ -612,11 +436,27 @@ class KLineChartWindow(QWidget):
         self.summary_widget.setStyleSheet(
             f"background-color: {summary_bg}; border-bottom: 1px solid {summary_border};"
         )
-        for label in self.summary_labels.values():
-            label.setStyleSheet(
-                f"background-color: {nav_bg}; color: {info_color}; border: 1px solid {summary_border};"
-                "border-radius: 11px; padding: 4px 10px; font-size: 11px; font-weight: 600;"
+        self._summary_key_color = t["TEXT_MUTED"]
+        self._summary_value_color = widget_text
+        self._summary_highlight_color = vcp_star
+        for card in self.summary_cards:
+            card["frame"].setStyleSheet(
+                f"""
+                QFrame#klineSummaryCard {{
+                    background-color: {nav_bg};
+                    border: 1px solid {summary_border};
+                    border-radius: {radius['lg']}px;
+                }}
+                """
             )
+            card["title"].setStyleSheet(
+                f"color: {t['TEXT_MUTED']}; font-size: {font['size_xs']}px;"
+                f" font-weight: {font['weight_medium']}; letter-spacing: 0.2px;"
+            )
+            for label in card["labels"]:
+                label.setStyleSheet(
+                    f"font-size: {font['size_sm']}px; font-weight: {font['weight_medium']};"
+                )
 
         self._apply_info_styles(widget_text=widget_text, info_color=info_color, is_dark=is_dark)
         self.browser.setStyleSheet(f"background-color: {chart_bg};")
@@ -629,19 +469,15 @@ class KLineChartWindow(QWidget):
             is_dark = theme_manager.is_dark()
 
         tone = getattr(self, "_info_tone", "info")
-        tone_map = {
-            "info": (t["BRAND_SUBTLE"], widget_text),
-            "loading": ("rgba(245, 158, 11, 0.14)", t["COLOR_WARNING"]),
-            "success": ("rgba(16, 185, 129, 0.14)", t["COLOR_SUCCESS"]),
-            "warning": ("rgba(245, 158, 11, 0.14)", t["COLOR_WARNING"]),
-            "error": ("rgba(239, 68, 68, 0.14)", t["COLOR_ERROR"]),
-            "realtime": ("rgba(59, 130, 246, 0.14)", t["COLOR_INFO"]),
-        }
-        bg_color, fg_color = tone_map.get(tone, (t["BRAND_SUBTLE"], widget_text))
-        border_color = "rgba(148, 163, 184, 0.10)" if is_dark else t["BORDER_SUBTLE"]
+        tokens = build_ui_tokens(t)
+        state_tone = get_state_tone("info" if tone == "realtime" else tone, t)
+        border_color = state_tone["border"] if tone != "info" else ("rgba(148, 163, 184, 0.10)" if is_dark else t["BORDER_SUBTLE"])
+        fg_color = widget_text if tone == "info" else state_tone["fg"]
+        bg_color = t["BRAND_SUBTLE"] if tone == "info" else state_tone["bg"]
         self.info_lbl.setStyleSheet(
             f"background-color: {bg_color}; color: {fg_color}; border: 1px solid {border_color};"
-            "border-radius: 11px; padding: 5px 10px; font-size: 12px; font-weight: 600;"
+            f"border-radius: {tokens['radius']['pill']}px; padding: 5px 10px;"
+            f" font-size: {tokens['font']['size_sm']}px; font-weight: {tokens['font']['weight_semibold']};"
         )
 
     def _get_market(self) -> str:
@@ -763,7 +599,7 @@ class KLineChartWindow(QWidget):
         if df is not None and len(df) >= 60:
             self._render_chart(df, loading=True)
         else:
-            self._set_status_message("正在获取完整 K 线数据...", tone="loading")
+            self._set_status_message("正在同步完整日线数据...", tone="loading")
 
         # 2. 异步拉取最新日线 + 盘中实时
         def _bg_fetch():
@@ -815,7 +651,7 @@ class KLineChartWindow(QWidget):
                 if result:
                     fresh_df, quote_to_apply, target_trade_date = result
                     if fresh_df is None or len(fresh_df) == 0:
-                        self._set_status_message("本地无 K 线，联网补齐失败，请检查网络后重试", tone="error")
+                        self._set_status_message("未获取到可用日线数据，请检查网络后重试", tone="error")
                         return
 
                     fresh_df = self._normalize_daily_df_index(fresh_df)
@@ -1002,7 +838,7 @@ class KLineChartWindow(QWidget):
             # 统一交由 _render_chart() 去计算指标并生成完整 ECharts，此时必然包含最新日期
             self._render_chart(df, loading=False)
         else:
-            self._set_status_message("暂无该亚洲标的历史数据", tone="warning")
+            self._set_status_message("当前标的暂无历史日线数据", tone="warning")
 
     # ======================== 图表渲染 ========================
     def _render_chart(self, df, loading=False):
@@ -1021,7 +857,7 @@ class KLineChartWindow(QWidget):
 
         if df is None or len(df) < 5:
             if not loading:
-                self._set_status_message("数据不足，无法绘图", tone="warning")
+                self._set_status_message("历史数据不足，暂无法绘图", tone="warning")
             return
 
         # 始终要求重算完整指标，避免合并了今天盘中的新K线后由于缺少最新日期的MACD导致JS渲染因含有NaN而雪崩不画K线

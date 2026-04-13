@@ -311,6 +311,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                 }},
                 tooltip: {{
                     trigger: 'axis',
+                    showContent: false,
                     axisPointer: {{
                         type: 'cross'
                     }},

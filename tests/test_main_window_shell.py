@@ -79,6 +79,8 @@ def test_main_window_shell_builders_wire_titlebar_menu_and_tabs():
         assert window._standalone_tabbar.count() == 2
         assert window.tabs.tabBar().isVisible() is False
         assert window.btn_sys_menu.menu() is window._sys_menu
+        assert window.btn_sys_menu.toolTip() == "系统菜单"
+        assert not window.btn_sys_menu.icon().isNull()
         assert window._theme_menu.title().startswith("界面主题：")
         assert window.last_density is not None
         assert window.last_density[1] is False

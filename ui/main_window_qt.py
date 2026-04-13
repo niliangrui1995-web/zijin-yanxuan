@@ -249,6 +249,7 @@ class MainWindowQT(QMainWindow):
         from core.app_config import app_config
         from PyQt6.QtWidgets import QApplication
         from ui.components import VCPTableView
+        from ui.styles.global_qss import generate_global_qss
 
         if mode not in ("紧凑", "舒适"):
             mode = "舒适"
@@ -265,6 +266,16 @@ class MainWindowQT(QMainWindow):
         for widget in QApplication.allWidgets():
             if isinstance(widget, VCPTableView):
                 widget.apply_density(mode)
+
+        app = QApplication.instance()
+        if app:
+            qss = generate_global_qss(density=mode)
+            self.setStyleSheet(qss)
+            app.setStyleSheet(qss)
+
+        apply_chrome_theme(self)
+        if hasattr(self, '_status_bar_widget') and self._status_bar_widget:
+            self._status_bar_widget.apply_theme()
 
 
     def eventFilter(self, obj, event):
@@ -541,7 +552,7 @@ class MainWindowQT(QMainWindow):
                                     line = "\t".join(cols.get(c, "") for c in sorted(cols.keys()))
                                     lines.append(line)
                                 QApplication.clipboard().setText("\n".join(lines))
-                                show_toast("✅ 已复制单元格内容 (支持粘入Excel)", "success", table.window(), duration=1500)
+                                show_toast("已复制单元格内容，可直接粘贴到 Excel。", "success", table.window(), duration=1500)
                         event.accept()
                     else:
                         orig(event)

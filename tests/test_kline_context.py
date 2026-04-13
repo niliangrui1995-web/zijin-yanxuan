@@ -2,6 +2,7 @@ import pandas as pd
 
 from ui.kline_chart_payload import (
     build_kline_echarts_payload,
+    build_kline_html,
     build_kline_summary_items,
     build_kline_theme_colors,
     build_kline_window_palette,
@@ -123,3 +124,14 @@ def test_build_kline_echarts_payload_includes_vcp_overlay():
     assert payload["vcpMarkers"]
     assert payload["vcpLines"]
     assert payload["vcpArea"]
+
+
+def test_build_kline_html_hides_echarts_tooltip_panel():
+    html = build_kline_html(
+        title="测试",
+        echarts_data={"dates": [], "klines": [], "vols": [], "ma10": [], "ma20": [], "ma50": [], "ma150": [], "ma200": [], "volMa20": [], "macd": [], "diff": [], "dea": []},
+        echarts_js_path=r"D:\fake\echarts.min.js",
+        theme_colors=build_kline_theme_colors(),
+    )
+
+    assert "showContent: false" in html

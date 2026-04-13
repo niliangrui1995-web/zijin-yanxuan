@@ -303,13 +303,13 @@ class RtScanWorker(QThread):
                     eval_day = rt_df.index[-1]
                     ok, reason, m = self.engine.evaluate_conditions(rt_df, eval_day, float(r120), float(r250), None, special_params)
                     if ok:
-                        status = "✓ 触发买入 . " + m.get('突破状态', '突破')
+                        status = "触发买点 · " + m.get('突破状态', '突破')
                     else:
-                        status = f"○ 未触发 . 跟踪 ({reason.split(' | ')[0]})"
+                        status = f"未触发 · 跟踪（{reason.split(' | ')[0]}）"
                         m = {'评分': '--', 'RPS强度': rps_display}
                 else:
                     # 兜底:即使无法构造实时DF,也显示基本信息(不静默消失)
-                    status = "○ 跟踪中"
+                    status = "跟踪中"
                     m = {'评分': '--', 'RPS强度': rps_display}
                 cap = _format_dynamic_cap(code, rt_close, pool_entry.get('market_cap', '') if pool_entry else '')
                 sector = pool_entry.get('sector_info', '--') if pool_entry else '--'
@@ -367,7 +367,7 @@ class RtScanWorker(QThread):
                 '现价': f"{quote['close']:.2f}", '涨幅%': f"{pct:+.2f}%",
                 '评分': score, 'RPS强度': pool_entry.get('rps_str', f"{r120:.0f}/{r250:.0f}"),
                 '市值': _cap,
-                '突破状态': f"✓ {breakout_status}",
+                '突破状态': breakout_status,
                 '热点板块': _sector,
                 '区间振幅': m_meta.get('区间振幅', ''),
             }

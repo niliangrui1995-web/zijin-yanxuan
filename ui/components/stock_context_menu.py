@@ -46,8 +46,8 @@ def build_stock_context_menu(
     menu.setStyleSheet(generate_context_menu_qss())
 
     # --- 查看操作 ---
-    act_chart = menu.addAction("📈 查看K线图")
-    act_copy = menu.addAction("📋 复制代码")
+    act_chart = menu.addAction("查看 K 线图")
+    act_copy = menu.addAction("复制代码")
     menu.addSeparator()
 
     # --- 关注池操作 ---
@@ -56,22 +56,22 @@ def build_stock_context_menu(
     act_move_bottom = None
     if show_watchlist_toggle:
         is_fav = watchlist_vm.is_in_watchlist(code)
-        act_watchlist = menu.addAction("⭐ 移出关注池" if is_fav else "⭐ 加入关注池")
+        act_watchlist = menu.addAction("移出关注池" if is_fav else "加入关注池")
         if is_fav:
-            act_pin_top = menu.addAction("🔝 置顶")
-            act_move_bottom = menu.addAction("🔽 置底")
+            act_pin_top = menu.addAction("置顶")
+            act_move_bottom = menu.addAction("置底")
         menu.addSeparator()
 
     # --- 跳转操作 ---
-    act_tdx = menu.addAction("🖥️ 跳转通达信")
-    act_em = menu.addAction("🖥️ 跳转东方财富")
-    act_gemini = menu.addAction("🤖 跳转 Gemini")
+    act_tdx = menu.addAction("跳转通达信")
+    act_em = menu.addAction("跳转东方财富")
+    act_gemini = menu.addAction("打开 Gemini")
 
     # --- 导出 ---
     act_export = None
     if show_export:
         menu.addSeparator()
-        act_export = menu.addAction("📤 导出当前表")
+        act_export = menu.addAction("导出当前表")
 
     # === 执行菜单 ===
     action = menu.exec(QCursor.pos())
@@ -93,7 +93,7 @@ def build_stock_context_menu(
 
     elif action == act_watchlist and show_watchlist_toggle:
         # 清理名称中的星标前缀
-        clean_name = name.replace("⭐ ", "")
+        clean_name = name.replace("⭐ ", "").replace("★ ", "")
         watchlist_vm.toggle_stock(code, clean_name, vcp_data)
 
     elif action == act_pin_top and act_pin_top is not None:

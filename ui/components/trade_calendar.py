@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from PyQt6.QtWidgets import QCalendarWidget
+from PyQt6.QtWidgets import QCalendarWidget, QTableView
 from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtGui import QColor, QFont, QPen
 
@@ -17,8 +17,21 @@ class TradeCalendarWidget(QCalendarWidget):
         self._apply_theme_stylesheet()
         # 隐藏周数侧边栏，释放水平空间解决 "..." 折叠问题
         self.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
+        self._configure_weekday_header()
         # 主题切换时动态刷新样式
         theme_manager.sig_theme_changed.connect(self._apply_theme_stylesheet)
+
+    def _configure_weekday_header(self):
+        """星期标题改成单字模式，避免窄窗口里被 Qt 自动折叠成省略号。"""
+        self.setFirstDayOfWeek(Qt.DayOfWeek.Monday)
+        self.setHorizontalHeaderFormat(
+            QCalendarWidget.HorizontalHeaderFormat.SingleLetterDayNames
+        )
+
+        view = self.findChild(QTableView, "qt_calendar_calendarview")
+        if view is not None:
+            view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
     def _apply_theme_stylesheet(self):
         """动态应用主题色，消除表头行（周一~周日）与日历网格的色差
