@@ -330,11 +330,47 @@ class MainWindowQT(QMainWindow):
         if self._splash:
             self._splash.set_progress(value, status)
 
+    def _refresh_gear_menu_theme(self):
+        """同步刷新齿轮按钮与设置菜单的主题样式。"""
+        from ui.theme import theme_manager
+        from ui.styles.context_menu_qss import generate_context_menu_qss
+
+        t = theme_manager.current_theme
+
+        if hasattr(self, "btn_sys_menu") and self.btn_sys_menu:
+            self.btn_sys_menu.setStyleSheet(f"""
+                QToolButton {{
+                    background: transparent;
+                    color: {t['TEXT_MUTED']};
+                    border: none;
+                    font-size: 12px;
+                    font-weight: bold;
+                    padding: 0 16px;
+                    min-height: 40px; max-height: 40px;
+                }}
+                QToolButton:hover {{
+                    background-color: {t['BG_HOVER']};
+                }}
+                QToolButton::menu-indicator {{
+                    image: none;
+                    width: 0px;
+                }}
+            """)
+
+        menu_qss = generate_context_menu_qss(t)
+        for attr_name in ("_sys_menu", "_density_menu", "_theme_menu"):
+            menu = getattr(self, attr_name, None)
+            if menu:
+                menu.setStyleSheet(menu_qss)
+                menu.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        if hasattr(self, "_theme_menu") and self._theme_menu:
+            self._theme_menu.setTitle(f"界面主题：{theme_manager.current_theme_name}")
+
     def _init_gear_menu(self):
         """在系统Tab右上角注入通达信风格的配置齿轮菜单"""
         from PyQt6.QtWidgets import QToolButton, QMenu
         from PyQt6.QtGui import QActionGroup
-        from ui.styles.context_menu_qss import generate_context_menu_qss
         
         self.btn_sys_menu = QToolButton()
         # Keep SVG icon dynamic by refreshing it in _apply_theme, but initial is text or icon
@@ -345,36 +381,12 @@ class MainWindowQT(QMainWindow):
         self.btn_sys_menu.setAutoRaise(False)
         self.btn_sys_menu.setFixedWidth(46)
         self.btn_sys_menu.setFixedHeight(40)
-        from ui.theme import theme_manager as _tm_btn
-        _btn_t = _tm_btn.current_theme
-        _win_btn_color = _btn_t['TEXT_MUTED']
-        _win_btn_hover = _btn_t['BG_HOVER']
-        self.btn_sys_menu.setStyleSheet(f"""
-            QToolButton {{
-                background: transparent;
-                color: {_win_btn_color};
-                border: none;
-                font-size: 12px;
-                font-weight: bold;
-                padding: 0 16px;
-                min-height: 40px; max-height: 40px;
-            }}
-            QToolButton:hover {{
-                background-color: {_win_btn_hover};
-            }}
-            QToolButton::menu-indicator {{
-                image: none;
-                width: 0px;
-            }}
-        """)
         # 无边框模式：齿轮按钮放在标题栏的窗口控制按钮左侧
         # 找到最小化按钮在 titlebar_layout 中的位置，插在它前面
         min_idx = self._titlebar_layout.indexOf(self._btn_minimize)
         self._titlebar_layout.insertWidget(min_idx, self.btn_sys_menu)
         
         sys_menu = QMenu(self)
-        sys_menu.setStyleSheet(generate_context_menu_qss())
-        sys_menu.setCursor(Qt.CursorShape.PointingHandCursor)
         try:
             from PyQt6.QtWidgets import QApplication
             sys_menu.aboutToShow.connect(lambda: QApplication.restoreOverrideCursor())
@@ -442,6 +454,7 @@ class MainWindowQT(QMainWindow):
         self._act_auto_theme.triggered.connect(lambda checked: _tm.set_auto_switch(checked))
 
         self._sys_menu = sys_menu
+        self._refresh_gear_menu_theme()
         self.btn_sys_menu.installEventFilter(self)
         sys_menu.installEventFilter(self)
         density_menu.installEventFilter(self)
@@ -1237,9 +1250,8 @@ class MainWindowQT(QMainWindow):
                 QFrame#tabsWrapperFrame {{ background-color: {t['BG_GLASS']}; border: none; }}
             """)
 
-        # 6. 更新齿轮菜单中主题子菜单文字
-        if hasattr(self, '_theme_menu'):
-            self._theme_menu.setTitle(f"界面主题：{theme_manager.current_theme_name}")
+        # 6. 刷新齿轮按钮和设置菜单主题
+        self._refresh_gear_menu_theme()
 
         for widget in (
             self,

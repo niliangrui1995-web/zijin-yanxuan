@@ -1,9 +1,11 @@
 from ui.kline_window_qt import (
     _build_kline_theme_colors,
+    _build_kline_window_palette,
     _build_kline_summary_items,
     _format_kline_market_badge,
     resolve_kline_vcp_context,
 )
+from ui.theme import THEME_YUEBAI
 
 
 def test_resolve_kline_vcp_context_merges_watchlist_and_scan_results():
@@ -74,3 +76,12 @@ def test_kline_theme_colors_include_vcp_overlay_tokens():
     assert colors["vcp_area"]
     assert colors["vcp_guide"]
     assert colors["vcp_breakout_bg"]
+
+
+def test_kline_window_palette_keeps_yuebai_top_area_unified():
+    palette = _build_kline_window_palette(THEME_YUEBAI, is_dark=False)
+
+    assert palette["toolbar_bg"] == THEME_YUEBAI["BG_ELEVATED"]
+    assert palette["toolbar_bg"] == palette["widget_bg"]
+    assert palette["toolbar_bg"] == palette["summary_bg"]
+    assert palette["toolbar_bg"] == palette["chart_bg"]

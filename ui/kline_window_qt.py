@@ -127,6 +127,57 @@ def _build_kline_theme_colors() -> dict:
     return colors
 
 
+def _build_kline_window_palette(theme: dict = None, is_dark: bool | None = None) -> dict:
+    """构建 K 线窗口原生 Qt 区域的配色。
+
+    月白主题下顶部栏必须和摘要带/图表底色保持一致，否则会出现明显拼色。
+    """
+    if theme is None:
+        theme = theme_manager.current_theme
+    if is_dark is None:
+        is_dark = theme.get("name") == "墨渊"
+
+    if is_dark:
+        return {
+            "widget_bg": "#0C1016",
+            "widget_text": "#F5F7FA",
+            "toolbar_bg": "#11161D",
+            "toolbar_border": "#222A33",
+            "summary_bg": "#0F141B",
+            "info_color": "#8B98A8",
+            "btn_border": "#303947",
+            "btn_hover_bg": "rgba(255,255,255,0.05)",
+            "btn_hover_text": "#F5F7FA",
+            "btn_disabled_text": "#5A6573",
+            "btn_disabled_border": "#262E39",
+            "chart_bg": "#0B0F14",
+            "nav_bg": "rgba(255,255,255,0.04)",
+            "badge_bg": "rgba(239, 68, 68, 0.10)",
+            "badge_fg": "#FCA5A5",
+            "summary_border": "rgba(148, 163, 184, 0.10)",
+        }
+
+    unified_bg = theme["BG_ELEVATED"]
+    return {
+        "widget_bg": unified_bg,
+        "widget_text": theme["TEXT_PRIMARY"],
+        "toolbar_bg": unified_bg,
+        "toolbar_border": theme["BORDER_DEFAULT"],
+        "summary_bg": unified_bg,
+        "info_color": theme["TEXT_MUTED"],
+        "btn_border": theme["BORDER_STRONG"],
+        "btn_hover_bg": theme["TAB_HOVER_BG"],
+        "btn_hover_text": theme["TEXT_PRIMARY"],
+        "btn_disabled_text": theme["TEXT_DISABLED"],
+        "btn_disabled_border": theme["BORDER_DEFAULT"],
+        "chart_bg": unified_bg,
+        "nav_bg": theme["BG_BUTTON"],
+        "badge_bg": "rgba(239, 68, 68, 0.10)",
+        "badge_fg": theme["BRAND_DEEP"],
+        "summary_border": theme["BORDER_SUBTLE"],
+    }
+
+
 def _format_kline_market_badge(code: str) -> str:
     market = MarketCalendar.infer_market(code)
     return {
@@ -642,33 +693,23 @@ class KLineChartWindow(QWidget):
         """
         t = theme_manager.current_theme
         is_dark = theme_manager.is_dark()
-
-        if is_dark:
-            widget_bg, widget_text = "#0C1016", "#F5F7FA"
-            toolbar_bg, toolbar_border = "#11161D", "#222A33"
-            summary_bg = "#0F141B"
-            info_color = "#8B98A8"
-            btn_border = "#303947"
-            btn_hover_bg, btn_hover_text = "rgba(255,255,255,0.05)", "#F5F7FA"
-            btn_disabled_text, btn_disabled_border = "#5A6573", "#262E39"
-            chart_bg = "#0B0F14"
-            nav_bg = "rgba(255,255,255,0.04)"
-            badge_bg = "rgba(239, 68, 68, 0.10)"
-            badge_fg = "#FCA5A5"
-            summary_border = "rgba(148, 163, 184, 0.10)"
-        else:
-            widget_bg, widget_text = t['BG_ELEVATED'], t['TEXT_PRIMARY']
-            toolbar_bg, toolbar_border = t['BG_CARD'], t['BORDER_DEFAULT']
-            summary_bg = t['BG_ELEVATED']
-            info_color = t['TEXT_MUTED']
-            btn_border = t['BORDER_STRONG']
-            btn_hover_bg, btn_hover_text = t['TAB_HOVER_BG'], t['TEXT_PRIMARY']
-            btn_disabled_text, btn_disabled_border = t['TEXT_DISABLED'], t['BORDER_DEFAULT']
-            chart_bg = t['BG_ELEVATED']
-            nav_bg = t['BG_BUTTON']
-            badge_bg = "rgba(239, 68, 68, 0.10)"
-            badge_fg = t['BRAND_DEEP']
-            summary_border = t['BORDER_SUBTLE']
+        palette = _build_kline_window_palette(t, is_dark)
+        widget_bg = palette["widget_bg"]
+        widget_text = palette["widget_text"]
+        toolbar_bg = palette["toolbar_bg"]
+        toolbar_border = palette["toolbar_border"]
+        summary_bg = palette["summary_bg"]
+        info_color = palette["info_color"]
+        btn_border = palette["btn_border"]
+        btn_hover_bg = palette["btn_hover_bg"]
+        btn_hover_text = palette["btn_hover_text"]
+        btn_disabled_text = palette["btn_disabled_text"]
+        btn_disabled_border = palette["btn_disabled_border"]
+        chart_bg = palette["chart_bg"]
+        nav_bg = palette["nav_bg"]
+        badge_bg = palette["badge_bg"]
+        badge_fg = palette["badge_fg"]
+        summary_border = palette["summary_border"]
 
         self.setStyleSheet(f"""
             QWidget {{ background-color: {widget_bg}; color: {widget_text}; }}
