@@ -1499,7 +1499,11 @@ class KLineChartWindow(QWidget):
                 quote = self._build_asian_rt_quote()
                 if quote is None:
                     import yfinance as yf
-                    rt_df = yf.Ticker(self.code).history(period="5d", interval="1d")
+                    from ui.tabs.asian_market_tab import GLOBAL_USE_CF_PROXY
+                    from vcp.fetchers.yf_session import build_yf_session
+
+                    yf_session = build_yf_session(GLOBAL_USE_CF_PROXY)
+                    rt_df = yf.Ticker(self.code, session=yf_session).history(period="5d", interval="1d")
                     if not rt_df.empty:
                         last_row = rt_df.iloc[-1]
                         rt_date = pd.Timestamp(last_row.name)

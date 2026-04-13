@@ -31,7 +31,7 @@
 ```
 紫金研选/
 ├── vcp_hunter_qt.pyw              # 应用程序入口（双击启动）
-├── requirements.txt               # Python 依赖声明
+├── requirements.txt               # Python 完整运行时依赖声明
 ├── .gitignore                     # Git 忽略规则
 ├── bull_icon.ico                  # 应用图标
 │
@@ -111,15 +111,58 @@
 - **Python 3.10+**
 - **通达信客户端**（本地 K 线数据源）
 
-### 2. 安装依赖
+### 2. 创建虚拟环境（强烈建议）
 
-```bash
-pip install -r requirements.txt
+当前项目是 Windows / PyQt6 桌面应用，**不要直接依赖系统里“碰巧可用”的 `python`**。
+建议固定使用项目自己的 Python 3.10 虚拟环境，避免出现：
+
+- 终端里的 `python` 指向别的解释器
+- `pytest` 与运行程序使用的不是同一个环境
+- `yfinance` / `curl_cffi`、`PyQt6-WebEngine` 这类依赖版本漂移
+
+```powershell
+py -3.10 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 ```
 
-> *注：跳转东方财富等自动化剪贴板/打字填表功能由于需要操作系统的 GUI 层，需确保已正确安装 `pyautogui`。*
+如果本机没有 `py` 启动器，也可以直接指定 Python 3.10：
 
-### 3. 配置通达信路径
+```powershell
+C:\Users\Administrator\AppData\Local\Programs\Python\Python310\python.exe -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+```
+
+### 3. 安装依赖
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+`requirements.txt` 已包含完整运行时依赖，其中：
+
+- `PyQt6-WebEngine`：K 线图窗口依赖
+- `akshare`：龙虎榜 / 外资大宗交易 / 北美相关抓取
+- `yfinance` + `curl_cffi`：亚洲寡头 / 海外行情相关抓取
+- `pywin32` + `pyautogui`：通达信 / 东方财富联动与 GUI 自动化
+
+> 注：当前依赖文件已显式约束 `curl_cffi<0.14`，用于兼容项目当前使用的 `yfinance 1.2.x`。
+
+### 4. 安装后快速自检
+
+```powershell
+python -m pip check
+python -c "from PyQt6.QtWebEngineWidgets import QWebEngineView; import akshare, yfinance, win32gui; print('runtime deps ok')"
+```
+
+如果你后续运行脚本、测试或启动主程序，统一使用：
+
+```powershell
+.\.venv\Scripts\python.exe
+```
+
+### 5. 配置通达信路径
 
 在通达信安装目录或项目根目录创建 `vcp_tdx_config.json`：
 
@@ -134,7 +177,7 @@ pip install -r requirements.txt
 2. `D:\HT\vcp_tdx_config.json`
 3. 项目根目录下的 `vcp_tdx_config.json`
 
-### 4. 配置 AI 诊股（可选）
+### 6. 配置 AI 诊股（可选）
 
 程序首次运行时会自动在 `data/Cache/ai_diag_config.json` 中创建配置文件。
 你也可以通过环境变量设置：
@@ -143,13 +186,19 @@ pip install -r requirements.txt
 set KIMI_API_KEY=your-api-key-here
 ```
 
-### 5. 启动程序
+### 7. 启动程序
+
+```bash
+.\.venv\Scripts\pythonw.exe vcp_hunter_qt.pyw
+```
+
+或在已经激活 `.venv` 的前提下执行：
 
 ```bash
 pythonw vcp_hunter_qt.pyw
 ```
 
-或双击 `vcp_hunter_qt.pyw` 文件启动。
+也可以双击 `vcp_hunter_qt.pyw` 文件启动，但前提仍然是本机已按上面的依赖步骤准备好运行环境。
 
 ---
 

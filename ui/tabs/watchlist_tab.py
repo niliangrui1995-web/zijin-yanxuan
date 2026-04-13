@@ -2,7 +2,6 @@
 # ui/tabs/watchlist_tab.py
 # 关注池独立组件 — 从 WatchlistMixin 解耦重构为完全自治的 QWidget
 import os
-import pickle
 import datetime
 
 from PyQt6.QtWidgets import (
@@ -17,9 +16,11 @@ from ui.viewmodels.watchlist_vm import watchlist_vm
 from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
 from ui.components import VCPTableView, TableStateWrapper
 from core.event_bus import event_bus
+from core.json_cache import load_json_file
 from core.logger import get_logger
 from core.task_manager import task_manager
 from ui.tabs.base_stock_tab import BaseStockTab
+from vcp.constants import RPS_CACHE_FILE
 
 log = get_logger(__name__)
 
@@ -138,31 +139,13 @@ class WatchlistTab(BaseStockTab):
     # 数据加载
     # ================================================================
     def _load_special_data(self):
-        """加载关注池数据：新UI JSON + 老UI pkl 兼容 + AI诊断缓存"""
-        # 1. 统一由 ViewModel 管理的数据
+        """加载关注池数据：统一走 ViewModel/SQLite。"""
         data_dict = watchlist_vm.get_watchlist_data()
 
-        # 2. 老UI pkl 兼容迁移
-        old_pool = {}
-        if not data_dict:
-            from vcp.constants import SPECIAL_POOL_DATA_CACHE
-            pool_pkl = SPECIAL_POOL_DATA_CACHE
-            if os.path.exists(pool_pkl):
-                try:
-                    with open(pool_pkl, 'rb') as f:
-                        raw = pickle.load(f)
-                    old_pool = raw.get('data', {}) if isinstance(raw, dict) else {}
-                except Exception as e:
-                    log.error(f"[关注池] 老UI缓存读取异常: {e}")
-
-
         all_codes = list(data_dict.keys())
-        for code in old_pool:
-            if code not in data_dict:
-                all_codes.append(code)
 
         # 渲染表格
-        self._render_table(all_codes, data_dict, old_pool)
+        self._render_table(all_codes, data_dict, {})
 
         # 抛弃本地缓存回填，直接触发基类的大一统市值刷新方案
         if all_codes:
@@ -532,23 +515,17 @@ class WatchlistTab(BaseStockTab):
     def _refresh_vcp_indicators(self, codes_with_rows, radar_data_tuple=None):
         """后台线程：计算关注池标的的 RPS 和跨 Tab 附加字段。"""
         try:
-            import pickle
-            import os
-
             log.debug(f"[关注池] 开始计算 {len(codes_with_rows)} 只标的附加指标")
 
             # 1. 尝试从引擎获取RPS
             rps_bundle = radar_data_tuple[5] if radar_data_tuple and len(radar_data_tuple) > 5 else None
 
             if not rps_bundle:
-                cache_dir = os.path.join(
-                    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                    'data', 'Cache'
-                )
-                rps_path = os.path.join(cache_dir, 'vcp_rps_precomputed.pkl')
-                if os.path.exists(rps_path):
-                    with open(rps_path, 'rb') as f:
-                        rps_bundle = pickle.load(f)
+                try:
+                    if os.path.exists(RPS_CACHE_FILE):
+                        rps_bundle = load_json_file(RPS_CACHE_FILE)
+                except Exception as e:
+                    log.debug(f"[关注池] RPS 缓存读取失败，改用空值: {e}")
 
             rps120_series = rps_bundle.get('rps120') if rps_bundle else None
             rps250_series = rps_bundle.get('rps250') if rps_bundle else None

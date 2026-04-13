@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import datetime as _dt
 import os
-import pickle
 from typing import Iterable
 
+from core.json_cache import load_json_file, save_json_file
 from core.logger import get_logger
 from core.market_calendar import MarketCalendar
 from vcp.constants import SECTOR_RPS_CACHE_FILE
@@ -40,13 +40,20 @@ def normalize_trade_date(target_date=None) -> str:
     return trade_dt.strftime("%Y%m%d")
 
 
-def _atomic_dump_pickle(path: str, payload: dict):
-    temp_path = f"{path}.tmp"
-    with open(temp_path, "wb") as file_obj:
-        pickle.dump(payload, file_obj, protocol=4)
-        file_obj.flush()
-        os.fsync(file_obj.fileno())
-    os.replace(temp_path, path)
+def _normalize_sector_rps(sector_rps: dict) -> dict:
+    """JSON 反序列化后把周期 key 从字符串恢复为 int。"""
+    normalized = {}
+    for sector_name, period_map in (sector_rps or {}).items():
+        if not isinstance(period_map, dict):
+            continue
+        normalized[sector_name] = {}
+        for period, value in period_map.items():
+            try:
+                key = int(period)
+            except (TypeError, ValueError):
+                key = period
+            normalized[sector_name][key] = value
+    return normalized
 
 
 def _get_sector_manager(data_provider) -> SectorManager:
@@ -78,9 +85,8 @@ def load_sector_rps_snapshot(data_provider, all_data, target_date=None, logger=N
 
     if os.path.exists(SECTOR_RPS_CACHE_FILE):
         try:
-            with open(SECTOR_RPS_CACHE_FILE, "rb") as file_obj:
-                payload = pickle.load(file_obj)
-            sector_rps = payload.get("sector_rps", {}) or {}
+            payload = load_json_file(SECTOR_RPS_CACHE_FILE)
+            sector_rps = _normalize_sector_rps(payload.get("sector_rps", {}) or {})
             cached_date = normalize_trade_date(payload.get("date"))
             cache_hit = bool(sector_rps) and cached_date == normalized_date
             if cache_hit:
@@ -98,7 +104,7 @@ def load_sector_rps_snapshot(data_provider, all_data, target_date=None, logger=N
         sector_rps = sector_manager.build_sector_rps(all_data or {}, normalized_date) or {}
         logger.info(f"[板块RPS] 现算完成 ({normalized_date}, {len(sector_rps)} 个板块)")
         if sector_rps:
-            _atomic_dump_pickle(
+            save_json_file(
                 SECTOR_RPS_CACHE_FILE,
                 {"date": normalized_date, "sector_rps": sector_rps},
             )

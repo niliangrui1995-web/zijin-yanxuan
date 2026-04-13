@@ -3,7 +3,7 @@
 # 紫金研选 统一缓存淘汰策略
 #
 # 为什么需要这个: 缓存文件散落在 data/Cache/ 和 data/parquet/ 下，
-# 有的设了过期(rt_monitor_*.pkl 10天)，有的永远不清理(rps/parquet)。
+# 有的设了过期(rt_monitor_*.json 10天)，有的永远不清理(rps/parquet)。
 # 时间一长磁盘会越来越大。这里统一定义过期规则和清理逻辑。
 # ================================================================================
 import os
@@ -19,26 +19,50 @@ CACHE_POLICIES = [
     {
         "name": "盘中监控缓存",
         "directory": "data/Cache",
-        "pattern": "rt_monitor_*.pkl",
+        "pattern": "rt_monitor_*.json",
         "max_age_days": 10,
+    },
+    {
+        "name": "旧版盘中监控缓存",
+        "directory": "data/Cache",
+        "pattern": "rt_monitor_*.pkl",
+        "max_age_days": 1,
     },
     {
         "name": "RPS 预计算缓存",
         "directory": "data/Cache",
-        "pattern": "vcp_rps_*.pkl",
+        "pattern": "vcp_rps_precomputed.json",
         "max_age_days": 30,
     },
     {
-        "name": "gbbq 解析缓存",
+        "name": "旧版 RPS 预计算缓存",
         "directory": "data/Cache",
-        "pattern": "gbbq_parsed.pkl",
-        "max_age_days": 60,
+        "pattern": "vcp_rps_precomputed.pkl",
+        "max_age_days": 1,
     },
     {
         "name": "板块 RPS 缓存",
         "directory": "data/Cache",
-        "pattern": "sector_rps_*.pkl",
+        "pattern": "vcp_sector_rps_precomputed.json",
         "max_age_days": 30,
+    },
+    {
+        "name": "旧版板块 RPS 缓存",
+        "directory": "data/Cache",
+        "pattern": "vcp_sector_rps_precomputed.pkl",
+        "max_age_days": 1,
+    },
+    {
+        "name": "gbbq 解析缓存",
+        "directory": "data/Cache",
+        "pattern": "gbbq_parsed.json",
+        "max_age_days": 60,
+    },
+    {
+        "name": "旧版 gbbq 解析缓存",
+        "directory": "data/Cache",
+        "pattern": "gbbq_parsed.pkl",
+        "max_age_days": 1,
     },
     {
         "name": "扫描结果缓存",

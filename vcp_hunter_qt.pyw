@@ -22,6 +22,7 @@ def main():
 
     from PyQt6.QtWidgets import QApplication, QMessageBox
     import traceback
+    from core.runtime_env import log_runtime_env_report
 
     def ui_exception_hook(exc_type, exc_value, exc_traceback):
         if issubclass(exc_type, KeyboardInterrupt):
@@ -60,6 +61,7 @@ def main():
         pass  # 如果没装 WebEngine 包，后续再报错
 
     app = QApplication(sys.argv)
+    log_runtime_env_report(os.path.dirname(os.path.abspath(__file__)))
 
     # === 单实例锁：防止多开 ===
     import ctypes

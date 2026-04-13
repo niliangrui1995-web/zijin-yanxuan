@@ -116,8 +116,10 @@ class CentralQuotesService(QObject):
 
         if not self.data_provider or not self.data_provider.is_online():
             return
-            
+
+        from core.market_calendar import MarketCalendar
         is_active = self._is_market_active
+        quote_refreshable = MarketCalendar.is_quote_refresh_time()
             
         # 非交易时间降频到 30秒跑一次 (10秒一跳)
         if not is_active:
@@ -144,15 +146,15 @@ class CentralQuotesService(QObject):
         
         def _bg_task():
             try:
-                # 交易时段：去网络拉数据！
-                if is_active:
+                # 交易时段与午休：都允许刷新报价快照。
+                if quote_refreshable:
                     quotes = self.data_provider.fetch_realtime_quotes_batch(list(codes))
                 else:
-                    # 非交易时段：彻底断网！组装空架子
+                    # 盘后/周末：不再联网，直接走本地兜底。
                     quotes = {}
 
-                # 如果在非活跃期（周末、晚上），强制从本地历史日线顶替为实时数据
-                if not is_active:
+                # 真正的非报价时段（周末、晚上）才强制从本地历史日线顶替。
+                if not quote_refreshable:
                     cache = self.data_provider.get_all_valid_data()
                     # 防止缓存还在龟速加载时，导致被当成获取成功然后死等30秒
                     if not cache:

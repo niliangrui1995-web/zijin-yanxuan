@@ -6,11 +6,12 @@ F5 预计算核心组件，封装 RPS大矩阵 以及 Sector板块 RPS的纯后�
 import os
 import datetime
 import time
-import pickle
 import gc
 
 
+from core.json_cache import save_json_file, remove_cache_file
 from core.logger import get_logger
+from vcp.constants import RPS_CACHE_FILE, SECTOR_RPS_CACHE_FILE
 log = get_logger(__name__)
 
 
@@ -146,9 +147,8 @@ class RPSPrecomputer:
                     rps120 = d_rps.get('rps120', {})
                     rps250 = d_rps.get('rps250', {})
                     rps_pkg = {'date': d_str, 'rps120': rps120, 'rps250': rps250}
-                    rps_path = os.path.join(cache_dir, 'vcp_rps_precomputed.pkl')
-                    with open(rps_path, 'wb') as f:
-                        pickle.dump(rps_pkg, f, protocol=4)
+                    save_json_file(RPS_CACHE_FILE, rps_pkg)
+                    remove_cache_file(RPS_CACHE_FILE.replace(".json", ".pkl"))
                     engine.set_precomputed_rps(d_str, rps120, rps250)
                     # 有效排名 = 值不是 NaN 的条目数
                     valid_count = sum(1 for v in rps120.values() if v == v)  # NaN != NaN
@@ -172,7 +172,6 @@ class RPSPrecomputer:
             _log_and_status("[F5] 阶段2.5/3: 预计算板块 RPS...")
             try:
                 from vcp.sector import SectorManager
-                from vcp.constants import SECTOR_RPS_CACHE_FILE
                 tdx_root = (
                     os.path.dirname(data_provider.tdx_vipdoc)
                     if data_provider.tdx_vipdoc else r'D:\HT'
@@ -185,8 +184,8 @@ class RPSPrecomputer:
                 sector_date = datetime.date.today().strftime('%Y%m%d')
                 sector_rps = sm.build_sector_rps(all_data_f5, sector_date)
                 sector_pkg = {'date': sector_date, 'sector_rps': sector_rps}
-                with open(SECTOR_RPS_CACHE_FILE, 'wb') as f:
-                    pickle.dump(sector_pkg, f, protocol=4)
+                save_json_file(SECTOR_RPS_CACHE_FILE, sector_pkg)
+                remove_cache_file(SECTOR_RPS_CACHE_FILE.replace(".json", ".pkl"))
                 _log_and_status(f"[F5] 阶段2.5/3 完成 -- 板块 RPS ({len(sector_rps)} 个)")
                 del all_data_f5, sector_rps, sector_pkg
             except Exception as e:

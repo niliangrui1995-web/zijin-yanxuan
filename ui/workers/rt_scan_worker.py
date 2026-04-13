@@ -5,7 +5,9 @@ import math
 import datetime
 from PyQt6.QtCore import QThread, pyqtSignal
 from vcp.engine import VCPEngine, VCPParams
+from vcp.constants import RPS_CACHE_FILE
 from core.logger import get_logger
+from core.json_cache import save_json_file, remove_cache_file
 from core.market_calendar import MarketCalendar
 from core.sector_rps_helper import enrich_hot_sector_rows, load_sector_rps_snapshot
 
@@ -152,13 +154,9 @@ class RtScanWorker(QThread):
 
                         # 保存到磁盘(与 F5 格式一致,下次启动可直接加载)
                         try:
-                            import pickle
-                            from vcp.constants import CACHE_DIR
-                            cache_dir = CACHE_DIR
                             rps_pkg = {'date': today_str, 'rps120': self._rps120, 'rps250': self._rps250}
-                            rps_path = os.path.join(cache_dir, 'vcp_rps_precomputed.pkl')
-                            with open(rps_path, 'wb') as f:
-                                pickle.dump(rps_pkg, f, protocol=4)
+                            save_json_file(RPS_CACHE_FILE, rps_pkg)
+                            remove_cache_file(RPS_CACHE_FILE.replace(".json", ".pkl"))
                             self.engine.set_precomputed_rps(today_str, self._rps120, self._rps250)
                             log.debug(f"[盘中] RPS 已保存磁盘 ({today_str})")
                         except Exception as e:

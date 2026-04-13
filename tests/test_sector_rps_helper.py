@@ -1,4 +1,4 @@
-import pickle
+import json
 
 from core import sector_rps_helper as helper
 
@@ -18,9 +18,9 @@ class FakeSectorManager:
 
 
 def test_load_sector_rps_snapshot_uses_matching_cache(tmp_path, monkeypatch):
-    cache_path = tmp_path / "sector_cache.pkl"
-    with open(cache_path, "wb") as file_obj:
-        pickle.dump({"date": "20260410", "sector_rps": {"缓存板块": {20: 88.0}}}, file_obj, protocol=4)
+    cache_path = tmp_path / "sector_cache.json"
+    with open(cache_path, "w", encoding="utf-8") as file_obj:
+        json.dump({"date": "20260410", "sector_rps": {"缓存板块": {20: 88.0}}}, file_obj, ensure_ascii=False)
 
     manager = FakeSectorManager()
     monkeypatch.setattr(helper, "SECTOR_RPS_CACHE_FILE", str(cache_path))
@@ -40,9 +40,9 @@ def test_load_sector_rps_snapshot_uses_matching_cache(tmp_path, monkeypatch):
 
 
 def test_load_sector_rps_snapshot_rebuilds_stale_cache(tmp_path, monkeypatch):
-    cache_path = tmp_path / "sector_cache.pkl"
-    with open(cache_path, "wb") as file_obj:
-        pickle.dump({"date": "20260409", "sector_rps": {"旧板块": {20: 70.0}}}, file_obj, protocol=4)
+    cache_path = tmp_path / "sector_cache.json"
+    with open(cache_path, "w", encoding="utf-8") as file_obj:
+        json.dump({"date": "20260409", "sector_rps": {"旧板块": {20: 70.0}}}, file_obj, ensure_ascii=False)
 
     all_data = {"000001": ["dummy"]}
     manager = FakeSectorManager(build_result={"新板块": {20: 93.0}})
@@ -61,10 +61,10 @@ def test_load_sector_rps_snapshot_rebuilds_stale_cache(tmp_path, monkeypatch):
     assert sector_rps == {"新板块": {20: 93.0}}
     assert manager.build_calls == [(all_data, "20260410")]
 
-    with open(cache_path, "rb") as file_obj:
-        payload = pickle.load(file_obj)
+    with open(cache_path, "r", encoding="utf-8") as file_obj:
+        payload = json.load(file_obj)
     assert payload["date"] == "20260410"
-    assert payload["sector_rps"] == {"新板块": {20: 93.0}}
+    assert payload["sector_rps"] == {"新板块": {"20": 93.0}}
 
 
 def test_resolve_hot_sector_prefers_existing_text():

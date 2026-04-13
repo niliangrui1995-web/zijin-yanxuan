@@ -2,18 +2,28 @@
 import os
 import time
 import random
-import pickle
 import threading
 import concurrent.futures
 import pandas as pd
 from datetime import datetime
 
 from vcp.constants import (
-    CACHE_DIR, CACHE_VERSION, MAX_HISTORY_BARS, INCREMENTAL_BARS,
+    CACHE_DIR, MAX_HISTORY_BARS, INCREMENTAL_BARS,
     MARKET_SYNC_WORKERS, DATE_FMT,
 )
-from vcp.utils import _load_tdx_local_config, read_tdx_day_file
+from vcp.data_provider_local import (
+    apply_forward_adjustment,
+    build_offline_quotes,
+    deserialize_gbbq_cache,
+    fetch_from_local_tdx,
+    get_market_code,
+    load_local_gbbq,
+    serialize_gbbq_cache,
+    tdx_day_path,
+)
+from vcp.utils import _load_tdx_local_config
 
+from core.json_cache import load_json_file, save_json_file, remove_cache_file
 from core.logger import get_logger
 _log = get_logger(__name__)
 
@@ -56,7 +66,10 @@ class TdxDataProvider:
         if offline_mode is not None:
             offline = bool(offline_mode)
         self.TdxHq_API = TdxHq_API
-        self.cache_file = os.path.join(CACHE_DIR, 'vcp_tdx_cache_adj.pkl')
+        self.legacy_cache_file = os.path.join(CACHE_DIR, 'vcp_tdx_cache_adj.pkl')
+        self.legacy_fallback_cache_file = os.path.join(CACHE_DIR, 'cache_data_fallback.pkl')
+        self.gbbq_cache_file = os.path.join(CACHE_DIR, 'gbbq_parsed.json')
+        self.legacy_gbbq_cache_file = os.path.join(CACHE_DIR, 'gbbq_parsed.pkl')
         self.cache_data = {}
         self.cache_lock = threading.Lock()
         self.thread_local = threading.local()
@@ -111,6 +124,13 @@ class TdxDataProvider:
         if count > 0:
             _log.info(f"[内存优化] 已将 {count} 只标的数据降精度 (float64→float32)")
 
+    @staticmethod
+    def _serialize_gbbq_cache(data_map: dict) -> dict:
+        return serialize_gbbq_cache(data_map)
+
+    @staticmethod
+    def _deserialize_gbbq_cache(payload: dict) -> dict:
+        return deserialize_gbbq_cache(payload)
 
     def _auto_select_best_servers(self):
         """轻量级测速，避免大量并发线程导致 PyQT6 C++ 内存崩溃"""
@@ -152,63 +172,16 @@ class TdxDataProvider:
         return [(ip, port) for ip, port, _ in best]
 
     def _load_local_gbbq(self, force=False):
-        """Load local gbbq ex-rights/ex-dividends data into memory."""
+        self._local_gbbq = load_local_gbbq(
+            self.tdx_vipdoc,
+            self.gbbq_cache_file,
+            self.legacy_gbbq_cache_file,
+            self._local_gbbq,
+            force=force,
+        )
 
-        if not self.tdx_vipdoc:
-            return
-        # gbbq 文件位于通达信安装目录 T0002/hq_cache/gbbq
-        tdx_root = os.path.dirname(self.tdx_vipdoc)  # vipdoc 的父目录即为通达信根目录
-        gbbq_path = os.path.join(tdx_root, 'T0002', 'hq_cache', 'gbbq')
-        if not os.path.exists(gbbq_path):
-            _log.info(f"[数据中台] 本地 gbbq 文件不存在: {gbbq_path}")
-            return
-        gbbq_mtime = os.path.getmtime(gbbq_path)
-        
-        # pkl 缓存路径
-        gbbq_pkl = os.path.join(CACHE_DIR, 'gbbq_parsed.pkl')
-        
-        # 非强制模式: 优先加载 pkl 缓存(启动时走这条路径,秒加载)
-        if not force and os.path.exists(gbbq_pkl):
-            try:
-                with open(gbbq_pkl, 'rb') as f:
-                    cached = pickle.load(f)
-                if cached.get('mtime') and cached.get('mtime') != gbbq_mtime:
-                    raise ValueError("gbbq 文件已更新，需要重新解析缓存")
-                self._local_gbbq = cached['data']
-                _log.info(f"[缓存] 已加载本地 gbbq 缓存: {len(self._local_gbbq)} 个代码, {cached.get('records', '?')} 条记录")
-                return
-            except Exception as _e:
-                _log.debug(f"[缓存] gbbq pkl 缓存损坏或版本不匹配，将重新解析: {_e}")
-        try:
-            from pytdx.reader import GbbqReader
-            reader = GbbqReader()
-            df = reader.get_df(gbbq_path)
-            if df is None or df.empty:
-                _log.info("[数据中台] gbbq 文件解析为空")
-                return
-            # 只保留除权除息记录。
-            xdxr = df[df['category'] == 1].copy()
-            # 按股票代码分组缓存到内存。
-            for code, group in xdxr.groupby('code'):
-                self._local_gbbq[str(code)] = group
-            _log.info(f"[缓存] 已解析本地 gbbq 原始文件: {len(self._local_gbbq)} 个代码, {len(xdxr)} 条记录")
-            # 保存 pkl 缓存，后续启动可直接复用解析结果。
-            try:
-                os.makedirs(CACHE_DIR, exist_ok=True)
-                with open(gbbq_pkl, 'wb') as f:
-                    pickle.dump(
-                        {'data': self._local_gbbq, 'mtime': gbbq_mtime, 'records': len(xdxr)},
-                        f,
-                        protocol=4,
-                    )
-                _log.info(f"[数据中台] gbbq pkl 缓存已保存 -> {gbbq_pkl}")
-            except Exception as e:
-                _log.error(f"[数据中台] gbbq pkl 缓存保存失败: {e}")
-        except Exception as e:
-            _log.error(f"[数据中台] gbbq 加载失败(不影响联网复权): {e}")
     def _get_market_code(self, stock_code):
-        stock_code = str(stock_code)
-        return 1 if stock_code.startswith(('6', '9')) else 0
+        return get_market_code(stock_code)
 
     def _is_before_930_today(self):
         now = datetime.now()
@@ -218,34 +191,17 @@ class TdxDataProvider:
         return datetime.now().hour >= 15
 
     def _tdx_day_path(self, code):
-        code = str(code).strip()
-        if code.startswith(('6', '9')):
-            sub = os.path.join('sh', 'lday', f'sh{code}.day')
-        else:
-            sub = os.path.join('sz', 'lday', f'sz{code}.day')
-        return os.path.join(self.tdx_vipdoc, sub)
+        return tdx_day_path(self.tdx_vipdoc, code)
 
     def _fetch_from_local_tdx(self, code):
-        if not self.tdx_vipdoc:
-            return None
-        path = self._tdx_day_path(code)
-        df = read_tdx_day_file(path)
-        # read_tdx_day_file 已直接返回 Pandas DataFrame，无需再做 .to_pandas() 转换
-        if df is not None and 'datetime' in df.columns:
-            df = df.set_index('datetime')
-        
-        if df is None or df.empty:
-            return None
-        if len(df) > MAX_HISTORY_BARS:
-            df = df.iloc[-MAX_HISTORY_BARS:]
-        # 离线模式下优先使用本地 gbbq 做前复权
-        if self._offline or not self.server_pool:
-            if self._local_gbbq:
-                df = self._apply_forward_adjustment(None, self._get_market_code(code), code, df)
-            elif not getattr(self, '_offline_warn_printed', False):
-                _log.warning("[警告] 本地 gbbq 缓存不可用，前复权一致性可能下降")
-                _log.info("[提示] 请确认通达信目录下存在 T0002/hq_cache/gbbq 文件")
-                self._offline_warn_printed = True
+        df, self._offline_warn_printed = fetch_from_local_tdx(
+            code,
+            tdx_vipdoc=self.tdx_vipdoc,
+            offline=self._offline,
+            server_pool=self.server_pool,
+            local_gbbq=self._local_gbbq,
+            offline_warn_printed=getattr(self, '_offline_warn_printed', False),
+        )
         return df
 
     def _get_thread_api(self):
@@ -279,85 +235,7 @@ class TdxDataProvider:
             _log.warning(f"[网络] {reason}")
 
     def _apply_forward_adjustment(self, api, market, code, df):
-        """Apply forward adjustment using local gbbq data first, then fall back to online API."""
-        try:
-            xdxr_df = None
-            # 优先使用本地 gbbq 数据(无需联网)
-            if code in self._local_gbbq:
-                local = self._local_gbbq[code]
-                xdxr_df = local.copy()
-                # gbbq 字段含: datetime(YYYYMMDD整数), hongli_panqianliutong(红利), songgu_qianzongguben(送股)
-                xdxr_df['dt'] = pd.to_datetime(xdxr_df['datetime'].astype(str), format='%Y%m%d', errors='coerce').dt.date
-                xdxr_df = xdxr_df.dropna(subset=['dt'])
-                xdxr_df = xdxr_df.set_index('dt').sort_index(ascending=False)
-            elif api is not None:
-                # fallback: 联网获取 xdxr_info
-                xdxr_data = api.get_xdxr_info(market, code)
-                if not xdxr_data:
-                    return df
-                xdxr_df = pd.DataFrame(xdxr_data)
-                xdxr_df = xdxr_df[xdxr_df['category'] == 1]
-                if xdxr_df.empty:
-                    return df
-                xdxr_df['dt'] = pd.to_datetime(xdxr_df[['year', 'month', 'day']].astype(str).agg('-'.join, axis=1)).dt.date
-                xdxr_df = xdxr_df.set_index('dt').sort_index(ascending=False)
-            else:
-                # 既无本地 gbbq 也无 API -> 无法复权
-                return df
-
-            if xdxr_df is None or xdxr_df.empty:
-                return df
-
-            # 纯 Pandas 复权（不用 Polars），避免多线程并发时 PyArrow C++ 竞态段错误
-            work_df = df.reset_index() if df.index.name == 'datetime' else df.copy()
-
-            # 将 datetime 列统一为 date 类型，用于与除权日比较
-            if 'datetime' in work_df.columns:
-                dt_col = pd.to_datetime(work_df['datetime']).dt.date
-            else:
-                dt_col = None
-
-            for i in range(len(xdxr_df)):
-                row = xdxr_df.iloc[i]
-                if 'songgu_qianzongguben' in row.index:
-                    # 本地 gbbq 格式
-                    sz = float(row.get('songgu_qianzongguben', 0) or 0) / 10.0
-                    fh = float(row.get('hongli_panqianliutong', 0) or 0) / 10.0
-                else:
-                    # API 格式
-                    sz = (float(row.get('songgu', 0) or 0) + float(row.get('houzhen', 0) or 0)) / 10.0
-                    fh = float(row.get('fenhong', 0) or 0) / 10.0
-
-                dt = xdxr_df.index[i]
-                if isinstance(dt, pd.Timestamp):
-                    dt = dt.date()
-                elif isinstance(dt, str):
-                    from datetime import datetime as dt_sys
-                    dt = dt_sys.strptime(dt, "%Y-%m-%d").date()
-
-                if dt_col is None:
-                    continue
-
-                # 找到除权日之前的所有行，对价格做前复权
-                mask = dt_col < dt
-                if not mask.any():
-                    continue
-
-                for c in ['open', 'high', 'low', 'close']:
-                    if c in work_df.columns:
-                        work_df.loc[mask, c] = (work_df.loc[mask, c] - fh) / (1 + sz)
-                for vc in ['vol', 'volume']:
-                    if vc in work_df.columns:
-                        work_df.loc[mask, vc] = work_df.loc[mask, vc] * (1 + sz)
-
-            # 返回 Pandas DataFrame（与输入一致）
-            if 'datetime' in work_df.columns:
-                work_df['datetime'] = pd.to_datetime(work_df['datetime'])
-                work_df = work_df.set_index('datetime')
-            return work_df
-        except Exception as e:
-            _log.error(f"[数据中台] 前复权计算异常: {e}", exc_info=True)
-            raise ValueError(f"除权除息因子计算失败: {e}") from e
+        return apply_forward_adjustment(api, market, code, df, self._local_gbbq)
 
     def _fetch_standard_data(self, api, code, count=MAX_HISTORY_BARS):
         import polars as pl
@@ -536,9 +414,9 @@ class TdxDataProvider:
     def load_cache_from_disk(self):
         """Load disk cache into memory and return the cache date string.
 
-        优先尝试 Parquet 缓存（体积更小、加载更快），失败时回退 pkl。
+        仅使用 Parquet 缓存（体积更小、加载更快）；旧版 pkl 已弃用。
         """
-        # ---- 优先尝试 Parquet 快速路径 ----
+        # ---- Parquet 快速路径 ----
         try:
             from vcp.polars_engine import load_cache_parquet
             result = load_cache_parquet()
@@ -548,50 +426,23 @@ class TdxDataProvider:
                     with self.cache_lock:
                         self.cache_data = loaded_data
                     # Parquet 数据在保存前已经过 _downcast_memory 降精度，无需重复执行
+                    remove_cache_file(self.legacy_cache_file)
+                    remove_cache_file(self.legacy_cache_file + '.corrupted')
+                    remove_cache_file(self.legacy_fallback_cache_file)
                     _log.info(f"\n[数据中台] Parquet 快速加载: {len(self.cache_data)} 只标的 (缓存日期: {last_date})")
                     return last_date
         except ImportError:
-            pass  # polars 未安装，回退 pkl
+            pass
         except Exception as e:
-            _log.error(f"[数据中台] Parquet 加载失败，回退 pkl: {e}")
-        # ---- 回退: pickle 加载 ----
-        if not os.path.exists(self.cache_file):
-            return ""
-        try:
-            file_size = os.path.getsize(self.cache_file)
-            if file_size > 500 * 1024 * 1024:
-                raise ValueError(f"缓存文件过大({file_size/1024/1024:.1f}MB)，可能已损坏")
-            with open(self.cache_file, 'rb') as f:
-                pkg = pickle.load(f)
-            if not isinstance(pkg, dict) or 'version' not in pkg or 'data' not in pkg:
-                raise ValueError("缓存版本不匹配")
-            version = pkg.get('version', 0)
-            if version != CACHE_VERSION:
-                _log.warning(f"\n[缓存] 缓存版本不匹配(version={version})，准备强制重建")
-                self.cache_data = {}
-                return ""
-            loaded_data = pkg.get('data', {})
-            if not isinstance(loaded_data, dict):
-                raise ValueError("缓存结构异常: data 字段不是字典")
-            with self.cache_lock:
-                self.cache_data = loaded_data
-            self._downcast_memory()
-            last_date = pkg.get('date', '')
-            _log.info(f"\n[数据中台] pkl 回退加载: {len(self.cache_data)} 只标的 (缓存日期: {last_date})")
-            return last_date
-        except (pickle.UnpicklingError, ValueError, TypeError, KeyError) as e:
-            self.cache_data = {}
-            _log.error(f"\n[数据中台] 读取缓存文件失败(格式异常)，已丢弃旧缓存并准备重建。原因: {e}")
-            try:
-                os.rename(self.cache_file, self.cache_file + '.corrupted')
-                _log.error("[缓存] 缓存文件已损坏或无法读取")
-            except Exception as _e:
-                _log.debug(f"[数据中台] 损坏缓存文件重命名失败: {_e}")
-            return ""
-        except Exception as e:
-            self.cache_data = {}
-            _log.error(f"\n[数据中台] 读取缓存文件失败，已丢弃旧缓存并准备重建。原因: {e}", exc_info=True)
-            return ""
+            _log.error(f"[数据中台] Parquet 加载失败: {e}")
+
+        if os.path.exists(self.legacy_cache_file) or os.path.exists(self.legacy_fallback_cache_file):
+            _log.info("[数据中台] 检测到旧版 pkl 行情缓存，已弃用并忽略")
+            remove_cache_file(self.legacy_cache_file)
+            remove_cache_file(self.legacy_cache_file + '.corrupted')
+            remove_cache_file(self.legacy_fallback_cache_file)
+
+        return ""
 
     def sync_market_data(self, codes, force_refresh=False, progress_callback=None):
         today = datetime.now().strftime(DATE_FMT)
@@ -668,22 +519,16 @@ class TdxDataProvider:
             from vcp.polars_engine import save_cache_parquet
             save_cache_parquet(self.cache_data, today)
             parquet_saved = True
+            remove_cache_file(self.legacy_cache_file)
+            remove_cache_file(self.legacy_cache_file + '.corrupted')
+            remove_cache_file(self.legacy_fallback_cache_file)
         except ImportError:
             _log.error("[数据中台] polars 未安装，无法写入 Parquet 缓存")
         except Exception as e:
             _log.error(f"[数据中台] Parquet 写入失败: {e}", exc_info=True)
 
-        # #13: Parquet 保存失败时，fallback 写一份 pkl 作为保底
         if not parquet_saved:
-            try:
-                import pickle
-                # 修复: self._cache_dir 不存在，改用全局常量 CACHE_DIR
-                pkl_path = os.path.join(CACHE_DIR, 'cache_data_fallback.pkl')
-                with open(pkl_path, 'wb') as f:
-                    pickle.dump({'date': today, 'data': self.cache_data}, f, protocol=4)
-                _log.warning(f"[数据中台] Parquet 失败,已 fallback 写入 pkl: {pkl_path}")
-            except Exception as pkl_e:
-                _log.error(f"[数据中台] pkl fallback 也失败: {pkl_e}")
+            _log.error("[数据中台] Parquet 失败，已停止写入旧版 pkl fallback，请检查 pyarrow/polars 环境")
         _log.info(f"[数据中台] 阶段3 完成 -> 缓存已保存 (日期: {today})\n")
         return True
 
@@ -831,42 +676,19 @@ class TdxDataProvider:
             return dict(self.cache_data)
 
     def _build_offline_quotes(self, codes):
-        """离线模式或无服务器节点时，利用内存中既有的最新日线数据充当当天的最新报价字典进行兜底返回"""
-        res = {}
-        for code in codes:
-            hist_df = self.get_data(code)
-            if hist_df is not None and len(hist_df) > 0:
-                last_row = hist_df.iloc[-1]
-                prev_row = hist_df.iloc[-2] if len(hist_df) > 1 else last_row
-                last_close = float(prev_row['close']) if len(hist_df) > 1 else float(last_row['open'])
-                quote_date = None
-                try:
-                    quote_date = pd.Timestamp(hist_df.index[-1]).strftime('%Y-%m-%d')
-                except Exception:
-                    quote_date = None
-                res[code] = {
-                    'open': float(last_row.get('open', 0)),
-                    'high': float(last_row.get('high', 0)),
-                    'low': float(last_row.get('low', 0)),
-                    'close': float(last_row.get('close', 0)),
-                    'volume': float(last_row.get('volume', 0)),
-                    'amount': float(last_row.get('amount', 0)),
-                    'last_close': last_close,
-                    'date': quote_date,
-                }
-        return res
+        return build_offline_quotes(codes, self.get_data)
 
     def fetch_realtime_quotes_batch(self, codes, _retry_once=True):
         """Fetch realtime quotes in batches of up to 80 symbols."""
         try:
             from core.market_calendar import MarketCalendar
-            is_active = MarketCalendar.is_market_active()
+            quote_refreshable = MarketCalendar.is_quote_refresh_time()
         except Exception as _e:
             _log.debug(f"[报价] 市场日历查询失败，默认开市: {_e}")
-            is_active = True
+            quote_refreshable = True
 
-        if not is_active:
-            # 严格依据交易日历：非交易时间段绝对不走网络，无论断网与否，直接闪回本地最后快照
+        if not quote_refreshable:
+            # 仅在真正的非报价时段（如盘后/周末）才彻底断网回退到本地日线快照。
             return self._build_offline_quotes(codes)
 
         try:

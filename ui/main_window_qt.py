@@ -1,6 +1,6 @@
 import os
 import datetime
-from vcp.constants import APP_VERSION
+from vcp.constants import APP_VERSION, RPS_CACHE_FILE
 from ui.components.kline_window_manager import kline_manager
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -987,10 +987,8 @@ class MainWindowQT(QMainWindow):
 
     def _update_last_f5_time(self):
         import os, datetime
-        cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'Cache')
-        rps_path = os.path.join(cache_dir, 'vcp_rps_precomputed.pkl')
-        if os.path.exists(rps_path):
-            mtime = os.path.getmtime(rps_path)
+        if os.path.exists(RPS_CACHE_FILE):
+            mtime = os.path.getmtime(RPS_CACHE_FILE)
             dt = datetime.datetime.fromtimestamp(mtime)
             if hasattr(self, 'act_f5'):
                 self.act_f5.setText(f"全局数据同步 (F5) [{dt.strftime('%m-%d')}]")

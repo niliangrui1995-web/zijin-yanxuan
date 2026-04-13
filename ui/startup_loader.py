@@ -82,7 +82,8 @@ class StartupLoader:
             # 加载 RPS 预计算缓存
             try:
                 self.mw.cache_manager.try_load_rps_from_disk(
-                    self.mw.engine, 
+                    self.mw.engine,
+                    data_provider=self.mw.data_provider,
                     set_status_callback=lambda msg: self._safe_call_in_ui(lambda: self.mw.lbl_status.setText(msg))
                 )
             except Exception as e:

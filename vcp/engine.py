@@ -15,8 +15,15 @@ from vcp.constants import (
     MIN_DAYS_AFTER_LAST_PEAK, MIN_DAYS_AFTER_LAST_PEAK_CONFIRM,
     MAX_R2_BELOW_R1_PCT, MIN_FIRST_TO_THIRD_DAYS, MIN_R1_R2_DAYS,
     MIN_SMA50_SLOPE,
-    INSTITUTION_KEYWORDS, INSTITUTION_NAME_KEYWORDS,
-    SHAREHOLDER_CACHE_FILE, MIN_MARKET_CAP,
+    MIN_MARKET_CAP,
+)
+from vcp.engine_external import (
+    batch_check_institution,
+    batch_check_market_cap,
+    batch_get_finance_info,
+    check_institutional_shareholders,
+    is_institution,
+    tdx_connect,
 )
 from vcp.models import VCPParams
 
@@ -600,124 +607,15 @@ class VCPEngine:
 
     @staticmethod
     def _tdx_connect():
-        """连接通达信服务器，返回 api 对象，失败返回 None"""
-        from pytdx.hq import TdxHq_API
-        api = TdxHq_API()
-        for host, port in VCPEngine._TDX_SERVERS:
-            try:
-                if api.connect(host, port, time_out=5):
-                    return api
-            except Exception as _e:
-                _log.debug(f"[pytdx] 连接服务器 {host}:{port} 失败: {_e}")
-                continue
-        return None
+        return tdx_connect(VCPEngine._TDX_SERVERS)
 
     @staticmethod
     def batch_get_finance_info(codes):
-        """通过通达信批量获取财务信息（总股本、法人股等），带30天磁盘缓存"""
-        import time as _time
-        import os
-        import pickle
-        from datetime import datetime
-        from vcp.constants import FINANCE_CACHE_FILE
-
-        # 1. 加载本地缓存（有效期 30 天）
-        cache = {}
-        if os.path.exists(FINANCE_CACHE_FILE):
-            try:
-                with open(FINANCE_CACHE_FILE, 'rb') as f:
-                    cache = pickle.load(f)
-            except Exception as _e:
-                _log.debug(f"[pytdx] 财务缓存文件读取异常，将重建: {_e}")
-                cache = {}
-
-        results = {}
-        need_query = []
-        now = datetime.now()
-
-        for code in codes:
-            if code in cache:
-                cached = cache[code]
-                try:
-                    cache_date = datetime.strptime(cached.get('date', '2000-01-01'), '%Y-%m-%d')
-                    if (now - cache_date).days < 30:
-                        results[code] = cached['info']
-                        continue
-                except (ValueError, KeyError) as _e:
-                    _log.debug(f"[pytdx] 缓存日期解析异常({code}): {_e}")
-            need_query.append(code)
-
-        if not need_query:
-            return results
-
-        api = VCPEngine._tdx_connect()
-        if api is None:
-            _log.warning("[pytdx] 无法连接通达信服务器，市值计算将使用本地旧缓存或暂无数据")
-            # 离线降级：如果连不上服务器，强制使用历史缓存（即使已过期）
-            for code in need_query:
-                if code in cache:
-                    results[code] = cache[code]['info']
-            return results
-
-        try:
-            for i, raw_code in enumerate(need_query):
-                # 清理 sh / sz 前缀
-                code = raw_code.replace("sh", "").replace("sz", "")
-                
-                # 判断市场：6/5开头=上海(market=1)，其余=深圳(market=0)
-                market = 1 if code.startswith(('6', '5')) else 0
-                try:
-                    info = api.get_finance_info(market, code)
-                    if info:
-                        results[raw_code] = info
-                        cache[raw_code] = {'info': info, 'date': now.strftime('%Y-%m-%d')}
-                except Exception as _e:
-                    _log.debug(f"[pytdx] 获取 {raw_code} 财务信息失败: {_e}")
-                
-                # 每50个暂停一下避免断连
-                if (i + 1) % 50 == 0:
-                    _time.sleep(0.3)
-            
-            # 写入缓存
-            try:
-                with open(FINANCE_CACHE_FILE, 'wb') as f:
-                    pickle.dump(cache, f)
-            except Exception as e:
-                _log.error(f"[pytdx] 财务缓存写入失败: {e}")
-                
-        finally:
-            try:
-                api.disconnect()
-            except Exception as _e:
-                _log.debug(f"[pytdx] 断开服务器连接时异常（可忽略）: {_e}")
-
-        return results
+        return batch_get_finance_info(codes, VCPEngine._TDX_SERVERS)
 
     @staticmethod
     def batch_check_market_cap(codes: list[str], close_prices: dict[str, float] | None = None) -> dict[str, float]:
-        """批量计算总市值 = 总股本 × 收盘价
-
-        参数:
-            codes: 股票代码列表
-            close_prices: {code: close_price} 收盘价字典（可选）
-
-        返回:
-            {code: market_cap_in_yuan}
-        """
-        finance_data = VCPEngine.batch_get_finance_info(codes)
-        results = {}
-        for code in codes:
-            info = finance_data.get(code)
-            if not info:
-                continue
-            zongguben = info.get('zongguben', 0)
-            if zongguben and zongguben > 0:
-                if close_prices and code in close_prices:
-                    # zongguben 如果已经是股数（或 UI 已做好 1e8 转换），这里就不乘 10000。
-                    results[code] = zongguben * close_prices[code]
-                else:
-                    results[code] = zongguben
-        return results
+        return batch_check_market_cap(codes, VCPEngine._TDX_SERVERS, close_prices)
 
     # ================================================================
     # 十大流通股东机构检查（硬过滤）
@@ -730,158 +628,15 @@ class VCPEngine:
 
     @staticmethod
     def _is_institution(name, holder_type):
-        """判断单个股东是否为机构
-
-        参数:
-            name: 股东名称
-            holder_type: 东方财富返回的 HOLDER_TYPE（个人/证券投资基金/私募基金/...）
-
-        返回:
-            True 如果是机构
-        """
-        # 1. 通过东方财富的 HOLDER_TYPE 直接判断
-        #    用户认定的机构类型：基金/券商/保险/社保/信托/QFII/北向资金
-        for kw in INSTITUTION_KEYWORDS:
-            if kw in (holder_type or ''):
-                return True
-
-        # 2. 通过股东名称关键词判断（北向资金等标为"其它"类型）
-        for kw in INSTITUTION_NAME_KEYWORDS:
-            if kw in (name or ''):
-                return True
-
-        return False
+        return is_institution(name, holder_type)
 
     @staticmethod
     def check_institutional_shareholders(code):
-        """通过东方财富API查询单只股票的十大流通股东，判断是否有机构持仓
-
-        参数:
-            code: 股票代码，如 '603659'
-
-        返回:
-            (has_institution, institution_names)
-            has_institution: bool 是否有机构
-            institution_names: str 机构名称摘要（最多显示3个）
-        """
-        import urllib.request
-        import json
-
-        # 确定市场前缀（SH=上海，SZ=深圳，BJ=北交所）
-        if code.startswith(('6', '5')):
-            prefix = 'SH'
-        elif code.startswith(('0', '3')):
-            prefix = 'SZ'
-        elif code.startswith(('4', '8')):
-            prefix = 'BJ'
-        else:
-            prefix = 'SZ'
-
-        url = f'https://emweb.securities.eastmoney.com/PC_HSF10/ShareholderResearch/PageAjax?code={prefix}{code}'
-
-        try:
-            req = urllib.request.Request(url, headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Referer': 'https://emweb.securities.eastmoney.com/',
-            })
-            resp = urllib.request.urlopen(req, timeout=8)
-            data = json.loads(resp.read().decode('utf-8'))
-
-            # sdltgd = 十大流通股东（最新一期，最多10条）
-            shareholders = data.get('sdltgd', [])
-            if not shareholders:
-                return False, "无股东数据"
-
-            # 遍历十大流通股东，查找机构
-            institutions = []
-            for sh in shareholders:
-                name = sh.get('HOLDER_NAME', '')
-                holder_type = sh.get('HOLDER_TYPE', '')
-
-                if VCPEngine._is_institution(name, holder_type):
-                    # 精简名称用于显示
-                    short = name[:12] + '..' if len(name) > 12 else name
-                    institutions.append(short)
-
-            if institutions:
-                display = '/'.join(institutions[:3])
-                if len(institutions) > 3:
-                    display += f' 等{len(institutions)}家'
-                return True, display
-            else:
-                return False, "无机构"
-
-        except Exception as e:
-            return False, f"查询失败:{str(e)[:20]}"
+        return check_institutional_shareholders(code)
 
     @staticmethod
     def batch_check_institution(codes):
-        """批量查询多只股票的机构股东情况（带 90 天磁盘缓存）
-
-        数据源: 东方财富 F10 HTTP API
-        缓存: SHAREHOLDER_CACHE_FILE，90天有效
-
-        参数:
-            codes: ['603659', '002463', ...] 股票代码列表
-
-        返回:
-            {code: {'has_institution': bool, 'detail': str, 'date': str}}
-        """
-        import os
-        import pickle
-        import time as _time
-
-        # ---- 加载磁盘缓存 ----
-        cache = {}
-        if os.path.exists(SHAREHOLDER_CACHE_FILE):
-            try:
-                with open(SHAREHOLDER_CACHE_FILE, 'rb') as f:
-                    cache = pickle.load(f)
-            except Exception as _e:
-                _log.debug(f"[机构股东] 缓存文件读取异常，将重建: {_e}")
-                cache = {}
-
-        results = {}
-        need_query = []
-        now = datetime.now()
-
-        for code in codes:
-            if code in cache:
-                cached = cache[code]
-                # 缓存有效期：90天
-                try:
-                    cache_date = datetime.strptime(cached['date'], '%Y-%m-%d')
-                    if (now - cache_date).days < 90:
-                        results[code] = cached
-                        continue
-                except (ValueError, KeyError) as _e:
-                    _log.debug(f"[机构股东] 缓存日期解析异常({code}): {_e}")
-            need_query.append(code)
-
-        # ---- 联网查询未缓存的（东方财富 F10） ----
-        if need_query:
-            _log.info(f"[机构股东] 东方财富查询 {len(need_query)} 只（缓存命中 {len(codes) - len(need_query)} 只）...")
-            for i, code in enumerate(need_query):
-                has_inst, detail = VCPEngine.check_institutional_shareholders(code)
-                entry = {
-                    'has_institution': has_inst,
-                    'detail': detail,
-                    'date': now.strftime('%Y-%m-%d'),
-                }
-                results[code] = entry
-                cache[code] = entry
-                # 每次查询间隔 0.3 秒，避免被东方财富限流
-                if i < len(need_query) - 1:
-                    _time.sleep(0.3)
-
-            # ---- 保存缓存到磁盘 ----
-            try:
-                with open(SHAREHOLDER_CACHE_FILE, 'wb') as f:
-                    pickle.dump(cache, f)
-            except Exception as _e:
-                _log.debug(f"[机构股东] 缓存保存失败: {_e}")
-
-        return results
+        return batch_check_institution(codes)
 
 
     # ================================================================

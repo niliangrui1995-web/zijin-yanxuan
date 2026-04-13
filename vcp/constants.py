@@ -39,10 +39,10 @@ def get_data_dir(sub_folder="Cache"):
 CACHE_DIR  = get_data_dir("Cache")
 
 
-SPECIAL_POOL_DATA_CACHE = os.path.join(CACHE_DIR, "vcp_special_pool_data.pkl")
-SECTOR_RPS_CACHE_FILE = os.path.join(CACHE_DIR, "vcp_sector_rps_precomputed.pkl")  # F5预算板块RPS
-SHAREHOLDER_CACHE_FILE = os.path.join(CACHE_DIR, "vcp_shareholder_cache.pkl")       # 十大流通股东缓存
-FINANCE_CACHE_FILE = os.path.join(CACHE_DIR, "vcp_finance_cache.pkl")               # 财务股本缓存(防服务器断连)
+RPS_CACHE_FILE = os.path.join(CACHE_DIR, "vcp_rps_precomputed.json")
+SECTOR_RPS_CACHE_FILE = os.path.join(CACHE_DIR, "vcp_sector_rps_precomputed.json")  # F5预算板块RPS
+SHAREHOLDER_CACHE_FILE = os.path.join(CACHE_DIR, "vcp_shareholder_cache.json")       # 十大流通股东缓存
+FINANCE_CACHE_FILE = os.path.join(CACHE_DIR, "vcp_finance_cache.json")               # 财务股本缓存(防服务器断连)
 SPECIAL_LATEST_DATA = os.path.join(PROJECT_ROOT, 'data', 'special_latest_data.json')  # 关注池最新数据
 MIN_MARKET_CAP = 4e9    # 最低总市值门槛：40亿元
 

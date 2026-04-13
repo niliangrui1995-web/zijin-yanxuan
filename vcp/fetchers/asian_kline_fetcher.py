@@ -22,6 +22,7 @@ import uuid
 from datetime import datetime
 
 import yfinance as yf
+from vcp.fetchers.yf_session import build_yf_session
 
 # Why: 行业字典暂未收入本项目工程，通过项目根目录向上推导兄弟目录，避免硬编码特定机器的绝对路径
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -122,7 +123,13 @@ def _find_track(ticker: str) -> str:
     return "未知赛道"
 
 
-def fetch_single_kline(name: str, ticker: str, period: str = "1y") -> dict | None:
+def fetch_single_kline(
+    name: str,
+    ticker: str,
+    period: str = "1y",
+    use_cf_proxy: bool = True,
+    session=None,
+) -> dict | None:
     """拉取单只标的的 K 线数据。
 
     Returns:
@@ -139,7 +146,8 @@ def fetch_single_kline(name: str, ticker: str, period: str = "1y") -> dict | Non
         }
     """
     try:
-        t = yf.Ticker(ticker)
+        yf_session = session or build_yf_session(use_cf_proxy)
+        t = yf.Ticker(ticker, session=yf_session)
         hist = t.history(period=period)
 
         if hist.empty:
@@ -185,6 +193,7 @@ def fetch_all_asian_klines(
     single_ticker: str | None = None,
     max_workers: int = 6,
     period: str = "1y",
+    use_cf_proxy: bool = True,
 ) -> list[dict]:
     """并发拉取亚洲寡头 K 线数据。
 
@@ -219,11 +228,18 @@ def fetch_all_asian_klines(
 
     results = []
     failed = []
+    yf_session = build_yf_session(use_cf_proxy)
 
     for name, ticker in tickers.items():
         time.sleep(0.3)
         try:
-            data = fetch_single_kline(name, ticker, period)
+            data = fetch_single_kline(
+                name,
+                ticker,
+                period=period,
+                use_cf_proxy=use_cf_proxy,
+                session=yf_session,
+            )
             if data:
                 results.append(data)
                 logging.info(

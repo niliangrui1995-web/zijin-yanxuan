@@ -722,3 +722,12 @@ class MarketCalendar:
     @classmethod
     def is_market_active(cls, market: str = "CN") -> bool:
         return cls.get_market_status(market) == "交易中"
+
+    @classmethod
+    def is_quote_refresh_time(cls, market: str = "CN") -> bool:
+        """是否允许刷新报价快照。
+
+        对 A 股来说，午休虽然不是连续成交时段，但主流行情源仍会返回
+        上午收盘后的最新快照，因此这里将“午休”也视为可刷新报价的时段。
+        """
+        return cls.get_market_status(market) in {"交易中", "午休"}

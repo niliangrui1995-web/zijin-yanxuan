@@ -1,59 +1,54 @@
 # -*- coding: utf-8 -*-
 """
 core/cache_manager.py
-文件级缓存管理：负责磁盘 pkl 缓存读写与清理逻辑。
+File-level cache management for JSON cache restore/save and stale cache cleanup.
 """
-import os
+
 import datetime
-import pickle
+import os
 import re
 
+from core.exceptions import BusinessRuleError, CacheIOError, DataFormatError
+from core.json_cache import load_json_file, remove_cache_file, save_json_file
 from core.logger import get_logger
-from core.exceptions import CacheIOError, DataFormatError, BusinessRuleError
+from vcp.constants import RPS_CACHE_FILE
 
 log = get_logger(__name__)
 
+
 class CacheManager:
-    """仅负责本地 pkl 缓存的读写与清理，不直接操作 UI。"""
-    
+    """Manage disk-backed caches without touching UI concerns directly."""
+
     def __init__(self):
-        # 确定 Cache 目录绝对路径
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        self.cache_dir = os.path.join(project_root, 'data', 'Cache')
+        self.cache_dir = os.path.join(project_root, "data", "Cache")
         os.makedirs(self.cache_dir, exist_ok=True)
-        self.rps_path = os.path.join(self.cache_dir, 'vcp_rps_precomputed.pkl')
+        self.rps_path = RPS_CACHE_FILE
 
-    def _load_pickle(self, path: str):
-        try:
-            with open(path, 'rb') as f:
-                return pickle.load(f)
-        except (FileNotFoundError, PermissionError, OSError) as e:
-            raise CacheIOError(f"cache read failed: {path}") from e
-        except (pickle.UnpicklingError, EOFError) as e:
-            raise DataFormatError(f"pickle payload invalid: {path}") from e
+    @staticmethod
+    def _legacy_pickle_path(path: str) -> str:
+        return f"{os.path.splitext(path)[0]}.pkl"
 
-    def _save_pickle(self, path: str, data) -> None:
-        try:
-            with open(path, 'wb') as f:
-                pickle.dump(data, f, protocol=4)
-        except (PermissionError, OSError) as e:
-            raise CacheIOError(f"cache write failed: {path}") from e
+    def _load_json(self, path: str):
+        return load_json_file(path)
+
+    def _save_json(self, path: str, data) -> None:
+        save_json_file(path, data)
 
     @staticmethod
     def _count_valid_rps_values(rps120) -> int:
-        """统计有效 RPS120 条目数（兼容 dict / pandas Series）。"""
         if isinstance(rps120, dict):
-            cnt = 0
-            for v in rps120.values():
+            count = 0
+            for value in rps120.values():
                 try:
-                    fv = float(v)
+                    float_value = float(value)
                 except (TypeError, ValueError):
                     continue
-                if fv == fv:  # NaN != NaN
-                    cnt += 1
-            return cnt
+                if float_value == float_value:
+                    count += 1
+            return count
 
-        if hasattr(rps120, 'notna'):
+        if hasattr(rps120, "notna"):
             try:
                 return int(rps120.notna().sum())
             except Exception:
@@ -61,88 +56,168 @@ class CacheManager:
 
         return 0
 
-    def try_load_rps_from_disk(self, engine, set_status_callback=None):
-        """
-        尝试从磁盘加载 F5 预计算 RPS 缓存。
-        :param engine: VCPEngine 实例，用于注入预计算矩阵
-        :param set_status_callback: 可选 UI 状态回调
-        """
-        if not os.path.exists(self.rps_path):
-            return
+    @staticmethod
+    def _infer_latest_rps_trade_date(cache_data: dict) -> str:
+        latest_date = ""
+        for df in (cache_data or {}).values():
+            if df is None:
+                continue
 
+            try:
+                if len(df) <= 0:
+                    continue
+            except Exception:
+                continue
+
+            try:
+                index = getattr(df, "index", None)
+                if index is None or len(index) <= 0:
+                    continue
+                last_value = index[-1]
+            except Exception:
+                continue
+
+            try:
+                if hasattr(last_value, "strftime"):
+                    date_str = last_value.strftime("%Y%m%d")
+                else:
+                    date_str = str(last_value).strip().replace("-", "")[:8]
+                if len(date_str) == 8 and date_str.isdigit() and date_str > latest_date:
+                    latest_date = date_str
+            except Exception:
+                continue
+
+        return latest_date
+
+    def _rebuild_rps_from_cache(self, engine, data_provider, set_status_callback=None) -> bool:
+        cache_data = getattr(data_provider, "cache_data", {}) or {}
+        all_data = {}
+        for code, df in cache_data.items():
+            try:
+                if df is not None and len(df) >= 60:
+                    all_data[code] = df
+            except Exception:
+                continue
+
+        if not all_data:
+            raise BusinessRuleError("local cache has no eligible symbols for rps rebuild")
+
+        target_date = self._infer_latest_rps_trade_date(all_data)
+        if not target_date:
+            raise BusinessRuleError("unable to infer latest trade date from local cache")
+
+        rps_matrix = engine.build_rps_matrix(all_data, target_date, target_date)
+        if not rps_matrix:
+            raise BusinessRuleError(f"rps rebuild returned empty matrix for {target_date}")
+
+        resolved_date = list(rps_matrix.keys())[-1]
+        resolved_rps = rps_matrix[resolved_date] or {}
+        rps120 = resolved_rps.get("rps120")
+        rps250 = resolved_rps.get("rps250")
+        if rps120 is None or rps250 is None:
+            raise BusinessRuleError("rps120/rps250 missing in rebuilt payload")
+
+        payload = {"date": resolved_date, "rps120": rps120, "rps250": rps250}
+        self._save_json(self.rps_path, payload)
+        remove_cache_file(self._legacy_pickle_path(self.rps_path))
+        engine.set_precomputed_rps(resolved_date, rps120, rps250)
+        count = self._count_valid_rps_values(rps120)
+        log.info(f"[RPS] 本地缓存重建预计算RPS成功(基准日:{resolved_date}, 仅{count}条有效)")
+
+        if set_status_callback:
+            set_status_callback(f"RPS cache rebuilt: {resolved_date}, {count} symbols")
+        return True
+
+    def try_load_rps_from_disk(self, engine, data_provider=None, set_status_callback=None):
+        """
+        Try loading the precomputed RPS bundle from JSON cache.
+        If JSON cache is missing, optionally rebuild it from local market cache.
+        """
         try:
-            pkg = self._load_pickle(self.rps_path)
-            cached_date = pkg.get('date', '')
-            rps120 = pkg.get('rps120')
-            rps250 = pkg.get('rps250')
-            if rps120 is None or rps250 is None:
-                raise BusinessRuleError("rps120/rps250 missing in cache payload")
+            if os.path.exists(self.rps_path):
+                payload = self._load_json(self.rps_path)
+                cached_date = payload.get("date", "")
+                rps120 = payload.get("rps120")
+                rps250 = payload.get("rps250")
+                if rps120 is None or rps250 is None:
+                    raise BusinessRuleError("rps120/rps250 missing in cache payload")
 
-            engine.set_precomputed_rps(cached_date, rps120, rps250)
-            count = self._count_valid_rps_values(rps120)
-            log.info(f"[RPS] 从磁盘加载预计算RPS成功(基准日:{cached_date}, 仅{count}条有效)")
+                engine.set_precomputed_rps(cached_date, rps120, rps250)
+                remove_cache_file(self._legacy_pickle_path(self.rps_path))
+                count = self._count_valid_rps_values(rps120)
+                log.info(f"[RPS] 从磁盘加载预计算RPS成功(基准日:{cached_date}, 仅{count}条有效)")
 
-            if set_status_callback:
-                set_status_callback(f"RPS cache loaded: {cached_date}, {count} symbols")
-        except CacheIOError as e:
-            log.error(f"[RPS][I/O] 磁盘加载失败: {e}")
-        except DataFormatError as e:
-            log.error(f"[RPS][FORMAT] 缓存格式异常: {e}")
-        except BusinessRuleError as e:
-            log.warning(f"[RPS][RULE] 缓存不可用: {e}")
+                if set_status_callback:
+                    set_status_callback(f"RPS cache loaded: {cached_date}, {count} symbols")
+                return
+
+            if data_provider is not None:
+                self._rebuild_rps_from_cache(
+                    engine,
+                    data_provider,
+                    set_status_callback=set_status_callback,
+                )
+        except CacheIOError as exc:
+            log.error(f"[RPS][I/O] 磁盘加载失败: {exc}")
+        except DataFormatError as exc:
+            log.error(f"[RPS][FORMAT] 缓存格式异常: {exc}")
+        except BusinessRuleError as exc:
+            log.warning(f"[RPS][RULE] 缓存不可用: {exc}")
+
     def save_rt_cache(self, table):
-        """保存盘中监控当日缓存到 pkl 文件"""
+        """Persist today's RT monitor rows into JSON cache."""
         try:
             rows = []
             headers = []
 
-            if hasattr(table, 'model') and getattr(table, 'model', lambda: None)():
+            if hasattr(table, "model") and getattr(table, "model", lambda: None)():
                 model = table.model()
-                if hasattr(model, 'sourceModel'):
+                if hasattr(model, "sourceModel"):
                     model = model.sourceModel()
 
-                if hasattr(model, 'row_data'):
+                if hasattr(model, "row_data"):
                     if not model.row_data:
                         return
-                    headers = model.headers if hasattr(model, 'headers') else []
+                    headers = model.headers if hasattr(model, "headers") else []
                     for row_dict in model.row_data:
-                        rows.append([str(row_dict.get(h, '')) for h in headers])
+                        rows.append([str(row_dict.get(header, "")) for header in headers])
 
             if not rows:
                 return
 
             if rows and rows[0]:
                 first_cell = rows[0][0]
-                if len(first_cell) > 10 or '(' in first_cell or ',' in first_cell:
+                if len(first_cell) > 10 or "(" in first_cell or "," in first_cell:
                     raise BusinessRuleError("abnormal first cell value in rt cache")
 
             data = {
-                'date': datetime.date.today().isoformat(),
-                'version': 2,
-                'rows': rows,
-                'headers': headers,
+                "date": datetime.date.today().isoformat(),
+                "version": 2,
+                "rows": rows,
+                "headers": headers,
             }
             path = os.path.join(
-                self.cache_dir, f"rt_monitor_{datetime.date.today().isoformat()}.pkl"
+                self.cache_dir, f"rt_monitor_{datetime.date.today().isoformat()}.json"
             )
-            self._save_pickle(path, data)
-            log.info(f"[盘中缓存] 已保存 {len(rows)} 条信号到 {os.path.basename(path)}")
+            self._save_json(path, data)
+            remove_cache_file(self._legacy_pickle_path(path))
+            log.info(f"[盘中缓存] 已保存{len(rows)}条信号到 {os.path.basename(path)}")
 
             self._cleanup_old_rt_caches(10)
+        except CacheIOError as exc:
+            log.error(f"[盘中缓存][I/O] 保存失败: {exc}")
+        except DataFormatError as exc:
+            log.error(f"[盘中缓存][FORMAT] 保存前校验失败: {exc}")
+        except BusinessRuleError as exc:
+            log.warning(f"[盘中缓存][RULE] 跳过保存: {exc}")
 
-        except CacheIOError as e:
-            log.error(f"[盘中缓存][I/O] 保存失败: {e}")
-        except DataFormatError as e:
-            log.error(f"[盘中缓存][FORMAT] 保存前校验失败: {e}")
-        except BusinessRuleError as e:
-            log.warning(f"[盘中缓存][RULE] 跳过保存: {e}")
     def load_rt_cache(self, table, set_status_callback=None):
-        """启动时加载最近的盘中监控缓存"""
+        """Restore the most recent RT monitor JSON cache on startup."""
         path = None
         for days_ago in range(10):
             check_date = datetime.date.today() - datetime.timedelta(days=days_ago)
             candidate = os.path.join(
-                self.cache_dir, f"rt_monitor_{check_date.isoformat()}.pkl"
+                self.cache_dir, f"rt_monitor_{check_date.isoformat()}.json"
             )
             if os.path.exists(candidate):
                 path = candidate
@@ -152,31 +227,35 @@ class CacheManager:
             return
 
         try:
-            data = self._load_pickle(path)
+            data = self._load_json(path)
 
-            raw_rows = data.get('rows', [])
+            raw_rows = data.get("rows", [])
             if not raw_rows:
                 raise BusinessRuleError("rows is empty")
-            cache_date = data.get('date', '?')
+            cache_date = data.get("date", "?")
 
-            if hasattr(table, 'model') and getattr(table, 'model', lambda: None)():
+            if hasattr(table, "model") and getattr(table, "model", lambda: None)():
                 model = table.model()
-                if hasattr(model, 'sourceModel'):
+                if hasattr(model, "sourceModel"):
                     model = model.sourceModel()
 
-                if hasattr(model, 'update_data') and hasattr(model, 'headers'):
-                    historical_headers = data.get('headers', [])
+                if hasattr(model, "update_data") and hasattr(model, "headers"):
+                    historical_headers = data.get("headers", [])
                     effective_headers = historical_headers if historical_headers else model.headers
 
                     final_data = []
                     for row_vals in raw_rows:
-                        if isinstance(row_vals, (list, tuple)) and len(row_vals) == 2 and isinstance(row_vals[0], (list, tuple)):
+                        if (
+                            isinstance(row_vals, (list, tuple))
+                            and len(row_vals) == 2
+                            and isinstance(row_vals[0], (list, tuple))
+                        ):
                             row_vals = row_vals[0]
 
                         row_dict = {}
-                        for c, val in enumerate(row_vals):
-                            if c < len(effective_headers):
-                                row_dict[effective_headers[c]] = val
+                        for column_index, value in enumerate(row_vals):
+                            if column_index < len(effective_headers):
+                                row_dict[effective_headers[column_index]] = value
                         final_data.append(row_dict)
 
                     model.update_data(final_data)
@@ -185,24 +264,29 @@ class CacheManager:
                     return
 
             log.warning("[RT cache] table model not available, skip restore")
-        except CacheIOError as e:
-            log.error(f"[盘中缓存][I/O] 加载失败: {e}")
-        except DataFormatError as e:
-            log.error(f"[盘中缓存][FORMAT] 加载失败: {e}")
-        except BusinessRuleError as e:
-            log.warning(f"[盘中缓存][RULE] 缓存不可用: {e}")
+        except CacheIOError as exc:
+            log.error(f"[盘中缓存][I/O] 加载失败: {exc}")
+        except DataFormatError as exc:
+            log.error(f"[盘中缓存][FORMAT] 加载失败: {exc}")
+        except BusinessRuleError as exc:
+            log.warning(f"[盘中缓存][RULE] 缓存不可用: {exc}")
+
     def _cleanup_old_rt_caches(self, retention_days=10):
-        """Cleanup expired realtime monitor cache files."""
+        """Remove expired RT JSON cache and leftover legacy pickle files."""
         today = datetime.date.today()
-        for fname in os.listdir(self.cache_dir):
-            if fname.startswith('rt_monitor_') and fname.endswith('.pkl'):
-                m = re.search(r'rt_monitor_(\d{4}-\d{2}-\d{2})\.pkl', fname)
-                if m:
-                    try:
-                        fdate = datetime.datetime.strptime(
-                            m.group(1), '%Y-%m-%d'
-                        ).date()
-                        if (today - fdate).days > retention_days:
-                            os.remove(os.path.join(self.cache_dir, fname))
-                    except (ValueError, OSError) as _e:
-                        log.debug(f"[缓存管理] 清理旧缓存 {fname} 失败: {_e}")
+        for filename in os.listdir(self.cache_dir):
+            if not filename.startswith("rt_monitor_"):
+                continue
+
+            matched = re.search(r"rt_monitor_(\d{4}-\d{2}-\d{2})\.(json|pkl)$", filename)
+            if not matched:
+                continue
+
+            try:
+                file_date = datetime.datetime.strptime(
+                    matched.group(1), "%Y-%m-%d"
+                ).date()
+                if (today - file_date).days > retention_days or filename.endswith(".pkl"):
+                    os.remove(os.path.join(self.cache_dir, filename))
+            except (ValueError, OSError) as exc:
+                log.debug(f"[缓存管理] 清理旧缓存 {filename} 失败: {exc}")
