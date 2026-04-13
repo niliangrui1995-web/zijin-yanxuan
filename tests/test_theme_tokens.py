@@ -39,6 +39,9 @@ def test_theme_tokens_expose_terminal_layers_and_toolbar_metrics():
     assert "chart" in tokens
     assert "toolbar_card" in tokens["surface"]
     assert tokens["table"]["selected_rail_width"] > 0
+    assert tokens["table"]["current_cell_border"] == THEME_YUEBAI["BRAND_DEEP"]
+    assert tokens["table"]["current_cell_bg"]
+    assert tokens["table"]["current_cell_bg_selected"]
     assert tokens["table"]["numeric_heat_max_alpha"] >= 32
     assert tokens["shell"]["toolbar_min_height"] >= tokens["control"]["button_height"]
     assert tokens["shell"]["toolbar_min_height"] < 48

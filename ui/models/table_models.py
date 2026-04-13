@@ -848,11 +848,37 @@ class StockItemDelegate(QStyledItemDelegate):
         is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
         show_selected_rail = is_selected and index.column() == 0
         selected_rail_width = table_tokens["selected_rail_width"] if show_selected_rail else 0
+        current_index = widget.currentIndex() if widget and hasattr(widget, "currentIndex") else QModelIndex()
+        is_current = current_index.isValid() and current_index == index
         plain_style_cell = bool(index.data(Qt.ItemDataRole.UserRole + 3))
         sorted_column = widget.sorted_column() if widget and hasattr(widget, "sorted_column") else -1
         sorted_overlay = None
         if not is_selected and not plain_style_cell and sorted_column == index.column():
             sorted_overlay = _qcolor_from_token(table_tokens["sorted_column_bg"])
+
+        def draw_current_cell_indicator():
+            if not is_current:
+                return
+
+            left_inset = 2 + selected_rail_width + (2 if show_selected_rail else 0)
+            indicator_rect = option.rect.adjusted(left_inset, 2, -2, -2)
+            if indicator_rect.width() <= 4 or indicator_rect.height() <= 4:
+                return
+
+            fill_token = "current_cell_bg_selected" if is_selected else "current_cell_bg"
+            fill_color = _qcolor_from_token(table_tokens[fill_token])
+            border_color = _qcolor_from_token(table_tokens["current_cell_border"])
+
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(fill_color))
+            painter.drawRoundedRect(indicator_rect, 4, 4)
+
+            pen = QPen(border_color)
+            pen.setWidth(1)
+            painter.setPen(pen)
+            painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+            painter.drawRoundedRect(indicator_rect, 4, 4)
 
         # 1. 获取闪电更新动画数据
         flash_data = index.data(Qt.ItemDataRole.UserRole + 1)
@@ -885,6 +911,7 @@ class StockItemDelegate(QStyledItemDelegate):
                     max(0, option.rect.height() - 2),
                 )
                 painter.fillRect(rail_rect, QColor(_c("BRAND_PRIMARY")))
+            draw_current_cell_indicator()
             rect = option.rect
             painter.setFont(opt.font)
             fm = painter.fontMetrics()
@@ -928,6 +955,7 @@ class StockItemDelegate(QStyledItemDelegate):
                     max(0, option.rect.height() - 2),
                 )
                 painter.fillRect(rail_rect, QColor(_c("BRAND_PRIMARY")))
+            draw_current_cell_indicator()
             left_padding = 8 + selected_rail_width + (4 if show_selected_rail else 0)
             text_rect = option.rect.adjusted(left_padding, 0, -8, 0)
 
