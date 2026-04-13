@@ -72,6 +72,22 @@ class LhbTab(BaseStockTab):
         except Exception:
             return None
 
+    @staticmethod
+    def _ensure_log_line(message: str) -> str:
+        text = str(message or "")
+        return text if text.endswith("\n") else text + "\n"
+
+    @classmethod
+    def _build_backfill_progress_log(cls, index: int, total: int, date_str: str, payload: dict) -> tuple[str, str]:
+        count = int(payload.get("count", 0) or 0)
+        status = str(payload.get("status", "ok") or "ok")
+        prefix = f"[龙虎榜池] [{index:02d}/{total:02d}] {date_str}"
+        if status == "error":
+            return "warn", f"{prefix} 抓取异常 | 已记{count}条"
+        if status == "empty":
+            return "info", f"{prefix} 无可用数据"
+        return "info", f"{prefix} 完成 | {count}条"
+
     # ================================================================
     # UI 构建
     # ================================================================
@@ -138,7 +154,7 @@ class LhbTab(BaseStockTab):
     # ================================================================
     def _load_and_display_pool(self):
         """启动时执行：用缓存计算池 → 展示 → 检查缺失天数 → 后台回填"""
-        trade_dates = MarketCalendar.get_recent_trade_dates(POOL_WINDOW)
+        trade_dates = self._get_lhb_trade_dates()
         if not trade_dates:
             self._calendar_retry_count += 1
             if self._calendar_retry_count <= 3:
@@ -165,6 +181,36 @@ class LhbTab(BaseStockTab):
             self.lbl_status.setText("暂无数据，请点击“刷新关注池”抓取")
             if hasattr(self, "table_state"):
                 self.table_state.show_empty("暂无龙虎榜数据")
+
+    @staticmethod
+    def _get_lhb_reference_trade_date():
+        """龙虎榜手动/启动回填的参考交易日。
+
+        龙虎榜当日数据通常在 20:00 后才稳定可抓。交易日但 20:00 前应回退到上一交易日，
+        否则会把“尚未发布的今天”计入 20 日窗口，导致只能拿到前 19 个有效交易日。
+        """
+        from datetime import timedelta
+
+        now_cn = MarketCalendar._get_market_now("CN")
+        today = now_cn.date()
+        latest = MarketCalendar.get_latest_trade_date("CN", ref_date=today)
+        if latest is None:
+            return None
+
+        if not MarketCalendar.is_trade_day(today, market="CN"):
+            return latest
+
+        hhmm = now_cn.hour * 100 + now_cn.minute
+        if hhmm < 2000:
+            return MarketCalendar.get_latest_trade_date("CN", ref_date=today - timedelta(days=1))
+
+        return latest
+
+    def _get_lhb_trade_dates(self, n: int = POOL_WINDOW) -> list[str]:
+        ref_trade_date = self._get_lhb_reference_trade_date()
+        if ref_trade_date is None:
+            return []
+        return MarketCalendar.get_recent_trade_dates(n, ref_date=ref_trade_date)
 
     def _display_pool(self, pool: list[dict]):
         """将池数据渲染到表格"""
@@ -210,7 +256,7 @@ class LhbTab(BaseStockTab):
                 main_win = self.window()
                 if main_win and getattr(main_win, "_is_closing", False):
                     return
-                event_bus.sig_system_log.emit(level, message)
+                event_bus.sig_system_log.emit(level, self._ensure_log_line(message))
             except RuntimeError:
                 pass
 
@@ -218,26 +264,30 @@ class LhbTab(BaseStockTab):
         missing_sorted = sorted(missing_dates)
         total = len(missing_sorted)
         self.lbl_status.setText(f"正在抓取 {total} 天龙虎榜数据...")
-        _safe_log_emit("info", f"[龙虎榜池] 开始抓取 {total} 个交易日数据...")
+        _safe_log_emit(
+            "info",
+            f"[龙虎榜池] 开始回填 {total} 个交易日 | {missing_sorted[0]} -> {missing_sorted[-1]}",
+        )
 
         def _bg_backfill():
             """后台线程：逐日抓取缺失天数的龙虎榜数据"""
             from ui.workers.lhb_worker import fetch_lhb_pool_for_date
 
-            results: dict[str, list[dict]] = {}
+            results: dict[str, dict] = {}
             for i, date_str in enumerate(missing_sorted):
                 try:
-                    records = fetch_lhb_pool_for_date(date_str)
-                    results[date_str] = records
-                    # 逐日进度广播到日志 Tab（在后台线程中 emit 是线程安全的）
-                    _safe_log_emit(
-                        "info",
-                        f"[龙虎榜池] ({i+1}/{total}) {date_str} 抓取完成，{len(records)} 条记录"
+                    payload = fetch_lhb_pool_for_date(
+                        date_str,
+                        emit_success_log=False,
+                        return_meta=True,
                     )
+                    results[date_str] = payload
+                    level, message = self._build_backfill_progress_log(i + 1, total, date_str, payload)
+                    _safe_log_emit(level, message)
                 except Exception as e:
                     log.warning(f"[龙虎榜池] 回填 {date_str} 失败: {e}")
-                    _safe_log_emit("warn", f"[龙虎榜池] {date_str} 抓取失败: {e}")
-                    results[date_str] = []
+                    _safe_log_emit("warn", f"[龙虎榜池] [{i+1:02d}/{total:02d}] {date_str} 抓取失败: {e}")
+                    results[date_str] = {"records": [], "count": 0, "status": "error", "message": str(e)}
 
                 # 限速保护：避免短时间内大量请求被东方财富限流
                 if i < total - 1:
@@ -250,11 +300,12 @@ class LhbTab(BaseStockTab):
 
             if not results:
                 self.lbl_status.setText("抓取失败，请稍后重试")
-                event_bus.sig_system_log.emit("error", "[龙虎榜池] 全部交易日抓取失败")
+                event_bus.sig_system_log.emit("error", self._ensure_log_line("[龙虎榜池] 全部交易日抓取失败"))
                 return
 
             # 写入池引擎
-            for date_str, records in results.items():
+            for date_str, payload in results.items():
+                records = payload.get("records", []) if isinstance(payload, dict) else payload
                 self.pool_manager.add_day(date_str, records)
             self.pool_manager.save()
 
@@ -263,14 +314,14 @@ class LhbTab(BaseStockTab):
             self._display_pool(pool)
             event_bus.sig_system_log.emit(
                 "info",
-                f"[龙虎榜池] ✅ 抓取完成: {len(results)} 天数据, {len(pool)} 只标的入池"
+                self._ensure_log_line(f"[龙虎榜池] ✅ 回填完成 | {len(results)}天 | 入池{len(pool)}只")
             )
 
         def _on_backfill_error(error_message: str):
             self._backfill_in_progress = False
             self.btn_refresh.setEnabled(True)
             self.lbl_status.setText(f"抓取异常: {error_message}")
-            event_bus.sig_system_log.emit("error", f"[龙虎榜池] 抓取任务异常: {error_message}")
+            event_bus.sig_system_log.emit("error", self._ensure_log_line(f"[龙虎榜池] 抓取任务异常: {error_message}"))
 
         task_manager.run_in_background(
             _bg_backfill,
@@ -289,7 +340,7 @@ class LhbTab(BaseStockTab):
             show_toast("正在抓取中，请稍候...", "warning", self)
             return
 
-        trade_dates = MarketCalendar.get_recent_trade_dates(POOL_WINDOW)
+        trade_dates = self._get_lhb_trade_dates()
         if not trade_dates:
             from ui.components.toast_widget import show_toast
             show_toast("交易日历尚未就绪", "warning", self)
@@ -345,7 +396,7 @@ class LhbTab(BaseStockTab):
             self._today_auto_fetched = True
             return
 
-        event_bus.sig_system_log.emit("info", f"[龙虎榜池] 触发每日20:00自动抓取: {today_str}")
+        event_bus.sig_system_log.emit("info", self._ensure_log_line(f"[龙虎榜池] 触发每日20:00自动抓取: {today_str}"))
         self._fetch_single_day(today_str)
 
     def _fetch_single_day(self, date_str: str):
@@ -355,10 +406,12 @@ class LhbTab(BaseStockTab):
 
         def _bg_fetch():
             from ui.workers.lhb_worker import fetch_lhb_pool_for_date
-            return fetch_lhb_pool_for_date(date_str)
+            return fetch_lhb_pool_for_date(date_str, emit_success_log=False, return_meta=True)
 
-        def _on_done(records):
+        def _on_done(payload):
             self.btn_refresh.setEnabled(True)
+            records = payload.get("records", []) if isinstance(payload, dict) else payload
+            status = payload.get("status", "ok") if isinstance(payload, dict) else "ok"
 
             # 写入池引擎
             self.pool_manager.add_day(date_str, records if records else [])
@@ -366,22 +419,25 @@ class LhbTab(BaseStockTab):
             self._today_auto_fetched = True
 
             # 裁剪并重算
-            trade_dates = MarketCalendar.get_recent_trade_dates(POOL_WINDOW)
+            trade_dates = self._get_lhb_trade_dates()
             if trade_dates:
                 self.pool_manager.prune(trade_dates)
             self.pool_manager.save()
 
             pool = self.pool_manager.compute_pool(data_provider=self.data_provider, engine=self._get_engine())
             self._display_pool(pool)
-            event_bus.sig_system_log.emit(
-                "info",
-                f"[龙虎榜池] ✅ {date_str} 自动抓取完成, {len(records) if records else 0} 条记录, 池中 {len(pool)} 只标的"
-            )
+            if status == "empty":
+                summary = f"[龙虎榜池] ✅ {date_str} 自动抓取完成 | 无可用数据 | 池中{len(pool)}只"
+            elif status == "error":
+                summary = f"[龙虎榜池] ✅ {date_str} 自动抓取完成 | 异常后记0条 | 池中{len(pool)}只"
+            else:
+                summary = f"[龙虎榜池] ✅ {date_str} 自动抓取完成 | {len(records) if records else 0}条 | 池中{len(pool)}只"
+            event_bus.sig_system_log.emit("info", self._ensure_log_line(summary))
 
         def _on_error(error_message: str):
             self.btn_refresh.setEnabled(True)
             self.lbl_status.setText(f"抓取 {date_str} 失败: {error_message}")
-            event_bus.sig_system_log.emit("error", f"[龙虎榜池] 自动抓取失败: {error_message}")
+            event_bus.sig_system_log.emit("error", self._ensure_log_line(f"[龙虎榜池] 自动抓取失败: {error_message}"))
 
         task_manager.run_in_background(
             _bg_fetch,

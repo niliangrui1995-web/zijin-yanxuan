@@ -14,6 +14,7 @@ from core.logger import get_logger
 from earnings.scheduler import EarningsScheduler
 
 log = get_logger(__name__)
+EARNINGS_DISPLAY_TRADE_DAYS = 21
 
 
 class EarningsTab(BaseStockTab):
@@ -156,16 +157,82 @@ class EarningsTab(BaseStockTab):
     def _on_search_text_changed(self, text):
         self.proxy_model.setFilterText(text)
 
+    @staticmethod
+    def _recent_trade_window_start(trade_days: int = EARNINGS_DISPLAY_TRADE_DAYS) -> str | None:
+        """返回展示窗口起点（yyyy-MM-dd），按交易日而不是自然日滚动。"""
+        if trade_days <= 0:
+            return None
+        try:
+            from core.market_calendar import MarketCalendar
+
+            recent_trade_dates = MarketCalendar.get_recent_trade_dates(trade_days)
+        except Exception as _e:
+            log.debug(f"[业绩监控] 获取交易日窗口失败: {_e}")
+            return None
+
+        if not recent_trade_dates:
+            return None
+
+        oldest_trade_date = str(recent_trade_dates[-1])
+        if len(oldest_trade_date) != 8:
+            return None
+        return f"{oldest_trade_date[:4]}-{oldest_trade_date[4:6]}-{oldest_trade_date[6:8]}"
+
+    @classmethod
+    def _prune_rows_to_recent_trade_window(cls, rows: list[dict], trade_days: int = EARNINGS_DISPLAY_TRADE_DAYS) -> list[dict]:
+        """只保留近 N 个交易日窗口内的公告记录。
+
+        注意这里用“最老交易日”作为窗口左边界，因此窗口内周末/节假日公告也会保留，
+        但不会让自然日把展示窗口越拉越长。
+        """
+        start_date = cls._recent_trade_window_start(trade_days)
+        if not start_date:
+            return list(rows or [])
+
+        pruned_rows = []
+        for row in rows or []:
+            reveal_date = str(row.get("揭晓日") or row.get("公告日期") or "").strip()[:10]
+            if not reveal_date or reveal_date >= start_date:
+                pruned_rows.append(row)
+        return pruned_rows
+
+    def _apply_display_trade_window(self, force_refresh: bool = False) -> bool:
+        """将展示数据裁剪到近 21 个交易日，并按需刷新表格。"""
+        pruned_rows = self._prune_rows_to_recent_trade_window(self.row_data)
+        changed = force_refresh or len(pruned_rows) != len(self.row_data)
+        self.row_data = pruned_rows
+
+        if changed:
+            self.model.update_data(self.row_data)
+
+        if hasattr(self, "table_state"):
+            if self.row_data:
+                self.table_state.show_table()
+            else:
+                self.table_state.show_empty(f"仅展示近 {EARNINGS_DISPLAY_TRADE_DAYS} 个交易日数据")
+        return changed
+
     @pyqtSlot(object, str)
     def _on_new_data_found(self, df: "pd.DataFrame", mode: str = "routine"):
         """当底层推上来新的 DataFrame 时，转成本地字典并无缝合并展示"""
         if df.empty:
+            rows_changed = self._apply_display_trade_window(force_refresh=False)
             if mode == "warm_cache":
-                self.lbl_status.setText("已恢复缓存，但当前没有可展示的高增股")
+                if self.row_data:
+                    self.lbl_status.setText(
+                        f"已恢复近 {EARNINGS_DISPLAY_TRADE_DAYS} 个交易日缓存，共 {len(self.row_data)} 只高增股"
+                    )
+                else:
+                    self.lbl_status.setText("已恢复缓存，但当前没有可展示的高增股")
             else:
-                self.lbl_status.setText("抓取完成，本轮无新增高增股")
-            if hasattr(self, "table_state"):
-                self.table_state.show_empty("暂无业绩数据")
+                if self.row_data:
+                    self.lbl_status.setText(
+                        f"抓取完成，本轮无新增高增股，当前展示近 {EARNINGS_DISPLAY_TRADE_DAYS} 个交易日数据"
+                    )
+                else:
+                    self.lbl_status.setText("抓取完成，本轮无新增高增股")
+            if rows_changed:
+                event_bus.sig_earnings_updated.emit()
             return
 
         if mode == "warm_cache":
@@ -234,10 +301,8 @@ class EarningsTab(BaseStockTab):
             if not exists:
                 self.row_data.append(row_obj)
                 
-        # 刷新视图
-        self.model.update_data(self.row_data)
-        if hasattr(self, "table_state"):
-            self.table_state.show_table()
+        # 只展示近 21 个交易日窗口，避免自然日累计导致表格越来越重。
+        self._apply_display_trade_window(force_refresh=True)
         
         # 通知关注池：业绩数据已就绪，重新拉取"业绩异动"列
         # 旧事件枚举链路已废弃，这里走专属刷新通道。

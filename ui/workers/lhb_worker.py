@@ -68,7 +68,12 @@ def _build_foreign_display(branch_details_map: dict[str, float]) -> tuple[str, s
 
     return display, "\n".join(tooltip_lines)
 
-def fetch_lhb_data_for_date(date_str: str, strict_filter: bool = True) -> list[dict]:
+def fetch_lhb_data_for_date(
+    date_str: str,
+    strict_filter: bool = True,
+    emit_success_log: bool = True,
+    return_meta: bool = False,
+) -> list[dict] | dict:
     """
     抓取指定日期的龙虎榜数据，并将 基础详情、机构统计、外资/知名游资参与情况聚合返回。
     """
@@ -76,7 +81,10 @@ def fetch_lhb_data_for_date(date_str: str, strict_filter: bool = True) -> list[d
         # 1. 抓取每日龙虎榜总表
         df_detail = ak.stock_lhb_detail_em(start_date=date_str, end_date=date_str)
         if df_detail is None or df_detail.empty:
-            log.info(f"[龙虎榜抓取] {date_str} 基础榜单为空，可能无数据或尚未发布。")
+            message = f"[龙虎榜抓取] {date_str} 基础榜单为空，可能无数据或尚未发布。"
+            log.info(message)
+            if return_meta:
+                return {"records": [], "count": 0, "status": "empty", "message": message}
             return []
             
         # 智能去重：同一天某只股票可能因为多种原因上榜，合并其原因并保留唯一行
@@ -88,7 +96,10 @@ def fetch_lhb_data_for_date(date_str: str, strict_filter: bool = True) -> list[d
             df_detail['上榜原因'] = df_detail.groupby(group_keys)['上榜原因'].transform(lambda x: ' | '.join(x.dropna().astype(str).unique()))
             df_detail = df_detail.drop_duplicates(subset=group_keys, keep='first')
     except Exception as e:
-        log.error(f"[龙虎榜抓取] {date_str} 基础榜单异常: {e}")
+        message = f"[龙虎榜抓取] {date_str} 基础榜单异常: {e}"
+        log.error(message)
+        if return_meta:
+            return {"records": [], "count": 0, "status": "error", "message": message}
         return []
 
     # 2. 抓取机构买卖追踪
@@ -247,7 +258,9 @@ def fetch_lhb_data_for_date(date_str: str, strict_filter: bool = True) -> list[d
         }
         results.append(record)
         
-    log.info(f"[龙虎榜抓取] {date_str} 成功拉取 {len(results)} 条数据")
+    message = f"[龙虎榜抓取] {date_str} 成功拉取 {len(results)} 条数据"
+    if emit_success_log:
+        log.info(message)
     
     # 挂机防漏：显式销毁 Pandas 大体积 DataFrame 对象并强制回收内存
     try:
@@ -256,13 +269,25 @@ def fetch_lhb_data_for_date(date_str: str, strict_filter: bool = True) -> list[d
         pass
     gc.collect()
     
+    if return_meta:
+        return {"records": results, "count": len(results), "status": "ok", "message": message}
+
     return results
 
 
-def fetch_lhb_pool_for_date(date_str: str) -> list[dict]:
+def fetch_lhb_pool_for_date(
+    date_str: str,
+    emit_success_log: bool = True,
+    return_meta: bool = False,
+) -> list[dict] | dict:
     """为 20 日关注池抓取指定日期的龙虎榜数据。
     现在直接复用完整提取器（strict_filter=False），彻底解决旧版历史记录外资和共振数据全部强行涂 0 的重大 BUG。
     """
-    return fetch_lhb_data_for_date(date_str, strict_filter=False)
+    return fetch_lhb_data_for_date(
+        date_str,
+        strict_filter=False,
+        emit_success_log=emit_success_log,
+        return_meta=return_meta,
+    )
 
 

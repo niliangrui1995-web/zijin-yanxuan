@@ -312,7 +312,7 @@ class LhbPoolManager:
             reverse=True,
         )
 
-        log.info(
+        log.debug(
             f"[龙虎榜池] 池计算完成: {len(self._data)} 天数据中，"
             f"{len(qualifying_codes)} 只标的入池"
         )

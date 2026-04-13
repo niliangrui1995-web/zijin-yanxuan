@@ -24,6 +24,7 @@
 import re
 import logging
 import textwrap
+from functools import lru_cache
 from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QSortFilterProxyModel, QRect, pyqtSignal, QMimeData
 from PyQt6.QtGui import QColor, QFont
 from ui.components import SearchFilter
@@ -34,26 +35,38 @@ from ui.theme import theme_manager
 
 SERIAL_HEADER = "序号"
 
+def _current_table_density():
+    try:
+        from core.app_config import app_config
+
+        return getattr(app_config, "table_density", None)
+    except Exception:
+        return None
+
+
 # 运行时动态获取当前主题颜色（不再用 from import 快照，否则切换主题后颜色不更新）
+@lru_cache(maxsize=128)
+def _theme_token_cached(theme_name: str, token: str) -> str:
+    theme = theme_manager.THEMES.get(theme_name, theme_manager.current_theme)
+    return theme.get(token, "")
+
+
 def _c(token: str) -> str:
-    return theme_manager.get(token)
+    return _theme_token_cached(theme_manager.current_theme_name, token)
+
+
+@lru_cache(maxsize=8)
+def _theme_table_tokens_cached(theme_name: str, density: str | None) -> dict:
+    theme = theme_manager.THEMES.get(theme_name, theme_manager.current_theme)
+    return build_ui_tokens(theme=theme, density=density)["table"]
 
 
 def _theme_table_tokens() -> dict:
-    return build_ui_tokens()["table"]
+    return _theme_table_tokens_cached(theme_manager.current_theme_name, _current_table_density())
 
 
-def _qcolor_from_token(color) -> QColor:
-    if isinstance(color, QColor):
-        return QColor(color)
-
-    if color is None:
-        return QColor()
-
-    text = str(color).strip()
-    if not text:
-        return QColor()
-
+@lru_cache(maxsize=512)
+def _qcolor_from_text_cached(text: str) -> QColor:
     rgba_match = re.fullmatch(
         r"rgba\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*([0-9]*\.?[0-9]+)\s*\)",
         text,
@@ -74,6 +87,19 @@ def _qcolor_from_token(color) -> QColor:
         return QColor(*(int(rgb_match.group(i)) for i in range(1, 4)))
 
     return QColor(text)
+
+
+def _qcolor_from_token(color) -> QColor:
+    if isinstance(color, QColor):
+        return QColor(color)
+
+    if color is None:
+        return QColor()
+
+    text = str(color).strip()
+    if not text:
+        return QColor()
+    return QColor(_qcolor_from_text_cached(text))
 
 
 def _parse_numeric_value(raw_val):
@@ -183,9 +209,8 @@ def _numeric_heat_color(header: str, raw_val):
     return color
 
 
-def _build_cell_tooltip(raw_val):
-    """统一表格悬浮提示文本，交给 QToolTip 自身样式渲染。"""
-    text = str(raw_val).strip()
+@lru_cache(maxsize=2048)
+def _build_cell_tooltip_cached(text: str):
     if not text:
         return None
 
@@ -195,8 +220,14 @@ def _build_cell_tooltip(raw_val):
     return "\n".join(wrapped_lines)
 
 
-def _summarize_long_text(header: str, raw_val):
-    text = str(raw_val or "").strip()
+def _build_cell_tooltip(raw_val):
+    """统一表格悬浮提示文本，交给 QToolTip 自身样式渲染。"""
+    text = str(raw_val).strip()
+    return _build_cell_tooltip_cached(text)
+
+
+@lru_cache(maxsize=4096)
+def _summarize_long_text_cached(header: str, text: str):
     if not text:
         return text
 
@@ -213,6 +244,11 @@ def _summarize_long_text(header: str, raw_val):
     normalized = " | ".join(part.strip() for part in text.splitlines() if part.strip()) or text
     max_len = 24 if header == "外资净买入" else 30
     return normalized if len(normalized) <= max_len else normalized[: max_len - 1] + "…"
+
+
+def _summarize_long_text(header: str, raw_val):
+    text = str(raw_val or "").strip()
+    return _summarize_long_text_cached(str(header), text)
 
 
 def _status_badge_color(text: str, header: str | None = None):
@@ -292,6 +328,21 @@ def _sync_serial_values(rows):
     for idx, item in enumerate(rows or [], 1):
         if isinstance(item, dict):
             item[SERIAL_HEADER] = idx
+
+
+def _emit_model_row_ranges(model, changed_rows, start_col: int, end_col: int, roles):
+    if not changed_rows:
+        return
+
+    start_row = prev_row = changed_rows[0]
+    for row in changed_rows[1:]:
+        if row == prev_row + 1:
+            prev_row = row
+            continue
+        model.dataChanged.emit(model.index(start_row, start_col), model.index(prev_row, end_col), roles)
+        start_row = prev_row = row
+
+    model.dataChanged.emit(model.index(start_row, start_col), model.index(prev_row, end_col), roles)
 
 class RtTableModel(QAbstractTableModel):
     def __init__(self, data=None):
@@ -386,47 +437,67 @@ class RtTableModel(QAbstractTableModel):
         return {}
 
     def update_quotes(self, quotes: dict):
-        if not quotes or not self._data: return
+        if not quotes or not self._data:
+            return
         try:
             col_price_idx = self._headers.index("现价")
             col_pct_idx = self._headers.index("涨幅%")
         except ValueError:
             return
-            
+
+        try:
+            col_cap_idx = self._headers.index("市值")
+            start_col = min(col_price_idx, col_pct_idx, col_cap_idx)
+            end_col = max(col_price_idx, col_pct_idx, col_cap_idx)
+        except ValueError:
+            col_cap_idx = None
+            start_col = min(col_price_idx, col_pct_idx)
+            end_col = max(col_price_idx, col_pct_idx)
+
+        changed_rows = []
         for row, item_dict in enumerate(self._data):
             code = item_dict.get("代码")
-            if not code or code not in quotes: continue
-            
+            if not code or code not in quotes:
+                continue
+
             q = quotes[code]
             rt_close = float(q.get('close', 0) or 0)
             last_close = float(q.get('last_close', 0) or 0)
-            
+
             if rt_close <= 0 and last_close > 0:
                 rt_close = last_close
-                
+
+            row_changed = False
             if last_close > 0 and rt_close > 0:
                 pct = ((rt_close / last_close) - 1) * 100
-                item_dict["涨幅%"] = pct
-                
+                if item_dict.get("涨幅%") != pct:
+                    item_dict["涨幅%"] = pct
+                    row_changed = True
+
             if rt_close > 0:
-                item_dict["现价"] = f"{rt_close:.2f}"
-            
+                price_text = f"{rt_close:.2f}"
+                if item_dict.get("现价") != price_text:
+                    item_dict["现价"] = price_text
+                    row_changed = True
+
             zbg = item_dict.get("_zongguben", 0)
             if zbg > 0 and rt_close > 0:
                 cap = zbg * rt_close
-                item_dict["市值"] = f"{cap / 1e8:.0f}亿"
-                try:
-                    col_cap_idx = self._headers.index("市值")
-                    idx_start = self.index(row, min(col_price_idx, col_cap_idx))
-                    idx_end = self.index(row, max(col_pct_idx, col_cap_idx))
-                except ValueError:
-                    idx_start = self.index(row, col_price_idx)
-                    idx_end = self.index(row, col_pct_idx)
-            else:
-                idx_start = self.index(row, col_price_idx)
-                idx_end = self.index(row, col_pct_idx)
-                
-            self.dataChanged.emit(idx_start, idx_end, [Qt.ItemDataRole.DisplayRole])
+                cap_text = f"{cap / 1e8:.0f}亿"
+                if item_dict.get("市值") != cap_text:
+                    item_dict["市值"] = cap_text
+                    row_changed = True
+
+            if row_changed:
+                changed_rows.append(row)
+
+        _emit_model_row_ranges(
+            self,
+            changed_rows,
+            start_col,
+            end_col,
+            [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ForegroundRole, Qt.ItemDataRole.BackgroundRole],
+        )
 
     def data(self, index, role):
         if not index.isValid():
@@ -984,7 +1055,7 @@ class StockTableModel(QAbstractTableModel):
         # but because we emit a signal that eventually rebuilds the table, it snaps visually correctly!
         return False
 
-    def set_cell_value(self, row, col_name, new_val):
+    def set_cell_value(self, row, col_name, new_val, emit_signal: bool = True):
         """用于局部闪动更新的接口"""
         if 0 <= row < len(self._data):
             old_val = self._data[row].get(col_name)
@@ -1004,41 +1075,65 @@ class StockTableModel(QAbstractTableModel):
                 except (ValueError, TypeError):
                     pass
             
-            try:
-                col_idx = self._headers.index(col_name)
-                idx = self.index(row, col_idx)
-                self.dataChanged.emit(idx, idx, [Qt.ItemDataRole.DisplayRole])
-            except ValueError:
-                pass
+            if emit_signal:
+                try:
+                    col_idx = self._headers.index(col_name)
+                    idx = self.index(row, col_idx)
+                    self.dataChanged.emit(idx, idx, [Qt.ItemDataRole.DisplayRole])
+                except ValueError:
+                    pass
 
     def update_quotes(self, quotes: dict):
         """批量更新现价与涨幅并触发局部刷新，解决主线程卡顿"""
-        if not quotes or not self._data: return
+        if not quotes or not self._data:
+            return
+
+        changed_rows = []
+        quote_cols = []
+        for header in ("现价", "涨幅%", "市值"):
+            if header in self._headers:
+                quote_cols.append(self._headers.index(header))
+        start_col = min(quote_cols) if quote_cols else None
+        end_col = max(quote_cols) if quote_cols else None
+
         for row, item_dict in enumerate(self._data):
             code = item_dict.get("代码")
-            if not code or code not in quotes: continue
-            
+            if not code or code not in quotes:
+                continue
+
             q = quotes[code]
             rt_close = float(q.get('close', 0) or 0)
             last_close = float(q.get('last_close', 0) or 0)
-            
+
             if rt_close <= 0 and last_close > 0:
                 rt_close = last_close
-                
+
             if last_close > 0 and rt_close > 0:
                 pct = ((rt_close / last_close) - 1) * 100
             else:
                 pct = 0
-                
-            self.set_cell_value(row, "现价", f"{rt_close:.2f}" if rt_close > 0 else "--")
-            self.set_cell_value(row, "涨幅%", pct)
-            
+
+            row_changed = False
+            price_text = f"{rt_close:.2f}" if rt_close > 0 else "--"
+            if item_dict.get("现价") != price_text:
+                self.set_cell_value(row, "现价", price_text, emit_signal=False)
+                row_changed = True
+            if item_dict.get("涨幅%") != pct:
+                self.set_cell_value(row, "涨幅%", pct, emit_signal=False)
+                row_changed = True
+
             if "市值" in self._headers:
                 zbg = item_dict.get("_zongguben", 0)
                 if zbg > 0 and rt_close > 0:
                     cap = zbg * rt_close
-                    self.set_cell_value(row, "市值", f"{cap / 1e8:.0f}亿")
-                    
+                    cap_text = f"{cap / 1e8:.0f}亿"
+                    if item_dict.get("市值") != cap_text:
+                        self.set_cell_value(row, "市值", cap_text, emit_signal=False)
+                        row_changed = True
+
+            if row_changed:
+                changed_rows.append(row)
+
             if "买点" in self._headers and rt_close > 0:
                 history = item_dict.get("_history_20", [])
                 history_date = item_dict.get("_history_date", "")
@@ -1079,9 +1174,18 @@ class StockTableModel(QAbstractTableModel):
                     # 4. 当天必须是红 K 线：rt_close >= rt_open
                     if is_red_candle and (dyn_ma10 > dyn_ma20) and (rt_open < dyn_ma10) and (rt_close > dyn_ma20 * 0.95):
                         pos_str = "触发"
-                        
+
                 if pos_str != item_dict.get("买点", ""):
                     self.set_cell_value(row, "买点", pos_str)
+
+        if start_col is not None and end_col is not None:
+            _emit_model_row_ranges(
+                self,
+                changed_rows,
+                start_col,
+                end_col,
+                [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ForegroundRole, Qt.ItemDataRole.BackgroundRole],
+            )
 
 
     def data(self, index, role):

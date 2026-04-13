@@ -27,6 +27,17 @@ class BaseStockTab(QWidget):
     def __init__(self, data_provider=None, parent=None):
         super().__init__(parent)
         self.data_provider = data_provider
+        self._deferred_quote_refresh = False
+
+    def _resolve_active_quote_model(self):
+        return getattr(self, '_active_model_ref', None) \
+             or getattr(self, 'source_model', None) \
+             or getattr(self, 'model', None)
+
+    def _apply_quote_snapshot(self, quotes: dict | None):
+        model = self._resolve_active_quote_model()
+        if model and hasattr(model, 'update_quotes') and quotes:
+            model.update_quotes(quotes)
 
     @staticmethod
     def _prepare_toolbar_widget(widget: QWidget | None):
@@ -377,17 +388,18 @@ class BaseStockTab(QWidget):
         """订阅中央行情站信号，自动刷新子类持有的 Model 或者通过 current_model 手动传入"""
         if current_model:
             self._active_model_ref = current_model
-            
-        model = getattr(self, '_active_model_ref', None) \
-             or getattr(self, 'source_model', None) \
-             or getattr(self, 'model', None)
-             
+
+        model = self._resolve_active_quote_model()
+              
         # 1. 尝试从 Redux Store 读取市场快照，实现秒刷 (无感知切图)
         if model and hasattr(model, 'update_quotes'):
             from core.global_store import global_store
             snapshot = global_store.get_latest_quotes()
             if snapshot:
-                model.update_quotes(snapshot)
+                if self.isVisible():
+                    model.update_quotes(snapshot)
+                else:
+                    self._deferred_quote_refresh = True
         
         # 2. 为了防止多次绑定导致的连环触发，先断开(忽略不存在的情况)
         try:
@@ -400,13 +412,23 @@ class BaseStockTab(QWidget):
 
     def _on_rt_quotes_direct(self, quotes: dict):
         """v4 直达信号：实时行情广播，不再需要 if-elif 路由"""
-        # 获取有效的 model (通常在子类中赋值给了 source_model 或者是 self.model)
-        model = getattr(self, '_active_model_ref', None) \
-             or getattr(self, 'source_model', None) \
-             or getattr(self, 'model', None)
+        if not self.isVisible():
+            self._deferred_quote_refresh = True
+            return
 
-        if model and hasattr(model, 'update_quotes'):
-            model.update_quotes(quotes)
+        self._apply_quote_snapshot(quotes)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._deferred_quote_refresh:
+            return
+        self._deferred_quote_refresh = False
+        try:
+            from core.global_store import global_store
+
+            self._apply_quote_snapshot(global_store.get_latest_quotes())
+        except Exception:
+            pass
 
 
 
