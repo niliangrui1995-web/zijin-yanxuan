@@ -12,7 +12,6 @@ K 线图窗口 — ECharts 5.5.0 + QWebEngineView 高性能版
 """
 import json
 import os as _os
-import numpy as np
 from core.logger import get_logger
 from core.market_calendar import MarketCalendar
 
@@ -27,206 +26,21 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 
 from ui.viewmodels.watchlist_vm import watchlist_vm
 from ui.theme import theme_manager
+from ui.kline_chart_payload import (
+    build_kline_echarts_payload,
+    build_kline_html,
+    build_kline_summary_items,
+    build_kline_theme_colors,
+    build_kline_window_palette,
+    format_kline_market_badge,
+    resolve_kline_vcp_context,
+)
 
 # ECharts JS 本地路径（断网也能用）
 _ECHARTS_JS_PATH = _os.path.join(
     _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
     "assets", "echarts.min.js"
 )
-
-
-def _merge_kline_context(base: dict, extra: dict, *, overwrite: bool = False) -> dict:
-    if not isinstance(extra, dict):
-        return base
-
-    for key, value in extra.items():
-        if value in (None, "", [], {}):
-            continue
-        if overwrite or key not in base or base.get(key) in (None, "", [], {}):
-            base[key] = value
-    return base
-
-
-def resolve_kline_vcp_context(
-    code: str,
-    name: str,
-    item_data: dict = None,
-    watchlist_entry: dict = None,
-    scan_results: list = None,
-) -> dict:
-    resolved = {
-        "代码": code,
-        "名称": name,
-        "code": code,
-        "name": name,
-    }
-    _merge_kline_context(resolved, item_data or {}, overwrite=True)
-    _merge_kline_context(resolved, watchlist_entry or {}, overwrite=False)
-
-    for scan_res in scan_results or []:
-        if isinstance(scan_res, dict) and str(scan_res.get("代码", "")).strip() == str(code).strip():
-            _merge_kline_context(resolved, scan_res, overwrite=True)
-            break
-
-    resolved["代码"] = str(resolved.get("代码") or code)
-    resolved["名称"] = str(resolved.get("名称") or name or code)
-    resolved["code"] = resolved["代码"]
-    resolved["name"] = resolved["名称"]
-    return resolved
-
-
-def _build_kline_theme_colors() -> dict:
-    """从当前主题中提取 K 线图渲染所需的全部色值。
-    为什么独立成函数？因为 HTML 模板和 Python 数据构建都需要同一套色值，
-    集中在一处避免散落各处时遗漏。
-    """
-    t = theme_manager.current_theme
-    is_dark = theme_manager.is_dark()
-
-    # K线专用色（从主题 token 读取，墨渊/月白各自定义了适配值）
-    colors = {
-        'up_color': t['KLINE_UP_COLOR'],
-        'down_color': t['KLINE_DOWN_COLOR'],
-        'ma10': t['KLINE_MA10'],
-        'ma20': t['KLINE_MA20'],
-        'ma50': t['KLINE_MA50'],
-        'ma150': t['KLINE_MA150'],
-        'ma200': t['KLINE_MA200'],
-        'vol_ma20': t['KLINE_VOL_MA20'],
-        'grid_line': t['KLINE_GRID_LINE'],
-        'axis_line': t['KLINE_AXIS_LINE'],
-        'axis_label': t['KLINE_AXIS_LABEL'],
-        'pointer_bg': t['KLINE_POINTER_BG'],
-        'vcp_star': t['KLINE_VCP_STAR'],
-        'vcp_line': t['KLINE_VCP_LINE'],
-        'vcp_line_soft': t['KLINE_VCP_LINE_SOFT'],
-        'vcp_area': t['KLINE_VCP_AREA'],
-        'vcp_guide': t['KLINE_VCP_GUIDE'],
-        'vcp_breakout_bg': t['KLINE_VCP_BREAKOUT_BG'],
-    }
-
-    if is_dark:
-        colors.update({
-            'bg_canvas': '#0A0A0A',
-            'bg_toolbar': '#0A0A0A',
-            'text_primary': '#FFF',
-            'text_secondary': '#D1D4DC',
-            'text_muted': '#A0A0A0',
-            'border': '#222',
-        })
-    else:
-        colors.update({
-            'bg_canvas': t['BG_ELEVATED'],
-            'bg_toolbar': t['BG_ELEVATED'],
-            'text_primary': t['TEXT_PRIMARY'],
-            'text_secondary': t['TEXT_SECONDARY'],
-            'text_muted': t['TEXT_MUTED'],
-            'border': t['BORDER_DEFAULT'],
-        })
-
-    return colors
-
-
-def _build_kline_window_palette(theme: dict = None, is_dark: bool | None = None) -> dict:
-    """构建 K 线窗口原生 Qt 区域的配色。
-
-    月白主题下顶部栏必须和摘要带/图表底色保持一致，否则会出现明显拼色。
-    """
-    if theme is None:
-        theme = theme_manager.current_theme
-    if is_dark is None:
-        is_dark = theme.get("name") == "墨渊"
-
-    if is_dark:
-        return {
-            "widget_bg": "#0C1016",
-            "widget_text": "#F5F7FA",
-            "toolbar_bg": "#11161D",
-            "toolbar_border": "#222A33",
-            "summary_bg": "#0F141B",
-            "info_color": "#8B98A8",
-            "btn_border": "#303947",
-            "btn_hover_bg": "rgba(255,255,255,0.05)",
-            "btn_hover_text": "#F5F7FA",
-            "btn_disabled_text": "#5A6573",
-            "btn_disabled_border": "#262E39",
-            "chart_bg": "#0B0F14",
-            "nav_bg": "rgba(255,255,255,0.04)",
-            "badge_bg": "rgba(239, 68, 68, 0.10)",
-            "badge_fg": "#FCA5A5",
-            "summary_border": "rgba(148, 163, 184, 0.10)",
-        }
-
-    unified_bg = theme["BG_ELEVATED"]
-    return {
-        "widget_bg": unified_bg,
-        "widget_text": theme["TEXT_PRIMARY"],
-        "toolbar_bg": unified_bg,
-        "toolbar_border": theme["BORDER_DEFAULT"],
-        "summary_bg": unified_bg,
-        "info_color": theme["TEXT_MUTED"],
-        "btn_border": theme["BORDER_STRONG"],
-        "btn_hover_bg": theme["TAB_HOVER_BG"],
-        "btn_hover_text": theme["TEXT_PRIMARY"],
-        "btn_disabled_text": theme["TEXT_DISABLED"],
-        "btn_disabled_border": theme["BORDER_DEFAULT"],
-        "chart_bg": unified_bg,
-        "nav_bg": theme["BG_BUTTON"],
-        "badge_bg": "rgba(239, 68, 68, 0.10)",
-        "badge_fg": theme["BRAND_DEEP"],
-        "summary_border": theme["BORDER_SUBTLE"],
-    }
-
-
-def _format_kline_market_badge(code: str) -> str:
-    market = MarketCalendar.infer_market(code)
-    return {
-        "CN": "A股",
-        "HK": "港股",
-        "TW": "台股",
-        "TWO": "台股",
-        "T": "日股",
-        "JP": "日股",
-        "KS": "韩股",
-        "US": "美股",
-    }.get(market, market or "市场")
-
-
-def _build_kline_summary_items(vcp_data: dict | None, is_fav: bool = False) -> dict:
-    payload = vcp_data or {}
-
-    def _pick(*keys, default="--"):
-        for key in keys:
-            value = payload.get(key)
-            if value not in (None, "", [], {}):
-                return value
-        return default
-
-    def _to_float(value):
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None
-
-    box_high = _to_float(_pick("区间最高价", "box_high", default=None))
-    box_low = _to_float(_pick("区间最低点", "box_low", "box_low_price", default=None))
-    if box_high is not None and box_low is not None:
-        range_text = f"{box_low:.2f} - {box_high:.2f}"
-    else:
-        range_text = "--"
-
-    rps_raw = str(_pick("RPS强度", "rps_str", default="--")).strip()
-    if rps_raw in {"", "-", "nan/nan"}:
-        rps_raw = "--"
-
-    return {
-        "形态": str(_pick("突破状态", "状态", default="--")),
-        "触发": str(_pick("触发日期", "日期", "trigger_date", default="--"))[:10] or "--",
-        "区间": range_text,
-        "振幅": str(_pick("区间振幅", "振幅", default="--")),
-        "RPS": rps_raw,
-        "关注": "已关注" if is_fav else "未关注",
-    }
 
 
 def _build_html(title: str, echarts_data: dict, echarts_js_path: str, theme_colors: dict) -> str:
@@ -475,7 +289,6 @@ class KLineChartWindow(QWidget):
         self._rt_timer = None
         # 缓存当前展示的 DataFrame（用于增量更新）
         self.df = None
-        self.time_dict = {}
 
         self.setWindowTitle(f"{name} ({code}) - K线图")
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
@@ -641,7 +454,7 @@ class KLineChartWindow(QWidget):
             self._apply_info_styles()
 
     def _refresh_header_context(self):
-        market_badge = _format_kline_market_badge(self.code)
+        market_badge = format_kline_market_badge(self.code)
         if hasattr(self, "identity_lbl"):
             self.identity_lbl.setText(f"{self.name}  {self.code}")
         if hasattr(self, "market_badge_lbl"):
@@ -652,7 +465,7 @@ class KLineChartWindow(QWidget):
                 f"{self.current_idx + 1} / {total}" if total else "单票"
             )
         if hasattr(self, "summary_labels"):
-            summary = _build_kline_summary_items(self.vcp_data, getattr(self, "is_fav", False))
+            summary = build_kline_summary_items(self.vcp_data, getattr(self, "is_fav", False))
             for key, label in self.summary_labels.items():
                 value = summary.get(key, "--")
                 label.setText(f"{key}  {value}")
@@ -693,7 +506,7 @@ class KLineChartWindow(QWidget):
         """
         t = theme_manager.current_theme
         is_dark = theme_manager.is_dark()
-        palette = _build_kline_window_palette(t, is_dark)
+        palette = build_kline_window_palette(t, is_dark)
         widget_bg = palette["widget_bg"]
         widget_text = palette["widget_text"]
         toolbar_bg = palette["toolbar_bg"]
@@ -1226,7 +1039,12 @@ class KLineChartWindow(QWidget):
                 self.df[col] = self.df[col].ffill().bfill()
 
         # 构建 ECharts 数据
-        echarts_data = self._build_echarts_data()
+        echarts_data = build_kline_echarts_payload(
+            self.df,
+            code=self.code,
+            name=self.name,
+            vcp_data=self.vcp_data,
+        )
 
         # 判断是首次加载还是切换股票
         if not loading and not hasattr(self, '_first_render_done'):
@@ -1234,11 +1052,11 @@ class KLineChartWindow(QWidget):
             pass
 
         # 渲染 HTML 到 WebEngine
-        html_content = _build_html(
+        html_content = build_kline_html(
             title=f"{self.name} ({self.code}) 日线",
             echarts_data=echarts_data,
             echarts_js_path=_ECHARTS_JS_PATH,
-            theme_colors=_build_kline_theme_colors()
+            theme_colors=build_kline_theme_colors()
         )
 
         # 用 baseUrl 确保本地 file:// 引用正常
@@ -1251,222 +1069,6 @@ class KLineChartWindow(QWidget):
         # 启动盘中定时器
         if not loading:
             self._start_rt_timer()
-
-    def _build_echarts_data(self) -> dict:
-        """将当前 self.df 转换为 ECharts 所需的 JSON 数据结构"""
-        dates = []
-        klines = []
-        vols = []
-        self.time_dict = {}
-
-        # 涨跌色从主题 token 读取，墨渊/月白各自有对应的色值
-        _t = theme_manager.current_theme
-        up_color = _t['KLINE_UP_COLOR']
-        down_color = _t['KLINE_DOWN_COLOR']
-
-        for i, (dt, row) in enumerate(self.df.iterrows()):
-            o = float(row['open'])
-            c = float(row['close'])
-            h = float(row['high'])
-            l = float(row['low'])
-            v = float(row.get('volume', 0))
-
-            date_str = dt.strftime('%Y-%m-%d')
-            dates.append(date_str)
-            self.time_dict[i] = date_str
-
-            # ECharts candlestick 格式：[open, close, low, high]
-            klines.append([o, c, l, h])
-
-            is_up = c >= o
-            vols.append({
-                "value": v,
-                "itemStyle": {"color": up_color if is_up else down_color}
-            })
-
-        # 计算 MA 线
-        closes = self.df['close'].values
-        ma_config = [
-            (10, 'ma10'),
-            (20, 'ma20'),
-            (50, 'ma50'),
-            (150, 'ma150'),
-            (200, 'ma200'),
-        ]
-        ma_data = {}
-        for period, key in ma_config:
-            if len(closes) >= period:
-                ma = pd.Series(closes).rolling(period).mean()
-                # 将 NaN 转为 None（JSON 中的 null），ECharts 会自动断线
-                ma_data[key] = [round(v, 2) if not np.isnan(v) else None for v in ma.values]
-            else:
-                ma_data[key] = [None] * len(closes)
-
-        # MACD 数据
-        macd_bars = []
-        diff_line = []
-        dea_line = []
-
-        if 'MACD' in self.df.columns:
-            for i, (_, row) in enumerate(self.df.iterrows()):
-                macd_val = float(row.get('MACD', 0) or 0)
-                signal_val = float(row.get('MACD_Signal', 0) or 0)
-                hist_val = float(row.get('MACD_Hist', 0) or 0)
-
-                macd_bars.append({
-                    "value": hist_val,
-                    "itemStyle": {"color": up_color if hist_val >= 0 else down_color}
-                })
-                diff_line.append(round(macd_val, 4))
-                dea_line.append(round(signal_val, 4))
-
-        # 计算 Volume MA20 均量线
-        vol_values = [v["value"] if isinstance(v, dict) else v for v in vols]
-        vol_ma20 = pd.Series(vol_values).rolling(20).mean()
-        vol_ma20_data = [round(v, 0) if not np.isnan(v) else None for v in vol_ma20.values]
-
-        result = {
-            "title": f"{self.name} ({self.code}) 日线",
-            "dates": dates,
-            "klines": klines,
-            "vols": vols,
-            "volMa20": vol_ma20_data,
-            "macd": macd_bars,
-            "diff": diff_line,
-            "dea": dea_line,
-            **ma_data,
-            "vcpMarkers": None,
-            "vcpLines": None,
-            "vcpArea": None,
-        }
-
-        # 叠加 VCP 信号
-        if self.vcp_data:
-            self._inject_vcp_overlays(result, dates)
-
-        return result
-
-    def _inject_vcp_overlays(self, data: dict, dates: list):
-        """将 VCP 买点信号注入 ECharts 的 markPoint / markLine / markArea"""
-        def _pick(*keys, default=''):
-            for key in keys:
-                value = self.vcp_data.get(key)
-                if value not in (None, ''):
-                    return value
-            return default
-
-        def _to_float(value, default=0.0):
-            try:
-                return float(value)
-            except (TypeError, ValueError):
-                return default
-
-        trigger_date = str(_pick('触发日期', '日期', '时间', 'trigger_date', default=''))[:10]
-        trigger_idx = -1
-        theme = theme_manager.current_theme
-
-        date_to_idx = {d: i for i, d in enumerate(dates)}
-
-        if trigger_date:
-            for d, idx in date_to_idx.items():
-                if trigger_date in d:
-                    trigger_idx = idx
-                    break
-
-        # 金星突破标记
-        if trigger_idx != -1:
-            kline = data["klines"][trigger_idx]
-            markers = [{
-                "coord": [trigger_idx, kline[3]],  # kline[3] = high
-                "symbol": "circle",
-                "symbolSize": 10,
-                "symbolOffset": [0, -10],
-                "itemStyle": {
-                    "color": theme['KLINE_VCP_STAR'],
-                    "borderColor": theme['KLINE_VCP_LINE'],
-                    "borderWidth": 1,
-                    "shadowBlur": 0,
-                },
-                "label": {
-                    "show": True,
-                    "formatter": "VCP",
-                    "position": "top",
-                    "distance": 6,
-                    "padding": [2, 6],
-                    "borderRadius": 6,
-                    "backgroundColor": theme.get('KLINE_VCP_BREAKOUT_BG', 'rgba(217, 163, 74, 0.14)'),
-                    "borderColor": theme['KLINE_VCP_LINE'],
-                    "borderWidth": 1,
-                    "color": theme['KLINE_VCP_STAR'],
-                    "fontSize": 10,
-                    "fontWeight": 700,
-                }
-            }]
-        else:
-            markers = []
-
-        # 箱体与高点连线
-        box_high = _to_float(_pick('区间最高价', 'box_high', default=0))
-        box_low = _to_float(_pick('区间最低点', 'box_low', default=0))
-
-        peak_dates = _pick('_peak_dates', 'peak_dates', default=[]) or []
-        if isinstance(peak_dates, str):
-            peak_dates = [peak_dates]
-        if not peak_dates:
-            for key in ['_high1_date', '_high2_date', '_high3_date']:
-                if self.vcp_data.get(key):
-                    peak_dates.append(self.vcp_data[key])
-
-        if box_high > 0 and box_low > 0 and peak_dates:
-            valid_indices = []
-            for d in peak_dates:
-                d_short = str(d)[:10]
-                if d_short in date_to_idx:
-                    valid_indices.append(date_to_idx[d_short])
-                else:
-                    # 尝试去掉横杠匹配
-                    d_no_dash = d_short.replace('-', '')
-                    for date_key, idx in date_to_idx.items():
-                        if date_key.replace('-', '') == d_no_dash:
-                            valid_indices.append(idx)
-                            break
-
-            if valid_indices:
-                x_start = min(valid_indices)
-                x_end = trigger_idx if trigger_idx != -1 else len(dates) - 1
-                x_end = max(x_start, x_end)
-
-                # 箱体区域
-                data["vcpArea"] = [[
-                    {"xAxis": dates[x_start], "yAxis": box_low},
-                    {"xAxis": dates[x_end], "yAxis": box_high}
-                ]]
-
-                vcp_lines = []
-
-                peak_seen = set()
-                for xi in valid_indices:
-                    if xi in peak_seen or xi < 0 or xi >= len(data["klines"]):
-                        continue
-                    peak_seen.add(xi)
-                    vcp_lines.append([
-                        {"xAxis": dates[xi], "yAxis": box_low},
-                        {"xAxis": dates[xi], "yAxis": box_high}
-                    ])
-
-                # 使用 ECharts 最稳的双点数组结构，避免覆盖层把整张图拖空白
-                vcp_lines.append([
-                    {"xAxis": dates[x_start], "yAxis": box_high},
-                    {"xAxis": dates[x_end], "yAxis": box_high}
-                ])
-                vcp_lines.append([
-                    {"xAxis": dates[x_start], "yAxis": box_low},
-                    {"xAxis": dates[x_end], "yAxis": box_low}
-                ])
-                data["vcpLines"] = vcp_lines
-
-        if markers:
-            data["vcpMarkers"] = markers
 
     # ======================== 盘中增量更新 ========================
     def _start_rt_timer(self):
@@ -1686,7 +1288,6 @@ class KLineChartWindow(QWidget):
             self._rt_timer.stop()
             self._rt_timer = None
 
-        self.time_dict.clear()
         self.df = None
 
         # 释放 WebEngine（先导航到空白页释放 Chromium 渲染进程）
