@@ -15,6 +15,7 @@ from core.event_bus import event_bus
 from core.task_manager import task_manager
 
 log = get_logger(__name__)
+ASIAN_DATA_SYNC_TIMEOUT_SEC = 120
 
 class StartupLoader:
     """接管主窗口的加载流程"""
@@ -40,6 +41,11 @@ class StartupLoader:
         self._closed = True
         self._deferred_timer.stop()
         self._smart_timer.stop()
+        for task_id in ("deferred_load", "asian_data_sync_bg", "smart_startup"):
+            try:
+                task_manager.abandon_task(task_id)
+            except Exception:
+                pass
 
     def _alive(self):
         return (
@@ -121,10 +127,15 @@ class StartupLoader:
                     subprocess.run(
                         [sys.executable, script_path, "--output-dir", output_dir],
                         check=True,
-                        creationflags=creationflags
+                        creationflags=creationflags,
+                        timeout=ASIAN_DATA_SYNC_TIMEOUT_SEC,
                     )
                     log.info("[启动] 亚洲市场静默增量拉取完成，触发界面重载...")
                     self._safe_call_in_ui(lambda: event_bus.sig_asian_klines_ready.emit())
+                except subprocess.TimeoutExpired:
+                    log.warning(
+                        f"[启动] 亚洲市场后台静默更新超时({ASIAN_DATA_SYNC_TIMEOUT_SEC}s)，已跳过本次同步"
+                    )
                 except Exception as e:
                     log.error(f"[启动] 亚洲市场后台静默更新失败: {e}")
 

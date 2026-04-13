@@ -27,6 +27,9 @@ from core.json_cache import load_json_file, save_json_file, remove_cache_file
 from core.logger import get_logger
 _log = get_logger(__name__)
 
+RT_QUOTE_CACHE_TTL_SEC = 180.0
+RT_QUOTE_CACHE_MAX_ENTRIES = 4096
+
 
 def _run_blocking_call_with_timeout(fn, timeout_sec: float, timeout_message: str):
     """用守护线程包裹阻塞网络调用，超时后快速失败，避免整条链路卡死。"""
@@ -94,6 +97,47 @@ class TdxDataProvider:
             _log.info("[启动] 正在启动动态测速池...")
             self.server_pool = self._auto_select_best_servers()
 
+    def _prune_rt_quote_cache(self, now: float | None = None) -> int:
+        now = time.time() if now is None else now
+        ttl = float(getattr(self, "_rt_quote_cache_ttl_sec", RT_QUOTE_CACHE_TTL_SEC))
+        max_entries = int(getattr(self, "_rt_quote_cache_max_entries", RT_QUOTE_CACHE_MAX_ENTRIES))
+        removed = 0
+
+        with self._rt_quote_lock:
+            expired_codes = [
+                code
+                for code, cached_at in self._rt_quote_time.items()
+                if now - float(cached_at or 0) > ttl
+            ]
+            for code in expired_codes:
+                self._rt_quote_time.pop(code, None)
+                self._rt_quote_cache.pop(code, None)
+            removed += len(expired_codes)
+
+            overflow = len(self._rt_quote_time) - max_entries
+            if overflow > 0:
+                oldest_codes = sorted(
+                    self._rt_quote_time.items(),
+                    key=lambda item: item[1],
+                )[:overflow]
+                for code, _ in oldest_codes:
+                    self._rt_quote_time.pop(code, None)
+                    self._rt_quote_cache.pop(code, None)
+                removed += len(oldest_codes)
+
+        return removed
+
+    def compact_runtime_caches(self, now: float | None = None) -> dict:
+        now = time.time() if now is None else now
+        removed = self._prune_rt_quote_cache(now=now)
+        with self._rt_quote_lock:
+            rt_quote_cache_size = len(self._rt_quote_cache)
+        return {
+            "removed_rt_quotes": removed,
+            "rt_quote_cache_size": rt_quote_cache_size,
+            "history_symbol_count": len(self.cache_data),
+        }
+
     def _downcast_memory(self):
         """将 cache_data 中所有 float64 列降为 float32，节省约 50% 数值内存
 
@@ -122,7 +166,7 @@ class TdxDataProvider:
                 _time.sleep(0)
         self._downcast_done = True
         if count > 0:
-            _log.info(f"[内存优化] 已将 {count} 只标的数据降精度 (float64→float32)")
+            _log.info(f"[缓存优化] 已压缩 {count} 只标的数据类型，节省内存")
 
     @staticmethod
     def _serialize_gbbq_cache(data_map: dict) -> dict:
@@ -704,6 +748,7 @@ class TdxDataProvider:
 
         # ====== 新增：微秒级 DataLoader 防并发堵塞机制 ======
         now = time.time()
+        self._prune_rt_quote_cache(now=now)
         dedup_codes = []
         result = {}
         
@@ -791,6 +836,7 @@ class TdxDataProvider:
                 for c, q_data in new_fetch.items():
                     self._rt_quote_cache[c] = q_data
                     self._rt_quote_time[c] = fetch_time
+            self._prune_rt_quote_cache(now=fetch_time)
             result.update(new_fetch)
 
         # 批量接口偶发“返回缺码”：优先回退到热缓存，再回退到本地日线，避免部分个股长期不刷新

@@ -33,6 +33,8 @@ class CentralQuotesService(QObject):
         self._FAILURE_THRESHOLD = 3   # 连续失败 3 次后触发熔断
         self._COOLDOWN_TICKS = 3      # 熔断后跳过 3 个周期（约 30 秒）
         self._fetch_generation = 0
+        self._tick_count = 0
+        self._heartbeat_every_ticks = 6
 
     @property
     def _is_market_active(self):
@@ -88,10 +90,31 @@ class CentralQuotesService(QObject):
                 f"暂停轮询 {self._COOLDOWN_TICKS * 10} 秒后自动恢复"
             )
 
+    def _run_maintenance(self, active_codes_count: int | None = None):
+        stats = {}
+        if self.data_provider is not None:
+            try:
+                stats = self.data_provider.compact_runtime_caches()
+            except Exception as exc:
+                log.debug(f"[报价站] 运行时缓存清理失败: {exc}")
+
+        if self._tick_count % self._heartbeat_every_ticks != 0:
+            return
+
+        log.info(
+            "[报价站] heartbeat "
+            f"active_codes={active_codes_count if active_codes_count is not None else '-'} "
+            f"rt_cache={stats.get('rt_quote_cache_size', 0)} "
+            f"history={stats.get('history_symbol_count', 0)} "
+            f"failures={self._consecutive_failures} "
+            f"cooldown={self._circuit_breaker_cooldown}"
+        )
+
     @pyqtSlot()
     def _trigger_fetch(self):
         if self._closed:
             return
+        self._tick_count += 1
         if self._is_fetching:
             # 超时保护：如果上一轮任务 hang 了超过 30 秒，强制释放锁避免报价站永久冻结
             import time
@@ -115,6 +138,7 @@ class CentralQuotesService(QObject):
             return
 
         if not self.data_provider or not self.data_provider.is_online():
+            self._run_maintenance()
             return
 
         from core.market_calendar import MarketCalendar
@@ -136,7 +160,9 @@ class CentralQuotesService(QObject):
 
         codes = self._get_all_active_codes()
         if not codes:
+            self._run_maintenance(active_codes_count=0)
             return
+        self._run_maintenance(active_codes_count=len(codes))
 
         import time as _t
         self._is_fetching = True

@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import (
     QComboBox, QLineEdit
 )
 from PyQt6.QtCore import QTimer, Qt
+from PyQt6.QtGui import QTextCursor
 from core.event_bus import event_bus
 
 class LogTab(QWidget):
@@ -11,6 +12,7 @@ class LogTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._log_history = []
+        self._refresh_from_history_pending = False
         self._init_ui()
         self._setup_log_redirect()
         
@@ -26,7 +28,7 @@ class LogTab(QWidget):
         self.log_text.setReadOnly(True)
         self.log_text.setObjectName("systemLogText")
         # 控制文档块数量，避免长时间运行后日志文本过大拖慢 UI。
-        self.log_text.document().setMaximumBlockCount(4000)
+        self.log_text.document().setMaximumBlockCount(2500)
         
         # 2. 工具栏
         toolbar = QWidget()
@@ -40,7 +42,7 @@ class LogTab(QWidget):
         
         btn_clear_log = QPushButton("清空")
         btn_clear_log.setProperty("class", "ctaSecondary")
-        btn_clear_log.clicked.connect(self.log_text.clear)
+        btn_clear_log.clicked.connect(self._clear_logs)
         tb_layout.addWidget(btn_clear_log)
 
         # 日志搜索框
@@ -61,6 +63,17 @@ class LogTab(QWidget):
         
         # 3. 按照顺序加入布局
         layout.addWidget(self.log_text)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._refresh_from_history_pending:
+            self._refresh_from_history_pending = False
+            self._apply_log_filter()
+
+    def _clear_logs(self):
+        self._log_buffer.clear()
+        self._log_history.clear()
+        self.log_text.clear()
 
     def _setup_log_redirect(self):
         """将当前进程的 stdout/stderr 重置，统一往 event_bus 发送"""
@@ -145,7 +158,7 @@ class LogTab(QWidget):
         
         # 批量聚合刷新定时器，防止死锁与卡顿
         self._log_buffer = []
-        self._log_buffer_max = 5000
+        self._log_buffer_max = 3000
         self._log_flush_timer = QTimer(self)
         self._log_flush_timer.timeout.connect(self._flush_log_buffer)
         self._log_flush_timer.start(200)
@@ -186,6 +199,11 @@ class LogTab(QWidget):
         if not self._log_buffer:
             return
 
+        if not self.isVisible():
+            self._log_buffer.clear()
+            self._refresh_from_history_pending = True
+            return
+
         # 读取当前过滤级别
         filter_idx = self.level_filter.currentIndex() if hasattr(self, 'level_filter') else 0
         search_text = self.search_box.text().strip().lower() if hasattr(self, 'search_box') else ""
@@ -204,7 +222,10 @@ class LogTab(QWidget):
 
         if filtered_texts:
             batch = ''.join(filtered_texts)
-            self.log_text.append(batch.rstrip())
+            cursor = self.log_text.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            cursor.insertText(batch.rstrip() + "\n")
+            self.log_text.setTextCursor(cursor)
             # 自动滚动到底端
             sb = self.log_text.verticalScrollBar()
             sb.setValue(sb.maximum())

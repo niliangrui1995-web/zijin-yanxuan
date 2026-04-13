@@ -278,7 +278,7 @@ class AsianMarketTab(BaseStockTab):
         self.header_labels = ["代码", "名称", "现价", "涨幅%", "市场", "状态", "赛道", "角色定位", "货币", "5日涨跌%", "10日涨跌%", "20日涨跌%"]
         
         self.model = StockTableModel(self.header_labels)
-        self.model.set_plain_style_headers(["涨幅%"])
+        self.model.set_plain_style_headers(["涨幅%", "状态"])
         self.proxy_model = RtSortFilterProxyModel(self.asian_table)
         self.proxy_model.setSourceModel(self.model)
         self.asian_table.setModel(self.proxy_model)

@@ -333,6 +333,53 @@ class RtTableModel(QAbstractTableModel):
         _sync_serial_values(self._data)
         self.endResetModel()
 
+    def _emit_row_update_ranges(self, changed_rows):
+        if not changed_rows:
+            return
+
+        roles = [
+            Qt.ItemDataRole.DisplayRole,
+            Qt.ItemDataRole.ToolTipRole,
+            Qt.ItemDataRole.BackgroundRole,
+            Qt.ItemDataRole.ForegroundRole,
+            Qt.ItemDataRole.FontRole,
+            Qt.ItemDataRole.TextAlignmentRole,
+        ]
+        start_row = prev_row = changed_rows[0]
+        last_column = self.columnCount() - 1
+
+        for row in changed_rows[1:]:
+            if row == prev_row + 1:
+                prev_row = row
+                continue
+            self.dataChanged.emit(self.index(start_row, 0), self.index(prev_row, last_column), roles)
+            start_row = prev_row = row
+
+        self.dataChanged.emit(self.index(start_row, 0), self.index(prev_row, last_column), roles)
+
+    def update_rows_incremental(self, new_data):
+        normalized_rows = [dict(item) for item in (new_data or [])]
+        _sync_serial_values(normalized_rows)
+
+        if len(normalized_rows) != len(self._data):
+            self.update_data(normalized_rows)
+            return False
+
+        old_codes = [row.get("代码") for row in self._data]
+        new_codes = [row.get("代码") for row in normalized_rows]
+        if old_codes != new_codes:
+            self.update_data(normalized_rows)
+            return False
+
+        changed_rows = []
+        for row_idx, new_row in enumerate(normalized_rows):
+            if self._data[row_idx] != new_row:
+                self._data[row_idx] = new_row
+                changed_rows.append(row_idx)
+
+        self._emit_row_update_ranges(changed_rows)
+        return True
+
     def get_row_data(self, row):
         if 0 <= row < len(self._data):
             return self._data[row]
@@ -798,7 +845,7 @@ class StockItemDelegate(QStyledItemDelegate):
             style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt_bg, painter, widget)
             if sorted_overlay is not None:
                 painter.fillRect(option.rect, sorted_overlay)
-            left_padding = 8 + (table_tokens["selected_rail_width"] if is_selected else 0)
+            left_padding = 8
             text_rect = option.rect.adjusted(left_padding, 0, -8, 0)
 
             font = index.data(Qt.ItemDataRole.FontRole)
@@ -823,16 +870,6 @@ class StockItemDelegate(QStyledItemDelegate):
             )
             painter.setPen(QPen(text_color))
             painter.drawText(text_rect, alignment, elided_text)
-
-        if is_selected:
-            rail_rect = QRect(
-                option.rect.left(),
-                option.rect.top() + 1,
-                table_tokens["selected_rail_width"],
-                max(0, option.rect.height() - 2),
-            )
-            if rail_rect.width() > 0 and rail_rect.height() > 0:
-                painter.fillRect(rail_rect, QColor(table_tokens["selected_rail_color"]))
 
         painter.restore()
 

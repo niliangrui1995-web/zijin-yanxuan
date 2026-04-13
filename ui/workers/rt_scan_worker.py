@@ -236,6 +236,14 @@ class RtScanWorker(QThread):
         for c in stale_keys:
             del self._special_details[c]
 
+        active_runtime_codes = set(self._ready_pool.keys()) | special_codes
+        stale_cap_codes = [c for c in self._cap_cache if c not in active_runtime_codes]
+        for c in stale_cap_codes:
+            del self._cap_cache[c]
+        stale_zbg_codes = [c for c in self._zbg_cache if c not in active_runtime_codes]
+        for c in stale_zbg_codes:
+            del self._zbg_cache[c]
+
         for sc in special_codes:
             if sc not in codes_to_fetch:
                 codes_to_fetch.append(sc)
@@ -465,4 +473,12 @@ class RtScanWorker(QThread):
         all_signals = list(self._signal_details.values()) + list(self._special_details.values())
 
         log.info(f"[盘中] 第{self._scan_count}轮 | 池 {pool_size} | 报价 {len(quotes)} | 新信号 {len(new_signals)} | 累计 {len(all_signals)}")
+        if self._scan_count % 12 == 0:
+            log.info(
+                f"[盘中] heartbeat ready_pool={pool_size} "
+                f"signal_cache={len(self._signal_details)} "
+                f"watchlist_cache={len(self._special_details)} "
+                f"cap_cache={len(self._cap_cache)} "
+                f"zbg_cache={len(self._zbg_cache)}"
+            )
         self.rt_result_ready.emit(all_signals)

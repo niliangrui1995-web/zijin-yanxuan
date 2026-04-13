@@ -446,7 +446,7 @@ class RtMonitorTab(BaseStockTab):
         """实际执行刷新：这部分现在由于 Throttler 保护，每秒最多只执行一次"""
         rt_only = [r for r in results if not r.get('_is_special')]
         try:
-            self.source_model.update_data(rt_only)
+            self.source_model.update_rows_incremental(rt_only)
             if hasattr(self, "table_state"):
                 if rt_only:
                     self.table_state.show_table()

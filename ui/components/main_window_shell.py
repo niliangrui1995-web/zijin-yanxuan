@@ -4,10 +4,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import cos, pi, sin
 
-from PyQt6.QtCore import QEvent, QSize, Qt, QTimer
-from PyQt6.QtGui import QActionGroup, QColor, QIcon, QPainter, QPen, QPixmap
+from PyQt6.QtCore import QEvent, Qt, QTimer
+from PyQt6.QtGui import QActionGroup
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
@@ -73,8 +72,9 @@ def _system_button_style(theme: dict, text_color: str, hover_bg: str) -> str:
             background: transparent;
             color: {text_color};
             border: none;
-            font-size: {tokens['font']['size_sm']}px;
-            font-weight: {tokens['font']['weight_semibold']};
+            font-size: {max(16, tokens['font']['size_md'])}px;
+            font-family: "Segoe UI Emoji", "Segoe UI Symbol", "Microsoft YaHei UI";
+            font-weight: {tokens['font']['weight_medium']};
             padding: 0;
             min-height: {tokens['shell']['titlebar_height']}px;
             max-height: {tokens['shell']['titlebar_height']}px;
@@ -87,52 +87,6 @@ def _system_button_style(theme: dict, text_color: str, hover_bg: str) -> str:
             width: 0px;
         }}
     """
-
-
-def _build_gear_icon(color: str, size: int = 16) -> QIcon:
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.GlobalColor.transparent)
-
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-    icon_color = QColor(color)
-    pen = QPen(icon_color)
-    pen.setWidthF(max(1.2, size * 0.10))
-    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-    painter.setPen(pen)
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-
-    center = size / 2
-    ring_radius = size * 0.27
-    core_radius = size * 0.12
-    tooth_inner = size * 0.34
-    tooth_outer = size * 0.43
-
-    painter.drawEllipse(
-        int(center - ring_radius),
-        int(center - ring_radius),
-        int(ring_radius * 2),
-        int(ring_radius * 2),
-    )
-    painter.drawEllipse(
-        int(center - core_radius),
-        int(center - core_radius),
-        int(core_radius * 2),
-        int(core_radius * 2),
-    )
-
-    for idx in range(8):
-        angle = (pi / 4) * idx - (pi / 2)
-        x1 = center + cos(angle) * tooth_inner
-        y1 = center + sin(angle) * tooth_inner
-        x2 = center + cos(angle) * tooth_outer
-        y2 = center + sin(angle) * tooth_outer
-        painter.drawLine(int(x1), int(y1), int(x2), int(y2))
-
-    painter.end()
-    return QIcon(pixmap)
 
 
 def _standalone_tabbar_qss(theme: dict) -> str:
@@ -430,7 +384,8 @@ def setup_system_menu(window) -> SystemMenuRefs:
     tokens = build_ui_tokens(theme_manager.current_theme)
     btn_sys_menu.setFixedWidth(tokens["shell"]["system_button_width"])
     btn_sys_menu.setFixedHeight(tokens["shell"]["titlebar_height"])
-    btn_sys_menu.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+    btn_sys_menu.setText("⚙️")
+    btn_sys_menu.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
     btn_sys_menu.setToolTip("系统菜单")
     btn_sys_menu.setAccessibleName("系统菜单")
 
@@ -523,8 +478,8 @@ def refresh_system_menu_theme(window) -> None:
         window.btn_sys_menu.setStyleSheet(
             _system_button_style(theme, theme['TEXT_MUTED'], theme['BG_HOVER'])
         )
-        window.btn_sys_menu.setIcon(_build_gear_icon(theme['TEXT_MUTED'], size=17))
-        window.btn_sys_menu.setIconSize(QSize(17, 17))
+        window.btn_sys_menu.setText("⚙️")
+        window.btn_sys_menu.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
 
     menu_qss = generate_context_menu_qss(theme)
     for attr_name in ("_sys_menu", "_density_menu", "_theme_menu"):

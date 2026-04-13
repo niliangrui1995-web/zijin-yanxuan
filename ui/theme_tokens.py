@@ -140,8 +140,6 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "selected_hover_bg": theme["SELECTION_HOVER_BG"],
         "sorted_column_bg": _hex_to_rgba(theme["COLOR_INFO"], 0.08 if is_dark else 0.06),
         "sorted_header_bg": _hex_to_rgba(theme["COLOR_INFO"], 0.14 if is_dark else 0.08),
-        "selected_rail_color": theme["BRAND_PRIMARY"],
-        "selected_rail_width": 3,
         "status_pill_radius": radius["sm"],
         "numeric_heat_max_alpha": 40 if is_dark else 32,
     }
