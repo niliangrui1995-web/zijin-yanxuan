@@ -27,6 +27,8 @@ class VCPTableView(QTableView):
         self.setShowGrid(False)
         self.setAlternatingRowColors(True)
         self.setWordWrap(False)
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
         self.verticalHeader().setVisible(False)
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -34,6 +36,8 @@ class VCPTableView(QTableView):
         self.setSortingEnabled(True)
         self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self._sorted_column = -1
+        self.horizontalHeader().sortIndicatorChanged.connect(self._on_sort_indicator_changed)
         self._apply_screen_width_limit()
 
         self._apply_runtime_style()
@@ -60,6 +64,13 @@ class VCPTableView(QTableView):
         self.horizontalHeader().setMaximumSectionSize(max_w)
         self.setMaximumWidth(max_w)
         self.updateGeometry()
+
+    def _on_sort_indicator_changed(self, column: int, _order):
+        self._sorted_column = column
+        self.viewport().update()
+
+    def sorted_column(self) -> int:
+        return self._sorted_column
 
     def sizeHint(self) -> QSize:
         hint = super().sizeHint()

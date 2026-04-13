@@ -9,6 +9,10 @@ class _DummyProvider:
     _offline = True
 
 
+class _LiveProvider:
+    _offline = False
+
+
 def test_kline_header_action_controls_share_same_height(monkeypatch):
     monkeypatch.setattr(kline_module, "QWebEngineView", QWidget)
     monkeypatch.setattr(kline_module.KLineChartWindow, "_load_and_draw", lambda self: None)
@@ -43,5 +47,35 @@ def test_kline_header_action_controls_share_same_height(monkeypatch):
         assert window.btn_prev.focusPolicy() == Qt.FocusPolicy.NoFocus
         assert window.btn_next.focusPolicy() == Qt.FocusPolicy.NoFocus
         assert window.btn_fav.focusPolicy() == Qt.FocusPolicy.NoFocus
+    finally:
+        window.deleteLater()
+
+
+def test_kline_header_exposes_session_and_feed_badges(monkeypatch):
+    monkeypatch.setattr(kline_module, "QWebEngineView", QWidget)
+    monkeypatch.setattr(kline_module.KLineChartWindow, "_load_and_draw", lambda self: None)
+    monkeypatch.setattr(
+        kline_module.KLineChartWindow,
+        "_check_fav_status",
+        lambda self: setattr(self, "is_fav", False),
+    )
+
+    window = kline_module.KLineChartWindow(
+        None,
+        "000001",
+        "平安银行",
+        _LiveProvider(),
+        vcp_data={},
+        code_list=[{"代码": "000001", "名称": "平安银行"}],
+        current_idx=0,
+    )
+    try:
+        window._set_status_message("实时刷新中", tone="realtime")
+
+        assert window.market_badge_lbl.text()
+        assert window.session_badge_lbl.text()
+        assert window.feed_badge_lbl.text()
+        assert "background-color" in window.session_badge_lbl.styleSheet()
+        assert "background-color" in window.feed_badge_lbl.styleSheet()
     finally:
         window.deleteLater()

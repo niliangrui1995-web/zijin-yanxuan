@@ -16,7 +16,7 @@ import time
 import webbrowser
 
 from PyQt6.QtCore import QCoreApplication, Qt
-from PyQt6.QtWidgets import QWidget, QLabel, QHBoxLayout, QVBoxLayout
+from PyQt6.QtWidgets import QWidget, QLabel, QHBoxLayout, QVBoxLayout, QFrame, QToolButton
 
 from core.event_bus import event_bus
 
@@ -28,6 +28,14 @@ class BaseStockTab(QWidget):
         super().__init__(parent)
         self.data_provider = data_provider
 
+    @staticmethod
+    def _prepare_toolbar_widget(widget: QWidget | None):
+        if widget is None:
+            return
+        widget.setProperty("inToolbar", True)
+        if isinstance(widget, QToolButton) and widget.property("class") is None:
+            widget.setProperty("class", "toolbarGhost")
+
     # ================================================================
     # UI 结构辅助：统一工具条 + 摘要条 + 列预设
     # ================================================================
@@ -36,11 +44,14 @@ class BaseStockTab(QWidget):
                           action_widgets: list[QWidget] | None) -> QWidget:
         """统一工具条结构：标题 + 副标题 + 过滤区 + 主操作"""
         toolbar = QWidget()
+        toolbar.setObjectName("tabToolbar")
+        toolbar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         tb_layout = QHBoxLayout(toolbar)
         tb_layout.setContentsMargins(8, 6, 8, 6)
         tb_layout.setSpacing(8)
 
-        left_wrap = QWidget()
+        left_wrap = QFrame()
+        left_wrap.setObjectName("tabToolbarTitleWrap")
         left_layout = QVBoxLayout(left_wrap)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(2)
@@ -50,7 +61,7 @@ class BaseStockTab(QWidget):
         left_layout.addWidget(lbl_title)
 
         if subtitle_label is not None:
-            subtitle_label.setObjectName("tabSubtitle")
+            subtitle_label.setObjectName("tabStatusLabel")
             left_layout.addWidget(subtitle_label)
 
         tb_layout.addWidget(left_wrap, 0, Qt.AlignmentFlag.AlignLeft)
@@ -58,19 +69,23 @@ class BaseStockTab(QWidget):
 
         if filter_widgets:
             filter_wrap = QWidget()
+            filter_wrap.setObjectName("tabToolbarFilters")
             filter_layout = QHBoxLayout(filter_wrap)
             filter_layout.setContentsMargins(0, 0, 0, 0)
             filter_layout.setSpacing(6)
             for w in filter_widgets:
+                self._prepare_toolbar_widget(w)
                 filter_layout.addWidget(w)
             tb_layout.addWidget(filter_wrap, 0, Qt.AlignmentFlag.AlignRight)
 
         if action_widgets:
             action_wrap = QWidget()
+            action_wrap.setObjectName("tabToolbarActions")
             action_layout = QHBoxLayout(action_wrap)
             action_layout.setContentsMargins(0, 0, 0, 0)
             action_layout.setSpacing(6)
             for w in action_widgets:
+                self._prepare_toolbar_widget(w)
                 action_layout.addWidget(w)
             tb_layout.addWidget(action_wrap, 0, Qt.AlignmentFlag.AlignRight)
 

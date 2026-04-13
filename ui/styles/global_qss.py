@@ -20,6 +20,9 @@ def generate_global_qss(theme: dict = None, density: str | None = None) -> str:
     control = ui["control"]
     table = ui["table"]
     shell = ui["shell"]
+    surface = ui["surface"]
+    border = ui["border"]
+    text = ui["text"]
 
     return f"""
 /* ═══════════════════════════════════════════
@@ -30,7 +33,7 @@ def generate_global_qss(theme: dict = None, density: str | None = None) -> str:
 /* --- 全局窗口基底 --- */
 QMainWindow, QWidget {{
     background-color: {t['BG_CANVAS']};
-    color: {t['TEXT_PRIMARY']};
+    color: {text['primary']};
     font-family: {font['family']};
     font-size: {font['size_md']}px;
 }}
@@ -89,7 +92,7 @@ QTableView {{
     border: none;
     font-family: "Microsoft YaHei", "微软雅黑";
     font-size: {font['size_md']}px;
-    selection-background-color: {t['SELECTION_BG']};
+    selection-background-color: {table['selected_bg']};
     selection-color: {t['TEXT_BRIGHT']};
     outline: none;
 }}
@@ -101,33 +104,33 @@ QTableView::item:hover {{
     background-color: {t['BG_TABLE_HOVER']};
 }}
 QTableView::item:selected {{
-    background-color: {t['SELECTION_BG']};
+    background-color: {table['selected_bg']};
     color: {t['TEXT_BRIGHT']};
 }}
 QTableView:focus {{
-    border: 1px solid {t['BORDER_BRAND']};
+    border: 1px solid {border['focus']};
     border-radius: {table['focus_radius']}px;
 }}
 
 /* 表头 */
 QHeaderView::section {{
-    background-color: {t['BG_ELEVATED']};
-    color: {t['TEXT_HEADER']};
+    background-color: {surface['elevated']};
+    color: {text['header']};
     font-family: "Microsoft YaHei", "微软雅黑";
     font-size: {table['header_font_size']}px;
     font-weight: {font['weight_semibold']};
     letter-spacing: 0.2px;
     padding: {table['header_padding_y']}px {table['header_padding_x']}px;
     border: none;
-    border-bottom: 1px solid {t['BORDER_DEFAULT']};
-    border-right: 1px solid {t['BORDER_SUBTLE']};
+    border-bottom: 1px solid {border['default']};
+    border-right: 1px solid {border['subtle']};
 }}
 QHeaderView::section:hover {{
-    background-color: {t['BG_CARD']};
-    color: {t['TEXT_PRIMARY']};
+    background-color: {surface['panel']};
+    color: {text['primary']};
 }}
 QHeaderView::section:pressed {{
-    background-color: {t['SELECTION_HOVER_BG']};
+    background-color: {table['sorted_header_bg']};
 }}
 QHeaderView::down-arrow {{ image: none; width: 0; }}
 QHeaderView::up-arrow {{ image: none; width: 0; }}
@@ -331,6 +334,28 @@ QProgressBar::chunk {{
 /* ═══════════════════════════════════════════
    QLabel / QLineEdit
    ═══════════════════════════════════════════ */
+QWidget#tabToolbar {{
+    background-color: {surface['toolbar']};
+    border-bottom: 1px solid {border['default']};
+    min-height: {shell['toolbar_min_height']}px;
+}}
+QFrame#tabToolbarTitleWrap {{
+    background: transparent;
+}}
+QWidget#tabToolbarFilters, QWidget#tabToolbarActions {{
+    background: transparent;
+}}
+QLabel#tabStatusLabel {{
+    background-color: {surface['toolbar_chip']};
+    color: {text['secondary']};
+    border: 1px solid {border['subtle']};
+    border-radius: {radius['pill']}px;
+    padding: 0 {shell['status_pill_padding_x']}px;
+    min-height: {shell['status_pill_min_height']}px;
+    font-size: {font['size_sm']}px;
+    font-weight: {font['weight_semibold']};
+}}
+
 QLabel {{ color: {t['TEXT_SECONDARY']}; background: transparent; }}
 
 QLabel#tabTitle {{

@@ -63,6 +63,9 @@ def _build_state_tones(theme: dict, *, is_dark: bool) -> dict:
         "success": tone("COLOR_SUCCESS", bg_alpha=0.12, border_alpha=0.22),
         "warning": tone("COLOR_WARNING", bg_alpha=0.12, border_alpha=0.22),
         "error": tone("COLOR_ERROR", bg_alpha=0.12, border_alpha=0.22),
+        "realtime": tone("COLOR_SUCCESS", fg=theme["COLOR_SUCCESS"], bg_alpha=0.10, border_alpha=0.24),
+        "stale": tone("COLOR_WARNING", fg=theme["COLOR_WARNING"], bg_alpha=0.08, border_alpha=0.18),
+        "focus": tone("COLOR_INFO", fg=theme["COLOR_INFO"], bg_alpha=0.10, border_alpha=0.28),
         "offline": {
             "bg": _hex_to_rgba(theme["TEXT_MUTED"], 0.10) if is_dark else theme["BG_ELEVATED"],
             "fg": theme["TEXT_SECONDARY"],
@@ -133,6 +136,14 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "header_padding_x": 9 if compact else 10,
         "header_font_size": 11 if compact else 12,
         "focus_radius": radius["xs"],
+        "selected_bg": theme["SELECTION_BG"],
+        "selected_hover_bg": theme["SELECTION_HOVER_BG"],
+        "sorted_column_bg": _hex_to_rgba(theme["COLOR_INFO"], 0.08 if is_dark else 0.06),
+        "sorted_header_bg": _hex_to_rgba(theme["COLOR_INFO"], 0.14 if is_dark else 0.08),
+        "selected_rail_color": theme["BRAND_PRIMARY"],
+        "selected_rail_width": 3,
+        "status_pill_radius": radius["sm"],
+        "numeric_heat_max_alpha": 40 if is_dark else 32,
     }
 
     shell = {
@@ -142,6 +153,7 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "status_height": 32 if compact else 34,
         "status_pill_min_height": 24 if compact else 26,
         "status_pill_padding_x": 10 if compact else 12,
+        "toolbar_min_height": 54 if compact else 58,
     }
 
     surface = {
@@ -154,6 +166,11 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "chrome": theme["BG_TITLEBAR"],
         "statusbar": theme["BG_STATUSBAR"],
         "input": theme["BG_INPUT"],
+        "toolbar": theme["BG_ELEVATED"],
+        "toolbar_chip": theme["BG_BUTTON"],
+        "panel_alt": theme["BG_TABLE_ALT_ROW"],
+        "overlay": _hex_to_rgba(theme["BG_ELEVATED"], 0.94 if is_dark else 0.98),
+        "chart_panel": theme["BG_INPUT"] if is_dark else theme["BG_CARD"],
         "selection": theme["SELECTION_BG"],
         "selection_hover": theme["SELECTION_HOVER_BG"],
     }
@@ -163,6 +180,32 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "subtle": theme["BORDER_SUBTLE"],
         "strong": theme["BORDER_STRONG"],
         "accent": theme["BORDER_BRAND"],
+        "focus": _hex_to_rgba(theme["COLOR_INFO"], 0.32 if is_dark else 0.24),
+    }
+
+    motion = {
+        "fast": 120,
+        "base": 180,
+        "slow": 260,
+        "pulse": 1500,
+    }
+
+    z_index = {
+        "base": 0,
+        "toolbar": 10,
+        "overlay": 20,
+        "menu": 30,
+        "modal": 40,
+    }
+
+    chart = {
+        "panel_bg": surface["chart_panel"],
+        "toolbar_bg": surface["toolbar"],
+        "grid_line": theme["KLINE_GRID_LINE"],
+        "axis_line": theme["KLINE_AXIS_LINE"],
+        "axis_label": theme["KLINE_AXIS_LABEL"],
+        "crosshair_bg": theme["KLINE_POINTER_BG"],
+        "vcp_star": theme["KLINE_VCP_STAR"],
     }
 
     text = {
@@ -187,6 +230,9 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "shell": shell,
         "surface": surface,
         "border": border,
+        "motion": motion,
+        "z_index": z_index,
+        "chart": chart,
         "text": text,
         "state": _build_state_tones(theme, is_dark=is_dark),
     }

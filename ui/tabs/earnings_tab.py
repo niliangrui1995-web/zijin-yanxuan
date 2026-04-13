@@ -88,6 +88,7 @@ class EarningsTab(BaseStockTab):
         ]
         
         self.model = StockTableModel(self.header_labels)
+        self.model.set_plain_style_headers(["揭晓日"])
         self.proxy_model = RtSortFilterProxyModel(self.table)
         self.proxy_model.setSourceModel(self.model)
         self.table.setModel(self.proxy_model)

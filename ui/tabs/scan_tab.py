@@ -167,6 +167,7 @@ class ScanTab(BaseStockTab):
         # 表格控件 (MVC)
         self.columns = ["代码", "名称", "现价", "涨幅%", "市值", "触发日期", "评分", "RPS强度", "距突破", "突破状态", "区间振幅", "热门板块"]
         self.source_model = StockTableModel(self.columns)
+        self.source_model.set_plain_style_headers(["触发日期"])
         self.proxy_model = RtSortFilterProxyModel(self)
         self.proxy_model.setSourceModel(self.source_model)
 

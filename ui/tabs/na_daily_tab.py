@@ -93,6 +93,7 @@ class NADailyTab(BaseStockTab):
         self.table_state = TableStateWrapper(self.na_daily_table, empty_title="暂无战报数据", loading_title="加载中...")
         
         self.model = StockTableModel(columns)
+        self.model.set_plain_style_headers(["日报时间"])
         self.proxy_model = RtSortFilterProxyModel(self)
         self.proxy_model.setSourceModel(self.model)
         self.na_daily_table.setModel(self.proxy_model)

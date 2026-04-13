@@ -56,6 +56,70 @@ class AsianMarketTab(BaseStockTab):
         self.auto_cache_timer.start(60000)
         QTimer.singleShot(2000, self._check_auto_cache)
 
+    def _schedule_fit_columns(self):
+        if hasattr(self, "_fit_columns_timer"):
+            self._fit_columns_timer.start()
+
+    def _fit_asian_columns_to_viewport(self):
+        if not hasattr(self, "asian_table"):
+            return
+
+        header = self.asian_table.horizontalHeader()
+        column_count = header.count()
+        if column_count <= 0:
+            return
+
+        viewport_width = self.asian_table.viewport().width()
+        if viewport_width <= 0:
+            return
+
+        current_widths = [max(1, self.asian_table.columnWidth(i)) for i in range(column_count)]
+        total_width = sum(current_widths)
+        if total_width <= 0:
+            return
+
+        # 预留一点边缘冗余，避免 rounding 导致最后一列被横向滚动条挤爆。
+        target_width = max(column_count * 40, viewport_width - 2)
+        if abs(total_width - target_width) <= column_count:
+            return
+
+        scale = target_width / total_width
+        scaled_widths = [max(40, int(round(width * scale))) for width in current_widths]
+        diff = target_width - sum(scaled_widths)
+
+        if diff != 0:
+            step = 1 if diff > 0 else -1
+            remaining = abs(diff)
+            ordered_columns = sorted(
+                range(column_count),
+                key=lambda idx: current_widths[idx],
+                reverse=(diff > 0),
+            )
+            while remaining > 0 and ordered_columns:
+                changed = False
+                for column in ordered_columns:
+                    next_width = scaled_widths[column] + step
+                    if next_width < 40:
+                        continue
+                    scaled_widths[column] = next_width
+                    remaining -= 1
+                    changed = True
+                    if remaining == 0:
+                        break
+                if not changed:
+                    break
+
+        for column, width in enumerate(scaled_widths):
+            self.asian_table.setColumnWidth(column, width)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._schedule_fit_columns()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._schedule_fit_columns()
+
     def _get_cache_latest_trade_date(self):
         try:
             if not os.path.exists(JSON_CACHE):
@@ -214,6 +278,7 @@ class AsianMarketTab(BaseStockTab):
         self.header_labels = ["代码", "名称", "现价", "涨幅%", "市场", "状态", "赛道", "角色定位", "货币", "5日涨跌%", "10日涨跌%", "20日涨跌%"]
         
         self.model = StockTableModel(self.header_labels)
+        self.model.set_plain_style_headers(["涨幅%"])
         self.proxy_model = RtSortFilterProxyModel(self.asian_table)
         self.proxy_model.setSourceModel(self.model)
         self.asian_table.setModel(self.proxy_model)
@@ -231,7 +296,12 @@ class AsianMarketTab(BaseStockTab):
         # 列宽自定义并持久化
         header_view = self.asian_table.horizontalHeader()
         header_view.setStretchLastSection(False)
-        
+
+        self._fit_columns_timer = QTimer(self)
+        self._fit_columns_timer.setSingleShot(True)
+        self._fit_columns_timer.setInterval(0)
+        self._fit_columns_timer.timeout.connect(self._fit_asian_columns_to_viewport)
+
         default_widths = [52, 70, 140, 90, 90, 80, 80, 120, 250, 60, 80, 80, 80]
         for i, w in enumerate(default_widths):
             header_view.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
@@ -239,6 +309,7 @@ class AsianMarketTab(BaseStockTab):
             
         # 绑定防抖自动保存与恢复配置
         self.bind_header_persistence(self.asian_table, "header_state_asian_v3")
+        self._schedule_fit_columns()
 
     def _show_context_menu(self, pos):
         index = self.asian_table.indexAt(pos)

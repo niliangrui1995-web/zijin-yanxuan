@@ -1,6 +1,9 @@
+# -*- coding: utf-8 -*-
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 
-from ui.models.table_models import RtSortFilterProxyModel, StockTableModel
+from ui.models.table_models import RtSortFilterProxyModel, StockTableModel, _qcolor_from_token
+from ui.theme import theme_manager
 
 
 def test_stock_table_model_prepends_serial_header():
@@ -38,7 +41,7 @@ def test_hot_sector_display_keeps_full_text():
     assert model.data(idx, Qt.ItemDataRole.ToolTipRole) is not None
 
 
-def test_only_serial_column_is_center_aligned():
+def test_terminal_alignment_uses_center_for_numeric_like_cells():
     model = StockTableModel(["代码", "名称", "现价", "时间", "涨幅%"])
     model.update_data([{"代码": "000001", "名称": "平安银行", "现价": "10.00", "时间": "09:35", "涨幅%": "1.23"}])
 
@@ -48,6 +51,137 @@ def test_only_serial_column_is_center_aligned():
     pct_align = model.data(model.index(0, model.headers.index("涨幅%")), Qt.ItemDataRole.TextAlignmentRole)
 
     assert serial_align & Qt.AlignmentFlag.AlignCenter.value
-    assert price_align & Qt.AlignmentFlag.AlignLeft.value
-    assert time_align & Qt.AlignmentFlag.AlignLeft.value
-    assert pct_align & Qt.AlignmentFlag.AlignLeft.value
+    assert price_align & Qt.AlignmentFlag.AlignCenter.value
+    assert time_align & Qt.AlignmentFlag.AlignCenter.value
+    assert pct_align & Qt.AlignmentFlag.AlignCenter.value
+
+
+def test_terminal_alignment_uses_left_for_pure_chinese_and_mixed_cells():
+    model = StockTableModel(["代码", "名称", "市值", "外资净买入", "买点"])
+    model.update_data([
+        {
+            "代码": "AAPL",
+            "名称": "苹果",
+            "市值": "734亿",
+            "外资净买入": "净买1200万",
+            "买点": "触发",
+        }
+    ])
+
+    code_align = model.data(model.index(0, model.headers.index("代码")), Qt.ItemDataRole.TextAlignmentRole)
+    name_align = model.data(model.index(0, model.headers.index("名称")), Qt.ItemDataRole.TextAlignmentRole)
+    cap_align = model.data(model.index(0, model.headers.index("市值")), Qt.ItemDataRole.TextAlignmentRole)
+    foreign_align = model.data(model.index(0, model.headers.index("外资净买入")), Qt.ItemDataRole.TextAlignmentRole)
+    buypoint_align = model.data(model.index(0, model.headers.index("买点")), Qt.ItemDataRole.TextAlignmentRole)
+
+    assert code_align & Qt.AlignmentFlag.AlignLeft.value
+    assert name_align & Qt.AlignmentFlag.AlignLeft.value
+    assert cap_align & Qt.AlignmentFlag.AlignLeft.value
+    assert foreign_align & Qt.AlignmentFlag.AlignLeft.value
+    assert buypoint_align & Qt.AlignmentFlag.AlignLeft.value
+
+
+def test_stock_table_model_exposes_heatmap_and_status_badges():
+    model = StockTableModel(["代码", "名称", "现价", "涨幅%", "状态"])
+    model.update_data([
+        {"代码": "000001", "名称": "平安银行", "现价": "10.00", "涨幅%": "3.20", "状态": "盘中"}
+    ])
+
+    price_idx = model.index(0, model.headers.index("现价"))
+    status_idx = model.index(0, model.headers.index("状态"))
+
+    assert model.data(price_idx, Qt.ItemDataRole.BackgroundRole) is not None
+    assert model.data(status_idx, Qt.ItemDataRole.UserRole + 2) is not None
+
+
+def test_stock_table_model_keeps_foreign_net_buy_left_aligned():
+    model = StockTableModel(["代码", "名称", "外资净买入"])
+    model.update_data([
+        {"代码": "000001", "名称": "平安银行", "外资净买入": "净买1200万", "外资净买(万)": 1200}
+    ])
+
+    foreign_idx = model.index(0, model.headers.index("外资净买入"))
+    foreign_align = model.data(foreign_idx, Qt.ItemDataRole.TextAlignmentRole)
+
+    assert foreign_align & Qt.AlignmentFlag.AlignLeft.value
+
+
+def test_stock_table_model_dates_use_center_alignment_and_secondary_text():
+    model = StockTableModel(["代码", "名称", "日报时间", "交易日期", "揭晓日", "触发日期"])
+    model.update_data([
+        {
+            "代码": "000001",
+            "名称": "平安银行",
+            "日报时间": "2026-04-13",
+            "交易日期": "2026-04-12",
+            "揭晓日": "2026-04-30",
+            "触发日期": "2026-04-10",
+            "_report_ts": 20260413123000,
+        }
+    ])
+
+    expected_color = QColor(theme_manager.get("TEXT_PRIMARY")).name()
+    for header in ("日报时间", "交易日期", "揭晓日", "触发日期"):
+        idx = model.index(0, model.headers.index(header))
+        align = model.data(idx, Qt.ItemDataRole.TextAlignmentRole)
+        foreground = model.data(idx, Qt.ItemDataRole.ForegroundRole)
+        assert align & Qt.AlignmentFlag.AlignCenter.value
+        assert foreground.name() == expected_color
+
+
+def test_stock_table_model_uses_flat_color_for_zero_pct():
+    model = StockTableModel(["代码", "名称", "涨幅%"])
+    model.update_data([{"代码": "000001", "名称": "平安银行", "涨幅%": "0.00"}])
+
+    idx = model.index(0, model.headers.index("涨幅%"))
+    foreground = model.data(idx, Qt.ItemDataRole.ForegroundRole)
+
+    assert foreground.name() == QColor(theme_manager.get("COLOR_FLAT")).name()
+
+
+def test_stock_table_model_does_not_badge_catalyst_text():
+    long_catalyst = "关注财报催化与平台突破共振，后续还要观察新品发布节奏和北美订单兑现。"
+    model = StockTableModel(["代码", "名称", "催化剂", "状态"])
+    model.update_data([
+        {"代码": "AAPL", "名称": "Apple", "催化剂": long_catalyst, "状态": "盘中"}
+    ])
+
+    catalyst_idx = model.index(0, model.headers.index("催化剂"))
+    status_idx = model.index(0, model.headers.index("状态"))
+
+    assert model.data(catalyst_idx, Qt.ItemDataRole.UserRole + 2) is None
+    assert model.data(catalyst_idx, Qt.ItemDataRole.DisplayRole) == long_catalyst
+    assert model.data(catalyst_idx, Qt.ItemDataRole.ToolTipRole) == long_catalyst
+    assert model.data(status_idx, Qt.ItemDataRole.UserRole + 2) is not None
+
+
+def test_qcolor_from_token_parses_rgba_strings():
+    color = _qcolor_from_token("rgba(59, 130, 246, 0.06)")
+
+    assert color.isValid()
+    assert color.red() == 59
+    assert color.green() == 130
+    assert color.blue() == 246
+    assert color.alpha() > 0
+
+
+def test_stock_table_model_plain_style_headers_disable_color_and_heat():
+    model = StockTableModel(["代码", "名称", "涨幅%"])
+    model.set_plain_style_headers(["涨幅%"])
+    model.update_data([{"代码": "000001", "名称": "平安银行", "涨幅%": "6.20"}])
+
+    idx = model.index(0, model.headers.index("涨幅%"))
+
+    assert model.data(idx, Qt.ItemDataRole.UserRole + 3) is True
+    assert model.data(idx, Qt.ItemDataRole.ForegroundRole).name() == QColor(theme_manager.get("TEXT_PRIMARY")).name()
+    assert model.data(idx, Qt.ItemDataRole.BackgroundRole) is None
+
+
+def test_buy_point_badge_uses_rise_red():
+    model = StockTableModel(["代码", "名称", "买点"])
+    model.update_data([{"代码": "000001", "名称": "平安银行", "买点": "触发"}])
+
+    idx = model.index(0, model.headers.index("买点"))
+    badge = model.data(idx, Qt.ItemDataRole.UserRole + 2)
+
+    assert QColor(badge).name() == QColor(theme_manager.get("COLOR_RISE_STRONG")).name()

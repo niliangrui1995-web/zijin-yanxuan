@@ -253,6 +253,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         ]
         self.table = VCPTableView(default_row_height=30)
         self.model = StockTableModel(self.columns)
+        self.model.set_plain_style_headers(["交易日期"])
         self.proxy_model = BlockTradeFilterProxyModel(self.table)
         self.proxy_model.setSourceModel(self.model)
         self.table.setModel(self.proxy_model)

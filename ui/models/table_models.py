@@ -27,6 +27,7 @@ import textwrap
 from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QSortFilterProxyModel, QRect, pyqtSignal, QMimeData
 from PyQt6.QtGui import QColor, QFont
 from ui.components import SearchFilter
+from ui.theme_tokens import build_ui_tokens
 
 _log = logging.getLogger(__name__)
 from ui.theme import theme_manager
@@ -36,6 +37,150 @@ SERIAL_HEADER = "序号"
 # 运行时动态获取当前主题颜色（不再用 from import 快照，否则切换主题后颜色不更新）
 def _c(token: str) -> str:
     return theme_manager.get(token)
+
+
+def _theme_table_tokens() -> dict:
+    return build_ui_tokens()["table"]
+
+
+def _qcolor_from_token(color) -> QColor:
+    if isinstance(color, QColor):
+        return QColor(color)
+
+    if color is None:
+        return QColor()
+
+    text = str(color).strip()
+    if not text:
+        return QColor()
+
+    rgba_match = re.fullmatch(
+        r"rgba\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*([0-9]*\.?[0-9]+)\s*\)",
+        text,
+        re.IGNORECASE,
+    )
+    if rgba_match:
+        r, g, b = (int(rgba_match.group(i)) for i in range(1, 4))
+        alpha_raw = float(rgba_match.group(4))
+        alpha = int(round(alpha_raw * 255)) if alpha_raw <= 1 else int(round(alpha_raw))
+        return QColor(r, g, b, max(0, min(255, alpha)))
+
+    rgb_match = re.fullmatch(
+        r"rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)",
+        text,
+        re.IGNORECASE,
+    )
+    if rgb_match:
+        return QColor(*(int(rgb_match.group(i)) for i in range(1, 4)))
+
+    return QColor(text)
+
+
+def _parse_numeric_value(raw_val):
+    if raw_val is None:
+        return None
+    text = str(raw_val).strip().replace(",", "")
+    if not text or text in {"--", "-"}:
+        return None
+    match = re.search(r"[-+]?\d*\.?\d+", text)
+    if not match:
+        return None
+    try:
+        value = float(match.group(0))
+    except (TypeError, ValueError):
+        return None
+
+    if "万" in text:
+        return value * 10000
+    if "亿" in text:
+        return value * 100000000
+    return value
+
+
+def _is_status_header(header: str) -> bool:
+    return header in {
+        SERIAL_HEADER,
+        "突破状态",
+        "状态",
+        "买点",
+        "关注",
+        "市场",
+    }
+
+
+def _is_date_like_header(header: str) -> bool:
+    if header in {
+        "揭晓日",
+        "报告期",
+        "最近上榜",
+        "上榜日",
+        "公告日",
+    }:
+        return True
+    return any(keyword in header for keyword in ("日期", "时间"))
+
+
+def _is_numeric_header(header: str) -> bool:
+    if header == SERIAL_HEADER or _is_status_header(header):
+        return False
+    keywords = (
+        "%",
+        "价",
+        "额",
+        "量",
+        "值",
+        "分",
+        "幅",
+        "RPS",
+        "评分",
+        "强度",
+        "净买",
+        "振幅",
+        "换手",
+        "流通",
+        "成交",
+    )
+    return any(keyword in header for keyword in keywords)
+
+
+def _numeric_heat_color(header: str, raw_val):
+    value = _parse_numeric_value(raw_val)
+    if value is None:
+        return None
+
+    tokens = _theme_table_tokens()
+    alpha = 0
+    base = None
+
+    if "%" in header or header in {"涨跌", "现价", "收盘", "最新价"}:
+        if abs(value) < 0.01:
+            return None
+        base = _c("COLOR_RISE") if value > 0 else _c("COLOR_FALL")
+        alpha = min(tokens["numeric_heat_max_alpha"], max(8, int(abs(value) * 2.6)))
+    elif header == "评分":
+        if value >= 90:
+            base = _c("SCORE_EXCELLENT")
+            alpha = 28
+        elif value >= 80:
+            base = _c("SCORE_GOOD")
+            alpha = 22
+        elif value >= 60:
+            base = _c("SCORE_NORMAL")
+            alpha = 16
+    elif "RPS" in header:
+        if value >= 95:
+            base = _c("COLOR_INFO")
+            alpha = 24
+        elif value >= 85:
+            base = _c("COLOR_INFO")
+            alpha = 16
+
+    if not base or alpha <= 0:
+        return None
+
+    color = QColor(base)
+    color.setAlpha(alpha)
+    return color
 
 
 def _build_cell_tooltip(raw_val):
@@ -70,10 +215,20 @@ def _summarize_long_text(header: str, raw_val):
     return normalized if len(normalized) <= max_len else normalized[: max_len - 1] + "…"
 
 
-def _status_badge_color(text: str):
+def _status_badge_color(text: str, header: str | None = None):
     st = str(text or "").strip()
     if not st or st in ("--", "-"):
         return None
+    if header == "状态":
+        if any(keyword in st for keyword in ("盘中", "交易中", "开盘")):
+            return _c("COLOR_SUCCESS")
+        if any(keyword in st for keyword in ("休市", "收盘", "闭市")):
+            return _c("COLOR_WARNING")
+        return _c("COLOR_INFO")
+    if header == "买点":
+        if any(keyword in st for keyword in ("触发", "确认")):
+            return _c("COLOR_RISE_STRONG")
+        return _c("COLOR_RISE")
     if "假突破" in st or "缩量" in st:
         return _c("COLOR_ERROR")
     if "临近" in st or "关注" in st:
@@ -83,11 +238,46 @@ def _status_badge_color(text: str):
     return None
 
 
-def _alignment_for_header(header: str):
+def _contains_cjk(text: str) -> bool:
+    return bool(re.search(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]", text or ""))
+
+
+def _normalized_alignment_text(header: str, raw_val) -> str:
+    text = str(raw_val or "").strip()
+    if not text:
+        return ""
+
+    if "日" in header or "期" in header or "时间" in header:
+        normalized = text.split(" ")[0].replace("-", "").replace("/", "")
+        if normalized.isdigit():
+            return normalized
+
+    return text
+
+
+def _is_numeric_like_text(text: str) -> bool:
+    if not text:
+        return False
+    if _contains_cjk(text):
+        return False
+
+    normalized = re.sub(r"[\s,\+\-\.:%/]", "", text)
+    return bool(normalized) and normalized.isdigit()
+
+
+def _alignment_for_cell(header: str, raw_val):
     if header == SERIAL_HEADER:
         return int(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-    if header in {"突破状态"}:
+
+    text = _normalized_alignment_text(header, raw_val)
+    if not text or text in {"--", "-"}:
+        if _is_numeric_header(header) or _is_date_like_header(header):
+            return int(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+        return int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+    if _is_numeric_like_text(text):
         return int(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+
     return int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
 
@@ -236,10 +426,12 @@ class RtTableModel(QAbstractTableModel):
             return _build_cell_tooltip(raw_val)
 
         elif role == Qt.ItemDataRole.TextAlignmentRole:
-            return _alignment_for_header(key)
+            return _alignment_for_cell(key, raw_val)
 
         elif role == Qt.ItemDataRole.FontRole:
             if key == SERIAL_HEADER:
+                return self.mono_font
+            if _is_numeric_header(key) or _is_date_like_header(key):
                 return self.mono_font
             if key in ["涨幅%", "市值", "时间", "评分", "突破状态", "区间振幅"]:
                 return self.mono_font
@@ -301,9 +493,14 @@ class RtTableModel(QAbstractTableModel):
                 
             return QColor(_c("TEXT_PRIMARY"))
 
+        elif role == Qt.ItemDataRole.BackgroundRole:
+            heat_color = _numeric_heat_color(key, raw_val)
+            if heat_color is not None:
+                return heat_color
+
         elif role == Qt.ItemDataRole.UserRole + 2:
-            if key == "突破状态":
-                badge = _status_badge_color(raw_val)
+            if _is_status_header(key):
+                badge = _status_badge_color(raw_val, key)
                 if badge:
                     return badge
 
@@ -516,7 +713,7 @@ class RtSortFilterProxyModel(QSortFilterProxyModel):
 
 import time
 from PyQt6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QApplication, QStyle
-from PyQt6.QtGui import QPainter, QPen, QBrush
+from PyQt6.QtGui import QPainter, QPen, QBrush, QPalette
 
 class StockItemDelegate(QStyledItemDelegate):
     """
@@ -529,12 +726,19 @@ class StockItemDelegate(QStyledItemDelegate):
         
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index):
         painter.save()
+        table_tokens = _theme_table_tokens()
         
         # 0. 绘制基础默认背景（借用系统的绘制，并屏蔽默认文字）
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
         widget = option.widget
         style = widget.style() if widget else QApplication.style()
+        is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        plain_style_cell = bool(index.data(Qt.ItemDataRole.UserRole + 3))
+        sorted_column = widget.sorted_column() if widget and hasattr(widget, "sorted_column") else -1
+        sorted_overlay = None
+        if not is_selected and not plain_style_cell and sorted_column == index.column():
+            sorted_overlay = _qcolor_from_token(table_tokens["sorted_column_bg"])
 
         # 1. 获取闪电更新动画数据
         flash_data = index.data(Qt.ItemDataRole.UserRole + 1)
@@ -557,6 +761,8 @@ class StockItemDelegate(QStyledItemDelegate):
             opt_bg = QStyleOptionViewItem(opt)
             opt_bg.text = ""
             style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt_bg, painter, widget)
+            if sorted_overlay is not None:
+                painter.fillRect(option.rect, sorted_overlay)
             rect = option.rect
             painter.setFont(opt.font)
             fm = painter.fontMetrics()
@@ -587,7 +793,46 @@ class StockItemDelegate(QStyledItemDelegate):
             painter.setPen(QPen(text_color))
             painter.drawText(draw_rect, Qt.AlignmentFlag.AlignCenter, str(text))
         else:
-            style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget)
+            opt_bg = QStyleOptionViewItem(opt)
+            opt_bg.text = ""
+            style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt_bg, painter, widget)
+            if sorted_overlay is not None:
+                painter.fillRect(option.rect, sorted_overlay)
+            left_padding = 8 + (table_tokens["selected_rail_width"] if is_selected else 0)
+            text_rect = option.rect.adjusted(left_padding, 0, -8, 0)
+
+            font = index.data(Qt.ItemDataRole.FontRole)
+            if isinstance(font, QFont):
+                painter.setFont(font)
+            else:
+                painter.setFont(opt.font)
+
+            text_color = index.data(Qt.ItemDataRole.ForegroundRole)
+            if not isinstance(text_color, QColor):
+                color_role = QPalette.ColorRole.HighlightedText if is_selected else QPalette.ColorRole.Text
+                text_color = opt.palette.color(color_role)
+
+            alignment = index.data(Qt.ItemDataRole.TextAlignmentRole)
+            if alignment is None:
+                alignment = int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+            elided_text = painter.fontMetrics().elidedText(
+                str(text or ""),
+                opt.textElideMode,
+                max(0, text_rect.width() - 2),
+            )
+            painter.setPen(QPen(text_color))
+            painter.drawText(text_rect, alignment, elided_text)
+
+        if is_selected:
+            rail_rect = QRect(
+                option.rect.left(),
+                option.rect.top() + 1,
+                table_tokens["selected_rail_width"],
+                max(0, option.rect.height() - 2),
+            )
+            if rail_rect.width() > 0 and rail_rect.height() > 0:
+                painter.fillRect(rail_rect, QColor(table_tokens["selected_rail_color"]))
 
         painter.restore()
 
@@ -600,6 +845,7 @@ class StockTableModel(QAbstractTableModel):
         self._headers = _with_serial_header(headers)
         self._data = data or []
         self._flash_records = {} # row -> {col: {"time": stamp, "diff": val}}
+        self._plain_style_headers = set()
 
         self.base_font = QFont()
         self.base_font.setFamilies(["Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "SimSun"])
@@ -623,6 +869,12 @@ class StockTableModel(QAbstractTableModel):
     @property
     def headers(self):
         return self._headers
+
+    def set_plain_style_headers(self, headers):
+        self._plain_style_headers = {str(header) for header in (headers or []) if str(header).strip()}
+
+    def _uses_plain_style(self, header: str) -> bool:
+        return header in self._plain_style_headers
 
     def get_row_data(self, row):
         if 0 <= row < len(self._data):
@@ -839,12 +1091,12 @@ class StockTableModel(QAbstractTableModel):
             return _build_cell_tooltip(raw_val)
 
         elif role == Qt.ItemDataRole.TextAlignmentRole:
-            return _alignment_for_header(key)
+            return _alignment_for_cell(key, raw_val)
 
         elif role == Qt.ItemDataRole.FontRole:
             if key == SERIAL_HEADER:
                 return self.mono_font
-            if key in ["现价", "涨幅%", "量比", "换手率%", "区间振幅", "市值", "流通市值", "成交额", "评分"]:
+            if _is_numeric_header(key) or _is_date_like_header(key):
                 return self.mono_font
             return self.base_font
 
@@ -856,6 +1108,8 @@ class StockTableModel(QAbstractTableModel):
                 code = str(item_dict.get("代码", ""))
                 if watchlist_vm.is_in_watchlist(code):
                     return QColor("#E879F9")  # 醒目紫粉色，用于标示自选股
+            if self._uses_plain_style(key) or _is_date_like_header(key):
+                return QColor(_c("TEXT_PRIMARY"))
                     
             if ("%" in key and "换手" not in key) or key in ["涨跌", "净额", "现价", "收盘", "最新价"]:
                 try:
@@ -868,8 +1122,9 @@ class StockTableModel(QAbstractTableModel):
                     elif pct > 0: return QColor(_c("COLOR_RISE"))
                     elif pct <= -9.0: return QColor(_c("COLOR_FALL_STRONG"))
                     elif pct < 0: return QColor(_c("COLOR_FALL"))
+                    else: return QColor(_c("COLOR_FLAT"))
                 except (ValueError, TypeError):
-                    pass
+                    return QColor(_c("COLOR_FLAT"))
             elif key == "卖方营业部":
                 val_str = str(raw_val)
                 if any(kw in val_str for kw in ["高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴", "渣打", "野村", "汇丰", "星展", "大和", "机构专用"]):
@@ -950,6 +1205,11 @@ class StockTableModel(QAbstractTableModel):
             return QColor(_c("TEXT_PRIMARY"))
 
         elif role == Qt.ItemDataRole.BackgroundRole:
+            if self._uses_plain_style(key):
+                return None
+            heat_color = _numeric_heat_color(key, raw_val)
+            if heat_color is not None:
+                return heat_color
             row_style = item_dict.get('_row_style', '')
             if row_style == 'breakout':
                 return QColor(232, 93, 93, 20)
@@ -1005,6 +1265,14 @@ class StockTableModel(QAbstractTableModel):
 
         elif role == Qt.ItemDataRole.UserRole + 1:
             return self._flash_records.get(row, {}).get(col, None)
+
+        elif role == Qt.ItemDataRole.UserRole + 2:
+            if not self._uses_plain_style(key) and _is_status_header(key):
+                return _status_badge_color(raw_val, key)
+            return None
+
+        elif role == Qt.ItemDataRole.UserRole + 3:
+            return self._uses_plain_style(key)
 
         return None
 

@@ -125,6 +125,12 @@ class KLineChartWindow(QWidget):
         self.market_badge_lbl = QLabel()
         self.market_badge_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         identity_layout.addWidget(self.market_badge_lbl)
+        self.session_badge_lbl = QLabel()
+        self.session_badge_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        identity_layout.addWidget(self.session_badge_lbl)
+        self.feed_badge_lbl = QLabel()
+        self.feed_badge_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        identity_layout.addWidget(self.feed_badge_lbl)
         identity_layout.addStretch()
         left_group.addLayout(identity_layout)
 
@@ -238,11 +244,16 @@ class KLineChartWindow(QWidget):
         try:
             self.is_fav = watchlist_vm.is_in_watchlist(self.code)
             self.btn_fav.setText("已关注" if self.is_fav else "加入关注")
+            self.btn_fav.setProperty("watching", bool(self.is_fav))
+            self.btn_fav.style().unpolish(self.btn_fav)
+            self.btn_fav.style().polish(self.btn_fav)
+            self.btn_fav.update()
             if hasattr(self, "summary_labels"):
                 self._refresh_header_context()
         except Exception as e:
             log.debug(f"[K线] 检查关注状态失败: {e}")
             self.is_fav = False
+            self.btn_fav.setProperty("watching", False)
 
     def _toggle_fav(self):
         try:
@@ -257,6 +268,45 @@ class KLineChartWindow(QWidget):
             self.info_lbl.setText(str(text or "").strip())
         if hasattr(self, "info_lbl"):
             self._apply_info_styles()
+        if hasattr(self, "feed_badge_lbl"):
+            self._apply_header_badges()
+
+    def _set_header_badge(self, label: QLabel, text: str, tone_name: str):
+        tokens = build_ui_tokens(theme_manager.current_theme)
+        tone = get_state_tone(tone_name, theme_manager.current_theme)
+        label.setText(text)
+        label.setStyleSheet(
+            f"background-color: {tone['bg']}; color: {tone['fg']}; border: 1px solid {tone['border']};"
+            f" border-radius: {tokens['radius']['pill']}px; padding: 1px 9px;"
+            f" min-height: {tokens['shell']['status_pill_min_height']}px;"
+            f" font-size: {tokens['font']['size_xs']}px; font-weight: {tokens['font']['weight_semibold']};"
+        )
+
+    def _apply_header_badges(self):
+        market = self._get_market()
+        is_offline = bool(getattr(self.data_provider, "_offline", False))
+        info_tone = getattr(self, "_info_tone", "info")
+
+        if is_offline and market == "CN":
+            feed_text, feed_tone = "本地缓存", "stale"
+            session_text, session_tone = "离线", "stale"
+        else:
+            if info_tone == "realtime":
+                feed_text, feed_tone = "实时链路", "realtime"
+            elif info_tone == "loading":
+                feed_text, feed_tone = "同步中", "focus"
+            elif info_tone == "success":
+                feed_text, feed_tone = "已同步", "success"
+            else:
+                feed_text, feed_tone = "日线工作区", "info"
+
+            if MarketCalendar.is_market_active(market):
+                session_text, session_tone = "盘中", "realtime"
+            else:
+                session_text, session_tone = "收盘", "neutral"
+
+        self._set_header_badge(self.session_badge_lbl, session_text, session_tone)
+        self._set_header_badge(self.feed_badge_lbl, feed_text, feed_tone)
 
     def _refresh_header_context(self):
         market_badge = format_kline_market_badge(self.code)
@@ -269,6 +319,8 @@ class KLineChartWindow(QWidget):
             self.nav_index_lbl.setText(
                 f"{self.current_idx + 1} / {total}" if total else "单票"
             )
+        if hasattr(self, "feed_badge_lbl"):
+            self._apply_header_badges()
         if hasattr(self, "summary_labels"):
             summary = build_kline_summary_items(self.vcp_data, getattr(self, "is_fav", False))
             for key, label in self.summary_labels.items():
@@ -420,8 +472,12 @@ class KLineChartWindow(QWidget):
 
         vcp_star = t.get('KLINE_VCP_STAR', '#FFD60A')
         fav_hover = 'rgba(255, 214, 10, 0.1)' if is_dark else 'rgba(217, 119, 6, 0.1)'
+        fav_active_bg = '#FACC15' if not is_dark else '#FFD60A'
+        fav_active_text = '#2B1900' if not is_dark else '#201300'
+        fav_active_hover = '#FDE047' if not is_dark else '#FFE083'
+        self.btn_fav.setProperty("watching", bool(getattr(self, "is_fav", False)))
         self.btn_fav.setStyleSheet(f"""
-            QPushButton {{
+            QPushButton[watching="false"] {{
                 background-color: {neutral_tone['bg']};
                 color: {vcp_star};
                 border: 1px solid {vcp_star};
@@ -430,8 +486,22 @@ class KLineChartWindow(QWidget):
                 font-weight: {font['weight_semibold']};
                 font-size: {font['size_sm']}px;
             }}
-            QPushButton:hover {{ background-color: {fav_hover}; }}
+            QPushButton[watching="false"]:hover {{ background-color: {fav_hover}; }}
+            QPushButton[watching="true"] {{
+                background-color: {fav_active_bg};
+                color: {fav_active_text};
+                border: 1px solid {fav_active_bg};
+                border-radius: {radius['md']}px;
+                padding: 0 12px;
+                font-weight: {font['weight_semibold']};
+                font-size: {font['size_sm']}px;
+            }}
+            QPushButton[watching="true"]:hover {{
+                background-color: {fav_active_hover};
+                border: 1px solid {fav_active_hover};
+            }}
         """)
+        self._apply_header_badges()
 
         self.summary_widget.setStyleSheet(
             f"background-color: {summary_bg}; border-bottom: 1px solid {summary_border};"
