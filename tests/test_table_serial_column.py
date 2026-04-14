@@ -143,6 +143,21 @@ def test_stock_table_model_dates_use_center_alignment_and_secondary_text():
         assert foreground.name() == expected_color
 
 
+def test_recent_lhb_date_sort_uses_hidden_raw_value_instead_of_mmdd_text():
+    model = StockTableModel(["代码", "名称", "最近上榜"])
+    model.update_data([
+        {"代码": "000001", "名称": "旧日期", "最近上榜": "04-13", "_最近上榜_raw": "20260413"},
+        {"代码": "000002", "名称": "新日期", "最近上榜": "04-14", "_最近上榜_raw": "20260414"},
+    ])
+    proxy = RtSortFilterProxyModel()
+    proxy.setSourceModel(model)
+
+    proxy.sort(model.headers.index("最近上榜"), Qt.SortOrder.DescendingOrder)
+
+    assert proxy.data(proxy.index(0, model.headers.index("代码")), Qt.ItemDataRole.DisplayRole) == "000002"
+    assert proxy.data(proxy.index(1, model.headers.index("代码")), Qt.ItemDataRole.DisplayRole) == "000001"
+
+
 def test_stock_table_model_uses_flat_color_for_zero_pct():
     model = StockTableModel(["代码", "名称", "涨幅%"])
     model.update_data([{"代码": "000001", "名称": "平安银行", "涨幅%": "0.00"}])

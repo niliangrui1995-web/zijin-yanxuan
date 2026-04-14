@@ -1412,6 +1412,10 @@ class StockTableModel(QAbstractTableModel):
                     return float(item_dict.get("外资净买(万)", 0) or 0)
                 except (ValueError, TypeError):
                     return 0.0
+            if key == "最近上榜":
+                raw_date = str(item_dict.get("_最近上榜_raw", "") or raw_val).strip()
+                if re.fullmatch(r'\d{8}', raw_date):
+                    return int(raw_date)
             s_val = str(raw_val).replace(',', '')
 
             if key == "日报时间":

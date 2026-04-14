@@ -1,10 +1,11 @@
 from PyQt6.QtCore import Qt
 
+from core.lhb_pool_manager import LhbPoolManager
 from ui.models.table_models import StockTableModel
 from ui.workers.lhb_worker import _build_foreign_display
 
 
-def test_build_foreign_display_generates_compact_summary_and_tooltip():
+def test_build_foreign_display_lists_all_seats_and_tooltip():
     display, tooltip = _build_foreign_display({
         "深股通": 8200.0,
         "高盛": -1200.0,
@@ -13,9 +14,19 @@ def test_build_foreign_display_generates_compact_summary_and_tooltip():
 
     assert display.startswith("净买")
     assert "深股通+" in display
-    assert "等3席" in display
+    assert "高盛-" in display
+    assert "摩根士丹利+" in display
+    assert "等3席" not in display
     assert "外资合计：" in tooltip
     assert "高盛：净卖" in tooltip
+
+
+def test_lhb_pool_manager_rebuilds_full_foreign_display_from_tooltip():
+    display = LhbPoolManager._build_full_foreign_display_from_tooltip(
+        "外资合计：净卖1.61亿\n高盛：净卖8853万\n瑞银：净卖5195万\n沪股通：净卖2004万"
+    )
+
+    assert display == "净卖1.61亿 | 高盛-8853万 / 瑞银-5195万 / 沪股通-2004万"
 
 
 def test_stock_table_model_sorts_foreign_column_by_numeric_net():

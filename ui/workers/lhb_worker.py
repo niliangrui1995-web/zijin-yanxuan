@@ -42,7 +42,7 @@ def _build_foreign_display(branch_details_map: dict[str, float]) -> tuple[str, s
         summary = "平衡"
 
     short_parts = []
-    for branch, amount in sorted_items[:2]:
+    for branch, amount in sorted_items:
         if amount > 0.01:
             short_parts.append(f"{branch}+{_format_wan_amount(amount)}")
         elif amount < -0.01:
@@ -53,8 +53,6 @@ def _build_foreign_display(branch_details_map: dict[str, float]) -> tuple[str, s
     display = summary
     if short_parts:
         display = f"{summary} | {' / '.join(short_parts)}"
-        if len(sorted_items) > 2:
-            display += f" 等{len(sorted_items)}席"
 
     tooltip_lines = [f"外资合计：{summary}"]
     for branch, amount in sorted_items:

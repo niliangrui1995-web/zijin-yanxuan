@@ -49,10 +49,67 @@ class LhbPoolManager:
                 raw = json.load(f)
             self._data = raw.get("daily_data", {})
             self._last_auto_fetch_date = raw.get("last_auto_fetch_date", "")
+            migrated_count = self._upgrade_legacy_foreign_display_cache()
+            if migrated_count:
+                self.save()
+                log.info(f"[龙虎榜池] 已升级 {migrated_count} 条旧版外资席位摘要缓存")
             log.info(f"[龙虎榜池] 缓存加载成功，包含 {len(self._data)} 个交易日数据")
         except Exception as e:
             log.warning(f"[龙虎榜池] 缓存加载失败，将重建: {e}")
             self._data = {}
+
+    @staticmethod
+    def _build_full_foreign_display_from_tooltip(tooltip: str) -> str:
+        tooltip_text = str(tooltip or "").strip()
+        if not tooltip_text:
+            return ""
+        if tooltip_text == "当日未发现外资席位上榜":
+            return "未现身"
+
+        lines = [line.strip() for line in tooltip_text.splitlines() if line.strip()]
+        if not lines:
+            return ""
+
+        summary_prefix = "外资合计："
+        summary_line = lines[0]
+        if not summary_line.startswith(summary_prefix):
+            return ""
+
+        summary = summary_line[len(summary_prefix):].strip()
+        short_parts: list[str] = []
+        for line in lines[1:]:
+            if "：" not in line:
+                continue
+            branch, detail = line.split("：", 1)
+            detail = detail.strip()
+            if detail.startswith("净买"):
+                short_parts.append(f"{branch}+{detail[2:]}")
+            elif detail.startswith("净卖"):
+                short_parts.append(f"{branch}-{detail[2:]}")
+            elif detail.startswith("平衡"):
+                short_parts.append(f"{branch}±0")
+
+        if short_parts:
+            return f"{summary} | {' / '.join(short_parts)}"
+        return summary
+
+    def _upgrade_legacy_foreign_display_cache(self) -> int:
+        updated_count = 0
+        for records in self._data.values():
+            if not isinstance(records, list):
+                continue
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                display = str(record.get("外资净买入") or "").strip()
+                if "等" not in display or "席" not in display:
+                    continue
+                tooltip = record.get("_外资净买入_tooltip")
+                full_display = self._build_full_foreign_display_from_tooltip(tooltip)
+                if full_display and full_display != display:
+                    record["外资净买入"] = full_display
+                    updated_count += 1
+        return updated_count
 
     def save(self):
         """落盘保存"""
@@ -157,7 +214,7 @@ class LhbPoolManager:
                            用于通过 K 线缓存行数判断上市天数。
                            没有传入则跳过次新股过滤。
 
-        返回：按 买点✅优先 → 最近上榜日降序 → 涨幅%降序 排列的列表
+        返回：按 最近上榜日降序 → 买点✅优先 → 涨幅%降序 排列的列表
         """
         if not self._data:
             return []
@@ -183,7 +240,6 @@ class LhbPoolManager:
 
                 net_buy = 0.0
                 jg_net = 0.0
-                wz_net = 0.0
                 try:
                     net_buy = float(rec.get("上榜净买额(万)", 0))
                 except (ValueError, TypeError):
@@ -192,16 +248,11 @@ class LhbPoolManager:
                     jg_net = float(rec.get("机构净买(万)", 0))
                 except (ValueError, TypeError):
                     pass
-                try:
-                    wz_net = float(rec.get("外资净买(万)", 0))
-                except (ValueError, TypeError):
-                    pass
 
                 # 过滤合集：
                 # 1. 榜单总净买入必须为正
                 # 2. 机构净买入必须为正
-                # 3. 外资净买入必须 >= 0（即：如果有外资出没它必须是净买的；如果没有外资参与它等于 0 也是允许放行的；唯一剔除的是外资砸盘流出的股票）
-                if net_buy > 0 and jg_net > 0 and wz_net >= 0:
+                if net_buy > 0 and jg_net > 0:
                     qualifying_codes.add(code)
                     code_hit_count[code] = code_hit_count.get(code, 0) + 1
 
@@ -244,13 +295,12 @@ class LhbPoolManager:
                     try:
                         net_buy = float(rec.get("上榜净买额(万)", 0))
                         jg_net = float(rec.get("机构净买(万)", 0))
-                        wz_net = float(rec.get("外资净买(万)", 0))
                     except (ValueError, TypeError):
-                        net_buy = jg_net = wz_net = 0.0
+                        net_buy = jg_net = 0.0
 
-                    # 【核心需求】：最后5列数据，必须显示【最近一次符合筛选条件的数据】
-                    # 即要求：上榜净买额 > 0 且 机构净买 > 0 且 外资净买 >= 0
-                    if not (net_buy > 0 and jg_net > 0 and wz_net >= 0):
+                    # 【核心需求】：最后 5 列数据，必须显示【最近一次符合筛选条件的数据】
+                    # 当前口径：上榜净买额 > 0 且 机构净买 > 0，外资不设门槛
+                    if not (net_buy > 0 and jg_net > 0):
                         continue
 
                     record = dict(rec)
@@ -301,12 +351,12 @@ class LhbPoolManager:
 
                     latest_records[code] = record
 
-        # 排序：优先把位于买点（即打出 ✅ 的标的）排在最前面，其次按最近上榜日由近到远（降序），最后同一天按涨跌幅倒序（降序）
+        # 排序：优先按最近上榜日由近到远（降序），同一天优先展示买点✅，最后按涨跌幅倒序（降序）
         result = list(latest_records.values())
         result.sort(
             key=lambda x: (
-                1 if x.get("买点", "") != "" else 0,
                 str(x.get("最近上榜", "")),
+                1 if x.get("买点", "") != "" else 0,
                 float(x.get("涨幅%", 0)),
             ),
             reverse=True,

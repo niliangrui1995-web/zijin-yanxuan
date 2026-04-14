@@ -223,6 +223,7 @@ class LhbTab(BaseStockTab):
             # "最近上榜" 格式化：yyyyMMdd -> MM-dd 更紧凑
             raw_date = str(row_dict.get("最近上榜", ""))
             if len(raw_date) == 8:
+                row_dict["_最近上榜_raw"] = raw_date
                 row_dict["最近上榜"] = f"{raw_date[4:6]}-{raw_date[6:8]}"
             row_data.append(row_dict)
 
