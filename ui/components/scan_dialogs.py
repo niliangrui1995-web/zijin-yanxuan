@@ -85,7 +85,6 @@ class VCPScanRangeDialog(QDialog):
         self.resize(520, 240)
 
         self._syncing_dates = False
-        self._active_preset: str | None = None
         self._preset_buttons: dict[str, QPushButton] = {}
 
         latest_trade_date = _latest_cn_trade_date()
@@ -175,7 +174,6 @@ class VCPScanRangeDialog(QDialog):
         self._apply_preset(self.PRESET_RECENT_30)
 
     def _set_button_active(self, preset_key: str | None):
-        self._active_preset = preset_key
         for key, button in self._preset_buttons.items():
             button.setProperty("state", "active" if key == preset_key else "")
             button.style().unpolish(button)

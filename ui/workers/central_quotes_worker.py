@@ -52,10 +52,6 @@ class CentralQuotesService(QObject):
         self._last_heartbeat_signature = None
         self._last_heartbeat_logged_at = 0.0
 
-    @property
-    def _is_market_active(self):
-        return MarketCalendar.is_market_active()
-
     def _get_all_active_codes(self) -> set[str]:
         codes = set()
         mw = self.main_window

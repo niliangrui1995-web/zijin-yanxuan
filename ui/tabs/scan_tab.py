@@ -2,7 +2,7 @@ import os
 import datetime
 import json
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QVBoxLayout, QLabel,
     QHeaderView, QPushButton, QLineEdit, QSpinBox, QDoubleSpinBox, QToolButton
 )
 from ui.components.toast_widget import show_toast

@@ -6,7 +6,6 @@ import random
 import threading
 import concurrent.futures
 import pandas as pd
-from datetime import datetime
 
 from vcp.constants import (
     CACHE_DIR, MAX_HISTORY_BARS, INCREMENTAL_BARS,
@@ -21,7 +20,7 @@ from vcp.data_provider_local import (
 )
 from vcp.utils import _load_tdx_local_config
 
-from core.json_cache import load_json_file, save_json_file, remove_cache_file
+from core.json_cache import remove_cache_file
 from core.logger import get_logger
 from core.market_calendar import MarketCalendar
 _log = get_logger(__name__)
@@ -499,23 +498,6 @@ class TdxDataProvider:
             self._connect_api_to_best_server(api, time_out=5, require_security_count=True, allow_unconnected=True)
             self.thread_local.api = api
         return self.thread_local.api
-
-    def _reset_thread_api(self, reason: str = ""):
-        self._reset_thread_api()
-        self._rt_runtime_cooldown_until = 0.0
-        self._rt_runtime_consecutive_failures = 0
-        self._reset_realtime_runtime("强制刷新实时行情连接")
-        if False and hasattr(self.thread_local, 'api'):
-            try:
-                self.thread_local.api.disconnect()
-            except Exception as _e:
-                _log.debug(f"[网络] 断开旧 API 连接时异常: {_e}")
-            try:
-                delattr(self.thread_local, 'api')
-            except Exception:
-                pass
-        if reason:
-            _log.warning(f"[网络] {reason}")
 
     def _apply_forward_adjustment(self, api, market, code, df):
         return apply_forward_adjustment(api, market, code, df, self._local_gbbq)

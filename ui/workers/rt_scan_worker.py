@@ -1,6 +1,5 @@
 # ui/workers.py - 后台工作线程
 # 从 main_window_qt.py 拆分出来的 ScanWorker 和 RtScanWorker
-import os
 import math
 import datetime
 from PyQt6.QtCore import QThread, pyqtSignal

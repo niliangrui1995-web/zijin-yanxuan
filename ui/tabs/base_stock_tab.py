@@ -16,7 +16,7 @@ import time
 import webbrowser
 
 from PyQt6.QtCore import QCoreApplication, Qt
-from PyQt6.QtWidgets import QWidget, QLabel, QHBoxLayout, QVBoxLayout, QFrame, QToolButton, QPushButton
+from PyQt6.QtWidgets import QWidget, QLabel, QHBoxLayout, QFrame, QToolButton, QPushButton
 
 from core.event_bus import event_bus
 from ui.theme_tokens import build_ui_tokens

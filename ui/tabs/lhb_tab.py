@@ -10,11 +10,10 @@ ui/tabs/lhb_tab.py
 - 首次使用自动回填缺失的历史交易日数据
 """
 
-import datetime
 import time
 
 from PyQt6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit,
+    QVBoxLayout, QPushButton, QLabel, QLineEdit,
 )
 from PyQt6.QtCore import Qt, QTimer
 

@@ -5,7 +5,7 @@ import os
 import datetime
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QVBoxLayout, QLabel,
     QHeaderView, QPushButton, QLineEdit, QAbstractItemView,
     QFileDialog
 )

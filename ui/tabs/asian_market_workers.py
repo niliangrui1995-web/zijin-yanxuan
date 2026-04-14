@@ -49,13 +49,6 @@ class AsianMarketWorker(QThread):
         self._cycle_done = threading.Event()
         self._cycle_done.set()
         self._last_status = ""
-        self._markets = sorted(
-            {
-                MarketCalendar.infer_market(code)
-                for code in self.codes
-                if str(code or "").strip()
-            }
-        ) or ["TW", "HK", "T", "KS"]
 
     def stop(self):
         self._is_running = False

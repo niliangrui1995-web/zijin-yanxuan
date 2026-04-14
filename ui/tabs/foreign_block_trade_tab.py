@@ -12,7 +12,7 @@ import sys
 import pandas as pd
 
 from PyQt6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QHeaderView, QPushButton, QLabel, QLineEdit, QComboBox
+    QVBoxLayout, QHeaderView, QPushButton, QLabel, QLineEdit, QComboBox
 )
 from PyQt6.QtCore import Qt, QTimer
 

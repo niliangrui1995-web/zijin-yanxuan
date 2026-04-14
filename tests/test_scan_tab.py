@@ -1,11 +1,8 @@
 # -*- coding: utf-8 -*-
-from PyQt6.QtWidgets import QApplication
-
 from ui.tabs.scan_tab import ScanTab
 
 
 def test_scan_tab_idle_status_summary_is_not_blank(monkeypatch):
-    app = QApplication.instance() or QApplication([])
     monkeypatch.setattr("ui.tabs.scan_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
 
     tab = ScanTab(data_provider=None, engine=None)
@@ -17,7 +14,6 @@ def test_scan_tab_idle_status_summary_is_not_blank(monkeypatch):
 
 
 def test_merge_scan_results_prefers_newer_trade_date(monkeypatch):
-    app = QApplication.instance() or QApplication([])
     monkeypatch.setattr("ui.tabs.scan_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
 
     tab = ScanTab(data_provider=None, engine=None)
@@ -45,7 +41,6 @@ def test_merge_scan_results_prefers_newer_trade_date(monkeypatch):
 
 
 def test_merge_scan_results_keeps_existing_rows_when_incremental_scan_has_no_hits(monkeypatch):
-    app = QApplication.instance() or QApplication([])
     monkeypatch.setattr("ui.tabs.scan_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
 
     tab = ScanTab(data_provider=None, engine=None)

@@ -56,7 +56,7 @@ def _numpy_rank_pct_axis1(matrix: np.ndarray) -> np.ndarray:
     #7: 优先使用 scipy.stats.rankdata 批量排名（C 级实现），
     比原先的 Python for 循环快 2-3x。scipy 不可用时自动退化为手写循环。
     """
-    n_rows, n_cols = matrix.shape
+    n_rows, _ = matrix.shape
     result = np.full_like(matrix, np.nan)
 
     try:

@@ -1,5 +1,4 @@
 import os
-import datetime
 from vcp.constants import APP_VERSION, RPS_CACHE_FILE
 from ui.components.kline_window_manager import kline_manager
 from PyQt6.QtWidgets import (
@@ -27,7 +26,6 @@ from ui.components.main_window_shell import (
     MainWindowStatusBar,
     apply_chrome_theme,
     inject_standalone_tabbar,
-    refresh_system_menu_theme,
     setup_custom_titlebar,
     setup_system_menu,
 )
@@ -149,12 +147,6 @@ class MainWindowQT(QMainWindow):
         from ui.workers.central_quotes_worker import CentralQuotesService
         self.central_quotes_svc = CentralQuotesService(self, self.data_provider)
 
-    def _get_logical_work_area(self):
-        """原生窗口直接获取可用区域即可，无需魔改扣除像素"""
-        from PyQt6.QtWidgets import QApplication
-        screen = QApplication.primaryScreen()
-        return screen.availableGeometry()
-
     # 联网成功后的各 Tab 刷新逻辑由 _on_smart_startup_online_done 负责
 
     def _on_smart_startup_online_done(self):
@@ -234,10 +226,6 @@ class MainWindowQT(QMainWindow):
         """update progress"""
         if self._splash:
             self._splash.set_progress(value, status)
-
-    def _refresh_gear_menu_theme(self):
-        """同步刷新齿轮按钮与设置菜单的主题样式。"""
-        refresh_system_menu_theme(self)
 
     def _init_gear_menu(self):
         """在标题栏右侧注入系统菜单。"""
