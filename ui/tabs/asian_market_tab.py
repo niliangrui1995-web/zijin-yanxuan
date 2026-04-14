@@ -42,6 +42,7 @@ class AsianMarketTab(BaseStockTab):
         self._load_cache_pending = False
         self._last_asian_success_at = None
         self._last_health_log_at = 0.0
+        self._last_health_signature = None
         self.cache_thread = None
         self._init_ui()
         
@@ -298,6 +299,8 @@ class AsianMarketTab(BaseStockTab):
         self.cache_thread.start()
 
     def _log_asian_health(self):
+        from core.market_calendar import MarketCalendar
+
         now_ts = datetime.datetime.now().timestamp()
         if now_ts - self._last_health_log_at < 60:
             return
@@ -309,11 +312,28 @@ class AsianMarketTab(BaseStockTab):
             or (getattr(self, "cache_thread", None) is not None and self.cache_thread.isRunning())
         )
         last_success = self._last_asian_success_at.strftime("%Y-%m-%d %H:%M:%S") if self._last_asian_success_at else "-"
+        health_signature = (
+            self._runtime_state_text(),
+            last_success,
+            cache_syncing,
+            worker_running,
+            len(getattr(self, 'row_data', []) or []),
+        )
+        should_log = MarketCalendar.is_quote_refresh_time()
+        if not should_log:
+            signature_changed = health_signature != self._last_health_signature
+            interval_reached = (now_ts - self._last_health_log_at) >= 1800
+            should_log = signature_changed or interval_reached
+
+        if not should_log:
+            return
+
         log.info(
             f"[亚洲页] 健康 状态={self._runtime_state_text()} | "
             f"上次成功={last_success} | 缓存同步中={cache_syncing} | "
             f"后台运行中={worker_running} | 行数={len(getattr(self, 'row_data', []) or [])}"
         )
+        self._last_health_signature = health_signature
         self._last_health_log_at = now_ts
 
     def _on_minute_tick(self):

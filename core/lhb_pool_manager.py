@@ -214,7 +214,7 @@ class LhbPoolManager:
                            用于通过 K 线缓存行数判断上市天数。
                            没有传入则跳过次新股过滤。
 
-        返回：按 最近上榜日降序 → 买点✅优先 → 涨幅%降序 排列的列表
+        返回：按 最近上榜日降序 → 买点触发优先 → 涨幅%降序 排列的列表
         """
         if not self._data:
             return []
@@ -304,6 +304,7 @@ class LhbPoolManager:
                         continue
 
                     record = dict(rec)
+                    record["买点"] = ""
                     record["上榜次数"] = code_hit_count.get(code, 1)
                     record["最近上榜"] = record.get("上榜日期", date_str)
                     
@@ -345,13 +346,13 @@ class LhbPoolManager:
                                 # 3. 终盘/现价必须收稳、守住均线支撑：last_close > ma20 * 0.95
                                 # 4. 当天必须是红 K 线：last_close >= last_open
                                 if is_red_candle and (ma10 > ma20) and (last_open < ma10) and (last_close > ma20 * 0.95):
-                                    record["买点"] = "✅"
+                                    record["买点"] = "触发"
                         except Exception as e:
                             log.debug(f"[龙虎榜池] 计算 {code} 股价位置失败: {e}")
 
                     latest_records[code] = record
 
-        # 排序：优先按最近上榜日由近到远（降序），同一天优先展示买点✅，最后按涨跌幅倒序（降序）
+        # 排序：优先按最近上榜日由近到远（降序），同一天优先展示买点触发，最后按涨跌幅倒序（降序）
         result = list(latest_records.values())
         result.sort(
             key=lambda x: (

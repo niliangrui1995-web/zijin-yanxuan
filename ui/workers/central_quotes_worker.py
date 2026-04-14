@@ -49,6 +49,8 @@ class CentralQuotesService(QObject):
 
         self._tick_count = 0
         self._heartbeat_every_ticks = 6
+        self._last_heartbeat_signature = None
+        self._last_heartbeat_logged_at = 0.0
 
     @property
     def _is_market_active(self):
@@ -167,6 +169,28 @@ class CentralQuotesService(QObject):
         )
         cooldown_until = float(runtime_stats.get("cooldown_until") or 0)
         cooldown_left = max(0, int(cooldown_until - time.time()))
+        now_ts = time.time()
+        heartbeat_signature = (
+            active_codes_count if active_codes_count is not None else "-",
+            stats.get("rt_quote_cache_size", 0) if isinstance(stats, dict) else 0,
+            stats.get("history_symbol_count", 0) if isinstance(stats, dict) else 0,
+            runtime_stats.get("inflight", 0),
+            last_success_text,
+            runtime_stats.get("consecutive_failures", 0),
+            runtime_stats.get("reconnect_count", 0),
+            cooldown_left,
+            runtime_stats.get("worker_alive", False),
+            total_threads,
+            pytdx_threads,
+        )
+        should_log = MarketCalendar.is_quote_refresh_time()
+        if not should_log:
+            signature_changed = heartbeat_signature != self._last_heartbeat_signature
+            interval_reached = (now_ts - self._last_heartbeat_logged_at) >= 1800
+            should_log = signature_changed or interval_reached
+
+        if not should_log:
+            return
 
         log.info(
             "[报价站] 心跳 "
@@ -182,6 +206,8 @@ class CentralQuotesService(QObject):
             f"总线程={total_threads} "
             f"pytdx线程={pytdx_threads}"
         )
+        self._last_heartbeat_signature = heartbeat_signature
+        self._last_heartbeat_logged_at = now_ts
 
     def _emit_off_market_snapshot(self, codes: set[str]):
         if self._off_market_snapshot_emitted or not codes or self.data_provider is None:

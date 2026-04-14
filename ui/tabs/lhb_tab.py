@@ -320,7 +320,7 @@ class LhbTab(BaseStockTab):
             self._display_pool(pool)
             event_bus.sig_system_log.emit(
                 "info",
-                self._ensure_log_line(f"[龙虎榜池] ✅ 回填完成 | {len(results)}天 | 入池{len(pool)}只")
+                self._ensure_log_line(f"[龙虎榜池] 回填完成 | {len(results)}天 | 入池{len(pool)}只")
             )
 
         def _on_backfill_error(error_message: str):
@@ -433,11 +433,11 @@ class LhbTab(BaseStockTab):
             pool = self.pool_manager.compute_pool(data_provider=self.data_provider, engine=self._get_engine())
             self._display_pool(pool)
             if status == "empty":
-                summary = f"[龙虎榜池] ✅ {date_str} 自动抓取完成 | 无可用数据 | 池中{len(pool)}只"
+                summary = f"[龙虎榜池] {date_str} 自动抓取完成 | 无可用数据 | 池中{len(pool)}只"
             elif status == "error":
-                summary = f"[龙虎榜池] ✅ {date_str} 自动抓取完成 | 异常后记0条 | 池中{len(pool)}只"
+                summary = f"[龙虎榜池] {date_str} 自动抓取完成 | 异常后记0条 | 池中{len(pool)}只"
             else:
-                summary = f"[龙虎榜池] ✅ {date_str} 自动抓取完成 | {len(records) if records else 0}条 | 池中{len(pool)}只"
+                summary = f"[龙虎榜池] {date_str} 自动抓取完成 | {len(records) if records else 0}条 | 池中{len(pool)}只"
             event_bus.sig_system_log.emit("info", self._ensure_log_line(summary))
 
         def _on_error(error_message: str):
