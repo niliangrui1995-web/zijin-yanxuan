@@ -1,5 +1,6 @@
 # data_provider.py - 数据中台（动态测速池） # 从 vcp_hunter.pyw 提取 TdxDataProvider 类，零逻辑变更
 import os
+import queue
 import time
 import random
 import threading
@@ -30,37 +31,131 @@ _log = get_logger(__name__)
 
 RT_QUOTE_CACHE_TTL_SEC = 180.0
 RT_QUOTE_CACHE_MAX_ENTRIES = 4096
+class _RealtimeQuoteRuntime:
+    """Own a single pytdx quote connection and execute requests serially."""
 
+    def __init__(self, provider):
+        self.provider = provider
+        self._queue = queue.Queue()
+        self._stop_event = threading.Event()
+        self._lock = threading.RLock()
+        self._thread = threading.Thread(
+            target=self._worker_loop,
+            daemon=True,
+            name="tdx-realtime-owner",
+        )
+        self._api = None
+        self._server = None
+        self._inflight = 0
+        self._last_success_at = 0.0
+        self._consecutive_failures = 0
+        self._reconnect_count = 0
+        self._thread.start()
 
-def _run_blocking_call_with_timeout(fn, timeout_sec: float, timeout_message: str):
-    """用守护线程包裹阻塞网络调用，超时后快速失败，避免整条链路卡死。"""
-    if timeout_sec is None or timeout_sec <= 0:
-        return fn()
+    def is_alive(self) -> bool:
+        return self._thread.is_alive()
 
-    done = threading.Event()
-    state = {}
+    def snapshot(self) -> dict:
+        with self._lock:
+            return {
+                "inflight": self._inflight,
+                "last_success_at": self._last_success_at,
+                "consecutive_failures": self._consecutive_failures,
+                "reconnect_count": self._reconnect_count,
+                "worker_alive": self._thread.is_alive(),
+                "server": self._server,
+            }
 
-    def _runner():
+    def close(self):
+        self._stop_event.set()
+        self._disconnect_api()
         try:
-            state["result"] = fn()
+            self._queue.put_nowait(None)
+        except Exception:
+            pass
+
+    def request(self, params_list, timeout_sec: float):
+        if self._stop_event.is_set():
+            raise RuntimeError("realtime runtime is closed")
+
+        state = {
+            "params": list(params_list),
+            "done": threading.Event(),
+            "result": None,
+            "error": None,
+        }
+        with self._lock:
+            self._inflight += 1
+        self._queue.put(state)
+
+        if not state["done"].wait(timeout_sec):
+            raise TimeoutError(
+                f"realtime quote batch timeout ({timeout_sec:.0f}s, {len(params_list)} symbols)"
+            )
+
+        if state["error"] is not None:
+            raise state["error"]
+        return state["result"] or []
+
+    def _ensure_api(self):
+        with self._lock:
+            if self._api is not None:
+                return self._api
+
+        api = self.provider._create_api_client()
+        server = self.provider._connect_api_to_best_server(
+            api,
+            time_out=5,
+            require_security_count=True,
+        )
+        with self._lock:
+            self._api = api
+            self._server = server
+            self._reconnect_count += 1
+            return self._api
+
+    def _disconnect_api(self):
+        with self._lock:
+            api = self._api
+            self._api = None
+            self._server = None
+        if api is None:
+            return
+        try:
+            api.disconnect()
         except Exception as exc:
-            state["error"] = exc
-        finally:
-            done.set()
+            _log.debug(f"[network] disconnect realtime pytdx failed: {exc}")
 
-    worker = threading.Thread(
-        target=_runner,
-        daemon=True,
-        name="tdx-blocking-call-guard",
-    )
-    worker.start()
+    def _worker_loop(self):
+        while not self._stop_event.is_set():
+            try:
+                state = self._queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
 
-    if not done.wait(timeout_sec):
-        raise TimeoutError(timeout_message)
+            if state is None:
+                continue
 
-    if "error" in state:
-        raise state["error"]
-    return state.get("result")
+            try:
+                api = self._ensure_api()
+                quotes = api.get_security_quotes(state["params"])
+                if not quotes:
+                    raise RuntimeError("empty realtime quote response")
+                with self._lock:
+                    self._last_success_at = time.time()
+                    self._consecutive_failures = 0
+                state["result"] = quotes
+            except Exception as exc:
+                with self._lock:
+                    self._consecutive_failures += 1
+                state["error"] = exc
+                self._disconnect_api()
+            finally:
+                with self._lock:
+                    self._inflight = max(0, self._inflight - 1)
+                state["done"].set()
+
+        self._disconnect_api()
 
 
 class TdxDataProvider:
@@ -82,6 +177,17 @@ class TdxDataProvider:
         self._rt_quote_time = {}
         self._rt_quote_lock = threading.Lock()
         self._rt_api_call_timeout_sec = 8.0
+        self._rt_runtime_lock = threading.RLock()
+        self._rt_runtime = None
+        self._rt_runtime_failure_threshold = 3
+        self._rt_runtime_cooldown_sec = 300.0
+        self._rt_runtime_cooldown_until = 0.0
+        self._rt_runtime_consecutive_failures = 0
+        self._rt_runtime_last_success_at = 0.0
+        self._rt_runtime_reconnect_archived = 0
+        self._rt_runtime_last_error = ""
+        self._rt_runtime_thread_threshold = 4
+        self._rt_runtime_dedup_window_sec = 0.5
         self.code2name = {}
         self._offline = offline
         self._is_trading_day = (
@@ -137,10 +243,12 @@ class TdxDataProvider:
         removed = self._prune_rt_quote_cache(now=now)
         with self._rt_quote_lock:
             rt_quote_cache_size = len(self._rt_quote_cache)
+        rt_runtime = self.get_realtime_runtime_stats()
         return {
             "removed_rt_quotes": removed,
             "rt_quote_cache_size": rt_quote_cache_size,
             "history_symbol_count": len(self.cache_data),
+            "rt_runtime": rt_runtime,
         }
 
     def _downcast_memory(self):
@@ -253,25 +361,165 @@ class TdxDataProvider:
         )
         return df
 
+    def _create_api_client(self):
+        return self.TdxHq_API(auto_retry=False, heartbeat=False)
+
+    def _connect_api_to_best_server(
+        self,
+        api,
+        *,
+        time_out: float = 5,
+        require_security_count: bool = True,
+        allow_unconnected: bool = False,
+    ):
+        last_error = None
+        for ip, port in self.server_pool:
+            try:
+                if not api.connect(ip, port, time_out=time_out):
+                    last_error = ConnectionError(f"connect returned False for {ip}:{port}")
+                    continue
+                if require_security_count and api.get_security_count(0) <= 0:
+                    last_error = ConnectionError(f"invalid security count from {ip}:{port}")
+                    try:
+                        api.disconnect()
+                    except Exception:
+                        pass
+                    continue
+                return (ip, port)
+            except (TimeoutError, OSError, ConnectionError, ValueError) as exc:
+                last_error = exc
+                _log.debug(f"[网络] 测速连接节点失败 {ip}:{port} - {exc}")
+            except Exception as exc:
+                last_error = exc
+                _log.debug(f"[网络] 测速连接节点失败 {ip}:{port} - {exc}")
+            try:
+                api.disconnect()
+            except Exception:
+                pass
+
+        if allow_unconnected:
+            return None
+        if last_error is not None:
+            raise ConnectionError("unable to connect to any pytdx server") from last_error
+        raise ConnectionError("tdx server pool is empty")
+
+    def _archive_realtime_runtime(self, runtime):
+        if runtime is None:
+            return
+        try:
+            stats = runtime.snapshot()
+        except Exception:
+            return
+        self._rt_runtime_last_success_at = max(
+            float(self._rt_runtime_last_success_at or 0),
+            float(stats.get("last_success_at") or 0),
+        )
+        self._rt_runtime_reconnect_archived += int(stats.get("reconnect_count") or 0)
+
+    def _ensure_realtime_runtime(self):
+        now = time.time()
+        if now < float(self._rt_runtime_cooldown_until or 0):
+            remaining = max(1, int(self._rt_runtime_cooldown_until - now))
+            raise TimeoutError(f"realtime runtime cooldown active, {remaining}s remaining")
+
+        with self._rt_runtime_lock:
+            runtime = self._rt_runtime
+            if runtime is not None and runtime.is_alive():
+                return runtime
+            if runtime is not None:
+                self._archive_realtime_runtime(runtime)
+                self._rt_runtime = None
+            runtime = _RealtimeQuoteRuntime(self)
+            self._rt_runtime = runtime
+            return runtime
+
+    def _reset_realtime_runtime(self, reason: str = ""):
+        runtime = None
+        with self._rt_runtime_lock:
+            runtime = self._rt_runtime
+            self._rt_runtime = None
+
+        if runtime is not None:
+            self._archive_realtime_runtime(runtime)
+            runtime.close()
+        if reason:
+            self._rt_runtime_last_error = reason
+            _log.warning(f"[realtime] {reason}")
+
+    def _register_realtime_success(self):
+        self._rt_runtime_consecutive_failures = 0
+        self._rt_runtime_last_error = ""
+        if time.time() >= float(self._rt_runtime_cooldown_until or 0):
+            self._rt_runtime_cooldown_until = 0.0
+
+    def _enter_realtime_cooldown(self, reason: str, cooldown_sec: float | None = None):
+        cooldown_sec = (
+            float(cooldown_sec)
+            if cooldown_sec is not None
+            else float(self._rt_runtime_cooldown_sec)
+        )
+        self._rt_runtime_cooldown_until = time.time() + cooldown_sec
+        self._rt_runtime_last_error = reason
+        self._reset_realtime_runtime(reason)
+        _log.error(f"[realtime] enter cooldown for {int(cooldown_sec)}s: {reason}")
+
+    def _register_realtime_failure(self, reason: str):
+        self._rt_runtime_consecutive_failures += 1
+        self._rt_runtime_last_error = reason
+        self._reset_realtime_runtime(reason)
+        if self._rt_runtime_consecutive_failures >= self._rt_runtime_failure_threshold:
+            self._enter_realtime_cooldown(reason)
+
+    def _submit_realtime_quote_request(self, params_list, timeout_sec: float):
+        runtime = self._ensure_realtime_runtime()
+        quotes = runtime.request(params_list, timeout_sec)
+        runtime_stats = runtime.snapshot()
+        self._rt_runtime_last_success_at = max(
+            float(self._rt_runtime_last_success_at or 0),
+            float(runtime_stats.get("last_success_at") or 0),
+        )
+        return quotes
+
+    def get_realtime_runtime_stats(self) -> dict:
+        with self._rt_runtime_lock:
+            runtime = self._rt_runtime
+
+        runtime_stats = runtime.snapshot() if runtime is not None else {}
+        return {
+            "inflight": int(runtime_stats.get("inflight") or 0),
+            "last_success_at": max(
+                float(self._rt_runtime_last_success_at or 0),
+                float(runtime_stats.get("last_success_at") or 0),
+            ),
+            "consecutive_failures": int(self._rt_runtime_consecutive_failures or 0),
+            "reconnect_count": int(self._rt_runtime_reconnect_archived or 0)
+            + int(runtime_stats.get("reconnect_count") or 0),
+            "cooldown_until": float(self._rt_runtime_cooldown_until or 0),
+            "worker_alive": bool(runtime_stats.get("worker_alive")),
+            "last_error": self._rt_runtime_last_error,
+        }
+
+    def protect_against_thread_anomaly(self, pytdx_thread_count: int, threshold: int | None = None) -> bool:
+        threshold = int(threshold or self._rt_runtime_thread_threshold)
+        if pytdx_thread_count <= threshold:
+            return False
+        reason = f"pytdx thread anomaly detected: {pytdx_thread_count}>{threshold}"
+        self._enter_realtime_cooldown(reason)
+        return True
+
     def _get_thread_api(self):
         if not hasattr(self.thread_local, "api"):
-            api = self.TdxHq_API(auto_retry=True, heartbeat=True)
-            for ip, port in self.server_pool:
-                try:
-                    if api.connect(ip, port, time_out=5) and api.get_security_count(0) > 0:
-                        break
-                except (TimeoutError, OSError, ConnectionError, ValueError) as e:
-                    _log.debug(f"[网络] 测速连接节点失败 {ip}:{port} - {e}")
-                    continue
-                except Exception as e:
-                    # pytdx 会抛出自定义异常类型，按网络失败处理并尝试下一个节点
-                    _log.debug(f"[网络] 测速连接节点失败 {ip}:{port} - {e}")
-                    continue
+            api = self._create_api_client()
+            self._connect_api_to_best_server(api, time_out=5, require_security_count=True, allow_unconnected=True)
             self.thread_local.api = api
         return self.thread_local.api
 
     def _reset_thread_api(self, reason: str = ""):
-        if hasattr(self.thread_local, 'api'):
+        self._reset_thread_api()
+        self._rt_runtime_cooldown_until = 0.0
+        self._rt_runtime_consecutive_failures = 0
+        self._reset_realtime_runtime("force refresh realtime connection")
+        if False and hasattr(self.thread_local, 'api'):
             try:
                 self.thread_local.api.disconnect()
             except Exception as _e:
@@ -693,7 +941,10 @@ class TdxDataProvider:
             except Exception as _e:
                 _log.debug(f"[网络] 断开旧 API 连接时异常: {_e}")
             delattr(self.thread_local, 'api')
-            
+        self._rt_runtime_cooldown_until = 0.0
+        self._rt_runtime_consecutive_failures = 0
+        self._reset_realtime_runtime("强制刷新 realtime 连接")
+
         _log.info("[网络] ✅ 强制重连成功，已刷新优质节点。")
 
     def test_network(self, timeout=3):
@@ -729,162 +980,127 @@ class TdxDataProvider:
 
     def fetch_realtime_quotes_batch(self, codes, _retry_once=True):
         """Fetch realtime quotes in batches of up to 80 symbols."""
+        normalized_codes = [
+            str(code).strip()
+            for code in dict.fromkeys(codes or [])
+            if str(code or "").strip()
+        ]
+        if not normalized_codes:
+            return {}
+
         try:
             quote_refreshable = MarketCalendar.is_quote_refresh_time()
-        except Exception as _e:
-            _log.debug(f"[报价] 市场日历查询失败，默认开市: {_e}")
+        except Exception as exc:
+            _log.debug(f"[报价] 市场日历查询失败，默认开市: {exc}")
             quote_refreshable = True
 
         if not quote_refreshable:
-            # 仅在真正的非报价时段（如盘后/周末）才彻底断网回退到本地日线快照。
-            return self._build_offline_quotes(codes)
+            return self._build_offline_quotes(normalized_codes)
 
         try:
             latest_trade_date = MarketCalendar.get_latest_trade_date("CN")
             inferred_trade_date = (
-                latest_trade_date.strftime('%Y-%m-%d')
+                latest_trade_date.strftime("%Y-%m-%d")
                 if latest_trade_date is not None
-                else MarketCalendar.today("CN").strftime('%Y-%m-%d')
+                else MarketCalendar.today("CN").strftime("%Y-%m-%d")
             )
         except Exception:
-            inferred_trade_date = MarketCalendar.today("CN").strftime('%Y-%m-%d')
+            inferred_trade_date = MarketCalendar.today("CN").strftime("%Y-%m-%d")
 
-        # ====== 新增：微秒级 DataLoader 防并发堵塞机制 ======
         now = time.time()
         self._prune_rt_quote_cache(now=now)
-        dedup_codes = []
+        dedup_window = float(self._rt_runtime_dedup_window_sec or 0.5)
         result = {}
-        
+        dedup_codes = []
+
         with self._rt_quote_lock:
-            for c in set(codes):
-                cached_time = self._rt_quote_time.get(c, 0)
-                # 缓冲期 0.5 秒：拦截同一时间窗口内不同 Tab 发起的重复查询
-                if now - cached_time < 0.5 and c in self._rt_quote_cache:
-                    result[c] = self._rt_quote_cache[c]
+            for code in normalized_codes:
+                cached_time = float(self._rt_quote_time.get(code, 0) or 0)
+                cached_quote = self._rt_quote_cache.get(code)
+                if cached_quote is not None and (now - cached_time) < dedup_window:
+                    result[code] = dict(cached_quote)
                 else:
-                    dedup_codes.append(c)
-                    
+                    dedup_codes.append(code)
+
         if not dedup_codes:
             return result
-        # ===================================================
 
-        # ====== 新增：网络熔断器 (Circuit Breaker) ======
-        # 如果之前因为网络挂掉导致连续报错，那么在此期间不要反复发起无用的 TCP 握手（避免 UI 卡死）
-        if now < getattr(self, '_circuit_breaker_open_until', 0):
-            # 仍在熔断期内，直接快速拒绝 (Fail Fast) 并返回静态快照兜底
+        if now < float(self._rt_runtime_cooldown_until or 0):
             fallback_res = self._build_offline_quotes(dedup_codes)
             result.update(fallback_res)
             return result
-        # ===============================================
 
-        # 交易时间段逻辑：如果探测到处于离线模式，必须强行尝试联网
         if self._offline or not self.server_pool:
-            _log.warning("[实时报价] 当前为交易时间段但处于离线状态，正在强行尝试联网...")
+            _log.warning("[realtime] provider is offline during trading hours, attempting reconnect")
             self.set_online_mode(True)
             if not self.server_pool:
                 self.force_reconnect_servers()
-
             if self._offline or not self.server_pool:
-                _log.error("[实时报价] 交易时间段强制联网失败！请检查本地网络情况。使用本地静态数据临时兜底。")
                 fallback_res = self._build_offline_quotes(dedup_codes)
                 result.update(fallback_res)
                 return result
 
-        api = self._get_thread_api()
-        fail_count = 0
+        batch_timeout_sec = float(getattr(self, "_rt_api_call_timeout_sec", 8.0) or 8.0)
+        batch_failures = 0
+        failure_reason = ""
         new_fetch = {}
-        batch_timeout_sec = float(getattr(self, '_rt_api_call_timeout_sec', 8.0) or 8.0)
-        for i in range(0, len(dedup_codes), 80):
-            batch = dedup_codes[i:i+80]
-            params_list = [(self._get_market_code(c), c) for c in batch]
+
+        for start in range(0, len(dedup_codes), 80):
+            batch = dedup_codes[start:start + 80]
+            params_list = [(self._get_market_code(code), code) for code in batch]
             try:
-                quotes = _run_blocking_call_with_timeout(
-                    lambda api_ref=api, payload=params_list: api_ref.get_security_quotes(payload),
-                    batch_timeout_sec,
-                    f"实时报价批次超时({batch_timeout_sec:.0f}s, {len(batch)}只)",
-                )
+                quotes = self._submit_realtime_quote_request(params_list, batch_timeout_sec)
                 if not quotes:
-                    fail_count += 1
-                    continue
-                for q in quotes:
-                    code_val = q.get('code', '')
-                    if code_val:
-                        new_fetch[code_val] = {
-                            'open':   q.get('open',  0),
-                            'high':   q.get('high',  0),
-                            'low':    q.get('low',   0),
-                            'close':  q.get('price', 0),
-                            'volume': q.get('vol',   0),
-                            'amount': q.get('amount', 0),
-                            'last_close': q.get('last_close', 0),
-                            'date': inferred_trade_date,
-                        }
-            except TimeoutError as _e:
-                _log.warning(f"[实时报价] 批次拉取超时: {_e}")
-                fail_count += 1
-                self._reset_thread_api("实时报价批次超时，已重建连接")
-                api = self._get_thread_api()
-                continue
-            except Exception as _e:
-                _log.debug(f"[实时报价] 批次拉取行情失败: {_e}")
-                fail_count += 1
-                self._reset_thread_api("实时报价批次异常，已重建连接")
-                api = self._get_thread_api()
-                continue
+                    raise RuntimeError("empty realtime quote response")
+                for quote in quotes:
+                    code_val = quote.get("code", "")
+                    if not code_val:
+                        continue
+                    new_fetch[code_val] = {
+                        "open": quote.get("open", 0),
+                        "high": quote.get("high", 0),
+                        "low": quote.get("low", 0),
+                        "close": quote.get("price", 0),
+                        "volume": quote.get("vol", 0),
+                        "amount": quote.get("amount", 0),
+                        "last_close": quote.get("last_close", 0),
+                        "date": inferred_trade_date,
+                    }
+            except Exception as exc:
+                batch_failures += 1
+                failure_reason = failure_reason or str(exc)
+                _log.warning(f"[realtime] batch fetch failed: {exc}")
+                self._reset_realtime_runtime(f"realtime batch failure: {exc}")
 
-        # 将新拉取的数据更新到全局热缓存
         if new_fetch:
+            fetch_time = time.time()
             with self._rt_quote_lock:
-                fetch_time = time.time()
-                for c, q_data in new_fetch.items():
-                    self._rt_quote_cache[c] = q_data
-                    self._rt_quote_time[c] = fetch_time
+                for code, quote_data in new_fetch.items():
+                    self._rt_quote_cache[code] = quote_data
+                    self._rt_quote_time[code] = fetch_time
+                    result[code] = dict(quote_data)
             self._prune_rt_quote_cache(now=fetch_time)
-            result.update(new_fetch)
+            self._register_realtime_success()
+        elif batch_failures:
+            self._register_realtime_failure(failure_reason or "all realtime quote batches failed")
 
-        # 批量接口偶发“返回缺码”：优先回退到热缓存，再回退到本地日线，避免部分个股长期不刷新
-        missing_codes = [c for c in dedup_codes if c not in result]
+        missing_codes = [code for code in dedup_codes if code not in result]
         if missing_codes:
             stale_quotes = {}
             with self._rt_quote_lock:
-                for c in missing_codes:
-                    cached = self._rt_quote_cache.get(c)
+                for code in missing_codes:
+                    cached = self._rt_quote_cache.get(code)
                     if cached:
-                        q = dict(cached)
-                        q.setdefault('date', inferred_trade_date)
-                        stale_quotes[c] = q
+                        quote = dict(cached)
+                        quote.setdefault("date", inferred_trade_date)
+                        stale_quotes[code] = quote
             if stale_quotes:
                 result.update(stale_quotes)
-                missing_codes = [c for c in missing_codes if c not in stale_quotes]
+                missing_codes = [code for code in missing_codes if code not in stale_quotes]
 
         if missing_codes:
             fallback_res = self._build_offline_quotes(missing_codes)
-            if fallback_res:
-                result.update(fallback_res)
-
-        # 如果部分或全部批次失败进行 API 缓存清理重试
-        if not new_fetch and fail_count > 0:
-            self._reset_thread_api()
-                
-            self._circuit_breaker_fails = getattr(self, '_circuit_breaker_fails', 0) + 1
-            if getattr(self, '_circuit_breaker_fails', 0) >= 3:
-                _log.error("[网络熔断] PyTdx 服务器连续拉取失败达到 3 次，将强行暂停数据刷新 30 秒！")
-                self._circuit_breaker_open_until = time.time() + 30
-                self._circuit_breaker_fails = 0  # 重置，等待 30 秒后的探针（半开状态）
-                
-            if _retry_once:
-                _log.error("[实时报价] 批次失败，已重建 API 连接并立即重试")
-                retry_res = self.fetch_realtime_quotes_batch(dedup_codes, _retry_once=False)
-                result.update(retry_res)
-                return result
-            # 两次都失败后，必须要有强兜底，绝不传空数据给前台！
-            _log.error("[实时报价] 全部批次重试失败，已强制调用本地静态快照兜底渲染UI！")
-            fallback_res = self._build_offline_quotes(dedup_codes)
             result.update(fallback_res)
-            return result
-        else:
-            # 只要不是重灾区（成功获取到数据），就重置熔断计数器
-            self._circuit_breaker_fails = 0
 
         return result
 

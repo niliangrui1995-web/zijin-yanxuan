@@ -26,7 +26,7 @@ def tdx_connect(tdx_servers):
 
     from pytdx.hq import TdxHq_API
 
-    api = TdxHq_API()
+    api = TdxHq_API(auto_retry=False, heartbeat=False)
     for host, port in tdx_servers:
         try:
             if api.connect(host, port, time_out=5):
