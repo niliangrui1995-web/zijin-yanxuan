@@ -123,14 +123,57 @@ def get_market_status(market: str) -> str:
 
     canonical = MarketCalendar.normalize_market(market)
     raw_status = MarketCalendar.get_market_status(canonical)
-    status_map = {
-        "交易中": "🟢 交易中",
-        "午休": "🟡 午休",
-        "盘前": "🟡 盘前",
-        "盘后": "🔴 盘后",
-        "休市": "🔴 休市",
+    tone_map = {
+        "交易中": "🟢",
+        "开盘集合竞价": "🟡",
+        "开市前时段": "🟡",
+        "收盘集合竞价": "🟡",
+        "收市竞价": "🟡",
+        "午休": "🟡",
+        "盘前": "🟡",
+        "盘前委托": "🟡",
+        "盘后定价申报": "🟡",
+        "盘后定价": "🟡",
+        "盘后": "🔴",
+        "休市": "🔴",
     }
-    return status_map.get(raw_status, "🔴 休市")
+    label_map = {
+        "交易中": "交易中",
+        "开盘集合竞价": "开盘集合竞价",
+        "开市前时段": "开市前时段",
+        "收盘集合竞价": "收盘集合竞价",
+        "收市竞价": "收市竞价",
+        "午休": "午休",
+        "盘前": "盘前",
+        "盘前委托": "盘前委托",
+        "盘后定价申报": "盘后定价申报",
+        "盘后定价": "盘后定价",
+        "盘后": "盘后",
+        "休市": "休市",
+    }
+    market_label_overrides = {
+        "HK": {
+            "午休": "午间休市",
+        },
+        "T": {
+            "午休": "午间休市",
+            "收盘集合竞价": "收盘竞价",
+        },
+        "KS": {
+            "开盘集合竞价": "开盘竞价",
+            "收盘集合竞价": "收盘竞价",
+        },
+        "TW": {
+            "午休": "午间休市",
+        },
+    }
+
+    label = market_label_overrides.get(canonical, {}).get(
+        raw_status,
+        label_map.get(raw_status, "休市"),
+    )
+    tone = tone_map.get(raw_status, "🔴")
+    return f"{tone} {label}"
 
 
 def format_market_display(market_value: str, code: str = "") -> str:

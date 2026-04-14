@@ -3,7 +3,9 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 
 from ui.tabs import asian_market_tab as asian_module
+from ui.tabs.asian_market_meta import get_market_status as get_asian_market_status
 from ui.models.table_models import _c
+from core.market_calendar import MarketCalendar
 
 
 class _Signal:
@@ -132,5 +134,76 @@ def test_asian_market_pct_column_keeps_rise_fall_color(monkeypatch):
 
         assert isinstance(color, QColor)
         assert color.name().lower() == QColor(_c("COLOR_RISE")).name().lower()
+    finally:
+        tab.deleteLater()
+
+
+def test_asian_market_status_display_uses_market_specific_labels(monkeypatch):
+    original = MarketCalendar.get_market_status
+
+    monkeypatch.setattr(
+        MarketCalendar,
+        "get_market_status",
+        classmethod(lambda cls, market="CN": "午休"),
+    )
+    assert get_asian_market_status("T") == "🟡 午间休市"
+    assert get_asian_market_status("HK") == "🟡 午间休市"
+
+    monkeypatch.setattr(
+        MarketCalendar,
+        "get_market_status",
+        classmethod(lambda cls, market="CN": "开盘集合竞价"),
+    )
+    assert get_asian_market_status("KS") == "🟡 开盘竞价"
+
+    monkeypatch.setattr(
+        MarketCalendar,
+        "get_market_status",
+        classmethod(lambda cls, market="CN": "交易中"),
+    )
+    assert get_asian_market_status("TW") == "🟢 交易中"
+
+    monkeypatch.setattr(MarketCalendar, "get_market_status", original)
+
+
+def test_asian_market_status_rows_refresh_without_quote_tick(monkeypatch):
+    monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "_load_local_cache",
+        lambda self: setattr(self, "row_data", []),
+    )
+    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+
+    tab = asian_module.AsianMarketTab()
+    try:
+        tab.row_data = [
+            {
+                "代码": "8035.T",
+                "名称": "东京电子",
+                "现价": 100.0,
+                "涨幅%": 1.2,
+                "市场": "日本",
+                "状态": "🟢 交易中",
+                "赛道": "半导体",
+                "角色定位": "龙头",
+                "货币": "JPY",
+                "5日涨跌%": 1.0,
+                "10日涨跌%": 2.0,
+                "20日涨跌%": 3.0,
+            }
+        ]
+        tab.model.update_data(tab.row_data)
+        monkeypatch.setattr(asian_module, "get_market_status", lambda market: "🟡 收盘竞价")
+
+        tab._refresh_market_status_rows()
+
+        assert tab.model.row_data[0]["状态"] == "🟡 收盘竞价"
     finally:
         tab.deleteLater()

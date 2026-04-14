@@ -382,7 +382,7 @@ class LhbTab(BaseStockTab):
         if self._backfill_in_progress:
             return
 
-        now = datetime.datetime.now()
+        now = MarketCalendar.now("CN")
         today_str = now.strftime("%Y%m%d")
 
         # 条件①：20:00 后
@@ -394,7 +394,7 @@ class LhbTab(BaseStockTab):
             return
 
         # 条件②：今天是交易日
-        if not MarketCalendar.is_trade_day(now.date()):
+        if not MarketCalendar.is_trade_day(now.date(), market="CN"):
             return
 
         # 已经缓存了今天的数据也跳过

@@ -1041,6 +1041,29 @@ class StockTableModel(QAbstractTableModel):
         _sync_serial_values(self._data)
         self._flash_records.clear()
         self.endResetModel()
+        self._hydrate_latest_quotes_from_store()
+
+    def _hydrate_latest_quotes_from_store(self):
+        """表格数据落地后，立刻吃一口全局最新行情快照，避免新 Tab 干等下一轮轮询。"""
+        if not self._data or "代码" not in self._headers:
+            return
+
+        if not any(header in self._headers for header in ("现价", "涨幅%", "市值", "买点")):
+            return
+
+        try:
+            from core.global_store import global_store
+
+            snapshot = global_store.get_latest_quotes()
+        except Exception:
+            return
+
+        if not snapshot:
+            return
+
+        self.update_quotes(snapshot)
+        # 首次建表吃快照属于初始化补齐，不需要保留闪烁态。
+        self._flash_records.clear()
 
     def supportedDropActions(self):
         return Qt.DropAction.MoveAction

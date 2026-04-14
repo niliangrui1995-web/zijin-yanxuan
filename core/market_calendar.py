@@ -44,11 +44,53 @@ class MarketCalendar:
         "KS": "Asia/Seoul",
         "US": "America/New_York",
     }
+    _MARKET_PHASES = {
+        # 中国内地现货市场：开盘集合竞价、连续竞价、午休、收盘集合竞价。
+        "CN": (
+            (915, 926, "开盘集合竞价"),
+            (926, 930, "盘前"),
+            (930, 1131, "交易中"),
+            (1131, 1300, "午休"),
+            (1300, 1457, "交易中"),
+            (1457, 1501, "收盘集合竞价"),
+        ),
+        # 港股：盘前竞价 + 连续交易 + 收市竞价。
+        "HK": (
+            (900, 930, "开市前时段"),
+            (930, 1201, "交易中"),
+            (1201, 1300, "午休"),
+            (1300, 1600, "交易中"),
+            (1600, 1611, "收市竞价"),
+        ),
+        # 台股：常规交易 + 盘后定价交易。
+        "TW": (
+            (830, 900, "盘前委托"),
+            (900, 1331, "交易中"),
+            (1400, 1430, "盘后定价申报"),
+            (1430, 1431, "盘后定价"),
+        ),
+        # 东证：午休后延长至 15:30，15:25 起进入收盘集合竞价。
+        "T": (
+            (900, 1131, "交易中"),
+            (1131, 1230, "午休"),
+            (1230, 1525, "交易中"),
+            (1525, 1531, "收盘集合竞价"),
+        ),
+        # 韩股：08:30-09:00 开盘集合竞价，15:20-15:30 收盘集合竞价。
+        "KS": (
+            (830, 900, "开盘集合竞价"),
+            (900, 1520, "交易中"),
+            (1520, 1531, "收盘集合竞价"),
+        ),
+        "US": (
+            (930, 1601, "交易中"),
+        ),
+    }
     _MARKET_SESSIONS = {
         "CN": ((930, 1130), (1300, 1500)),
         "HK": ((930, 1200), (1300, 1600)),
         "TW": ((900, 1330),),
-        "T": ((900, 1130), (1230, 1500)),
+        "T": ((900, 1130), (1230, 1530)),
         "KS": ((900, 1530),),
         "US": ((930, 1600),),
     }
@@ -253,7 +295,8 @@ class MarketCalendar:
         try:
             from zoneinfo import ZoneInfo
 
-            return datetime.datetime.now(ZoneInfo(tz_name)).replace(tzinfo=None)
+            utc_now = datetime.datetime.now(datetime.timezone.utc)
+            return utc_now.astimezone(ZoneInfo(tz_name)).replace(tzinfo=None)
         except Exception:
             # safe fallback without timezone db
             utc_now = datetime.datetime.utcnow()
@@ -268,9 +311,37 @@ class MarketCalendar:
             return utc_now + datetime.timedelta(hours=offset_hours)
 
     @classmethod
+    def now(cls, market: str = "CN") -> datetime.datetime:
+        return cls._get_market_now(market)
+
+    @classmethod
+    def today(cls, market: str = "CN") -> datetime.date:
+        return cls._get_market_now(market).date()
+
+    @classmethod
+    def from_timestamp(cls, ts: float | int, market: str = "CN") -> datetime.datetime:
+        canonical = cls.normalize_market(market)
+        tz_name = cls._MARKET_TIMEZONE.get(canonical, "Asia/Shanghai")
+        try:
+            from zoneinfo import ZoneInfo
+
+            utc_dt = datetime.datetime.fromtimestamp(ts, datetime.timezone.utc)
+            return utc_dt.astimezone(ZoneInfo(tz_name)).replace(tzinfo=None)
+        except Exception:
+            offset_hours = {
+                "CN": 8,
+                "HK": 8,
+                "TW": 8,
+                "T": 9,
+                "KS": 9,
+                "US": -5,
+            }.get(canonical, 8)
+            return datetime.datetime.utcfromtimestamp(ts) + datetime.timedelta(hours=offset_hours)
+
+    @classmethod
     def _coerce_date(cls, day: Any, market: str = "CN") -> datetime.date:
         if day is None:
-            return cls._get_market_now(market).date()
+            return cls.today(market)
         if isinstance(day, datetime.datetime):
             return day.date()
         if isinstance(day, datetime.date):
@@ -392,7 +463,7 @@ class MarketCalendar:
                 result = {}
             fetched = result.get("fetched", {})
             transient_failed = set(result.get("transient_failed", []))
-            now = datetime.datetime.now()
+            now = cls.now(market)
 
             with cls._asian_lock:
                 bucket = cls._asian_holidays.setdefault(market, {})
@@ -566,7 +637,7 @@ class MarketCalendar:
     def load_trade_dates(cls) -> set[str] | None:
         from core.data_store import DataStore
 
-        now = datetime.datetime.now()
+        now = cls.now("CN")
         cur_month = now.strftime("%Y-%m")
 
         try:
@@ -705,6 +776,15 @@ class MarketCalendar:
             return "休市"
 
         hhmm = now.hour * 100 + now.minute
+        phases = cls._MARKET_PHASES.get(market)
+        if phases:
+            for start, end, status in phases:
+                if start <= hhmm < end:
+                    return status
+            if hhmm < phases[0][0]:
+                return "盘前"
+            return "盘后"
+
         sessions = cls._MARKET_SESSIONS.get(market, cls._MARKET_SESSIONS["CN"])
         first_start = sessions[0][0]
         last_end = sessions[-1][1]
@@ -721,7 +801,14 @@ class MarketCalendar:
 
     @classmethod
     def is_market_active(cls, market: str = "CN") -> bool:
-        return cls.get_market_status(market) == "交易中"
+        return cls.get_market_status(market) in {
+            "交易中",
+            "开盘集合竞价",
+            "收盘集合竞价",
+            "收市竞价",
+            "开市前时段",
+            "盘后定价",
+        }
 
     @classmethod
     def is_quote_refresh_time(cls, market: str = "CN") -> bool:
@@ -730,4 +817,12 @@ class MarketCalendar:
         对 A 股来说，午休虽然不是连续成交时段，但主流行情源仍会返回
         上午收盘后的最新快照，因此这里将“午休”也视为可刷新报价的时段。
         """
-        return cls.get_market_status(market) in {"交易中", "午休"}
+        return cls.get_market_status(market) in {
+            "交易中",
+            "午休",
+            "开盘集合竞价",
+            "收盘集合竞价",
+            "收市竞价",
+            "开市前时段",
+            "盘后定价",
+        }

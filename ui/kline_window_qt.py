@@ -700,7 +700,7 @@ class KLineChartWindow(QWidget):
             if (
                 not getattr(self.data_provider, '_offline', False)
                 and target_trade_date is not None
-                and MarketCalendar.is_market_active("CN")
+                and MarketCalendar.is_quote_refresh_time("CN")
             ):
                 last_dt = None
                 if fresh_df is not None and not fresh_df.empty:
@@ -745,7 +745,7 @@ class KLineChartWindow(QWidget):
                             if quote_trade_date is None:
                                 # 通达信实时接口不带交易日：按交易日历+交易时段推断该归属哪一日
                                 if (
-                                    MarketCalendar.is_market_active("CN")
+                                    MarketCalendar.is_quote_refresh_time("CN")
                                     and target_trade_date is not None
                                     and last_date < target_trade_date
                                 ):
@@ -768,7 +768,7 @@ class KLineChartWindow(QWidget):
                             elif (
                                 quote_trade_date > last_date
                                 and quote_trade_date <= target_trade_date
-                                and MarketCalendar.is_market_active("CN")
+                                and MarketCalendar.is_quote_refresh_time("CN")
                                 and rt_close > 0
                             ):
                                 prev_row = fresh_df.iloc[-1]
@@ -886,7 +886,7 @@ class KLineChartWindow(QWidget):
                     elif (
                         quote_trade_date > last_date
                         and quote_trade_date <= latest_trade_date
-                        and MarketCalendar.is_market_active(market)
+                        and MarketCalendar.is_quote_refresh_time(market)
                     ):
                         # 只有报价自身日期前进到了新交易日，才允许补新 bar
                         rt_close_val = float(rt_close) if rt_close else 0.0
@@ -980,7 +980,7 @@ class KLineChartWindow(QWidget):
     def _start_rt_timer(self):
         """启动盘中实时刷新定时器（60秒间隔），只在交易时段运行"""
         market = self._get_market()
-        if not MarketCalendar.is_market_active(market):
+        if not MarketCalendar.is_quote_refresh_time(market):
             if self._rt_timer is not None:
                 self._rt_timer.stop()
             return
@@ -996,7 +996,7 @@ class KLineChartWindow(QWidget):
     def _on_rt_timer(self):
         """定时器回调：拉取最新实时报价，通过 JS 增量更新最后一根 K 线"""
         market = self._get_market()
-        if not MarketCalendar.is_market_active(market):
+        if not MarketCalendar.is_quote_refresh_time(market):
             if self._rt_timer:
                 self._rt_timer.stop()
                 log.debug(f"[K线] {self.code} 已收盘，停止实时刷新")
@@ -1064,7 +1064,7 @@ class KLineChartWindow(QWidget):
             if (
                 market == "CN"
                 and latest_trade_date is not None
-                and MarketCalendar.is_market_active(market)
+                and MarketCalendar.is_quote_refresh_time(market)
                 and last_date < latest_trade_date
             ):
                 rt_date = latest_trade_date

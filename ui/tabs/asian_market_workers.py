@@ -13,6 +13,7 @@ import yfinance as yf
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from core.logger import get_logger
+from core.market_calendar import MarketCalendar
 from vcp.constants import CACHE_DIR
 from vcp.fetchers.yf_session import build_yf_session
 
@@ -42,6 +43,11 @@ class AsianMarketWorker(QThread):
         super().__init__()
         self.codes = codes
         self._is_running = True
+        self._markets = sorted({
+            MarketCalendar.infer_market(code)
+            for code in codes
+            if str(code or "").strip()
+        }) or ["TW", "HK", "T", "KS"]
 
     def stop(self):
         self._is_running = False
@@ -51,9 +57,11 @@ class AsianMarketWorker(QThread):
 
     def run(self):
         while self._is_running:
-            now = datetime.datetime.now()
-            time_num = now.hour * 100 + now.minute
-            is_trading_hours = (now.weekday() < 5) and (800 <= time_num <= 1635)
+            now = MarketCalendar.now("CN")
+            is_trading_hours = any(
+                MarketCalendar.get_market_status(market) not in {"休市", "盘后", "盘前"}
+                for market in self._markets
+            )
             is_manual_refresh = getattr(self, '_force_refresh', False)
 
             if not is_trading_hours and not is_manual_refresh:

@@ -28,6 +28,7 @@ from vcp.engine_external import (
 from vcp.models import VCPParams
 
 from core.logger import get_logger
+from core.market_calendar import MarketCalendar
 _log = get_logger(__name__)
 
 
@@ -218,7 +219,7 @@ class VCPEngine:
 
     def build_rps_matrix(self, data_dict: dict[str, pd.DataFrame], start_date: str, end_date: str) -> dict:
         num_stocks = len(data_dict)
-        today = datetime.now().date()
+        today = MarketCalendar.today("CN")
         if getattr(self, '_rps_cache_date', None) != today:
             self._daily_rps_cache = {}
             self._rps_cache_date = today
@@ -899,8 +900,7 @@ class VCPEngine:
 
         A股交易时间：9:30-11:30（120分钟）+ 13:00-15:00（120分钟）= 240分钟
         """
-        from datetime import datetime
-        now = datetime.now()
+        now = MarketCalendar.now("CN")
         hour, minute = now.hour, now.minute
 
         # 计算已过交易时间（分钟）

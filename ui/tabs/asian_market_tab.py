@@ -52,9 +52,9 @@ class AsianMarketTab(BaseStockTab):
         
         # 4. 自动缓存校验器：每分钟检查本地缓存是否需要更新
         self.auto_cache_timer = QTimer(self)
-        self.auto_cache_timer.timeout.connect(self._check_auto_cache)
+        self.auto_cache_timer.timeout.connect(self._on_minute_tick)
         self.auto_cache_timer.start(60000)
-        QTimer.singleShot(2000, self._check_auto_cache)
+        QTimer.singleShot(2000, self._on_minute_tick)
 
     def _schedule_fit_columns(self):
         if hasattr(self, "_fit_columns_timer"):
@@ -168,7 +168,7 @@ class AsianMarketTab(BaseStockTab):
 
             latest_expected = None
             for mkt in markets:
-                now_mkt = MarketCalendar._get_market_now(mkt)
+                now_mkt = MarketCalendar.now(mkt)
                 today_mkt = now_mkt.date()
                 hhmm = now_mkt.hour * 100 + now_mkt.minute
                 cutoff = close_cutoff_hhmm.get(mkt, 1630)
@@ -190,10 +190,11 @@ class AsianMarketTab(BaseStockTab):
     def _check_auto_cache(self):
         import os
         from datetime import datetime, timedelta
+        from core.market_calendar import MarketCalendar
         if getattr(self, '_is_fetching_cache', False):
             return
 
-        now = datetime.now()
+        now = MarketCalendar.now("CN")
 
         target_dt = now.replace(hour=16, minute=30, second=0, microsecond=0)
         if now < target_dt:
@@ -204,7 +205,7 @@ class AsianMarketTab(BaseStockTab):
         mtime = 0
         if os.path.exists(JSON_CACHE):
             mtime = os.path.getmtime(JSON_CACHE)
-        cache_dt = datetime.fromtimestamp(mtime) if mtime else datetime.min
+        cache_dt = MarketCalendar.from_timestamp(mtime, "CN") if mtime else datetime.min
 
         cache_latest_trade_date = self._get_cache_latest_trade_date()
         expected_latest_trade_date = self._get_expected_latest_trade_date()
@@ -234,6 +235,38 @@ class AsianMarketTab(BaseStockTab):
             self.cache_thread = AsianCacheFetcherThread()
             self.cache_thread.finished_sig.connect(self._on_auto_cache_finished)
             self.cache_thread.start()
+
+    def _on_minute_tick(self):
+        self._refresh_market_status_rows()
+        self._check_auto_cache()
+
+    def _refresh_market_status_rows(self):
+        rows = list(getattr(self.model, "row_data", []) or [])
+        if not rows:
+            return
+
+        try:
+            status_col = self.model.headers.index("状态")
+        except ValueError:
+            return
+
+        changed_rows = []
+        for row_idx, row_dict in enumerate(rows):
+            code = str(row_dict.get("代码", "")).strip()
+            if not code:
+                continue
+            market = code.split(".")[-1] if "." in code else ""
+            new_status = get_market_status(market)
+            if row_dict.get("状态") != new_status:
+                row_dict["状态"] = new_status
+                changed_rows.append(row_idx)
+
+        for row_idx in changed_rows:
+            self.model.dataChanged.emit(
+                self.model.index(row_idx, status_col),
+                self.model.index(row_idx, status_col),
+            )
+
     def _on_auto_cache_finished(self, success, msg):
         self._is_fetching_cache = False
         self.lbl_status.setText(msg)

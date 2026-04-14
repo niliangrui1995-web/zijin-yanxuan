@@ -52,8 +52,8 @@ class NADailyTab(BaseStockTab):
             self._load_na_daily_incremental()
 
         # 2. 定时全量刷新（交易日 9:25 自动拉一次完整战报）
-        now = datetime.datetime.now()
-        if now.weekday() < 5:
+        now = MarketCalendar.now("CN")
+        if MarketCalendar.is_trade_day(now.date(), market="CN"):
             today_str = now.strftime('%Y%m%d')
             key = f"{today_str}_0925"
             if key not in self._na_daily_fired_today:

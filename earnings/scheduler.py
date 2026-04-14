@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from .engine import EarningsEngine
 import pandas as pd
 from core.logger import get_logger
+from core.market_calendar import MarketCalendar
 
 logger = get_logger()
 # 启动期断档追扫非常重，默认关闭以避免 UI 假死；手动扫描和定时巡检仍可用。
@@ -60,7 +61,7 @@ class EarningsScheduler(QObject):
         
         self.target_times = [(8, 30), (12, 0), (17, 0), (19, 0), (21, 0), (23, 0)]
         self.triggered_today = set()
-        self.last_check_day = datetime.now().day
+        self.last_check_day = MarketCalendar.today("CN")
         self.active_workers = set()
 
         self.clock_timer = QTimer(self)
@@ -86,7 +87,7 @@ class EarningsScheduler(QObject):
             
         # 第二步：计算我们到底睡了几天，开启断档追更（无缝回填核心）
         last_sync = self.engine.last_sync_date
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = MarketCalendar.today("CN").strftime("%Y-%m-%d")
         
         missing_dates = []
         try:
@@ -126,11 +127,11 @@ class EarningsScheduler(QObject):
         self._run_in_background("gap_fill", missing_dates=date_list)
 
     def _check_schedule(self):
-        now = datetime.now()
+        now = MarketCalendar.now("CN")
         
-        if now.day != self.last_check_day:
+        if now.date() != self.last_check_day:
             self.triggered_today.clear()
-            self.last_check_day = now.day
+            self.last_check_day = now.date()
 
         for t_hour, t_minute in self.target_times:
             if now.hour == t_hour and now.minute == t_minute:

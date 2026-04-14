@@ -37,6 +37,7 @@ except Exception as _e:
 
 # akshare/pandas/numpy 已在文件顶部 import，此处不再重复
 from core.logger import get_logger
+from core.market_calendar import MarketCalendar
 import json
 
 logger = get_logger()
@@ -125,7 +126,7 @@ def safe_ak_fetch(fetch_func, *args, **kwargs):
 
 
 def current_active_report_dates() -> list:
-    now = datetime.now()
+    now = MarketCalendar.now("CN")
     year = now.year
     month = now.month
     dates = []
@@ -144,7 +145,7 @@ class EarningsEngine:
         self.keep_days = keep_days
         self.seen_fingerprints = set()
         self.local_records = []
-        self.last_sync_date = datetime.now().strftime("%Y-%m-%d")
+        self.last_sync_date = MarketCalendar.today("CN").strftime("%Y-%m-%d")
         self._quick_report_profit_cache = {}
         self._load_cache()
 
@@ -226,7 +227,7 @@ class EarningsEngine:
 
             # 清理过期数据保障性能（只保留距离今天内 N 天的数据）
             valid_records = []
-            today_dt = datetime.now()
+            today_dt = MarketCalendar.now("CN")
             for r in all_records:
                 # 强力清真过滤：剔除最新单季扣非利润为负或为 0，环比增速不足 15%，或同比为负的垃圾股
                 if float(r.get("单季净利润_新增", 0.0)) <= 0 or float(r.get("环比增速_百分比", 0.0)) < 15:
@@ -352,7 +353,7 @@ class EarningsEngine:
 
     def fetch_daily_surprises(self, target_publish_date: str = None) -> pd.DataFrame:
         if target_publish_date is None:
-            target_publish_date = datetime.now().strftime("%Y-%m-%d")
+            target_publish_date = MarketCalendar.today("CN").strftime("%Y-%m-%d")
             
         logger.info(f"[业绩引擎] 扫描目标日期: {target_publish_date}")
         

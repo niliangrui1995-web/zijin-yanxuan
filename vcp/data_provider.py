@@ -25,6 +25,7 @@ from vcp.utils import _load_tdx_local_config
 
 from core.json_cache import load_json_file, save_json_file, remove_cache_file
 from core.logger import get_logger
+from core.market_calendar import MarketCalendar
 _log = get_logger(__name__)
 
 RT_QUOTE_CACHE_TTL_SEC = 180.0
@@ -83,7 +84,11 @@ class TdxDataProvider:
         self._rt_api_call_timeout_sec = 8.0
         self.code2name = {}
         self._offline = offline
-        self._is_trading_day = is_trading_day if callable(is_trading_day) else (lambda d=None: datetime.now().weekday() < 5)
+        self._is_trading_day = (
+            is_trading_day
+            if callable(is_trading_day)
+            else (lambda d=None: MarketCalendar.is_trade_day(d, market="CN"))
+        )
         self.tdx_vipdoc = _load_tdx_local_config()
         # 预加载本地 gbbq (股本变迁/除权除息) 数据
         self._local_gbbq = {}  # {code: DataFrame}
@@ -228,11 +233,11 @@ class TdxDataProvider:
         return get_market_code(stock_code)
 
     def _is_before_930_today(self):
-        now = datetime.now()
+        now = MarketCalendar.now("CN")
         return now.hour < 9 or (now.hour == 9 and now.minute < 30)
 
     def _is_after_1500_today(self):
-        return datetime.now().hour >= 15
+        return MarketCalendar.now("CN").hour >= 15
 
     def _tdx_day_path(self, code):
         return tdx_day_path(self.tdx_vipdoc, code)
@@ -489,7 +494,7 @@ class TdxDataProvider:
         return ""
 
     def sync_market_data(self, codes, force_refresh=False, progress_callback=None):
-        today = datetime.now().strftime(DATE_FMT)
+        today = MarketCalendar.today("CN").strftime(DATE_FMT)
         if not self.cache_data:
             last_date = self.load_cache_from_disk()
         else:
@@ -606,7 +611,7 @@ class TdxDataProvider:
             and len(existing_df) > 0
         ):
             try:
-                if pd.Timestamp(existing_df.index.max()).date() >= datetime.now().date():
+                if pd.Timestamp(existing_df.index.max()).date() >= MarketCalendar.today("CN"):
                     return existing_df
             except Exception as _e:
                 _log.debug(f"[K线 {code}] 缓存日期检查异常: {_e}")
@@ -725,7 +730,6 @@ class TdxDataProvider:
     def fetch_realtime_quotes_batch(self, codes, _retry_once=True):
         """Fetch realtime quotes in batches of up to 80 symbols."""
         try:
-            from core.market_calendar import MarketCalendar
             quote_refreshable = MarketCalendar.is_quote_refresh_time()
         except Exception as _e:
             _log.debug(f"[报价] 市场日历查询失败，默认开市: {_e}")
@@ -736,15 +740,14 @@ class TdxDataProvider:
             return self._build_offline_quotes(codes)
 
         try:
-            from core.market_calendar import MarketCalendar
             latest_trade_date = MarketCalendar.get_latest_trade_date("CN")
             inferred_trade_date = (
                 latest_trade_date.strftime('%Y-%m-%d')
                 if latest_trade_date is not None
-                else datetime.now().strftime('%Y-%m-%d')
+                else MarketCalendar.today("CN").strftime('%Y-%m-%d')
             )
         except Exception:
-            inferred_trade_date = datetime.now().strftime('%Y-%m-%d')
+            inferred_trade_date = MarketCalendar.today("CN").strftime('%Y-%m-%d')
 
         # ====== 新增：微秒级 DataLoader 防并发堵塞机制 ======
         now = time.time()
@@ -900,22 +903,20 @@ class TdxDataProvider:
             rt_date = pd.Timestamp(rt_date_str)
         else:
             try:
-                from core.market_calendar import MarketCalendar
                 trade_dt = MarketCalendar.get_latest_trade_date()
                 if trade_dt:
                     rt_date = pd.Timestamp(trade_dt)
                 else:
-                    rt_date = pd.Timestamp(datetime.now().date())
+                    rt_date = pd.Timestamp(MarketCalendar.today("CN"))
             except Exception as _e:
                 _log.debug(f"[盘中K线] 获取最近交易日失败: {_e}")
-                rt_date = pd.Timestamp(datetime.now().date())
+                rt_date = pd.Timestamp(MarketCalendar.today("CN"))
 
         # 【核心修复】：盘中监控自动进行成交量和成交额“全日预估”
         # 防止早上9点半的微薄成交量拉低MA25，导致系统误判为“缩量假突破”
-        now = datetime.now()
+        now = MarketCalendar.now("CN")
         h, m = now.hour, now.minute
         ratio = 1.0
-        from core.market_calendar import MarketCalendar
         if MarketCalendar.is_market_active():
             if 9 <= h <= 11:
                 passed = (m - 30) if h == 9 else (30 + m if h == 10 else (120 if m > 30 else 90 + m))
