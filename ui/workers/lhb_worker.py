@@ -14,6 +14,14 @@ FOREIGN_KEYWORDS = [
     "渣打", "野村", "汇丰", "星展", "大和"
 ]
 
+DEFAULT_JG_INFO = {
+    "买方机构数": 0,
+    "卖方机构数": 0,
+    "机构买入总额": 0.0,
+    "机构卖出总额": 0.0,
+    "机构买入净额": 0.0,
+}
+
 
 def _format_wan_amount(amount_wan: float) -> str:
     amount = abs(float(amount_wan or 0))
@@ -66,6 +74,134 @@ def _build_foreign_display(branch_details_map: dict[str, float]) -> tuple[str, s
 
     return display, "\n".join(tooltip_lines)
 
+
+def _normalize_reason_key(reason: str) -> str:
+    text = str(reason or "").replace("｜", "|").strip()
+    if not text:
+        return ""
+    parts = [part.strip() for part in text.split("|") if part.strip()]
+    if not parts:
+        return ""
+    return " | ".join(sorted(dict.fromkeys(parts)))
+
+
+def _build_jg_info(row: pd.Series) -> dict:
+    info = dict(DEFAULT_JG_INFO)
+    info.update(
+        {
+            "买方机构数": int(row.get("买方机构数", 0) if pd.notna(row.get("买方机构数")) else 0),
+            "卖方机构数": int(row.get("卖方机构数", 0) if pd.notna(row.get("卖方机构数")) else 0),
+            "机构买入总额": float(row.get("机构买入总额", 0) if pd.notna(row.get("机构买入总额")) else 0),
+            "机构卖出总额": float(row.get("机构卖出总额", 0) if pd.notna(row.get("机构卖出总额")) else 0),
+            "机构买入净额": float(row.get("机构买入净额", 0) if pd.notna(row.get("机构买入净额")) else 0),
+        }
+    )
+    return info
+
+
+def _jg_info_signature(info: dict) -> tuple:
+    return (
+        int(info.get("买方机构数", 0)),
+        int(info.get("卖方机构数", 0)),
+        round(float(info.get("机构买入总额", 0.0) or 0.0), 2),
+        round(float(info.get("机构卖出总额", 0.0) or 0.0), 2),
+        round(float(info.get("机构买入净额", 0.0) or 0.0), 2),
+    )
+
+
+def _merge_jg_candidates(candidates: list[dict]) -> dict:
+    if not candidates:
+        return dict(DEFAULT_JG_INFO)
+
+    unique_candidates = []
+    seen = set()
+    for candidate in candidates:
+        signature = _jg_info_signature(candidate)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        unique_candidates.append(candidate)
+
+    if len(unique_candidates) == 1:
+        return dict(unique_candidates[0])
+
+    return dict(
+        max(
+            unique_candidates,
+            key=lambda item: (
+                abs(float(item.get("机构买入净额", 0.0) or 0.0)),
+                int(item.get("买方机构数", 0)) + int(item.get("卖方机构数", 0)),
+            ),
+        )
+    )
+
+
+def _is_close_number(left: float, right: float, tolerance: float = 1e-6) -> bool:
+    return abs(float(left or 0.0) - float(right or 0.0)) <= tolerance
+
+
+def _resolve_jg_info(
+    code: str,
+    reason: str,
+    close_p: float,
+    pct: float,
+    jg_reason_dict: dict[tuple[str, str], list[dict]],
+    jg_candidates: dict[str, list[dict]],
+) -> dict:
+    reason_key = _normalize_reason_key(reason)
+    if reason_key:
+        exact_matches = jg_reason_dict.get((code, reason_key), [])
+        if exact_matches:
+            return _merge_jg_candidates(exact_matches)
+
+    candidates = jg_candidates.get(code, [])
+    if not candidates:
+        return dict(DEFAULT_JG_INFO)
+    if len(candidates) == 1:
+        return dict(candidates[0])
+
+    price_pct_matches = [
+        candidate
+        for candidate in candidates
+        if _is_close_number(candidate.get("_收盘价", 0.0), close_p)
+        and _is_close_number(candidate.get("_涨跌幅", 0.0), pct)
+    ]
+    if price_pct_matches:
+        return _merge_jg_candidates(price_pct_matches)
+
+    if reason_key:
+        reason_tokens = {part.strip() for part in reason_key.split("|") if part.strip()}
+        token_matches = []
+        for candidate in candidates:
+            candidate_tokens = candidate.get("_上榜原因_tokens", set())
+            if candidate_tokens and (
+                candidate_tokens.issubset(reason_tokens) or reason_tokens.issubset(candidate_tokens)
+            ):
+                token_matches.append(candidate)
+        if token_matches:
+            return _merge_jg_candidates(token_matches)
+
+    return _merge_jg_candidates(candidates)
+
+
+def _build_foreign_row_key(row: pd.Series) -> tuple:
+    def _num(name: str) -> float:
+        value = row.get(name, 0)
+        if pd.isna(value):
+            return 0.0
+        try:
+            return round(float(value), 2)
+        except Exception:
+            return 0.0
+
+    return (
+        str(row.get("交易营业部名称", "")).strip(),
+        str(row.get("类型", "")).strip(),
+        _num("买入金额"),
+        _num("卖出金额"),
+        _num("净额"),
+    )
+
 def fetch_lhb_data_for_date(
     date_str: str,
     strict_filter: bool = True,
@@ -108,15 +244,20 @@ def fetch_lhb_data_for_date(
         log.warning(f"[龙虎榜抓取] 机构买卖详情抓取失败: {e}")
     
     # 构建机构速查字典
-    jg_dict = {}
+    jg_reason_dict: dict[tuple[str, str], list[dict]] = {}
+    jg_candidates: dict[str, list[dict]] = {}
     if not df_jg.empty:
         for _, row in df_jg.iterrows():
             code = str(row.get('代码', '')).zfill(6)
-            jg_dict[code] = {
-                '买方机构数': int(row.get('买方机构数', 0) if pd.notna(row.get('买方机构数')) else 0),
-                '卖方机构数': int(row.get('卖方机构数', 0) if pd.notna(row.get('卖方机构数')) else 0),
-                '机构买入净额': float(row.get('机构买入净额', 0) if pd.notna(row.get('机构买入净额')) else 0)
-            }
+            reason_key = _normalize_reason_key(row.get("上榜原因", ""))
+            jg_info = _build_jg_info(row)
+            jg_info["_上榜原因_key"] = reason_key
+            jg_info["_上榜原因_tokens"] = {part.strip() for part in reason_key.split("|") if part.strip()}
+            jg_info["_收盘价"] = float(row.get("收盘价", 0) if pd.notna(row.get("收盘价")) else 0)
+            jg_info["_涨跌幅"] = float(row.get("涨跌幅", 0) if pd.notna(row.get("涨跌幅")) else 0)
+            jg_candidates.setdefault(code, []).append(jg_info)
+            if reason_key:
+                jg_reason_dict.setdefault((code, reason_key), []).append(jg_info)
 
 
 
@@ -173,7 +314,14 @@ def fetch_lhb_data_for_date(
         reason = str(row.get('上榜原因', ''))
         
         # 关联机构数据
-        jg_info = jg_dict.get(code, {'买方机构数': 0, '卖方机构数': 0, '机构买入净额': 0.0})
+        jg_info = _resolve_jg_info(
+            code=code,
+            reason=reason,
+            close_p=close_p,
+            pct=pct,
+            jg_reason_dict=jg_reason_dict,
+            jg_candidates=jg_candidates,
+        )
         has_jg = (jg_info['买方机构数'] > 0) or (jg_info['卖方机构数'] > 0)
         
         # 关联外资数据 (通过简称匹配)
@@ -206,10 +354,15 @@ def fetch_lhb_data_for_date(
             
             if dfs:
                 df_concat = pd.concat(dfs, ignore_index=True)
+                seen_detail_rows = set()
                 for _, s_row in df_concat.iterrows():
                     yyb_name = str(s_row.get("交易营业部名称", ""))
                     matched_kw = next((kw for kw in FOREIGN_KEYWORDS if kw in yyb_name), None)
                     if matched_kw:
+                        detail_row_key = _build_foreign_row_key(s_row)
+                        if detail_row_key in seen_detail_rows:
+                            continue
+                        seen_detail_rows.add(detail_row_key)
                         net_str = str(s_row.get("净额", "0"))
                         try:
                             net_val = float(net_str)
