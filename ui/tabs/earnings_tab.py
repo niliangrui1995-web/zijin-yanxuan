@@ -363,6 +363,12 @@ class EarningsTab(BaseStockTab):
         self.scheduler.stop_patrol()
         super().closeEvent(event)
 
+    def showEvent(self, event):
+        """隐藏页首次打开时，父类会补现价/市值快照，这里紧跟着补算 PE。"""
+        super().showEvent(event)
+        if self.row_data:
+            QTimer.singleShot(0, self._recalc_pe_ttm)
+
     def _on_rt_quotes_direct(self, quotes: dict):
         """重写基类的直达信号接收，在刷新行情后补充计算 PE(TTM)"""
         super()._on_rt_quotes_direct(quotes)
@@ -374,11 +380,19 @@ class EarningsTab(BaseStockTab):
 
     def _recalc_pe_ttm(self):
         """PE(TTM) = 市值 / (最新单季扣非利润 × 4)，两个数据表里都有，直接算"""
-        for row_idx, r in enumerate(self.row_data):
-            cap_str = str(r.get("市值", "--"))
-            raw_profit = r.get("_raw_profit", 0)
+        model_rows = getattr(self.model, "row_data", None) or self.row_data
+        updated = 0
 
-            if cap_str == "--" or not raw_profit or raw_profit <= 0:
+        for row_idx, row_dict in enumerate(model_rows):
+            cap_str = str(row_dict.get("市值", "--")).strip()
+            raw_profit = row_dict.get("_raw_profit", 0)
+
+            try:
+                raw_profit_val = float(raw_profit or 0)
+            except (ValueError, TypeError):
+                continue
+
+            if cap_str in ("", "--") or raw_profit_val <= 0:
                 continue
 
             try:
@@ -390,14 +404,16 @@ class EarningsTab(BaseStockTab):
                 else:
                     cap = float(cap_str)
 
-                pe = cap / (raw_profit * 4.0)
+                pe = cap / (raw_profit_val * 4.0)
                 new_pe = f"{pe:.1f}"
-                if r.get("PE(TTM)") != new_pe:
-                    r["PE(TTM)"] = new_pe
-                    if hasattr(self.model, 'dataChanged'):
-                        self.model.dataChanged.emit(
-                            self.model.index(row_idx, 5),
-                            self.model.index(row_idx, 5)
-                        )
+                if row_dict.get("PE(TTM)") != new_pe:
+                    if hasattr(self.model, "set_cell_value"):
+                        self.model.set_cell_value(row_idx, "PE(TTM)", new_pe)
+                    else:
+                        row_dict["PE(TTM)"] = new_pe
+                    updated += 1
             except (ValueError, ZeroDivisionError) as _e:
                 log.debug(f"[业绩监控] PE 计算异常({cap_str}): {_e}")
+
+        if updated > 0:
+            log.debug(f"[业绩监控] PE(TTM) 已刷新 {updated} 行")
