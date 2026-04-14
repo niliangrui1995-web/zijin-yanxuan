@@ -21,9 +21,6 @@ from vcp.engine_external import (
     batch_check_institution,
     batch_check_market_cap,
     batch_get_finance_info,
-    check_institutional_shareholders,
-    is_institution,
-    tdx_connect,
 )
 from vcp.models import VCPParams
 
@@ -607,10 +604,6 @@ class VCPEngine:
     ]
 
     @staticmethod
-    def _tdx_connect():
-        return tdx_connect(VCPEngine._TDX_SERVERS)
-
-    @staticmethod
     def batch_get_finance_info(codes):
         return batch_get_finance_info(codes, VCPEngine._TDX_SERVERS)
 
@@ -626,14 +619,6 @@ class VCPEngine:
     #       因此此功能使用东方财富接口。带 90 天磁盘缓存，日常几乎
     #       不产生联网请求。
     # ================================================================
-
-    @staticmethod
-    def _is_institution(name, holder_type):
-        return is_institution(name, holder_type)
-
-    @staticmethod
-    def check_institutional_shareholders(code):
-        return check_institutional_shareholders(code)
 
     @staticmethod
     def batch_check_institution(codes):

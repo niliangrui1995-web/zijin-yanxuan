@@ -15,12 +15,9 @@ from vcp.constants import (
 from vcp.data_provider_local import (
     apply_forward_adjustment,
     build_offline_quotes,
-    deserialize_gbbq_cache,
     fetch_from_local_tdx,
     get_market_code,
     load_local_gbbq,
-    serialize_gbbq_cache,
-    tdx_day_path,
 )
 from vcp.utils import _load_tdx_local_config
 
@@ -281,14 +278,6 @@ class TdxDataProvider:
         if count > 0:
             _log.info(f"[缓存优化] 已压缩 {count} 只标的数据类型，节省内存")
 
-    @staticmethod
-    def _serialize_gbbq_cache(data_map: dict) -> dict:
-        return serialize_gbbq_cache(data_map)
-
-    @staticmethod
-    def _deserialize_gbbq_cache(payload: dict) -> dict:
-        return deserialize_gbbq_cache(payload)
-
     def _auto_select_best_servers(self):
         """轻量级测速，避免大量并发线程导致 PyQT6 C++ 内存崩溃"""
         candidates = [
@@ -346,9 +335,6 @@ class TdxDataProvider:
 
     def _is_after_1500_today(self):
         return MarketCalendar.now("CN").hour >= 15
-
-    def _tdx_day_path(self, code):
-        return tdx_day_path(self.tdx_vipdoc, code)
 
     def _fetch_from_local_tdx(self, code):
         df, self._offline_warn_printed = fetch_from_local_tdx(
