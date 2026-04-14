@@ -587,5 +587,13 @@ class BaseStockTab(QWidget):
                                 import logging
                                 logging.getLogger(__name__).debug(f"市值计算价格解析异常({price_str}): {_e}")
 
+            after_cap_hook = getattr(self, "_after_market_caps_updated", None)
+            if callable(after_cap_hook):
+                try:
+                    after_cap_hook()
+                except Exception as _e:
+                    import logging
+                    logging.getLogger(__name__).debug(f"市值刷新后回调异常: {_e}")
+
         from core.task_manager import task_manager
         task_manager.run_in_background(_bg_cap, task_id=f"caps_{self.__class__.__name__}", on_success=_on_cap)

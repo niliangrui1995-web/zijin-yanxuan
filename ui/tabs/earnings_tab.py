@@ -368,6 +368,10 @@ class EarningsTab(BaseStockTab):
         super()._on_rt_quotes_direct(quotes)
         self._recalc_pe_ttm()
 
+    def _after_market_caps_updated(self):
+        """总股本/市值异步回填完成后，立刻重算 PE，避免等待下一轮行情广播。"""
+        self._recalc_pe_ttm()
+
     def _recalc_pe_ttm(self):
         """PE(TTM) = 市值 / (最新单季扣非利润 × 4)，两个数据表里都有，直接算"""
         for row_idx, r in enumerate(self.row_data):
