@@ -76,7 +76,7 @@ class _RealtimeQuoteRuntime:
 
     def request(self, params_list, timeout_sec: float):
         if self._stop_event.is_set():
-            raise RuntimeError("realtime runtime is closed")
+            raise RuntimeError("实时行情运行时已关闭")
 
         state = {
             "params": list(params_list),
@@ -90,7 +90,7 @@ class _RealtimeQuoteRuntime:
 
         if not state["done"].wait(timeout_sec):
             raise TimeoutError(
-                f"realtime quote batch timeout ({timeout_sec:.0f}s, {len(params_list)} symbols)"
+                f"实时行情批次超时（{timeout_sec:.0f}s，{len(params_list)} 个标的）"
             )
 
         if state["error"] is not None:
@@ -124,7 +124,7 @@ class _RealtimeQuoteRuntime:
         try:
             api.disconnect()
         except Exception as exc:
-            _log.debug(f"[network] disconnect realtime pytdx failed: {exc}")
+            _log.debug(f"[网络] 断开实时 pytdx 连接失败: {exc}")
 
     def _worker_loop(self):
         while not self._stop_event.is_set():
@@ -140,7 +140,7 @@ class _RealtimeQuoteRuntime:
                 api = self._ensure_api()
                 quotes = api.get_security_quotes(state["params"])
                 if not quotes:
-                    raise RuntimeError("empty realtime quote response")
+                    raise RuntimeError("实时行情返回空结果")
                 with self._lock:
                     self._last_success_at = time.time()
                     self._consecutive_failures = 0
@@ -376,10 +376,10 @@ class TdxDataProvider:
         for ip, port in self.server_pool:
             try:
                 if not api.connect(ip, port, time_out=time_out):
-                    last_error = ConnectionError(f"connect returned False for {ip}:{port}")
+                    last_error = ConnectionError(f"连接节点返回 False: {ip}:{port}")
                     continue
                 if require_security_count and api.get_security_count(0) <= 0:
-                    last_error = ConnectionError(f"invalid security count from {ip}:{port}")
+                    last_error = ConnectionError(f"节点返回的证券数量无效: {ip}:{port}")
                     try:
                         api.disconnect()
                     except Exception:
@@ -400,8 +400,8 @@ class TdxDataProvider:
         if allow_unconnected:
             return None
         if last_error is not None:
-            raise ConnectionError("unable to connect to any pytdx server") from last_error
-        raise ConnectionError("tdx server pool is empty")
+            raise ConnectionError("无法连接任何 pytdx 行情节点") from last_error
+        raise ConnectionError("pytdx 行情节点池为空")
 
     def _archive_realtime_runtime(self, runtime):
         if runtime is None:
@@ -420,7 +420,7 @@ class TdxDataProvider:
         now = time.time()
         if now < float(self._rt_runtime_cooldown_until or 0):
             remaining = max(1, int(self._rt_runtime_cooldown_until - now))
-            raise TimeoutError(f"realtime runtime cooldown active, {remaining}s remaining")
+            raise TimeoutError(f"实时行情冷却中，剩余 {remaining}s")
 
         with self._rt_runtime_lock:
             runtime = self._rt_runtime
@@ -444,7 +444,7 @@ class TdxDataProvider:
             runtime.close()
         if reason:
             self._rt_runtime_last_error = reason
-            _log.warning(f"[realtime] {reason}")
+            _log.warning(f"[实时行情] {reason}")
 
     def _register_realtime_success(self):
         self._rt_runtime_consecutive_failures = 0
@@ -461,7 +461,7 @@ class TdxDataProvider:
         self._rt_runtime_cooldown_until = time.time() + cooldown_sec
         self._rt_runtime_last_error = reason
         self._reset_realtime_runtime(reason)
-        _log.error(f"[realtime] enter cooldown for {int(cooldown_sec)}s: {reason}")
+        _log.error(f"[实时行情] 进入冷却 {int(cooldown_sec)}s: {reason}")
 
     def _register_realtime_failure(self, reason: str):
         self._rt_runtime_consecutive_failures += 1
@@ -503,7 +503,7 @@ class TdxDataProvider:
         threshold = int(threshold or self._rt_runtime_thread_threshold)
         if pytdx_thread_count <= threshold:
             return False
-        reason = f"pytdx thread anomaly detected: {pytdx_thread_count}>{threshold}"
+        reason = f"pytdx 线程异常: {pytdx_thread_count}>{threshold}"
         self._enter_realtime_cooldown(reason)
         return True
 
@@ -518,7 +518,7 @@ class TdxDataProvider:
         self._reset_thread_api()
         self._rt_runtime_cooldown_until = 0.0
         self._rt_runtime_consecutive_failures = 0
-        self._reset_realtime_runtime("force refresh realtime connection")
+        self._reset_realtime_runtime("强制刷新实时行情连接")
         if False and hasattr(self.thread_local, 'api'):
             try:
                 self.thread_local.api.disconnect()
@@ -943,7 +943,7 @@ class TdxDataProvider:
             delattr(self.thread_local, 'api')
         self._rt_runtime_cooldown_until = 0.0
         self._rt_runtime_consecutive_failures = 0
-        self._reset_realtime_runtime("强制刷新 realtime 连接")
+        self._reset_realtime_runtime("强制刷新实时行情连接")
 
         _log.info("[网络] ✅ 强制重连成功，已刷新优质节点。")
 
@@ -1031,7 +1031,7 @@ class TdxDataProvider:
             return result
 
         if self._offline or not self.server_pool:
-            _log.warning("[realtime] provider is offline during trading hours, attempting reconnect")
+            _log.warning("[实时行情] 交易时段检测到提供方离线，尝试重连")
             self.set_online_mode(True)
             if not self.server_pool:
                 self.force_reconnect_servers()
@@ -1051,7 +1051,7 @@ class TdxDataProvider:
             try:
                 quotes = self._submit_realtime_quote_request(params_list, batch_timeout_sec)
                 if not quotes:
-                    raise RuntimeError("empty realtime quote response")
+                    raise RuntimeError("实时行情返回空结果")
                 for quote in quotes:
                     code_val = quote.get("code", "")
                     if not code_val:
@@ -1069,8 +1069,8 @@ class TdxDataProvider:
             except Exception as exc:
                 batch_failures += 1
                 failure_reason = failure_reason or str(exc)
-                _log.warning(f"[realtime] batch fetch failed: {exc}")
-                self._reset_realtime_runtime(f"realtime batch failure: {exc}")
+                _log.warning(f"[实时行情] 批次抓取失败: {exc}")
+                self._reset_realtime_runtime(f"实时行情批次失败: {exc}")
 
         if new_fetch:
             fetch_time = time.time()
@@ -1082,7 +1082,7 @@ class TdxDataProvider:
             self._prune_rt_quote_cache(now=fetch_time)
             self._register_realtime_success()
         elif batch_failures:
-            self._register_realtime_failure(failure_reason or "all realtime quote batches failed")
+            self._register_realtime_failure(failure_reason or "全部实时行情批次失败")
 
         missing_codes = [code for code in dedup_codes if code not in result]
         if missing_codes:

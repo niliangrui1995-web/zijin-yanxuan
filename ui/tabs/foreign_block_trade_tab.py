@@ -292,6 +292,68 @@ class ForeignBlockTradeTab(BaseStockTab):
     def _set_fetch_status(self, primary: str, *segments: str):
         self.lbl_status.setText(self.format_status_summary(primary, *segments))
 
+    def _apply_cached_quotes_once(self):
+        if not self._block_trade_codes:
+            return
+
+        try:
+            from core.global_store import global_store
+            snapshot = global_store.get_latest_quotes() or {}
+        except Exception as exc:
+            log.debug(f"[大宗交易] 读取全局报价快照失败: {exc}")
+            return
+
+        if not snapshot:
+            return
+
+        quote_subset = {
+            code: dict(snapshot[code])
+            for code in self._block_trade_codes
+            if code in snapshot
+        }
+        if quote_subset:
+            self._apply_quote_snapshot(quote_subset)
+
+    def _collect_blank_quote_codes(self):
+        blank_codes = []
+        for row_dict in getattr(self.model, "row_data", []) or []:
+            code = str(row_dict.get("代码", "")).strip().zfill(6)
+            price_text = str(row_dict.get("现价", "")).strip()
+            if code and price_text in {"", "--", "0", "0.0", "0.00"}:
+                blank_codes.append(code)
+        return list(dict.fromkeys(blank_codes))
+
+    def _auto_refresh_realtime(self, force=False):
+        if not self.data_provider:
+            return
+
+        codes = sorted(self._block_trade_codes)
+        if not codes:
+            return
+
+        self._apply_cached_quotes_once()
+        target_codes = codes if force else self._collect_blank_quote_codes()
+        if not target_codes or task_manager.is_active_task("foreign_block_trade_quotes"):
+            return
+
+        def _bg_task():
+            return self.data_provider.fetch_realtime_quotes_batch(target_codes)
+
+        def _on_success(quotes):
+            if quotes:
+                event_bus.sig_rt_quotes.emit(quotes)
+
+        def _on_error(error_message: str):
+            if error_message:
+                log.warning(f"[大宗交易] 单次补价失败: {error_message}")
+
+        task_manager.run_in_background(
+            _bg_task,
+            on_success=_on_success,
+            on_error=_on_error,
+            task_id="foreign_block_trade_quotes",
+        )
+
     def _should_include_row(self, buyer, seller):
         buyer_str = str(buyer) if pd.notna(buyer) else ""
         seller_str = str(seller) if pd.notna(seller) else ""
@@ -586,6 +648,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         
         # 统一异步刷新市值
         self.async_update_market_caps()
+        self._auto_refresh_realtime()
 
     def _on_data_fetch_failed(self, error_message: str):
         self._is_loading = False

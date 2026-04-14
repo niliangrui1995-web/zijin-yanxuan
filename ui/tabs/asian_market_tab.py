@@ -170,7 +170,7 @@ class AsianMarketTab(BaseStockTab):
                     latest_date = last_date
             return latest_date
         except Exception as e:
-            log.warning(f"[AsianTab] parse cache latest trade date failed: {e}")
+            log.warning(f"[亚洲页] 解析缓存最新交易日失败: {e}")
             return None
 
     def _get_expected_latest_trade_date(self):
@@ -212,7 +212,7 @@ class AsianMarketTab(BaseStockTab):
                     latest_expected = trade_date
             return latest_expected
         except Exception as e:
-            log.warning(f"[AsianTab] calc expected trade date failed: {e}")
+            log.warning(f"[亚洲页] 计算期望最新交易日失败: {e}")
             return None
 
     def _check_auto_cache(self):
@@ -253,15 +253,15 @@ class AsianMarketTab(BaseStockTab):
                 self.worker.pause_for_cache_sync()
             reason = []
             if stale_by_mtime:
-                reason.append(f"mtime<{target_dt.strftime('%m-%d %H:%M')}")
+                reason.append(f"修改时间早于 {target_dt.strftime('%m-%d %H:%M')}")
             if stale_by_trade_date:
-                reason.append(f"trade_date {cache_latest_trade_date} < {expected_latest_trade_date}")
-            reason_txt = ", ".join(reason) if reason else "unknown"
+                reason.append(f"缓存交易日 {cache_latest_trade_date} 早于 {expected_latest_trade_date}")
+            reason_txt = "，".join(reason) if reason else "未知"
             log.info(
-                f"[AsianTab] stale cache detected ({reason_txt}), "
-                f"cache_mtime={cache_dt.strftime('%m-%d %H:%M')}, "
-                f"cache_last_trade_date={cache_latest_trade_date}, "
-                f"expected_last_trade_date={expected_latest_trade_date}"
+                f"[亚洲页] 检测到缓存过期({reason_txt})，"
+                f"缓存时间={cache_dt.strftime('%m-%d %H:%M')}，"
+                f"缓存交易日={cache_latest_trade_date}，"
+                f"期望交易日={expected_latest_trade_date}"
             )
             self.lbl_status.setText("检测到 16:30 收盘缓存过期，等待后台轮次退出后开始同步")
             QTimer.singleShot(0, self._continue_auto_cache_sync)
@@ -283,7 +283,7 @@ class AsianMarketTab(BaseStockTab):
                     self._pending_auto_cache_sync = False
                     self._cache_sync_wait_deadline = None
                     self.lbl_status.setText("等待亚洲后台轮次退出超时，本轮缓存同步延后一轮重试")
-                    log.warning("[AsianTab] wait current asian cycle exit timeout before cache sync")
+                    log.warning("[亚洲页] 等待后台轮次退出超时，本轮缓存同步延后一轮")
                     return
                 self.lbl_status.setText("等待亚洲后台轮次退出，随后开始 16:30 缓存同步")
                 QTimer.singleShot(1000, self._continue_auto_cache_sync)
@@ -310,9 +310,9 @@ class AsianMarketTab(BaseStockTab):
         )
         last_success = self._last_asian_success_at.strftime("%Y-%m-%d %H:%M:%S") if self._last_asian_success_at else "-"
         log.info(
-            f"[AsianTab] health | state={self._runtime_state_text()} | "
-            f"last_success={last_success} | cache_syncing={cache_syncing} | "
-            f"worker_running={worker_running} | rows={len(getattr(self, 'row_data', []) or [])}"
+            f"[亚洲页] 健康 状态={self._runtime_state_text()} | "
+            f"上次成功={last_success} | 缓存同步中={cache_syncing} | "
+            f"后台运行中={worker_running} | 行数={len(getattr(self, 'row_data', []) or [])}"
         )
         self._last_health_log_at = now_ts
 
@@ -370,11 +370,11 @@ class AsianMarketTab(BaseStockTab):
             self._load_local_cache()
             self._last_asian_success_at = datetime.datetime.now()
             self.lbl_status.setText("16:30 收盘缓存同步完成，已重载本地 K 线，当前保持静默")
-            log.info("[AsianTab] close cache sync finished, local K lines reloaded, keep silent")
+            log.info("[亚洲页] 16:30 缓存同步完成，已重载本地 K 线，当前保持静默")
             return
 
         self.lbl_status.setText(msg or "收盘缓存同步失败")
-        log.warning(f"[AsianTab] close cache sync failed: {msg}")
+        log.warning(f"[亚洲页] 收盘缓存同步失败: {msg}")
 
     def _on_asian_klines_ready(self):
         self._load_local_cache()
@@ -564,7 +564,7 @@ class AsianMarketTab(BaseStockTab):
                     target_map = filter_asian_tickers() or {}
                 except Exception as _e:
                     target_map = {}
-                    log.warning(f"[AsianTab] 读取亚洲目标池失败，跳过缺失补齐: {_e}")
+                    log.warning(f"[亚洲页] 读取亚洲目标池失败，跳过缺失补齐: {_e}")
 
                 if target_map:
                     existing_codes = {
@@ -615,10 +615,10 @@ class AsianMarketTab(BaseStockTab):
 
                     if missing_codes:
                         log.warning(
-                            f"[AsianTab] 本地缓存缺失 {len(missing_codes)} 只，已补齐占位行: {sorted(missing_codes)}"
+                            f"[亚洲页] 本地缓存缺失 {len(missing_codes)} 只，已补齐占位行: {sorted(missing_codes)}"
                         )
             except Exception as e:
-                log.error(f"[AsianTab] JSON 历史缓存加载失败: {e}")
+                log.error(f"[亚洲页] JSON 历史缓存加载失败: {e}")
 
         # --- 恢复退出时的最后一次盘口实时缓存 ---
         if os.path.exists(RT_JSON_CACHE):
@@ -642,7 +642,7 @@ class AsianMarketTab(BaseStockTab):
                             GLOBAL_ASIAN_RT_CACHE[code] = {}
                         GLOBAL_ASIAN_RT_CACHE[code].update(info)
             except Exception as e:
-                log.error(f"[AsianTab] 恢复 RT 盘口缓存失败: {e}")
+                log.error(f"[亚洲页] 恢复 RT 盘口缓存失败: {e}")
 
         self._sync_worker_codes()
         self.update_table_ui()
@@ -657,7 +657,7 @@ class AsianMarketTab(BaseStockTab):
                     if str(r.get("代码", "")).strip()
                 ]
             except Exception as e:
-                log.warning(f"[AsianTab] 同步 worker 股票池失败: {e}")
+                log.warning(f"[亚洲页] 同步 worker 股票池失败: {e}")
 
     def update_table_ui(self):
         self.model.update_data(self.row_data)
@@ -709,12 +709,12 @@ class AsianMarketTab(BaseStockTab):
             with open(RT_JSON_CACHE, 'w', encoding='utf-8') as f:
                 json.dump(cache_friendly, f, ensure_ascii=False)
         except Exception as e:
-            log.error(f"[AsianTab] 持久化 RT 缓存失败: {e}")
+            log.error(f"[亚洲页] 持久化 RT 缓存失败: {e}")
 
     def _load_local_cache(self):
         if self._load_cache_in_progress:
             self._load_cache_pending = True
-            log.info("[AsianTab] local cache reload already in progress, queue one pending reload")
+            log.info("[亚洲页] 本地缓存重载进行中，已追加一次待执行重载")
             return
 
         self._load_cache_in_progress = True
@@ -799,7 +799,7 @@ class AsianMarketTab(BaseStockTab):
                         target_map = filter_asian_tickers() or {}
                     except Exception as fetch_exc:
                         target_map = {}
-                        log.warning(f"[AsianTab] 读取亚洲目标池失败，跳过缺失补齐: {fetch_exc}")
+                        log.warning(f"[亚洲页] 读取亚洲目标池失败，跳过缺失补齐: {fetch_exc}")
 
                     if target_map:
                         existing_codes = {
@@ -847,10 +847,10 @@ class AsianMarketTab(BaseStockTab):
 
                         if missing_codes:
                             log.warning(
-                                f"[AsianTab] 本地缓存缺失 {len(missing_codes)} 只，已补齐占位行: {sorted(missing_codes)}"
+                                f"[亚洲页] 本地缓存缺失 {len(missing_codes)} 只，已补齐占位行: {sorted(missing_codes)}"
                             )
                 except Exception as exc:
-                    log.error(f"[AsianTab] JSON 历史缓存加载失败: {exc}")
+                    log.error(f"[亚洲页] JSON 历史缓存加载失败: {exc}")
 
             if os.path.exists(RT_JSON_CACHE):
                 try:
@@ -876,7 +876,7 @@ class AsianMarketTab(BaseStockTab):
                             GLOBAL_ASIAN_RT_CACHE[code] = {}
                         GLOBAL_ASIAN_RT_CACHE[code].update(info)
                 except Exception as exc:
-                    log.error(f"[AsianTab] 恢复 RT 盘口缓存失败: {exc}")
+                    log.error(f"[亚洲页] 恢复 RT 盘口缓存失败: {exc}")
 
             self._sync_worker_codes()
             self.update_table_ui()
@@ -887,7 +887,7 @@ class AsianMarketTab(BaseStockTab):
             self._load_cache_pending = False
             self._load_cache_in_progress = False
             if pending_reload:
-                log.info("[AsianTab] rerun queued local cache reload once")
+                log.info("[亚洲页] 执行排队中的一次本地缓存重载")
                 QTimer.singleShot(0, self._load_local_cache)
 
     def _on_rt_update(self, updates: dict):

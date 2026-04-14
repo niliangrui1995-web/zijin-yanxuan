@@ -111,7 +111,7 @@ class CentralQuotesService(QObject):
         if self.data_provider is not None:
             try:
                 self.data_provider._enter_realtime_cooldown(
-                    f"central quotes failure threshold reached: {reason}",
+                    f"报价站连续失败达到阈值：{reason}",
                     cooldown_sec=300,
                 )
             except Exception as exc:
@@ -169,18 +169,18 @@ class CentralQuotesService(QObject):
         cooldown_left = max(0, int(cooldown_until - time.time()))
 
         log.info(
-            "[报价站] heartbeat "
-            f"active_codes={active_codes_count if active_codes_count is not None else '-'} "
-            f"rt_cache={stats.get('rt_quote_cache_size', 0) if isinstance(stats, dict) else 0} "
-            f"history={stats.get('history_symbol_count', 0) if isinstance(stats, dict) else 0} "
-            f"inflight={runtime_stats.get('inflight', 0)} "
-            f"last_success={last_success_text} "
-            f"failures={runtime_stats.get('consecutive_failures', 0)} "
-            f"reconnects={runtime_stats.get('reconnect_count', 0)} "
-            f"cooldown_left={cooldown_left}s "
-            f"worker_alive={runtime_stats.get('worker_alive', False)} "
-            f"threads_total={total_threads} "
-            f"threads_pytdx={pytdx_threads}"
+            "[报价站] 心跳 "
+            f"标的={active_codes_count if active_codes_count is not None else '-'} "
+            f"实时缓存={stats.get('rt_quote_cache_size', 0) if isinstance(stats, dict) else 0} "
+            f"历史缓存={stats.get('history_symbol_count', 0) if isinstance(stats, dict) else 0} "
+            f"飞行中={runtime_stats.get('inflight', 0)} "
+            f"上次成功={last_success_text} "
+            f"连败={runtime_stats.get('consecutive_failures', 0)} "
+            f"重连={runtime_stats.get('reconnect_count', 0)} "
+            f"冷却剩余={cooldown_left}s "
+            f"工作线程存活={runtime_stats.get('worker_alive', False)} "
+            f"总线程={total_threads} "
+            f"pytdx线程={pytdx_threads}"
         )
 
     def _emit_off_market_snapshot(self, codes: set[str]):
@@ -232,7 +232,7 @@ class CentralQuotesService(QObject):
                 self._fetch_warned_slow = True
                 log.warning(
                     f"[报价站] 单次抓取耗时过长({time.time() - self._fetch_start_time:.1f}s)，"
-                    "继续等待当前 single-flight 结束"
+                    "继续等待当前单飞行任务结束"
                 )
             return
 
@@ -280,7 +280,7 @@ class CentralQuotesService(QObject):
             )
 
             if provider_failed:
-                self._record_failure(provider_stats.get("last_error") or "provider returned fallback snapshot")
+                self._record_failure(provider_stats.get("last_error") or "提供方返回离线兜底快照")
             else:
                 self._reset_failures()
 
@@ -298,7 +298,7 @@ class CentralQuotesService(QObject):
             if self._closed:
                 return
 
-            self._record_failure(err_msg or "background fetch error")
+            self._record_failure(err_msg or "后台抓取异常")
             log.error(f"[报价站] 后台抓取异常: {err_msg}")
 
         task_manager.run_in_background(
