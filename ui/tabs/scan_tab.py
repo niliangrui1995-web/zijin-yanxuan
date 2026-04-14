@@ -14,6 +14,7 @@ from ui.components import VCPTableView, TableStateWrapper
 from ui.components.scan_dialogs import VCPScanRangeDialog, VCPScanSettingsDialog
 from ui.workers.scan_worker import ScanWorker
 from vcp.engine import VCPParams
+from core.market_calendar import MarketCalendar
 from core.event_bus import event_bus
 from core.logger import get_logger
 from ui.viewmodels.watchlist_vm import watchlist_vm
@@ -32,6 +33,9 @@ class ScanTab(BaseStockTab):
         self._current_results = []
         self.worker = None
         self._scan_cancel_requested = False
+        self._scan_mode = "full"
+        self._scan_target_date = ""
+        self._last_incremental_stats = None
 
         self._init_settings_widgets()
         self._init_ui()
@@ -125,6 +129,103 @@ class ScanTab(BaseStockTab):
         dates = [item for item in dates if item]
         return max(dates) if dates else ""
 
+    @staticmethod
+    def _normalize_scan_date(value) -> str:
+        text = str(value or "").strip().replace("-", "").replace("/", "")
+        return text[:8] if len(text) >= 8 else text
+
+    def _infer_cache_latest_trade_date(self) -> str:
+        latest_date = ""
+        cache_data = getattr(self.data_provider, "cache_data", {}) or {}
+        for df in cache_data.values():
+            if df is None:
+                continue
+            try:
+                if len(df) <= 0:
+                    continue
+            except Exception:
+                continue
+
+            try:
+                index = getattr(df, "index", None)
+                if index is None or len(index) <= 0:
+                    continue
+                last_value = index[-1]
+            except Exception:
+                continue
+
+            try:
+                if hasattr(last_value, "strftime"):
+                    date_str = last_value.strftime("%Y%m%d")
+                else:
+                    date_str = str(last_value).strip().replace("-", "")[:8]
+                if len(date_str) == 8 and date_str.isdigit() and date_str > latest_date:
+                    latest_date = date_str
+            except Exception:
+                continue
+        return latest_date
+
+    def _resolve_incremental_scan_date(self) -> str:
+        latest_cache_date = self._infer_cache_latest_trade_date()
+        if latest_cache_date:
+            return f"{latest_cache_date[:4]}-{latest_cache_date[4:6]}-{latest_cache_date[6:]}"
+
+        trade_date = MarketCalendar.get_latest_trade_date("CN")
+        if trade_date is None:
+            trade_date = MarketCalendar.today("CN")
+        return trade_date.isoformat()
+
+    def _merge_scan_results(self, base_results: list, incoming_results: list) -> tuple[list, dict]:
+        merged: dict[str, dict] = {}
+        for row in (base_results or []):
+            if not isinstance(row, dict):
+                continue
+            code = str(row.get("代码", "")).strip()
+            if code:
+                merged[code] = dict(row)
+
+        stats = {"原始命中": len(incoming_results or []), "新增": 0, "更新": 0, "刷新": 0, "忽略": 0}
+        for row in (incoming_results or []):
+            if not isinstance(row, dict):
+                continue
+            code = str(row.get("代码", "")).strip()
+            if not code:
+                continue
+
+            candidate = dict(row)
+            current = merged.get(code)
+            if current is None:
+                merged[code] = candidate
+                stats["新增"] += 1
+                continue
+
+            current_date = self._normalize_scan_date(current.get("触发日期", ""))
+            candidate_date = self._normalize_scan_date(candidate.get("触发日期", ""))
+            if candidate_date >= current_date:
+                merged[code] = candidate
+                if candidate_date > current_date:
+                    stats["更新"] += 1
+                else:
+                    stats["刷新"] += 1
+            else:
+                stats["忽略"] += 1
+
+        return list(merged.values()), stats
+
+    def _build_incremental_finish_message(self) -> str:
+        stats = self._last_incremental_stats or {}
+        target_date = self._scan_target_date or self._resolve_incremental_scan_date()
+        current_count = len(self._pending_scan_results or [])
+        raw_hits = int(stats.get("原始命中", 0) or 0)
+        if raw_hits <= 0:
+            return f"新增扫描完成: {target_date} 无新增信号，当前 {current_count} 只"
+
+        updated = int(stats.get("更新", 0) or 0) + int(stats.get("刷新", 0) or 0)
+        return (
+            f"新增扫描完成: {target_date} 命中 {raw_hits} 条，"
+            f"新增 {int(stats.get('新增', 0) or 0)} 只，更新 {updated} 只，当前 {current_count} 只"
+        )
+
     def _refresh_scan_status(self, primary: str | None = None):
         if self._current_results:
             latest_date = self._latest_scan_trigger_date()
@@ -141,23 +242,46 @@ class ScanTab(BaseStockTab):
         )
 
     def _set_scan_action_state(self, state: str):
+        is_incremental = self._scan_mode == "incremental"
         if state == "running":
-            self.btn_scan_action.setText("终止VCP扫描")
+            self.btn_scan_action.setText("终止新增扫描" if is_incremental else "终止VCP扫描")
             self.btn_scan_action.setEnabled(True)
+            if hasattr(self, "btn_scan_increment"):
+                self.btn_scan_increment.setEnabled(False)
             self.lbl_scan_status.setText(
-                self.format_status_summary("正在扫描", *self._scan_param_segments())
+                self.format_status_summary(
+                    "新增扫描中" if is_incremental else "正在扫描",
+                    self._status_metric("目标 ", self._scan_target_date) if is_incremental else "",
+                    *self._scan_param_segments(),
+                )
             )
             if hasattr(self, "table_state"):
-                self.table_state.show_loading("扫描中...", "正在计算候选信号")
+                if is_incremental and self.source_model.rowCount() > 0:
+                    self.table_state.show_table()
+                else:
+                    self.table_state.show_loading(
+                        "新增扫描中..." if is_incremental else "扫描中...",
+                        f"正在补扫 {self._scan_target_date}" if is_incremental and self._scan_target_date else "正在计算候选信号",
+                    )
         elif state == "stopping":
-            self.btn_scan_action.setText("正在终止...")
+            self.btn_scan_action.setText("正在终止新增..." if is_incremental else "正在终止...")
             self.btn_scan_action.setEnabled(False)
-            self.lbl_scan_status.setText(self.format_status_summary("正在终止", "保留已完成结果"))
+            if hasattr(self, "btn_scan_increment"):
+                self.btn_scan_increment.setEnabled(False)
+            self.lbl_scan_status.setText(
+                self.format_status_summary("正在终止", "保留已完成结果", self._status_metric("目标 ", self._scan_target_date))
+            )
             if hasattr(self, "table_state"):
-                self.table_state.show_loading("正在终止...", "正在收尾")
+                if is_incremental and self.source_model.rowCount() > 0:
+                    self.table_state.show_table()
+                else:
+                    self.table_state.show_loading("正在终止...", "正在收尾")
         else:
-            self.btn_scan_action.setText("执行VCP扫描")
+            self.btn_scan_action.setText("区间扫描")
             self.btn_scan_action.setEnabled(True)
+            if hasattr(self, "btn_scan_increment"):
+                self.btn_scan_increment.setText("新增扫描")
+                self.btn_scan_increment.setEnabled(True)
             self._refresh_scan_status()
             if hasattr(self, "table_state"):
                 if self.source_model.rowCount() > 0:
@@ -179,9 +303,14 @@ class ScanTab(BaseStockTab):
 
         filter_widgets = [self.scan_search]
 
-        self.btn_scan_action = QPushButton("执行VCP扫描")
+        self.btn_scan_action = QPushButton("区间扫描")
         self.btn_scan_action.setObjectName("primaryButton")
         self.btn_scan_action.clicked.connect(self._on_scan_action_clicked)
+
+        self.btn_scan_increment = QPushButton("新增扫描")
+        self.btn_scan_increment.setProperty("class", "secondary")
+        self.btn_scan_increment.setToolTip("只扫描最近可用交易日，并将结果追加/刷新到当前表格")
+        self.btn_scan_increment.clicked.connect(self._on_incremental_scan_clicked)
 
         # 扫描参数设置按钮
         self.btn_scan_settings = QToolButton()
@@ -194,7 +323,7 @@ class ScanTab(BaseStockTab):
         self.btn_scan_settings.setToolTip("VCP扫描参数设置")
         self.btn_scan_settings.clicked.connect(self._show_scan_settings)
 
-        action_widgets = [self.btn_scan_action, self.btn_scan_settings]
+        action_widgets = [self.btn_scan_action, self.btn_scan_increment, self.btn_scan_settings]
         toolbar = self.build_tab_toolbar("VCP 扫描", self.lbl_scan_status, filter_widgets, action_widgets)
         layout.addWidget(toolbar)
         self._refresh_scan_status()
@@ -300,7 +429,15 @@ class ScanTab(BaseStockTab):
             return
 
         start_date, end_date = dlg.selected_range()
-        self.start_scan(start_date, end_date)
+        self.start_scan(start_date, end_date, merge_mode=False)
+
+    def _on_incremental_scan_clicked(self):
+        if self.worker and self.worker.isRunning():
+            self.cancel_scan()
+            return
+
+        target_date = self._resolve_incremental_scan_date()
+        self.start_scan(target_date, target_date, merge_mode=True)
 
     def _show_scan_settings(self):
         dlg = VCPScanSettingsDialog(self._get_scan_params(), self._load_user_presets(), self)
@@ -317,7 +454,7 @@ class ScanTab(BaseStockTab):
     # ==========================
     # 核心引擎调度与任务生命周期
     # ==========================
-    def start_scan(self, sd: str, ed: str):
+    def start_scan(self, sd: str, ed: str, merge_mode: bool = False):
         if self.worker is not None and self.worker.isRunning():
             return
 
@@ -326,9 +463,12 @@ class ScanTab(BaseStockTab):
         if len(sd) == 8: sd = f"{sd[:4]}-{sd[4:6]}-{sd[6:]}"
         if len(ed) == 8: ed = f"{ed[:4]}-{ed[4:6]}-{ed[6:]}"
 
+        self._scan_mode = "incremental" if merge_mode else "full"
+        self._scan_target_date = ed if merge_mode else f"{sd} ~ {ed}"
+        self._last_incremental_stats = None
         self._scan_cancel_requested = False
         self._set_scan_action_state("running")
-        event_bus.sig_task_progress.emit("scan", 1, "准备扫描...")
+        event_bus.sig_task_progress.emit("scan", 1, "准备新增扫描..." if merge_mode else "准备扫描...")
         self._pending_scan_results = None
 
         params = VCPParams(
@@ -359,7 +499,8 @@ class ScanTab(BaseStockTab):
     def _on_scan_finished(self, success, msg):
         if success:
             self._save_scan_cache(self._pending_scan_results or [])
-        event_bus.sig_task_progress.emit("scan", 100 if success else 0, msg)
+        final_msg = self._build_incremental_finish_message() if success and self._scan_mode == "incremental" else msg
+        event_bus.sig_task_progress.emit("scan", 100 if success else 0, final_msg)
 
     def _on_worker_thread_finished(self):
         if self.worker:
@@ -367,9 +508,17 @@ class ScanTab(BaseStockTab):
             self.worker = None
         self._scan_cancel_requested = False
         self._set_scan_action_state("idle")
+        self._scan_mode = "full"
+        self._scan_target_date = ""
 
     def _on_scan_results(self, results):
-        self._pending_scan_results = results or []
+        incoming_results = results or []
+        if self._scan_mode == "incremental":
+            merged_results, merge_stats = self._merge_scan_results(self._current_results, incoming_results)
+            self._last_incremental_stats = merge_stats
+            self._pending_scan_results = merged_results
+        else:
+            self._pending_scan_results = incoming_results
         self._current_results = self._pending_scan_results
         self._render_scan_table(self._pending_scan_results)
 

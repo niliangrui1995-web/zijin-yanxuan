@@ -3,7 +3,8 @@
 from functools import lru_cache
 
 from PyQt6.QtWidgets import (
-    QApplication, QTableView, QAbstractItemView, QWidget, QToolTip, QVBoxLayout, QStackedLayout, QLabel, QFrame
+    QApplication, QTableView, QAbstractItemView, QWidget, QToolTip, QVBoxLayout, QStackedLayout, QLabel, QFrame,
+    QSizePolicy
 )
 from PyQt6.QtCore import Qt, QSize, QTimer, QEvent, QPropertyAnimation, QEasingCurve, pyqtProperty
 from PyQt6.QtGui import QPainter, QColor, QBrush, QPalette, QFont, QFontMetrics
@@ -259,12 +260,13 @@ class TableStateOverlay(QWidget):
         self._card = QFrame(self)
         self._card.setObjectName("tableStateCard")
         self._card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self._card.setMinimumWidth(280)
+        self._card.setMinimumWidth(320)
+        self._card.setMaximumWidth(420)
 
         card_layout = QVBoxLayout(self._card)
         card_layout.setContentsMargins(18, 16, 18, 16)
         card_layout.setSpacing(8)
-        card_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        card_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
         self._dot = PulsingDot(parent=self)
         self._dot.setVisible(False)
@@ -272,11 +274,14 @@ class TableStateOverlay(QWidget):
         self._title = QLabel("")
         self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._title.setWordWrap(True)
+        self._title.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
         self._subtitle = QLabel("")
         self._subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._subtitle.setWordWrap(True)
-        self._subtitle.setMaximumWidth(320)
+        self._subtitle.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._subtitle.setMinimumWidth(220)
+        self._subtitle.setMaximumWidth(360)
 
         card_layout.addWidget(self._dot, 0, Qt.AlignmentFlag.AlignCenter)
         card_layout.addWidget(self._title)
