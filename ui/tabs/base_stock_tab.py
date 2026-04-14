@@ -16,7 +16,7 @@ import time
 import webbrowser
 
 from PyQt6.QtCore import QCoreApplication, Qt
-from PyQt6.QtWidgets import QWidget, QLabel, QHBoxLayout, QVBoxLayout, QFrame, QToolButton
+from PyQt6.QtWidgets import QWidget, QLabel, QHBoxLayout, QVBoxLayout, QFrame, QToolButton, QPushButton
 
 from core.event_bus import event_bus
 from ui.theme_tokens import build_ui_tokens
@@ -49,6 +49,54 @@ class BaseStockTab(QWidget):
             widget.setProperty("toolbarRole", "meta")
         if isinstance(widget, QToolButton) and widget.property("class") is None:
             widget.setProperty("class", "toolbarGhost")
+
+    @staticmethod
+    def _toolbar_button_texts(button: QPushButton) -> list[str]:
+        hints = button.property("toolbarWidthHints")
+        texts: list[str] = []
+
+        if isinstance(hints, (list, tuple, set)):
+            texts.extend(str(item).strip() for item in hints if str(item).strip())
+        elif isinstance(hints, str):
+            texts.extend(part.strip() for part in hints.split("|") if part.strip())
+
+        current_text = str(button.text() or "").strip()
+        if current_text and current_text not in texts:
+            texts.append(current_text)
+        return texts
+
+    @classmethod
+    def _equalize_toolbar_action_widths(cls, action_widgets: list[QWidget] | None):
+        if not action_widgets:
+            return
+
+        candidates: list[QPushButton] = []
+        for widget in action_widgets:
+            if not isinstance(widget, QPushButton):
+                continue
+            if widget.property("toolbarWidthPolicy") == "content":
+                continue
+            candidates.append(widget)
+
+        if len(candidates) < 2:
+            return
+
+        target_width = 0
+        for button in candidates:
+            texts = cls._toolbar_button_texts(button)
+            if not texts:
+                continue
+            metrics = button.fontMetrics()
+            content_width = max(metrics.horizontalAdvance(text) for text in texts)
+            icon_width = 18 if not button.icon().isNull() else 0
+            button_width = max(button.minimumWidth(), content_width + icon_width + 36)
+            target_width = max(target_width, button_width)
+
+        if target_width <= 0:
+            return
+
+        for button in candidates:
+            button.setMinimumWidth(target_width)
 
     @staticmethod
     def _status_metric(label: str, value, suffix: str = "") -> str:
@@ -136,6 +184,7 @@ class BaseStockTab(QWidget):
                 self._prepare_toolbar_widget(w)
                 action_layout.addWidget(w)
             tb_layout.addWidget(action_wrap, 0, Qt.AlignmentFlag.AlignRight)
+            self._equalize_toolbar_action_widths(action_widgets)
 
         return toolbar
 

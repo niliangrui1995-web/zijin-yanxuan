@@ -305,10 +305,12 @@ class ScanTab(BaseStockTab):
 
         self.btn_scan_action = QPushButton("区间扫描")
         self.btn_scan_action.setObjectName("primaryButton")
+        self.btn_scan_action.setProperty("toolbarWidthHints", ["区间扫描", "终止VCP扫描", "终止新增扫描", "正在终止...", "正在终止新增..."])
         self.btn_scan_action.clicked.connect(self._on_scan_action_clicked)
 
         self.btn_scan_increment = QPushButton("新增扫描")
         self.btn_scan_increment.setProperty("class", "secondary")
+        self.btn_scan_increment.setProperty("toolbarWidthHints", ["新增扫描"])
         self.btn_scan_increment.setToolTip("只扫描最近可用交易日，并将结果追加/刷新到当前表格")
         self.btn_scan_increment.clicked.connect(self._on_incremental_scan_clicked)
 

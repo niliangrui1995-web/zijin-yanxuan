@@ -141,12 +141,6 @@ class RtMonitorTab(BaseStockTab):
         if emit_progress:
             event_bus.sig_task_progress.emit("rt_monitor", 1 if running else 0, "start" if running else "stop")
 
-    def _ensure_rt_button_width(self):
-        texts = ["启动监控", "停止监控", "正在停止..."]
-        metrics = self.btn_rt_start.fontMetrics()
-        content_width = max(metrics.horizontalAdvance(text) for text in texts)
-        self.btn_rt_start.setFixedWidth(max(124, content_width + 36))
-
     def _set_rt_button_stopping(self, info_text: str | None = None):
         self.btn_rt_start.setText("正在停止...")
         self.btn_rt_start.setProperty("monitoring", True)
@@ -201,7 +195,7 @@ class RtMonitorTab(BaseStockTab):
         self.btn_rt_start = QPushButton("启动监控")
         self.btn_rt_start.setObjectName("primaryButton")
         self.btn_rt_start.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._ensure_rt_button_width()
+        self.btn_rt_start.setProperty("toolbarWidthHints", ["启动监控", "停止监控", "正在停止..."])
         self.btn_rt_start.clicked.connect(lambda *args: self._toggle_rt_monitor())
 
         # 清空盘中记录按钮
