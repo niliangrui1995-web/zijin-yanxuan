@@ -51,7 +51,7 @@ class CacheManager:
         if hasattr(rps120, "notna"):
             try:
                 return int(rps120.notna().sum())
-            except Exception:
+            except (AttributeError, TypeError, ValueError):
                 return 0
 
         return 0
@@ -66,7 +66,7 @@ class CacheManager:
             try:
                 if len(df) <= 0:
                     continue
-            except Exception:
+            except TypeError:
                 continue
 
             try:
@@ -74,7 +74,7 @@ class CacheManager:
                 if index is None or len(index) <= 0:
                     continue
                 last_value = index[-1]
-            except Exception:
+            except (IndexError, TypeError):
                 continue
 
             try:
@@ -84,7 +84,7 @@ class CacheManager:
                     date_str = str(last_value).strip().replace("-", "")[:8]
                 if len(date_str) == 8 and date_str.isdigit() and date_str > latest_date:
                     latest_date = date_str
-            except Exception:
+            except (AttributeError, TypeError, ValueError):
                 continue
 
         return latest_date
@@ -96,7 +96,7 @@ class CacheManager:
             try:
                 if df is not None and len(df) >= 60:
                     all_data[code] = df
-            except Exception:
+            except TypeError:
                 continue
 
         if not all_data:

@@ -9,12 +9,12 @@ ui/components/stock_context_menu.py
 现在用工厂模式，各 Tab 只需 3 行代码调用。
 """
 
-from PyQt6.QtWidgets import QMenu, QApplication
 from PyQt6.QtGui import QCursor
+from PyQt6.QtWidgets import QApplication, QMenu
 
+from core.event_bus import event_bus
 from ui.styles.context_menu_qss import generate_context_menu_qss
 from ui.viewmodels.watchlist_vm import watchlist_vm
-from core.event_bus import event_bus
 
 
 def build_stock_context_menu(
@@ -98,7 +98,7 @@ def build_stock_context_menu(
 
     elif action == act_pin_top and act_pin_top is not None:
         watchlist_vm.pin_to_top(code)
-        
+
     elif action == act_move_bottom and act_move_bottom is not None:
         watchlist_vm.move_to_bottom(code)
 
@@ -113,12 +113,8 @@ def build_stock_context_menu(
 
     elif action == act_gemini:
         url = "https://gemini.google.com/u/6/app?utm_source=app_launcher&utm_medium=owned&utm_campaign=base_all&pageId=none"
-        try:
-            import subprocess
-            subprocess.Popen(['start', 'chrome', url], shell=True)
-        except Exception:
-            import webbrowser
-            webbrowser.open(url)
+        import webbrowser
+        webbrowser.open_new_tab(url)
 
     elif action == act_export and show_export and export_callback:
         export_callback()

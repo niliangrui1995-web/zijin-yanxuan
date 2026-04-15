@@ -14,7 +14,6 @@ ignore = [
   "E402",
   "E701",
   "E702",
-  "E722",
 ]
 
 [tool.ruff.format]

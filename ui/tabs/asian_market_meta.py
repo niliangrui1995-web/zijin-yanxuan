@@ -56,7 +56,9 @@ def get_role_mapping():
     try:
         with open(dict_path, 'r', encoding='utf-8') as f:
             for line in f:
-                if "#" in line and (".T\"" in line or ".TW\"" in line or ".TWO\"" in line or ".KS\"" in line or ".HK\"" in line):
+                if "#" in line and any(
+                    marker in line for marker in (".T\"", ".TW\"", ".TWO\"", ".KS\"", ".HK\"")
+                ):
                     import re
 
                     match = re.search(r'\"([A-Z0-9\.]+)\"', line)
@@ -192,6 +194,16 @@ def format_market_display(market_value: str, code: str = "") -> str:
         "HK": "香港",
         "香港": "香港",
     }
+    market_map.update(
+        {
+            "TW": "中华民国",
+            "TWO": "中华民国",
+            "台湾": "中华民国",
+            "台湾上柜": "中华民国",
+            "中华民国": "中华民国",
+            "中华民国上柜": "中华民国",
+        }
+    )
     if raw_market in market_map:
         return market_map[raw_market]
 

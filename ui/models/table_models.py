@@ -995,6 +995,7 @@ class StockTableModel(QAbstractTableModel):
         self._data = data or []
         self._flash_records = {} # row -> {col: {"time": stamp, "diff": val}}
         self._plain_style_headers = set()
+        self._plain_background_headers = set()
 
         self.base_font = QFont()
         self.base_font.setFamilies(["Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "SimSun"])
@@ -1024,6 +1025,12 @@ class StockTableModel(QAbstractTableModel):
 
     def _uses_plain_style(self, header: str) -> bool:
         return header in self._plain_style_headers
+
+    def set_plain_background_headers(self, headers):
+        self._plain_background_headers = {str(header) for header in (headers or []) if str(header).strip()}
+
+    def _uses_plain_background(self, header: str) -> bool:
+        return header in self._plain_background_headers
 
     def get_row_data(self, row):
         if 0 <= row < len(self._data):
@@ -1402,7 +1409,7 @@ class StockTableModel(QAbstractTableModel):
             return QColor(_c("TEXT_PRIMARY"))
 
         elif role == Qt.ItemDataRole.BackgroundRole:
-            if self._uses_plain_style(key):
+            if self._uses_plain_style(key) or self._uses_plain_background(key):
                 return None
             heat_color = _numeric_heat_color(key, raw_val)
             if heat_color is not None:

@@ -1,25 +1,21 @@
 # -*- coding: utf-8 -*-
 # ui/tabs/watchlist_tab.py
 # 关注池独立组件 — 从 WatchlistMixin 解耦重构为完全自治的 QWidget
-import os
 import datetime
+import os
 
-from PyQt6.QtWidgets import (
-    QVBoxLayout, QLabel,
-    QHeaderView, QPushButton, QLineEdit, QAbstractItemView,
-    QFileDialog
-)
-from ui.components.toast_widget import show_toast
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtWidgets import QAbstractItemView, QFileDialog, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
-from ui.viewmodels.watchlist_vm import watchlist_vm
-from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
-from ui.components import VCPTableView, TableStateWrapper
 from core.event_bus import event_bus
 from core.json_cache import load_json_file
 from core.logger import get_logger
 from core.task_manager import task_manager
+from ui.components import TableStateWrapper, VCPTableView
+from ui.components.toast_widget import show_toast
+from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_tab import BaseStockTab
+from ui.viewmodels.watchlist_vm import watchlist_vm
 from vcp.constants import RPS_CACHE_FILE
 
 log = get_logger(__name__)
@@ -43,7 +39,7 @@ class WatchlistTab(BaseStockTab):
         # 挂载全局事件总线
         event_bus.sig_watchlist_changed.connect(self._on_watchlist_changed)
         event_bus.sig_app_closing.connect(self._on_app_closing)
-        
+
         # v4: 使用精准专用信道
         event_bus.sig_cache_loaded.connect(self._on_cache_or_earnings_updated)
         event_bus.sig_earnings_updated.connect(self._on_cache_or_earnings_updated)
@@ -85,14 +81,14 @@ class WatchlistTab(BaseStockTab):
 
         # 表格控件
         self.table_sp = VCPTableView(default_row_height=30)
-        
+
         # 拖拽排序设置 (只有在默认排序状态下才可用)
         self.table_sp.setDragEnabled(True)
         self.table_sp.setAcceptDrops(True)
         self.table_sp.setDropIndicatorShown(True)
         self.table_sp.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self.table_sp.setDragDropOverwriteMode(False)
-        
+
         # 绑定 Model 与 Delegate
         headers = [
             "代码", "名称", "现价", "涨幅%", "市值",
@@ -102,7 +98,7 @@ class WatchlistTab(BaseStockTab):
         self.proxy_model = RtSortFilterProxyModel(self.table_sp)
         self.proxy_model.setSourceModel(self.model)
         self.table_sp.setModel(self.proxy_model)
-        
+
         self.delegate = StockItemDelegate(self.table_sp)
         self.table_sp.setItemDelegate(self.delegate)
         self.table_state = TableStateWrapper(self.table_sp, empty_title="暂无关注池数据", loading_title="加载中...")
@@ -120,7 +116,7 @@ class WatchlistTab(BaseStockTab):
         # 绑定防抖自动保存与恢复配置（restoreState 会连带把上次的排序列也恢复了）
         # 列结构变更（移除“时间”列），升级配置 key，避免旧列状态错位恢复
         self.bind_header_persistence(self.table_sp, "header_state_watchlist_v8")
-        
+
         # 【修复】强制抹掉任何因为 header.restoreState 还原出来的自动排序状态
         # 因为在关闭时，我们已经把当前的各种（哪怕是点击表头排出来的）视觉顺序定死并按此顺序拍扁存入硬盘了
         # 所以重启后，应当直接默认展示物理顺序，而不受过去排序标记的干扰
@@ -155,7 +151,7 @@ class WatchlistTab(BaseStockTab):
 
     def _render_table(self, all_codes, data_dict, old_pool):
         """渲染关注池表格"""
-        
+
         # 提取当前表格中活跃的实时行情和市值，避免重绘时发生闪退或变成 '--'
         live_data_map = {}
         if hasattr(self, 'model') and getattr(self.model, 'row_data', None):
@@ -260,10 +256,10 @@ class WatchlistTab(BaseStockTab):
             show_toast("当前正处于条件排序状态，拖拽无效，请点击右上角【还原默认视图】后再拖拽！", "warning", self)
             self._load_special_data() # 撤销刚刚拖拽引发的界面错乱，滚回原状
             return
-            
+
         # 2. 调用 VM 写入磁盘
         watchlist_vm.reorder(new_codes_list)
-        
+
         # 3. 再重新拉取一次保持严格同步
         self._load_special_data()
 
@@ -326,13 +322,13 @@ class WatchlistTab(BaseStockTab):
                         if v not in (None, "", [], {}):
                             merged[k] = v
                     code_list.append(merged)
-            
+
             current_idx = 0
             for i, c in enumerate(code_list):
                 if c['代码'] == code:
                     current_idx = i
                     break
-                    
+
             event_bus.sig_show_kline_with_list.emit(code, code_list, current_idx)
 
     def _show_context_menu(self, pos):
@@ -345,7 +341,7 @@ class WatchlistTab(BaseStockTab):
         row = source_index.row()
         if row >= len(self.model.row_data):
             return
-            
+
         code = self.model.row_data[row].get("代码", "")
         name = self.model.row_data[row].get("名称", "")
         if not code or not name:
@@ -390,7 +386,7 @@ class WatchlistTab(BaseStockTab):
         """取消强制排序：仅重置表格排序状态，不影响用户自定义的列宽"""
         # 还原默认排序列，使得可随意拖拽
         self.table_sp.sortByColumn(-1, Qt.SortOrder.AscendingOrder)
-        
+
         show_toast("已解除列表排序，您可以自由拖拽个股顺序了", "success", self.window(), duration=2500)
 
     # ================================================================
@@ -405,14 +401,14 @@ class WatchlistTab(BaseStockTab):
             if main_win:
                 if hasattr(main_win, 'engine'):
                     rps_bundle = main_win.engine.get_precomputed_rps()
-                    
+
                 if hasattr(main_win, 'tab_na_daily') and hasattr(main_win.tab_na_daily, 'model'):
                     for r in main_win.tab_na_daily.model.row_data:
                         c = str(r.get("代码", ""))
                         if c:
                             na_data[c] = str(r.get("催化剂", "") or r.get("💥催化剂", ""))
                             na_subsector_data[c] = str(r.get("细分板块", "") or "")
-                        
+
                 if hasattr(main_win, 'tab_foreign_block') and hasattr(main_win.tab_foreign_block, 'model'):
                     # 用于聚合单只股票下各主力席位的买卖净额: code -> { short_branch: net_amount_wan }
                     block_aggregates = {}
@@ -424,12 +420,12 @@ class WatchlistTab(BaseStockTab):
                             buy = str(r.get("买方营业部", ""))
                             sell = str(r.get("卖方营业部", ""))
                             amt = str(r.get("成交金额(万元)", "0"))
-                            
+
                             try:
                                 amt_val = float(amt) if amt and amt != "--" else 0.0
-                            except:
+                            except (TypeError, ValueError):
                                 amt_val = 0.0
-                                
+
                             branch = ""
                             sign = 1.0
                             if "买入" in detail:
@@ -441,17 +437,18 @@ class WatchlistTab(BaseStockTab):
                             else:
                                 branch = buy if buy else sell
                                 sign = 1.0
-                                
+
                             short_branch = branch
                             for kw in FOREIGN_KEYWORDS:
                                 if kw in branch:
                                     short_branch = kw
                                     break
-                                    
+
                             if c not in block_aggregates:
                                 block_aggregates[c] = {}
-                            block_aggregates[c][short_branch] = block_aggregates[c].get(short_branch, 0.0) + (amt_val * sign)
-                            
+                            current_net = block_aggregates[c].get(short_branch, 0.0)
+                            block_aggregates[c][short_branch] = current_net + (amt_val * sign)
+
                     # 将聚合的数据重组为显示串
                     for c, branch_data in block_aggregates.items():
                         memos = []
@@ -465,13 +462,13 @@ class WatchlistTab(BaseStockTab):
                             else:
                                 memos.append(f"{br}净买0万")
                         block_data[c] = " | ".join(memos)
-                            
+
                 if hasattr(main_win, 'tab_earnings') and hasattr(main_win.tab_earnings, 'model'):
                     for r in main_win.tab_earnings.model.row_data:
                         c = str(r.get("代码", ""))
                         pct = str(r.get("环比%", ""))
                         if c and pct and pct != "--": earn_data[c] = f"{pct}%"
-                        
+
                 if hasattr(main_win, 'tab_lhb') and hasattr(main_win.tab_lhb, 'model'):
                     for r in main_win.tab_lhb.model.row_data:
                         c = str(r.get("代码", ""))
@@ -485,20 +482,20 @@ class WatchlistTab(BaseStockTab):
                                 date_mmdd = "-".join(parts[-2:]) if len(parts) >= 2 else raw_date
                             else:
                                 date_mmdd = raw_date
-                            
+
                             net = float(r.get("上榜净买额(万)", 0))
                             jg = float(r.get("机构净买(万)", 0))
                             fgn = float(r.get("外资净买(万)", 0))
-                            
+
                             net_s = f"净卖:{abs(net):.0f}万" if net < 0 else f"净买:{net:.0f}万"
                             jg_s = f"机构净卖:{abs(jg):.0f}万" if jg < 0 else f"机构净买:{jg:.0f}万"
                             fgn_s = f"外资净卖:{abs(fgn):.0f}万" if fgn < 0 else f"外资净买:{fgn:.0f}万"
-                            
+
                             lhb_data[c] = {
                                 "text": f"{date_mmdd} | {net_s} | {jg_s} | {fgn_s}",
                                 "date": str(r.get("上榜日期", ""))
                             }
-                            
+
         except Exception as e:
             log.warning(f"[关注池] 提取主界面数据异常: {e}")
         return na_data, na_subsector_data, block_data, earn_data, lhb_data, rps_bundle
@@ -545,18 +542,20 @@ class WatchlistTab(BaseStockTab):
 
             # 剥离不再必要的重复计算市值逻辑 (由大一统机制负责)
             results = {}  # 修复局部变量未初始化的 bug
-            
+
             for _, code in codes_with_rows:
                 try:
-                    rps120_val = float(rps120_series.get(code, 0)) if rps120_series is not None and code in rps120_series else 0
-                    rps250_val = float(rps250_series.get(code, 0)) if rps250_series is not None and code in rps250_series else 0
-                    
+                    has_rps120 = rps120_series is not None and code in rps120_series
+                    has_rps250 = rps250_series is not None and code in rps250_series
+                    rps120_val = float(rps120_series.get(code, 0)) if has_rps120 else 0
+                    rps250_val = float(rps250_series.get(code, 0)) if has_rps250 else 0
+
                     rps_display = '--'
                     if rps250_val > 0:
                         rps_display = f"{rps250_val:.0f}"
                         if rps120_val > 0:
                             rps_display += f"/{rps120_val:.0f}"
-                            
+
                     results[code] = {
                         'rps': rps_display,
                         'subsector': na_subsector_data.get(code, ''),
@@ -568,7 +567,7 @@ class WatchlistTab(BaseStockTab):
                 except Exception as _e:
                     log.debug(f"[关注池] {code} RPS指标计算异常: {_e}")
                     continue
-            
+
             if results:
                 event_bus.sig_vcp_watchlist_ready.emit(results)
                 log.info(f"[关注池] {len(results)} 只标的附加指标已就绪")
@@ -579,29 +578,29 @@ class WatchlistTab(BaseStockTab):
     def _apply_vcp_indicators_ui(self, results: dict):
         """主线程：将 VCP 指标更新到 Model（按股票代码匹配，不再按行号，防止排序/拖拽后错位）"""
         if not results: return
-        
+
         # 构建 code -> row_idx 的当前映射（实时安全）
         code_to_row = {}
         for idx, row_dict in enumerate(self.model.row_data):
             c = row_dict.get('代码')
             if c:
                 code_to_row[c] = idx
-        
+
         for code, data in results.items():
             row_idx = code_to_row.get(code, -1)
             if row_idx < 0 or row_idx >= len(self.model.row_data): continue
-            
+
             row_dict = self.model.row_data[row_idx]
             row_dict['RPS强度'] = data.get('rps', '--')
             if data.get('subsector'):
                 row_dict['细分板块'] = data['subsector']
-            
+
             # 三大阵营的数据注入 (如果原本有数据但不为空，我们不覆盖；如果本次扫到了，坚决覆盖)
             if data.get('na_catalyst'):
                 row_dict['催化剂'] = data['na_catalyst']
             if data.get('block_trade'): row_dict['大宗交易'] = data['block_trade']
             if data.get('earnings'): row_dict['业绩异动'] = data['earnings']
-            if data.get('lhb'): 
+            if data.get('lhb'):
                 new_lhb = data['lhb']
                 if isinstance(new_lhb, dict):
                     new_date = new_lhb.get("date", "")
@@ -609,7 +608,7 @@ class WatchlistTab(BaseStockTab):
                     # 【逻辑变更】：根据龙虎榜表信息无条件刷新，不考虑历史日期锁定
                     row_dict["龙虎榜"] = new_text
                     row_dict["龙虎榜日期"] = new_date
-                        
+
             # trigger row update
             self.model.dataChanged.emit(
                 self.model.index(row_idx, 0),
@@ -686,7 +685,7 @@ class WatchlistTab(BaseStockTab):
                 code = str(row_dict.get("代码", ""))
                 if not code or code not in current_cache:
                     continue
-                
+
                 # 更新最新的结构化指标到 ViewModel
                 entry = current_cache[code]
                 entry["RPS强度"] = str(row_dict.get("RPS强度", ""))
@@ -698,7 +697,7 @@ class WatchlistTab(BaseStockTab):
                 entry["龙虎榜日期"] = str(row_dict.get("龙虎榜日期", ""))
                 entry.pop("催化剂", None)
                 entry.pop("热点板块", None)
-                
+
                 # 按视觉顺序保存
                 new_cache[code] = entry
 

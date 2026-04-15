@@ -20,12 +20,12 @@ def _normalize_for_json(value):
     if hasattr(value, "item"):
         try:
             return _normalize_for_json(value.item())
-        except Exception:
+        except (TypeError, ValueError):
             pass
     if hasattr(value, "isoformat"):
         try:
             return value.isoformat()
-        except Exception:
+        except (TypeError, ValueError):
             pass
     return str(value)
 

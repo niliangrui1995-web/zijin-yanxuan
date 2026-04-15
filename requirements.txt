@@ -1,23 +1,23 @@
-# 紫金研选量化终端 - 完整运行时依赖
+# Runtime dependencies for 紫金研选
 # Python 3.10+
 
-# === 核心依赖 ===
+# Core dependencies
 PyQt6>=6.5.0
-PyQt6-WebEngine>=6.5.0   # K 线图窗口 / QWebEngineView
+PyQt6-WebEngine>=6.5.0
 qdarkstyle>=3.1
 pytdx>=1.72
 pandas>=1.5.0
 numpy>=1.23.0
-requests>=2.33.0         # 修复 2.32.5 已知安全问题
+requests>=2.33.0
 
-# === 加速依赖（推荐安装） ===
-polars>=0.20.0           # 高性能数据处理加速引擎
-pyarrow>=12.0.0          # Parquet 读写支持
+# Performance helpers
+polars>=0.20.0
+pyarrow>=12.0.0
 
-# === 功能依赖 ===
-pypinyin>=0.49.0         # 拼音首字母搜索
-pyautogui>=0.9.54        # GUI 自动化辅助
-pywin32>=311; platform_system == "Windows"  # win32gui / win32con
-akshare>=1.18.35         # 龙虎榜 / 北美战报 / 外资大宗交易
-yfinance>=1.2.0,<1.3     # 亚洲寡头 / 海外行情
-curl_cffi>=0.7,<0.14     # 与 yfinance 1.2.x 兼容，避免解析冲突
+# Feature dependencies
+pypinyin>=0.49.0
+pyautogui>=0.9.54
+pywin32>=311; platform_system == "Windows"
+akshare>=1.18.35
+yfinance>=1.2.0,<1.3
+curl_cffi>=0.7,<0.14

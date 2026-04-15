@@ -92,6 +92,7 @@ def test_asian_market_status_column_uses_plain_style(monkeypatch):
     try:
         assert "状态" in tab.model._plain_style_headers
         assert "涨幅%" not in tab.model._plain_style_headers
+        assert "涨幅%" in tab.model._plain_background_headers
     finally:
         tab.deleteLater()
 
@@ -130,10 +131,13 @@ def test_asian_market_pct_column_keeps_rise_fall_color(monkeypatch):
             }
         ])
         pct_col = tab.model.headers.index("涨幅%")
-        color = tab.model.data(tab.model.index(0, pct_col), Qt.ItemDataRole.ForegroundRole)
+        model_index = tab.model.index(0, pct_col)
+        color = tab.model.data(model_index, Qt.ItemDataRole.ForegroundRole)
+        background = tab.model.data(model_index, Qt.ItemDataRole.BackgroundRole)
 
         assert isinstance(color, QColor)
         assert color.name().lower() == QColor(_c("COLOR_RISE")).name().lower()
+        assert background is None
     finally:
         tab.deleteLater()
 
