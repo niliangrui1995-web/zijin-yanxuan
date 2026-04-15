@@ -134,10 +134,12 @@ def test_asian_market_pct_column_keeps_rise_fall_color(monkeypatch):
         model_index = tab.model.index(0, pct_col)
         color = tab.model.data(model_index, Qt.ItemDataRole.ForegroundRole)
         background = tab.model.data(model_index, Qt.ItemDataRole.BackgroundRole)
+        skip_sorted_overlay = tab.model.data(model_index, Qt.ItemDataRole.UserRole + 3)
 
         assert isinstance(color, QColor)
         assert color.name().lower() == QColor(_c("COLOR_RISE")).name().lower()
         assert background is None
+        assert skip_sorted_overlay is True
     finally:
         tab.deleteLater()
 

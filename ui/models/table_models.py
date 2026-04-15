@@ -851,10 +851,10 @@ class StockItemDelegate(QStyledItemDelegate):
         selected_rail_width = table_tokens["selected_rail_width"] if show_selected_rail else 0
         current_index = widget.currentIndex() if widget and hasattr(widget, "currentIndex") else QModelIndex()
         is_current = current_index.isValid() and current_index == index
-        plain_style_cell = bool(index.data(Qt.ItemDataRole.UserRole + 3))
+        skip_sorted_overlay = bool(index.data(Qt.ItemDataRole.UserRole + 3))
         sorted_column = widget.sorted_column() if widget and hasattr(widget, "sorted_column") else -1
         sorted_overlay = None
-        if not is_selected and not plain_style_cell and sorted_column == index.column():
+        if not is_selected and not skip_sorted_overlay and sorted_column == index.column():
             sorted_overlay = _qcolor_from_token(table_tokens["sorted_column_bg"])
 
         def draw_current_cell_indicator():
@@ -1480,7 +1480,7 @@ class StockTableModel(QAbstractTableModel):
             return None
 
         elif role == Qt.ItemDataRole.UserRole + 3:
-            return self._uses_plain_style(key)
+            return self._uses_plain_style(key) or self._uses_plain_background(key)
 
         return None
 
