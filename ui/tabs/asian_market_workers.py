@@ -23,6 +23,7 @@ log = get_logger(__name__)
 JSON_CACHE = os.path.join(CACHE_DIR, "asian_klines_latest.json")
 RT_JSON_CACHE = os.path.join(CACHE_DIR, "asian_rt_latest.json")
 GLOBAL_ASIAN_RT_CACHE: dict[str, dict] = {}
+_ASIAN_MARKET_CODES = ("TW", "HK", "T", "KS")
 
 _USE_CF_PROXY = True
 
@@ -34,6 +35,26 @@ def is_cf_proxy_enabled() -> bool:
 def set_cf_proxy_enabled(enabled: bool) -> None:
     global _USE_CF_PROXY
     _USE_CF_PROXY = bool(enabled)
+
+
+def infer_asian_markets(codes) -> list[str]:
+    markets: list[str] = []
+    for raw_code in codes or []:
+        code = str(raw_code or "").strip()
+        if not code:
+            continue
+        market = MarketCalendar.normalize_market(MarketCalendar.infer_market(code))
+        if market not in _ASIAN_MARKET_CODES or market in markets:
+            continue
+        markets.append(market)
+    return markets or list(_ASIAN_MARKET_CODES)
+
+
+def is_asian_quote_refresh_time(codes) -> bool:
+    return any(
+        MarketCalendar.is_quote_refresh_time(market)
+        for market in infer_asian_markets(codes)
+    )
 
 
 class AsianMarketWorker(QThread):
@@ -165,7 +186,7 @@ class AsianMarketWorker(QThread):
 
     def run(self):
         while self._is_running:
-            auto_refresh_allowed = MarketCalendar.is_quote_refresh_time()
+            auto_refresh_allowed = is_asian_quote_refresh_time(self.codes)
             manual_refresh = self._manual_refresh_requested
 
             if self._pause_mode and not manual_refresh:

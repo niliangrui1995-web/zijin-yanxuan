@@ -130,8 +130,6 @@ def continue_auto_cache_sync(tab):
 
 
 def log_asian_health(tab):
-    from core.market_calendar import MarketCalendar
-
     now_ts = dt.datetime.now().timestamp()
     if now_ts - tab._last_health_log_at < 60:
         return
@@ -150,7 +148,7 @@ def log_asian_health(tab):
         worker_running,
         len(getattr(tab, "row_data", []) or []),
     )
-    should_log = MarketCalendar.is_quote_refresh_time()
+    should_log = tab._is_quote_refresh_open()
     if not should_log:
         signature_changed = health_signature != tab._last_health_signature
         interval_reached = (now_ts - tab._last_health_log_at) >= 1800
@@ -169,11 +167,9 @@ def log_asian_health(tab):
 
 
 def on_minute_tick(tab):
-    from core.market_calendar import MarketCalendar
-
     tab._refresh_market_status_rows()
     if not tab._is_fetching_cache and not tab._pending_auto_cache_sync:
-        if MarketCalendar.is_quote_refresh_time():
+        if tab._is_quote_refresh_open():
             if tab._asian_runtime_state != "manual_refresh_once":
                 tab._set_runtime_state("running")
                 if hasattr(tab, "worker") and tab.worker is not None:

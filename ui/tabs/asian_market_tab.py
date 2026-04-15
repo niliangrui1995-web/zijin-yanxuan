@@ -35,6 +35,7 @@ from ui.tabs.asian_market_workers import (
     JSON_CACHE,
     RT_JSON_CACHE,
     AsianMarketWorker,
+    is_asian_quote_refresh_time,
     is_cf_proxy_enabled,
     set_cf_proxy_enabled,
 )
@@ -67,8 +68,7 @@ class AsianMarketTab(BaseStockTab):
         self.worker = AsianMarketWorker(codes)
         self.worker.progress.connect(self.lbl_status.setText)
         self.worker.result_ready.connect(self._on_rt_update)
-        from core.market_calendar import MarketCalendar
-        if MarketCalendar.is_quote_refresh_time():
+        if self._is_quote_refresh_open():
             self._asian_runtime_state = "running"
             self._worker_resume_auto_refresh()
         else:
@@ -95,6 +95,25 @@ class AsianMarketTab(BaseStockTab):
 
     def _call_worker_method(self, method_name: str):
         return asian_call_worker_method(self, method_name)
+
+    def _get_tracked_codes(self) -> list[str]:
+        worker_codes = [
+            str(code).strip()
+            for code in getattr(getattr(self, "worker", None), "codes", []) or []
+            if str(code).strip()
+        ]
+        if worker_codes:
+            return list(dict.fromkeys(worker_codes))
+
+        row_codes = [
+            str(row.get("代码", "")).strip()
+            for row in getattr(self, "row_data", []) or []
+            if str(row.get("代码", "")).strip()
+        ]
+        return list(dict.fromkeys(row_codes))
+
+    def _is_quote_refresh_open(self) -> bool:
+        return is_asian_quote_refresh_time(self._get_tracked_codes())
 
     def _worker_resume_auto_refresh(self):
         return asian_worker_resume_auto_refresh(self)
@@ -603,10 +622,8 @@ class AsianMarketTab(BaseStockTab):
         self._last_asian_success_at = datetime.datetime.now()
         self._save_rt_cache()
 
-        from core.market_calendar import MarketCalendar
-
         if self._asian_runtime_state == "manual_refresh_once":
-            if MarketCalendar.is_quote_refresh_time():
+            if self._is_quote_refresh_open():
                 self._set_runtime_state("running")
                 if hasattr(self, "worker") and self.worker is not None:
                     self._worker_resume_auto_refresh()

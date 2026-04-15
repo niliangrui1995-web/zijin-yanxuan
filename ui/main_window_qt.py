@@ -608,6 +608,16 @@ class MainWindowQT(QMainWindow):
         import gc
         QTimer.singleShot(2000, lambda: gc.collect())
         self._update_last_f5_time()
+        try:
+            central_quotes_svc = getattr(self, "central_quotes_svc", None)
+            if central_quotes_svc is not None:
+                central_quotes_svc.refresh_after_cache_reload()
+        except Exception as e:
+            log.error(f"[F5] 鍒锋柊鍏ㄥ眬鎶ヤ环蹇収寮傚父: {e}")
+        try:
+            event_bus.sig_cache_loaded.emit()
+        except Exception as e:
+            log.error(f"[F5] 骞挎挱缂撳瓨鍔犺浇瀹屾垚淇″彿寮傚父: {e}")
         if count > 0:
             self.lbl_status.setText(f"F5预计算完成: {count}只 | 耗时{elapsed:.1f}s")
             self.lbl_code_count.setText(f"标的池: {count} 只")

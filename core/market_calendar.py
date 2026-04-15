@@ -48,7 +48,7 @@ class MarketCalendar:
         # 中国内地现货市场：开盘集合竞价、连续竞价、午休、收盘集合竞价。
         "CN": (
             (915, 926, "开盘集合竞价"),
-            (926, 930, "盘前"),
+            (926, 930, "开市前时段"),
             (930, 1131, "交易中"),
             (1131, 1300, "午休"),
             (1300, 1457, "交易中"),
@@ -94,6 +94,19 @@ class MarketCalendar:
         "KS": ((900, 1530),),
         "US": ((930, 1600),),
     }
+    _MARKET_ACTIVE_STATUSES = frozenset(
+        {
+            "交易中",
+            "开盘集合竞价",
+            "收盘集合竞价",
+            "收市竞价",
+            "开市前时段",
+            "盘前委托",
+            "盘后定价申报",
+            "盘后定价",
+        }
+    )
+    _MARKET_QUOTE_REFRESH_STATUSES = frozenset(_MARKET_ACTIVE_STATUSES | {"午休"})
     _NAGER_COUNTRY = {
         "HK": "HK",
         "T": "JP",
@@ -801,14 +814,7 @@ class MarketCalendar:
 
     @classmethod
     def is_market_active(cls, market: str = "CN") -> bool:
-        return cls.get_market_status(market) in {
-            "交易中",
-            "开盘集合竞价",
-            "收盘集合竞价",
-            "收市竞价",
-            "开市前时段",
-            "盘后定价",
-        }
+        return cls.get_market_status(market) in cls._MARKET_ACTIVE_STATUSES
 
     @classmethod
     def is_quote_refresh_time(cls, market: str = "CN") -> bool:
@@ -817,12 +823,4 @@ class MarketCalendar:
         对 A 股来说，午休虽然不是连续成交时段，但主流行情源仍会返回
         上午收盘后的最新快照，因此这里将“午休”也视为可刷新报价的时段。
         """
-        return cls.get_market_status(market) in {
-            "交易中",
-            "午休",
-            "开盘集合竞价",
-            "收盘集合竞价",
-            "收市竞价",
-            "开市前时段",
-            "盘后定价",
-        }
+        return cls.get_market_status(market) in cls._MARKET_QUOTE_REFRESH_STATUSES

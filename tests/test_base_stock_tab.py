@@ -197,3 +197,66 @@ def test_base_stock_refresh_table_market_data_can_force_full_quote_refresh(monke
         assert provider.requested_codes == [["000001", "000002"]]
     finally:
         tab.deleteLater()
+
+
+def test_base_stock_refresh_table_market_data_fetches_newly_added_blank_rows(monkeypatch):
+    class DummyModel:
+        def __init__(self):
+            self.headers = ["代码", "现价", "涨幅%", "市值"]
+            self.row_data = [
+                {"代码": "000001", "现价": "--", "涨幅%": "--", "市值": "--"},
+                {"代码": "000002", "现价": "--", "涨幅%": "--", "市值": "--"},
+            ]
+
+        def update_quotes(self, quotes):
+            for row in self.row_data:
+                code = row.get("代码")
+                if code not in quotes:
+                    continue
+                close = float(quotes[code].get("close", 0) or 0)
+                last_close = float(quotes[code].get("last_close", 0) or 0)
+                row["现价"] = f"{close:.2f}" if close > 0 else "--"
+                if close > 0 and last_close > 0:
+                    row["涨幅%"] = ((close / last_close) - 1) * 100
+
+    class DummyProvider:
+        def __init__(self):
+            self.requested_codes = []
+
+        def fetch_realtime_quotes_batch(self, codes):
+            self.requested_codes.append(list(codes))
+            return {"000002": {"close": 11.2, "last_close": 11.0}}
+
+    class DummyTaskManager:
+        def is_active_task(self, task_id):
+            return False
+
+        def run_in_background(self, fn, on_success=None, on_error=None, task_id=None):
+            result = fn()
+            if on_success:
+                on_success(result)
+
+    class DummyTab(BaseStockTab):
+        def __init__(self, provider):
+            super().__init__(data_provider=provider)
+            self.model = DummyModel()
+
+    from core.global_store import global_store
+    import core.task_manager as task_manager_module
+
+    provider = DummyProvider()
+    tab = DummyTab(provider)
+
+    monkeypatch.setattr(
+        global_store,
+        "get_latest_quotes",
+        lambda: {"000001": {"close": 10.8, "last_close": 10.0}},
+    )
+    monkeypatch.setattr(task_manager_module, "task_manager", DummyTaskManager())
+    monkeypatch.setattr(tab, "async_update_market_caps", lambda: None)
+
+    try:
+        tab.refresh_table_quotes_and_market_caps(quote_task_id="new_codes_quotes")
+        assert provider.requested_codes == [["000002"]]
+    finally:
+        tab.deleteLater()

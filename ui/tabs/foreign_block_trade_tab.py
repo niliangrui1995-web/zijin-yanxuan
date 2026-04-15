@@ -198,6 +198,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         super().__init__(data_provider=data_provider, parent=parent)
         self._cap_cache = {}
         self._is_loading = False
+        self._block_trade_codes = []
         
         self.days_to_fetch = 20  # 默认拉取最近20个交易日
         self._init_ui()
@@ -337,6 +338,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._set_fetch_status("正在抓取大宗交易", self._status_metric("窗口 ", self.days_to_fetch, "交易日"))
         if hasattr(self, "table_state"):
             self.table_state.show_loading("正在抓取大宗交易...", "请稍候")
+        self._block_trade_codes = []
         self.model.update_data([])
         # 清空上一轮的K线缓存，防止跨交易日窗口后内存只增不减
         _kline_cache.clear()
@@ -461,6 +463,7 @@ class ForeignBlockTradeTab(BaseStockTab):
             failed_chunks = []
 
         if not data_list:
+            self._block_trade_codes = []
             if timeout_chunks or failed_chunks:
                 self._set_fetch_status(
                     "大宗抓取未完成",
@@ -558,6 +561,13 @@ class ForeignBlockTradeTab(BaseStockTab):
             }
             row_data.append(row_dict)
 
+        self._block_trade_codes = list(
+            dict.fromkeys(
+                row.get("代码", "")
+                for row in row_data
+                if str(row.get("代码", "")).strip()
+            )
+        )
         self.model.update_data(row_data)
         self._set_fetch_status(
             self._status_metric("命中 ", len(df), "笔"),
@@ -583,6 +593,7 @@ class ForeignBlockTradeTab(BaseStockTab):
             msg = "大宗交易抓取失败，请稍后重试。"
         elif not msg.startswith(("抓取超时", "抓取失败")):
             msg = f"大宗交易抓取失败：{msg}"
+        self._block_trade_codes = []
         self._set_fetch_status(msg)
         if hasattr(self, "table_state"):
             self.table_state.show_empty("暂无大宗交易数据")

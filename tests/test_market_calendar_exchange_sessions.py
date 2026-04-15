@@ -37,6 +37,32 @@ def test_cn_call_auction_status(monkeypatch):
     assert MarketCalendar.is_market_active("CN") is True
 
 
+def test_cn_pre_open_session_is_refreshable(monkeypatch):
+    monkeypatch.setattr(MarketCalendar, "is_trade_day", _always_trade_day())
+    monkeypatch.setattr(
+        MarketCalendar,
+        "_get_market_now",
+        _fake_now(datetime.datetime(2026, 4, 14, 9, 27)),
+    )
+
+    assert MarketCalendar.get_market_status("CN") == "开市前时段"
+    assert MarketCalendar.is_market_active("CN") is True
+    assert MarketCalendar.is_quote_refresh_time("CN") is True
+
+
+def test_cn_early_morning_premarket_stays_idle(monkeypatch):
+    monkeypatch.setattr(MarketCalendar, "is_trade_day", _always_trade_day())
+    monkeypatch.setattr(
+        MarketCalendar,
+        "_get_market_now",
+        _fake_now(datetime.datetime(2026, 4, 14, 8, 30)),
+    )
+
+    assert MarketCalendar.get_market_status("CN") == "盘前"
+    assert MarketCalendar.is_market_active("CN") is False
+    assert MarketCalendar.is_quote_refresh_time("CN") is False
+
+
 def test_japan_extended_close_session(monkeypatch):
     monkeypatch.setattr(MarketCalendar, "is_trade_day", _always_trade_day())
     monkeypatch.setattr(
@@ -84,3 +110,25 @@ def test_kr_closing_auction_status(monkeypatch):
 
     assert MarketCalendar.get_market_status("KS") == "收盘集合竞价"
     assert MarketCalendar.is_market_active("KS") is True
+
+
+def test_tw_pre_and_post_close_sessions_are_refreshable(monkeypatch):
+    monkeypatch.setattr(MarketCalendar, "is_trade_day", _always_trade_day())
+
+    monkeypatch.setattr(
+        MarketCalendar,
+        "_get_market_now",
+        _fake_now(datetime.datetime(2026, 4, 14, 8, 45)),
+    )
+    assert MarketCalendar.get_market_status("TW") == "盘前委托"
+    assert MarketCalendar.is_market_active("TW") is True
+    assert MarketCalendar.is_quote_refresh_time("TW") is True
+
+    monkeypatch.setattr(
+        MarketCalendar,
+        "_get_market_now",
+        _fake_now(datetime.datetime(2026, 4, 14, 14, 5)),
+    )
+    assert MarketCalendar.get_market_status("TW") == "盘后定价申报"
+    assert MarketCalendar.is_market_active("TW") is True
+    assert MarketCalendar.is_quote_refresh_time("TW") is True

@@ -55,6 +55,14 @@ class CentralQuotesService(QObject):
         self._last_heartbeat_signature = None
         self._last_heartbeat_logged_at = 0.0
 
+    @pyqtSlot()
+    def refresh_after_cache_reload(self):
+        """F5 或本地缓存更新后，立刻重建一次全局报价快照。"""
+        self._off_market_snapshot_emitted = False
+        if self._closed:
+            return
+        self._trigger_fetch()
+
     def _get_all_active_codes(self) -> set[str]:
         codes = set()
         mw = self.main_window
@@ -78,11 +86,16 @@ class CentralQuotesService(QObject):
         if hasattr(mw, "tab_watchlist") and getattr(mw.tab_watchlist, "model", None):
             _extract(mw.tab_watchlist.model.row_data)
 
-        if hasattr(mw, "tab_foreign_block") and hasattr(mw.tab_foreign_block, "_block_trade_codes"):
-            for code in mw.tab_foreign_block._block_trade_codes:
-                normalized = _normalize_a_code(code)
-                if normalized:
-                    codes.add(normalized)
+        if hasattr(mw, "tab_foreign_block"):
+            foreign_block = mw.tab_foreign_block
+            foreign_model = getattr(foreign_block, "model", None)
+            if foreign_model and hasattr(foreign_model, "row_data"):
+                _extract(foreign_model.row_data)
+            elif hasattr(foreign_block, "_block_trade_codes"):
+                for code in foreign_block._block_trade_codes:
+                    normalized = _normalize_a_code(code)
+                    if normalized:
+                        codes.add(normalized)
 
         if hasattr(mw, "tab_na_daily") and getattr(mw.tab_na_daily, "model", None):
             _extract(mw.tab_na_daily.model.row_data)

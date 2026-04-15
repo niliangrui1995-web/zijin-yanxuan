@@ -4,6 +4,7 @@ from PyQt6.QtGui import QColor
 
 from ui.tabs import asian_market_tab as asian_module
 from ui.tabs.asian_market_meta import get_market_status as get_asian_market_status
+from ui.tabs.asian_market_workers import infer_asian_markets, is_asian_quote_refresh_time
 from ui.models.table_models import _c
 from core.market_calendar import MarketCalendar
 
@@ -33,6 +34,26 @@ class _DummyWorker:
 
     def trigger_refresh(self):
         return None
+
+
+def test_infer_asian_markets_normalizes_from_code_suffixes():
+    assert infer_asian_markets(["0522.HK", "3324.TWO", "8035.T", "000660.KS"]) == [
+        "HK",
+        "TW",
+        "T",
+        "KS",
+    ]
+
+
+def test_asian_quote_refresh_uses_tracked_market_union(monkeypatch):
+    monkeypatch.setattr(
+        MarketCalendar,
+        "is_quote_refresh_time",
+        classmethod(lambda cls, market="CN": market == "HK"),
+    )
+
+    assert is_asian_quote_refresh_time(["0522.HK"]) is True
+    assert is_asian_quote_refresh_time(["8035.T"]) is False
 
 
 def test_asian_market_table_scales_columns_to_fill_view(monkeypatch):
@@ -211,5 +232,55 @@ def test_asian_market_status_rows_refresh_without_quote_tick(monkeypatch):
         tab._refresh_market_status_rows()
 
         assert tab.model.row_data[0]["状态"] == "🟡 收盘竞价"
+    finally:
+        tab.deleteLater()
+
+
+def test_asian_market_runtime_state_uses_actual_tracked_markets(monkeypatch):
+    monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "_load_local_cache",
+        lambda self: setattr(self, "row_data", [{"代码": "0522.HK"}]),
+    )
+    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+    monkeypatch.setattr(asian_module, "is_asian_quote_refresh_time", lambda codes: codes == ["0522.HK"])
+
+    tab = asian_module.AsianMarketTab()
+    try:
+        assert tab._asian_runtime_state == "running"
+    finally:
+        tab.deleteLater()
+
+
+def test_asian_market_minute_tick_uses_tracked_market_refresh_window(monkeypatch):
+    monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "_load_local_cache",
+        lambda self: setattr(self, "row_data", [{"代码": "8035.T"}]),
+    )
+    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+
+    tab = asian_module.AsianMarketTab()
+    try:
+        tab._set_runtime_state("running")
+        monkeypatch.setattr(tab, "_is_quote_refresh_open", lambda: False)
+
+        tab._on_minute_tick()
+
+        assert tab._asian_runtime_state == "paused_for_cache_sync"
     finally:
         tab.deleteLater()
