@@ -348,7 +348,7 @@ class RtMonitorTab(BaseStockTab):
                 self._set_status("无可用缓存", "先执行扫描或F5")
                 return
             
-            if not self.data_provider.server_pool or not self.data_provider.is_online():
+            if not self.data_provider.is_online():
                 self._set_status("连接行情服务器", "成功后自动启动")
                 self.btn_rt_start.setEnabled(False)
                 def _try_connect():
@@ -438,7 +438,7 @@ class RtMonitorTab(BaseStockTab):
             False,
             info_text=self._format_status_text("联网失败", "检查网络后重试")
         )
-        show_toast("无法连接通达信行情服务器", "error", self)
+        show_toast("无法连接东方财富实时报价", "error", self)
 
     def _do_update_rt_table(self, results):
         """实际执行刷新：这部分现在由于 Throttler 保护，每秒最多只执行一次"""

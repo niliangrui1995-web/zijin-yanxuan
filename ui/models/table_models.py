@@ -27,6 +27,7 @@ import textwrap
 from functools import lru_cache
 from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QSortFilterProxyModel, QRect, pyqtSignal, QMimeData
 from PyQt6.QtGui import QColor, QFont
+from core.buy_point import BUY_POINT_STYLE_TEXT, calculate_buy_point_from_history
 from ui.components import SearchFilter
 from ui.theme_tokens import build_ui_tokens
 
@@ -256,7 +257,7 @@ def _status_badge_color(text: str, header: str | None = None):
             return _c("COLOR_WARNING")
         return _c("COLOR_INFO")
     if header == "买点":
-        if any(keyword in st for keyword in ("触发", "确认")):
+        if any(keyword in st for keyword in ("触发", "确认", "✅")):
             return _c("COLOR_RISE_STRONG")
         return _c("COLOR_RISE")
     if "假突破" in st or "缩量" in st:
@@ -1221,22 +1222,14 @@ class StockTableModel(QAbstractTableModel):
                             # e.g 凌晨，或者周末，现价仅仅用于代替最后一根避免K线叠加
                             temp_hist = history[:-1] + [rt_close]
                             
-                    dyn_ma10 = sum(temp_hist[-10:]) / 10 if len(temp_hist) >= 10 else 0
-                    dyn_ma20 = sum(temp_hist[-20:]) / 20 if len(temp_hist) >= 20 else 0
-                    
-                    
                     # 获取当天的开盘价
                     rt_open = float(q.get('open') or rt_close)
-                    
-                    is_red_candle = (rt_close >= rt_open)
-                    
-                    # 新版买点定义：
-                    # 1. 多头或纠缠准备金叉状态：MA10 > MA20
-                    # 2. 开盘价被强行砸在均线以下吸筹：rt_open < ma10
-                    # 3. 终盘/现价必须收稳、守住均线支撑：rt_close > ma20 * 0.95
-                    # 4. 当天必须是红 K 线：rt_close >= rt_open
-                    if is_red_candle and (dyn_ma10 > dyn_ma20) and (rt_open < dyn_ma10) and (rt_close > dyn_ma20 * 0.95):
-                        pos_str = "触发"
+                    pos_str = calculate_buy_point_from_history(
+                        history=temp_hist,
+                        open_price=rt_open,
+                        close_price=rt_close,
+                        style=BUY_POINT_STYLE_TEXT,
+                    )
 
                 if pos_str != item_dict.get("买点", ""):
                     self.set_cell_value(row, "买点", pos_str)
@@ -1331,12 +1324,12 @@ class StockTableModel(QAbstractTableModel):
                     return QColor(_c("COLOR_FLAT"))
             elif key == "卖方营业部":
                 val_str = str(raw_val)
-                if any(kw in val_str for kw in ["高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴", "渣打", "野村", "汇丰", "星展", "大和", "机构专用"]):
-                    return QColor(_c("COLOR_FALL"))  # 外资/机构卖出标为绿
+                if any(kw in val_str for kw in ["高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴", "渣打", "野村", "汇丰", "星展", "大和"]):
+                    return QColor(_c("COLOR_FALL"))  # 外资卖出标为绿
             elif key == "买方营业部":
                 val_str = str(raw_val)
-                if any(kw in val_str for kw in ["高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴", "渣打", "野村", "汇丰", "星展", "大和", "机构专用"]):
-                    return QColor(_c("COLOR_RISE"))  # 外资/机构买入标为红
+                if any(kw in val_str for kw in ["高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴", "渣打", "野村", "汇丰", "星展", "大和"]):
+                    return QColor(_c("COLOR_RISE"))  # 外资买入标为红
             elif key == "交易详情":
                 val_str = str(raw_val)
                 if "对倒" in val_str:

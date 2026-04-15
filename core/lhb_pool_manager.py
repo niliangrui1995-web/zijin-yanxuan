@@ -18,6 +18,7 @@ import gc
 import json
 import os
 
+from core.buy_point import BUY_POINT_STYLE_BADGE, calculate_buy_point_from_history
 from core.logger import get_logger
 
 log = get_logger(__name__)
@@ -329,24 +330,19 @@ class LhbPoolManager:
                                 record["_history_date"] = last_date
                                 
                                 # 静态回显 (用于在没有实时行情推送的初始化瞬间，把位置显示出来)
-                                ma10 = sum(hist_list[-10:]) / 10 if len(hist_list) >= 10 else 0
-                                ma20 = sum(hist_list[-20:]) / 20 if len(hist_list) >= 20 else 0
-                                
                                 # 提取开盘价（兼容盘后首次点开不跳动行情时的静态推断）
                                 try:
                                     last_open = float(df_k.get('open', df_k['close']).iloc[-1])
                                 except Exception:
                                     last_open = hist_list[-1]
-                                
+
                                 last_close = hist_list[-1]
-                                is_red_candle = (last_close >= last_open)
-                                # 新版买点定义：
-                                # 1. 多头或纠缠准备金叉状态：MA10 > MA20
-                                # 2. 开盘价被强行砸在均线以下吸筹：last_open < ma10
-                                # 3. 终盘/现价必须收稳、守住均线支撑：last_close > ma20 * 0.95
-                                # 4. 当天必须是红 K 线：last_close >= last_open
-                                if is_red_candle and (ma10 > ma20) and (last_open < ma10) and (last_close > ma20 * 0.95):
-                                    record["买点"] = "触发"
+                                record["买点"] = calculate_buy_point_from_history(
+                                    history=hist_list,
+                                    open_price=last_open,
+                                    close_price=last_close,
+                                    style=BUY_POINT_STYLE_BADGE,
+                                )
                         except Exception as e:
                             log.debug(f"[龙虎榜池] 计算 {code} 股价位置失败: {e}")
 

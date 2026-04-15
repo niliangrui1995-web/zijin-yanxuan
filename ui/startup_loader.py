@@ -132,7 +132,7 @@ class StartupLoader:
             project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             output_dir = os.path.join(project_root, "data", "Cache")
             json_cache = os.path.join(output_dir, "asian_klines_latest.json")
-            script_path = os.path.join(project_root, "vcp", "fetchers", "asian_kline_fetcher.py")
+            module_entry = os.path.join(project_root, "vcp", "fetchers", "asian_kline_fetcher.py")
             
             needs_update = False
             if not os.path.exists(json_cache):
@@ -143,13 +143,14 @@ class StartupLoader:
                 if mdate < datetime.date.today():
                     needs_update = True
                      
-            if needs_update and os.path.exists(script_path):
+            if needs_update and os.path.exists(module_entry):
                 log.info("[启动] 亚洲市场 JSON 已非最新，后台静默拉取中(YF)...")
                 try:
                     creationflags = 0x08000000 if os.name == 'nt' else 0
                     subprocess.run(
-                        [sys.executable, script_path, "--output-dir", output_dir],
+                        [sys.executable, "-m", "vcp.fetchers.asian_kline_fetcher", "--output-dir", output_dir],
                         check=True,
+                        cwd=project_root,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         text=True,

@@ -16,11 +16,24 @@ from ui.tabs.asian_market_meta import (
     get_market_status,
     get_role_mapping,
 )
+from ui.tabs.asian_market_runtime import (
+    call_worker_method as asian_call_worker_method,
+    check_auto_cache as asian_check_auto_cache,
+    continue_auto_cache_sync as asian_continue_auto_cache_sync,
+    log_asian_health as asian_log_asian_health,
+    on_asian_klines_ready as asian_on_asian_klines_ready,
+    on_auto_cache_finished as asian_on_auto_cache_finished,
+    on_minute_tick as asian_on_minute_tick,
+    refresh_market_status_rows as asian_refresh_market_status_rows,
+    runtime_state_text as asian_runtime_state_text,
+    worker_pause_for_cache_sync as asian_worker_pause_for_cache_sync,
+    worker_resume_auto_refresh as asian_worker_resume_auto_refresh,
+    worker_trigger_refresh as asian_worker_trigger_refresh,
+)
 from ui.tabs.asian_market_workers import (
     GLOBAL_ASIAN_RT_CACHE,
     JSON_CACHE,
     RT_JSON_CACHE,
-    AsianCacheFetcherThread,
     AsianMarketWorker,
     is_cf_proxy_enabled,
     set_cf_proxy_enabled,
@@ -57,10 +70,10 @@ class AsianMarketTab(BaseStockTab):
         from core.market_calendar import MarketCalendar
         if MarketCalendar.is_quote_refresh_time():
             self._asian_runtime_state = "running"
-            self.worker.resume_auto_refresh()
+            self._worker_resume_auto_refresh()
         else:
             self._asian_runtime_state = "paused_for_cache_sync"
-            self.worker.pause_for_cache_sync()
+            self._worker_pause_for_cache_sync()
         # 等界面加载完稍微延后一点启动后台
         QTimer.singleShot(1000, self.worker.start)
         
@@ -78,12 +91,19 @@ class AsianMarketTab(BaseStockTab):
         self._asian_runtime_state = state
 
     def _runtime_state_text(self) -> str:
-        mapping = {
-            "running": "运行",
-            "paused_for_cache_sync": "暂停",
-            "manual_refresh_once": "手动单次",
-        }
-        return mapping.get(self._asian_runtime_state, self._asian_runtime_state)
+        return asian_runtime_state_text(self._asian_runtime_state)
+
+    def _call_worker_method(self, method_name: str):
+        return asian_call_worker_method(self, method_name)
+
+    def _worker_resume_auto_refresh(self):
+        return asian_worker_resume_auto_refresh(self)
+
+    def _worker_pause_for_cache_sync(self):
+        return asian_worker_pause_for_cache_sync(self)
+
+    def _worker_trigger_refresh(self):
+        return asian_worker_trigger_refresh(self)
 
     def _schedule_fit_columns(self):
         if hasattr(self, "_fit_columns_timer"):
@@ -217,189 +237,25 @@ class AsianMarketTab(BaseStockTab):
             return None
 
     def _check_auto_cache(self):
-        import os
-        from datetime import datetime, timedelta
-        from core.market_calendar import MarketCalendar
-        if self._is_fetching_cache or self._pending_auto_cache_sync:
-            return
-
-        now = MarketCalendar.now("CN")
-
-        target_dt = now.replace(hour=16, minute=30, second=0, microsecond=0)
-        if now < target_dt:
-            target_dt -= timedelta(days=1)
-        while target_dt.weekday() >= 5:
-            target_dt -= timedelta(days=1)
-
-        mtime = 0
-        if os.path.exists(JSON_CACHE):
-            mtime = os.path.getmtime(JSON_CACHE)
-        cache_dt = MarketCalendar.from_timestamp(mtime, "CN") if mtime else datetime.min
-
-        cache_latest_trade_date = self._get_cache_latest_trade_date()
-        expected_latest_trade_date = self._get_expected_latest_trade_date()
-
-        stale_by_mtime = cache_dt < target_dt
-        stale_by_trade_date = (
-            expected_latest_trade_date is not None and (
-                cache_latest_trade_date is None or cache_latest_trade_date < expected_latest_trade_date
-            )
-        )
-
-        if stale_by_mtime or stale_by_trade_date:
-            self._pending_auto_cache_sync = True
-            self._cache_sync_wait_deadline = datetime.now() + timedelta(seconds=60)
-            self._set_runtime_state("paused_for_cache_sync")
-            if hasattr(self, "worker") and self.worker is not None:
-                self.worker.pause_for_cache_sync()
-            reason = []
-            if stale_by_mtime:
-                reason.append(f"修改时间早于 {target_dt.strftime('%m-%d %H:%M')}")
-            if stale_by_trade_date:
-                reason.append(f"缓存交易日 {cache_latest_trade_date} 早于 {expected_latest_trade_date}")
-            reason_txt = "，".join(reason) if reason else "未知"
-            log.info(
-                f"[亚洲页] 检测到缓存过期({reason_txt})，"
-                f"缓存时间={cache_dt.strftime('%m-%d %H:%M')}，"
-                f"缓存交易日={cache_latest_trade_date}，"
-                f"期望交易日={expected_latest_trade_date}"
-            )
-            self.lbl_status.setText("检测到 16:30 收盘缓存过期，等待后台轮次退出后开始同步")
-            QTimer.singleShot(0, self._continue_auto_cache_sync)
-            return
+        return asian_check_auto_cache(self)
 
     def _continue_auto_cache_sync(self):
-        if not self._pending_auto_cache_sync or self._is_fetching_cache:
-            return
-
-        if getattr(self, "cache_thread", None) is not None and self.cache_thread.isRunning():
-            return
-
-        if hasattr(self, "worker") and self.worker is not None and self.worker.isRunning():
-            if not self.worker.wait_for_cycle_idle(0.1):
-                if (
-                    self._cache_sync_wait_deadline is not None
-                    and datetime.datetime.now() >= self._cache_sync_wait_deadline
-                ):
-                    self._pending_auto_cache_sync = False
-                    self._cache_sync_wait_deadline = None
-                    self.lbl_status.setText("等待亚洲后台轮次退出超时，本轮缓存同步延后一轮重试")
-                    log.warning("[亚洲页] 等待后台轮次退出超时，本轮缓存同步延后一轮")
-                    return
-                self.lbl_status.setText("等待亚洲后台轮次退出，随后开始 16:30 缓存同步")
-                QTimer.singleShot(1000, self._continue_auto_cache_sync)
-                return
-
-        self._pending_auto_cache_sync = False
-        self._cache_sync_wait_deadline = None
-        self._is_fetching_cache = True
-        self.lbl_status.setText("正在同步 16:30 收盘后最新 K 线缓存...")
-        self.cache_thread = AsianCacheFetcherThread()
-        self.cache_thread.finished_sig.connect(self._on_auto_cache_finished)
-        self.cache_thread.start()
+        return asian_continue_auto_cache_sync(self)
 
     def _log_asian_health(self):
-        from core.market_calendar import MarketCalendar
-
-        now_ts = datetime.datetime.now().timestamp()
-        if now_ts - self._last_health_log_at < 60:
-            return
-
-        worker_running = bool(hasattr(self, "worker") and self.worker is not None and self.worker.isRunning())
-        cache_syncing = bool(
-            self._is_fetching_cache
-            or self._pending_auto_cache_sync
-            or (getattr(self, "cache_thread", None) is not None and self.cache_thread.isRunning())
-        )
-        last_success = self._last_asian_success_at.strftime("%Y-%m-%d %H:%M:%S") if self._last_asian_success_at else "-"
-        health_signature = (
-            self._runtime_state_text(),
-            last_success,
-            cache_syncing,
-            worker_running,
-            len(getattr(self, 'row_data', []) or []),
-        )
-        should_log = MarketCalendar.is_quote_refresh_time()
-        if not should_log:
-            signature_changed = health_signature != self._last_health_signature
-            interval_reached = (now_ts - self._last_health_log_at) >= 1800
-            should_log = signature_changed or interval_reached
-
-        if not should_log:
-            return
-
-        log.info(
-            f"[亚洲页] 健康 状态={self._runtime_state_text()} | "
-            f"上次成功={last_success} | 缓存同步中={cache_syncing} | "
-            f"后台运行中={worker_running} | 行数={len(getattr(self, 'row_data', []) or [])}"
-        )
-        self._last_health_signature = health_signature
-        self._last_health_log_at = now_ts
+        return asian_log_asian_health(self)
 
     def _on_minute_tick(self):
-        from core.market_calendar import MarketCalendar
-
-        self._refresh_market_status_rows()
-        if not self._is_fetching_cache and not self._pending_auto_cache_sync:
-            if MarketCalendar.is_quote_refresh_time():
-                if self._asian_runtime_state != "manual_refresh_once":
-                    self._set_runtime_state("running")
-                    if hasattr(self, "worker") and self.worker is not None:
-                        self.worker.resume_auto_refresh()
-            else:
-                self._set_runtime_state("paused_for_cache_sync")
-                if hasattr(self, "worker") and self.worker is not None:
-                    self.worker.pause_for_cache_sync()
-        self._check_auto_cache()
-        self._log_asian_health()
+        return asian_on_minute_tick(self)
 
     def _refresh_market_status_rows(self):
-        rows = list(getattr(self.model, "row_data", []) or [])
-        if not rows:
-            return
-
-        try:
-            status_col = self.model.headers.index("状态")
-        except ValueError:
-            return
-
-        changed_rows = []
-        for row_idx, row_dict in enumerate(rows):
-            code = str(row_dict.get("代码", "")).strip()
-            if not code:
-                continue
-            market = code.split(".")[-1] if "." in code else ""
-            new_status = get_market_status(market)
-            if row_dict.get("状态") != new_status:
-                row_dict["状态"] = new_status
-                changed_rows.append(row_idx)
-
-        for row_idx in changed_rows:
-            self.model.dataChanged.emit(
-                self.model.index(row_idx, status_col),
-                self.model.index(row_idx, status_col),
-            )
+        return asian_refresh_market_status_rows(self, get_market_status)
 
     def _on_auto_cache_finished(self, success, msg):
-        self._is_fetching_cache = False
-        self.cache_thread = None
-        if success:
-            self._set_runtime_state("paused_for_cache_sync")
-            if hasattr(self, "worker") and self.worker is not None:
-                self.worker.pause_for_cache_sync()
-            self._load_local_cache()
-            self._last_asian_success_at = datetime.datetime.now()
-            self.lbl_status.setText("16:30 收盘缓存同步完成，已重载本地 K 线，当前保持静默")
-            log.info("[亚洲页] 16:30 缓存同步完成，已重载本地 K 线，当前保持静默")
-            return
-
-        self.lbl_status.setText(msg or "收盘缓存同步失败")
-        log.warning(f"[亚洲页] 收盘缓存同步失败: {msg}")
+        return asian_on_auto_cache_finished(self, success, msg)
 
     def _on_asian_klines_ready(self):
-        self._load_local_cache()
-        self._last_asian_success_at = datetime.datetime.now()
-        self.lbl_status.setText("亚洲市场本地缓存已更新，K 线数据已重载")
+        return asian_on_asian_klines_ready(self)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -496,7 +352,7 @@ class AsianMarketTab(BaseStockTab):
         if hasattr(self, 'worker') and self.worker.isRunning():
             self._set_runtime_state("manual_refresh_once")
             self.lbl_status.setText("手动刷新已触发，正在请求海外接口并重载...")
-            self.worker.trigger_refresh()
+            self._worker_trigger_refresh()
         else:
             self.lbl_status.setText("后台工作线程未连接或已断开")
 
@@ -752,11 +608,11 @@ class AsianMarketTab(BaseStockTab):
             if MarketCalendar.is_quote_refresh_time():
                 self._set_runtime_state("running")
                 if hasattr(self, "worker") and self.worker is not None:
-                    self.worker.resume_auto_refresh()
+                    self._worker_resume_auto_refresh()
             else:
                 self._set_runtime_state("paused_for_cache_sync")
                 if hasattr(self, "worker") and self.worker is not None:
-                    self.worker.pause_for_cache_sync()
+                    self._worker_pause_for_cache_sync()
 
     def _on_double_click(self, index):
         if not index.isValid(): return

@@ -3,7 +3,7 @@ from vcp.constants import APP_VERSION, RPS_CACHE_FILE
 from ui.components.kline_window_manager import kline_manager
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QFrame,
-    QTabWidget, QToolTip
+    QToolTip
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot, QSettings, QEvent
 from PyQt6.QtGui import QIcon
@@ -12,14 +12,8 @@ from PyQt6.QtGui import QIcon
 from vcp.data_provider import TdxDataProvider
 from vcp.engine import VCPEngine
 
-from ui.tabs.scan_tab import ScanTab
-from ui.tabs.rt_monitor_tab import RtMonitorTab
-from ui.tabs.watchlist_tab import WatchlistTab
-from ui.tabs.na_daily_tab import NADailyTab
-from ui.tabs.foreign_block_trade_tab import ForeignBlockTradeTab
-from ui.tabs.asian_market_tab import AsianMarketTab
-from ui.tabs.lhb_tab import LhbTab
 from core.event_bus import event_bus
+from core.app_config import app_config
 from core.logger import get_logger
 from ui.components.main_window_shell import (
     DraggableTitleBar,
@@ -32,6 +26,7 @@ from ui.components.main_window_shell import (
 
 from core.cache_manager import CacheManager
 from ui.startup_loader import StartupLoader
+from ui.workspaces import ClassicWorkspace
 from core.task_manager import task_manager
 
 log = get_logger(__name__)
@@ -81,6 +76,8 @@ class MainWindowQT(QMainWindow):
         self.cache_manager = CacheManager()
         self._f5_cancelled = False
         self._settings = QSettings("VCPHunter", "MainWindowQT")
+        self._workspace = None
+        self.tabs = None
         
         self._splash_update(60, "正在构建主界面模块...")
         self.data_provider = TdxDataProvider(offline=True)
@@ -198,7 +195,7 @@ class MainWindowQT(QMainWindow):
                 if hasattr(self, 'status_dot'): self.status_dot.set_color("#EF4444")
 
     def _force_reconnect(self):
-        """主站强制重新测速方法"""
+        """主站强制重置东方财富实时行情方法"""
         if not self.data_provider.is_online():
             return
         if hasattr(self, 'status_dot'): self.status_dot.set_color("#F59E0B")
@@ -216,9 +213,9 @@ class MainWindowQT(QMainWindow):
             self._update_network_ui(True)
             from ui.components.toast_widget import show_toast
             if ok:
-                show_toast("强制测速完成，已切换至最快服务器。", "success", self, duration=2500)
+                show_toast("东方财富实时行情连接已重置。", "success", self, duration=2500)
             else:
-                show_toast("服务器测速失败，请检查网络。", "error", self, duration=3500)
+                show_toast("东方财富实时行情检测失败，请检查网络。", "error", self, duration=3500)
 
         task_manager.run_in_background(_reconnect_task, on_success=lambda res: self._call_in_ui(lambda: _on_done(res)), task_id="force_reconnect")
 
@@ -416,137 +413,19 @@ class MainWindowQT(QMainWindow):
                 border: none;
             }}
         """)
-        tabs_layout = QVBoxLayout(self.tabs_wrapper)
-        tabs_layout.setContentsMargins(0, 0, 0, 0)
-        
-        self.tabs = QTabWidget()
-        self.tabs.setDocumentMode(True)
-        tabs_layout.addWidget(self.tabs)
-        
+        self._tabs_wrapper_layout = QVBoxLayout(self.tabs_wrapper)
+        self._tabs_wrapper_layout.setContentsMargins(0, 0, 0, 0)
+        self._tabs_wrapper_layout.setSpacing(0)
 
-        # --- 右侧 AI 诊断面板(独立组件) ---
-
-        
-        # Tab 3: 关注池（独立组件）
-
-        self.tab_watchlist = WatchlistTab(self.data_provider, self)
-        self.tabs.addTab(self.tab_watchlist, '关注池')
-        self.table_sp = self.tab_watchlist.table_sp  # 向下兼容引用
-
-        # Tab 3.5: 龙虎榜（紧跟关注池）
-        self.tab_lhb = LhbTab(self.data_provider, self)
-        self.tabs.addTab(self.tab_lhb, "龙虎榜")
-
-        # Tab 4: 北美战报（独立组件）
-
-        self.tab_na_daily = NADailyTab(self.data_provider, self)
-        self.tabs.addTab(self.tab_na_daily, "美股日报")
-        self.na_daily_table = self.tab_na_daily.na_daily_table  # 向下兼容
-
-        # Tab 5: 亚洲市场跟踪 (独立组件)
-
-        self.tab_asian_market = AsianMarketTab(self.data_provider, self)
-        self.tabs.addTab(self.tab_asian_market, "亚洲寡头")
-
-        self.tab_rt = RtMonitorTab(self.data_provider, self.engine, self)
-        self.tabs.addTab(self.tab_rt, "盘中监控")
-        
-        self.table_rt = self.tab_rt.table_rt
-        self.btn_rt_start = self.tab_rt.btn_rt_start
-        self.lbl_rt_info = self.tab_rt.lbl_rt_info
-
-        # Tab 6: 外资大宗交易 (独立组件)
-
-        self.tab_foreign_block = ForeignBlockTradeTab(self.data_provider, self)
-        self.tabs.addTab(self.tab_foreign_block, "大宗交易")
-
-        # (龙虎榜已移至关注池后方)
-
-        # Tab 7: 业绩预告与财报爆点追踪（独立组件）
-        from ui.tabs.earnings_tab import EarningsTab
-        self.tab_earnings = EarningsTab(self.data_provider, self)
-        self.tabs.addTab(self.tab_earnings, "业绩异动")
-
-        self.tab_scan = ScanTab(self.data_provider, self.engine, self)
-        self.tabs.addTab(self.tab_scan, "VCP扫描")
-        self.table_scan = self.tab_scan.table_scan
-
-        from ui.tabs.log_tab import LogTab
-        self.tab_log = LogTab(self)
-        self.tabs.addTab(self.tab_log, "系统日志")
-        
         event_bus.sig_rt_quotes_refreshed.connect(self._on_rt_quotes_refreshed)
         event_bus.sig_task_progress.connect(self._on_task_progress)
         event_bus.sig_show_kline.connect(self._on_show_kline)
         event_bus.sig_show_kline_with_list.connect(self._on_show_kline_with_list)
-        
-        # 激活齿轮菜单
+
+        self._mount_workspace()
         self._init_gear_menu()
-        
-        # 把 TabBar 从 QTabWidget 拉到标题栏中，完成"品牌+导航+控制"一行布局
         self._inject_tabbar_into_titlebar()
-
-
-        # === Bug#5 修复: Ctrl+C 钩子适配 QTableView + QTableWidget 双模式 ===
-        tables_to_patch = [
-            getattr(self, 'table_scan', None),
-            getattr(self, 'table_rt', None),
-            getattr(self, 'table_sp', None), 
-            getattr(self, 'na_daily_table', None), 
-            getattr(self, 'ai_tracker_table', None),
-            getattr(getattr(self, 'tab_lhb', None), 'table', None),
-            getattr(getattr(self, 'tab_foreign_block', None), 'table', None),
-            getattr(getattr(self, 'tab_asian_market', None), 'asian_table', None),
-            getattr(getattr(self, 'tab_earnings', None), 'table', None)
-        ]
-        
-        from PyQt6.QtWidgets import QAbstractItemView, QApplication
-        from PyQt6.QtGui import QKeySequence
-        from ui.components.toast_widget import show_toast
-        
-        for t in tables_to_patch:
-            if not t: continue
-            
-            # 允许点选单独的单元格，并且支持按住左键拉框多选多个格子
-            t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-            t.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-            
-            # 统一 Ctrl+C 钩子：兼容 QTableView（selectionModel）和 QTableWidget（selectedRanges）
-            original_kp = t.keyPressEvent
-            def make_kp(table, orig):
-                def new_kp(event):
-                    if event.matches(QKeySequence.StandardKey.Copy):
-                        # 通用路径: 使用 selectionModel().selectedIndexes()，兼容 QTableView 和 QTableWidget
-                        sel_model = table.selectionModel()
-                        if sel_model:
-                            indexes = sel_model.selectedIndexes()
-                            if indexes:
-                                current_idx = sel_model.currentIndex()
-                                # 智能剥离模式：如果因为 SelectRows 导致单行全亮，但用户只想复制自己点的那个格子，则过滤
-                                unique_rows = set(idx.row() for idx in indexes)
-                                if len(unique_rows) == 1 and current_idx.isValid():
-                                    indexes = [current_idx]
-                                    
-                                # 按行列分组，组装制表符分隔文本（兼容 Excel 粘贴）
-                                from collections import defaultdict
-                                rows_dict = defaultdict(dict)
-                                for idx in indexes:
-                                    # 通过 model 取 DisplayRole 内容，避免依赖 .item() API
-                                    display_val = table.model().data(idx, Qt.ItemDataRole.DisplayRole)
-                                    rows_dict[idx.row()][idx.column()] = str(display_val) if display_val is not None else ""
-                                lines = []
-                                for row_key in sorted(rows_dict.keys()):
-                                    cols = rows_dict[row_key]
-                                    line = "\t".join(cols.get(c, "") for c in sorted(cols.keys()))
-                                    lines.append(line)
-                                QApplication.clipboard().setText("\n".join(lines))
-                                show_toast("已复制单元格内容，可直接粘贴到 Excel。", "success", table.window(), duration=1500)
-                        event.accept()
-                    else:
-                        orig(event)
-                return new_kp
-                
-            t.keyPressEvent = make_kp(t, original_kp)
+        return
 
 
     # _filter_table 已删除 — 各 Tab 已自行实现 proxy_model.setFilterText()，0 调用方
@@ -559,9 +438,120 @@ class MainWindowQT(QMainWindow):
     # _launch_tdx / _launch_eastmoney 已移除(#1)
     # 统一由 BaseStockTab 基类提供，避免双份代码维护噩梦
 
+    def _remember_last_active_tab(self, index: int):
+        app_config.last_active_tab = index
+
+    def _bridge_workspace_handles(self, workspace):
+        self.tabs = workspace.tabs
+        self.tab_console = getattr(workspace, "console_tab", None)
+        self.tab_watchlist = getattr(workspace, "tab_watchlist", None)
+        self.tab_lhb = getattr(workspace, "tab_lhb", None)
+        self.tab_na_daily = getattr(workspace, "tab_na_daily", None)
+        self.tab_asian_market = getattr(workspace, "tab_asian_market", None)
+        self.tab_rt = getattr(workspace, "tab_rt", None)
+        self.tab_foreign_block = getattr(workspace, "tab_foreign_block", None)
+        self.tab_earnings = getattr(workspace, "tab_earnings", None)
+        self.tab_scan = getattr(workspace, "tab_scan", None)
+        self.tab_log = getattr(workspace, "tab_log", None)
+        self.table_sp = getattr(self.tab_watchlist, "table_sp", None)
+        self.table_scan = getattr(self.tab_scan, "table_scan", None)
+        self.table_rt = getattr(self.tab_rt, "table_rt", None)
+        self.na_daily_table = getattr(self.tab_na_daily, "na_daily_table", None)
+        self.btn_rt_start = getattr(self.tab_rt, "btn_rt_start", None)
+        self.lbl_rt_info = getattr(self.tab_rt, "lbl_rt_info", None)
+
+    def _workspace_tables(self):
+        return [
+            table for table in [
+                getattr(self, "table_scan", None),
+                getattr(self, "table_rt", None),
+                getattr(self, "table_sp", None),
+                getattr(self, "na_daily_table", None),
+                getattr(getattr(self, "tab_console", None), "table", None),
+                getattr(getattr(self, "tab_lhb", None), "table", None),
+                getattr(getattr(self, "tab_foreign_block", None), "table", None),
+                getattr(getattr(self, "tab_asian_market", None), "asian_table", None),
+                getattr(getattr(self, "tab_earnings", None), "table", None),
+            ]
+            if table is not None
+        ]
+
+    def _install_table_copy_hooks(self):
+        from PyQt6.QtGui import QKeySequence
+        from PyQt6.QtWidgets import QAbstractItemView, QApplication
+        from ui.components.toast_widget import show_toast
+
+        for table in self._workspace_tables():
+            table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+            table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+            if getattr(table, "_copy_hook_installed", False):
+                continue
+
+            original_kp = table.keyPressEvent
+
+            def make_kp(current_table, original):
+                def new_kp(event):
+                    if event.matches(QKeySequence.StandardKey.Copy):
+                        selection_model = current_table.selectionModel()
+                        if selection_model:
+                            indexes = selection_model.selectedIndexes()
+                            if indexes:
+                                current_idx = selection_model.currentIndex()
+                                unique_rows = set(item.row() for item in indexes)
+                                if len(unique_rows) == 1 and current_idx.isValid():
+                                    indexes = [current_idx]
+
+                                from collections import defaultdict
+
+                                rows_dict = defaultdict(dict)
+                                for item in indexes:
+                                    display_val = current_table.model().data(item, Qt.ItemDataRole.DisplayRole)
+                                    rows_dict[item.row()][item.column()] = str(display_val) if display_val is not None else ""
+
+                                lines = []
+                                for row_key in sorted(rows_dict.keys()):
+                                    cols = rows_dict[row_key]
+                                    line = "\t".join(cols.get(col, "") for col in sorted(cols.keys()))
+                                    lines.append(line)
+                                QApplication.clipboard().setText("\n".join(lines))
+                                show_toast("已复制单元格内容，可直接粘贴到 Excel。", "success", current_table.window(), duration=1500)
+                        event.accept()
+                        return
+                    original(event)
+
+                return new_kp
+
+            table.keyPressEvent = make_kp(table, original_kp)
+            table._copy_hook_installed = True
+
+    def _mount_workspace(self):
+        workspace = ClassicWorkspace(self.data_provider, self.engine, host=self, parent=self.tabs_wrapper)
+
+        if self._workspace is not None:
+            try:
+                self._workspace.shutdown()
+            except Exception as exc:
+                log.error(f"[UI] 停止旧工作区失败: {exc}")
+            self._tabs_wrapper_layout.removeWidget(self._workspace)
+            self._workspace.deleteLater()
+
+        self._workspace = workspace
+        self._tabs_wrapper_layout.addWidget(workspace, 1)
+        self._bridge_workspace_handles(workspace)
+        workspace.restore_last_tab(app_config.last_active_tab)
+        self._install_table_copy_hooks()
+
+        try:
+            self.tabs.currentChanged.disconnect(self._remember_last_active_tab)
+        except Exception:
+            pass
+        self.tabs.currentChanged.connect(self._remember_last_active_tab)
+
     def _save_ui_state(self):
         """Persist window geometry with version tag."""
         s = self._settings
+        if self.tabs is not None:
+            self._remember_last_active_tab(self.tabs.currentIndex())
         s.setValue("geometry", self.saveGeometry())
         s.setValue("geometry_version", 2)  # 无边框版本标记，防止旧缓存导致崩溃
         s.sync()
@@ -637,6 +627,11 @@ class MainWindowQT(QMainWindow):
                 self.central_quotes_svc.shutdown()
             except Exception as e:
                 log.error(f"[关闭] 停止中央报价服务异常: {e}")
+        if self._workspace is not None:
+            try:
+                self._workspace.shutdown()
+            except Exception as e:
+                log.error(f"[关闭] 停止工作区异常: {e}")
 
         try:
             self._save_ui_state()
@@ -654,26 +649,6 @@ class MainWindowQT(QMainWindow):
             event_bus.sig_app_closing.emit()
         except Exception as e:
             log.error(f"[关闭] 广播关闭信号异常: {e}")
-
-        # Bug#1 修复: rt_worker 属于 tab_rt，不是 MainWindowQT 自身的属性
-        if hasattr(self, 'tab_rt') and hasattr(self.tab_rt, 'rt_worker'):
-            try:
-                if self.tab_rt.rt_worker.isRunning():
-                    self.tab_rt.rt_worker.stop()
-                    self.tab_rt.rt_worker.wait(2000)
-            except Exception as e:
-                log.error(f"[关闭] 停止盘中监控线程异常: {e}")
-
-        if hasattr(self, 'tab_scan') and getattr(self.tab_scan, 'worker', None):
-            try:
-                if self.tab_scan.worker.isRunning():
-                    self.tab_scan.cancel_scan()
-                    self.tab_scan.worker.wait(2000)
-            except Exception as e:
-                log.error(f"[关闭] 停止VCP扫描线程异常: {e}")
-
-        if hasattr(self, '_auto_rt_timer'):
-            self._auto_rt_timer.stop()
 
         try:
             task_manager.shutdown()
@@ -832,8 +807,10 @@ class MainWindowQT(QMainWindow):
             getattr(self, '_custom_titlebar', None),
             getattr(self, '_status_bar_widget', None),
             getattr(self, '_standalone_tabbar', None),
+            getattr(self, '_workspace', None),
             getattr(self, 'tabs_wrapper', None),
             getattr(self, 'btn_sys_menu', None),
+            getattr(getattr(self, '_workspace', None), 'detail_drawer', None),
         ):
             if widget:
                 widget.style().unpolish(widget)

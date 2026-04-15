@@ -30,3 +30,19 @@ def qt_application():
 
     app = QApplication(sys.argv)
     yield app
+
+
+@pytest.fixture(autouse=True)
+def reset_global_runtime_state():
+    """隔离跨测试的全局行情快照，避免排序和表格用例互相污染。"""
+    try:
+        from core.global_store import global_store
+
+        global_store.reset_runtime_state()
+    except Exception:
+        global_store = None
+
+    yield
+
+    if global_store is not None:
+        global_store.reset_runtime_state()

@@ -14,6 +14,9 @@ from core.task_manager import task_manager
 
 log = get_logger(__name__)
 _A_SHARE_CODE_RE = re.compile(r"^\d{6}$")
+_A_SHARE_POLL_INTERVAL_MS = 30000
+_A_SHARE_FAILURE_COOLDOWN_SEC = 300
+_A_SHARE_HEARTBEAT_INTERVAL_SEC = 60
 
 
 class CentralQuotesService(QObject):
@@ -34,7 +37,7 @@ class CentralQuotesService(QObject):
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._trigger_fetch)
-        self._timer.start(10000)
+        self._timer.start(_A_SHARE_POLL_INTERVAL_MS)
 
         self._is_fetching = False
         self._fetch_start_time = 0.0
@@ -45,10 +48,10 @@ class CentralQuotesService(QObject):
         self._consecutive_failures = 0
         self._circuit_breaker_cooldown = 0
         self._FAILURE_THRESHOLD = 3
-        self._COOLDOWN_TICKS = 30  # 10s * 30 = 5 minutes
+        self._COOLDOWN_TICKS = max(1, _A_SHARE_FAILURE_COOLDOWN_SEC * 1000 // _A_SHARE_POLL_INTERVAL_MS)
 
         self._tick_count = 0
-        self._heartbeat_every_ticks = 6
+        self._heartbeat_every_ticks = max(1, _A_SHARE_HEARTBEAT_INTERVAL_SEC * 1000 // _A_SHARE_POLL_INTERVAL_MS)
         self._last_heartbeat_signature = None
         self._last_heartbeat_logged_at = 0.0
 
@@ -244,7 +247,8 @@ class CentralQuotesService(QObject):
 
         if self._is_fetching:
             batch_timeout_sec = float(getattr(self.data_provider, "_rt_api_call_timeout_sec", 8.0) or 8.0)
-            expected_batches = max(1, (len(codes) + 79) // 80)
+            batch_size = int(getattr(self.data_provider, "_rt_quote_batch_size", 20) or 20)
+            expected_batches = max(1, (len(codes) + batch_size - 1) // batch_size)
             slow_threshold = max(20.0, expected_batches * batch_timeout_sec + 4.0)
             if (
                 not self._fetch_warned_slow
@@ -296,8 +300,14 @@ class CentralQuotesService(QObject):
             quotes = payload.get("quotes") or {}
             provider_stats = payload.get("provider_stats") or {}
             cooldown_until = float(provider_stats.get("cooldown_until") or 0)
-            provider_failed = (
-                int(provider_stats.get("consecutive_failures") or 0) > 0
+            has_valid = any(float(quote.get("close", 0) or 0) > 0 for quote in quotes.values())
+            has_live_source = any(
+                str(quote.get("source") or "").lower() in {"eastmoney", "sina"}
+                for quote in quotes.values()
+            )
+            provider_failed = (not has_live_source) and (
+                (not has_valid)
+                or int(provider_stats.get("consecutive_failures") or 0) > 0
                 or time.time() < cooldown_until
             )
 
@@ -306,7 +316,6 @@ class CentralQuotesService(QObject):
             else:
                 self._reset_failures()
 
-            has_valid = any(float(quote.get("close", 0) or 0) > 0 for quote in quotes.values())
             if has_valid:
                 event_bus.sig_rt_quotes.emit(quotes)
 

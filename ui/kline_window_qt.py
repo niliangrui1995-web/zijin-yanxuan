@@ -13,6 +13,7 @@ K 线图窗口 — ECharts 5.5.0 + QWebEngineView 高性能版
 import html
 import json
 import os as _os
+from core.event_bus import event_bus
 from core.logger import get_logger
 from core.market_calendar import MarketCalendar
 
@@ -68,6 +69,7 @@ class KLineChartWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.resize(1100, 680)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        event_bus.sig_rt_quotes.connect(self._on_global_rt_quotes)
 
         # 窗口图标
         from PyQt6.QtGui import QIcon
@@ -984,7 +986,9 @@ class KLineChartWindow(QWidget):
             if self._rt_timer is not None:
                 self._rt_timer.stop()
             return
-        if market == "CN" and getattr(self.data_provider, '_offline', False):
+        if market == "CN":
+            if self._rt_timer is not None:
+                self._rt_timer.stop()
             return
 
         if self._rt_timer is None:
@@ -992,6 +996,16 @@ class KLineChartWindow(QWidget):
             self._rt_timer.timeout.connect(self._on_rt_timer)
         self._rt_timer.start(60 * 1000)
         log.debug(f"[K线] {self.code} 实时刷新已启动 (60s)")
+
+    def _on_global_rt_quotes(self, quotes: dict):
+        if self._get_market() != "CN":
+            return
+        if not quotes or self.code not in quotes:
+            return
+        try:
+            self._refresh_last_bar(quotes[self.code])
+        except Exception as e:
+            log.debug(f"[K线] 全局实时行情刷新失败: {e}")
 
     def _on_rt_timer(self):
         """定时器回调：拉取最新实时报价，通过 JS 增量更新最后一根 K 线"""
@@ -1186,6 +1200,10 @@ class KLineChartWindow(QWidget):
         # 断开主题切换信号，防止信号调用已销毁的窗口
         try:
             theme_manager.sig_theme_changed.disconnect(self._on_theme_changed)
+        except TypeError:
+            pass
+        try:
+            event_bus.sig_rt_quotes.disconnect(self._on_global_rt_quotes)
         except TypeError:
             pass
 

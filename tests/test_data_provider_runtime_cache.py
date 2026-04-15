@@ -8,6 +8,13 @@ def _make_provider():
     provider._rt_quote_cache = {}
     provider._rt_quote_time = {}
     provider._rt_quote_lock = threading.Lock()
+    provider._rt_runtime_lock = threading.RLock()
+    provider._rt_runtime = None
+    provider._rt_runtime_consecutive_failures = 0
+    provider._rt_runtime_last_success_at = 0.0
+    provider._rt_runtime_reconnect_archived = 0
+    provider._rt_runtime_cooldown_until = 0.0
+    provider._rt_runtime_last_error = ""
     provider.cache_data = {}
     provider._rt_quote_cache_ttl_sec = 30
     provider._rt_quote_cache_max_entries = 2

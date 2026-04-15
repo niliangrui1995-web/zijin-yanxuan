@@ -41,5 +41,14 @@ class GlobalStore(QObject):
         """获取所有已缓存的全局最新行情快照"""
         return self.state["quotes"]
 
+    def reset_quotes(self):
+        """清空全局行情快照。"""
+        self.state["quotes"].clear()
+
+    def reset_runtime_state(self):
+        """重置轻量运行态，避免跨测试和跨阶段污染。"""
+        self.reset_quotes()
+        self.state["watchlist"] = []
+
 # 导出单例 (Store)
 global_store = GlobalStore()

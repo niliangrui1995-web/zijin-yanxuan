@@ -428,7 +428,7 @@ def setup_system_menu(window) -> SystemMenuRefs:
 
     sys_menu.addSeparator()
 
-    act_speed = sys_menu.addAction("测速与线路优选")
+    act_speed = sys_menu.addAction("重置行情连接")
     act_speed.triggered.connect(window._force_reconnect)
 
     sys_menu.addSeparator()

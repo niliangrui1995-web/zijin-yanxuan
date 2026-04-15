@@ -2,7 +2,7 @@
 """
 ui/tabs/foreign_block_trade_tab.py
 大宗交易监控 Tab
-展示包含指定外资/机构关键字的营业部近期大宗交易明细，并高亮对倒、互砍等特殊行为。
+展示包含指定外资关键字的营业部近期大宗交易明细，并高亮对倒等特殊行为。
 """
 import datetime
 import json
@@ -20,7 +20,7 @@ from ui.theme import (
     COLOR_RISE, COLOR_FALL, COLOR_FLAT
 )
 from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
-from ui.components import VCPTableView, TableStateWrapper
+from ui.components import VCPTableView, TableStateWrapper, SearchFilter
 from core.event_bus import event_bus
 
 class BlockTradeFilterProxyModel(RtSortFilterProxyModel):
@@ -51,8 +51,22 @@ class BlockTradeFilterProxyModel(RtSortFilterProxyModel):
                         return False
                 elif val != cell_val:
                     return False
-                    
-        return super().filterAcceptsRow(source_row, source_parent)
+
+        filter_text = getattr(self, "_filter_text", "")
+        if not filter_text:
+            return True
+
+        model = self.sourceModel()
+        row_data = model.row_data[source_row]
+        code_text = str(row_data.get("代码", "") or "").lower()
+        name_text = str(row_data.get("名称", "") or "").lower()
+        buyer_text = str(row_data.get("买方营业部", "") or "").lower()
+        seller_text = str(row_data.get("卖方营业部", "") or "").lower()
+
+        if SearchFilter.match_pinyin_or_text(filter_text, code_text, name_text):
+            return True
+
+        return filter_text in buyer_text or filter_text in seller_text
 
 from core.logger import get_logger
 from core.task_manager import UserFacingTaskError, task_manager
@@ -61,7 +75,6 @@ from ui.tabs.base_stock_tab import BaseStockTab
 log = get_logger(__name__)
 
 FOREIGN_KEYWORDS = ["高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴", "渣打", "野村", "汇丰", "星展", "大和"]
-TARGET_KEYWORDS = FOREIGN_KEYWORDS + ["机构专用"]
 
 # 模块级K线缓存：每只股票的文件只读一次，后续直接从内存取
 _kline_cache: dict = {}
@@ -214,12 +227,12 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.cmb_filter_branch.currentIndexChanged.connect(self._filter_table_combo)
 
         self.cmb_filter_direction = QComboBox()
-        self.cmb_filter_direction.addItems(["全部动作", "外资买入", "外资卖出", "外资对倒", "机构买入", "机构卖出", "机构对倒", "机构买/外资卖", "外资买/机构卖"])
+        self.cmb_filter_direction.addItems(["全部动作", "外资买入", "外资卖出", "外资对倒"])
         self.cmb_filter_direction.setFixedWidth(128)
         self.cmb_filter_direction.currentIndexChanged.connect(self._filter_table_combo)
 
         self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("筛选代码、名称或关键词...")
+        self.search_box.setPlaceholderText("筛选代码、名称或外资席位...")
         self.search_box.setFixedWidth(240)
         self.search_box.textChanged.connect(self._filter_table_combo)
 
@@ -241,7 +254,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.btn_refresh.clicked.connect(self._load_block_trade_data)
 
         action_widgets = [self.btn_refresh]
-        toolbar = self.build_tab_toolbar("主力/外资大宗", self.lbl_status, filter_widgets, action_widgets)
+        toolbar = self.build_tab_toolbar("外资大宗", self.lbl_status, filter_widgets, action_widgets)
         layout.addWidget(toolbar)
 
         # 表格
@@ -294,44 +307,24 @@ class ForeignBlockTradeTab(BaseStockTab):
     def _should_include_row(self, buyer, seller):
         buyer_str = str(buyer) if pd.notna(buyer) else ""
         seller_str = str(seller) if pd.notna(seller) else ""
-        
-        for kw in TARGET_KEYWORDS:
-            if kw in buyer_str or kw in seller_str:
-                return True
-        return False
+
+        return any(kw in buyer_str or kw in seller_str for kw in FOREIGN_KEYWORDS)
 
     def _determine_direction(self, buyer, seller):
-        """判断是外资/机构的买卖动作"""
+        """判断外资买卖动作"""
         buyer_str = str(buyer) if pd.notna(buyer) else ""
         seller_str = str(seller) if pd.notna(seller) else ""
         
         buy_foreign = any(kw in buyer_str for kw in FOREIGN_KEYWORDS)
         sell_foreign = any(kw in seller_str for kw in FOREIGN_KEYWORDS)
-        
-        buy_inst = "机构专用" in buyer_str
-        sell_inst = "机构专用" in seller_str
-        
-        # 混合对倒
-        if buy_inst and sell_foreign:
-            return "机构买/外资卖", "#3B82F6"  # 混合动作标记蓝色
-        if buy_foreign and sell_inst:
-            return "外资买/机构卖", "#3B82F6"
             
-        # 同类对倒
         if buy_foreign and sell_foreign:
             return "外资对倒", "#F59E0B"
-        if buy_inst and sell_inst:
-            return "机构对倒", "#F59E0B"
             
-        # 单方动作
         if buy_foreign:
             return "外资买入", COLOR_RISE
         if sell_foreign:
             return "外资卖出", COLOR_FALL
-        if buy_inst:
-            return "机构买入", COLOR_RISE
-        if sell_inst:
-            return "机构卖出", COLOR_FALL
             
         return "--", COLOR_FLAT
 
@@ -502,7 +495,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         target_branches = set()
         for b in raw_branches:
             b_str = str(b)
-            if any(kw in b_str for kw in TARGET_KEYWORDS):
+            if any(kw in b_str for kw in FOREIGN_KEYWORDS):
                 target_branches.add(b_str)
         unique_branches = sorted(list(target_branches))
 
@@ -545,7 +538,7 @@ class ForeignBlockTradeTab(BaseStockTab):
             buyer = str(record.get("买方营业部", ""))
             seller = str(record.get("卖方营业部", ""))
             
-            direction, color = self._determine_direction(buyer, seller)
+            direction, _ = self._determine_direction(buyer, seller)
 
             row_dict = {
                 "代码": code,
