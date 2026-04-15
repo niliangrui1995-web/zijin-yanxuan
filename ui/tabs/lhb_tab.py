@@ -243,8 +243,7 @@ class LhbTab(BaseStockTab):
         # 触发全局通知，让关注池 Tab 能扫描到龙虎榜数据
         event_bus.sig_cache_loaded.emit()
 
-        # 统一异步刷新市值
-        self.async_update_market_caps()
+        self.refresh_table_quotes_and_market_caps(quote_task_id="lhb_quotes")
 
     # ================================================================
     # 后台回填缺失天数

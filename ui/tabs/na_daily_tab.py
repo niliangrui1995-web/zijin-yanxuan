@@ -318,7 +318,7 @@ class NADailyTab(BaseStockTab):
             pass
 
         if self._na_daily_codes:
-            self.async_update_market_caps()
+            self.refresh_table_quotes_and_market_caps(quote_task_id="na_daily_quotes")
 
         event_bus.sig_na_daily_updated.emit()
 

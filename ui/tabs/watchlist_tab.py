@@ -147,10 +147,6 @@ class WatchlistTab(BaseStockTab):
         # 渲染表格
         self._render_table(all_codes, data_dict, {})
 
-        # 抛弃本地缓存回填，直接触发基类的大一统市值刷新方案
-        if all_codes:
-            self.async_update_market_caps()
-
         # 主动触发 VCP 指标刷新（细分板块/RPS/业绩异动等）
         # 为什么不依赖 CACHE_LOADED 事件：因为存在时序竞态——
         # 缓存可能在 3.5s 延迟前就加载完了，那时 model.row_data 还是空的
@@ -221,6 +217,7 @@ class WatchlistTab(BaseStockTab):
             final_list.append(row_data)
 
         self.model.update_data(final_list)
+        self.refresh_table_quotes_and_market_caps(quote_task_id="watchlist_quotes")
         self._update_status_summary()
 
     def _update_status_summary(self):

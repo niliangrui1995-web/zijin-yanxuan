@@ -602,6 +602,11 @@ class ScanTab(BaseStockTab):
                 formatted_list.append(formatted_row)
                 
             self.source_model.update_data(formatted_list)
+            self.refresh_table_quotes_and_market_caps(
+                current_model=self.source_model,
+                force_quotes=True,
+                quote_task_id="scan_quotes",
+            )
             if hasattr(self, "table_state"):
                 self.table_state.show_table()
             self._refresh_scan_status()

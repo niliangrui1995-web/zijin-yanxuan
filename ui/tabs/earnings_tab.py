@@ -207,6 +207,7 @@ class EarningsTab(BaseStockTab):
 
         if changed:
             self.model.update_data(self.row_data)
+            self.refresh_table_quotes_and_market_caps(quote_task_id="earnings_quotes")
 
         if hasattr(self, "table_state"):
             if self.row_data:
@@ -320,9 +321,6 @@ class EarningsTab(BaseStockTab):
         # 旧事件枚举链路已废弃，这里走专属刷新通道。
         event_bus.sig_earnings_updated.emit()
         
-        # 统一异步刷新市值
-        self.async_update_market_caps()
-
     def _show_context_menu(self, pos):
         index = self.table.indexAt(pos)
         if not index.isValid(): return

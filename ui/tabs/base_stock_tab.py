@@ -41,6 +41,112 @@ class BaseStockTab(QWidget):
             model.update_quotes(quotes)
 
     @staticmethod
+    def _is_blank_quote_value(value, zero_is_blank=True) -> bool:
+        text = "" if value is None else str(value).strip()
+        if text in {"", "--"}:
+            return True
+        if zero_is_blank and text in {"0", "0.0", "0.00"}:
+            return True
+        return False
+
+    def _collect_table_codes(self, current_model=None) -> list[str]:
+        model = current_model or self._resolve_active_quote_model()
+        if not model or not hasattr(model, "row_data"):
+            return []
+
+        codes = []
+        for row_dict in getattr(model, "row_data", []) or []:
+            code = self._normalize_quote_code(row_dict.get("代码", ""))
+            if not code:
+                continue
+            if code.isdigit():
+                code = code.zfill(6)
+            codes.append(code)
+        return list(dict.fromkeys(codes))
+
+    def _collect_quote_refresh_codes(self, current_model=None, force=False) -> list[str]:
+        model = current_model or self._resolve_active_quote_model()
+        codes = self._collect_table_codes(model)
+        if force or not model:
+            return codes
+
+        target_codes = []
+        for row_dict in getattr(model, "row_data", []) or []:
+            code = self._normalize_quote_code(row_dict.get("代码", ""))
+            if not code:
+                continue
+            if code.isdigit():
+                code = code.zfill(6)
+
+            price_blank = self._is_blank_quote_value(row_dict.get("现价"))
+            pct_blank = self._is_blank_quote_value(row_dict.get("涨幅%"), zero_is_blank=False)
+            if price_blank or pct_blank:
+                target_codes.append(code)
+        return list(dict.fromkeys(target_codes))
+
+    def refresh_table_quotes_and_market_caps(self, current_model=None, force_quotes=False, quote_task_id=None):
+        if current_model is not None:
+            self._active_model_ref = current_model
+
+        model = current_model or self._resolve_active_quote_model()
+        if not model or not hasattr(model, "row_data"):
+            return
+
+        codes = self._collect_table_codes(model)
+        if not codes:
+            return
+
+        try:
+            from core.global_store import global_store
+            snapshot = global_store.get_latest_quotes() or {}
+        except Exception:
+            snapshot = {}
+
+        quote_subset = {
+            code: dict(snapshot[code])
+            for code in codes
+            if code in snapshot
+        }
+        if quote_subset:
+            self._apply_quote_snapshot(quote_subset)
+
+        self.async_update_market_caps()
+
+        if not self.data_provider:
+            return
+
+        target_codes = self._collect_quote_refresh_codes(model, force=force_quotes)
+        if not target_codes:
+            return
+
+        from core.task_manager import task_manager
+
+        task_id = str(quote_task_id or f"{self.__class__.__name__.lower()}_quotes")
+        if task_manager.is_active_task(task_id):
+            return
+
+        def _bg_task():
+            return self.data_provider.fetch_realtime_quotes_batch(target_codes)
+
+        def _on_success(quotes):
+            if quotes:
+                event_bus.sig_rt_quotes.emit(quotes)
+
+        def _on_error(error_message: str):
+            if error_message:
+                import logging
+                logging.getLogger(__name__).debug(
+                    f"[{self.__class__.__name__}] 表格补价失败: {error_message}"
+                )
+
+        task_manager.run_in_background(
+            _bg_task,
+            on_success=_on_success,
+            on_error=_on_error,
+            task_id=task_id,
+        )
+
+    @staticmethod
     def _prepare_toolbar_widget(widget: QWidget | None):
         if widget is None:
             return
