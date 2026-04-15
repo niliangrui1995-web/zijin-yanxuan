@@ -17,6 +17,7 @@ def _build_manager(monkeypatch):
     monkeypatch.setattr(LhbPoolManager, "_migrate_old_cache", lambda self: None)
     manager = LhbPoolManager()
     manager._data = {}
+    manager._day_meta = {}
     manager._last_auto_fetch_date = ""
     return manager
 
@@ -94,4 +95,31 @@ def test_compute_pool_prioritizes_recent_listing_before_older_buy_point(monkeypa
     pool = manager.compute_pool(data_provider=provider)
 
     assert [row["代码"] for row in pool] == ["000002", "000001"]
-    assert pool[1]["买点"] == "✅"
+    assert pool[1]["买点"] == "\u2705"
+
+
+def test_add_day_records_cache_meta(monkeypatch):
+    manager = _build_manager(monkeypatch)
+
+    manager.add_day("20260407", [{"代码": "605589"}])
+
+    assert manager.get_cached_record_count("20260407") == 1
+    assert manager.get_day_meta("20260407") == {
+        "record_count": 1,
+        "source_count": 1,
+        "last_probe_ref_date": "",
+        "probe_status": "unverified",
+    }
+
+
+def test_get_dates_pending_validation_marks_unverified_and_broken_meta(monkeypatch):
+    manager = _build_manager(monkeypatch)
+    manager.add_day("20260407", [{"代码": "605589"}])
+
+    assert manager.get_dates_pending_validation(["20260407"], "20260414") == ["20260407"]
+
+    manager.mark_day_probe("20260407", source_count=1, validation_ref_date="20260414", status="ok")
+    assert manager.get_dates_pending_validation(["20260407"], "20260414") == []
+
+    manager._day_meta["20260407"]["record_count"] = 99
+    assert manager.get_dates_pending_validation(["20260407"], "20260414") == ["20260407"]

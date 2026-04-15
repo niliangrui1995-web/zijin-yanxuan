@@ -202,6 +202,32 @@ def _build_foreign_row_key(row: pd.Series) -> tuple:
         _num("净额"),
     )
 
+
+def _load_lhb_detail_frame(date_str: str) -> tuple[pd.DataFrame, str, str]:
+    """加载并按池口径去重单日龙虎榜基础明细。"""
+    try:
+        df_detail = ak.stock_lhb_detail_em(start_date=date_str, end_date=date_str)
+        if df_detail is None or df_detail.empty:
+            message = f"[龙虎榜抓取] {date_str} 基础榜单为空，可能无数据或尚未发布。"
+            log.info(message)
+            return pd.DataFrame(), "empty", message
+
+        # 同一天某只股票可能因为多种原因上榜，合并其原因并保留唯一行。
+        # 注意：必须同时根据“代码”和“龙虎榜买卖净额”作为复合主键去重，
+        # 否则会把三日榜和单日榜误合并。
+        if all(c in df_detail.columns for c in ["代码", "上榜原因", "龙虎榜净买额"]):
+            group_keys = ["代码", "龙虎榜净买额"]
+            df_detail["上榜原因"] = df_detail.groupby(group_keys)["上榜原因"].transform(
+                lambda x: " | ".join(x.dropna().astype(str).unique())
+            )
+            df_detail = df_detail.drop_duplicates(subset=group_keys, keep="first")
+
+        return df_detail, "ok", f"[龙虎榜抓取] {date_str} 基础榜单 {len(df_detail)} 条"
+    except Exception as e:
+        message = f"[龙虎榜抓取] {date_str} 基础榜单异常: {e}"
+        log.error(message)
+        return pd.DataFrame(), "error", message
+
 def fetch_lhb_data_for_date(
     date_str: str,
     strict_filter: bool = True,
@@ -211,29 +237,11 @@ def fetch_lhb_data_for_date(
     """
     抓取指定日期的龙虎榜数据，并将 基础详情、机构统计、外资/知名游资参与情况聚合返回。
     """
-    try:
-        # 1. 抓取每日龙虎榜总表
-        df_detail = ak.stock_lhb_detail_em(start_date=date_str, end_date=date_str)
-        if df_detail is None or df_detail.empty:
-            message = f"[龙虎榜抓取] {date_str} 基础榜单为空，可能无数据或尚未发布。"
-            log.info(message)
-            if return_meta:
-                return {"records": [], "count": 0, "status": "empty", "message": message}
-            return []
-            
-        # 智能去重：同一天某只股票可能因为多种原因上榜，合并其原因并保留唯一行
-        # 注意：必须同时根据“代码”和“龙虎榜买卖净额”作为复合主键去重！
-        # 因为“日涨幅偏离”和“三日涨幅偏离”虽然是同一只股票，但背后买卖金额完全不同（一个是单日，一个是三日累计）。
-        # 加入资金额作为分组键，可以完美隔离三日榜和单日榜，只合并真正属于同一数据维度的上榜原因。
-        if all(c in df_detail.columns for c in ['代码', '上榜原因', '龙虎榜净买额']):
-            group_keys = ['代码', '龙虎榜净买额']
-            df_detail['上榜原因'] = df_detail.groupby(group_keys)['上榜原因'].transform(lambda x: ' | '.join(x.dropna().astype(str).unique()))
-            df_detail = df_detail.drop_duplicates(subset=group_keys, keep='first')
-    except Exception as e:
-        message = f"[龙虎榜抓取] {date_str} 基础榜单异常: {e}"
-        log.error(message)
+    # 1. 抓取每日龙虎榜总表
+    df_detail, detail_status, detail_message = _load_lhb_detail_frame(date_str)
+    if detail_status != "ok":
         if return_meta:
-            return {"records": [], "count": 0, "status": "error", "message": message}
+            return {"records": [], "count": 0, "status": detail_status, "message": detail_message}
         return []
 
     # 2. 抓取机构买卖追踪
@@ -424,6 +432,20 @@ def fetch_lhb_data_for_date(
         return {"records": results, "count": len(results), "status": "ok", "message": message}
 
     return results
+
+
+def probe_lhb_detail_count_for_date(
+    date_str: str,
+    return_meta: bool = False,
+) -> int | dict:
+    """轻量探针：只返回基础榜单去重条数，用于校验历史缓存是否脏。"""
+    df_detail, status, message = _load_lhb_detail_frame(date_str)
+    count = len(df_detail) if status == "ok" else 0
+
+    if return_meta:
+        return {"count": count, "status": status, "message": message}
+
+    return count
 
 
 def fetch_lhb_pool_for_date(

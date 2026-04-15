@@ -49,3 +49,10 @@ def test_lhb_build_backfill_progress_log_formats_statuses():
     assert empty_msg == "[龙虎榜池] [02/20] 20260402 无可用数据"
     assert err_level == "warn"
     assert err_msg == "[龙虎榜池] [03/20] 20260403 抓取异常 | 已记0条"
+
+
+def test_lhb_should_refresh_after_probe_only_on_count_mismatch():
+    assert LhbTab._should_refresh_after_probe(61, {"status": "ok", "count": 65}) is True
+    assert LhbTab._should_refresh_after_probe(61, {"status": "ok", "count": 61}) is False
+    assert LhbTab._should_refresh_after_probe(61, {"status": "empty", "count": 0}) is False
+    assert LhbTab._should_refresh_after_probe(61, {"status": "error", "count": 0}) is False

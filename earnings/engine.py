@@ -41,6 +41,7 @@ from core.market_calendar import MarketCalendar
 import json
 
 logger = get_logger()
+EARNINGS_QOQ_MIN_PCT = 30.0
 
 _POOL_CACHE = {}
 
@@ -229,8 +230,8 @@ class EarningsEngine:
             valid_records = []
             today_dt = MarketCalendar.now("CN")
             for r in all_records:
-                # 强力清真过滤：剔除最新单季扣非利润为负或为 0，环比增速不足 15%，或同比为负的垃圾股
-                if float(r.get("单季净利润_新增", 0.0)) <= 0 or float(r.get("环比增速_百分比", 0.0)) < 15:
+                # 强力清真过滤：剔除最新单季扣非利润为负或为 0，环比增速不足 30%，或同比为负的垃圾股
+                if float(r.get("单季净利润_新增", 0.0)) <= 0 or float(r.get("环比增速_百分比", 0.0)) < EARNINGS_QOQ_MIN_PCT:
                     continue
                 # 同比必须为正（即去年同期对比必须是增长的），否则说明公司在走下坡路
                 if float(r.get("同比增速_百分比", -1.0)) <= 0:
@@ -503,9 +504,9 @@ class EarningsEngine:
                         self.seen_fingerprints.add(fingerprint)
                         new_found_flag = True
                         
-                        # 三重硬门槛：① 单季利润为正 ② 环比>=15% ③ 同比为正（扣非同比增长）
+                        # 三重硬门槛：① 单季利润为正 ② 环比>=30% ③ 同比为正（扣非同比增长）
                         yoy_pct = res.get('同比增速_百分比', -1)
-                        if res.get('环比增速_百分比', -1) >= 15 and res.get('单季净利润_新增', -1) > 0 and yoy_pct > 0:
+                        if res.get('环比增速_百分比', -1) >= EARNINGS_QOQ_MIN_PCT and res.get('单季净利润_新增', -1) > 0 and yoy_pct > 0:
                             cand.update(res)
                             valid_records.append(cand)
                             self.local_records.append(cand)

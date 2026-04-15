@@ -35,6 +35,7 @@ class LhbPoolManager:
         self._cache_path = os.path.join(project_root, 'data', 'Cache', 'lhb_pool_20d.json')
         self._old_cache_path = os.path.join(project_root, 'data', 'Cache', 'lhb_cache.json')
         self._data: dict[str, list[dict]] = {}  # date_str(yyyyMMdd) -> [records]
+        self._day_meta: dict[str, dict] = {}    # date_str(yyyyMMdd) -> cache metadata
         self._last_auto_fetch_date: str = ""
         self._load()
         self._migrate_old_cache()
@@ -49,7 +50,9 @@ class LhbPoolManager:
             with open(self._cache_path, 'r', encoding='utf-8') as f:
                 raw = json.load(f)
             self._data = raw.get("daily_data", {})
+            self._day_meta = raw.get("day_meta", {})
             self._last_auto_fetch_date = raw.get("last_auto_fetch_date", "")
+            self._repair_day_meta()
             migrated_count = self._upgrade_legacy_foreign_display_cache()
             if migrated_count:
                 self.save()
@@ -112,14 +115,60 @@ class LhbPoolManager:
                     updated_count += 1
         return updated_count
 
+    @staticmethod
+    def _to_int(value, default: int = 0) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _build_day_meta(
+        self,
+        records: list[dict],
+        *,
+        source_count: int | None = None,
+        validation_ref_date: str = "",
+        probe_status: str = "unverified",
+    ) -> dict:
+        record_count = len(records) if isinstance(records, list) else 0
+        return {
+            "record_count": record_count,
+            "source_count": record_count if source_count is None else self._to_int(source_count, record_count),
+            "last_probe_ref_date": str(validation_ref_date or ""),
+            "probe_status": str(probe_status or "unverified"),
+        }
+
+    def _normalize_day_meta_item(self, meta: dict | None, records: list[dict]) -> dict:
+        normalized = self._build_day_meta(records)
+        if not isinstance(meta, dict):
+            return normalized
+
+        actual_count = len(records) if isinstance(records, list) else 0
+        normalized["record_count"] = actual_count
+        normalized["source_count"] = self._to_int(meta.get("source_count"), actual_count)
+        normalized["last_probe_ref_date"] = str(meta.get("last_probe_ref_date", "") or "")
+        normalized["probe_status"] = str(meta.get("probe_status", normalized["probe_status"]) or normalized["probe_status"])
+        return normalized
+
+    def _repair_day_meta(self):
+        if not isinstance(self._day_meta, dict):
+            self._day_meta = {}
+
+        repaired_meta: dict[str, dict] = {}
+        for date_str, records in self._data.items():
+            safe_records = records if isinstance(records, list) else []
+            repaired_meta[date_str] = self._normalize_day_meta_item(self._day_meta.get(date_str), safe_records)
+        self._day_meta = repaired_meta
+
     def save(self):
         """落盘保存"""
         try:
             os.makedirs(os.path.dirname(self._cache_path), exist_ok=True)
             payload = {
-                "version": 1,
+                "version": 2,
                 "last_auto_fetch_date": self._last_auto_fetch_date,
                 "daily_data": self._data,
+                "day_meta": self._day_meta,
             }
             with open(self._cache_path, 'w', encoding='utf-8') as f:
                 json.dump(payload, f, ensure_ascii=False)
@@ -137,7 +186,7 @@ class LhbPoolManager:
             rows = old.get("rows", [])
             if date_str and rows and date_str not in self._data:
                 # 旧缓存直接平移，不再做格式转换（资金共振字段已废弃）
-                self._data[date_str] = rows
+                self.add_day(date_str, rows)
                 self.save()
                 log.info(f"[龙虎榜池] 成功迁移旧缓存 {date_str}，{len(rows)} 条记录")
             # 清理旧缓存文件
@@ -149,18 +198,63 @@ class LhbPoolManager:
     # ================================================================
     # 数据管理
     # ================================================================
-    def add_day(self, date_str: str, records: list[dict]):
+    def add_day(self, date_str: str, records: list[dict], meta: dict | None = None):
         """写入某一天的龙虎榜数据"""
-        self._data[date_str] = records
+        safe_records = records if isinstance(records, list) else []
+        self._data[date_str] = safe_records
+        self._day_meta[date_str] = self._normalize_day_meta_item(meta, safe_records)
         # 不在这里 save()，由调用方决定何时批量保存（减少 IO）
 
     def get_cached_dates(self) -> set[str]:
         return set(self._data.keys())
 
+    def get_cached_record_count(self, date_str: str) -> int:
+        records = self._data.get(date_str, [])
+        return len(records) if isinstance(records, list) else 0
+
+    def get_day_meta(self, date_str: str) -> dict:
+        meta = self._day_meta.get(date_str, {})
+        return dict(meta) if isinstance(meta, dict) else {}
+
     def get_missing_dates(self, required_dates: list[str]) -> list[str]:
         """找出 required_dates 中还没有缓存的日期"""
         cached = self.get_cached_dates()
         return [d for d in required_dates if d not in cached]
+
+    def get_dates_pending_validation(self, required_dates: list[str], validation_ref_date: str) -> list[str]:
+        """找出当前窗口里需要做轻量校验的日期。"""
+        pending_dates: list[str] = []
+        validation_ref = str(validation_ref_date or "")
+
+        for date_str in required_dates:
+            if date_str not in self._data:
+                continue
+
+            cached_count = self.get_cached_record_count(date_str)
+            meta = self._day_meta.get(date_str)
+            if not isinstance(meta, dict):
+                pending_dates.append(date_str)
+                continue
+
+            if self._to_int(meta.get("record_count"), -1) != cached_count:
+                pending_dates.append(date_str)
+                continue
+
+            if str(meta.get("last_probe_ref_date", "") or "") != validation_ref:
+                pending_dates.append(date_str)
+
+        return pending_dates
+
+    def mark_day_probe(self, date_str: str, source_count: int, validation_ref_date: str, status: str = "ok"):
+        """记录某一天最新一次轻量校验结果。"""
+        if date_str not in self._data:
+            return
+
+        meta = self._normalize_day_meta_item(self._day_meta.get(date_str), self._data.get(date_str, []))
+        meta["source_count"] = self._to_int(source_count, meta["record_count"])
+        meta["last_probe_ref_date"] = str(validation_ref_date or "")
+        meta["probe_status"] = str(status or "ok")
+        self._day_meta[date_str] = meta
 
     def prune(self, valid_dates: list[str]):
         """裁剪掉不在 valid_dates 窗口内的历史数据"""
@@ -169,12 +263,14 @@ class LhbPoolManager:
         if to_remove:
             for d in to_remove:
                 del self._data[d]
+                self._day_meta.pop(d, None)
             self.save()
             log.info(f"[龙虎榜池] 裁剪了 {len(to_remove)} 天过期数据: {sorted(to_remove)}")
 
     def clear_all(self):
         """清空全部缓存数据（手动全量刷新时使用）"""
         self._data.clear()
+        self._day_meta.clear()
         self.save()
 
     @property

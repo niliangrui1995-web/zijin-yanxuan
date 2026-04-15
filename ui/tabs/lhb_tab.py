@@ -87,6 +87,15 @@ class LhbTab(BaseStockTab):
             return "info", f"{prefix} 无可用数据"
         return "info", f"{prefix} 完成 | {count}条"
 
+    @staticmethod
+    def _should_refresh_after_probe(cached_count: int, probe_payload: dict) -> bool:
+        """探针成功且条数不一致时，说明当天缓存已经脏了，需要定点补刷。"""
+        status = str(probe_payload.get("status", "") or "")
+        if status != "ok":
+            return False
+        source_count = int(probe_payload.get("count", 0) or 0)
+        return int(cached_count or 0) != source_count
+
     def _set_pool_status(self, primary: str, *segments: str):
         self.lbl_status.setText(self.format_status_summary(primary, *segments))
 
@@ -175,10 +184,13 @@ class LhbTab(BaseStockTab):
         if pool:
             self._display_pool(pool)
 
-        # 检查缺失天数，有缺失就后台回填
+        validation_ref_date = max(trade_dates)
+        pending_validation = self.pool_manager.get_dates_pending_validation(trade_dates, validation_ref_date)
+
+        # 检查缺失天数和脏缓存，有问题就后台回填/纠偏
         missing = self.pool_manager.get_missing_dates(trade_dates)
-        if missing:
-            self._start_backfill(missing)
+        if missing or pending_validation:
+            self._start_backfill(missing, pending_validation, validation_ref_date)
         elif not pool:
             self._set_pool_status("暂无龙虎榜数据", "点击“刷新关注池”开始抓取")
             if hasattr(self, "table_state"):
@@ -248,7 +260,12 @@ class LhbTab(BaseStockTab):
     # ================================================================
     # 后台回填缺失天数
     # ================================================================
-    def _start_backfill(self, missing_dates: list[str]):
+    def _start_backfill(
+        self,
+        missing_dates: list[str],
+        validation_dates: list[str] | None = None,
+        validation_ref_date: str = "",
+    ):
         """后台逐日回填缺失的龙虎榜数据"""
         if self._backfill_in_progress:
             return
@@ -264,61 +281,155 @@ class LhbTab(BaseStockTab):
             except RuntimeError:
                 pass
 
-        # 从远到近排列，先拉最老的（这样最后拉到最新的，latest record 最准）
-        missing_sorted = sorted(missing_dates)
-        total = len(missing_sorted)
-        self._set_pool_status("正在回填龙虎榜", self._status_metric("天数 ", total), f"{missing_sorted[0]}→{missing_sorted[-1]}")
-        _safe_log_emit(
-            "info",
-            f"[龙虎榜池] 开始回填 {total} 个交易日 | {missing_sorted[0]} -> {missing_sorted[-1]}",
-        )
+        missing_sorted = sorted(set(missing_dates))
+        validation_sorted = sorted(set(validation_dates or []))
+        total = len(missing_sorted) + len(validation_sorted)
+        if total <= 0:
+            self._backfill_in_progress = False
+            self.btn_refresh.setEnabled(True)
+            return
+
+        if missing_sorted and validation_sorted:
+            self._set_pool_status(
+                "正在同步龙虎榜",
+                self._status_metric("补缺 ", len(missing_sorted), "天"),
+                self._status_metric("校验 ", len(validation_sorted), "天"),
+            )
+            _safe_log_emit(
+                "info",
+                f"[龙虎榜池] 开始同步 | 补缺{len(missing_sorted)}天 | 校验{len(validation_sorted)}天",
+            )
+        elif missing_sorted:
+            self._set_pool_status("正在回填龙虎榜", self._status_metric("天数 ", len(missing_sorted)), f"{missing_sorted[0]}→{missing_sorted[-1]}")
+            _safe_log_emit(
+                "info",
+                f"[龙虎榜池] 开始回填 {len(missing_sorted)} 个交易日 | {missing_sorted[0]} -> {missing_sorted[-1]}",
+            )
+        else:
+            self._set_pool_status("正在校验龙虎榜缓存", self._status_metric("天数 ", len(validation_sorted)))
+            _safe_log_emit(
+                "info",
+                f"[龙虎榜池] 开始校验 {len(validation_sorted)} 个已缓存交易日",
+            )
 
         def _bg_backfill():
-            """后台线程：逐日抓取缺失天数的龙虎榜数据"""
-            from ui.workers.lhb_worker import fetch_lhb_pool_for_date
+            """后台线程：逐日抓取缺失天数并校验已有缓存。"""
+            from ui.workers.lhb_worker import fetch_lhb_pool_for_date, probe_lhb_detail_count_for_date
 
-            results: dict[str, dict] = {}
-            for i, date_str in enumerate(missing_sorted):
+            fetched_results: dict[str, dict] = {}
+            validated_results: dict[str, dict] = {}
+            step = 0
+
+            for date_str in missing_sorted:
+                step += 1
                 try:
                     payload = fetch_lhb_pool_for_date(
                         date_str,
                         emit_success_log=False,
                         return_meta=True,
                     )
-                    results[date_str] = payload
-                    level, message = self._build_backfill_progress_log(i + 1, total, date_str, payload)
+                    if str(payload.get("status", "ok") or "ok") != "error":
+                        fetched_results[date_str] = {
+                            "records": payload.get("records", []),
+                            "meta": None,
+                        }
+                    level, message = self._build_backfill_progress_log(step, total, date_str, payload)
                     _safe_log_emit(level, message)
                 except Exception as e:
                     log.warning(f"[龙虎榜池] 回填 {date_str} 失败: {e}")
-                    _safe_log_emit("warn", f"[龙虎榜池] [{i+1:02d}/{total:02d}] {date_str} 抓取失败: {e}")
-                    results[date_str] = {"records": [], "count": 0, "status": "error", "message": str(e)}
+                    _safe_log_emit("warn", f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 抓取失败: {e}")
 
-                # 限速保护：避免短时间内大量请求被东方财富限流
-                if i < total - 1:
+                if step < total:
                     time.sleep(0.8)
-            return results
+
+            for date_str in validation_sorted:
+                step += 1
+                cached_count = self.pool_manager.get_cached_record_count(date_str)
+                try:
+                    probe_payload = probe_lhb_detail_count_for_date(date_str, return_meta=True)
+                    if self._should_refresh_after_probe(cached_count, probe_payload):
+                        refresh_payload = fetch_lhb_pool_for_date(
+                            date_str,
+                            emit_success_log=False,
+                            return_meta=True,
+                        )
+                        refresh_status = str(refresh_payload.get("status", "ok") or "ok")
+                        if refresh_status != "error":
+                            source_count = int(probe_payload.get("count", refresh_payload.get("count", 0)) or 0)
+                            fetched_results[date_str] = {
+                                "records": refresh_payload.get("records", []),
+                                "meta": {
+                                    "source_count": source_count,
+                                    "last_probe_ref_date": validation_ref_date,
+                                    "probe_status": "ok",
+                                },
+                            }
+                            _safe_log_emit(
+                                "warn",
+                                f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 校验发现缓存脏数据 | 缓存{cached_count}条 -> 源头{source_count}条，已自动补刷",
+                            )
+                        else:
+                            validated_results[date_str] = {
+                                "count": probe_payload.get("count", cached_count),
+                                "status": "repair_failed",
+                            }
+                            _safe_log_emit(
+                                "warn",
+                                f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 校验发现条数差异，但补刷失败，暂保留缓存{cached_count}条",
+                            )
+                    else:
+                        validated_results[date_str] = probe_payload
+                        probe_status = str(probe_payload.get("status", "ok") or "ok")
+                        if probe_status == "ok":
+                            _safe_log_emit("info", f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 校验通过 | {cached_count}条")
+                        elif probe_status == "empty":
+                            _safe_log_emit("warn", f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 源头暂为空，保留缓存{cached_count}条")
+                        else:
+                            _safe_log_emit("warn", f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 校验异常，保留缓存{cached_count}条")
+                except Exception as e:
+                    log.warning(f"[龙虎榜池] 校验 {date_str} 失败: {e}")
+                    _safe_log_emit("warn", f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 校验失败: {e}")
+
+                if step < total:
+                    time.sleep(0.8)
+
+            return {"fetched": fetched_results, "validated": validated_results}
 
         def _on_backfill_done(results: dict):
             self._backfill_in_progress = False
             self.btn_refresh.setEnabled(True)
 
-            if not results:
-                self._set_pool_status("抓取失败", "请稍后重试")
-                event_bus.sig_system_log.emit("error", self._ensure_log_line("[龙虎榜池] 全部交易日抓取失败"))
+            fetched_results = results.get("fetched", {}) if isinstance(results, dict) else {}
+            validated_results = results.get("validated", {}) if isinstance(results, dict) else {}
+            if not fetched_results and not validated_results:
+                self._set_pool_status("同步失败", "请稍后重试")
+                event_bus.sig_system_log.emit("error", self._ensure_log_line("[龙虎榜池] 同步任务未产出有效结果"))
                 return
 
-            # 写入池引擎
-            for date_str, payload in results.items():
-                records = payload.get("records", []) if isinstance(payload, dict) else payload
-                self.pool_manager.add_day(date_str, records)
+            for date_str, payload in fetched_results.items():
+                records = payload.get("records", []) if isinstance(payload, dict) else []
+                meta = payload.get("meta") if isinstance(payload, dict) else None
+                self.pool_manager.add_day(date_str, records, meta=meta)
+
+            for date_str, payload in validated_results.items():
+                if not isinstance(payload, dict):
+                    continue
+                self.pool_manager.mark_day_probe(
+                    date_str,
+                    source_count=payload.get("count", 0),
+                    validation_ref_date=validation_ref_date,
+                    status=payload.get("status", "ok"),
+                )
+
             self.pool_manager.save()
 
-            # 重新计算池并展示
             pool = self.pool_manager.compute_pool(data_provider=self.data_provider, engine=self._get_engine())
             self._display_pool(pool)
             event_bus.sig_system_log.emit(
                 "info",
-                self._ensure_log_line(f"[龙虎榜池] 回填完成 | {len(results)}天 | 入池{len(pool)}只")
+                self._ensure_log_line(
+                    f"[龙虎榜池] 同步完成 | 更新{len(fetched_results)}天 | 校验{len(validated_results)}天 | 入池{len(pool)}只"
+                )
             )
 
         def _on_backfill_error(error_message: str):
