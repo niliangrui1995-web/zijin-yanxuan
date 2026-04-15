@@ -14,7 +14,7 @@ from core.logger import get_logger
 from earnings.scheduler import EarningsScheduler
 
 log = get_logger(__name__)
-EARNINGS_DISPLAY_TRADE_DAYS = 21
+EARNINGS_DISPLAY_TRADE_DAYS = 10
 
 
 class EarningsTab(BaseStockTab):
@@ -161,6 +161,26 @@ class EarningsTab(BaseStockTab):
         self.proxy_model.setFilterText(text)
 
     @staticmethod
+    def _is_st_stock_name(name: str) -> bool:
+        return "ST" in str(name or "").strip().upper()
+
+    @classmethod
+    def _filter_out_st_dataframe(cls, df: "pd.DataFrame") -> "pd.DataFrame":
+        if df is None or df.empty:
+            return df if df is not None else pd.DataFrame()
+
+        name_col = None
+        for candidate in ("股票名称", "股票简称", "名称"):
+            if candidate in df.columns:
+                name_col = candidate
+                break
+        if not name_col:
+            return df
+
+        keep_mask = ~df[name_col].apply(cls._is_st_stock_name)
+        return df.loc[keep_mask].copy()
+
+    @staticmethod
     def _recent_trade_window_start(trade_days: int = EARNINGS_DISPLAY_TRADE_DAYS) -> str | None:
         """返回展示窗口起点（yyyy-MM-dd），按交易日而不是自然日滚动。"""
         if trade_days <= 0:
@@ -194,13 +214,16 @@ class EarningsTab(BaseStockTab):
 
         pruned_rows = []
         for row in rows or []:
+            stock_name = row.get("名称") or row.get("股票名称") or row.get("股票简称") or ""
+            if cls._is_st_stock_name(stock_name):
+                continue
             reveal_date = str(row.get("揭晓日") or row.get("公告日期") or "").strip()[:10]
             if not reveal_date or reveal_date >= start_date:
                 pruned_rows.append(row)
         return pruned_rows
 
     def _apply_display_trade_window(self, force_refresh: bool = False) -> bool:
-        """将展示数据裁剪到近 21 个交易日，并按需刷新表格。"""
+        """将展示数据裁剪到近 N 个交易日，并按需刷新表格。"""
         pruned_rows = self._prune_rows_to_recent_trade_window(self.row_data)
         changed = force_refresh or len(pruned_rows) != len(self.row_data)
         self.row_data = pruned_rows
@@ -219,6 +242,7 @@ class EarningsTab(BaseStockTab):
     @pyqtSlot(object, str)
     def _on_new_data_found(self, df: "pd.DataFrame", mode: str = "routine"):
         """当底层推上来新的 DataFrame 时，转成本地字典并无缝合并展示"""
+        df = self._filter_out_st_dataframe(df)
         if df.empty:
             rows_changed = self._apply_display_trade_window(force_refresh=False)
             if mode == "warm_cache":
@@ -309,7 +333,7 @@ class EarningsTab(BaseStockTab):
             if not exists:
                 self.row_data.append(row_obj)
                 
-        # 只展示近 21 个交易日窗口，避免自然日累计导致表格越来越重。
+        # 只展示近 N 个交易日窗口，避免自然日累计导致表格越来越重。
         self._apply_display_trade_window(force_refresh=True)
         self._set_window_status(
             "业绩异动已刷新",
