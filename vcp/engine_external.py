@@ -21,31 +21,100 @@ from vcp.constants import (
 _log = get_logger(__name__)
 
 
-def tdx_connect(tdx_servers):
-    """连接通达信服务器，返回 api 对象，失败返回 None"""
+def _coerce_number(value) -> float:
+    if value in (None, "", "-", "--"):
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
-    from pytdx.hq import TdxHq_API
 
-    api = TdxHq_API(auto_retry=False, heartbeat=False)
-    for host, port in tdx_servers:
+def _to_eastmoney_secid(code: str) -> str:
+    code = str(code).strip()
+    market = 1 if code.startswith(("5", "6", "9")) else 0
+    return f"{market}.{code}"
+
+
+def _fetch_eastmoney_finance_info(codes):
+    """通过东方财富批量行情接口反推总股本。"""
+
+    normalized_codes = [
+        str(code).strip()
+        for code in dict.fromkeys(codes or [])
+        if str(code or "").strip()
+    ]
+    if not normalized_codes:
+        return {}
+
+    results = {}
+    batch_size = 80
+    fields = "f12,f2,f18,f20,f21"
+
+    for start in range(0, len(normalized_codes), batch_size):
+        batch = normalized_codes[start:start + batch_size]
+        secids = ",".join(_to_eastmoney_secid(code) for code in batch)
+        url = (
+            "https://push2.eastmoney.com/api/qt/ulist.np/get"
+            f"?fltt=2&np=3&ut=bd1d9ddb04089700cf9c27f6f7426281"
+            f"&invt=2&fields={fields}&secids={secids}"
+        )
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer": "https://quote.eastmoney.com/",
+                "Connection": "close",
+            },
+        )
+
+        resp = urllib.request.urlopen(req, timeout=8)
         try:
-            if api.connect(host, port, time_out=5):
-                return api
-        except Exception as exc:
-            _log.debug(f"[pytdx] 连接服务器 {host}:{port} 失败: {exc}")
-            continue
-    return None
+            payload = json.loads(resp.read().decode("utf-8"))
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
+
+        if int(payload.get("rc", 0) or 0) != 0:
+            raise RuntimeError(f"东方财富财务股本接口异常 rc={payload.get('rc')}")
+
+        diff = (payload.get("data") or {}).get("diff") or []
+        for row in diff:
+            code_val = str(row.get("f12") or "").strip()
+            if not code_val:
+                continue
+
+            total_market_cap = _coerce_number(row.get("f20"))
+            float_market_cap = _coerce_number(row.get("f21"))
+            latest_price = _coerce_number(row.get("f2"))
+            last_close = _coerce_number(row.get("f18"))
+            price_base = latest_price or last_close
+
+            if total_market_cap <= 0 or price_base <= 0:
+                continue
+
+            results[code_val] = {
+                "zongguben": total_market_cap / price_base,
+                "market_cap": total_market_cap,
+                "float_market_cap": float_market_cap,
+                "price_base": price_base,
+                "source": "eastmoney",
+            }
+
+    return results
 
 
-def batch_get_finance_info(codes, tdx_servers):
-    """通过通达信批量获取财务信息（总股本、法人股等），带30天磁盘缓存"""
+def batch_get_finance_info(codes):
+    """批量获取财务信息（当前只维护总股本），带30天磁盘缓存。"""
 
     cache = {}
     if os.path.exists(FINANCE_CACHE_FILE):
         try:
             cache = load_json_file(FINANCE_CACHE_FILE) or {}
         except Exception as exc:
-            _log.debug(f"[pytdx] 财务缓存文件读取异常，将重建: {exc}")
+            _log.debug(f"[财务股本] 缓存文件读取异常，将重建: {exc}")
             cache = {}
 
     results = {}
@@ -61,57 +130,67 @@ def batch_get_finance_info(codes, tdx_servers):
                     results[code] = cached['info']
                     continue
             except (ValueError, KeyError) as exc:
-                _log.debug(f"[pytdx] 缓存日期解析异常({code}): {exc}")
+                _log.debug(f"[财务股本] 缓存日期解析异常({code}): {exc}")
         need_query.append(code)
 
     if not need_query:
         return results
 
-    api = tdx_connect(tdx_servers)
-    if api is None:
-        _log.warning("[pytdx] 无法连接通达信服务器，市值计算将使用本地旧缓存或暂无数据")
+    try:
+        online_results = _fetch_eastmoney_finance_info(need_query)
+    except Exception as exc:
+        _log.warning(f"[eastmoney] 无法获取总股本，市值计算将使用本地旧缓存或暂无数据: {exc}")
         for code in need_query:
             if code in cache:
                 results[code] = cache[code]['info']
         return results
 
+    if not online_results:
+        for code in need_query:
+            if code in cache:
+                results[code] = cache[code]['info']
+        return results
+
+    for i, raw_code in enumerate(need_query):
+        info = online_results.get(raw_code)
+        if info:
+            results[raw_code] = info
+            cache[raw_code] = {'info': info, 'date': now.strftime('%Y-%m-%d')}
+        if (i + 1) % 80 == 0:
+            _time.sleep(0.1)
+
     try:
-        for i, raw_code in enumerate(need_query):
-            code = raw_code.replace("sh", "").replace("sz", "")
-            market = 1 if code.startswith(('6', '5')) else 0
-            try:
-                info = api.get_finance_info(market, code)
-                if info:
-                    results[raw_code] = info
-                    cache[raw_code] = {'info': info, 'date': now.strftime('%Y-%m-%d')}
-            except Exception as exc:
-                _log.debug(f"[pytdx] 获取 {raw_code} 财务信息失败: {exc}")
-
-            if (i + 1) % 50 == 0:
-                _time.sleep(0.3)
-
-        try:
-            save_json_file(FINANCE_CACHE_FILE, cache)
-            remove_cache_file(FINANCE_CACHE_FILE.replace(".json", ".pkl"))
-        except Exception as exc:
-            _log.error(f"[pytdx] 财务缓存写入失败: {exc}")
-    finally:
-        try:
-            api.disconnect()
-        except Exception as exc:
-            _log.debug(f"[pytdx] 断开服务器连接时异常（可忽略）: {exc}")
+        save_json_file(FINANCE_CACHE_FILE, cache)
+        remove_cache_file(FINANCE_CACHE_FILE.replace(".json", ".pkl"))
+    except Exception as exc:
+        _log.error(f"[eastmoney] 财务缓存写入失败: {exc}")
 
     return results
 
 
-def batch_check_market_cap(codes: list[str], tdx_servers, close_prices: dict[str, float] | None = None) -> dict[str, float]:
+def batch_check_market_cap(codes: list[str], close_prices: dict[str, float] | None = None) -> dict[str, float]:
     """批量计算总市值 = 总股本 × 收盘价"""
 
-    finance_data = batch_get_finance_info(codes, tdx_servers)
+    finance_data = batch_get_finance_info(codes)
     results = {}
     for code in codes:
         info = finance_data.get(code)
         if not info:
+            continue
+        market_cap = float(info.get('market_cap', 0) or 0)
+        price_base = float(info.get('price_base', 0) or 0)
+        if market_cap > 0:
+            if close_prices and code in close_prices:
+                close_price = float(close_prices.get(code, 0) or 0)
+                if close_price > 0:
+                    if price_base > 0:
+                        results[code] = market_cap * (close_price / price_base)
+                    else:
+                        results[code] = market_cap
+                else:
+                    results[code] = market_cap
+            else:
+                results[code] = market_cap
             continue
         zongguben = info.get('zongguben', 0)
         if zongguben and zongguben > 0:
@@ -157,7 +236,13 @@ def check_institutional_shareholders(code):
             },
         )
         resp = urllib.request.urlopen(req, timeout=8)
-        data = json.loads(resp.read().decode('utf-8'))
+        try:
+            data = json.loads(resp.read().decode('utf-8'))
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
         shareholders = data.get('sdltgd', [])
         if not shareholders:
             return False, "无股东数据"

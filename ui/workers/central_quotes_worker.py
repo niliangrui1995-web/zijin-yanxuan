@@ -8,8 +8,10 @@ import time
 from PyQt6.QtCore import QObject, QTimer, pyqtSlot
 
 from core.event_bus import event_bus
+from core.global_store import global_store
 from core.logger import get_logger
 from core.market_calendar import MarketCalendar
+from core.quote_snapshot import enrich_quotes_with_finance
 from core.task_manager import task_manager
 
 log = get_logger(__name__)
@@ -107,6 +109,40 @@ class CentralQuotesService(QObject):
             _extract(mw.tab_lhb.model.row_data)
 
         return codes
+
+    def _get_missing_finance_codes(self, codes: set[str]) -> list[str]:
+        try:
+            return global_store.get_missing_a_share_finance_codes(codes)
+        except Exception as exc:
+            log.debug(f"[报价站] 读取股本缺口失败: {exc}")
+            return []
+
+    def _fetch_quote_payload(self, codes: set[str]) -> dict:
+        quotes = self.data_provider.fetch_realtime_quotes_batch(list(codes))
+        finance_data = {}
+        provider_stats = {}
+
+        finance_codes = self._get_missing_finance_codes(codes)
+        if finance_codes:
+            try:
+                from vcp.engine import VCPEngine
+
+                finance_data = VCPEngine.batch_get_finance_info(finance_codes) or {}
+            except Exception as exc:
+                log.debug(f"[报价站] 批量补股本失败: {exc}")
+
+        stats_getter = getattr(self.data_provider, "get_realtime_runtime_stats", None)
+        if callable(stats_getter):
+            try:
+                provider_stats = stats_getter() or {}
+            except Exception as exc:
+                log.debug(f"[报价站] 读取运行态统计失败: {exc}")
+
+        return {
+            "quotes": enrich_quotes_with_finance(quotes, finance_data),
+            "finance_data": finance_data,
+            "provider_stats": provider_stats,
+        }
 
     def _reset_failures(self):
         self._consecutive_failures = 0
@@ -226,7 +262,8 @@ class CentralQuotesService(QObject):
             return
 
         try:
-            quotes = self.data_provider.fetch_realtime_quotes_batch(list(codes))
+            payload = self._fetch_quote_payload(codes)
+            quotes = payload.get("quotes") or {}
         except Exception as exc:
             log.warning(f"[报价站] 盘后离线快照构建失败: {exc}")
             return
@@ -293,11 +330,7 @@ class CentralQuotesService(QObject):
         fetch_token = self._fetch_generation
 
         def _bg_task():
-            quotes = self.data_provider.fetch_realtime_quotes_batch(list(codes))
-            return {
-                "quotes": quotes,
-                "provider_stats": self.data_provider.get_realtime_runtime_stats(),
-            }
+            return self._fetch_quote_payload(codes)
 
         def _on_result(payload):
             if fetch_token != self._fetch_generation:

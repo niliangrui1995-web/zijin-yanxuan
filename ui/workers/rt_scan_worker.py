@@ -280,11 +280,11 @@ class RtScanWorker(QThread):
             r120 = self._rps120.get(code, float('nan'))
             r250 = self._rps250.get(code, float('nan'))
 
-            # 涨幅计算:优先使用 pytdx 返回的昨收价,精确可靠
+            # 涨幅计算:优先使用实时报价返回的昨收价,精确可靠
             last_close = float(quote.get('last_close', 0) or 0)
             rt_close = float(quote.get('close', 0) or 0)
             
-            # --- 兜底检查：防御 Pytdx 服务器返回零值 (停牌/断流) ---
+            # --- 兜底检查：防御上游报价返回零值 (停牌/断流) ---
             if last_close <= 0:
                 hist_df = self.data_provider.get_data(code)
                 if hist_df is not None and len(hist_df) > 0:

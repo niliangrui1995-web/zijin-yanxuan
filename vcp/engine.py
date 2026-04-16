@@ -588,28 +588,18 @@ class VCPEngine:
         return True, "OK", m
 
     # ================================================================
-    # 总市值计算（数据源：通达信 pytdx）
-    # 公式：总市值 = 总股本(get_finance_info) × 收盘价(本地日线)
-    # 优势：无需 HTTP 外部请求，批量高效，可算历史市值
+    # 总市值计算（数据源：东方财富批量行情 + 本地/实时价格）
+    # 公式：总市值 = 总股本 × 收盘价
+    # 说明：总股本由东方财富总市值字段反推，不再连接通达信服务器
     # ================================================================
-
-    # 通达信服务器池（轮询备用）
-    _TDX_SERVERS = [
-        ('180.153.18.170', 7709),
-        ('180.153.18.171', 7709),
-        ('202.108.253.130', 7709),
-        ('202.108.253.131', 7709),
-        ('60.12.136.250', 7709),
-        ('218.75.126.9', 7709),
-    ]
 
     @staticmethod
     def batch_get_finance_info(codes):
-        return batch_get_finance_info(codes, VCPEngine._TDX_SERVERS)
+        return batch_get_finance_info(codes)
 
     @staticmethod
     def batch_check_market_cap(codes: list[str], close_prices: dict[str, float] | None = None) -> dict[str, float]:
-        return batch_check_market_cap(codes, VCPEngine._TDX_SERVERS, close_prices)
+        return batch_check_market_cap(codes, close_prices)
 
     # ================================================================
     # 十大流通股东机构检查（硬过滤）
@@ -647,7 +637,7 @@ class VCPEngine:
             sector_manager: 板块管理器（可选）
             sector_rps_dict: 板块RPS字典（可选）
             sector_threshold: 板块RPS阈值
-            server_pool: [(ip,port),...] 通达信服务器列表，用于查询机构股东（可选）
+            server_pool: 历史兼容参数，当前保留但不再参与联网查询
 
         返回:
             ready_pool: {代码: {
@@ -787,7 +777,7 @@ class VCPEngine:
                 _log.info(f"[机构股东] 标记完成 | 有机构 {inst_count} 只，无机构 {no_inst_count} 只（均保留在池中）")
             except Exception as e:
                 _log.error(f"[机构股东] 查询异常，跳过筛选: {e}")
-        # ---- 总市值标记：总股本×收盘价（通达信） ----
+        # ---- 总市值标记：总股本×收盘价（东方财富股本 + 收盘价） ----
         # 改为"软标记"而非硬删除，小市值股票保留在池中但打上标记
         if ready_pool:
             if cancelled_checker and cancelled_checker():

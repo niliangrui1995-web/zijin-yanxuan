@@ -19,6 +19,7 @@ from PyQt6.QtCore import QCoreApplication, Qt
 from PyQt6.QtWidgets import QWidget, QLabel, QHBoxLayout, QFrame, QToolButton, QPushButton
 
 from core.event_bus import event_bus
+from core.quote_snapshot import build_finance_quote_payload, coerce_number, is_a_share_code
 from ui.theme_tokens import build_ui_tokens
 
 
@@ -83,6 +84,32 @@ class BaseStockTab(QWidget):
             if price_blank or pct_blank:
                 target_codes.append(code)
         return list(dict.fromkeys(target_codes))
+
+    def _collect_missing_finance_codes(self, current_model=None) -> list[str]:
+        model = current_model or self._resolve_active_quote_model()
+        if not model or not hasattr(model, "row_data"):
+            return []
+
+        try:
+            from core.global_store import global_store
+
+            snapshot = global_store.get_latest_quotes() or {}
+        except Exception:
+            snapshot = {}
+
+        missing: list[str] = []
+        for row_dict in getattr(model, "row_data", []) or []:
+            code = self._normalize_quote_code(row_dict.get("代码", ""))
+            if not is_a_share_code(code):
+                continue
+
+            snapshot_entry = snapshot.get(code) or {}
+            row_zbg = coerce_number(row_dict.get("_zongguben", 0))
+            snapshot_zbg = coerce_number(snapshot_entry.get("_zongguben") or snapshot_entry.get("zongguben"))
+            if row_zbg <= 0 and snapshot_zbg <= 0:
+                missing.append(code)
+
+        return list(dict.fromkeys(missing))
 
     def refresh_table_quotes_and_market_caps(self, current_model=None, force_quotes=False, quote_task_id=None):
         if current_model is not None:
@@ -625,7 +652,7 @@ class BaseStockTab(QWidget):
 
 
     def async_update_market_caps(self):
-        """异步统一更新所在表格里的股票市值 (消除 weekend 或 null 的干扰)"""
+        """异步补齐缺失股本，并通过全局实时行情信号回灌动态市值。"""
         app = QCoreApplication.instance()
         owner_window = self.window()
         if app is None or app.closingDown():
@@ -633,35 +660,43 @@ class BaseStockTab(QWidget):
         if owner_window and getattr(owner_window, "_is_closing", False):
             return
 
-        model = getattr(self, '_active_model_ref', None) \
-             or getattr(self, 'source_model', None) \
-             or getattr(self, 'model', None)
-             
-        if not model or not hasattr(model, 'row_data'): 
+        model = self._resolve_active_quote_model()
+        if not model or not hasattr(model, "row_data"):
             return
 
-        # 提取需要市值的代码
-        codes_need_cap = []
-        for r_dict in model.row_data:
-            c = r_dict.get("代码")
-            if c: 
-                codes_need_cap.append(str(c))
-                
+        try:
+            from core.global_store import global_store
+
+            latest_quotes = global_store.get_latest_quotes() or {}
+        except Exception:
+            latest_quotes = {}
+
+        if latest_quotes:
+            self._apply_quote_snapshot(latest_quotes)
+
+        codes_need_cap = self._collect_missing_finance_codes(model)
         if not codes_need_cap:
+            after_cap_hook = getattr(self, "_after_market_caps_updated", None)
+            if callable(after_cap_hook):
+                try:
+                    after_cap_hook()
+                except Exception:
+                    pass
             return
 
         def _bg_cap():
             app_obj = QCoreApplication.instance()
             if app_obj is None or app_obj.closingDown():
                 return {}
+
             from vcp.engine import VCPEngine
+
             try:
-                # 获取总股本 (zongguben) 即可，市值交由表格引擎底层根据实时现价计算
-                finance_data = VCPEngine.batch_get_finance_info(codes_need_cap)
-                return finance_data
-            except Exception as e:
+                return VCPEngine.batch_get_finance_info(codes_need_cap)
+            except Exception as exc:
                 import logging
-                logging.getLogger(__name__).error(f"[市值统一刷新] 获取股本失败: {e}")
+
+                logging.getLogger(__name__).error(f"[市值统一刷新] 获取股本失败: {exc}")
                 return {}
 
         def _on_cap(finance_data):
@@ -671,35 +706,24 @@ class BaseStockTab(QWidget):
                 return
             if owner and getattr(owner, "_is_closing", False):
                 return
-            if not model or not finance_data: return
-            
-            for row, d in enumerate(model.row_data):
-                c = d.get("代码")
-                info = finance_data.get(c)
-                if info:
-                    zbg = info.get('zongguben', 0)
-                    if zbg > 0:
-                        # 注入到底层数据模型，以供 update_quotes 时动态计算
-                        d['_zongguben'] = zbg
-                        
-                        # 如果当前“现价”已经有了数据，立刻算一次市值刷新
-                        price_str = str(d.get("现价", "--")).replace(',', '')
-                        if price_str not in ("--", ""):
-                            try:
-                                rt_close = float(price_str)
-                                cap = zbg * rt_close
-                                model.set_cell_value(row, "市值", f"{cap / 1e8:.0f}亿")
-                            except (ValueError, TypeError) as _e:
-                                import logging
-                                logging.getLogger(__name__).debug(f"市值计算价格解析异常({price_str}): {_e}")
+            if not finance_data:
+                return
+
+            payload = build_finance_quote_payload(finance_data)
+            if payload:
+                event_bus.sig_rt_quotes.emit(payload)
 
             after_cap_hook = getattr(self, "_after_market_caps_updated", None)
             if callable(after_cap_hook):
                 try:
                     after_cap_hook()
-                except Exception as _e:
-                    import logging
-                    logging.getLogger(__name__).debug(f"市值刷新后回调异常: {_e}")
+                except Exception:
+                    pass
 
         from core.task_manager import task_manager
-        task_manager.run_in_background(_bg_cap, task_id=f"caps_{self.__class__.__name__}", on_success=_on_cap)
+
+        task_manager.run_in_background(
+            _bg_cap,
+            task_id=f"caps_{self.__class__.__name__}",
+            on_success=_on_cap,
+        )

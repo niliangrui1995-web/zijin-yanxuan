@@ -28,6 +28,7 @@ from functools import lru_cache
 from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QSortFilterProxyModel, QRect, pyqtSignal, QMimeData
 from PyQt6.QtGui import QColor, QFont
 from core.buy_point import BUY_POINT_STYLE_TEXT, calculate_buy_point_from_history
+from core.quote_snapshot import resolve_quote_metrics
 from ui.components import SearchFilter
 from ui.theme_tokens import build_ui_tokens
 
@@ -88,6 +89,33 @@ def _qcolor_from_text_cached(text: str) -> QColor:
         return QColor(*(int(rgb_match.group(i)) for i in range(1, 4)))
 
     return QColor(text)
+
+
+def _apply_quote_metrics_to_row(item_dict: dict, quote: dict) -> tuple[bool, dict]:
+    metrics = resolve_quote_metrics(item_dict, quote)
+    row_changed = False
+
+    zongguben = float(metrics.get("zongguben", 0) or 0)
+    if zongguben > 0 and float(item_dict.get("_zongguben", 0) or 0) != zongguben:
+        item_dict["_zongguben"] = zongguben
+        row_changed = True
+
+    price_text = metrics.get("price_text")
+    if price_text is not None and item_dict.get("现价") != price_text:
+        item_dict["现价"] = price_text
+        row_changed = True
+
+    pct = metrics.get("pct")
+    if pct is not None and item_dict.get("涨幅%") != pct:
+        item_dict["涨幅%"] = pct
+        row_changed = True
+
+    cap_text = metrics.get("market_cap_text")
+    if cap_text and item_dict.get("市值") != cap_text:
+        item_dict["市值"] = cap_text
+        row_changed = True
+
+    return row_changed, metrics
 
 
 def _qcolor_from_token(color) -> QColor:
@@ -455,34 +483,7 @@ class RtTableModel(QAbstractTableModel):
             if not code or code not in quotes:
                 continue
 
-            q = quotes[code]
-            rt_close = float(q.get('close', 0) or 0)
-            last_close = float(q.get('last_close', 0) or 0)
-
-            if rt_close <= 0 and last_close > 0:
-                rt_close = last_close
-
-            row_changed = False
-            if last_close > 0 and rt_close > 0:
-                pct = ((rt_close / last_close) - 1) * 100
-                if item_dict.get("涨幅%") != pct:
-                    item_dict["涨幅%"] = pct
-                    row_changed = True
-
-            if rt_close > 0:
-                price_text = f"{rt_close:.2f}"
-                if item_dict.get("现价") != price_text:
-                    item_dict["现价"] = price_text
-                    row_changed = True
-
-            zbg = item_dict.get("_zongguben", 0)
-            if zbg > 0 and rt_close > 0:
-                cap = zbg * rt_close
-                cap_text = f"{cap / 1e8:.0f}亿"
-                if item_dict.get("市值") != cap_text:
-                    item_dict["市值"] = cap_text
-                    row_changed = True
-
+            row_changed, _ = _apply_quote_metrics_to_row(item_dict, quotes[code])
             if row_changed:
                 changed_rows.append(row)
 
@@ -1173,34 +1174,28 @@ class StockTableModel(QAbstractTableModel):
                 continue
 
             q = quotes[code]
-            rt_close = float(q.get('close', 0) or 0)
-            last_close = float(q.get('last_close', 0) or 0)
-
-            if rt_close <= 0 and last_close > 0:
-                rt_close = last_close
-
-            if last_close > 0 and rt_close > 0:
-                pct = ((rt_close / last_close) - 1) * 100
-            else:
-                pct = 0
-
+            metrics = resolve_quote_metrics(item_dict, q)
+            rt_close = float(metrics.get("rt_close", 0) or 0)
+            pct = metrics.get("pct")
             row_changed = False
-            price_text = f"{rt_close:.2f}" if rt_close > 0 else "--"
-            if item_dict.get("现价") != price_text:
+            zongguben = float(metrics.get("zongguben", 0) or 0)
+            if zongguben > 0 and float(item_dict.get("_zongguben", 0) or 0) != zongguben:
+                item_dict["_zongguben"] = zongguben
+                row_changed = True
+
+            price_text = metrics.get("price_text")
+            if price_text is not None and item_dict.get("现价") != price_text:
                 self.set_cell_value(row, "现价", price_text, emit_signal=False)
                 row_changed = True
-            if item_dict.get("涨幅%") != pct:
+            if pct is not None and item_dict.get("涨幅%") != pct:
                 self.set_cell_value(row, "涨幅%", pct, emit_signal=False)
                 row_changed = True
 
             if "市值" in self._headers:
-                zbg = item_dict.get("_zongguben", 0)
-                if zbg > 0 and rt_close > 0:
-                    cap = zbg * rt_close
-                    cap_text = f"{cap / 1e8:.0f}亿"
-                    if item_dict.get("市值") != cap_text:
-                        self.set_cell_value(row, "市值", cap_text, emit_signal=False)
-                        row_changed = True
+                cap_text = metrics.get("market_cap_text")
+                if cap_text and item_dict.get("市值") != cap_text:
+                    self.set_cell_value(row, "市值", cap_text, emit_signal=False)
+                    row_changed = True
 
             if row_changed:
                 changed_rows.append(row)
