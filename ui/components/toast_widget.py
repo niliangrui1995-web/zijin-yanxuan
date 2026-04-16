@@ -79,22 +79,28 @@ class Toast(QWidget):
 
         # 根据级别换图标和边框色
         styles = {
-            "info": ("i", "rgba(59, 130, 246, 0.5)", "#3B82F6"),
-            "success": ("OK", "rgba(34, 197, 94, 0.5)", "#22C55E"),
-            "warning": ("", "rgba(245, 158, 11, 0.5)", "#F59E0B"),
-            "error": ("x", "rgba(239, 68, 68, 0.6)", "#EF4444")
+            "info": ("i", "rgba(59, 130, 246, 0.10)", "rgba(59, 130, 246, 0.42)", "#3B82F6"),
+            "success": ("OK", "rgba(34, 197, 94, 0.12)", "rgba(34, 197, 94, 0.48)", "#22C55E"),
+            "warning": ("", "rgba(245, 158, 11, 0.14)", "rgba(245, 158, 11, 0.52)", "#F59E0B"),
+            "error": ("x", "rgba(239, 68, 68, 0.14)", "rgba(239, 68, 68, 0.56)", "#EF4444")
         }
-        icon, border_color, text_color = styles.get(level, styles["info"])
+        icon, bg_color, border_color, text_color = styles.get(level, styles["info"])
         self.lbl_icon.setText(icon)
         self.lbl_icon.setVisible(bool(icon))
         from ui.theme import theme_manager as _tm
         self.bg_widget.setStyleSheet(f"""
             QWidget#ToastBackground {{
-                background-color: {_tm.current_theme['BG_GLASS']};
+                background-color: {bg_color};
                 border-radius: 8px;
                 border: 1px solid {border_color};
             }}
         """)
+        self.lbl_icon.setStyleSheet(
+            f"font-size: 16px; margin-right: 8px; background: transparent; color: {text_color}; font-weight: 700;"
+        )
+        self.lbl_text.setStyleSheet(
+            f"color: {text_color}; font-size: 14px; font-weight: 600; background: transparent;"
+        )
 
         # 居中显示在父窗口或主屏幕顶部
         self.adjustSize()

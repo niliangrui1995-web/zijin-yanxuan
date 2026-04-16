@@ -415,13 +415,33 @@ def sync_asian_kline_cache(
         use_cf_proxy=use_cf_proxy,
     )
     if not data:
+        try:
+            old_map = _load_cached_row_map(output_dir)
+        except (FileNotFoundError, PermissionError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            logging.warning(f"⚠️ 旧缓存回填失败: {exc}")
+            old_map = {}
+
+        preserved = sorted(target_tickers & set(old_map.keys()))
+        missing = sorted(target_tickers - set(old_map.keys()))
+        if preserved and not missing:
+            message = "亚洲 K 线远端拉取失败，已保留现有缓存"
+            return True, message, {
+                "target_count": len(target_tickers),
+                "written_count": len(preserved),
+                "single_recovered": [],
+                "reused": preserved,
+                "missing": [],
+                "cache_preserved": True,
+            }
+
         message = "亚洲 K 线缓存全量拉取失败"
         return False, message, {
             "target_count": len(target_tickers),
             "written_count": 0,
             "single_recovered": [],
-            "reused": [],
-            "missing": sorted(target_tickers),
+            "reused": preserved,
+            "missing": missing or sorted(target_tickers),
+            "cache_preserved": False,
         }
 
     row_map = _rows_to_map(data)

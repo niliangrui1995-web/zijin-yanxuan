@@ -227,8 +227,10 @@ class WatchlistTab(BaseStockTab):
     def _update_status_summary(self):
         rows = list(getattr(self.model, "row_data", []) or [])
         total = len(rows)
+        visible = self.proxy_model.rowCount()
+        search_text = self.sp_search.text().strip()
         if total == 0:
-            self.lbl_sp_status.setText("关注池 | 池内0只")
+            self.lbl_sp_status.setText(self.format_status_summary("关注池为空", "可输入 A 股代码加入自选"))
             if hasattr(self, "table_state"):
                 self.table_state.show_empty("暂无关注池数据")
             return
@@ -243,16 +245,18 @@ class WatchlistTab(BaseStockTab):
         block_count = sum(_filled(r, "大宗交易") for r in rows)
         lhb_count = sum(_filled(r, "龙虎榜") for r in rows)
 
-        self.lbl_sp_status.setText(
-            self.format_status_summary(
-                self._status_metric("池内", total, "只"),
-                self._status_metric("RPS就绪 ", rps_count),
-                self._status_metric("催化 ", catalyst_count),
-                self._status_metric("业绩 ", earnings_count),
-                self._status_metric("大宗 ", block_count),
-                self._status_metric("龙虎 ", lhb_count),
-            )
-        )
+        segments = [
+            self._status_metric("匹配 ", visible, f"/{total}"),
+            self._status_metric("RPS就绪 ", rps_count),
+            self._status_metric("催化 ", catalyst_count),
+            self._status_metric("业绩 ", earnings_count),
+            self._status_metric("大宗 ", block_count),
+            self._status_metric("龙虎 ", lhb_count),
+        ]
+        if search_text:
+            segments.append(f"搜索 {search_text}")
+
+        self.lbl_sp_status.setText(self.format_status_summary(self._status_metric("池内", total, "只"), *segments))
         if hasattr(self, "table_state"):
             self.table_state.show_table()
 
@@ -707,4 +711,5 @@ class WatchlistTab(BaseStockTab):
     def _filter_table(self, text):
         """搜索过滤：支持代码、名称、拼音首字母"""
         self.proxy_model.setFilterText(text)
+        self._update_status_summary()
 

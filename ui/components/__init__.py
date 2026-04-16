@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
     QLabel,
+    QPushButton,
     QSizePolicy,
     QStackedLayout,
     QTableView,
@@ -156,7 +157,11 @@ class VCPTableView(QTableView):
             return False
 
         fm = QFontMetrics(self._display_font_for_index(index))
-        available_width = max(0, self.columnWidth(index.column()) - 16)
+        visible_rect = self.visualRect(index)
+        available_width = self.columnWidth(index.column())
+        if visible_rect.isValid() and visible_rect.width() > 0:
+            available_width = min(available_width, visible_rect.width())
+        available_width = max(0, available_width - 14)
         if available_width <= 0:
             return False
 
@@ -165,12 +170,7 @@ class VCPTableView(QTableView):
             required_width = fm.horizontalAdvance(display_text) + 12
             return required_width > available_width
 
-        elided_text = fm.elidedText(
-            display_text,
-            Qt.TextElideMode.ElideRight,
-            max(0, available_width - 2),
-        )
-        return elided_text != display_text
+        return fm.horizontalAdvance(display_text) > available_width
 
     def viewportEvent(self, event):
         if event.type() == QEvent.Type.ToolTip:
@@ -254,6 +254,10 @@ class TableStateOverlay(QWidget):
         "empty": "当前条件下暂无可显示内容，可调整筛选条件或稍后刷新。",
         "loading": "正在同步最新数据，请稍候。",
         "offline": "当前处于离线模式，仅展示本地缓存。",
+        "cached": "本次未拿到新结果，当前展示的是最近一次成功数据。",
+        "error": "本次加载失败，请检查网络或稍后重试。",
+        "success": "最新数据已同步完成。",
+        "info": "当前状态已更新。",
     }
 
     def __init__(self, parent=None):
@@ -291,14 +295,35 @@ class TableStateOverlay(QWidget):
         self._subtitle.setMinimumWidth(220)
         self._subtitle.setMaximumWidth(360)
 
+        self._meta = QLabel("")
+        self._meta.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._meta.setWordWrap(True)
+        self._meta.setVisible(False)
+        self._meta.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._meta.setMinimumWidth(220)
+        self._meta.setMaximumWidth(360)
+
+        self._action = QPushButton("")
+        self._action.setVisible(False)
+        self._action.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._action.setProperty("class", "secondary")
+        self._action_callback = None
+        self._action.clicked.connect(self._handle_action)
+
         card_layout.addWidget(self._dot, 0, Qt.AlignmentFlag.AlignCenter)
         card_layout.addWidget(self._title)
         card_layout.addWidget(self._subtitle)
+        card_layout.addWidget(self._meta)
+        card_layout.addWidget(self._action, 0, Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._card, 0, Qt.AlignmentFlag.AlignCenter)
 
         from ui.theme import theme_manager
         theme_manager.sig_theme_changed.connect(lambda _name: self._apply_style())
         self._apply_style()
+
+    def _handle_action(self):
+        if callable(self._action_callback):
+            self._action_callback()
 
     def _apply_style(self):
         tokens = build_ui_tokens()
@@ -322,13 +347,31 @@ class TableStateOverlay(QWidget):
         self._subtitle.setStyleSheet(
             f"color: {t['TEXT_SECONDARY']}; font-size: {tokens['font']['size_sm']}px;"
         )
-        dot_color = tone["fg"] if self._mode in ("loading", "success", "warning", "error", "info") else t.get("COLOR_INFO", "#3B82F6")
+        self._meta.setStyleSheet(
+            f"color: {t['TEXT_MUTED']}; font-size: {tokens['font']['size_sm']}px;"
+            f" font-family: {tokens['font']['mono_family']};"
+        )
+        dot_color = tone["fg"] if self._mode in ("loading", "success", "warning", "error", "info", "cached") else t.get("COLOR_INFO", "#3B82F6")
         self._dot.set_color(dot_color)
 
-    def set_state(self, mode: str, title: str, subtitle: str = ""):
+    def set_state(
+        self,
+        mode: str,
+        title: str,
+        subtitle: str = "",
+        *,
+        meta: str = "",
+        action_text: str = "",
+        action_callback=None,
+    ):
         self._mode = mode
         self._title.setText(title)
         self._subtitle.setText(subtitle or self._DEFAULT_SUBTITLES.get(mode, ""))
+        self._meta.setText(meta)
+        self._meta.setVisible(bool(meta))
+        self._action.setText(action_text)
+        self._action.setVisible(bool(action_text))
+        self._action_callback = action_callback
         self._dot.setVisible(mode == "loading")
         self._apply_style()
 
@@ -387,6 +430,52 @@ class TableStateWrapper(QWidget):
 
     def show_offline(self, title: str = "离线模式", subtitle: str = ""):
         self._overlay.set_state("offline", title, subtitle)
+        self._stack.setCurrentWidget(self._overlay)
+
+    def show_error(
+        self,
+        title: str = "加载失败",
+        subtitle: str = "",
+        *,
+        meta: str = "",
+        action_text: str = "",
+        action_callback=None,
+    ):
+        self._overlay.set_state(
+            "error",
+            title,
+            subtitle,
+            meta=meta,
+            action_text=action_text,
+            action_callback=action_callback,
+        )
+        self._stack.setCurrentWidget(self._overlay)
+
+    def show_cached(
+        self,
+        title: str = "显示缓存数据",
+        subtitle: str = "",
+        *,
+        meta: str = "",
+        action_text: str = "",
+        action_callback=None,
+    ):
+        self._overlay.set_state(
+            "cached",
+            title,
+            subtitle,
+            meta=meta,
+            action_text=action_text,
+            action_callback=action_callback,
+        )
+        self._stack.setCurrentWidget(self._overlay)
+
+    def show_success(self, title: str = "更新完成", subtitle: str = "", *, meta: str = ""):
+        self._overlay.set_state("success", title, subtitle, meta=meta)
+        self._stack.setCurrentWidget(self._overlay)
+
+    def show_info(self, title: str = "状态更新", subtitle: str = "", *, meta: str = ""):
+        self._overlay.set_state("info", title, subtitle, meta=meta)
         self._stack.setCurrentWidget(self._overlay)
 
 

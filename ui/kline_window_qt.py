@@ -118,6 +118,8 @@ class KLineChartWindow(QWidget):
         self.btn_close = QToolButton()
         self.btn_close.setText("✕")
         self.btn_close.setFixedSize(32, 28)
+        self.btn_close.setToolTip("关闭 K 线窗口")
+        self.btn_close.setAccessibleName("关闭 K 线窗口")
         self.btn_close.clicked.connect(self.close)
         tb_layout.addWidget(self.btn_close)
 
@@ -164,6 +166,8 @@ class KLineChartWindow(QWidget):
         self.btn_prev = QPushButton("上一只")
         self.btn_prev.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_prev.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_prev.setToolTip("查看当前列表中的上一只股票")
+        self.btn_prev.setAccessibleName("上一只股票")
         self.btn_prev.clicked.connect(lambda: self._nav_stock(-1))
         right_group.addWidget(self.btn_prev)
 
@@ -174,12 +178,16 @@ class KLineChartWindow(QWidget):
         self.btn_next = QPushButton("下一只")
         self.btn_next.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_next.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_next.setToolTip("查看当前列表中的下一只股票")
+        self.btn_next.setAccessibleName("下一只股票")
         self.btn_next.clicked.connect(lambda: self._nav_stock(1))
         right_group.addWidget(self.btn_next)
 
         self.btn_fav = QPushButton("加入关注")
         self.btn_fav.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_fav.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_fav.setToolTip("将当前股票加入或移出关注池")
+        self.btn_fav.setAccessibleName("切换关注状态")
         self.btn_fav.clicked.connect(self._toggle_fav)
         right_group.addWidget(self.btn_fav)
 

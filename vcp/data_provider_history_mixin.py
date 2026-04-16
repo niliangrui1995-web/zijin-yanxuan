@@ -247,7 +247,21 @@ class TdxDataProviderHistoryMixin:
                         if 'datetime' in df.columns:
                             df = df.set_index('datetime')
                         self.cache_data[code] = df
-            return df
+                return df
+
+        # K 线窗口等历史图表不能依赖“缓存先被别处预热”这一前置条件；
+        # 当内存缓存为空时，直接回退读取本地通达信日线并写回缓存。
+        if getattr(self, "tdx_vipdoc", None):
+            local_df = self._fetch_from_local_tdx(code)
+            if local_df is not None and len(local_df) > 0:
+                with self.cache_lock:
+                    cached_df = self.cache_data.get(code)
+                    if cached_df is None:
+                        self.cache_data[code] = local_df
+                        return local_df
+                    return cached_df
+
+        return None
 
     def get_data_fresh_for_chart(self, code, force_sync=False):
         """Return latest daily bars by combining local cache and online incremental data.

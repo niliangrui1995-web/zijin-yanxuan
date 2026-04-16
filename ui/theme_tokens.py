@@ -63,6 +63,7 @@ def _build_state_tones(theme: dict, *, is_dark: bool) -> dict:
         "success": tone("COLOR_SUCCESS", bg_alpha=0.12, border_alpha=0.22),
         "warning": tone("COLOR_WARNING", bg_alpha=0.12, border_alpha=0.22),
         "error": tone("COLOR_ERROR", bg_alpha=0.12, border_alpha=0.22),
+        "cached": tone("COLOR_INFO", fg=theme["TEXT_PRIMARY"] if is_dark else theme["COLOR_INFO"], bg_alpha=0.08, border_alpha=0.18),
         "realtime": tone("COLOR_SUCCESS", fg=theme["COLOR_SUCCESS"], bg_alpha=0.10, border_alpha=0.24),
         "stale": tone("COLOR_WARNING", fg=theme["COLOR_WARNING"], bg_alpha=0.08, border_alpha=0.18),
         "focus": tone("COLOR_INFO", fg=theme["COLOR_INFO"], bg_alpha=0.10, border_alpha=0.28),

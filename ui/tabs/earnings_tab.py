@@ -114,7 +114,31 @@ class EarningsTab(BaseStockTab):
         self.bind_header_persistence(self.table, "earnings_header_state_v5")
 
     def _set_window_status(self, primary: str, *segments: str):
-        self.lbl_status.setText(self.format_status_summary(primary, *segments))
+        self._status_primary = primary
+        self._status_segments = tuple(seg for seg in segments if seg)
+        self._refresh_window_status()
+
+    def _refresh_window_status(self):
+        extra_segments = []
+        total = len(getattr(self.model, "row_data", []) or [])
+        visible = self.proxy_model.rowCount()
+        if total:
+            extra_segments.append(self._status_metric("匹配 ", visible, f"/{total}"))
+
+        search_text = self.search_box.text().strip()
+        if search_text:
+            extra_segments.append(f"搜索 {search_text}")
+
+        type_text = self.combo_type_filter.currentText()
+        if type_text != "全看":
+            extra_segments.append(type_text)
+
+        self.lbl_status.setText(
+            self.format_status_summary(
+                getattr(self, "_status_primary", "业绩监控"),
+                *(getattr(self, "_status_segments", ()) + tuple(seg for seg in extra_segments if seg)),
+            )
+        )
 
     def _on_manual_fetch(self):
         start_str = self.ent_start_date.text().strip()
@@ -155,9 +179,11 @@ class EarningsTab(BaseStockTab):
 
         # 记录下操作
         log.debug(f"[业绩监控] 筛选切换: {text}")
+        self._refresh_window_status()
 
     def _on_search_text_changed(self, text):
         self.proxy_model.setFilterText(text)
+        self._refresh_window_status()
 
     @staticmethod
     def _is_st_stock_name(name: str) -> bool:

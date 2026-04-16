@@ -15,6 +15,14 @@ from ui.tabs.asian_market_workers import JSON_CACHE, AsianCacheFetcherThread
 log = get_logger(__name__)
 
 
+def _set_tab_status(tab, primary: str, *segments: str):
+    setter = getattr(tab, "_set_asian_status", None)
+    if callable(setter):
+        setter(primary, *segments)
+        return
+    tab.lbl_status.setText(" | ".join(part for part in (primary, *segments) if part))
+
+
 def runtime_state_text(state: str) -> str:
     mapping = {
         "running": "运行",
@@ -97,7 +105,7 @@ def check_auto_cache(tab):
         f"缓存交易日={cache_latest_trade_date}，"
         f"期望交易日={expected_latest_trade_date}"
     )
-    tab.lbl_status.setText("检测到 16:30 收盘缓存过期，等待后台轮次退出后开始同步")
+    _set_tab_status(tab, "检测到收盘缓存过期", "等待当前刷新轮次结束后同步")
     QTimer.singleShot(0, tab._continue_auto_cache_sync)
 
 
@@ -113,17 +121,17 @@ def continue_auto_cache_sync(tab):
             if tab._cache_sync_wait_deadline is not None and dt.datetime.now() >= tab._cache_sync_wait_deadline:
                 tab._pending_auto_cache_sync = False
                 tab._cache_sync_wait_deadline = None
-                tab.lbl_status.setText("等待亚洲后台轮次退出超时，本轮缓存同步延后一轮重试")
+                _set_tab_status(tab, "等待后台刷新超时", "本轮缓存同步已延后一轮")
                 log.warning("[亚洲页] 等待后台轮次退出超时，本轮缓存同步延后一轮")
                 return
-            tab.lbl_status.setText("等待亚洲后台轮次退出，随后开始 16:30 缓存同步")
+            _set_tab_status(tab, "等待后台刷新结束", "随后开始收盘缓存同步")
             QTimer.singleShot(1000, tab._continue_auto_cache_sync)
             return
 
     tab._pending_auto_cache_sync = False
     tab._cache_sync_wait_deadline = None
     tab._is_fetching_cache = True
-    tab.lbl_status.setText("正在同步 16:30 收盘后最新 K 线缓存...")
+    _set_tab_status(tab, "正在同步收盘缓存", "完成后会自动重载本地 K 线")
     tab.cache_thread = AsianCacheFetcherThread()
     tab.cache_thread.finished_sig.connect(tab._on_auto_cache_finished)
     tab.cache_thread.start()
@@ -221,15 +229,19 @@ def on_auto_cache_finished(tab, success, msg):
             worker_pause_for_cache_sync(tab)
         tab._load_local_cache()
         tab._last_asian_success_at = dt.datetime.now()
-        tab.lbl_status.setText("16:30 收盘缓存同步完成，已重载本地 K 线，当前保持静默")
-        log.info("[亚洲页] 16:30 缓存同步完成，已重载本地 K 线，当前保持静默")
+        if "已保留现有缓存" in str(msg or ""):
+            _set_tab_status(tab, "已保留本地缓存", "远端拉取失败，本次继续沿用上次成功结果")
+            log.warning(f"[亚洲页] 远端拉取失败，已保留旧缓存: {msg}")
+        else:
+            _set_tab_status(tab, "收盘缓存同步完成", "已重载本地 K 线")
+            log.info("[亚洲页] 16:30 缓存同步完成，已重载本地 K 线，当前保持静默")
         return
 
-    tab.lbl_status.setText(msg or "收盘缓存同步失败")
+    _set_tab_status(tab, "收盘缓存同步失败", msg or "请稍后重试")
     log.warning(f"[亚洲页] 收盘缓存同步失败: {msg}")
 
 
 def on_asian_klines_ready(tab):
     tab._load_local_cache()
     tab._last_asian_success_at = dt.datetime.now()
-    tab.lbl_status.setText("亚洲市场本地缓存已更新，K 线数据已重载")
+    _set_tab_status(tab, "本地缓存已更新", "K 线数据已重载")

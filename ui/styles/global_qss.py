@@ -352,6 +352,9 @@ QWidget#tabToolbar {{
     border-bottom: 1px solid {border['default']};
     min-height: {shell['toolbar_min_height']}px;
 }}
+QWidget#tabToolbarHeader, QWidget#tabToolbarControls {{
+    background: transparent;
+}}
 QFrame#tabToolbarTitleWrap {{
     background-color: {surface['toolbar_card']};
     border: 1px solid {border['default']};
@@ -365,7 +368,8 @@ QToolButton[inToolbar="true"],
 QLineEdit[inToolbar="true"],
 QComboBox[inToolbar="true"],
 QSpinBox[inToolbar="true"],
-QDoubleSpinBox[inToolbar="true"] {{
+QDoubleSpinBox[inToolbar="true"],
+QCheckBox[inToolbar="true"] {{
     min-height: {control['toolbar_button_height']}px;
     max-height: {control['toolbar_button_height']}px;
 }}
@@ -381,6 +385,15 @@ QComboBox[inToolbar="true"] {{
 }}
 QSpinBox[inToolbar="true"], QDoubleSpinBox[inToolbar="true"] {{
     padding: 0 8px;
+}}
+QCheckBox[inToolbar="true"] {{
+    color: {text['secondary']};
+    spacing: 6px;
+    padding: 0 2px;
+}}
+QCheckBox[inToolbar="true"]::indicator {{
+    width: 14px;
+    height: 14px;
 }}
 QLabel#tabStatusLabel {{
     background-color: {surface['toolbar_chip']};

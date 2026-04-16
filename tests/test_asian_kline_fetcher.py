@@ -160,3 +160,56 @@ def test_sync_asian_kline_cache_reuses_previous_snapshot_before_write(monkeypatc
     written_rows, written_output_dir = saved_payloads[0]
     assert written_output_dir == "cache-dir"
     assert sorted(row["ticker"] for row in written_rows) == ["2330.TW", "3711.TW"]
+
+
+def test_sync_asian_kline_cache_keeps_existing_snapshot_when_full_fetch_is_empty(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    monkeypatch.setattr(
+        fetcher,
+        "filter_asian_tickers",
+        lambda market_filter=None: {
+            "TSMC": "2330.TW",
+            "ASE": "3711.TW",
+        },
+    )
+    monkeypatch.setattr(fetcher, "fetch_all_asian_klines", lambda **kwargs: [])
+    monkeypatch.setattr(
+        fetcher,
+        "_load_cached_row_map",
+        lambda output_dir=None: {
+            "2330.TW": {
+                "name": "TSMC",
+                "ticker": "2330.TW",
+                "market": "台湾",
+                "track": "晶圆代工",
+                "currency": "TWD",
+                "kline_count": 2,
+                "klines": [{"date": "2026-04-15", "close": 880}, {"date": "2026-04-16", "close": 888}],
+            },
+            "3711.TW": {
+                "name": "ASE",
+                "ticker": "3711.TW",
+                "market": "台湾",
+                "track": "封测",
+                "currency": "TWD",
+                "kline_count": 2,
+                "klines": [{"date": "2026-04-15", "close": 100}, {"date": "2026-04-16", "close": 101}],
+            },
+        },
+    )
+
+    saved_payloads = []
+    monkeypatch.setattr(
+        fetcher,
+        "save_kline_data",
+        lambda data, output_dir=None: saved_payloads.append((data, output_dir)) or "ignored.json",
+    )
+
+    success, message, report = fetcher.sync_asian_kline_cache(output_dir="cache-dir")
+
+    assert success is True
+    assert message == "亚洲 K 线远端拉取失败，已保留现有缓存"
+    assert report["missing"] == []
+    assert report["reused"] == ["2330.TW", "3711.TW"]
+    assert report["cache_preserved"] is True
+    assert saved_payloads == []

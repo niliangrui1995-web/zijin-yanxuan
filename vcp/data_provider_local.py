@@ -154,6 +154,13 @@ def apply_forward_adjustment(api, market, code, df, local_gbbq: dict | None):
             return df
 
         work_df = df.reset_index() if df.index.name == 'datetime' else df.copy()
+        adjusted_cols = [
+            col
+            for col in ('open', 'high', 'low', 'close', 'vol', 'volume')
+            if col in work_df.columns
+        ]
+        for col in adjusted_cols:
+            work_df[col] = pd.to_numeric(work_df[col], errors='coerce').astype(float)
 
         if 'datetime' in work_df.columns:
             dt_col = pd.to_datetime(work_df['datetime']).dt.date

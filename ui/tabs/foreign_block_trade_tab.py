@@ -196,6 +196,10 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._cap_cache = {}
         self._is_loading = False
         self._block_trade_codes = []
+        self._last_success_at = None
+        self._status_primary = "等待加载"
+        self._status_segments = ()
+        self._had_rows_before_refresh = False
 
         self.days_to_fetch = 20  # 默认拉取最近20个交易日
         self._init_ui()
@@ -299,8 +303,49 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.days_to_fetch = days_map.get(idx, 10)
         self._load_block_trade_data()
 
+    def _format_last_success_segment(self) -> str:
+        if not self._last_success_at:
+            return ""
+        return self._status_metric("上次成功 ", self._last_success_at.strftime("%H:%M:%S"))
+
+    def _refresh_header_status(self):
+        extra_segments = []
+        total = len(getattr(self.model, "row_data", []) or [])
+        visible = self.proxy_model.rowCount()
+        if total:
+            extra_segments.append(self._status_metric("匹配 ", visible, f"/{total}"))
+
+        search_text = self.search_box.text().strip()
+        if search_text:
+            extra_segments.append(f"搜索 {search_text}")
+
+        date_text = self.cmb_filter_date.currentText()
+        if date_text != "全部日期":
+            extra_segments.append(f"日期 {date_text}")
+
+        branch_text = self.cmb_filter_branch.currentText()
+        if branch_text != "全部监控席位":
+            extra_segments.append(f"席位 {branch_text}")
+
+        direction_text = self.cmb_filter_direction.currentText()
+        if direction_text != "全部动作":
+            extra_segments.append(direction_text)
+
+        last_success = self._format_last_success_segment()
+        if last_success:
+            extra_segments.append(last_success)
+
+        self.lbl_status.setText(
+            self.format_status_summary(
+                self._status_primary,
+                *(self._status_segments + tuple(seg for seg in extra_segments if seg)),
+            )
+        )
+
     def _set_fetch_status(self, primary: str, *segments: str):
-        self.lbl_status.setText(self.format_status_summary(primary, *segments))
+        self._status_primary = primary
+        self._status_segments = tuple(seg for seg in segments if seg)
+        self._refresh_header_status()
 
     def _should_include_row(self, buyer, seller):
         buyer_str = str(buyer) if pd.notna(buyer) else ""
@@ -332,11 +377,11 @@ class ForeignBlockTradeTab(BaseStockTab):
             return
         self._is_loading = True
         self.btn_refresh.setEnabled(False)
+        self._had_rows_before_refresh = bool(getattr(self.model, "row_data", []) or [])
         self._set_fetch_status("正在抓取大宗交易", self._status_metric("窗口 ", self.days_to_fetch, "交易日"))
         if hasattr(self, "table_state"):
             self.table_state.show_loading("正在抓取大宗交易...", "请稍候")
         self._block_trade_codes = []
-        self.model.update_data([])
         # 清空上一轮的K线缓存，防止跨交易日窗口后内存只增不减
         _kline_cache.clear()
 
@@ -462,16 +507,36 @@ class ForeignBlockTradeTab(BaseStockTab):
         if not data_list:
             self._block_trade_codes = []
             if timeout_chunks or failed_chunks:
-                self._set_fetch_status(
-                    "大宗抓取未完成",
-                    "本轮无有效结果",
-                    _format_incomplete_message(timeout_chunks, failed_chunks).lstrip("；"),
-                )
+                if self._had_rows_before_refresh:
+                    self._set_fetch_status(
+                        "刷新未完成",
+                        "已保留上次成功结果",
+                        _format_incomplete_message(timeout_chunks, failed_chunks).lstrip("；"),
+                    )
+                    if hasattr(self, "table_state"):
+                        self.table_state.show_table()
+                else:
+                    self._set_fetch_status(
+                        "大宗抓取未完成",
+                        "本轮无有效结果",
+                        _format_incomplete_message(timeout_chunks, failed_chunks).lstrip("；"),
+                    )
+                    if hasattr(self, "table_state"):
+                        self.table_state.show_error(
+                            "大宗交易刷新失败",
+                            _BLOCK_TRADE_TIMEOUT_USER_MESSAGE,
+                            meta="当前没有可展示的历史结果。",
+                            action_text="重新尝试",
+                            action_callback=self._load_block_trade_data,
+                        )
             else:
                 self._set_fetch_status("近期无命中", self._status_metric("窗口 ", self.days_to_fetch, "交易日"))
+                if hasattr(self, "table_state"):
+                    self.table_state.show_empty(
+                        "暂无大宗交易数据",
+                        "当前窗口内没有命中监控席位的大宗交易记录。",
+                    )
             event_bus.sig_block_trade_updated.emit()
-            if hasattr(self, "table_state"):
-                self.table_state.show_empty("暂无大宗交易数据")
             return
 
         df = pd.DataFrame(data_list)
@@ -566,6 +631,7 @@ class ForeignBlockTradeTab(BaseStockTab):
             )
         )
         self.model.update_data(row_data)
+        self._last_success_at = datetime.datetime.now()
         self._set_fetch_status(
             self._status_metric("命中 ", len(df), "笔"),
             self._status_metric("日期 ", len(unique_dates)),
@@ -591,9 +657,22 @@ class ForeignBlockTradeTab(BaseStockTab):
         elif not msg.startswith(("抓取超时", "抓取失败")):
             msg = f"大宗交易抓取失败：{msg}"
         self._block_trade_codes = []
-        self._set_fetch_status(msg)
+        if getattr(self.model, "row_data", []):
+            self._set_fetch_status("刷新失败", msg, "已保留上次成功结果")
+        else:
+            self._set_fetch_status("刷新失败", msg)
         if hasattr(self, "table_state"):
-            self.table_state.show_empty("暂无大宗交易数据")
+            if getattr(self.model, "row_data", []):
+                self.table_state.show_table()
+            else:
+                self.table_state.show_error(
+                    "大宗交易刷新失败",
+                    msg,
+                    meta="当前没有可展示的历史结果。",
+                    action_text="重新尝试",
+                    action_callback=self._load_block_trade_data,
+                )
+
     def _filter_table_combo(self):
         search_text = self.search_box.text().strip().lower()
         self.proxy_model.setFilterText(search_text)
@@ -606,6 +685,7 @@ class ForeignBlockTradeTab(BaseStockTab):
 
         filter_branch = self.cmb_filter_branch.currentText()
         self.proxy_model.setExactFilter("_branch", None if filter_branch == "全部监控席位" else filter_branch)
+        self._refresh_header_status()
 
     def _on_double_click(self, index):
         if not index.isValid(): return

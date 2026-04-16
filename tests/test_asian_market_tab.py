@@ -6,6 +6,7 @@ from PyQt6.QtGui import QColor
 
 from core.market_calendar import MarketCalendar
 from ui.models.table_models import _c
+from ui.tabs import asian_market_runtime as asian_runtime
 from ui.tabs import asian_market_tab as asian_module
 from ui.tabs.asian_market_meta import (
     format_market_display,
@@ -271,6 +272,39 @@ def test_asian_market_status_rows_refresh_without_quote_tick(monkeypatch):
         assert tab.model.row_data[0]["状态"] == "🟡 收盘竞价"
     finally:
         tab.deleteLater()
+
+
+class _RuntimeStatusStub:
+    def __init__(self):
+        self.worker = None
+        self.cache_thread = object()
+        self._last_asian_success_at = None
+        self.runtime_state = None
+        self.loaded_cache = False
+        self.status_calls = []
+
+    def _set_runtime_state(self, state):
+        self.runtime_state = state
+
+    def _load_local_cache(self):
+        self.loaded_cache = True
+
+    def _set_asian_status(self, primary, *segments):
+        self.status_calls.append((primary, segments))
+
+
+def test_on_auto_cache_finished_marks_preserved_cache_mode():
+    tab = _RuntimeStatusStub()
+
+    asian_runtime.on_auto_cache_finished(tab, True, "亚洲 K 线远端拉取失败，已保留现有缓存")
+
+    assert tab.runtime_state == "paused_for_cache_sync"
+    assert tab.loaded_cache is True
+    assert tab._last_asian_success_at is not None
+    assert tab.status_calls[-1] == (
+        "已保留本地缓存",
+        ("远端拉取失败，本次继续沿用上次成功结果",),
+    )
 
 
 def test_asian_market_runtime_state_uses_actual_tracked_markets(monkeypatch):
