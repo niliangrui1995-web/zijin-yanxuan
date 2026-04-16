@@ -18,7 +18,7 @@ import gc
 import json
 import os
 
-from core.buy_point import BUY_POINT_STYLE_BADGE, calculate_buy_point_from_history
+from core.buy_point import BUY_POINT_STYLE_TEXT, calculate_buy_point_from_history
 from core.logger import get_logger
 
 log = get_logger(__name__)
@@ -437,7 +437,7 @@ class LhbPoolManager:
                                     history=hist_list,
                                     open_price=last_open,
                                     close_price=last_close,
-                                    style=BUY_POINT_STYLE_BADGE,
+                                    style=BUY_POINT_STYLE_TEXT,
                                 )
                         except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
                             log.debug(f"[龙虎榜池] 计算 {code} 股价位置失败: {e}")

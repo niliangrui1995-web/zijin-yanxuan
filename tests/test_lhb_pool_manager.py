@@ -95,7 +95,7 @@ def test_compute_pool_prioritizes_recent_listing_before_older_buy_point(monkeypa
     pool = manager.compute_pool(data_provider=provider)
 
     assert [row["代码"] for row in pool] == ["000002", "000001"]
-    assert pool[1]["买点"] == "\u2705"
+    assert pool[1]["买点"] == "触发"
 
 
 def test_add_day_records_cache_meta(monkeypatch):
