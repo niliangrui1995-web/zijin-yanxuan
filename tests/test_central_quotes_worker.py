@@ -9,7 +9,7 @@ from ui.workers.central_quotes_worker import CentralQuotesService
 
 
 def test_central_quotes_service_uses_30s_a_share_polling():
-    app = QApplication.instance() or QApplication([])
+    _ = QApplication.instance() or QApplication([])
     main_window = QWidget()
 
     class DummyProvider:
@@ -69,7 +69,7 @@ def test_central_quotes_service_refresh_after_cache_reload_re_emits_off_market_s
 
 
 def test_central_quotes_service_collects_foreign_block_codes_from_model_rows():
-    app = QApplication.instance() or QApplication([])
+    _ = QApplication.instance() or QApplication([])
     main_window = QWidget()
 
     class DummyProvider:

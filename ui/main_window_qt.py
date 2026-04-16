@@ -37,8 +37,6 @@ class MainWindowQT(QMainWindow):
     _sig_f5_done = pyqtSignal(int, float)
     _sig_ui_call = pyqtSignal(object)
 
-    # _merge_and_wrap_ai_diag 已删除 — AI诊断功能已移除，无调用方
-
     @pyqtSlot(object)
     def _run_ui_callback(self, callback):
         try:

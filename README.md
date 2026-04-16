@@ -1,124 +1,206 @@
 # 紫金研选量化终端
 
-> VCP (Volatility Contraction Pattern) 自动化选股系统 — 基于通达信本地日线数据
+Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatility Contraction Pattern）扫描、盘中监控、关注池联动和多市场辅助观察构建。
 
-![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue)
+当前代码基于本地通达信日线数据运行，盘中实时行情通过东方财富 HTTP 链路获取，并在必要时回退到新浪批量报价；海外和亚洲辅助页面使用独立数据抓取链路。
+
+> 注意
+>
+> 当前仓库已经移除 `AI 诊股`、`AI 追踪`、`ai_service.py`、`ai_diag_panel.py` 等旧模块。本文档仅描述仓库当前实际存在的架构和代码。
+
+![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue)
 ![PyQt6](https://img.shields.io/badge/UI-PyQt6-green)
+![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)
 ![License](https://img.shields.io/badge/License-Private-red)
 
----
+## 当前功能面
 
-## 功能概览
+当前 `ClassicWorkspace` 装配了 9 个主 Tab：
 
-| **模块** | **功能** | **说明** |
-|------|------|------|
-| **F5 全量扫描** | VCP 形态选股 | 按 RPS 强度 + 三高点收缩区间 + 均线粘合逻辑筛选 |
-| **盘中监控** | 实时突破检测 | 预构建待突破池 → 轻量 rt_quick_check（~0.01ms/只） |
-| **独立关注池** | 自治高压监控 | 彻底脱离本地静态缓存，支持盘中独立高频报价与分发 |
-| **亚洲寡头监控** | 全球核心资产 | 离线静态极速加载 + CF代理直连/盘后智能防呆静默拉取 |
-| **北美战报** | 美股映射监控 | 定期拉取美股核心标的与中概行情，提供 A 股映射参考 |
-| **外资大宗交易** | QFII 席位跟踪 | 实时监控外资专属席位大宗交易动向，解析超额资金行为 |
-| **AI 产业链** | 核心概念追踪 | 结构化追踪 AI 产业链核心标的异动与板块共振 |
-| **AI 诊股** | Kimi 联网分析 | 自动联网检索利好/利空信息并结构化输出 |
-| **多终端联动** | 极速跳转直达 | 右键一键穿透打开并聚焦已有「通达信/东方财富」窗口实现联动 |
-| **K线图** | 专业级图表 | 彭博终端风格、高点/区间标注、技术指标叠加 |
-| **板块 RPS** | 热点板块排名 | 解析通达信本地板块文件，计算多周期板块 RPS |
+| 页面 | 模块 | 说明 |
+| --- | --- | --- |
+| 关注池 | `ui/tabs/watchlist_tab.py` | 自选股票池，联动实时现价、涨幅、市值、催化与专题信息 |
+| 龙虎榜 | `ui/tabs/lhb_tab.py` | 20 日滚动龙虎榜关注池，带上榜次数、最近上榜、净买额等字段 |
+| 北美战报 | `ui/tabs/na_daily_tab.py` | 从战报产出文件中回填标的，并挂接实时行情 |
+| 亚洲寡头 | `ui/tabs/asian_market_tab.py` | 多市场亚洲龙头/寡头跟踪，带本地缓存与盘中刷新 |
+| 盘中监控 | `ui/tabs/rt_monitor_tab.py` | 盘中轮询待突破池，展示实时突破状态 |
+| 大宗交易 | `ui/tabs/foreign_block_trade_tab.py` | 外资席位相关大宗交易监控与过滤 |
+| 业绩异动 | `ui/tabs/earnings_tab.py` | 业绩预告、快报、财报高增跟踪 |
+| VCP 扫描 | `ui/tabs/scan_tab.py` | 全市场 VCP 静态扫描结果页 |
+| 系统日志 | `ui/tabs/log_tab.py` | 统一查看运行日志与后台任务状态 |
 
----
+除此之外，还有两个贯穿全局的能力：
 
-## 项目结构
+- K 线详情窗口：`ui/kline_window_qt.py`
+- 中央行情广播与表格快照合并：`ui/workers/central_quotes_worker.py` + `core/global_store.py`
 
-```
-紫金研选/
-├── vcp_hunter_qt.pyw              # 应用程序入口（双击启动）
-├── requirements.txt               # Python 完整运行时依赖声明
-├── .gitignore                     # Git 忽略规则
-├── bull_icon.ico                  # 应用图标
-│
-├── core/                          # 核心基础设施层
-│   ├── __init__.py
-│   ├── event_bus.py               # 全局事件总线（PyQt 信号中转）
-│   ├── task_manager.py            # 统一异步任务调度器（替代 threading.Thread）
-│   ├── logger.py                  # 标准化日志系统（替代 print）
-│   └── throttler.py               # 信号防抖限流器 (抵御高频刷新卡顿)
-│
-├── vcp/                           # 核心引擎层（策略 + 数据）
-│   ├── __init__.py
-│   ├── constants.py               # 全局常量、配色、策略参数
-│   ├── models.py                  # 数据类（VCPParams）
-│   ├── utils.py                   # 辅助工具（拼音搜索、时间判断、通达信路径）
-│   ├── engine.py                  # VCP 策略中台（选股、评分、RPS）
-│   ├── data_provider.py           # 数据中台（通达信/pytdx 数据获取与缓存）
-│   ├── ai_service.py              # AI 诊断服务（Kimi API 封装）
-│   ├── sector.py                  # 板块数据管理与板块 RPS 计算
-│   └── polars_engine.py           # 高性能加速引擎（numpy/Polars 优化）
-│
-├── ui/                            # UI 层（PyQt6）
-│   ├── __init__.py
-│   ├── main_window_qt.py          # 主窗口外壳（UI 布局 + 信号转发）
-│   ├── kline_window_qt.py         # K 线图窗口（彭博终端风格）
-│   ├── splash_screen.py           # 启动画面
-│   ├── components/                # 通用 UI 组件（标题栏、动画卡片、Toast、呼吸灯）
-│   ├── workers.py                 # 后台 QThread（ScanWorker、RtScanWorker）
-│   ├── theme.py                   # 主题色常量（涨跌着色、状态色）
-│   ├── models/                    # UI 数据模型 (Qt Model)
-│   ├── viewmodels/                # UI 视图模型 (ViewModel)
-│   │
-│   ├── tabs/                      # Tab 页组件（全部继承 BaseStockTab）
-│   │   ├── __init__.py
-│   │   ├── base_stock_tab.py      # Tab 基类（通达信跳转、着色、日志）
-│   │   ├── scan_tab.py            # F5 全量扫描结果
-│   │   ├── rt_monitor_tab.py      # 盘中实时监控
-│   │   ├── watchlist_tab.py       # 关注池管理
-│   │   ├── na_daily_tab.py        # 北美战报
-│   │   ├── asian_market_tab.py    # 亚洲寡头监控
-│   │   ├── foreign_block_trade_tab.py # 外资大宗交易监控
-│   │   ├── ai_tracker_tab.py      # AI 追踪
-│   │   └── log_tab.py             # 系统运行日志
-│   │
-│   ├── panels/                    # 侧边面板组件
-│   │   ├── __init__.py
-│   │   └── ai_diag_panel.py       # AI 诊断面板
-│   │
-│   ├── mixins/                    # 功能 Mixin（从 MainWindow 抽离）
-│   │   ├── __init__.py
-│   │   └── data_cache_mixin.py    # 数据缓存操作（F5/RPS/RT 缓存）
-│   │
-│   └── styles/                    # 样式管理
-│       ├── __init__.py
-│       └── global_qss.py          # 全局 QSS 样式表
-│
-├── data/                          # 数据目录（运行时生成，git 忽略）
-│   ├── Cache/                     # 缓存文件（pkl/parquet/json）
-│   ├── Export/                    # 导出报告
-│   └── logs/                      # 运行日志
-│
-├── 外资动向/                      # 外资席位跟踪与验证工具
-│
-├── 外资研究/                      # 外资大宗交易高阶量化研究与回测
-│
-└── docs/                          # 文档
-    ├── 项目全景介绍文档.md
-    └── *.png                      # UI 截图、流程图
+## 技术栈
+
+- 语言：Python 3.10+
+- UI：PyQt6、PyQt6-WebEngine、QSS
+- 表格模型：`QTableView` + `QAbstractTableModel`
+- 数据处理：pandas、numpy、polars、pyarrow
+- A 股本地数据：通达信 `vipdoc` 日线文件
+- A 股实时行情：东方财富 HTTP，异常时回退新浪批量报价
+- 财务/股本补充：东方财富接口
+- 海外/亚洲辅助数据：AkShare、yfinance、`curl_cffi`
+- 任务调度：`core/task_manager.py`
+- 全局通信：`core/event_bus.py`
+- 日志：`core/logger.py`
+- 配置持久化：`QSettings` + `core/app_config.py`
+- 本地缓存：`data/Cache/*.json`、`data/vcp_hunter.db`
+
+## 架构概览
+
+### 1. 启动链路
+
+```text
+vcp_hunter_qt.pyw
+  -> MainWindowQT
+  -> TdxDataProvider(offline=True)
+  -> VCPEngine
+  -> ClassicWorkspace
+  -> StartupLoader
 ```
 
----
+关键点：
+
+- 入口文件是 `vcp_hunter_qt.pyw`，负责单实例限制、崩溃日志和 `QApplication` 初始化。
+- 程序默认先以“离线优先”启动，优先保证冷启动可用。
+- `StartupLoader` 在启动后异步完成：
+  - 本地缓存恢复
+  - RPS 预计算缓存恢复
+  - 亚洲市场 JSON 缓存静默同步
+  - 网络探测与在线模式切换
+
+### 2. 工作区与页面装配
+
+- 主窗口外壳：`ui/main_window_qt.py`
+- 工作区装配：`ui/workspaces/classic_workspace.py`
+- 当前仅装配 `ClassicWorkspace`
+- 各 Tab 大多继承 `ui/tabs/base_stock_tab.py`，共享：
+  - 右键菜单
+  - K 线跳转
+  - 表格行情刷新
+  - 市值补齐
+  - 工具栏构建
+
+### 3. 行情与表格链路
+
+当前仓库已经把盘中表格的 `现价 / 涨幅 / 市值` 统一到同一条实时链路：
+
+```text
+CentralQuotesService
+  -> event_bus.sig_rt_quotes
+  -> GlobalStore(quotes snapshot)
+  -> BaseStockTab / TableModel.update_quotes()
+  -> 各表格页面刷新
+```
+
+对应模块：
+
+- 中央广播：`ui/workers/central_quotes_worker.py`
+- 全局快照存储：`core/global_store.py`
+- 快照合并与指标解析：`core/quote_snapshot.py`
+- 表格模型：`ui/models/table_models.py`
+
+这条链路的当前行为是：
+
+- 实时 quote 到达后先进入中央广播器
+- 缺失 A 股股本时按需补一次 finance 数据
+- `GlobalStore` 对 quote 做逐股深合并，而不是简单覆盖
+- 表格统一解析 `close / last_close / _zongguben / market_cap`
+- 市值按最新价动态重算，而不是依赖静态写死值
+
+### 4. 数据层与策略层
+
+- `vcp/data_provider.py`
+  - 本地通达信日线读取
+  - 东方财富实时行情批量获取
+  - 新浪批量回退
+  - 运行时微缓存与冷却保护
+- `vcp/engine.py`
+  - VCP 指标计算
+  - RPS 矩阵构建
+  - 多维条件评分
+- `vcp/engine_external.py`
+  - 财务、股本、机构股东等外部补充信息
+- `core/market_calendar.py`
+  - 多市场交易日、交易时段、报价刷新时段判断
+
+## 目录结构
+
+```text
+.
+├─ vcp_hunter_qt.pyw              # 应用入口
+├─ requirements.txt              # 运行时依赖
+├─ pyproject.toml                # Ruff 配置
+├─ assets/                       # 前端静态资源（如 echarts）
+├─ core/                         # 核心基础设施
+│  ├─ app_config.py
+│  ├─ cache_manager.py
+│  ├─ event_bus.py
+│  ├─ global_store.py
+│  ├─ logger.py
+│  ├─ market_calendar.py
+│  ├─ quote_snapshot.py
+│  ├─ runtime_env.py
+│  └─ task_manager.py
+├─ earnings/                     # 业绩异动调度与引擎
+├─ ui/                           # PyQt6 界面层
+│  ├─ main_window_qt.py
+│  ├─ kline_window_qt.py
+│  ├─ startup_loader.py
+│  ├─ workspaces/
+│  ├─ components/
+│  ├─ models/
+│  ├─ styles/
+│  ├─ tabs/
+│  └─ workers/
+├─ vcp/                          # 数据层与 VCP 策略层
+│  ├─ constants.py
+│  ├─ data_provider.py
+│  ├─ data_provider_local.py
+│  ├─ engine.py
+│  ├─ engine_external.py
+│  ├─ fetchers/
+│  ├─ models.py
+│  ├─ polars_engine.py
+│  ├─ sector.py
+│  └─ utils.py
+├─ tests/                        # pytest 回归测试
+├─ docs/                         # 计划、说明文档
+└─ data/                         # 运行时生成的数据、缓存和日志
+```
+
+## 运行要求
+
+推荐环境：
+
+- Windows 10 / 11
+- Python 3.10 或 3.11（64 位）
+- 已安装通达信，并可访问本地 `vipdoc` 数据目录
+- 可访问东方财富、AkShare、Yahoo Finance 相关数据源
+
+说明：
+
+- 项目明显是 Windows 优先设计：
+  - 入口使用 `pythonw`
+  - 存在单实例互斥锁
+  - 依赖 `pywin32`
+  - 部分联动能力默认面向本地桌面应用
+- Linux / macOS 未见完整适配代码，不建议按“可直接运行”理解
 
 ## 快速开始
 
-### 1. 环境要求
+### 1. 克隆仓库
 
-- **Python 3.10+**
-- **通达信客户端**（本地 K 线数据源）
+```powershell
+git clone <your-repo-url>
+cd 紫金研选
+```
 
-### 2. 创建虚拟环境（强烈建议）
-
-当前项目是 Windows / PyQt6 桌面应用，**不要直接依赖系统里“碰巧可用”的 `python`**。
-建议固定使用项目自己的 Python 3.10 虚拟环境，避免出现：
-
-- 终端里的 `python` 指向别的解释器
-- `pytest` 与运行程序使用的不是同一个环境
-- `yfinance` / `curl_cffi`、`PyQt6-WebEngine` 这类依赖版本漂移
+### 2. 创建虚拟环境
 
 ```powershell
 py -3.10 -m venv .venv
@@ -126,45 +208,31 @@ py -3.10 -m venv .venv
 python -m pip install --upgrade pip
 ```
 
-如果本机没有 `py` 启动器，也可以直接指定 Python 3.10：
+如果本机没有 `py` 启动器，请直接指定 Python 解释器路径。
+
+### 3. 安装运行时依赖
 
 ```powershell
-C:\Users\Administrator\AppData\Local\Programs\Python\Python310\python.exe -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-```
-
-### 3. 安装依赖
-
-```bash
 python -m pip install -r requirements.txt
 ```
 
-`requirements.txt` 已包含完整运行时依赖，其中：
+`requirements.txt` 当前包含的关键运行时依赖有：
 
-- `PyQt6-WebEngine`：K 线图窗口依赖
-- `akshare`：龙虎榜 / 外资大宗交易 / 北美相关抓取
-- `yfinance` + `curl_cffi`：亚洲寡头 / 海外行情相关抓取
-- `pywin32` + `pyautogui`：通达信 / 东方财富联动与 GUI 自动化
+- `PyQt6`
+- `PyQt6-WebEngine`
+- `pytdx`
+- `pandas`
+- `numpy`
+- `polars`
+- `pyarrow`
+- `akshare`
+- `yfinance`
+- `curl_cffi`
+- `pywin32`
 
-> 注：当前依赖文件已显式约束 `curl_cffi<0.14`，用于兼容项目当前使用的 `yfinance 1.2.x`。
+### 4. 配置通达信数据目录
 
-### 4. 安装后快速自检
-
-```powershell
-python -m pip check
-python -c "from PyQt6.QtWebEngineWidgets import QWebEngineView; import akshare, yfinance, win32gui; print('runtime deps ok')"
-```
-
-如果你后续运行脚本、测试或启动主程序，统一使用：
-
-```powershell
-.\.venv\Scripts\python.exe
-```
-
-### 5. 配置通达信路径
-
-在通达信安装目录或项目根目录创建 `vcp_tdx_config.json`：
+推荐在项目根目录放置 `vcp_tdx_config.json`：
 
 ```json
 {
@@ -172,105 +240,134 @@ python -c "from PyQt6.QtWebEngineWidgets import QWebEngineView; import akshare, 
 }
 ```
 
-程序会自动查找以下候选路径：
-1. `D:\vcp_qt\vcp_tdx_config.json`
-2. `D:\HT\vcp_tdx_config.json`
-3. 项目根目录下的 `vcp_tdx_config.json`
+程序启动后会用这个目录读取本地日线数据与名称映射。
 
-### 6. 配置 AI 诊股（可选）
+### 5. 启动程序
 
-程序首次运行时会自动在 `data/Cache/ai_diag_config.json` 中创建配置文件。
-你也可以通过环境变量设置：
+生产式启动：
 
-```bash
-set KIMI_API_KEY=your-api-key-here
+```powershell
+.\.venv\Scripts\pythonw.exe .\vcp_hunter_qt.pyw
 ```
 
-### 7. 启动程序
+调试式启动（会保留控制台）：
 
-```bash
-.\.venv\Scripts\pythonw.exe vcp_hunter_qt.pyw
+```powershell
+.\.venv\Scripts\python.exe .\vcp_hunter_qt.pyw
 ```
 
-或在已经激活 `.venv` 的前提下执行：
+## 数据源与运行模式
 
-```bash
-pythonw vcp_hunter_qt.pyw
+### A 股主链路
+
+- 历史 K 线：本地通达信 `vipdoc`
+- 盘中实时 quote：东方财富 HTTP
+- 异常回退：新浪批量报价
+- 股本/财务补充：东方财富 finance 数据
+
+### 海外 / 亚洲辅助链路
+
+- 亚洲市场历史与缓存：`vcp/fetchers/asian_kline_fetcher.py`
+- 亚洲市场盘中辅助行情：`ui/tabs/asian_market_workers.py`
+- 北美 / 海外辅助数据：AkShare、yfinance
+
+### 启动模式
+
+- 冷启动：默认离线
+- 启动后：`StartupLoader` 异步探测网络
+- 网络可用：自动切换在线模式并触发相关页面刷新
+
+这种设计的目标是：
+
+- 冷启动快
+- 无网也能打开本地缓存
+- 联网能力恢复后尽量无感切换
+
+## 数据与缓存目录
+
+运行过程中会在 `data/` 下生成或维护这些内容：
+
+- `data/Cache/`
+  - RPS 预计算缓存
+  - 盘中监控缓存
+  - 亚洲市场缓存
+  - 财务/股本缓存
+- `data/vcp_hunter.db`
+  - 市场节假日缓存等 SQLite 数据
+- `data/logs/`
+  - 按天滚动的应用日志
+- `data/crash_report.log`
+  - `faulthandler` 写入的底层崩溃日志
+
+这些文件属于运行时产物，不应作为业务源码理解。
+
+## 开发与测试
+
+### 安装开发工具
+
+仓库当前没有单独的开发依赖文件，建议手动安装：
+
+```powershell
+python -m pip install pytest ruff pre-commit
 ```
 
-也可以双击 `vcp_hunter_qt.pyw` 文件启动，但前提仍然是本机已按上面的依赖步骤准备好运行环境。
+### 运行测试
 
----
+全量：
 
-## 核心技术栈
-
-| 组件 | 技术 | 说明 |
-|------|------|------|
-| UI 框架 | PyQt6 (MVC) | 采用 QTableView+StockTableModel 标准MVC架构、极致紫金全局主题、悬浮玻璃拟态 |
-| 数据源 | 通达信本地 `.day` + pytdx | 本地优先、联网增量补全 |
-| 行情接口 | pytdx (通达信协议) | 动态测速池、多线程同步 |
-| 加速引擎 | numpy + Polars | 向量化 pct_change/rank、Parquet 缓存 |
-| AI 诊股 | Moonshot (Kimi) API | 内置联网搜索、利好/利空结构化输出 |
-| 系统 RPA | pyautogui / win32gui | 无缝桥接外部桌面端软件（通达信/东方财富进程激活与注入） |
-| 板块分析 | 通达信 tdxhy.cfg + infoharbor_block.dat | 行业+概念板块 RPS |
-| 任务调度 | core/task_manager (QThreadPool) | 统一后台任务管理 |
-| 日志系统 | core/logger (RotatingFileHandler) | 文件+控制台双输出 |
-| 事件总线 | core/event_bus (PyQt Signal) | 组件间解耦通信 |
-
----
-
-## 数据流
-
-```
-通达信本地 .day 文件
-        │
-        ▼
-  TdxDataProvider（data_provider.py）
-  ├── 本地读取 → read_tdx_day_file()
-  ├── 联网增量 → pytdx API
-  └── 前复权    → gbbq 股本变迁数据
-        │
-        ▼
-  VCPEngine（engine.py）
-  ├── 技术指标 → SMA50/150/200, ATR, MACD, RSI, 布林带
-  ├── RPS 矩阵 → 50/120/250 日相对强度排名
-  ├── VCP 形态 → 三高点区间 + 弹性峰计算
-  └── 综合评分 → 均线/量价/突破状态/板块 RPS
-        │
-        ▼
-  MainWindowQT（main_window_qt.py）
-  ├── F5 全量扫描结果 → 表格展示
-  ├── 盘中监控信号   → 实时刷新
-  └── K线图/AI诊断   → 详情窗口
+```powershell
+pytest -q
 ```
 
----
+定向回归示例：
 
-## 盘中实时数据流与多标签页联动
+```powershell
+pytest tests/test_quote_snapshot.py -q
+pytest tests/test_global_store_quote_merge.py -q
+pytest tests/test_central_quotes_finance.py -q
+```
 
-系统在盘中（交易时段）实现了高性能的 **非阻塞式实时双轨数据驱动**，确保多面板丝滑刷新且主线程不卡顿：
+说明：
 
-1. **核心驱动引擎 (`RtScanWorker`)：** 按照自定义间隔（如30秒），高频轮询待突破池与自选池（关注池），在后台直接完成行情拉取与内存微计算。
-2. **全局总线广播 (`Event Bus`)：** 计算结果被打成快照，通过 `sig_data_updated("rt_quotes_refreshed")` 全局无差别广播发射。
-3. **渲染防抖护城河 (`Throttler`)：** 高频信号被 `SignalThrottler` 组件限流，保障主 UI 线程的平滑渲染，抵御爆量并发假死。
-4. **多级自适应刷新：**
-   - **🟢 盘中监控 & 关注池：** 监听公屏广播。数据命中即触发局部变色与幅度重绘，毫无卡顿感。
-   - **🟢 北美战报 & AI 产业链：** 享受**双轨制**刷新。既监听公屏广播借势更新，又启动独立后台协程定期拉取专有板块标的数据。
-   - **🟡 亚洲寡头监控：** 首创**“动静分离式架构”**。冷启动秒开读取 250 日长序列静态缓存，盘中仅在 RAM 内存测算毫秒级跳动；同时自带休市/漏抓防呆回溯算法（遇到周末也会智能倒退至周五比对校验），一旦侦测到日线收盘断层，隐形协程自动化发起极速补漏，无损硬盘寿命。
-   - **⏹ 全盘扫描 (`ScanTab`)：** 刻意设计为**防乱跳静态锚点**。保留每日首次 F5 全盘体检的快照结果，方便盘中及盘后沉浸式心流复盘。
+- `tests/conftest.py` 会统一创建 `QApplication`，避免 PyQt 测试直接崩溃
+- 多数表格与行情链路已经有回归测试覆盖
 
----
+### 代码检查
 
-## 性能优化
+```powershell
+ruff check .
+ruff format .
+```
 
-项目包含三层性能优化：
+### pre-commit
 
-1. **numpy 向量化**：`pct_change` + `rank` 替代 pandas，加速 3-5x
-2. **Parquet 缓存**：替代 pickle，读取速度提升 2-3x
-3. **增量 RPS**：磁盘缓存价格矩阵，二次运行自动增量复用
+```powershell
+pre-commit install
+pre-commit run --all-files
+```
 
----
+仓库当前启用了：
+
+- `ruff-check`
+- `ruff-format`
+
+## 维护建议
+
+如果你准备继续沿当前架构演进，建议保持下面几条不变：
+
+- 新 Tab 尽量继承 `BaseStockTab`
+- 新的盘中表格字段尽量接入 `core/quote_snapshot.py`
+- 高频 UI 刷新继续走中央广播链，而不是各页单独造轮子
+- 需要跨页共享的运行时状态，优先进入 `GlobalStore`
+- 涉及市场时间判断时，统一走 `MarketCalendar`
+
+## 已知边界
+
+- 这是本地桌面终端，不是 Web 服务，也没有部署到云端的标准流程
+- 核心能力建立在本地通达信数据目录存在的前提上
+- 海外/亚洲页面的数据质量和稳定性受外部源影响
+- 某些旧文件注释中可能仍存在历史术语，但 README 已以当前代码为准
 
 ## 许可证
 
-本项目为私有项目，未经授权不得分发。
+Private / Internal Use Only.
