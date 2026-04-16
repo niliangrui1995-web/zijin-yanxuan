@@ -80,11 +80,12 @@ class Toast(QWidget):
         styles = {
             "info": ("i", "rgba(59, 130, 246, 0.5)", "#3B82F6"),
             "success": ("OK", "rgba(34, 197, 94, 0.5)", "#22C55E"),
-            "warning": ("!", "rgba(245, 158, 11, 0.5)", "#F59E0B"),
+            "warning": ("", "rgba(245, 158, 11, 0.5)", "#F59E0B"),
             "error": ("x", "rgba(239, 68, 68, 0.6)", "#EF4444")
         }
         icon, border_color, text_color = styles.get(level, styles["info"])
         self.lbl_icon.setText(icon)
+        self.lbl_icon.setVisible(bool(icon))
         from ui.theme import theme_manager as _tm
         self.bg_widget.setStyleSheet(f"""
             QWidget#ToastBackground {{

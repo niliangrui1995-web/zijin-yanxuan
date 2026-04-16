@@ -1,8 +1,28 @@
 # -*- coding: utf-8 -*-
-from vcp.fetchers import asian_kline_fetcher as fetcher
+import importlib
+import sys
+import types
+
+
+def _load_fetcher_module(monkeypatch):
+    fake_yfinance = types.ModuleType("yfinance")
+    fake_yfinance.Ticker = object
+    fake_industry = types.ModuleType("industry_dict")
+    fake_industry.OLIGARCH_DICT = {}
+    fake_industry.VANGUARD_TICKERS = {}
+    fake_session = types.ModuleType("vcp.fetchers.yf_session")
+    fake_session.build_yf_session = lambda use_cf_proxy=True: object()
+
+    monkeypatch.setitem(sys.modules, "yfinance", fake_yfinance)
+    monkeypatch.setitem(sys.modules, "industry_dict", fake_industry)
+    monkeypatch.setitem(sys.modules, "vcp.fetchers.yf_session", fake_session)
+
+    sys.modules.pop("vcp.fetchers.asian_kline_fetcher", None)
+    return importlib.import_module("vcp.fetchers.asian_kline_fetcher")
 
 
 def test_filter_asian_tickers_prefers_tw_listing_for_tsmc(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
     monkeypatch.setattr(
         fetcher,
         "VANGUARD_TICKERS",
@@ -22,6 +42,7 @@ def test_filter_asian_tickers_prefers_tw_listing_for_tsmc(monkeypatch):
 
 
 def test_find_track_works_with_local_tsmc_tw_override(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
     monkeypatch.setattr(fetcher, "VANGUARD_TICKERS", {"TSMC": "TSM"}, raising=False)
     monkeypatch.setattr(
         fetcher,
@@ -36,6 +57,7 @@ def test_find_track_works_with_local_tsmc_tw_override(monkeypatch):
 
 
 def test_sync_asian_kline_cache_refuses_partial_overwrite(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
     monkeypatch.setattr(
         fetcher,
         "filter_asian_tickers",
@@ -79,6 +101,7 @@ def test_sync_asian_kline_cache_refuses_partial_overwrite(monkeypatch):
 
 
 def test_sync_asian_kline_cache_reuses_previous_snapshot_before_write(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
     monkeypatch.setattr(
         fetcher,
         "filter_asian_tickers",
