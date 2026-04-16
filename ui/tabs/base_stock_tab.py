@@ -377,7 +377,7 @@ class BaseStockTab(QWidget):
             tokens["shell"]["toolbar_padding_x"],
             tokens["shell"]["toolbar_padding_y"],
         )
-        tb_layout.setSpacing(tokens["shell"]["toolbar_group_gap"] + 2)
+        tb_layout.setSpacing(0)
 
         title_row = QWidget(toolbar)
         title_row.setObjectName("tabToolbarHeader")
@@ -388,68 +388,60 @@ class BaseStockTab(QWidget):
         left_wrap = QFrame()
         left_wrap.setObjectName("tabToolbarTitleWrap")
         left_wrap.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        left_layout = QVBoxLayout(left_wrap)
+        left_layout = QHBoxLayout(left_wrap)
         left_layout.setContentsMargins(
             max(8, tokens["shell"]["toolbar_padding_x"] - 4),
-            8,
+            6,
             max(8, tokens["shell"]["toolbar_padding_x"] - 4),
-            8,
+            6,
         )
-        left_layout.setSpacing(tokens["shell"]["toolbar_group_gap"])
+        left_layout.setSpacing(tokens["shell"]["toolbar_group_gap"] + 2)
 
         lbl_title = QLabel(title)
         lbl_title.setObjectName("tabTitle")
-        left_layout.addWidget(lbl_title, 0, Qt.AlignmentFlag.AlignLeft)
+        left_layout.addWidget(lbl_title, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         if subtitle_label is not None:
             subtitle_label.setObjectName("tabStatusLabel")
             subtitle_label.setProperty("toolbarRole", "status")
-            subtitle_label.setWordWrap(True)
+            subtitle_label.setWordWrap(False)
             subtitle_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
-            left_layout.addWidget(subtitle_label, 0, Qt.AlignmentFlag.AlignLeft)
+            left_layout.addWidget(subtitle_label, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
-        title_row_layout.addWidget(left_wrap, 1, Qt.AlignmentFlag.AlignLeft)
+        title_row_layout.addWidget(left_wrap, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        if filter_widgets:
+            filter_wrap = QWidget()
+            filter_wrap.setObjectName("tabToolbarFilters")
+            filter_layout = QHBoxLayout(filter_wrap)
+            filter_layout.setContentsMargins(0, 0, 0, 0)
+            filter_layout.setSpacing(tokens["shell"]["toolbar_group_gap"])
+            filter_layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            for w in filter_widgets:
+                if w is None:
+                    continue
+                self._prepare_toolbar_widget(w)
+                filter_layout.addWidget(w)
+            title_row_layout.addWidget(filter_wrap, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
         title_row_layout.addStretch(1)
 
         if action_widgets:
             action_wrap = QWidget()
             action_wrap.setObjectName("tabToolbarActions")
-            action_layout = ToolbarFlowLayout(
-                action_wrap,
-                h_spacing=tokens["shell"]["toolbar_group_gap"],
-                v_spacing=tokens["shell"]["toolbar_group_gap"],
-            )
+            action_layout = QHBoxLayout(action_wrap)
+            action_layout.setContentsMargins(0, 0, 0, 0)
+            action_layout.setSpacing(tokens["shell"]["toolbar_group_gap"])
+            action_layout.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             for w in action_widgets:
                 if w is None:
                     continue
                 self._prepare_toolbar_widget(w)
                 action_layout.addWidget(w)
             self._equalize_toolbar_action_widths(action_widgets)
-            title_row_layout.addWidget(action_wrap, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+            title_row_layout.addWidget(action_wrap, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         tb_layout.addWidget(title_row)
-
-        if filter_widgets:
-            filter_wrap = QWidget()
-            filter_wrap.setObjectName("tabToolbarFilters")
-            filter_layout = ToolbarFlowLayout(
-                filter_wrap,
-                h_spacing=tokens["shell"]["toolbar_group_gap"],
-                v_spacing=tokens["shell"]["toolbar_group_gap"],
-            )
-            for w in filter_widgets:
-                if w is None:
-                    continue
-                self._prepare_toolbar_widget(w)
-                filter_layout.addWidget(w)
-
-            controls_row = QWidget(toolbar)
-            controls_row.setObjectName("tabToolbarControls")
-            controls_row_layout = QVBoxLayout(controls_row)
-            controls_row_layout.setContentsMargins(0, 0, 0, 0)
-            controls_row_layout.setSpacing(tokens["shell"]["toolbar_group_gap"])
-            controls_row_layout.addWidget(filter_wrap)
-            tb_layout.addWidget(controls_row)
 
         return toolbar
     def _launch_tdx(self, code: str):
