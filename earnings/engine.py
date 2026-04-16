@@ -207,7 +207,7 @@ class EarningsEngine:
                 continue
 
             _, code, report_date, data_type = parts
-            if data_type == "预告" and report_date in active_report_dates and fp not in persisted_success:
+            if report_date in active_report_dates and fp not in persisted_success:
                 cleaned += 1
                 continue
             kept.add(fp)
@@ -529,15 +529,14 @@ class EarningsEngine:
                         if error_code is not None:
                             continue
 
-                        self.seen_fingerprints.add(fingerprint)
-                        new_found_flag = True
-
                         # 三重硬门槛：① 单季利润为正 ② 环比>=30% ③ 同比为正（扣非同比增长）
                         yoy_pct = res.get('同比增速_百分比', -1)
                         if res.get('环比增速_百分比', -1) >= EARNINGS_QOQ_MIN_PCT and res.get('单季净利润_新增', -1) > 0 and yoy_pct > 0:
                             cand.update(res)
                             valid_records.append(cand)
                             self.local_records.append(cand)
+                            self.seen_fingerprints.add(fingerprint)
+                            new_found_flag = True
                     except _EARNINGS_COMPUTE_ERRORS as _e:
                         logger.debug(
                             f"[业绩引擎] {failed_candidate.get('股票代码', '?')} 并发计算异常: {_e}"

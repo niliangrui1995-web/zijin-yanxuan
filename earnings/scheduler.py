@@ -1,5 +1,3 @@
-from datetime import datetime, timedelta
-
 import pandas as pd
 from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
 
@@ -9,8 +7,7 @@ from core.market_calendar import MarketCalendar
 from .engine import EarningsEngine
 
 logger = get_logger()
-# 启动期断档追扫非常重，默认关闭以避免 UI 假死；手动扫描和定时巡检仍可用。
-ENABLE_STARTUP_GAP_FILL = False
+STARTUP_BACKFILL_TRADE_DAYS = 10
 _SCHEDULER_ERRORS = (
     AttributeError,
     KeyError,
@@ -93,40 +90,43 @@ class EarningsScheduler(QObject):
         # 无论是否有新增数据，都必须通知 UI 结束加载状态
         self.sig_new_surprises_found.emit(df, mode)
 
+    @staticmethod
+    def _normalize_trade_dates(trade_dates: list[str] | None) -> list[str]:
+        normalized: list[str] = []
+        for raw in trade_dates or []:
+            text = str(raw or "").strip()
+            if len(text) == 8 and text.isdigit():
+                normalized.append(f"{text[:4]}-{text[4:6]}-{text[6:8]}")
+            elif len(text) >= 10:
+                normalized.append(text[:10])
+        return sorted(dict.fromkeys(normalized))
+
+    @classmethod
+    def _build_startup_scan_dates(cls, last_sync_date: str, has_cached_records: bool) -> list[str]:
+        recent_trade_dates = cls._normalize_trade_dates(
+            MarketCalendar.get_recent_trade_dates(STARTUP_BACKFILL_TRADE_DAYS)
+        )
+        if not recent_trade_dates:
+            return []
+        if not has_cached_records or not last_sync_date:
+            return recent_trade_dates
+        return [trade_date for trade_date in recent_trade_dates if trade_date > last_sync_date]
+
     def start_patrol(self):
-        """开机：先吐缓存 -> 计算断档脱水回填 -> 进入战备"""
+        """开机：先吐缓存 -> 自动补抓近 10 个交易日 -> 进入战备"""
         # 第一步：后台吐缓存，避免在 UI 线程里做重型历史数据处理。
         self._run_in_background("warm_cache")
 
-        # 第二步：计算我们到底睡了几天，开启断档追更（无缝回填核心）
-        last_sync = self.engine.last_sync_date
-        today_str = MarketCalendar.today("CN").strftime("%Y-%m-%d")
+        # 第二步：优先回填近 10 个交易日；清缓存后重新打开也能自动恢复展示窗口。
+        missing_dates = self._build_startup_scan_dates(
+            self.engine.last_sync_date,
+            has_cached_records=bool(self.engine.local_records),
+        )
 
-        missing_dates = []
-        try:
-            start_dt = datetime.strptime(last_sync, "%Y-%m-%d")
-            end_dt = datetime.strptime(today_str, "%Y-%m-%d")
-            delta_days = (end_dt - start_dt).days
-
-            # 如果断档超过 15 天，就只追近 15 天，防止开机卡死（可调整）
-            if delta_days > 15:
-                delta_days = 15
-                start_dt = end_dt - timedelta(days=15)
-
-            for i in range(1, delta_days + 1):
-                missing_dates.append((start_dt + timedelta(days=i)).strftime("%Y-%m-%d"))
-        except (TypeError, ValueError, OverflowError) as e:
-            logger.warning(f"[业绩调度] 日期解析失败，回退仅查今天: {e}")
-            missing_dates = [today_str] # 解析失败保底查今天
-
-        # 补全中间漏掉的每一天，同时包含今天
-        if today_str not in missing_dates:
-             missing_dates.append(today_str)
-
-        if missing_dates and ENABLE_STARTUP_GAP_FILL:
+        if missing_dates:
             self._run_in_background("gap_fill", missing_dates=missing_dates)
-        elif missing_dates:
-            logger.info("[业绩调度] 跳过开机补扫（防卡），后续定时巡检")
+        else:
+            logger.info("[业绩调度] 启动窗口已完整，无需补抓，后续定时巡检")
 
         # 第三步：挂载日常心跳时钟（30秒对次表），今天剩下的时间交给机器打理
         self.clock_timer.start(30000)

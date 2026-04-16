@@ -34,12 +34,23 @@ Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatil
 - K 线详情窗口：`ui/kline_window_qt.py`
 - 中央行情广播与表格快照合并：`ui/workers/central_quotes_worker.py` + `core/global_store.py`
 
+## 当前交互基线
+
+当前仓库的主工作区已经完成一轮统一化交互收口，主要约束如下：
+
+- 主要数据页统一采用页面级状态反馈，明确区分 `加载中 / 最新数据 / 缓存数据 / 刷新失败 / 离线`
+- 各 Tab 页头统一回答“当前看的是什么数据、筛选是否生效、数据何时更新”
+- 通用工具栏已经按窄宽度场景重排，优先保证筛选控件、状态摘要和动作按钮不互相挤压
+- 亚洲页在远端抓取失败时会明确标记“沿用缓存”，而不是把底层抓取异常直接外泄给用户
+- K 线窗口和主窗口关键按钮补齐了 tooltip 与可访问性命名，便于悬停识别和后续维护
+
 ## 技术栈
 
 - 语言：Python 3.10+
 - UI：PyQt6、PyQt6-WebEngine、QSS
 - 表格模型：`QTableView` + `QAbstractTableModel`
 - 数据处理：pandas、numpy、polars、pyarrow
+- 拼音辅助：`pypinyin`
 - A 股本地数据：通达信 `vipdoc` 日线文件
 - A 股实时行情：东方财富 HTTP，异常时回退新浪批量报价
 - 财务/股本补充：东方财富接口
@@ -169,7 +180,7 @@ CentralQuotesService
 │  ├─ sector.py
 │  └─ utils.py
 ├─ tests/                        # pytest 回归测试
-├─ docs/                         # 计划、说明文档
+├─ docs/                         # 补充说明文档
 └─ data/                         # 运行时生成的数据、缓存和日志
 ```
 
@@ -225,6 +236,7 @@ python -m pip install -r requirements.txt
 - `numpy`
 - `polars`
 - `pyarrow`
+- `pypinyin`
 - `akshare`
 - `yfinance`
 - `curl_cffi`
@@ -270,6 +282,11 @@ python -m pip install -r requirements.txt
 - 亚洲市场历史与缓存：`vcp/fetchers/asian_kline_fetcher.py`
 - 亚洲市场盘中辅助行情：`ui/tabs/asian_market_workers.py`
 - 北美 / 海外辅助数据：AkShare、yfinance
+
+补充说明：
+
+- 亚洲页在盘后缓存同步失败但旧缓存完整可用时，会继续沿用本地缓存并在页内明确提示缓存状态
+- 外资大宗、业绩异动、VCP 扫描等页共用统一页头和工具栏基线，README 中描述的页面行为以当前 UI 为准
 
 ### 启动模式
 
