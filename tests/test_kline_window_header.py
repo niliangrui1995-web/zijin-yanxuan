@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import datetime as dt
+import json
 
 import pandas as pd
 from PyQt6.QtCore import Qt
@@ -7,6 +8,8 @@ from PyQt6.QtWidgets import QWidget
 
 from core.task_manager import task_manager
 from ui import kline_window_qt as kline_module
+from ui.tabs import asian_market_tab as asian_module
+from vcp.fetchers import asian_kline_fetcher as asian_fetcher_module
 
 
 class _DummyProvider:
@@ -186,6 +189,81 @@ def test_kline_load_and_draw_appends_today_bar_during_lunch_break(monkeypatch):
         assert "df" in captured
         assert list(captured["df"].index.strftime("%Y-%m-%d")) == ["2026-04-13", "2026-04-14"]
         assert float(captured["df"].iloc[-1]["close"]) == 10.6
+    finally:
+        if window._rt_timer is not None:
+            window._rt_timer.stop()
+        window.deleteLater()
+
+
+def test_kline_load_asian_chart_falls_back_to_single_ticket_fetch(monkeypatch, tmp_path):
+    cache_file = tmp_path / "asian_klines_latest.json"
+    cache_file.write_text(json.dumps({"stocks": []}, ensure_ascii=False), encoding="utf-8")
+
+    monkeypatch.setattr(kline_module, "QWebEngineView", QWidget)
+    monkeypatch.setattr(kline_module.KLineChartWindow, "_load_and_draw", lambda self: None)
+    monkeypatch.setattr(
+        kline_module.KLineChartWindow,
+        "_check_fav_status",
+        lambda self: setattr(self, "is_fav", False),
+    )
+    monkeypatch.setattr(asian_module, "JSON_CACHE", str(cache_file))
+    monkeypatch.setattr(asian_module, "GLOBAL_ASIAN_RT_CACHE", {})
+
+    def _fake_fetch_single_kline(name, ticker, period="1y"):
+        assert ticker == "2330.TW"
+        return {
+            "name": "TSMC",
+            "ticker": "2330.TW",
+            "market": "台湾",
+            "track": "晶圆制造与材料设备",
+            "currency": "TWD",
+            "klines": [
+                {"date": "2026-04-14", "open": 820.0, "high": 828.0, "low": 818.0, "close": 826.0, "volume": 1000},
+                {"date": "2026-04-15", "open": 826.0, "high": 835.0, "low": 824.0, "close": 833.0, "volume": 1200},
+            ],
+        }
+
+    def _run_inline(fn, *args, on_success=None, on_error=None, task_id=None, **kwargs):
+        try:
+            result = fn(*args, **kwargs)
+            if on_success:
+                on_success(result)
+        except Exception as exc:
+            if on_error:
+                on_error(str(exc))
+            else:
+                raise exc
+        return task_id or "test-kline-asian-fallback"
+
+    monkeypatch.setattr(asian_fetcher_module, "fetch_single_kline", _fake_fetch_single_kline)
+    monkeypatch.setattr(task_manager, "run_in_background", _run_inline)
+
+    window = kline_module.KLineChartWindow(
+        None,
+        "2330.TW",
+        "台积电",
+        _LiveProvider(),
+        vcp_data={},
+        code_list=[{"代码": "2330.TW", "名称": "台积电"}],
+        current_idx=0,
+    )
+
+    captured = {}
+
+    def _fake_render(df, loading=False):
+        captured["df"] = df.copy()
+
+    try:
+        monkeypatch.setattr(window, "_render_chart", _fake_render)
+        monkeypatch.setattr(window, "_set_status_message", lambda *args, **kwargs: None)
+
+        window._load_asian_chart()
+
+        assert "df" in captured
+        assert list(captured["df"].index.strftime("%Y-%m-%d")) == ["2026-04-14", "2026-04-15"]
+        assert float(captured["df"].iloc[-1]["close"]) == 833.0
+        assert window.vcp_data["赛道"] == "晶圆制造与材料设备"
+        assert window.vcp_data["货币"] == "TWD"
     finally:
         if window._rt_timer is not None:
             window._rt_timer.stop()

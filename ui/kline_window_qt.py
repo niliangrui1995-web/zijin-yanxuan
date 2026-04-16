@@ -35,6 +35,7 @@ from ui.kline_chart_payload import (
     build_kline_theme_colors,
     build_kline_window_palette,
     format_kline_market_badge,
+    merge_kline_context,
     resolve_kline_vcp_context,
 )
 from ui.theme_tokens import build_ui_tokens, get_state_tone
@@ -806,23 +807,96 @@ class KLineChartWindow(QWidget):
         """加载亚洲市场（yfinance 缓存）的 K 线数据"""
         import json as json_mod
         from ui.tabs.asian_market_tab import JSON_CACHE, GLOBAL_ASIAN_RT_CACHE
+        from vcp.fetchers.asian_kline_fetcher import fetch_single_kline
+
+        def _build_df_from_klines(klines):
+            if not klines:
+                return None
+
+            frame = pd.DataFrame(klines)
+            if frame.empty:
+                return None
+
+            if 'date' in frame.columns:
+                frame['date'] = pd.to_datetime(frame['date']).dt.normalize()
+                frame.set_index('date', inplace=True)
+
+            for col in ['open', 'high', 'low', 'close', 'volume']:
+                if col in frame.columns:
+                    frame[col] = pd.to_numeric(frame[col], errors='coerce').astype(float)
+
+            return self._normalize_daily_df_index(frame)
+
+        def _merge_asian_context(stock_payload):
+            track = str(stock_payload.get('track', '') or '').strip()
+            market = str(stock_payload.get('market', '') or '').strip()
+            currency = str(stock_payload.get('currency', '') or '').strip()
+            if not any((track, market, currency)):
+                return
+
+            merge_kline_context(
+                self.vcp_data,
+                {
+                    "赛道": track,
+                    "track": track,
+                    "市场": market,
+                    "market": market,
+                    "货币": currency,
+                    "currency": currency,
+                },
+                overwrite=True,
+            )
+            self._refresh_header_context()
 
         df = None
+        target_stock = None
         if _os.path.exists(JSON_CACHE):
             with open(JSON_CACHE, 'r', encoding='utf-8') as f:
                 raw = json_mod.load(f)
                 stocks = raw.get('stocks', [])
                 target_stock = next((s for s in stocks if s.get('ticker') == self.code), None)
                 if target_stock:
-                    data = target_stock.get('klines', [])
-                    if data:
-                        df = pd.DataFrame(data)
-                        if 'date' in df.columns:
-                            df['date'] = pd.to_datetime(df['date']).dt.normalize()
-                            df.set_index('date', inplace=True)
-                        for col in ['open', 'high', 'low', 'close', 'volume']:
-                            if col in df.columns:
-                                df[col] = pd.to_numeric(df[col], errors='coerce').astype(float)
+                    _merge_asian_context(target_stock)
+                    df = _build_df_from_klines(target_stock.get('klines', []))
+
+        if df is None:
+            self._set_status_message("本地缓存缺少该标的，正在单独补拉历史日线...", tone="loading")
+
+            def _bg_fetch():
+                return fetch_single_kline(self.name, self.code, period="1y")
+
+            def _on_fetch_success(stock_payload):
+                try:
+                    if not stock_payload:
+                        self._set_status_message("当前标的暂无历史日线数据", tone="warning")
+                        return
+
+                    _merge_asian_context(stock_payload)
+                    fresh_df = _build_df_from_klines(stock_payload.get('klines', []))
+                    if fresh_df is None or fresh_df.empty:
+                        self._set_status_message("当前标的暂无历史日线数据", tone="warning")
+                        return
+
+                    self._set_status_message(f"已回源载入 · {len(fresh_df)} 条日线", tone="success")
+                    self._render_chart(fresh_df, loading=False)
+                except RuntimeError:
+                    pass
+
+            def _on_fetch_error(error_msg):
+                try:
+                    self._set_status_message(f"历史日线拉取失败: {error_msg}", tone="error")
+                except RuntimeError:
+                    pass
+
+            from core.task_manager import task_manager
+
+            task_manager.run_in_background(
+                _bg_fetch,
+                on_success=_on_fetch_success,
+                on_error=_on_fetch_error,
+                task_id=f"kline_asian_{self.code}",
+            )
+            return
 
         if df is not None:
             if self.code in GLOBAL_ASIAN_RT_CACHE:

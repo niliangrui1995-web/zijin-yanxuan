@@ -84,11 +84,47 @@ class WatchlistViewModel:
         with self._lock:
             return self._cache.copy()
 
+    @staticmethod
+    def _build_watchlist_entry(name: str, vcp_data: dict = None) -> dict:
+        entry = {"名称": name, "现价": "--", "涨幅%": "--", "市值": "--", "评分": ""}
+        if vcp_data and isinstance(vcp_data, dict):
+            for k, v in vcp_data.items():
+                # 海鲜数据不写硬盘：坚决防守，切断时效性极强的实时数据污染持久层
+                if k in ["现价", "涨幅%", "市值", "最低", "最高", "开盘", "昨收", "成交额", "换手%"]:
+                    continue
+                if hasattr(v, 'item'):
+                    entry[k] = v.item()
+                elif isinstance(v, (str, int, float, bool, list, dict, type(None))):
+                    entry[k] = v
+                else:
+                    entry[k] = str(v)
+        return entry
+
+    def add_stock(self, stock_code: str, name: str, vcp_data: dict = None) -> bool:
+        """向关注池新增一只股票；若已存在则保持不动并返回 False。"""
+        stock_code = str(stock_code or "").strip()
+        name = str(name or stock_code).strip()
+        if not stock_code:
+            return False
+
+        with self._lock:
+            if stock_code in self._cache:
+                return False
+            self._cache[stock_code] = self._build_watchlist_entry(name, vcp_data)
+
+        self._save_data()
+        event_bus.sig_system_log.emit("info", f"[{name}] 已加入关注池")
+        event_bus.sig_watchlist_changed.emit("add", stock_code)
+        return True
+
     def toggle_stock(self, stock_code: str, name: str, vcp_data: dict = None):
         """
         翻转股票的关注状态。
         如果是关注，就移除；如果没关注，就添加并保留当时的 VCP 分析数据。
         """
+        stock_code = str(stock_code or "").strip()
+        name = str(name or stock_code).strip()
+
         with self._lock:
             is_fav = stock_code in self._cache
 
@@ -97,20 +133,7 @@ class WatchlistViewModel:
                 action = "remove"
                 event_bus.sig_system_log.emit("info", f"[{name}] 已移出关注池")
             else:
-                entry = {"名称": name, "现价": "--", "涨幅%": "--", "市值": "--", "评分": ""}
-                # 如果有传入当时的扫描数据，把数据保留下来供以后参考
-                if vcp_data and isinstance(vcp_data, dict):
-                    for k, v in vcp_data.items():
-                        # 海鲜数据不写硬盘：坚决防守，切断时效性极强的实时数据污染持久层
-                        if k in ["现价", "涨幅%", "市值", "最低", "最高", "开盘", "昨收", "成交额", "换手%"]:
-                            continue
-                        if hasattr(v, 'item'):
-                            entry[k] = v.item()
-                        elif isinstance(v, (str, int, float, bool, list, dict, type(None))):
-                            entry[k] = v
-                        else:
-                            entry[k] = str(v)
-                self._cache[stock_code] = entry
+                self._cache[stock_code] = self._build_watchlist_entry(name, vcp_data)
                 action = "add"
                 event_bus.sig_system_log.emit("info", f"[{name}] 已加入关注池")
 

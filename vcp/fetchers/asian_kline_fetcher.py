@@ -136,6 +136,57 @@ def _find_track(ticker: str) -> str:
     return "未知赛道"
 
 
+def _resolve_cache_output_dir(output_dir: str | None = None) -> str:
+    """解析亚洲 K 线缓存输出目录。"""
+    if output_dir:
+        return output_dir
+    return os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "..", "..", "data", "Cache"
+    )
+
+
+def _latest_cache_path(output_dir: str | None = None) -> str:
+    return os.path.join(_resolve_cache_output_dir(output_dir), "asian_klines_latest.json")
+
+
+def _rows_to_map(rows: list[dict] | None) -> dict[str, dict]:
+    """按 ticker 建立唯一索引，便于做缺票校验与旧缓存回填。"""
+    row_map: dict[str, dict] = {}
+    for row in rows or []:
+        ticker = str((row or {}).get("ticker", "")).strip()
+        if ticker and ticker not in row_map:
+            row_map[ticker] = row
+    return row_map
+
+
+def _load_cached_row_map(output_dir: str | None = None) -> dict[str, dict]:
+    cache_path = _latest_cache_path(output_dir)
+    if not os.path.exists(cache_path):
+        return {}
+    with open(cache_path, "r", encoding="utf-8") as handle:
+        raw = json.load(handle)
+    return _rows_to_map(raw.get("stocks", []))
+
+
+def _build_sync_target_map(
+    market_filter: str | None = None,
+    single_ticker: str | None = None,
+) -> dict[str, str]:
+    """构建严格同步时的目标股票池。"""
+    if single_ticker:
+        single_ticker = str(single_ticker).strip()
+        if not single_ticker:
+            return {}
+
+        for name, ticker in _get_asian_source_tickers().items():
+            if ticker == single_ticker:
+                return {name: single_ticker}
+        return {single_ticker: single_ticker}
+
+    return filter_asian_tickers(market_filter)
+
+
 def fetch_single_kline(
     name: str,
     ticker: str,
@@ -276,14 +327,127 @@ def fetch_all_asian_klines(
     return results
 
 
+def sync_asian_kline_cache(
+    market_filter: str | None = None,
+    single_ticker: str | None = None,
+    max_workers: int = 6,
+    period: str = "1y",
+    use_cf_proxy: bool = True,
+    output_dir: str | None = None,
+) -> tuple[bool, str, dict]:
+    """严格同步亚洲 K 线缓存。
+
+    统一规则：
+    1. 先按目标池做全量拉取；
+    2. 对缺失票做单票补抓；
+    3. 仍缺失时尝试从旧缓存回填；
+    4. 若最终仍缺票，则拒绝覆盖 latest 缓存。
+    """
+    target_map = _build_sync_target_map(market_filter=market_filter, single_ticker=single_ticker)
+    if not target_map:
+        message = "没有找到符合条件的亚洲标的"
+        return False, message, {
+            "target_count": 0,
+            "written_count": 0,
+            "single_recovered": [],
+            "reused": [],
+            "missing": [],
+        }
+
+    ticker_to_name = {ticker: name for name, ticker in target_map.items()}
+    target_tickers = set(target_map.values())
+    output_dir = _resolve_cache_output_dir(output_dir)
+
+    data = fetch_all_asian_klines(
+        market_filter=market_filter,
+        single_ticker=single_ticker,
+        max_workers=max_workers,
+        period=period,
+        use_cf_proxy=use_cf_proxy,
+    )
+    if not data:
+        message = "亚洲 K 线缓存全量拉取失败"
+        return False, message, {
+            "target_count": len(target_tickers),
+            "written_count": 0,
+            "single_recovered": [],
+            "reused": [],
+            "missing": sorted(target_tickers),
+        }
+
+    row_map = _rows_to_map(data)
+    missing = sorted(target_tickers - set(row_map.keys()))
+    single_recovered: list[str] = []
+
+    if missing:
+        logging.warning(f"⚠️ 全量抓取缺失 {len(missing)} 只，开始单票补抓: {missing}")
+        rescue_session = build_yf_session(use_cf_proxy)
+        for ticker in list(missing):
+            name = ticker_to_name.get(ticker, ticker)
+            try:
+                one = fetch_single_kline(
+                    name,
+                    ticker,
+                    period=period,
+                    use_cf_proxy=use_cf_proxy,
+                    session=rescue_session,
+                )
+                if one:
+                    row_map[ticker] = one
+                    single_recovered.append(ticker)
+            except Exception as exc:
+                logging.warning(f"⚠️ 单票补抓失败 {ticker}: {exc}")
+        missing = sorted(target_tickers - set(row_map.keys()))
+
+    reused: list[str] = []
+    if missing:
+        try:
+            old_map = _load_cached_row_map(output_dir)
+            for ticker in list(missing):
+                if ticker in old_map:
+                    row_map[ticker] = old_map[ticker]
+                    reused.append(ticker)
+            if reused:
+                logging.warning(f"⚠️ 已从旧缓存回填 {len(reused)} 只: {sorted(reused)}")
+            missing = sorted(target_tickers - set(row_map.keys()))
+        except Exception as exc:
+            logging.warning(f"⚠️ 旧缓存回填失败: {exc}")
+
+    if missing:
+        message = (
+            f"亚洲 K 线缓存同步失败，仍缺失 {len(missing)} 只"
+            f"({', '.join(missing)})，未覆盖现有缓存"
+        )
+        return False, message, {
+            "target_count": len(target_tickers),
+            "written_count": 0,
+            "single_recovered": single_recovered,
+            "reused": reused,
+            "missing": missing,
+        }
+
+    final_data = list(row_map.values())
+    final_data.sort(key=lambda item: (item.get("market", ""), item.get("name", "")))
+    save_kline_data(final_data, output_dir)
+
+    parts = [f"亚洲 K 线缓存同步完成，共 {len(final_data)} 只"]
+    if single_recovered:
+        parts.append(f"单票补抓 {len(single_recovered)} 只")
+    if reused:
+        parts.append(f"旧缓存回填 {len(reused)} 只")
+    message = "，".join(parts)
+    return True, message, {
+        "target_count": len(target_tickers),
+        "written_count": len(final_data),
+        "single_recovered": single_recovered,
+        "reused": reused,
+        "missing": [],
+    }
+
+
 def save_kline_data(data: list[dict], output_dir: str | None = None) -> str:
     """保存 K 线数据到 JSON 文件。"""
-    if not output_dir:
-        # Why: 默认存到根目录的 data/Cache 目录
-        output_dir = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "..", "..", "data", "Cache"
-        )
+    output_dir = _resolve_cache_output_dir(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
     now_str = datetime.now().strftime("%Y%m%d_%H%M")
@@ -350,6 +514,11 @@ def main():
         help="输出目录（默认：亚洲寡头行情/data/）",
     )
     parser.add_argument(
+        "--strict-sync",
+        action="store_true",
+        help="严格同步模式：缺票时拒绝覆盖 latest 缓存",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="只列出目标标的，不实际拉数据",
@@ -364,6 +533,20 @@ def main():
         for name, ticker in sorted(tickers.items(), key=lambda x: x[1]):
             print(f"  {ticker:>12s}  {name:<20s}  [{_get_market_name(ticker)}] {_find_track(ticker)}")
         return
+
+    if args.strict_sync:
+        success, message, _report = sync_asian_kline_cache(
+            market_filter=args.market,
+            single_ticker=args.ticker,
+            max_workers=args.workers,
+            period=args.period,
+            output_dir=args.output_dir,
+        )
+        if success:
+            logging.info(message)
+            return
+        logging.error(message)
+        raise SystemExit(1)
 
     data = fetch_all_asian_klines(
         market_filter=args.market,

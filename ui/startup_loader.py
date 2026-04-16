@@ -148,7 +148,14 @@ class StartupLoader:
                 try:
                     creationflags = 0x08000000 if os.name == 'nt' else 0
                     subprocess.run(
-                        [sys.executable, "-m", "vcp.fetchers.asian_kline_fetcher", "--output-dir", output_dir],
+                        [
+                            sys.executable,
+                            "-m",
+                            "vcp.fetchers.asian_kline_fetcher",
+                            "--strict-sync",
+                            "--output-dir",
+                            output_dir,
+                        ],
                         check=True,
                         cwd=project_root,
                         stdout=subprocess.PIPE,

@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 # ui/tabs/watchlist_tab.py
 # 关注池独立组件 — 从 WatchlistMixin 解耦重构为完全自治的 QWidget
-import datetime
 import os
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import QAbstractItemView, QFileDialog, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
+from PyQt6.QtWidgets import QAbstractItemView, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from core.event_bus import event_bus
 from core.json_cache import load_json_file
@@ -69,13 +68,19 @@ class WatchlistTab(BaseStockTab):
 
         filter_widgets = [self.sp_search]
 
+        self.add_stock_input = QLineEdit()
+        self.add_stock_input.setPlaceholderText("输入A股代码，如 600519")
+        self.add_stock_input.setClearButtonEnabled(True)
+        self.add_stock_input.setFixedWidth(160)
+        self.add_stock_input.returnPressed.connect(self._add_custom_stock)
+
+        btn_add_stock = QPushButton("添加自选股")
+        btn_add_stock.clicked.connect(self._add_custom_stock)
+
         btn_reset = QPushButton("解除列表排序")
         btn_reset.clicked.connect(self._reset_view)
 
-        btn_export_sp = QPushButton("📄 导出")
-        btn_export_sp.clicked.connect(self._export_to_excel)
-
-        action_widgets = [btn_reset, btn_export_sp]
+        action_widgets = [self.add_stock_input, btn_add_stock, btn_reset]
         toolbar = self.build_tab_toolbar("关注池", self.lbl_sp_status, filter_widgets, action_widgets)
         layout.addWidget(toolbar)
 
@@ -350,37 +355,74 @@ class WatchlistTab(BaseStockTab):
         from ui.components.stock_context_menu import build_stock_context_menu
         build_stock_context_menu(self, code, name)
 
+    def _get_a_share_name_map(self) -> dict:
+        cached = getattr(self, "_a_share_name_map", None)
+        if isinstance(cached, dict) and cached:
+            return cached
 
+        provider = self.data_provider
+        code_map = {}
+        if provider is not None:
+            code_map = getattr(provider, "code2name", {}) or {}
+            if not code_map and hasattr(provider, "get_all_codes"):
+                try:
+                    code_map = provider.get_all_codes() or {}
+                    provider.code2name = code_map
+                except Exception as e:
+                    log.error(f"[关注池] 读取A股代码表失败: {e}")
+                    code_map = {}
 
-    def _export_to_excel(self):
-        """导出关注池表格到 Excel"""
-        if self.model.rowCount() == 0:
-            show_toast("关注池为空，无法导出", "warning", self)
+        normalized_map = {}
+        for code, name in code_map.items():
+            normalized_code = self._normalize_quote_code(code).zfill(6)
+            if len(normalized_code) == 6 and normalized_code.isdigit():
+                normalized_map[normalized_code] = str(name or normalized_code).strip()
+
+        self._a_share_name_map = normalized_map
+        return self._a_share_name_map
+
+    def _add_custom_stock(self):
+        raw_code = self.add_stock_input.text() if hasattr(self, "add_stock_input") else ""
+        code = self._normalize_quote_code(raw_code).zfill(6)
+        if len(code) != 6 or not code.isdigit():
+            show_toast("请输入 6 位 A 股代码", "warning", self)
+            if hasattr(self, "add_stock_input"):
+                self.add_stock_input.setFocus()
+                self.add_stock_input.selectAll()
             return
-        import pandas as pd
-        path, _ = QFileDialog.getSaveFileName(
-            self, "导出关注池",
-            f"关注池_{datetime.date.today().strftime('%Y%m%d')}.xlsx",
-            "Excel Files (*.xlsx)"
+
+        name_map = self._get_a_share_name_map()
+        name = str(name_map.get(code, "") or "").strip()
+        if not name:
+            show_toast(f"{code} 不在当前 A 股股票列表中", "warning", self)
+            if hasattr(self, "add_stock_input"):
+                self.add_stock_input.setFocus()
+                self.add_stock_input.selectAll()
+            return
+
+        if watchlist_vm.is_in_watchlist(code):
+            show_toast(f"{name} 已在关注池", "info", self)
+            if hasattr(self, "add_stock_input"):
+                self.add_stock_input.clear()
+                self.add_stock_input.setFocus()
+            return
+
+        added = watchlist_vm.add_stock(
+            code,
+            name,
+            {"代码": code, "名称": name, "code": code, "name": name},
         )
-        if not path:
-            return
-        try:
-            headers = self.model.headers
-            rows = []
-            for row_dict in self.model.row_data:
-                row = []
-                for header in headers:
-                    row.append(str(row_dict.get(header, "")))
-                rows.append(row)
-            df = pd.DataFrame(rows, columns=headers)
-            df.to_excel(path, index=False, engine='openpyxl')
-            event_bus.sig_system_log.emit(
-                "info", f"已导出 {len(rows)} 条关注池记录至 {path}"
-            )
-            show_toast("自选股导出成功!", "success", self)
-        except Exception as e:
-            show_toast(f"导出失败: {str(e)}", "error", self)
+        if added:
+            self.lbl_sp_status.setText(f"关注池 | 已加入 {name}，正在刷新后续列...")
+            show_toast(f"{name} 已加入关注池，正在刷新行情与附加列", "success", self)
+            if hasattr(self, "add_stock_input"):
+                self.add_stock_input.clear()
+                self.add_stock_input.setFocus()
+        else:
+            show_toast(f"{name} 已在关注池", "info", self)
+            if hasattr(self, "add_stock_input"):
+                self.add_stock_input.clear()
+                self.add_stock_input.setFocus()
 
     def _reset_view(self):
         """取消强制排序：仅重置表格排序状态，不影响用户自定义的列宽"""

@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+import json
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 
@@ -202,6 +204,30 @@ def test_asian_market_display_uses_taiwan_label_for_tw_codes():
     assert format_market_display("TW", "2330.TW") == "台湾"
     assert format_market_display("TWO", "3324.TWO") == "台湾"
     assert format_market_display("中华民国", "2330.TW") == "台湾"
+
+
+def test_asian_market_placeholder_rows_fill_track_for_missing_cache(monkeypatch, tmp_path):
+    cache_file = tmp_path / "asian_klines_latest.json"
+    cache_file.write_text(json.dumps({"stocks": []}, ensure_ascii=False), encoding="utf-8")
+
+    monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
+    monkeypatch.setattr(asian_module, "JSON_CACHE", str(cache_file))
+    monkeypatch.setattr(asian_module, "RT_JSON_CACHE", str(tmp_path / "asian_rt_cache.json"))
+    monkeypatch.setattr(asian_module, "GLOBAL_ASIAN_RT_CACHE", {})
+    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+
+    tab = asian_module.AsianMarketTab()
+    try:
+        row = next(item for item in tab.row_data if item["代码"] == "2330.TW")
+        assert row["赛道"] not in {"", "未知赛道"}
+    finally:
+        tab.deleteLater()
 
 
 def test_asian_market_status_rows_refresh_without_quote_tick(monkeypatch):

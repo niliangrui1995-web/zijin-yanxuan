@@ -497,7 +497,7 @@ class AsianMarketTab(BaseStockTab):
                         )
 
                     try:
-                        from vcp.fetchers.asian_kline_fetcher import filter_asian_tickers
+                        from vcp.fetchers.asian_kline_fetcher import _find_track, filter_asian_tickers
 
                         target_map = filter_asian_tickers() or {}
                     except Exception as fetch_exc:
@@ -527,7 +527,7 @@ class AsianMarketTab(BaseStockTab):
                                     "涨幅%": 0.0,
                                     "市场": format_market_display(market_code, ticker),
                                     "状态": get_market_status(market_code),
-                                    "赛道": "",
+                                    "赛道": _find_track(ticker),
                                     "角色定位": roles_map.get(ticker, en_name),
                                     "货币": "---",
                                     "5日涨跌%": 0.0,

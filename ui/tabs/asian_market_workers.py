@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import concurrent.futures
 import datetime
-import json
 import os
 import threading
 import time
@@ -247,81 +246,13 @@ class AsianCacheFetcherThread(QThread):
     def run(self):
         try:
             from vcp.fetchers.asian_kline_fetcher import (
-                fetch_all_asian_klines,
-                fetch_single_kline,
-                filter_asian_tickers,
-                save_kline_data,
+                sync_asian_kline_cache,
             )
-
-            target_map = filter_asian_tickers()
-            target_tickers = set(target_map.values())
-            ticker_to_name = {ticker: name for name, ticker in target_map.items()}
-
-            def _to_map(rows):
-                out = {}
-                for row in rows or []:
-                    ticker = str((row or {}).get("ticker", "")).strip()
-                    if ticker and ticker not in out:
-                        out[ticker] = row
-                return out
-
-            data = fetch_all_asian_klines(max_workers=3, use_cf_proxy=is_cf_proxy_enabled())
-            if not data:
-                self.finished_sig.emit(False, "盘后缓存全量拉取失败")
-                return
-
-            row_map = _to_map(data)
-            missing = sorted(target_tickers - set(row_map.keys()))
-
-            if missing:
-                log.warning(f"[AsianTab] 盘后全量抓取缺失 {len(missing)} 只，开始单票补抓: {missing}")
-                for ticker in list(missing):
-                    name = ticker_to_name.get(ticker, ticker)
-                    try:
-                        one = fetch_single_kline(
-                            name,
-                            ticker,
-                            period="1y",
-                            use_cf_proxy=is_cf_proxy_enabled(),
-                        )
-                        if one:
-                            row_map[ticker] = one
-                    except Exception as exc:
-                        log.warning(f"[AsianTab] 单票补抓失败 {ticker}: {exc}")
-                missing = sorted(target_tickers - set(row_map.keys()))
-
-            reused = []
-            if missing and os.path.exists(JSON_CACHE):
-                try:
-                    with open(JSON_CACHE, "r", encoding="utf-8") as handle:
-                        old_raw = json.load(handle)
-                    old_map = _to_map(old_raw.get("stocks", []))
-                    for ticker in list(missing):
-                        if ticker in old_map:
-                            row_map[ticker] = old_map[ticker]
-                            reused.append(ticker)
-                    missing = sorted(target_tickers - set(row_map.keys()))
-                    if reused:
-                        log.warning(f"[AsianTab] 已从旧缓存回填 {len(reused)} 只: {sorted(reused)}")
-                except Exception as exc:
-                    log.warning(f"[AsianTab] 旧缓存回填失败: {exc}")
-
-            if missing:
-                message = (
-                    f"盘后同步部分失败，仍缺失 {len(missing)} 只"
-                    f"({', '.join(missing)})，已保留旧缓存"
-                )
-                log.warning(f"[AsianTab] {message}")
-                self.finished_sig.emit(False, message)
-                return
-
-            final_data = list(row_map.values())
-            final_data.sort(key=lambda item: (item.get("market", ""), item.get("name", "")))
-            save_kline_data(final_data)
-
-            if reused:
-                self.finished_sig.emit(True, f"16:30 盘后自动同步完成，含旧缓存回填 {len(reused)} 只")
-            else:
-                self.finished_sig.emit(True, "16:30 盘后自动同步完成")
+            success, message, _report = sync_asian_kline_cache(
+                max_workers=3,
+                period="1y",
+                use_cf_proxy=is_cf_proxy_enabled(),
+            )
+            self.finished_sig.emit(success, message)
         except Exception as exc:
             self.finished_sig.emit(False, f"盘后拉取异常: {exc}")

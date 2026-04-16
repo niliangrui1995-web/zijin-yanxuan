@@ -33,3 +33,107 @@ def test_find_track_works_with_local_tsmc_tw_override(monkeypatch):
     )
 
     assert fetcher._find_track("2330.TW") == "定制化ASIC与代工"
+
+
+def test_sync_asian_kline_cache_refuses_partial_overwrite(monkeypatch):
+    monkeypatch.setattr(
+        fetcher,
+        "filter_asian_tickers",
+        lambda market_filter=None: {
+            "TSMC": "2330.TW",
+            "ASE": "3711.TW",
+        },
+    )
+    monkeypatch.setattr(
+        fetcher,
+        "fetch_all_asian_klines",
+        lambda **kwargs: [
+            {
+                "name": "ASE",
+                "ticker": "3711.TW",
+                "market": "台湾",
+                "track": "封测",
+                "currency": "TWD",
+                "kline_count": 2,
+                "klines": [{"date": "2026-04-15", "close": 100}, {"date": "2026-04-16", "close": 101}],
+            }
+        ],
+    )
+    monkeypatch.setattr(fetcher, "build_yf_session", lambda use_cf_proxy=True: object())
+    monkeypatch.setattr(fetcher, "fetch_single_kline", lambda *args, **kwargs: None)
+    monkeypatch.setattr(fetcher, "_load_cached_row_map", lambda output_dir=None: {})
+
+    saved_payloads = []
+    monkeypatch.setattr(
+        fetcher,
+        "save_kline_data",
+        lambda data, output_dir=None: saved_payloads.append((data, output_dir)) or "ignored.json",
+    )
+
+    success, message, report = fetcher.sync_asian_kline_cache(output_dir="cache-dir")
+
+    assert success is False
+    assert report["missing"] == ["2330.TW"]
+    assert "2330.TW" in message
+    assert saved_payloads == []
+
+
+def test_sync_asian_kline_cache_reuses_previous_snapshot_before_write(monkeypatch):
+    monkeypatch.setattr(
+        fetcher,
+        "filter_asian_tickers",
+        lambda market_filter=None: {
+            "TSMC": "2330.TW",
+            "ASE": "3711.TW",
+        },
+    )
+    monkeypatch.setattr(
+        fetcher,
+        "fetch_all_asian_klines",
+        lambda **kwargs: [
+            {
+                "name": "ASE",
+                "ticker": "3711.TW",
+                "market": "台湾",
+                "track": "封测",
+                "currency": "TWD",
+                "kline_count": 2,
+                "klines": [{"date": "2026-04-15", "close": 100}, {"date": "2026-04-16", "close": 101}],
+            }
+        ],
+    )
+    monkeypatch.setattr(fetcher, "build_yf_session", lambda use_cf_proxy=True: object())
+    monkeypatch.setattr(fetcher, "fetch_single_kline", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        fetcher,
+        "_load_cached_row_map",
+        lambda output_dir=None: {
+            "2330.TW": {
+                "name": "TSMC",
+                "ticker": "2330.TW",
+                "market": "台湾",
+                "track": "晶圆代工",
+                "currency": "TWD",
+                "kline_count": 2,
+                "klines": [{"date": "2026-04-15", "close": 880}, {"date": "2026-04-16", "close": 888}],
+            }
+        },
+    )
+
+    saved_payloads = []
+    monkeypatch.setattr(
+        fetcher,
+        "save_kline_data",
+        lambda data, output_dir=None: saved_payloads.append((data, output_dir)) or "ignored.json",
+    )
+
+    success, message, report = fetcher.sync_asian_kline_cache(output_dir="cache-dir")
+
+    assert success is True
+    assert report["missing"] == []
+    assert report["reused"] == ["2330.TW"]
+    assert "旧缓存回填 1 只" in message
+    assert len(saved_payloads) == 1
+    written_rows, written_output_dir = saved_payloads[0]
+    assert written_output_dir == "cache-dir"
+    assert sorted(row["ticker"] for row in written_rows) == ["2330.TW", "3711.TW"]

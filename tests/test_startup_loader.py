@@ -76,7 +76,7 @@ def test_startup_loader_asian_sync_uses_subprocess_timeout(monkeypatch):
 
     assert run_calls, "expected asian sync subprocess to run"
     cmd = run_calls[0]["args"][0]
-    assert cmd[1:4] == ["-m", "vcp.fetchers.asian_kline_fetcher", "--output-dir"]
+    assert cmd[1:5] == ["-m", "vcp.fetchers.asian_kline_fetcher", "--strict-sync", "--output-dir"]
     assert run_calls[0]["kwargs"]["timeout"] == ASIAN_DATA_SYNC_TIMEOUT_SEC
     assert run_calls[0]["kwargs"]["cwd"].endswith("紫金研选")
     assert run_calls[0]["kwargs"]["stdout"] == subprocess.PIPE
