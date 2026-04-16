@@ -1,7 +1,7 @@
 import io
 import sys
 
-from PyQt6.QtCore import QTimer, Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -242,7 +242,7 @@ class LogTab(QWidget):
                 fallback.write(message)
                 if hasattr(fallback, "flush"):
                     fallback.flush()
-            except Exception:
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
                 pass
 
         class LogStream(io.TextIOBase):
@@ -262,12 +262,12 @@ class LogTab(QWidget):
                             self.original.write(text)
                             if hasattr(self.original, "flush"):
                                 self.original.flush()
-                    except Exception as exc:
+                    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
                         _safe_fallback_write(f"[LogStream] 原始流写入失败: {exc}\n")
 
                     try:
                         event_bus.sig_system_log.emit("info", text)
-                    except Exception as exc:
+                    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
                         _safe_fallback_write(f"[LogStream] 事件总线发送失败: {exc}\n")
                 return len(text)
 
@@ -275,7 +275,7 @@ class LogTab(QWidget):
                 try:
                     if self.original is not None and hasattr(self.original, "flush"):
                         self.original.flush()
-                except Exception as exc:
+                except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
                     _safe_fallback_write(f"[LogStream] flush失败: {exc}\n")
 
         stdout_original = _resolve_original_stream(

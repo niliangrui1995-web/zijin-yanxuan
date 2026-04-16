@@ -2,12 +2,20 @@
 # 从 main_window_qt.py 拆分出来的独立工具类
 from functools import lru_cache
 
+from PyQt6.QtCore import QEasingCurve, QEvent, QPropertyAnimation, QSize, Qt, QTimer, pyqtProperty
+from PyQt6.QtGui import QBrush, QColor, QFont, QFontMetrics, QPainter, QPalette
 from PyQt6.QtWidgets import (
-    QApplication, QTableView, QAbstractItemView, QWidget, QToolTip, QVBoxLayout, QStackedLayout, QLabel, QFrame,
-    QSizePolicy
+    QAbstractItemView,
+    QApplication,
+    QFrame,
+    QLabel,
+    QSizePolicy,
+    QStackedLayout,
+    QTableView,
+    QToolTip,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt6.QtCore import Qt, QSize, QTimer, QEvent, QPropertyAnimation, QEasingCurve, pyqtProperty
-from PyQt6.QtGui import QPainter, QColor, QBrush, QPalette, QFont, QFontMetrics
 
 from ui.theme_tokens import build_ui_tokens, get_state_tone
 

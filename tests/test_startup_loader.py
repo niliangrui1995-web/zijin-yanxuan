@@ -2,7 +2,9 @@ import subprocess
 import types
 
 from PyQt6.QtCore import QObject
+from PyQt6.QtTest import QSignalSpy
 
+from core.event_bus import event_bus
 from ui.startup_loader import ASIAN_DATA_SYNC_TIMEOUT_SEC, StartupLoader
 
 
@@ -82,6 +84,25 @@ def test_startup_loader_asian_sync_uses_subprocess_timeout(monkeypatch):
     assert run_calls[0]["kwargs"]["stdout"] == subprocess.PIPE
     assert run_calls[0]["kwargs"]["stderr"] == subprocess.PIPE
     assert run_calls[0]["kwargs"]["text"] is True
+
+
+def test_startup_loader_deferred_load_emits_cache_bootstrap_ready(monkeypatch):
+    loader = StartupLoader(_DummyMainWindow())
+    spy = QSignalSpy(event_bus.sig_cache_bootstrap_ready)
+
+    def run_now(fn, *args, **kwargs):
+        fn()
+        return kwargs.get("task_id", "")
+
+    def fake_exists(path):
+        return not path.endswith("asian_kline_fetcher.py")
+
+    monkeypatch.setattr("ui.startup_loader.task_manager.run_in_background", run_now)
+    monkeypatch.setattr("ui.startup_loader.os.path.exists", fake_exists)
+
+    loader.deferred_data_load()
+
+    assert len(spy) == 1
 
 
 def test_startup_loader_asian_sync_logs_succinct_failure_message(monkeypatch):

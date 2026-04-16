@@ -3,15 +3,15 @@
 core/rps_precomputer.py
 F5 预计算核心组件，封装 RPS大矩阵 以及 Sector板块 RPS的纯后台计算流。
 """
-import os
 import datetime
-import time
 import gc
+import os
+import time
 
-
-from core.json_cache import save_json_file, remove_cache_file
+from core.json_cache import remove_cache_file, save_json_file
 from core.logger import get_logger
 from vcp.constants import RPS_CACHE_FILE, SECTOR_RPS_CACHE_FILE
+
 log = get_logger(__name__)
 
 
@@ -26,12 +26,12 @@ def _get_memory_usage_mb() -> float:
 
 class RPSPrecomputer:
     """封装原本在 MainWindow_DataCacheMixin 中的 _action_refresh 业务。"""
-    
+
     @staticmethod
     def run_f5_pipeline(data_provider, engine, cancelled_checker, set_status_callback, done_callback):
         """
         运行 F5 预计算核心流程。这是个纯阻塞方法，应由 TaskManager 在后台线程调用。
-        
+
         :param data_provider: TdxDataProvider 实例
         :param engine: VCPEngine 实例
         :param cancelled_checker: 一个无参函数 `lambda: bool` 返回是否用户中途取消
@@ -64,7 +64,7 @@ class RPSPrecomputer:
             _log_and_status("[F5] 阶段0: 重新解析通达信 gbbq 除权除息数据...")
             try:
                 data_provider._load_local_gbbq(force=True)
-            except Exception as e:
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
                 log.error(f"[F5] gbbq 解析异常(不影响后续): {e}")
 
             # --- 阶段1: 重读日线 ---
@@ -82,7 +82,7 @@ class RPSPrecomputer:
                         data_provider.code2name = codes_dict
                         _log_and_status(f"[F5] 阶段1/3: ⚡ 断点续算 — 检测到今日缓存 ({len(cached_data)} 只)，跳过重读")
                         skip_stage1 = True
-            except Exception as e:
+            except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as e:
                 log.info(f"[F5] 断点续算检测失败(不影响全量重读): {e}")
 
             if not skip_stage1:
@@ -114,10 +114,10 @@ class RPSPrecomputer:
                         from vcp.polars_engine import save_cache_parquet
                         save_cache_parquet(data_provider.cache_data, today_str)
                         log.info("[F5] 阶段1 断点存档完成 — 下次 F5 可跳过重读")
-                    except Exception as e:
+                    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
                         log.warning(f"[F5] 断点存档失败(不影响后续): {e}")
 
-                except Exception as e:
+                except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
                     log.error(f"[F5] ❌ 阶段1 重读本地数据异常: {e}", exc_info=True)
                     return
 
@@ -157,7 +157,7 @@ class RPSPrecomputer:
                     log.warning("[F5] ⚠ 阶段2/3: RPS 矩阵计算返回空")
                 # 释放 rps_matrix 字典（可能上百 MB），只保留已经写入 engine 的 rps120/rps250
                 del rps_matrix
-            except Exception as e:
+            except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
                 log.error(f"[F5] ❌ 阶段2 RPS 计算异常: {e}", exc_info=True)
 
             if cancelled_checker and cancelled_checker():
@@ -188,9 +188,9 @@ class RPSPrecomputer:
                 remove_cache_file(SECTOR_RPS_CACHE_FILE.replace(".json", ".pkl"))
                 _log_and_status(f"[F5] 阶段2.5/3 完成 -- 板块 RPS ({len(sector_rps)} 个)")
                 del all_data_f5, sector_rps, sector_pkg
-            except Exception as e:
+            except (AttributeError, ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
                 log.error(f"[F5] ❌ 阶段2.5 板块 RPS 异常: {e}", exc_info=True)
-            
+
             # 全部完成后最终回收
             gc.collect()
             _log_memory("全部完成")
@@ -198,20 +198,20 @@ class RPSPrecomputer:
             elapsed = time.time() - total_start
             _log_and_status(f"[F5] ✅ 全部完成 -- 耗时 {elapsed:.1f} 秒")
 
-        except Exception as e:
+        except (AttributeError, ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
             log.error(f"[F5] ❌ 预计算过程发生未预期异常: {e}", exc_info=True)
         finally:
             elapsed = time.time() - total_start
             count = len(data_provider.cache_data) if data_provider.cache_data else 0
             log.info(f"[F5] 内部流程结束 (count={count}, elapsed={elapsed:.1f}s)")
-            
+
             # 收尾过期清理
             try:
                 from core.cache_policy import cleanup_stale_caches
                 cleanup_stale_caches(project_root)
-            except Exception as e:
+            except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as e:
                 log.warning(f"[F5] 缓存清理跳过: {e}")
-            
+
             # 使用回调返送给UI以脱钩
             if done_callback:
                 done_callback(count, elapsed)

@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 import datetime as dt
 
-from ui.tabs.lhb_tab import LhbTab
 from core.market_calendar import MarketCalendar
+from ui.tabs.lhb_tab import LhbTab
 
 
 def test_lhb_reference_trade_date_uses_previous_day_before_20(monkeypatch):

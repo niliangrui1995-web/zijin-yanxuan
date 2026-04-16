@@ -1,17 +1,20 @@
 # -*- coding: utf-8 -*-
 """
 ui/startup_loader.py
-负责接管应用冷启动与后台缓存加载流程，为“白屏克星”做框架铺垫
+负责主窗口冷启动、缓存恢复和智能联机启动。
 """
-import os
+
+from __future__ import annotations
+
 import datetime
+import os
 import subprocess
 import sys
 
 from PyQt6.QtCore import QTimer
 
-from core.logger import get_logger
 from core.event_bus import event_bus
+from core.logger import get_logger
 from core.task_manager import task_manager
 
 log = get_logger(__name__)
@@ -25,7 +28,7 @@ def _normalize_log_detail(text: str, limit: int = 120) -> str:
     compact = " | ".join(part.strip() for part in raw.splitlines() if part.strip()) or raw
     if len(compact) <= limit:
         return compact
-    return compact[: limit - 1] + "…"
+    return compact[: limit - 3] + "..."
 
 
 def _format_subprocess_failure(exc: Exception) -> tuple[str, str]:
@@ -40,11 +43,11 @@ def _format_subprocess_failure(exc: Exception) -> tuple[str, str]:
     message = str(exc or "").strip() or exc.__class__.__name__
     return message, message
 
+
 class StartupLoader:
-    """接管主窗口的加载流程"""
+    """主窗口启动流程协调器。"""
+
     def __init__(self, main_window):
-        # 强引用 MainWindow 只是为了方便调用 UI UI 线程桥接 `_call_in_ui` 和引用核心部件
-        # 未来可逐渐解耦
         self.mw = main_window
         self._closed = False
         self._deferred_timer = QTimer(main_window)
@@ -65,16 +68,13 @@ class StartupLoader:
         self._deferred_timer.stop()
         self._smart_timer.stop()
         for task_id in ("deferred_load", "asian_data_sync_bg", "smart_startup"):
-            try:
-                task_manager.abandon_task(task_id)
-            except Exception:
-                pass
+            task_manager.abandon_task(task_id)
 
     def _alive(self):
         return (
-            not self._closed and
-            self.mw is not None and
-            not getattr(self.mw, "_is_closing", False)
+            not self._closed
+            and self.mw is not None
+            and not getattr(self.mw, "_is_closing", False)
         )
 
     def _safe_call_in_ui(self, callback):
@@ -86,54 +86,58 @@ class StartupLoader:
             pass
 
     def deferred_data_load(self):
-        """延迟加载缓存数据（pkl + RT缓存 + RPS缓存），避免阻塞UI线程"""
+        """延迟恢复历史缓存、实时缓存和 RPS 缓存。"""
+
         def _load_bg():
             if not self._alive():
                 return
-            try:
-                cache_date = self.mw.data_provider.load_cache_from_disk()
-                if cache_date and self._alive():
-                    count = len(self.mw.data_provider.cache_data)
-                    self._safe_call_in_ui(
-                        lambda: getattr(self.mw, 'lbl_code_count') and self.mw.lbl_code_count.setText(f"标的池: {count}") if hasattr(self.mw, 'lbl_code_count') else None
-                    )
-                    self._safe_call_in_ui(
-                        lambda: self.mw.lbl_status.setText(f"已加载 {count} 只标的缓存 (日期: {cache_date})")
-                    )
-            except Exception as e:
-                log.error(f"[启动] 延迟加载缓存异常: {e}")
 
-            # 在UI线程恢复RT缓存
-            self._safe_call_in_ui(
-                lambda: self.mw.cache_manager.load_rt_cache(self.mw.table_rt, lambda msg: self.mw.lbl_status.setText(msg))
-            )
-
-            # 加载 RPS 预计算缓存
-            try:
-                self.mw.cache_manager.try_load_rps_from_disk(
-                    self.mw.engine,
-                    data_provider=self.mw.data_provider,
-                    set_status_callback=lambda msg: self._safe_call_in_ui(lambda: self.mw.lbl_status.setText(msg))
+            cache_date = self.mw.data_provider.load_cache_from_disk()
+            if cache_date and self._alive():
+                count = len(self.mw.data_provider.cache_data)
+                self._safe_call_in_ui(
+                    lambda: getattr(self.mw, "lbl_code_count", None)
+                    and self.mw.lbl_code_count.setText(f"标的池: {count}")
                 )
-            except Exception as e:
-                log.error(f"[启动] RPS 缓存加载异常: {e}")
+                self._safe_call_in_ui(
+                    lambda: self.mw.lbl_status.setText(
+                        f"已加载 {count} 只标的缓存 (日期: {cache_date})"
+                    )
+                )
 
-            # 通知各 Tab: 缓存数据已就绪，可以回填历史数据
             self._safe_call_in_ui(
-                lambda: event_bus.sig_cache_loaded.emit()
+                lambda: self.mw.cache_manager.load_rt_cache(
+                    getattr(getattr(self.mw, "_workspace", None), "get_rt_table", lambda: None)(),
+                    lambda msg: self.mw.lbl_status.setText(msg),
+                )
             )
+
+            self.mw.cache_manager.try_load_rps_from_disk(
+                self.mw.engine,
+                data_provider=self.mw.data_provider,
+                set_status_callback=lambda msg: self._safe_call_in_ui(
+                    lambda: self.mw.lbl_status.setText(msg)
+                ),
+            )
+
+            self._safe_call_in_ui(lambda: event_bus.sig_cache_bootstrap_ready.emit())
 
         task_manager.run_in_background(_load_bg, task_id="deferred_load")
 
-        # 启动时静默检查并更新亚洲寡头历史 json 缓存
         def _check_asian_data_bg():
             if not self._alive():
                 return
+
             project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             output_dir = os.path.join(project_root, "data", "Cache")
             json_cache = os.path.join(output_dir, "asian_klines_latest.json")
-            module_entry = os.path.join(project_root, "vcp", "fetchers", "asian_kline_fetcher.py")
-            
+            module_entry = os.path.join(
+                project_root,
+                "vcp",
+                "fetchers",
+                "asian_kline_fetcher.py",
+            )
+
             needs_update = False
             if not os.path.exists(json_cache):
                 needs_update = True
@@ -142,11 +146,11 @@ class StartupLoader:
                 mdate = datetime.date.fromtimestamp(mtime)
                 if mdate < datetime.date.today():
                     needs_update = True
-                     
+
             if needs_update and os.path.exists(module_entry):
-                log.info("[启动] 亚洲市场 JSON 已非最新，后台静默拉取中(YF)...")
+                log.info("[启动] 亚洲市场 JSON 非最新，后台静默增量同步中...")
                 try:
-                    creationflags = 0x08000000 if os.name == 'nt' else 0
+                    creationflags = 0x08000000 if os.name == "nt" else 0
                     subprocess.run(
                         [
                             sys.executable,
@@ -166,14 +170,14 @@ class StartupLoader:
                         creationflags=creationflags,
                         timeout=ASIAN_DATA_SYNC_TIMEOUT_SEC,
                     )
-                    log.info("[启动] 亚洲市场静默增量拉取完成，触发界面重载...")
+                    log.info("[启动] 亚洲市场静默同步完成，触发界面刷新。")
                     self._safe_call_in_ui(lambda: event_bus.sig_asian_klines_ready.emit())
                 except subprocess.TimeoutExpired:
                     log.warning(
-                        f"[启动] 亚洲市场后台静默更新超时({ASIAN_DATA_SYNC_TIMEOUT_SEC}s)，已跳过本次同步"
+                        f"[启动] 亚洲市场后台静默同步超时({ASIAN_DATA_SYNC_TIMEOUT_SEC}s)，已跳过本次同步"
                     )
-                except Exception as e:
-                    summary, raw_detail = _format_subprocess_failure(e)
+                except (OSError, subprocess.CalledProcessError, ValueError) as exc:
+                    summary, raw_detail = _format_subprocess_failure(exc)
                     log.warning(f"[启动] 亚洲市场静默同步失败，已跳过本次更新（{summary}）")
                     if raw_detail:
                         log.debug(f"[启动] 亚洲市场静默同步原始输出: {raw_detail}")
@@ -181,7 +185,8 @@ class StartupLoader:
         task_manager.run_in_background(_check_asian_data_bg, task_id="asian_data_sync_bg")
 
     def smart_startup(self):
-        """智能启动：异步检测网络，联网可用则自动切换联网模式并触发各Tab刷新"""
+        """异步检测网络；可联机时切到在线模式并驱动后续刷新。"""
+
         def _check_and_go_online():
             try:
                 if not self._alive():
@@ -190,54 +195,53 @@ class StartupLoader:
                     if not self._alive():
                         return
                     self.mw.data_provider.set_online_mode(True)
-                    log.info("[智能启动] ✅ 网络可用，已自动切换到联网模式")
-                    
+                    log.info("[智能启动] 网络可用，已自动切换到联机模式")
+
                     try:
                         if not self._alive():
                             return
-                        self.mw.data_provider.get_all_codes() 
-                        self.mw.data_provider.code2name = self.mw.data_provider._get_codes_from_vipdoc()
-                        
-                        def _refresh_watchlist_names():
-                            if hasattr(self.mw, 'tab_watchlist') and self.mw.tab_watchlist:
-                                changed = False
-                                for r in self.mw.tab_watchlist.model.row_data:
-                                    code = str(r.get("代码", ""))
-                                    name = str(r.get("名称", ""))
-                                    if code and (not name or name == code):
-                                        r["名称"] = self.mw.data_provider.code2name.get(code, code)
-                                        changed = True
-                                if changed:
-                                    self.mw.tab_watchlist.model.layoutChanged.emit()
-                        self._safe_call_in_ui(_refresh_watchlist_names)
-                    except Exception as e:
-                        log.error(f"[智能启动] 后台同步大盘代码名称映射表时失败: {e}")
+                        self.mw.data_provider.get_all_codes()
+                        self.mw.data_provider.code2name = (
+                            self.mw.data_provider._get_codes_from_vipdoc()
+                        )
+                        workspace = getattr(self.mw, "_workspace", None)
+                        if workspace is not None:
+                            self._safe_call_in_ui(
+                                lambda: workspace.refresh_watchlist_names(
+                                    self.mw.data_provider.code2name
+                                )
+                            )
+                    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                        log.error(f"[智能启动] 后台同步代码名称映射失败: {exc}")
 
                     self._safe_call_in_ui(lambda: self.mw._update_network_ui(True))
-                    if hasattr(self.mw, '_on_smart_startup_online_done'):
+                    if hasattr(self.mw, "_on_smart_startup_online_done"):
                         self._safe_call_in_ui(self.mw._on_smart_startup_online_done)
                     self._safe_call_in_ui(self.auto_start_rt_if_ready)
                 else:
                     log.info("[智能启动] 网络不可用，保持离线模式")
-            except Exception as e:
-                log.error(f"[智能启动] 网络检测异常: {e}")
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                log.error(f"[智能启动] 网络检测异常: {exc}")
 
         task_manager.run_in_background(_check_and_go_online, task_id="smart_startup")
 
     def auto_start_rt_if_ready(self):
-        """智能启动后自动开启盘中监控（仅在交易日+交易时间且数据就绪时）"""
+        """启动完成后按条件自动开启盘中监控。"""
         try:
             if not self._alive():
                 return
+
             from core.market_calendar import MarketCalendar
+
             if not MarketCalendar.is_market_active():
-                log.info("[智能启动] 非交易日/非交易时间，跳过盘中自动监控")
+                log.info("[智能启动] 非交易时段，跳过盘中自动监控")
                 return
             if not self.mw.data_provider.cache_data or len(self.mw.data_provider.cache_data) < 100:
                 log.info("[智能启动] 数据不足，跳过盘中自动监控")
                 return
-            if hasattr(self.mw, 'tab_rt') and hasattr(self.mw.tab_rt, '_toggle_rt_monitor'):
-                self.mw.tab_rt._toggle_rt_monitor(auto=True)
-                log.info("[智能启动] ✅ 盘中监控已自动启动")
-        except Exception as e:
-            log.error(f"[智能启动] 自动监控启动异常: {e}")
+
+            workspace = getattr(self.mw, "_workspace", None)
+            if workspace is not None and workspace.auto_start_rt_monitor():
+                log.info("[智能启动] 盘中监控已自动启动")
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.error(f"[智能启动] 自动监控启动异常: {exc}")

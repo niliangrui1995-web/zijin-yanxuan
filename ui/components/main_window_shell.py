@@ -408,7 +408,7 @@ def setup_system_menu(window) -> SystemMenuRefs:
     try:
         sys_menu.aboutToShow.connect(lambda: QApplication.restoreOverrideCursor())
         sys_menu.aboutToHide.connect(lambda: QApplication.restoreOverrideCursor())
-    except Exception:
+    except (AttributeError, RuntimeError, TypeError):
         pass
 
     sys_menu.setObjectName("sysMenu")

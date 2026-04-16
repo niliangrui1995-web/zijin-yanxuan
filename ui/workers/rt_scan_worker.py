@@ -1,14 +1,17 @@
 # ui/workers.py - 后台工作线程
 # 从 main_window_qt.py 拆分出来的 ScanWorker 和 RtScanWorker
-import math
 import datetime
+import math
+
 from PyQt6.QtCore import QThread, pyqtSignal
-from vcp.engine import VCPEngine, VCPParams
-from vcp.constants import RPS_CACHE_FILE
+
+from core.exceptions import CacheIOError
+from core.json_cache import remove_cache_file, save_json_file
 from core.logger import get_logger
-from core.json_cache import save_json_file, remove_cache_file
 from core.market_calendar import MarketCalendar
 from core.sector_rps_helper import enrich_hot_sector_rows, load_sector_rps_snapshot
+from vcp.constants import RPS_CACHE_FILE
+from vcp.engine import VCPEngine, VCPParams
 
 log = get_logger(__name__)
 
@@ -69,6 +72,7 @@ class RtScanWorker(QThread):
 
     def run(self):
         import time as _time
+
         import numpy as np
 
         while self._is_running:
@@ -80,7 +84,7 @@ class RtScanWorker(QThread):
                 if not self._is_running:
                     self._cleanup_caches()
                     return
-            except Exception as e:
+            except (AttributeError, IndexError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
                 self.progress.emit(f"盘中扫描异常: {e}")
                 log.error(f"[盘中监控] 第{self._scan_count}轮扫描异常: {e}", exc_info=True)
 
@@ -131,11 +135,12 @@ class RtScanWorker(QThread):
                         today_str = trade_dt.strftime('%Y%m%d')
                     else:
                         today_str = datetime.date.today().strftime('%Y%m%d')
-                except Exception as _e:
+                except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as _e:
                     log.debug(f"[盘中] 获取最近交易日失败: {_e}")
                     today_str = datetime.date.today().strftime('%Y%m%d')
                 try:
                     import gc
+
                     from vcp.polars_engine import build_rps_matrix_pl
                     rps_matrix = build_rps_matrix_pl(self._all_data, today_str, today_str)
                     if rps_matrix:
@@ -158,12 +163,12 @@ class RtScanWorker(QThread):
                             remove_cache_file(RPS_CACHE_FILE.replace(".json", ".pkl"))
                             self.engine.set_precomputed_rps(today_str, self._rps120, self._rps250)
                             log.debug(f"[盘中] RPS 已保存磁盘 ({today_str})")
-                        except Exception as e:
+                        except CacheIOError as e:
                             log.error(f"[盘中] RPS 磁盘保存失败: {e}")
                     else:
                         self.progress.emit("❌ RPS 计算失败:无价格数据")
                         return
-                except Exception as e:
+                except (ImportError, AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
                     log.error(f"[盘中] 兜底 RPS 计算异常: {e}")
                     self.progress.emit("❌ RPS 计算失败")
                     return
@@ -217,7 +222,7 @@ class RtScanWorker(QThread):
         # 加入关注池代码(即使不在待突破池中)
         from ui.viewmodels.watchlist_vm import watchlist_vm
         special_codes = set(watchlist_vm.get_all_codes())
-        
+
         # 【修复 BUG】清理已剔除出待突破池的历史爆破信号，防止"诈尸"
         stale_signals = [c for c in self._signal_details if c not in self._ready_pool]
         for c in stale_signals:
@@ -263,7 +268,7 @@ class RtScanWorker(QThread):
                     zbg = float(info.get('zongguben', 0) or 0)
                     if zbg > 0:
                         self._zbg_cache[c] = zbg
-            except Exception as _e:
+            except (KeyError, OSError, RuntimeError, TypeError, ValueError) as _e:
                 log.debug(f"[盘中] 总股本缓存刷新失败: {_e}")
 
         def _format_dynamic_cap(code: str, rt_price: float, fallback: str = "") -> str:
@@ -283,13 +288,13 @@ class RtScanWorker(QThread):
             # 涨幅计算:优先使用实时报价返回的昨收价,精确可靠
             last_close = float(quote.get('last_close', 0) or 0)
             rt_close = float(quote.get('close', 0) or 0)
-            
+
             # --- 兜底检查：防御上游报价返回零值 (停牌/断流) ---
             if last_close <= 0:
                 hist_df = self.data_provider.get_data(code)
                 if hist_df is not None and len(hist_df) > 0:
                     last_close = float(hist_df.iloc[-2]['close']) if len(hist_df) > 1 else float(hist_df.iloc[-1]['close'])
-                    
+
             if rt_close <= 0 and last_close > 0:
                 rt_close = last_close
                 quote['close'] = rt_close  # 回写防御后续使用 quote['close']
@@ -359,7 +364,7 @@ class RtScanWorker(QThread):
                 try:
                     from ui.components.notification_service import notify_breakout
                     notify_breakout(code, stock_name, f"{pct:+.2f}% {breakout_status}")
-                except Exception as _e:
+                except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as _e:
                     log.debug(f"[盘中] 桌面通知发送失败: {_e}")  # 通知失败不应影响核心扫描逻辑
 
             # 构建信号时,优先使用 pool_entry 中的板块/市值,
@@ -411,12 +416,12 @@ class RtScanWorker(QThread):
                 for c in codes_need_cap:
                     q = quotes.get(c)
                     rt_price = float(q.get('close', 0) or 0) if q else 0
-                    
+
                     if rt_price <= 0:
                         hist = self.data_provider.get_data(c)
                         if hist is not None and len(hist) > 0:
                             rt_price = float(hist.iloc[-1]['close'])
-                            
+
                     close_prices[c] = rt_price
                 cap_results = VCPEngine.batch_check_market_cap(codes_need_cap, close_prices=close_prices)
                 for c in codes_need_cap:
@@ -425,7 +430,7 @@ class RtScanWorker(QThread):
                         self._cap_cache[c] = f"{cap / 1e8:.0f}亿"
                     else:
                         self._cap_cache[c] = ''
-            except Exception as e:
+            except (KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
                 log.error(f"[盘中] 市值补全异常: {e}")
 
         latest_trade_date = MarketCalendar.get_latest_trade_date().strftime("%Y%m%d")
@@ -444,7 +449,7 @@ class RtScanWorker(QThread):
                 else:
                     self._sector_manager = False
                     self._sector_rps = {}
-            except Exception as e:
+            except (AttributeError, IndexError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
                 log.error(f"[盘中] 板块管理器创建异常: {e}")
                 self._sector_manager = False  # 标记为失败,不再重试
 

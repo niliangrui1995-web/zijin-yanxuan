@@ -3,13 +3,13 @@
 tests/conftest.py — pytest 通用 Fixture
 
 为什么需要这个：
-    PyQt6 应用的测试需要一个 QApplication 实例存在，否则任何 QWidget/QSettings 
+    PyQt6 应用的测试需要一个 QApplication 实例存在，否则任何 QWidget/QSettings
     都会直接 segfault。这里统一创建一次，所有测试共享。
 """
-import pytest
 import os
 import sys
 
+import pytest
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
@@ -19,8 +19,9 @@ if _PROJECT_ROOT not in sys.path:
 @pytest.fixture(scope="session", autouse=True)
 def qt_application():
     """整个测试会话只创建一次 QApplication，防止重复创建导致崩溃"""
-    from PyQt6.QtWidgets import QApplication
     import sys
+
+    from PyQt6.QtWidgets import QApplication
 
     # 如果已经有 QApplication 实例（比如在 IDE 中跑），直接复用
     existing_app = QApplication.instance()
@@ -39,7 +40,7 @@ def reset_global_runtime_state():
         from core.global_store import global_store
 
         global_store.reset_runtime_state()
-    except Exception:
+    except (AttributeError, ImportError, RuntimeError, TypeError, ValueError):
         global_store = None
 
     yield

@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
-from PyQt6.QtWidgets import QCalendarWidget, QTableView
-from PyQt6.QtCore import Qt, QDate
+from PyQt6.QtCore import QDate, Qt
 from PyQt6.QtGui import QColor, QFont, QPen
+from PyQt6.QtWidgets import QCalendarWidget, QTableView
 
 from core.market_calendar import MarketCalendar
 from ui.theme import theme_manager
+
 
 def _c(token: str) -> str:
     return theme_manager.get(token)
@@ -71,7 +72,7 @@ class TradeCalendarWidget(QCalendarWidget):
         is_current_month = (date.month() == current_month and date.year() == current_year)
         is_selected = (date == self.selectedDate())
         is_today = (date == QDate.currentDate())
-        
+
         is_trade_day = MarketCalendar.is_trade_day(date.toPyDate(), "CN")
 
         # ── 1. 底色 ──

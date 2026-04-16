@@ -4,19 +4,19 @@ from typing import Any
 
 from PyQt6.QtCore import QDate
 from PyQt6.QtWidgets import (
+    QComboBox,
     QDateEdit,
     QDialog,
+    QDoubleSpinBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QPushButton,
-    QSpinBox,
-    QDoubleSpinBox,
     QSizePolicy,
+    QSpinBox,
     QVBoxLayout,
-    QComboBox,
 )
 
 from core.market_calendar import MarketCalendar

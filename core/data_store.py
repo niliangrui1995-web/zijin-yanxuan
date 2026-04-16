@@ -146,7 +146,7 @@ class DataStore:
         try:
             self._conn.close()
             log.info("[DataStore] SQLite 连接已关闭")
-        except Exception as _e:
+        except sqlite3.Error as _e:
             log.debug(f"[DataStore] SQLite 关闭异常: {_e}")
 
 

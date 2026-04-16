@@ -7,6 +7,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QAbstractItemView, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from core.event_bus import event_bus
+from core.exceptions import CacheIOError, DataFormatError
 from core.json_cache import load_json_file
 from core.logger import get_logger
 from core.task_manager import task_manager
@@ -40,10 +41,12 @@ class WatchlistTab(BaseStockTab):
         event_bus.sig_app_closing.connect(self._on_app_closing)
 
         # v4: 使用精准专用信道
-        event_bus.sig_cache_loaded.connect(self._on_cache_or_earnings_updated)
+        event_bus.sig_cache_bootstrap_ready.connect(self._on_cache_or_earnings_updated)
+        event_bus.sig_cache_reload_completed.connect(self._on_cache_or_earnings_updated)
         event_bus.sig_earnings_updated.connect(self._on_cache_or_earnings_updated)
         event_bus.sig_na_daily_updated.connect(self._on_na_daily_updated)
         event_bus.sig_block_trade_updated.connect(self._on_block_trade_updated)
+        event_bus.sig_lhb_pool_updated.connect(self._on_cache_or_earnings_updated)
         event_bus.sig_vcp_watchlist_ready.connect(self._on_vcp_watchlist_ready)
 
         # 先立即回填一次，避免启动期 UI 忙时定时器延后导致“关注池长期空白”。
@@ -368,7 +371,7 @@ class WatchlistTab(BaseStockTab):
                 try:
                     code_map = provider.get_all_codes() or {}
                     provider.code2name = code_map
-                except Exception as e:
+                except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
                     log.error(f"[关注池] 读取A股代码表失败: {e}")
                     code_map = {}
 
@@ -436,111 +439,15 @@ class WatchlistTab(BaseStockTab):
     # ================================================================
     def _gather_radar_data(self):
         """主线程快速提取 UI 数据，供后台线程使用（避免跨线程访问UI崩溃）"""
-        na_data, na_subsector_data, block_data, earn_data, lhb_data = {}, {}, {}, {}, {}
-        rps_bundle = None
+        workspace = getattr(self.window(), "_workspace", None)
+        if workspace is None:
+            return {}, {}, {}, {}, {}, None
+
         try:
-            main_win = self.window()
-            if main_win:
-                if hasattr(main_win, 'engine'):
-                    rps_bundle = main_win.engine.get_precomputed_rps()
-
-                if hasattr(main_win, 'tab_na_daily') and hasattr(main_win.tab_na_daily, 'model'):
-                    for r in main_win.tab_na_daily.model.row_data:
-                        c = str(r.get("代码", ""))
-                        if c:
-                            na_data[c] = str(r.get("催化剂", "") or r.get("💥催化剂", ""))
-                            na_subsector_data[c] = str(r.get("细分板块", "") or "")
-
-                if hasattr(main_win, 'tab_foreign_block') and hasattr(main_win.tab_foreign_block, 'model'):
-                    # 用于聚合单只股票下各主力席位的买卖净额: code -> { short_branch: net_amount_wan }
-                    block_aggregates = {}
-                    from ui.tabs.foreign_block_trade_tab import FOREIGN_KEYWORDS
-                    for r in main_win.tab_foreign_block.model.row_data:
-                        c = str(r.get("代码", ""))
-                        if c:
-                            detail = str(r.get("交易详情", ""))
-                            buy = str(r.get("买方营业部", ""))
-                            sell = str(r.get("卖方营业部", ""))
-                            amt = str(r.get("成交金额(万元)", "0"))
-
-                            try:
-                                amt_val = float(amt) if amt and amt != "--" else 0.0
-                            except (TypeError, ValueError):
-                                amt_val = 0.0
-
-                            branch = ""
-                            sign = 1.0
-                            if "买入" in detail:
-                                branch = buy
-                                sign = 1.0
-                            elif "卖出" in detail:
-                                branch = sell
-                                sign = -1.0
-                            else:
-                                branch = buy if buy else sell
-                                sign = 1.0
-
-                            short_branch = branch
-                            for kw in FOREIGN_KEYWORDS:
-                                if kw in branch:
-                                    short_branch = kw
-                                    break
-
-                            if c not in block_aggregates:
-                                block_aggregates[c] = {}
-                            current_net = block_aggregates[c].get(short_branch, 0.0)
-                            block_aggregates[c][short_branch] = current_net + (amt_val * sign)
-
-                    # 将聚合的数据重组为显示串
-                    for c, branch_data in block_aggregates.items():
-                        memos = []
-                        # 降序排列，净买金额大的排前面，净卖排后面
-                        sorted_branches = sorted(branch_data.items(), key=lambda x: x[1], reverse=True)
-                        for br, total_amt in sorted_branches:
-                            if total_amt > 0:
-                                memos.append(f"{br}买入{total_amt:.0f}万")
-                            elif total_amt < 0:
-                                memos.append(f"{br}卖出{abs(total_amt):.0f}万")
-                            else:
-                                memos.append(f"{br}净买0万")
-                        block_data[c] = " | ".join(memos)
-
-                if hasattr(main_win, 'tab_earnings') and hasattr(main_win.tab_earnings, 'model'):
-                    for r in main_win.tab_earnings.model.row_data:
-                        c = str(r.get("代码", ""))
-                        pct = str(r.get("环比%", ""))
-                        if c and pct and pct != "--": earn_data[c] = f"{pct}%"
-
-                if hasattr(main_win, 'tab_lhb') and hasattr(main_win.tab_lhb, 'model'):
-                    for r in main_win.tab_lhb.model.row_data:
-                        c = str(r.get("代码", ""))
-                        if c:
-                            # 日期格式兼容：lhb_worker输出的是 "20260410" 纯数字格式
-                            raw_date = str(r.get("上榜日期", ""))
-                            if len(raw_date) == 8:
-                                date_mmdd = f"{raw_date[4:6]}-{raw_date[6:8]}"
-                            elif '-' in raw_date:
-                                parts = raw_date.split('-')
-                                date_mmdd = "-".join(parts[-2:]) if len(parts) >= 2 else raw_date
-                            else:
-                                date_mmdd = raw_date
-
-                            net = float(r.get("上榜净买额(万)", 0))
-                            jg = float(r.get("机构净买(万)", 0))
-                            fgn = float(r.get("外资净买(万)", 0))
-
-                            net_s = f"净卖:{abs(net):.0f}万" if net < 0 else f"净买:{net:.0f}万"
-                            jg_s = f"机构净卖:{abs(jg):.0f}万" if jg < 0 else f"机构净买:{jg:.0f}万"
-                            fgn_s = f"外资净卖:{abs(fgn):.0f}万" if fgn < 0 else f"外资净买:{fgn:.0f}万"
-
-                            lhb_data[c] = {
-                                "text": f"{date_mmdd} | {net_s} | {jg_s} | {fgn_s}",
-                                "date": str(r.get("上榜日期", ""))
-                            }
-
-        except Exception as e:
-            log.warning(f"[关注池] 提取主界面数据异常: {e}")
-        return na_data, na_subsector_data, block_data, earn_data, lhb_data, rps_bundle
+            return workspace.collect_watchlist_radar_data()
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
+            log.warning(f"[关注池] 提取工作区雷达数据异常: {e}")
+            return {}, {}, {}, {}, {}, None
 
     def _on_watchlist_changed(self, action: str, _code: str):
         """外部请求关注池变更时，防抖 300ms 后再重新加载（防止快速增删导致任务堆积）"""
@@ -567,7 +474,7 @@ class WatchlistTab(BaseStockTab):
                 try:
                     if os.path.exists(RPS_CACHE_FILE):
                         rps_bundle = load_json_file(RPS_CACHE_FILE)
-                except Exception as e:
+                except (CacheIOError, DataFormatError) as e:
                     log.debug(f"[关注池] RPS 缓存读取失败，改用空值: {e}")
 
             rps120_series = rps_bundle.get('rps120') if rps_bundle else None
@@ -606,7 +513,7 @@ class WatchlistTab(BaseStockTab):
                         'earnings': earn_data.get(code, ''),
                         'lhb': lhb_data.get(code, '')
                     }
-                except Exception as _e:
+                except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as _e:
                     log.debug(f"[关注池] {code} RPS指标计算异常: {_e}")
                     continue
 
@@ -614,7 +521,7 @@ class WatchlistTab(BaseStockTab):
                 event_bus.sig_vcp_watchlist_ready.emit(results)
                 log.info(f"[关注池] {len(results)} 只标的附加指标已就绪")
 
-        except Exception as e:
+        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
             log.error(f"[关注池] 附加指标批量计算异常: {e}")
 
     def _apply_vcp_indicators_ui(self, results: dict):
@@ -751,7 +658,7 @@ class WatchlistTab(BaseStockTab):
             if new_cache:
                 watchlist_vm._cache = new_cache
                 watchlist_vm._save_data()
-        except Exception as e:
+        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
             log.error(f"[关注池] 同步缓存到 ViewModel 失败: {e}")
 
     def _on_cache_or_earnings_updated(self):

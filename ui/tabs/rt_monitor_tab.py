@@ -1,19 +1,29 @@
-from PyQt6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout,
-    QHeaderView, QPushButton, QLabel, QLineEdit,
-    QDialog, QComboBox, QSpinBox, QToolButton
-)
 import re
-from ui.components.toast_widget import show_toast
-from PyQt6.QtCore import Qt, pyqtSlot, QTimer
-from ui.models.table_models import RtTableModel, RtSortFilterProxyModel, StockItemDelegate
-from ui.workers.rt_scan_worker import RtScanWorker
+
+from PyQt6.QtCore import Qt, QTimer, pyqtSlot
+from PyQt6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QSpinBox,
+    QToolButton,
+    QVBoxLayout,
+)
+
 from core.event_bus import event_bus
 from core.logger import get_logger
 from core.task_manager import task_manager
-from ui.tabs.base_stock_tab import BaseStockTab
-from ui.components import VCPTableView, TableStateWrapper
 from core.throttler import SignalThrottler
+from ui.components import TableStateWrapper, VCPTableView
+from ui.components.toast_widget import show_toast
+from ui.models.table_models import RtSortFilterProxyModel, RtTableModel, StockItemDelegate
+from ui.status_registry import format_runtime_status_text
+from ui.tabs.base_stock_tab import BaseStockTab
+from ui.workers.rt_scan_worker import RtScanWorker
 
 log = get_logger(__name__)
 
@@ -28,14 +38,14 @@ class RtMonitorTab(BaseStockTab):
         from PyQt6.QtCore import QSettings
         self._settings = QSettings("VCPHunter", "RtMonitorTab")
         self._init_ui()
-        
+
         # 核心：实时数据流 UI 防抖拦截器 (针对未来的海量 tick 数据)
         self._rt_throttler = SignalThrottler(interval=1000, parent=self)
         self._rt_throttler.throttled_signal.connect(self._do_update_rt_table)
-        
+
         # 盘中监控由 RtScanWorker 独立推送数据，不订阅中央广播站
         # 盘后 Worker 停止后，model 中的数据原地保留，第二天自动覆盖
-        
+
         # 自动化监控：交易日 9:15-16:00 自动启动
         self._manual_stop_requested = False
         self._rt_stop_requested = False
@@ -45,8 +55,9 @@ class RtMonitorTab(BaseStockTab):
         self._set_rt_button_state(
             False,
             info_text=self._format_status_text(
+                "idle",
                 "未启动",
-                "点“启动监控”开始"
+                "点“启动监控”开始",
             )
         )
 
@@ -58,13 +69,18 @@ class RtMonitorTab(BaseStockTab):
         interval_map = {"30秒": 30, "1分钟": 60, "3分钟": 180, "5分钟": 300}
         return interval_map.get(interval_text, 30)
 
-    def _format_status_text(self, current: str, next_step: str = "") -> str:
-        if not next_step:
-            return self.format_status_summary(f"状态 {current}")
-        return self.format_status_summary(f"状态 {current}", f"下一步 {next_step}")
+    def _format_status_text(self, state: str, detail: str = "", next_step: str = "") -> str:
+        canonical_states = {"idle", "realtime", "cache", "fallback", "error", "working"}
+        if state not in canonical_states:
+            if next_step:
+                return self.format_status_summary(f"状态 {state}", f"说明 {detail}", f"下一步 {next_step}")
+            if detail:
+                return self.format_status_summary(f"状态 {state}", f"下一步 {detail}")
+            return self.format_status_summary(f"状态 {state}")
+        return format_runtime_status_text(state, detail, next_step)
 
-    def _set_status(self, current: str, next_step: str = ""):
-        self.lbl_rt_info.setText(self._format_status_text(current, next_step))
+    def _set_status(self, state: str, detail: str = "", next_step: str = ""):
+        self.lbl_rt_info.setText(self._format_status_text(state, detail, next_step))
 
     def _on_worker_progress(self, raw_msg: str):
         msg = str(raw_msg or "").strip()
@@ -77,6 +93,7 @@ class RtMonitorTab(BaseStockTab):
         if m_fetch:
             round_no, cnt = m_fetch.groups()
             self._set_status(
+                "realtime",
                 f"第{round_no}轮 拉取{cnt}只报价",
                 "检测突破并刷新"
             )
@@ -87,36 +104,37 @@ class RtMonitorTab(BaseStockTab):
             round_no = int(m_done.group(1))
             elapsed = m_done.group(2)
             self._set_status(
+                "realtime",
                 f"第{round_no}轮 完成({elapsed}s)",
                 f"{interval_sec}s后第{round_no + 1}轮"
             )
             return
 
         if "加载历史日线数据" in msg:
-            self._set_status("初始化历史数据", "计算RPS并建池")
+            self._set_status("cache", "初始化历史数据", "计算RPS并建池")
             return
 
         if "计算全市场 RPS 排名" in msg:
-            self._set_status("计算RPS", "建池并拉取报价")
+            self._set_status("working", "计算RPS", "建池并拉取报价")
             return
 
         if msg.startswith("补全") and "市值" in msg:
-            self._set_status(msg.replace("...", ""), "收尾后进入下一轮")
+            self._set_status("working", msg.replace("...", ""), "收尾后进入下一轮")
             return
 
         if "实时报价获取失败" in msg:
-            self._set_status("拉取报价失败", f"{interval_sec}s后重试")
+            self._set_status("error", "拉取报价失败", f"{interval_sec}s后重试")
             return
 
         if msg.startswith("盘中扫描异常"):
-            self._set_status("本轮扫描异常", f"{interval_sec}s后重试")
+            self._set_status("error", "本轮扫描异常", f"{interval_sec}s后重试")
             return
 
         if "无历史数据" in msg:
-            self._set_status("缺少历史数据", "先执行F5或扫描")
+            self._set_status("fallback", "缺少历史数据", "先执行F5或扫描")
             return
 
-        self._set_status(msg.replace("...", ""), "处理中")
+        self._set_status("working", msg.replace("...", ""), "处理中")
 
     def _set_rt_button_state(self, running: bool, info_text: str | None = None, emit_progress: bool = False):
         """统一维护盘中监控按钮显示状态，避免 UI 与真实运行状态漂移。"""
@@ -180,7 +198,7 @@ class RtMonitorTab(BaseStockTab):
     def _init_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
-        
+
         # 统一工具条：标题 + 副标题 + 过滤区 + 主操作
         self.lbl_rt_info = QLabel("未启动")
         self.lbl_rt_info.setWordWrap(True)
@@ -223,17 +241,17 @@ class RtMonitorTab(BaseStockTab):
         self.source_model = RtTableModel()
         self.proxy_model = RtSortFilterProxyModel(self)
         self.proxy_model.setSourceModel(self.source_model)
-        
+
         self.table_rt = VCPTableView(default_row_height=30)
         self.table_rt.setModel(self.proxy_model)
         self.delegate = StockItemDelegate(self.table_rt)
         self.table_rt.setItemDelegate(self.delegate)
         self.table_state = TableStateWrapper(self.table_rt, empty_title="暂无监控记录", loading_title="加载中...")
-        
+
         header = self.table_rt.horizontalHeader()
         header.setStretchLastSection(False)
         header.setMinimumSectionSize(52)
-        
+
         try:
             width_map = {
                 "序号": 58,
@@ -253,14 +271,14 @@ class RtMonitorTab(BaseStockTab):
                 header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
                 if header_name in width_map:
                     self.table_rt.setColumnWidth(col_idx, width_map[header_name])
-        except Exception as e:
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
             log.warning(f"[盘中监控] 列宽初始化异常: {e}")
         self.table_rt.setSortingEnabled(True)
         self.table_rt.horizontalHeader().setSortIndicatorShown(True)
-        
+
         # 绑定防抖自动保存与恢复配置
         self.bind_header_persistence(self.table_rt, "header_state_rt_v5")
-        
+
         # 绑定双击事件，广播K线上下文
         self.table_rt.doubleClicked.connect(self._on_table_double_clicked)
 
@@ -272,7 +290,7 @@ class RtMonitorTab(BaseStockTab):
 
     def _clear_table(self):
         self.source_model.update_data([])
-        self._set_status("已清空记录", "监控可继续")
+        self._set_status("idle", "已清空记录", "监控可继续")
         if hasattr(self, "table_state"):
             self.table_state.show_empty("暂无监控记录")
 
@@ -286,11 +304,11 @@ class RtMonitorTab(BaseStockTab):
         dlg.setFixedSize(300, 160)
         form = QVBoxLayout(dlg)
         form.setContentsMargins(20, 20, 20, 20)
-        
+
         cmb_interval = QComboBox()
         cmb_interval.addItems(["30秒", "1分钟", "3分钟", "5分钟"])
         cmb_interval.setCurrentText(str(self._settings.value("interval", "30秒")))
-        
+
         spn_rps = QSpinBox()
         spn_rps.setRange(50, 99)
         spn_rps.setValue(int(self._settings.value("rps", 80)))
@@ -299,12 +317,12 @@ class RtMonitorTab(BaseStockTab):
         row1.addWidget(QLabel("刷新间隔:"))
         row1.addWidget(cmb_interval)
         form.addLayout(row1)
-        
+
         row2 = QHBoxLayout()
         row2.addWidget(QLabel("RPS 阈值:"))
         row2.addWidget(spn_rps)
         form.addLayout(row2)
-        
+
         form.addStretch()
         btn_ok = QPushButton("确定")
         btn_ok.setProperty("class", "secondary")
@@ -324,9 +342,9 @@ class RtMonitorTab(BaseStockTab):
             self.rt_worker.stop()
             self._set_rt_button_stopping(
                 info_text=(
-                    self._format_status_text("正在停止", "稍后可重新启动")
+                    self._format_status_text("working", "正在停止", "稍后可重新启动")
                     if not auto else
-                    self._format_status_text("自动停止中", "下个交易时段会自动启动")
+                    self._format_status_text("working", "自动停止中", "下个交易时段会自动启动")
                 ),
             )
             return
@@ -336,20 +354,20 @@ class RtMonitorTab(BaseStockTab):
             self._rt_stop_requested = False
             # 兜底：如果内存缓存为空，先尝试从磁盘加载昨日F5的缓存
             if not self.data_provider.cache_data:
-                self._set_status("加载本地缓存", "就绪后连接行情")
+                self._set_status("cache", "加载本地缓存", "就绪后连接行情")
                 try:
                     cache_date = self.data_provider.load_cache_from_disk()
                     if cache_date and self.data_provider.cache_data:
                         log.info(f"[盘中监控] 缓存为空，从磁盘自动加载成功(日期: {cache_date})")
-                except Exception as e:
+                except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
                     log.error(f"[盘中监控] 磁盘缓存自动加载失败: {e}")
             if not self.data_provider.cache_data:
                 show_toast("请先执行扫描或按 F5 加载数据后再启动", "warning", self)
-                self._set_status("无可用缓存", "先执行扫描或F5")
+                self._set_status("fallback", "无可用缓存", "先执行扫描或F5")
                 return
-            
+
             if not self.data_provider.is_online():
-                self._set_status("连接行情服务器", "成功后自动启动")
+                self._set_status("working", "连接行情服务器", "成功后自动启动")
                 self.btn_rt_start.setEnabled(False)
                 def _try_connect():
                     ok = self.data_provider.test_network(timeout=5)
@@ -386,12 +404,12 @@ class RtMonitorTab(BaseStockTab):
         self.rt_worker.progress.connect(self._on_worker_progress)
         self.rt_worker.scan_count.connect(lambda n, pool: event_bus.sig_system_log.emit("info", f"[监控] 第{n}轮 | 待突破池 {pool} 只"))
         self.rt_worker.finished.connect(self._on_rt_worker_finished)
-        
+
         self._rt_stop_requested = False
         self.rt_worker.start()
         self._set_rt_button_state(
             True,
-            info_text=self._format_status_text("已启动", "正在执行首轮任务"),
+            info_text=self._format_status_text("realtime", "已启动", "正在执行首轮任务"),
             emit_progress=True
         )
 
@@ -407,7 +425,7 @@ class RtMonitorTab(BaseStockTab):
         try:
             from core.market_calendar import MarketCalendar
             active = MarketCalendar.is_market_active()
-        except Exception:
+        except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
             active = False
 
         if self._manual_stop_requested:
@@ -419,7 +437,7 @@ class RtMonitorTab(BaseStockTab):
 
         self._set_rt_button_state(
             False,
-            info_text=self._format_status_text("已停止", next_step),
+            info_text=self._format_status_text("idle", "已停止", next_step),
             emit_progress=True
         )
 
@@ -428,7 +446,7 @@ class RtMonitorTab(BaseStockTab):
         self.btn_rt_start.setEnabled(True)
         event_bus.sig_network_status_changed.emit(True, "Online")
         event_bus.sig_system_log.emit("info", "[盘中监控] 启动前自动联网成功")
-        self._set_status("联网成功", "正在启动")
+        self._set_status("realtime", "联网成功", "正在启动")
         self._start_rt_worker()
 
     @pyqtSlot()
@@ -436,7 +454,7 @@ class RtMonitorTab(BaseStockTab):
         self.btn_rt_start.setEnabled(True)
         self._set_rt_button_state(
             False,
-            info_text=self._format_status_text("联网失败", "检查网络后重试")
+            info_text=self._format_status_text("error", "联网失败", "检查网络后重试")
         )
         show_toast("无法连接东方财富实时报价", "error", self)
 
@@ -450,7 +468,7 @@ class RtMonitorTab(BaseStockTab):
                     self.table_state.show_table()
                 else:
                     self.table_state.show_empty("暂无监控记录")
-        except Exception as e:
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
             log.error(f"Failed to update rt table: {e}")
 
         # 核心解耦点：表格自身渲染完毕后，向全系统抛出数据刷新事件！
@@ -529,7 +547,7 @@ class RtMonitorTab(BaseStockTab):
         index = self.table_rt.indexAt(pos)
         if not index.isValid():
             return
-            
+
         source_index = self.proxy_model.mapToSource(index)
         row_data = self.source_model.get_row_data(source_index.row())
         if not row_data:

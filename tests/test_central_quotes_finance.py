@@ -16,7 +16,7 @@ def test_central_quotes_service_enriches_quotes_with_missing_finance(monkeypatch
     from vcp.engine import VCPEngine
 
     main_window = QWidget()
-    service = CentralQuotesService(main_window, DummyProvider())
+    service = CentralQuotesService(main_window, DummyProvider(), code_supplier=lambda: {"000001"})
 
     monkeypatch.setattr(
         global_store,

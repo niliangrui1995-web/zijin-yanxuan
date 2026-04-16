@@ -12,11 +12,13 @@
 
 import os
 import re
-import numpy as np
-from datetime import datetime as _datetime
 from collections import defaultdict
+from datetime import datetime as _datetime
+
+import numpy as np
 
 from core.logger import get_logger
+
 _log = get_logger(__name__)
 
 
@@ -102,7 +104,7 @@ class SectorManager:
                         parts = line.split('|')
                         if len(parts) >= 2:
                             hy_name_map[parts[0]] = parts[1]
-            except Exception as e:
+            except (OSError, TypeError, UnicodeDecodeError, ValueError) as e:
                 _log.error(f"[板块管理] ⚠ 解析 incon.dat 失败: {e}")
         try:
             with open(filepath, 'r', encoding='gbk', errors='ignore') as f:
@@ -130,7 +132,7 @@ class SectorManager:
                     self.code_to_sectors[full_code].append(sector_name)
                     self.sector_to_codes[sector_name].append(full_code)
                     self._hy_count += 1
-        except Exception as e:
+        except (OSError, TypeError, UnicodeDecodeError, ValueError) as e:
             _log.error(f"[板块管理] ⚠ 解析行业文件失败: {e}")
     # ---------- 解析概念板块文件 ----------
     def _parse_concepts(self, filepath):
@@ -143,14 +145,14 @@ class SectorManager:
         self._gn_count = 0
         if not os.path.exists(filepath):
             _log.warning(f"[板块管理] ⚠ 未找到概念板块文件: {filepath}，尝试 fallback")
-            
+
         text = ""
         try:
             if os.path.exists(filepath):
                 with open(filepath, 'rb') as f:
                     raw = f.read()
                 text = raw.decode('gbk', errors='replace')
-        except Exception as e:
+        except (OSError, TypeError, UnicodeDecodeError, ValueError) as e:
             _log.error(f"[板块管理] ⚠ 读取 {filepath} 失败: {e}，尝试 fallback")
 
         if not text:
@@ -161,7 +163,7 @@ class SectorManager:
                         raw = f.read()
                     text = raw.decode('gbk', errors='replace')
                     _log.info(f"[板块管理] 成功读取备用文件: {fallback_path}")
-                except Exception as e:
+                except (OSError, TypeError, UnicodeDecodeError, ValueError) as e:
                     _log.error(f"[板块管理] ⚠ 备用文件 {fallback_path} 读取失败: {e}")
             else:
                 _log.warning(f"[板块管理] ⚠ 备用文件也不存在: {fallback_path}")
@@ -200,7 +202,7 @@ class SectorManager:
                     self.sector_to_codes[sector_name].append(full_code)
 
                 self._gn_count += 1
-        except Exception as e:
+        except (AttributeError, IndexError, OSError, TypeError, ValueError) as e:
             _log.error(f"[板块管理] ⚠ 解析概念板块文件失败: {e}")
     # ---------- 查询接口 ----------
     def get_sectors(self, code):
@@ -245,7 +247,7 @@ class SectorManager:
                 return result
         except ImportError:
             pass  # polars 未安装
-        except Exception as e:
+        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
             _log.error(f"[板块管理] Polars 板块 RPS 计算失败，回退 numpy: {e}")
         # ---- numpy 原始路径（fallback）----
         if isinstance(target_date, str):
@@ -292,7 +294,7 @@ class SectorManager:
                     else:
                         loc = int(loc)
                     curr_close = float(df.iloc[loc]['close'])
-            except Exception as _e:
+            except (AttributeError, IndexError, KeyError, RuntimeError, TypeError, ValueError) as _e:
                 _log.debug(f"[板块管理] 计算 {code} 涨幅时异常: {_e}")
                 continue
 

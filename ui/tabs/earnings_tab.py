@@ -1,17 +1,16 @@
 # -*- coding: utf-8 -*-
 from datetime import datetime
+
 import pandas as pd
-from PyQt6.QtWidgets import (
-    QVBoxLayout, QHeaderView, QPushButton, QLabel, QLineEdit, QComboBox
-)
-from PyQt6.QtCore import Qt, pyqtSlot, QTimer
-from ui.tabs.base_stock_tab import BaseStockTab
-from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
-from ui.components import VCPTableView, TableStateWrapper
+from PyQt6.QtCore import Qt, QTimer, pyqtSlot
+from PyQt6.QtWidgets import QComboBox, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
+
 from core.event_bus import event_bus
 from core.logger import get_logger
-
 from earnings.scheduler import EarningsScheduler
+from ui.components import TableStateWrapper, VCPTableView
+from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
+from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
 EARNINGS_DISPLAY_TRADE_DAYS = 10
@@ -23,14 +22,14 @@ class EarningsTab(BaseStockTab):
         super().__init__(data_provider, parent)
         self.row_data = []
         self._init_ui()
-        
+
         # 订阅中央广播站报价及开启大一统市值更新
         self.subscribe_global_quotes()
-        
+
         # 挂载后台总调度器
         self.scheduler = EarningsScheduler(self)
         self.scheduler.sig_new_surprises_found.connect(self._on_new_data_found)
-        
+
         # 延后到事件循环空闲时再启动巡逻，避免构造阶段阻塞 UI。
         QTimer.singleShot(0, self.scheduler.start_patrol)
 
@@ -51,17 +50,17 @@ class EarningsTab(BaseStockTab):
         self.ent_start_date.setPlaceholderText("起点(如2024-01-01)")
         self.ent_start_date.setText(datetime.now().strftime("%Y-%m-%d"))
         self.ent_start_date.setFixedWidth(100)
-        
+
         self.ent_end_date = QLineEdit()
         self.ent_end_date.setPlaceholderText("终点(如2024-01-15)")
         self.ent_end_date.setText(datetime.now().strftime("%Y-%m-%d"))
         self.ent_end_date.setFixedWidth(100)
-        
+
         self.btn_manual_fetch = QPushButton("历史更新")
         self.btn_manual_fetch.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_manual_fetch.setToolTip("手动填入日期区间，强行进行数据扫描并在本地进行去重和升级！")
         self.btn_manual_fetch.clicked.connect(self._on_manual_fetch)
-        
+
         # 新增 Excel 风格的分类筛选下拉框
         self.combo_type_filter = QComboBox()
         self.combo_type_filter.addItems(["全看", "仅看预告", "仅看快报", "仅看财报"])
@@ -80,20 +79,20 @@ class EarningsTab(BaseStockTab):
         self.table = VCPTableView(default_row_height=30)
         self.table_state = TableStateWrapper(self.table, empty_title="暂无业绩数据", loading_title="加载中...")
         layout.addWidget(self.table_state)
-        
+
         # 字段映射表：前四列必须是标准列（代码/名称/现价/涨幅%），以便接收盘中广播
         self.header_labels = [
             "代码", "名称", "现价", "涨幅%", "市值", "PE(TTM)",
-            "环比%", "同比%", "当季利润", "上季利润", 
+            "环比%", "同比%", "当季利润", "上季利润",
             "报告期", "类型", "揭晓日", "基调", "所属行业与概念"
         ]
-        
+
         self.model = StockTableModel(self.header_labels)
         self.model.set_plain_style_headers(["揭晓日"])
         self.proxy_model = RtSortFilterProxyModel(self.table)
         self.proxy_model.setSourceModel(self.model)
         self.table.setModel(self.proxy_model)
-        
+
         self.delegate = StockItemDelegate(self.table)
         self.table.setItemDelegate(self.delegate)
         # 默认按第12列（“揭晓日”）由近到远（降序）排列，让最新鲜的情报自动顶在最上面
@@ -111,7 +110,7 @@ class EarningsTab(BaseStockTab):
         for i, w in enumerate(default_widths):
             header_view.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
             self.table.setColumnWidth(i, w)
-            
+
         self.bind_header_persistence(self.table, "earnings_header_state_v5")
 
     def _set_window_status(self, primary: str, *segments: str):
@@ -122,23 +121,23 @@ class EarningsTab(BaseStockTab):
         end_str = self.ent_end_date.text().strip()
         if not start_str or not end_str:
             return
-            
+
         try:
             from datetime import timedelta
             start_dt = datetime.strptime(start_str, "%Y-%m-%d")
             end_dt = datetime.strptime(end_str, "%Y-%m-%d")
-            
+
             # 自动调整起止顺序防呆
             if start_dt > end_dt:
                 start_dt, end_dt = end_dt, start_dt
-                
+
             delta_days = (end_dt - start_dt).days
             date_list = [(start_dt + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(delta_days + 1)]
         except (ValueError, OverflowError) as _e:
             log.debug(f"[业绩监控] 日期解析失败: {_e}")
             self._set_window_status("日期格式错误", "请使用 YYYY-MM-DD")
             return
-            
+
         self._set_window_status("正在拉取业绩数据", f"{start_str}→{end_str}", self._status_metric("区间 ", len(date_list), "天"))
         if hasattr(self, "table_state"):
             self.table_state.show_loading("正在拉取业绩数据...", "请稍候")
@@ -153,7 +152,7 @@ class EarningsTab(BaseStockTab):
             # 截断提取真实关键字，比如 “仅看预告” -> “预告”
             keyword = text.replace("仅看", "")
             self.proxy_model.setColumnFilter("类型", keyword)
-            
+
         # 记录下操作
         log.debug(f"[业绩监控] 筛选切换: {text}")
 
@@ -189,7 +188,7 @@ class EarningsTab(BaseStockTab):
             from core.market_calendar import MarketCalendar
 
             recent_trade_dates = MarketCalendar.get_recent_trade_dates(trade_days)
-        except Exception as _e:
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as _e:
             log.debug(f"[业绩监控] 获取交易日窗口失败: {_e}")
             return None
 
@@ -271,21 +270,21 @@ class EarningsTab(BaseStockTab):
             self._set_window_status("缓存恢复中", self._status_metric("新增 ", len(df), "只"))
         else:
             self._set_window_status("本次扫描命中", self._status_metric("新增 ", len(df), "只"))
-        
+
         for _, row in df.iterrows():
             code = str(row.get('股票代码', '')).zfill(6)
             name = str(row.get('股票名称', ''))
             pct = float(row.get('环比增速_百分比', 0.0))
             cur_profit = float(row.get('单季净利润_新增', 0.0))
             last_profit = float(row.get('单季净利润_上期', 0.0))
-            
+
             # 格式化一下大额单位
             def fmt_money(v):
                 if v != v or v is None: return "--"
                 if abs(v) >= 1e8: return f"{v/1e8:.2f}亿"
                 if abs(v) >= 1e4: return f"{v/1e4:.0f}万"
                 return f"{v:.0f}"
-            
+
             row_obj = {
                 "代码": code,
                 "名称": name,
@@ -304,7 +303,7 @@ class EarningsTab(BaseStockTab):
                 "基调": str(row.get("基调", "")),
                 "所属行业与概念": str(row.get("所属行业与概念", ""))
             }
-            
+
             # 校验与层级更替（预告 -> 财报）去重
             exists = False
             for r in self.row_data:
@@ -313,7 +312,7 @@ class EarningsTab(BaseStockTab):
                     exists = True
                     old_date = r.get("揭晓日", "")
                     new_date = row_obj["揭晓日"]
-                    
+
                     # 只有更晚发布的权威版（包括同日不同类型），才允许覆盖界面上的旧版（如财报覆盖旧预告）
                     if new_date >= old_date:
                         row_obj["现价"] = r.get("现价", "--")
@@ -322,17 +321,17 @@ class EarningsTab(BaseStockTab):
                         row_obj["PE(TTM)"] = r.get("PE(TTM)", "--")
                         if "_raw_profit" not in row_obj and "_raw_profit" in r:
                             row_obj["_raw_profit"] = r["_raw_profit"]
-                        
+
                         # 确保如果有老的字段，也被合并到新数据上（防止旧属性丢失）
                         r.update(row_obj)
                         log.debug(f"[业绩监控] {code} {row_obj['报告期']} 已覆盖为 {row_obj['类型']}")
                     else:
                         log.debug(f"[业绩监控] {code} {row_obj['类型']} 已存在更新版，跳过")
                     break
-                    
+
             if not exists:
                 self.row_data.append(row_obj)
-                
+
         # 只展示近 N 个交易日窗口，避免自然日累计导致表格越来越重。
         self._apply_display_trade_window(force_refresh=True)
         self._set_window_status(
@@ -340,18 +339,18 @@ class EarningsTab(BaseStockTab):
             self._status_metric("展示 ", len(self.row_data), "只"),
             self._status_metric("窗口 ", EARNINGS_DISPLAY_TRADE_DAYS, "交易日"),
         )
-        
+
         # 通知关注池：业绩数据已就绪，重新拉取"业绩异动"列
         # 旧事件枚举链路已废弃，这里走专属刷新通道。
         event_bus.sig_earnings_updated.emit()
-        
+
     def _show_context_menu(self, pos):
         index = self.table.indexAt(pos)
         if not index.isValid(): return
         source_idx = self.proxy_model.mapToSource(index)
         row = source_idx.row()
         if row >= len(self.model.row_data): return
-        
+
         code = self.model.row_data[row].get("代码", "")
         name = self.model.row_data[row].get("名称", "")
         row_data = self.model.row_data[row]
@@ -364,7 +363,7 @@ class EarningsTab(BaseStockTab):
         source_idx = self.proxy_model.mapToSource(index)
         row = source_idx.row()
         if row >= len(self.model.row_data): return
-        
+
         code = self.model.row_data[row].get("代码", "")
         code_list = []
         for r in range(self.proxy_model.rowCount()):
@@ -372,13 +371,13 @@ class EarningsTab(BaseStockTab):
             if s_idx.row() < len(self.model.row_data):
                 rd = self.model.row_data[s_idx.row()]
                 code_list.append({'代码': rd.get("代码", ""), '名称': rd.get("名称", "")})
-        
+
         current_idx = 0
         for i, c in enumerate(code_list):
             if c['代码'] == code:
                 current_idx = i
                 break
-                
+
         event_bus.sig_show_kline_with_list.emit(code, code_list, current_idx)
 
     def closeEvent(self, event):

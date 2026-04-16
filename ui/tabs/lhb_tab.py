@@ -12,19 +12,22 @@ ui/tabs/lhb_tab.py
 
 import time
 
-from PyQt6.QtWidgets import (
-    QVBoxLayout, QPushButton, QLabel, QLineEdit,
-)
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtWidgets import (
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QVBoxLayout,
+)
 
-from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
-from ui.components import VCPTableView, TableStateWrapper
 from core.event_bus import event_bus
+from core.lhb_pool_manager import POOL_WINDOW, LhbPoolManager
 from core.logger import get_logger
-from core.task_manager import task_manager
-from ui.tabs.base_stock_tab import BaseStockTab
-from core.lhb_pool_manager import LhbPoolManager, POOL_WINDOW
 from core.market_calendar import MarketCalendar
+from core.task_manager import task_manager
+from ui.components import TableStateWrapper, VCPTableView
+from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
+from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
 
@@ -53,13 +56,17 @@ class LhbTab(BaseStockTab):
         # 订阅全局缓存异步加载完成事件：
         # RPS 缓存是由后台线程在 2.5 秒后注入 engine 的。
         self._rps_injected_flag = False
-        event_bus.sig_cache_loaded.connect(self._on_global_cache_loaded)
+        event_bus.sig_cache_bootstrap_ready.connect(self._on_cache_bootstrap_ready)
+        event_bus.sig_cache_reload_completed.connect(self._on_cache_reload_completed)
 
-    def _on_global_cache_loaded(self):
+    def _on_cache_bootstrap_ready(self):
         """处理延迟的 RPS 数据加载，仅执行一次避免和自身发出的同名信号造成无限死循环"""
         if self._rps_injected_flag:
             return
         self._rps_injected_flag = True
+        self._load_and_display_pool()
+
+    def _on_cache_reload_completed(self):
         self._load_and_display_pool()
 
     @staticmethod
@@ -68,7 +75,7 @@ class LhbTab(BaseStockTab):
         try:
             from vcp.engine import VCPEngine
             return VCPEngine.get_instance()
-        except Exception:
+        except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
             return None
 
     @staticmethod
@@ -253,7 +260,7 @@ class LhbTab(BaseStockTab):
                 self.table_state.show_empty("暂无龙虎榜数据")
 
         # 触发全局通知，让关注池 Tab 能扫描到龙虎榜数据
-        event_bus.sig_cache_loaded.emit()
+        event_bus.sig_lhb_pool_updated.emit()
 
         self.refresh_table_quotes_and_market_caps(quote_task_id="lhb_quotes")
 
@@ -335,7 +342,7 @@ class LhbTab(BaseStockTab):
                         }
                     level, message = self._build_backfill_progress_log(step, total, date_str, payload)
                     _safe_log_emit(level, message)
-                except Exception as e:
+                except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
                     log.warning(f"[龙虎榜池] 回填 {date_str} 失败: {e}")
                     _safe_log_emit("warn", f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 抓取失败: {e}")
 
@@ -386,7 +393,7 @@ class LhbTab(BaseStockTab):
                             _safe_log_emit("warn", f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 源头暂为空，保留缓存{cached_count}条")
                         else:
                             _safe_log_emit("warn", f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 校验异常，保留缓存{cached_count}条")
-                except Exception as e:
+                except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
                     log.warning(f"[龙虎榜池] 校验 {date_str} 失败: {e}")
                     _safe_log_emit("warn", f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 校验失败: {e}")
 

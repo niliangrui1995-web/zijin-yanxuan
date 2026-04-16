@@ -1,24 +1,33 @@
-import os
 import datetime
 import json
-from PyQt6.QtWidgets import (
-    QVBoxLayout, QLabel,
-    QHeaderView, QPushButton, QLineEdit, QSpinBox, QDoubleSpinBox, QToolButton
-)
-from ui.components.toast_widget import show_toast
-from PyQt6.QtCore import Qt, QTimer
-# Removed unused imports from ui.theme and PyQt6
+import os
+import sqlite3
 
-from ui.models.table_models import StockTableModel, RtSortFilterProxyModel, StockItemDelegate
-from ui.components import VCPTableView, TableStateWrapper
-from ui.components.scan_dialogs import VCPScanRangeDialog, VCPScanSettingsDialog
-from ui.workers.scan_worker import ScanWorker
-from vcp.engine import VCPParams
-from core.market_calendar import MarketCalendar
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtWidgets import (
+    QDoubleSpinBox,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QSpinBox,
+    QToolButton,
+    QVBoxLayout,
+)
+
 from core.event_bus import event_bus
 from core.logger import get_logger
-from ui.viewmodels.watchlist_vm import watchlist_vm
+from core.market_calendar import MarketCalendar
+from ui.components import TableStateWrapper, VCPTableView
+from ui.components.scan_dialogs import VCPScanRangeDialog, VCPScanSettingsDialog
+from ui.components.toast_widget import show_toast
+
+# Removed unused imports from ui.theme and PyQt6
+from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_tab import BaseStockTab
+from ui.viewmodels.watchlist_vm import watchlist_vm
+from ui.workers.scan_worker import ScanWorker
+from vcp.engine import VCPParams
 
 log = get_logger(__name__)
 
@@ -39,10 +48,10 @@ class ScanTab(BaseStockTab):
 
         self._init_settings_widgets()
         self._init_ui()
-        
+
         # 启动时自动加载上次缓存的扫描结果
         QTimer.singleShot(300, self._load_scan_cache)
-        
+
         # 统一订阅及后台刷新
         self.subscribe_global_quotes()
 
@@ -143,7 +152,7 @@ class ScanTab(BaseStockTab):
             try:
                 if len(df) <= 0:
                     continue
-            except Exception:
+            except (AttributeError, TypeError, ValueError):
                 continue
 
             try:
@@ -151,7 +160,7 @@ class ScanTab(BaseStockTab):
                 if index is None or len(index) <= 0:
                     continue
                 last_value = index[-1]
-            except Exception:
+            except (AttributeError, IndexError, KeyError, TypeError, ValueError):
                 continue
 
             try:
@@ -161,7 +170,7 @@ class ScanTab(BaseStockTab):
                     date_str = str(last_value).strip().replace("-", "")[:8]
                 if len(date_str) == 8 and date_str.isdigit() and date_str > latest_date:
                     latest_date = date_str
-            except Exception:
+            except (AttributeError, TypeError, ValueError):
                 continue
         return latest_date
 
@@ -348,7 +357,7 @@ class ScanTab(BaseStockTab):
         # 右键菜单
         self.table_scan.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table_scan.customContextMenuRequested.connect(self._show_context_menu)
-        
+
         # 挂载快捷键: 拦截回车与空格模拟双击
         original_keypress = self.table_scan.keyPressEvent
         def table_key_press(event):
@@ -366,7 +375,7 @@ class ScanTab(BaseStockTab):
         header.setStretchLastSection(False)
         header.setSectionsClickable(True)
         self.table_scan.setSortingEnabled(True)
-        
+
         scan_weights = [0.55, 0.8, 0.9, 0.8, 0.8, 0.7, 1.2, 1.0, 1.0, 0.9, 1.0, 0.7, 2.5]
         for col_idx, w in enumerate(scan_weights):
             header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
@@ -375,10 +384,10 @@ class ScanTab(BaseStockTab):
 
         # 绑定防抖自动保存与恢复配置
         self.bind_header_persistence(self.table_scan, "header_state_scan_v3")
-        
+
         # 强制默认按第5列（触发日期）降序排序（由近到远），覆盖掉持久化中可能记录的其他排序列
         self.table_scan.sortByColumn(self.source_model.headers.index("触发日期"), Qt.SortOrder.DescendingOrder)
-        
+
         layout.addWidget(self.table_state)
 
     def _handle_show_kline(self, index=None):
@@ -390,10 +399,10 @@ class ScanTab(BaseStockTab):
         code_idx = model.index(row, code_col)
         current_code = model.data(code_idx, Qt.ItemDataRole.DisplayRole)
         if not current_code: return
-        
+
         code_list = []
         visual_rows = []
-        
+
         # 构建当前经过筛选后(未隐藏)的股票列表，支持在K线中翻页
         for r in range(model.rowCount()):
             c_code = model.data(model.index(r, code_col), Qt.ItemDataRole.DisplayRole)
@@ -408,10 +417,10 @@ class ScanTab(BaseStockTab):
                     row_data.setdefault('名称', c_name)
                 if not isinstance(row_data, dict):
                     row_data = {'代码': c_code, '名称': c_name}
-                    
+
                 code_list.append(row_data)
                 visual_rows.append(r)
-                    
+
         try:
             current_idx = visual_rows.index(row)
             event_bus.sig_show_kline_with_list.emit(current_code, code_list, current_idx)
@@ -545,10 +554,10 @@ class ScanTab(BaseStockTab):
                 df_res = df_res.drop(columns=['评分_tmp'])
             final_list = df_res.to_dict('records')
             self._current_results = final_list
-        except Exception as e:
+        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
             event_bus.sig_system_log.emit("error", f"数据整理失败: {e}")
             final_list = results
-            
+
         fav_codes = set(watchlist_vm.get_all_codes())
         formatted_list = []
 
@@ -556,7 +565,7 @@ class ScanTab(BaseStockTab):
             for row_idx, row_data in enumerate(final_list):
                 code_str = str(row_data.get('代码', ''))
                 name_str = str(row_data.get('名称', ''))
-                    
+
                 def _safe_float_str(val, fmt="{:.2f}"):
                     try: return fmt.format(float(val))
                     except (ValueError, TypeError): return str(val)
@@ -571,7 +580,7 @@ class ScanTab(BaseStockTab):
                     row_style = "fake_breakout"
                 elif "关注" in name_str or code_str in fav_codes:
                     row_style = "approaching"
-                    
+
                 # Format score cleanly
                 score_str = str(row_data.get('评分', ''))
                 try:
@@ -598,9 +607,9 @@ class ScanTab(BaseStockTab):
                 for k, v in row_data.items():
                     if k not in formatted_row:
                         formatted_row[k] = v
-                        
+
                 formatted_list.append(formatted_row)
-                
+
             self.source_model.update_data(formatted_list)
             self.refresh_table_quotes_and_market_caps(
                 current_model=self.source_model,
@@ -610,7 +619,7 @@ class ScanTab(BaseStockTab):
             if hasattr(self, "table_state"):
                 self.table_state.show_table()
             self._refresh_scan_status()
-        except Exception as e:
+        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
             event_bus.sig_system_log.emit("error", f"渲染表格错误: {e}")
 
     # ==========================
@@ -639,14 +648,14 @@ class ScanTab(BaseStockTab):
             }
             store.save_json("scan_cache", cache_data)
             log.info(f"[扫描缓存] 已保存 {len(results)} 条结果至 SQLite")
-        except Exception as e:
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError, sqlite3.Error) as e:
             log.error(f"[扫描缓存] 保存失败: {e}")
 
     def _load_scan_cache(self):
         try:
             from core.data_store import DataStore
             cache_data = DataStore().load_json("scan_cache")
-            
+
             # 如果 SQLite 没查到，尝试兼容旧的 JSON 并自动迁入
             if not cache_data:
                 data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'data')
@@ -667,7 +676,7 @@ class ScanTab(BaseStockTab):
             if not isinstance(cache_data, dict): return
             results = cache_data.get('results', [])
             if not results: return
-            
+
             saved_at = cache_data.get('saved_at', '未知')
             self._current_results = results
             self._render_scan_table(results)
@@ -685,7 +694,7 @@ class ScanTab(BaseStockTab):
                 f"[扫描缓存] 已加载 {len(results)} 条记录 (保存于 {saved_at[:16]}){params_hint}"
             )
             event_bus.sig_task_progress.emit("scan", 100, f"已加载 {len(results)} 条扫描缓存")
-        except Exception as e:
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError, sqlite3.Error, json.JSONDecodeError) as e:
             event_bus.sig_system_log.emit("error", f"[扫描缓存] 加载失败: {e}")
 
     # ==========================
@@ -696,7 +705,7 @@ class ScanTab(BaseStockTab):
         index = self.table_scan.indexAt(pos)
         if not index.isValid():
             return
-            
+
         model = index.model()
         row = index.row()
         code_col = self.source_model.headers.index("代码")

@@ -2,19 +2,48 @@
 # 三大优化: ①numpy 并行 pct_change+rank ②Parquet 缓存 ③增量 RPS
 
 import os
-import time
 import threading
+import time
 import uuid
 from datetime import datetime, timedelta
+
 import numpy as np
 import polars as pl
 
-from vcp.constants import DATE_FMT, RPS_BUFFER_DAYS, CACHE_DIR
-
 from core.logger import get_logger
+from vcp.constants import CACHE_DIR, DATE_FMT, RPS_BUFFER_DAYS
+
 _log = get_logger(__name__)
 _PRICES_MATRIX_LOCK = threading.Lock()
 _PARQUET_CACHE_LOCK = threading.Lock()
+_POLARS_EXCEPTION_TYPES = tuple(
+    exc_type
+    for exc_type in (
+        getattr(pl.exceptions, "PolarsError", None),
+        getattr(pl.exceptions, "ColumnNotFoundError", None),
+        getattr(pl.exceptions, "ComputeError", None),
+        getattr(pl.exceptions, "InvalidOperationError", None),
+        getattr(pl.exceptions, "SchemaError", None),
+        getattr(pl.exceptions, "ShapeError", None),
+    )
+    if isinstance(exc_type, type)
+)
+_POLARS_RUNTIME_ERRORS = (
+    AttributeError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+) + _POLARS_EXCEPTION_TYPES
+_POLARS_DATA_ERRORS = (
+    AttributeError,
+    IndexError,
+    KeyError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+) + _POLARS_EXCEPTION_TYPES
 
 
 def _atomic_parquet_write(df: pl.DataFrame, final_path: str, compression: str = "zstd") -> None:
@@ -155,7 +184,7 @@ def build_prices_matrix_fast(
                 continue
             sub = sub.with_columns(pl.lit(code).alias('code'))
             frames.append(sub)
-        except Exception as _e:
+        except _POLARS_DATA_ERRORS as _e:
             _log.debug(f"[加速引擎] 矩阵构建跳过一只: {_e}")
             continue
 
@@ -206,7 +235,7 @@ def _save_prices_matrix(matrix: np.ndarray, columns: list[str], dates: np.ndarra
         save_df = pl.DataFrame(data_dict)
         with _PRICES_MATRIX_LOCK:
             _atomic_parquet_write(save_df, _PRICES_MATRIX_CACHE, compression='zstd')
-    except Exception as e:
+    except _POLARS_RUNTIME_ERRORS as e:
         _log.error(f"[加速引擎] 价格矩阵缓存保存失败: {e}")
 
 
@@ -223,7 +252,7 @@ def _load_prices_matrix() -> tuple[np.ndarray, list[str], np.ndarray] | None:
         stock_cols = [c for c in df.columns if c != 'date']
         matrix = df.select(stock_cols).to_numpy()
         return matrix, stock_cols, dates
-    except Exception as e:
+    except _POLARS_RUNTIME_ERRORS as e:
         _log.error(f"[加速引擎] 价格矩阵缓存加载失败: {e}")
         return None
 
@@ -408,7 +437,7 @@ def save_cache_parquet(cache_data: dict, date_str: str) -> bool:
             else:
                 temp = df.with_columns(pl.lit(code).alias("_code"))
                 frames.append(temp)
-        except Exception as _e:
+        except _POLARS_DATA_ERRORS as _e:
             _log.debug(f"[加速引擎] Parquet 保存时转换失败: {_e}")
             continue
 
@@ -484,7 +513,7 @@ def load_cache_parquet() -> tuple[dict, str] | None:
         _log.info(f"[加速引擎] Parquet 缓存加载完成(纯Polars): {len(cache_data)} 只 | 耗时 {elapsed:.2f}s")
         return cache_data, date_str
 
-    except Exception as e:
+    except _POLARS_RUNTIME_ERRORS as e:
         _log.error(f"[加速引擎] Parquet 缓存加载失败: {e}")
         return None
 
@@ -553,7 +582,7 @@ def build_sector_rps_pl(
                         records.append((f"{prefix}{code}", p, ret))
                     else:
                         records.append((bare, p, ret))
-        except Exception as _e:
+        except _POLARS_DATA_ERRORS as _e:
             _log.debug(f"[加速引擎] 板块RPS计算跳过一只: {_e}")
             continue
 

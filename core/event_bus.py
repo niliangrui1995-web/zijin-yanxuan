@@ -40,9 +40,11 @@ class GlobalEventBus(QObject):
     # 3. 关注池 VCP 数据就绪 — payload: list[dict]
     sig_vcp_watchlist_ready = pyqtSignal(object)
 
-    # 4. 本地缓存加载完成
-    # 接收方：main_window 等
-    sig_cache_loaded = pyqtSignal()
+    # 4. 本地缓存事件
+    # bootstrap: 启动期离线缓存首次就绪
+    # reload: F5 或显式缓存重建完成
+    sig_cache_bootstrap_ready = pyqtSignal()
+    sig_cache_reload_completed = pyqtSignal()
 
     # 5. 业绩异动数据更新完成
     # 接收方：watchlist_tab 等
@@ -59,6 +61,7 @@ class GlobalEventBus(QObject):
     # 8. 大宗交易数据更新完成
     # 接收方：watchlist_tab
     sig_block_trade_updated = pyqtSignal()
+    sig_lhb_pool_updated = pyqtSignal()
 
     # ====== [任务控制信号] ======
 

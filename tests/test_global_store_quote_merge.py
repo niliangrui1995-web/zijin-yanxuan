@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-from core.event_bus import event_bus
 from core.global_store import global_store
+from core.quote_dispatcher import publish_rt_quotes
 
 
 def test_global_store_preserves_finance_fields_across_quote_events():
-    event_bus.sig_rt_quotes.emit(
+    publish_rt_quotes(
         {
             "000001": {
                 "close": 10.0,
@@ -14,7 +14,7 @@ def test_global_store_preserves_finance_fields_across_quote_events():
         }
     )
 
-    event_bus.sig_rt_quotes.emit(
+    publish_rt_quotes(
         {
             "000001": {
                 "close": 10.5,

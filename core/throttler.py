@@ -1,4 +1,5 @@
-from PyQt6.QtCore import QObject, pyqtSignal, QTimer, pyqtSlot
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal, pyqtSlot
+
 
 class SignalThrottler(QObject):
     """
@@ -7,7 +8,7 @@ class SignalThrottler(QObject):
     丢弃掉中间极其密集的重复刷新请求，保护主 UI 线程不卡死。
     """
     # 当节流周期结束后，抛出合并后的最后一次数据
-    throttled_signal = pyqtSignal(object) 
+    throttled_signal = pyqtSignal(object)
 
     def __init__(self, interval=500, parent=None):
         super().__init__(parent)

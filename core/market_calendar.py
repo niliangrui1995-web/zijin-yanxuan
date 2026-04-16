@@ -6,7 +6,6 @@ from __future__ import annotations
 import datetime
 import json
 import os
-import re
 import sqlite3
 import threading
 from typing import Any
@@ -18,6 +17,14 @@ from core.exceptions import (
     NetworkServiceError,
 )
 from core.logger import get_logger
+from core.market_calendar_holidays import (
+    ensure_holiday_table,
+    fetch_public_holidays,
+    is_iso_date,
+    load_holidays_from_store,
+    normalize_holiday_days,
+    save_holidays_to_store,
+)
 from core.task_manager import task_manager
 
 log = get_logger(__name__)
@@ -164,120 +171,37 @@ class MarketCalendar:
         return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     @classmethod
-    def _holiday_db_path(cls) -> str:
-        return os.path.join(cls._project_root(), "data", "vcp_hunter.db")
-
-    @classmethod
-    def _connect_holiday_db(cls) -> sqlite3.Connection:
-        db_path = cls._holiday_db_path()
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        return sqlite3.connect(db_path, timeout=10)
-
-    @classmethod
     def _ensure_holiday_table(cls) -> None:
         if cls._holiday_table_ready:
             return
         with cls._asian_lock:
             if cls._holiday_table_ready:
                 return
-            try:
-                with cls._connect_holiday_db() as conn:
-                    conn.execute(
-                        """
-                        CREATE TABLE IF NOT EXISTS market_holiday_cache (
-                            market TEXT NOT NULL,
-                            year INTEGER NOT NULL,
-                            days_json TEXT NOT NULL,
-                            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-                            PRIMARY KEY (market, year)
-                        )
-                        """
-                    )
-                    conn.commit()
-                cls._holiday_table_ready = True
-            except sqlite3.Error as e:
-                raise CacheIOError("holiday cache table init failed") from e
-
-    @staticmethod
-    def _parse_sqlite_ts(raw: str | None) -> datetime.datetime | None:
-        if not raw:
-            return None
-        txt = str(raw).strip()
-        if not txt:
-            return None
-        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
-            try:
-                return datetime.datetime.strptime(txt, fmt)
-            except ValueError:
-                continue
-        return None
+            ensure_holiday_table(cls._project_root())
+            cls._holiday_table_ready = True
 
     @staticmethod
     def _is_iso_date(text: str) -> bool:
-        return bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(text).strip()))
+        return is_iso_date(text)
 
     @classmethod
     def _normalize_holiday_days(cls, days: Any) -> set[str]:
-        normalized: set[str] = set()
-        if not isinstance(days, (list, tuple, set)):
-            return normalized
-        for raw in days:
-            ds = str(raw).strip()[:10]
-            if cls._is_iso_date(ds):
-                normalized.add(ds)
-        return normalized
+        return normalize_holiday_days(days)
 
     @classmethod
     def _load_holidays_from_store(cls, market: str, target: dict[int, set[str]]) -> None:
         cls._ensure_holiday_table()
-        try:
-            with cls._connect_holiday_db() as conn:
-                rows = conn.execute(
-                    "SELECT year, days_json, updated_at FROM market_holiday_cache WHERE market = ?",
-                    (market,),
-                ).fetchall()
-        except sqlite3.Error as e:
-            raise CacheIOError(f"holiday cache read failed: {market}") from e
-
-        for year_raw, days_json, updated_at in rows:
-            try:
-                year = int(year_raw)
-            except (TypeError, ValueError):
-                continue
-
-            payload = []
-            if isinstance(days_json, str) and days_json.strip():
-                try:
-                    payload = json.loads(days_json)
-                except json.JSONDecodeError:
-                    payload = []
-
-            normalized_days = cls._normalize_holiday_days(payload)
+        rows = load_holidays_from_store(cls._project_root(), market)
+        for year, normalized_days, updated_at in rows:
             # keep empty-year entries so coverage checker knows the year has been handled
             target.setdefault(year, set()).update(normalized_days)
-
-            parsed_updated_at = cls._parse_sqlite_ts(updated_at)
-            if parsed_updated_at is not None:
-                cls._asian_holiday_updated_at[(market, year)] = parsed_updated_at
+            if updated_at is not None:
+                cls._asian_holiday_updated_at[(market, year)] = updated_at
 
     @classmethod
     def _save_holidays_to_store(cls, market: str, year: int, days: set[str]) -> None:
         cls._ensure_holiday_table()
-        payload = json.dumps(sorted(days), ensure_ascii=False)
-        try:
-            with cls._connect_holiday_db() as conn:
-                conn.execute(
-                    """
-                    INSERT INTO market_holiday_cache (market, year, days_json, updated_at)
-                    VALUES (?, ?, ?, datetime('now'))
-                    ON CONFLICT(market, year)
-                    DO UPDATE SET days_json = excluded.days_json, updated_at = datetime('now')
-                    """,
-                    (market, int(year), payload),
-                )
-                conn.commit()
-        except sqlite3.Error as e:
-            raise CacheIOError(f"holiday cache write failed: {market} {year}") from e
+        save_holidays_to_store(cls._project_root(), market, year, days)
 
     @classmethod
     def normalize_market(cls, market: str | None) -> str:
@@ -306,11 +230,11 @@ class MarketCalendar:
         canonical = cls.normalize_market(market)
         tz_name = cls._MARKET_TIMEZONE.get(canonical, "Asia/Shanghai")
         try:
-            from zoneinfo import ZoneInfo
+            from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
             utc_now = datetime.datetime.now(datetime.timezone.utc)
             return utc_now.astimezone(ZoneInfo(tz_name)).replace(tzinfo=None)
-        except Exception:
+        except (ImportError, ZoneInfoNotFoundError):
             # safe fallback without timezone db
             utc_now = datetime.datetime.utcnow()
             offset_hours = {
@@ -336,11 +260,11 @@ class MarketCalendar:
         canonical = cls.normalize_market(market)
         tz_name = cls._MARKET_TIMEZONE.get(canonical, "Asia/Shanghai")
         try:
-            from zoneinfo import ZoneInfo
+            from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
             utc_dt = datetime.datetime.fromtimestamp(ts, datetime.timezone.utc)
             return utc_dt.astimezone(ZoneInfo(tz_name)).replace(tzinfo=None)
-        except Exception:
+        except (ImportError, ZoneInfoNotFoundError):
             offset_hours = {
                 "CN": 8,
                 "HK": 8,
@@ -515,136 +439,13 @@ class MarketCalendar:
 
     @classmethod
     def _fetch_public_holidays(cls, market: str, year: int) -> set[str]:
-        market = cls.normalize_market(market)
-        year = int(year)
-
-        if market == "TW":
-            return cls._fetch_twse_holidays(year)
-
-        country_code = cls._NAGER_COUNTRY.get(market)
-        if not country_code:
-            raise BusinessRuleError(f"unsupported holiday market: {market}")
-
-        try:
-            import requests
-
-            url = f"https://date.nager.at/api/v3/PublicHolidays/{year}/{country_code}"
-            response = requests.get(url, timeout=15)
-        except Exception as e:
-            raise NetworkServiceError(f"holiday api request failed: {country_code} {year}") from e
-
-        if response.status_code == 204:
-            raise BusinessRuleError(
-                f"holiday api has no data for target year: {country_code} {year}"
-            )
-        if response.status_code == 404:
-            raise BusinessRuleError(
-                f"holiday api country/year unsupported: {country_code} {year}"
-            )
-        if response.status_code >= 400:
-            raise NetworkServiceError(
-                f"holiday api http {response.status_code}: {country_code} {year}"
-            )
-
-        try:
-            payload = response.json()
-        except ValueError as e:
-            raise DataFormatError(f"holiday api payload invalid: {country_code} {year}") from e
-
-        if not isinstance(payload, list):
-            raise DataFormatError(f"holiday api payload invalid: {country_code} {year}")
-
-        holidays: set[str] = set()
-        for item in payload:
-            if not isinstance(item, dict):
-                continue
-            date_text = str(item.get("date", "")).strip()[:10]
-            if cls._is_iso_date(date_text):
-                holidays.add(date_text)
-        return holidays
-
-    @classmethod
-    def _is_twse_holiday_row(cls, name: str, desc: str) -> bool:
-        text = f"{name} {desc}".strip()
-        if not text:
-            return False
-        if any(keyword in text for keyword in cls._TWSE_EXCLUDE_KEYWORDS):
-            return False
-        if any(keyword in text for keyword in cls._TWSE_INCLUDE_KEYWORDS):
-            return True
-        return False
-
-    @classmethod
-    def _fetch_twse_holidays(cls, year: int) -> set[str]:
-        minguo_year = year - 1911
-        if minguo_year <= 0:
-            raise BusinessRuleError(f"invalid TW target year: {year}")
-
-        try:
-            import requests
-
-            url = (
-                "https://www.twse.com.tw/holidaySchedule/holidaySchedule"
-                f"?response=json&queryYear={minguo_year}"
-            )
-            response = requests.get(url, timeout=20)
-        except Exception as e:
-            raise NetworkServiceError(f"twse request failed: {year}") from e
-
-        if response.status_code >= 400:
-            raise NetworkServiceError(f"twse http {response.status_code}: {year}")
-
-        try:
-            payload = response.json()
-        except ValueError as e:
-            raise DataFormatError(f"twse payload invalid: {year}") from e
-
-        if not isinstance(payload, dict):
-            raise DataFormatError(f"twse payload invalid: {year}")
-
-        stat = str(payload.get("stat", "")).strip().lower()
-        if stat not in {"ok", "success"}:
-            raise DataFormatError(f"twse stat invalid: {year}, stat={stat or 'N/A'}")
-
-        title = str(payload.get("title", "")).strip()
-        query_year = payload.get("queryYear")
-        expected_marker = str(minguo_year)
-        actual_year: int | None = None
-        if isinstance(query_year, int):
-            actual_year = query_year
-        elif isinstance(query_year, str) and query_year.strip().isdigit():
-            actual_year = int(query_year.strip())
-        else:
-            m = re.search(r"(\d{2,4})\s*年", title)
-            if m:
-                maybe = int(m.group(1))
-                actual_year = maybe + 1911 if maybe < 1911 else maybe
-
-        if actual_year is not None and actual_year != year:
-            raise BusinessRuleError(
-                f"twse holiday for target year not published yet: request={year}, title={title}"
-            )
-        if title and expected_marker not in title and str(year) not in title:
-            raise BusinessRuleError(
-                f"twse holiday for target year not published yet: request={year}, title={title}"
-            )
-
-        rows = payload.get("data")
-        if not isinstance(rows, list):
-            raise DataFormatError(f"twse payload invalid rows: {year}")
-
-        holidays: set[str] = set()
-        for row in rows:
-            if not isinstance(row, (list, tuple)) or len(row) < 2:
-                continue
-            date_text = str(row[0]).strip()
-            name = str(row[1]).strip()
-            desc = str(row[2]).strip() if len(row) >= 3 else ""
-            if not cls._is_twse_holiday_row(name, desc):
-                continue
-            if cls._is_iso_date(date_text):
-                holidays.add(date_text)
-        return holidays
+        return fetch_public_holidays(
+            market=cls.normalize_market(market),
+            year=year,
+            nager_country=cls._NAGER_COUNTRY,
+            twse_include_keywords=cls._TWSE_INCLUDE_KEYWORDS,
+            twse_exclude_keywords=cls._TWSE_EXCLUDE_KEYWORDS,
+        )
 
     @classmethod
     def load_trade_dates(cls) -> set[str] | None:
@@ -657,7 +458,7 @@ class MarketCalendar:
             data = DataStore().load_json("trade_dates")
             if isinstance(data, dict) and data.get("month") == cur_month:
                 return cls._normalize_holiday_days(data.get("dates", []))
-        except Exception as e:
+        except (OSError, sqlite3.Error, TypeError, ValueError) as e:
             log.debug(f"[交易日历][I/O] DataStore 读取失败: {e}")
 
         cache_file = os.path.join(cls._project_root(), "data", "Cache", "trade_dates.json")

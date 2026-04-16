@@ -4,9 +4,9 @@
 from __future__ import annotations
 
 import json
+
 import numpy as np
 import pandas as pd
-
 from PyQt6.QtCore import QUrl
 
 from core.market_calendar import MarketCalendar
@@ -709,12 +709,12 @@ def build_kline_echarts_payload(df: pd.DataFrame, *, code: str, name: str, vcp_d
         o = float(row["open"])
         c = float(row["close"])
         h = float(row["high"])
-        l = float(row["low"])
+        low_price = float(row["low"])
         v = float(row.get("volume", 0))
 
         date_str = dt.strftime("%Y-%m-%d")
         dates.append(date_str)
-        klines.append([o, c, l, h])
+        klines.append([o, c, low_price, h])
 
         vols.append({
             "value": v,

@@ -160,7 +160,7 @@ def test_kline_load_and_draw_appends_today_bar_during_lunch_break(monkeypatch):
             result = fn(*args, **kwargs)
             if on_success:
                 on_success(result)
-        except Exception as exc:
+        except (AttributeError, KeyError, RuntimeError, TypeError, ValueError) as exc:
             if on_error:
                 on_error(str(exc))
             else:
@@ -228,7 +228,7 @@ def test_kline_load_asian_chart_falls_back_to_single_ticket_fetch(monkeypatch, t
             result = fn(*args, **kwargs)
             if on_success:
                 on_success(result)
-        except Exception as exc:
+        except (AttributeError, KeyError, RuntimeError, TypeError, ValueError) as exc:
             if on_error:
                 on_error(str(exc))
             else:

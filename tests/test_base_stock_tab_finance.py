@@ -2,7 +2,13 @@
 from PyQt6.QtTest import QSignalSpy
 
 from core.event_bus import event_bus
+from core.quote_dispatcher import publish_rt_quotes
 from ui.tabs.base_stock_tab import BaseStockTab
+
+
+class DummyQuotePublisher:
+    def publish_external_quotes(self, payload, *, source: str, require_valid: bool = False):
+        return publish_rt_quotes(payload, source=source, require_valid=require_valid)
 
 
 def test_base_stock_tab_async_market_caps_only_fetches_missing_a_share_finance(monkeypatch):
@@ -29,8 +35,8 @@ def test_base_stock_tab_async_market_caps_only_fetches_missing_a_share_finance(m
             super().__init__(data_provider=None)
             self.model = DummyModel()
 
-    from core.global_store import global_store
     import core.task_manager as task_manager_module
+    from core.global_store import global_store
     from vcp.engine import VCPEngine
 
     latest_quotes = {
@@ -51,6 +57,7 @@ def test_base_stock_tab_async_market_caps_only_fetches_missing_a_share_finance(m
     )
 
     tab = DummyTab()
+    tab._quote_publisher = DummyQuotePublisher()
     spy = QSignalSpy(event_bus.sig_rt_quotes)
     try:
         tab.async_update_market_caps()

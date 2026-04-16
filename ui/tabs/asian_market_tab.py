@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
-import os
-import json
 import datetime
-from PyQt6.QtWidgets import (
-    QVBoxLayout, QHeaderView, QPushButton, QLabel, QCheckBox, QLineEdit
-)
-from PyQt6.QtCore import Qt, QTimer
-from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
-from ui.components import VCPTableView, TableStateWrapper
+import json
+import os
 
-from ui.tabs.base_stock_tab import BaseStockTab
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtWidgets import QCheckBox, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
+
+from core.event_bus import event_bus
+from core.logger import get_logger
+from ui.components import TableStateWrapper, VCPTableView
+from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.asian_market_meta import (
     format_market_display,
     get_ch_names_mapping,
@@ -18,16 +18,38 @@ from ui.tabs.asian_market_meta import (
 )
 from ui.tabs.asian_market_runtime import (
     call_worker_method as asian_call_worker_method,
+)
+from ui.tabs.asian_market_runtime import (
     check_auto_cache as asian_check_auto_cache,
+)
+from ui.tabs.asian_market_runtime import (
     continue_auto_cache_sync as asian_continue_auto_cache_sync,
+)
+from ui.tabs.asian_market_runtime import (
     log_asian_health as asian_log_asian_health,
+)
+from ui.tabs.asian_market_runtime import (
     on_asian_klines_ready as asian_on_asian_klines_ready,
+)
+from ui.tabs.asian_market_runtime import (
     on_auto_cache_finished as asian_on_auto_cache_finished,
+)
+from ui.tabs.asian_market_runtime import (
     on_minute_tick as asian_on_minute_tick,
+)
+from ui.tabs.asian_market_runtime import (
     refresh_market_status_rows as asian_refresh_market_status_rows,
+)
+from ui.tabs.asian_market_runtime import (
     runtime_state_text as asian_runtime_state_text,
+)
+from ui.tabs.asian_market_runtime import (
     worker_pause_for_cache_sync as asian_worker_pause_for_cache_sync,
+)
+from ui.tabs.asian_market_runtime import (
     worker_resume_auto_refresh as asian_worker_resume_auto_refresh,
+)
+from ui.tabs.asian_market_runtime import (
     worker_trigger_refresh as asian_worker_trigger_refresh,
 )
 from ui.tabs.asian_market_workers import (
@@ -39,8 +61,7 @@ from ui.tabs.asian_market_workers import (
     is_cf_proxy_enabled,
     set_cf_proxy_enabled,
 )
-from core.event_bus import event_bus
-from core.logger import get_logger
+from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
 
@@ -59,10 +80,10 @@ class AsianMarketTab(BaseStockTab):
         self._last_health_signature = None
         self.cache_thread = None
         self._init_ui()
-        
+
         # 1. 冷开机瞬间加载本地 JSON (asian_klines_latest.json)
         self._load_local_cache()
-        
+
         # 2. 启动后台 Worker, 进行 60 秒常态轮询
         codes = [item['代码'] for item in self.row_data]
         self.worker = AsianMarketWorker(codes)
@@ -76,12 +97,11 @@ class AsianMarketTab(BaseStockTab):
             self._worker_pause_for_cache_sync()
         # 等界面加载完稍微延后一点启动后台
         QTimer.singleShot(1000, self.worker.start)
-        
+
         # 3. 监听全局数据更新事件 (如被 deferred_load 静默更新完毕)
         event_bus.sig_asian_klines_ready.connect(self._on_asian_klines_ready)
-        
+
         # 4. 自动缓存校验器：每分钟检查本地缓存是否需要更新
-        self.auto_cache_timer = QTimer(self)
         self.auto_cache_timer = QTimer(self)
         self.auto_cache_timer.timeout.connect(self._on_minute_tick)
         self.auto_cache_timer.start(60000)
@@ -204,19 +224,20 @@ class AsianMarketTab(BaseStockTab):
                     continue
                 try:
                     last_date = datetime.datetime.strptime(last_date_raw[:10], "%Y-%m-%d").date()
-                except Exception:
+                except (TypeError, ValueError):
                     continue
                 if latest_date is None or last_date > latest_date:
                     latest_date = last_date
             return latest_date
-        except Exception as e:
+        except (FileNotFoundError, PermissionError, OSError, TypeError, ValueError, KeyError, json.JSONDecodeError) as e:
             log.warning(f"[亚洲页] 解析缓存最新交易日失败: {e}")
             return None
 
     def _get_expected_latest_trade_date(self):
         try:
-            from core.market_calendar import MarketCalendar
             from datetime import timedelta
+
+            from core.market_calendar import MarketCalendar
             markets = set()
             for row in getattr(self, 'row_data', []) or []:
                 code = str(row.get("代码", "")).strip()
@@ -251,7 +272,7 @@ class AsianMarketTab(BaseStockTab):
                 if trade_date is not None and (latest_expected is None or trade_date > latest_expected):
                     latest_expected = trade_date
             return latest_expected
-        except Exception as e:
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
             log.warning(f"[亚洲页] 计算期望最新交易日失败: {e}")
             return None
 
@@ -291,7 +312,7 @@ class AsianMarketTab(BaseStockTab):
         self.chk_cf_proxy.setObjectName("successStatus")
         self.chk_cf_proxy.setChecked(is_cf_proxy_enabled())
         self.chk_cf_proxy.toggled.connect(self._on_cf_proxy_toggled)
-        
+
         self.btn_refresh = QPushButton("网络检查与手动刷新")
         self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_refresh.setToolTip("强制跳过等待，立刻请求外网(Yahoo Finance)测速并获取最新价格")
@@ -305,23 +326,23 @@ class AsianMarketTab(BaseStockTab):
         self.asian_table = VCPTableView(default_row_height=30)
         self.table_state = TableStateWrapper(self.asian_table, empty_title="暂无亚洲数据", loading_title="加载中...")
         layout.addWidget(self.table_state)
-        
+
         self.header_labels = ["代码", "名称", "现价", "涨幅%", "市场", "状态", "赛道", "角色定位", "货币", "5日涨跌%", "10日涨跌%", "20日涨跌%"]
-        
+
         self.model = StockTableModel(self.header_labels)
         self.model.set_plain_style_headers(["状态"])
         self.model.set_plain_background_headers(["涨幅%"])
         self.proxy_model = RtSortFilterProxyModel(self.asian_table)
         self.proxy_model.setSourceModel(self.model)
         self.asian_table.setModel(self.proxy_model)
-        
+
         self.delegate = StockItemDelegate(self.asian_table)
         self.asian_table.setItemDelegate(self.delegate)
 
         # Context menu
         self.asian_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.asian_table.customContextMenuRequested.connect(self._show_context_menu)
-        
+
         # Double click to open Kline
         self.asian_table.doubleClicked.connect(self._on_double_click)
 
@@ -338,7 +359,7 @@ class AsianMarketTab(BaseStockTab):
         for i, w in enumerate(default_widths):
             header_view.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
             self.asian_table.setColumnWidth(i, w)
-            
+
         # 绑定防抖自动保存与恢复配置
         self.bind_header_persistence(self.asian_table, "header_state_asian_v3")
         self._schedule_fit_columns()
@@ -349,7 +370,7 @@ class AsianMarketTab(BaseStockTab):
         source_idx = self.proxy_model.mapToSource(index)
         row = source_idx.row()
         if row >= len(self.model.row_data): return
-        
+
         code = self.model.row_data[row].get("代码", "")
         name = self.model.row_data[row].get("名称", "")
         if code and name:
@@ -385,7 +406,7 @@ class AsianMarketTab(BaseStockTab):
                     for r in (self.row_data or [])
                     if str(r.get("代码", "")).strip()
                 ]
-            except Exception as e:
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
                 log.warning(f"[亚洲页] 同步 worker 股票池失败: {e}")
 
     def update_table_ui(self):
@@ -411,7 +432,7 @@ class AsianMarketTab(BaseStockTab):
                 }
             with open(RT_JSON_CACHE, 'w', encoding='utf-8') as f:
                 json.dump(cache_friendly, f, ensure_ascii=False)
-        except Exception as e:
+        except (PermissionError, OSError, TypeError, ValueError) as e:
             log.error(f"[亚洲页] 持久化 RT 缓存失败: {e}")
 
     def _load_local_cache(self):
@@ -500,7 +521,7 @@ class AsianMarketTab(BaseStockTab):
                         from vcp.fetchers.asian_kline_fetcher import _find_track, filter_asian_tickers
 
                         target_map = filter_asian_tickers() or {}
-                    except Exception as fetch_exc:
+                    except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as fetch_exc:
                         target_map = {}
                         log.warning(f"[亚洲页] 读取亚洲目标池失败，跳过缺失补齐: {fetch_exc}")
 
@@ -552,7 +573,7 @@ class AsianMarketTab(BaseStockTab):
                             log.warning(
                                 f"[亚洲页] 本地缓存缺失 {len(missing_codes)} 只，已补齐占位行: {sorted(missing_codes)}"
                             )
-                except Exception as exc:
+                except (FileNotFoundError, PermissionError, OSError, TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
                     log.error(f"[亚洲页] JSON 历史缓存加载失败: {exc}")
 
             if os.path.exists(RT_JSON_CACHE):
@@ -578,7 +599,7 @@ class AsianMarketTab(BaseStockTab):
                         if code not in GLOBAL_ASIAN_RT_CACHE:
                             GLOBAL_ASIAN_RT_CACHE[code] = {}
                         GLOBAL_ASIAN_RT_CACHE[code].update(info)
-                except Exception as exc:
+                except (FileNotFoundError, PermissionError, OSError, TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
                     log.error(f"[亚洲页] 恢复 RT 盘口缓存失败: {exc}")
 
             self._sync_worker_codes()
@@ -637,7 +658,7 @@ class AsianMarketTab(BaseStockTab):
         source_idx = self.proxy_model.mapToSource(index)
         row = source_idx.row()
         if row >= len(self.model.row_data): return
-        
+
         code = self.model.row_data[row].get("代码", "")
         # 按当前表格视觉排序顺序构建列表，让 K 线窗口的"上一只/下一只"跟随用户排序
         code_list = []
@@ -646,13 +667,13 @@ class AsianMarketTab(BaseStockTab):
             if s_idx.row() < len(self.model.row_data):
                 rd = self.model.row_data[s_idx.row()]
                 code_list.append({'代码': rd.get("代码", ""), '名称': rd.get("名称", "")})
-        
+
         current_idx = 0
         for i, c in enumerate(code_list):
             if c['代码'] == code:
                 current_idx = i
                 break
-                
+
         # 触发全局画图事件
         event_bus.sig_show_kline_with_list.emit(code, code_list, current_idx)
 

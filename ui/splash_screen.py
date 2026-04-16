@@ -1,10 +1,12 @@
 # ui/splash_screen.py - 启动闪屏组件
 # 程序启动时立即显示，减少用户等待焦虑
 import os
-from vcp.constants import APP_VERSION
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QProgressBar, QApplication
+
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPainter, QColor, QPen
+from PyQt6.QtGui import QColor, QPainter, QPen
+from PyQt6.QtWidgets import QApplication, QLabel, QProgressBar, QVBoxLayout, QWidget
+
+from vcp.constants import APP_VERSION
 
 
 class SplashScreen(QWidget):

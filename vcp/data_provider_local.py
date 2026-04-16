@@ -8,6 +8,7 @@ from datetime import datetime
 
 import pandas as pd
 
+from core.exceptions import CacheIOError, DataFormatError
 from core.json_cache import load_json_file, remove_cache_file, save_json_file
 from core.logger import get_logger
 from vcp.constants import CACHE_DIR, MAX_HISTORY_BARS
@@ -67,7 +68,7 @@ def load_local_gbbq(
                 f"[缓存] 已加载本地 gbbq 缓存: {len(restored)} 个代码, {cached.get('records', '?')} 条记录"
             )
             return restored
-        except Exception as exc:
+        except (CacheIOError, DataFormatError, ValueError) as exc:
             _log.debug(f"[缓存] gbbq JSON 缓存损坏或版本不匹配，将重新解析: {exc}")
 
     try:
@@ -97,10 +98,10 @@ def load_local_gbbq(
             )
             remove_cache_file(legacy_gbbq_cache_file)
             _log.info(f"[数据中台] gbbq JSON 缓存已保存 -> {gbbq_cache_file}")
-        except Exception as exc:
+        except CacheIOError as exc:
             _log.error(f"[数据中台] gbbq JSON 缓存保存失败: {exc}")
         return rebuilt
-    except Exception as exc:
+    except (AttributeError, ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
         _log.error(f"[数据中台] gbbq 加载失败(不影响联网复权): {exc}")
         return current
 
@@ -192,7 +193,7 @@ def apply_forward_adjustment(api, market, code, df, local_gbbq: dict | None):
             work_df['datetime'] = pd.to_datetime(work_df['datetime'])
             work_df = work_df.set_index('datetime')
         return work_df
-    except Exception as exc:
+    except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
         _log.error(f"[数据中台] 前复权计算异常: {exc}", exc_info=True)
         raise ValueError(f"除权除息因子计算失败: {exc}") from exc
 
@@ -243,7 +244,7 @@ def build_offline_quotes(codes, get_data) -> dict:
             quote_date = None
             try:
                 quote_date = pd.Timestamp(hist_df.index[-1]).strftime('%Y-%m-%d')
-            except Exception:
+            except (TypeError, ValueError):
                 quote_date = None
             res[code] = {
                 'open': float(last_row.get('open', 0)),

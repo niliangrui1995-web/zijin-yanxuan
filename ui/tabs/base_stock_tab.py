@@ -9,6 +9,7 @@
 - 代码复制
 """
 
+import logging
 import os
 import re
 import subprocess
@@ -16,10 +17,11 @@ import time
 import webbrowser
 
 from PyQt6.QtCore import QCoreApplication, Qt
-from PyQt6.QtWidgets import QWidget, QLabel, QHBoxLayout, QFrame, QToolButton, QPushButton
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QToolButton, QWidget
 
 from core.event_bus import event_bus
 from core.quote_snapshot import build_finance_quote_payload, coerce_number, is_a_share_code
+from ui.status_registry import format_status_summary
 from ui.theme_tokens import build_ui_tokens
 
 
@@ -30,6 +32,7 @@ class BaseStockTab(QWidget):
         super().__init__(parent)
         self.data_provider = data_provider
         self._deferred_quote_refresh = False
+        self._missing_quote_publisher_warned = False
 
     def _resolve_active_quote_model(self):
         return getattr(self, '_active_model_ref', None) \
@@ -40,6 +43,34 @@ class BaseStockTab(QWidget):
         model = self._resolve_active_quote_model()
         if model and hasattr(model, 'update_quotes') and quotes:
             model.update_quotes(quotes)
+
+    def _resolve_quote_publisher(self):
+        publisher = getattr(self, "_quote_publisher", None)
+        if publisher is not None:
+            return publisher
+        owner_window = self.window()
+        return getattr(owner_window, "central_quotes_svc", None)
+
+    def _publish_quote_payload(self, payload, *, source: str, require_valid: bool = False) -> dict:
+        normalized = dict(payload or {})
+        if not normalized:
+            return {}
+
+        publisher = self._resolve_quote_publisher()
+        if publisher is None or not hasattr(publisher, "publish_external_quotes"):
+            if not self._missing_quote_publisher_warned:
+                self._missing_quote_publisher_warned = True
+                logging.getLogger(__name__).warning(
+                    f"[{self.__class__.__name__}] 未找到 central_quotes_svc，已跳过外部报价广播"
+                )
+            return {}
+
+        self._missing_quote_publisher_warned = False
+        return publisher.publish_external_quotes(
+            normalized,
+            source=source,
+            require_valid=require_valid,
+        ) or {}
 
     @staticmethod
     def _is_blank_quote_value(value, zero_is_blank=True) -> bool:
@@ -94,7 +125,7 @@ class BaseStockTab(QWidget):
             from core.global_store import global_store
 
             snapshot = global_store.get_latest_quotes() or {}
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError):
             snapshot = {}
 
         missing: list[str] = []
@@ -126,7 +157,7 @@ class BaseStockTab(QWidget):
         try:
             from core.global_store import global_store
             snapshot = global_store.get_latest_quotes() or {}
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError):
             snapshot = {}
 
         quote_subset = {
@@ -157,7 +188,10 @@ class BaseStockTab(QWidget):
 
         def _on_success(quotes):
             if quotes:
-                event_bus.sig_rt_quotes.emit(quotes)
+                self._publish_quote_payload(
+                    quotes,
+                    source=f"{self.__class__.__name__}.quotes",
+                )
 
         def _on_error(error_message: str):
             if error_message:
@@ -242,14 +276,7 @@ class BaseStockTab(QWidget):
 
     @classmethod
     def format_status_summary(cls, primary: str, *segments: str) -> str:
-        parts = []
-        if primary:
-            parts.append(str(primary).strip())
-        for segment in segments:
-            text = str(segment or "").strip()
-            if text:
-                parts.append(text)
-        return " | ".join(parts)
+        return format_status_summary(primary, *segments)
 
     # ================================================================
     # UI 结构辅助：统一工具条 + 摘要条 + 列预设
@@ -358,7 +385,7 @@ class BaseStockTab(QWidget):
             webbrowser.open(url)
             suffix = f" ({reason})" if reason else ""
             event_bus.sig_system_log.emit("warn", f"[跳转兜底] 已改为打开网页行情: {bare}{suffix}")
-        except Exception as e:
+        except (webbrowser.Error, OSError, RuntimeError) as e:
             event_bus.sig_system_log.emit("error", f"[跳转兜底] 打开网页行情失败: {e}")
 
     @staticmethod
@@ -371,7 +398,7 @@ class BaseStockTab(QWidget):
             user32.ShowWindow(hwnd, 5)  # SW_SHOW
         try:
             win32gui.BringWindowToTop(hwnd)
-        except Exception:
+        except OSError:
             pass
         user32.SetForegroundWindow(hwnd)
         time.sleep(0.3)
@@ -403,7 +430,7 @@ class BaseStockTab(QWidget):
                 if width < 60 or height < 18:
                     return True
                 candidates.append((child_hwnd, class_name, top, width))
-            except Exception:
+            except (OSError, RuntimeError):
                 return True
             return True
 
@@ -427,7 +454,7 @@ class BaseStockTab(QWidget):
                 win32gui.PostMessage(hwnd, win32con.WM_KEYUP, win32con.VK_RETURN, 0)
                 event_bus.sig_system_log.emit("info", f"[{app_name}] 已写入输入框: {bare} ({class_name})")
                 return True
-            except Exception:
+            except (OSError, RuntimeError, TypeError):
                 continue
         return False
 
@@ -454,7 +481,7 @@ class BaseStockTab(QWidget):
 
         try:
             return self._type_quote_code(bare, app_name)
-        except Exception as e:
+        except (OSError, RuntimeError, ValueError) as e:
             event_bus.sig_system_log.emit("warn", f"[{app_name}] 快捷输入失败: {e}")
             return False
 
@@ -471,7 +498,7 @@ class BaseStockTab(QWidget):
 
             EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
             user32 = ctypes.windll.user32
-            
+
             def find_tdx_window():
                 found_hwnd = ctypes.wintypes.HWND(0)
                 def callback(hwnd, _):
@@ -483,12 +510,12 @@ class BaseStockTab(QWidget):
                         buf = ctypes.create_unicode_buffer(length + 1)
                         user32.GetWindowTextW(hwnd, buf, length + 1)
                         title = buf.value
-                        
+
                         class_buf = ctypes.create_unicode_buffer(256)
                         user32.GetClassNameW(hwnd, class_buf, 256)
                         class_name = class_buf.value
-                        
-                        if ('华泰网上' in title or '华泰证券' in title or '通达信' in title or 
+
+                        if ('华泰网上' in title or '华泰证券' in title or '通达信' in title or
                             '网上股票交易' in title or class_name == 'TdxW_MainFrame_Class'):
                             found_hwnd = hwnd
                             return False
@@ -512,7 +539,7 @@ class BaseStockTab(QWidget):
             else:
                 event_bus.sig_system_log.emit("warn", "[TDX] 启动后仍未检测到通达信窗口，已切换网页兜底")
                 self._open_quote_web_fallback(code, "通达信窗口未就绪")
-        except Exception as e:
+        except (AttributeError, ImportError, OSError, RuntimeError, subprocess.SubprocessError, TypeError, ValueError) as e:
             event_bus.sig_system_log.emit("error", f"[TDX] 跳转失败: {e}")
             self._open_quote_web_fallback(code, "通达信跳转异常")
 
@@ -527,7 +554,7 @@ class BaseStockTab(QWidget):
             import ctypes
             EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
             user32 = ctypes.windll.user32
-            
+
             def find_em_window():
                 found_hwnd = ctypes.wintypes.HWND(0)
                 def callback(hwnd, _):
@@ -539,7 +566,7 @@ class BaseStockTab(QWidget):
                         buf = ctypes.create_unicode_buffer(length + 1)
                         user32.GetWindowTextW(hwnd, buf, length + 1)
                         title = buf.value
-                        
+
                         if '东方财富' in title:
                             found_hwnd = hwnd
                             return False
@@ -555,46 +582,46 @@ class BaseStockTab(QWidget):
 
             if not self._input_quote_code(user32, hwnd, code, "东方财富"):
                 self._open_quote_web_fallback(code, "东方财富输入代码失败")
-        except Exception as e:
+        except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as e:
             event_bus.sig_system_log.emit("error", f"[东方财富] 跳转失败: {e}")
             self._open_quote_web_fallback(code, "东方财富跳转异常")
 
     def bind_header_persistence(self, table, settings_key: str = "header_state"):
         """通用：绑定表格列宽调整后自动保存（带防抖），并恢复上次保存的宽度"""
         from PyQt6.QtCore import QSettings, QTimer
-        
+
         # 使用当前类的名字作为配置的分类，确保不冲突
         settings = QSettings("VCPHunter", self.__class__.__name__)
         header = table.horizontalHeader()
-        
+
         # 1. 如果有保存的配置，则立刻恢复
         if settings.contains(settings_key):
             try:
                 header.restoreState(settings.value(settings_key))
-            except Exception as e:
+            except (AttributeError, RuntimeError, TypeError, ValueError) as e:
                 import logging
                 logging.getLogger(__name__).warning(f"恢复列宽配置异常 {settings_key}: {e}")
 
         # 2. 创建防抖定时器，防止拖拉列宽时高频疯狂写盘
         if not hasattr(self, "_header_save_timers"):
             self._header_save_timers = []
-            
+
         throttle_timer = QTimer(self)
         throttle_timer.setSingleShot(True)
         throttle_timer.setInterval(800) # 停止拖拽 800ms 后保存
         self._header_save_timers.append(throttle_timer)
-        
+
         def _save_state():
             try:
                 settings.setValue(settings_key, header.saveState())
                 settings.sync()
-            except Exception as _e:
+            except (AttributeError, RuntimeError, TypeError, ValueError) as _e:
                 # Why: 保存列宽配置是低优先级操作，失败不影响业务
                 import logging
                 logging.getLogger(__name__).debug(f"列宽配置保存失败: {_e}")
-                
+
         throttle_timer.timeout.connect(_save_state)
-        
+
         # 宽度拖拽改变 或 列被拖拽移动 时触发重置定时器
         header.sectionResized.connect(lambda: throttle_timer.start())
         header.sectionMoved.connect(lambda: throttle_timer.start())
@@ -609,7 +636,7 @@ class BaseStockTab(QWidget):
             self._active_model_ref = current_model
 
         model = self._resolve_active_quote_model()
-              
+
         # 1. 尝试从 Redux Store 读取市场快照，实现秒刷 (无感知切图)
         if model and hasattr(model, 'update_quotes'):
             from core.global_store import global_store
@@ -619,14 +646,14 @@ class BaseStockTab(QWidget):
                     model.update_quotes(snapshot)
                 else:
                     self._deferred_quote_refresh = True
-        
+
         # 2. 为了防止多次绑定导致的连环触发，先断开(忽略不存在的情况)
         try:
             event_bus.sig_rt_quotes.disconnect(self._on_rt_quotes_direct)
         except (TypeError, RuntimeError):
             # Why: 信号从未连接过时 disconnect 报 TypeError，是正常情况
             pass
-            
+
         event_bus.sig_rt_quotes.connect(self._on_rt_quotes_direct)
 
     def _on_rt_quotes_direct(self, quotes: dict):
@@ -646,7 +673,7 @@ class BaseStockTab(QWidget):
             from core.global_store import global_store
 
             self._apply_quote_snapshot(global_store.get_latest_quotes())
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError):
             pass
 
 
@@ -668,7 +695,7 @@ class BaseStockTab(QWidget):
             from core.global_store import global_store
 
             latest_quotes = global_store.get_latest_quotes() or {}
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError):
             latest_quotes = {}
 
         if latest_quotes:
@@ -680,7 +707,7 @@ class BaseStockTab(QWidget):
             if callable(after_cap_hook):
                 try:
                     after_cap_hook()
-                except Exception:
+                except (AttributeError, RuntimeError, TypeError):
                     pass
             return
 
@@ -693,7 +720,7 @@ class BaseStockTab(QWidget):
 
             try:
                 return VCPEngine.batch_get_finance_info(codes_need_cap)
-            except Exception as exc:
+            except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 import logging
 
                 logging.getLogger(__name__).error(f"[市值统一刷新] 获取股本失败: {exc}")
@@ -711,13 +738,16 @@ class BaseStockTab(QWidget):
 
             payload = build_finance_quote_payload(finance_data)
             if payload:
-                event_bus.sig_rt_quotes.emit(payload)
+                self._publish_quote_payload(
+                    payload,
+                    source=f"{self.__class__.__name__}.finance",
+                )
 
             after_cap_hook = getattr(self, "_after_market_caps_updated", None)
             if callable(after_cap_hook):
                 try:
                     after_cap_hook()
-                except Exception:
+                except (AttributeError, RuntimeError, TypeError):
                     pass
 
         from core.task_manager import task_manager

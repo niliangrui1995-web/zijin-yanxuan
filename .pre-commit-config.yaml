@@ -1,4 +1,11 @@
 repos:
+  - repo: local
+    hooks:
+      - id: check-utf8
+        name: check-utf8
+        entry: python scripts/check_utf8.py
+        language: system
+        pass_filenames: false
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.9
     hooks:

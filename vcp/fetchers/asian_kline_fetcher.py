@@ -13,9 +13,11 @@
 """
 
 import argparse
+import importlib
 import json
 import logging
 import os
+import re
 import sys
 import time
 import uuid
@@ -64,8 +66,30 @@ ASIAN_LOCAL_TICKER_OVERRIDES = {
     "TSMC": "2330.TW",
 }
 
+_ALNUM_RE = re.compile(r"[a-z0-9]+")
+
+
+def _ensure_industry_mappings_loaded() -> None:
+    global OLIGARCH_DICT, VANGUARD_TICKERS
+
+    if OLIGARCH_DICT and VANGUARD_TICKERS:
+        return
+
+    try:
+        industry_module = importlib.import_module("industry_dict")
+    except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
+        return
+
+    real_oligarch = getattr(industry_module, "OLIGARCH_DICT", None)
+    real_tickers = getattr(industry_module, "VANGUARD_TICKERS", None)
+    if real_oligarch:
+        OLIGARCH_DICT = real_oligarch
+    if real_tickers:
+        VANGUARD_TICKERS = real_tickers
+
 
 def _get_asian_source_tickers() -> dict[str, str]:
+    _ensure_industry_mappings_loaded()
     tickers = dict(VANGUARD_TICKERS)
     tickers.update(ASIAN_LOCAL_TICKER_OVERRIDES)
     return tickers
@@ -113,6 +137,7 @@ def filter_asian_tickers(market_filter: str | None = None) -> dict[str, str]:
 
 def _find_track(ticker: str) -> str:
     """反查 ticker 所属的赛道名称。"""
+    _ensure_industry_mappings_loaded()
     # Why: 从 VANGUARD_TICKERS 找到公司名，再从 OLIGARCH_DICT 反查赛道
     company_name = None
     for name, tk in _get_asian_source_tickers().items():
@@ -123,7 +148,18 @@ def _find_track(ticker: str) -> str:
     if not company_name:
         return "未知赛道"
 
+    def _normalize_text(value: str) -> str:
+        return "".join(_ALNUM_RE.findall(str(value or "").lower()))
+
+    def _build_acronym(value: str) -> str:
+        tokens = _ALNUM_RE.findall(str(value or ""))
+        if len(tokens) <= 1:
+            return ""
+        return "".join(token[0] for token in tokens).lower()
+
     name_lower = company_name.lower()
+    name_normalized = _normalize_text(company_name)
+    ticker_prefix = str(ticker or "").split(".")[0].lower()
     for track, companies in OLIGARCH_DICT.items():
         for comp in companies:
             comp_lower = comp.lower()
@@ -131,7 +167,20 @@ def _find_track(ticker: str) -> str:
             if name_lower in comp_lower or comp_lower.startswith(name_lower):
                 return track
             eng_prefix = comp.split("(")[0].strip()
-            if eng_prefix.lower() == name_lower:
+            eng_prefix_lower = eng_prefix.lower()
+            if eng_prefix_lower == name_lower:
+                return track
+            if name_normalized and _normalize_text(comp) == name_normalized:
+                return track
+            if name_normalized and _normalize_text(eng_prefix) == name_normalized:
+                return track
+            if name_lower and _build_acronym(comp) == name_lower:
+                return track
+            if name_lower and _build_acronym(eng_prefix) == name_lower:
+                return track
+            if ticker_prefix and _build_acronym(comp) == ticker_prefix:
+                return track
+            if ticker_prefix and _build_acronym(eng_prefix) == ticker_prefix:
                 return track
     return "未知赛道"
 
@@ -247,7 +296,7 @@ def fetch_single_kline(
             "klines": klines,
         }
 
-    except Exception as e:
+    except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
         logging.error(f"❌ {name}({ticker}): 拉取失败 — {e}")
         return None
 
@@ -312,7 +361,7 @@ def fetch_all_asian_klines(
                 )
             else:
                 failed.append(f"{name}({ticker})")
-        except Exception as e:
+        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
             failed.append(f"{name}({ticker})")
             logging.error(f"  ❌ {name}({ticker}): {e}")
 
@@ -395,7 +444,7 @@ def sync_asian_kline_cache(
                 if one:
                     row_map[ticker] = one
                     single_recovered.append(ticker)
-            except Exception as exc:
+            except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 logging.warning(f"⚠️ 单票补抓失败 {ticker}: {exc}")
         missing = sorted(target_tickers - set(row_map.keys()))
 
@@ -410,7 +459,7 @@ def sync_asian_kline_cache(
             if reused:
                 logging.warning(f"⚠️ 已从旧缓存回填 {len(reused)} 只: {sorted(reused)}")
             missing = sorted(target_tickers - set(row_map.keys()))
-        except Exception as exc:
+        except (FileNotFoundError, PermissionError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
             logging.warning(f"⚠️ 旧缓存回填失败: {exc}")
 
     if missing:

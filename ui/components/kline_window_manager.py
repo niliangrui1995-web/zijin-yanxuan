@@ -79,7 +79,7 @@ class KLineWindowManager:
                         main_window,
                         duration=2000,
                     )
-                except Exception as _e:
+                except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as _e:
                     log.debug(f"[K线管理] toast 提示发送失败: {_e}")
             except RuntimeError:
                 pass
@@ -103,7 +103,7 @@ class KLineWindowManager:
             chart.activateWindow()
         except RuntimeError:
             pass
-        except Exception as _e:
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as _e:
             log.debug(f"[K线管理] 置前激活窗口失败: {_e}")
         self._charts.append(chart)
         return chart

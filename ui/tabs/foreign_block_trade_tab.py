@@ -9,19 +9,16 @@ import json
 import os
 import subprocess
 import sys
+
 import pandas as pd
-
-from PyQt6.QtWidgets import (
-    QVBoxLayout, QHeaderView, QPushButton, QLabel, QLineEdit, QComboBox
-)
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtWidgets import QComboBox, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
-from ui.theme import (
-    COLOR_RISE, COLOR_FALL, COLOR_FLAT
-)
-from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
-from ui.components import VCPTableView, TableStateWrapper, SearchFilter
 from core.event_bus import event_bus
+from ui.components import SearchFilter, TableStateWrapper, VCPTableView
+from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
+from ui.theme import COLOR_FALL, COLOR_FLAT, COLOR_RISE
+
 
 class BlockTradeFilterProxyModel(RtSortFilterProxyModel):
     def __init__(self, parent=None):
@@ -34,7 +31,7 @@ class BlockTradeFilterProxyModel(RtSortFilterProxyModel):
         else:
             self.exact_filters.pop(col_name, None)
         self.invalidateFilter()
-        
+
     def filterAcceptsRow(self, source_row, source_parent):
         if self.exact_filters:
             model = self.sourceModel()
@@ -199,7 +196,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._cap_cache = {}
         self._is_loading = False
         self._block_trade_codes = []
-        
+
         self.days_to_fetch = 20  # 默认拉取最近20个交易日
         self._init_ui()
 
@@ -260,8 +257,8 @@ class ForeignBlockTradeTab(BaseStockTab):
 
         # 表格
         self.columns = [
-            "代码", "名称", "现价", "涨幅%", "市值", "交易日期", "交易详情", 
-            "当日收盘价", "成交价格", "折/溢价率(%)", "成交数量(万股)", "成交金额(万元)", 
+            "代码", "名称", "现价", "涨幅%", "市值", "交易日期", "交易详情",
+            "当日收盘价", "成交价格", "折/溢价率(%)", "成交数量(万股)", "成交金额(万元)",
             "买方营业部", "卖方营业部"
         ]
         self.table = VCPTableView(default_row_height=30)
@@ -296,7 +293,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.table.customContextMenuRequested.connect(self._show_context_menu)
 
         layout.addWidget(self.table_state, 1)
-        
+
     def _on_days_changed(self, idx):
         days_map = {0: 10, 1: 20, 2: 40, 3: 60}
         self.days_to_fetch = days_map.get(idx, 10)
@@ -315,18 +312,18 @@ class ForeignBlockTradeTab(BaseStockTab):
         """判断外资买卖动作"""
         buyer_str = str(buyer) if pd.notna(buyer) else ""
         seller_str = str(seller) if pd.notna(seller) else ""
-        
+
         buy_foreign = any(kw in buyer_str for kw in FOREIGN_KEYWORDS)
         sell_foreign = any(kw in seller_str for kw in FOREIGN_KEYWORDS)
-            
+
         if buy_foreign and sell_foreign:
             return "外资对倒", "#F59E0B"
-            
+
         if buy_foreign:
             return "外资买入", COLOR_RISE
         if sell_foreign:
             return "外资卖出", COLOR_FALL
-            
+
         return "--", COLOR_FLAT
 
     def _load_block_trade_data(self):
@@ -342,13 +339,13 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.model.update_data([])
         # 清空上一轮的K线缓存，防止跨交易日窗口后内存只增不减
         _kline_cache.clear()
-        
+
         def _fetch_task():
             import time
 
             end_dt = datetime.datetime.now()
             deadline = time.monotonic() + _BLOCK_TRADE_TOTAL_TIMEOUT
-            
+
             # 使用交易日历倒推 start_dt
             try:
                 remaining = max(5, int(deadline - time.monotonic()))
@@ -369,7 +366,7 @@ class ForeignBlockTradeTab(BaseStockTab):
             except subprocess.TimeoutExpired:
                 log.warning("[大宗交易] 获取交易日历超时，回退到自然日估算")
                 start_dt = end_dt - datetime.timedelta(days=int(self.days_to_fetch * 1.5))
-            except Exception as e:
+            except (json.JSONDecodeError, OSError, RuntimeError, subprocess.CalledProcessError, TypeError, ValueError) as e:
                 log.warning(f"获取交易日历失败，使用自然日重估: {e}")
                 start_dt = end_dt - datetime.timedelta(days=int(self.days_to_fetch * 1.5))
 
@@ -377,7 +374,7 @@ class ForeignBlockTradeTab(BaseStockTab):
             timeout_chunks = []
             failed_chunks = []
             finished_chunks = 0
-            
+
             # 分段拉取：东财接口对大日期范围会截断或断连，每次只拉15天
             CHUNK_DAYS = 15
             cursor = start_dt
@@ -391,7 +388,7 @@ class ForeignBlockTradeTab(BaseStockTab):
                 chunk_key = f"{s_str}-{e_str}"
                 chunk_done = False
                 chunk_timed_out = False
-                
+
                 for attempt in range(_BLOCK_TRADE_MAX_RETRIES):
                     remaining = int(deadline - time.monotonic())
                     if remaining <= 0:
@@ -416,7 +413,7 @@ class ForeignBlockTradeTab(BaseStockTab):
                         log.warning(f"[大宗交易] {chunk_key} 请求超时，可能是国内数据源响应慢或当前网络代理影响")
                         if attempt < _BLOCK_TRADE_MAX_RETRIES - 1:
                             time.sleep(1)
-                    except Exception as e:
+                    except (json.JSONDecodeError, OSError, RuntimeError, subprocess.CalledProcessError, TypeError, ValueError) as e:
                         log.warning(f"[大宗交易] {chunk_key} 第{attempt+1}次失败: {e}")
                         if attempt < _BLOCK_TRADE_MAX_RETRIES - 1:
                             time.sleep(1)
@@ -442,9 +439,9 @@ class ForeignBlockTradeTab(BaseStockTab):
                 "timeout_chunks": timeout_chunks,
                 "failed_chunks": failed_chunks,
             }
-            
+
         task_manager.run_in_background(
-            _fetch_task, 
+            _fetch_task,
             task_id="foreign_block_trade",
             on_success=self._on_data_fetched,
             on_error=self._on_data_fetch_failed
@@ -476,11 +473,11 @@ class ForeignBlockTradeTab(BaseStockTab):
             if hasattr(self, "table_state"):
                 self.table_state.show_empty("暂无大宗交易数据")
             return
-            
+
         df = pd.DataFrame(data_list)
         if '交易日期' in df.columns:
             df['交易日期'] = _normalize_trade_date_series(df['交易日期'])
-        
+
         # 按照 (交易日期, 股票代码, 买方营业部, 卖方营业部) 分组汇总，合并拆单金额和数量
         # 对于数值类型去求和或者均值，字符去第一条
         df = df.groupby(['交易日期', '证券代码', '买方营业部', '卖方营业部', '证券简称'], as_index=False).agg({
@@ -504,30 +501,30 @@ class ForeignBlockTradeTab(BaseStockTab):
 
         self.cmb_filter_date.blockSignals(True)
         self.cmb_filter_branch.blockSignals(True)
-        
+
         self.cmb_filter_date.clear()
         self.cmb_filter_date.addItem("全部日期")
         self.cmb_filter_date.addItems([str(x) for x in unique_dates])
-        
+
         self.cmb_filter_branch.clear()
         self.cmb_filter_branch.addItem("全部监控席位")
         self.cmb_filter_branch.addItems(unique_branches)
 
         self.cmb_filter_date.blockSignals(False)
         self.cmb_filter_branch.blockSignals(False)
-        
+
         row_data = []
         for row, (_, record) in enumerate(df.iterrows()):
             trade_date = str(record.get("交易日期", ""))
             code = str(record.get("证券代码", "")).zfill(6)
             name = str(record.get("证券简称", ""))
-            
+
             close_price = record.get("收盘价", 0)
             trade_price = record.get("成交价", 0)
             premium = record.get("折溢率", 0)
             vol = record.get("成交量", 0)
             amt = record.get("成交额", 0)
-            
+
             close_price = 0 if pd.isna(close_price) else close_price
             trade_price = 0 if pd.isna(trade_price) else trade_price
             premium = 0 if pd.isna(premium) else premium
@@ -537,10 +534,10 @@ class ForeignBlockTradeTab(BaseStockTab):
             premium_pct = premium * 100
             vol_wan = vol / 10000.0
             amt_wan = amt / 10000.0
-            
+
             buyer = str(record.get("买方营业部", ""))
             seller = str(record.get("卖方营业部", ""))
-            
+
             direction, _ = self._determine_direction(buyer, seller)
 
             row_dict = {
@@ -578,11 +575,11 @@ class ForeignBlockTradeTab(BaseStockTab):
         )
         if hasattr(self, "table_state"):
             self.table_state.show_table()
-        
+
         # 强制应用当前的筛选状态
         self._filter_table_combo()
         event_bus.sig_block_trade_updated.emit()
-        
+
         self.refresh_table_quotes_and_market_caps(quote_task_id="foreign_block_trade_quotes")
 
     def _on_data_fetch_failed(self, error_message: str):
@@ -600,13 +597,13 @@ class ForeignBlockTradeTab(BaseStockTab):
     def _filter_table_combo(self):
         search_text = self.search_box.text().strip().lower()
         self.proxy_model.setFilterText(search_text)
-        
+
         filter_date = self.cmb_filter_date.currentText()
         self.proxy_model.setExactFilter("交易日期", None if filter_date == "全部日期" else filter_date)
 
         filter_direction = self.cmb_filter_direction.currentText()
         self.proxy_model.setExactFilter("交易详情", None if filter_direction == "全部动作" else filter_direction)
-        
+
         filter_branch = self.cmb_filter_branch.currentText()
         self.proxy_model.setExactFilter("_branch", None if filter_branch == "全部监控席位" else filter_branch)
 
@@ -615,9 +612,9 @@ class ForeignBlockTradeTab(BaseStockTab):
         source_idx = self.proxy_model.mapToSource(index)
         row = source_idx.row()
         if row >= len(self.model.row_data): return
-        
+
         code = self.model.row_data[row].get("代码", "")
-        
+
         # 提取当前表格顺序以传递给K线窗口
         code_list = []
         for r in range(self.proxy_model.rowCount()):
@@ -625,13 +622,13 @@ class ForeignBlockTradeTab(BaseStockTab):
             if s_idx.row() < len(self.model.row_data):
                 rd = self.model.row_data[s_idx.row()]
                 code_list.append({'代码': rd.get("代码", ""), '名称': rd.get("名称", "")})
-                
+
         current_idx = 0
         for i, c in enumerate(code_list):
             if c['代码'] == code:
                 current_idx = i
                 break
-                
+
         event_bus.sig_show_kline_with_list.emit(code, code_list, current_idx)
 
     def _show_context_menu(self, pos):

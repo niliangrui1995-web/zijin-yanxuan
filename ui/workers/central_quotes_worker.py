@@ -7,10 +7,10 @@ import time
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSlot
 
-from core.event_bus import event_bus
 from core.global_store import global_store
 from core.logger import get_logger
 from core.market_calendar import MarketCalendar
+from core.quote_dispatcher import publish_rt_quotes
 from core.quote_snapshot import enrich_quotes_with_finance
 from core.task_manager import task_manager
 
@@ -31,10 +31,11 @@ class CentralQuotesService(QObject):
     3. 分钟级输出运行时健康日志，发现线程异常时主动熔断。
     """
 
-    def __init__(self, main_window, data_provider):
+    def __init__(self, main_window, data_provider, code_supplier=None):
         super().__init__(main_window)
-        self.main_window = main_window
         self.data_provider = data_provider
+        self._code_supplier = code_supplier
+        self._missing_code_supplier_warned = False
         self._closed = False
 
         self._timer = QTimer(self)
@@ -65,55 +66,40 @@ class CentralQuotesService(QObject):
             return
         self._trigger_fetch()
 
-    def _get_all_active_codes(self) -> set[str]:
-        codes = set()
-        mw = self.main_window
+    def publish_external_quotes(
+        self,
+        payload,
+        *,
+        source: str,
+        require_valid: bool = False,
+    ) -> dict[str, dict]:
+        if self._closed:
+            return {}
+        return publish_rt_quotes(payload, source=source, require_valid=require_valid)
 
+    def _get_all_active_codes(self) -> set[str]:
         def _normalize_a_code(code):
             code = str(code).strip()
             return code if _A_SHARE_CODE_RE.match(code) else None
 
-        def _extract(model_data):
-            for row in model_data:
-                code = _normalize_a_code(row.get("代码"))
-                if code:
-                    codes.add(code)
+        if not callable(self._code_supplier):
+            if not self._missing_code_supplier_warned:
+                self._missing_code_supplier_warned = True
+                log.warning("[报价站] 未注入 code_supplier，跳过本轮行情轮询")
+            return set()
 
-        if hasattr(mw, "tab_scan") and mw.tab_scan.source_model:
-            _extract(mw.tab_scan.source_model.row_data)
-
-        if hasattr(mw, "tab_rt") and mw.tab_rt.source_model:
-            _extract(mw.tab_rt.source_model.row_data)
-
-        if hasattr(mw, "tab_watchlist") and getattr(mw.tab_watchlist, "model", None):
-            _extract(mw.tab_watchlist.model.row_data)
-
-        if hasattr(mw, "tab_foreign_block"):
-            foreign_block = mw.tab_foreign_block
-            foreign_model = getattr(foreign_block, "model", None)
-            if foreign_model and hasattr(foreign_model, "row_data"):
-                _extract(foreign_model.row_data)
-            elif hasattr(foreign_block, "_block_trade_codes"):
-                for code in foreign_block._block_trade_codes:
-                    normalized = _normalize_a_code(code)
-                    if normalized:
-                        codes.add(normalized)
-
-        if hasattr(mw, "tab_na_daily") and getattr(mw.tab_na_daily, "model", None):
-            _extract(mw.tab_na_daily.model.row_data)
-
-        if hasattr(mw, "tab_earnings") and getattr(mw.tab_earnings, "model", None):
-            _extract(mw.tab_earnings.model.row_data)
-
-        if hasattr(mw, "tab_lhb") and getattr(mw.tab_lhb, "model", None):
-            _extract(mw.tab_lhb.model.row_data)
-
+        self._missing_code_supplier_warned = False
+        codes = set()
+        for code in self._code_supplier() or []:
+            normalized = _normalize_a_code(code)
+            if normalized:
+                codes.add(normalized)
         return codes
 
     def _get_missing_finance_codes(self, codes: set[str]) -> list[str]:
         try:
             return global_store.get_missing_a_share_finance_codes(codes)
-        except Exception as exc:
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
             log.debug(f"[报价站] 读取股本缺口失败: {exc}")
             return []
 
@@ -128,14 +114,14 @@ class CentralQuotesService(QObject):
                 from vcp.engine import VCPEngine
 
                 finance_data = VCPEngine.batch_get_finance_info(finance_codes) or {}
-            except Exception as exc:
+            except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 log.debug(f"[报价站] 批量补股本失败: {exc}")
 
         stats_getter = getattr(self.data_provider, "get_realtime_runtime_stats", None)
         if callable(stats_getter):
             try:
                 provider_stats = stats_getter() or {}
-            except Exception as exc:
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
                 log.debug(f"[报价站] 读取运行态统计失败: {exc}")
 
         return {
@@ -164,7 +150,7 @@ class CentralQuotesService(QObject):
                     f"报价站连续失败达到阈值：{reason}",
                     cooldown_sec=300,
                 )
-            except Exception as exc:
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
                 log.debug(f"[报价站] 触发 provider 冷却失败: {exc}")
 
     def _collect_thread_health(self) -> tuple[int, int]:
@@ -194,7 +180,7 @@ class CentralQuotesService(QObject):
         if self.data_provider is not None:
             try:
                 stats = self.data_provider.compact_runtime_caches()
-            except Exception as exc:
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
                 log.debug(f"[报价站] 运行时缓存清理失败: {exc}")
 
         total_threads, pytdx_threads = self._collect_thread_health()
@@ -202,7 +188,7 @@ class CentralQuotesService(QObject):
             try:
                 if self.data_provider.protect_against_thread_anomaly(pytdx_threads):
                     self._circuit_breaker_cooldown = max(self._circuit_breaker_cooldown, self._COOLDOWN_TICKS)
-            except Exception as exc:
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
                 log.debug(f"[报价站] pytdx 线程防护失败: {exc}")
 
         if self._tick_count % self._heartbeat_every_ticks != 0:
@@ -264,14 +250,18 @@ class CentralQuotesService(QObject):
         try:
             payload = self._fetch_quote_payload(codes)
             quotes = payload.get("quotes") or {}
-        except Exception as exc:
+        except (AttributeError, ConnectionError, OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
             log.warning(f"[报价站] 盘后离线快照构建失败: {exc}")
             return
 
         self._off_market_snapshot_emitted = True
         has_valid = any(float(quote.get("close", 0) or 0) > 0 for quote in quotes.values())
         if has_valid:
-            event_bus.sig_rt_quotes.emit(quotes)
+            self.publish_external_quotes(
+                quotes,
+                source="central_quotes.off_market",
+                require_valid=True,
+            )
 
     @pyqtSlot()
     def _trigger_fetch(self):
@@ -363,7 +353,11 @@ class CentralQuotesService(QObject):
                 self._reset_failures()
 
             if has_valid:
-                event_bus.sig_rt_quotes.emit(quotes)
+                self.publish_external_quotes(
+                    quotes,
+                    source="central_quotes.realtime",
+                    require_valid=True,
+                )
 
         def _on_error(err_msg):
             if fetch_token != self._fetch_generation:

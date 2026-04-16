@@ -3,7 +3,13 @@ from PyQt6.QtTest import QSignalSpy
 from PyQt6.QtWidgets import QApplication, QLabel, QLineEdit, QToolButton, QWidget
 
 from core.event_bus import event_bus
+from core.quote_dispatcher import publish_rt_quotes
 from ui.tabs.base_stock_tab import BaseStockTab
+
+
+class DummyQuotePublisher:
+    def publish_external_quotes(self, payload, *, source: str, require_valid: bool = False):
+        return publish_rt_quotes(payload, source=source, require_valid=require_valid)
 
 
 def test_base_stock_toolbar_applies_shell_object_names_and_toolbutton_style():
@@ -30,7 +36,10 @@ def test_base_stock_toolbar_applies_shell_object_names_and_toolbutton_style():
 
 
 def test_base_stock_status_summary_skips_empty_segments():
-    assert BaseStockTab.format_status_summary("状态 已启动", "", None, "下一步 拉取报价") == "状态 已启动 | 下一步 拉取报价"
+    assert (
+        BaseStockTab.format_status_summary("状态 已启动", "", None, "下一步 拉取报价")
+        == "状态 已启动 | 下一步 拉取报价"
+    )
 
 
 def test_base_stock_tab_defers_quote_refresh_until_visible(monkeypatch):
@@ -114,8 +123,8 @@ def test_base_stock_refresh_table_market_data_only_fetches_blank_quotes(monkeypa
             super().__init__(data_provider=provider)
             self.model = DummyModel()
 
-    from core.global_store import global_store
     import core.task_manager as task_manager_module
+    from core.global_store import global_store
 
     snapshot = {
         "000001": {"close": 10.8, "last_close": 10.0},
@@ -129,6 +138,7 @@ def test_base_stock_refresh_table_market_data_only_fetches_blank_quotes(monkeypa
     monkeypatch.setattr(task_manager_module, "task_manager", task_manager)
 
     tab = DummyTab(provider)
+    tab._quote_publisher = DummyQuotePublisher()
     spy = QSignalSpy(event_bus.sig_rt_quotes)
     monkeypatch.setattr(tab, "async_update_market_caps", lambda: cap_calls.append("caps"))
 
@@ -179,8 +189,8 @@ def test_base_stock_refresh_table_market_data_can_force_full_quote_refresh(monke
             super().__init__(data_provider=provider)
             self.model = DummyModel()
 
-    from core.global_store import global_store
     import core.task_manager as task_manager_module
+    from core.global_store import global_store
 
     provider = DummyProvider()
     tab = DummyTab(provider)
@@ -241,8 +251,8 @@ def test_base_stock_refresh_table_market_data_fetches_newly_added_blank_rows(mon
             super().__init__(data_provider=provider)
             self.model = DummyModel()
 
-    from core.global_store import global_store
     import core.task_manager as task_manager_module
+    from core.global_store import global_store
 
     provider = DummyProvider()
     tab = DummyTab(provider)
@@ -254,6 +264,7 @@ def test_base_stock_refresh_table_market_data_fetches_newly_added_blank_rows(mon
     )
     monkeypatch.setattr(task_manager_module, "task_manager", DummyTaskManager())
     monkeypatch.setattr(tab, "async_update_market_caps", lambda: None)
+    tab._quote_publisher = DummyQuotePublisher()
 
     try:
         tab.refresh_table_quotes_and_market_caps(quote_task_id="new_codes_quotes")

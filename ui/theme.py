@@ -7,8 +7,9 @@ ui/theme.py
 为什么用单例+信号？因为主题切换需要通知所有已创建的组件刷新样式，
 就像广播电台——发一次信号，所有收音机同时收到。
 """
-from PyQt6.QtCore import QObject, pyqtSignal, QSettings, QTimer
 from datetime import datetime as _datetime
+
+from PyQt6.QtCore import QObject, QSettings, QTimer, pyqtSignal
 
 # ============================================================
 # 墨渊主题（暗色，即当前默认主题）

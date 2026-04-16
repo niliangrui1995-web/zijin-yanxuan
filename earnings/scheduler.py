@@ -1,13 +1,26 @@
-from PyQt6.QtCore import QTimer, QObject, pyqtSignal, QThread
 from datetime import datetime, timedelta
-from .engine import EarningsEngine
+
 import pandas as pd
+from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
+
 from core.logger import get_logger
 from core.market_calendar import MarketCalendar
+
+from .engine import EarningsEngine
 
 logger = get_logger()
 # 启动期断档追扫非常重，默认关闭以避免 UI 假死；手动扫描和定时巡检仍可用。
 ENABLE_STARTUP_GAP_FILL = False
+_SCHEDULER_ERRORS = (
+    AttributeError,
+    KeyError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+    ArithmeticError,
+)
 
 class FetchWorker(QThread):
     sig_finished = pyqtSignal(object, str)
@@ -26,7 +39,7 @@ class FetchWorker(QThread):
                 if cached_df is not None and not cached_df.empty:
                     logger.info(f"[业绩调度] 📡 恢复缓存 {len(cached_df)} 条记录")
                 self.sig_finished.emit(cached_df if cached_df is not None else pd.DataFrame(), self.mode)
-            
+
             elif self.mode == "gap_fill" and self.missing_dates:
                 logger.info(f"[业绩调度] 开始补扫 {len(self.missing_dates)} 天断档")
                 all_missed_dfs = []
@@ -40,15 +53,15 @@ class FetchWorker(QThread):
                     self.sig_finished.emit(combined_df, self.mode)
                 else:
                     self.sig_finished.emit(pd.DataFrame(), self.mode)
-            
+
             elif self.mode == "single" and self.target_date:
                 df_new = self.engine.fetch_daily_surprises(target_publish_date=self.target_date)
                 self.sig_finished.emit(df_new, self.mode)
-                
+
             elif self.mode == "routine":
                 df_new = self.engine.fetch_daily_surprises()
                 self.sig_finished.emit(df_new, self.mode)
-        except Exception as e:
+        except _SCHEDULER_ERRORS as e:
             logger.error(f"[业绩调度] ❌ 后台抓取异常退出: {e}")
             self.sig_finished.emit(pd.DataFrame(), self.mode)
 
@@ -58,7 +71,7 @@ class EarningsScheduler(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.engine = EarningsEngine()
-        
+
         self.target_times = [(8, 30), (12, 0), (17, 0), (19, 0), (21, 0), (23, 0)]
         self.triggered_today = set()
         self.last_check_day = MarketCalendar.today("CN")
@@ -66,11 +79,11 @@ class EarningsScheduler(QObject):
 
         self.clock_timer = QTimer(self)
         self.clock_timer.timeout.connect(self._check_schedule)
-        
+
     def _run_in_background(self, mode, missing_dates=None, target_date=None):
         worker = FetchWorker(self.engine, mode, missing_dates, target_date)
         self.active_workers.add(worker)
-        
+
         worker.sig_finished.connect(self._on_worker_finished)
         # 用 deleteLater 确保 worker 断开信号后被 Qt 事件循环安全回收
         worker.finished.connect(lambda w=worker: (self.active_workers.discard(w), w.deleteLater()))
@@ -84,39 +97,39 @@ class EarningsScheduler(QObject):
         """开机：先吐缓存 -> 计算断档脱水回填 -> 进入战备"""
         # 第一步：后台吐缓存，避免在 UI 线程里做重型历史数据处理。
         self._run_in_background("warm_cache")
-            
+
         # 第二步：计算我们到底睡了几天，开启断档追更（无缝回填核心）
         last_sync = self.engine.last_sync_date
         today_str = MarketCalendar.today("CN").strftime("%Y-%m-%d")
-        
+
         missing_dates = []
         try:
             start_dt = datetime.strptime(last_sync, "%Y-%m-%d")
             end_dt = datetime.strptime(today_str, "%Y-%m-%d")
             delta_days = (end_dt - start_dt).days
-            
+
             # 如果断档超过 15 天，就只追近 15 天，防止开机卡死（可调整）
             if delta_days > 15:
                 delta_days = 15
                 start_dt = end_dt - timedelta(days=15)
-                
+
             for i in range(1, delta_days + 1):
                 missing_dates.append((start_dt + timedelta(days=i)).strftime("%Y-%m-%d"))
-        except Exception as e:
+        except (TypeError, ValueError, OverflowError) as e:
             logger.warning(f"[业绩调度] 日期解析失败，回退仅查今天: {e}")
             missing_dates = [today_str] # 解析失败保底查今天
-            
+
         # 补全中间漏掉的每一天，同时包含今天
         if today_str not in missing_dates:
              missing_dates.append(today_str)
-             
+
         if missing_dates and ENABLE_STARTUP_GAP_FILL:
             self._run_in_background("gap_fill", missing_dates=missing_dates)
         elif missing_dates:
             logger.info("[业绩调度] 跳过开机补扫（防卡），后续定时巡检")
 
         # 第三步：挂载日常心跳时钟（30秒对次表），今天剩下的时间交给机器打理
-        self.clock_timer.start(30000) 
+        self.clock_timer.start(30000)
         logger.info("[业绩调度] ✅ 定时巡检已启动 (6 个巡检时间点)")
 
     def stop_patrol(self):
@@ -128,7 +141,7 @@ class EarningsScheduler(QObject):
 
     def _check_schedule(self):
         now = MarketCalendar.now("CN")
-        
+
         if now.date() != self.last_check_day:
             self.triggered_today.clear()
             self.last_check_day = now.date()

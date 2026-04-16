@@ -131,7 +131,7 @@ class AsianMarketWorker(QThread):
             if getattr(last_idx, "tzinfo", None) is not None:
                 last_idx = last_idx.tz_localize(None)
             quote_date = str(last_idx)[:10]
-        except Exception:
+        except (AttributeError, IndexError, TypeError, ValueError):
             quote_date = None
 
         payload = {
@@ -171,7 +171,15 @@ class AsianMarketWorker(QThread):
                     result_code, payload = future.result(timeout=1)
                     if payload:
                         updates[result_code] = payload
-                except Exception as exc:
+                except (
+                    concurrent.futures.CancelledError,
+                    AttributeError,
+                    KeyError,
+                    OSError,
+                    RuntimeError,
+                    TypeError,
+                    ValueError,
+                ) as exc:
                     log.debug(f"[AsianTab] 单票拉取失败 {code}: {exc}")
         except concurrent.futures.TimeoutError:
             log.warning("[AsianTab] 本轮亚洲报价抓取达到 45 秒上限，等待在途请求收尾")
@@ -214,7 +222,7 @@ class AsianMarketWorker(QThread):
                     )
                     self.progress.emit(message)
                     log.info(f"[AsianTab] {message}")
-            except Exception as exc:
+            except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 error_text = str(exc)
                 if "Too Many Requests" in error_text or "429" in error_text:
                     hint = "Yahoo Finance 返回 429，请稍后重试或切换网络出口"
@@ -254,5 +262,5 @@ class AsianCacheFetcherThread(QThread):
                 use_cf_proxy=is_cf_proxy_enabled(),
             )
             self.finished_sig.emit(success, message)
-        except Exception as exc:
+        except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
             self.finished_sig.emit(False, f"盘后拉取异常: {exc}")

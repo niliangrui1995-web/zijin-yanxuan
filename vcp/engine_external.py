@@ -7,8 +7,10 @@ import json
 import os
 import time as _time
 import urllib.request
+from contextlib import suppress
 from datetime import datetime
 
+from core.exceptions import CacheIOError, DataFormatError
 from core.json_cache import load_json_file, remove_cache_file, save_json_file
 from core.logger import get_logger
 from vcp.constants import (
@@ -37,7 +39,7 @@ def _to_eastmoney_secid(code: str) -> str:
 
 
 def _fetch_eastmoney_finance_info(codes):
-    """通过东方财富批量行情接口反推总股本。"""
+    """批量获取总股本/总市值等财务基础数据。"""
 
     normalized_codes = [
         str(code).strip()
@@ -72,13 +74,11 @@ def _fetch_eastmoney_finance_info(codes):
         try:
             payload = json.loads(resp.read().decode("utf-8"))
         finally:
-            try:
+            with suppress(AttributeError, OSError, RuntimeError, TypeError):
                 resp.close()
-            except Exception:
-                pass
 
         if int(payload.get("rc", 0) or 0) != 0:
-            raise RuntimeError(f"东方财富财务股本接口异常 rc={payload.get('rc')}")
+            raise RuntimeError(f"eastmoney finance rc={payload.get('rc')}")
 
         diff = (payload.get("data") or {}).get("diff") or []
         for row in diff:
@@ -107,14 +107,14 @@ def _fetch_eastmoney_finance_info(codes):
 
 
 def batch_get_finance_info(codes):
-    """批量获取财务信息（当前只维护总股本），带30天磁盘缓存。"""
+    """批量获取财务信息，带 30 天磁盘缓存。"""
 
     cache = {}
     if os.path.exists(FINANCE_CACHE_FILE):
         try:
             cache = load_json_file(FINANCE_CACHE_FILE) or {}
-        except Exception as exc:
-            _log.debug(f"[财务股本] 缓存文件读取异常，将重建: {exc}")
+        except (CacheIOError, DataFormatError) as exc:
+            _log.debug(f"[财务股本] 缓存读取异常，将重建: {exc}")
             cache = {}
 
     results = {}
@@ -125,11 +125,11 @@ def batch_get_finance_info(codes):
         if code in cache:
             cached = cache[code]
             try:
-                cache_date = datetime.strptime(cached.get('date', '2000-01-01'), '%Y-%m-%d')
+                cache_date = datetime.strptime(cached.get("date", "2000-01-01"), "%Y-%m-%d")
                 if (now - cache_date).days < 30:
-                    results[code] = cached['info']
+                    results[code] = cached["info"]
                     continue
-            except (ValueError, KeyError) as exc:
+            except (KeyError, ValueError) as exc:
                 _log.debug(f"[财务股本] 缓存日期解析异常({code}): {exc}")
         need_query.append(code)
 
@@ -138,38 +138,41 @@ def batch_get_finance_info(codes):
 
     try:
         online_results = _fetch_eastmoney_finance_info(need_query)
-    except Exception as exc:
-        _log.warning(f"[eastmoney] 无法获取总股本，市值计算将使用本地旧缓存或暂无数据: {exc}")
+    except (json.JSONDecodeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        _log.warning(f"[eastmoney] 无法获取总股本，回退本地旧缓存: {exc}")
         for code in need_query:
             if code in cache:
-                results[code] = cache[code]['info']
+                results[code] = cache[code]["info"]
         return results
 
     if not online_results:
         for code in need_query:
             if code in cache:
-                results[code] = cache[code]['info']
+                results[code] = cache[code]["info"]
         return results
 
-    for i, raw_code in enumerate(need_query):
+    for index, raw_code in enumerate(need_query):
         info = online_results.get(raw_code)
         if info:
             results[raw_code] = info
-            cache[raw_code] = {'info': info, 'date': now.strftime('%Y-%m-%d')}
-        if (i + 1) % 80 == 0:
+            cache[raw_code] = {
+                "info": info,
+                "date": now.strftime("%Y-%m-%d"),
+            }
+        if (index + 1) % 80 == 0:
             _time.sleep(0.1)
 
     try:
         save_json_file(FINANCE_CACHE_FILE, cache)
         remove_cache_file(FINANCE_CACHE_FILE.replace(".json", ".pkl"))
-    except Exception as exc:
+    except CacheIOError as exc:
         _log.error(f"[eastmoney] 财务缓存写入失败: {exc}")
 
     return results
 
 
 def batch_check_market_cap(codes: list[str], close_prices: dict[str, float] | None = None) -> dict[str, float]:
-    """批量计算总市值 = 总股本 × 收盘价"""
+    """批量计算总市值。"""
 
     finance_data = batch_get_finance_info(codes)
     results = {}
@@ -177,22 +180,21 @@ def batch_check_market_cap(codes: list[str], close_prices: dict[str, float] | No
         info = finance_data.get(code)
         if not info:
             continue
-        market_cap = float(info.get('market_cap', 0) or 0)
-        price_base = float(info.get('price_base', 0) or 0)
+
+        market_cap = float(info.get("market_cap", 0) or 0)
+        price_base = float(info.get("price_base", 0) or 0)
         if market_cap > 0:
             if close_prices and code in close_prices:
                 close_price = float(close_prices.get(code, 0) or 0)
                 if close_price > 0:
-                    if price_base > 0:
-                        results[code] = market_cap * (close_price / price_base)
-                    else:
-                        results[code] = market_cap
+                    results[code] = market_cap * (close_price / price_base) if price_base > 0 else market_cap
                 else:
                     results[code] = market_cap
             else:
                 results[code] = market_cap
             continue
-        zongguben = info.get('zongguben', 0)
+
+        zongguben = info.get("zongguben", 0)
         if zongguben and zongguben > 0:
             if close_prices and code in close_prices:
                 results[code] = zongguben * close_prices[code]
@@ -203,78 +205,79 @@ def batch_check_market_cap(codes: list[str], close_prices: dict[str, float] | No
 
 def is_institution(name, holder_type):
     for kw in INSTITUTION_KEYWORDS:
-        if kw in (holder_type or ''):
+        if kw in (holder_type or ""):
             return True
 
     for kw in INSTITUTION_NAME_KEYWORDS:
-        if kw in (name or ''):
+        if kw in (name or ""):
             return True
 
     return False
 
 
 def check_institutional_shareholders(code):
-    """通过东方财富API查询单只股票的十大流通股东，判断是否有机构持仓"""
+    """查询单只股票的十大流通股东是否包含机构。"""
 
-    if code.startswith(('6', '5')):
-        prefix = 'SH'
-    elif code.startswith(('0', '3')):
-        prefix = 'SZ'
-    elif code.startswith(('4', '8')):
-        prefix = 'BJ'
+    if code.startswith(("6", "5")):
+        prefix = "SH"
+    elif code.startswith(("0", "3")):
+        prefix = "SZ"
+    elif code.startswith(("4", "8")):
+        prefix = "BJ"
     else:
-        prefix = 'SZ'
+        prefix = "SZ"
 
-    url = f'https://emweb.securities.eastmoney.com/PC_HSF10/ShareholderResearch/PageAjax?code={prefix}{code}'
+    url = (
+        "https://emweb.securities.eastmoney.com/PC_HSF10/"
+        f"ShareholderResearch/PageAjax?code={prefix}{code}"
+    )
 
     try:
         req = urllib.request.Request(
             url,
             headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Referer': 'https://emweb.securities.eastmoney.com/',
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer": "https://emweb.securities.eastmoney.com/",
             },
         )
         resp = urllib.request.urlopen(req, timeout=8)
         try:
-            data = json.loads(resp.read().decode('utf-8'))
+            data = json.loads(resp.read().decode("utf-8"))
         finally:
-            try:
+            with suppress(AttributeError, OSError, RuntimeError, TypeError):
                 resp.close()
-            except Exception:
-                pass
-        shareholders = data.get('sdltgd', [])
+
+        shareholders = data.get("sdltgd", [])
         if not shareholders:
             return False, "无股东数据"
 
         institutions = []
         for shareholder in shareholders:
-            name = shareholder.get('HOLDER_NAME', '')
-            holder_type = shareholder.get('HOLDER_TYPE', '')
-
+            name = shareholder.get("HOLDER_NAME", "")
+            holder_type = shareholder.get("HOLDER_TYPE", "")
             if is_institution(name, holder_type):
-                short = name[:12] + '..' if len(name) > 12 else name
+                short = name[:12] + ".." if len(name) > 12 else name
                 institutions.append(short)
 
         if institutions:
-            display = '/'.join(institutions[:3])
+            display = "/".join(institutions[:3])
             if len(institutions) > 3:
-                display += f' 等{len(institutions)}家'
+                display += f" 等{len(institutions)}家"
             return True, display
         return False, "无机构"
-    except Exception as exc:
+    except (json.JSONDecodeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
         return False, f"查询失败:{str(exc)[:20]}"
 
 
 def batch_check_institution(codes):
-    """批量查询多只股票的机构股东情况（带 90 天磁盘缓存）"""
+    """批量查询多只股票的机构股东情况，带 90 天磁盘缓存。"""
 
     cache = {}
     if os.path.exists(SHAREHOLDER_CACHE_FILE):
         try:
             cache = load_json_file(SHAREHOLDER_CACHE_FILE) or {}
-        except Exception as exc:
-            _log.debug(f"[机构股东] 缓存文件读取异常，将重建: {exc}")
+        except (CacheIOError, DataFormatError) as exc:
+            _log.debug(f"[机构股东] 缓存读取异常，将重建: {exc}")
             cache = {}
 
     results = {}
@@ -285,32 +288,35 @@ def batch_check_institution(codes):
         if code in cache:
             cached = cache[code]
             try:
-                cache_date = datetime.strptime(cached['date'], '%Y-%m-%d')
+                cache_date = datetime.strptime(cached["date"], "%Y-%m-%d")
                 if (now - cache_date).days < 90:
                     results[code] = cached
                     continue
-            except (ValueError, KeyError) as exc:
+            except (KeyError, ValueError) as exc:
                 _log.debug(f"[机构股东] 缓存日期解析异常({code}): {exc}")
         need_query.append(code)
 
     if need_query:
-        _log.info(f"[机构股东] 东方财富查询 {len(need_query)} 只（缓存命中 {len(codes) - len(need_query)} 只）...")
-        for i, code in enumerate(need_query):
+        _log.info(
+            f"[机构股东] 东方财富查询 {len(need_query)} 只"
+            f"（缓存命中 {len(codes) - len(need_query)} 只）..."
+        )
+        for index, code in enumerate(need_query):
             has_inst, detail = check_institutional_shareholders(code)
             entry = {
-                'has_institution': has_inst,
-                'detail': detail,
-                'date': now.strftime('%Y-%m-%d'),
+                "has_institution": has_inst,
+                "detail": detail,
+                "date": now.strftime("%Y-%m-%d"),
             }
             results[code] = entry
             cache[code] = entry
-            if i < len(need_query) - 1:
+            if index < len(need_query) - 1:
                 _time.sleep(0.3)
 
         try:
             save_json_file(SHAREHOLDER_CACHE_FILE, cache)
             remove_cache_file(SHAREHOLDER_CACHE_FILE.replace(".json", ".pkl"))
-        except Exception as exc:
+        except CacheIOError as exc:
             _log.debug(f"[机构股东] 缓存保存失败: {exc}")
 
     return results

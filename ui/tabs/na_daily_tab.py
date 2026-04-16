@@ -3,21 +3,19 @@
 ui/tabs/na_daily_tab.py
 北美战报 独立 Tab 组件 (MVC 版本重构)
 """
+import datetime
+import glob
 import os
 import re
-import glob
-import datetime
 
-from PyQt6.QtWidgets import (
-    QVBoxLayout,
-    QHeaderView, QPushButton, QLabel, QLineEdit
-)
 from PyQt6.QtCore import Qt, QTimer
-from ui.models.table_models import StockTableModel, StockItemDelegate, RtSortFilterProxyModel
+from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
+
 from core.event_bus import event_bus
 from core.logger import get_logger
+from ui.components import TableStateWrapper, VCPTableView
+from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_tab import BaseStockTab
-from ui.components import VCPTableView, TableStateWrapper
 
 log = get_logger(__name__)
 
@@ -91,13 +89,13 @@ class NADailyTab(BaseStockTab):
         ]
         self.na_daily_table = VCPTableView(default_row_height=30)
         self.table_state = TableStateWrapper(self.na_daily_table, empty_title="暂无战报数据", loading_title="加载中...")
-        
+
         self.model = StockTableModel(columns)
         self.model.set_plain_style_headers(["日报时间"])
         self.proxy_model = RtSortFilterProxyModel(self)
         self.proxy_model.setSourceModel(self.model)
         self.na_daily_table.setModel(self.proxy_model)
-        
+
         self.delegate = StockItemDelegate(self.na_daily_table)
         self.na_daily_table.setItemDelegate(self.delegate)
 
@@ -197,14 +195,14 @@ class NADailyTab(BaseStockTab):
                             "strategy": adv.get("strategy", "")
                         }
                 parsed_from_json = True
-            except Exception as e:
+            except (json.JSONDecodeError, AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
                 log.warning(f"解析 JSON 失败: {e}")
 
         if not parsed_from_json:
             try:
                 with open(fpath, "r", encoding="utf-8") as f:
                     content = f.read()
-            except Exception as _e:
+            except (FileNotFoundError, PermissionError, OSError) as _e:
                 log.debug(f"[北美战报] 读取战报文件失败: {_e}")
                 return [], {}
             stocks = self._parse_battle_report(content)
@@ -348,7 +346,7 @@ class NADailyTab(BaseStockTab):
         if not index.isValid(): return
         source_index = self.proxy_model.mapToSource(index)
         row = source_index.row()
-        
+
         code = self.model.row_data[row].get("代码")
         if code:
             code_list = []
@@ -357,13 +355,13 @@ class NADailyTab(BaseStockTab):
                 if s_idx.row() < len(self.model.row_data):
                     rd = self.model.row_data[s_idx.row()]
                     code_list.append({'代码': rd.get("代码", ""), '名称': rd.get("名称", "")})
-            
+
             current_idx = 0
             for i, c in enumerate(code_list):
                 if c['代码'] == code:
                     current_idx = i
                     break
-                    
+
             event_bus.sig_show_kline_with_list.emit(code, code_list, current_idx)
 
     def _show_context_menu(self, pos):
@@ -373,7 +371,7 @@ class NADailyTab(BaseStockTab):
         source_index = self.proxy_model.mapToSource(index)
         row = source_index.row()
         if row >= len(self.model.row_data): return
-            
+
         code = self.model.row_data[row].get("代码", "")
         name = self.model.row_data[row].get("名称", "")
         row_data = self.model.row_data[row]
@@ -399,7 +397,7 @@ class NADailyTab(BaseStockTab):
             end = industry_matches[i + 1].start() if i + 1 < len(industry_matches) else len(section)
             block = section[start:end]
             table_rows = block.strip().split('\n')
-            
+
             header_cells = []
             info_rows = []
             for row_text in table_rows:
@@ -407,15 +405,15 @@ class NADailyTab(BaseStockTab):
                 if len(cells) >= 3 and cells[0] == '' and cells[-1] == '':
                     cells = cells[1:-1]
                 elif not cells: continue
-                
+
                 if ('代码' in cells) and ('标的' in cells or '名称' in cells):
                     header_cells = cells
                 elif header_cells:
                     if all('---' in c or not c for c in cells): continue
                     info_rows.append(cells)
-                    
+
             if not header_cells: continue
-                
+
             def get_col_idx(title_keywords):
                 for ind, h in enumerate(header_cells):
                     for kw in title_keywords:
@@ -439,7 +437,7 @@ class NADailyTab(BaseStockTab):
                 name = get_val(idx_name)
                 code = get_val(idx_code)
                 if not re.match(r'^\d{6}$', code): continue
-                    
+
                 stocks.append({
                     "行业": industry, "名称": name, "代码": code,
                     "近3月": get_val(idx_chg_3m), "分位": get_val(idx_pct_250d),
@@ -476,7 +474,7 @@ class NADailyTab(BaseStockTab):
                             cells = raw_cells[1:-1]
                         else:
                             cells = [c for c in raw_cells if c]
-                            
+
                         if len(cells) >= 3:
                             code = code_match.group(1)
                             priority = cells[0].replace('**', '').strip()

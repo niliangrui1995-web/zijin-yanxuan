@@ -16,9 +16,9 @@ class _DummyLabel:
         self.text = value
 
 
-def test_main_window_f5_done_refreshes_snapshot_and_emits_cache_loaded(monkeypatch):
+def test_main_window_f5_done_refreshes_snapshot_and_emits_cache_reload_completed(monkeypatch):
     app = QApplication.instance() or QApplication([])
-    cache_spy = QSignalSpy(event_bus.sig_cache_loaded)
+    cache_spy = QSignalSpy(event_bus.sig_cache_reload_completed)
     calls = []
 
     dummy_window = SimpleNamespace(

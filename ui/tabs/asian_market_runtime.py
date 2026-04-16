@@ -35,7 +35,7 @@ def call_worker_method(tab, method_name: str):
 
     try:
         return method()
-    except Exception as exc:
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
         log.warning(f"[亚洲页] 调用 worker.{method_name} 失败: {exc}")
         return None
 

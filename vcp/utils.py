@@ -1,14 +1,15 @@
 # utils.py - 辅助工具函数
 # 从 vcp_hunter.pyw 提取，零逻辑变更
-import os
 import json
-import numpy as np
+import os
 from datetime import datetime
+
+import numpy as np
 import pandas as pd
 
+from core.logger import get_logger
 from vcp.constants import PROJECT_ROOT
 
-from core.logger import get_logger
 _log = get_logger(__name__)
 
 
@@ -44,7 +45,7 @@ def _load_tdx_local_config():
                     vipdoc = os.path.join(root, 'vipdoc')
                 if _check_vipdoc_valid(vipdoc):
                     return vipdoc
-        except Exception as _e:
+        except (FileNotFoundError, PermissionError, OSError, TypeError, ValueError, json.JSONDecodeError) as _e:
             _log.debug(f"[配置] 通达信配置文件 {cfg_path} 读取异常: {_e}")
             continue
     default_ht = os.path.join('D:\\', 'HT', 'vipdoc')
@@ -70,7 +71,7 @@ def read_tdx_day_file(filepath, price_div=100.0):
     try:
         with open(filepath, 'rb') as f:
             buf = f.read()
-    except Exception as e:
+    except (FileNotFoundError, PermissionError, OSError) as e:
         _log.error(f"[Error] read_tdx_day_file: {str(e)}")
         return None
     n = len(buf) // 32
@@ -103,7 +104,7 @@ def read_tdx_day_file(filepath, price_div=100.0):
         })
         pdf = pdf.sort_values('datetime').reset_index(drop=True)
         return pdf
-    except Exception as e:
+    except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
         _log.error(f"[Error] read_tdx_day_file: {str(e)}")
         return None
 

@@ -8,8 +8,9 @@
 """
 
 import threading
-import uuid
 import traceback
+import uuid
+
 from PyQt6.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal, pyqtSlot
 
 
@@ -77,7 +78,7 @@ class BackgroundWorker(QRunnable):
                 self.signals.error.emit(str(e))
             except RuntimeError:
                 pass
-        except Exception as e:
+        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
             tb = traceback.format_exc()
             from core.logger import get_logger
             get_logger(__name__).error(f"[任务调度][{task_label}] Worker 异常: {e}\n{tb}")
@@ -220,7 +221,7 @@ class GlobalTaskManager(QObject):
         if hasattr(worker, 'cancel'):
             try:
                 worker.cancel()
-            except Exception:
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
                 pass
         return True
 

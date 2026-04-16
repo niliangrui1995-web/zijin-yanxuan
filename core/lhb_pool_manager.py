@@ -58,7 +58,7 @@ class LhbPoolManager:
                 self.save()
                 log.info(f"[龙虎榜池] 已升级 {migrated_count} 条旧版外资席位摘要缓存")
             log.info(f"[龙虎榜池] 缓存加载成功，包含 {len(self._data)} 个交易日数据")
-        except Exception as e:
+        except (FileNotFoundError, PermissionError, OSError, TypeError, ValueError, json.JSONDecodeError) as e:
             log.warning(f"[龙虎榜池] 缓存加载失败，将重建: {e}")
             self._data = {}
 
@@ -172,7 +172,7 @@ class LhbPoolManager:
             }
             with open(self._cache_path, 'w', encoding='utf-8') as f:
                 json.dump(payload, f, ensure_ascii=False)
-        except Exception as e:
+        except (PermissionError, OSError, TypeError, ValueError) as e:
             log.error(f"[龙虎榜池] 缓存保存失败: {e}")
 
     def _migrate_old_cache(self):
@@ -192,7 +192,7 @@ class LhbPoolManager:
             # 清理旧缓存文件
             os.remove(self._old_cache_path)
             log.info("[龙虎榜池] 旧缓存 lhb_cache.json 已删除")
-        except Exception as e:
+        except (FileNotFoundError, PermissionError, OSError, TypeError, ValueError, json.JSONDecodeError) as e:
             log.warning(f"[龙虎榜池] 旧缓存迁移失败（无影响）: {e}")
 
     # ================================================================
@@ -404,7 +404,7 @@ class LhbPoolManager:
                     record["买点"] = ""
                     record["上榜次数"] = code_hit_count.get(code, 1)
                     record["最近上榜"] = record.get("上榜日期", date_str)
-                    
+
                     # === 计算股价位置 & 静态买点 ===
                     if data_provider is not None:
                         try:
@@ -417,19 +417,19 @@ class LhbPoolManager:
                                     last_date = str(df_k['日期'].iloc[-1])[:10]
                                 else:
                                     last_date = str(df_k.index[-1])[:10]
-                                
+
                                 # 核心终极技：不再传任何玄学求和，直接传最干净的最后 20 根收盘价数组
                                 # 一切留给 UI 渲染层去根据“当前时间”动态推导
                                 hist_list = df_k['close'].tail(20).astype(float).tolist()
-                                
+
                                 record["_history_20"] = hist_list
                                 record["_history_date"] = last_date
-                                
+
                                 # 静态回显 (用于在没有实时行情推送的初始化瞬间，把位置显示出来)
                                 # 提取开盘价（兼容盘后首次点开不跳动行情时的静态推断）
                                 try:
                                     last_open = float(df_k.get('open', df_k['close']).iloc[-1])
-                                except Exception:
+                                except (AttributeError, KeyError, IndexError, TypeError, ValueError):
                                     last_open = hist_list[-1]
 
                                 last_close = hist_list[-1]
@@ -439,7 +439,7 @@ class LhbPoolManager:
                                     close_price=last_close,
                                     style=BUY_POINT_STYLE_BADGE,
                                 )
-                        except Exception as e:
+                        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
                             log.debug(f"[龙虎榜池] 计算 {code} 股价位置失败: {e}")
 
                     latest_records[code] = record
@@ -459,9 +459,9 @@ class LhbPoolManager:
             f"[龙虎榜池] 池计算完成: {len(self._data)} 天数据中，"
             f"{len(qualifying_codes)} 只标的入池"
         )
-        
+
         # 挂机防漏：计算核心完成深层循环后，显式扫地出门，回收计算期产生的海量瞬态字典和列表残余
         gc.collect()
-        
+
         return result
 

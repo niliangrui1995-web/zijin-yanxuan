@@ -6,6 +6,7 @@ from PyQt6.QtTest import QSignalSpy
 
 from core.event_bus import event_bus
 from core.global_store import global_store
+from core.quote_dispatcher import publish_rt_quotes
 from core.task_manager import task_manager
 from ui.tabs.na_daily_tab import NADailyTab
 
@@ -20,9 +21,15 @@ class DummyProvider:
         return dict(self.response)
 
 
+class DummyQuotePublisher:
+    def publish_external_quotes(self, payload, *, source: str, require_valid: bool = False):
+        return publish_rt_quotes(payload, source=source, require_valid=require_valid)
+
+
 def _build_tab(monkeypatch, provider):
     monkeypatch.setattr(QTimer, "singleShot", lambda *args, **kwargs: None)
     tab = NADailyTab(provider)
+    tab._quote_publisher = DummyQuotePublisher()
     tab._patrol_timer.stop()
     return tab
 

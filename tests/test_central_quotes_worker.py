@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-from PyQt6.QtWidgets import QApplication, QWidget
 from PyQt6.QtTest import QSignalSpy
+from PyQt6.QtWidgets import QApplication, QWidget
 
 from core.event_bus import event_bus
 from core.global_store import global_store
@@ -15,7 +15,7 @@ def test_central_quotes_service_uses_30s_a_share_polling():
     class DummyProvider:
         pass
 
-    service = CentralQuotesService(main_window, DummyProvider())
+    service = CentralQuotesService(main_window, DummyProvider(), code_supplier=lambda: set())
     try:
         assert service._timer.interval() == 30000
         assert service._COOLDOWN_TICKS == 10
@@ -30,12 +30,6 @@ def test_central_quotes_service_refresh_after_cache_reload_re_emits_off_market_s
     app = QApplication.instance() or QApplication([])
     main_window = QWidget()
 
-    class DummyModel:
-        row_data = [{"代码": "000001"}]
-
-    class DummyTab:
-        source_model = DummyModel()
-
     class DummyProvider:
         def __init__(self):
             self.calls = []
@@ -44,9 +38,8 @@ def test_central_quotes_service_refresh_after_cache_reload_re_emits_off_market_s
             self.calls.append(list(codes))
             return {"000001": {"close": 12.3, "last_close": 12.0}}
 
-    main_window.tab_scan = DummyTab()
     provider = DummyProvider()
-    service = CentralQuotesService(main_window, provider)
+    service = CentralQuotesService(main_window, provider, code_supplier=lambda: {"000001"})
     spy = QSignalSpy(event_bus.sig_rt_quotes)
 
     monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", classmethod(lambda cls, market="CN": False))
@@ -68,28 +61,64 @@ def test_central_quotes_service_refresh_after_cache_reload_re_emits_off_market_s
         main_window.deleteLater()
 
 
-def test_central_quotes_service_collects_foreign_block_codes_from_model_rows():
+def test_central_quotes_service_normalizes_codes_from_supplier():
     _ = QApplication.instance() or QApplication([])
     main_window = QWidget()
 
     class DummyProvider:
         pass
 
-    class DummyModel:
-        row_data = [
-            {"代码": "600000"},
-            {"代码": "600000"},
-            {"代码": "000001"},
-        ]
-
-    class DummyForeignBlockTab:
-        model = DummyModel()
-
-    main_window.tab_foreign_block = DummyForeignBlockTab()
-    service = CentralQuotesService(main_window, DummyProvider())
+    service = CentralQuotesService(
+        main_window,
+        DummyProvider(),
+        code_supplier=lambda: ["600000", "600000", "000001", "bad"],
+    )
     try:
         assert service._get_all_active_codes() == {"600000", "000001"}
     finally:
+        service.shutdown()
+        service.deleteLater()
+        main_window.deleteLater()
+
+
+def test_central_quotes_service_without_code_supplier_skips_polling():
+    _ = QApplication.instance() or QApplication([])
+    main_window = QWidget()
+
+    class DummyProvider:
+        pass
+
+    service = CentralQuotesService(main_window, DummyProvider())
+    try:
+        assert service._get_all_active_codes() == set()
+    finally:
+        service.shutdown()
+        service.deleteLater()
+        main_window.deleteLater()
+
+
+def test_central_quotes_service_publish_external_quotes_updates_store_and_emits():
+    app = QApplication.instance() or QApplication([])
+    main_window = QWidget()
+
+    class DummyProvider:
+        pass
+
+    service = CentralQuotesService(main_window, DummyProvider(), code_supplier=lambda: {"000001"})
+    spy = QSignalSpy(event_bus.sig_rt_quotes)
+    global_store.reset_runtime_state()
+
+    try:
+        service.publish_external_quotes(
+            {"000001": {"close": 12.8, "last_close": 12.0}},
+            source="test.external",
+        )
+        app.processEvents()
+
+        assert len(spy) == 1
+        assert global_store.get_latest_quotes()["000001"]["close"] == 12.8
+    finally:
+        global_store.reset_runtime_state()
         service.shutdown()
         service.deleteLater()
         main_window.deleteLater()

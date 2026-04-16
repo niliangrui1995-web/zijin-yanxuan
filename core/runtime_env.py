@@ -71,7 +71,7 @@ def collect_runtime_env_issues(
         for module_name, dependency_name in _WINDOWS_RUNTIME_MODULES:
             try:
                 import_module(module_name)
-            except Exception:
+            except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
                 issues.append(f"缺少运行时依赖: {dependency_name} ({module_name})")
 
     requests_version = package_version("requests")

@@ -1,6 +1,7 @@
 # models.py - 数据类定义
 # 从 vcp_hunter.pyw 提取，零逻辑变更
 from dataclasses import dataclass
+
 from vcp.constants import DEFAULT_AMP_THRESHOLD
 
 

@@ -12,6 +12,7 @@ import datetime as _dt
 import os
 from typing import Iterable
 
+from core.exceptions import CacheIOError, DataFormatError
 from core.json_cache import load_json_file, save_json_file
 from core.logger import get_logger
 from core.market_calendar import MarketCalendar
@@ -75,7 +76,7 @@ def load_sector_rps_snapshot(data_provider, all_data, target_date=None, logger=N
 
     try:
         sector_manager = _get_sector_manager(data_provider)
-    except Exception as exc:
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
         logger.error(f"[板块RPS] 初始化 SectorManager 失败: {exc}")
         return False, {}, normalized_date, "error"
 
@@ -93,7 +94,7 @@ def load_sector_rps_snapshot(data_provider, all_data, target_date=None, logger=N
                 logger.info(f"[板块RPS] 命中缓存 ({cached_date}, {len(sector_rps)} 个板块)")
             else:
                 logger.info(f"[板块RPS] 缓存过期或为空，重建 ({cached_date or '-'} -> {normalized_date})")
-        except Exception as exc:
+        except (CacheIOError, DataFormatError) as exc:
             logger.warning(f"[板块RPS] 缓存读取失败，改为现算: {exc}")
             sector_rps = {}
 
@@ -109,7 +110,7 @@ def load_sector_rps_snapshot(data_provider, all_data, target_date=None, logger=N
                 {"date": normalized_date, "sector_rps": sector_rps},
             )
         return sector_manager, sector_rps, normalized_date, "rebuild"
-    except Exception as exc:
+    except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
         logger.error(f"[板块RPS] 现算失败: {exc}")
         return False, {}, normalized_date, "error"
 
@@ -127,7 +128,7 @@ def resolve_hot_sector(code: str, preferred_text: str, sector_manager, sector_rp
     try:
         _, info_str, _ = sector_manager.check_sector_rps(code, sector_rps, threshold=0)
         return info_str if info_str else "--"
-    except Exception as exc:
+    except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
         logger.debug(f"[板块RPS] {code} 热点板块查询失败: {exc}")
         return "--"
 

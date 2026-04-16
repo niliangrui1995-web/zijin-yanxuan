@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
+from collections.abc import Mapping
+
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from core.event_bus import event_bus
 from core.quote_snapshot import get_missing_a_share_finance_codes, merge_quote_snapshot_inplace
 
 
@@ -16,14 +17,11 @@ class GlobalStore(QObject):
             "quotes": {},
             "watchlist": [],
         }
-        self._bind_events()
 
-    def _bind_events(self):
-        event_bus.sig_rt_quotes.connect(self._on_rt_quotes)
-
-    def _on_rt_quotes(self, data: dict):
-        if isinstance(data, dict):
-            merge_quote_snapshot_inplace(self.state["quotes"], data)
+    def merge_quotes(self, data: Mapping | None):
+        if not isinstance(data, Mapping):
+            return
+        merge_quote_snapshot_inplace(self.state["quotes"], dict(data))
 
     def get_latest_quotes(self) -> dict:
         return self.state["quotes"]

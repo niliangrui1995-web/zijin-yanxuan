@@ -2,7 +2,7 @@
 import pandas as pd
 
 from core.market_calendar import MarketCalendar
-from ui.tabs.earnings_tab import EarningsTab, EARNINGS_DISPLAY_TRADE_DAYS
+from ui.tabs.earnings_tab import EARNINGS_DISPLAY_TRADE_DAYS, EarningsTab
 
 
 def test_recent_trade_window_start_uses_oldest_trade_day(monkeypatch):
