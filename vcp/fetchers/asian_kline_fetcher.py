@@ -22,6 +22,7 @@ import uuid
 from datetime import datetime
 
 import yfinance as yf
+
 from vcp.fetchers.yf_session import build_yf_session
 
 # Why: 行业字典暂未收入本项目工程，通过项目根目录向上推导兄弟目录，避免硬编码特定机器的绝对路径
@@ -30,7 +31,7 @@ _PIPELINE_DIR = os.path.join(os.path.dirname(_PROJECT_ROOT), "每日战报", "�
 if os.path.isdir(_PIPELINE_DIR) and _PIPELINE_DIR not in sys.path:
     sys.path.insert(0, _PIPELINE_DIR)
 
-from industry_dict import VANGUARD_TICKERS, OLIGARCH_DICT  # noqa: E402
+from industry_dict import OLIGARCH_DICT, VANGUARD_TICKERS  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -56,6 +57,18 @@ MARKET_SHORTCUT = {
     "JP": (".T",),
     "HK": (".HK",),
 }
+
+# Why: 亚洲页需要优先跟踪本地挂牌代码，避免被 ADR/海外替代代码稀释。
+# 这里仅覆盖“亚洲看板”的取数池，不影响每日战报主工程里的全局 ticker 定义。
+ASIAN_LOCAL_TICKER_OVERRIDES = {
+    "TSMC": "2330.TW",
+}
+
+
+def _get_asian_source_tickers() -> dict[str, str]:
+    tickers = dict(VANGUARD_TICKERS)
+    tickers.update(ASIAN_LOCAL_TICKER_OVERRIDES)
+    return tickers
 
 
 def _get_market_suffix(ticker: str) -> str | None:
@@ -91,7 +104,7 @@ def filter_asian_tickers(market_filter: str | None = None) -> dict[str, str]:
     else:
         target_suffixes = tuple(ASIAN_MARKET_MAP.keys())
 
-    for name, ticker in VANGUARD_TICKERS.items():
+    for name, ticker in _get_asian_source_tickers().items():
         if any(ticker.endswith(s) for s in target_suffixes):
             result[name] = ticker
 
@@ -102,7 +115,7 @@ def _find_track(ticker: str) -> str:
     """反查 ticker 所属的赛道名称。"""
     # Why: 从 VANGUARD_TICKERS 找到公司名，再从 OLIGARCH_DICT 反查赛道
     company_name = None
-    for name, tk in VANGUARD_TICKERS.items():
+    for name, tk in _get_asian_source_tickers().items():
         if tk == ticker:
             company_name = name
             break
@@ -206,7 +219,7 @@ def fetch_all_asian_klines(
     # Why: 支持单只调试模式
     if single_ticker:
         name = None
-        for n, tk in VANGUARD_TICKERS.items():
+        for n, tk in _get_asian_source_tickers().items():
             if tk == single_ticker:
                 name = n
                 break

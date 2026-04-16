@@ -2,11 +2,16 @@
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 
-from ui.tabs import asian_market_tab as asian_module
-from ui.tabs.asian_market_meta import get_market_status as get_asian_market_status
-from ui.tabs.asian_market_workers import infer_asian_markets, is_asian_quote_refresh_time
-from ui.models.table_models import _c
 from core.market_calendar import MarketCalendar
+from ui.models.table_models import _c
+from ui.tabs import asian_market_tab as asian_module
+from ui.tabs.asian_market_meta import (
+    format_market_display,
+)
+from ui.tabs.asian_market_meta import (
+    get_market_status as get_asian_market_status,
+)
+from ui.tabs.asian_market_workers import infer_asian_markets, is_asian_quote_refresh_time
 
 
 class _Signal:
@@ -191,6 +196,12 @@ def test_asian_market_status_display_uses_market_specific_labels(monkeypatch):
     assert get_asian_market_status("TW") == "🟢 交易中"
 
     monkeypatch.setattr(MarketCalendar, "get_market_status", original)
+
+
+def test_asian_market_display_uses_taiwan_label_for_tw_codes():
+    assert format_market_display("TW", "2330.TW") == "台湾"
+    assert format_market_display("TWO", "3324.TWO") == "台湾"
+    assert format_market_display("中华民国", "2330.TW") == "台湾"
 
 
 def test_asian_market_status_rows_refresh_without_quote_tick(monkeypatch):

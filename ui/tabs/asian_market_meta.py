@@ -12,6 +12,7 @@ log = get_logger(__name__)
 
 def get_role_mapping():
     roles_mapping = {
+        '2330.TW': '先进制程晶圆代工龙头',
         '3661.TW': 'ASIC设计服务龙头',
         '3711.TW': '全球封测龙头',
         '3037.TW': 'ABF载板双寡头之一',
@@ -196,12 +197,8 @@ def format_market_display(market_value: str, code: str = "") -> str:
     }
     market_map.update(
         {
-            "TW": "中华民国",
-            "TWO": "中华民国",
-            "台湾": "中华民国",
-            "台湾上柜": "中华民国",
-            "中华民国": "中华民国",
-            "中华民国上柜": "中华民国",
+            "中华民国": "台湾",
+            "中华民国上柜": "台湾",
         }
     )
     if raw_market in market_map:
