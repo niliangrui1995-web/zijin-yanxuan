@@ -1,6 +1,6 @@
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import akshare as ak
 import numpy as np
@@ -177,6 +177,54 @@ class EarningsEngine:
     @staticmethod
     def _build_fingerprint(code: str, report_date: str, data_type: str) -> str:
         return f"SHOCK_{str(code).zfill(6)}_{report_date}_{data_type}"
+
+    @staticmethod
+    def _normalize_publish_date(raw_value) -> str:
+        raw_text = str(raw_value or "").strip()
+        return raw_text[:10] if raw_text else ""
+
+    @classmethod
+    def _next_trade_date(cls, trade_date: str) -> str | None:
+        try:
+            cursor = datetime.strptime(trade_date, "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+        for _ in range(10):
+            cursor += timedelta(days=1)
+            if MarketCalendar.is_trade_day(cursor, "CN"):
+                return cursor.strftime("%Y-%m-%d")
+        return None
+
+    @classmethod
+    def _resolve_allowed_publish_dates(cls, target_publish_date: str, data_type: str) -> set[str]:
+        allowed_dates = {target_publish_date}
+        if data_type not in {"财报", "快报"}:
+            return allowed_dates
+
+        today_str = MarketCalendar.today("CN").strftime("%Y-%m-%d")
+        if target_publish_date != today_str:
+            return allowed_dates
+
+        next_trade_date = cls._next_trade_date(target_publish_date)
+        if next_trade_date:
+            allowed_dates.add(next_trade_date)
+        return allowed_dates
+
+    @classmethod
+    def _filter_candidates_by_publish_date(
+        cls,
+        df: pd.DataFrame,
+        date_col: str,
+        target_publish_date: str,
+        data_type: str,
+    ) -> pd.DataFrame:
+        if df.empty or date_col not in df.columns:
+            return df.iloc[0:0]
+
+        allowed_dates = cls._resolve_allowed_publish_dates(target_publish_date, data_type)
+        normalized_dates = df[date_col].astype(str).str[:10]
+        return df[normalized_dates.isin(allowed_dates)]
 
     def _record_to_fingerprint(self, record: dict):
         code = str(record.get("股票代码") or record.get("代码") or "").zfill(6)
@@ -395,7 +443,12 @@ class EarningsEngine:
             try:
                 df_yg = safe_ak_fetch(ak.stock_yjyg_em, date=r_date)
                 if not df_yg.empty and '公告日期' in df_yg.columns:
-                    df_target = df_yg[df_yg['公告日期'].astype(str).str.startswith(target_publish_date)]
+                    df_target = self._filter_candidates_by_publish_date(
+                        df_yg,
+                        '公告日期',
+                        target_publish_date,
+                        '预告',
+                    )
                     for _, row in df_target.iterrows():
                         est_profit = pd.to_numeric(row.get('预测数值', np.nan), errors='coerce')
                         target_metric = str(row.get('预测指标', ''))
@@ -421,10 +474,13 @@ class EarningsEngine:
                         # 严格卡口：只要拿不到扣非数据就直接丢弃，不允许用归母净利润混进来
                         if not is_koufei: continue
 
+                        source_publish_date = self._normalize_publish_date(row.get('公告日期')) or target_publish_date
+
                         all_candidates.append({
                             "股票代码": str(row['股票代码']).zfill(6), "股票名称": row.get('股票简称', ''),
                             "报告期": r_date, "数据类型": "预告", "基调": row.get('预告类型', ''),
                             "累计期末利润估算_元": float(est_profit), "公告日期": target_publish_date,
+                            "源公告日期": source_publish_date,
                             "is_koufei": is_koufei
                         })
             except _AKSHARE_FETCH_ERRORS as e:
@@ -435,14 +491,21 @@ class EarningsEngine:
             try:
                 df_bb = safe_ak_fetch(ak.stock_yjbb_em, date=r_date)
                 if not df_bb.empty and '最新公告日期' in df_bb.columns:
-                    df_target = df_bb[df_bb['最新公告日期'].astype(str).str.startswith(target_publish_date)]
+                    df_target = self._filter_candidates_by_publish_date(
+                        df_bb,
+                        '最新公告日期',
+                        target_publish_date,
+                        '财报',
+                    )
                     for _, row in df_target.iterrows():
                         est_profit = pd.to_numeric(row.get('净利润-净利润', np.nan), errors='coerce')
                         if pd.notna(est_profit):
+                            source_publish_date = self._normalize_publish_date(row.get('最新公告日期')) or target_publish_date
                             all_candidates.append({
                                 "股票代码": str(row['股票代码']).zfill(6), "股票名称": row.get('股票简称', ''),
                                 "报告期": r_date, "数据类型": "财报", "基调": "正式出炉",
                                 "累计期末利润估算_元": float(est_profit), "公告日期": target_publish_date,
+                                "源公告日期": source_publish_date,
                                 "is_koufei": False
                             })
             except _AKSHARE_FETCH_ERRORS as e:
@@ -452,14 +515,21 @@ class EarningsEngine:
             try:
                 df_kb = safe_ak_fetch(ak.stock_yjkb_em, date=r_date)
                 if not df_kb.empty and '公告日期' in df_kb.columns:
-                    df_target = df_kb[df_kb['公告日期'].astype(str).str.startswith(target_publish_date)]
+                    df_target = self._filter_candidates_by_publish_date(
+                        df_kb,
+                        '公告日期',
+                        target_publish_date,
+                        '快报',
+                    )
                     for _, row in df_target.iterrows():
                         est_profit = pd.to_numeric(row.get('净利润-净利润', np.nan), errors='coerce')
                         if pd.notna(est_profit):
+                            source_publish_date = self._normalize_publish_date(row.get('公告日期')) or target_publish_date
                             all_candidates.append({
                                 "股票代码": str(row['股票代码']).zfill(6), "股票名称": row.get('股票简称', ''),
                                 "报告期": r_date, "数据类型": "快报", "基调": "快报速递",
                                 "累计期末利润估算_元": float(est_profit), "公告日期": target_publish_date,
+                                "源公告日期": source_publish_date,
                                 "is_koufei": False
                             })
             except _AKSHARE_FETCH_ERRORS as e:

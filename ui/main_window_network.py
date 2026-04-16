@@ -18,7 +18,7 @@ def toggle_network(main_window):
                 TypeError,
                 ValueError,
             ) as exc:
-                log.error(f"[缃戠粶] 鍒囨崲鑱旂綉澶辫触: {exc}")
+                log.error(f"[网络] 切换联网失败: {exc}")
                 main_window._call_in_ui(lambda: main_window._update_network_ui(False))
 
         from core.task_manager import task_manager
@@ -35,18 +35,18 @@ def update_network_ui(main_window, online: bool, detail: str = ""):
     if not hasattr(main_window, "act_network"):
         return
     if online:
-        main_window.act_network.setText("缃戠粶鐘舵€侊細鍦ㄧ嚎")
+        main_window.act_network.setText("网络状态：在线")
         if hasattr(main_window, "status_dot"):
             main_window.status_dot.set_color("#22C55E")
         return
 
-    main_window.act_network.setText("缃戠粶鐘舵€侊細绂荤嚎")
+    main_window.act_network.setText("网络状态：离线")
     if hasattr(main_window, "status_dot"):
         main_window.status_dot.set_color("#EF4444")
 
 
 def force_reconnect(main_window):
-    """涓荤珯寮哄埗閲嶇疆涓滄柟璐㈠瘜瀹炴椂琛屾儏鏂规硶"""
+    """主站强制重置东方财富实时行情连接。"""
     if not main_window.data_provider.is_online():
         return
     if hasattr(main_window, "status_dot"):
@@ -64,7 +64,7 @@ def force_reconnect(main_window):
             TypeError,
             ValueError,
         ) as exc:
-            log.error(f"寮哄埗閲嶈繛寮傚父: {exc}")
+            log.error(f"强制重连异常: {exc}")
             return False
 
     def _on_done(ok):
@@ -72,10 +72,10 @@ def force_reconnect(main_window):
         from ui.components.toast_widget import show_toast
 
         if ok:
-            show_toast("涓滄柟璐㈠瘜瀹炴椂琛屾儏杩炴帴宸查噸缃€?", "success", main_window, duration=2500)
+            show_toast("东方财富实时行情连接已重置。", "success", main_window, duration=2500)
             return
 
-        show_toast("涓滄柟璐㈠瘜瀹炴椂琛屾儏妫€娴嬪け璐ワ紝璇锋鏌ョ綉缁溿€?", "error", main_window, duration=3500)
+        show_toast("东方财富实时行情检测失败，请检查网络。", "error", main_window, duration=3500)
 
     from core.task_manager import task_manager
 

@@ -119,3 +119,111 @@ def test_fetch_daily_surprises_marks_seen_only_after_valid_record(monkeypatch):
     assert len(result) == 1
     assert "SHOCK_300308_20251231_财报" in engine.seen_fingerprints
     assert len(engine.local_records) == 1
+
+
+def test_fetch_daily_surprises_accepts_next_trade_day_financial_report_on_today_scan(monkeypatch):
+    engine = _build_engine()
+
+    candidate_df = pd.DataFrame(
+        [
+            {
+                "股票代码": "300308",
+                "股票简称": "中际旭创",
+                "最新公告日期": "2026-04-17",
+                "净利润-净利润": 1000000,
+            }
+        ]
+    )
+
+    monkeypatch.setattr(engine_module, "current_active_report_dates", lambda: ["20260331"])
+    monkeypatch.setattr(
+        engine_module.MarketCalendar,
+        "today",
+        classmethod(lambda cls, market="CN": pd.Timestamp("2026-04-16").date()),
+    )
+    monkeypatch.setattr(
+        engine_module.MarketCalendar,
+        "get_recent_trade_dates",
+        classmethod(
+            lambda cls, n=20, ref_date=None: ["20260417", "20260416", "20260415"]
+        ),
+    )
+    monkeypatch.setattr(
+        engine_module,
+        "safe_ak_fetch",
+        lambda fetch_func, *args, **kwargs: candidate_df.copy() if fetch_func.__name__ == "stock_yjbb_em" else pd.DataFrame(),
+    )
+    monkeypatch.setattr(engine, "_inject_sectors", lambda records: records)
+    monkeypatch.setattr(engine, "_save_cache", lambda: None)
+    monkeypatch.setattr(
+        engine,
+        "compute_single_quarter_qoq",
+        lambda *args, **kwargs: {
+            "单季净利润_新增": 1.0,
+            "单季净利润_上期": 1.0,
+            "环比增速_百分比": 57.69,
+            "同比增速_百分比": 264.67,
+            "error": None,
+        },
+    )
+
+    result = engine.fetch_daily_surprises(target_publish_date="2026-04-16")
+
+    assert len(result) == 1
+    row = result.iloc[0].to_dict()
+    assert row["股票代码"] == "300308"
+    assert row["公告日期"] == "2026-04-16"
+    assert row["源公告日期"] == "2026-04-17"
+    assert "SHOCK_300308_20260331_财报" in engine.seen_fingerprints
+
+
+def test_fetch_daily_surprises_does_not_accept_next_trade_day_financial_report_on_backfill(monkeypatch):
+    engine = _build_engine()
+
+    candidate_df = pd.DataFrame(
+        [
+            {
+                "股票代码": "300308",
+                "股票简称": "中际旭创",
+                "最新公告日期": "2026-04-17",
+                "净利润-净利润": 1000000,
+            }
+        ]
+    )
+
+    monkeypatch.setattr(engine_module, "current_active_report_dates", lambda: ["20260331"])
+    monkeypatch.setattr(
+        engine_module.MarketCalendar,
+        "today",
+        classmethod(lambda cls, market="CN": pd.Timestamp("2026-04-16").date()),
+    )
+    monkeypatch.setattr(
+        engine_module.MarketCalendar,
+        "get_recent_trade_dates",
+        classmethod(
+            lambda cls, n=20, ref_date=None: ["20260417", "20260416", "20260415"]
+        ),
+    )
+    monkeypatch.setattr(
+        engine_module,
+        "safe_ak_fetch",
+        lambda fetch_func, *args, **kwargs: candidate_df.copy() if fetch_func.__name__ == "stock_yjbb_em" else pd.DataFrame(),
+    )
+    monkeypatch.setattr(engine, "_inject_sectors", lambda records: records)
+    monkeypatch.setattr(engine, "_save_cache", lambda: None)
+    monkeypatch.setattr(
+        engine,
+        "compute_single_quarter_qoq",
+        lambda *args, **kwargs: {
+            "单季净利润_新增": 1.0,
+            "单季净利润_上期": 1.0,
+            "环比增速_百分比": 57.69,
+            "同比增速_百分比": 264.67,
+            "error": None,
+        },
+    )
+
+    result = engine.fetch_daily_surprises(target_publish_date="2026-04-15")
+
+    assert result.empty
+    assert engine.seen_fingerprints == set()
