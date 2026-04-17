@@ -10,7 +10,7 @@ import threading
 import time
 
 import yfinance as yf
-from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import QThread
 
 from core.logger import get_logger
 from core.market_calendar import MarketCalendar
@@ -249,7 +249,10 @@ class AsianMarketWorker(QThread):
 
 
 class AsianCacheFetcherThread(QThread):
-    finished_sig = pyqtSignal(bool, str)
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.result_success = False
+        self.result_message = ""
 
     def run(self):
         try:
@@ -261,6 +264,8 @@ class AsianCacheFetcherThread(QThread):
                 period="1y",
                 use_cf_proxy=is_cf_proxy_enabled(),
             )
-            self.finished_sig.emit(success, message)
+            self.result_success = bool(success)
+            self.result_message = str(message or "")
         except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
-            self.finished_sig.emit(False, f"盘后拉取异常: {exc}")
+            self.result_success = False
+            self.result_message = f"盘后拉取异常: {exc}"

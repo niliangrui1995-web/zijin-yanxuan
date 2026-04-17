@@ -132,9 +132,19 @@ def continue_auto_cache_sync(tab):
     tab._cache_sync_wait_deadline = None
     tab._is_fetching_cache = True
     _set_tab_status(tab, "正在同步收盘缓存", "完成后会自动重载本地 K 线")
-    tab.cache_thread = AsianCacheFetcherThread()
-    tab.cache_thread.finished_sig.connect(tab._on_auto_cache_finished)
-    tab.cache_thread.start()
+    thread = AsianCacheFetcherThread()
+    thread.finished.connect(lambda: _handle_auto_cache_thread_finished(tab, thread))
+    thread.finished.connect(thread.deleteLater)
+    tab.cache_thread = thread
+    thread.start()
+
+
+def _handle_auto_cache_thread_finished(tab, thread):
+    success = bool(getattr(thread, "result_success", False))
+    msg = str(getattr(thread, "result_message", "") or "")
+    if getattr(tab, "cache_thread", None) is thread:
+        tab.cache_thread = None
+    tab._on_auto_cache_finished(success, msg)
 
 
 def log_asian_health(tab):
@@ -222,7 +232,6 @@ def refresh_market_status_rows(tab, status_provider=None):
 
 def on_auto_cache_finished(tab, success, msg):
     tab._is_fetching_cache = False
-    tab.cache_thread = None
     if success:
         tab._set_runtime_state("paused_for_cache_sync")
         if hasattr(tab, "worker") and tab.worker is not None:
