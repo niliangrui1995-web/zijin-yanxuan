@@ -304,12 +304,6 @@ def _classify_change(curr: dict | None, prev: dict | None) -> tuple[str, float]:
     if abs(delta) > _EPSILON:
         return ("增持", delta) if delta > 0 else ("减持", delta)
 
-    _, curr_ratio = choose_display_ratio(curr)
-    _, prev_ratio = choose_display_ratio(prev)
-    ratio_delta = curr_ratio - prev_ratio
-    if abs(ratio_delta) > _EPSILON:
-        return ("增持", ratio_delta) if ratio_delta > 0 else ("减持", ratio_delta)
-
     return "持平", 0.0
 
 

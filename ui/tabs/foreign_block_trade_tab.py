@@ -15,7 +15,13 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QComboBox, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from core.event_bus import event_bus
-from ui.components import SearchFilter, TableStateWrapper, VCPTableView
+from ui.components import (
+    MultiSelectFilterButton,
+    SearchFilter,
+    TableStateWrapper,
+    VCPTableView,
+    format_multi_select_summary,
+)
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.theme import COLOR_FALL, COLOR_FLAT, COLOR_RISE
 
@@ -26,8 +32,16 @@ class BlockTradeFilterProxyModel(RtSortFilterProxyModel):
         self.exact_filters = {}
 
     def setExactFilter(self, col_name, value):
-        if value:
-            self.exact_filters[col_name] = value
+        self.setExactFilters(col_name, [value] if value else [])
+
+    def setExactFilters(self, col_name, values):
+        normalized = {
+            str(value or "").strip()
+            for value in (values or [])
+            if str(value or "").strip()
+        }
+        if normalized:
+            self.exact_filters[col_name] = normalized
         else:
             self.exact_filters.pop(col_name, None)
         self.invalidateFilter()
@@ -36,17 +50,23 @@ class BlockTradeFilterProxyModel(RtSortFilterProxyModel):
         if self.exact_filters:
             model = self.sourceModel()
             row_data = model.row_data[source_row]
-            for col_name, val in self.exact_filters.items():
+            for col_name, values in self.exact_filters.items():
                 cell_val = str(row_data.get(col_name, ''))
+                candidate_values = values if isinstance(values, set) else {str(values or '').strip()}
+                candidate_values = {value for value in candidate_values if value}
+                if not candidate_values:
+                    continue
                 if col_name in ("买方营业部", "卖方营业部"):
                     # 席位做包含匹配（模糊搜索），匹配不上则拦截
-                    if val not in cell_val:
+                    if not any(value in cell_val for value in candidate_values):
                         return False
                 elif col_name == "_branch":
                     # 特殊的席位联合逻辑
-                    if val not in str(row_data.get("买方营业部", "")) and val not in str(row_data.get("卖方营业部", "")):
+                    buyer_branch = str(row_data.get("买方营业部", ""))
+                    seller_branch = str(row_data.get("卖方营业部", ""))
+                    if not any(value in buyer_branch or value in seller_branch for value in candidate_values):
                         return False
-                elif val != cell_val:
+                elif cell_val not in candidate_values:
                     return False
 
         filter_text = getattr(self, "_filter_text", "")
@@ -218,20 +238,20 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.lbl_status = QLabel("等待加载...")
 
         # ── 筛选器组：按数据维度从大到小排列 ──
-        self.cmb_filter_date = QComboBox()
-        self.cmb_filter_date.addItem("全部日期")
+        self.cmb_filter_date = MultiSelectFilterButton("全部日期")
         self.cmb_filter_date.setFixedWidth(128)
-        self.cmb_filter_date.currentIndexChanged.connect(self._filter_table_combo)
+        self.cmb_filter_date.selectionChanged.connect(self._filter_table_combo)
+        self.cmb_filter_date.set_options([], preserve_selection=False)
 
-        self.cmb_filter_branch = QComboBox()
-        self.cmb_filter_branch.addItem("全部监控席位")
+        self.cmb_filter_branch = MultiSelectFilterButton("全部监控席位")
         self.cmb_filter_branch.setFixedWidth(152)
-        self.cmb_filter_branch.currentIndexChanged.connect(self._filter_table_combo)
+        self.cmb_filter_branch.selectionChanged.connect(self._filter_table_combo)
+        self.cmb_filter_branch.set_options([], preserve_selection=False)
 
-        self.cmb_filter_direction = QComboBox()
-        self.cmb_filter_direction.addItems(["全部动作", "外资买入", "外资卖出", "外资对倒"])
+        self.cmb_filter_direction = MultiSelectFilterButton("全部动作")
         self.cmb_filter_direction.setFixedWidth(128)
-        self.cmb_filter_direction.currentIndexChanged.connect(self._filter_table_combo)
+        self.cmb_filter_direction.selectionChanged.connect(self._filter_table_combo)
+        self.cmb_filter_direction.set_options(["外资买入", "外资卖出", "外资对倒"], preserve_selection=False)
 
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("筛选代码、名称或外资席位...")
@@ -245,6 +265,10 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.cmb_days.setCurrentIndex(1)
         self.cmb_days.setFixedWidth(148)
         self.cmb_days.currentIndexChanged.connect(self._on_days_changed)
+
+        self._refresh_filter_button_text(self.cmb_filter_date, "日期", "全部")
+        self._refresh_filter_button_text(self.cmb_filter_branch, "席位", "全部")
+        self._refresh_filter_button_text(self.cmb_filter_direction, "动作", "全部")
 
         filter_widgets = [
             self.cmb_filter_date, self.cmb_filter_branch,
@@ -308,6 +332,23 @@ class ForeignBlockTradeTab(BaseStockTab):
             return ""
         return self._status_metric("上次成功 ", self._last_success_at.strftime("%H:%M:%S"))
 
+    def _refresh_filter_button_text(self, button, prefix: str, all_text: str):
+        text, tooltip = format_multi_select_summary(
+            prefix,
+            button.selected_labels(),
+            all_text=all_text,
+        )
+        button.setText(text)
+        button.setToolTip(tooltip)
+
+    def _filter_status_text(self, button, *, all_text: str) -> str:
+        labels = button.selected_labels()
+        if not labels:
+            return all_text
+        if len(labels) <= 2:
+            return " / ".join(labels)
+        return f"{len(labels)}项"
+
     def _refresh_header_status(self):
         extra_segments = []
         total = len(getattr(self.model, "row_data", []) or [])
@@ -319,17 +360,17 @@ class ForeignBlockTradeTab(BaseStockTab):
         if search_text:
             extra_segments.append(f"搜索 {search_text}")
 
-        date_text = self.cmb_filter_date.currentText()
+        date_text = self._filter_status_text(self.cmb_filter_date, all_text="全部日期")
         if date_text != "全部日期":
             extra_segments.append(f"日期 {date_text}")
 
-        branch_text = self.cmb_filter_branch.currentText()
+        branch_text = self._filter_status_text(self.cmb_filter_branch, all_text="全部监控席位")
         if branch_text != "全部监控席位":
             extra_segments.append(f"席位 {branch_text}")
 
-        direction_text = self.cmb_filter_direction.currentText()
+        direction_text = self._filter_status_text(self.cmb_filter_direction, all_text="全部动作")
         if direction_text != "全部动作":
-            extra_segments.append(direction_text)
+            extra_segments.append(f"动作 {direction_text}")
 
         last_success = self._format_last_success_segment()
         if last_success:
@@ -564,19 +605,10 @@ class ForeignBlockTradeTab(BaseStockTab):
                 target_branches.add(b_str)
         unique_branches = sorted(list(target_branches))
 
-        self.cmb_filter_date.blockSignals(True)
-        self.cmb_filter_branch.blockSignals(True)
-
-        self.cmb_filter_date.clear()
-        self.cmb_filter_date.addItem("全部日期")
-        self.cmb_filter_date.addItems([str(x) for x in unique_dates])
-
-        self.cmb_filter_branch.clear()
-        self.cmb_filter_branch.addItem("全部监控席位")
-        self.cmb_filter_branch.addItems(unique_branches)
-
-        self.cmb_filter_date.blockSignals(False)
-        self.cmb_filter_branch.blockSignals(False)
+        self.cmb_filter_date.set_options([str(x) for x in unique_dates], preserve_selection=True)
+        self.cmb_filter_branch.set_options(unique_branches, preserve_selection=True)
+        self._refresh_filter_button_text(self.cmb_filter_date, "日期", "全部")
+        self._refresh_filter_button_text(self.cmb_filter_branch, "席位", "全部")
 
         row_data = []
         for row, (_, record) in enumerate(df.iterrows()):
@@ -677,14 +709,12 @@ class ForeignBlockTradeTab(BaseStockTab):
         search_text = self.search_box.text().strip().lower()
         self.proxy_model.setFilterText(search_text)
 
-        filter_date = self.cmb_filter_date.currentText()
-        self.proxy_model.setExactFilter("交易日期", None if filter_date == "全部日期" else filter_date)
-
-        filter_direction = self.cmb_filter_direction.currentText()
-        self.proxy_model.setExactFilter("交易详情", None if filter_direction == "全部动作" else filter_direction)
-
-        filter_branch = self.cmb_filter_branch.currentText()
-        self.proxy_model.setExactFilter("_branch", None if filter_branch == "全部监控席位" else filter_branch)
+        self.proxy_model.setExactFilters("交易日期", self.cmb_filter_date.selected_values())
+        self.proxy_model.setExactFilters("交易详情", self.cmb_filter_direction.selected_values())
+        self.proxy_model.setExactFilters("_branch", self.cmb_filter_branch.selected_values())
+        self._refresh_filter_button_text(self.cmb_filter_date, "日期", "全部")
+        self._refresh_filter_button_text(self.cmb_filter_branch, "席位", "全部")
+        self._refresh_filter_button_text(self.cmb_filter_direction, "动作", "全部")
         self._refresh_header_status()
 
     def _on_double_click(self, index):

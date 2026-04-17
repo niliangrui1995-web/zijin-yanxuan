@@ -28,3 +28,25 @@ def test_log_tab_skips_hidden_flush_and_recovers_from_history():
         assert tab.level_filter.property("inToolbar") is True
     finally:
         tab.deleteLater()
+
+
+def test_log_tab_level_filter_supports_multi_select():
+    tab = LogTab()
+    try:
+        tab._log_history = [
+            ("info", "info message"),
+            ("error", "error message"),
+            ("warn", "warn message"),
+        ]
+
+        tab.level_filter.set_selected_values({"error", "warning"})
+        filtered = tab._filtered_entries()
+        assert filtered == [
+            ("error", "error message"),
+            ("warn", "warn message"),
+        ]
+
+        tab.level_filter.set_selected_values(set())
+        assert len(tab._filtered_entries()) == 3
+    finally:
+        tab.deleteLater()

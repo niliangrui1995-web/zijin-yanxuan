@@ -180,6 +180,66 @@ def test_fund_holdings_store_refreshes_existing_compare_quarter_cache():
         os.remove(db_path)
 
 
+def test_fund_holdings_store_uses_hold_num_only_for_change_type():
+    store, db_path = _make_store()
+    repo = FundHoldingsStore(store=store)
+    try:
+        q4_rows = [
+            {
+                "rank_no": 1,
+                "stock_code": "000001",
+                "stock_name": "平安银行",
+                "net_value_ratio_pct": 1.0,
+                "hold_num_shares": 1_000_000,
+                "hold_market_value_cny": 10_000_000,
+                "latest_source_update": "2024-12-31",
+            }
+        ]
+        q1_rows = [
+            {
+                "rank_no": 1,
+                "stock_code": "000001",
+                "stock_name": "平安银行",
+                "net_value_ratio_pct": 1.5,
+                "hold_num_shares": 1_000_000,
+                "hold_market_value_cny": 15_000_000,
+                "latest_source_update": "2025-03-31",
+            }
+        ]
+        payloads = {
+            "2024Q4": {
+                "quarter_key": "2024Q4",
+                "end_date": "2024-12-31",
+                "raw_rows": q4_rows,
+                "snapshots": build_ruiyuan_snapshots(q4_rows, SUBJECT_RUIYUAN, "2024Q4", "2024-12-31"),
+            },
+            "2025Q1": {
+                "quarter_key": "2025Q1",
+                "end_date": "2025-03-31",
+                "raw_rows": q1_rows,
+                "snapshots": build_ruiyuan_snapshots(q1_rows, SUBJECT_RUIYUAN, "2025Q1", "2025-03-31"),
+            },
+        }
+
+        repo.replace_ruiyuan_quarters(
+            SUBJECT_RUIYUAN,
+            payloads,
+            sync_scope="specific",
+            requested_quarter_key="2025Q1",
+            resolved_quarter_key="2025Q1",
+            message="睿远指定季度 2025Q1 已同步",
+        )
+
+        change_rows = repo.query_change_rows()
+        target = next(row for row in change_rows if row["subject_code"] == SUBJECT_RUIYUAN["subject_code"] and row["quarter_key"] == "2025Q1")
+        assert target["change_type"] == "持平"
+        assert target["delta_hold_num_shares"] == 0
+        assert target["delta_ratio_pct"] == 0.5
+    finally:
+        store.close()
+        os.remove(db_path)
+
+
 def test_fund_holdings_store_qfii_subject_names_show_holder_names_and_skip_hk():
     store, db_path = _make_store()
     repo = FundHoldingsStore(store=store)

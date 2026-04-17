@@ -224,11 +224,57 @@ def test_fund_holdings_tab_subject_filter_uses_holder_name(monkeypatch):
 
     tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
     try:
-        subjects = [
-            str(tab.cmb_subject.itemData(index) or "").strip()
-            for index in range(tab.cmb_subject.count())
-        ]
-        assert subjects == ["", "BARCLAYS BANK PLC", "UBS AG"]
+        assert tab.cmb_subject.option_values() == ["BARCLAYS BANK PLC", "UBS AG"]
+    finally:
+        tab.deleteLater()
+
+
+def test_fund_holdings_tab_subject_filter_supports_multi_select(monkeypatch):
+    _setup_store(
+        monkeypatch,
+        [
+            _build_change_row(
+                subject_code="QFII",
+                subject_name="BARCLAYS BANK PLC",
+                quarter_key="2025Q4",
+                compare_quarter_key="2025Q3",
+                change_type="增持",
+                stock_code="000001",
+                stock_name="平安银行",
+            ),
+            _build_change_row(
+                subject_code="QFII",
+                subject_name="UBS AG",
+                quarter_key="2025Q4",
+                compare_quarter_key="2025Q3",
+                change_type="新进",
+                stock_code="000002",
+                stock_name="万科A",
+            ),
+            _build_change_row(
+                subject_code="007119",
+                subject_name="睿远成长价值混合A",
+                quarter_key="2025Q4",
+                compare_quarter_key="2025Q3",
+                change_type="持平",
+                stock_code="000004",
+                stock_name="国华网安",
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "refresh_table_quotes_and_market_caps",
+        lambda self, current_model=None, force_quotes=False, quote_task_id=None: None,
+        raising=False,
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
+    try:
+        tab._set_quarter_filter_state(all_quarters=True, apply=True)
+        tab.cmb_subject.set_selected_values({"BARCLAYS BANK PLC", "睿远成长价值混合A"})
+        assert tab.proxy_model.rowCount() == 2
+        assert _visible_codes(tab) == ["000001", "000004"]
     finally:
         tab.deleteLater()
 
@@ -377,15 +423,7 @@ def test_fund_holdings_tab_restores_saved_view_state(monkeypatch):
 
     tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
     try:
-        subject_index = next(
-            (
-                index
-                for index in range(tab.cmb_subject.count())
-                if str(tab.cmb_subject.itemData(index) or "").strip() == "睿远成长价值混合A"
-            ),
-            -1,
-        )
-        tab.cmb_subject.setCurrentIndex(subject_index)
+        tab.cmb_subject.set_selected_values({"睿远成长价值混合A"})
         tab._set_quarter_filter_state(selected_quarters={"2025Q3", "2025Q4"}, apply=True)
         tab._set_change_filter_values({"新进", "持平"}, apply=True)
         tab.search_box.setText("0")
@@ -393,12 +431,13 @@ def test_fund_holdings_tab_restores_saved_view_state(monkeypatch):
         tab.table.sortByColumn(code_col, fund_holdings_module.Qt.SortOrder.DescendingOrder)
         tab._save_view_state()
         assert settings.value(tab._view_state_key("subject_name")) == "睿远成长价值混合A"
+        assert settings.value(tab._view_state_key("subject_names")) == ["睿远成长价值混合A"]
     finally:
         tab.deleteLater()
 
     restored = fund_holdings_module.FundHoldingsTab(_DummyProvider())
     try:
-        assert restored.cmb_subject.currentData() == "睿远成长价值混合A"
+        assert restored.cmb_subject.selected_values() == {"睿远成长价值混合A"}
         assert restored.search_box.text() == "0"
         assert restored._selected_change_types() == {"新进", "持平"}
         assert restored._quarter_filter_state() == (False, {"2025Q3", "2025Q4"})

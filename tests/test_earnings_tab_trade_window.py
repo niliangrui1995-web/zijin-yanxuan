@@ -2,6 +2,7 @@
 import pandas as pd
 
 from core.market_calendar import MarketCalendar
+from ui.models.table_models import RtSortFilterProxyModel, StockTableModel
 from ui.tabs.earnings_tab import EARNINGS_DISPLAY_TRADE_DAYS, EarningsTab
 
 
@@ -71,3 +72,24 @@ def test_prune_rows_to_recent_trade_window_drops_st_rows(monkeypatch):
 
     kept_codes = [row["代码"] for row in pruned]
     assert kept_codes == ["000001"]
+
+
+def test_rt_sort_filter_proxy_supports_multi_select_column_filters():
+    model = StockTableModel(["代码", "名称", "类型"])
+    model.update_data([
+        {"代码": "000001", "名称": "平安银行", "类型": "预告"},
+        {"代码": "000002", "名称": "万科A", "类型": "快报"},
+        {"代码": "000004", "名称": "国华网安", "类型": "财报"},
+    ])
+
+    proxy = RtSortFilterProxyModel()
+    proxy.setSourceModel(model)
+
+    proxy.setColumnFilters("类型", {"预告", "财报"})
+    assert proxy.rowCount() == 2
+
+    codes = []
+    for row in range(proxy.rowCount()):
+        source_index = proxy.mapToSource(proxy.index(row, 0))
+        codes.append(model.get_row_data(source_index.row())["代码"])
+    assert codes == ["000001", "000004"]

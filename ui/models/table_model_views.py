@@ -26,8 +26,16 @@ class RtSortFilterProxyModel(QSortFilterProxyModel):
         self._exact_column_filters = {}
 
     def setColumnFilter(self, col_name, text):
-        if text:
-            self._exact_column_filters[col_name] = text
+        self.setColumnFilters(col_name, [text] if text else [])
+
+    def setColumnFilters(self, col_name, values):
+        normalized = {
+            str(value or "").strip()
+            for value in (values or [])
+            if str(value or "").strip()
+        }
+        if normalized:
+            self._exact_column_filters[col_name] = normalized
         else:
             self._exact_column_filters.pop(col_name, None)
         self.invalidateFilter()
@@ -97,12 +105,14 @@ class RtSortFilterProxyModel(QSortFilterProxyModel):
         # 1. 拦截层：表头精确定向筛选（模拟 Excel 表头筛选）
         if getattr(self, '_exact_column_filters', None):
             headers = model._headers if hasattr(model, '_headers') else []
-            for col_name, pattern in self._exact_column_filters.items():
+            for col_name, patterns in self._exact_column_filters.items():
                 if col_name in headers:
                     col_idx = headers.index(col_name)
                     idx = model.index(source_row, col_idx, source_parent)
                     val = str(model.data(idx, Qt.ItemDataRole.DisplayRole) or "")
-                    if pattern not in val:
+                    pattern_set = patterns if isinstance(patterns, set) else {str(patterns or "").strip()}
+                    pattern_set = {pattern for pattern in pattern_set if pattern}
+                    if pattern_set and not any(pattern in val for pattern in pattern_set):
                         return False
 
         # 2. 全局拼音搜索层

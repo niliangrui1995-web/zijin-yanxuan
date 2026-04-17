@@ -161,6 +161,55 @@ def test_build_change_rows_uses_previous_quarter_for_ruiyuan():
     assert target["delta_ratio_pct"] == 0.5
 
 
+def test_build_change_rows_uses_hold_num_only_for_change_type():
+    snapshots = [
+        {
+            "subject_code": SUBJECT_RUIYUAN["subject_code"],
+            "subject_name": SUBJECT_RUIYUAN["subject_name"],
+            "subject_type": SUBJECT_RUIYUAN["subject_type"],
+            "quarter_key": "2024Q4",
+            "quarter_label": "2024Q4",
+            "compare_quarter_key": "2024Q3",
+            "end_date": "2024-12-31",
+            "stock_code": "000001",
+            "stock_name": "平安银行",
+            "holders_count": 1,
+            "hold_num_shares": 1_000_000,
+            "hold_market_value_cny": 10_000_000,
+            "net_value_ratio_pct": 1.0,
+            "free_hold_ratio_pct": 0.0,
+            "hold_ratio_pct": 0.0,
+            "latest_source_update": "2024-12-31",
+            "raw_source": "eastmoney_fund",
+        },
+        {
+            "subject_code": SUBJECT_RUIYUAN["subject_code"],
+            "subject_name": SUBJECT_RUIYUAN["subject_name"],
+            "subject_type": SUBJECT_RUIYUAN["subject_type"],
+            "quarter_key": "2025Q1",
+            "quarter_label": "2025Q1",
+            "compare_quarter_key": "2024Q3",
+            "end_date": "2025-03-31",
+            "stock_code": "000001",
+            "stock_name": "平安银行",
+            "holders_count": 1,
+            "hold_num_shares": 1_000_000,
+            "hold_market_value_cny": 12_000_000,
+            "net_value_ratio_pct": 1.5,
+            "free_hold_ratio_pct": 0.0,
+            "hold_ratio_pct": 0.0,
+            "latest_source_update": "2025-03-31",
+            "raw_source": "eastmoney_fund",
+        },
+    ]
+
+    rows = build_change_rows(SUBJECT_RUIYUAN, snapshots)
+    target = next(row for row in rows if row["quarter_key"] == "2025Q1" and row["stock_code"] == "000001")
+    assert target["change_type"] == "持平"
+    assert target["delta_hold_num_shares"] == 0
+    assert target["delta_ratio_pct"] == 0.5
+
+
 def test_build_qfii_holder_change_rows_tracks_each_holder_individually():
     rows = build_qfii_holder_change_rows(
         [

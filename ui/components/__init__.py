@@ -2,17 +2,19 @@
 # 从 main_window_qt.py 拆分出来的独立工具类
 from functools import lru_cache
 
-from PyQt6.QtCore import QEasingCurve, QEvent, QPropertyAnimation, QSize, Qt, QTimer, pyqtProperty
-from PyQt6.QtGui import QBrush, QColor, QFont, QFontMetrics, QPainter, QPalette
+from PyQt6.QtCore import QEasingCurve, QEvent, QPropertyAnimation, QSize, Qt, QTimer, pyqtProperty, pyqtSignal
+from PyQt6.QtGui import QAction, QBrush, QColor, QFont, QFontMetrics, QPainter, QPalette
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QFrame,
     QLabel,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QStackedLayout,
     QTableView,
+    QToolButton,
     QToolTip,
     QVBoxLayout,
     QWidget,
@@ -245,6 +247,159 @@ class PulsingDot(QWidget):
         painter.drawEllipse(self.rect().center(), int(self._radius), int(self._radius))
 
         painter.end()
+
+
+def format_multi_select_summary(
+    prefix: str,
+    selected_labels,
+    *,
+    all_text: str = "全部",
+    inline_limit: int = 2,
+    separator: str = " / ",
+    count_suffix: str = "项",
+) -> tuple[str, str]:
+    labels = [str(label or "").strip() for label in (selected_labels or []) if str(label or "").strip()]
+    prefix_text = str(prefix or "").strip()
+    if not labels:
+        text = f"{prefix_text}：{all_text}" if prefix_text else all_text
+        return text, all_text
+
+    tooltip = "、".join(labels)
+    if len(labels) <= max(1, int(inline_limit or 1)):
+        body = separator.join(labels)
+    else:
+        body = f"{len(labels)}{count_suffix}"
+
+    text = f"{prefix_text}：{body}" if prefix_text else body
+    return text, tooltip
+
+
+class MultiSelectFilterButton(QToolButton):
+    selectionChanged = pyqtSignal()
+
+    def __init__(self, all_label: str = "全部", parent=None):
+        super().__init__(parent)
+        self._all_label = str(all_label or "全部")
+        self._menu = QMenu(self)
+        self._all_action: QAction | None = None
+        self._actions: dict[str, QAction] = {}
+        self._labels: dict[str, str] = {}
+        self._updating = False
+
+        self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.setMenu(self._menu)
+        self.setText(self._all_label)
+        self.setToolTip(self._all_label)
+        self.set_options([])
+
+    def option_values(self) -> list[str]:
+        return list(self._actions.keys())
+
+    def option_labels(self) -> list[str]:
+        return [self._labels[value] for value in self.option_values()]
+
+    def selected_values(self) -> set[str]:
+        if not self._actions:
+            return set()
+        if self._all_action and self._all_action.isChecked():
+            return set()
+        return {
+            value
+            for value, action in self._actions.items()
+            if action.isChecked()
+        }
+
+    def selected_labels(self) -> list[str]:
+        selected = self.selected_values()
+        return [self._labels[value] for value in self.option_values() if value in selected]
+
+    def has_value(self, value: str) -> bool:
+        return str(value or "").strip() in self._actions
+
+    def set_options(self, options, *, preserve_selection: bool = True):
+        current_selection = self.selected_values() if preserve_selection else set()
+        normalized: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for option in options or []:
+            if isinstance(option, (tuple, list)) and len(option) >= 2:
+                value = str(option[0] or "").strip()
+                label = str(option[1] or "").strip()
+            else:
+                value = str(option or "").strip()
+                label = value
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            normalized.append((value, label or value))
+
+        self._updating = True
+        try:
+            self._menu.clear()
+            self._actions.clear()
+            self._labels.clear()
+
+            self._all_action = QAction(self._all_label, self)
+            self._all_action.setCheckable(True)
+            self._all_action.toggled.connect(self._on_all_toggled)
+            self._menu.addAction(self._all_action)
+
+            if normalized:
+                self._menu.addSeparator()
+
+            for value, label in normalized:
+                action = QAction(label, self)
+                action.setCheckable(True)
+                action.setData(value)
+                action.toggled.connect(self._on_option_toggled)
+                self._actions[value] = action
+                self._labels[value] = label
+                self._menu.addAction(action)
+        finally:
+            self._updating = False
+
+        restored_selection = {value for value in current_selection if value in self._actions}
+        self.set_selected_values(restored_selection, emit=False)
+
+    def set_selected_values(self, values, *, emit: bool = True):
+        selected = {
+            str(value or "").strip()
+            for value in (values or [])
+            if str(value or "").strip() in self._actions
+        }
+
+        self._updating = True
+        try:
+            if self._all_action is not None:
+                self._all_action.setChecked(not selected)
+            for value, action in self._actions.items():
+                action.setChecked(value in selected)
+        finally:
+            self._updating = False
+
+        if emit:
+            self.selectionChanged.emit()
+
+    def _on_all_toggled(self, checked: bool):
+        if self._updating:
+            return
+        if checked:
+            self.set_selected_values(set(), emit=True)
+            return
+        if not any(action.isChecked() for action in self._actions.values()):
+            self.set_selected_values(set(), emit=True)
+
+    def _on_option_toggled(self, _checked: bool):
+        if self._updating:
+            return
+        self.set_selected_values(
+            {
+                value
+                for value, action in self._actions.items()
+                if action.isChecked()
+            },
+            emit=True,
+        )
 
 
 class TableStateOverlay(QWidget):

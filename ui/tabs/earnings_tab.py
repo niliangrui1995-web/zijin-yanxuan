@@ -3,17 +3,18 @@ from datetime import datetime
 
 import pandas as pd
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot
-from PyQt6.QtWidgets import QComboBox, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
+from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from core.event_bus import event_bus
 from core.logger import get_logger
 from earnings.scheduler import EarningsScheduler
-from ui.components import TableStateWrapper, VCPTableView
+from ui.components import MultiSelectFilterButton, TableStateWrapper, VCPTableView, format_multi_select_summary
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
 EARNINGS_DISPLAY_TRADE_DAYS = 10
+EARNINGS_TYPE_OPTIONS = ("预告", "快报", "财报")
 
 
 class EarningsTab(BaseStockTab):
@@ -61,14 +62,14 @@ class EarningsTab(BaseStockTab):
         self.btn_manual_fetch.setToolTip("手动填入日期区间，强行进行数据扫描并在本地进行去重和升级！")
         self.btn_manual_fetch.clicked.connect(self._on_manual_fetch)
 
-        # 新增 Excel 风格的分类筛选下拉框
-        self.combo_type_filter = QComboBox()
-        self.combo_type_filter.addItems(["全看", "仅看预告", "仅看快报", "仅看财报"])
-        # Removed hardcoded inline stylesheet to rely on global responsive QSS
-        self.combo_type_filter.currentTextChanged.connect(self._on_type_filter_changed)
+        self.type_filter = MultiSelectFilterButton("全看")
+        self.type_filter.setFixedWidth(126)
+        self.type_filter.set_options(EARNINGS_TYPE_OPTIONS, preserve_selection=False)
+        self.type_filter.selectionChanged.connect(self._on_type_filter_changed)
+        self._refresh_type_filter_button_text()
 
         filter_widgets = [
-            self.search_box, QLabel("分类筛选:"), self.combo_type_filter,
+            self.search_box, self.type_filter,
             QLabel("更新区间倒推:"), self.ent_start_date, QLabel("-"), self.ent_end_date
         ]
         action_widgets = [self.btn_manual_fetch]
@@ -129,9 +130,9 @@ class EarningsTab(BaseStockTab):
         if search_text:
             extra_segments.append(f"搜索 {search_text}")
 
-        type_text = self.combo_type_filter.currentText()
+        type_text = self._type_filter_status_text()
         if type_text != "全看":
-            extra_segments.append(type_text)
+            extra_segments.append(f"分类 {type_text}")
 
         self.lbl_status.setText(
             self.format_status_summary(
@@ -168,17 +169,29 @@ class EarningsTab(BaseStockTab):
         log.info(f"[业绩监控] 手动扫描: {start_str} ~ {end_str}")
         self.scheduler.force_manual_scan(date_list)
 
-    def _on_type_filter_changed(self, text):
-        """联动到底层 Proxy Model 进行实时列过滤"""
-        if text == "全看":
-            self.proxy_model.setColumnFilter("类型", "")
-        else:
-            # 截断提取真实关键字，比如 “仅看预告” -> “预告”
-            keyword = text.replace("仅看", "")
-            self.proxy_model.setColumnFilter("类型", keyword)
+    def _refresh_type_filter_button_text(self):
+        text, tooltip = format_multi_select_summary(
+            "分类",
+            self.type_filter.selected_labels(),
+            all_text="全看",
+        )
+        self.type_filter.setText(text)
+        self.type_filter.setToolTip(tooltip)
 
-        # 记录下操作
-        log.debug(f"[业绩监控] 筛选切换: {text}")
+    def _type_filter_status_text(self) -> str:
+        labels = self.type_filter.selected_labels()
+        if not labels:
+            return "全看"
+        if len(labels) <= 2:
+            return " / ".join(labels)
+        return f"{len(labels)}项"
+
+    def _on_type_filter_changed(self):
+        """联动到底层 Proxy Model 进行实时列过滤"""
+        selected_types = self.type_filter.selected_values()
+        self.proxy_model.setColumnFilters("类型", selected_types)
+        self._refresh_type_filter_button_text()
+        log.debug(f"[业绩监控] 分类筛选切换: {sorted(selected_types) if selected_types else '全看'}")
         self._refresh_window_status()
 
     def _on_search_text_changed(self, text):

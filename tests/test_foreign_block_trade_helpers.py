@@ -55,3 +55,45 @@ def test_block_trade_search_only_matches_code_name_and_foreign_branch():
 
     proxy.setFilterText("买入")
     assert proxy.rowCount() == 0
+
+
+def test_block_trade_exact_filters_support_multi_select():
+    model = StockTableModel(["代码", "名称", "交易日期", "交易详情", "买方营业部", "卖方营业部"])
+    model.update_data([
+        {
+            "代码": "600000",
+            "名称": "浦发银行",
+            "交易日期": "2026-04-10",
+            "交易详情": "外资买入",
+            "买方营业部": "高盛上海营业部",
+            "卖方营业部": "普通营业部",
+        },
+        {
+            "代码": "000001",
+            "名称": "平安银行",
+            "交易日期": "2026-04-11",
+            "交易详情": "外资卖出",
+            "买方营业部": "普通营业部",
+            "卖方营业部": "瑞银证券上海浦东新区营业部",
+        },
+        {
+            "代码": "000002",
+            "名称": "万科A",
+            "交易日期": "2026-04-12",
+            "交易详情": "外资对倒",
+            "买方营业部": "高盛上海营业部",
+            "卖方营业部": "瑞银证券上海浦东新区营业部",
+        },
+    ])
+
+    proxy = BlockTradeFilterProxyModel()
+    proxy.setSourceModel(model)
+
+    proxy.setExactFilters("交易日期", {"2026-04-10", "2026-04-12"})
+    assert proxy.rowCount() == 2
+
+    proxy.setExactFilters("交易详情", {"外资买入", "外资对倒"})
+    assert proxy.rowCount() == 2
+
+    proxy.setExactFilters("_branch", {"高盛", "瑞银"})
+    assert proxy.rowCount() == 2

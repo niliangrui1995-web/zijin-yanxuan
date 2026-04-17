@@ -4,7 +4,6 @@ import sys
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (
-    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -17,6 +16,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.event_bus import event_bus
+from ui.components import MultiSelectFilterButton, format_multi_select_summary
 from ui.theme_tokens import build_ui_tokens
 
 
@@ -109,11 +109,15 @@ class LogTab(QWidget):
         self.search_box.textChanged.connect(self._apply_log_filter)
         action_layout.addWidget(self.search_box)
 
-        self.level_filter = QComboBox()
-        self.level_filter.addItems(["全部", "仅 Error", "仅 Warning"])
+        self.level_filter = MultiSelectFilterButton("全部")
         self._prepare_toolbar_widget(self.level_filter)
         self.level_filter.setFixedWidth(90)
-        self.level_filter.currentIndexChanged.connect(self._apply_log_filter)
+        self.level_filter.set_options(
+            [("error", "Error"), ("warning", "Warning")],
+            preserve_selection=False,
+        )
+        self.level_filter.selectionChanged.connect(self._apply_log_filter)
+        self._refresh_level_filter_button_text()
         action_layout.addWidget(self.level_filter)
 
         tb_layout.addWidget(action_wrap, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -140,7 +144,7 @@ class LogTab(QWidget):
         if visible_count is None:
             visible_count = self._count_visible_logs()
 
-        filter_text = self.level_filter.currentText() if hasattr(self, "level_filter") else "全部"
+        filter_text = self._level_filter_status_text() if hasattr(self, "level_filter") else "全部"
         search_text = self.search_box.text().strip() if hasattr(self, "search_box") else ""
         primary = f"日志 {visible_count}条" if visible_count == total else f"可见 {visible_count}/{total}条"
         segments = [f"级别 {filter_text}"]
@@ -153,26 +157,44 @@ class LogTab(QWidget):
 
     @staticmethod
     def _normalize_level(level) -> str:
-        return str(level or "info").strip().lower()
+        normalized = str(level or "info").strip().lower()
+        if normalized == "warn":
+            return "warning"
+        return normalized
 
-    def _entry_visible(self, level, text, filter_idx: int, search_text: str) -> bool:
+    def _refresh_level_filter_button_text(self):
+        text, tooltip = format_multi_select_summary(
+            "级别",
+            self.level_filter.selected_labels(),
+            all_text="全部",
+        )
+        self.level_filter.setText(text)
+        self.level_filter.setToolTip(tooltip)
+
+    def _level_filter_status_text(self) -> str:
+        labels = self.level_filter.selected_labels()
+        if not labels:
+            return "全部"
+        if len(labels) <= 2:
+            return " / ".join(labels)
+        return f"{len(labels)}项"
+
+    def _entry_visible(self, level, text, selected_levels: set[str], search_text: str) -> bool:
         normalized = self._normalize_level(level)
-        if filter_idx == 1 and normalized != "error":
-            return False
-        if filter_idx == 2 and normalized not in ("warn", "warning"):
+        if selected_levels and normalized not in selected_levels:
             return False
         if search_text and search_text not in str(text).lower():
             return False
         return True
 
     def _filtered_entries(self, entries=None):
-        filter_idx = self.level_filter.currentIndex() if hasattr(self, "level_filter") else 0
+        selected_levels = self.level_filter.selected_values() if hasattr(self, "level_filter") else set()
         search_text = self.search_box.text().strip().lower() if hasattr(self, "search_box") else ""
         source_entries = entries if entries is not None else self._log_history
         return [
             (level, text)
             for level, text in source_entries
-            if self._entry_visible(level, text, filter_idx, search_text)
+            if self._entry_visible(level, text, selected_levels, search_text)
         ]
 
     def _log_level_color(self, level) -> QColor:
@@ -309,6 +331,7 @@ class LogTab(QWidget):
             del self._log_buffer[:overflow]
 
     def _apply_log_filter(self):
+        self._refresh_level_filter_button_text()
         self._log_buffer.clear()
         filtered_entries = self._filtered_entries()
         self._append_log_entries(filtered_entries, clear_existing=True)

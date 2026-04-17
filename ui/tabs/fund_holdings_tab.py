@@ -8,7 +8,6 @@ from contextlib import suppress
 from PyQt6.QtCore import QSettings, Qt, QTimer
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
-    QComboBox,
     QHeaderView,
     QInputDialog,
     QLabel,
@@ -23,7 +22,13 @@ from core.fund_holdings_compare import SUBJECT_QFII, SUBJECT_RUIYUAN
 from core.fund_holdings_store import fund_holdings_store
 from core.fund_holdings_sync import fund_holdings_sync_service
 from core.task_manager import task_manager
-from ui.components import SearchFilter, TableStateWrapper, VCPTableView
+from ui.components import (
+    MultiSelectFilterButton,
+    SearchFilter,
+    TableStateWrapper,
+    VCPTableView,
+    format_multi_select_summary,
+)
 from ui.components.stock_context_menu import build_stock_context_menu
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_tab import BaseStockTab
@@ -32,13 +37,20 @@ from ui.tabs.base_stock_tab import BaseStockTab
 class FundHoldingsFilterProxyModel(RtSortFilterProxyModel):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._subject_name = ""
+        self._subject_names: set[str] = set()
         self._quarter_keys: set[str] = set()
         self._change_types: set[str] = set()
         self._latest_only = True
 
     def set_subject_name(self, subject_name: str):
-        self._subject_name = str(subject_name or "").strip()
+        self.set_subject_names([subject_name] if subject_name else [])
+
+    def set_subject_names(self, subject_names):
+        self._subject_names = {
+            str(subject_name or "").strip()
+            for subject_name in (subject_names or [])
+            if str(subject_name or "").strip()
+        }
         self.invalidateFilter()
 
     def set_quarter_keys(self, quarter_keys):
@@ -65,7 +77,7 @@ class FundHoldingsFilterProxyModel(RtSortFilterProxyModel):
         model = self.sourceModel()
         row_data = model.row_data[source_row]
 
-        if self._subject_name and str(row_data.get("主体", "")).strip() != self._subject_name:
+        if self._subject_names and str(row_data.get("主体", "")).strip() not in self._subject_names:
             return False
 
         if self._change_types and str(row_data.get("变化类型", "")).strip() not in self._change_types:
@@ -133,19 +145,8 @@ class FundHoldingsTab(BaseStockTab):
     def _view_state_key(self, name: str) -> str:
         return f"{self._VIEW_STATE_PREFIX}/{name}"
 
-    def _find_subject_index(self, subject_name: str) -> int:
-        target = str(subject_name or "").strip()
-        if not target:
-            return 0
-
-        index = self.cmb_subject.findData(target)
-        if index >= 0:
-            return index
-
-        for row in range(self.cmb_subject.count()):
-            if str(self.cmb_subject.itemData(row) or "").strip() == target:
-                return row
-        return -1
+    def _selected_subject_names(self) -> set[str]:
+        return self.cmb_subject.selected_values()
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -154,9 +155,9 @@ class FundHoldingsTab(BaseStockTab):
 
         self.lbl_status = QLabel("等待同步基金持仓数据库")
 
-        self.cmb_subject = QComboBox()
-        self.cmb_subject.setFixedWidth(180)
-        self.cmb_subject.currentIndexChanged.connect(self._apply_filters)
+        self.cmb_subject = MultiSelectFilterButton("全部主体")
+        self.cmb_subject.setFixedWidth(190)
+        self.cmb_subject.selectionChanged.connect(self._on_subject_selection_changed)
 
         self.btn_quarter = QToolButton()
         self.btn_quarter.setFixedWidth(150)
@@ -172,6 +173,7 @@ class FundHoldingsTab(BaseStockTab):
         self.menu_change = QMenu(self.btn_change)
         self.btn_change.setMenu(self.menu_change)
         self._build_change_menu()
+        self._refresh_subject_button_text()
 
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("筛选代码、名称、主体或变化...")
@@ -455,6 +457,19 @@ class FundHoldingsTab(BaseStockTab):
             return
         self._view_state_save_timer.start()
 
+    def _refresh_subject_button_text(self):
+        text, tooltip = format_multi_select_summary(
+            "主体",
+            self.cmb_subject.selected_labels(),
+            all_text="全部",
+        )
+        self.cmb_subject.setText(text)
+        self.cmb_subject.setToolTip(tooltip)
+
+    def _on_subject_selection_changed(self):
+        self._refresh_subject_button_text()
+        self._apply_filters()
+
     @staticmethod
     def _sort_order_to_int(order) -> int:
         value = getattr(order, "value", order)
@@ -470,7 +485,7 @@ class FundHoldingsTab(BaseStockTab):
             latest_only, selected_quarters = self._quarter_filter_state()
             quarter_mode = "latest" if latest_only else ("all" if not selected_quarters else "selected")
             change_types = list(self._selected_change_types())
-            subject_name = str(self.cmb_subject.currentData() or "").strip()
+            subject_names = sorted(self._selected_subject_names())
             search_text = self.search_box.text().strip()
         except (AttributeError, RuntimeError, TypeError, ValueError):
             return
@@ -485,7 +500,8 @@ class FundHoldingsTab(BaseStockTab):
             sort_order = Qt.SortOrder.AscendingOrder.value
 
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-            self._settings.setValue(self._view_state_key("subject_name"), subject_name)
+            self._settings.setValue(self._view_state_key("subject_names"), subject_names)
+            self._settings.setValue(self._view_state_key("subject_name"), subject_names[0] if len(subject_names) == 1 else "")
             self._settings.setValue(self._view_state_key("search_text"), search_text)
             self._settings.setValue(self._view_state_key("quarter_mode"), quarter_mode)
             self._settings.setValue(self._view_state_key("quarter_values"), sorted(selected_quarters, reverse=True))
@@ -500,7 +516,11 @@ class FundHoldingsTab(BaseStockTab):
 
         self._restoring_view_state = True
         try:
-            subject_name = str(self._settings.value(self._view_state_key("subject_name"), "") or "").strip()
+            subject_names = set(self._normalize_settings_values(self._settings.value(self._view_state_key("subject_names"), [])))
+            if not subject_names:
+                legacy_subject_name = str(self._settings.value(self._view_state_key("subject_name"), "") or "").strip()
+                if legacy_subject_name:
+                    subject_names = {legacy_subject_name}
             search_text = str(self._settings.value(self._view_state_key("search_text"), "") or "")
             quarter_mode = str(self._settings.value(self._view_state_key("quarter_mode"), "latest") or "latest").strip().lower()
             quarter_values = set(self._normalize_settings_values(self._settings.value(self._view_state_key("quarter_values"), [])))
@@ -519,12 +539,8 @@ class FundHoldingsTab(BaseStockTab):
             except (TypeError, ValueError):
                 sort_order = Qt.SortOrder.AscendingOrder
 
-            subject_was_blocked = self.cmb_subject.blockSignals(True)
-            try:
-                subject_index = self._find_subject_index(subject_name)
-                self.cmb_subject.setCurrentIndex(subject_index if subject_index >= 0 else 0)
-            finally:
-                self.cmb_subject.blockSignals(subject_was_blocked)
+            self.cmb_subject.set_selected_values(subject_names, emit=False)
+            self._refresh_subject_button_text()
 
             search_was_blocked = self.search_box.blockSignals(True)
             try:
@@ -636,7 +652,7 @@ class FundHoldingsTab(BaseStockTab):
     def _refresh_filter_options(self):
         quarters = fund_holdings_store.list_quarters()
 
-        current_subject = self.cmb_subject.currentData()
+        current_subjects = self._selected_subject_names()
         latest_only, selected_quarters = self._quarter_filter_state()
         all_quarters = bool(
             self._quarter_actions.get(self._QUARTER_FILTER_ALL)
@@ -644,9 +660,6 @@ class FundHoldingsTab(BaseStockTab):
         )
 
         with suppress(RuntimeError):
-            self.cmb_subject.blockSignals(True)
-            self.cmb_subject.clear()
-            self.cmb_subject.addItem("全部主体", "")
             subject_names = list(
                 dict.fromkeys(
                     str(row.get("主体") or "").strip()
@@ -654,11 +667,13 @@ class FundHoldingsTab(BaseStockTab):
                     if str(row.get("主体") or "").strip()
                 )
             )
-            for subject_name in subject_names:
-                self.cmb_subject.addItem(subject_name, subject_name)
-            subject_index = max(0, self._find_subject_index(current_subject))
-            self.cmb_subject.setCurrentIndex(subject_index)
-            self.cmb_subject.blockSignals(False)
+            valid_subjects = set(subject_names)
+            self.cmb_subject.set_options(subject_names, preserve_selection=False)
+            self.cmb_subject.set_selected_values(
+                [subject_name for subject_name in current_subjects if subject_name in valid_subjects],
+                emit=False,
+            )
+            self._refresh_subject_button_text()
 
         with suppress(RuntimeError):
             self._build_quarter_menu(quarters)
@@ -670,11 +685,11 @@ class FundHoldingsTab(BaseStockTab):
             )
 
     def _apply_filters(self):
-        subject_name = str(self.cmb_subject.currentData() or "").strip()
+        subject_names = self._selected_subject_names()
         latest_only, selected_quarters = self._quarter_filter_state()
         change_types = self._selected_change_types()
 
-        self.proxy_model.set_subject_name(subject_name)
+        self.proxy_model.set_subject_names(subject_names)
         self.proxy_model.set_change_types(change_types)
         self.proxy_model.setFilterText(self.search_box.text().strip())
         self.proxy_model.set_latest_only(latest_only)
