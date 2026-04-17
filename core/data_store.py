@@ -19,6 +19,7 @@ import json
 import os
 import sqlite3
 import threading
+from contextlib import contextmanager
 from typing import Optional
 
 from core.logger import get_logger
@@ -57,6 +58,7 @@ class DataStore:
         # WAL 模式：一写多读不阻塞，崩溃自恢复
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._conn.row_factory = sqlite3.Row
 
         self._ensure_tables()
         self._clean_migrated_backups()
@@ -124,6 +126,59 @@ class DataStore:
         with self._lock:
             self._conn.execute("DELETE FROM kv_store WHERE key = ?", (key,))
             self._conn.commit()
+
+    # ========== 通用 SQL 助手 ==========
+
+    @contextmanager
+    def transaction(self):
+        """提供一个带锁事务上下文，适合批量写入或多表更新。"""
+        with self._lock:
+            cursor = self._conn.cursor()
+            try:
+                yield cursor
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+            finally:
+                cursor.close()
+
+    def execute(self, sql: str, params=()):
+        """执行单条 SQL 并自动提交。"""
+        with self.transaction() as cursor:
+            cursor.execute(sql, params)
+            return cursor.rowcount
+
+    def executemany(self, sql: str, seq_of_params):
+        """执行批量 SQL 并自动提交。"""
+        rows = list(seq_of_params or [])
+        if not rows:
+            return 0
+        with self.transaction() as cursor:
+            cursor.executemany(sql, rows)
+            return cursor.rowcount
+
+    def execute_script(self, sql_script: str) -> None:
+        """执行多条建表/迁移脚本。"""
+        with self._lock:
+            self._conn.executescript(sql_script)
+            self._conn.commit()
+
+    def fetch_all(self, sql: str, params=()):
+        """查询多行，统一返回 dict 列表。"""
+        with self._lock:
+            cursor = self._conn.execute(sql, params)
+            rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    def fetch_one(self, sql: str, params=(), default=None):
+        """查询单行，统一返回 dict。"""
+        with self._lock:
+            cursor = self._conn.execute(sql, params)
+            row = cursor.fetchone()
+        if row is None:
+            return default
+        return dict(row)
 
     # ========== 业绩异动专用方法 ==========
 

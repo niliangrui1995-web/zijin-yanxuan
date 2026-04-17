@@ -80,9 +80,11 @@ def _apply_quote_metrics_to_row(item_dict: dict, quote: dict) -> tuple[bool, dic
         row_changed = True
 
     price_text = metrics.get("price_text")
-    if price_text is not None and item_dict.get("现价") != price_text:
-        item_dict["现价"] = price_text
-        row_changed = True
+    if price_text is not None:
+        for price_key in ("现价", "市价"):
+            if price_key in item_dict and item_dict.get(price_key) != price_text:
+                item_dict[price_key] = price_text
+                row_changed = True
 
     pct = metrics.get("pct")
     if pct is not None and item_dict.get("涨幅%") != pct:
@@ -186,7 +188,7 @@ def _numeric_heat_color(header: str, raw_val):
     alpha = 0
     base = None
 
-    if "%" in header or header in {"涨跌", "现价", "收盘", "最新价"}:
+    if "%" in header or header in {"涨跌", "现价", "市价", "收盘", "最新价"}:
         if abs(value) < 0.01:
             return None
         base = _c("COLOR_RISE") if value > 0 else _c("COLOR_FALL")

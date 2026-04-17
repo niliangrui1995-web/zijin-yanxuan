@@ -49,3 +49,20 @@ def test_stock_table_model_update_data_hydrates_latest_global_quotes(monkeypatch
     assert model.row_data[0]["现价"] == "10.50"
     assert model.row_data[0]["涨幅%"] == pytest.approx(5.0)
     assert model.row_data[0]["市值"] == "105亿"
+
+
+def test_stock_table_model_supports_shijia_header(monkeypatch):
+    monkeypatch.setattr(
+        global_store,
+        "get_latest_quotes",
+        lambda: {"000001": {"close": 10.5, "last_close": 10.0}},
+    )
+
+    model = StockTableModel(["代码", "名称", "市价", "涨幅%", "市值"])
+    model.update_data([
+        {"代码": "000001", "名称": "A", "市价": "--", "涨幅%": "--", "市值": "--", "_zongguben": 1_000_000_000},
+    ])
+
+    assert model.row_data[0]["市价"] == "10.50"
+    assert model.row_data[0]["涨幅%"] == pytest.approx(5.0)
+    assert model.row_data[0]["市值"] == "105亿"

@@ -147,7 +147,10 @@ def test_base_stock_refresh_table_market_data_only_fetches_blank_quotes(monkeypa
         app.processEvents()
 
         assert cap_calls == ["caps"]
-        assert tab.model.quote_calls == [snapshot]
+        assert tab.model.quote_calls == [
+            snapshot,
+            {"000002": {"close": 11.2, "last_close": 11.0}},
+        ]
         assert provider.requested_codes == [["000002"]]
         assert len(spy) == 1
         assert task_manager.task_ids == [("active", "dummy_quotes"), ("run", "dummy_quotes")]
@@ -269,5 +272,7 @@ def test_base_stock_refresh_table_market_data_fetches_newly_added_blank_rows(mon
     try:
         tab.refresh_table_quotes_and_market_caps(quote_task_id="new_codes_quotes")
         assert provider.requested_codes == [["000002"]]
+        assert tab.model.row_data[0]["现价"] == "10.80"
+        assert tab.model.row_data[1]["现价"] == "11.20"
     finally:
         tab.deleteLater()

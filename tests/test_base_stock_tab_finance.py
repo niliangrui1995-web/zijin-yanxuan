@@ -62,7 +62,16 @@ def test_base_stock_tab_async_market_caps_only_fetches_missing_a_share_finance(m
     try:
         tab.async_update_market_caps()
 
-        assert tab.model.quote_calls == [latest_quotes]
+        assert tab.model.quote_calls == [
+            latest_quotes,
+            {
+                "000001": {
+                    "zongguben": 1_000_000_000,
+                    "_zongguben": 1_000_000_000,
+                    "finance_source": "eastmoney",
+                }
+            },
+        ]
         assert finance_calls == [["000001"]]
         assert len(spy) == 1
         payload = spy[0][0]

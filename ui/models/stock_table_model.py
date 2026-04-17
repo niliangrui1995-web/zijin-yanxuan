@@ -94,7 +94,7 @@ class StockTableModel(QAbstractTableModel):
     def _hydrate_latest_quotes_from_store(self):
         if not self._data or "代码" not in self._headers:
             return
-        if not any(header in self._headers for header in ("现价", "涨幅%", "市值", "买点")):
+        if not any(header in self._headers for header in ("现价", "市价", "涨幅%", "市值", "买点")):
             return
         try:
             from core.global_store import global_store
@@ -165,7 +165,7 @@ class StockTableModel(QAbstractTableModel):
             old_val = self._data[row].get(col_name)
             self._data[row][col_name] = new_val
 
-            if col_name in ["现价", "最新价", "最新", "涨幅%"]:
+            if col_name in ["现价", "市价", "最新价", "最新", "涨幅%"]:
                 try:
                     diff = float(str(new_val).strip('%').strip('+')) - float(str(old_val).strip('%').strip('+'))
                     if abs(diff) > 0.0001:
@@ -193,7 +193,7 @@ class StockTableModel(QAbstractTableModel):
 
         changed_rows = []
         quote_cols = []
-        for header in ("现价", "涨幅%", "市值"):
+        for header in ("现价", "市价", "涨幅%", "市值"):
             if header in self._headers:
                 quote_cols.append(self._headers.index(header))
         start_col = min(quote_cols) if quote_cols else None
@@ -215,9 +215,11 @@ class StockTableModel(QAbstractTableModel):
                 row_changed = True
 
             price_text = metrics.get("price_text")
-            if price_text is not None and item_dict.get("现价") != price_text:
-                self.set_cell_value(row, "现价", price_text, emit_signal=False)
-                row_changed = True
+            if price_text is not None:
+                for price_key in ("现价", "市价"):
+                    if price_key in self._headers and item_dict.get(price_key) != price_text:
+                        self.set_cell_value(row, price_key, price_text, emit_signal=False)
+                        row_changed = True
             if pct is not None and item_dict.get("涨幅%") != pct:
                 self.set_cell_value(row, "涨幅%", pct, emit_signal=False)
                 row_changed = True

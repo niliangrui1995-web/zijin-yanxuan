@@ -191,7 +191,9 @@ class BaseStockTab(QWidget):
             if code.isdigit():
                 code = code.zfill(6)
 
-            price_blank = self._is_blank_quote_value(row_dict.get("现价"))
+            price_blank = self._is_blank_quote_value(
+                row_dict.get("现价", row_dict.get("市价"))
+            )
             pct_blank = self._is_blank_quote_value(row_dict.get("涨幅%"), zero_is_blank=False)
             if price_blank or pct_blank:
                 target_codes.append(code)
@@ -269,10 +271,11 @@ class BaseStockTab(QWidget):
 
         def _on_success(quotes):
             if quotes:
-                self._publish_quote_payload(
+                published = self._publish_quote_payload(
                     quotes,
                     source=f"{self.__class__.__name__}.quotes",
                 )
+                self._apply_quote_snapshot(published or quotes)
 
         def _on_error(error_message: str):
             if error_message:
@@ -833,10 +836,11 @@ class BaseStockTab(QWidget):
 
             payload = build_finance_quote_payload(finance_data)
             if payload:
-                self._publish_quote_payload(
+                published = self._publish_quote_payload(
                     payload,
                     source=f"{self.__class__.__name__}.finance",
                 )
+                self._apply_quote_snapshot(published or payload)
 
             after_cap_hook = getattr(self, "_after_market_caps_updated", None)
             if callable(after_cap_hook):

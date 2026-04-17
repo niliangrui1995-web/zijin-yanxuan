@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import QTabWidget, QVBoxLayout, QWidget
 from ui.tabs.asian_market_tab import AsianMarketTab
 from ui.tabs.earnings_tab import EarningsTab
 from ui.tabs.foreign_block_trade_tab import ForeignBlockTradeTab
+from ui.tabs.fund_holdings_tab import FundHoldingsTab
 from ui.tabs.lhb_tab import LhbTab
 from ui.tabs.log_tab import LogTab
 from ui.tabs.na_daily_tab import NADailyTab
@@ -37,6 +38,7 @@ class ClassicWorkspace(QWidget):
         self.tab_asian_market = AsianMarketTab(self.data_provider, self)
         self.tab_rt = RtMonitorTab(self.data_provider, self.engine, self)
         self.tab_foreign_block = ForeignBlockTradeTab(self.data_provider, self)
+        self.tab_fund_holdings = FundHoldingsTab(self.data_provider, self)
         self.tab_earnings = EarningsTab(self.data_provider, self)
         self.tab_scan = ScanTab(self.data_provider, self.engine, self)
         self.tab_log = LogTab(self)
@@ -47,6 +49,7 @@ class ClassicWorkspace(QWidget):
         self.tabs.addTab(self.tab_asian_market, "亚洲寡头")
         self.tabs.addTab(self.tab_rt, "盘中监控")
         self.tabs.addTab(self.tab_foreign_block, "大宗交易")
+        self.tabs.addTab(self.tab_fund_holdings, "基金持仓")
         self.tabs.addTab(self.tab_earnings, "业绩异动")
         self.tabs.addTab(self.tab_scan, "VCP扫描")
         self.tabs.addTab(self.tab_log, "系统日志")
@@ -101,6 +104,9 @@ class ClassicWorkspace(QWidget):
         if earnings_model is not None:
             codes.update(extract_codes(getattr(earnings_model, "row_data", None)))
 
+        # 基金持仓包含股票过多，不纳入中央实时报价轮询池。
+        # 该 Tab 仅在自身重载数据库后做一次性补价/补市值，避免盘中全局轮询卡顿。
+
         lhb_model = getattr(getattr(self, "tab_lhb", None), "model", None)
         if lhb_model is not None:
             codes.update(extract_codes(getattr(lhb_model, "row_data", None)))
@@ -124,6 +130,7 @@ class ClassicWorkspace(QWidget):
                 getattr(getattr(self, "tab_console", None), "table", None),
                 getattr(getattr(self, "tab_lhb", None), "table", None),
                 getattr(getattr(self, "tab_foreign_block", None), "table", None),
+                getattr(getattr(self, "tab_fund_holdings", None), "table", None),
                 getattr(getattr(self, "tab_asian_market", None), "asian_table", None),
                 getattr(getattr(self, "tab_earnings", None), "table", None),
             ]
