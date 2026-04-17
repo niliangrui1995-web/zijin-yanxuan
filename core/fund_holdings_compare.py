@@ -31,7 +31,14 @@ SUBJECTS = {
 
 _QUARTER_KEY_RE = re.compile(r"^\s*(\d{4})\s*[-/]?\s*[Qq季度]?\s*([1-4])\s*$")
 _DATE_KEY_RE = re.compile(r"^\s*(\d{4})[-/](\d{2})[-/](\d{2})\s*$")
+_WHITESPACE_RE = re.compile(r"\s+")
+_CJK_SPACE_RE = re.compile(r"(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])")
+_HOLDER_NAME_FRAGMENT_RE = re.compile(r"[A-Z]+")
 _EPSILON = 1e-6
+_HOLDER_NAME_SHORT_TOKENS = {
+    "AG", "CO", "PLC", "LTD", "LP", "LLC", "INC", "NV", "NA", "SA", "AB", "AS", "BV",
+    "PTE", "QFII",
+}
 
 
 def is_mainland_security_code(value) -> bool:
@@ -54,6 +61,59 @@ def _first_number(raw: dict, *keys: str) -> float:
         if value not in (None, "", "-", "--"):
             return coerce_float(value)
     return 0.0
+
+
+def normalize_holder_name(value) -> str:
+    text = str(value or "").strip().replace("\u3000", " ")
+    if not text:
+        return ""
+    text = _WHITESPACE_RE.sub(" ", text)
+    text = _CJK_SPACE_RE.sub("", text)
+    text = re.sub(r"\s*-\s*", "-", text)
+    text = re.sub(r"\(\s+", "(", text)
+    text = re.sub(r"\s+\)", ")", text)
+    return text.strip()
+
+
+def holder_name_match_key(value) -> str:
+    return _WHITESPACE_RE.sub("", normalize_holder_name(value)).upper()
+
+
+def _holder_name_display_score(value) -> int:
+    text = normalize_holder_name(value)
+    if not text:
+        return -10_000
+
+    if re.search(r"[\u4e00-\u9fff]", text) and not re.search(r"[A-Za-z]", text):
+        return 1_000 - len(text)
+
+    tokens = [token for token in text.split(" ") if token]
+    score = 0
+    short_penalty = 0
+    for token in tokens:
+        for fragment in _HOLDER_NAME_FRAGMENT_RE.findall(token.upper()):
+            if len(fragment) >= 4:
+                score += 2
+            elif len(fragment) == 3:
+                score += 1
+            elif fragment in _HOLDER_NAME_SHORT_TOKENS:
+                score += 1
+            else:
+                short_penalty += 2
+
+    score += min(max(len(tokens) - 1, 0), 4) * 2
+    score -= max(0, len(tokens) - 5) * 3
+    score -= short_penalty
+    return score
+
+
+def _normalize_qfii_raw_holder_name(raw: dict) -> dict:
+    row = dict(raw or {})
+    holder_name = normalize_holder_name(_first_text(row, "HOLDER_NAME", "holder_name"))
+    if holder_name:
+        row["HOLDER_NAME"] = holder_name
+        row["holder_name"] = holder_name
+    return row
 
 
 def _qfii_row_market(raw: dict) -> str:
@@ -96,6 +156,7 @@ def _qfii_row_preference(raw: dict) -> tuple[int, float, str]:
     return (
         _qfii_code_priority(stock_code, market),
         _first_number(raw, "HOLDER_MARKET_CAP", "hold_market_value_cny"),
+        _holder_name_display_score(_first_text(raw, "HOLDER_NAME", "holder_name")),
         stock_code,
     )
 
@@ -103,7 +164,7 @@ def _qfii_row_preference(raw: dict) -> tuple[int, float, str]:
 def _qfii_row_signature(raw: dict) -> tuple[object, ...]:
     return (
         _first_text(raw, "quarter_key"),
-        _first_text(raw, "HOLDER_NAME", "holder_name"),
+        holder_name_match_key(_first_text(raw, "HOLDER_NAME", "holder_name")),
         int(round(_first_number(raw, "HOLDER_RANK", "holder_rank"))),
         round(_first_number(raw, "HOLD_NUM", "hold_num_shares"), 6),
         round(_first_number(raw, "HOLD_RATIO", "hold_ratio_pct"), 9),
@@ -114,7 +175,7 @@ def _qfii_row_signature(raw: dict) -> tuple[object, ...]:
 def dedupe_qfii_raw_rows(raw_rows: list[dict]) -> list[dict]:
     deduped: dict[tuple[object, ...], dict] = {}
     for raw in raw_rows or []:
-        row = dict(raw or {})
+        row = _normalize_qfii_raw_holder_name(raw)
         signature = _qfii_row_signature(row)
         existing = deduped.get(signature)
         if existing is None or _qfii_row_preference(row) > _qfii_row_preference(existing):
@@ -400,7 +461,7 @@ def build_qfii_holder_change_rows(raw_rows: list[dict], subject: dict) -> list[d
     for raw in dedupe_qfii_raw_rows(raw_rows):
         quarter_key = normalize_quarter_key(raw.get("quarter_key"))
         stock_code = str(raw.get("stock_code") or "").strip()
-        holder_name = str(raw.get("holder_name") or "").strip()
+        holder_name = normalize_holder_name(raw.get("holder_name"))
         if not is_mainland_security_code(stock_code) or not holder_name:
             continue
 

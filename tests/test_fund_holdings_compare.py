@@ -6,6 +6,7 @@ from core.fund_holdings_compare import (
     build_qfii_holder_change_rows,
     build_qfii_snapshots,
     get_compare_quarter_key,
+    normalize_holder_name,
     normalize_quarter_key,
 )
 
@@ -352,3 +353,46 @@ def test_build_qfii_holder_change_rows_prefers_current_listed_code_when_name_cha
     assert len(rows) == 1
     assert rows[0]["stock_code"] == "300967"
     assert rows[0]["stock_name"] == "晓鸣股份"
+
+
+def test_normalize_holder_name_collapses_space_only_differences():
+    assert normalize_holder_name("  UBS   AG  ") == "UBS AG"
+    assert normalize_holder_name("J.P.Morgan Securities PLC - 自有资金") == "J.P.Morgan Securities PLC-自有资金"
+    assert normalize_holder_name("中国 国际 金融 香港 资产 管理 有限公司") == "中国国际金融香港资产管理有限公司"
+
+
+def test_build_qfii_holder_change_rows_merges_holder_names_that_only_differ_by_spaces():
+    rows = build_qfii_holder_change_rows(
+        [
+            {
+                "subject_code": SUBJECT_QFII["subject_code"],
+                "quarter_key": "2025Q4",
+                "end_date": "2025-12-31",
+                "stock_code": "000001",
+                "stock_name": "平安银行",
+                "holder_name": "UBSAG",
+                "hold_num_shares": 1000,
+                "hold_market_value_cny": 10_000,
+                "hold_ratio_pct": 0.10,
+                "free_hold_ratio_pct": 0.20,
+                "update_date": "2025-12-31",
+            },
+            {
+                "subject_code": SUBJECT_QFII["subject_code"],
+                "quarter_key": "2025Q4",
+                "end_date": "2025-12-31",
+                "stock_code": "000001",
+                "stock_name": "平安银行",
+                "holder_name": "UBS AG",
+                "hold_num_shares": 1000,
+                "hold_market_value_cny": 10_000,
+                "hold_ratio_pct": 0.10,
+                "free_hold_ratio_pct": 0.20,
+                "update_date": "2025-12-31",
+            },
+        ],
+        SUBJECT_QFII,
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["subject_name"] == "UBS AG"

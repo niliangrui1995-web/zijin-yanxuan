@@ -583,3 +583,77 @@ def test_fund_holdings_store_qfii_multiple_holders_same_stock_track_independentl
     finally:
         store.close()
         os.remove(db_path)
+
+
+def test_fund_holdings_store_qfii_holder_names_merge_when_only_spaces_differ():
+    store, db_path = _make_store()
+    repo = FundHoldingsStore(store=store)
+    try:
+        q4_rows = [
+            {
+                "SECURITY_CODE": "000001",
+                "SECURITY_NAME_ABBR": "平安银行",
+                "HOLDER_NAME": "UBSAG",
+                "HOLDER_RANK": 1,
+                "HOLD_NUM": 1000,
+                "HOLDER_MARKET_CAP": 10000,
+                "FREE_HOLDNUM_RATIO": 0.5,
+                "HOLD_RATIO": 0.10,
+                "UPDATE_DATE": "2026-04-18 00:00:00",
+                "HOLDER_TYPE": "QFII",
+                "HOLDER_NEWTYPE": "QFII",
+                "HOLD_CHANGE": "新进",
+            },
+            {
+                "SECURITY_CODE": "000001",
+                "SECURITY_NAME_ABBR": "平安银行",
+                "HOLDER_NAME": "UBS AG",
+                "HOLDER_RANK": 1,
+                "HOLD_NUM": 1000,
+                "HOLDER_MARKET_CAP": 10000,
+                "FREE_HOLDNUM_RATIO": 0.5,
+                "HOLD_RATIO": 0.10,
+                "UPDATE_DATE": "2026-04-18 00:00:00",
+                "HOLDER_TYPE": "QFII",
+                "HOLDER_NEWTYPE": "QFII",
+                "HOLD_CHANGE": "新进",
+            },
+        ]
+        payloads = {
+            "2025Q4": {
+                "quarter_key": "2025Q4",
+                "end_date": "2025-12-31",
+                "raw_rows": q4_rows,
+                "snapshots": build_qfii_snapshots(q4_rows, SUBJECT_QFII, "2025Q4", "2025-12-31"),
+            },
+        }
+
+        repo.replace_qfii_quarters(
+            SUBJECT_QFII,
+            payloads,
+            sync_scope="specific",
+            requested_quarter_key="2025Q4",
+            resolved_quarter_key="2025Q4",
+            message="QFII 指定季度 2025Q4 已同步",
+        )
+
+        q4_rows = [
+            row for row in repo.query_change_rows()
+            if row["quarter_key"] == "2025Q4" and row["stock_code"] == "000001"
+        ]
+        assert len(q4_rows) == 1
+        assert q4_rows[0]["subject_name"] == "UBS AG"
+
+        raw_rows = store.fetch_all(
+            """
+            SELECT holder_name
+            FROM fh_raw_qfii
+            WHERE subject_code = ? AND quarter_key = ?
+            ORDER BY holder_name ASC
+            """,
+            (SUBJECT_QFII["subject_code"], "2025Q4"),
+        )
+        assert [row["holder_name"] for row in raw_rows] == ["UBS AG"]
+    finally:
+        store.close()
+        os.remove(db_path)
