@@ -2,6 +2,17 @@
 from ui.tabs.scan_tab import ScanTab
 
 
+class _DummyProvider:
+    def __init__(self):
+        self.code2name = {"300093": "*ST金刚"}
+        self.requests = []
+
+    def ensure_code_name_map(self, codes=None, *, refresh_missing=False):
+        normalized_codes = tuple(sorted(str(code) for code in (codes or ())))
+        self.requests.append((normalized_codes, refresh_missing))
+        return dict(self.code2name)
+
+
 def test_scan_tab_idle_status_summary_is_not_blank(monkeypatch):
     monkeypatch.setattr("ui.tabs.scan_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
 
@@ -56,5 +67,38 @@ def test_merge_scan_results_keeps_existing_rows_when_incremental_scan_has_no_hit
         assert stats["新增"] == 0
         assert stats["更新"] == 0
         assert stats["刷新"] == 0
+    finally:
+        tab.deleteLater()
+
+
+def test_refresh_scan_result_names_repairs_placeholder_name(monkeypatch):
+    monkeypatch.setattr("ui.tabs.scan_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+
+    provider = _DummyProvider()
+    tab = ScanTab(data_provider=provider, engine=None)
+    try:
+        refreshed = tab._refresh_scan_result_names(
+            [{"代码": "300093", "名称": "300093", "触发日期": "2026-04-17"}]
+        )
+
+        assert refreshed[0]["名称"] == "*ST金刚"
+        assert provider.requests == [(("300093",), True)]
+    finally:
+        tab.deleteLater()
+
+
+def test_incremental_scan_repairs_existing_cached_names(monkeypatch):
+    monkeypatch.setattr("ui.tabs.scan_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+
+    provider = _DummyProvider()
+    tab = ScanTab(data_provider=provider, engine=None)
+    try:
+        tab._current_results = [{"代码": "300093", "名称": "300093", "触发日期": "2026-04-16", "评分": 80}]
+        tab._scan_mode = "incremental"
+
+        tab._on_scan_results([])
+
+        row = next(item for item in tab._current_results if item["代码"] == "300093")
+        assert row["名称"] == "*ST金刚"
     finally:
         tab.deleteLater()

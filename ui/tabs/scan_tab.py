@@ -221,6 +221,45 @@ class ScanTab(BaseStockTab):
 
         return list(merged.values()), stats
 
+    def _refresh_scan_result_names(self, results: list) -> list:
+        normalized_rows = []
+        codes = []
+        for row in (results or []):
+            if not isinstance(row, dict):
+                normalized_rows.append(row)
+                continue
+            cloned = dict(row)
+            normalized_rows.append(cloned)
+            code = str(cloned.get("代码", "")).strip()
+            if code:
+                codes.append(code)
+
+        if not normalized_rows or not self.data_provider or not codes:
+            return normalized_rows
+
+        try:
+            name_map = self.data_provider.ensure_code_name_map(
+                list(dict.fromkeys(codes)),
+                refresh_missing=True,
+            )
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.debug(f"[扫描结果] 名称回填失败: {exc}")
+            name_map = getattr(self.data_provider, "code2name", {}) or {}
+
+        refreshed = 0
+        for row in normalized_rows:
+            if not isinstance(row, dict):
+                continue
+            code = str(row.get("代码", "")).strip()
+            resolved = str((name_map or {}).get(code, "") or "").strip()
+            if code and resolved and resolved != code and str(row.get("名称", "")).strip() != resolved:
+                row["名称"] = resolved
+                refreshed += 1
+
+        if refreshed:
+            log.info(f"[扫描结果] 已回填 {refreshed} 条名称")
+        return normalized_rows
+
     def _build_incremental_finish_message(self) -> str:
         stats = self._last_incremental_stats or {}
         target_date = self._scan_target_date or self._resolve_incremental_scan_date()
@@ -527,9 +566,9 @@ class ScanTab(BaseStockTab):
         if self._scan_mode == "incremental":
             merged_results, merge_stats = self._merge_scan_results(self._current_results, incoming_results)
             self._last_incremental_stats = merge_stats
-            self._pending_scan_results = merged_results
+            self._pending_scan_results = self._refresh_scan_result_names(merged_results)
         else:
-            self._pending_scan_results = incoming_results
+            self._pending_scan_results = self._refresh_scan_result_names(incoming_results)
         self._current_results = self._pending_scan_results
         self._render_scan_table(self._pending_scan_results)
 
@@ -678,8 +717,9 @@ class ScanTab(BaseStockTab):
             if not results: return
 
             saved_at = cache_data.get('saved_at', '未知')
-            self._current_results = results
-            self._render_scan_table(results)
+            refreshed_results = self._refresh_scan_result_names(results)
+            self._current_results = refreshed_results
+            self._render_scan_table(refreshed_results)
 
             # #9: 回显参数快照，让用户知道这批结果用的什么参数
             params_info = cache_data.get('params')
