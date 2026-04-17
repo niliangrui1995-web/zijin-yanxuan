@@ -142,6 +142,63 @@ class FundHoldingsTab(BaseStockTab):
     _CAPITAL_ATTRIBUTE_LABELS = {
         QFII_CAPITAL_ATTRIBUTE_UNMARKED: _DISPLAY_PLACEHOLDER,
     }
+    _AI_CONCEPT_EXCLUDE_NAMES = {
+        "AI营销",
+    }
+    _AI_CONCEPT_INCLUDE_NAMES = {
+        "AIGC概念",
+        "AI医疗",
+        "AI手机PC",
+        "AI智能体",
+        "AI眼镜",
+        "ChatGPT",
+        "DeepSeek",
+        "EDA概念",
+        "东数西算",
+        "云计算",
+        "人工智能",
+        "人形机器",
+        "先进封装",
+        "光刻机",
+        "光通信",
+        "华为海思",
+        "华为算力",
+        "国资云",
+        "多模态AI",
+        "存储芯片",
+        "数据中心",
+        "智谱AI",
+        "智能机器",
+        "机器视觉",
+        "液冷服务",
+        "算力租赁",
+        "英伟达",
+        "边缘计算",
+    }
+    _AI_CONCEPT_DISPLAY_ALIASES = {
+        "\u6db2\u51b7\u670d\u52a1": "\u6db2\u51b7",
+        "CPO\u6982\u5ff5": "CPO",
+    }
+    _AI_CONCEPT_INCLUDE_KEYWORDS = (
+        "AI",
+        "AIGC",
+        "GPT",
+        "DeepSeek",
+        "智谱",
+        "人工智能",
+        "算力",
+        "CPO",
+        "光通信",
+        "铜缆",
+        "液冷",
+        "芯片",
+        "半导",
+        "存储",
+        "封装",
+        "EDA",
+        "PCB",
+        "光刻机",
+    )
     _VIEW_STATE_PREFIX = "fund_holdings_view_state_v2"
 
     def __init__(self, data_provider, parent=None):
@@ -251,6 +308,7 @@ class FundHoldingsTab(BaseStockTab):
         self.table_state = TableStateWrapper(self.table, empty_title="暂无基金持仓数据", loading_title="同步基金持仓数据中...")
 
         header = self.table.horizontalHeader()
+        header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
         header.setStretchLastSection(True)
         default_widths = [70, 90, 70, 70, 75, 180, 96, 90, 80, 90, 110, 110, 110, 240]
         for index, width in enumerate(default_widths):
@@ -832,13 +890,40 @@ class FundHoldingsTab(BaseStockTab):
                     concept_name = sector_text.replace("GN_", "", 1).strip()
                     if concept_name:
                         concepts.append(concept_name)
-                if concepts:
-                    concept_text = " | ".join(dict.fromkeys(concepts))
+                filtered_concepts = self._filter_ai_related_concepts(concepts)
+                if filtered_concepts:
+                    concept_text = " | ".join(filtered_concepts)
             except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
                 concept_text = self._DISPLAY_PLACEHOLDER
 
         self._concept_sector_cache[code] = concept_text
         return concept_text
+
+    @classmethod
+    def _is_ai_related_concept(cls, concept_name: str) -> bool:
+        text = str(concept_name or "").strip()
+        if not text or text in cls._AI_CONCEPT_EXCLUDE_NAMES:
+            return False
+        if text in cls._AI_CONCEPT_INCLUDE_NAMES:
+            return True
+        return any(keyword in text for keyword in cls._AI_CONCEPT_INCLUDE_KEYWORDS)
+
+    @classmethod
+    def _normalize_ai_concept_display(cls, concept_name: str) -> str:
+        text = str(concept_name or "").strip()
+        if not text:
+            return ""
+        return cls._AI_CONCEPT_DISPLAY_ALIASES.get(text, text)
+
+    @classmethod
+    def _filter_ai_related_concepts(cls, concepts) -> list[str]:
+        filtered = []
+        for concept_name in concepts or []:
+            text = str(concept_name or "").strip()
+            if not cls._is_ai_related_concept(text):
+                continue
+            filtered.append(cls._normalize_ai_concept_display(text))
+        return list(dict.fromkeys(filtered))
 
     def _build_view_rows(self, change_rows: list[dict]) -> list[dict]:
         rows: list[dict] = []

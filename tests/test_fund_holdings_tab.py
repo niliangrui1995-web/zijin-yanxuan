@@ -247,6 +247,32 @@ def test_fund_holdings_tab_shows_concept_sector_column(monkeypatch):
         tab.deleteLater()
 
 
+def test_fund_holdings_tab_centers_header_alignment(monkeypatch):
+    _setup_store(monkeypatch, [])
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
+    try:
+        alignment = tab.table.horizontalHeader().defaultAlignment()
+        assert alignment & fund_holdings_module.Qt.AlignmentFlag.AlignHCenter
+        assert alignment & fund_holdings_module.Qt.AlignmentFlag.AlignVCenter
+    finally:
+        tab.deleteLater()
+
+
+def test_fund_holdings_tab_filters_ai_related_concepts_for_display():
+    assert fund_holdings_module.FundHoldingsTab._is_ai_related_concept("DeepSeek") is True
+    assert fund_holdings_module.FundHoldingsTab._is_ai_related_concept("CPO概念") is True
+    assert fund_holdings_module.FundHoldingsTab._is_ai_related_concept("数据中心") is True
+    assert fund_holdings_module.FundHoldingsTab._is_ai_related_concept("白酒概念") is False
+    assert fund_holdings_module.FundHoldingsTab._is_ai_related_concept("海南自贸") is False
+    assert fund_holdings_module.FundHoldingsTab._is_ai_related_concept("AI营销") is False
+    assert fund_holdings_module.FundHoldingsTab._filter_ai_related_concepts(
+        ["白酒概念", "DeepSeek", "CPO概念", "DeepSeek", "海南自贸"]
+    ) == ["DeepSeek", "CPO"]
+    assert fund_holdings_module.FundHoldingsTab._filter_ai_related_concepts(
+        ["液冷服务", "CPO概念", "DeepSeek", "液冷服务"]
+    ) == ["液冷", "CPO", "DeepSeek"]
+
+
 def test_fund_holdings_tab_subject_filter_uses_holder_name(monkeypatch):
     _setup_store(
         monkeypatch,
