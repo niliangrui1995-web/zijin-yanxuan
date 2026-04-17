@@ -10,7 +10,7 @@ import threading
 import time
 
 import yfinance as yf
-from PyQt6.QtCore import QThread
+from PyQt6.QtCore import QThread, pyqtSignal
 
 from core.logger import get_logger
 from core.market_calendar import MarketCalendar

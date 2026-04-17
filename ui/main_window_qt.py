@@ -78,7 +78,7 @@ class MainWindowQT(QMainWindow):
 
         self._splash_update(60, "正在构建主界面模块...")
         self.data_provider = TdxDataProvider(offline=True)
-        self.data_provider.code2name = self.data_provider._get_codes_from_vipdoc()
+        self.data_provider.code2name = self.data_provider.ensure_code_name_map()
         self.engine = VCPEngine.get_instance()
 
         # 全局样式（动态生成，支持主题切换）

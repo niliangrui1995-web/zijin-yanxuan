@@ -200,9 +200,10 @@ class StartupLoader:
                     try:
                         if not self._alive():
                             return
-                        self.mw.data_provider.get_all_codes()
                         self.mw.data_provider.code2name = (
-                            self.mw.data_provider._get_codes_from_vipdoc()
+                            self.mw.data_provider.ensure_code_name_map(
+                                refresh_missing=True
+                            )
                         )
                         workspace = getattr(self.mw, "_workspace", None)
                         if workspace is not None:

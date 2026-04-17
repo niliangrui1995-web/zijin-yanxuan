@@ -146,6 +146,7 @@ def request_eastmoney_quote_batch(provider, codes, inferred_trade_date: str):
                 code_val = str(row.get("f12") or "").strip()
                 if not code_val:
                     continue
+                name_val = str(row.get("f14") or "").strip()
                 last_close = coerce_quote_number(row.get("f18"))
                 close_price = coerce_quote_number(row.get("f2")) or last_close
                 open_price = coerce_quote_number(row.get("f17")) or close_price
@@ -165,6 +166,7 @@ def request_eastmoney_quote_batch(provider, codes, inferred_trade_date: str):
                     "pct": pct_change,
                     "date": inferred_trade_date,
                     "source": "eastmoney",
+                    "name": name_val,
                 }
 
             if not quotes:
@@ -220,6 +222,7 @@ def request_sina_quote_batch(provider, codes, inferred_trade_date: str):
             continue
 
         code_val = symbol[-6:]
+        name_val = str(fields[0] or "").strip()
         open_price = coerce_quote_number(fields[1])
         last_close = coerce_quote_number(fields[2])
         close_price = coerce_quote_number(fields[3]) or last_close
@@ -241,6 +244,7 @@ def request_sina_quote_batch(provider, codes, inferred_trade_date: str):
             "pct": pct_change,
             "date": quote_date,
             "source": "sina",
+            "name": name_val,
         }
 
     if not quotes:

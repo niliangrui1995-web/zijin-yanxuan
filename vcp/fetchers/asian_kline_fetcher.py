@@ -64,6 +64,12 @@ MARKET_SHORTCUT = {
 # 这里仅覆盖“亚洲看板”的取数池，不影响每日战报主工程里的全局 ticker 定义。
 ASIAN_LOCAL_TICKER_OVERRIDES = {
     "TSMC": "2330.TW",
+    "TUC": "6274.TWO",
+}
+
+# Why: 亚洲页允许补充少量本地维护的赛道归属，避免上游产业字典尚未同步时出现“未知赛道”。
+ASIAN_LOCAL_TRACK_OVERRIDES = {
+    "6274.TWO": "高频PCB与覆铜板材料",
 }
 
 _ALNUM_RE = re.compile(r"[a-z0-9]+")
@@ -138,6 +144,9 @@ def filter_asian_tickers(market_filter: str | None = None) -> dict[str, str]:
 def _find_track(ticker: str) -> str:
     """反查 ticker 所属的赛道名称。"""
     _ensure_industry_mappings_loaded()
+    if ticker in ASIAN_LOCAL_TRACK_OVERRIDES:
+        return ASIAN_LOCAL_TRACK_OVERRIDES[ticker]
+
     # Why: 从 VANGUARD_TICKERS 找到公司名，再从 OLIGARCH_DICT 反查赛道
     company_name = None
     for name, tk in _get_asian_source_tickers().items():

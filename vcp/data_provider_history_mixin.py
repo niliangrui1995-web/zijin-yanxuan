@@ -15,6 +15,12 @@ _log = get_logger(__name__)
 
 
 class TdxDataProviderHistoryMixin:
+    @staticmethod
+    def _is_placeholder_name(code, name) -> bool:
+        code_text = str(code or "").strip()
+        name_text = str(name or "").strip()
+        return not name_text or name_text == code_text
+
     def get_all_codes(self):
         from core.data_store import DataStore
         if self._offline or not self.server_pool:
@@ -81,6 +87,66 @@ class TdxDataProviderHistoryMixin:
         has_names = sum(1 for c, n in stocks.items() if c != n)
         _log.info(f"[离线模式] 已从 vipdoc 扫描 {len(stocks)} 只标的（其中 {has_names} 只有名称）")
         return stocks
+
+    def ensure_code_name_map(self, codes=None, *, refresh_missing=False):
+        from core.data_store import DataStore
+
+        base_map = dict(self._get_codes_from_vipdoc() or {})
+        current_map = getattr(self, "code2name", {}) or {}
+        for raw_code, raw_name in dict(current_map).items():
+            code = str(raw_code or "").strip()
+            if not code:
+                continue
+            name = str(raw_name or "").strip()
+            if not self._is_placeholder_name(code, name):
+                base_map[code] = name
+
+        target_codes = []
+        if codes:
+            for raw_code in codes:
+                code = str(raw_code or "").strip()
+                if len(code) == 6 and code.isdigit():
+                    target_codes.append(code)
+        else:
+            target_codes = list(base_map.keys())
+
+        missing_codes = [
+            code for code in dict.fromkeys(target_codes)
+            if self._is_placeholder_name(code, base_map.get(code, ""))
+        ]
+
+        if refresh_missing and missing_codes and not self._offline:
+            try:
+                quotes = self.fetch_realtime_quotes_batch(missing_codes) or {}
+            except (AttributeError, ConnectionError, KeyError, OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
+                _log.debug(f"[名称映射] 在线补名称失败: {exc}")
+                quotes = {}
+
+            refreshed = {}
+            for raw_code, payload in dict(quotes).items():
+                code = str(raw_code or "").strip()
+                name = str((payload or {}).get("name") or "").strip()
+                if len(code) == 6 and code.isdigit() and not self._is_placeholder_name(code, name):
+                    refreshed[code] = name
+
+            if refreshed:
+                base_map.update(refreshed)
+                try:
+                    store = DataStore()
+                    cached_map = store.load_json("vcp_code_names", {}) or {}
+                    merged_map = {
+                        str(raw_code).strip(): str(raw_name or "").strip()
+                        for raw_code, raw_name in dict(cached_map).items()
+                        if str(raw_code or "").strip()
+                    }
+                    merged_map.update(refreshed)
+                    store.save_json("vcp_code_names", merged_map)
+                    _log.info(f"[名称映射] 已在线补齐 {len(refreshed)} 只标的名称")
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                    _log.debug(f"[名称映射] 持久化名称缓存失败: {exc}")
+
+        self.code2name = base_map
+        return dict(base_map)
 
     def _worker_fetch(self, code, force_refresh, existing_df):
         if self._offline:

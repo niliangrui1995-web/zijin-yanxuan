@@ -41,6 +41,15 @@ def test_filter_asian_tickers_prefers_tw_listing_for_tsmc(monkeypatch):
     assert "NVIDIA" not in tickers
 
 
+def test_filter_asian_tickers_includes_local_tuc_override(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    monkeypatch.setattr(fetcher, "VANGUARD_TICKERS", {"ASE": "3711.TW"}, raising=False)
+
+    tickers = fetcher.filter_asian_tickers()
+
+    assert tickers["TUC"] == "6274.TWO"
+
+
 def test_find_track_works_with_local_tsmc_tw_override(monkeypatch):
     fetcher = _load_fetcher_module(monkeypatch)
     monkeypatch.setattr(fetcher, "VANGUARD_TICKERS", {"TSMC": "TSM"}, raising=False)
@@ -54,6 +63,14 @@ def test_find_track_works_with_local_tsmc_tw_override(monkeypatch):
     )
 
     assert fetcher._find_track("2330.TW") == "定制化ASIC与代工"
+
+
+def test_find_track_uses_local_track_override_for_tuc(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    monkeypatch.setattr(fetcher, "VANGUARD_TICKERS", {}, raising=False)
+    monkeypatch.setattr(fetcher, "OLIGARCH_DICT", {}, raising=False)
+
+    assert fetcher._find_track("6274.TWO") == "高频PCB与覆铜板材料"
 
 
 def test_sync_asian_kline_cache_refuses_partial_overwrite(monkeypatch):

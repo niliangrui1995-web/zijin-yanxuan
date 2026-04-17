@@ -47,7 +47,7 @@ class ScanWorker(QThread):
             # 首次运行:需要读取由vipdoc目录结构提取的股票名称和预缓存数据
             if not self.data_provider.cache_data:
                 self.progress.emit(0, "首次扫描:读取本地代码表...")
-                codes_dict = self.data_provider._get_codes_from_vipdoc()
+                codes_dict = self.data_provider.ensure_code_name_map()
 
                 # 设置一个进度回调映射到信号(占用前 50% 进度条)
                 def _sync_cb(done, total, eta):
@@ -59,8 +59,8 @@ class ScanWorker(QThread):
 
                 self.data_provider.sync_market_data(codes_dict, force_refresh=False, progress_callback=_sync_cb)
                 self.data_provider.code2name = codes_dict
-            elif not hasattr(self.data_provider, 'code2name'):
-                self.data_provider.code2name = self.data_provider._get_codes_from_vipdoc()
+            else:
+                self.data_provider.code2name = self.data_provider.ensure_code_name_map()
 
             if self._is_cancelled:
                 self.finished_scan.emit(False, "任务已取消")
@@ -74,6 +74,21 @@ class ScanWorker(QThread):
             if not matrix:
                 self.finished_scan.emit(False, "区间无效或无通达信本地数据")
                 return
+
+            candidate_codes = set()
+            for d_rps in matrix.values():
+                candidate_codes.update(
+                    k for k, v in d_rps['rps250'].items()
+                    if pd.notna(v) and (
+                        v >= self.params.rps_threshold
+                        or d_rps['rps120'].get(k, 0) >= self.params.rps_threshold
+                    )
+                )
+            if candidate_codes:
+                self.data_provider.code2name = self.data_provider.ensure_code_name_map(
+                    candidate_codes,
+                    refresh_missing=True,
+                )
 
             total_days = len(matrix)
             all_results = []
