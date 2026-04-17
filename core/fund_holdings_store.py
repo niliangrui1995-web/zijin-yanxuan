@@ -7,7 +7,16 @@ import json
 from datetime import datetime
 
 from core.data_store import data_store
-from core.fund_holdings_compare import SUBJECTS, build_change_rows, get_compare_quarter_key, normalize_quarter_key
+from core.fund_holdings_compare import (
+    SUBJECT_QFII,
+    SUBJECTS,
+    build_change_rows,
+    build_qfii_holder_change_rows,
+    dedupe_qfii_raw_rows,
+    get_compare_quarter_key,
+    is_mainland_security_code,
+    normalize_quarter_key,
+)
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS fh_subject (
@@ -356,7 +365,11 @@ class FundHoldingsStore:
             for quarter_key, payload in sorted((quarter_payloads or {}).items()):
                 norm_quarter = normalize_quarter_key(quarter_key)
                 end_date = str(payload.get("end_date") or "").strip()
-                raw_rows = list(payload.get("raw_rows") or [])
+                raw_rows = dedupe_qfii_raw_rows([
+                    dict(row)
+                    for row in (payload.get("raw_rows") or [])
+                    if is_mainland_security_code(row.get("SECURITY_CODE"))
+                ])
                 snapshots = list(payload.get("snapshots") or [])
 
                 cursor.execute(
@@ -555,22 +568,61 @@ class FundHoldingsStore:
         )
         return {str(row["subject_code"]): row for row in rows}
 
+    def _query_cached_change_rows(self) -> list[dict]:
+        return [
+            dict(row)
+            for row in self._store.fetch_all(
+                """
+                SELECT
+                    subject_code, subject_name, subject_type, quarter_key, compare_quarter_key, end_date,
+                    stock_code, stock_name, change_type, ratio_label, holders_count,
+                    curr_hold_num_shares, prev_hold_num_shares, delta_hold_num_shares,
+                    curr_hold_market_value_cny, prev_hold_market_value_cny, delta_hold_market_value_cny,
+                    curr_ratio_pct, prev_ratio_pct, delta_ratio_pct,
+                    curr_net_value_ratio_pct, prev_net_value_ratio_pct, delta_net_value_ratio_pct,
+                    curr_free_hold_ratio_pct, prev_free_hold_ratio_pct, delta_free_hold_ratio_pct,
+                    curr_hold_ratio_pct, prev_hold_ratio_pct, delta_hold_ratio_pct,
+                    latest_source_update, sort_quarter, sort_value
+                FROM fh_change_cache
+                WHERE subject_code != ?
+                ORDER BY sort_quarter DESC, sort_value DESC, stock_code ASC
+                """
+                ,
+                (SUBJECT_QFII["subject_code"],),
+            )
+            if is_mainland_security_code(row["stock_code"])
+        ]
+
+    def _query_qfii_holder_change_rows(self) -> list[dict]:
+        raw_rows = [
+            dict(row)
+            for row in self._store.fetch_all(
+                """
+                SELECT
+                    subject_code, quarter_key, end_date, stock_code, stock_name, holder_name, holder_rank,
+                    hold_num_shares, hold_market_value_cny, hold_ratio_pct, free_hold_ratio_pct,
+                    update_date, raw_json
+                FROM fh_raw_qfii
+                WHERE subject_code = ?
+                ORDER BY quarter_key DESC, stock_code ASC, holder_rank ASC, holder_name ASC
+                """,
+                (SUBJECT_QFII["subject_code"],),
+            )
+            if is_mainland_security_code(row["stock_code"])
+        ]
+        return build_qfii_holder_change_rows(raw_rows, SUBJECT_QFII)
+
     def query_change_rows(self) -> list[dict]:
-        return self._store.fetch_all(
-            """
-            SELECT
-                subject_code, subject_name, subject_type, quarter_key, compare_quarter_key, end_date,
-                stock_code, stock_name, change_type, ratio_label, holders_count,
-                curr_hold_num_shares, prev_hold_num_shares, delta_hold_num_shares,
-                curr_hold_market_value_cny, prev_hold_market_value_cny, delta_hold_market_value_cny,
-                curr_ratio_pct, prev_ratio_pct, delta_ratio_pct,
-                curr_net_value_ratio_pct, prev_net_value_ratio_pct, delta_net_value_ratio_pct,
-                curr_free_hold_ratio_pct, prev_free_hold_ratio_pct, delta_free_hold_ratio_pct,
-                curr_hold_ratio_pct, prev_hold_ratio_pct, delta_hold_ratio_pct,
-                latest_source_update, sort_quarter, sort_value
-            FROM fh_change_cache
-            ORDER BY sort_quarter DESC, sort_value DESC, stock_code ASC
-            """
+        rows = self._query_cached_change_rows()
+        rows.extend(self._query_qfii_holder_change_rows())
+        return sorted(
+            rows,
+            key=lambda row: (
+                -int(row.get("sort_quarter", 0) or 0),
+                -float(row.get("sort_value", 0) or 0),
+                str(row.get("stock_code") or ""),
+                str(row.get("subject_name") or ""),
+            ),
         )
 
 

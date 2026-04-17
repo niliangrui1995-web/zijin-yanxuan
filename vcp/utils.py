@@ -108,6 +108,50 @@ def read_tdx_day_file(filepath, price_div=100.0):
         _log.error(f"[Error] read_tdx_day_file: {str(e)}")
         return None
 
+
+def ensure_pandas_dataframe(df, *, datetime_col: str = "datetime", set_datetime_index: bool = True):
+    """将常见 DataFrame 实现尽量归一化为 pandas.DataFrame。"""
+    if df is None:
+        return None
+    if isinstance(df, pd.DataFrame):
+        pdf = df
+    else:
+        pdf = None
+        if hasattr(df, "to_pandas"):
+            try:
+                pdf = df.to_pandas()
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                pdf = None
+        if pdf is None and hasattr(df, "to_dicts"):
+            try:
+                pdf = pd.DataFrame(df.to_dicts())
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                pdf = None
+        if pdf is None and hasattr(df, "to_dict"):
+            try:
+                pdf = pd.DataFrame(df.to_dict(orient="records"))
+            except TypeError:
+                try:
+                    pdf = pd.DataFrame(df.to_dict())
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    pdf = None
+            except (AttributeError, RuntimeError, ValueError):
+                pdf = None
+        if pdf is None:
+            return df
+
+    if datetime_col in getattr(pdf, "columns", []) and not isinstance(pdf.index, pd.DatetimeIndex):
+        try:
+            normalized = pdf.copy()
+            normalized[datetime_col] = pd.to_datetime(normalized[datetime_col], errors="coerce")
+            normalized = normalized.dropna(subset=[datetime_col])
+            if set_datetime_index:
+                normalized = normalized.set_index(datetime_col)
+            pdf = normalized
+        except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
+            pass
+    return pdf
+
 # ==========================================
 # 交易时间判断
 # ==========================================

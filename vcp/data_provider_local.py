@@ -12,7 +12,7 @@ from core.exceptions import CacheIOError, DataFormatError
 from core.json_cache import load_json_file, remove_cache_file, save_json_file
 from core.logger import get_logger
 from vcp.constants import CACHE_DIR, MAX_HISTORY_BARS
-from vcp.utils import read_tdx_day_file
+from vcp.utils import ensure_pandas_dataframe, read_tdx_day_file
 
 _log = get_logger(__name__)
 
@@ -243,7 +243,7 @@ def build_offline_quotes(codes, get_data) -> dict:
 
     res = {}
     for code in codes:
-        hist_df = get_data(code)
+        hist_df = ensure_pandas_dataframe(get_data(code))
         if hist_df is not None and len(hist_df) > 0:
             last_row = hist_df.iloc[-1]
             prev_row = hist_df.iloc[-2] if len(hist_df) > 1 else last_row

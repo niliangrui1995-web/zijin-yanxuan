@@ -33,20 +33,28 @@ class FundHoldingsFilterProxyModel(RtSortFilterProxyModel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._subject_code = ""
-        self._quarter_key = ""
-        self._change_type = ""
+        self._quarter_keys: set[str] = set()
+        self._change_types: set[str] = set()
         self._latest_only = True
 
     def set_subject_code(self, subject_code: str):
         self._subject_code = str(subject_code or "").strip()
         self.invalidateFilter()
 
-    def set_quarter_key(self, quarter_key: str):
-        self._quarter_key = str(quarter_key or "").strip()
+    def set_quarter_keys(self, quarter_keys):
+        self._quarter_keys = {
+            str(quarter_key or "").strip()
+            for quarter_key in (quarter_keys or [])
+            if str(quarter_key or "").strip()
+        }
         self.invalidateFilter()
 
-    def set_change_type(self, change_type: str):
-        self._change_type = str(change_type or "").strip()
+    def set_change_types(self, change_types):
+        self._change_types = {
+            str(change_type or "").strip()
+            for change_type in (change_types or [])
+            if str(change_type or "").strip()
+        }
         self.invalidateFilter()
 
     def set_latest_only(self, latest_only: bool):
@@ -60,10 +68,10 @@ class FundHoldingsFilterProxyModel(RtSortFilterProxyModel):
         if self._subject_code and str(row_data.get("主体代码", "")).strip() != self._subject_code:
             return False
 
-        if self._change_type and str(row_data.get("变化类型", "")).strip() != self._change_type:
+        if self._change_types and str(row_data.get("变化类型", "")).strip() not in self._change_types:
             return False
 
-        if self._quarter_key and str(row_data.get("季度", "")).strip() != self._quarter_key:
+        if self._quarter_keys and str(row_data.get("季度", "")).strip() not in self._quarter_keys:
             return False
 
         if self._latest_only and not bool(row_data.get("_is_latest_subject_quarter")):
@@ -92,6 +100,8 @@ class FundHoldingsTab(BaseStockTab):
     _SUBJECT_CODE_RUIYUAN = SUBJECT_RUIYUAN["subject_code"]
     _QUARTER_FILTER_LATEST = "__LATEST__"
     _QUARTER_FILTER_ALL = "__ALL__"
+    _CHANGE_FILTER_ALL = "__ALL__"
+    _CHANGE_TYPE_OPTIONS = ("新进", "增持", "减持", "退出", "持平")
 
     def __init__(self, data_provider, parent=None):
         super().__init__(data_provider=data_provider, parent=parent)
@@ -99,6 +109,9 @@ class FundHoldingsTab(BaseStockTab):
         self._latest_sync_map: dict[str, dict] = {}
         self._sync_task_id = ""
         self._sync_active = False
+        self._filter_menu_updating = False
+        self._quarter_actions: dict[str, QAction] = {}
+        self._change_actions: dict[str, QAction] = {}
 
         self._init_ui()
         self._reload_from_db()
@@ -116,23 +129,27 @@ class FundHoldingsTab(BaseStockTab):
         self.cmb_subject.setFixedWidth(180)
         self.cmb_subject.currentIndexChanged.connect(self._apply_filters)
 
-        self.cmb_quarter = QComboBox()
-        self.cmb_quarter.setFixedWidth(130)
-        self.cmb_quarter.currentIndexChanged.connect(self._apply_filters)
+        self.btn_quarter = QToolButton()
+        self.btn_quarter.setFixedWidth(150)
+        self.btn_quarter.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.btn_quarter.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.menu_quarter = QMenu(self.btn_quarter)
+        self.btn_quarter.setMenu(self.menu_quarter)
 
-        self.cmb_change = QComboBox()
-        self.cmb_change.setFixedWidth(118)
-        self.cmb_change.addItem("全部变化", "")
-        for label in ("新进", "增持", "减持", "退出", "持平"):
-            self.cmb_change.addItem(label, label)
-        self.cmb_change.currentIndexChanged.connect(self._apply_filters)
+        self.btn_change = QToolButton()
+        self.btn_change.setFixedWidth(150)
+        self.btn_change.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.btn_change.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.menu_change = QMenu(self.btn_change)
+        self.btn_change.setMenu(self.menu_change)
+        self._build_change_menu()
 
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("筛选代码、名称、主体或变化...")
         self.search_box.setFixedWidth(220)
         self.search_box.textChanged.connect(self._apply_filters)
 
-        filter_widgets = [self.cmb_subject, self.cmb_quarter, self.cmb_change, self.search_box]
+        filter_widgets = [self.cmb_subject, self.btn_quarter, self.btn_change, self.search_box]
 
         self.btn_update = QToolButton()
         self.btn_update.setText("更新数据库")
@@ -149,7 +166,7 @@ class FundHoldingsTab(BaseStockTab):
             "主体", "季度", "对比季度", "变化类型", "占比口径",
             "本期占比", "上期占比", "占比变化",
             "本期持股(万股)", "上期持股(万股)", "持股变化(万股)",
-            "本期持仓(万元)", "上期持仓(万元)", "持仓变化(万元)", "持有家数",
+            "持有家数",
         ]
         self.table = VCPTableView(default_row_height=30)
         self.model = StockTableModel(self.columns)
@@ -165,7 +182,7 @@ class FundHoldingsTab(BaseStockTab):
 
         header = self.table.horizontalHeader()
         header.setStretchLastSection(True)
-        default_widths = [70, 90, 70, 70, 75, 150, 90, 90, 80, 80, 90, 90, 90, 110, 110, 110, 118, 118, 118, 78]
+        default_widths = [70, 90, 70, 70, 75, 180, 90, 90, 80, 80, 90, 90, 90, 110, 110, 110, 78]
         for index, width in enumerate(default_widths):
             header.setSectionResizeMode(index, QHeaderView.ResizeMode.Interactive)
             self.table.setColumnWidth(index, width)
@@ -205,6 +222,191 @@ class FundHoldingsTab(BaseStockTab):
         menu.addAction(act_all_latest)
 
         return menu
+
+    def _build_change_menu(self):
+        self.menu_change.clear()
+        self._change_actions.clear()
+
+        act_all = QAction("全部变化", self)
+        act_all.setCheckable(True)
+        act_all.toggled.connect(self._on_change_selection_toggled)
+        self._change_actions[self._CHANGE_FILTER_ALL] = act_all
+        self.menu_change.addAction(act_all)
+        self.menu_change.addSeparator()
+
+        for label in self._CHANGE_TYPE_OPTIONS:
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.toggled.connect(self._on_change_selection_toggled)
+            self._change_actions[label] = action
+            self.menu_change.addAction(action)
+
+        self._set_change_filter_values(set(), apply=False)
+
+    def _build_quarter_menu(self, quarters: list[str]):
+        self.menu_quarter.clear()
+        self._quarter_actions.clear()
+
+        for key, label in (
+            (self._QUARTER_FILTER_LATEST, "最新季度"),
+            (self._QUARTER_FILTER_ALL, "全部季度"),
+        ):
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.toggled.connect(self._on_quarter_selection_toggled)
+            self._quarter_actions[key] = action
+            self.menu_quarter.addAction(action)
+
+        if quarters:
+            self.menu_quarter.addSeparator()
+
+        for quarter in quarters:
+            action = QAction(quarter, self)
+            action.setCheckable(True)
+            action.toggled.connect(self._on_quarter_selection_toggled)
+            self._quarter_actions[quarter] = action
+            self.menu_quarter.addAction(action)
+
+    def _selected_change_types(self) -> set[str]:
+        if self._change_actions.get(self._CHANGE_FILTER_ALL, None) and self._change_actions[self._CHANGE_FILTER_ALL].isChecked():
+            return set()
+        return {
+            label
+            for label in self._CHANGE_TYPE_OPTIONS
+            if self._change_actions.get(label) and self._change_actions[label].isChecked()
+        }
+
+    def _quarter_filter_state(self) -> tuple[bool, set[str]]:
+        if self._quarter_actions.get(self._QUARTER_FILTER_LATEST) and self._quarter_actions[self._QUARTER_FILTER_LATEST].isChecked():
+            return True, set()
+        if self._quarter_actions.get(self._QUARTER_FILTER_ALL) and self._quarter_actions[self._QUARTER_FILTER_ALL].isChecked():
+            return False, set()
+        selected = {
+            key
+            for key, action in self._quarter_actions.items()
+            if key not in {self._QUARTER_FILTER_LATEST, self._QUARTER_FILTER_ALL} and action.isChecked()
+        }
+        if not selected:
+            return True, set()
+        return False, selected
+
+    def _set_change_filter_values(self, values: set[str] | list[str], *, apply: bool = True):
+        selected = {
+            str(value or "").strip()
+            for value in (values or [])
+            if str(value or "").strip() in self._CHANGE_TYPE_OPTIONS
+        }
+
+        self._filter_menu_updating = True
+        try:
+            self._change_actions[self._CHANGE_FILTER_ALL].setChecked(not selected)
+            for label in self._CHANGE_TYPE_OPTIONS:
+                self._change_actions[label].setChecked(label in selected)
+        finally:
+            self._filter_menu_updating = False
+
+        self._refresh_change_button_text()
+        if apply:
+            self._apply_filters()
+
+    def _set_quarter_filter_state(
+        self,
+        *,
+        latest_only: bool = False,
+        all_quarters: bool = False,
+        selected_quarters: set[str] | list[str] | None = None,
+        apply: bool = True,
+    ):
+        selected = {
+            str(value or "").strip()
+            for value in (selected_quarters or [])
+            if str(value or "").strip() in self._quarter_actions
+            and str(value or "").strip() not in {self._QUARTER_FILTER_LATEST, self._QUARTER_FILTER_ALL}
+        }
+
+        if not latest_only and not all_quarters and not selected:
+            latest_only = True
+
+        self._filter_menu_updating = True
+        try:
+            self._quarter_actions[self._QUARTER_FILTER_LATEST].setChecked(bool(latest_only))
+            self._quarter_actions[self._QUARTER_FILTER_ALL].setChecked(bool(all_quarters))
+            for key, action in self._quarter_actions.items():
+                if key in {self._QUARTER_FILTER_LATEST, self._QUARTER_FILTER_ALL}:
+                    continue
+                action.setChecked(key in selected)
+        finally:
+            self._filter_menu_updating = False
+
+        self._refresh_quarter_button_text()
+        if apply:
+            self._apply_filters()
+
+    def _on_change_selection_toggled(self, _checked: bool):
+        if self._filter_menu_updating:
+            return
+
+        if self.sender() is self._change_actions.get(self._CHANGE_FILTER_ALL):
+            self._set_change_filter_values(set(), apply=True)
+            return
+
+        selected = {
+            label
+            for label in self._CHANGE_TYPE_OPTIONS
+            if self._change_actions[label].isChecked()
+        }
+        self._set_change_filter_values(selected, apply=True)
+
+    def _on_quarter_selection_toggled(self, _checked: bool):
+        if self._filter_menu_updating:
+            return
+
+        sender = self.sender()
+        if sender is self._quarter_actions.get(self._QUARTER_FILTER_LATEST):
+            self._set_quarter_filter_state(latest_only=True, apply=True)
+            return
+        if sender is self._quarter_actions.get(self._QUARTER_FILTER_ALL):
+            self._set_quarter_filter_state(all_quarters=True, apply=True)
+            return
+
+        selected_quarters = {
+            key
+            for key, action in self._quarter_actions.items()
+            if key not in {self._QUARTER_FILTER_LATEST, self._QUARTER_FILTER_ALL} and action.isChecked()
+        }
+        self._set_quarter_filter_state(selected_quarters=selected_quarters, apply=True)
+
+    def _refresh_change_button_text(self):
+        selected = sorted(self._selected_change_types(), key=self._CHANGE_TYPE_OPTIONS.index)
+        if not selected:
+            text = "变化：全部"
+            tooltip = "全部变化"
+        elif len(selected) <= 2:
+            text = f"变化：{' / '.join(selected)}"
+            tooltip = "、".join(selected)
+        else:
+            text = f"变化：{len(selected)}项"
+            tooltip = "、".join(selected)
+        self.btn_change.setText(text)
+        self.btn_change.setToolTip(tooltip)
+
+    def _refresh_quarter_button_text(self):
+        latest_only, selected = self._quarter_filter_state()
+        if latest_only:
+            text = "季度：最新"
+            tooltip = "仅显示各主体最新季度"
+        elif not selected:
+            text = "季度：全部"
+            tooltip = "显示全部季度"
+        elif len(selected) <= 2:
+            ordered = sorted(selected, reverse=True)
+            text = f"季度：{' / '.join(ordered)}"
+            tooltip = "、".join(ordered)
+        else:
+            text = f"季度：{len(selected)}项"
+            tooltip = "、".join(sorted(selected, reverse=True))
+        self.btn_quarter.setText(text)
+        self.btn_quarter.setToolTip(tooltip)
 
     def _prompt_quarter(self, title: str) -> str | None:
         quarter_text, ok = QInputDialog.getText(self, title, "输入季度（例如 2025Q4）")
@@ -294,7 +496,11 @@ class FundHoldingsTab(BaseStockTab):
         quarters = fund_holdings_store.list_quarters()
 
         current_subject = self.cmb_subject.currentData()
-        current_quarter = self.cmb_quarter.currentData()
+        latest_only, selected_quarters = self._quarter_filter_state()
+        all_quarters = bool(
+            self._quarter_actions.get(self._QUARTER_FILTER_ALL)
+            and self._quarter_actions[self._QUARTER_FILTER_ALL].isChecked()
+        )
 
         with suppress(RuntimeError):
             self.cmb_subject.blockSignals(True)
@@ -310,36 +516,24 @@ class FundHoldingsTab(BaseStockTab):
             self.cmb_subject.blockSignals(False)
 
         with suppress(RuntimeError):
-            self.cmb_quarter.blockSignals(True)
-            self.cmb_quarter.clear()
-            self.cmb_quarter.addItem("最新季度", self._QUARTER_FILTER_LATEST)
-            self.cmb_quarter.addItem("全部季度", self._QUARTER_FILTER_ALL)
-            for quarter in quarters:
-                self.cmb_quarter.addItem(quarter, quarter)
-            quarter_index = self.cmb_quarter.findData(current_quarter)
-            if quarter_index < 0:
-                quarter_index = 0
-            self.cmb_quarter.setCurrentIndex(quarter_index)
-            self.cmb_quarter.blockSignals(False)
+            self._build_quarter_menu(quarters)
+            self._set_quarter_filter_state(
+                latest_only=latest_only,
+                all_quarters=all_quarters,
+                selected_quarters=[quarter for quarter in selected_quarters if quarter in set(quarters)],
+                apply=False,
+            )
 
     def _apply_filters(self):
         subject_code = str(self.cmb_subject.currentData() or "").strip()
-        quarter_value = str(self.cmb_quarter.currentData() or self._QUARTER_FILTER_LATEST).strip()
-        change_type = str(self.cmb_change.currentData() or "").strip()
+        latest_only, selected_quarters = self._quarter_filter_state()
+        change_types = self._selected_change_types()
 
         self.proxy_model.set_subject_code(subject_code)
-        self.proxy_model.set_change_type(change_type)
+        self.proxy_model.set_change_types(change_types)
         self.proxy_model.setFilterText(self.search_box.text().strip())
-
-        if quarter_value == self._QUARTER_FILTER_LATEST:
-            self.proxy_model.set_latest_only(True)
-            self.proxy_model.set_quarter_key("")
-        elif quarter_value == self._QUARTER_FILTER_ALL:
-            self.proxy_model.set_latest_only(False)
-            self.proxy_model.set_quarter_key("")
-        else:
-            self.proxy_model.set_latest_only(False)
-            self.proxy_model.set_quarter_key(quarter_value)
+        self.proxy_model.set_latest_only(latest_only)
+        self.proxy_model.set_quarter_keys(selected_quarters)
 
         if self.model.row_data:
             self.table_state.show_table()
@@ -377,9 +571,6 @@ class FundHoldingsTab(BaseStockTab):
                     "本期持股(万股)": self._format_amount(row.get("curr_hold_num_shares"), divisor=10000.0, show=has_curr),
                     "上期持股(万股)": self._format_amount(row.get("prev_hold_num_shares"), divisor=10000.0, show=has_prev),
                     "持股变化(万股)": self._format_amount(row.get("delta_hold_num_shares"), divisor=10000.0, show=has_curr or has_prev, signed=True),
-                    "本期持仓(万元)": self._format_amount(row.get("curr_hold_market_value_cny"), divisor=10000.0, show=has_curr),
-                    "上期持仓(万元)": self._format_amount(row.get("prev_hold_market_value_cny"), divisor=10000.0, show=has_prev),
-                    "持仓变化(万元)": self._format_amount(row.get("delta_hold_market_value_cny"), divisor=10000.0, show=has_curr or has_prev, signed=True),
                     "持有家数": str(int(float(row.get("holders_count") or 0))) if row.get("holders_count") else "--",
                     "_is_latest_subject_quarter": quarter_key == self._latest_quarter_map.get(subject_code),
                 }

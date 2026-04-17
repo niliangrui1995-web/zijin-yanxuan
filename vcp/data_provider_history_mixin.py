@@ -10,6 +10,7 @@ from core.logger import get_logger
 from core.market_calendar import MarketCalendar
 from vcp.constants import DATE_FMT, INCREMENTAL_BARS, MARKET_SYNC_WORKERS, MAX_HISTORY_BARS
 from vcp.data_provider_cache import load_cache_from_disk
+from vcp.utils import ensure_pandas_dataframe
 
 _log = get_logger(__name__)
 
@@ -412,13 +413,10 @@ class TdxDataProviderHistoryMixin:
         with self.cache_lock:
             df = self.cache_data.get(code)
             if df is not None:
-                import pandas as pd
-                if not isinstance(df, pd.DataFrame):
-                    if hasattr(df, 'to_pandas'):
-                        df = df.to_pandas()
-                        if 'datetime' in df.columns:
-                            df = df.set_index('datetime')
-                        self.cache_data[code] = df
+                normalized_df = ensure_pandas_dataframe(df)
+                if isinstance(normalized_df, pd.DataFrame) and normalized_df is not df:
+                    self.cache_data[code] = normalized_df
+                    df = normalized_df
                 return df
 
         # K 线窗口等历史图表不能依赖“缓存先被别处预热”这一前置条件；

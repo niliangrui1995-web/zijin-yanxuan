@@ -178,3 +178,348 @@ def test_fund_holdings_store_refreshes_existing_compare_quarter_cache():
     finally:
         store.close()
         os.remove(db_path)
+
+
+def test_fund_holdings_store_qfii_subject_names_show_holder_names_and_skip_hk():
+    store, db_path = _make_store()
+    repo = FundHoldingsStore(store=store)
+    try:
+        q4_rows = [
+            {
+                "SECURITY_CODE": "000001",
+                "SECURITY_NAME_ABBR": "平安银行",
+                "HOLDER_NAME": "阿布达比投资局",
+                "HOLDER_RANK": 1,
+                "HOLD_NUM": 1000,
+                "HOLDER_MARKET_CAP": 10000,
+                "FREE_HOLDNUM_RATIO": 0.5,
+                "HOLD_RATIO": 0.10,
+                "UPDATE_DATE": "2026-04-18 00:00:00",
+                "HOLDER_TYPE": "QFII",
+                "HOLDER_NEWTYPE": "QFII",
+                "HOLD_CHANGE": "新进",
+            },
+            {
+                "SECURITY_CODE": "000001",
+                "SECURITY_NAME_ABBR": "平安银行",
+                "HOLDER_NAME": "科威特政府投资局",
+                "HOLDER_RANK": 2,
+                "HOLD_NUM": 500,
+                "HOLDER_MARKET_CAP": 5000,
+                "FREE_HOLDNUM_RATIO": 0.2,
+                "HOLD_RATIO": 0.05,
+                "UPDATE_DATE": "2026-04-18 00:00:00",
+                "HOLDER_TYPE": "QFII",
+                "HOLDER_NEWTYPE": "QFII",
+                "HOLD_CHANGE": "新进",
+            },
+            {
+                "SECURITY_CODE": "00700",
+                "SECURITY_NAME_ABBR": "腾讯控股",
+                "HOLDER_NAME": "香港样本",
+                "HOLDER_RANK": 3,
+                "HOLD_NUM": 300,
+                "HOLDER_MARKET_CAP": 3000,
+                "FREE_HOLDNUM_RATIO": 0.1,
+                "HOLD_RATIO": 0.03,
+                "UPDATE_DATE": "2026-04-18 00:00:00",
+                "HOLDER_TYPE": "QFII",
+                "HOLDER_NEWTYPE": "QFII",
+                "HOLD_CHANGE": "新进",
+            },
+        ]
+        payloads = {
+            "2025Q4": {
+                "quarter_key": "2025Q4",
+                "end_date": "2025-12-31",
+                "raw_rows": q4_rows,
+                "snapshots": build_qfii_snapshots(q4_rows, SUBJECT_QFII, "2025Q4", "2025-12-31"),
+            },
+        }
+
+        repo.replace_qfii_quarters(
+            SUBJECT_QFII,
+            payloads,
+            sync_scope="specific",
+            requested_quarter_key="2025Q4",
+            resolved_quarter_key="2025Q4",
+            message="QFII 指定季度 2025Q4 已同步",
+        )
+
+        change_rows = repo.query_change_rows()
+        qfii_rows = [
+            row for row in change_rows
+            if row["quarter_key"] == "2025Q4" and row["stock_code"] == "000001"
+        ]
+        assert len(qfii_rows) == 2
+        assert {row["subject_name"] for row in qfii_rows} == {"阿布达比投资局", "科威特政府投资局"}
+        assert {row["change_type"] for row in qfii_rows} == {"新进"}
+
+        raw_rows = store.fetch_all(
+            """
+            SELECT stock_code
+            FROM fh_raw_qfii
+            WHERE subject_code = ? AND quarter_key = ?
+            ORDER BY stock_code ASC
+            """,
+            (SUBJECT_QFII["subject_code"], "2025Q4"),
+        )
+        assert [row["stock_code"] for row in raw_rows] == ["000001", "000001"]
+    finally:
+        store.close()
+        os.remove(db_path)
+
+
+def test_fund_holdings_store_qfii_prefers_current_listed_code_over_old_nq_code():
+    store, db_path = _make_store()
+    repo = FundHoldingsStore(store=store)
+    try:
+        q4_rows = [
+            {
+                "SECUCODE": "872731.NQ",
+                "SECURITY_CODE": "872731",
+                "SECURITY_NAME_ABBR": "德石股份",
+                "HOLDER_NAME": "BARCLAYS BANK PLC",
+                "HOLDER_RANK": 1,
+                "HOLD_NUM": 542381,
+                "HOLDER_MARKET_CAP": 6042124.34,
+                "FREE_HOLDNUM_RATIO": 0.3607,
+                "HOLD_RATIO": 0.3607,
+                "UPDATE_DATE": "2026-04-18 00:00:00",
+                "HOLDER_TYPE": "QFII",
+                "HOLDER_NEWTYPE": "QFII",
+                "HOLD_CHANGE": "新进",
+            },
+            {
+                "SECUCODE": "301158.SZ",
+                "SECURITY_CODE": "301158",
+                "SECURITY_NAME_ABBR": "德石股份",
+                "HOLDER_NAME": "BARCLAYS BANK PLC",
+                "HOLDER_RANK": 1,
+                "HOLD_NUM": 542381,
+                "HOLDER_MARKET_CAP": 12133062.97,
+                "FREE_HOLDNUM_RATIO": 0.3607,
+                "HOLD_RATIO": 0.3607,
+                "UPDATE_DATE": "2026-04-18 00:00:00",
+                "HOLDER_TYPE": "QFII",
+                "HOLDER_NEWTYPE": "QFII",
+                "HOLD_CHANGE": "新进",
+            },
+        ]
+        payloads = {
+            "2025Q4": {
+                "quarter_key": "2025Q4",
+                "end_date": "2025-12-31",
+                "raw_rows": q4_rows,
+                "snapshots": build_qfii_snapshots(q4_rows, SUBJECT_QFII, "2025Q4", "2025-12-31"),
+            },
+        }
+
+        repo.replace_qfii_quarters(
+            SUBJECT_QFII,
+            payloads,
+            sync_scope="specific",
+            requested_quarter_key="2025Q4",
+            resolved_quarter_key="2025Q4",
+            message="QFII 指定季度 2025Q4 已同步",
+        )
+
+        change_rows = [
+            row for row in repo.query_change_rows()
+            if row["quarter_key"] == "2025Q4" and row["subject_name"] == "BARCLAYS BANK PLC"
+        ]
+        assert len(change_rows) == 1
+        assert change_rows[0]["stock_code"] == "301158"
+
+        raw_rows = store.fetch_all(
+            """
+            SELECT stock_code
+            FROM fh_raw_qfii
+            WHERE subject_code = ? AND quarter_key = ?
+            ORDER BY stock_code ASC
+            """,
+            (SUBJECT_QFII["subject_code"], "2025Q4"),
+        )
+        assert [row["stock_code"] for row in raw_rows] == ["301158"]
+    finally:
+        store.close()
+        os.remove(db_path)
+
+
+def test_fund_holdings_store_qfii_exit_rows_fallback_to_compare_quarter_holder_names():
+    store, db_path = _make_store()
+    repo = FundHoldingsStore(store=store)
+    try:
+        q3_rows = [
+            {
+                "SECURITY_CODE": "000001",
+                "SECURITY_NAME_ABBR": "平安银行",
+                "HOLDER_NAME": "阿布达比投资局",
+                "HOLDER_RANK": 1,
+                "HOLD_NUM": 1000,
+                "HOLDER_MARKET_CAP": 10000,
+                "FREE_HOLDNUM_RATIO": 0.5,
+                "HOLD_RATIO": 0.10,
+                "UPDATE_DATE": "2026-04-18 00:00:00",
+                "HOLDER_TYPE": "QFII",
+                "HOLDER_NEWTYPE": "QFII",
+                "HOLD_CHANGE": "新进",
+            }
+        ]
+        payloads = {
+            "2025Q3": {
+                "quarter_key": "2025Q3",
+                "end_date": "2025-09-30",
+                "raw_rows": q3_rows,
+                "snapshots": build_qfii_snapshots(q3_rows, SUBJECT_QFII, "2025Q3", "2025-09-30"),
+            },
+            "2025Q4": {
+                "quarter_key": "2025Q4",
+                "end_date": "2025-12-31",
+                "raw_rows": [
+                    {
+                        "SECURITY_CODE": "000002",
+                        "SECURITY_NAME_ABBR": "万科A",
+                        "HOLDER_NAME": "示例QFII",
+                        "HOLDER_RANK": 1,
+                        "HOLD_NUM": 800,
+                        "HOLDER_MARKET_CAP": 8000,
+                        "FREE_HOLDNUM_RATIO": 0.4,
+                        "HOLD_RATIO": 0.08,
+                        "UPDATE_DATE": "2026-04-18 00:00:00",
+                        "HOLDER_TYPE": "QFII",
+                        "HOLDER_NEWTYPE": "QFII",
+                        "HOLD_CHANGE": "新进",
+                    }
+                ],
+                "snapshots": build_qfii_snapshots(
+                    [
+                        {
+                            "SECURITY_CODE": "000002",
+                            "SECURITY_NAME_ABBR": "万科A",
+                            "HOLDER_NAME": "示例QFII",
+                            "HOLDER_RANK": 1,
+                            "HOLD_NUM": 800,
+                            "HOLDER_MARKET_CAP": 8000,
+                            "FREE_HOLDNUM_RATIO": 0.4,
+                            "HOLD_RATIO": 0.08,
+                            "UPDATE_DATE": "2026-04-18 00:00:00",
+                        }
+                    ],
+                    SUBJECT_QFII,
+                    "2025Q4",
+                    "2025-12-31",
+                ),
+            },
+        }
+
+        repo.replace_qfii_quarters(
+            SUBJECT_QFII,
+            payloads,
+            sync_scope="specific",
+            requested_quarter_key="2025Q4",
+            resolved_quarter_key="2025Q4",
+            message="QFII 指定季度 2025Q4 已同步",
+        )
+
+        change_rows = repo.query_change_rows()
+        target = next(
+            row for row in change_rows
+            if row["quarter_key"] == "2025Q4" and row["stock_code"] == "000001"
+        )
+        assert target["change_type"] == "退出"
+        assert target["subject_name"] == "阿布达比投资局"
+    finally:
+        store.close()
+        os.remove(db_path)
+
+
+def test_fund_holdings_store_qfii_multiple_holders_same_stock_track_independently():
+    store, db_path = _make_store()
+    repo = FundHoldingsStore(store=store)
+    try:
+        q3_rows = [
+            {
+                "SECURITY_CODE": "000001",
+                "SECURITY_NAME_ABBR": "平安银行",
+                "HOLDER_NAME": "阿布达比投资局",
+                "HOLDER_RANK": 1,
+                "HOLD_NUM": 1000,
+                "HOLDER_MARKET_CAP": 10000,
+                "FREE_HOLDNUM_RATIO": 0.5,
+                "HOLD_RATIO": 0.10,
+                "UPDATE_DATE": "2026-04-18 00:00:00",
+                "HOLDER_TYPE": "QFII",
+                "HOLDER_NEWTYPE": "QFII",
+                "HOLD_CHANGE": "增持",
+            }
+        ]
+        q4_rows = [
+            {
+                "SECURITY_CODE": "000001",
+                "SECURITY_NAME_ABBR": "平安银行",
+                "HOLDER_NAME": "阿布达比投资局",
+                "HOLDER_RANK": 1,
+                "HOLD_NUM": 1500,
+                "HOLDER_MARKET_CAP": 15000,
+                "FREE_HOLDNUM_RATIO": 0.8,
+                "HOLD_RATIO": 0.15,
+                "UPDATE_DATE": "2026-04-18 00:00:00",
+                "HOLDER_TYPE": "QFII",
+                "HOLDER_NEWTYPE": "QFII",
+                "HOLD_CHANGE": "增持",
+            },
+            {
+                "SECURITY_CODE": "000001",
+                "SECURITY_NAME_ABBR": "平安银行",
+                "HOLDER_NAME": "科威特政府投资局",
+                "HOLDER_RANK": 2,
+                "HOLD_NUM": 500,
+                "HOLDER_MARKET_CAP": 5000,
+                "FREE_HOLDNUM_RATIO": 0.2,
+                "HOLD_RATIO": 0.05,
+                "UPDATE_DATE": "2026-04-18 00:00:00",
+                "HOLDER_TYPE": "QFII",
+                "HOLDER_NEWTYPE": "QFII",
+                "HOLD_CHANGE": "新进",
+            },
+        ]
+        payloads = {
+            "2025Q3": {
+                "quarter_key": "2025Q3",
+                "end_date": "2025-09-30",
+                "raw_rows": q3_rows,
+                "snapshots": build_qfii_snapshots(q3_rows, SUBJECT_QFII, "2025Q3", "2025-09-30"),
+            },
+            "2025Q4": {
+                "quarter_key": "2025Q4",
+                "end_date": "2025-12-31",
+                "raw_rows": q4_rows,
+                "snapshots": build_qfii_snapshots(q4_rows, SUBJECT_QFII, "2025Q4", "2025-12-31"),
+            },
+        }
+
+        repo.replace_qfii_quarters(
+            SUBJECT_QFII,
+            payloads,
+            sync_scope="specific",
+            requested_quarter_key="2025Q4",
+            resolved_quarter_key="2025Q4",
+            message="QFII 指定季度 2025Q4 已同步",
+        )
+
+        q4_rows = [
+            row for row in repo.query_change_rows()
+            if row["quarter_key"] == "2025Q4" and row["stock_code"] == "000001"
+        ]
+        assert len(q4_rows) == 2
+
+        abudhabi_row = next(row for row in q4_rows if row["subject_name"] == "阿布达比投资局")
+        kuwait_row = next(row for row in q4_rows if row["subject_name"] == "科威特政府投资局")
+        assert abudhabi_row["change_type"] == "增持"
+        assert abudhabi_row["delta_hold_num_shares"] == 500
+        assert kuwait_row["change_type"] == "新进"
+        assert kuwait_row["delta_hold_num_shares"] == 500
+    finally:
+        store.close()
+        os.remove(db_path)
