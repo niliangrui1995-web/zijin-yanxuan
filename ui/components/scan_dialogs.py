@@ -18,7 +18,6 @@ from PyQt6.QtWidgets import (
     QSpinBox,
     QToolButton,
     QVBoxLayout,
-    QWidget,
 )
 
 from core.market_calendar import MarketCalendar
