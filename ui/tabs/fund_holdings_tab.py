@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 from contextlib import suppress
 
 from PyQt6.QtCore import QSettings, Qt, QTimer
@@ -152,6 +153,9 @@ class FundHoldingsTab(BaseStockTab):
         self._filter_menu_updating = False
         self._quarter_actions: dict[str, QAction] = {}
         self._change_actions: dict[str, QAction] = {}
+        self._sector_manager = None
+        self._sector_manager_initialized = False
+        self._concept_sector_cache: dict[str, str] = {}
         self._settings = self._create_settings()
         self._restoring_view_state = False
         self._view_state_restored = False
@@ -211,7 +215,7 @@ class FundHoldingsTab(BaseStockTab):
         self._refresh_capital_attribute_button_text()
 
         self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("筛选代码、名称、主体、资金属性或变化...")
+        self.search_box.setPlaceholderText("筛选代码、名称、主体、资金属性、概念或变化...")
         self.search_box.setFixedWidth(220)
         self.search_box.textChanged.connect(self._apply_filters)
 
@@ -229,14 +233,14 @@ class FundHoldingsTab(BaseStockTab):
 
         self.columns = [
             "代码", "名称", "市价", "涨幅%", "市值",
-            "主体", "资金属性", "季度", "对比季度", "变化类型", "占比口径",
+            "主体", "资金属性", "季度", "变化类型",
             "本期占比",
-            "本期持股(万股)", "上期持股(万股)", "持股变化(万股)",
-            "持有家数",
+            "本期持股", "上期持股", "持股变化",
+            "概念板块",
         ]
         self.table = VCPTableView(default_row_height=30)
         self.model = StockTableModel(self.columns)
-        self.model.set_plain_style_headers(["主体", "资金属性", "季度", "对比季度", "变化类型", "占比口径"])
+        self.model.set_plain_style_headers(["主体", "资金属性", "季度", "变化类型", "概念板块"])
 
         self.proxy_model = FundHoldingsFilterProxyModel(self.table)
         self.proxy_model.setSourceModel(self.model)
@@ -248,11 +252,11 @@ class FundHoldingsTab(BaseStockTab):
 
         header = self.table.horizontalHeader()
         header.setStretchLastSection(True)
-        default_widths = [70, 90, 70, 70, 75, 180, 96, 90, 90, 80, 80, 90, 110, 110, 110, 78]
+        default_widths = [70, 90, 70, 70, 75, 180, 96, 90, 80, 90, 110, 110, 110, 240]
         for index, width in enumerate(default_widths):
             header.setSectionResizeMode(index, QHeaderView.ResizeMode.Interactive)
             self.table.setColumnWidth(index, width)
-        self.bind_header_persistence(self.table, "fund_holdings_header_state_v2")
+        self.bind_header_persistence(self.table, "fund_holdings_header_state_v3")
         header.sortIndicatorChanged.connect(self._on_sort_indicator_changed)
 
         self.table.doubleClicked.connect(self._on_double_click)
@@ -694,6 +698,7 @@ class FundHoldingsTab(BaseStockTab):
     def _reload_from_db(self):
         self._latest_quarter_map = fund_holdings_store.get_latest_quarter_map()
         self._latest_sync_map = fund_holdings_store.get_latest_sync_map()
+        self._concept_sector_cache.clear()
         change_rows = fund_holdings_store.query_change_rows()
         view_rows = self._build_view_rows(change_rows)
         self.model.update_data(view_rows)
@@ -791,9 +796,54 @@ class FundHoldingsTab(BaseStockTab):
             self.table_state.show_table()
         self._update_status_summary()
 
+    def _get_sector_manager(self):
+        if self._sector_manager_initialized:
+            return self._sector_manager
+
+        self._sector_manager_initialized = True
+        tdx_vipdoc = str(getattr(self.data_provider, "tdx_vipdoc", "") or "").strip()
+        tdx_root = os.path.dirname(tdx_vipdoc) if tdx_vipdoc else None
+        try:
+            from vcp.sector import SectorManager
+
+            self._sector_manager = SectorManager.get_instance(tdx_root)
+        except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
+            self._sector_manager = None
+        return self._sector_manager
+
+    def _get_concept_sector_text(self, stock_code: str) -> str:
+        code = str(stock_code or "").strip()
+        if not code:
+            return self._DISPLAY_PLACEHOLDER
+
+        cached = self._concept_sector_cache.get(code)
+        if cached is not None:
+            return cached
+
+        concept_text = self._DISPLAY_PLACEHOLDER
+        manager = self._get_sector_manager()
+        if manager is not None:
+            try:
+                concepts = []
+                for sector_name in manager.get_sectors(code) or []:
+                    sector_text = str(sector_name or "").strip()
+                    if not sector_text.startswith("GN_"):
+                        continue
+                    concept_name = sector_text.replace("GN_", "", 1).strip()
+                    if concept_name:
+                        concepts.append(concept_name)
+                if concepts:
+                    concept_text = " | ".join(dict.fromkeys(concepts))
+            except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
+                concept_text = self._DISPLAY_PLACEHOLDER
+
+        self._concept_sector_cache[code] = concept_text
+        return concept_text
+
     def _build_view_rows(self, change_rows: list[dict]) -> list[dict]:
         rows: list[dict] = []
         for row in change_rows or []:
+            stock_code = str(row.get("stock_code") or "").strip()
             subject_code = str(row.get("subject_code") or "").strip()
             quarter_key = str(row.get("quarter_key") or "").strip()
             change_type = str(row.get("change_type") or "").strip()
@@ -808,7 +858,7 @@ class FundHoldingsTab(BaseStockTab):
 
             rows.append(
                 {
-                    "代码": str(row.get("stock_code") or "").strip(),
+                    "代码": stock_code,
                     "名称": str(row.get("stock_name") or "").strip(),
                     "市价": self._DISPLAY_PLACEHOLDER,
                     "涨幅%": self._DISPLAY_PLACEHOLDER,
@@ -817,14 +867,12 @@ class FundHoldingsTab(BaseStockTab):
                     "资金属性": capital_attribute_text,
                     "主体代码": subject_code,
                     "季度": quarter_key,
-                    "对比季度": str(row.get("compare_quarter_key") or "").strip(),
                     "变化类型": change_type,
-                    "占比口径": str(row.get("ratio_label") or "").strip(),
                     "本期占比": curr_ratio,
-                    "本期持股(万股)": self._format_amount(row.get("curr_hold_num_shares"), divisor=10000.0, show=has_curr),
-                    "上期持股(万股)": self._format_amount(row.get("prev_hold_num_shares"), divisor=10000.0, show=has_prev),
-                    "持股变化(万股)": self._format_amount(row.get("delta_hold_num_shares"), divisor=10000.0, show=has_curr or has_prev, signed=True),
-                    "持有家数": str(int(float(row.get("holders_count") or 0))) if row.get("holders_count") else self._DISPLAY_PLACEHOLDER,
+                    "本期持股": self._format_amount(row.get("curr_hold_num_shares"), divisor=10000.0, show=has_curr),
+                    "上期持股": self._format_amount(row.get("prev_hold_num_shares"), divisor=10000.0, show=has_prev),
+                    "持股变化": self._format_amount(row.get("delta_hold_num_shares"), divisor=10000.0, show=has_curr or has_prev, signed=True),
+                    "概念板块": self._get_concept_sector_text(stock_code),
                     "_capital_attribute_value": capital_attribute,
                     "_is_latest_subject_quarter": quarter_key == self._latest_quarter_map.get(subject_code),
                 }

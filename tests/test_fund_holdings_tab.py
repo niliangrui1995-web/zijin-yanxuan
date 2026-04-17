@@ -69,8 +69,9 @@ def _build_change_row(
     }
 
 
-def _setup_store(monkeypatch, rows, settings=None):
+def _setup_store(monkeypatch, rows, settings=None, concept_map=None):
     settings = settings or _FakeSettings()
+    concept_map = concept_map or {}
     monkeypatch.setattr(
         fund_holdings_module.fund_holdings_store,
         "get_latest_quarter_map",
@@ -109,6 +110,12 @@ def _setup_store(monkeypatch, rows, settings=None):
         fund_holdings_module.FundHoldingsTab,
         "_create_settings",
         staticmethod(lambda: settings),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "_get_concept_sector_text",
+        lambda self, stock_code: concept_map.get(str(stock_code or "").strip(), "--"),
         raising=False,
     )
     return settings
@@ -190,8 +197,52 @@ def test_fund_holdings_tab_hides_market_value_delta_columns(monkeypatch):
         assert "持仓变化(万元)" not in tab.columns
         assert "占比变化" not in tab.columns
         assert "上期占比" not in tab.columns
+        assert "对比季度" not in tab.columns
+        assert "占比口径" not in tab.columns
+        assert "本期持股(万股)" not in tab.columns
+        assert "上期持股(万股)" not in tab.columns
+        assert "持股变化(万股)" not in tab.columns
+        assert "本期持股" in tab.columns
+        assert "上期持股" in tab.columns
+        assert "持股变化" in tab.columns
+        assert "持有家数" not in tab.columns
+        assert "概念板块" in tab.columns
         assert tab.model.get_row_data(0)["市价"] == "--"
+        assert tab.model.get_row_data(0)["本期持股"] == "150.00"
+        assert tab.model.get_row_data(0)["上期持股"] == "100.00"
+        assert tab.model.get_row_data(0)["持股变化"] == "+50.00"
+        assert tab.model.get_row_data(0)["概念板块"] == "--"
         assert tab.model.get_row_data(0)["主体"] == "阿布达比投资局"
+    finally:
+        tab.deleteLater()
+
+
+def test_fund_holdings_tab_shows_concept_sector_column(monkeypatch):
+    _setup_store(
+        monkeypatch,
+        [
+            _build_change_row(
+                subject_code="QFII",
+                subject_name="阿布达比投资局",
+                quarter_key="2025Q4",
+                compare_quarter_key="2025Q3",
+                change_type="增持",
+                stock_code="000001",
+                stock_name="平安银行",
+            )
+        ],
+        concept_map={"000001": "MSCI概念 | 互联金融"},
+    )
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "refresh_table_quotes_and_market_caps",
+        lambda self, current_model=None, force_quotes=False, quote_task_id=None: None,
+        raising=False,
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
+    try:
+        assert tab.model.get_row_data(0)["概念板块"] == "MSCI概念 | 互联金融"
     finally:
         tab.deleteLater()
 
