@@ -292,10 +292,11 @@ class ScanTab(BaseStockTab):
     def _set_scan_action_state(self, state: str):
         is_incremental = self._scan_mode == "incremental"
         if state == "running":
-            self.btn_scan_action.setText("终止新增扫描" if is_incremental else "终止VCP扫描")
-            self.btn_scan_action.setEnabled(True)
             if hasattr(self, "btn_scan_increment"):
-                self.btn_scan_increment.setEnabled(False)
+                self.btn_scan_increment.setText("终止新增扫描" if is_incremental else "新增扫描")
+                self.btn_scan_increment.setEnabled(is_incremental)
+            self.btn_scan_action.setText("区间扫描" if is_incremental else "终止VCP扫描")
+            self.btn_scan_action.setEnabled(not is_incremental)
             self.lbl_scan_status.setText(
                 self.format_status_summary(
                     "新增扫描中" if is_incremental else "正在扫描",
@@ -312,10 +313,11 @@ class ScanTab(BaseStockTab):
                         f"正在补扫 {self._scan_target_date}" if is_incremental and self._scan_target_date else "正在计算候选信号",
                     )
         elif state == "stopping":
-            self.btn_scan_action.setText("正在终止新增..." if is_incremental else "正在终止...")
-            self.btn_scan_action.setEnabled(False)
             if hasattr(self, "btn_scan_increment"):
+                self.btn_scan_increment.setText("正在终止新增..." if is_incremental else "新增扫描")
                 self.btn_scan_increment.setEnabled(False)
+            self.btn_scan_action.setText("区间扫描" if is_incremental else "正在终止...")
+            self.btn_scan_action.setEnabled(False)
             self.lbl_scan_status.setText(
                 self.format_status_summary("正在终止", "保留已完成结果", self._status_metric("目标 ", self._scan_target_date))
             )
@@ -353,12 +355,12 @@ class ScanTab(BaseStockTab):
 
         self.btn_scan_action = QPushButton("区间扫描")
         self.btn_scan_action.setObjectName("primaryButton")
-        self.btn_scan_action.setProperty("toolbarWidthHints", ["区间扫描", "终止VCP扫描", "终止新增扫描", "正在终止...", "正在终止新增..."])
+        self.btn_scan_action.setProperty("toolbarWidthHints", ["区间扫描", "终止VCP扫描", "正在终止..."])
         self.btn_scan_action.clicked.connect(self._on_scan_action_clicked)
 
         self.btn_scan_increment = QPushButton("新增扫描")
         self.btn_scan_increment.setProperty("class", "secondary")
-        self.btn_scan_increment.setProperty("toolbarWidthHints", ["新增扫描"])
+        self.btn_scan_increment.setProperty("toolbarWidthHints", ["新增扫描", "终止新增扫描", "正在终止新增..."])
         self.btn_scan_increment.setToolTip("只扫描最近可用交易日，并将结果追加/刷新到当前表格")
         self.btn_scan_increment.clicked.connect(self._on_incremental_scan_clicked)
 

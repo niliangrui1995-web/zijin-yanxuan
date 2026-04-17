@@ -2,7 +2,7 @@
 import datetime
 from typing import Any
 
-from PyQt6.QtCore import QDate
+from PyQt6.QtCore import QDate, Qt
 from PyQt6.QtWidgets import (
     QComboBox,
     QDateEdit,
@@ -16,11 +16,16 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSpinBox,
+    QToolButton,
     QVBoxLayout,
+    QWidget,
 )
 
 from core.market_calendar import MarketCalendar
+from ui.components.main_window_shell import DraggableTitleBar
 from ui.components.trade_calendar import TradeCalendarWidget
+from ui.theme import theme_manager
+from ui.theme_tokens import build_ui_tokens
 
 
 def _latest_cn_trade_date() -> datetime.date:
@@ -71,27 +76,91 @@ def _first_trade_day_of_year(end_date: datetime.date) -> tuple[datetime.date, da
     return end_date, end_date
 
 
-class VCPScanRangeDialog(QDialog):
+class _ThemedDialog(QDialog):
+    """Shared frameless shell for scan dialogs so dialog chrome matches the active theme."""
+
+    def __init__(
+        self,
+        object_name: str,
+        window_title: str,
+        size: tuple[int, int],
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.setObjectName(object_name)
+        self.setWindowTitle(window_title)
+        self.setModal(True)
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.resize(*size)
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        self._container = QFrame(self)
+        self._container.setObjectName("dialogContainer")
+        outer_layout.addWidget(self._container)
+
+        container_layout = QVBoxLayout(self._container)
+        container_layout.setContentsMargins(1, 1, 1, 18)
+        container_layout.setSpacing(0)
+
+        self._title_bar = DraggableTitleBar(self)
+        self._title_bar.setObjectName("dialogTitleBar")
+        title_bar_layout = QHBoxLayout(self._title_bar)
+        title_bar_layout.setContentsMargins(14, 0, 8, 0)
+        title_bar_layout.setSpacing(0)
+
+        self._window_title_label = QLabel(window_title)
+        self._window_title_label.setObjectName("dialogWindowTitle")
+        title_bar_layout.addWidget(self._window_title_label)
+        title_bar_layout.addStretch(1)
+
+        self._btn_close = QToolButton(self._title_bar)
+        self._btn_close.setObjectName("dialogCloseButton")
+        self._btn_close.setText("✕")
+        self._btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_close.clicked.connect(self.reject)
+        title_bar_layout.addWidget(self._btn_close)
+        container_layout.addWidget(self._title_bar)
+
+        self.content_layout = QVBoxLayout()
+        self.content_layout.setContentsMargins(20, 18, 20, 0)
+        self.content_layout.setSpacing(14)
+        container_layout.addLayout(self.content_layout)
+
+        self._refresh_shell_metrics()
+        theme_manager.sig_theme_changed.connect(self._on_theme_changed)
+
+    def _refresh_shell_metrics(self):
+        tokens = build_ui_tokens(theme_manager.current_theme)
+        titlebar_height = tokens["shell"]["titlebar_height"]
+        self._title_bar.setFixedHeight(titlebar_height)
+        self._btn_close.setFixedSize(36, titlebar_height)
+
+    def _on_theme_changed(self, _theme_name: str):
+        self._refresh_shell_metrics()
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.update()
+
+
+class VCPScanRangeDialog(_ThemedDialog):
     PRESET_RECENT_30 = "recent_30"
     PRESET_RECENT_60 = "recent_60"
     PRESET_RECENT_120 = "recent_120"
     PRESET_YTD = "ytd"
 
     def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName("scanRangeDialog")
-        self.setWindowTitle("选择扫描时间区间")
-        self.setModal(True)
-        self.resize(520, 240)
+        super().__init__("scanRangeDialog", "选择扫描时间区间", (520, 292), parent)
 
         self._syncing_dates = False
         self._preset_buttons: dict[str, QPushButton] = {}
 
         latest_trade_date = _latest_cn_trade_date()
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 18, 20, 18)
-        layout.setSpacing(14)
+        layout = self.content_layout
 
         title = QLabel("VCP 区间扫描")
         title.setObjectName("dialogTitle")
@@ -215,23 +284,17 @@ class VCPScanRangeDialog(QDialog):
         return start_date.isoformat(), end_date.isoformat()
 
 
-class VCPScanSettingsDialog(QDialog):
+class VCPScanSettingsDialog(_ThemedDialog):
     DEFAULT_PRESET_NAME = "VCP 标准"
 
     def __init__(self, params: dict[str, Any], user_presets: dict[str, dict[str, float]] | None = None, parent=None):
-        super().__init__(parent)
-        self.setObjectName("settingsDialog")
-        self.setWindowTitle("VCP 扫描参数设置")
-        self.setModal(True)
-        self.resize(460, 360)
+        super().__init__("settingsDialog", "VCP 扫描参数设置", (460, 408), parent)
 
         self._user_presets = dict(user_presets or {})
         self._builtin_presets = self._build_builtin_presets()
         self._all_presets: dict[str, dict[str, float]] = {}
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 18, 20, 18)
-        layout.setSpacing(14)
+        layout = self.content_layout
 
         title = QLabel("扫描核心参数")
         title.setObjectName("dialogTitle")

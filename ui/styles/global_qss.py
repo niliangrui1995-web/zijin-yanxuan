@@ -38,6 +38,16 @@ QMainWindow, QWidget {{
     font-size: {font['size_md']}px;
 }}
 
+QToolTip {{
+    background-color: {surface['elevated']};
+    color: {text['primary']};
+    border: 1px solid {border['default']};
+    border-radius: 0px;
+    padding: 6px 10px;
+    font-family: {font['family']};
+    font-size: {font['size_md']}px;
+}}
+
 /* --- 左侧面板 --- */
 QWidget#leftPanel {{
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -329,6 +339,40 @@ QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{
     border-top: 4px solid {t['ARROW_COLOR']};
 }}
 
+/* 日期输入 / 区间选择 */
+QDateEdit {{
+    background-color: {t['BG_INPUT']};
+    color: {t['TEXT_PRIMARY']};
+    border: 1px solid {t['BORDER_STRONG']};
+    border-radius: {radius['sm']}px;
+    padding: 0 30px 0 10px;
+    font-size: {font['size_sm']}px;
+    min-height: {control['input_height']}px;
+    selection-background-color: rgba(239, 68, 68, 0.3);
+}}
+QDateEdit:hover {{ border: 1px solid {t['BORDER_BRAND']}; }}
+QDateEdit:focus {{ border: 1px solid {t['BRAND_PRIMARY']}; }}
+QDateEdit::drop-down {{
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 24px;
+    border: none;
+    background: transparent;
+}}
+QDateEdit::down-arrow {{
+    image: none;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid {t['ARROW_COLOR']};
+    margin-right: 6px;
+}}
+QDateEdit QLineEdit {{
+    background: transparent;
+    color: {t['TEXT_PRIMARY']};
+    border: none;
+    padding: 0;
+}}
+
 
 
 /* ═══════════════════════════════════════════
@@ -441,9 +485,21 @@ QLineEdit:focus {{ border: 1px solid {t['BRAND_PRIMARY']}; background-color: {t[
 QLineEdit::placeholder {{ color: {t['TEXT_DISABLED']}; }}
 
 QDialog#settingsDialog, QDialog#scanRangeDialog {{
+    background: transparent;
+    border: none;
+}}
+QDialog#settingsDialog QFrame#dialogContainer,
+QDialog#scanRangeDialog QFrame#dialogContainer {{
     background-color: {t['BG_ELEVATED']};
     border: 1px solid {t['BORDER_DEFAULT']};
     border-radius: {radius['xl']}px;
+}}
+QDialog#settingsDialog QWidget#dialogTitleBar,
+QDialog#scanRangeDialog QWidget#dialogTitleBar {{
+    background-color: {t['BG_TITLEBAR']};
+    border-top-left-radius: {radius['xl']}px;
+    border-top-right-radius: {radius['xl']}px;
+    border-bottom: 1px solid {t['TITLEBAR_BORDER']};
 }}
 QDialog#settingsDialog QFrame#dialogSection,
 QDialog#scanRangeDialog QFrame#dialogSection {{
@@ -464,6 +520,23 @@ QLabel#dialogFieldLabel {{
 QLabel#dialogHint {{
     color: {t['TEXT_MUTED']};
     font-size: {font['size_sm']}px;
+}}
+QLabel#dialogWindowTitle {{
+    color: {t['TEXT_PRIMARY']};
+    font-size: {font['size_md']}px;
+    font-weight: {font['weight_semibold']};
+}}
+QToolButton#dialogCloseButton {{
+    background: transparent;
+    border: none;
+    color: {t['TEXT_MUTED']};
+    font-size: {font['size_md']}px;
+    font-weight: {font['weight_bold']};
+}}
+QToolButton#dialogCloseButton:hover {{
+    background-color: #C42B1C;
+    color: #FFFFFF;
+    border-radius: {radius['sm']}px;
 }}
 QTextEdit#systemLogText {{
     background-color: {surface['panel']};

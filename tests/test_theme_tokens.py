@@ -78,6 +78,24 @@ def test_global_qss_selected_tab_does_not_use_brand_top_rule():
     assert f"border-top: 2px solid {THEME_YUEBAI['BRAND_PRIMARY']};" not in qss
 
 
+def test_global_qss_includes_themed_tooltip_style():
+    qss = generate_global_qss(THEME_MOYUAN, density="紧凑")
+
+    assert "QToolTip {" in qss
+    assert f"background-color: {THEME_MOYUAN['BG_ELEVATED']};" in qss
+    assert f"color: {THEME_MOYUAN['TEXT_PRIMARY']};" in qss
+    assert "border-radius: 0px;" in qss
+
+
+def test_global_qss_themes_date_edit_and_dialog_shell():
+    qss = generate_global_qss(THEME_MOYUAN, density="紧凑")
+
+    assert "QDateEdit {" in qss
+    assert "QDialog#scanRangeDialog QFrame#dialogContainer" in qss
+    assert "QDialog#scanRangeDialog QWidget#dialogTitleBar" in qss
+    assert "QToolButton#dialogCloseButton" in qss
+
+
 def test_vcp_table_view_apply_density_updates_row_height():
     table = VCPTableView()
     try:

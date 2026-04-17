@@ -359,7 +359,6 @@ def inject_standalone_tabbar(window) -> QTabBar:
     standalone_bar.setUsesScrollButtons(True)
     standalone_bar.setElideMode(Qt.TextElideMode.ElideNone)
     standalone_bar.setAccessibleName("主导航标签栏")
-    standalone_bar.setToolTip("主导航标签栏，标签过多时可横向滚动")
     standalone_bar.setStyleSheet(_standalone_tabbar_qss(theme_manager.current_theme))
 
     for i in range(window.tabs.count()):
