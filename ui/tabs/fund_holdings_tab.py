@@ -95,7 +95,7 @@ class FundHoldingsFilterProxyModel(RtSortFilterProxyModel):
         if self._subject_names and str(row_data.get("主体", "")).strip() not in self._subject_names:
             return False
 
-        if self._capital_attributes and str(row_data.get("资金属性", "")).strip() not in self._capital_attributes:
+        if self._capital_attributes and str(row_data.get("_capital_attribute_value", "")).strip() not in self._capital_attributes:
             return False
 
         if self._change_types and str(row_data.get("变化类型", "")).strip() not in self._change_types:
@@ -131,12 +131,16 @@ class FundHoldingsTab(BaseStockTab):
     _QUARTER_FILTER_LATEST = "__LATEST__"
     _QUARTER_FILTER_ALL = "__ALL__"
     _CHANGE_FILTER_ALL = "__ALL__"
+    _DISPLAY_PLACEHOLDER = "--"
     _CHANGE_TYPE_OPTIONS = ("新进", "增持", "减持", "退出", "持平")
     _CAPITAL_ATTRIBUTE_OPTIONS = (
         QFII_CAPITAL_ATTRIBUTE_SELF_OWNED,
         QFII_CAPITAL_ATTRIBUTE_CLIENT,
         QFII_CAPITAL_ATTRIBUTE_UNMARKED,
     )
+    _CAPITAL_ATTRIBUTE_LABELS = {
+        QFII_CAPITAL_ATTRIBUTE_UNMARKED: _DISPLAY_PLACEHOLDER,
+    }
     _VIEW_STATE_PREFIX = "fund_holdings_view_state_v2"
 
     def __init__(self, data_provider, parent=None):
@@ -226,7 +230,7 @@ class FundHoldingsTab(BaseStockTab):
         self.columns = [
             "代码", "名称", "市价", "涨幅%", "市值",
             "主体", "资金属性", "季度", "对比季度", "变化类型", "占比口径",
-            "本期占比", "上期占比", "占比变化",
+            "本期占比",
             "本期持股(万股)", "上期持股(万股)", "持股变化(万股)",
             "持有家数",
         ]
@@ -244,7 +248,7 @@ class FundHoldingsTab(BaseStockTab):
 
         header = self.table.horizontalHeader()
         header.setStretchLastSection(True)
-        default_widths = [70, 90, 70, 70, 75, 180, 96, 90, 90, 80, 80, 90, 90, 90, 110, 110, 110, 78]
+        default_widths = [70, 90, 70, 70, 75, 180, 96, 90, 90, 80, 80, 90, 110, 110, 110, 78]
         for index, width in enumerate(default_widths):
             header.setSectionResizeMode(index, QHeaderView.ResizeMode.Interactive)
             self.table.setColumnWidth(index, width)
@@ -514,6 +518,13 @@ class FundHoldingsTab(BaseStockTab):
         self._refresh_capital_attribute_button_text()
         self._apply_filters()
 
+    @classmethod
+    def _capital_attribute_label(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return cls._DISPLAY_PLACEHOLDER
+        return cls._CAPITAL_ATTRIBUTE_LABELS.get(text, text)
+
     @staticmethod
     def _sort_order_to_int(order) -> int:
         value = getattr(order, "value", order)
@@ -731,12 +742,18 @@ class FundHoldingsTab(BaseStockTab):
                 capital_attribute
                 for capital_attribute in self._CAPITAL_ATTRIBUTE_OPTIONS
                 if any(
-                    str(row.get("资金属性") or "").strip() == capital_attribute
+                    str(row.get("_capital_attribute_value") or "").strip() == capital_attribute
                     for row in (self.model.row_data or [])
                 )
             ]
             valid_capital_attributes = set(capital_attributes)
-            self.cmb_capital_attribute.set_options(capital_attributes, preserve_selection=False)
+            self.cmb_capital_attribute.set_options(
+                [
+                    (capital_attribute, self._capital_attribute_label(capital_attribute))
+                    for capital_attribute in capital_attributes
+                ],
+                preserve_selection=False,
+            )
             self.cmb_capital_attribute.set_selected_values(
                 [
                     capital_attribute
@@ -783,34 +800,32 @@ class FundHoldingsTab(BaseStockTab):
             capital_attribute = str(row.get("capital_attribute") or "").strip()
             if subject_code == self._SUBJECT_CODE_QFII and not capital_attribute:
                 capital_attribute = QFII_CAPITAL_ATTRIBUTE_UNMARKED
+            capital_attribute_text = self._capital_attribute_label(capital_attribute)
             has_curr = change_type != "退出"
             has_prev = change_type != "新进"
 
             curr_ratio = self._format_pct(row.get("curr_ratio_pct"), show=has_curr)
-            prev_ratio = self._format_pct(row.get("prev_ratio_pct"), show=has_prev)
-            delta_ratio = self._format_pct(row.get("delta_ratio_pct"), show=has_curr or has_prev, signed=True)
 
             rows.append(
                 {
                     "代码": str(row.get("stock_code") or "").strip(),
                     "名称": str(row.get("stock_name") or "").strip(),
-                    "市价": "--",
-                    "涨幅%": "--",
-                    "市值": "--",
+                    "市价": self._DISPLAY_PLACEHOLDER,
+                    "涨幅%": self._DISPLAY_PLACEHOLDER,
+                    "市值": self._DISPLAY_PLACEHOLDER,
                     "主体": str(row.get("subject_name") or "").strip(),
-                    "资金属性": capital_attribute or "--",
+                    "资金属性": capital_attribute_text,
                     "主体代码": subject_code,
                     "季度": quarter_key,
                     "对比季度": str(row.get("compare_quarter_key") or "").strip(),
                     "变化类型": change_type,
                     "占比口径": str(row.get("ratio_label") or "").strip(),
                     "本期占比": curr_ratio,
-                    "上期占比": prev_ratio,
-                    "占比变化": delta_ratio,
                     "本期持股(万股)": self._format_amount(row.get("curr_hold_num_shares"), divisor=10000.0, show=has_curr),
                     "上期持股(万股)": self._format_amount(row.get("prev_hold_num_shares"), divisor=10000.0, show=has_prev),
                     "持股变化(万股)": self._format_amount(row.get("delta_hold_num_shares"), divisor=10000.0, show=has_curr or has_prev, signed=True),
-                    "持有家数": str(int(float(row.get("holders_count") or 0))) if row.get("holders_count") else "--",
+                    "持有家数": str(int(float(row.get("holders_count") or 0))) if row.get("holders_count") else self._DISPLAY_PLACEHOLDER,
+                    "_capital_attribute_value": capital_attribute,
                     "_is_latest_subject_quarter": quarter_key == self._latest_quarter_map.get(subject_code),
                 }
             )
@@ -819,22 +834,22 @@ class FundHoldingsTab(BaseStockTab):
     @staticmethod
     def _format_pct(value, *, show: bool, signed: bool = False) -> str:
         if not show:
-            return "--"
+            return FundHoldingsTab._DISPLAY_PLACEHOLDER
         try:
             number = float(value or 0)
         except (TypeError, ValueError):
-            return "--"
+            return FundHoldingsTab._DISPLAY_PLACEHOLDER
         prefix = "+" if signed and number > 0 else ""
         return f"{prefix}{number:.2f}%"
 
     @staticmethod
     def _format_amount(value, *, divisor: float, show: bool, signed: bool = False) -> str:
         if not show:
-            return "--"
+            return FundHoldingsTab._DISPLAY_PLACEHOLDER
         try:
             number = float(value or 0) / divisor
         except (TypeError, ValueError):
-            return "--"
+            return FundHoldingsTab._DISPLAY_PLACEHOLDER
         prefix = "+" if signed and number > 0 else ""
         return f"{prefix}{number:,.2f}"
 
@@ -857,8 +872,8 @@ class FundHoldingsTab(BaseStockTab):
         rows = list(getattr(self.model, "row_data", []) or [])
         total = len(rows)
         visible = self.proxy_model.rowCount()
-        qfii_quarter = self._latest_quarter_map.get(self._SUBJECT_CODE_QFII, "--")
-        ruiyuan_quarter = self._latest_quarter_map.get(self._SUBJECT_CODE_RUIYUAN, "--")
+        qfii_quarter = self._latest_quarter_map.get(self._SUBJECT_CODE_QFII, self._DISPLAY_PLACEHOLDER)
+        ruiyuan_quarter = self._latest_quarter_map.get(self._SUBJECT_CODE_RUIYUAN, self._DISPLAY_PLACEHOLDER)
         qfii_sync = str((self._latest_sync_map.get(self._SUBJECT_CODE_QFII) or {}).get("finished_at") or "")
         ruiyuan_sync = str((self._latest_sync_map.get(self._SUBJECT_CODE_RUIYUAN) or {}).get("finished_at") or "")
 

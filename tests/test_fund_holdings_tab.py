@@ -188,6 +188,9 @@ def test_fund_holdings_tab_hides_market_value_delta_columns(monkeypatch):
         assert "本期持仓(万元)" not in tab.columns
         assert "上期持仓(万元)" not in tab.columns
         assert "持仓变化(万元)" not in tab.columns
+        assert "占比变化" not in tab.columns
+        assert "上期占比" not in tab.columns
+        assert tab.model.get_row_data(0)["市价"] == "--"
         assert tab.model.get_row_data(0)["主体"] == "阿布达比投资局"
     finally:
         tab.deleteLater()
@@ -327,6 +330,8 @@ def test_fund_holdings_tab_capital_attribute_filter_supports_multi_select(monkey
     try:
         assert tab.cmb_subject.option_values() == ["MORGAN STANLEY & CO.INTERNATIONAL PLC", "睿远成长价值混合A"]
         assert tab.cmb_capital_attribute.option_values() == ["自有资金", "未标注"]
+        assert tab.cmb_capital_attribute.option_labels() == ["自有资金", "--"]
+        assert tab.model.get_row_data(1)["资金属性"] == "--"
         tab._set_quarter_filter_state(all_quarters=True, apply=True)
         tab.cmb_capital_attribute.set_selected_values({"自有资金"})
         assert tab.proxy_model.rowCount() == 1
