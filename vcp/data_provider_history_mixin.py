@@ -15,17 +15,120 @@ _log = get_logger(__name__)
 
 
 class TdxDataProviderHistoryMixin:
+    _TNF_RECORD_SIZE = 360
+    _TNF_CODE_OFFSET = 50
+    _TNF_NAME_OFFSET = 81
+    _TNF_NAME_FIELD_LEN = 45
+    _TNF_NAME_FILES = ("shs.tnf", "szs.tnf")
+
     @staticmethod
     def _is_placeholder_name(code, name) -> bool:
         code_text = str(code or "").strip()
         name_text = str(name or "").strip()
         return not name_text or name_text == code_text
 
+    @classmethod
+    def _decode_tnf_name(cls, raw_name: bytes) -> str:
+        payload = bytes(raw_name or b"").split(b"\x00", 1)[0].rstrip(b" \x00")
+        if not payload:
+            return ""
+        for encoding in ("gbk", "gb18030", "utf-8"):
+            try:
+                return payload.decode(encoding).strip()
+            except UnicodeDecodeError:
+                continue
+        return payload.decode("latin1", errors="ignore").strip()
+
+    @classmethod
+    def _parse_tnf_name_file(cls, tnf_path: str) -> dict[str, str]:
+        if not tnf_path or not os.path.exists(tnf_path):
+            return {}
+
+        try:
+            with open(tnf_path, "rb") as handle:
+                payload = handle.read()
+        except OSError as exc:
+            _log.debug(f"[名称映射] 读取本地证券主表失败: {tnf_path} {exc}")
+            return {}
+
+        code_names: dict[str, str] = {}
+        stride = cls._TNF_RECORD_SIZE
+        code_start = cls._TNF_CODE_OFFSET
+        code_end = code_start + 6
+        name_start = cls._TNF_NAME_OFFSET
+        name_end = name_start + cls._TNF_NAME_FIELD_LEN
+
+        for offset in range(0, len(payload) - stride + 1, stride):
+            record = payload[offset: offset + stride]
+            code_bytes = record[code_start:code_end]
+            if len(code_bytes) != 6 or not code_bytes.isdigit():
+                continue
+            code = code_bytes.decode("ascii", errors="ignore").strip()
+            if len(code) != 6:
+                continue
+            name = cls._decode_tnf_name(record[name_start:name_end])
+            if cls._is_placeholder_name(code, name):
+                continue
+            code_names[code] = name
+
+        return code_names
+
+    def _load_local_tdx_name_map(self) -> dict[str, str]:
+        cached_map = getattr(self, "_local_tdx_name_map_cache", None)
+        if isinstance(cached_map, dict) and cached_map:
+            return dict(cached_map)
+
+        vipdoc = getattr(self, "tdx_vipdoc", "") or ""
+        if not vipdoc:
+            self._local_tdx_name_map_cache = {}
+            return {}
+
+        tdx_root = os.path.dirname(vipdoc)
+        hq_cache_dir = os.path.join(tdx_root, "T0002", "hq_cache")
+        merged_map: dict[str, str] = {}
+        for filename in self._TNF_NAME_FILES:
+            merged_map.update(self._parse_tnf_name_file(os.path.join(hq_cache_dir, filename)))
+
+        self._local_tdx_name_map_cache = dict(merged_map)
+        if merged_map:
+            _log.info(f"[离线模式] 已从本地证券主表解析 {len(merged_map)} 只标的名称")
+        return dict(merged_map)
+
+    def _merge_local_tdx_name_map(self, base_map: dict | None, *, persist: bool = False) -> dict[str, str]:
+        from core.data_store import DataStore
+
+        merged_map = {
+            str(raw_code or "").strip(): str(raw_name or "").strip()
+            for raw_code, raw_name in dict(base_map or {}).items()
+            if str(raw_code or "").strip()
+        }
+        local_name_map = self._load_local_tdx_name_map()
+        if not local_name_map:
+            return merged_map
+
+        refreshed = 0
+        for code, name in local_name_map.items():
+            if self._is_placeholder_name(code, name):
+                continue
+            if merged_map.get(code) != name:
+                merged_map[code] = name
+                refreshed += 1
+
+        if refreshed and persist:
+            try:
+                DataStore().save_json("vcp_code_names", merged_map)
+                _log.info(f"[名称映射] 已从本地证券主表补齐 {refreshed} 只标的名称")
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                _log.debug(f"[名称映射] 持久化本地名称缓存失败: {exc}")
+
+        return merged_map
+
     def get_all_codes(self):
         from core.data_store import DataStore
         if self._offline or not self.server_pool:
             cached = DataStore().load_json("vcp_code_names")
             if cached:
+                cached = self._merge_local_tdx_name_map(cached, persist=True)
                 _log.info(f"[离线模式] 从名称缓存读取 {len(cached)} 只标的（含股票名称）")
                 return cached
             if self.tdx_vipdoc:
@@ -57,7 +160,10 @@ class TdxDataProviderHistoryMixin:
     def _get_codes_from_vipdoc(self):
         stocks = {}
         from core.data_store import DataStore
-        name_map = DataStore().load_json("vcp_code_names") or {}
+        name_map = self._merge_local_tdx_name_map(
+            DataStore().load_json("vcp_code_names") or {},
+            persist=True,
+        )
 
         # --- 曾用名/新名 人工热修复映射册 ---
         # 防止因 pytdx 证券列表缓存不及时或本地 JSON 始终未刷新导致的名称滞后

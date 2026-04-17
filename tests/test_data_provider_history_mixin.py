@@ -1,4 +1,5 @@
 import threading
+from pathlib import Path
 
 import pandas as pd
 
@@ -60,3 +61,35 @@ def test_get_data_prefers_existing_runtime_cache_without_local_reload():
 
     assert result is cached
     assert provider.fetch_calls == 0
+
+
+def _build_tnf_record(code: str, name: str) -> bytes:
+    record = bytearray(TdxDataProviderHistoryMixin._TNF_RECORD_SIZE)
+    record[19:23] = b"FZDM"
+    record[
+        TdxDataProviderHistoryMixin._TNF_CODE_OFFSET:
+        TdxDataProviderHistoryMixin._TNF_CODE_OFFSET + 6
+    ] = code.encode("ascii")
+    name_bytes = name.encode("gbk")
+    start = TdxDataProviderHistoryMixin._TNF_NAME_OFFSET
+    record[start:start + len(name_bytes)] = name_bytes
+    return bytes(record)
+
+
+def test_parse_tnf_name_file_extracts_a_share_names(tmp_path):
+    tnf_path = Path(tmp_path) / "szs.tnf"
+    tnf_path.write_bytes(
+        b"".join(
+            [
+                _build_tnf_record("300093", "*ST金刚"),
+                _build_tnf_record("300236", "上海新阳"),
+                _build_tnf_record("002709", "天赐材料"),
+            ]
+        )
+    )
+
+    parsed = TdxDataProviderHistoryMixin._parse_tnf_name_file(str(tnf_path))
+
+    assert parsed["300093"] == "*ST金刚"
+    assert parsed["300236"] == "上海新阳"
+    assert parsed["002709"] == "天赐材料"
