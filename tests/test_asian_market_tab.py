@@ -168,7 +168,7 @@ def test_asian_market_pct_column_keeps_rise_fall_color(monkeypatch):
         assert isinstance(color, QColor)
         assert color.name().lower() == QColor(_c("COLOR_RISE")).name().lower()
         assert background is None
-        assert skip_sorted_overlay is True
+        assert skip_sorted_overlay is False
     finally:
         tab.deleteLater()
 

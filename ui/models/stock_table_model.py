@@ -511,7 +511,7 @@ class StockTableModel(QAbstractTableModel):
             return None
 
         elif role == Qt.ItemDataRole.UserRole + 3:
-            return self._uses_plain_style(key) or self._uses_plain_background(key)
+            return self._uses_plain_style(key)
 
         return None
 
