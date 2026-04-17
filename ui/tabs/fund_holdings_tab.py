@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from contextlib import suppress
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSettings, Qt, QTimer
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -32,13 +32,13 @@ from ui.tabs.base_stock_tab import BaseStockTab
 class FundHoldingsFilterProxyModel(RtSortFilterProxyModel):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._subject_code = ""
+        self._subject_name = ""
         self._quarter_keys: set[str] = set()
         self._change_types: set[str] = set()
         self._latest_only = True
 
-    def set_subject_code(self, subject_code: str):
-        self._subject_code = str(subject_code or "").strip()
+    def set_subject_name(self, subject_name: str):
+        self._subject_name = str(subject_name or "").strip()
         self.invalidateFilter()
 
     def set_quarter_keys(self, quarter_keys):
@@ -65,7 +65,7 @@ class FundHoldingsFilterProxyModel(RtSortFilterProxyModel):
         model = self.sourceModel()
         row_data = model.row_data[source_row]
 
-        if self._subject_code and str(row_data.get("主体代码", "")).strip() != self._subject_code:
+        if self._subject_name and str(row_data.get("主体", "")).strip() != self._subject_name:
             return False
 
         if self._change_types and str(row_data.get("变化类型", "")).strip() not in self._change_types:
@@ -102,6 +102,7 @@ class FundHoldingsTab(BaseStockTab):
     _QUARTER_FILTER_ALL = "__ALL__"
     _CHANGE_FILTER_ALL = "__ALL__"
     _CHANGE_TYPE_OPTIONS = ("新进", "增持", "减持", "退出", "持平")
+    _VIEW_STATE_PREFIX = "fund_holdings_view_state_v1"
 
     def __init__(self, data_provider, parent=None):
         super().__init__(data_provider=data_provider, parent=parent)
@@ -112,11 +113,39 @@ class FundHoldingsTab(BaseStockTab):
         self._filter_menu_updating = False
         self._quarter_actions: dict[str, QAction] = {}
         self._change_actions: dict[str, QAction] = {}
+        self._settings = self._create_settings()
+        self._restoring_view_state = False
+        self._view_state_restored = False
+        self._view_state_save_timer = QTimer(self)
+        self._view_state_save_timer.setSingleShot(True)
+        self._view_state_save_timer.setInterval(300)
+        self._view_state_save_timer.timeout.connect(self._save_view_state)
 
         self._init_ui()
         self._reload_from_db()
 
         event_bus.sig_cache_reload_completed.connect(self._on_cache_reload_completed)
+
+    @staticmethod
+    def _create_settings():
+        return QSettings("VCPHunter", "FundHoldingsTab")
+
+    def _view_state_key(self, name: str) -> str:
+        return f"{self._VIEW_STATE_PREFIX}/{name}"
+
+    def _find_subject_index(self, subject_name: str) -> int:
+        target = str(subject_name or "").strip()
+        if not target:
+            return 0
+
+        index = self.cmb_subject.findData(target)
+        if index >= 0:
+            return index
+
+        for row in range(self.cmb_subject.count()):
+            if str(self.cmb_subject.itemData(row) or "").strip() == target:
+                return row
+        return -1
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -187,6 +216,7 @@ class FundHoldingsTab(BaseStockTab):
             header.setSectionResizeMode(index, QHeaderView.ResizeMode.Interactive)
             self.table.setColumnWidth(index, width)
         self.bind_header_persistence(self.table, "fund_holdings_header_state_v1")
+        header.sortIndicatorChanged.connect(self._on_sort_indicator_changed)
 
         self.table.doubleClicked.connect(self._on_double_click)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -408,6 +438,117 @@ class FundHoldingsTab(BaseStockTab):
         self.btn_quarter.setText(text)
         self.btn_quarter.setToolTip(tooltip)
 
+    @staticmethod
+    def _normalize_settings_values(value) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            text = value.strip()
+            return [text] if text else []
+        if isinstance(value, (list, tuple, set)):
+            return [str(item).strip() for item in value if str(item).strip()]
+        text = str(value).strip()
+        return [text] if text else []
+
+    def _schedule_view_state_save(self):
+        if self._restoring_view_state:
+            return
+        self._view_state_save_timer.start()
+
+    @staticmethod
+    def _sort_order_to_int(order) -> int:
+        value = getattr(order, "value", order)
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return Qt.SortOrder.AscendingOrder.value
+
+    def _save_view_state(self):
+        if self._restoring_view_state:
+            return
+        try:
+            latest_only, selected_quarters = self._quarter_filter_state()
+            quarter_mode = "latest" if latest_only else ("all" if not selected_quarters else "selected")
+            change_types = list(self._selected_change_types())
+            subject_name = str(self.cmb_subject.currentData() or "").strip()
+            search_text = self.search_box.text().strip()
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return
+
+        try:
+            sort_column = int(self.table.sorted_column()) if hasattr(self.table, "sorted_column") else -1
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            sort_column = -1
+        try:
+            sort_order = self._sort_order_to_int(self.table.horizontalHeader().sortIndicatorOrder())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            sort_order = Qt.SortOrder.AscendingOrder.value
+
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            self._settings.setValue(self._view_state_key("subject_name"), subject_name)
+            self._settings.setValue(self._view_state_key("search_text"), search_text)
+            self._settings.setValue(self._view_state_key("quarter_mode"), quarter_mode)
+            self._settings.setValue(self._view_state_key("quarter_values"), sorted(selected_quarters, reverse=True))
+            self._settings.setValue(self._view_state_key("change_types"), change_types)
+            self._settings.setValue(self._view_state_key("sort_column"), sort_column)
+            self._settings.setValue(self._view_state_key("sort_order"), sort_order)
+            self._settings.sync()
+
+    def _restore_view_state(self):
+        if self._view_state_restored:
+            return
+
+        self._restoring_view_state = True
+        try:
+            subject_name = str(self._settings.value(self._view_state_key("subject_name"), "") or "").strip()
+            search_text = str(self._settings.value(self._view_state_key("search_text"), "") or "")
+            quarter_mode = str(self._settings.value(self._view_state_key("quarter_mode"), "latest") or "latest").strip().lower()
+            quarter_values = set(self._normalize_settings_values(self._settings.value(self._view_state_key("quarter_values"), [])))
+            change_types = set(self._normalize_settings_values(self._settings.value(self._view_state_key("change_types"), [])))
+
+            try:
+                sort_column = int(self._settings.value(self._view_state_key("sort_column"), -1) or -1)
+            except (TypeError, ValueError):
+                sort_column = -1
+            try:
+                sort_order_value = self._settings.value(
+                    self._view_state_key("sort_order"),
+                    Qt.SortOrder.AscendingOrder.value,
+                )
+                sort_order = Qt.SortOrder(self._sort_order_to_int(sort_order_value))
+            except (TypeError, ValueError):
+                sort_order = Qt.SortOrder.AscendingOrder
+
+            subject_was_blocked = self.cmb_subject.blockSignals(True)
+            try:
+                subject_index = self._find_subject_index(subject_name)
+                self.cmb_subject.setCurrentIndex(subject_index if subject_index >= 0 else 0)
+            finally:
+                self.cmb_subject.blockSignals(subject_was_blocked)
+
+            search_was_blocked = self.search_box.blockSignals(True)
+            try:
+                self.search_box.setText(search_text)
+            finally:
+                self.search_box.blockSignals(search_was_blocked)
+
+            self._set_change_filter_values(change_types, apply=False)
+            self._set_quarter_filter_state(
+                latest_only=quarter_mode == "latest",
+                all_quarters=quarter_mode == "all",
+                selected_quarters=quarter_values,
+                apply=False,
+            )
+
+            if 0 <= sort_column < self.model.columnCount():
+                self.table.sortByColumn(sort_column, sort_order)
+        finally:
+            self._restoring_view_state = False
+            self._view_state_restored = True
+
+    def _on_sort_indicator_changed(self, _section: int, _order: Qt.SortOrder):
+        self._schedule_view_state_save()
+
     def _prompt_quarter(self, title: str) -> str | None:
         quarter_text, ok = QInputDialog.getText(self, title, "输入季度（例如 2025Q4）")
         if not ok:
@@ -479,6 +620,7 @@ class FundHoldingsTab(BaseStockTab):
         view_rows = self._build_view_rows(change_rows)
         self.model.update_data(view_rows)
         self._refresh_filter_options()
+        self._restore_view_state()
         self._apply_filters()
         self._apply_latest_quotes_from_store()
         if view_rows:
@@ -492,7 +634,6 @@ class FundHoldingsTab(BaseStockTab):
             self.table_state.show_empty("暂无基金持仓数据", "请使用右上角“更新数据库”同步 QFII 或睿远持仓")
 
     def _refresh_filter_options(self):
-        subjects = fund_holdings_store.list_subjects()
         quarters = fund_holdings_store.list_quarters()
 
         current_subject = self.cmb_subject.currentData()
@@ -506,12 +647,16 @@ class FundHoldingsTab(BaseStockTab):
             self.cmb_subject.blockSignals(True)
             self.cmb_subject.clear()
             self.cmb_subject.addItem("全部主体", "")
-            for subject in subjects:
-                self.cmb_subject.addItem(
-                    f"{subject['subject_name']}{' (' + subject['subject_code'] + ')' if subject['subject_code'] != subject['subject_name'] else ''}",
-                    subject["subject_code"],
+            subject_names = list(
+                dict.fromkeys(
+                    str(row.get("主体") or "").strip()
+                    for row in (self.model.row_data or [])
+                    if str(row.get("主体") or "").strip()
                 )
-            subject_index = max(0, self.cmb_subject.findData(current_subject))
+            )
+            for subject_name in subject_names:
+                self.cmb_subject.addItem(subject_name, subject_name)
+            subject_index = max(0, self._find_subject_index(current_subject))
             self.cmb_subject.setCurrentIndex(subject_index)
             self.cmb_subject.blockSignals(False)
 
@@ -525,15 +670,16 @@ class FundHoldingsTab(BaseStockTab):
             )
 
     def _apply_filters(self):
-        subject_code = str(self.cmb_subject.currentData() or "").strip()
+        subject_name = str(self.cmb_subject.currentData() or "").strip()
         latest_only, selected_quarters = self._quarter_filter_state()
         change_types = self._selected_change_types()
 
-        self.proxy_model.set_subject_code(subject_code)
+        self.proxy_model.set_subject_name(subject_name)
         self.proxy_model.set_change_types(change_types)
         self.proxy_model.setFilterText(self.search_box.text().strip())
         self.proxy_model.set_latest_only(latest_only)
         self.proxy_model.set_quarter_keys(selected_quarters)
+        self._schedule_view_state_save()
 
         if self.model.row_data:
             self.table_state.show_table()
@@ -667,3 +813,7 @@ class FundHoldingsTab(BaseStockTab):
                 show_watchlist_toggle=True,
                 vcp_data={"代码": code, "名称": str(row.get("名称") or "").strip()},
             )
+
+    def closeEvent(self, event):
+        self._save_view_state()
+        super().closeEvent(event)

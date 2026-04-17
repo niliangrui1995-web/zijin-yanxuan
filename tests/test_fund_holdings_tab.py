@@ -6,6 +6,35 @@ class _DummyProvider:
     pass
 
 
+class _FakeSettings:
+    def __init__(self):
+        self._values = {}
+
+    def value(self, key, default=None, type=None):
+        value = self._values.get(key, default)
+        if value is None or type is None:
+            return value
+        if type is list:
+            if isinstance(value, list):
+                return value
+            if isinstance(value, tuple):
+                return list(value)
+            return [value]
+        try:
+            return type(value)
+        except (TypeError, ValueError):
+            return default
+
+    def setValue(self, key, value):
+        self._values[key] = value
+
+    def contains(self, key):
+        return key in self._values
+
+    def sync(self):
+        return None
+
+
 def _build_change_row(
     *,
     subject_code: str,
@@ -38,7 +67,8 @@ def _build_change_row(
     }
 
 
-def _setup_store(monkeypatch, rows):
+def _setup_store(monkeypatch, rows, settings=None):
+    settings = settings or _FakeSettings()
     monkeypatch.setattr(
         fund_holdings_module.fund_holdings_store,
         "get_latest_quarter_map",
@@ -73,6 +103,13 @@ def _setup_store(monkeypatch, rows):
         lambda self, table, settings_key="header_state": None,
         raising=False,
     )
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "_create_settings",
+        staticmethod(lambda: settings),
+        raising=False,
+    )
+    return settings
 
 
 def _visible_codes(tab):
@@ -150,6 +187,48 @@ def test_fund_holdings_tab_hides_market_value_delta_columns(monkeypatch):
         assert "上期持仓(万元)" not in tab.columns
         assert "持仓变化(万元)" not in tab.columns
         assert tab.model.get_row_data(0)["主体"] == "阿布达比投资局"
+    finally:
+        tab.deleteLater()
+
+
+def test_fund_holdings_tab_subject_filter_uses_holder_name(monkeypatch):
+    _setup_store(
+        monkeypatch,
+        [
+            _build_change_row(
+                subject_code="QFII",
+                subject_name="BARCLAYS BANK PLC",
+                quarter_key="2025Q4",
+                compare_quarter_key="2025Q3",
+                change_type="增持",
+                stock_code="000001",
+                stock_name="平安银行",
+            ),
+            _build_change_row(
+                subject_code="QFII",
+                subject_name="UBS AG",
+                quarter_key="2025Q4",
+                compare_quarter_key="2025Q3",
+                change_type="新进",
+                stock_code="000002",
+                stock_name="万科A",
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "refresh_table_quotes_and_market_caps",
+        lambda self, current_model=None, force_quotes=False, quote_task_id=None: None,
+        raising=False,
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
+    try:
+        subjects = [
+            str(tab.cmb_subject.itemData(index) or "").strip()
+            for index in range(tab.cmb_subject.count())
+        ]
+        assert subjects == ["", "BARCLAYS BANK PLC", "UBS AG"]
     finally:
         tab.deleteLater()
 
@@ -253,3 +332,79 @@ def test_fund_holdings_tab_quarter_filter_supports_multi_select(monkeypatch):
         assert _visible_codes(tab) == ["000002", "000004"]
     finally:
         tab.deleteLater()
+
+
+def test_fund_holdings_tab_restores_saved_view_state(monkeypatch):
+    settings = _setup_store(
+        monkeypatch,
+        [
+            _build_change_row(
+                subject_code="QFII",
+                subject_name="QFII",
+                quarter_key="2025Q4",
+                compare_quarter_key="2025Q3",
+                change_type="增持",
+                stock_code="000001",
+                stock_name="平安银行",
+            ),
+            _build_change_row(
+                subject_code="007119",
+                subject_name="睿远成长价值混合A",
+                quarter_key="2025Q3",
+                compare_quarter_key="2025Q2",
+                change_type="持平",
+                stock_code="000002",
+                stock_name="万科A",
+            ),
+            _build_change_row(
+                subject_code="007119",
+                subject_name="睿远成长价值混合A",
+                quarter_key="2025Q4",
+                compare_quarter_key="2025Q3",
+                change_type="新进",
+                stock_code="000004",
+                stock_name="国华网安",
+            ),
+        ],
+        settings=_FakeSettings(),
+    )
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "refresh_table_quotes_and_market_caps",
+        lambda self, current_model=None, force_quotes=False, quote_task_id=None: None,
+        raising=False,
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
+    try:
+        subject_index = next(
+            (
+                index
+                for index in range(tab.cmb_subject.count())
+                if str(tab.cmb_subject.itemData(index) or "").strip() == "睿远成长价值混合A"
+            ),
+            -1,
+        )
+        tab.cmb_subject.setCurrentIndex(subject_index)
+        tab._set_quarter_filter_state(selected_quarters={"2025Q3", "2025Q4"}, apply=True)
+        tab._set_change_filter_values({"新进", "持平"}, apply=True)
+        tab.search_box.setText("0")
+        code_col = tab.model.headers.index("代码")
+        tab.table.sortByColumn(code_col, fund_holdings_module.Qt.SortOrder.DescendingOrder)
+        tab._save_view_state()
+        assert settings.value(tab._view_state_key("subject_name")) == "睿远成长价值混合A"
+    finally:
+        tab.deleteLater()
+
+    restored = fund_holdings_module.FundHoldingsTab(_DummyProvider())
+    try:
+        assert restored.cmb_subject.currentData() == "睿远成长价值混合A"
+        assert restored.search_box.text() == "0"
+        assert restored._selected_change_types() == {"新进", "持平"}
+        assert restored._quarter_filter_state() == (False, {"2025Q3", "2025Q4"})
+        assert restored.table.sorted_column() == code_col
+        assert restored.table.horizontalHeader().sortIndicatorOrder() == fund_holdings_module.Qt.SortOrder.DescendingOrder
+        assert _visible_codes(restored) == ["000004", "000002"]
+        assert settings.value(restored._view_state_key("subject_name")) == "睿远成长价值混合A"
+    finally:
+        restored.deleteLater()
