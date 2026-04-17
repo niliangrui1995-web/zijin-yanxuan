@@ -44,10 +44,12 @@ def _build_change_row(
     change_type: str,
     stock_code: str,
     stock_name: str,
+    capital_attribute: str = "",
 ):
     return {
         "subject_code": subject_code,
         "subject_name": subject_name,
+        "capital_attribute": capital_attribute,
         "quarter_key": quarter_key,
         "compare_quarter_key": compare_quarter_key,
         "change_type": change_type,
@@ -279,6 +281,60 @@ def test_fund_holdings_tab_subject_filter_supports_multi_select(monkeypatch):
         tab.deleteLater()
 
 
+def test_fund_holdings_tab_capital_attribute_filter_supports_multi_select(monkeypatch):
+    _setup_store(
+        monkeypatch,
+        [
+            _build_change_row(
+                subject_code="QFII",
+                subject_name="MORGAN STANLEY & CO.INTERNATIONAL PLC",
+                capital_attribute="自有资金",
+                quarter_key="2025Q4",
+                compare_quarter_key="2025Q3",
+                change_type="增持",
+                stock_code="000001",
+                stock_name="平安银行",
+            ),
+            _build_change_row(
+                subject_code="QFII",
+                subject_name="MORGAN STANLEY & CO.INTERNATIONAL PLC",
+                capital_attribute="未标注",
+                quarter_key="2025Q4",
+                compare_quarter_key="2025Q3",
+                change_type="新进",
+                stock_code="000002",
+                stock_name="万科A",
+            ),
+            _build_change_row(
+                subject_code="007119",
+                subject_name="睿远成长价值混合A",
+                quarter_key="2025Q4",
+                compare_quarter_key="2025Q3",
+                change_type="持平",
+                stock_code="000004",
+                stock_name="国华网安",
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "refresh_table_quotes_and_market_caps",
+        lambda self, current_model=None, force_quotes=False, quote_task_id=None: None,
+        raising=False,
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
+    try:
+        assert tab.cmb_subject.option_values() == ["MORGAN STANLEY & CO.INTERNATIONAL PLC", "睿远成长价值混合A"]
+        assert tab.cmb_capital_attribute.option_values() == ["自有资金", "未标注"]
+        tab._set_quarter_filter_state(all_quarters=True, apply=True)
+        tab.cmb_capital_attribute.set_selected_values({"自有资金"})
+        assert tab.proxy_model.rowCount() == 1
+        assert _visible_codes(tab) == ["000001"]
+    finally:
+        tab.deleteLater()
+
+
 def test_fund_holdings_tab_change_filter_supports_multi_select(monkeypatch):
     _setup_store(
         monkeypatch,
@@ -445,5 +501,56 @@ def test_fund_holdings_tab_restores_saved_view_state(monkeypatch):
         assert restored.table.horizontalHeader().sortIndicatorOrder() == fund_holdings_module.Qt.SortOrder.DescendingOrder
         assert _visible_codes(restored) == ["000004", "000002"]
         assert settings.value(restored._view_state_key("subject_name")) == "睿远成长价值混合A"
+    finally:
+        restored.deleteLater()
+
+
+def test_fund_holdings_tab_restores_saved_capital_attribute_state(monkeypatch):
+    settings = _setup_store(
+        monkeypatch,
+        [
+            _build_change_row(
+                subject_code="QFII",
+                subject_name="MORGAN STANLEY & CO.INTERNATIONAL PLC",
+                capital_attribute="自有资金",
+                quarter_key="2025Q4",
+                compare_quarter_key="2025Q3",
+                change_type="增持",
+                stock_code="000001",
+                stock_name="平安银行",
+            ),
+            _build_change_row(
+                subject_code="QFII",
+                subject_name="MORGAN STANLEY & CO.INTERNATIONAL PLC",
+                capital_attribute="未标注",
+                quarter_key="2025Q4",
+                compare_quarter_key="2025Q3",
+                change_type="新进",
+                stock_code="000002",
+                stock_name="万科A",
+            ),
+        ],
+        settings=_FakeSettings(),
+    )
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "refresh_table_quotes_and_market_caps",
+        lambda self, current_model=None, force_quotes=False, quote_task_id=None: None,
+        raising=False,
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
+    try:
+        tab._set_quarter_filter_state(all_quarters=True, apply=True)
+        tab.cmb_capital_attribute.set_selected_values({"未标注"})
+        tab._save_view_state()
+        assert settings.value(tab._view_state_key("capital_attributes")) == ["未标注"]
+    finally:
+        tab.deleteLater()
+
+    restored = fund_holdings_module.FundHoldingsTab(_DummyProvider())
+    try:
+        assert restored.cmb_capital_attribute.selected_values() == {"未标注"}
+        assert _visible_codes(restored) == ["000002"]
     finally:
         restored.deleteLater()

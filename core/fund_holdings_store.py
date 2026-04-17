@@ -349,6 +349,79 @@ class FundHoldingsStore:
             updated_at,
         )
 
+    @staticmethod
+    def _qfii_raw_json_text(row: dict, holder_name: str) -> str:
+        raw_json = str(row.get("raw_json") or "").strip()
+        payload = {}
+        if raw_json:
+            try:
+                payload = json.loads(raw_json)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                payload = {}
+        elif row:
+            payload = dict(row)
+        if not isinstance(payload, dict):
+            payload = {}
+
+        payload["HOLDER_NAME"] = holder_name
+        payload["holder_name"] = holder_name
+        return json.dumps(payload, ensure_ascii=False, default=str)
+
+    def _qfii_raw_params(self, subject_code: str, row: dict, updated_at: str) -> tuple:
+        holder_name = str(row.get("HOLDER_NAME") or row.get("holder_name") or "").strip()
+        return (
+            subject_code,
+            str(row.get("quarter_key") or "").strip(),
+            str(row.get("end_date") or "").strip(),
+            str(row.get("SECURITY_CODE") or row.get("stock_code") or "").strip(),
+            str(row.get("SECURITY_NAME_ABBR") or row.get("stock_name") or "").strip(),
+            holder_name,
+            int(float(row.get("HOLDER_RANK") or row.get("holder_rank") or 0)),
+            float(row.get("HOLD_NUM") or row.get("hold_num_shares") or 0),
+            float(row.get("HOLDER_MARKET_CAP") or row.get("hold_market_value_cny") or 0),
+            float(row.get("HOLD_RATIO") or row.get("hold_ratio_pct") or 0),
+            float(row.get("FREE_HOLDNUM_RATIO") or row.get("free_hold_ratio_pct") or 0),
+            str(row.get("UPDATE_DATE") or row.get("update_date") or "").strip(),
+            str(row.get("HOLDER_TYPE") or row.get("holder_type") or "").strip(),
+            str(row.get("HOLDER_NEWTYPE") or row.get("holder_newtype") or "").strip(),
+            str(row.get("HOLD_CHANGE") or row.get("HOLD_NUM_CHANGE") or row.get("change_text") or "").strip(),
+            self._qfii_raw_json_text(row, holder_name),
+            updated_at,
+        )
+
+    def _canonicalize_qfii_raw_table_locked(self, cursor, subject: dict, updated_at: str) -> None:
+        raw_rows = [
+            dict(row)
+            for row in cursor.execute(
+                """
+                SELECT
+                    quarter_key, end_date, stock_code, stock_name, holder_name, holder_rank,
+                    hold_num_shares, hold_market_value_cny, hold_ratio_pct, free_hold_ratio_pct,
+                    update_date, holder_type, holder_newtype, change_text, raw_json
+                FROM fh_raw_qfii
+                WHERE subject_code = ?
+                ORDER BY quarter_key ASC, stock_code ASC, holder_rank ASC, holder_name ASC
+                """,
+                (subject["subject_code"],),
+            ).fetchall()
+        ]
+        if not raw_rows:
+            return
+
+        canonical_rows = dedupe_qfii_raw_rows(raw_rows)
+        cursor.execute("DELETE FROM fh_raw_qfii WHERE subject_code = ?", (subject["subject_code"],))
+        cursor.executemany(
+            """
+            INSERT INTO fh_raw_qfii(
+                subject_code, quarter_key, end_date, stock_code, stock_name, holder_name,
+                holder_rank, hold_num_shares, hold_market_value_cny, hold_ratio_pct,
+                free_hold_ratio_pct, update_date, holder_type, holder_newtype,
+                change_text, raw_json, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [self._qfii_raw_params(subject["subject_code"], row, updated_at) for row in canonical_rows],
+        )
+
     def replace_qfii_quarters(
         self,
         subject: dict,
@@ -392,23 +465,9 @@ class FundHoldingsStore:
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         [
-                            (
+                            self._qfii_raw_params(
                                 subject["subject_code"],
-                                norm_quarter,
-                                end_date,
-                                str(row.get("SECURITY_CODE") or "").strip(),
-                                str(row.get("SECURITY_NAME_ABBR") or "").strip(),
-                                str(row.get("HOLDER_NAME") or "").strip(),
-                                int(float(row.get("HOLDER_RANK") or 0)),
-                                float(row.get("HOLD_NUM") or 0),
-                                float(row.get("HOLDER_MARKET_CAP") or 0),
-                                float(row.get("HOLD_RATIO") or 0),
-                                float(row.get("FREE_HOLDNUM_RATIO") or 0),
-                                str(row.get("UPDATE_DATE") or "").strip(),
-                                str(row.get("HOLDER_TYPE") or "").strip(),
-                                str(row.get("HOLDER_NEWTYPE") or "").strip(),
-                                str(row.get("HOLD_CHANGE") or row.get("HOLD_NUM_CHANGE") or "").strip(),
-                                json.dumps(row, ensure_ascii=False, default=str),
+                                {**dict(row), "quarter_key": norm_quarter, "end_date": end_date},
                                 updated_at,
                             )
                             for row in raw_rows
@@ -428,6 +487,7 @@ class FundHoldingsStore:
                         [self._snapshot_params(snapshot, updated_at) for snapshot in snapshots],
                     )
 
+            self._canonicalize_qfii_raw_table_locked(cursor, subject, updated_at)
             self._rebuild_change_cache_locked(cursor, subject, updated_at)
 
         self.record_sync_run(
@@ -622,6 +682,7 @@ class FundHoldingsStore:
                 -float(row.get("sort_value", 0) or 0),
                 str(row.get("stock_code") or ""),
                 str(row.get("subject_name") or ""),
+                str(row.get("capital_attribute") or ""),
             ),
         )
 

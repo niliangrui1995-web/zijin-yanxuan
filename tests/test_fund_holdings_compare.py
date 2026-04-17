@@ -396,3 +396,160 @@ def test_build_qfii_holder_change_rows_merges_holder_names_that_only_differ_by_s
 
     assert len(rows) == 1
     assert rows[0]["subject_name"] == "UBS AG"
+
+
+def test_build_qfii_holder_change_rows_merges_holder_names_that_only_differ_by_spaces_across_quarters():
+    rows = build_qfii_holder_change_rows(
+        [
+            {
+                "subject_code": SUBJECT_QFII["subject_code"],
+                "quarter_key": "2025Q3",
+                "end_date": "2025-09-30",
+                "stock_code": "000001",
+                "stock_name": "平安银行",
+                "holder_name": "UBSAG",
+                "hold_num_shares": 1000,
+                "hold_market_value_cny": 10_000,
+                "hold_ratio_pct": 0.10,
+                "free_hold_ratio_pct": 0.20,
+                "update_date": "2025-09-30",
+            },
+            {
+                "subject_code": SUBJECT_QFII["subject_code"],
+                "quarter_key": "2025Q4",
+                "end_date": "2025-12-31",
+                "stock_code": "000001",
+                "stock_name": "平安银行",
+                "holder_name": "UBS AG",
+                "hold_num_shares": 1500,
+                "hold_market_value_cny": 15_000,
+                "hold_ratio_pct": 0.15,
+                "free_hold_ratio_pct": 0.25,
+                "update_date": "2025-12-31",
+            },
+        ],
+        SUBJECT_QFII,
+    )
+
+    q4_rows = [row for row in rows if row["quarter_key"] == "2025Q4"]
+    q3_rows = [row for row in rows if row["quarter_key"] == "2025Q3"]
+
+    assert len(q4_rows) == 1
+    assert len(q3_rows) == 1
+    assert q4_rows[0]["subject_name"] == "UBS AG"
+    assert q3_rows[0]["subject_name"] == "UBS AG"
+    assert q4_rows[0]["change_type"] == "增持"
+    assert q4_rows[0]["delta_hold_num_shares"] == 500
+
+
+def test_build_qfii_holder_change_rows_merges_holder_names_that_only_differ_by_dots():
+    rows = build_qfii_holder_change_rows(
+        [
+            {
+                "subject_code": SUBJECT_QFII["subject_code"],
+                "quarter_key": "2025Q4",
+                "end_date": "2025-12-31",
+                "stock_code": "000001",
+                "stock_name": "平安银行",
+                "holder_name": "MORGAN STANLEY & CO.INTERNATIONAL PLC",
+                "hold_num_shares": 1000,
+                "hold_market_value_cny": 10_000,
+                "hold_ratio_pct": 0.10,
+                "free_hold_ratio_pct": 0.20,
+                "update_date": "2025-12-31",
+            },
+            {
+                "subject_code": SUBJECT_QFII["subject_code"],
+                "quarter_key": "2025Q4",
+                "end_date": "2025-12-31",
+                "stock_code": "000001",
+                "stock_name": "平安银行",
+                "holder_name": "MORGAN STANLEY & CO.INTERNATIONAL PLC.",
+                "hold_num_shares": 1000,
+                "hold_market_value_cny": 10_000,
+                "hold_ratio_pct": 0.10,
+                "free_hold_ratio_pct": 0.20,
+                "update_date": "2025-12-31",
+            },
+        ],
+        SUBJECT_QFII,
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["subject_name"] == "MORGAN STANLEY & CO.INTERNATIONAL PLC"
+
+
+def test_build_qfii_holder_change_rows_uses_institution_name_and_capital_attribute():
+    rows = build_qfii_holder_change_rows(
+        [
+            {
+                "subject_code": SUBJECT_QFII["subject_code"],
+                "quarter_key": "2025Q4",
+                "end_date": "2025-12-31",
+                "stock_code": "000001",
+                "stock_name": "平安银行",
+                "holder_name": "MORGAN STANLEY&CO.INTERNATIONAL PLC.-自有资金",
+                "hold_num_shares": 1000,
+                "hold_market_value_cny": 10_000,
+                "hold_ratio_pct": 0.10,
+                "free_hold_ratio_pct": 0.20,
+                "update_date": "2025-12-31",
+            },
+            {
+                "subject_code": SUBJECT_QFII["subject_code"],
+                "quarter_key": "2025Q4",
+                "end_date": "2025-12-31",
+                "stock_code": "000001",
+                "stock_name": "平安银行",
+                "holder_name": "MORGAN STANLEY & CO.INTERNATIONAL PLC",
+                "hold_num_shares": 1500,
+                "hold_market_value_cny": 15_000,
+                "hold_ratio_pct": 0.15,
+                "free_hold_ratio_pct": 0.25,
+                "update_date": "2025-12-31",
+            },
+        ],
+        SUBJECT_QFII,
+    )
+
+    assert len(rows) == 2
+    assert {row["subject_name"] for row in rows} == {"MORGAN STANLEY & CO.INTERNATIONAL PLC"}
+    assert {row["capital_attribute"] for row in rows} == {"自有资金", "未标注"}
+
+
+def test_build_qfii_holder_change_rows_merges_same_institution_self_owned_variants():
+    rows = build_qfii_holder_change_rows(
+        [
+            {
+                "subject_code": SUBJECT_QFII["subject_code"],
+                "quarter_key": "2025Q4",
+                "end_date": "2025-12-31",
+                "stock_code": "000001",
+                "stock_name": "平安银行",
+                "holder_name": "J.P.Morgan Securities PLC-自有资金",
+                "hold_num_shares": 1000,
+                "hold_market_value_cny": 10_000,
+                "hold_ratio_pct": 0.10,
+                "free_hold_ratio_pct": 0.20,
+                "update_date": "2025-12-31",
+            },
+            {
+                "subject_code": SUBJECT_QFII["subject_code"],
+                "quarter_key": "2025Q4",
+                "end_date": "2025-12-31",
+                "stock_code": "000001",
+                "stock_name": "平安银行",
+                "holder_name": "J.PMorgan Securities PLC-自有资金",
+                "hold_num_shares": 1000,
+                "hold_market_value_cny": 10_000,
+                "hold_ratio_pct": 0.10,
+                "free_hold_ratio_pct": 0.20,
+                "update_date": "2025-12-31",
+            },
+        ],
+        SUBJECT_QFII,
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["subject_name"] == "J.P.Morgan Securities PLC"
+    assert rows[0]["capital_attribute"] == "自有资金"

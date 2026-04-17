@@ -18,7 +18,13 @@ from PyQt6.QtWidgets import (
 )
 
 from core.event_bus import event_bus
-from core.fund_holdings_compare import SUBJECT_QFII, SUBJECT_RUIYUAN
+from core.fund_holdings_compare import (
+    QFII_CAPITAL_ATTRIBUTE_CLIENT,
+    QFII_CAPITAL_ATTRIBUTE_SELF_OWNED,
+    QFII_CAPITAL_ATTRIBUTE_UNMARKED,
+    SUBJECT_QFII,
+    SUBJECT_RUIYUAN,
+)
 from core.fund_holdings_store import fund_holdings_store
 from core.fund_holdings_sync import fund_holdings_sync_service
 from core.task_manager import task_manager
@@ -38,6 +44,7 @@ class FundHoldingsFilterProxyModel(RtSortFilterProxyModel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._subject_names: set[str] = set()
+        self._capital_attributes: set[str] = set()
         self._quarter_keys: set[str] = set()
         self._change_types: set[str] = set()
         self._latest_only = True
@@ -50,6 +57,14 @@ class FundHoldingsFilterProxyModel(RtSortFilterProxyModel):
             str(subject_name or "").strip()
             for subject_name in (subject_names or [])
             if str(subject_name or "").strip()
+        }
+        self.invalidateFilter()
+
+    def set_capital_attributes(self, capital_attributes):
+        self._capital_attributes = {
+            str(capital_attribute or "").strip()
+            for capital_attribute in (capital_attributes or [])
+            if str(capital_attribute or "").strip()
         }
         self.invalidateFilter()
 
@@ -78,6 +93,9 @@ class FundHoldingsFilterProxyModel(RtSortFilterProxyModel):
         row_data = model.row_data[source_row]
 
         if self._subject_names and str(row_data.get("主体", "")).strip() not in self._subject_names:
+            return False
+
+        if self._capital_attributes and str(row_data.get("资金属性", "")).strip() not in self._capital_attributes:
             return False
 
         if self._change_types and str(row_data.get("变化类型", "")).strip() not in self._change_types:
@@ -114,7 +132,12 @@ class FundHoldingsTab(BaseStockTab):
     _QUARTER_FILTER_ALL = "__ALL__"
     _CHANGE_FILTER_ALL = "__ALL__"
     _CHANGE_TYPE_OPTIONS = ("新进", "增持", "减持", "退出", "持平")
-    _VIEW_STATE_PREFIX = "fund_holdings_view_state_v1"
+    _CAPITAL_ATTRIBUTE_OPTIONS = (
+        QFII_CAPITAL_ATTRIBUTE_SELF_OWNED,
+        QFII_CAPITAL_ATTRIBUTE_CLIENT,
+        QFII_CAPITAL_ATTRIBUTE_UNMARKED,
+    )
+    _VIEW_STATE_PREFIX = "fund_holdings_view_state_v2"
 
     def __init__(self, data_provider, parent=None):
         super().__init__(data_provider=data_provider, parent=parent)
@@ -148,6 +171,9 @@ class FundHoldingsTab(BaseStockTab):
     def _selected_subject_names(self) -> set[str]:
         return self.cmb_subject.selected_values()
 
+    def _selected_capital_attributes(self) -> set[str]:
+        return self.cmb_capital_attribute.selected_values()
+
     def _init_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -158,6 +184,10 @@ class FundHoldingsTab(BaseStockTab):
         self.cmb_subject = MultiSelectFilterButton("全部主体")
         self.cmb_subject.setFixedWidth(190)
         self.cmb_subject.selectionChanged.connect(self._on_subject_selection_changed)
+
+        self.cmb_capital_attribute = MultiSelectFilterButton("全部资金属性")
+        self.cmb_capital_attribute.setFixedWidth(150)
+        self.cmb_capital_attribute.selectionChanged.connect(self._on_capital_attribute_selection_changed)
 
         self.btn_quarter = QToolButton()
         self.btn_quarter.setFixedWidth(150)
@@ -174,13 +204,14 @@ class FundHoldingsTab(BaseStockTab):
         self.btn_change.setMenu(self.menu_change)
         self._build_change_menu()
         self._refresh_subject_button_text()
+        self._refresh_capital_attribute_button_text()
 
         self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("筛选代码、名称、主体或变化...")
+        self.search_box.setPlaceholderText("筛选代码、名称、主体、资金属性或变化...")
         self.search_box.setFixedWidth(220)
         self.search_box.textChanged.connect(self._apply_filters)
 
-        filter_widgets = [self.cmb_subject, self.btn_quarter, self.btn_change, self.search_box]
+        filter_widgets = [self.cmb_subject, self.cmb_capital_attribute, self.btn_quarter, self.btn_change, self.search_box]
 
         self.btn_update = QToolButton()
         self.btn_update.setText("更新数据库")
@@ -194,14 +225,14 @@ class FundHoldingsTab(BaseStockTab):
 
         self.columns = [
             "代码", "名称", "市价", "涨幅%", "市值",
-            "主体", "季度", "对比季度", "变化类型", "占比口径",
+            "主体", "资金属性", "季度", "对比季度", "变化类型", "占比口径",
             "本期占比", "上期占比", "占比变化",
             "本期持股(万股)", "上期持股(万股)", "持股变化(万股)",
             "持有家数",
         ]
         self.table = VCPTableView(default_row_height=30)
         self.model = StockTableModel(self.columns)
-        self.model.set_plain_style_headers(["主体", "季度", "对比季度", "变化类型", "占比口径"])
+        self.model.set_plain_style_headers(["主体", "资金属性", "季度", "对比季度", "变化类型", "占比口径"])
 
         self.proxy_model = FundHoldingsFilterProxyModel(self.table)
         self.proxy_model.setSourceModel(self.model)
@@ -213,11 +244,11 @@ class FundHoldingsTab(BaseStockTab):
 
         header = self.table.horizontalHeader()
         header.setStretchLastSection(True)
-        default_widths = [70, 90, 70, 70, 75, 180, 90, 90, 80, 80, 90, 90, 90, 110, 110, 110, 78]
+        default_widths = [70, 90, 70, 70, 75, 180, 96, 90, 90, 80, 80, 90, 90, 90, 110, 110, 110, 78]
         for index, width in enumerate(default_widths):
             header.setSectionResizeMode(index, QHeaderView.ResizeMode.Interactive)
             self.table.setColumnWidth(index, width)
-        self.bind_header_persistence(self.table, "fund_holdings_header_state_v1")
+        self.bind_header_persistence(self.table, "fund_holdings_header_state_v2")
         header.sortIndicatorChanged.connect(self._on_sort_indicator_changed)
 
         self.table.doubleClicked.connect(self._on_double_click)
@@ -466,8 +497,21 @@ class FundHoldingsTab(BaseStockTab):
         self.cmb_subject.setText(text)
         self.cmb_subject.setToolTip(tooltip)
 
+    def _refresh_capital_attribute_button_text(self):
+        text, tooltip = format_multi_select_summary(
+            "资金属性",
+            self.cmb_capital_attribute.selected_labels(),
+            all_text="全部",
+        )
+        self.cmb_capital_attribute.setText(text)
+        self.cmb_capital_attribute.setToolTip(tooltip)
+
     def _on_subject_selection_changed(self):
         self._refresh_subject_button_text()
+        self._apply_filters()
+
+    def _on_capital_attribute_selection_changed(self):
+        self._refresh_capital_attribute_button_text()
         self._apply_filters()
 
     @staticmethod
@@ -486,6 +530,7 @@ class FundHoldingsTab(BaseStockTab):
             quarter_mode = "latest" if latest_only else ("all" if not selected_quarters else "selected")
             change_types = list(self._selected_change_types())
             subject_names = sorted(self._selected_subject_names())
+            capital_attributes = sorted(self._selected_capital_attributes())
             search_text = self.search_box.text().strip()
         except (AttributeError, RuntimeError, TypeError, ValueError):
             return
@@ -502,6 +547,7 @@ class FundHoldingsTab(BaseStockTab):
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             self._settings.setValue(self._view_state_key("subject_names"), subject_names)
             self._settings.setValue(self._view_state_key("subject_name"), subject_names[0] if len(subject_names) == 1 else "")
+            self._settings.setValue(self._view_state_key("capital_attributes"), capital_attributes)
             self._settings.setValue(self._view_state_key("search_text"), search_text)
             self._settings.setValue(self._view_state_key("quarter_mode"), quarter_mode)
             self._settings.setValue(self._view_state_key("quarter_values"), sorted(selected_quarters, reverse=True))
@@ -521,6 +567,9 @@ class FundHoldingsTab(BaseStockTab):
                 legacy_subject_name = str(self._settings.value(self._view_state_key("subject_name"), "") or "").strip()
                 if legacy_subject_name:
                     subject_names = {legacy_subject_name}
+            capital_attributes = set(
+                self._normalize_settings_values(self._settings.value(self._view_state_key("capital_attributes"), []))
+            )
             search_text = str(self._settings.value(self._view_state_key("search_text"), "") or "")
             quarter_mode = str(self._settings.value(self._view_state_key("quarter_mode"), "latest") or "latest").strip().lower()
             quarter_values = set(self._normalize_settings_values(self._settings.value(self._view_state_key("quarter_values"), [])))
@@ -541,6 +590,8 @@ class FundHoldingsTab(BaseStockTab):
 
             self.cmb_subject.set_selected_values(subject_names, emit=False)
             self._refresh_subject_button_text()
+            self.cmb_capital_attribute.set_selected_values(capital_attributes, emit=False)
+            self._refresh_capital_attribute_button_text()
 
             search_was_blocked = self.search_box.blockSignals(True)
             try:
@@ -653,6 +704,7 @@ class FundHoldingsTab(BaseStockTab):
         quarters = fund_holdings_store.list_quarters()
 
         current_subjects = self._selected_subject_names()
+        current_capital_attributes = self._selected_capital_attributes()
         latest_only, selected_quarters = self._quarter_filter_state()
         all_quarters = bool(
             self._quarter_actions.get(self._QUARTER_FILTER_ALL)
@@ -675,6 +727,26 @@ class FundHoldingsTab(BaseStockTab):
             )
             self._refresh_subject_button_text()
 
+            capital_attributes = [
+                capital_attribute
+                for capital_attribute in self._CAPITAL_ATTRIBUTE_OPTIONS
+                if any(
+                    str(row.get("资金属性") or "").strip() == capital_attribute
+                    for row in (self.model.row_data or [])
+                )
+            ]
+            valid_capital_attributes = set(capital_attributes)
+            self.cmb_capital_attribute.set_options(capital_attributes, preserve_selection=False)
+            self.cmb_capital_attribute.set_selected_values(
+                [
+                    capital_attribute
+                    for capital_attribute in current_capital_attributes
+                    if capital_attribute in valid_capital_attributes
+                ],
+                emit=False,
+            )
+            self._refresh_capital_attribute_button_text()
+
         with suppress(RuntimeError):
             self._build_quarter_menu(quarters)
             self._set_quarter_filter_state(
@@ -686,10 +758,12 @@ class FundHoldingsTab(BaseStockTab):
 
     def _apply_filters(self):
         subject_names = self._selected_subject_names()
+        capital_attributes = self._selected_capital_attributes()
         latest_only, selected_quarters = self._quarter_filter_state()
         change_types = self._selected_change_types()
 
         self.proxy_model.set_subject_names(subject_names)
+        self.proxy_model.set_capital_attributes(capital_attributes)
         self.proxy_model.set_change_types(change_types)
         self.proxy_model.setFilterText(self.search_box.text().strip())
         self.proxy_model.set_latest_only(latest_only)
@@ -706,6 +780,9 @@ class FundHoldingsTab(BaseStockTab):
             subject_code = str(row.get("subject_code") or "").strip()
             quarter_key = str(row.get("quarter_key") or "").strip()
             change_type = str(row.get("change_type") or "").strip()
+            capital_attribute = str(row.get("capital_attribute") or "").strip()
+            if subject_code == self._SUBJECT_CODE_QFII and not capital_attribute:
+                capital_attribute = QFII_CAPITAL_ATTRIBUTE_UNMARKED
             has_curr = change_type != "退出"
             has_prev = change_type != "新进"
 
@@ -721,6 +798,7 @@ class FundHoldingsTab(BaseStockTab):
                     "涨幅%": "--",
                     "市值": "--",
                     "主体": str(row.get("subject_name") or "").strip(),
+                    "资金属性": capital_attribute or "--",
                     "主体代码": subject_code,
                     "季度": quarter_key,
                     "对比季度": str(row.get("compare_quarter_key") or "").strip(),

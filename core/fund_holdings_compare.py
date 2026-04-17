@@ -33,12 +33,19 @@ _QUARTER_KEY_RE = re.compile(r"^\s*(\d{4})\s*[-/]?\s*[Qq季度]?\s*([1-4])\s*$")
 _DATE_KEY_RE = re.compile(r"^\s*(\d{4})[-/](\d{2})[-/](\d{2})\s*$")
 _WHITESPACE_RE = re.compile(r"\s+")
 _CJK_SPACE_RE = re.compile(r"(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])")
+_HOLDER_NAME_MATCH_PUNCT_RE = re.compile(r"[.\u3002]")
 _HOLDER_NAME_FRAGMENT_RE = re.compile(r"[A-Z]+")
+_QFII_QFII_SUFFIX_RE = re.compile(r"(?:[-－]\s*QFII|[（(]\s*QFII\s*[)）])$", re.IGNORECASE)
+_QFII_SELF_OWNED_SUFFIX_RE = re.compile(r"[-－]\s*自有资金(?:[（(][^)）]*[)）])*$")
+_QFII_CLIENT_SUFFIX_RE = re.compile(r"[-－]\s*客户资金(?:[（(][^)）]*[)）])*$")
 _EPSILON = 1e-6
 _HOLDER_NAME_SHORT_TOKENS = {
     "AG", "CO", "PLC", "LTD", "LP", "LLC", "INC", "NV", "NA", "SA", "AB", "AS", "BV",
     "PTE", "QFII",
 }
+QFII_CAPITAL_ATTRIBUTE_SELF_OWNED = "自有资金"
+QFII_CAPITAL_ATTRIBUTE_CLIENT = "客户资金"
+QFII_CAPITAL_ATTRIBUTE_UNMARKED = "未标注"
 
 
 def is_mainland_security_code(value) -> bool:
@@ -76,7 +83,10 @@ def normalize_holder_name(value) -> str:
 
 
 def holder_name_match_key(value) -> str:
-    return _WHITESPACE_RE.sub("", normalize_holder_name(value)).upper()
+    normalized = normalize_holder_name(value)
+    normalized = _WHITESPACE_RE.sub("", normalized)
+    normalized = _HOLDER_NAME_MATCH_PUNCT_RE.sub("", normalized)
+    return normalized.upper()
 
 
 def _holder_name_display_score(value) -> int:
@@ -102,8 +112,12 @@ def _holder_name_display_score(value) -> int:
                 short_penalty += 2
 
     score += min(max(len(tokens) - 1, 0), 4) * 2
+    score += min(text.count(" "), 4)
+    score += min(text.rstrip(".。").count("."), 4) * 2
     score -= max(0, len(tokens) - 5) * 3
     score -= short_penalty
+    if text.endswith((".", "。")):
+        score -= 2
     return score
 
 
@@ -114,6 +128,77 @@ def _normalize_qfii_raw_holder_name(raw: dict) -> dict:
         row["HOLDER_NAME"] = holder_name
         row["holder_name"] = holder_name
     return row
+
+
+def split_qfii_holder_identity(value) -> dict[str, str]:
+    holder_name = normalize_holder_name(value)
+    if not holder_name:
+        return {
+            "holder_name": "",
+            "institution_name": "",
+            "institution_match_key": "",
+            "capital_attribute": QFII_CAPITAL_ATTRIBUTE_UNMARKED,
+        }
+
+    capital_attribute = QFII_CAPITAL_ATTRIBUTE_UNMARKED
+    institution_name = holder_name
+
+    if _QFII_SELF_OWNED_SUFFIX_RE.search(institution_name):
+        capital_attribute = QFII_CAPITAL_ATTRIBUTE_SELF_OWNED
+        institution_name = _QFII_SELF_OWNED_SUFFIX_RE.sub("", institution_name).strip()
+    elif _QFII_CLIENT_SUFFIX_RE.search(institution_name):
+        capital_attribute = QFII_CAPITAL_ATTRIBUTE_CLIENT
+        institution_name = _QFII_CLIENT_SUFFIX_RE.sub("", institution_name).strip()
+
+    had_qfii_suffix = bool(_QFII_QFII_SUFFIX_RE.search(institution_name))
+    institution_name = _QFII_QFII_SUFFIX_RE.sub("", institution_name).strip()
+    if had_qfii_suffix and "-" in institution_name:
+        institution_name = institution_name.split("-", 1)[0].strip()
+
+    institution_name = normalize_holder_name(institution_name).rstrip("-－ .。").strip()
+    institution_match_key = holder_name_match_key(institution_name)
+    if not institution_name:
+        institution_name = holder_name
+        institution_match_key = holder_name_match_key(institution_name)
+
+    return {
+        "holder_name": holder_name,
+        "institution_name": institution_name,
+        "institution_match_key": institution_match_key,
+        "capital_attribute": capital_attribute,
+    }
+
+
+def canonicalize_qfii_holder_names(raw_rows: list[dict]) -> list[dict]:
+    prepared_rows = [_normalize_qfii_raw_holder_name(raw) for raw in (raw_rows or [])]
+    best_name_by_match_key: dict[str, str] = {}
+
+    for row in prepared_rows:
+        holder_name = str(row.get("holder_name") or row.get("HOLDER_NAME") or "").strip()
+        if not holder_name:
+            continue
+        match_key = holder_name_match_key(holder_name)
+        if not match_key:
+            continue
+
+        existing = best_name_by_match_key.get(match_key, "")
+        candidate_rank = (_holder_name_display_score(holder_name), len(holder_name), holder_name)
+        existing_rank = (_holder_name_display_score(existing), len(existing), existing)
+        if candidate_rank > existing_rank:
+            best_name_by_match_key[match_key] = holder_name
+
+    normalized_rows: list[dict] = []
+    for row in prepared_rows:
+        holder_name = str(row.get("holder_name") or row.get("HOLDER_NAME") or "").strip()
+        match_key = holder_name_match_key(holder_name)
+        canonical_name = best_name_by_match_key.get(match_key) or holder_name
+        normalized = dict(row)
+        normalized["holder_match_key"] = match_key
+        normalized["HOLDER_NAME"] = canonical_name
+        normalized["holder_name"] = canonical_name
+        normalized_rows.append(normalized)
+
+    return normalized_rows
 
 
 def _qfii_row_market(raw: dict) -> str:
@@ -174,8 +259,7 @@ def _qfii_row_signature(raw: dict) -> tuple[object, ...]:
 
 def dedupe_qfii_raw_rows(raw_rows: list[dict]) -> list[dict]:
     deduped: dict[tuple[object, ...], dict] = {}
-    for raw in raw_rows or []:
-        row = _normalize_qfii_raw_holder_name(raw)
+    for row in canonicalize_qfii_holder_names(raw_rows):
         signature = _qfii_row_signature(row)
         existing = deduped.get(signature)
         if existing is None or _qfii_row_preference(row) > _qfii_row_preference(existing):
@@ -399,6 +483,7 @@ def _build_change_rows_from_snapshot_map(subject: dict, snapshot_map: dict[str, 
                     "subject_code": str(base_row.get("subject_code") or subject["subject_code"]).strip(),
                     "subject_name": str(base_row.get("subject_name") or subject["subject_name"]).strip(),
                     "subject_type": str(base_row.get("subject_type") or subject["subject_type"]).strip(),
+                    "capital_attribute": str(base_row.get("capital_attribute") or "").strip(),
                     "quarter_key": quarter_key,
                     "compare_quarter_key": compare_quarter_key,
                     "end_date": str(base_row.get("end_date") or quarter_end_date_text(quarter_key)),
@@ -440,6 +525,7 @@ def _build_change_rows_from_snapshot_map(subject: dict, snapshot_map: dict[str, 
             -coerce_float(item.get("sort_value")),
             item.get("stock_code", ""),
             item.get("subject_name", ""),
+            item.get("capital_attribute", ""),
         ),
     )
 
@@ -458,21 +544,41 @@ def build_change_rows(subject: dict, snapshots: list[dict]) -> list[dict]:
 
 def build_qfii_holder_change_rows(raw_rows: list[dict], subject: dict) -> list[dict]:
     snapshot_map: dict[str, dict[tuple[str, str], dict]] = {}
-    for raw in dedupe_qfii_raw_rows(raw_rows):
+    prepared_rows = dedupe_qfii_raw_rows(raw_rows)
+    best_institution_name_by_match_key: dict[str, str] = {}
+
+    for raw in prepared_rows:
+        holder_identity = split_qfii_holder_identity(raw.get("holder_name"))
+        institution_name = holder_identity["institution_name"]
+        institution_match_key = holder_identity["institution_match_key"]
+        if not institution_name or not institution_match_key:
+            continue
+        existing = best_institution_name_by_match_key.get(institution_match_key, "")
+        candidate_rank = (_holder_name_display_score(institution_name), len(institution_name), institution_name)
+        existing_rank = (_holder_name_display_score(existing), len(existing), existing)
+        if candidate_rank > existing_rank:
+            best_institution_name_by_match_key[institution_match_key] = institution_name
+
+    for raw in prepared_rows:
         quarter_key = normalize_quarter_key(raw.get("quarter_key"))
         stock_code = str(raw.get("stock_code") or "").strip()
-        holder_name = normalize_holder_name(raw.get("holder_name"))
-        if not is_mainland_security_code(stock_code) or not holder_name:
+        holder_identity = split_qfii_holder_identity(raw.get("holder_name"))
+        holder_name = holder_identity["holder_name"]
+        institution_match_key = holder_identity["institution_match_key"]
+        institution_name = best_institution_name_by_match_key.get(institution_match_key) or holder_identity["institution_name"]
+        capital_attribute = holder_identity["capital_attribute"]
+        if not is_mainland_security_code(stock_code) or not holder_name or not institution_match_key:
             continue
 
         grouped_rows = snapshot_map.setdefault(quarter_key, {})
-        row_key = (stock_code, holder_name)
+        row_key = (stock_code, institution_match_key, capital_attribute)
         bucket = grouped_rows.setdefault(
             row_key,
             {
                 "subject_code": subject["subject_code"],
-                "subject_name": holder_name,
+                "subject_name": institution_name,
                 "subject_type": subject["subject_type"],
+                "capital_attribute": capital_attribute,
                 "quarter_key": quarter_key,
                 "quarter_label": quarter_key,
                 "compare_quarter_key": get_compare_quarter_key(subject["subject_type"], quarter_key),
@@ -489,6 +595,12 @@ def build_qfii_holder_change_rows(raw_rows: list[dict], subject: dict) -> list[d
                 "raw_source": "eastmoney_qfii_holder",
             },
         )
+        if (_holder_name_display_score(institution_name), len(institution_name), institution_name) > (
+            _holder_name_display_score(str(bucket.get("subject_name") or "")),
+            len(str(bucket.get("subject_name") or "")),
+            str(bucket.get("subject_name") or ""),
+        ):
+            bucket["subject_name"] = institution_name
         bucket["stock_name"] = bucket["stock_name"] or str(raw.get("stock_name") or "").strip()
         bucket["hold_num_shares"] += coerce_float(raw.get("hold_num_shares"))
         bucket["hold_market_value_cny"] += coerce_float(raw.get("hold_market_value_cny"))

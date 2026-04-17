@@ -657,3 +657,231 @@ def test_fund_holdings_store_qfii_holder_names_merge_when_only_spaces_differ():
     finally:
         store.close()
         os.remove(db_path)
+
+
+def test_fund_holdings_store_qfii_holder_names_merge_when_only_spaces_differ_across_quarters():
+    store, db_path = _make_store()
+    repo = FundHoldingsStore(store=store)
+    try:
+        q3_rows = [
+            {
+                "SECURITY_CODE": "000001",
+                "SECURITY_NAME_ABBR": "平安银行",
+                "HOLDER_NAME": "UBSAG",
+                "HOLDER_RANK": 1,
+                "HOLD_NUM": 1000,
+                "HOLDER_MARKET_CAP": 10000,
+                "FREE_HOLDNUM_RATIO": 0.5,
+                "HOLD_RATIO": 0.10,
+                "UPDATE_DATE": "2026-04-18 00:00:00",
+                "HOLDER_TYPE": "QFII",
+                "HOLDER_NEWTYPE": "QFII",
+                "HOLD_CHANGE": "新进",
+            },
+        ]
+        q4_rows = [
+            {
+                "SECURITY_CODE": "000001",
+                "SECURITY_NAME_ABBR": "平安银行",
+                "HOLDER_NAME": "UBS AG",
+                "HOLDER_RANK": 1,
+                "HOLD_NUM": 1500,
+                "HOLDER_MARKET_CAP": 15000,
+                "FREE_HOLDNUM_RATIO": 0.8,
+                "HOLD_RATIO": 0.15,
+                "UPDATE_DATE": "2026-04-18 00:00:00",
+                "HOLDER_TYPE": "QFII",
+                "HOLDER_NEWTYPE": "QFII",
+                "HOLD_CHANGE": "增持",
+            },
+        ]
+        payloads = {
+            "2025Q3": {
+                "quarter_key": "2025Q3",
+                "end_date": "2025-09-30",
+                "raw_rows": q3_rows,
+                "snapshots": build_qfii_snapshots(q3_rows, SUBJECT_QFII, "2025Q3", "2025-09-30"),
+            },
+            "2025Q4": {
+                "quarter_key": "2025Q4",
+                "end_date": "2025-12-31",
+                "raw_rows": q4_rows,
+                "snapshots": build_qfii_snapshots(q4_rows, SUBJECT_QFII, "2025Q4", "2025-12-31"),
+            },
+        }
+
+        repo.replace_qfii_quarters(
+            SUBJECT_QFII,
+            payloads,
+            sync_scope="specific",
+            requested_quarter_key="2025Q4",
+            resolved_quarter_key="2025Q4",
+            message="QFII 指定季度 2025Q4 已同步",
+        )
+
+        qfii_rows = [
+            row for row in repo.query_change_rows()
+            if row["stock_code"] == "000001" and row["subject_name"] == "UBS AG"
+        ]
+        assert len(qfii_rows) == 2
+
+        q4_row = next(row for row in qfii_rows if row["quarter_key"] == "2025Q4")
+        q3_row = next(row for row in qfii_rows if row["quarter_key"] == "2025Q3")
+        assert q4_row["change_type"] == "增持"
+        assert q4_row["delta_hold_num_shares"] == 500
+        assert q3_row["change_type"] == "新进"
+
+        raw_rows = store.fetch_all(
+            """
+            SELECT quarter_key, holder_name
+            FROM fh_raw_qfii
+            WHERE subject_code = ? AND stock_code = ?
+            ORDER BY quarter_key ASC
+            """,
+            (SUBJECT_QFII["subject_code"], "000001"),
+        )
+        assert [(row["quarter_key"], row["holder_name"]) for row in raw_rows] == [
+            ("2025Q3", "UBS AG"),
+            ("2025Q4", "UBS AG"),
+        ]
+    finally:
+        store.close()
+        os.remove(db_path)
+
+
+def test_fund_holdings_store_qfii_holder_names_merge_when_only_dots_differ():
+    store, db_path = _make_store()
+    repo = FundHoldingsStore(store=store)
+    try:
+        q4_rows = [
+            {
+                "SECURITY_CODE": "000001",
+                "SECURITY_NAME_ABBR": "平安银行",
+                "HOLDER_NAME": "MORGAN STANLEY & CO.INTERNATIONAL PLC",
+                "HOLDER_RANK": 1,
+                "HOLD_NUM": 1000,
+                "HOLDER_MARKET_CAP": 10000,
+                "FREE_HOLDNUM_RATIO": 0.5,
+                "HOLD_RATIO": 0.10,
+                "UPDATE_DATE": "2026-04-18 00:00:00",
+                "HOLDER_TYPE": "QFII",
+                "HOLDER_NEWTYPE": "QFII",
+                "HOLD_CHANGE": "新进",
+            },
+            {
+                "SECURITY_CODE": "000001",
+                "SECURITY_NAME_ABBR": "平安银行",
+                "HOLDER_NAME": "MORGAN STANLEY & CO.INTERNATIONAL PLC.",
+                "HOLDER_RANK": 1,
+                "HOLD_NUM": 1000,
+                "HOLDER_MARKET_CAP": 10000,
+                "FREE_HOLDNUM_RATIO": 0.5,
+                "HOLD_RATIO": 0.10,
+                "UPDATE_DATE": "2026-04-18 00:00:00",
+                "HOLDER_TYPE": "QFII",
+                "HOLDER_NEWTYPE": "QFII",
+                "HOLD_CHANGE": "新进",
+            },
+        ]
+        payloads = {
+            "2025Q4": {
+                "quarter_key": "2025Q4",
+                "end_date": "2025-12-31",
+                "raw_rows": q4_rows,
+                "snapshots": build_qfii_snapshots(q4_rows, SUBJECT_QFII, "2025Q4", "2025-12-31"),
+            },
+        }
+
+        repo.replace_qfii_quarters(
+            SUBJECT_QFII,
+            payloads,
+            sync_scope="specific",
+            requested_quarter_key="2025Q4",
+            resolved_quarter_key="2025Q4",
+            message="QFII 指定季度 2025Q4 已同步",
+        )
+
+        qfii_rows = [
+            row for row in repo.query_change_rows()
+            if row["quarter_key"] == "2025Q4" and row["stock_code"] == "000001"
+        ]
+        assert len(qfii_rows) == 1
+        assert qfii_rows[0]["subject_name"] == "MORGAN STANLEY & CO.INTERNATIONAL PLC"
+
+        raw_rows = store.fetch_all(
+            """
+            SELECT holder_name
+            FROM fh_raw_qfii
+            WHERE subject_code = ? AND quarter_key = ?
+            ORDER BY holder_name ASC
+            """,
+            (SUBJECT_QFII["subject_code"], "2025Q4"),
+        )
+        assert [row["holder_name"] for row in raw_rows] == ["MORGAN STANLEY & CO.INTERNATIONAL PLC"]
+    finally:
+        store.close()
+        os.remove(db_path)
+
+
+def test_fund_holdings_store_qfii_groups_rows_by_institution_and_capital_attribute():
+    store, db_path = _make_store()
+    repo = FundHoldingsStore(store=store)
+    try:
+        q4_rows = [
+            {
+                "SECURITY_CODE": "000001",
+                "SECURITY_NAME_ABBR": "平安银行",
+                "HOLDER_NAME": "MORGAN STANLEY&CO.INTERNATIONAL PLC.-自有资金",
+                "HOLDER_RANK": 1,
+                "HOLD_NUM": 1000,
+                "HOLDER_MARKET_CAP": 10000,
+                "FREE_HOLDNUM_RATIO": 0.5,
+                "HOLD_RATIO": 0.10,
+                "UPDATE_DATE": "2026-04-18 00:00:00",
+                "HOLDER_TYPE": "QFII",
+                "HOLDER_NEWTYPE": "QFII",
+                "HOLD_CHANGE": "新进",
+            },
+            {
+                "SECURITY_CODE": "000001",
+                "SECURITY_NAME_ABBR": "平安银行",
+                "HOLDER_NAME": "MORGAN STANLEY & CO.INTERNATIONAL PLC",
+                "HOLDER_RANK": 2,
+                "HOLD_NUM": 1500,
+                "HOLDER_MARKET_CAP": 15000,
+                "FREE_HOLDNUM_RATIO": 0.8,
+                "HOLD_RATIO": 0.15,
+                "UPDATE_DATE": "2026-04-18 00:00:00",
+                "HOLDER_TYPE": "QFII",
+                "HOLDER_NEWTYPE": "QFII",
+                "HOLD_CHANGE": "新进",
+            },
+        ]
+        payloads = {
+            "2025Q4": {
+                "quarter_key": "2025Q4",
+                "end_date": "2025-12-31",
+                "raw_rows": q4_rows,
+                "snapshots": build_qfii_snapshots(q4_rows, SUBJECT_QFII, "2025Q4", "2025-12-31"),
+            },
+        }
+
+        repo.replace_qfii_quarters(
+            SUBJECT_QFII,
+            payloads,
+            sync_scope="specific",
+            requested_quarter_key="2025Q4",
+            resolved_quarter_key="2025Q4",
+            message="QFII 指定季度 2025Q4 已同步",
+        )
+
+        qfii_rows = [
+            row for row in repo.query_change_rows()
+            if row["quarter_key"] == "2025Q4" and row["stock_code"] == "000001"
+        ]
+        assert len(qfii_rows) == 2
+        assert {row["subject_name"] for row in qfii_rows} == {"MORGAN STANLEY & CO.INTERNATIONAL PLC"}
+        assert {row["capital_attribute"] for row in qfii_rows} == {"自有资金", "未标注"}
+    finally:
+        store.close()
+        os.remove(db_path)
