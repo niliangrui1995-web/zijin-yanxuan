@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import threading
 import weakref
 
 from PyQt6.QtCore import QCoreApplication, QTimer
@@ -19,6 +21,11 @@ from core.quote_snapshot import (
     enrich_quotes_with_finance,
     is_a_share_code,
 )
+
+_FINANCE_CACHE_LOCK = threading.RLock()
+_FINANCE_CACHE_PATH: str | None = None
+_FINANCE_CACHE_SIGNATURE: tuple[int, int] | None = None
+_FINANCE_CACHE_PAYLOAD: dict | None = None
 
 
 def collect_table_codes(owner, current_model=None) -> list[str]:
@@ -105,10 +112,9 @@ def load_cached_finance_snapshot(codes) -> dict[str, dict]:
         return {}
 
     try:
-        from core.json_cache import load_json_file
         from vcp.constants import FINANCE_CACHE_FILE
 
-        cache_payload = load_json_file(FINANCE_CACHE_FILE) or {}
+        cache_payload = _load_shared_finance_cache_payload(FINANCE_CACHE_FILE)
     except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
         return {}
 
@@ -121,6 +127,41 @@ def load_cached_finance_snapshot(codes) -> dict[str, dict]:
         info.setdefault("source", "finance_cache")
         finance_snapshot[code] = info
     return finance_snapshot
+
+
+def _get_finance_cache_signature(path: str) -> tuple[int, int] | None:
+    try:
+        stat_result = os.stat(path)
+    except (FileNotFoundError, OSError, TypeError, ValueError):
+        return None
+    return (int(stat_result.st_mtime_ns), int(stat_result.st_size))
+
+
+def _load_shared_finance_cache_payload(path: str) -> dict:
+    global _FINANCE_CACHE_PATH, _FINANCE_CACHE_SIGNATURE, _FINANCE_CACHE_PAYLOAD
+
+    signature = _get_finance_cache_signature(path)
+    with _FINANCE_CACHE_LOCK:
+        if (
+            _FINANCE_CACHE_PATH == path
+            and _FINANCE_CACHE_SIGNATURE == signature
+            and _FINANCE_CACHE_PAYLOAD is not None
+        ):
+            return _FINANCE_CACHE_PAYLOAD
+
+        if signature is None:
+            _FINANCE_CACHE_PATH = path
+            _FINANCE_CACHE_SIGNATURE = None
+            _FINANCE_CACHE_PAYLOAD = {}
+            return _FINANCE_CACHE_PAYLOAD
+
+        from core.json_cache import load_json_file
+
+        payload = load_json_file(path) or {}
+        _FINANCE_CACHE_PATH = path
+        _FINANCE_CACHE_SIGNATURE = signature
+        _FINANCE_CACHE_PAYLOAD = dict(payload)
+        return _FINANCE_CACHE_PAYLOAD
 
 
 def _resolve_cached_finance_loader(owner):

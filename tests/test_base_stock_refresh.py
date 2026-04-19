@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 
+from core.json_cache import save_json_file
 from ui.tabs.base_stock_refresh import MarketCapRefreshBatcher
 
 
@@ -73,3 +74,63 @@ def test_market_cap_batcher_merges_overlapping_tab_requests(monkeypatch):
     assert owner_b.after_cap_calls == 1
     assert set(owner_a.snapshots[0].keys()) == {"600519", "000001"}
     assert set(owner_b.snapshots[0].keys()) == {"600519", "300750"}
+
+
+def test_load_cached_finance_snapshot_reuses_shared_file_cache(monkeypatch, tmp_path):
+    import core.json_cache as json_cache
+    from ui.tabs import base_stock_refresh as refresh_module
+    from vcp import constants as vcp_constants
+
+    cache_file = tmp_path / "finance.json"
+    save_json_file(
+        str(cache_file),
+        {
+            "000001": {
+                "info": {"zongguben": 1000000000},
+            }
+        },
+    )
+
+    load_calls = []
+    original_load_json_file = json_cache.load_json_file
+
+    def _counting_load(path):
+        load_calls.append(path)
+        return original_load_json_file(path)
+
+    monkeypatch.setattr(vcp_constants, "FINANCE_CACHE_FILE", str(cache_file))
+    monkeypatch.setattr(json_cache, "load_json_file", _counting_load)
+
+    refresh_module._FINANCE_CACHE_PATH = None
+    refresh_module._FINANCE_CACHE_SIGNATURE = None
+    refresh_module._FINANCE_CACHE_PAYLOAD = None
+
+    first = refresh_module.load_cached_finance_snapshot(["000001"])
+    second = refresh_module.load_cached_finance_snapshot(["000001"])
+
+    assert first == {"000001": {"zongguben": 1000000000, "source": "finance_cache"}}
+    assert second == first
+    assert load_calls == [str(cache_file)]
+
+    save_json_file(
+        str(cache_file),
+        {
+            "000001": {
+                "info": {
+                    "zongguben": 2000000000,
+                    "market_cap": 21000000000,
+                }
+            }
+        },
+    )
+
+    third = refresh_module.load_cached_finance_snapshot(["000001"])
+
+    assert third == {
+        "000001": {
+            "zongguben": 2000000000,
+            "market_cap": 21000000000,
+            "source": "finance_cache",
+        }
+    }
+    assert load_calls == [str(cache_file), str(cache_file)]
