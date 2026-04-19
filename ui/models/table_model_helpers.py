@@ -159,6 +159,8 @@ def _is_date_like_header(header: str) -> bool:
 def _is_numeric_header(header: str) -> bool:
     if header == SERIAL_HEADER or _is_status_header(header):
         return False
+    if header in {"PE"}:
+        return True
     keywords = (
         "%",
         "价",

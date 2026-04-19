@@ -3,6 +3,7 @@ from PyQt6.QtWidgets import QFrame, QMainWindow, QTabWidget, QVBoxLayout, QWidge
 
 from ui.components.main_window_shell import (
     MainWindowStatusBar,
+    ShellNavigationWidget,
     apply_chrome_theme,
     inject_standalone_tabbar,
     setup_custom_titlebar,
@@ -103,3 +104,42 @@ def test_main_window_shell_builders_wire_titlebar_menu_and_tabs():
         assert window._btn_close.text() == "✕"
     finally:
         window.deleteLater()
+
+
+class DummyGroupedWorkspace:
+    @staticmethod
+    def tab_indices_by_group():
+        return {
+            "主工作台": [0, 1],
+            "情报源": [2, 3],
+        }
+
+
+def test_shell_navigation_widget_restores_last_subtab_per_group():
+    tabs = QTabWidget()
+    nav = ShellNavigationWidget()
+    try:
+        tabs.addTab(QWidget(), "扫描")
+        tabs.addTab(QWidget(), "观察")
+        tabs.addTab(QWidget(), "北美")
+        tabs.addTab(QWidget(), "亚洲")
+
+        nav.bind_workspace(DummyGroupedWorkspace(), tabs)
+
+        tabs.setCurrentIndex(1)
+        assert tabs.currentIndex() == 1
+
+        nav._switch_group("情报源")
+        assert tabs.currentIndex() == 2
+
+        tabs.setCurrentIndex(3)
+        assert tabs.currentIndex() == 3
+
+        nav._switch_group("主工作台")
+        assert tabs.currentIndex() == 1
+
+        nav._switch_group("情报源")
+        assert tabs.currentIndex() == 3
+    finally:
+        nav.deleteLater()
+        tabs.deleteLater()

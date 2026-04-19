@@ -340,6 +340,7 @@ class ShellNavigationWidget(QWidget):
         self._workspace = None
         self._syncing = False
         self._group_to_indices: dict[str, list[int]] = {}
+        self._last_index_by_group: dict[str, int] = {}
         self._visible_indices: list[int] = []
         self._group_buttons: dict[str, QPushButton] = {}
 
@@ -383,6 +384,12 @@ class ShellNavigationWidget(QWidget):
         elif tabs is not None:
             self._group_to_indices = {"全部": list(range(tabs.count()))}
 
+        self._last_index_by_group = {
+            group: index
+            for group, index in self._last_index_by_group.items()
+            if group in self._group_to_indices
+        }
+
         self._rebuild_group_buttons()
 
         if self._tabs is not None:
@@ -422,11 +429,13 @@ class ShellNavigationWidget(QWidget):
             return
 
         current_index = self._tabs.currentIndex()
-        target_index = preferred_index if preferred_index in indices else current_index
+        remembered_index = self._last_index_by_group.get(group)
+        target_index = preferred_index if preferred_index in indices else remembered_index
         if target_index not in indices:
-            target_index = indices[0]
+            target_index = current_index if current_index in indices else indices[0]
 
         self._visible_indices = indices
+        self._remember_group_index(group, target_index)
 
         self._syncing = True
         try:
@@ -453,10 +462,18 @@ class ShellNavigationWidget(QWidget):
         groups = list(self._group_to_indices.keys())
         return groups[0] if groups else ""
 
+    def _remember_group_index(self, group: str, tab_index: int) -> None:
+        if not group:
+            return
+        if tab_index not in self._group_to_indices.get(group, []):
+            return
+        self._last_index_by_group[group] = tab_index
+
     def sync_from_current_tab(self, tab_index: int) -> None:
         group = self._find_group_for_index(tab_index)
         if not group:
             return
+        self._remember_group_index(group, tab_index)
         self._switch_group(group, preferred_index=tab_index)
 
     def _on_tabbar_changed(self, visible_index: int) -> None:

@@ -23,6 +23,7 @@ JSON_CACHE = os.path.join(CACHE_DIR, "asian_klines_latest.json")
 RT_JSON_CACHE = os.path.join(CACHE_DIR, "asian_rt_latest.json")
 GLOBAL_ASIAN_RT_CACHE: dict[str, dict] = {}
 _ASIAN_MARKET_CODES = ("TW", "HK", "T", "KS")
+_PE_REFRESH_INTERVAL_SEC = 12 * 60 * 60
 
 _USE_CF_PROXY = True
 
@@ -98,7 +99,7 @@ class AsianMarketWorker(QThread):
             time.sleep(0.1)
         return self._is_running
 
-    def _fetch_single_code(self, code: str, yf_session):
+    def _fetch_single_code(self, code: str, yf_session, info_session):
         ticker = yf.Ticker(code, session=yf_session)
         fast_info = ticker.fast_info
         df = ticker.history(period="2mo", interval="1d", timeout=15)
@@ -134,6 +135,36 @@ class AsianMarketWorker(QThread):
         except (AttributeError, IndexError, TypeError, ValueError):
             quote_date = None
 
+        cached_payload = GLOBAL_ASIAN_RT_CACHE.get(code, {}) or {}
+        pe_value = cached_payload.get("pe")
+        pe_source = cached_payload.get("pe_source", "")
+        pe_updated_at = float(cached_payload.get("pe_updated_at", 0.0) or 0.0)
+        if (time.time() - pe_updated_at) >= _PE_REFRESH_INTERVAL_SEC:
+            try:
+                info_ticker = ticker if info_session is yf_session else yf.Ticker(code, session=info_session)
+                info = info_ticker.info
+                trailing_pe = self._normalize_pe(info.get("trailingPE"))
+                forward_pe = self._normalize_pe(info.get("forwardPE"))
+                if trailing_pe is not None:
+                    pe_value = trailing_pe
+                    pe_source = "trailing"
+                elif forward_pe is not None:
+                    pe_value = forward_pe
+                    pe_source = "forward"
+                else:
+                    pe_value = None
+                    pe_source = ""
+                pe_updated_at = time.time()
+            except (
+                AttributeError,
+                KeyError,
+                OSError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+            ) as exc:
+                log.debug(f"[AsianTab] PE 拉取失败 {code}: {exc}")
+
         payload = {
             "date": quote_date,
             "close": close_price,
@@ -145,21 +176,33 @@ class AsianMarketWorker(QThread):
             "pct_10": _past_pct(10),
             "pct_20": _past_pct(20),
             "currency": fast_info.get("currency", "USD"),
+            "pe": pe_value,
+            "pe_source": pe_source,
+            "pe_updated_at": pe_updated_at,
             "df_today": df,
         }
         GLOBAL_ASIAN_RT_CACHE[code] = payload
         return code, payload
 
+    @staticmethod
+    def _normalize_pe(value):
+        try:
+            pe_value = float(value)
+        except (TypeError, ValueError):
+            return None
+        return pe_value if pe_value > 0 else None
+
     def _fetch_updates(self) -> dict:
         updates = {}
         yf_session = build_yf_session(is_cf_proxy_enabled())
+        info_session = build_yf_session(False) if is_cf_proxy_enabled() else yf_session
         codes = [str(code).strip() for code in self.codes if str(code).strip()]
         if not codes:
             return updates
 
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
         futures = {
-            executor.submit(self._fetch_single_code, code, yf_session): code
+            executor.submit(self._fetch_single_code, code, yf_session, info_session): code
             for code in codes
         }
         try:

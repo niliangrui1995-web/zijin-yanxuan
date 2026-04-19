@@ -413,7 +413,7 @@ class AsianMarketTab(BaseStockTab):
         self.table_state = TableStateWrapper(self.asian_table, empty_title="暂无亚洲数据", loading_title="加载中...")
         layout.addWidget(self.table_state)
 
-        self.header_labels = ["代码", "名称", "现价", "涨幅%", "市场", "状态", "赛道", "角色定位", "货币", "5日涨跌%", "10日涨跌%", "20日涨跌%"]
+        self.header_labels = ["代码", "名称", "现价", "涨幅%", "PE", "市场", "状态", "赛道", "角色定位", "货币", "5日涨跌%", "10日涨跌%", "20日涨跌%"]
 
         self.model = StockTableModel(self.header_labels)
         self.model.set_plain_style_headers(["状态"])
@@ -441,13 +441,13 @@ class AsianMarketTab(BaseStockTab):
         self._fit_columns_timer.setInterval(0)
         self._fit_columns_timer.timeout.connect(self._fit_asian_columns_to_viewport)
 
-        default_widths = [52, 70, 140, 90, 90, 80, 80, 120, 250, 60, 80, 80, 80]
+        default_widths = [52, 70, 140, 90, 80, 90, 80, 80, 120, 250, 60, 80, 80, 80]
         for i, w in enumerate(default_widths):
             header_view.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
             self.asian_table.setColumnWidth(i, w)
 
         # 绑定防抖自动保存与恢复配置
-        self.bind_header_persistence(self.asian_table, "header_state_asian_v3")
+        self.bind_header_persistence(self.asian_table, "header_state_asian_v4")
         self._schedule_fit_columns()
 
     def _show_context_menu(self, pos):
@@ -517,6 +517,9 @@ class AsianMarketTab(BaseStockTab):
                     "date": v.get("date", ""),
                     "close": v.get("close", 0.0),
                     "pct": v.get("pct", 0.0),
+                    "pe": v.get("pe"),
+                    "pe_source": v.get("pe_source", ""),
+                    "pe_updated_at": v.get("pe_updated_at", 0.0),
                     "pct_5": v.get("pct_5", 0.0),
                     "pct_10": v.get("pct_10", 0.0),
                     "pct_20": v.get("pct_20", 0.0),
@@ -579,6 +582,9 @@ class AsianMarketTab(BaseStockTab):
                                 "date": data_points[-1].get("date") if data_points else None,
                                 "close": close_val,
                                 "pct": pct_val,
+                                "pe": None,
+                                "pe_source": "",
+                                "pe_updated_at": 0.0,
                                 "pct_5": pct_5,
                                 "pct_10": pct_10,
                                 "pct_20": pct_20,
@@ -598,6 +604,7 @@ class AsianMarketTab(BaseStockTab):
                                 "名称": display_name,
                                 "现价": fmt_close,
                                 "涨幅%": pct_val,
+                                "PE": "--",
                                 "市场": market_display,
                                 "状态": real_status,
                                 "赛道": item.get("track", ""),
@@ -638,6 +645,7 @@ class AsianMarketTab(BaseStockTab):
                                     "名称": f"{en_name}  ({ch_names_map.get(ticker, '未录入')})" if ch_names_map.get(ticker) else en_name,
                                     "现价": "--",
                                     "涨幅%": 0.0,
+                                    "PE": "--",
                                     "市场": format_market_display(market_code, ticker),
                                     "状态": get_market_status(market_code),
                                     "赛道": _find_track(ticker),
@@ -654,6 +662,9 @@ class AsianMarketTab(BaseStockTab):
                                     "date": None,
                                     "close": 0.0,
                                     "pct": 0.0,
+                                    "pe": None,
+                                    "pe_source": "",
+                                    "pe_updated_at": 0.0,
                                     "pct_5": 0.0,
                                     "pct_10": 0.0,
                                     "pct_20": 0.0,
@@ -682,6 +693,7 @@ class AsianMarketTab(BaseStockTab):
                         close_number = float(info.get("close", 0.0))
                         row_dict["现价"] = f"{close_number:.3f}" if 0 < close_number < 10 else (f"{close_number:.2f}" if close_number > 0 else "--")
                         row_dict["涨幅%"] = info.get("pct", 0.0)
+                        row_dict["PE"] = info.get("pe") if info.get("pe") is not None else "--"
                         row_dict["5日涨跌%"] = info.get("pct_5", 0.0)
                         row_dict["10日涨跌%"] = info.get("pct_10", 0.0)
                         row_dict["20日涨跌%"] = info.get("pct_20", 0.0)
@@ -730,6 +742,7 @@ class AsianMarketTab(BaseStockTab):
             close_number = float(info["close"]) if info.get("close") else 0.0
             row_dict["现价"] = f"{close_number:.3f}" if 0 < close_number < 10 else (f"{close_number:.2f}" if close_number > 0 else "--")
             row_dict["涨幅%"] = info.get("pct", 0.0)
+            row_dict["PE"] = info.get("pe") if info.get("pe") is not None else "--"
             row_dict["5日涨跌%"] = info.get("pct_5", 0.0)
             row_dict["10日涨跌%"] = info.get("pct_10", 0.0)
             row_dict["20日涨跌%"] = info.get("pct_20", 0.0)

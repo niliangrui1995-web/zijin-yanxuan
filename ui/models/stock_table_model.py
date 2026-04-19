@@ -290,6 +290,14 @@ class StockTableModel(QAbstractTableModel):
             if key == "代码" and isinstance(raw_val, str) and not raw_val.startswith("sz") and not raw_val.startswith("sh"):
                 pass
 
+            if key == "PE":
+                if raw_val in ("", "--", None):
+                    return "--"
+                try:
+                    return f"{float(raw_val):.2f}"
+                except (ValueError, TypeError):
+                    return str(raw_val)
+
             if "日" in key or "期" in key or "时间" in key:
                 s_val = str(raw_val).split(" ")[0].replace("-", "").replace("/", "")
                 if len(s_val) == 8 and s_val.isdigit() and s_val.startswith("20"):
