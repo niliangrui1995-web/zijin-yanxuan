@@ -517,18 +517,22 @@ QLineEdit:hover {{ border: 1px solid {t['BORDER_BRAND']}; }}
 QLineEdit:focus {{ border: 1px solid {border['focus']}; background-color: {t['BG_INPUT']}; }}
 QLineEdit::placeholder {{ color: {t['TEXT_DISABLED']}; }}
 
-QDialog#settingsDialog, QDialog#scanRangeDialog {{
+QDialog#settingsDialog, QDialog#scanRangeDialog, QDialog#tradeCalendarDialog, QDialog#tradeDateRangeDialog {{
     background: transparent;
     border: none;
 }}
 QDialog#settingsDialog QFrame#dialogContainer,
-QDialog#scanRangeDialog QFrame#dialogContainer {{
+QDialog#scanRangeDialog QFrame#dialogContainer,
+QDialog#tradeCalendarDialog QFrame#dialogContainer,
+QDialog#tradeDateRangeDialog QFrame#dialogContainer {{
     background-color: {t['BG_ELEVATED']};
     border: 1px solid {t['BORDER_DEFAULT']};
     border-radius: {radius['xl']}px;
 }}
 QDialog#settingsDialog QWidget#dialogTitleBar,
-QDialog#scanRangeDialog QWidget#dialogTitleBar {{
+QDialog#scanRangeDialog QWidget#dialogTitleBar,
+QDialog#tradeCalendarDialog QWidget#dialogTitleBar,
+QDialog#tradeDateRangeDialog QWidget#dialogTitleBar {{
     background-color: {t['BG_TITLEBAR']};
     border-top-left-radius: {radius['xl']}px;
     border-top-right-radius: {radius['xl']}px;
@@ -567,9 +571,19 @@ QToolButton#dialogCloseButton {{
     font-weight: {font['weight_bold']};
 }}
 QToolButton#dialogCloseButton:hover {{
-    background-color: #C42B1C;
-    color: #FFFFFF;
+    background-color: {error_hover};
+    color: {text_on_danger};
     border-radius: {radius['sm']}px;
+}}
+QFrame#tradeCalendarBody {{
+    background-color: {t['BG_INPUT']};
+    border: 1px solid {t['BORDER_DEFAULT']};
+    border-radius: {radius['lg']}px;
+}}
+QLabel#calendarSectionTitle {{
+    color: {t['TEXT_PRIMARY']};
+    font-size: {font['size_md']}px;
+    font-weight: {font['weight_semibold']};
 }}
 QTextEdit#systemLogText {{
     background-color: {surface['panel']};

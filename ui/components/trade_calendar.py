@@ -1,29 +1,27 @@
 # -*- coding: utf-8 -*-
-from PyQt6.QtCore import QDate, Qt
-from PyQt6.QtGui import QColor, QFont, QPen
-from PyQt6.QtWidgets import QCalendarWidget, QTableView
+from PyQt6.QtCore import QDate, QRectF, Qt
+from PyQt6.QtGui import QColor, QFont, QPen, QTextCharFormat
+from PyQt6.QtWidgets import QCalendarWidget, QDateEdit, QTableView
 
 from core.market_calendar import MarketCalendar
 from ui.theme import theme_manager
+from ui.theme_tokens import build_ui_tokens
 
 
 def _c(token: str) -> str:
     return theme_manager.get(token)
 
-class TradeCalendarWidget(QCalendarWidget):
-    """完全自绘日历，彻底绕过 Qt 内部的颜色机智，统一节假日显示样式"""
 
+class TradeCalendarWidget(QCalendarWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._apply_theme_stylesheet()
-        # 隐藏周数侧边栏，释放水平空间解决 "..." 折叠问题
         self.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
+        self.setGridVisible(False)
         self._configure_weekday_header()
-        # 主题切换时动态刷新样式
+        self._apply_theme_stylesheet()
         theme_manager.sig_theme_changed.connect(self._apply_theme_stylesheet)
 
     def _configure_weekday_header(self):
-        """星期标题改成单字模式，避免窄窗口里被 Qt 自动折叠成省略号。"""
         self.setFirstDayOfWeek(Qt.DayOfWeek.Monday)
         self.setHorizontalHeaderFormat(
             QCalendarWidget.HorizontalHeaderFormat.SingleLetterDayNames
@@ -33,87 +31,213 @@ class TradeCalendarWidget(QCalendarWidget):
         if view is not None:
             view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            view.setShowGrid(False)
+
+    def _apply_weekday_formats(self):
+        weekday_format = QTextCharFormat()
+        weekday_format.setForeground(QColor(_c("TEXT_SECONDARY")))
+        weekday_format.setFontWeight(int(QFont.Weight.DemiBold))
+
+        weekend_color = QColor(_c("COLOR_ERROR"))
+        weekend_color.setAlpha(220 if theme_manager.is_dark() else 190)
+        weekend_format = QTextCharFormat(weekday_format)
+        weekend_format.setForeground(weekend_color)
+
+        for day in (
+            Qt.DayOfWeek.Monday,
+            Qt.DayOfWeek.Tuesday,
+            Qt.DayOfWeek.Wednesday,
+            Qt.DayOfWeek.Thursday,
+            Qt.DayOfWeek.Friday,
+        ):
+            self.setWeekdayTextFormat(day, weekday_format)
+
+        self.setWeekdayTextFormat(Qt.DayOfWeek.Saturday, weekend_format)
+        self.setWeekdayTextFormat(Qt.DayOfWeek.Sunday, weekend_format)
 
     def _apply_theme_stylesheet(self):
-        """动态应用主题色，消除表头行（周一~周日）与日历网格的色差
+        ui = build_ui_tokens(theme_manager.current_theme)
+        font = ui["font"]
+        radius = ui["radius"]
+        control = ui["control"]
+        surface = ui["surface"]
+        border = ui["border"]
+        text = ui["text"]
 
-        为什么需要单独处理表头行：
-        QCalendarWidget 内部用 QTableView 渲染，表头行是独立的 QHeaderView，
-        paintCell 覆盖不到它。必须通过 QSS 给表头单独设背景色和文字色。
-        """
-        bg = _c("BG_TABLE_BASE")
-        text_dim = _c("TEXT_DISABLED")
-        self.setStyleSheet(f"""
+        nav_button_size = max(control["button_height"], 30)
+        nav_height = max(control["toolbar_button_height"], 34)
+
+        self._apply_weekday_formats()
+        self.setStyleSheet(
+            f"""
+            QCalendarWidget {{
+                background: transparent;
+                border: none;
+            }}
             QCalendarWidget QWidget {{
                 alternate-background-color: transparent;
             }}
+            QCalendarWidget QWidget#qt_calendar_navigationbar {{
+                background-color: {surface['toolbar']};
+                border: 1px solid {border['default']};
+                border-radius: {radius['lg']}px;
+                padding: 0 6px;
+                margin: 0 0 10px 0;
+                min-height: {nav_height}px;
+            }}
+            QCalendarWidget QToolButton {{
+                background: transparent;
+                border: none;
+                border-radius: {radius['sm']}px;
+                color: {text['secondary']};
+                font-size: {font['size_sm']}px;
+                font-weight: {font['weight_medium']};
+                min-height: {nav_button_size}px;
+                padding: 0 8px;
+            }}
+            QCalendarWidget QToolButton:hover {{
+                background-color: {surface['soft']};
+                color: {text['primary']};
+            }}
+            QCalendarWidget QToolButton:pressed {{
+                background-color: {surface['hover']};
+            }}
+            QCalendarWidget QToolButton#qt_calendar_prevmonth,
+            QCalendarWidget QToolButton#qt_calendar_nextmonth {{
+                background-color: {surface['soft']};
+                border: 1px solid {border['default']};
+                min-width: {nav_button_size}px;
+                max-width: {nav_button_size}px;
+                padding: 0;
+                font-size: {font['size_md']}px;
+                font-weight: {font['weight_semibold']};
+            }}
+            QCalendarWidget QToolButton#qt_calendar_prevmonth:hover,
+            QCalendarWidget QToolButton#qt_calendar_nextmonth:hover {{
+                background-color: {surface['hover']};
+                border: 1px solid {border['accent']};
+            }}
+            QCalendarWidget QToolButton#qt_calendar_monthbutton,
+            QCalendarWidget QToolButton#qt_calendar_yearbutton {{
+                color: {text['primary']};
+                font-size: {font['size_md']}px;
+                font-weight: {font['weight_semibold']};
+                padding: 0 10px;
+            }}
             QCalendarWidget QAbstractItemView {{
-                background-color: {bg};
+                background: {surface['panel']};
+                color: {text['primary']};
+                border: none;
+                outline: none;
+                selection-background-color: transparent;
+                selection-color: {text['bright']};
             }}
             QCalendarWidget QAbstractItemView::item:disabled {{
-                color: {text_dim};
+                color: {_c('TEXT_DISABLED')};
             }}
-            /* 表头行（周一~周日）：统一底色消除色差 */
-            QCalendarWidget QWidget#qt_calendar_calendarview {{
-                background-color: {bg};
+            QCalendarWidget QWidget#qt_calendar_calendarview,
+            QCalendarWidget QTableView {{
+                background: transparent;
+                border: none;
+                outline: none;
+                selection-background-color: transparent;
             }}
-            QCalendarWidget QWidget#qt_calendar_navigationbar {{
-                background-color: {bg};
+            QCalendarWidget QTableView QHeaderView::section {{
+                background: transparent;
+                color: {text['header']};
+                border: none;
+                border-bottom: 1px solid {border['subtle']};
+                padding: 0 0 8px 0;
+                font-size: {font['size_sm']}px;
+                font-weight: {font['weight_semibold']};
             }}
-        """)
+            QCalendarWidget QSpinBox {{
+                background-color: {_c('BG_INPUT')};
+                color: {_c('TEXT_PRIMARY')};
+                border: 1px solid {_c('BORDER_STRONG')};
+                border-radius: {radius['sm']}px;
+                padding: 0 8px;
+                min-height: {control['input_height']}px;
+            }}
+            """
+        )
 
     def paintCell(self, painter, rect, date):
-        """完全接管单元格的绘制"""
         painter.save()
         painter.setRenderHint(painter.RenderHint.Antialiasing)
 
+        is_dark = theme_manager.is_dark()
         current_month = self.monthShown()
         current_year = self.yearShown()
-        is_current_month = (date.month() == current_month and date.year() == current_year)
-        is_selected = (date == self.selectedDate())
-        is_today = (date == QDate.currentDate())
-
+        is_current_month = date.month() == current_month and date.year() == current_year
+        is_selected = date == self.selectedDate()
+        is_today = date == QDate.currentDate()
         is_trade_day = MarketCalendar.is_trade_day(date.toPyDate(), "CN")
 
-        # ── 1. 底色 ──
-        bg_color = QColor(_c("BG_TABLE_BASE"))
+        painter.fillRect(rect, QColor(_c("BG_TABLE_BASE")))
+
+        chip_rect = QRectF(rect.adjusted(4, 4, -4, -4))
+        if chip_rect.width() < 14 or chip_rect.height() < 14:
+            chip_rect = QRectF(rect.adjusted(2, 2, -2, -2))
+
+        fill_color = None
+        border_color = None
         if is_selected:
-            bg_color = QColor(_c("BRAND_PRIMARY"))
-            bg_color.setAlpha(45)
+            fill_color = QColor(_c("BRAND_PRIMARY"))
+            fill_color.setAlpha(34 if is_dark else 22)
+            border_color = QColor(_c("BRAND_PRIMARY"))
+            border_color.setAlpha(215 if is_dark else 165)
         elif is_today and is_current_month:
-            bg_color = QColor(_c("BG_HOVER"))
-        painter.fillRect(rect, bg_color)
+            fill_color = QColor(_c("COLOR_INFO"))
+            fill_color.setAlpha(18 if is_dark else 10)
+            border_color = QColor(_c("COLOR_INFO"))
+            border_color.setAlpha(118 if is_dark else 92)
 
-        # ── 2. 今日圆环标识 ──
-        if is_today and is_current_month:
-            ring_color = QColor(_c("BRAND_PRIMARY"))
-            ring_color.setAlpha(180)
-            pen = QPen(ring_color, 1.5)
-            painter.setPen(pen)
+        if fill_color is not None:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(fill_color)
+            painter.drawRoundedRect(chip_rect, 8, 8)
+
+        if border_color is not None:
+            painter.setPen(QPen(border_color, 1.2))
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            inset = rect.adjusted(3, 3, -3, -3)
-            painter.drawRoundedRect(inset, 4, 4)
+            painter.drawRoundedRect(chip_rect.adjusted(0.6, 0.6, -0.6, -0.6), 8, 8)
 
-        # ── 3. 文字颜色（统一节假日样式） ──
         if is_selected:
             text_color = QColor(_c("TEXT_BRIGHT"))
+        elif is_current_month and not is_trade_day:
+            text_color = QColor(_c("COLOR_ERROR"))
+            text_color.setAlpha(220 if is_dark else 190)
         elif is_current_month:
-            if not is_trade_day:
-                # 统一节假日颜色（红字）
-                text_color = QColor(_c("COLOR_ERROR"))
-                text_color.setAlpha(200)
-            else:
-                text_color = QColor(_c("TEXT_PRIMARY"))
+            text_color = QColor(_c("TEXT_PRIMARY"))
         else:
-            # 非本月日期用暗淡色
             text_color = QColor(_c("TEXT_DISABLED"))
 
         font = QFont()
         font.setPointSize(10)
-        if is_today and is_current_month:
-            font.setBold(True)
+        font.setBold(is_selected or (is_today and is_current_month))
         painter.setFont(font)
         painter.setPen(text_color)
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, str(date.day()))
 
         painter.restore()
+
+
+class TradeDateEdit(QDateEdit):
+    def __init__(
+        self,
+        parent=None,
+        *,
+        display_format: str = "yyyy-MM-dd",
+        date: QDate | None = None,
+        fixed_width: int | None = None,
+    ):
+        super().__init__(parent)
+        self.setCalendarPopup(True)
+        self._trade_calendar = TradeCalendarWidget(self)
+        self.setCalendarWidget(self._trade_calendar)
+        self.setDisplayFormat(display_format)
+        if date is not None:
+            self.setDate(date)
+        if fixed_width:
+            self.setFixedWidth(fixed_width)

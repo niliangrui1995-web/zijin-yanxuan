@@ -6,6 +6,7 @@ from ui.components.main_window_shell import DraggableTitleBar, apply_chrome_them
 from ui.components.trade_calendar import TradeCalendarWidget
 from ui.styles.global_qss import generate_global_qss
 from ui.theme import theme_manager
+from ui.theme_tokens import build_ui_tokens
 
 
 def apply_table_density(main_window, mode: str, persist: bool = True):
@@ -40,7 +41,11 @@ def apply_table_density(main_window, mode: str, persist: bool = True):
 
 
 def show_trade_calendar(main_window):
+    tokens = build_ui_tokens(theme_manager.current_theme)
+    shell = tokens["shell"]
+
     dlg = QDialog(main_window)
+    dlg.setObjectName("tradeCalendarDialog")
     dlg.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
     dlg.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
     dlg.resize(400, 360)
@@ -48,62 +53,47 @@ def show_trade_calendar(main_window):
     main_layout = QVBoxLayout(dlg)
     main_layout.setContentsMargins(0, 0, 0, 0)
 
-    container = QFrame()
+    container = QFrame(dlg)
     container.setObjectName("dialogContainer")
-    container.setStyleSheet(f"""
-        QFrame#dialogContainer {{
-            background-color: {theme_manager.get('BG_BASE')};
-            border: 1px solid {theme_manager.get('BORDER_DEFAULT')};
-            border-radius: 8px;
-        }}
-    """)
     container_layout = QVBoxLayout(container)
-    container_layout.setContentsMargins(1, 1, 1, 14)
+    container_layout.setContentsMargins(1, 1, 1, 18)
     container_layout.setSpacing(0)
 
     title_bar = DraggableTitleBar(dlg)
-    title_bar.setObjectName("calendarTitleBar")
-    title_bar.setFixedHeight(38)
-    title_bar.setStyleSheet(f"""
-        QWidget#calendarTitleBar {{
-            background-color: {theme_manager.get('BG_TITLEBAR')};
-            border-top-left-radius: 8px;
-            border-top-right-radius: 8px;
-            border-bottom: 1px solid {theme_manager.get('TITLEBAR_BORDER')};
-        }}
-    """)
+    title_bar.setObjectName("dialogTitleBar")
+    title_bar.setFixedHeight(shell["titlebar_height"])
     tb_layout = QHBoxLayout(title_bar)
     tb_layout.setContentsMargins(14, 0, 8, 0)
+    tb_layout.setSpacing(0)
 
     title_lbl = QLabel("A股交易休市日历")
-    title_lbl.setStyleSheet(
-        f"color: {theme_manager.get('TEXT_PRIMARY')}; font-weight: bold; background: transparent;"
-    )
+    title_lbl.setObjectName("dialogWindowTitle")
     tb_layout.addWidget(title_lbl)
     tb_layout.addStretch()
 
-    btn_close = QToolButton()
+    btn_close = QToolButton(title_bar)
+    btn_close.setObjectName("dialogCloseButton")
     btn_close.setText("✕")
-    btn_close.setFixedSize(32, 28)
+    btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
+    btn_close.setFixedSize(36, shell["titlebar_height"])
     btn_close.clicked.connect(dlg.reject)
-    btn_close.setStyleSheet(f"""
-        QToolButton {{
-            background: transparent;
-            border: none;
-            color: {theme_manager.get('TEXT_MUTED')};
-        }}
-        QToolButton:hover {{
-            background-color: #E81123;
-            color: white;
-            border-radius: 4px;
-        }}
-    """)
     tb_layout.addWidget(btn_close)
     container_layout.addWidget(title_bar)
 
+    body = QFrame(container)
+    body.setObjectName("tradeCalendarBody")
+    body_layout = QVBoxLayout(body)
+    body_layout.setContentsMargins(14, 14, 14, 14)
+    body_layout.setSpacing(0)
+
+    calendar = TradeCalendarWidget(body)
+    calendar.setObjectName("tradeCalendarWidget")
+    body_layout.addWidget(calendar)
+
     content_layout = QVBoxLayout()
-    content_layout.setContentsMargins(14, 14, 14, 0)
-    content_layout.addWidget(TradeCalendarWidget())
+    content_layout.setContentsMargins(18, 16, 18, 0)
+    content_layout.setSpacing(0)
+    content_layout.addWidget(body)
 
     container_layout.addLayout(content_layout)
     main_layout.addWidget(container)

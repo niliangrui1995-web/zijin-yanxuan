@@ -3,7 +3,7 @@ from datetime import datetime
 
 import pandas as pd
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot
-from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
+from PyQt6.QtWidgets import QDialog, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from core.event_bus import event_bus
 from core.logger import get_logger
@@ -22,6 +22,7 @@ class EarningsTab(BaseStockTab):
     def __init__(self, data_provider=None, parent=None):
         super().__init__(data_provider, parent)
         self.row_data = []
+        self._manual_fetch_range: tuple[str, str] | None = None
         self._init_ui()
 
         # 订阅中央广播站报价及开启大一统市值更新
@@ -46,20 +47,9 @@ class EarningsTab(BaseStockTab):
         self.search_box.setFixedWidth(160)
         self.search_box.textChanged.connect(self._on_search_text_changed)
 
-        # 时光机雷达
-        self.ent_start_date = QLineEdit()
-        self.ent_start_date.setPlaceholderText("起点(如2024-01-01)")
-        self.ent_start_date.setText(datetime.now().strftime("%Y-%m-%d"))
-        self.ent_start_date.setFixedWidth(100)
-
-        self.ent_end_date = QLineEdit()
-        self.ent_end_date.setPlaceholderText("终点(如2024-01-15)")
-        self.ent_end_date.setText(datetime.now().strftime("%Y-%m-%d"))
-        self.ent_end_date.setFixedWidth(100)
-
         self.btn_manual_fetch = QPushButton("历史回补")
         self.btn_manual_fetch.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_manual_fetch.setToolTip("手动填入日期区间，强行进行数据扫描并在本地进行去重和升级！")
+        self.btn_manual_fetch.setToolTip("打开区间选择窗口，按日期范围执行历史回补。")
         self.btn_manual_fetch.clicked.connect(self._on_manual_fetch)
 
         self.type_filter = MultiSelectFilterButton("全看")
@@ -68,10 +58,7 @@ class EarningsTab(BaseStockTab):
         self.type_filter.selectionChanged.connect(self._on_type_filter_changed)
         self._refresh_type_filter_button_text()
 
-        filter_widgets = [
-            self.search_box, self.type_filter,
-            QLabel("更新区间倒推:"), self.ent_start_date, QLabel("-"), self.ent_end_date
-        ]
+        filter_widgets = [self.search_box, self.type_filter]
         action_widgets = [self.btn_manual_fetch]
         toolbar = self.build_tab_toolbar("业绩高增追踪", self.lbl_status, filter_widgets, action_widgets)
         layout.addWidget(toolbar)
@@ -156,13 +143,36 @@ class EarningsTab(BaseStockTab):
         )
 
     def _on_manual_fetch(self):
-        start_str = self.ent_start_date.text().strip()
-        end_str = self.ent_end_date.text().strip()
-        if not start_str or not end_str:
+        from datetime import timedelta
+
+        from ui.components.scan_dialogs import TradeDateRangeDialog
+
+        default_start = None
+        default_end = None
+        if self._manual_fetch_range:
+            try:
+                default_start = datetime.strptime(self._manual_fetch_range[0], "%Y-%m-%d").date()
+                default_end = datetime.strptime(self._manual_fetch_range[1], "%Y-%m-%d").date()
+            except ValueError:
+                default_start = None
+                default_end = None
+
+        dialog = TradeDateRangeDialog(
+            window_title="业绩历史回补",
+            headline="选择历史回补区间",
+            hint="按自然日区间补齐业绩公告数据，日历样式与全局交易日历保持一致。",
+            confirm_text="开始回补",
+            default_start=default_start,
+            default_end=default_end,
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
 
+        start_str, end_str = dialog.selected_range()
+        self._manual_fetch_range = (start_str, end_str)
+
         try:
-            from datetime import timedelta
             start_dt = datetime.strptime(start_str, "%Y-%m-%d")
             end_dt = datetime.strptime(end_str, "%Y-%m-%d")
 

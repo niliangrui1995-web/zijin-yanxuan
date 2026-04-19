@@ -5,7 +5,6 @@ from typing import Any
 from PyQt6.QtCore import QDate, Qt
 from PyQt6.QtWidgets import (
     QComboBox,
-    QDateEdit,
     QDialog,
     QDoubleSpinBox,
     QFrame,
@@ -22,7 +21,7 @@ from PyQt6.QtWidgets import (
 
 from core.market_calendar import MarketCalendar
 from ui.components.main_window_shell import DraggableTitleBar
-from ui.components.trade_calendar import TradeCalendarWidget
+from ui.components.trade_calendar import TradeDateEdit
 from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens
 
@@ -145,6 +144,87 @@ class _ThemedDialog(QDialog):
         self.update()
 
 
+class TradeDateRangeDialog(_ThemedDialog):
+    def __init__(
+        self,
+        *,
+        object_name: str = "tradeDateRangeDialog",
+        window_title: str = "选择区间",
+        headline: str = "选择时间区间",
+        hint: str = "使用统一交易日历控件选择开始和结束日期。",
+        confirm_text: str = "确定",
+        start_label: str = "开始日期",
+        end_label: str = "结束日期",
+        default_start: datetime.date | None = None,
+        default_end: datetime.date | None = None,
+        parent=None,
+    ):
+        super().__init__(object_name, window_title, (438, 276), parent)
+
+        latest_trade_date = _latest_cn_trade_date()
+        start_date = default_start or latest_trade_date
+        end_date = default_end or latest_trade_date
+
+        layout = self.content_layout
+
+        title = QLabel(headline)
+        title.setObjectName("dialogTitle")
+        layout.addWidget(title)
+
+        hint_label = QLabel(hint)
+        hint_label.setObjectName("dialogHint")
+        hint_label.setWordWrap(True)
+        layout.addWidget(hint_label)
+
+        calendar_card = QFrame()
+        calendar_card.setObjectName("tradeCalendarBody")
+        calendar_layout = QVBoxLayout(calendar_card)
+        calendar_layout.setContentsMargins(14, 14, 14, 14)
+        calendar_layout.setSpacing(12)
+
+        section_title = QLabel("回补区间")
+        section_title.setObjectName("calendarSectionTitle")
+        calendar_layout.addWidget(section_title)
+
+        date_grid = QGridLayout()
+        date_grid.setHorizontalSpacing(12)
+        date_grid.setVerticalSpacing(10)
+
+        self.start_date_edit = TradeDateEdit(fixed_width=140)
+        self.end_date_edit = TradeDateEdit(fixed_width=140)
+        self.start_date_edit.setDate(QDate(start_date.year, start_date.month, start_date.day))
+        self.end_date_edit.setDate(QDate(end_date.year, end_date.month, end_date.day))
+
+        date_grid.addWidget(QLabel(start_label), 0, 0)
+        date_grid.addWidget(self.start_date_edit, 0, 1)
+        date_grid.addWidget(QLabel(end_label), 1, 0)
+        date_grid.addWidget(self.end_date_edit, 1, 1)
+        date_grid.setColumnStretch(2, 1)
+        calendar_layout.addLayout(date_grid)
+        layout.addWidget(calendar_card)
+
+        footer = QHBoxLayout()
+        footer.addStretch()
+
+        btn_cancel = QPushButton("取消")
+        btn_cancel.setProperty("class", "secondary")
+        btn_cancel.clicked.connect(self.reject)
+        footer.addWidget(btn_cancel)
+
+        btn_confirm = QPushButton(confirm_text)
+        btn_confirm.setObjectName("primaryButton")
+        btn_confirm.clicked.connect(self.accept)
+        footer.addWidget(btn_confirm)
+        layout.addLayout(footer)
+
+    def selected_range(self) -> tuple[str, str]:
+        start_date = self.start_date_edit.date().toPyDate()
+        end_date = self.end_date_edit.date().toPyDate()
+        if start_date > end_date:
+            start_date, end_date = end_date, start_date
+        return start_date.isoformat(), end_date.isoformat()
+
+
 class VCPScanRangeDialog(_ThemedDialog):
     PRESET_RECENT_30 = "recent_30"
     PRESET_RECENT_60 = "recent_60"
@@ -198,29 +278,24 @@ class VCPScanRangeDialog(_ThemedDialog):
         layout.addWidget(quick_section)
 
         date_section = QFrame()
-        date_section.setObjectName("dialogSection")
+        date_section.setObjectName("tradeCalendarBody")
         date_layout = QGridLayout(date_section)
         date_layout.setContentsMargins(14, 14, 14, 14)
         date_layout.setHorizontalSpacing(12)
         date_layout.setVerticalSpacing(10)
 
-        self.start_date_edit = QDateEdit()
-        self.start_date_edit.setCalendarPopup(True)
-        self._cal_start = TradeCalendarWidget()
-        self.start_date_edit.setCalendarWidget(self._cal_start)
-        self.start_date_edit.setDisplayFormat("yyyy-MM-dd")
+        date_section_title = QLabel("交易日历区间")
+        date_section_title.setObjectName("calendarSectionTitle")
+        date_layout.addWidget(date_section_title, 0, 0, 1, 2)
 
-        self.end_date_edit = QDateEdit()
-        self.end_date_edit.setCalendarPopup(True)
-        self._cal_end = TradeCalendarWidget()
-        self.end_date_edit.setCalendarWidget(self._cal_end)
-        self.end_date_edit.setDisplayFormat("yyyy-MM-dd")
+        self.start_date_edit = TradeDateEdit(fixed_width=140)
+        self.end_date_edit = TradeDateEdit(fixed_width=140)
         self.end_date_edit.setDate(QDate(latest_trade_date.year, latest_trade_date.month, latest_trade_date.day))
 
-        date_layout.addWidget(QLabel("开始日期"), 0, 0)
-        date_layout.addWidget(self.start_date_edit, 0, 1)
-        date_layout.addWidget(QLabel("结束日期"), 1, 0)
-        date_layout.addWidget(self.end_date_edit, 1, 1)
+        date_layout.addWidget(QLabel("开始日期"), 1, 0)
+        date_layout.addWidget(self.start_date_edit, 1, 1)
+        date_layout.addWidget(QLabel("结束日期"), 2, 0)
+        date_layout.addWidget(self.end_date_edit, 2, 1)
         layout.addWidget(date_section)
 
         footer = QHBoxLayout()
