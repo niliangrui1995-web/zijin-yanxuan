@@ -290,11 +290,11 @@ class FundHoldingsTab(BaseStockTab):
         filter_widgets = [self.cmb_subject, self.cmb_capital_attribute, self.btn_quarter, self.btn_change, self.search_box]
 
         self.btn_update = QToolButton()
-        self.btn_update.setText("更新数据库")
-        self.btn_update.setAccessibleName("更新基金持仓数据库")
+        self.btn_update.setText("刷新")
+        self.btn_update.setAccessibleName("刷新基金持仓")
         self.btn_update.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.btn_update.clicked.connect(
-            lambda: self._run_sync_action("全部更新", fund_holdings_sync_service.sync_latest_all)
+            lambda: self._run_sync_action("刷新", fund_holdings_sync_service.sync_latest_all)
         )
 
         action_widgets = [self.btn_update]
@@ -571,6 +571,46 @@ class FundHoldingsTab(BaseStockTab):
             return cls._DISPLAY_PLACEHOLDER
         return cls._CAPITAL_ATTRIBUTE_LABELS.get(text, text)
 
+    def _latest_sync_freshness_text(self) -> str:
+        sync_times = []
+        for subject_code in (self._SUBJECT_CODE_QFII, self._SUBJECT_CODE_RUIYUAN):
+            finished_at = str((self._latest_sync_map.get(subject_code) or {}).get("finished_at") or "").strip()
+            if finished_at:
+                sync_times.append(finished_at)
+        if not sync_times:
+            return "快照待同步"
+        latest_sync = max(sync_times)
+        return f"快照 {latest_sync[-8:]}"
+
+    def _current_filter_summary(self) -> str:
+        parts = []
+        subject_text = " / ".join(sorted(self._selected_subject_names()))
+        if subject_text:
+            parts.append(subject_text)
+
+        capital_text = " / ".join(
+            self._capital_attribute_label(item)
+            for item in sorted(self._selected_capital_attributes())
+        )
+        if capital_text:
+            parts.append(capital_text)
+
+        latest_only, selected_quarters = self._quarter_filter_state()
+        if latest_only:
+            parts.append("最新季度")
+        elif selected_quarters:
+            parts.append(" / ".join(sorted(selected_quarters, reverse=True)))
+
+        change_text = " / ".join(sorted(self._selected_change_types()))
+        if change_text:
+            parts.append(change_text)
+
+        search_text = self.search_box.text().strip()
+        if search_text:
+            parts.append(search_text)
+
+        return "｜".join(parts) if parts else "全部"
+
     @staticmethod
     def _sort_order_to_int(order) -> int:
         value = getattr(order, "value", order)
@@ -685,20 +725,53 @@ class FundHoldingsTab(BaseStockTab):
 
         self._sync_task_id = f"fund_holdings_sync::{label}"
         self._set_sync_active(True, "同步基金持仓中...", label)
-        self.lbl_status.setText(self.format_status_summary("数据库更新中", label))
+        total = len(getattr(self.model, "row_data", []) or [])
+        visible = self.proxy_model.rowCount() if hasattr(self, "proxy_model") else total
+        self.lbl_status.setText(
+            self.format_workspace_status(
+                "基金持仓刷新中",
+                result=f"{visible}/{total}只" if total else "0只",
+                freshness="本地缓存",
+                current_filter=self._current_filter_summary(),
+                next_step="等待数据库写入",
+                extra_segments=(label,),
+            )
+        )
 
         def _on_success(result):
             self._set_sync_active(False)
             self._reload_from_db()
             message = str((result or {}).get("message") or label).strip()
-            self.lbl_status.setText(self.format_status_summary("数据库已更新", message))
+            total = len(getattr(self.model, "row_data", []) or [])
+            visible = self.proxy_model.rowCount() if hasattr(self, "proxy_model") else total
+            self.lbl_status.setText(
+                self.format_workspace_status(
+                    "基金持仓已刷新",
+                    result=f"{visible}/{total}只" if total else "0只",
+                    freshness=self._latest_sync_freshness_text(),
+                    current_filter=self._current_filter_summary(),
+                    next_step="双击查看K线｜右键更多操作",
+                    extra_segments=(message,),
+                )
+            )
             event_bus.sig_system_log.emit("info", f"[基金持仓] {message}")
 
         def _on_error(error_message: str):
             self._set_sync_active(False)
             self._reload_from_db()
             message = str(error_message or "更新失败").strip()
-            self.lbl_status.setText(self.format_status_summary("数据库更新失败", message))
+            total = len(getattr(self.model, "row_data", []) or [])
+            visible = self.proxy_model.rowCount() if hasattr(self, "proxy_model") else total
+            self.lbl_status.setText(
+                self.format_workspace_status(
+                    "基金持仓刷新失败",
+                    result=f"{visible}/{total}只" if total else "0只",
+                    freshness="远端失败沿用" if total else "待同步",
+                    current_filter=self._current_filter_summary(),
+                    next_step="请稍后重试",
+                    extra_segments=(message,),
+                )
+            )
             self.table_state.show_error(
                 title="基金持仓更新失败",
                 subtitle=message,
@@ -734,7 +807,7 @@ class FundHoldingsTab(BaseStockTab):
         self._update_status_summary()
 
         if not view_rows and not self._sync_active:
-            self.table_state.show_empty("暂无基金持仓数据", "请使用右上角“更新数据库”同步 QFII 或睿远持仓")
+            self.table_state.show_empty("暂无基金持仓数据", "请使用右上角“刷新”同步 QFII 或睿远持仓")
 
     def _refresh_filter_options(self):
         quarters = fund_holdings_store.list_quarters()
@@ -973,20 +1046,34 @@ class FundHoldingsTab(BaseStockTab):
         ruiyuan_sync = str((self._latest_sync_map.get(self._SUBJECT_CODE_RUIYUAN) or {}).get("finished_at") or "")
 
         if total == 0 and not self._sync_active:
-            self.lbl_status.setText(self.format_status_summary("等待同步数据库", "QFII/睿远数据尚未入库"))
+            self.lbl_status.setText(
+                self.format_workspace_status(
+                    "等待基金持仓同步",
+                    result="0只",
+                    freshness="待同步",
+                    current_filter=self._current_filter_summary(),
+                    next_step="点击刷新同步数据库",
+                    extra_segments=("QFII/睿远数据尚未入库",),
+                )
+            )
             return
 
-        segments = [
-            self._status_metric("显示 ", visible, f"/{total}"),
-            self._status_metric("QFII ", qfii_quarter),
-            self._status_metric("睿远 ", ruiyuan_quarter),
-        ]
+        segments = [self._status_metric("QFII ", qfii_quarter), self._status_metric("睿远 ", ruiyuan_quarter)]
         if qfii_sync:
             segments.append(self._status_metric("QFII更新 ", qfii_sync[-8:]))
         if ruiyuan_sync:
             segments.append(self._status_metric("睿远更新 ", ruiyuan_sync[-8:]))
 
-        self.lbl_status.setText(self.format_status_summary("基金持仓就绪", *segments))
+        self.lbl_status.setText(
+            self.format_workspace_status(
+                "基金持仓已就绪",
+                result=f"{visible}/{total}只",
+                freshness=self._latest_sync_freshness_text(),
+                current_filter=self._current_filter_summary(),
+                next_step="双击查看K线｜右键更多操作",
+                extra_segments=segments,
+            )
+        )
 
     def _row_dict_from_index(self, proxy_index):
         if not proxy_index.isValid():

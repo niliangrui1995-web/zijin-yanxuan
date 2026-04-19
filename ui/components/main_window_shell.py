@@ -6,9 +6,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QActionGroup
+from PyQt6.QtGui import QAction, QActionGroup
 from PyQt6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -21,7 +22,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ui.components import PulsingDot
-from ui.theme_tokens import build_ui_tokens
+from ui.theme_tokens import build_ui_tokens, get_state_tone
 
 
 def _titlebar_shell_style(theme: dict) -> str:
@@ -92,7 +93,7 @@ def _system_button_style(theme: dict, text_color: str, hover_bg: str) -> str:
 def _standalone_tabbar_qss(theme: dict) -> str:
     tokens = build_ui_tokens(theme)
     tab_gap = 0
-    tab_padding_x = max(7, tokens["control"]["tab_padding_x"] - 2)
+    tab_padding_x = max(12, tokens["control"]["tab_padding_x"] + 2)
     tab_radius = max(8, tokens["radius"]["lg"] - 2)
     return f"""
         QTabBar {{
@@ -109,19 +110,68 @@ def _standalone_tabbar_qss(theme: dict) -> str:
             font-size: {tokens['font']['size_sm']}px;
             font-weight: {tokens['font']['weight_semibold']};
             min-height: {tokens['shell']['tabbar_height']}px;
+            min-width: 0px;
             border-radius: {tab_radius}px;
             font-family: {tokens['font']['family']};
         }}
         QTabBar::tab:selected {{
-            color: {theme['TEXT_PRIMARY']};
-            background: {theme['BRAND_SUBTLE']};
-            border-color: {theme['BORDER_BRAND']};
-            border-top: 2px solid transparent;
+            color: {theme.get('TAB_ACTIVE_TEXT', theme['TEXT_PRIMARY'])};
+            background: {theme.get('TAB_ACTIVE_BG', theme['BRAND_SUBTLE'])};
+            border-color: {theme.get('TAB_ACTIVE_BORDER', theme['BORDER_BRAND'])};
+            border-top: 2px solid {theme.get('TAB_ACTIVE_TOP', 'transparent')};
         }}
         QTabBar::tab:hover:!selected {{
             color: {theme['TAB_TEXT_HOVER']};
             background: {theme['TAB_HOVER_BG']};
             border-color: {theme['BORDER_STRONG']};
+        }}
+    """
+
+
+def _nav_group_button_qss(theme: dict) -> str:
+    tokens = build_ui_tokens(theme)
+    return f"""
+        QPushButton {{
+            background: transparent;
+            color: {theme['TEXT_SECONDARY']};
+            border: 1px solid {theme['BORDER_DEFAULT']};
+            border-radius: {tokens['radius']['pill']}px;
+            padding: 0 {tokens['space']['lg']}px;
+            min-height: {tokens['control']['segment_height']}px;
+            font-size: {tokens['font']['size_sm']}px;
+            font-weight: {tokens['font']['weight_semibold']};
+        }}
+        QPushButton:hover {{
+            color: {theme['TEXT_PRIMARY']};
+            border-color: {theme['BORDER_STRONG']};
+            background: {theme['BG_HOVER']};
+        }}
+        QPushButton:checked {{
+            color: {theme['TEXT_ON_ACCENT']};
+            border-color: {theme['BRAND_DEEP']};
+            background: {theme['BRAND_PRIMARY']};
+        }}
+    """
+
+
+def _titlebar_sync_button_qss(theme: dict) -> str:
+    tokens = build_ui_tokens(theme)
+    return f"""
+        QPushButton {{
+            background: {theme['BRAND_PRIMARY']};
+            color: {theme['TEXT_ON_ACCENT']};
+            border: 1px solid {theme['BRAND_DEEP']};
+            border-radius: {tokens['radius']['pill']}px;
+            padding: 0 {tokens['space']['xl']}px;
+            min-height: {tokens['control']['toolbar_button_height']}px;
+            font-size: {tokens['font']['size_sm']}px;
+            font-weight: {tokens['font']['weight_bold']};
+        }}
+        QPushButton:hover {{
+            background: {theme['BRAND_DEEP']};
+        }}
+        QPushButton:pressed {{
+            background: {theme['BRAND_PRIMARY']};
         }}
     """
 
@@ -180,12 +230,19 @@ class MainWindowStatusBar(QFrame):
         self.setObjectName("statusBarWidget")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setFixedHeight(34)
+        self._status_tone = "offline"
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(14, 0, 14, 0)
         layout.setSpacing(10)
 
-        self.status_dot = PulsingDot(color="#10B981")
+        from ui.theme import theme_manager
+
+        default_dot = theme_manager.current_theme.get(
+            "NETWORK_OFFLINE",
+            theme_manager.current_theme.get("COLOR_ERROR", "#EF4444"),
+        )
+        self.status_dot = PulsingDot(color=default_dot)
         layout.addWidget(self.status_dot)
 
         self.lbl_status = QLabel("---")
@@ -211,6 +268,21 @@ class MainWindowStatusBar(QFrame):
         self.refresh_clock()
 
         self.apply_theme()
+
+    def _resolve_status_dot_color(self, tone: str) -> str:
+        from ui.theme import theme_manager
+
+        theme = theme_manager.current_theme
+        mapping = {
+            "online": theme.get("NETWORK_ONLINE", theme.get("COLOR_REALTIME", theme.get("COLOR_SUCCESS", "#10B981"))),
+            "busy": theme.get("NETWORK_BUSY", theme.get("COLOR_WARNING", "#F59E0B")),
+            "offline": theme.get("NETWORK_OFFLINE", theme.get("COLOR_ERROR", "#EF4444")),
+        }
+        return mapping.get(tone, mapping["offline"])
+
+    def set_status_tone(self, tone: str) -> None:
+        self._status_tone = tone if tone in {"online", "busy", "offline"} else "offline"
+        self.status_dot.set_color(self._resolve_status_dot_color(self._status_tone))
 
     def refresh_clock(self):
         import datetime
@@ -256,6 +328,246 @@ class MainWindowStatusBar(QFrame):
         self.lbl_version.setStyleSheet(
             f"color: {theme['TEXT_DISABLED']}; font-size: {tokens['font']['size_xs']}px;"
         )
+        self.set_status_tone(self._status_tone)
+
+
+class ShellNavigationWidget(QWidget):
+    """标题栏一级导航 + 二级标签导航。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._tabs = None
+        self._workspace = None
+        self._syncing = False
+        self._group_to_indices: dict[str, list[int]] = {}
+        self._visible_indices: list[int] = []
+        self._group_buttons: dict[str, QPushButton] = {}
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        self._group_button_group = QButtonGroup(self)
+        self._group_button_group.setExclusive(True)
+
+        self.group_wrap = QWidget(self)
+        self.group_layout = QHBoxLayout(self.group_wrap)
+        self.group_layout.setContentsMargins(0, 0, 0, 0)
+        self.group_layout.setSpacing(6)
+        layout.addWidget(self.group_wrap, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        self.tabbar = QTabBar(self)
+        self.tabbar.setExpanding(True)
+        self.tabbar.setDrawBase(False)
+        self.tabbar.setUsesScrollButtons(False)
+        self.tabbar.setElideMode(Qt.TextElideMode.ElideNone)
+        self.tabbar.setAccessibleName("二级页面导航")
+        self.tabbar.currentChanged.connect(self._on_tabbar_changed)
+        layout.addWidget(self.tabbar, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        self.apply_theme()
+
+    def bind_workspace(self, workspace, tabs) -> None:
+        if self._tabs is not None:
+            try:
+                self._tabs.currentChanged.disconnect(self._on_tabs_changed)
+            except (TypeError, RuntimeError):
+                pass
+
+        self._workspace = workspace
+        self._tabs = tabs
+        self._group_to_indices = {}
+
+        if workspace is not None and hasattr(workspace, "tab_indices_by_group"):
+            self._group_to_indices = workspace.tab_indices_by_group()
+        elif tabs is not None:
+            self._group_to_indices = {"全部": list(range(tabs.count()))}
+
+        self._rebuild_group_buttons()
+
+        if self._tabs is not None:
+            self._tabs.currentChanged.connect(self._on_tabs_changed)
+            self.sync_from_current_tab(self._tabs.currentIndex())
+
+    def _clear_group_buttons(self) -> None:
+        while self.group_layout.count():
+            item = self.group_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                self._group_button_group.removeButton(widget)
+                widget.deleteLater()
+        self._group_buttons.clear()
+
+    def _rebuild_group_buttons(self) -> None:
+        self._clear_group_buttons()
+
+        groups = [group for group, indices in self._group_to_indices.items() if indices]
+        for group in groups:
+            button = QPushButton(group, self.group_wrap)
+            button.setCheckable(True)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setAccessibleName(f"{group}一级导航")
+            button.clicked.connect(lambda checked=False, g=group: self._switch_group(g))
+            button.setStyleSheet(_nav_group_button_qss(build_ui_tokens()["theme"]))
+            self._group_button_group.addButton(button)
+            self._group_buttons[group] = button
+            self.group_layout.addWidget(button)
+
+        self.group_layout.addStretch(1)
+        self.group_wrap.setVisible(bool(groups))
+
+    def _switch_group(self, group: str, preferred_index: int | None = None) -> None:
+        indices = list(self._group_to_indices.get(group, []))
+        if not indices or self._tabs is None:
+            return
+
+        current_index = self._tabs.currentIndex()
+        target_index = preferred_index if preferred_index in indices else current_index
+        if target_index not in indices:
+            target_index = indices[0]
+
+        self._visible_indices = indices
+
+        self._syncing = True
+        try:
+            self.tabbar.blockSignals(True)
+            while self.tabbar.count() > 0:
+                self.tabbar.removeTab(self.tabbar.count() - 1)
+            for global_index in indices:
+                self.tabbar.addTab(self._tabs.tabText(global_index))
+            self.tabbar.setCurrentIndex(indices.index(target_index))
+
+            button = self._group_buttons.get(group)
+            if button is not None and not button.isChecked():
+                button.setChecked(True)
+        finally:
+            self.tabbar.blockSignals(False)
+            self._syncing = False
+
+    def _find_group_for_index(self, tab_index: int) -> str:
+        for group, indices in self._group_to_indices.items():
+            if tab_index in indices:
+                return group
+        groups = list(self._group_to_indices.keys())
+        return groups[0] if groups else ""
+
+    def sync_from_current_tab(self, tab_index: int) -> None:
+        group = self._find_group_for_index(tab_index)
+        if not group:
+            return
+        self._switch_group(group, preferred_index=tab_index)
+
+    def _on_tabbar_changed(self, visible_index: int) -> None:
+        if self._syncing or self._tabs is None:
+            return
+        if 0 <= visible_index < len(self._visible_indices):
+            self._tabs.setCurrentIndex(self._visible_indices[visible_index])
+
+    def _on_tabs_changed(self, tab_index: int) -> None:
+        if self._syncing:
+            return
+        self.sync_from_current_tab(tab_index)
+
+    def apply_theme(self) -> None:
+        from ui.theme import theme_manager
+
+        theme = theme_manager.current_theme
+        for button in self._group_buttons.values():
+            button.setStyleSheet(_nav_group_button_qss(theme))
+        self.tabbar.setStyleSheet(_standalone_tabbar_qss(theme))
+
+
+class TitleBarSyncWidget(QFrame):
+    """标题栏全局同步入口与同步状态摘要。"""
+
+    _STATE_META = {
+        "idle": ("同步就绪", "neutral"),
+        "cache": ("本地缓存", "cached"),
+        "working": ("同步中", "loading"),
+        "success": ("已同步", "success"),
+        "error": ("同步异常", "error"),
+    }
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._state = "idle"
+        self._detail = ""
+        self._freshness = ""
+
+        self.setObjectName("titleBarSyncWidget")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        self.btn_sync = QPushButton("全局同步", self)
+        self.btn_sync.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_sync.setAccessibleName("全局同步")
+        self.btn_sync.setToolTip("执行盘后全局同步（F5）")
+        layout.addWidget(self.btn_sync, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self.lbl_state = QLabel("同步就绪", self)
+        self.lbl_state.setObjectName("titleBarSyncState")
+        layout.addWidget(self.lbl_state, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self.lbl_meta = QLabel("等待首次同步", self)
+        self.lbl_meta.setObjectName("titleBarSyncMeta")
+        layout.addWidget(self.lbl_meta, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self.apply_theme()
+
+    def set_state(self, state: str, detail: str = "", freshness: str = "") -> None:
+        canonical_state = str(state or "").strip() or "idle"
+        if canonical_state not in self._STATE_META:
+            canonical_state = "idle"
+
+        self._state = canonical_state
+        self._detail = str(detail or "").strip()
+        if freshness:
+            self._freshness = str(freshness or "").strip()
+
+        state_text, _tone_name = self._STATE_META[self._state]
+        self.lbl_state.setText(state_text)
+
+        segments = []
+        if self._detail:
+            segments.append(self._detail)
+        if self._freshness:
+            segments.append(self._freshness)
+        self.lbl_meta.setText("｜".join(segments) if segments else "等待首次同步")
+        self.apply_theme()
+
+    def apply_theme(self) -> None:
+        from ui.theme import theme_manager
+
+        theme = theme_manager.current_theme
+        tokens = build_ui_tokens(theme)
+        _state_text, tone_name = self._STATE_META.get(self._state, self._STATE_META["idle"])
+        tone = get_state_tone(tone_name, theme)
+
+        self.setStyleSheet(
+            f"""
+            QFrame#titleBarSyncWidget {{
+                background: transparent;
+            }}
+            QLabel#titleBarSyncState {{
+                background-color: {tone['bg']};
+                color: {tone['fg']};
+                border: 1px solid {tone['border']};
+                border-radius: {tokens['radius']['pill']}px;
+                padding: 0 {tokens['space']['md']}px;
+                min-height: {tokens['control']['toolbar_chip_height']}px;
+                font-size: {tokens['font']['size_sm']}px;
+                font-weight: {tokens['font']['weight_semibold']};
+            }}
+            QLabel#titleBarSyncMeta {{
+                color: {theme['TEXT_MUTED']};
+                font-size: {tokens['font']['size_sm']}px;
+            }}
+            """
+        )
+        self.btn_sync.setStyleSheet(_titlebar_sync_button_qss(theme))
 
 
 @dataclass
@@ -349,45 +661,40 @@ def setup_custom_titlebar(window, parent_layout: QVBoxLayout) -> TitleBarRefs:
 
 
 def inject_standalone_tabbar(window) -> QTabBar:
-    from ui.theme import theme_manager
-
+    if getattr(window, "tabs", None) is None:
+        return QTabBar()
     window.tabs.tabBar().setVisible(False)
 
-    standalone_bar = QTabBar()
-    standalone_bar.setExpanding(False)
-    standalone_bar.setDrawBase(False)
-    standalone_bar.setUsesScrollButtons(True)
-    standalone_bar.setElideMode(Qt.TextElideMode.ElideNone)
-    standalone_bar.setAccessibleName("主导航标签栏")
-    standalone_bar.setStyleSheet(_standalone_tabbar_qss(theme_manager.current_theme))
+    nav_widget = getattr(window, "_shell_navigation_widget", None)
+    sync_widget = getattr(window, "_titlebar_sync_widget", None)
 
-    for i in range(window.tabs.count()):
-        standalone_bar.addTab(window.tabs.tabText(i))
-    standalone_bar.setCurrentIndex(window.tabs.currentIndex())
+    if nav_widget is None or sync_widget is None:
+        nav_host = QWidget()
+        nav_host.setObjectName("titleBarNavHost")
+        nav_layout = QHBoxLayout(nav_host)
+        nav_layout.setContentsMargins(0, 0, 0, 0)
+        nav_layout.setSpacing(10)
 
-    window._syncing_tabs = False
+        nav_widget = ShellNavigationWidget(nav_host)
+        sync_widget = TitleBarSyncWidget(nav_host)
+        sync_widget.btn_sync.clicked.connect(window._action_refresh_f5)
 
-    def on_bar_changed(index: int):
-        if not window._syncing_tabs:
-            window._syncing_tabs = True
-            window.tabs.setCurrentIndex(index)
-            window._syncing_tabs = False
+        nav_layout.addWidget(nav_widget, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        nav_layout.addWidget(sync_widget, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-    def on_tabs_changed(index: int):
-        if not window._syncing_tabs:
-            window._syncing_tabs = True
-            standalone_bar.setCurrentIndex(index)
-            window._syncing_tabs = False
+        old = window._titlebar_tab_placeholder
+        idx = window._titlebar_layout.indexOf(old)
+        window._titlebar_layout.removeWidget(old)
+        old.deleteLater()
+        window._titlebar_layout.insertWidget(idx, nav_host, 1)
 
-    standalone_bar.currentChanged.connect(on_bar_changed)
-    window.tabs.currentChanged.connect(on_tabs_changed)
+        window._titlebar_nav_host = nav_host
+        window._shell_navigation_widget = nav_widget
+        window._titlebar_sync_widget = sync_widget
 
-    old = window._titlebar_tab_placeholder
-    idx = window._titlebar_layout.indexOf(old)
-    window._titlebar_layout.removeWidget(old)
-    old.deleteLater()
-    window._titlebar_layout.insertWidget(idx, standalone_bar)
-    return standalone_bar
+    nav_widget.bind_workspace(getattr(window, "_workspace", None), window.tabs)
+    window._standalone_tabbar = nav_widget.tabbar
+    return nav_widget.tabbar
 
 
 def setup_system_menu(window) -> SystemMenuRefs:
@@ -419,11 +726,6 @@ def setup_system_menu(window) -> SystemMenuRefs:
         pass
 
     sys_menu.setObjectName("sysMenu")
-
-    window.act_f5 = sys_menu.addAction("全局数据同步 (F5)")
-    window.act_f5.triggered.connect(window._action_refresh_f5)
-
-    sys_menu.addSeparator()
 
     window.act_trade_calendar = sys_menu.addAction("交易日历")
     window.act_trade_calendar.triggered.connect(window._show_trade_calendar)
@@ -460,8 +762,15 @@ def setup_system_menu(window) -> SystemMenuRefs:
     sys_menu.addSeparator()
 
     theme_menu = sys_menu.addMenu(f"界面主题：{theme_manager.current_theme_name}")
+    theme_group = QActionGroup(window)
+    theme_group.setExclusive(True)
+    window._theme_actions = {}
     for theme_name in theme_manager.theme_names():
         act = theme_menu.addAction(theme_name)
+        act.setCheckable(True)
+        act.setChecked(theme_name == theme_manager.current_theme_name)
+        theme_group.addAction(act)
+        window._theme_actions[theme_name] = act
         act.triggered.connect(lambda checked, n=theme_name: theme_manager.switch_theme(n))
 
     theme_menu.addSeparator()
@@ -510,6 +819,10 @@ def refresh_system_menu_theme(window) -> None:
     theme_menu = getattr(window, "_theme_menu", None)
     if theme_menu:
         theme_menu.setTitle(f"界面主题：{theme_manager.current_theme_name}")
+    for theme_name, action in getattr(window, "_theme_actions", {}).items():
+        action.setChecked(theme_name == theme_manager.current_theme_name)
+    if hasattr(window, "_act_auto_theme") and window._act_auto_theme:
+        window._act_auto_theme.setChecked(theme_manager.is_auto_switch())
 
 
 def apply_chrome_theme(window) -> None:
@@ -536,8 +849,11 @@ def apply_chrome_theme(window) -> None:
         )
         window._btn_close.setFixedWidth(build_ui_tokens(theme)["shell"]["window_button_width"])
 
-    if hasattr(window, "_standalone_tabbar") and window._standalone_tabbar:
-        window._standalone_tabbar.setStyleSheet(_standalone_tabbar_qss(theme))
+    if hasattr(window, "_shell_navigation_widget") and window._shell_navigation_widget:
+        window._shell_navigation_widget.apply_theme()
+
+    if hasattr(window, "_titlebar_sync_widget") and window._titlebar_sync_widget:
+        window._titlebar_sync_widget.apply_theme()
 
     if hasattr(window, "_custom_titlebar") and window._custom_titlebar:
         window._custom_titlebar.setFixedHeight(build_ui_tokens(theme)["shell"]["titlebar_height"])
@@ -553,5 +869,8 @@ def apply_chrome_theme(window) -> None:
                 border: none;
             }}
         """)
+
+    if hasattr(window, "_titlebar_nav_host") and window._titlebar_nav_host:
+        window._titlebar_nav_host.setStyleSheet("QWidget#titleBarNavHost { background: transparent; }")
 
     refresh_system_menu_theme(window)

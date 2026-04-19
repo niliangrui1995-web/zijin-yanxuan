@@ -24,6 +24,11 @@ class NADailyTab(BaseStockTab):
         super().__init__(data_provider=data_provider, parent=parent)
         self._na_daily_codes = set()
         self._last_report_signature = ()
+        self._status_primary = "等待北美战报"
+        self._status_segments: list[str] = []
+        self._status_freshness = ""
+        self._status_next_step = ""
+        self._current_report_files: list[str] = []
 
         self._init_ui()
 
@@ -74,7 +79,7 @@ class NADailyTab(BaseStockTab):
         self.search_box.setPlaceholderText("筛选代码或名称...")
         self.search_box.setFixedWidth(160)
         self.search_box.textChanged.connect(self._on_search_text_changed)
-        btn_refresh = QPushButton("刷新战报")
+        btn_refresh = QPushButton("刷新")
         btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_refresh.clicked.connect(self._load_na_daily_report)
 
@@ -115,12 +120,44 @@ class NADailyTab(BaseStockTab):
         self.na_daily_table.customContextMenuRequested.connect(self._show_context_menu)
 
         layout.addWidget(self.table_state, 1)
+        self._set_report_status("等待北美战报", freshness="待加载", next_step="点击刷新载入最新战报")
 
     def _on_search_text_changed(self, text):
         self.proxy_model.setFilterText(text)
+        self._refresh_report_status()
 
-    def _set_report_status(self, primary: str, *segments: str):
-        self.na_daily_source_label.setText(self.format_status_summary(primary, *segments))
+    def _latest_report_freshness(self) -> str:
+        report_files = getattr(self, "_current_report_files", None) or []
+        if not report_files:
+            return self._status_freshness or "待加载"
+        newest_file = max(report_files, key=lambda path: self._parse_report_identity(path)[1])
+        report_date, _, _ = self._parse_report_identity(newest_file)
+        return f"快照 {report_date}"
+
+    def _current_filter_summary(self) -> str:
+        keyword = str(self.search_box.text() or "").strip()
+        return keyword or "全部"
+
+    def _refresh_report_status(self):
+        total = len(getattr(self.model, "row_data", None) or [])
+        visible = self.proxy_model.rowCount() if hasattr(self, "proxy_model") else total
+        self.na_daily_source_label.setText(
+            self.format_workspace_status(
+                self._status_primary or ("北美战报已就绪" if total else "等待北美战报"),
+                result=self._status_metric("结果 ", f"{visible}/{total}", "只") if total else "",
+                freshness=self._status_freshness or self._latest_report_freshness(),
+                current_filter=self._current_filter_summary(),
+                next_step=self._status_next_step or ("双击查看K线｜右键更多操作" if total else "点击刷新载入最新战报"),
+                extra_segments=tuple(seg for seg in self._status_segments if seg),
+            )
+        )
+
+    def _set_report_status(self, primary: str, *segments: str, freshness: str = "", next_step: str = ""):
+        self._status_primary = str(primary or "").strip()
+        self._status_segments = [str(seg or "").strip() for seg in segments if str(seg or "").strip()]
+        self._status_freshness = str(freshness or "").strip()
+        self._status_next_step = str(next_step or "").strip()
+        self._refresh_report_status()
 
     def _get_na_daily_output_dir(self):
         return os.path.join(
@@ -276,9 +313,10 @@ class NADailyTab(BaseStockTab):
 
     def _apply_na_daily_rows(self, final_list, report_files, report_signature):
         self._last_report_signature = report_signature
+        self._current_report_files = list(report_files or [])
 
         if not report_files:
-            self._set_report_status("未找到战报文件", "最近窗口为空")
+            self._set_report_status("等待北美战报", "最近窗口为空", freshness="待加载", next_step="点击刷新载入最新战报")
             self.model.update_data([])
             self._na_daily_codes = set()
             event_bus.sig_na_daily_updated.emit()
@@ -288,17 +326,23 @@ class NADailyTab(BaseStockTab):
 
         newest_file = max(report_files, key=lambda path: self._parse_report_identity(path)[1])
         newest_name = os.path.basename(newest_file)
+        report_date, _, _ = self._parse_report_identity(newest_file)
         if len(report_files) == 1:
             self._set_report_status(
+                "北美战报已就绪",
                 newest_name,
                 self._status_metric("合并 ", len(final_list), "只"),
+                freshness=f"快照 {report_date}",
+                next_step="双击查看K线｜右键更多操作",
             )
         else:
             self._set_report_status(
-                "最近5份战报",
+                "北美战报已就绪",
                 newest_name,
                 self._status_metric("覆盖 ", len(report_files), "份"),
                 self._status_metric("合并 ", len(final_list), "只"),
+                freshness=f"快照 {report_date}",
+                next_step="双击查看K线｜右键更多操作",
             )
 
         self._na_daily_codes = {row.get("代码", "") for row in final_list if row.get("代码")}
@@ -323,6 +367,7 @@ class NADailyTab(BaseStockTab):
     def _load_na_daily_report(self):
         if hasattr(self, "table_state"):
             self.table_state.show_loading("正在加载战报...", "请稍候")
+        self._set_report_status("北美战报刷新中", freshness=self._latest_report_freshness(), next_step="等待战报文件合并")
         final_list, report_files, report_signature = self._build_na_daily_rows()
         self._apply_na_daily_rows(final_list, report_files, report_signature)
 

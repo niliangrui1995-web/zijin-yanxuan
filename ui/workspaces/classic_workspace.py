@@ -35,27 +35,118 @@ class ClassicWorkspace(QWidget):
         self.tabs.setDocumentMode(True)
         layout.addWidget(self.tabs, 1)
 
-        self.tab_watchlist = WatchlistTab(self.data_provider, self)
-        self.tab_lhb = LhbTab(self.data_provider, self)
-        self.tab_na_daily = NADailyTab(self.data_provider, self)
-        self.tab_asian_market = AsianMarketTab(self.data_provider, self)
-        self.tab_rt = RtMonitorTab(self.data_provider, self.engine, self)
-        self.tab_foreign_block = ForeignBlockTradeTab(self.data_provider, self)
-        self.tab_fund_holdings = FundHoldingsTab(self.data_provider, self)
-        self.tab_earnings = EarningsTab(self.data_provider, self)
-        self.tab_scan = ScanTab(self.data_provider, self.engine, self)
-        self.tab_log = LogTab(self)
+        self._tab_specs = [
+            {
+                "key": "watchlist",
+                "title": "关注池",
+                "group": "主工作台",
+                "group_order": 10,
+                "attr": "tab_watchlist",
+                "widget": WatchlistTab(self.data_provider, self),
+            },
+            {
+                "key": "na_daily",
+                "title": "北美战报",
+                "group": "主工作台",
+                "group_order": 20,
+                "attr": "tab_na_daily",
+                "widget": NADailyTab(self.data_provider, self),
+            },
+            {
+                "key": "asian_market",
+                "title": "亚洲寡头",
+                "group": "主工作台",
+                "group_order": 30,
+                "attr": "tab_asian_market",
+                "widget": AsianMarketTab(self.data_provider, self),
+            },
+            {
+                "key": "rt_monitor",
+                "title": "盘中监控",
+                "group": "主工作台",
+                "group_order": 40,
+                "attr": "tab_rt",
+                "widget": RtMonitorTab(self.data_provider, self.engine, self),
+            },
+            {
+                "key": "scan",
+                "title": "VCP扫描",
+                "group": "情报源",
+                "group_order": 10,
+                "attr": "tab_scan",
+                "widget": ScanTab(self.data_provider, self.engine, self),
+            },
+            {
+                "key": "lhb",
+                "title": "龙虎榜",
+                "group": "情报源",
+                "group_order": 20,
+                "attr": "tab_lhb",
+                "widget": LhbTab(self.data_provider, self),
+            },
+            {
+                "key": "foreign_block",
+                "title": "大宗交易",
+                "group": "情报源",
+                "group_order": 30,
+                "attr": "tab_foreign_block",
+                "widget": ForeignBlockTradeTab(self.data_provider, self),
+            },
+            {
+                "key": "fund_holdings",
+                "title": "基金持仓",
+                "group": "情报源",
+                "group_order": 40,
+                "attr": "tab_fund_holdings",
+                "widget": FundHoldingsTab(self.data_provider, self),
+            },
+            {
+                "key": "earnings",
+                "title": "业绩异动",
+                "group": "情报源",
+                "group_order": 40,
+                "attr": "tab_earnings",
+                "widget": EarningsTab(self.data_provider, self),
+            },
+            {
+                "key": "system_log",
+                "title": "系统日志",
+                "group": "系统",
+                "group_order": 10,
+                "attr": "tab_log",
+                "widget": LogTab(self),
+            },
+        ]
 
-        self.tabs.addTab(self.tab_watchlist, "关注池")
-        self.tabs.addTab(self.tab_lhb, "龙虎榜")
-        self.tabs.addTab(self.tab_na_daily, "美股日报")
-        self.tabs.addTab(self.tab_asian_market, "亚洲寡头")
-        self.tabs.addTab(self.tab_rt, "盘中监控")
-        self.tabs.addTab(self.tab_foreign_block, "大宗交易")
-        self.tabs.addTab(self.tab_fund_holdings, "基金持仓")
-        self.tabs.addTab(self.tab_earnings, "业绩异动")
-        self.tabs.addTab(self.tab_scan, "VCP扫描")
-        self.tabs.addTab(self.tab_log, "系统日志")
+        for spec in self._tab_specs:
+            setattr(self, spec["attr"], spec["widget"])
+            self.tabs.addTab(spec["widget"], spec["title"])
+
+    def tab_specs(self) -> list[dict]:
+        return list(self._tab_specs)
+
+    def nav_groups(self) -> list[str]:
+        groups: list[str] = []
+        for spec in self._tab_specs:
+            group = str(spec.get("group", "")).strip()
+            if group and group not in groups:
+                groups.append(group)
+        return groups
+
+    def tab_indices_by_group(self) -> dict[str, list[int]]:
+        result: dict[str, list[int]] = {}
+        for index, spec in enumerate(self._tab_specs):
+            group = str(spec.get("group", "")).strip()
+            result.setdefault(group, []).append(index)
+        for group, indices in result.items():
+            result[group] = sorted(
+                indices,
+                key=lambda idx: (
+                    int(self._tab_specs[idx].get("group_order", idx) or idx),
+                    idx,
+                ),
+            )
+        return result
 
     def restore_last_tab(self, index: int):
         if 0 <= index < self.tabs.count():
@@ -72,6 +163,16 @@ class ClassicWorkspace(QWidget):
             if len(code) == 6 and code.isdigit():
                 codes.add(code)
         return codes
+
+    @staticmethod
+    def _safe_float(value, default: float = 0.0) -> float:
+        try:
+            text = str(value or "").replace(",", "").strip()
+            if not text:
+                return float(default)
+            return float(text)
+        except (TypeError, ValueError):
+            return float(default)
 
     def get_realtime_quote_codes(self) -> set[str]:
         codes: set[str] = set()
@@ -106,9 +207,6 @@ class ClassicWorkspace(QWidget):
         earnings_model = getattr(getattr(self, "tab_earnings", None), "model", None)
         if earnings_model is not None:
             codes.update(extract_codes(getattr(earnings_model, "row_data", None)))
-
-        # 基金持仓包含股票过多，不纳入中央实时报价轮询池。
-        # 该 Tab 仅在自身重载数据库后做一次性补价/补市值，避免盘中全局轮询卡顿。
 
         lhb_model = getattr(getattr(self, "tab_lhb", None), "model", None)
         if lhb_model is not None:
@@ -235,7 +333,7 @@ class ClassicWorkspace(QWidget):
                 code = str(row.get("代码", "")).strip()
                 if not code:
                     continue
-                na_data[code] = str(row.get("催化剂", "") or row.get("💥催化剂", ""))
+                na_data[code] = str(row.get("催化剂", "") or row.get("📨催化剂", ""))
                 na_subsector_data[code] = str(row.get("细分板块", "") or "")
 
         foreign_model = getattr(getattr(self, "tab_foreign_block", None), "model", None)
@@ -263,45 +361,48 @@ class ClassicWorkspace(QWidget):
                     branch = sell
                     sign = -1.0
                 else:
-                    branch = buy if buy else sell
-                    sign = 1.0
+                    branch = f"{buy} {sell}".strip()
+                    sign = 0.0
 
-                short_branch = branch
-                for keyword in FOREIGN_KEYWORDS:
-                    if keyword in branch:
-                        short_branch = keyword
-                        break
+                bucket = block_aggregates.setdefault(code, {"foreign": 0.0, "double": 0.0})
+                if any(keyword in branch for keyword in FOREIGN_KEYWORDS):
+                    bucket["foreign"] += sign * amount
+                elif buy and sell and buy == sell:
+                    bucket["double"] += amount
 
-                branch_data = block_aggregates.setdefault(code, {})
-                branch_data[short_branch] = branch_data.get(short_branch, 0.0) + (amount * sign)
-
-            for code, branch_data in block_aggregates.items():
-                memos = []
-                for branch, total_amount in sorted(branch_data.items(), key=lambda item: item[1], reverse=True):
-                    if total_amount > 0:
-                        memos.append(f"{branch}买入{total_amount:.0f}万")
-                    elif total_amount < 0:
-                        memos.append(f"{branch}卖出{abs(total_amount):.0f}万")
-                    else:
-                        memos.append(f"{branch}净买0万")
-                block_data[code] = " | ".join(memos)
+            for code, stats in block_aggregates.items():
+                foreign_amount = float(stats.get("foreign", 0.0) or 0.0)
+                double_amount = float(stats.get("double", 0.0) or 0.0)
+                if abs(foreign_amount) >= 0.01:
+                    action = "净买" if foreign_amount > 0 else "净卖"
+                    block_data[code] = f"外资大宗 {action}{abs(foreign_amount):.0f}万"
+                elif abs(double_amount) >= 0.01:
+                    block_data[code] = f"大宗对倒 {double_amount:.0f}万"
 
         earnings_model = getattr(getattr(self, "tab_earnings", None), "model", None)
         if earnings_model is not None:
             for row in getattr(earnings_model, "row_data", []) or []:
                 code = str(row.get("代码", "")).strip()
-                pct = str(row.get("环比%", "")).strip()
-                if code and pct and pct != "--":
-                    earn_data[code] = f"{pct}%"
+                if not code:
+                    continue
+
+                reasons = []
+                flag = str(row.get("异动标签", "")).strip()
+                if flag:
+                    reasons.append(flag)
+                yoy = str(row.get("净利润同比", "")).strip()
+                if yoy:
+                    reasons.append(f"净利同比{yoy}")
+                earn_data[code] = " | ".join(reasons) if reasons else "业绩异动"
 
         lhb_model = getattr(getattr(self, "tab_lhb", None), "model", None)
         if lhb_model is not None:
             for row in getattr(lhb_model, "row_data", []) or []:
                 code = str(row.get("代码", "")).strip()
-                if not code:
+                if not code or code in lhb_data:
                     continue
 
-                raw_date = str(row.get("上榜日期", "") or "")
+                raw_date = str(row.get("_最近上榜_raw", "") or row.get("最近上榜", "") or "")
                 if len(raw_date) == 8:
                     date_mmdd = f"{raw_date[4:6]}-{raw_date[6:8]}"
                 elif "-" in raw_date:
@@ -310,13 +411,15 @@ class ClassicWorkspace(QWidget):
                 else:
                     date_mmdd = raw_date
 
-                net = float(row.get("上榜净买额(万)", 0) or 0)
-                jg = float(row.get("机构净买(万)", 0) or 0)
-                fgn = float(row.get("外资净买(万)", 0) or 0)
+                net = self._safe_float(row.get("上榜净买额(万)", 0))
+                jg = self._safe_float(row.get("机构净买(万)", 0))
+                # “外资净买入”是展示字符串（如“净买123万”），不能直接转 float。
+                # 关注池汇总应读取数值字段“外资净买(万)”。
+                fgn = self._safe_float(row.get("外资净买(万)", 0))
 
-                net_s = f"净卖:{abs(net):.0f}万" if net < 0 else f"净买:{net:.0f}万"
-                jg_s = f"机构净卖:{abs(jg):.0f}万" if jg < 0 else f"机构净买:{jg:.0f}万"
-                fgn_s = f"外资净卖:{abs(fgn):.0f}万" if fgn < 0 else f"外资净买:{fgn:.0f}万"
+                net_s = f"净卖{abs(net):.0f}万" if net < 0 else f"净买{net:.0f}万"
+                jg_s = f"机构净卖{abs(jg):.0f}万" if jg < 0 else f"机构净买{jg:.0f}万"
+                fgn_s = f"外资净卖{abs(fgn):.0f}万" if fgn < 0 else f"外资净买{fgn:.0f}万"
 
                 lhb_data[code] = {
                     "text": f"{date_mmdd} | {net_s} | {jg_s} | {fgn_s}",

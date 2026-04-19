@@ -12,6 +12,14 @@ from ui.components.toast_widget import show_toast
 
 def _build_copy_handler(current_table, original_handler):
     def new_handler(event):
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            selection_model = current_table.selectionModel()
+            current_idx = selection_model.currentIndex() if selection_model else None
+            if current_idx is not None and current_idx.isValid():
+                current_table.doubleClicked.emit(current_idx)
+                event.accept()
+                return
+
         if event.matches(QKeySequence.StandardKey.Copy):
             selection_model = current_table.selectionModel()
             if selection_model:

@@ -39,7 +39,11 @@ def start_f5_precompute(main_window, *, task_manager):
 
     def _set_status_cb(message: str):
         main_window._call_in_ui(
-            lambda: hasattr(main_window, "lbl_status") and main_window.lbl_status.setText(message)
+            lambda: (
+                hasattr(main_window, "lbl_status") and main_window.lbl_status.setText(message),
+                hasattr(main_window, "_set_titlebar_sync_state")
+                and main_window._set_titlebar_sync_state("working", str(message or "").strip()),
+            )
         )
 
     def _done_cb(count, elapsed):
@@ -99,10 +103,14 @@ def finish_f5_reload(main_window, *, count, elapsed, event_bus):
             main_window.lbl_status.setText(f"F5预计算完成: {count}只 | 耗时{elapsed:.1f}s")
         if hasattr(main_window, "lbl_code_count"):
             main_window.lbl_code_count.setText(f"标的池: {count} 只")
+        if hasattr(main_window, "_set_titlebar_sync_state"):
+            main_window._set_titlebar_sync_state("success", f"已同步 {count}只")
         return
 
     if hasattr(main_window, "lbl_status"):
         main_window.lbl_status.setText("F5预计算完成: 无新增数据")
+    if hasattr(main_window, "_set_titlebar_sync_state"):
+        main_window._set_titlebar_sync_state("cache", "无新增，沿用现有快照")
 
 
 def shutdown_main_window(main_window, *, event_bus, task_manager):

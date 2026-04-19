@@ -297,8 +297,8 @@ def apply_info_styles(
 ) -> None:
     theme = theme_manager.current_theme
     if widget_text is None or info_color is None or is_dark is None:
-        widget_text = "#F5F7FA" if theme_manager.is_dark() else theme["TEXT_PRIMARY"]
-        info_color = "#8B98A8" if theme_manager.is_dark() else theme["TEXT_MUTED"]
+        widget_text = theme.get("KLINE_WIDGET_TEXT", "#F5F7FA" if theme_manager.is_dark() else theme["TEXT_PRIMARY"])
+        info_color = theme.get("KLINE_INFO_COLOR", "#8B98A8" if theme_manager.is_dark() else theme["TEXT_MUTED"])
         is_dark = theme_manager.is_dark()
 
     tone = getattr(window, "_info_tone", "info")
@@ -307,10 +307,14 @@ def apply_info_styles(
     border_color = (
         state_tone["border"]
         if tone != "info"
-        else ("rgba(148, 163, 184, 0.10)" if is_dark else theme["BORDER_SUBTLE"])
+        else theme.get("INFO_BADGE_BORDER", "rgba(148, 163, 184, 0.10)" if is_dark else theme["BORDER_SUBTLE"])
     )
     fg_color = widget_text if tone == "info" else state_tone["fg"]
-    bg_color = theme["BRAND_SUBTLE"] if tone == "info" else state_tone["bg"]
+    if tone == "info":
+        fg_color = theme.get("INFO_BADGE_FG", fg_color)
+        bg_color = theme.get("INFO_BADGE_BG", theme["BRAND_SUBTLE"])
+    else:
+        bg_color = state_tone["bg"]
     window.info_lbl.setStyleSheet(
         f"background-color: {bg_color}; color: {fg_color}; border: 1px solid {border_color};"
         f"border-radius: {tokens['radius']['pill']}px; padding: 5px 10px;"

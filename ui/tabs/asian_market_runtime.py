@@ -15,10 +15,10 @@ from ui.tabs.asian_market_workers import JSON_CACHE, AsianCacheFetcherThread
 log = get_logger(__name__)
 
 
-def _set_tab_status(tab, primary: str, *segments: str):
+def _set_tab_status(tab, primary: str, *segments: str, freshness: str = "", next_step: str = ""):
     setter = getattr(tab, "_set_asian_status", None)
     if callable(setter):
-        setter(primary, *segments)
+        setter(primary, *segments, freshness=freshness, next_step=next_step)
         return
     tab.lbl_status.setText(" | ".join(part for part in (primary, *segments) if part))
 
@@ -239,18 +239,24 @@ def on_auto_cache_finished(tab, success, msg):
         tab._load_local_cache()
         tab._last_asian_success_at = dt.datetime.now()
         if "已保留现有缓存" in str(msg or ""):
-            _set_tab_status(tab, "已保留本地缓存", "远端拉取失败，本次继续沿用上次成功结果")
+            _set_tab_status(
+                tab,
+                "已保留本地缓存",
+                "远端拉取失败，本次继续沿用上次成功结果",
+                freshness="远端失败沿用",
+                next_step="等待下一轮缓存同步",
+            )
             log.warning(f"[亚洲页] 远端拉取失败，已保留旧缓存: {msg}")
         else:
-            _set_tab_status(tab, "收盘缓存同步完成", "已重载本地 K 线")
+            _set_tab_status(tab, "收盘缓存同步完成", "已重载本地 K 线", freshness="本地缓存")
             log.info("[亚洲页] 16:30 缓存同步完成，已重载本地 K 线，当前保持静默")
         return
 
-    _set_tab_status(tab, "收盘缓存同步失败", msg or "请稍后重试")
+    _set_tab_status(tab, "收盘缓存同步失败", msg or "请稍后重试", freshness="远端失败沿用", next_step="请稍后重试")
     log.warning(f"[亚洲页] 收盘缓存同步失败: {msg}")
 
 
 def on_asian_klines_ready(tab):
     tab._load_local_cache()
     tab._last_asian_success_at = dt.datetime.now()
-    _set_tab_status(tab, "本地缓存已更新", "K 线数据已重载")
+    _set_tab_status(tab, "本地缓存已更新", "K 线数据已重载", freshness="本地缓存")

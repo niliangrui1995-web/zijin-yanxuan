@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QSizePolicy,
     QToolButton,
@@ -28,7 +29,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.event_bus import event_bus
-from ui.status_registry import format_status_summary
+from ui.status_registry import format_status_summary, format_workspace_status
 from ui.tabs.base_stock_refresh import (
     async_update_market_caps as run_async_market_caps,
 )
@@ -63,6 +64,7 @@ from ui.theme_tokens import build_ui_tokens
 
 
 class BaseStockTab(QWidget):
+    DEFAULT_TOOLBAR_HINT = "双击查看K线｜右键更多操作｜Enter 打开｜Esc 退出搜索"
     """股票列表 Tab 基类 — 提供通用方法"""
 
     def __init__(self, data_provider=None, parent=None):
@@ -152,6 +154,28 @@ class BaseStockTab(QWidget):
             widget.setProperty("class", "toolbarGhost")
 
     @staticmethod
+    def _install_search_escape_behavior(widget: QWidget | None):
+        if not isinstance(widget, QLineEdit):
+            return
+        if widget.property("_toolbarEscapeHookInstalled"):
+            return
+
+        widget.setProperty("_toolbarEscapeHookInstalled", True)
+        widget.setClearButtonEnabled(True)
+        original_keypress = widget.keyPressEvent
+
+        def _wrapped_keypress(event):
+            if event.key() == Qt.Key.Key_Escape:
+                if widget.text():
+                    widget.clear()
+                widget.clearFocus()
+                event.accept()
+                return
+            original_keypress(event)
+
+        widget.keyPressEvent = _wrapped_keypress
+
+    @staticmethod
     def _toolbar_button_texts(button: QPushButton) -> list[str]:
         hints = button.property("toolbarWidthHints")
         texts: list[str] = []
@@ -237,6 +261,26 @@ class BaseStockTab(QWidget):
     def format_status_summary(cls, primary: str, *segments: str) -> str:
         return format_status_summary(primary, *segments)
 
+    @classmethod
+    def format_workspace_status(
+        cls,
+        primary: str,
+        *,
+        result: str = "",
+        freshness: str = "",
+        current_filter: str = "",
+        next_step: str = "",
+        extra_segments: tuple[str, ...] | list[str] | None = None,
+    ) -> str:
+        return format_workspace_status(
+            primary,
+            result=result,
+            freshness=freshness,
+            current_filter=current_filter,
+            next_step=next_step,
+            extra_segments=extra_segments,
+        )
+
     # ================================================================
     # UI 结构辅助：统一工具条 + 摘要条 + 列预设
     # ================================================================
@@ -284,12 +328,24 @@ class BaseStockTab(QWidget):
 
         tb_layout.addWidget(left_wrap, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
+        for widget in filter_widgets or []:
+            self._install_search_escape_behavior(widget)
+
         filter_wrap = self._build_toolbar_flow_group("tabToolbarFilters", filter_widgets)
         if filter_wrap is not None:
             filter_wrap.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             tb_layout.addWidget(filter_wrap, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         else:
             tb_layout.addStretch(1)
+
+        toolbar_hint = str(getattr(self, "toolbar_hint_text", self.DEFAULT_TOOLBAR_HINT) or "").strip()
+        if toolbar_hint:
+            hint_label = QLabel(toolbar_hint)
+            hint_label.setObjectName("tabToolbarHint")
+            hint_label.setProperty("toolbarRole", "meta")
+            hint_label.setToolTip(toolbar_hint)
+            hint_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+            tb_layout.addWidget(hint_label, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         if action_widgets:
             self._equalize_toolbar_action_widths(action_widgets)

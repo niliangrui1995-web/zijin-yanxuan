@@ -203,7 +203,7 @@ class AsianMarketWorker(QThread):
                 continue
 
             if not auto_refresh_allowed and not manual_refresh:
-                self._emit_status_once("盘后静默中，可手动刷新亚洲市场")
+                self._emit_status_once("盘后静默中，可点击刷新亚洲市场")
                 if not self._sleep_with_break(1.0):
                     return
                 continue

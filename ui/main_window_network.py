@@ -1,5 +1,4 @@
 from core.logger import get_logger
-
 log = get_logger(__name__)
 
 
@@ -36,21 +35,21 @@ def update_network_ui(main_window, online: bool, detail: str = ""):
         return
     if online:
         main_window.act_network.setText("网络状态：在线")
-        if hasattr(main_window, "status_dot"):
-            main_window.status_dot.set_color("#22C55E")
+        if hasattr(main_window, "_status_bar_widget") and main_window._status_bar_widget:
+            main_window._status_bar_widget.set_status_tone("online")
         return
 
     main_window.act_network.setText("网络状态：离线")
-    if hasattr(main_window, "status_dot"):
-        main_window.status_dot.set_color("#EF4444")
+    if hasattr(main_window, "_status_bar_widget") and main_window._status_bar_widget:
+        main_window._status_bar_widget.set_status_tone("offline")
 
 
 def force_reconnect(main_window):
     """主站强制重置东方财富实时行情连接。"""
     if not main_window.data_provider.is_online():
         return
-    if hasattr(main_window, "status_dot"):
-        main_window.status_dot.set_color("#F59E0B")
+    if hasattr(main_window, "_status_bar_widget") and main_window._status_bar_widget:
+        main_window._status_bar_widget.set_status_tone("busy")
 
     def _reconnect_task():
         try:

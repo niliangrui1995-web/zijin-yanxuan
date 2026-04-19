@@ -57,7 +57,7 @@ class EarningsTab(BaseStockTab):
         self.ent_end_date.setText(datetime.now().strftime("%Y-%m-%d"))
         self.ent_end_date.setFixedWidth(100)
 
-        self.btn_manual_fetch = QPushButton("历史更新")
+        self.btn_manual_fetch = QPushButton("历史回补")
         self.btn_manual_fetch.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_manual_fetch.setToolTip("手动填入日期区间，强行进行数据扫描并在本地进行去重和升级！")
         self.btn_manual_fetch.clicked.connect(self._on_manual_fetch)
@@ -119,25 +119,39 @@ class EarningsTab(BaseStockTab):
         self._status_segments = tuple(seg for seg in segments if seg)
         self._refresh_window_status()
 
-    def _refresh_window_status(self):
-        extra_segments = []
-        total = len(getattr(self.model, "row_data", []) or [])
-        visible = self.proxy_model.rowCount()
-        if total:
-            extra_segments.append(self._status_metric("匹配 ", visible, f"/{total}"))
+    def _latest_disclosure_date(self) -> str:
+        dates = [
+            str(row.get("揭晓日", "")).strip()
+            for row in (self.row_data or [])
+            if isinstance(row, dict)
+        ]
+        dates = [date for date in dates if date]
+        return max(dates) if dates else ""
 
+    def _current_filter_summary(self) -> str:
+        parts = []
         search_text = self.search_box.text().strip()
         if search_text:
-            extra_segments.append(f"搜索 {search_text}")
+            parts.append(search_text)
 
         type_text = self._type_filter_status_text()
         if type_text != "全看":
-            extra_segments.append(f"分类 {type_text}")
+            parts.append(type_text)
 
+        return "｜".join(parts) if parts else "全部"
+
+    def _refresh_window_status(self):
+        total = len(getattr(self.model, "row_data", []) or [])
+        visible = self.proxy_model.rowCount()
+        freshness = f"快照 {self._latest_disclosure_date()}" if total else "待回补"
         self.lbl_status.setText(
-            self.format_status_summary(
+            self.format_workspace_status(
                 getattr(self, "_status_primary", "业绩监控"),
-                *(getattr(self, "_status_segments", ()) + tuple(seg for seg in extra_segments if seg)),
+                result=f"{visible}/{total}只" if total else "0只",
+                freshness=freshness,
+                current_filter=self._current_filter_summary(),
+                next_step="双击查看K线｜右键更多操作",
+                extra_segments=getattr(self, "_status_segments", ()),
             )
         )
 
@@ -163,7 +177,7 @@ class EarningsTab(BaseStockTab):
             self._set_window_status("日期格式错误", "请使用 YYYY-MM-DD")
             return
 
-        self._set_window_status("正在拉取业绩数据", f"{start_str}→{end_str}", self._status_metric("区间 ", len(date_list), "天"))
+        self._set_window_status("正在历史回补", f"{start_str}→{end_str}", self._status_metric("区间 ", len(date_list), "天"))
         if hasattr(self, "table_state"):
             self.table_state.show_loading("正在拉取业绩数据...", "请稍候")
         log.info(f"[业绩监控] 手动扫描: {start_str} ~ {end_str}")
@@ -286,12 +300,12 @@ class EarningsTab(BaseStockTab):
             if mode == "warm_cache":
                 if self.row_data:
                     self._set_window_status(
-                        "缓存恢复完成",
+                        "本地缓存已加载",
                         self._status_metric("展示 ", len(self.row_data), "只"),
                         self._status_metric("窗口 ", EARNINGS_DISPLAY_TRADE_DAYS, "交易日"),
                     )
                 else:
-                    self._set_window_status("缓存恢复完成", "当前无可展示数据")
+                    self._set_window_status("本地缓存为空", "当前无可展示数据")
             else:
                 if self.row_data:
                     self._set_window_status(
@@ -306,7 +320,7 @@ class EarningsTab(BaseStockTab):
             return
 
         if mode == "warm_cache":
-            self._set_window_status("缓存恢复中", self._status_metric("新增 ", len(df), "只"))
+            self._set_window_status("本地缓存加载中", self._status_metric("新增 ", len(df), "只"))
         else:
             self._set_window_status("本次扫描命中", self._status_metric("新增 ", len(df), "只"))
 

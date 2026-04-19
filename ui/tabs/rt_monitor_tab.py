@@ -22,7 +22,6 @@ from core.throttler import SignalThrottler
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.toast_widget import show_toast
 from ui.models.table_models import RtSortFilterProxyModel, RtTableModel, StockItemDelegate
-from ui.status_registry import format_runtime_status_text
 from ui.tabs.base_stock_tab import BaseStockTab
 from ui.workers.rt_scan_worker import RtScanWorker
 
@@ -36,8 +35,8 @@ class RtMonitorTab(BaseStockTab):
     _STATUS_LABELS = {
         "idle": "静默",
         "realtime": "实时",
-        "cache": "缓存",
-        "fallback": "回退",
+        "cache": "本地缓存",
+        "fallback": "远端失败沿用",
         "error": "错误",
         "working": "处理中",
     }
@@ -64,7 +63,7 @@ class RtMonitorTab(BaseStockTab):
         self._auto_timer.start(30000)  # 每 30 秒检查一次
         self._rt_status_state = "idle"
         self._rt_status_detail = "未启动"
-        self._rt_status_next_step = "点“启动监控”开始"
+        self._rt_status_next_step = "点“开始监控”开始"
         self._rt_pool_size = 0
         self._rt_last_update = ""
         self._refresh_rt_header_summary()
@@ -77,16 +76,6 @@ class RtMonitorTab(BaseStockTab):
         interval_text = str(self._settings.value("interval", "30秒"))
         interval_map = {"30秒": 30, "1分钟": 60, "3分钟": 180, "5分钟": 300}
         return interval_map.get(interval_text, 30)
-
-    def _format_status_text(self, state: str, detail: str = "", next_step: str = "") -> str:
-        canonical_states = {"idle", "realtime", "cache", "fallback", "error", "working"}
-        if state not in canonical_states:
-            if next_step:
-                return self.format_status_summary(f"状态 {state}", f"说明 {detail}", f"下一步 {next_step}")
-            if detail:
-                return self.format_status_summary(f"状态 {state}", f"下一步 {detail}")
-            return self.format_status_summary(f"状态 {state}")
-        return format_runtime_status_text(state, detail, next_step)
 
     @staticmethod
     def _now_hhmm() -> str:
@@ -116,36 +105,36 @@ class RtMonitorTab(BaseStockTab):
         search_text = self.rt_search.text().strip() if hasattr(self, "rt_search") else ""
 
         if total > 0:
-            primary = self._status_metric("结果 ", total, "只")
+            primary = "盘中监控已就绪"
         elif self._rt_status_state == "fallback":
             primary = "等待数据"
         elif self._rt_status_state == "error":
             primary = "监控异常"
         elif self._rt_status_state == "idle" and "清空" in self._rt_status_detail:
-            primary = "记录已清空"
+            primary = "监控记录已清空"
         elif self._is_rt_running():
             primary = "监控运行中"
         else:
-            primary = "待启动"
+            primary = "盘中监控未启动"
 
-        segments = [self._status_metric("显示 ", visible, f"/{total}")]
-        if search_text:
-            segments.append(f"搜索 {search_text}")
-        if self._rt_pool_size > 0:
-            segments.append(self._status_metric("待突破池 ", self._rt_pool_size, "只"))
-        if self._rt_last_update:
-            segments.append(self._status_metric("最近 ", self._rt_last_update))
-        segments.append(f"状态 {self._status_label_text()}")
+        freshness = f"最近 {self._rt_last_update}" if self._rt_last_update else self._status_label_text()
+        next_step = str(self._rt_status_next_step or "").strip() or "双击查看K线｜右键更多操作"
 
+        extra_segments = [f"数据 {self._status_label_text()}"]
         detail_text = str(self._rt_status_detail or "").strip()
         if detail_text:
-            segments.append(f"说明 {detail_text}")
+            extra_segments.append(f"说明 {detail_text}")
+        if self._rt_pool_size > 0:
+            extra_segments.append(self._status_metric("待突破池 ", self._rt_pool_size, "只"))
 
-        next_text = str(self._rt_status_next_step or "").strip()
-        if next_text:
-            segments.append(f"下一步 {next_text}")
-
-        return self.format_status_summary(primary, *segments)
+        return self.format_workspace_status(
+            primary,
+            result=f"{visible}/{total}只" if total else "0只",
+            freshness=freshness,
+            current_filter=search_text or "全部",
+            next_step=next_step,
+            extra_segments=extra_segments,
+        )
 
     def _refresh_rt_header_summary(self):
         if hasattr(self, "lbl_rt_info"):
@@ -229,7 +218,7 @@ class RtMonitorTab(BaseStockTab):
             self.btn_rt_start.style().unpolish(self.btn_rt_start)
             self.btn_rt_start.style().polish(self.btn_rt_start)
         else:
-            self.btn_rt_start.setText("启动监控")
+            self.btn_rt_start.setText("开始监控")
             self.btn_rt_start.setProperty("monitoring", False)
             self.btn_rt_start.setProperty("monitoring_state", "idle")
             self.btn_rt_start.setEnabled(True)
@@ -275,7 +264,7 @@ class RtMonitorTab(BaseStockTab):
             if self.btn_rt_start.text() != "停止监控":
                 self._set_rt_button_state(True)
         else:
-            if self.btn_rt_start.text() != "启动监控":
+            if self.btn_rt_start.text() != "开始监控":
                 self._set_rt_button_state(False)
 
     def _init_ui(self):
@@ -296,21 +285,21 @@ class RtMonitorTab(BaseStockTab):
 
         filter_widgets = [self.rt_search]
 
-        self.btn_rt_start = QPushButton("启动监控")
+        self.btn_rt_start = QPushButton("开始监控")
         self.btn_rt_start.setObjectName("primaryButton")
         self.btn_rt_start.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_rt_start.setProperty("toolbarWidthHints", ["启动监控", "停止监控", "正在停止..."])
+        self.btn_rt_start.setProperty("toolbarWidthHints", ["开始监控", "停止监控", "正在停止..."])
         self.btn_rt_start.clicked.connect(lambda *args: self._toggle_rt_monitor())
 
         # 清空盘中记录按钮
-        self.btn_rt_clear = QPushButton("清空")
+        self.btn_rt_clear = QPushButton("清空记录")
         self.btn_rt_clear.setProperty("class", "secondary")
         self.btn_rt_clear.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_rt_clear.clicked.connect(self._clear_table)
 
         # 盘中监控参数设置按钮
         btn_rt_settings = QToolButton()
-        btn_rt_settings.setText("设置")
+        btn_rt_settings.setText("参数")
         btn_rt_settings.setAccessibleName("盘中监控参数设置")
         btn_rt_settings.setProperty("class", "toolbarGhost")
         btn_rt_settings.setMinimumWidth(56)
@@ -377,7 +366,7 @@ class RtMonitorTab(BaseStockTab):
     def _clear_table(self):
         self.source_model.update_data([])
         self._touch_last_update()
-        self._set_status("idle", "已清空记录", "监控可继续")
+        self._set_status("idle", "已清空记录", "点“开始监控”恢复轮询")
         if hasattr(self, "table_state"):
             self.table_state.show_empty("暂无监控记录")
 

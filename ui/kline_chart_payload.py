@@ -76,26 +76,20 @@ def build_kline_theme_colors() -> dict:
         "vcp_area": t["KLINE_VCP_AREA"],
         "vcp_guide": t["KLINE_VCP_GUIDE"],
         "vcp_breakout_bg": t["KLINE_VCP_BREAKOUT_BG"],
+        "tooltip_bg": t.get("KLINE_TOOLTIP_BG", "rgba(17, 24, 39, 0.92)"),
+        "tooltip_text": t.get("KLINE_TOOLTIP_TEXT", "#F3F4F6"),
+        "macd_diff": t.get("KLINE_MACD_DIFF", "#FBBF24"),
+        "macd_dea": t.get("KLINE_MACD_DEA", "#60A5FA"),
     }
 
-    if is_dark:
-        colors.update({
-            "bg_canvas": "#0A0A0A",
-            "bg_toolbar": "#0A0A0A",
-            "text_primary": "#FFF",
-            "text_secondary": "#D1D4DC",
-            "text_muted": "#A0A0A0",
-            "border": "#222",
-        })
-    else:
-        colors.update({
-            "bg_canvas": t["BG_ELEVATED"],
-            "bg_toolbar": t["BG_ELEVATED"],
-            "text_primary": t["TEXT_PRIMARY"],
-            "text_secondary": t["TEXT_SECONDARY"],
-            "text_muted": t["TEXT_MUTED"],
-            "border": t["BORDER_DEFAULT"],
-        })
+    colors.update({
+        "bg_canvas": t.get("KLINE_BG_CANVAS", "#0A0A0A" if is_dark else t["BG_ELEVATED"]),
+        "bg_toolbar": t.get("KLINE_BG_TOOLBAR", "#0A0A0A" if is_dark else t["BG_ELEVATED"]),
+        "text_primary": t.get("KLINE_WIDGET_TEXT", "#FFF" if is_dark else t["TEXT_PRIMARY"]),
+        "text_secondary": t["TEXT_SECONDARY"],
+        "text_muted": t.get("KLINE_INFO_COLOR", "#A0A0A0" if is_dark else t["TEXT_MUTED"]),
+        "border": t.get("KLINE_TOOLBAR_BORDER", "#222" if is_dark else t["BORDER_DEFAULT"]),
+    })
 
     return colors
 
@@ -104,46 +98,46 @@ def build_kline_window_palette(theme: dict = None, is_dark: bool | None = None) 
     if theme is None:
         theme = theme_manager.current_theme
     if is_dark is None:
-        is_dark = theme.get("name") == "墨渊"
+        is_dark = theme.get("appearance") == "dark"
 
     if is_dark:
         return {
-            "widget_bg": "#0C1016",
-            "widget_text": "#F5F7FA",
-            "toolbar_bg": "#11161D",
-            "toolbar_border": "#222A33",
-            "summary_bg": "#0F141B",
-            "info_color": "#8B98A8",
-            "btn_border": "#303947",
-            "btn_hover_bg": "rgba(255,255,255,0.05)",
-            "btn_hover_text": "#F5F7FA",
-            "btn_disabled_text": "#5A6573",
-            "btn_disabled_border": "#262E39",
-            "chart_bg": "#0B0F14",
-            "nav_bg": "rgba(255,255,255,0.04)",
-            "badge_bg": "rgba(239, 68, 68, 0.10)",
-            "badge_fg": "#FCA5A5",
-            "summary_border": "rgba(148, 163, 184, 0.10)",
+            "widget_bg": theme.get("KLINE_WIDGET_BG", "#0C1016"),
+            "widget_text": theme.get("KLINE_WIDGET_TEXT", "#F5F7FA"),
+            "toolbar_bg": theme.get("KLINE_TOOLBAR_BG", "#11161D"),
+            "toolbar_border": theme.get("KLINE_TOOLBAR_BORDER", "#222A33"),
+            "summary_bg": theme.get("KLINE_SUMMARY_BG", "#0F141B"),
+            "info_color": theme.get("KLINE_INFO_COLOR", "#8B98A8"),
+            "btn_border": theme.get("KLINE_BTN_BORDER", "#303947"),
+            "btn_hover_bg": theme.get("KLINE_BTN_HOVER_BG", "rgba(255,255,255,0.05)"),
+            "btn_hover_text": theme.get("KLINE_BTN_HOVER_TEXT", "#F5F7FA"),
+            "btn_disabled_text": theme.get("KLINE_BTN_DISABLED_TEXT", "#5A6573"),
+            "btn_disabled_border": theme.get("KLINE_BTN_DISABLED_BORDER", "#262E39"),
+            "chart_bg": theme.get("KLINE_CHART_BG", "#0B0F14"),
+            "nav_bg": theme.get("KLINE_NAV_BG", "rgba(255,255,255,0.04)"),
+            "badge_bg": theme.get("KLINE_BADGE_BG", "rgba(239, 68, 68, 0.10)"),
+            "badge_fg": theme.get("KLINE_BADGE_FG", "#FCA5A5"),
+            "summary_border": theme.get("KLINE_SUMMARY_BORDER", "rgba(148, 163, 184, 0.10)"),
         }
 
     unified_bg = theme["BG_ELEVATED"]
     return {
-        "widget_bg": unified_bg,
-        "widget_text": theme["TEXT_PRIMARY"],
-        "toolbar_bg": unified_bg,
-        "toolbar_border": theme["BORDER_DEFAULT"],
-        "summary_bg": unified_bg,
-        "info_color": theme["TEXT_MUTED"],
-        "btn_border": theme["BORDER_STRONG"],
-        "btn_hover_bg": theme["TAB_HOVER_BG"],
-        "btn_hover_text": theme["TEXT_PRIMARY"],
-        "btn_disabled_text": theme["TEXT_DISABLED"],
-        "btn_disabled_border": theme["BORDER_DEFAULT"],
-        "chart_bg": unified_bg,
-        "nav_bg": theme["BG_BUTTON"],
-        "badge_bg": "rgba(239, 68, 68, 0.10)",
-        "badge_fg": theme["BRAND_DEEP"],
-        "summary_border": theme["BORDER_SUBTLE"],
+        "widget_bg": theme.get("KLINE_WIDGET_BG", unified_bg),
+        "widget_text": theme.get("KLINE_WIDGET_TEXT", theme["TEXT_PRIMARY"]),
+        "toolbar_bg": theme.get("KLINE_TOOLBAR_BG", unified_bg),
+        "toolbar_border": theme.get("KLINE_TOOLBAR_BORDER", theme["BORDER_DEFAULT"]),
+        "summary_bg": theme.get("KLINE_SUMMARY_BG", unified_bg),
+        "info_color": theme.get("KLINE_INFO_COLOR", theme["TEXT_MUTED"]),
+        "btn_border": theme.get("KLINE_BTN_BORDER", theme["BORDER_STRONG"]),
+        "btn_hover_bg": theme.get("KLINE_BTN_HOVER_BG", theme["TAB_HOVER_BG"]),
+        "btn_hover_text": theme.get("KLINE_BTN_HOVER_TEXT", theme["TEXT_PRIMARY"]),
+        "btn_disabled_text": theme.get("KLINE_BTN_DISABLED_TEXT", theme["TEXT_DISABLED"]),
+        "btn_disabled_border": theme.get("KLINE_BTN_DISABLED_BORDER", theme["BORDER_DEFAULT"]),
+        "chart_bg": theme.get("KLINE_CHART_BG", unified_bg),
+        "nav_bg": theme.get("KLINE_NAV_BG", theme["BG_BUTTON"]),
+        "badge_bg": theme.get("KLINE_BADGE_BG", "rgba(239, 68, 68, 0.10)"),
+        "badge_fg": theme.get("KLINE_BADGE_FG", theme["BRAND_DEEP"]),
+        "summary_border": theme.get("KLINE_SUMMARY_BORDER", theme["BORDER_SUBTLE"]),
     }
 
 
@@ -315,9 +309,9 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                     axisPointer: {{
                         type: 'cross'
                     }},
-                    backgroundColor: 'rgba(17, 24, 39, 0.92)',
+                    backgroundColor: '{theme_colors['tooltip_bg']}',
                     borderWidth: 0,
-                    textStyle: {{ color: '#F3F4F6' }}
+                    textStyle: {{ color: '{theme_colors['tooltip_text']}' }}
                 }},
                 grid: [
                     {{ left: '7%', right: '2%', top: 18, height: '56%' }},
@@ -510,7 +504,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         data: rawData.diff,
                         showSymbol: false,
                         smooth: true,
-                        lineStyle: {{ width: 1.1, color: '#FBBF24' }}
+                        lineStyle: {{ width: 1.1, color: '{theme_colors['macd_diff']}' }}
                     }},
                     {{
                         name: 'DEA',
@@ -520,7 +514,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         data: rawData.dea,
                         showSymbol: false,
                         smooth: true,
-                        lineStyle: {{ width: 1.1, color: '#60A5FA' }}
+                        lineStyle: {{ width: 1.1, color: '{theme_colors['macd_dea']}' }}
                     }}
                 ]
             }};

@@ -32,6 +32,7 @@ class WatchlistTab(BaseStockTab):
     def __init__(self, data_provider, parent=None):
         super().__init__(data_provider=data_provider, parent=parent)
         self._watchlist_last_update = ""
+        self.toolbar_hint_text = "双击查看K线｜右键更多操作｜Enter 打开｜Esc 退出搜索"
 
         self._init_ui()
 
@@ -107,7 +108,7 @@ class WatchlistTab(BaseStockTab):
 
         # 绑定 Model 与 Delegate
         headers = [
-            "代码", "名称", "现价", "涨幅%", "市值",
+            "代码", "名称", "来源", "现价", "涨幅%", "市值",
             "RPS强度", "细分板块", "催化剂", "业绩异动", "大宗交易", "龙虎榜"
         ]
         self.model = StockTableModel(headers)
@@ -123,7 +124,7 @@ class WatchlistTab(BaseStockTab):
         self.model.sig_rows_reordered.connect(self._on_rows_reordered)
 
         # 自适应列宽
-        sp_weights = [0.55, 0.75, 0.65, 1.4, 0.75, 0.9, 0.8, 1.4, 1.8, 1.2, 1.8, 2.8]
+        sp_weights = [0.55, 0.78, 1.15, 0.72, 0.72, 0.92, 0.9, 1.2, 1.45, 1.45, 1.2, 1.75]
         header = self.table_sp.horizontalHeader()
         header.setStretchLastSection(True)
         for col_idx, w in enumerate(sp_weights):
@@ -197,6 +198,13 @@ class WatchlistTab(BaseStockTab):
         for row_idx, code in enumerate(all_codes):
             info_new = data_dict.get(code, {})
             info_old = old_pool.get(code, {})
+            source_context = dict(info_old)
+            source_context.update(info_new)
+            source_tags = watchlist_vm.derive_source_tags(
+                source_context,
+                existing_tags=source_context.get("来源标签"),
+            )
+            source_text = watchlist_vm.format_source_tags(source_tags)
             # 优先从新老池数据中提取名称，最后使用全局映射
             name = info_new.get("名称") or info_old.get("名称")
             if not name or name == str(code):
@@ -220,6 +228,7 @@ class WatchlistTab(BaseStockTab):
             row_data = {
                 "代码": code,
                 "名称": name,
+                "来源": source_text,
                 "现价": str(cur_price),
                 "涨幅%": str(pct_str),
                 "市值": str(cap_display),
@@ -236,6 +245,7 @@ class WatchlistTab(BaseStockTab):
                 "业绩异动": info_new.get("业绩异动", ""),
                 "龙虎榜": info_new.get("龙虎榜", ""),
                 "龙虎榜日期": info_new.get("龙虎榜日期", ""),
+                "来源标签": source_tags,
                 "_zongguben": live_entry.get("_zongguben", 0)
             }
             final_list.append(row_data)
@@ -250,35 +260,39 @@ class WatchlistTab(BaseStockTab):
         visible = self.proxy_model.rowCount()
         search_text = self.sp_search.text().strip()
         if total == 0:
-            self.lbl_sp_status.setText(self.format_status_summary("关注池为空", "可输入 A 股代码加入自选"))
+            self.lbl_sp_status.setText(
+                self.format_workspace_status(
+                    "关注池为空",
+                    result="0只",
+                    freshness=self._watchlist_last_update or "待加载",
+                    current_filter=search_text or "全部",
+                    next_step="输入代码或从其他页面加入",
+                )
+            )
             if hasattr(self, "table_state"):
                 self.table_state.show_empty("暂无关注池数据")
             return
 
-        def _filled(row, key):
-            val = str(row.get(key, "") or "").strip()
-            return val not in ("", "--")
+        source_tags = []
+        for row in rows:
+            for tag in watchlist_vm.normalize_source_tags(row.get("来源标签") or row.get("来源", "")):
+                if tag not in source_tags:
+                    source_tags.append(tag)
 
-        rps_count = sum(_filled(r, "RPS强度") for r in rows)
-        catalyst_count = sum(_filled(r, "催化剂") for r in rows)
-        earnings_count = sum(_filled(r, "业绩异动") for r in rows)
-        block_count = sum(_filled(r, "大宗交易") for r in rows)
-        lhb_count = sum(_filled(r, "龙虎榜") for r in rows)
+        extra_segments = []
+        if source_tags:
+            extra_segments.append(f"来源 {watchlist_vm.format_source_tags(source_tags)}")
 
-        segments = [
-            self._status_metric("匹配 ", visible, f"/{total}"),
-            self._status_metric("RPS就绪 ", rps_count),
-            self._status_metric("催化 ", catalyst_count),
-            self._status_metric("业绩 ", earnings_count),
-            self._status_metric("大宗 ", block_count),
-            self._status_metric("龙虎 ", lhb_count),
-        ]
-        if search_text:
-            segments.append(f"搜索 {search_text}")
-        if self._watchlist_last_update:
-            segments.append(self._status_metric("最近 ", self._watchlist_last_update))
-
-        self.lbl_sp_status.setText(self.format_status_summary(self._status_metric("池内", total, "只"), *segments))
+        self.lbl_sp_status.setText(
+            self.format_workspace_status(
+                "关注池已就绪",
+                result=f"{visible}/{total}只",
+                freshness=self._watchlist_last_update or "待刷新",
+                current_filter=search_text or "全部",
+                next_step="双击查看K线｜右键更多操作",
+                extra_segments=extra_segments,
+            )
+        )
         if hasattr(self, "table_state"):
             self.table_state.show_table()
 
@@ -302,36 +316,13 @@ class WatchlistTab(BaseStockTab):
     # 交互事件
     # ================================================================
     def _on_double_click(self, index):
-        """双击行 → 备注列弹编辑框(#11)，其他列跳 K 线图"""
+        """双击行 → 打开 K 线图。"""
         if not index.isValid():
             return
         source_index = self.proxy_model.mapToSource(index)
         row = source_index.row()
-        col = source_index.column()
         if row >= len(self.model.row_data):
             return
-
-        # #11: 如果双击的是备注列(第9列)，弹出编辑框
-        notes_col_idx = self.model.headers.index("备注") if "备注" in self.model.headers else -1
-        if col == notes_col_idx:
-            code = self.model.row_data[row].get("代码", "")
-            old_note = self.model.row_data[row].get("备注", "")
-            from PyQt6.QtWidgets import QInputDialog
-            new_note, ok = QInputDialog.getText(
-                self, "编辑备注",
-                f"请输入 {code} 的备注:",
-                text=old_note
-            )
-            if ok:
-                # 更新内存
-                self.model.row_data[row]["备注"] = new_note
-                # 触发表格刷新
-                idx = self.model.index(row, notes_col_idx)
-                self.model.dataChanged.emit(idx, idx)
-                watchlist_vm.patch_entry(code, {"备注": new_note})
-            return
-
-        # 非备注列 → K 线图
         code = self.model.row_data[row].get("代码")
         if code:
             watchlist_data = watchlist_vm.get_watchlist_data()
@@ -435,9 +426,18 @@ class WatchlistTab(BaseStockTab):
             code,
             name,
             {"代码": code, "名称": name, "code": code, "name": name},
+            source_tags=["手动"],
         )
         if added:
-            self.lbl_sp_status.setText(f"关注池 | 已加入 {name}，正在刷新后续列...")
+            self.lbl_sp_status.setText(
+                self.format_workspace_status(
+                    "关注池已更新",
+                    result=f"{len(getattr(self.model, 'row_data', []) or [])}只",
+                    freshness=self._watchlist_last_update or self._now_hhmm(),
+                    current_filter=self.sp_search.text().strip() or "全部",
+                    next_step=f"等待 {name} 的行情与来源补齐",
+                )
+            )
             show_toast(f"{name} 已加入关注池，正在刷新行情与附加列", "success", self)
             if hasattr(self, "add_stock_input"):
                 self.add_stock_input.clear()
@@ -579,6 +579,13 @@ class WatchlistTab(BaseStockTab):
                     row_dict["龙虎榜"] = new_text
                     row_dict["龙虎榜日期"] = new_date
 
+            source_tags = watchlist_vm.derive_source_tags(
+                row_dict,
+                existing_tags=row_dict.get("来源标签"),
+            )
+            row_dict["来源标签"] = source_tags
+            row_dict["来源"] = watchlist_vm.format_source_tags(source_tags)
+
             # trigger row update
             self.model.dataChanged.emit(
                 self.model.index(row_idx, 0),
@@ -653,6 +660,10 @@ class WatchlistTab(BaseStockTab):
                 entry["大宗交易"] = str(row_dict.get("大宗交易", ""))
                 entry["业绩异动"] = str(row_dict.get("业绩异动", ""))
                 entry["龙虎榜日期"] = str(row_dict.get("龙虎榜日期", ""))
+                entry["来源标签"] = watchlist_vm.derive_source_tags(
+                    row_dict,
+                    existing_tags=row_dict.get("来源标签"),
+                )
                 entry.pop("催化剂", None)
                 entry.pop("热点板块", None)
 

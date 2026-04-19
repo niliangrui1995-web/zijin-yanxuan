@@ -44,6 +44,10 @@ class LhbTab(BaseStockTab):
         self._today_auto_fetched = False
         # 交易日历加载重试计数器，防止网络永久断开时无限重试
         self._calendar_retry_count = 0
+        self._status_primary = "加载中..."
+        self._status_segments = ()
+        self._status_freshness = ""
+        self._status_next_step = ""
 
         self._init_ui()
         # 启动时先用缓存数据展示，再后台检查缺失天数
@@ -83,6 +87,10 @@ class LhbTab(BaseStockTab):
         text = str(message or "")
         return text if text.endswith("\n") else text + "\n"
 
+    def _latest_cached_trade_date(self) -> str:
+        cached_dates = self.pool_manager.get_cached_dates() or []
+        return max(cached_dates) if cached_dates else ""
+
     @classmethod
     def _build_backfill_progress_log(cls, index: int, total: int, date_str: str, payload: dict) -> tuple[str, str]:
         count = int(payload.get("count", 0) or 0)
@@ -103,8 +111,36 @@ class LhbTab(BaseStockTab):
         source_count = int(probe_payload.get("count", 0) or 0)
         return int(cached_count or 0) != source_count
 
-    def _set_pool_status(self, primary: str, *segments: str):
-        self.lbl_status.setText(self.format_status_summary(primary, *segments))
+    def _set_pool_status(
+        self,
+        primary: str,
+        *segments: str,
+        freshness: str = "",
+        next_step: str = "",
+    ):
+        self._status_primary = str(primary or "").strip() or "龙虎榜已就绪"
+        self._status_segments = tuple(str(segment or "").strip() for segment in segments if str(segment or "").strip())
+        self._status_freshness = str(freshness or "").strip()
+        self._status_next_step = str(next_step or "").strip()
+        self._refresh_pool_status()
+
+    def _refresh_pool_status(self):
+        total = len(getattr(self.model, "row_data", []) or [])
+        visible = self.proxy_model.rowCount() if hasattr(self, "proxy_model") else total
+        search_text = self.search_box.text().strip() if hasattr(self, "search_box") else ""
+        latest_date = self._latest_cached_trade_date()
+        freshness = self._status_freshness or (f"快照 {latest_date}" if latest_date else "待回补")
+        next_step = self._status_next_step or "双击查看K线｜右键更多操作"
+        self.lbl_status.setText(
+            self.format_workspace_status(
+                self._status_primary,
+                result=f"{visible}/{total}只" if total else "0只",
+                freshness=freshness,
+                current_filter=search_text or "全部",
+                next_step=next_step,
+                extra_segments=self._status_segments,
+            )
+        )
 
     # ================================================================
     # UI 构建
@@ -124,7 +160,7 @@ class LhbTab(BaseStockTab):
 
         filter_widgets = [self.search_box]
 
-        self.btn_refresh = QPushButton("刷新关注池")
+        self.btn_refresh = QPushButton("历史回补")
         self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_refresh.clicked.connect(self._manual_refresh)
 
@@ -179,7 +215,7 @@ class LhbTab(BaseStockTab):
                 self._set_pool_status("交易日历未就绪", f"第{self._calendar_retry_count}次重试")
                 QTimer.singleShot(5000, self._load_and_display_pool)
             else:
-                self._set_pool_status("交易日历加载失败", "请手动刷新")
+                self._set_pool_status("交易日历加载失败", freshness="待回补", next_step="点击历史回补重新抓取")
             return
         self._calendar_retry_count = 0
 
@@ -199,7 +235,7 @@ class LhbTab(BaseStockTab):
         if missing or pending_validation:
             self._start_backfill(missing, pending_validation, validation_ref_date)
         elif not pool:
-            self._set_pool_status("暂无龙虎榜数据", "点击“刷新关注池”开始抓取")
+            self._set_pool_status("暂无龙虎榜数据", freshness="待回补", next_step="点击历史回补开始抓取")
             if hasattr(self, "table_state"):
                 self.table_state.show_empty("暂无龙虎榜数据")
 
@@ -252,6 +288,7 @@ class LhbTab(BaseStockTab):
             self._status_metric("入池 ", len(pool), "只"),
             self._status_metric("覆盖 ", cached_days, "个交易日"),
             self._status_metric("窗口 ", POOL_WINDOW, "日"),
+            freshness=f"快照 {self._latest_cached_trade_date()}" if self._latest_cached_trade_date() else "快照待更新",
         )
         if hasattr(self, "table_state"):
             if row_data:
@@ -301,19 +338,32 @@ class LhbTab(BaseStockTab):
                 "正在同步龙虎榜",
                 self._status_metric("补缺 ", len(missing_sorted), "天"),
                 self._status_metric("校验 ", len(validation_sorted), "天"),
+                freshness="手动回补",
+                next_step="等待结果落表",
             )
             _safe_log_emit(
                 "info",
                 f"[龙虎榜池] 开始同步 | 补缺{len(missing_sorted)}天 | 校验{len(validation_sorted)}天",
             )
         elif missing_sorted:
-            self._set_pool_status("正在回填龙虎榜", self._status_metric("天数 ", len(missing_sorted)), f"{missing_sorted[0]}→{missing_sorted[-1]}")
+            self._set_pool_status(
+                "正在回填龙虎榜",
+                self._status_metric("天数 ", len(missing_sorted)),
+                f"{missing_sorted[0]}→{missing_sorted[-1]}",
+                freshness="手动回补",
+                next_step="等待结果落表",
+            )
             _safe_log_emit(
                 "info",
                 f"[龙虎榜池] 开始回填 {len(missing_sorted)} 个交易日 | {missing_sorted[0]} -> {missing_sorted[-1]}",
             )
         else:
-            self._set_pool_status("正在校验龙虎榜缓存", self._status_metric("天数 ", len(validation_sorted)))
+            self._set_pool_status(
+                "正在校验龙虎榜缓存",
+                self._status_metric("天数 ", len(validation_sorted)),
+                freshness="本地缓存",
+                next_step="等待校验完成",
+            )
             _safe_log_emit(
                 "info",
                 f"[龙虎榜池] 开始校验 {len(validation_sorted)} 个已缓存交易日",
@@ -409,7 +459,11 @@ class LhbTab(BaseStockTab):
             fetched_results = results.get("fetched", {}) if isinstance(results, dict) else {}
             validated_results = results.get("validated", {}) if isinstance(results, dict) else {}
             if not fetched_results and not validated_results:
-                self._set_pool_status("同步失败", "请稍后重试")
+                self._set_pool_status(
+                    "同步失败",
+                    freshness="远端失败沿用" if getattr(self.model, "row_data", []) else "待回补",
+                    next_step="请稍后重试",
+                )
                 event_bus.sig_system_log.emit("error", self._ensure_log_line("[龙虎榜池] 同步任务未产出有效结果"))
                 return
 
@@ -442,7 +496,12 @@ class LhbTab(BaseStockTab):
         def _on_backfill_error(error_message: str):
             self._backfill_in_progress = False
             self.btn_refresh.setEnabled(True)
-            self._set_pool_status("抓取异常", error_message)
+            self._set_pool_status(
+                "抓取异常",
+                error_message,
+                freshness="远端失败沿用" if getattr(self.model, "row_data", []) else "待回补",
+                next_step="请稍后重试",
+            )
             event_bus.sig_system_log.emit("error", self._ensure_log_line(f"[龙虎榜池] 抓取任务异常: {error_message}"))
 
         task_manager.run_in_background(
@@ -453,10 +512,10 @@ class LhbTab(BaseStockTab):
         )
 
     # ================================================================
-    # 手动刷新
+    # 历史回补
     # ================================================================
     def _manual_refresh(self):
-        """手动刷新：清空缓存，重新获取全新 20 个交易日的龙虎榜数据"""
+        """历史回补：清空缓存，重新获取全新 20 个交易日的龙虎榜数据"""
         if self._backfill_in_progress:
             from ui.components.toast_widget import show_toast
             show_toast("正在抓取中，请稍候...", "warning", self)
@@ -524,7 +583,7 @@ class LhbTab(BaseStockTab):
     def _fetch_single_day(self, date_str: str):
         """抓取单天数据并刷新池"""
         self.btn_refresh.setEnabled(False)
-        self._set_pool_status("正在抓取单日龙虎榜", date_str)
+        self._set_pool_status("正在抓取单日龙虎榜", date_str, freshness="快照", next_step="等待同步完成")
 
         def _bg_fetch():
             from ui.workers.lhb_worker import fetch_lhb_pool_for_date
@@ -558,7 +617,12 @@ class LhbTab(BaseStockTab):
 
         def _on_error(error_message: str):
             self.btn_refresh.setEnabled(True)
-            self._set_pool_status(f"抓取 {date_str} 失败", error_message)
+            self._set_pool_status(
+                f"抓取 {date_str} 失败",
+                error_message,
+                freshness="远端失败沿用" if getattr(self.model, "row_data", []) else "待回补",
+                next_step="请稍后重试",
+            )
             event_bus.sig_system_log.emit("error", self._ensure_log_line(f"[龙虎榜池] 自动抓取失败: {error_message}"))
 
         task_manager.run_in_background(
@@ -574,6 +638,7 @@ class LhbTab(BaseStockTab):
     def _filter_table(self):
         search_text = self.search_box.text().strip().lower()
         self.proxy_model.setFilterText(search_text)
+        self._refresh_pool_status()
 
     # ================================================================
     # 交互事件

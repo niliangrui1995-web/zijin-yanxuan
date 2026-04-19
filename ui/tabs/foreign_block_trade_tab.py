@@ -219,6 +219,8 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._last_success_at = None
         self._status_primary = "等待加载"
         self._status_segments = ()
+        self._status_freshness = ""
+        self._status_next_step = ""
         self._had_rows_before_refresh = False
 
         self.days_to_fetch = 20  # 默认拉取最近20个交易日
@@ -275,7 +277,7 @@ class ForeignBlockTradeTab(BaseStockTab):
             self.cmb_filter_direction, self.search_box, self.cmb_days
         ]
 
-        self.btn_refresh = QPushButton("刷新数据")
+        self.btn_refresh = QPushButton("刷新")
         self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_refresh.clicked.connect(self._load_block_trade_data)
 
@@ -332,6 +334,15 @@ class ForeignBlockTradeTab(BaseStockTab):
             return ""
         return self._status_metric("上次成功 ", self._last_success_at.strftime("%H:%M:%S"))
 
+    def _latest_trade_date_text(self) -> str:
+        dates = [
+            str(row.get("交易日期", "")).strip()
+            for row in (getattr(self.model, "row_data", []) or [])
+            if isinstance(row, dict)
+        ]
+        dates = [date for date in dates if date]
+        return max(dates) if dates else ""
+
     def _refresh_filter_button_text(self, button, prefix: str, all_text: str):
         text, tooltip = format_multi_select_summary(
             prefix,
@@ -349,43 +360,56 @@ class ForeignBlockTradeTab(BaseStockTab):
             return " / ".join(labels)
         return f"{len(labels)}项"
 
-    def _refresh_header_status(self):
-        extra_segments = []
-        total = len(getattr(self.model, "row_data", []) or [])
-        visible = self.proxy_model.rowCount()
-        if total:
-            extra_segments.append(self._status_metric("匹配 ", visible, f"/{total}"))
-
-        search_text = self.search_box.text().strip()
-        if search_text:
-            extra_segments.append(f"搜索 {search_text}")
-
+    def _current_filter_summary(self) -> str:
+        parts = []
         date_text = self._filter_status_text(self.cmb_filter_date, all_text="全部日期")
         if date_text != "全部日期":
-            extra_segments.append(f"日期 {date_text}")
+            parts.append(date_text)
 
         branch_text = self._filter_status_text(self.cmb_filter_branch, all_text="全部监控席位")
         if branch_text != "全部监控席位":
-            extra_segments.append(f"席位 {branch_text}")
+            parts.append(branch_text)
 
         direction_text = self._filter_status_text(self.cmb_filter_direction, all_text="全部动作")
         if direction_text != "全部动作":
-            extra_segments.append(f"动作 {direction_text}")
+            parts.append(direction_text)
 
+        search_text = self.search_box.text().strip()
+        if search_text:
+            parts.append(search_text)
+
+        return "｜".join(parts) if parts else "全部"
+
+    def _refresh_header_status(self):
+        total = len(getattr(self.model, "row_data", []) or [])
+        visible = self.proxy_model.rowCount()
+        extra_segments = list(self._status_segments)
         last_success = self._format_last_success_segment()
         if last_success:
             extra_segments.append(last_success)
 
         self.lbl_status.setText(
-            self.format_status_summary(
+            self.format_workspace_status(
                 self._status_primary,
-                *(self._status_segments + tuple(seg for seg in extra_segments if seg)),
+                result=f"{visible}/{total}只" if total else "0只",
+                freshness=self._status_freshness or (f"快照 {self._latest_trade_date_text()}" if total else "待刷新"),
+                current_filter=self._current_filter_summary(),
+                next_step=self._status_next_step or "双击查看K线｜右键更多操作",
+                extra_segments=tuple(seg for seg in extra_segments if seg),
             )
         )
 
-    def _set_fetch_status(self, primary: str, *segments: str):
+    def _set_fetch_status(
+        self,
+        primary: str,
+        *segments: str,
+        freshness: str = "",
+        next_step: str = "",
+    ):
         self._status_primary = primary
         self._status_segments = tuple(seg for seg in segments if seg)
+        self._status_freshness = str(freshness or "").strip()
+        self._status_next_step = str(next_step or "").strip()
         self._refresh_header_status()
 
     def _should_include_row(self, buyer, seller):
@@ -414,12 +438,17 @@ class ForeignBlockTradeTab(BaseStockTab):
 
     def _load_block_trade_data(self):
         if self._is_loading or task_manager.is_active_task("foreign_block_trade"):
-            self._set_fetch_status("大宗抓取中", "上一轮任务尚未结束")
+            self._set_fetch_status("大宗抓取中", "上一轮任务尚未结束", freshness="快照", next_step="等待当前轮次结束")
             return
         self._is_loading = True
         self.btn_refresh.setEnabled(False)
         self._had_rows_before_refresh = bool(getattr(self.model, "row_data", []) or [])
-        self._set_fetch_status("正在抓取大宗交易", self._status_metric("窗口 ", self.days_to_fetch, "交易日"))
+        self._set_fetch_status(
+            "正在抓取大宗交易",
+            self._status_metric("窗口 ", self.days_to_fetch, "交易日"),
+            freshness="快照",
+            next_step="等待结果落表",
+        )
         if hasattr(self, "table_state"):
             self.table_state.show_loading("正在抓取大宗交易...", "请稍候")
         self._block_trade_codes = []
@@ -553,6 +582,8 @@ class ForeignBlockTradeTab(BaseStockTab):
                         "刷新未完成",
                         "已保留上次成功结果",
                         _format_incomplete_message(timeout_chunks, failed_chunks).lstrip("；"),
+                        freshness="远端失败沿用",
+                        next_step="双击查看K线｜右键更多操作",
                     )
                     if hasattr(self, "table_state"):
                         self.table_state.show_table()
@@ -561,6 +592,8 @@ class ForeignBlockTradeTab(BaseStockTab):
                         "大宗抓取未完成",
                         "本轮无有效结果",
                         _format_incomplete_message(timeout_chunks, failed_chunks).lstrip("；"),
+                        freshness="待刷新",
+                        next_step="点击刷新重新尝试",
                     )
                     if hasattr(self, "table_state"):
                         self.table_state.show_error(
@@ -571,7 +604,12 @@ class ForeignBlockTradeTab(BaseStockTab):
                             action_callback=self._load_block_trade_data,
                         )
             else:
-                self._set_fetch_status("近期无命中", self._status_metric("窗口 ", self.days_to_fetch, "交易日"))
+                self._set_fetch_status(
+                    "近期无命中",
+                    self._status_metric("窗口 ", self.days_to_fetch, "交易日"),
+                    freshness="快照待更新",
+                    next_step="点击刷新扩大窗口",
+                )
                 if hasattr(self, "table_state"):
                     self.table_state.show_empty(
                         "暂无大宗交易数据",
@@ -670,6 +708,7 @@ class ForeignBlockTradeTab(BaseStockTab):
             self._status_metric("席位 ", len(unique_branches)),
             self._status_metric("窗口 ", self.days_to_fetch, "交易日"),
             _format_incomplete_message(timeout_chunks, failed_chunks).lstrip("；"),
+            next_step="双击查看K线｜右键更多操作",
         )
         if hasattr(self, "table_state"):
             self.table_state.show_table()
@@ -690,9 +729,9 @@ class ForeignBlockTradeTab(BaseStockTab):
             msg = f"大宗交易抓取失败：{msg}"
         self._block_trade_codes = []
         if getattr(self.model, "row_data", []):
-            self._set_fetch_status("刷新失败", msg, "已保留上次成功结果")
+            self._set_fetch_status("刷新失败", msg, "已保留上次成功结果", freshness="远端失败沿用", next_step="双击查看K线｜右键更多操作")
         else:
-            self._set_fetch_status("刷新失败", msg)
+            self._set_fetch_status("刷新失败", msg, freshness="待刷新", next_step="点击刷新重新尝试")
         if hasattr(self, "table_state"):
             if getattr(self.model, "row_data", []):
                 self.table_state.show_table()

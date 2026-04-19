@@ -1,14 +1,15 @@
 import os
 
 from PyQt6.QtCore import QEvent, QSettings, Qt, QTimer, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QFrame, QMainWindow, QToolTip, QVBoxLayout, QWidget
+from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
+from PyQt6.QtWidgets import QFrame, QLineEdit, QMainWindow, QToolTip, QVBoxLayout, QWidget
 
 from core.app_config import app_config
 from core.cache_manager import CacheManager
 from core.event_bus import event_bus
 from core.logger import get_logger
 from core.task_manager import task_manager
+from ui.components.command_palette import CommandPaletteDialog
 from ui.components.kline_window_manager import kline_manager
 from ui.components.main_window_shell import (
     DraggableTitleBar,
@@ -72,6 +73,9 @@ class MainWindowQT(QMainWindow):
         self.startup_loader = StartupLoader(self)
         self.cache_manager = CacheManager()
         self._f5_cancelled = False
+        self._titlebar_sync_state = "idle"
+        self._last_sync_freshness = ""
+        self._command_palette = None
         self._settings = QSettings("VCPHunter", "MainWindowQT")
         self._workspace = None
         self.tabs = None
@@ -119,6 +123,7 @@ class MainWindowQT(QMainWindow):
 
         self._init_right_panel()
         main_layout.addWidget(self.tabs_wrapper, 1)
+        self._init_global_shortcuts()
 
         self._status_bar_widget = MainWindowStatusBar(f"v{APP_VERSION}", self)
         self.status_dot = self._status_bar_widget.status_dot
@@ -177,6 +182,226 @@ class MainWindowQT(QMainWindow):
         setup_system_menu(self)
         self._update_last_f5_time()
 
+    def _init_global_shortcuts(self):
+        self._shortcut_f5 = QShortcut(QKeySequence("F5"), self)
+        self._shortcut_f5.setContext(Qt.ShortcutContext.WindowShortcut)
+        self._shortcut_f5.activated.connect(self._action_refresh_f5)
+
+        self._shortcut_command_palette = QShortcut(QKeySequence("Ctrl+K"), self)
+        self._shortcut_command_palette.setContext(Qt.ShortcutContext.WindowShortcut)
+        self._shortcut_command_palette.activated.connect(self._open_command_palette)
+
+        self._shortcut_escape = QShortcut(QKeySequence("Esc"), self)
+        self._shortcut_escape.setContext(Qt.ShortcutContext.WindowShortcut)
+        self._shortcut_escape.activated.connect(self._handle_escape_shortcut)
+
+    def _handle_escape_shortcut(self):
+        from PyQt6.QtWidgets import QApplication
+
+        if self._command_palette is not None and self._command_palette.isVisible():
+            self._command_palette.reject()
+            return
+
+        app = QApplication.instance()
+        popup = app.activePopupWidget() if app is not None else None
+        if popup is not None and popup is not self:
+            popup.close()
+            return
+
+        modal = app.activeModalWidget() if app is not None else None
+        if modal is not None and modal is not self and hasattr(modal, "reject"):
+            modal.reject()
+            return
+
+        focus_widget = self.focusWidget()
+        if isinstance(focus_widget, QLineEdit):
+            focus_widget.clearFocus()
+
+    def _activate_workspace_tab(self, tab_index: int):
+        if self.tabs is not None and 0 <= int(tab_index) < self.tabs.count():
+            self.tabs.setCurrentIndex(int(tab_index))
+
+    def _build_command_palette_entries(self) -> list[dict]:
+        from ui.theme import theme_manager
+
+        commands: list[dict] = [
+            {
+                "title": "全局同步",
+                "subtitle": "执行盘后缓存与预计算同步",
+                "shortcut": "F5",
+                "keywords": ["同步", "f5", "刷新", "全局同步"],
+                "handler": self._action_refresh_f5,
+            }
+        ]
+
+        workspace = getattr(self, "_workspace", None)
+        tab_specs = workspace.tab_specs() if workspace is not None and hasattr(workspace, "tab_specs") else []
+        for index, spec in enumerate(tab_specs):
+            title = str(spec.get("title") or "").strip()
+            group = str(spec.get("group") or "").strip()
+            if not title:
+                continue
+            commands.append(
+                {
+                    "title": f"打开{title}",
+                    "subtitle": f"{group} · 切换到{title}页面" if group else f"切换到{title}页面",
+                    "keywords": [title, group, "页面", "导航"],
+                    "handler": lambda i=index: self._activate_workspace_tab(i),
+                }
+            )
+
+        rt_tab = getattr(workspace, "tab_rt", None)
+        if rt_tab is not None and hasattr(rt_tab, "_toggle_rt_monitor"):
+            running = bool(getattr(rt_tab, "_is_rt_running", lambda: False)())
+            commands.append(
+                {
+                    "title": "停止盘中监控" if running else "开始盘中监控",
+                    "subtitle": "切换盘中监控运行状态",
+                    "keywords": ["盘中监控", "开始", "停止", "监控"],
+                    "handler": lambda: rt_tab._toggle_rt_monitor(),
+                }
+            )
+
+        scan_tab = getattr(workspace, "tab_scan", None)
+        if scan_tab is not None:
+            if hasattr(scan_tab, "_on_incremental_scan_clicked"):
+                commands.append(
+                    {
+                        "title": "新增补扫",
+                        "subtitle": "仅扫描最近可用交易日",
+                        "keywords": ["扫描", "补扫", "新增补扫"],
+                        "handler": scan_tab._on_incremental_scan_clicked,
+                    }
+                )
+            if hasattr(scan_tab, "_show_scan_settings"):
+                commands.append(
+                    {
+                        "title": "扫描参数",
+                        "subtitle": "打开 VCP 扫描参数面板",
+                        "keywords": ["扫描", "参数"],
+                        "handler": scan_tab._show_scan_settings,
+                }
+            )
+
+        lhb_tab = getattr(workspace, "tab_lhb", None)
+        if lhb_tab is not None and hasattr(lhb_tab, "_manual_refresh"):
+            commands.append(
+                {
+                    "title": "历史回补龙虎榜",
+                    "subtitle": "执行龙虎榜历史回补并刷新表格",
+                    "keywords": ["龙虎榜", "刷新", "历史回补"],
+                    "handler": lhb_tab._manual_refresh,
+                }
+            )
+
+        fund_tab = getattr(workspace, "tab_fund_holdings", None)
+        if fund_tab is not None and hasattr(fund_tab, "btn_update"):
+            commands.append(
+                {
+                    "title": "刷新基金持仓",
+                    "subtitle": "拉取最新基金持仓并刷新表格",
+                    "keywords": ["基金持仓", "刷新", "持仓同步"],
+                    "handler": lambda: fund_tab.btn_update.click(),
+                }
+            )
+
+        for theme_name in theme_manager.theme_names():
+            commands.append(
+                {
+                    "title": f"切换主题：{theme_name}",
+                    "subtitle": "立即切换界面主题",
+                    "keywords": ["主题", "切换主题", theme_name],
+                    "handler": lambda n=theme_name: theme_manager.switch_theme(n),
+                }
+            )
+
+        commands.extend(
+            [
+                {
+                    "title": "表格密度：紧凑",
+                    "subtitle": "切换为紧凑表格密度",
+                    "keywords": ["表格密度", "紧凑", "密度"],
+                    "handler": lambda: self._apply_table_density("紧凑"),
+                },
+                {
+                    "title": "表格密度：舒适",
+                    "subtitle": "切换为舒适表格密度",
+                    "keywords": ["表格密度", "舒适", "密度"],
+                    "handler": lambda: self._apply_table_density("舒适"),
+                },
+            ]
+        )
+
+        return commands
+
+    def _build_stock_command_entries(self, query: str) -> list[dict]:
+        raw_query = str(query or "").strip()
+        if not raw_query:
+            return []
+
+        if not raw_query.isdigit() and len(raw_query) < 2:
+            return []
+
+        code_name_map = getattr(self.data_provider, "code2name", None) or {}
+        if not code_name_map:
+            return []
+
+        query_lower = raw_query.lower()
+        matches: list[tuple[int, str, str]] = []
+
+        for code, name in code_name_map.items():
+            code_text = str(code or "").strip()
+            name_text = str(name or "").strip()
+            if len(code_text) != 6 or not code_text.isdigit() or not name_text:
+                continue
+
+            score: int | None = None
+            if code_text == raw_query:
+                score = 0
+            elif name_text == raw_query or name_text.lower() == query_lower:
+                score = 1
+            elif code_text.startswith(raw_query):
+                score = 2
+            elif query_lower in name_text.lower():
+                score = 3
+
+            if score is not None:
+                matches.append((score, code_text, name_text))
+
+        matches.sort(key=lambda item: (item[0], item[1]))
+        commands: list[dict] = []
+        for _, code_text, name_text in matches[:12]:
+            commands.append(
+                {
+                    "title": f"打开K线：{code_text} {name_text}",
+                    "subtitle": "按代码或名称快速打开个股 K 线",
+                    "keywords": [code_text, name_text, "K线", "个股"],
+                    "handler": lambda c=code_text: self._on_show_kline(c),
+                }
+            )
+        return commands
+
+    def _open_command_palette(self):
+        if self._command_palette is None:
+            self._command_palette = CommandPaletteDialog(parent=self)
+            self._command_palette.set_dynamic_provider(self._build_stock_command_entries)
+        self._command_palette.set_commands(self._build_command_palette_entries())
+        self._command_palette.show()
+        self._command_palette.raise_()
+        self._command_palette.activateWindow()
+
+    def _set_titlebar_sync_state(self, state: str, detail: str = "", freshness: str = ""):
+        self._titlebar_sync_state = str(state or "").strip() or "idle"
+        if freshness:
+            self._last_sync_freshness = str(freshness or "").strip()
+
+        sync_widget = getattr(self, "_titlebar_sync_widget", None)
+        if sync_widget is not None:
+            sync_widget.set_state(
+                self._titlebar_sync_state,
+                detail=detail,
+                freshness=self._last_sync_freshness,
+            )
 
     def _apply_table_density(self, mode: str, persist: bool = True):
         from ui.main_window_visuals import apply_table_density
@@ -369,11 +594,18 @@ class MainWindowQT(QMainWindow):
         if os.path.exists(RPS_CACHE_FILE):
             mtime = os.path.getmtime(RPS_CACHE_FILE)
             dt = datetime.datetime.fromtimestamp(mtime)
+            freshness = f"快照 {dt.strftime('%m-%d %H:%M')}"
+            self._last_sync_freshness = freshness
             if hasattr(self, 'act_f5'):
-                self.act_f5.setText(f"全局数据同步 (F5) [{dt.strftime('%m-%d')}]")
+                self.act_f5.setText(f"全局同步 (F5) [{dt.strftime('%m-%d')}]")
+            if self._titlebar_sync_state != "working":
+                self._set_titlebar_sync_state("success", "可执行全局同步", freshness)
         else:
+            self._last_sync_freshness = "暂无可用快照"
             if hasattr(self, 'act_f5'):
-                self.act_f5.setText("全局数据同步 (F5) [暂无]")
+                self.act_f5.setText("全局同步 (F5) [暂无]")
+            if self._titlebar_sync_state != "working":
+                self._set_titlebar_sync_state("idle", "等待首次同步", self._last_sync_freshness)
 
     def _on_f5_done(self, count, elapsed):
         """Handle the completion signal from the F5 precompute workflow."""
@@ -408,6 +640,7 @@ class MainWindowQT(QMainWindow):
         if reply != QMessageBox.StandardButton.Yes: return
 
         if hasattr(self, 'lbl_status'): self.lbl_status.setText("F5 盘后预计算进行中...")
+        self._set_titlebar_sync_state("working", "全局同步进行中")
         self._f5_cancelled = False
         from ui.main_window_runtime import start_f5_precompute
 

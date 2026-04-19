@@ -23,6 +23,23 @@ def generate_global_qss(theme: dict = None, density: str | None = None) -> str:
     surface = ui["surface"]
     border = ui["border"]
     text = ui["text"]
+    tab_active_bg = t.get("TAB_ACTIVE_BG", t["BRAND_SUBTLE"])
+    tab_active_border = t.get("TAB_ACTIVE_BORDER", t["BORDER_BRAND"])
+    tab_active_text = t.get("TAB_ACTIVE_TEXT", t["TEXT_PRIMARY"])
+    tab_active_top = t.get("TAB_ACTIVE_TOP", "transparent")
+    primary_gradient_start = t.get("PRIMARY_GRADIENT_START", t["BRAND_PRIMARY"])
+    primary_gradient_end = t.get("PRIMARY_GRADIENT_END", t.get("BRAND_PRESSED", t["BRAND_DEEP"]))
+    primary_hover_start = t.get("PRIMARY_HOVER_GRADIENT_START", t["BRAND_HOVER"])
+    primary_hover_end = t.get("PRIMARY_HOVER_GRADIENT_END", t["BRAND_PRIMARY"])
+    segment_active_bg = t.get("SEGMENT_ACTIVE_BG", t["BRAND_PRIMARY"])
+    segment_active_border = t.get("SEGMENT_ACTIVE_BORDER", t["BRAND_HOVER"])
+    segment_active_text = t.get("SEGMENT_ACTIVE_TEXT", t["TEXT_ON_ACCENT"])
+    progress_gradient_start = t.get("PROGRESS_GRADIENT_START", primary_gradient_start)
+    progress_gradient_mid = t.get("PROGRESS_GRADIENT_MID", primary_hover_start)
+    progress_gradient_end = t.get("PROGRESS_GRADIENT_END", primary_gradient_end)
+    error_hover = t.get("COLOR_ERROR_HOVER", t["BRAND_HOVER"])
+    text_on_danger = t.get("TEXT_ON_DANGER", t["TEXT_ON_ACCENT"])
+    input_selection_bg = t.get("INPUT_SELECTION_BG", t["SELECTION_BG"])
 
     return f"""
 /* ═══════════════════════════════════════════
@@ -86,11 +103,11 @@ QTabBar::tab:hover {{
     border-color: {border['strong']};
 }}
 QTabBar::tab:selected {{
-    color: {t['TEXT_PRIMARY']};
+    color: {tab_active_text};
     font-weight: {font['weight_semibold']};
-    background: {t['BRAND_SUBTLE']};
-    border-color: {border['accent']};
-    border-top: 2px solid transparent;
+    background: {tab_active_bg};
+    border-color: {tab_active_border};
+    border-top: 2px solid {tab_active_top};
 }}
 
 /* ═══════════════════════════════════════════
@@ -208,25 +225,25 @@ QPushButton[class="ghost"]:hover {{
 }}
 QPushButton[class="danger"] {{
     background-color: {t['COLOR_ERROR']};
-    color: {t['TEXT_ON_ACCENT']};
+    color: {text_on_danger};
     border: none;
 }}
 QPushButton[class="danger"]:hover {{
-    background-color: {t['BRAND_HOVER']};
-    color: {t['TEXT_ON_ACCENT']};
+    background-color: {error_hover};
+    color: {text_on_danger};
 }}
 
 /* CTA 主按钮 */
 QPushButton#primaryButton {{
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 #EF4444, stop:1 #DC2626);
+        stop:0 {primary_gradient_start}, stop:1 {primary_gradient_end});
     color: {t['TEXT_ON_ACCENT']}; border: none; font-weight: {font['weight_semibold']}; min-height: {control['button_height']}px;
 }}
 QPushButton#primaryButton:hover {{
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 #F87171, stop:1 #EF4444);
+        stop:0 {primary_hover_start}, stop:1 {primary_hover_end});
 }}
-QPushButton#primaryButton:pressed {{ background: #B91C1C; }}
+QPushButton#primaryButton:pressed {{ background: {t.get('BRAND_PRESSED', t['BRAND_DEEP'])}; }}
 QPushButton#primaryButton:disabled {{ background: {t['BORDER_STRONG']}; color: {t['TEXT_MUTED']}; }}
 
 QPushButton[class="ctaSecondary"] {{
@@ -271,31 +288,28 @@ QPushButton[class="segmentControl"] {{
 }}
 QPushButton[class="segmentControl"]:hover {{ background: {t['BG_BUTTON_HOVER']}; color: {t['TEXT_PRIMARY']}; }}
 QPushButton[class="segmentControl"][state="active"] {{
-    background: #EF4444; color: #FFFFFF;
-    border: 1px solid #F87171; font-weight: 600;
+    background: {segment_active_bg}; color: {segment_active_text};
+    border: 1px solid {segment_active_border}; font-weight: 600;
 }}
 
 /* 监控启动/停止按钮状态 */
 QPushButton[monitoring="true"] {{
-    background-color: {t['COLOR_ERROR']}; color: #FFFFFF; border: none;
+    background-color: {t['COLOR_ERROR']}; color: {text_on_danger}; border: none;
 }}
 QPushButton[monitoring="true"]:hover {{
-    background-color: #F87171;
+    background-color: {error_hover};
 }}
 QPushButton[monitoring_state="running"] {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 #EF4444, stop:1 #DC2626);
-    color: #FFFFFF;
+    background-color: {t['COLOR_ERROR']};
+    color: {text_on_danger};
     border: none;
 }}
 QPushButton[monitoring_state="running"]:hover {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 #F87171, stop:1 #EF4444);
+    background-color: {error_hover};
 }}
 QPushButton[monitoring_state="stopping"],
 QPushButton[monitoring_state="stopping"]:disabled {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 #F59E0B, stop:1 #D97706);
+    background-color: {t['COLOR_WARNING']};
     color: #FFFFFF;
     border: none;
 }}
@@ -354,7 +368,7 @@ QDateEdit {{
     padding: 0 30px 0 10px;
     font-size: {font['size_sm']}px;
     min-height: {control['input_height']}px;
-    selection-background-color: rgba(239, 68, 68, 0.3);
+    selection-background-color: {input_selection_bg};
 }}
 QDateEdit:hover {{ border: 1px solid {t['BORDER_BRAND']}; }}
 QDateEdit:focus {{ border: 1px solid {border['focus']}; }}
@@ -390,7 +404,7 @@ QProgressBar {{
 }}
 QProgressBar::chunk {{
     background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 #EF4444, stop:0.5 #F87171, stop:1 #B91C1C);
+        stop:0 {progress_gradient_start}, stop:0.5 {progress_gradient_mid}, stop:1 {progress_gradient_end});
     border-radius: 3px;
 }}
 
@@ -490,14 +504,14 @@ QLabel#successStatus {{
     color: {t['COLOR_SUCCESS']}; font-weight: {font['weight_bold']}; font-size: {font['size_md']}px;
 }}
 QLabel#warningStatus {{
-    color: #F59E0B; font-weight: {font['weight_bold']}; font-size: {font['size_xs']}px;
+    color: {t['COLOR_WARNING']}; font-weight: {font['weight_bold']}; font-size: {font['size_xs']}px;
 }}
 
 QLineEdit {{
     background-color: {t['BG_INPUT']}; color: {t['TEXT_PRIMARY']};
     border: 1px solid {t['BORDER_STRONG']}; border-radius: {radius['sm']}px;
     padding: 0 12px; font-size: {font['size_sm']}px;
-    selection-background-color: rgba(239, 68, 68, 0.3); min-height: {control['input_height']}px;
+    selection-background-color: {input_selection_bg}; min-height: {control['input_height']}px;
 }}
 QLineEdit:hover {{ border: 1px solid {t['BORDER_BRAND']}; }}
 QLineEdit:focus {{ border: 1px solid {border['focus']}; background-color: {t['BG_INPUT']}; }}

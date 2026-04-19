@@ -266,42 +266,58 @@ class ScanTab(BaseStockTab):
         current_count = len(self._pending_scan_results or [])
         raw_hits = int(stats.get("原始命中", 0) or 0)
         if raw_hits <= 0:
-            return f"新增扫描完成: {target_date} 无新增信号，当前 {current_count} 只"
+            return f"新增补扫完成: {target_date} 无新增信号，当前 {current_count} 只"
 
         updated = int(stats.get("更新", 0) or 0) + int(stats.get("刷新", 0) or 0)
         return (
-            f"新增扫描完成: {target_date} 命中 {raw_hits} 条，"
+            f"新增补扫完成: {target_date} 命中 {raw_hits} 条，"
             f"新增 {int(stats.get('新增', 0) or 0)} 只，更新 {updated} 只，当前 {current_count} 只"
         )
 
     def _refresh_scan_status(self, primary: str | None = None):
+        search_text = self.scan_search.text().strip() if hasattr(self, "scan_search") else ""
+        extra_segments = list(self._scan_param_segments())
         if self._current_results:
             latest_date = self._latest_scan_trigger_date()
             self.lbl_scan_status.setText(
-                self.format_status_summary(
-                    primary or f"结果 {len(self._current_results)}只",
-                    self._status_metric("最近 ", latest_date),
+                self.format_workspace_status(
+                    primary or "扫描结果已就绪",
+                    result=f"{self.proxy_model.rowCount()}/{len(self._current_results)}只",
+                    freshness=f"快照 {latest_date}" if latest_date else "快照待更新",
+                    current_filter=search_text or "全部",
+                    next_step="双击查看K线｜右键更多操作",
+                    extra_segments=extra_segments,
                 )
             )
             return
 
         self.lbl_scan_status.setText(
-            self.format_status_summary(primary or "待扫描", *self._scan_param_segments())
+            self.format_workspace_status(
+                primary or "等待扫描",
+                result="0只",
+                freshness=self._scan_target_date or "待扫描",
+                current_filter=search_text or "全部",
+                next_step="点击开始扫描或新增补扫",
+                extra_segments=extra_segments,
+            )
         )
 
     def _set_scan_action_state(self, state: str):
         is_incremental = self._scan_mode == "incremental"
         if state == "running":
             if hasattr(self, "btn_scan_increment"):
-                self.btn_scan_increment.setText("终止新增扫描" if is_incremental else "新增扫描")
+                self.btn_scan_increment.setText("停止补扫" if is_incremental else "新增补扫")
                 self.btn_scan_increment.setEnabled(is_incremental)
-            self.btn_scan_action.setText("区间扫描" if is_incremental else "终止VCP扫描")
+            self.btn_scan_action.setText("开始扫描" if is_incremental else "停止扫描")
             self.btn_scan_action.setEnabled(not is_incremental)
             self.lbl_scan_status.setText(
-                self.format_status_summary(
-                    "新增扫描中" if is_incremental else "正在扫描",
-                    self._status_metric("目标 ", self._scan_target_date) if is_incremental else "",
-                    *self._scan_param_segments(),
+                self.format_workspace_status(
+                    "新增补扫中" if is_incremental else "扫描进行中",
+                    result=f"{self.proxy_model.rowCount()}/{len(self._current_results)}只",
+                    freshness=f"手动回补 {self._scan_target_date}" if is_incremental else "实时计算",
+                    current_filter=self.scan_search.text().strip() or "全部",
+                    next_step="等待结果落表",
+                    extra_segments=self._scan_param_segments(),
                 )
             )
             if hasattr(self, "table_state"):
@@ -309,17 +325,23 @@ class ScanTab(BaseStockTab):
                     self.table_state.show_table()
                 else:
                     self.table_state.show_loading(
-                        "新增扫描中..." if is_incremental else "扫描中...",
+                        "新增补扫中..." if is_incremental else "扫描中...",
                         f"正在补扫 {self._scan_target_date}" if is_incremental and self._scan_target_date else "正在计算候选信号",
                     )
         elif state == "stopping":
             if hasattr(self, "btn_scan_increment"):
-                self.btn_scan_increment.setText("正在终止新增..." if is_incremental else "新增扫描")
+                self.btn_scan_increment.setText("正在停止补扫..." if is_incremental else "新增补扫")
                 self.btn_scan_increment.setEnabled(False)
-            self.btn_scan_action.setText("区间扫描" if is_incremental else "正在终止...")
+            self.btn_scan_action.setText("开始扫描" if is_incremental else "正在停止...")
             self.btn_scan_action.setEnabled(False)
             self.lbl_scan_status.setText(
-                self.format_status_summary("正在终止", "保留已完成结果", self._status_metric("目标 ", self._scan_target_date))
+                self.format_workspace_status(
+                    "正在停止扫描",
+                    result=f"{self.proxy_model.rowCount()}/{len(self._current_results)}只",
+                    freshness=f"手动回补 {self._scan_target_date}" if is_incremental else "扫描中断",
+                    current_filter=self.scan_search.text().strip() or "全部",
+                    next_step="保留已完成结果",
+                )
             )
             if hasattr(self, "table_state"):
                 if is_incremental and self.source_model.rowCount() > 0:
@@ -327,10 +349,10 @@ class ScanTab(BaseStockTab):
                 else:
                     self.table_state.show_loading("正在终止...", "正在收尾")
         else:
-            self.btn_scan_action.setText("区间扫描")
+            self.btn_scan_action.setText("开始扫描")
             self.btn_scan_action.setEnabled(True)
             if hasattr(self, "btn_scan_increment"):
-                self.btn_scan_increment.setText("新增扫描")
+                self.btn_scan_increment.setText("新增补扫")
                 self.btn_scan_increment.setEnabled(True)
             self._refresh_scan_status()
             if hasattr(self, "table_state"):
@@ -356,20 +378,20 @@ class ScanTab(BaseStockTab):
 
         filter_widgets = [self.scan_search]
 
-        self.btn_scan_action = QPushButton("区间扫描")
+        self.btn_scan_action = QPushButton("开始扫描")
         self.btn_scan_action.setObjectName("primaryButton")
-        self.btn_scan_action.setProperty("toolbarWidthHints", ["区间扫描", "终止VCP扫描", "正在终止..."])
+        self.btn_scan_action.setProperty("toolbarWidthHints", ["开始扫描", "停止扫描", "正在停止..."])
         self.btn_scan_action.clicked.connect(self._on_scan_action_clicked)
 
-        self.btn_scan_increment = QPushButton("新增扫描")
+        self.btn_scan_increment = QPushButton("新增补扫")
         self.btn_scan_increment.setProperty("class", "secondary")
-        self.btn_scan_increment.setProperty("toolbarWidthHints", ["新增扫描", "终止新增扫描", "正在终止新增..."])
+        self.btn_scan_increment.setProperty("toolbarWidthHints", ["新增补扫", "停止补扫", "正在停止补扫..."])
         self.btn_scan_increment.setToolTip("只扫描最近可用交易日，并将结果追加/刷新到当前表格")
         self.btn_scan_increment.clicked.connect(self._on_incremental_scan_clicked)
 
         # 扫描参数设置按钮
         self.btn_scan_settings = QToolButton()
-        self.btn_scan_settings.setText("设置")
+        self.btn_scan_settings.setText("参数")
         self.btn_scan_settings.setAccessibleName("VCP 扫描参数设置")
         self.btn_scan_settings.setProperty("class", "toolbarGhost")
         self.btn_scan_settings.setMinimumWidth(56)
@@ -523,7 +545,7 @@ class ScanTab(BaseStockTab):
         self._last_incremental_stats = None
         self._scan_cancel_requested = False
         self._set_scan_action_state("running")
-        event_bus.sig_task_progress.emit("scan", 1, "准备新增扫描..." if merge_mode else "准备扫描...")
+        event_bus.sig_task_progress.emit("scan", 1, "准备新增补扫..." if merge_mode else "准备扫描...")
         self._pending_scan_results = None
 
         params = VCPParams(

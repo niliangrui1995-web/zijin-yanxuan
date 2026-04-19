@@ -44,8 +44,8 @@ _STATUS_CLOSED_KEYWORDS = ("休市", "收盘", "闭市", "盘后")
 _RUNTIME_STATUS_LABEL = {
     "idle": "静默",
     "realtime": "实时",
-    "cache": "缓存",
-    "fallback": "回退",
+    "cache": "本地缓存",
+    "fallback": "远端失败沿用",
     "error": "错误",
     "working": "处理中",
 }
@@ -64,6 +64,57 @@ def format_status_summary(primary: str, *segments: str) -> str:
             parts.append(text)
 
     return " | ".join(parts)
+
+
+def format_workspace_status(
+    primary: str,
+    *,
+    result: str = "",
+    freshness: str = "",
+    current_filter: str = "",
+    next_step: str = "",
+    extra_segments: tuple[str, ...] | list[str] | None = None,
+) -> str:
+    segments: list[str] = []
+
+    result_text = str(result or "").strip()
+    if result_text:
+        segments.append(f"结果 {result_text}")
+
+    freshness_text = str(freshness or "").strip()
+    if freshness_text:
+        segments.append(f"时效 {freshness_text}")
+
+    filter_text = str(current_filter or "").strip()
+    if filter_text:
+        segments.append(f"筛选 {filter_text}")
+
+    next_text = str(next_step or "").strip()
+    if next_text:
+        segments.append(f"下一步 {next_text}")
+
+    for segment in extra_segments or ():
+        text = str(segment or "").strip()
+        if text:
+            segments.append(text)
+
+    return format_status_summary(primary, *segments)
+
+
+def join_semantic_badges(*badge_groups) -> str:
+    badges: list[str] = []
+    for group in badge_groups:
+        if isinstance(group, (list, tuple, set)):
+            iterable = group
+        else:
+            iterable = [group]
+
+        for badge in iterable:
+            text = str(badge or "").strip()
+            if text and text not in badges:
+                badges.append(text)
+
+    return "｜".join(badges)
 
 
 def resolve_market_status_badge(raw_status: str, market: str) -> dict[str, str]:

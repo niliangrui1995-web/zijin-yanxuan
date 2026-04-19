@@ -77,6 +77,10 @@ class AsianMarketTab(BaseStockTab):
         self._load_cache_pending = False
         self._last_asian_success_at = None
         self._last_asian_error = ""
+        self._status_primary = "系统初始化..."
+        self._status_segments = ()
+        self._status_freshness = ""
+        self._status_next_step = ""
         self._last_health_log_at = 0.0
         self._last_health_signature = None
         self.cache_thread = None
@@ -206,8 +210,38 @@ class AsianMarketTab(BaseStockTab):
             return ""
         return self._status_metric("上次成功 ", self._last_asian_success_at.strftime("%H:%M:%S"))
 
-    def _set_asian_status(self, primary: str, *segments: str):
-        self.lbl_status.setText(self.format_status_summary(primary, *segments))
+    def _set_asian_status(
+        self,
+        primary: str,
+        *segments: str,
+        freshness: str = "",
+        next_step: str = "",
+    ):
+        self._status_primary = str(primary or "").strip() or "亚洲市场已就绪"
+        self._status_segments = tuple(str(segment or "").strip() for segment in segments if str(segment or "").strip())
+        self._status_freshness = str(freshness or "").strip()
+        self._status_next_step = str(next_step or "").strip()
+        self._refresh_asian_status()
+
+    def _refresh_asian_status(self):
+        total = len(getattr(self, "row_data", []) or [])
+        visible = self.proxy_model.rowCount() if hasattr(self, "proxy_model") else total
+        search_text = self.search_box.text().strip() if hasattr(self, "search_box") else ""
+        extra_segments = list(self._status_segments)
+        last_success = self._format_last_success_segment()
+        if last_success:
+            extra_segments.append(last_success)
+
+        self.lbl_status.setText(
+            self.format_workspace_status(
+                self._status_primary,
+                result=f"{visible}/{total}只" if total else "0只",
+                freshness=self._status_freshness or ("本地缓存" if total else "待刷新"),
+                current_filter=search_text or "全部",
+                next_step=self._status_next_step or "双击查看K线｜右键更多操作",
+                extra_segments=extra_segments,
+            )
+        )
 
     def _on_worker_progress(self, message: str):
         text = str(message or "").strip()
@@ -218,7 +252,13 @@ class AsianMarketTab(BaseStockTab):
         if any(marker in text for marker in error_markers):
             self._last_asian_error = text
             cached_hint = "当前保留本地缓存" if getattr(self, "row_data", None) else "当前没有可展示缓存"
-            self._set_asian_status("本次刷新失败", text, cached_hint, self._format_last_success_segment())
+            self._set_asian_status(
+                "本次刷新失败",
+                text,
+                cached_hint,
+                freshness="远端失败沿用" if getattr(self, "row_data", None) else "待刷新",
+                next_step="请稍后重试",
+            )
             if hasattr(self, "table_state"):
                 if self.row_data:
                     self.table_state.show_table()
@@ -233,18 +273,18 @@ class AsianMarketTab(BaseStockTab):
             return
 
         if "正在拉取亚洲市场最新报价" in text:
-            self._set_asian_status("正在刷新亚洲市场", self._format_last_success_segment())
+            self._set_asian_status("正在刷新亚洲市场", freshness="实时", next_step="等待报价同步")
             if hasattr(self, "table_state") and not self.row_data:
                 self.table_state.show_loading("正在刷新亚洲市场...", "请稍候")
             return
 
         if "报价更新完成" in text:
-            self._set_asian_status("最新数据已同步", self._format_last_success_segment())
+            self._set_asian_status("最新数据已同步", freshness="实时")
             if hasattr(self, "table_state"):
                 self.table_state.show_table()
             return
 
-        self._set_asian_status(text, self._format_last_success_segment())
+        self._set_asian_status(text)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -359,9 +399,9 @@ class AsianMarketTab(BaseStockTab):
         self.chk_cf_proxy.setChecked(is_cf_proxy_enabled())
         self.chk_cf_proxy.toggled.connect(self._on_cf_proxy_toggled)
 
-        self.btn_refresh = QPushButton("立即刷新")
+        self.btn_refresh = QPushButton("刷新")
         self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_refresh.setToolTip("立刻请求最新亚洲报价，并重新检查本地缓存状态。")
+        self.btn_refresh.setToolTip("刷新亚洲市场报价，并重新检查本地缓存状态。")
         self.btn_refresh.clicked.connect(self._on_manual_refresh)
 
         filter_widgets = [self.search_box, self.chk_cf_proxy]
@@ -431,6 +471,7 @@ class AsianMarketTab(BaseStockTab):
 
     def _on_search_text_changed(self, text):
         self.proxy_model.setFilterText(text)
+        self._refresh_asian_status()
 
     def _on_manual_refresh(self):
         """手动触发外网数据更新"""
@@ -438,10 +479,10 @@ class AsianMarketTab(BaseStockTab):
         self._load_local_cache()
         if hasattr(self, 'worker') and self.worker.isRunning():
             self._set_runtime_state("manual_refresh_once")
-            self._set_asian_status("手动刷新已触发", "正在请求最新亚洲报价...", self._format_last_success_segment())
+            self._set_asian_status("刷新已触发", "正在请求最新亚洲报价...", freshness="实时", next_step="等待报价同步")
             self._worker_trigger_refresh()
         else:
-            self._set_asian_status("后台刷新线程未就绪", "请稍后再试", self._format_last_success_segment())
+            self._set_asian_status("后台刷新线程未就绪", "请稍后再试", freshness="待刷新", next_step="稍后重试")
 
     def _sync_worker_codes(self):
         """让后台 worker 的轮询列表始终跟随当前表格数据，避免长期停留在旧数量。"""
@@ -464,7 +505,7 @@ class AsianMarketTab(BaseStockTab):
                 self.table_state.show_error(
                     "暂无亚洲市场数据",
                     "当前没有可展示的本地缓存。",
-                    action_text="立即刷新",
+                    action_text="刷新",
                     action_callback=self._on_manual_refresh,
                 )
 
@@ -661,10 +702,10 @@ class AsianMarketTab(BaseStockTab):
                     "已载入本地缓存",
                     self._status_metric("标的 ", len(self.row_data), "只"),
                     "等待最新报价同步",
-                    self._format_last_success_segment(),
+                    freshness="本地缓存",
                 )
             else:
-                self._set_asian_status("本地缓存为空", "可点击立即刷新获取最新数据")
+                self._set_asian_status("本地缓存为空", "可点击刷新获取最新数据", freshness="待刷新", next_step="点击刷新获取最新报价")
         finally:
             pending_reload = self._load_cache_pending
             self._load_cache_pending = False
@@ -705,7 +746,7 @@ class AsianMarketTab(BaseStockTab):
         self._set_asian_status(
             "最新数据已同步",
             self._status_metric("覆盖 ", len(updates), "只"),
-            self._format_last_success_segment(),
+            freshness="实时",
         )
         if hasattr(self, "table_state"):
             self.table_state.show_table()

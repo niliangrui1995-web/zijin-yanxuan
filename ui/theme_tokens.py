@@ -18,7 +18,7 @@ def _normalize_density(density: str | None = None) -> str:
 
 
 def _is_dark_theme(theme: dict) -> bool:
-    return theme.get("name") == "墨渊"
+    return theme.get("appearance") == "dark"
 
 
 def _hex_to_rgba(color: str, alpha: float) -> str:
@@ -64,7 +64,7 @@ def _build_state_tones(theme: dict, *, is_dark: bool) -> dict:
         "warning": tone("COLOR_WARNING", bg_alpha=0.12, border_alpha=0.22),
         "error": tone("COLOR_ERROR", bg_alpha=0.12, border_alpha=0.22),
         "cached": tone("COLOR_INFO", fg=theme["TEXT_PRIMARY"] if is_dark else theme["COLOR_INFO"], bg_alpha=0.08, border_alpha=0.18),
-        "realtime": tone("COLOR_SUCCESS", fg=theme["COLOR_SUCCESS"], bg_alpha=0.10, border_alpha=0.24),
+        "realtime": tone("COLOR_REALTIME", fg=theme["COLOR_REALTIME"], bg_alpha=0.10, border_alpha=0.24),
         "stale": tone("COLOR_WARNING", fg=theme["COLOR_WARNING"], bg_alpha=0.08, border_alpha=0.18),
         "focus": tone("COLOR_INFO", fg=theme["COLOR_INFO"], bg_alpha=0.10, border_alpha=0.28),
         "offline": {
@@ -178,9 +178,9 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "chrome": theme["BG_TITLEBAR"],
         "statusbar": theme["BG_STATUSBAR"],
         "input": theme["BG_INPUT"],
-        "toolbar": theme["BG_ELEVATED"] if is_dark else theme["BG_CARD"],
-        "toolbar_card": theme["BG_CARD"] if is_dark else _hex_to_rgba(theme["TEXT_PRIMARY"], 0.02),
-        "toolbar_chip": theme["BG_BUTTON"] if is_dark else _hex_to_rgba(theme["TEXT_PRIMARY"], 0.05),
+        "toolbar": theme.get("BG_TOOLBAR", theme["BG_ELEVATED"] if is_dark else theme["BG_CARD"]),
+        "toolbar_card": theme.get("BG_TOOLBAR_CARD", theme["BG_CARD"] if is_dark else _hex_to_rgba(theme["TEXT_PRIMARY"], 0.02)),
+        "toolbar_chip": theme.get("BG_TOOLBAR_CHIP", theme["BG_BUTTON"] if is_dark else _hex_to_rgba(theme["TEXT_PRIMARY"], 0.05)),
         "panel_alt": theme["BG_TABLE_ALT_ROW"],
         "overlay": _hex_to_rgba(theme["BG_ELEVATED"], 0.94 if is_dark else 0.98),
         "chart_panel": theme["BG_INPUT"] if is_dark else theme["BG_CARD"],
@@ -193,7 +193,7 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "subtle": theme["BORDER_SUBTLE"],
         "strong": theme["BORDER_STRONG"],
         "accent": theme["BORDER_BRAND"],
-        "focus": _hex_to_rgba(theme["COLOR_INFO"], 0.32 if is_dark else 0.24),
+        "focus": theme.get("FOCUS_RING") or _hex_to_rgba(theme["COLOR_INFO"], 0.32 if is_dark else 0.24),
     }
 
     motion = {

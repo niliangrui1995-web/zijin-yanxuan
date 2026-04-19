@@ -104,6 +104,13 @@ class StartupLoader:
                         f"已加载 {count} 只标的缓存 (日期: {cache_date})"
                     )
                 )
+                self._safe_call_in_ui(
+                    lambda: self.mw._set_titlebar_sync_state(
+                        "cache",
+                        "本地缓存已加载",
+                        f"快照 {cache_date}",
+                    )
+                )
 
             self._safe_call_in_ui(
                 lambda: self.mw.cache_manager.load_rt_cache(
