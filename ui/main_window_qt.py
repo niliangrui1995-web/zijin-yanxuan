@@ -692,8 +692,24 @@ class MainWindowQT(QMainWindow):
         """响应带列表上下文的 K 线图请求 — 委托给 KLineWindowManager (#1)"""
         name = getattr(self.data_provider, 'code2name', {}).get(code, code)
         vcp_data = {'code': code, 'name': name}
-        if code_list and 0 <= current_idx < len(code_list):
-            item_data = code_list[current_idx]
+        workspace = getattr(self, "_workspace", None)
+        source_tab_index = self.tabs.currentIndex() if self.tabs is not None else -1
+        source_tab_key = ""
+        if workspace is not None and hasattr(workspace, "tab_specs"):
+            tab_specs = workspace.tab_specs()
+            if 0 <= source_tab_index < len(tab_specs):
+                source_tab_key = str(tab_specs[source_tab_index].get("key") or "").strip()
+
+        normalized_code_list = []
+        for item in code_list or []:
+            enriched = dict(item) if isinstance(item, dict) else {}
+            if source_tab_index >= 0:
+                enriched.setdefault("__source_tab_index", source_tab_index)
+            if source_tab_key:
+                enriched.setdefault("__source_tab_key", source_tab_key)
+            normalized_code_list.append(enriched)
+        if normalized_code_list and 0 <= current_idx < len(normalized_code_list):
+            item_data = normalized_code_list[current_idx]
             if isinstance(item_data, dict):
                 if item_data.get('代码') == code:
                     name = item_data.get('名称', name)
@@ -702,7 +718,6 @@ class MainWindowQT(QMainWindow):
         # 核心需求：全局 VCP 状态穿透投影
         # 如果从其他 Tab (如龙虎榜、美股) 打开 K 线，只要它在当前的 VCP 扫描结果中
         # 就自动把它在 VCP 表格中的突破点、箱体等画线数据合并进来
-        workspace = getattr(self, "_workspace", None)
         scan_res = workspace.find_scan_result(code) if workspace is not None else None
         if isinstance(scan_res, dict):
             for k, v in scan_res.items():
@@ -716,7 +731,7 @@ class MainWindowQT(QMainWindow):
             name=name,
             data_provider=self.data_provider,
             vcp_data=vcp_data,
-            code_list=code_list,
+            code_list=normalized_code_list,
             current_idx=current_idx,
         )
 

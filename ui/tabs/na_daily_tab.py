@@ -112,8 +112,14 @@ class NADailyTab(BaseStockTab):
                 header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
                 self.na_daily_table.setColumnWidth(i, w)
 
-        # 绑定防抖自动保存与恢复配置
-        self.bind_header_persistence(self.na_daily_table, "header_state_na_daily_v4")
+        # 绑定防抖自动保存与恢复配置；首开默认按日报时间降序
+        restored_sort = self.bind_header_persistence(self.na_daily_table, "header_state_na_daily_v4")
+        if not restored_sort:
+            try:
+                report_col = self.model.headers.index("日报时间")
+                self.na_daily_table.sortByColumn(report_col, Qt.SortOrder.DescendingOrder)
+            except ValueError:
+                pass
 
         self.na_daily_table.doubleClicked.connect(self._on_double_click)
         self.na_daily_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -352,12 +358,6 @@ class NADailyTab(BaseStockTab):
                 self.table_state.show_table()
             else:
                 self.table_state.show_empty("暂无战报数据")
-
-        try:
-            report_col = self.model.headers.index("日报时间")
-            self.na_daily_table.sortByColumn(report_col, Qt.SortOrder.DescendingOrder)
-        except ValueError:
-            pass
 
         if self._na_daily_codes:
             self.refresh_table_quotes_and_market_caps(quote_task_id="na_daily_quotes")

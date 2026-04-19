@@ -436,6 +436,8 @@ class ShellNavigationWidget(QWidget):
             for global_index in indices:
                 self.tabbar.addTab(self._tabs.tabText(global_index))
             self.tabbar.setCurrentIndex(indices.index(target_index))
+            if self._tabs.currentIndex() != target_index:
+                self._tabs.setCurrentIndex(target_index)
 
             button = self._group_buttons.get(group)
             if button is not None and not button.isChecked():

@@ -448,11 +448,10 @@ class ScanTab(BaseStockTab):
             self.table_scan.setColumnWidth(col_idx, int(w * 80))
         header.setSectionResizeMode(self.source_model.columnCount() - 1, QHeaderView.ResizeMode.Stretch)
 
-        # 绑定防抖自动保存与恢复配置
-        self.bind_header_persistence(self.table_scan, "header_state_scan_v3")
-
-        # 强制默认按第5列（触发日期）降序排序（由近到远），覆盖掉持久化中可能记录的其他排序列
-        self.table_scan.sortByColumn(self.source_model.headers.index("触发日期"), Qt.SortOrder.DescendingOrder)
+        # 绑定防抖自动保存与恢复配置；没有历史排序时才走默认触发日期降序
+        restored_sort = self.bind_header_persistence(self.table_scan, "header_state_scan_v3")
+        if not restored_sort:
+            self.table_scan.sortByColumn(self.source_model.headers.index("触发日期"), Qt.SortOrder.DescendingOrder)
 
         layout.addWidget(self.table_state)
 

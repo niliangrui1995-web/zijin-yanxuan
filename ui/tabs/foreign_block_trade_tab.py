@@ -301,9 +301,6 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.table.setItemDelegate(self.delegate)
         self.table_state = TableStateWrapper(self.table, empty_title="暂无大宗交易数据", loading_title="抓取中...")
 
-        # 大宗交易默认按时间排序 由近到远
-        self.table.sortByColumn(self.model.headers.index("交易日期"), Qt.SortOrder.DescendingOrder)
-
         # 列宽
         header = self.table.horizontalHeader()
         header.setStretchLastSection(True)
@@ -314,7 +311,9 @@ class ForeignBlockTradeTab(BaseStockTab):
             self.table.setColumnWidth(i, w)
 
         # 绑定防抖自动保存与恢复配置 (v4 强制刷新新布局)
-        self.bind_header_persistence(self.table, "block_trade_header_state_v5")
+        restored_sort = self.bind_header_persistence(self.table, "block_trade_header_state_v5")
+        if not restored_sort:
+            self.table.sortByColumn(self.model.headers.index("交易日期"), Qt.SortOrder.DescendingOrder)
 
         # 双击 → K线图
         self.table.doubleClicked.connect(self._on_double_click)

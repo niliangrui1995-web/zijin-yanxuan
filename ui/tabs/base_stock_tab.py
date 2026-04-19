@@ -72,6 +72,8 @@ class BaseStockTab(QWidget):
         self.data_provider = data_provider
         self._deferred_quote_refresh = False
         self._missing_quote_publisher_warned = False
+        self._header_state_savers = []
+        event_bus.sig_app_closing.connect(self._flush_header_persistence)
 
     def _resolve_active_quote_model(self):
         return getattr(self, '_active_model_ref', None) \
@@ -592,13 +594,25 @@ class BaseStockTab(QWidget):
             event_bus.sig_system_log.emit("error", f"[东方财富] 跳转失败: {e}")
             self._open_quote_web_fallback(code, "东方财富跳转异常")
 
-    def bind_header_persistence(self, table, settings_key: str = "header_state"):
-        """通用：绑定表格列宽调整后自动保存（带防抖），并恢复上次保存的宽度"""
+    def _flush_header_persistence(self):
+        for saver in getattr(self, "_header_state_savers", []) or []:
+            try:
+                saver()
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                logging.getLogger(__name__).debug(f"表格状态关闭落盘失败: {exc}")
+
+    def bind_header_persistence(self, table, settings_key: str = "header_state") -> bool:
+        """通用：绑定表格列宽/列顺序/排序状态自动保存，并恢复上次保存的视图状态"""
         from PyQt6.QtCore import QSettings, QTimer
 
         # 使用当前类的名字作为配置的分类，确保不冲突
         settings = QSettings("VCPHunter", self.__class__.__name__)
         header = table.horizontalHeader()
+        sort_column_key = f"{settings_key}/sort_column"
+        sort_order_key = f"{settings_key}/sort_order"
+        restored_sort = False
+        sort_column = -1
+        sort_order = Qt.SortOrder.AscendingOrder
 
         # 1. 如果有保存的配置，则立刻恢复
         if settings.contains(settings_key):
@@ -607,6 +621,19 @@ class BaseStockTab(QWidget):
             except (AttributeError, RuntimeError, TypeError, ValueError) as e:
                 import logging
                 logging.getLogger(__name__).warning(f"恢复列宽配置异常 {settings_key}: {e}")
+
+        if settings.contains(sort_column_key):
+            try:
+                sort_column = int(settings.value(sort_column_key, -1) or -1)
+                sort_order_value = settings.value(sort_order_key, Qt.SortOrder.AscendingOrder.value)
+                sort_order = Qt.SortOrder(int(sort_order_value))
+                restored_sort = True
+            except (AttributeError, RuntimeError, TypeError, ValueError) as e:
+                import logging
+                logging.getLogger(__name__).warning(f"恢复排序配置异常 {settings_key}: {e}")
+                sort_column = -1
+                sort_order = Qt.SortOrder.AscendingOrder
+                restored_sort = False
 
         # 2. 创建防抖定时器，防止拖拉列宽时高频疯狂写盘
         if not hasattr(self, "_header_save_timers"):
@@ -619,7 +646,14 @@ class BaseStockTab(QWidget):
 
         def _save_state():
             try:
+                sorted_column_getter = getattr(table, "sorted_column", None)
+                current_sort_column = -1
+                if callable(sorted_column_getter):
+                    current_sort_column = int(sorted_column_getter())
+                current_sort_order = header.sortIndicatorOrder()
                 settings.setValue(settings_key, header.saveState())
+                settings.setValue(sort_column_key, current_sort_column)
+                settings.setValue(sort_order_key, int(current_sort_order.value))
                 settings.sync()
             except (AttributeError, RuntimeError, TypeError, ValueError) as _e:
                 # Why: 保存列宽配置是低优先级操作，失败不影响业务
@@ -627,10 +661,23 @@ class BaseStockTab(QWidget):
                 logging.getLogger(__name__).debug(f"列宽配置保存失败: {_e}")
 
         throttle_timer.timeout.connect(_save_state)
+        self._header_state_savers.append(_save_state)
 
-        # 宽度拖拽改变 或 列被拖拽移动 时触发重置定时器
+        # 宽度拖拽改变、列移动、排序变化时都触发重置定时器
         header.sectionResized.connect(lambda: throttle_timer.start())
         header.sectionMoved.connect(lambda: throttle_timer.start())
+        header.sortIndicatorChanged.connect(lambda *_args: throttle_timer.start())
+
+        if restored_sort:
+            def _restore_sort_state():
+                try:
+                    table.sortByColumn(sort_column, sort_order)
+                except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                    logging.getLogger(__name__).warning(f"恢复排序状态异常 {settings_key}: {exc}")
+
+            QTimer.singleShot(0, _restore_sort_state)
+
+        return restored_sort
 
     # ================================================================
     # 统一行情与市值基础封装 (大一统机制)

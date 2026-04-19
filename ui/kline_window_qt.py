@@ -533,7 +533,10 @@ class KLineChartWindow(QWidget):
             # 同步选中主窗口表格行
             workspace = getattr(self.main_window, "_workspace", None) if self.main_window else None
             if workspace is not None:
-                workspace.select_scan_row(new_idx)
+                preferred_tab_index = item_data.get("__source_tab_index")
+                if not isinstance(preferred_tab_index, int):
+                    preferred_tab_index = None
+                workspace.select_code_row(self.code, preferred_tab_index=preferred_tab_index)
 
             self._check_fav_status()
             self._load_and_draw()

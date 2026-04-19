@@ -130,14 +130,10 @@ class WatchlistTab(BaseStockTab):
         for col_idx, w in enumerate(sp_weights):
             header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
             self.table_sp.setColumnWidth(col_idx, int(w * 80))
-        # 绑定防抖自动保存与恢复配置（restoreState 会连带把上次的排序列也恢复了）
-        # 列结构变更（移除“时间”列），升级配置 key，避免旧列状态错位恢复
-        self.bind_header_persistence(self.table_sp, "header_state_watchlist_v8")
-
-        # 【修复】强制抹掉任何因为 header.restoreState 还原出来的自动排序状态
-        # 因为在关闭时，我们已经把当前的各种（哪怕是点击表头排出来的）视觉顺序定死并按此顺序拍扁存入硬盘了
-        # 所以重启后，应当直接默认展示物理顺序，而不受过去排序标记的干扰
-        self.table_sp.sortByColumn(-1, Qt.SortOrder.AscendingOrder)
+        # 绑定防抖自动保存与恢复配置（列结构变更后沿用新 key，避免旧状态错位）
+        restored_sort = self.bind_header_persistence(self.table_sp, "header_state_watchlist_v8")
+        if not restored_sort:
+            self.table_sp.sortByColumn(-1, Qt.SortOrder.AscendingOrder)
 
         # 双击 → 查看K线图（通过 EventBus 广播）
         self.table_sp.doubleClicked.connect(self._on_double_click)

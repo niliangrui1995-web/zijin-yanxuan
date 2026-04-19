@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QTabWidget, QVBoxLayout, QWidget
 
 from core.logger import get_logger
@@ -174,6 +175,51 @@ class ClassicWorkspace(QWidget):
         except (TypeError, ValueError):
             return float(default)
 
+    @staticmethod
+    def _compact_block_trade_branch(branch: str, foreign_keywords: list[str]) -> str:
+        text = str(branch or "").strip()
+        if not text:
+            return ""
+        for keyword in foreign_keywords:
+            if keyword in text:
+                return keyword
+        if "机构专用" in text:
+            return "机构专用"
+        return ""
+
+    @classmethod
+    def _build_watchlist_block_trade_signal(
+        cls,
+        detail: str,
+        buy: str,
+        sell: str,
+        amount: float,
+        foreign_keywords: list[str],
+    ) -> tuple[str, float]:
+        if amount < 0.01:
+            return "", 0.0
+
+        buy_label = cls._compact_block_trade_branch(buy, foreign_keywords)
+        sell_label = cls._compact_block_trade_branch(sell, foreign_keywords)
+        detail_text = str(detail or "")
+
+        if "买入" in detail_text:
+            if buy_label:
+                return f"{buy_label}买入{amount:.0f}万", amount
+            if sell_label:
+                return f"{sell_label}卖出{amount:.0f}万", amount
+
+        if "卖出" in detail_text:
+            if sell_label:
+                return f"{sell_label}卖出{amount:.0f}万", amount
+            if buy_label:
+                return f"{buy_label}买入{amount:.0f}万", amount
+
+        if buy and sell and buy == sell:
+            return f"大宗对倒 {amount:.0f}万", amount
+
+        return "", 0.0
+
     def get_realtime_quote_codes(self) -> set[str]:
         codes: set[str] = set()
         extract_codes = ClassicWorkspace._extract_a_share_codes
@@ -281,6 +327,106 @@ class ClassicWorkspace(QWidget):
             return False
         return True
 
+    @staticmethod
+    def _iter_tab_tables(tab) -> list:
+        tables = []
+        for attr_name in ("table_sp", "table_scan", "table_rt", "na_daily_table", "asian_table", "table"):
+            table = getattr(tab, attr_name, None)
+            if table is not None and hasattr(table, "model") and table not in tables:
+                tables.append(table)
+        return tables
+
+    @staticmethod
+    def _find_code_column(model) -> int:
+        if model is None:
+            return -1
+        try:
+            column_count = int(model.columnCount())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return -1
+
+        for column in range(column_count):
+            try:
+                header_text = str(
+                    model.headerData(column, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) or ""
+                ).strip()
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                header_text = ""
+            if header_text == "代码":
+                return column
+        return -1
+
+    @classmethod
+    def _select_code_in_tab(cls, tab, code: str) -> bool:
+        code_text = str(code or "").strip()
+        if not code_text:
+            return False
+
+        for table in cls._iter_tab_tables(tab):
+            model = table.model()
+            code_column = cls._find_code_column(model)
+            if code_column < 0:
+                continue
+
+            try:
+                row_count = int(model.rowCount())
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                continue
+
+            for row in range(row_count):
+                try:
+                    index = model.index(row, code_column)
+                    row_code = str(model.data(index, Qt.ItemDataRole.DisplayRole) or "").strip()
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    continue
+                if row_code != code_text:
+                    continue
+
+                try:
+                    table.clearSelection()
+                    table.setCurrentIndex(index)
+                    table.selectRow(row)
+                    table.scrollTo(index)
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    return False
+                return True
+
+        return False
+
+    def select_code_row(self, code: str, preferred_tab_index: int | None = None) -> bool:
+        code_text = str(code or "").strip()
+        if not code_text:
+            return False
+
+        tab_widget = getattr(self, "tabs", None)
+        if tab_widget is None:
+            return False
+
+        current_index = tab_widget.currentIndex()
+        candidate_indices: list[int] = []
+
+        if 0 <= current_index < tab_widget.count():
+            candidate_indices.append(current_index)
+
+        if isinstance(preferred_tab_index, int) and 0 <= preferred_tab_index < tab_widget.count():
+            if preferred_tab_index not in candidate_indices:
+                candidate_indices.append(preferred_tab_index)
+
+        for tab_index in range(tab_widget.count()):
+            if tab_index not in candidate_indices:
+                candidate_indices.append(tab_index)
+
+        for tab_index in candidate_indices:
+            tab = tab_widget.widget(tab_index)
+            if tab is None:
+                continue
+            if self._select_code_in_tab(tab, code_text):
+                if tab_index != current_index:
+                    tab_widget.setCurrentIndex(tab_index)
+                return True
+
+        return False
+
     def refresh_watchlist_names(self, code2name: dict[str, str]) -> bool:
         model = getattr(getattr(self, "tab_watchlist", None), "model", None)
         if model is None:
@@ -340,7 +486,7 @@ class ClassicWorkspace(QWidget):
         if foreign_model is not None:
             from ui.tabs.foreign_block_trade_tab import FOREIGN_KEYWORDS
 
-            block_aggregates: dict[str, dict[str, float]] = {}
+            block_aggregates: dict[str, dict] = {}
             for row in getattr(foreign_model, "row_data", []) or []:
                 code = str(row.get("代码", "")).strip()
                 if not code:
@@ -349,35 +495,32 @@ class ClassicWorkspace(QWidget):
                 detail = str(row.get("交易详情", "") or "")
                 buy = str(row.get("买方营业部", "") or "")
                 sell = str(row.get("卖方营业部", "") or "")
-                try:
-                    amount = float(str(row.get("成交金额(万元)", "0") or "0"))
-                except (TypeError, ValueError):
-                    amount = 0.0
+                amount = self._safe_float(row.get("成交金额(万元)", 0))
 
-                if "买入" in detail:
-                    branch = buy
-                    sign = 1.0
-                elif "卖出" in detail:
-                    branch = sell
-                    sign = -1.0
-                else:
-                    branch = f"{buy} {sell}".strip()
-                    sign = 0.0
+                bucket = block_aggregates.setdefault(
+                    code,
+                    {
+                        "best_text": "",
+                        "best_amount": 0.0,
+                    },
+                )
 
-                bucket = block_aggregates.setdefault(code, {"foreign": 0.0, "double": 0.0})
-                if any(keyword in branch for keyword in FOREIGN_KEYWORDS):
-                    bucket["foreign"] += sign * amount
-                elif buy and sell and buy == sell:
-                    bucket["double"] += amount
+                signal_text, signal_amount = self._build_watchlist_block_trade_signal(
+                    detail,
+                    buy,
+                    sell,
+                    amount,
+                    FOREIGN_KEYWORDS,
+                )
+                best_amount = float(bucket.get("best_amount", 0.0) or 0.0)
+                if signal_text and signal_amount >= best_amount:
+                    bucket["best_text"] = signal_text
+                    bucket["best_amount"] = signal_amount
 
             for code, stats in block_aggregates.items():
-                foreign_amount = float(stats.get("foreign", 0.0) or 0.0)
-                double_amount = float(stats.get("double", 0.0) or 0.0)
-                if abs(foreign_amount) >= 0.01:
-                    action = "净买" if foreign_amount > 0 else "净卖"
-                    block_data[code] = f"外资大宗 {action}{abs(foreign_amount):.0f}万"
-                elif abs(double_amount) >= 0.01:
-                    block_data[code] = f"大宗对倒 {double_amount:.0f}万"
+                best_text = str(stats.get("best_text", "") or "")
+                if best_text:
+                    block_data[code] = best_text
 
         earnings_model = getattr(getattr(self, "tab_earnings", None), "model", None)
         if earnings_model is not None:
@@ -386,14 +529,14 @@ class ClassicWorkspace(QWidget):
                 if not code:
                     continue
 
-                reasons = []
-                flag = str(row.get("异动标签", "")).strip()
-                if flag:
-                    reasons.append(flag)
-                yoy = str(row.get("净利润同比", "")).strip()
-                if yoy:
-                    reasons.append(f"净利同比{yoy}")
-                earn_data[code] = " | ".join(reasons) if reasons else "业绩异动"
+                qoq_raw = row.get("环比%")
+                qoq_text = str(qoq_raw).strip()
+                if not qoq_text:
+                    continue
+
+                qoq_value = self._safe_float(qoq_raw, default=0.0)
+                qoq_display = f"{qoq_value:.2f}".rstrip("0").rstrip(".")
+                earn_data[code] = f"{qoq_display}%"
 
         lhb_model = getattr(getattr(self, "tab_lhb", None), "model", None)
         if lhb_model is not None:

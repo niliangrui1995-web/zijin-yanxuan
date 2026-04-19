@@ -225,6 +225,7 @@ class FundHoldingsTab(BaseStockTab):
         self._reload_from_db()
 
         event_bus.sig_cache_reload_completed.connect(self._on_cache_reload_completed)
+        event_bus.sig_app_closing.connect(self._save_view_state)
 
     @staticmethod
     def _create_settings():

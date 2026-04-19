@@ -96,8 +96,6 @@ class EarningsTab(BaseStockTab):
 
         self.delegate = StockItemDelegate(self.table)
         self.table.setItemDelegate(self.delegate)
-        # 默认按第12列（“揭晓日”）由近到远（降序）排列，让最新鲜的情报自动顶在最上面
-        self.table.sortByColumn(self.model.headers.index("揭晓日"), Qt.SortOrder.DescendingOrder)
 
         # 右键菜单与双击看K线
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -112,7 +110,9 @@ class EarningsTab(BaseStockTab):
             header_view.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
             self.table.setColumnWidth(i, w)
 
-        self.bind_header_persistence(self.table, "earnings_header_state_v5")
+        restored_sort = self.bind_header_persistence(self.table, "earnings_header_state_v5")
+        if not restored_sort:
+            self.table.sortByColumn(self.model.headers.index("揭晓日"), Qt.SortOrder.DescendingOrder)
 
     def _set_window_status(self, primary: str, *segments: str):
         self._status_primary = primary

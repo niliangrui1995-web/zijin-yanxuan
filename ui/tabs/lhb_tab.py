@@ -192,9 +192,9 @@ class LhbTab(BaseStockTab):
                 self.table.setColumnWidth(i, w)
 
         # 持久化表头（v9: 外资净买入列摘要+tooltip重构版）
-        self.bind_header_persistence(self.table, "lhb_header_state_v9")
-        # 清除 restoreState 带来的默认排序干扰
-        self.table.sortByColumn(-1, Qt.SortOrder.AscendingOrder)
+        restored_sort = self.bind_header_persistence(self.table, "lhb_header_state_v9")
+        if not restored_sort:
+            self.table.sortByColumn(-1, Qt.SortOrder.AscendingOrder)
 
         # 交互：双击查看 K 线，右键菜单
         self.table.doubleClicked.connect(self._on_double_click)
