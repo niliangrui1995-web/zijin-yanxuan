@@ -176,6 +176,9 @@ QPushButton:hover {{
     border: 1px solid {t['BORDER_BRAND']};
     color: {t['TEXT_PRIMARY']};
 }}
+QPushButton:focus {{
+    border: 1px solid {border['focus']};
+}}
 QPushButton:pressed {{ background-color: {t['BG_HOVER']}; }}
 QPushButton:disabled {{
     background-color: {t['BG_BUTTON']};
@@ -246,6 +249,9 @@ QToolButton[class="toolbarGhost"]:hover {{
     color: {t['TEXT_PRIMARY']};
     border: 1px solid {t['BORDER_BRAND']};
 }}
+QToolButton[class="toolbarGhost"]:focus {{
+    border: 1px solid {border['focus']};
+}}
 QToolButton[class="toolbarGhost"]:pressed {{
     background-color: {t['BG_HOVER']};
 }}
@@ -303,7 +309,7 @@ QComboBox {{
     padding: 0 30px 0 10px; font-size: {font['size_sm']}px; min-height: {control['input_height']}px;
 }}
 QComboBox:hover {{ border: 1px solid {t['BORDER_BRAND']}; }}
-QComboBox:focus {{ border: 1px solid {t['BRAND_PRIMARY']}; outline: none; }}
+QComboBox:focus {{ border: 1px solid {border['focus']}; outline: none; }}
 QComboBox::drop-down {{ border: none; width: 24px; }}
 QComboBox::down-arrow {{
     image: none; border-left: 4px solid transparent;
@@ -325,7 +331,7 @@ QSpinBox, QDoubleSpinBox {{
     padding: 0 8px; font-size: {font['size_sm']}px; min-height: {control['input_height']}px;
 }}
 QSpinBox:hover, QDoubleSpinBox:hover {{ border: 1px solid {t['BORDER_BRAND']}; }}
-QSpinBox:focus, QDoubleSpinBox:focus {{ border: 1px solid {t['BRAND_PRIMARY']}; }}
+QSpinBox:focus, QDoubleSpinBox:focus {{ border: 1px solid {border['focus']}; }}
 QSpinBox::up-button, QDoubleSpinBox::up-button,
 QSpinBox::down-button, QDoubleSpinBox::down-button {{
     background: transparent; border: none; width: 16px;
@@ -351,7 +357,7 @@ QDateEdit {{
     selection-background-color: rgba(239, 68, 68, 0.3);
 }}
 QDateEdit:hover {{ border: 1px solid {t['BORDER_BRAND']}; }}
-QDateEdit:focus {{ border: 1px solid {t['BRAND_PRIMARY']}; }}
+QDateEdit:focus {{ border: 1px solid {border['focus']}; }}
 QDateEdit::drop-down {{
     subcontrol-origin: padding;
     subcontrol-position: top right;
@@ -396,13 +402,11 @@ QWidget#tabToolbar {{
     border-bottom: 1px solid {border['default']};
     min-height: {shell['toolbar_min_height']}px;
 }}
-QWidget#tabToolbarHeader, QWidget#tabToolbarControls {{
-    background: transparent;
-}}
 QFrame#tabToolbarTitleWrap {{
     background-color: {surface['toolbar_card']};
     border: 1px solid {border['default']};
     border-radius: {radius['xl']}px;
+    min-height: {control['toolbar_button_height'] + 1}px;
 }}
 QWidget#tabToolbarFilters, QWidget#tabToolbarActions {{
     background: transparent;
@@ -415,25 +419,40 @@ QSpinBox[inToolbar="true"],
 QDoubleSpinBox[inToolbar="true"],
 QCheckBox[inToolbar="true"] {{
     min-height: {control['toolbar_button_height']}px;
-    max-height: {control['toolbar_button_height']}px;
 }}
 QPushButton[inToolbar="true"],
 QToolButton[inToolbar="true"] {{
-    padding: 0 {max(10, control['button_padding_x'] - 1)}px;
+    padding: 0 {max(8, control['button_padding_x'] - 2)}px;
 }}
 QLineEdit[inToolbar="true"] {{
-    padding: 0 10px;
+    padding: 0 8px;
 }}
 QComboBox[inToolbar="true"] {{
-    padding: 0 26px 0 10px;
+    padding: 0 24px 0 8px;
 }}
 QSpinBox[inToolbar="true"], QDoubleSpinBox[inToolbar="true"] {{
-    padding: 0 8px;
+    padding: 0 6px;
 }}
 QCheckBox[inToolbar="true"] {{
     color: {text['secondary']};
     spacing: 6px;
-    padding: 0 2px;
+    padding: 0 12px 0 10px;
+    background-color: {surface['toolbar_card']};
+    border: 1px solid {border['default']};
+    border-radius: {radius['pill']}px;
+}}
+QCheckBox[inToolbar="true"]:hover {{
+    background-color: {t['BG_BUTTON_HOVER']};
+    color: {text['primary']};
+    border: 1px solid {t['BORDER_BRAND']};
+}}
+QCheckBox[inToolbar="true"]:focus {{
+    border: 1px solid {border['focus']};
+}}
+QCheckBox[inToolbar="true"]:checked {{
+    background-color: {surface['toolbar_chip']};
+    color: {text['primary']};
+    border: 1px solid {t['BORDER_BRAND']};
 }}
 QCheckBox[inToolbar="true"]::indicator {{
     width: 14px;
@@ -481,7 +500,7 @@ QLineEdit {{
     selection-background-color: rgba(239, 68, 68, 0.3); min-height: {control['input_height']}px;
 }}
 QLineEdit:hover {{ border: 1px solid {t['BORDER_BRAND']}; }}
-QLineEdit:focus {{ border: 1px solid {t['BRAND_PRIMARY']}; background-color: {t['BG_INPUT']}; }}
+QLineEdit:focus {{ border: 1px solid {border['focus']}; background-color: {t['BG_INPUT']}; }}
 QLineEdit::placeholder {{ color: {t['TEXT_DISABLED']}; }}
 
 QDialog#settingsDialog, QDialog#scanRangeDialog {{

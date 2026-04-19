@@ -2,6 +2,7 @@
 # ui/tabs/watchlist_tab.py
 # 关注池独立组件 — 从 WatchlistMixin 解耦重构为完全自治的 QWidget
 import os
+from datetime import datetime
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QAbstractItemView, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
@@ -30,6 +31,7 @@ class WatchlistTab(BaseStockTab):
 
     def __init__(self, data_provider, parent=None):
         super().__init__(data_provider=data_provider, parent=parent)
+        self._watchlist_last_update = ""
 
         self._init_ui()
 
@@ -66,15 +68,21 @@ class WatchlistTab(BaseStockTab):
 
         self.sp_search = QLineEdit()
         self.sp_search.setPlaceholderText("筛选关注池...")
-        self.sp_search.setFixedWidth(150)
+        self.sp_search.setAccessibleName("关注池筛选")
+        self.sp_search.setAccessibleDescription("按代码或名称筛选当前关注池股票")
+        self.sp_search.setMinimumWidth(150)
+        self.sp_search.setMaximumWidth(240)
         self.sp_search.textChanged.connect(self._filter_table)
 
         filter_widgets = [self.sp_search]
 
         self.add_stock_input = QLineEdit()
         self.add_stock_input.setPlaceholderText("输入A股代码，如 600519")
+        self.add_stock_input.setAccessibleName("添加自选股输入框")
+        self.add_stock_input.setAccessibleDescription("输入六位 A 股代码后可加入关注池")
         self.add_stock_input.setClearButtonEnabled(True)
-        self.add_stock_input.setFixedWidth(160)
+        self.add_stock_input.setMinimumWidth(160)
+        self.add_stock_input.setMaximumWidth(260)
         self.add_stock_input.returnPressed.connect(self._add_custom_stock)
 
         btn_add_stock = QPushButton("添加自选股")
@@ -139,6 +147,17 @@ class WatchlistTab(BaseStockTab):
 
         layout.addWidget(self.table_state)
 
+    @staticmethod
+    def _now_hhmm() -> str:
+        return datetime.now().strftime("%H:%M")
+
+    def _touch_watchlist_update(self, stamp: str | None = None) -> bool:
+        text = str(stamp or "").strip() or self._now_hhmm()
+        if not text or text == self._watchlist_last_update:
+            return False
+        self._watchlist_last_update = text
+        return True
+
     # ================================================================
     # 数据加载
     # ================================================================
@@ -159,6 +178,7 @@ class WatchlistTab(BaseStockTab):
 
     def _render_table(self, all_codes, data_dict, old_pool):
         """渲染关注池表格"""
+        self._touch_watchlist_update()
 
         # 提取当前表格中活跃的实时行情和市值，避免重绘时发生闪退或变成 '--'
         live_data_map = {}
@@ -255,6 +275,8 @@ class WatchlistTab(BaseStockTab):
         ]
         if search_text:
             segments.append(f"搜索 {search_text}")
+        if self._watchlist_last_update:
+            segments.append(self._status_metric("最近 ", self._watchlist_last_update))
 
         self.lbl_sp_status.setText(self.format_status_summary(self._status_metric("池内", total, "只"), *segments))
         if hasattr(self, "table_state"):
@@ -569,6 +591,7 @@ class WatchlistTab(BaseStockTab):
             )
 
         self._persist_watchlist_metrics(results)
+        self._touch_watchlist_update()
         self._update_status_summary()
 
     def _persist_watchlist_metrics(self, results: dict):
@@ -712,4 +735,11 @@ class WatchlistTab(BaseStockTab):
         """搜索过滤：支持代码、名称、拼音首字母"""
         self.proxy_model.setFilterText(text)
         self._update_status_summary()
+
+    def _on_rt_quotes_direct(self, quotes: dict):
+        super()._on_rt_quotes_direct(quotes)
+        if not self.isVisible() or not quotes:
+            return
+        if self._touch_watchlist_update():
+            self._update_status_summary()
 

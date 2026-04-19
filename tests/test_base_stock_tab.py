@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 from PyQt6.QtTest import QSignalSpy
-from PyQt6.QtWidgets import QApplication, QLabel, QLineEdit, QToolButton, QWidget
+from PyQt6.QtWidgets import QApplication, QHBoxLayout, QLabel, QLineEdit, QToolButton, QWidget
 
 from core.event_bus import event_bus
 from core.quote_dispatcher import publish_rt_quotes
 from ui.tabs.base_stock_tab import BaseStockTab
+from ui.theme_tokens import build_ui_tokens
 
 
 class DummyQuotePublisher:
@@ -22,12 +23,16 @@ def test_base_stock_toolbar_applies_shell_object_names_and_toolbutton_style():
     toolbar = tab.build_tab_toolbar("示例", subtitle, [filter_label, filter_input], [action_btn])
     try:
         assert toolbar.objectName() == "tabToolbar"
+        assert isinstance(toolbar.layout(), QHBoxLayout)
         assert subtitle.objectName() == "tabStatusLabel"
         assert subtitle.property("toolbarRole") == "status"
         assert filter_label.property("toolbarRole") == "meta"
         assert filter_input.property("inToolbar") is True
         assert action_btn.property("class") == "toolbarGhost"
         assert action_btn.property("inToolbar") is True
+        title_wrap = toolbar.findChild(QWidget, "tabToolbarTitleWrap")
+        assert title_wrap is not None
+        assert title_wrap.minimumHeight() == build_ui_tokens()["control"]["toolbar_button_height"] + 1
         assert toolbar.findChild(QWidget, "tabToolbarFilters") is not None
         assert toolbar.findChild(QWidget, "tabToolbarActions") is not None
     finally:

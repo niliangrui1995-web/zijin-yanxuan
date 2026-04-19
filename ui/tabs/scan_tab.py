@@ -348,7 +348,10 @@ class ScanTab(BaseStockTab):
 
         self.scan_search = QLineEdit()
         self.scan_search.setPlaceholderText("筛选代码或名称...")
-        self.scan_search.setFixedWidth(200)
+        self.scan_search.setAccessibleName("VCP 扫描筛选")
+        self.scan_search.setAccessibleDescription("按代码或名称筛选扫描结果")
+        self.scan_search.setMinimumWidth(180)
+        self.scan_search.setMaximumWidth(280)
         self.scan_search.textChanged.connect(self._on_search_text_changed)
 
         filter_widgets = [self.scan_search]
@@ -367,8 +370,8 @@ class ScanTab(BaseStockTab):
         # 扫描参数设置按钮
         self.btn_scan_settings = QToolButton()
         self.btn_scan_settings.setText("设置")
+        self.btn_scan_settings.setAccessibleName("VCP 扫描参数设置")
         self.btn_scan_settings.setProperty("class", "toolbarGhost")
-        self.btn_scan_settings.setFixedHeight(32)
         self.btn_scan_settings.setMinimumWidth(56)
         self.btn_scan_settings.setAutoRaise(False)
         self.btn_scan_settings.setCursor(Qt.CursorShape.PointingHandCursor)

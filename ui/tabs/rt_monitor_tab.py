@@ -1,4 +1,5 @@
 import re
+from datetime import datetime
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot
 from PyQt6.QtWidgets import (
@@ -32,6 +33,15 @@ class RtMonitorTab(BaseStockTab):
     盘中监控 独立组件 (Controller + View)
     负责独立的盘中轮询逻辑，表格渲染。
     """
+    _STATUS_LABELS = {
+        "idle": "静默",
+        "realtime": "实时",
+        "cache": "缓存",
+        "fallback": "回退",
+        "error": "错误",
+        "working": "处理中",
+    }
+
     def __init__(self, data_provider, engine, parent=None):
         super().__init__(data_provider=data_provider, parent=parent)
         self.engine = engine
@@ -52,14 +62,13 @@ class RtMonitorTab(BaseStockTab):
         self._auto_timer = QTimer(self)
         self._auto_timer.timeout.connect(self._check_auto_start_stop)
         self._auto_timer.start(30000)  # 每 30 秒检查一次
-        self._set_rt_button_state(
-            False,
-            info_text=self._format_status_text(
-                "idle",
-                "未启动",
-                "点“启动监控”开始",
-            )
-        )
+        self._rt_status_state = "idle"
+        self._rt_status_detail = "未启动"
+        self._rt_status_next_step = "点“启动监控”开始"
+        self._rt_pool_size = 0
+        self._rt_last_update = ""
+        self._refresh_rt_header_summary()
+        self._set_rt_button_state(False)
 
     def _is_rt_running(self) -> bool:
         return hasattr(self, 'rt_worker') and self.rt_worker is not None and self.rt_worker.isRunning()
@@ -79,8 +88,82 @@ class RtMonitorTab(BaseStockTab):
             return self.format_status_summary(f"状态 {state}")
         return format_runtime_status_text(state, detail, next_step)
 
-    def _set_status(self, state: str, detail: str = "", next_step: str = ""):
-        self.lbl_rt_info.setText(self._format_status_text(state, detail, next_step))
+    @staticmethod
+    def _now_hhmm() -> str:
+        return datetime.now().strftime("%H:%M")
+
+    def _touch_last_update(self, time_text: str | None = None) -> bool:
+        stamp = str(time_text or "").strip() or self._now_hhmm()
+        if not stamp or stamp == self._rt_last_update:
+            return False
+        self._rt_last_update = stamp
+        return True
+
+    def _status_label_text(self) -> str:
+        return self._STATUS_LABELS.get(str(self._rt_status_state or "").strip(), "处理中")
+
+    def _current_result_count(self) -> int:
+        return len(getattr(self.source_model, "row_data", []) or [])
+
+    def _current_visible_count(self) -> int:
+        if not hasattr(self, "proxy_model"):
+            return 0
+        return self.proxy_model.rowCount()
+
+    def _compose_rt_header_summary(self) -> str:
+        total = self._current_result_count()
+        visible = self._current_visible_count()
+        search_text = self.rt_search.text().strip() if hasattr(self, "rt_search") else ""
+
+        if total > 0:
+            primary = self._status_metric("结果 ", total, "只")
+        elif self._rt_status_state == "fallback":
+            primary = "等待数据"
+        elif self._rt_status_state == "error":
+            primary = "监控异常"
+        elif self._rt_status_state == "idle" and "清空" in self._rt_status_detail:
+            primary = "记录已清空"
+        elif self._is_rt_running():
+            primary = "监控运行中"
+        else:
+            primary = "待启动"
+
+        segments = [self._status_metric("显示 ", visible, f"/{total}")]
+        if search_text:
+            segments.append(f"搜索 {search_text}")
+        if self._rt_pool_size > 0:
+            segments.append(self._status_metric("待突破池 ", self._rt_pool_size, "只"))
+        if self._rt_last_update:
+            segments.append(self._status_metric("最近 ", self._rt_last_update))
+        segments.append(f"状态 {self._status_label_text()}")
+
+        detail_text = str(self._rt_status_detail or "").strip()
+        if detail_text:
+            segments.append(f"说明 {detail_text}")
+
+        next_text = str(self._rt_status_next_step or "").strip()
+        if next_text:
+            segments.append(f"下一步 {next_text}")
+
+        return self.format_status_summary(primary, *segments)
+
+    def _refresh_rt_header_summary(self):
+        if hasattr(self, "lbl_rt_info"):
+            self.lbl_rt_info.setText(self._compose_rt_header_summary())
+
+    def _set_status(self, state: str, detail: str = "", next_step: str = "", *, touch: bool = True):
+        self._rt_status_state = str(state or "").strip() or "working"
+        self._rt_status_detail = str(detail or "").strip()
+        self._rt_status_next_step = str(next_step or "").strip()
+        if touch:
+            self._touch_last_update()
+        self._refresh_rt_header_summary()
+
+    def _on_scan_count_updated(self, round_no: int, pool_size: int):
+        self._rt_pool_size = max(0, int(pool_size or 0))
+        if round_no:
+            self._touch_last_update()
+        self._refresh_rt_header_summary()
 
     def _on_worker_progress(self, raw_msg: str):
         msg = str(raw_msg or "").strip()
@@ -205,7 +288,10 @@ class RtMonitorTab(BaseStockTab):
 
         self.rt_search = QLineEdit()
         self.rt_search.setPlaceholderText("筛选代码或名称...")
-        self.rt_search.setFixedWidth(180)
+        self.rt_search.setAccessibleName("盘中监控筛选")
+        self.rt_search.setAccessibleDescription("按代码或名称筛选盘中监控结果")
+        self.rt_search.setMinimumWidth(180)
+        self.rt_search.setMaximumWidth(260)
         self.rt_search.textChanged.connect(self._on_search_text_changed)
 
         filter_widgets = [self.rt_search]
@@ -225,8 +311,8 @@ class RtMonitorTab(BaseStockTab):
         # 盘中监控参数设置按钮
         btn_rt_settings = QToolButton()
         btn_rt_settings.setText("设置")
+        btn_rt_settings.setAccessibleName("盘中监控参数设置")
         btn_rt_settings.setProperty("class", "toolbarGhost")
-        btn_rt_settings.setFixedHeight(32)
         btn_rt_settings.setMinimumWidth(56)
         btn_rt_settings.setAutoRaise(False)
         btn_rt_settings.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -290,12 +376,14 @@ class RtMonitorTab(BaseStockTab):
 
     def _clear_table(self):
         self.source_model.update_data([])
+        self._touch_last_update()
         self._set_status("idle", "已清空记录", "监控可继续")
         if hasattr(self, "table_state"):
             self.table_state.show_empty("暂无监控记录")
 
     def _on_search_text_changed(self, text):
         self.proxy_model.setFilterText(text)
+        self._refresh_rt_header_summary()
 
     def _show_rt_settings(self):
         dlg = QDialog(self)
@@ -340,13 +428,11 @@ class RtMonitorTab(BaseStockTab):
             self._manual_stop_requested = not auto
             self._rt_stop_requested = True
             self.rt_worker.stop()
-            self._set_rt_button_stopping(
-                info_text=(
-                    self._format_status_text("working", "正在停止", "稍后可重新启动")
-                    if not auto else
-                    self._format_status_text("working", "自动停止中", "下个交易时段会自动启动")
-                ),
-            )
+            if auto:
+                self._set_status("working", "自动停止中", "下个交易时段会自动启动")
+            else:
+                self._set_status("working", "正在停止", "稍后可重新启动")
+            self._set_rt_button_stopping()
             return
         else:
             if not auto:
@@ -402,16 +488,14 @@ class RtMonitorTab(BaseStockTab):
         # 拦截：工作线程的高频抛出不再直接刷新界面，只喂给 throttler
         self.rt_worker.rt_result_ready.connect(lambda data: self._rt_throttler.trigger(data))
         self.rt_worker.progress.connect(self._on_worker_progress)
+        self.rt_worker.scan_count.connect(self._on_scan_count_updated)
         self.rt_worker.scan_count.connect(lambda n, pool: event_bus.sig_system_log.emit("info", f"[监控] 第{n}轮 | 待突破池 {pool} 只"))
         self.rt_worker.finished.connect(self._on_rt_worker_finished)
 
         self._rt_stop_requested = False
         self.rt_worker.start()
-        self._set_rt_button_state(
-            True,
-            info_text=self._format_status_text("realtime", "已启动", "正在执行首轮任务"),
-            emit_progress=True
-        )
+        self._set_status("realtime", "已启动", "正在执行首轮任务")
+        self._set_rt_button_state(True, emit_progress=True)
 
     @pyqtSlot()
     def _on_rt_worker_finished(self):
@@ -435,11 +519,8 @@ class RtMonitorTab(BaseStockTab):
         else:
             next_step = "可手动重新启动"
 
-        self._set_rt_button_state(
-            False,
-            info_text=self._format_status_text("idle", "已停止", next_step),
-            emit_progress=True
-        )
+        self._set_status("idle", "已停止", next_step)
+        self._set_rt_button_state(False, emit_progress=True)
 
     @pyqtSlot()
     def _on_rt_network_ready(self):
@@ -452,10 +533,8 @@ class RtMonitorTab(BaseStockTab):
     @pyqtSlot()
     def _on_rt_network_failed(self):
         self.btn_rt_start.setEnabled(True)
-        self._set_rt_button_state(
-            False,
-            info_text=self._format_status_text("error", "联网失败", "检查网络后重试")
-        )
+        self._set_status("error", "联网失败", "检查网络后重试")
+        self._set_rt_button_state(False)
         show_toast("无法连接东方财富实时报价", "error", self)
 
     def _do_update_rt_table(self, results):
@@ -463,6 +542,14 @@ class RtMonitorTab(BaseStockTab):
         rt_only = [r for r in results if not r.get('_is_special')]
         try:
             self.source_model.update_rows_incremental(rt_only)
+            latest_time = ""
+            for row in rt_only:
+                row_time = str((row or {}).get("时间", "")).strip()
+                if row_time and row_time > latest_time:
+                    latest_time = row_time
+            if latest_time:
+                self._touch_last_update(latest_time)
+            self._refresh_rt_header_summary()
             if hasattr(self, "table_state"):
                 if rt_only:
                     self.table_state.show_table()

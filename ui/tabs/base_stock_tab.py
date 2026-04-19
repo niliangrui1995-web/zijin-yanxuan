@@ -16,16 +16,14 @@ import subprocess
 import time
 import webbrowser
 
-from PyQt6.QtCore import QCoreApplication, QRect, QSize, Qt
+from PyQt6.QtCore import QCoreApplication, Qt
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QLayout,
     QPushButton,
     QSizePolicy,
     QToolButton,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -33,77 +31,6 @@ from core.event_bus import event_bus
 from core.quote_snapshot import build_finance_quote_payload, coerce_number, is_a_share_code
 from ui.status_registry import format_status_summary
 from ui.theme_tokens import build_ui_tokens
-
-
-class ToolbarFlowLayout(QLayout):
-    """轻量级流式布局，让工具条在窄宽度下自动换行。"""
-
-    def __init__(self, parent=None, *, h_spacing: int = 4, v_spacing: int = 4):
-        super().__init__(parent)
-        self._items = []
-        self._h_spacing = h_spacing
-        self._v_spacing = v_spacing
-        self.setContentsMargins(0, 0, 0, 0)
-
-    def addItem(self, item):
-        self._items.append(item)
-
-    def count(self):
-        return len(self._items)
-
-    def itemAt(self, index):
-        return self._items[index] if 0 <= index < len(self._items) else None
-
-    def takeAt(self, index):
-        return self._items.pop(index) if 0 <= index < len(self._items) else None
-
-    def expandingDirections(self):
-        return Qt.Orientation(0)
-
-    def hasHeightForWidth(self):
-        return True
-
-    def heightForWidth(self, width):
-        return self._do_layout(QRect(0, 0, max(0, width), 0), True)
-
-    def setGeometry(self, rect):
-        super().setGeometry(rect)
-        self._do_layout(rect, False)
-
-    def sizeHint(self):
-        return self.minimumSize()
-
-    def minimumSize(self):
-        size = QSize()
-        for item in self._items:
-            size = size.expandedTo(item.minimumSize())
-        margins = self.contentsMargins()
-        size += QSize(margins.left() + margins.right(), margins.top() + margins.bottom())
-        return size
-
-    def _do_layout(self, rect: QRect, test_only: bool) -> int:
-        left, top, right, bottom = self.getContentsMargins()
-        effective_rect = rect.adjusted(left, top, -right, -bottom)
-        x = effective_rect.x()
-        y = effective_rect.y()
-        line_height = 0
-
-        for item in self._items:
-            hint = item.sizeHint()
-            next_x = x + hint.width()
-            if line_height > 0 and next_x > effective_rect.right() + 1:
-                x = effective_rect.x()
-                y += line_height + self._v_spacing
-                next_x = x + hint.width()
-                line_height = 0
-
-            if not test_only:
-                item.setGeometry(QRect(x, y, hint.width(), hint.height()))
-
-            x = next_x + self._h_spacing
-            line_height = max(line_height, hint.height())
-
-        return y + line_height - rect.y() + bottom
 
 
 class BaseStockTab(QWidget):
@@ -340,7 +267,7 @@ class BaseStockTab(QWidget):
             metrics = button.fontMetrics()
             content_width = max(metrics.horizontalAdvance(text) for text in texts)
             icon_width = 18 if not button.icon().isNull() else 0
-            button_width = max(button.minimumWidth(), content_width + icon_width + 36)
+            button_width = max(button.minimumWidth(), content_width + icon_width + 28)
             target_width = max(target_width, button_width)
 
         if target_width <= 0:
@@ -348,6 +275,31 @@ class BaseStockTab(QWidget):
 
         for button in candidates:
             button.setMinimumWidth(target_width)
+
+    def _build_toolbar_flow_group(
+        self,
+        object_name: str,
+        widgets: list[QWidget] | None,
+        *,
+        h_spacing: int | None = None,
+        v_spacing: int | None = None,
+    ) -> QWidget | None:
+        valid_widgets = [widget for widget in (widgets or []) if widget is not None]
+        if not valid_widgets:
+            return None
+
+        tokens = build_ui_tokens()
+        group_host = QWidget()
+        group_host.setObjectName(object_name)
+        group_layout = QHBoxLayout(group_host)
+        group_layout.setContentsMargins(0, 0, 0, 0)
+        group_layout.setSpacing(tokens["shell"]["toolbar_group_gap"] if h_spacing is None else h_spacing)
+
+        for widget in valid_widgets:
+            self._prepare_toolbar_widget(widget)
+            group_layout.addWidget(widget, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        return group_host
 
     @staticmethod
     def _status_metric(label: str, value, suffix: str = "") -> str:
@@ -368,37 +320,33 @@ class BaseStockTab(QWidget):
     def build_tab_toolbar(self, title: str, subtitle_label: QLabel | None,
                           filter_widgets: list[QWidget] | None,
                           action_widgets: list[QWidget] | None) -> QWidget:
-        """统一工具条结构：标题区 + 流式筛选区 + 流式操作区。"""
+        """统一工具条结构：标题区 + 筛选区 + 操作区，全部压缩到单行。"""
         tokens = build_ui_tokens()
         toolbar = QWidget()
         toolbar.setObjectName("tabToolbar")
         toolbar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        tb_layout = QVBoxLayout(toolbar)
+        tb_layout = QHBoxLayout(toolbar)
         tb_layout.setContentsMargins(
             tokens["shell"]["toolbar_padding_x"],
             tokens["shell"]["toolbar_padding_y"],
             tokens["shell"]["toolbar_padding_x"],
             tokens["shell"]["toolbar_padding_y"],
         )
-        tb_layout.setSpacing(0)
-
-        title_row = QWidget(toolbar)
-        title_row.setObjectName("tabToolbarHeader")
-        title_row_layout = QHBoxLayout(title_row)
-        title_row_layout.setContentsMargins(0, 0, 0, 0)
-        title_row_layout.setSpacing(tokens["shell"]["toolbar_section_gap"])
+        tb_layout.setSpacing(tokens["shell"]["toolbar_section_gap"])
 
         left_wrap = QFrame()
         left_wrap.setObjectName("tabToolbarTitleWrap")
         left_wrap.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         left_layout = QHBoxLayout(left_wrap)
         left_layout.setContentsMargins(
-            max(8, tokens["shell"]["toolbar_padding_x"] - 4),
-            6,
-            max(8, tokens["shell"]["toolbar_padding_x"] - 4),
-            6,
+            max(6, tokens["shell"]["toolbar_padding_x"] - 2),
+            0,
+            max(6, tokens["shell"]["toolbar_padding_x"] - 2),
+            0,
         )
-        left_layout.setSpacing(tokens["shell"]["toolbar_group_gap"] + 2)
+        left_layout.setSpacing(tokens["shell"]["toolbar_group_gap"] + 1)
+        left_wrap.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        left_wrap.setMinimumHeight(tokens["control"]["toolbar_button_height"] + 1)
 
         lbl_title = QLabel(title)
         lbl_title.setObjectName("tabTitle")
@@ -411,40 +359,21 @@ class BaseStockTab(QWidget):
             subtitle_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
             left_layout.addWidget(subtitle_label, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
-        title_row_layout.addWidget(left_wrap, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        tb_layout.addWidget(left_wrap, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
-        if filter_widgets:
-            filter_wrap = QWidget()
-            filter_wrap.setObjectName("tabToolbarFilters")
-            filter_layout = QHBoxLayout(filter_wrap)
-            filter_layout.setContentsMargins(0, 0, 0, 0)
-            filter_layout.setSpacing(tokens["shell"]["toolbar_group_gap"])
-            filter_layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            for w in filter_widgets:
-                if w is None:
-                    continue
-                self._prepare_toolbar_widget(w)
-                filter_layout.addWidget(w)
-            title_row_layout.addWidget(filter_wrap, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-
-        title_row_layout.addStretch(1)
+        filter_wrap = self._build_toolbar_flow_group("tabToolbarFilters", filter_widgets)
+        if filter_wrap is not None:
+            filter_wrap.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            tb_layout.addWidget(filter_wrap, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        else:
+            tb_layout.addStretch(1)
 
         if action_widgets:
-            action_wrap = QWidget()
-            action_wrap.setObjectName("tabToolbarActions")
-            action_layout = QHBoxLayout(action_wrap)
-            action_layout.setContentsMargins(0, 0, 0, 0)
-            action_layout.setSpacing(tokens["shell"]["toolbar_group_gap"])
-            action_layout.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            for w in action_widgets:
-                if w is None:
-                    continue
-                self._prepare_toolbar_widget(w)
-                action_layout.addWidget(w)
             self._equalize_toolbar_action_widths(action_widgets)
-            title_row_layout.addWidget(action_wrap, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-
-        tb_layout.addWidget(title_row)
+        action_wrap = self._build_toolbar_flow_group("tabToolbarActions", action_widgets)
+        if action_wrap is not None:
+            action_wrap.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+            tb_layout.addWidget(action_wrap, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         return toolbar
     def _launch_tdx(self, code: str):

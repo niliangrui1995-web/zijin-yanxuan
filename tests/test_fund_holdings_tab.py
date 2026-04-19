@@ -217,6 +217,40 @@ def test_fund_holdings_tab_hides_market_value_delta_columns(monkeypatch):
         tab.deleteLater()
 
 
+def test_fund_holdings_toolbar_exposes_accessible_filter_names(monkeypatch):
+    _setup_store(
+        monkeypatch,
+        [
+            _build_change_row(
+                subject_code="QFII",
+                subject_name="QFII",
+                quarter_key="2025Q4",
+                compare_quarter_key="2025Q3",
+                change_type="增持",
+                stock_code="000001",
+                stock_name="平安银行",
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "refresh_table_quotes_and_market_caps",
+        lambda self, current_model=None, force_quotes=False, quote_task_id=None: None,
+        raising=False,
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
+    try:
+        assert tab.cmb_subject.accessibleName() == "主体筛选"
+        assert tab.cmb_capital_attribute.accessibleName() == "资金属性筛选"
+        assert tab.btn_quarter.accessibleName() == "季度筛选"
+        assert tab.btn_change.accessibleName() == "变动类型筛选"
+        assert tab.search_box.accessibleName() == "基金持仓筛选"
+        assert tab.btn_update.accessibleName() == "更新基金持仓数据库"
+    finally:
+        tab.deleteLater()
+
+
 def test_fund_holdings_tab_shows_concept_sector_column(monkeypatch):
     _setup_store(
         monkeypatch,
@@ -254,6 +288,46 @@ def test_fund_holdings_tab_centers_header_alignment(monkeypatch):
         alignment = tab.table.horizontalHeader().defaultAlignment()
         assert alignment & fund_holdings_module.Qt.AlignmentFlag.AlignHCenter
         assert alignment & fund_holdings_module.Qt.AlignmentFlag.AlignVCenter
+    finally:
+        tab.deleteLater()
+
+
+def test_fund_holdings_tab_update_button_runs_sync_all_directly(monkeypatch):
+    _setup_store(monkeypatch, [])
+    calls = []
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "_run_sync_action",
+        lambda self, label, runner: calls.append((label, runner)),
+        raising=False,
+    )
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
+    try:
+        assert tab.btn_update.menu() is None
+        tab.btn_update.click()
+        assert len(calls) == 1
+        assert calls[0][0] == "全部更新"
+        assert calls[0][1] == fund_holdings_module.fund_holdings_sync_service.sync_latest_all
+    finally:
+        tab.deleteLater()
+
+
+def test_fund_holdings_tab_runs_auto_sync_after_f5(monkeypatch):
+    _setup_store(monkeypatch, [])
+    calls = []
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "_run_sync_action",
+        lambda self, label, runner: calls.append((label, runner)),
+        raising=False,
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
+    try:
+        assert tab.run_auto_sync_after_f5() is True
+        assert len(calls) == 1
+        assert calls[0][0] == "F5后自动更新"
+        assert calls[0][1] == fund_holdings_module.fund_holdings_sync_service.sync_latest_all
     finally:
         tab.deleteLater()
 

@@ -8,6 +8,25 @@ from ui.theme import THEME_MOYUAN, THEME_YUEBAI
 from ui.theme_tokens import build_ui_tokens, get_state_tone
 
 
+def _hex_to_rgb(color: str) -> tuple[float, float, float]:
+    value = color.lstrip("#")
+    return tuple(int(value[index:index + 2], 16) / 255 for index in (0, 2, 4))
+
+
+def _relative_luminance(color: str) -> float:
+    def channel(value: float) -> float:
+        return value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4
+
+    red, green, blue = _hex_to_rgb(color)
+    return 0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue)
+
+
+def _contrast_ratio(foreground: str, background: str) -> float:
+    light = max(_relative_luminance(foreground), _relative_luminance(background))
+    dark = min(_relative_luminance(foreground), _relative_luminance(background))
+    return (light + 0.05) / (dark + 0.05)
+
+
 def test_build_ui_tokens_compact_density_tightens_metrics():
     comfort = build_ui_tokens(THEME_MOYUAN, density="舒展")
     compact = build_ui_tokens(THEME_MOYUAN, density="紧凑")
@@ -53,6 +72,12 @@ def test_theme_tokens_expose_terminal_layers_and_toolbar_metrics():
     assert dark_tokens["surface"]["toolbar_chip"] == THEME_MOYUAN["BG_BUTTON"]
 
 
+def test_light_theme_muted_text_contrast_meets_toolbar_threshold():
+    assert _contrast_ratio(THEME_YUEBAI["TEXT_MUTED"], THEME_YUEBAI["BG_CARD"]) >= 4.5
+    assert _contrast_ratio(THEME_YUEBAI["TEXT_MUTED"], THEME_YUEBAI["BG_BUTTON"]) >= 4.5
+    assert _contrast_ratio(THEME_YUEBAI["TAB_TEXT"], THEME_YUEBAI["BG_CARD"]) >= 4.5
+
+
 def test_global_qss_uses_density_tokens_for_table_and_controls():
     compact_qss = generate_global_qss(THEME_YUEBAI, density="紧凑")
     comfort_tokens = build_ui_tokens(THEME_YUEBAI, density="舒展")
@@ -64,6 +89,8 @@ def test_global_qss_uses_density_tokens_for_table_and_controls():
     assert "QLabel#tabStatusLabel" in compact_qss
     assert 'QPushButton[inToolbar="true"]' in compact_qss
     assert 'QLineEdit[inToolbar="true"]' in compact_qss
+    assert "QPushButton:focus {" in compact_qss
+    assert 'QToolButton[class="toolbarGhost"]:focus {' in compact_qss
     assert f"background-color: {compact_tokens['surface']['toolbar']};" in compact_qss
     assert f"background-color: {compact_tokens['surface']['toolbar_card']};" in compact_qss
     assert f"background-color: {compact_tokens['surface']['toolbar_chip']};" in compact_qss

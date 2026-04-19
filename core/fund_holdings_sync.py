@@ -17,7 +17,6 @@ from core.fund_holdings_compare import (
     build_qfii_snapshots,
     build_ruiyuan_snapshots,
     get_compare_quarter_key,
-    iter_desc_quarters,
     normalize_quarter_key,
     quarter_end_date_text,
     quarter_key_for_date,
@@ -174,22 +173,17 @@ def _candidate_ruiyuan_payloads(target_quarter_key: str | None = None) -> tuple[
         return quarter_payloads, resolved
 
     natural_current = quarter_key_for_date(date.today())
-    current_year = quarter_parts(natural_current)[0]
-    year_candidates = [current_year, current_year - 1]
-    for year in year_candidates:
-        quarter_payloads.update(_fetch_ruiyuan_year(year))
+    compare_quarter = get_compare_quarter_key(SUBJECT_RUIYUAN["subject_type"], natural_current)
+    target_quarters = (natural_current, compare_quarter)
+    target_years = sorted({quarter_parts(quarter_key)[0] for quarter_key in target_quarters}, reverse=True)
+    fetched_payloads: dict[str, dict] = {}
+    for year in target_years:
+        fetched_payloads.update(_fetch_ruiyuan_year(year))
 
-    available = sorted(quarter_payloads.keys(), key=quarter_sort_value, reverse=True)
-    if not available:
-        raise UserFacingTaskError("睿远暂无可用持仓数据", "睿远接口未返回任何季度")
+    for quarter_key in target_quarters:
+        quarter_payloads[quarter_key] = fetched_payloads.get(quarter_key) or _empty_quarter_payload(quarter_key)
 
-    resolved = available[0]
-    compare_quarter = get_compare_quarter_key(SUBJECT_RUIYUAN["subject_type"], resolved)
-    compare_year = quarter_parts(compare_quarter)[0]
-    if compare_quarter not in quarter_payloads:
-        quarter_payloads.update(_fetch_ruiyuan_year(compare_year))
-
-    return quarter_payloads, resolved
+    return quarter_payloads, natural_current
 
 
 def _fetch_qfii_quarter(quarter_key: str) -> dict:
@@ -231,6 +225,15 @@ def _fetch_qfii_quarter(quarter_key: str) -> dict:
     }
 
 
+def _empty_quarter_payload(quarter_key: str) -> dict:
+    norm_quarter = normalize_quarter_key(quarter_key)
+    return {
+        "quarter_key": norm_quarter,
+        "end_date": quarter_end_date_text(norm_quarter),
+        "raw_rows": [],
+    }
+
+
 def _candidate_qfii_payloads(target_quarter_key: str | None = None) -> tuple[dict[str, dict], str]:
     quarter_payloads: dict[str, dict] = {}
 
@@ -244,17 +247,10 @@ def _candidate_qfii_payloads(target_quarter_key: str | None = None) -> tuple[dic
         return quarter_payloads, resolved
 
     natural_current = quarter_key_for_date(date.today())
-    for quarter_key in iter_desc_quarters(natural_current, steps=8):
-        payload = _fetch_qfii_quarter(quarter_key)
-        quarter_payloads[quarter_key] = payload
-        if payload["raw_rows"]:
-            resolved = quarter_key
-            compare_quarter = get_compare_quarter_key(SUBJECT_QFII["subject_type"], resolved)
-            if compare_quarter not in quarter_payloads:
-                quarter_payloads[compare_quarter] = _fetch_qfii_quarter(compare_quarter)
-            return quarter_payloads, resolved
-
-    raise UserFacingTaskError("QFII 暂无可用持仓数据", "QFII 当前及历史季度均未命中数据")
+    compare_quarter = get_compare_quarter_key(SUBJECT_QFII["subject_type"], natural_current)
+    for quarter_key in (natural_current, compare_quarter):
+        quarter_payloads[quarter_key] = _fetch_qfii_quarter(quarter_key)
+    return quarter_payloads, natural_current
 
 
 class FundHoldingsSyncService:
@@ -277,14 +273,12 @@ class FundHoldingsSyncService:
             )
 
         message = (
-            f"QFII 已同步 {resolved_quarter}"
+            f"QFII 已检查 {resolved_quarter} / {get_compare_quarter_key(SUBJECT_QFII['subject_type'], resolved_quarter)}"
             if not quarter_key
             else f"QFII 指定季度 {resolved_quarter} 已同步"
         )
         if not quarter_key:
-            natural_current = quarter_key_for_date(date.today())
-            if resolved_quarter != natural_current:
-                message += f"，当前自然季度 {natural_current} 未披露，已回退到最新可得季度"
+            message += "（固定抓取当季与上一季度）"
 
         self._store.replace_qfii_quarters(
             SUBJECT_QFII,
@@ -294,10 +288,11 @@ class FundHoldingsSyncService:
             resolved_quarter_key=resolved_quarter,
             message=message,
             payload_meta={
+                "checked_quarters": list(quarter_payloads.keys()),
                 "available_quarters": sorted(available_payloads.keys(), key=quarter_sort_value, reverse=True),
                 "raw_counts": {
                     key: len(value.get("raw_rows") or [])
-                    for key, value in available_payloads.items()
+                    for key, value in quarter_payloads.items()
                 },
             },
         )
@@ -326,14 +321,12 @@ class FundHoldingsSyncService:
             )
 
         message = (
-            f"睿远成长价值混合A 已同步 {resolved_quarter}"
+            f"睿远成长价值混合A 已检查 {resolved_quarter} / {get_compare_quarter_key(SUBJECT_RUIYUAN['subject_type'], resolved_quarter)}"
             if not quarter_key
             else f"睿远成长价值混合A 指定季度 {resolved_quarter} 已同步"
         )
         if not quarter_key:
-            natural_current = quarter_key_for_date(date.today())
-            if resolved_quarter != natural_current:
-                message += f"，当前自然季度 {natural_current} 未披露，已回退到最新可得季度"
+            message += "（固定抓取当季与上一季度）"
 
         self._store.replace_ruiyuan_quarters(
             SUBJECT_RUIYUAN,
@@ -343,10 +336,11 @@ class FundHoldingsSyncService:
             resolved_quarter_key=resolved_quarter,
             message=message,
             payload_meta={
+                "checked_quarters": list(quarter_payloads.keys()),
                 "available_quarters": sorted(available_payloads.keys(), key=quarter_sort_value, reverse=True),
                 "raw_counts": {
                     key: len(value.get("raw_rows") or [])
-                    for key, value in available_payloads.items()
+                    for key, value in quarter_payloads.items()
                 },
             },
         )

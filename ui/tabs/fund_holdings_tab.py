@@ -10,7 +10,6 @@ from PyQt6.QtCore import QSettings, Qt, QTimer
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QHeaderView,
-    QInputDialog,
     QLabel,
     QLineEdit,
     QMenu,
@@ -247,22 +246,30 @@ class FundHoldingsTab(BaseStockTab):
         self.lbl_status = QLabel("等待同步基金持仓数据库")
 
         self.cmb_subject = MultiSelectFilterButton("全部主体")
-        self.cmb_subject.setFixedWidth(190)
+        self.cmb_subject.setAccessibleName("主体筛选")
+        self.cmb_subject.setMinimumWidth(190)
+        self.cmb_subject.setMaximumWidth(280)
         self.cmb_subject.selectionChanged.connect(self._on_subject_selection_changed)
 
         self.cmb_capital_attribute = MultiSelectFilterButton("全部资金属性")
-        self.cmb_capital_attribute.setFixedWidth(150)
+        self.cmb_capital_attribute.setAccessibleName("资金属性筛选")
+        self.cmb_capital_attribute.setMinimumWidth(150)
+        self.cmb_capital_attribute.setMaximumWidth(220)
         self.cmb_capital_attribute.selectionChanged.connect(self._on_capital_attribute_selection_changed)
 
         self.btn_quarter = QToolButton()
-        self.btn_quarter.setFixedWidth(150)
+        self.btn_quarter.setAccessibleName("季度筛选")
+        self.btn_quarter.setMinimumWidth(140)
+        self.btn_quarter.setMaximumWidth(180)
         self.btn_quarter.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.btn_quarter.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.menu_quarter = QMenu(self.btn_quarter)
         self.btn_quarter.setMenu(self.menu_quarter)
 
         self.btn_change = QToolButton()
-        self.btn_change.setFixedWidth(150)
+        self.btn_change.setAccessibleName("变动类型筛选")
+        self.btn_change.setMinimumWidth(140)
+        self.btn_change.setMaximumWidth(180)
         self.btn_change.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.btn_change.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.menu_change = QMenu(self.btn_change)
@@ -273,16 +280,21 @@ class FundHoldingsTab(BaseStockTab):
 
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("筛选代码、名称、主体、资金属性、概念或变化...")
-        self.search_box.setFixedWidth(220)
+        self.search_box.setAccessibleName("基金持仓筛选")
+        self.search_box.setAccessibleDescription("按代码、名称、主体、资金属性、概念或变化筛选基金持仓")
+        self.search_box.setMinimumWidth(200)
+        self.search_box.setMaximumWidth(320)
         self.search_box.textChanged.connect(self._apply_filters)
 
         filter_widgets = [self.cmb_subject, self.cmb_capital_attribute, self.btn_quarter, self.btn_change, self.search_box]
 
         self.btn_update = QToolButton()
         self.btn_update.setText("更新数据库")
+        self.btn_update.setAccessibleName("更新基金持仓数据库")
         self.btn_update.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-        self.btn_update.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self.btn_update.setMenu(self._build_update_menu())
+        self.btn_update.clicked.connect(
+            lambda: self._run_sync_action("全部更新", fund_holdings_sync_service.sync_latest_all)
+        )
 
         action_widgets = [self.btn_update]
         toolbar = self.build_tab_toolbar("基金持仓", self.lbl_status, filter_widgets, action_widgets)
@@ -322,35 +334,6 @@ class FundHoldingsTab(BaseStockTab):
         self.table.customContextMenuRequested.connect(self._show_context_menu)
 
         layout.addWidget(self.table_state, 1)
-
-    def _build_update_menu(self) -> QMenu:
-        menu = QMenu(self)
-
-        act_qfii_current = QAction("更新 QFII 当前季度", self)
-        act_qfii_current.triggered.connect(lambda: self._run_sync_action("更新 QFII 当前季度", fund_holdings_sync_service.sync_qfii))
-        menu.addAction(act_qfii_current)
-
-        act_qfii_specific = QAction("更新 QFII 指定季度", self)
-        act_qfii_specific.triggered.connect(self._sync_qfii_specific)
-        menu.addAction(act_qfii_specific)
-
-        menu.addSeparator()
-
-        act_ruiyuan_current = QAction("更新 睿远 当前季度", self)
-        act_ruiyuan_current.triggered.connect(lambda: self._run_sync_action("更新 睿远 当前季度", fund_holdings_sync_service.sync_ruiyuan))
-        menu.addAction(act_ruiyuan_current)
-
-        act_ruiyuan_specific = QAction("更新 睿远 指定季度", self)
-        act_ruiyuan_specific.triggered.connect(self._sync_ruiyuan_specific)
-        menu.addAction(act_ruiyuan_specific)
-
-        menu.addSeparator()
-
-        act_all_latest = QAction("更新 全部最新可得数据", self)
-        act_all_latest.triggered.connect(lambda: self._run_sync_action("更新 全部最新可得数据", fund_holdings_sync_service.sync_latest_all))
-        menu.addAction(act_all_latest)
-
-        return menu
 
     def _build_change_menu(self):
         self.menu_change.clear()
@@ -689,29 +672,6 @@ class FundHoldingsTab(BaseStockTab):
     def _on_sort_indicator_changed(self, _section: int, _order: Qt.SortOrder):
         self._schedule_view_state_save()
 
-    def _prompt_quarter(self, title: str) -> str | None:
-        quarter_text, ok = QInputDialog.getText(self, title, "输入季度（例如 2025Q4）")
-        if not ok:
-            return None
-        quarter_text = str(quarter_text or "").strip()
-        return quarter_text or None
-
-    def _sync_qfii_specific(self):
-        quarter_key = self._prompt_quarter("更新 QFII 指定季度")
-        if quarter_key:
-            self._run_sync_action(
-                f"更新 QFII 指定季度 {quarter_key}",
-                lambda: fund_holdings_sync_service.sync_qfii(quarter_key),
-            )
-
-    def _sync_ruiyuan_specific(self):
-        quarter_key = self._prompt_quarter("更新 睿远 指定季度")
-        if quarter_key:
-            self._run_sync_action(
-                f"更新 睿远 指定季度 {quarter_key}",
-                lambda: fund_holdings_sync_service.sync_ruiyuan(quarter_key),
-            )
-
     def _set_sync_active(self, active: bool, title: str = "", subtitle: str = ""):
         self._sync_active = bool(active)
         self.btn_update.setEnabled(not self._sync_active)
@@ -752,6 +712,12 @@ class FundHoldingsTab(BaseStockTab):
             on_error=_on_error,
             task_id=self._sync_task_id,
         )
+
+    def run_auto_sync_after_f5(self) -> bool:
+        if self._sync_active:
+            return False
+        self._run_sync_action("F5后自动更新", fund_holdings_sync_service.sync_latest_all)
+        return True
 
     def _reload_from_db(self):
         self._latest_quarter_map = fund_holdings_store.get_latest_quarter_map()

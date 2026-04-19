@@ -156,7 +156,7 @@ THEME_YUEBAI = {
     # 文字色 — 白底黑字，严格遵循 WCAG 4.5:1
     "TEXT_PRIMARY": "#172033",
     "TEXT_SECONDARY": "#516074",
-    "TEXT_MUTED": "#708196",
+    "TEXT_MUTED": "#5A6778",
     "TEXT_DISABLED": "#97A3B3",
     "TEXT_HEADER": "#5A6778",
     "TEXT_BRIGHT": "#172033",
@@ -220,7 +220,7 @@ THEME_YUEBAI = {
     "SPLITTER_HOVER": "rgba(0, 0, 0, 0.15)",
 
     # Tab
-    "TAB_TEXT": "#708196",
+    "TAB_TEXT": "#5A6778",
     "TAB_TEXT_HOVER": "#172033",
     "TAB_HOVER_BG": "rgba(93, 78, 55, 0.07)",
 

@@ -89,9 +89,12 @@ def test_kline_header_action_controls_share_same_height(monkeypatch):
         assert len(heights) == 1
         assert len(max_heights) == 1
         assert all(height > 0 for height in heights)
-        assert window.btn_prev.focusPolicy() == Qt.FocusPolicy.NoFocus
-        assert window.btn_next.focusPolicy() == Qt.FocusPolicy.NoFocus
-        assert window.btn_fav.focusPolicy() == Qt.FocusPolicy.NoFocus
+        assert window.btn_prev.focusPolicy() == Qt.FocusPolicy.StrongFocus
+        assert window.btn_next.focusPolicy() == Qt.FocusPolicy.StrongFocus
+        assert window.btn_fav.focusPolicy() == Qt.FocusPolicy.StrongFocus
+        assert window.btn_prev.accessibleDescription() == "切换到当前列表中的上一只股票"
+        assert window.btn_next.accessibleDescription() == "切换到当前列表中的下一只股票"
+        assert window.btn_fav.accessibleDescription() == "将当前股票加入或移出关注池"
     finally:
         window.deleteLater()
 

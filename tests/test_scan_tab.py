@@ -20,6 +20,8 @@ def test_scan_tab_idle_status_summary_is_not_blank(monkeypatch):
     try:
         assert tab.lbl_scan_status.text()
         assert "RPS" in tab.lbl_scan_status.text()
+        assert tab.scan_search.accessibleName() == "VCP 扫描筛选"
+        assert tab.btn_scan_settings.accessibleName() == "VCP 扫描参数设置"
     finally:
         tab.deleteLater()
 
