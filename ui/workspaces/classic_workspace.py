@@ -94,20 +94,20 @@ class ClassicWorkspace(QWidget):
                 "widget": ForeignBlockTradeTab(self.data_provider, self),
             },
             {
-                "key": "fund_holdings",
-                "title": "基金持仓",
-                "group": "情报源",
-                "group_order": 40,
-                "attr": "tab_fund_holdings",
-                "widget": FundHoldingsTab(self.data_provider, self),
-            },
-            {
                 "key": "earnings",
                 "title": "业绩异动",
                 "group": "情报源",
                 "group_order": 40,
                 "attr": "tab_earnings",
                 "widget": EarningsTab(self.data_provider, self),
+            },
+            {
+                "key": "fund_holdings",
+                "title": "基金持仓",
+                "group": "情报源",
+                "group_order": 50,
+                "attr": "tab_fund_holdings",
+                "widget": FundHoldingsTab(self.data_provider, self),
             },
             {
                 "key": "system_log",
