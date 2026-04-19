@@ -37,6 +37,7 @@ from ui.components import (
 )
 from ui.components.stock_context_menu import build_stock_context_menu
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
+from ui.tabs.base_stock_refresh import load_cached_finance_snapshot
 from ui.tabs.base_stock_tab import BaseStockTab
 
 
@@ -730,11 +731,6 @@ class FundHoldingsTab(BaseStockTab):
         self._restore_view_state()
         self._apply_filters()
         self._apply_latest_quotes_from_store()
-        if view_rows:
-            self.refresh_table_quotes_and_market_caps(
-                current_model=self.model,
-                quote_task_id="fund_holdings_quotes",
-            )
         self._update_status_summary()
 
         if not view_rows and not self._sync_active:
@@ -931,6 +927,13 @@ class FundHoldingsTab(BaseStockTab):
         return rows
 
     @staticmethod
+    def _load_cached_finance_snapshot(codes) -> dict[str, dict]:
+        return load_cached_finance_snapshot(codes)
+
+    def _prime_local_quote_snapshot(self):
+        self.prime_local_quote_snapshot()
+
+    @staticmethod
     def _format_pct(value, *, show: bool, signed: bool = False) -> str:
         if not show:
             return FundHoldingsTab._DISPLAY_PLACEHOLDER
@@ -953,15 +956,8 @@ class FundHoldingsTab(BaseStockTab):
         return f"{prefix}{number:,.2f}"
 
     def _apply_latest_quotes_from_store(self):
-        try:
-            from core.global_store import global_store
-
-            snapshot = global_store.get_latest_quotes() or {}
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            snapshot = {}
-
-        if snapshot:
-            self.model.update_quotes(snapshot)
+        # 基金持仓只消费最新的全局/F5快照；若当前表格新增了代码，会先尝试用本地缓存预热。
+        self.refresh_table_from_latest_snapshot()
 
     def _on_cache_reload_completed(self):
         self._apply_latest_quotes_from_store()

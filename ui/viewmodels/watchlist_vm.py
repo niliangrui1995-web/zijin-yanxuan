@@ -2,6 +2,7 @@ import json
 import os
 import sqlite3
 import threading
+from copy import deepcopy
 
 from core.event_bus import event_bus
 from core.logger import get_logger
@@ -65,7 +66,7 @@ class WatchlistViewModel:
         """安全地将内存中的数据刷入 SQLite（原子写入）"""
         try:
             with self._lock:
-                save_data = self._cache.copy()
+                save_data = deepcopy(self._cache)
             from core.data_store import DataStore
             DataStore().save_json("watchlist_special", save_data)
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError, sqlite3.Error) as e:
@@ -84,7 +85,114 @@ class WatchlistViewModel:
     def get_watchlist_data(self) -> dict:
         """获取整个关注池的详尽数据拷贝，防止外部直接引用修改污染缓存"""
         with self._lock:
-            return self._cache.copy()
+            return deepcopy(self._cache)
+
+    @staticmethod
+    def _normalize_entry_value(value):
+        if hasattr(value, "item"):
+            return value.item()
+        if isinstance(value, (str, int, float, bool, list, dict, type(None))):
+            return deepcopy(value)
+        return str(value)
+
+    def patch_entry(self, stock_code: str, updates: dict | None = None, remove_keys: list[str] | tuple[str, ...] | None = None) -> bool:
+        """更新单个关注池条目并持久化。"""
+        stock_code = str(stock_code or "").strip()
+        if not stock_code:
+            return False
+
+        with self._lock:
+            entry = self._cache.get(stock_code)
+            if not isinstance(entry, dict):
+                return False
+
+            changed = False
+            merged = dict(entry)
+            for key, value in dict(updates or {}).items():
+                normalized = self._normalize_entry_value(value)
+                if merged.get(key) != normalized:
+                    merged[key] = normalized
+                    changed = True
+
+            for key in remove_keys or ():
+                if key in merged:
+                    merged.pop(key, None)
+                    changed = True
+
+            if not changed:
+                return False
+
+            self._cache[stock_code] = merged
+
+        self._save_data()
+        return True
+
+    def bulk_patch_entries(
+        self,
+        updates_by_code: dict[str, dict] | None,
+        remove_keys: list[str] | tuple[str, ...] | None = None,
+    ) -> bool:
+        """批量更新关注池条目，统一落盘一次。"""
+        updates_by_code = dict(updates_by_code or {})
+        if not updates_by_code:
+            return False
+
+        changed = False
+        with self._lock:
+            for stock_code, updates in updates_by_code.items():
+                code = str(stock_code or "").strip()
+                entry = self._cache.get(code)
+                if not code or not isinstance(entry, dict):
+                    continue
+
+                merged = dict(entry)
+                entry_changed = False
+                for key, value in dict(updates or {}).items():
+                    normalized = self._normalize_entry_value(value)
+                    if merged.get(key) != normalized:
+                        merged[key] = normalized
+                        entry_changed = True
+
+                for key in remove_keys or ():
+                    if key in merged:
+                        merged.pop(key, None)
+                        entry_changed = True
+
+                if entry_changed:
+                    self._cache[code] = merged
+                    changed = True
+
+        if changed:
+            self._save_data()
+        return changed
+
+    def replace_watchlist_data(self, new_cache: dict | None) -> bool:
+        """整体替换关注池缓存，用于按最新视觉顺序落盘。"""
+        if not isinstance(new_cache, dict) or not new_cache:
+            return False
+
+        normalized_cache: dict[str, dict] = {}
+        for raw_code, raw_entry in new_cache.items():
+            code = str(raw_code or "").strip()
+            if not code or not isinstance(raw_entry, dict):
+                continue
+            normalized_cache[code] = {
+                str(key): self._normalize_entry_value(value)
+                for key, value in raw_entry.items()
+            }
+
+        if not normalized_cache:
+            return False
+
+        with self._lock:
+            same_content = self._cache == normalized_cache
+            same_order = list(self._cache.keys()) == list(normalized_cache.keys())
+            if same_content and same_order:
+                return False
+            self._cache = normalized_cache
+
+        self._save_data()
+        return True
 
     @staticmethod
     def _build_watchlist_entry(name: str, vcp_data: dict = None) -> dict:

@@ -328,12 +328,7 @@ class WatchlistTab(BaseStockTab):
                 # 触发表格刷新
                 idx = self.model.index(row, notes_col_idx)
                 self.model.dataChanged.emit(idx, idx)
-                # 持久化到 WatchlistVM JSON
-                vm_data = watchlist_vm.get_watchlist_data()
-                if code in vm_data:
-                    vm_data[code]["备注"] = new_note
-                    watchlist_vm._cache[code] = vm_data[code]
-                    watchlist_vm._save_data()
+                watchlist_vm.patch_entry(code, {"备注": new_note})
             return
 
         # 非备注列 → K 线图
@@ -598,44 +593,31 @@ class WatchlistTab(BaseStockTab):
         if not results:
             return
 
-        current_cache = watchlist_vm.get_watchlist_data()
-        if not current_cache:
-            return
-
-        cache_dirty = False
+        patch_payload: dict[str, dict] = {}
         for code, data in results.items():
-            entry = current_cache.get(code)
-            if not entry:
-                continue
-
-            entry["RPS强度"] = str(data.get('rps', entry.get("RPS强度", "")))
+            entry_patch = {
+                "RPS强度": str(data.get('rps', '')),
+            }
             if data.get('subsector'):
-                entry["细分板块"] = str(data['subsector'])
-            else:
-                entry.setdefault("细分板块", entry.get("细分板块", ""))
+                entry_patch["细分板块"] = str(data['subsector'])
 
             if data.get('na_catalyst'):
-                entry["美股日报"] = str(data['na_catalyst'])
+                entry_patch["美股日报"] = str(data['na_catalyst'])
             if data.get('block_trade'):
-                entry["大宗交易"] = str(data['block_trade'])
+                entry_patch["大宗交易"] = str(data['block_trade'])
             if data.get('earnings'):
-                entry["业绩异动"] = str(data['earnings'])
+                entry_patch["业绩异动"] = str(data['earnings'])
             if data.get('lhb'):
                 new_lhb = data['lhb']
                 if isinstance(new_lhb, dict):
                     new_date = new_lhb.get("date", "")
                     new_text = new_lhb.get("text", "")
-                    entry["龙虎榜"] = str(new_text)
-                    entry["龙虎榜日期"] = str(new_date)
+                    entry_patch["龙虎榜"] = str(new_text)
+                    entry_patch["龙虎榜日期"] = str(new_date)
 
-            entry.pop("催化剂", None)
-            entry.pop("热点板块", None)
-            current_cache[code] = entry
-            cache_dirty = True
+            patch_payload[str(code)] = entry_patch
 
-        if cache_dirty:
-            watchlist_vm._cache = current_cache
-            watchlist_vm._save_data()
+        watchlist_vm.bulk_patch_entries(patch_payload, remove_keys=["催化剂", "热点板块"])
 
 
     def _on_app_closing(self):
@@ -683,8 +665,7 @@ class WatchlistTab(BaseStockTab):
                     new_cache[code] = entry
 
             if new_cache:
-                watchlist_vm._cache = new_cache
-                watchlist_vm._save_data()
+                watchlist_vm.replace_watchlist_data(new_cache)
         except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
             log.error(f"[关注池] 同步缓存到 ViewModel 失败: {e}")
 
@@ -714,6 +695,13 @@ class WatchlistTab(BaseStockTab):
             self._vcp_calc_timer.setSingleShot(True)
             self._vcp_calc_timer.timeout.connect(self._do_vcp_calc)
         self._vcp_calc_timer.start(max(0, int(delay_ms)))
+
+    def prime_startup_state(self):
+        """工作区联动：启动后主动补一次关注池行情与附加指标。"""
+        if not self.model or not getattr(self.model, "row_data", None):
+            return
+        self.refresh_table_quotes_and_market_caps(quote_task_id="smart_startup_watchlist")
+        self._request_vcp_calc(delay_ms=0)
 
     def _do_vcp_calc(self):
         """实际计算"""

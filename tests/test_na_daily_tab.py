@@ -31,6 +31,12 @@ def _build_tab(monkeypatch, provider):
     tab = NADailyTab(provider)
     tab._quote_publisher = DummyQuotePublisher()
     tab._patrol_timer.stop()
+    monkeypatch.setattr(
+        tab,
+        "_load_cached_finance_snapshot",
+        staticmethod(lambda codes: {}),
+        raising=False,
+    )
     return tab
 
 

@@ -146,6 +146,12 @@ def test_base_stock_refresh_table_market_data_only_fetches_blank_quotes(monkeypa
     tab._quote_publisher = DummyQuotePublisher()
     spy = QSignalSpy(event_bus.sig_rt_quotes)
     monkeypatch.setattr(tab, "async_update_market_caps", lambda: cap_calls.append("caps"))
+    monkeypatch.setattr(
+        tab,
+        "_load_cached_finance_snapshot",
+        staticmethod(lambda codes: {}),
+        raising=False,
+    )
 
     try:
         tab.refresh_table_quotes_and_market_caps(quote_task_id="dummy_quotes")
@@ -206,6 +212,12 @@ def test_base_stock_refresh_table_market_data_can_force_full_quote_refresh(monke
     monkeypatch.setattr(global_store, "get_latest_quotes", lambda: {})
     monkeypatch.setattr(task_manager_module, "task_manager", DummyTaskManager())
     monkeypatch.setattr(tab, "async_update_market_caps", lambda: None)
+    monkeypatch.setattr(
+        tab,
+        "_load_cached_finance_snapshot",
+        staticmethod(lambda codes: {}),
+        raising=False,
+    )
 
     try:
         tab.refresh_table_quotes_and_market_caps(
@@ -273,6 +285,12 @@ def test_base_stock_refresh_table_market_data_fetches_newly_added_blank_rows(mon
     monkeypatch.setattr(task_manager_module, "task_manager", DummyTaskManager())
     monkeypatch.setattr(tab, "async_update_market_caps", lambda: None)
     tab._quote_publisher = DummyQuotePublisher()
+    monkeypatch.setattr(
+        tab,
+        "_load_cached_finance_snapshot",
+        staticmethod(lambda codes: {}),
+        raising=False,
+    )
 
     try:
         tab.refresh_table_quotes_and_market_caps(quote_task_id="new_codes_quotes")
@@ -280,4 +298,129 @@ def test_base_stock_refresh_table_market_data_fetches_newly_added_blank_rows(mon
         assert tab.model.row_data[0]["现价"] == "10.80"
         assert tab.model.row_data[1]["现价"] == "11.20"
     finally:
+        tab.deleteLater()
+
+
+def test_base_stock_refresh_from_latest_snapshot_primes_local_cache_for_new_codes(monkeypatch):
+    class DummyModel:
+        def __init__(self):
+            self.headers = ["代码", "现价", "涨幅%", "市值"]
+            self.row_data = [
+                {"代码": "000001", "现价": "--", "涨幅%": "--", "市值": "--"},
+            ]
+
+        def update_quotes(self, quotes):
+            for row in self.row_data:
+                code = row.get("代码")
+                payload = dict(quotes.get(code) or {})
+                if not payload:
+                    continue
+                close = float(payload.get("close", 0) or 0)
+                last_close = float(payload.get("last_close", 0) or 0)
+                zongguben = float(payload.get("_zongguben") or payload.get("zongguben") or 0)
+                if close > 0:
+                    row["现价"] = f"{close:.2f}"
+                if close > 0 and last_close > 0:
+                    row["涨幅%"] = ((close / last_close) - 1) * 100
+                if close > 0 and zongguben > 0:
+                    row["市值"] = f"{(close * zongguben) / 1e8:.0f}亿"
+
+    class DummyProvider:
+        def __init__(self):
+            self.offline_calls = []
+
+        def _build_offline_quotes(self, codes):
+            self.offline_calls.append(list(codes))
+            return {"000001": {"close": 10.5, "last_close": 10.0}}
+
+    class DummyTab(BaseStockTab):
+        def __init__(self, provider):
+            super().__init__(data_provider=provider)
+            self.model = DummyModel()
+
+    from core.global_store import global_store
+
+    provider = DummyProvider()
+    tab = DummyTab(provider)
+
+    global_store.reset_quotes()
+    monkeypatch.setattr(
+        tab,
+        "_load_cached_finance_snapshot",
+        staticmethod(lambda codes: {"000001": {"zongguben": 1_000_000_000}} if codes == ["000001"] else {}),
+        raising=False,
+    )
+
+    try:
+        tab.refresh_table_from_latest_snapshot()
+
+        assert provider.offline_calls == [["000001"]]
+        assert tab.model.row_data[0]["现价"] == "10.50"
+        assert round(float(tab.model.row_data[0]["涨幅%"]), 2) == 5.0
+        assert tab.model.row_data[0]["市值"] == "105亿"
+    finally:
+        global_store.reset_quotes()
+        tab.deleteLater()
+
+
+def test_base_stock_refresh_table_market_data_primes_local_f5_snapshot_for_new_rows(monkeypatch):
+    class DummyModel:
+        def __init__(self):
+            self.headers = ["代码", "现价", "涨幅%", "市值"]
+            self.row_data = [
+                {"代码": "000001", "现价": "--", "涨幅%": "--", "市值": "--"},
+            ]
+
+        def update_quotes(self, quotes):
+            for row in self.row_data:
+                code = row.get("代码")
+                payload = dict(quotes.get(code) or {})
+                if not payload:
+                    continue
+                close = float(payload.get("close", 0) or 0)
+                last_close = float(payload.get("last_close", 0) or 0)
+                zongguben = float(payload.get("_zongguben") or payload.get("zongguben") or 0)
+                if close > 0:
+                    row["现价"] = f"{close:.2f}"
+                if close > 0 and last_close > 0:
+                    row["涨幅%"] = ((close / last_close) - 1) * 100
+                if close > 0 and zongguben > 0:
+                    row["市值"] = f"{(close * zongguben) / 1e8:.0f}亿"
+
+    class DummyProvider:
+        def __init__(self):
+            self.offline_calls = []
+
+        def _build_offline_quotes(self, codes):
+            self.offline_calls.append(list(codes))
+            return {"000001": {"close": 10.5, "last_close": 10.0}}
+
+    class DummyTab(BaseStockTab):
+        def __init__(self, provider):
+            super().__init__(data_provider=provider)
+            self.model = DummyModel()
+
+    from core.global_store import global_store
+
+    provider = DummyProvider()
+    tab = DummyTab(provider)
+
+    global_store.reset_quotes()
+    monkeypatch.setattr(tab, "async_update_market_caps", lambda: None)
+    monkeypatch.setattr(
+        tab,
+        "_load_cached_finance_snapshot",
+        staticmethod(lambda codes: {"000001": {"zongguben": 1_000_000_000}} if codes == ["000001"] else {}),
+        raising=False,
+    )
+
+    try:
+        tab.refresh_table_quotes_and_market_caps(quote_task_id="local_f5_quotes")
+
+        assert provider.offline_calls == [["000001"]]
+        assert tab.model.row_data[0]["现价"] == "10.50"
+        assert round(float(tab.model.row_data[0]["涨幅%"]), 2) == 5.0
+        assert tab.model.row_data[0]["市值"] == "105亿"
+    finally:
+        global_store.reset_quotes()
         tab.deleteLater()

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from PyQt6.QtWidgets import QTabWidget, QVBoxLayout, QWidget
 
+from core.logger import get_logger
 from ui.tabs.asian_market_tab import AsianMarketTab
 from ui.tabs.earnings_tab import EarningsTab
 from ui.tabs.foreign_block_trade_tab import ForeignBlockTradeTab
@@ -13,6 +14,8 @@ from ui.tabs.na_daily_tab import NADailyTab
 from ui.tabs.rt_monitor_tab import RtMonitorTab
 from ui.tabs.scan_tab import ScanTab
 from ui.tabs.watchlist_tab import WatchlistTab
+
+log = get_logger(__name__)
 
 
 class ClassicWorkspace(QWidget):
@@ -137,6 +140,30 @@ class ClassicWorkspace(QWidget):
             if table is not None
         ]
 
+    def iter_refreshable_tabs(self) -> list:
+        return [
+            tab
+            for tab in [
+                getattr(self, "tab_watchlist", None),
+                getattr(self, "tab_lhb", None),
+                getattr(self, "tab_na_daily", None),
+                getattr(self, "tab_asian_market", None),
+                getattr(self, "tab_rt", None),
+                getattr(self, "tab_foreign_block", None),
+                getattr(self, "tab_fund_holdings", None),
+                getattr(self, "tab_earnings", None),
+                getattr(self, "tab_scan", None),
+            ]
+            if tab is not None and hasattr(tab, "refresh_table_from_latest_snapshot")
+        ]
+
+    def refresh_all_tabs_after_f5(self) -> None:
+        for tab in self.iter_refreshable_tabs():
+            try:
+                tab.refresh_table_from_latest_snapshot()
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                log.warning(f"[F5] {tab.__class__.__name__} 表格快照回灌失败: {exc}")
+
     def find_scan_result(self, code: str) -> dict | None:
         code_text = str(code or "").strip()
         if not code_text:
@@ -177,26 +204,9 @@ class ClassicWorkspace(QWidget):
 
     def schedule_watchlist_special_quotes(self, task_manager) -> None:
         watchlist_tab = getattr(self, "tab_watchlist", None)
-        model = getattr(watchlist_tab, "model", None)
-        refresh_quotes = getattr(watchlist_tab, "_refresh_special_quotes", None)
-        update_quotes_ui = getattr(watchlist_tab, "_update_quotes_ui", None)
-        if model is None or not callable(refresh_quotes) or not callable(update_quotes_ui):
-            return
-
-        sp_codes = [
-            str(row.get("代码", "")).strip()
-            for row in getattr(model, "row_data", []) or []
-            if row.get("代码")
-        ]
-        if not sp_codes:
-            return
-
-        task_manager.run_in_background(
-            refresh_quotes,
-            sp_codes,
-            on_success=lambda quotes: update_quotes_ui(quotes) if quotes else None,
-            task_id="smart_startup_watchlist",
-        )
+        prime_state = getattr(watchlist_tab, "prime_startup_state", None)
+        if callable(prime_state):
+            prime_state()
 
     def run_post_online_refresh(self, task_manager) -> None:
         for attr_name in ("tab_na_daily", "tab_foreign_block"):

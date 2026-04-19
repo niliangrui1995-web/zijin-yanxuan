@@ -130,7 +130,7 @@ def _visible_codes(tab):
     return codes
 
 
-def test_fund_holdings_tab_reload_triggers_quote_refresh(monkeypatch):
+def test_fund_holdings_tab_reload_uses_f5_quote_cache_only(monkeypatch):
     _setup_store(
         monkeypatch,
         [
@@ -144,6 +144,13 @@ def test_fund_holdings_tab_reload_triggers_quote_refresh(monkeypatch):
                 stock_name="平安银行",
             )
         ],
+    )
+    from core.global_store import global_store
+
+    monkeypatch.setattr(
+        global_store,
+        "get_latest_quotes",
+        lambda: {"000001": {"close": 10.5}},
     )
 
     refresh_calls = []
@@ -160,10 +167,65 @@ def test_fund_holdings_tab_reload_triggers_quote_refresh(monkeypatch):
 
     tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
     try:
-        assert len(refresh_calls) == 1
-        assert refresh_calls[0][0] is tab.model
-        assert refresh_calls[0][1] is False
-        assert refresh_calls[0][2] == "fund_holdings_quotes"
+        assert refresh_calls == []
+        assert tab.model.get_row_data(0)["市价"] == "10.50"
+    finally:
+        tab.deleteLater()
+
+
+def test_fund_holdings_tab_reload_warms_local_snapshot_for_new_codes(monkeypatch):
+    _setup_store(
+        monkeypatch,
+        [
+            _build_change_row(
+                subject_code="QFII",
+                subject_name="QFII",
+                quarter_key="2025Q4",
+                compare_quarter_key="2025Q3",
+                change_type="增持",
+                stock_code="000001",
+                stock_name="平安银行",
+            )
+        ],
+    )
+
+    class _OfflineQuoteProvider:
+        def _build_offline_quotes(self, codes):
+            assert codes == ["000001"]
+            return {
+                "000001": {
+                    "close": 10.5,
+                    "last_close": 10.0,
+                }
+            }
+
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "_load_cached_finance_snapshot",
+        staticmethod(
+            lambda codes: {
+                "000001": {
+                    "zongguben": 1_000_000_000,
+                    "market_cap": 10_000_000_000,
+                    "price_base": 10.0,
+                }
+            }
+            if codes == ["000001"]
+            else {}
+        ),
+        raising=False,
+    )
+
+    from core.global_store import global_store
+
+    tab = fund_holdings_module.FundHoldingsTab(_OfflineQuoteProvider())
+    try:
+        latest = global_store.get_latest_quotes()
+        assert latest["000001"]["close"] == 10.5
+        assert latest["000001"]["zongguben"] == 1_000_000_000
+        assert tab.model.get_row_data(0)["市价"] == "10.50"
+        assert round(float(tab.model.get_row_data(0)["涨幅%"]), 2) == 5.0
+        assert tab.model.get_row_data(0)["市值"] == "105亿"
     finally:
         tab.deleteLater()
 

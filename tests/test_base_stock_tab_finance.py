@@ -12,6 +12,8 @@ class DummyQuotePublisher:
 
 
 def test_base_stock_tab_async_market_caps_only_fetches_missing_a_share_finance(monkeypatch):
+    from PyQt6.QtWidgets import QApplication
+
     class DummyModel:
         def __init__(self):
             self.row_data = [
@@ -37,8 +39,10 @@ def test_base_stock_tab_async_market_caps_only_fetches_missing_a_share_finance(m
 
     import core.task_manager as task_manager_module
     from core.global_store import global_store
+    from ui.tabs import base_stock_refresh as refresh_module
     from vcp.engine import VCPEngine
 
+    app = QApplication.instance() or QApplication([])
     latest_quotes = {
         "000001": {"close": 10.5, "last_close": 10.0},
         "AAPL": {"close": 188.0, "last_close": 185.0},
@@ -48,6 +52,14 @@ def test_base_stock_tab_async_market_caps_only_fetches_missing_a_share_finance(m
 
     monkeypatch.setattr(global_store, "get_latest_quotes", lambda: latest_quotes)
     monkeypatch.setattr(task_manager_module, "task_manager", DummyTaskManager())
+    refresh_module.MarketCapRefreshBatcher._scheduled = False
+    refresh_module.MarketCapRefreshBatcher._pending_codes = set()
+    refresh_module.MarketCapRefreshBatcher._waiters = {}
+    monkeypatch.setattr(
+        refresh_module.QTimer,
+        "singleShot",
+        staticmethod(lambda _ms, callback: callback()),
+    )
     monkeypatch.setattr(
         VCPEngine,
         "batch_get_finance_info",
@@ -61,6 +73,7 @@ def test_base_stock_tab_async_market_caps_only_fetches_missing_a_share_finance(m
     spy = QSignalSpy(event_bus.sig_rt_quotes)
     try:
         tab.async_update_market_caps()
+        app.processEvents()
 
         assert tab.model.quote_calls == [
             latest_quotes,

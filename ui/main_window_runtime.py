@@ -61,6 +61,7 @@ def finish_f5_reload(main_window, *, count, elapsed, event_bus):
     """完成 F5 后的缓存重载收尾，只保留 UI 壳层必须知道的结果。"""
     QTimer.singleShot(2000, lambda: gc.collect())
     main_window._update_last_f5_time()
+    workspace = getattr(main_window, "_workspace", None)
 
     refresh_after_reload = getattr(
         getattr(main_window, "central_quotes_svc", None),
@@ -73,12 +74,18 @@ def finish_f5_reload(main_window, *, count, elapsed, event_bus):
         except (AttributeError, RuntimeError, TypeError) as exc:
             log.error(f"[F5] 刷新全局报价快照异常: {exc}")
 
+    refresh_all_tabs_after_f5 = getattr(workspace, "refresh_all_tabs_after_f5", None)
+    if callable(refresh_all_tabs_after_f5):
+        try:
+            refresh_all_tabs_after_f5()
+        except (AttributeError, RuntimeError, TypeError) as exc:
+            log.error(f"[F5] 刷新各 Tab 表格快照异常: {exc}")
+
     try:
         event_bus.sig_cache_reload_completed.emit()
     except (AttributeError, RuntimeError, TypeError) as exc:
         log.error(f"[F5] 广播缓存重载完成信号异常: {exc}")
 
-    workspace = getattr(main_window, "_workspace", None)
     fund_holdings_tab = getattr(workspace, "tab_fund_holdings", None)
     auto_sync_after_f5 = getattr(fund_holdings_tab, "run_auto_sync_after_f5", None)
     if callable(auto_sync_after_f5):

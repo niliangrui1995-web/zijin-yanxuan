@@ -16,7 +16,7 @@ import subprocess
 import time
 import webbrowser
 
-from PyQt6.QtCore import QCoreApplication, Qt
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -28,8 +28,37 @@ from PyQt6.QtWidgets import (
 )
 
 from core.event_bus import event_bus
-from core.quote_snapshot import build_finance_quote_payload, coerce_number, is_a_share_code
 from ui.status_registry import format_status_summary
+from ui.tabs.base_stock_refresh import (
+    async_update_market_caps as run_async_market_caps,
+)
+from ui.tabs.base_stock_refresh import (
+    collect_missing_finance_codes as collect_refresh_missing_finance_codes,
+)
+from ui.tabs.base_stock_refresh import (
+    collect_quote_refresh_codes as collect_refresh_quote_codes,
+)
+from ui.tabs.base_stock_refresh import (
+    collect_table_codes as collect_refresh_table_codes,
+)
+from ui.tabs.base_stock_refresh import (
+    on_rt_quotes_direct as apply_rt_quotes_direct,
+)
+from ui.tabs.base_stock_refresh import (
+    prime_local_quote_snapshot as warm_local_quote_snapshot,
+)
+from ui.tabs.base_stock_refresh import (
+    refresh_table_from_latest_snapshot as refresh_quotes_from_latest_snapshot,
+)
+from ui.tabs.base_stock_refresh import (
+    refresh_table_quotes_and_market_caps as refresh_quotes_and_market_caps,
+)
+from ui.tabs.base_stock_refresh import (
+    replay_deferred_quotes,
+)
+from ui.tabs.base_stock_refresh import (
+    subscribe_global_quotes as subscribe_quote_stream,
+)
 from ui.theme_tokens import build_ui_tokens
 
 
@@ -90,133 +119,27 @@ class BaseStockTab(QWidget):
         return False
 
     def _collect_table_codes(self, current_model=None) -> list[str]:
-        model = current_model or self._resolve_active_quote_model()
-        if not model or not hasattr(model, "row_data"):
-            return []
-
-        codes = []
-        for row_dict in getattr(model, "row_data", []) or []:
-            code = self._normalize_quote_code(row_dict.get("代码", ""))
-            if not code:
-                continue
-            if code.isdigit():
-                code = code.zfill(6)
-            codes.append(code)
-        return list(dict.fromkeys(codes))
+        return collect_refresh_table_codes(self, current_model)
 
     def _collect_quote_refresh_codes(self, current_model=None, force=False) -> list[str]:
-        model = current_model or self._resolve_active_quote_model()
-        codes = self._collect_table_codes(model)
-        if force or not model:
-            return codes
-
-        target_codes = []
-        for row_dict in getattr(model, "row_data", []) or []:
-            code = self._normalize_quote_code(row_dict.get("代码", ""))
-            if not code:
-                continue
-            if code.isdigit():
-                code = code.zfill(6)
-
-            price_blank = self._is_blank_quote_value(
-                row_dict.get("现价", row_dict.get("市价"))
-            )
-            pct_blank = self._is_blank_quote_value(row_dict.get("涨幅%"), zero_is_blank=False)
-            if price_blank or pct_blank:
-                target_codes.append(code)
-        return list(dict.fromkeys(target_codes))
+        return collect_refresh_quote_codes(self, current_model, force=force)
 
     def _collect_missing_finance_codes(self, current_model=None) -> list[str]:
-        model = current_model or self._resolve_active_quote_model()
-        if not model or not hasattr(model, "row_data"):
-            return []
-
-        try:
-            from core.global_store import global_store
-
-            snapshot = global_store.get_latest_quotes() or {}
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            snapshot = {}
-
-        missing: list[str] = []
-        for row_dict in getattr(model, "row_data", []) or []:
-            code = self._normalize_quote_code(row_dict.get("代码", ""))
-            if not is_a_share_code(code):
-                continue
-
-            snapshot_entry = snapshot.get(code) or {}
-            row_zbg = coerce_number(row_dict.get("_zongguben", 0))
-            snapshot_zbg = coerce_number(snapshot_entry.get("_zongguben") or snapshot_entry.get("zongguben"))
-            if row_zbg <= 0 and snapshot_zbg <= 0:
-                missing.append(code)
-
-        return list(dict.fromkeys(missing))
+        return collect_refresh_missing_finance_codes(self, current_model)
 
     def refresh_table_quotes_and_market_caps(self, current_model=None, force_quotes=False, quote_task_id=None):
-        if current_model is not None:
-            self._active_model_ref = current_model
-
-        model = current_model or self._resolve_active_quote_model()
-        if not model or not hasattr(model, "row_data"):
-            return
-
-        codes = self._collect_table_codes(model)
-        if not codes:
-            return
-
-        try:
-            from core.global_store import global_store
-            snapshot = global_store.get_latest_quotes() or {}
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            snapshot = {}
-
-        quote_subset = {
-            code: dict(snapshot[code])
-            for code in codes
-            if code in snapshot
-        }
-        if quote_subset:
-            self._apply_quote_snapshot(quote_subset)
-
-        self.async_update_market_caps()
-
-        if not self.data_provider:
-            return
-
-        target_codes = self._collect_quote_refresh_codes(model, force=force_quotes)
-        if not target_codes:
-            return
-
-        from core.task_manager import task_manager
-
-        task_id = str(quote_task_id or f"{self.__class__.__name__.lower()}_quotes")
-        if task_manager.is_active_task(task_id):
-            return
-
-        def _bg_task():
-            return self.data_provider.fetch_realtime_quotes_batch(target_codes)
-
-        def _on_success(quotes):
-            if quotes:
-                published = self._publish_quote_payload(
-                    quotes,
-                    source=f"{self.__class__.__name__}.quotes",
-                )
-                self._apply_quote_snapshot(published or quotes)
-
-        def _on_error(error_message: str):
-            if error_message:
-                import logging
-                logging.getLogger(__name__).debug(
-                    f"[{self.__class__.__name__}] 表格补价失败: {error_message}"
-                )
-
-        task_manager.run_in_background(
-            _bg_task,
-            on_success=_on_success,
-            on_error=_on_error,
-            task_id=task_id,
+        refresh_quotes_and_market_caps(
+            self,
+            current_model=current_model,
+            force_quotes=force_quotes,
+            quote_task_id=quote_task_id,
         )
+
+    def prime_local_quote_snapshot(self, current_model=None):
+        return warm_local_quote_snapshot(self, current_model=current_model)
+
+    def refresh_table_from_latest_snapshot(self, current_model=None):
+        refresh_quotes_from_latest_snapshot(self, current_model=current_model)
 
     @staticmethod
     def _prepare_toolbar_widget(widget: QWidget | None):
@@ -659,129 +582,18 @@ class BaseStockTab(QWidget):
 
     def subscribe_global_quotes(self, current_model=None):
         """订阅中央行情站信号，自动刷新子类持有的 Model 或者通过 current_model 手动传入"""
-        if current_model:
-            self._active_model_ref = current_model
-
-        model = self._resolve_active_quote_model()
-
-        # 1. 尝试从 Redux Store 读取市场快照，实现秒刷 (无感知切图)
-        if model and hasattr(model, 'update_quotes'):
-            from core.global_store import global_store
-            snapshot = global_store.get_latest_quotes()
-            if snapshot:
-                if self.isVisible():
-                    model.update_quotes(snapshot)
-                else:
-                    self._deferred_quote_refresh = True
-
-        # 2. 为了防止多次绑定导致的连环触发，先断开(忽略不存在的情况)
-        try:
-            event_bus.sig_rt_quotes.disconnect(self._on_rt_quotes_direct)
-        except (TypeError, RuntimeError):
-            # Why: 信号从未连接过时 disconnect 报 TypeError，是正常情况
-            pass
-
-        event_bus.sig_rt_quotes.connect(self._on_rt_quotes_direct)
+        subscribe_quote_stream(self, current_model)
 
     def _on_rt_quotes_direct(self, quotes: dict):
         """v4 直达信号：实时行情广播，不再需要 if-elif 路由"""
-        if not self.isVisible():
-            self._deferred_quote_refresh = True
-            return
-
-        self._apply_quote_snapshot(quotes)
+        apply_rt_quotes_direct(self, quotes)
 
     def showEvent(self, event):
         super().showEvent(event)
-        if not self._deferred_quote_refresh:
-            return
-        self._deferred_quote_refresh = False
-        try:
-            from core.global_store import global_store
-
-            self._apply_quote_snapshot(global_store.get_latest_quotes())
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            pass
+        replay_deferred_quotes(self)
 
 
 
     def async_update_market_caps(self):
-        """异步补齐缺失股本，并通过全局实时行情信号回灌动态市值。"""
-        app = QCoreApplication.instance()
-        owner_window = self.window()
-        if app is None or app.closingDown():
-            return
-        if owner_window and getattr(owner_window, "_is_closing", False):
-            return
-
-        model = self._resolve_active_quote_model()
-        if not model or not hasattr(model, "row_data"):
-            return
-
-        try:
-            from core.global_store import global_store
-
-            latest_quotes = global_store.get_latest_quotes() or {}
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            latest_quotes = {}
-
-        if latest_quotes:
-            self._apply_quote_snapshot(latest_quotes)
-
-        codes_need_cap = self._collect_missing_finance_codes(model)
-        if not codes_need_cap:
-            after_cap_hook = getattr(self, "_after_market_caps_updated", None)
-            if callable(after_cap_hook):
-                try:
-                    after_cap_hook()
-                except (AttributeError, RuntimeError, TypeError):
-                    pass
-            return
-
-        def _bg_cap():
-            app_obj = QCoreApplication.instance()
-            if app_obj is None or app_obj.closingDown():
-                return {}
-
-            from vcp.engine import VCPEngine
-
-            try:
-                return VCPEngine.batch_get_finance_info(codes_need_cap)
-            except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                import logging
-
-                logging.getLogger(__name__).error(f"[市值统一刷新] 获取股本失败: {exc}")
-                return {}
-
-        def _on_cap(finance_data):
-            app_obj = QCoreApplication.instance()
-            owner = self.window()
-            if app_obj is None or app_obj.closingDown():
-                return
-            if owner and getattr(owner, "_is_closing", False):
-                return
-            if not finance_data:
-                return
-
-            payload = build_finance_quote_payload(finance_data)
-            if payload:
-                published = self._publish_quote_payload(
-                    payload,
-                    source=f"{self.__class__.__name__}.finance",
-                )
-                self._apply_quote_snapshot(published or payload)
-
-            after_cap_hook = getattr(self, "_after_market_caps_updated", None)
-            if callable(after_cap_hook):
-                try:
-                    after_cap_hook()
-                except (AttributeError, RuntimeError, TypeError):
-                    pass
-
-        from core.task_manager import task_manager
-
-        task_manager.run_in_background(
-            _bg_cap,
-            task_id=f"caps_{self.__class__.__name__}",
-            on_success=_on_cap,
-        )
+        """异步补齐缺失股本，并通过共享批次去重后回灌动态市值。"""
+        run_async_market_caps(self)

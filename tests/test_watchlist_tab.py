@@ -35,6 +35,56 @@ def test_watchlist_vm_add_stock_emits_add_signal(monkeypatch):
         watchlist_vm._cache = original_cache
 
 
+def test_watchlist_vm_get_watchlist_data_returns_deep_copy(monkeypatch):
+    original_cache = deepcopy(watchlist_vm._cache)
+    watchlist_vm._cache = {
+        "600519": {"名称": "贵州茅台", "标签": {"来源": "自选"}},
+    }
+
+    try:
+        snapshot = watchlist_vm.get_watchlist_data()
+        snapshot["600519"]["标签"]["来源"] = "外部修改"
+
+        assert watchlist_vm._cache["600519"]["标签"]["来源"] == "自选"
+    finally:
+        watchlist_vm._cache = original_cache
+
+
+def test_watchlist_vm_public_patch_interfaces(monkeypatch):
+    original_cache = deepcopy(watchlist_vm._cache)
+    monkeypatch.setattr(watchlist_vm, "_save_data", lambda: None)
+    watchlist_vm._cache = {
+        "600519": {"名称": "贵州茅台", "旧字段": "待清理"},
+        "000001": {"名称": "平安银行"},
+    }
+
+    try:
+        assert watchlist_vm.patch_entry("600519", {"备注": "核心观察"}) is True
+        assert watchlist_vm._cache["600519"]["备注"] == "核心观察"
+
+        changed = watchlist_vm.bulk_patch_entries(
+            {
+                "600519": {"RPS强度": "95/93"},
+                "000001": {"RPS强度": "88/80"},
+            },
+            remove_keys=["旧字段"],
+        )
+        assert changed is True
+        assert "旧字段" not in watchlist_vm._cache["600519"]
+        assert watchlist_vm._cache["000001"]["RPS强度"] == "88/80"
+
+        replaced = watchlist_vm.replace_watchlist_data(
+            {
+                "000001": {"名称": "平安银行"},
+                "600519": {"名称": "贵州茅台", "备注": "核心观察"},
+            }
+        )
+        assert replaced is True
+        assert list(watchlist_vm._cache.keys()) == ["000001", "600519"]
+    finally:
+        watchlist_vm._cache = original_cache
+
+
 def test_watchlist_toolbar_uses_add_stock_button_and_accepts_a_share_code(monkeypatch):
     monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
     monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)
