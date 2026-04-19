@@ -118,7 +118,7 @@ class RtMonitorTab(BaseStockTab):
             primary = "盘中监控未启动"
 
         freshness = f"最近 {self._rt_last_update}" if self._rt_last_update else self._status_label_text()
-        next_step = str(self._rt_status_next_step or "").strip() or "双击查看K线｜右键更多操作"
+        next_step = str(self._rt_status_next_step or "").strip()
 
         extra_segments = [f"数据 {self._status_label_text()}"]
         detail_text = str(self._rt_status_detail or "").strip()

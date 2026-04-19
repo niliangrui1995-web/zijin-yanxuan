@@ -36,6 +36,16 @@ class LogTab(QWidget):
         if widget is None:
             return
         widget.setProperty("inToolbar", True)
+        if isinstance(widget, QLineEdit):
+            widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            if widget.minimumWidth() == widget.maximumWidth() and widget.maximumWidth() > 0:
+                preferred_width = widget.maximumWidth()
+                widget.setMinimumWidth(max(150, preferred_width - 20))
+                widget.setMaximumWidth(max(260, preferred_width + 80))
+            if widget.minimumWidth() < 150:
+                widget.setMinimumWidth(150)
+        elif isinstance(widget, QPushButton):
+            widget.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
 
     def _init_ui(self):
         tokens = build_ui_tokens()
@@ -84,40 +94,42 @@ class LogTab(QWidget):
         title_layout.addWidget(self.lbl_status, 0, Qt.AlignmentFlag.AlignVCenter)
 
         tb_layout.addWidget(title_wrap)
-        tb_layout.addStretch()
+        tb_layout.addStretch(1)
 
         action_wrap = QWidget()
         action_wrap.setObjectName("tabToolbarActions")
         action_wrap.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         action_layout = QHBoxLayout(action_wrap)
         action_layout.setContentsMargins(0, 0, 0, 0)
-        action_layout.setSpacing(tokens["shell"]["toolbar_group_gap"])
+        action_layout.setSpacing(max(6, tokens["shell"]["toolbar_group_gap"] + 2))
         action_layout.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         self.btn_clear_log = QPushButton("清空")
         self.btn_clear_log.setProperty("class", "ctaSecondary")
         self.btn_clear_log.setCursor(Qt.CursorShape.PointingHandCursor)
         self._prepare_toolbar_widget(self.btn_clear_log)
-        self.btn_clear_log.setFixedWidth(50)
+        self.btn_clear_log.setMinimumWidth(58)
         self.btn_clear_log.clicked.connect(self._clear_logs)
         action_layout.addWidget(self.btn_clear_log)
 
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("搜索日志...")
         self._prepare_toolbar_widget(self.search_box)
-        self.search_box.setFixedWidth(120)
+        self.search_box.setMinimumWidth(150)
+        self.search_box.setMaximumWidth(260)
         self.search_box.textChanged.connect(self._apply_log_filter)
         action_layout.addWidget(self.search_box)
 
         self.level_filter = MultiSelectFilterButton("全部")
         self._prepare_toolbar_widget(self.level_filter)
-        self.level_filter.setFixedWidth(90)
+        self.level_filter.setMaximumWidth(120)
         self.level_filter.set_options(
             [("error", "Error"), ("warning", "Warning")],
             preserve_selection=False,
         )
         self.level_filter.selectionChanged.connect(self._apply_log_filter)
         self._refresh_level_filter_button_text()
+        self.level_filter.setMinimumWidth(92)
         action_layout.addWidget(self.level_filter)
 
         tb_layout.addWidget(action_wrap, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)

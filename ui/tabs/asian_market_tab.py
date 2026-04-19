@@ -238,7 +238,7 @@ class AsianMarketTab(BaseStockTab):
                 result=f"{visible}/{total}只" if total else "0只",
                 freshness=self._status_freshness or ("本地缓存" if total else "待刷新"),
                 current_filter=search_text or "全部",
-                next_step=self._status_next_step or "双击查看K线｜右键更多操作",
+                next_step=self._status_next_step or "",
                 extra_segments=extra_segments,
             )
         )

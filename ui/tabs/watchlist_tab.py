@@ -32,8 +32,6 @@ class WatchlistTab(BaseStockTab):
     def __init__(self, data_provider, parent=None):
         super().__init__(data_provider=data_provider, parent=parent)
         self._watchlist_last_update = ""
-        self.toolbar_hint_text = "双击查看K线｜右键更多操作｜Enter 打开｜Esc 退出搜索"
-
         self._init_ui()
 
         # 订阅全局报价与大一统市值更新机制
@@ -285,7 +283,7 @@ class WatchlistTab(BaseStockTab):
                 result=f"{visible}/{total}只",
                 freshness=self._watchlist_last_update or "待刷新",
                 current_filter=search_text or "全部",
-                next_step="双击查看K线｜右键更多操作",
+                next_step="",
                 extra_segments=extra_segments,
             )
         )

@@ -285,7 +285,7 @@ class ScanTab(BaseStockTab):
                     result=f"{self.proxy_model.rowCount()}/{len(self._current_results)}只",
                     freshness=f"快照 {latest_date}" if latest_date else "快照待更新",
                     current_filter=search_text or "全部",
-                    next_step="双击查看K线｜右键更多操作",
+                    next_step="",
                     extra_segments=extra_segments,
                 )
             )

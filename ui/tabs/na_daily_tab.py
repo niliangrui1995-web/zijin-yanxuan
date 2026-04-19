@@ -153,7 +153,7 @@ class NADailyTab(BaseStockTab):
                 result=self._status_metric("结果 ", f"{visible}/{total}", "只") if total else "",
                 freshness=self._status_freshness or self._latest_report_freshness(),
                 current_filter=self._current_filter_summary(),
-                next_step=self._status_next_step or ("双击查看K线｜右键更多操作" if total else "点击刷新载入最新战报"),
+                next_step=self._status_next_step or ("" if total else "点击刷新载入最新战报"),
                 extra_segments=tuple(seg for seg in self._status_segments if seg),
             )
         )
@@ -339,7 +339,7 @@ class NADailyTab(BaseStockTab):
                 newest_name,
                 self._status_metric("合并 ", len(final_list), "只"),
                 freshness=f"快照 {report_date}",
-                next_step="双击查看K线｜右键更多操作",
+                next_step="",
             )
         else:
             self._set_report_status(
@@ -348,7 +348,7 @@ class NADailyTab(BaseStockTab):
                 self._status_metric("覆盖 ", len(report_files), "份"),
                 self._status_metric("合并 ", len(final_list), "只"),
                 freshness=f"快照 {report_date}",
-                next_step="双击查看K线｜右键更多操作",
+                next_step="",
             )
 
         self._na_daily_codes = {row.get("代码", "") for row in final_list if row.get("代码")}

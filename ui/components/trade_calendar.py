@@ -64,8 +64,8 @@ class TradeCalendarWidget(QCalendarWidget):
         border = ui["border"]
         text = ui["text"]
 
-        nav_button_size = max(control["button_height"], 30)
-        nav_height = max(control["toolbar_button_height"], 34)
+        nav_button_size = max(control["button_height"] + 2, 34)
+        nav_height = max(control["toolbar_button_height"], 36)
 
         self._apply_weekday_formats()
         self.setStyleSheet(
@@ -78,11 +78,10 @@ class TradeCalendarWidget(QCalendarWidget):
                 alternate-background-color: transparent;
             }}
             QCalendarWidget QWidget#qt_calendar_navigationbar {{
-                background-color: {surface['toolbar']};
-                border: 1px solid {border['default']};
-                border-radius: {radius['lg']}px;
-                padding: 0 6px;
-                margin: 0 0 10px 0;
+                background: transparent;
+                border: none;
+                padding: 0 0 8px 0;
+                margin: 0 0 8px 0;
                 min-height: {nav_height}px;
             }}
             QCalendarWidget QToolButton {{
@@ -93,19 +92,16 @@ class TradeCalendarWidget(QCalendarWidget):
                 font-size: {font['size_sm']}px;
                 font-weight: {font['weight_medium']};
                 min-height: {nav_button_size}px;
-                padding: 0 8px;
+                padding: 0 6px;
             }}
             QCalendarWidget QToolButton:hover {{
-                background-color: {surface['soft']};
                 color: {text['primary']};
-            }}
-            QCalendarWidget QToolButton:pressed {{
-                background-color: {surface['hover']};
             }}
             QCalendarWidget QToolButton#qt_calendar_prevmonth,
             QCalendarWidget QToolButton#qt_calendar_nextmonth {{
                 background-color: {surface['soft']};
-                border: 1px solid {border['default']};
+                border: 1px solid {border['subtle']};
+                border-radius: {radius['md']}px;
                 min-width: {nav_button_size}px;
                 max-width: {nav_button_size}px;
                 padding: 0;
@@ -117,15 +113,26 @@ class TradeCalendarWidget(QCalendarWidget):
                 background-color: {surface['hover']};
                 border: 1px solid {border['accent']};
             }}
+            QCalendarWidget QToolButton#qt_calendar_prevmonth:pressed,
+            QCalendarWidget QToolButton#qt_calendar_nextmonth:pressed {{
+                background-color: {surface['toolbar']};
+            }}
             QCalendarWidget QToolButton#qt_calendar_monthbutton,
             QCalendarWidget QToolButton#qt_calendar_yearbutton {{
                 color: {text['primary']};
-                font-size: {font['size_md']}px;
-                font-weight: {font['weight_semibold']};
-                padding: 0 10px;
+                font-size: {font['size_lg']}px;
+                font-weight: {font['weight_bold']};
+                padding: 0 6px;
+                min-width: 0;
+            }}
+            QCalendarWidget QToolButton#qt_calendar_monthbutton::menu-indicator,
+            QCalendarWidget QToolButton#qt_calendar_yearbutton::menu-indicator {{
+                image: none;
+                width: 0px;
+                subcontrol-position: right center;
             }}
             QCalendarWidget QAbstractItemView {{
-                background: {surface['panel']};
+                background: transparent;
                 color: {text['primary']};
                 border: none;
                 outline: none;
@@ -146,8 +153,7 @@ class TradeCalendarWidget(QCalendarWidget):
                 background: transparent;
                 color: {text['header']};
                 border: none;
-                border-bottom: 1px solid {border['subtle']};
-                padding: 0 0 8px 0;
+                padding: 0 0 10px 0;
                 font-size: {font['size_sm']}px;
                 font-weight: {font['weight_semibold']};
             }}
@@ -174,40 +180,38 @@ class TradeCalendarWidget(QCalendarWidget):
         is_today = date == QDate.currentDate()
         is_trade_day = MarketCalendar.is_trade_day(date.toPyDate(), "CN")
 
-        painter.fillRect(rect, QColor(_c("BG_TABLE_BASE")))
+        painter.fillRect(rect, QColor(_c("BG_INPUT")))
 
-        chip_rect = QRectF(rect.adjusted(4, 4, -4, -4))
+        chip_rect = QRectF(rect.adjusted(6, 5, -6, -5))
         if chip_rect.width() < 14 or chip_rect.height() < 14:
-            chip_rect = QRectF(rect.adjusted(2, 2, -2, -2))
+            chip_rect = QRectF(rect.adjusted(3, 3, -3, -3))
 
         fill_color = None
         border_color = None
         if is_selected:
             fill_color = QColor(_c("BRAND_PRIMARY"))
-            fill_color.setAlpha(34 if is_dark else 22)
-            border_color = QColor(_c("BRAND_PRIMARY"))
-            border_color.setAlpha(215 if is_dark else 165)
+            fill_color.setAlpha(220 if is_dark else 205)
         elif is_today and is_current_month:
             fill_color = QColor(_c("COLOR_INFO"))
-            fill_color.setAlpha(18 if is_dark else 10)
+            fill_color.setAlpha(16 if is_dark else 10)
             border_color = QColor(_c("COLOR_INFO"))
-            border_color.setAlpha(118 if is_dark else 92)
+            border_color.setAlpha(148 if is_dark else 116)
 
         if fill_color is not None:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(fill_color)
-            painter.drawRoundedRect(chip_rect, 8, 8)
+            painter.drawRoundedRect(chip_rect, 10, 10)
 
         if border_color is not None:
             painter.setPen(QPen(border_color, 1.2))
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawRoundedRect(chip_rect.adjusted(0.6, 0.6, -0.6, -0.6), 8, 8)
+            painter.drawRoundedRect(chip_rect.adjusted(0.6, 0.6, -0.6, -0.6), 10, 10)
 
         if is_selected:
-            text_color = QColor(_c("TEXT_BRIGHT"))
+            text_color = QColor(_c("TEXT_ON_ACCENT"))
         elif is_current_month and not is_trade_day:
             text_color = QColor(_c("COLOR_ERROR"))
-            text_color.setAlpha(220 if is_dark else 190)
+            text_color.setAlpha(208 if is_dark else 180)
         elif is_current_month:
             text_color = QColor(_c("TEXT_PRIMARY"))
         else:
@@ -215,10 +219,17 @@ class TradeCalendarWidget(QCalendarWidget):
 
         font = QFont()
         font.setPointSize(10)
-        font.setBold(is_selected or (is_today and is_current_month))
+        font.setBold(is_selected or is_today)
         painter.setFont(font)
         painter.setPen(text_color)
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, str(date.day()))
+
+        if is_today and not is_selected and is_current_month:
+            dot_color = QColor(_c("COLOR_INFO"))
+            dot_color.setAlpha(220 if is_dark else 180)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(dot_color)
+            painter.drawEllipse(chip_rect.center().x() - 2.2, chip_rect.bottom() - 6.0, 4.4, 4.4)
 
         painter.restore()
 

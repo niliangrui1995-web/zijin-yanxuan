@@ -130,7 +130,7 @@ class LhbTab(BaseStockTab):
         search_text = self.search_box.text().strip() if hasattr(self, "search_box") else ""
         latest_date = self._latest_cached_trade_date()
         freshness = self._status_freshness or (f"快照 {latest_date}" if latest_date else "待回补")
-        next_step = self._status_next_step or "双击查看K线｜右键更多操作"
+        next_step = self._status_next_step or ""
         self.lbl_status.setText(
             self.format_workspace_status(
                 self._status_primary,

@@ -751,7 +751,7 @@ class FundHoldingsTab(BaseStockTab):
                     result=f"{visible}/{total}只" if total else "0只",
                     freshness=self._latest_sync_freshness_text(),
                     current_filter=self._current_filter_summary(),
-                    next_step="双击查看K线｜右键更多操作",
+                    next_step="",
                     extra_segments=(message,),
                 )
             )
@@ -1071,7 +1071,7 @@ class FundHoldingsTab(BaseStockTab):
                 result=f"{visible}/{total}只",
                 freshness=self._latest_sync_freshness_text(),
                 current_filter=self._current_filter_summary(),
-                next_step="双击查看K线｜右键更多操作",
+                next_step="",
                 extra_segments=segments,
             )
         )

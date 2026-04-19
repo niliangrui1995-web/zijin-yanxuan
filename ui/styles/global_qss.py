@@ -424,6 +424,7 @@ QFrame#tabToolbarTitleWrap {{
 }}
 QWidget#tabToolbarFilters, QWidget#tabToolbarActions {{
     background: transparent;
+    min-height: {control['toolbar_button_height']}px;
 }}
 QPushButton[inToolbar="true"],
 QToolButton[inToolbar="true"],
@@ -538,6 +539,17 @@ QDialog#tradeDateRangeDialog QWidget#dialogTitleBar {{
     border-top-right-radius: {radius['xl']}px;
     border-bottom: 1px solid {t['TITLEBAR_BORDER']};
 }}
+QDialog#tradeCalendarDialog QFrame#dialogContainer,
+QDialog#tradeDateRangeDialog QFrame#dialogContainer {{
+    background-color: {surface['overlay']};
+    border: 1px solid {border['default']};
+    border-radius: {radius['xl'] + 2}px;
+}}
+QDialog#tradeCalendarDialog QWidget#dialogTitleBar,
+QDialog#tradeDateRangeDialog QWidget#dialogTitleBar {{
+    background: transparent;
+    border: none;
+}}
 QDialog#settingsDialog QFrame#dialogSection,
 QDialog#scanRangeDialog QFrame#dialogSection {{
     background-color: {t['BG_INPUT']};
@@ -563,6 +575,11 @@ QLabel#dialogWindowTitle {{
     font-size: {font['size_md']}px;
     font-weight: {font['weight_semibold']};
 }}
+QDialog#tradeCalendarDialog QLabel#dialogWindowTitle,
+QDialog#tradeDateRangeDialog QLabel#dialogWindowTitle {{
+    font-size: {font['size_lg']}px;
+    font-weight: {font['weight_bold']};
+}}
 QToolButton#dialogCloseButton {{
     background: transparent;
     border: none;
@@ -570,15 +587,22 @@ QToolButton#dialogCloseButton {{
     font-size: {font['size_md']}px;
     font-weight: {font['weight_bold']};
 }}
+QDialog#tradeCalendarDialog QToolButton#dialogCloseButton,
+QDialog#tradeDateRangeDialog QToolButton#dialogCloseButton {{
+    min-width: 30px;
+    min-height: 30px;
+    border-radius: {radius['md']}px;
+}}
 QToolButton#dialogCloseButton:hover {{
     background-color: {error_hover};
     color: {text_on_danger};
     border-radius: {radius['sm']}px;
 }}
 QFrame#tradeCalendarBody {{
-    background-color: {t['BG_INPUT']};
-    border: 1px solid {t['BORDER_DEFAULT']};
-    border-radius: {radius['lg']}px;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 {surface['panel']}, stop:1 {surface['input']});
+    border: 1px solid {border['subtle']};
+    border-radius: {radius['xl']}px;
 }}
 QLabel#calendarSectionTitle {{
     color: {t['TEXT_PRIMARY']};

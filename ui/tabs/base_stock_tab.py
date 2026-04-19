@@ -64,8 +64,7 @@ from ui.theme_tokens import build_ui_tokens
 
 
 class BaseStockTab(QWidget):
-    DEFAULT_TOOLBAR_HINT = "双击查看K线｜右键更多操作｜Enter 打开｜Esc 退出搜索"
-    """股票列表 Tab 基类 — 提供通用方法"""
+    """股票列表 Tab 基类 - 提供通用方法"""
 
     def __init__(self, data_provider=None, parent=None):
         super().__init__(parent)
@@ -154,6 +153,16 @@ class BaseStockTab(QWidget):
             widget.setProperty("toolbarRole", "meta")
         if isinstance(widget, QToolButton) and widget.property("class") is None:
             widget.setProperty("class", "toolbarGhost")
+        if isinstance(widget, QLineEdit):
+            widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            if widget.minimumWidth() == widget.maximumWidth() and widget.maximumWidth() > 0:
+                preferred_width = widget.maximumWidth()
+                widget.setMinimumWidth(max(150, preferred_width - 20))
+                widget.setMaximumWidth(max(260, preferred_width + 80))
+            if widget.minimumWidth() < 150:
+                widget.setMinimumWidth(150)
+        elif isinstance(widget, (QPushButton, QToolButton)):
+            widget.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
 
     @staticmethod
     def _install_search_escape_behavior(widget: QWidget | None):
@@ -246,7 +255,8 @@ class BaseStockTab(QWidget):
 
         for widget in valid_widgets:
             self._prepare_toolbar_widget(widget)
-            group_layout.addWidget(widget, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            stretch = 1 if isinstance(widget, QLineEdit) else 0
+            group_layout.addWidget(widget, stretch, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         return group_host
 
@@ -325,7 +335,7 @@ class BaseStockTab(QWidget):
             subtitle_label.setObjectName("tabStatusLabel")
             subtitle_label.setProperty("toolbarRole", "status")
             subtitle_label.setWordWrap(False)
-            subtitle_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+            subtitle_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
             left_layout.addWidget(subtitle_label, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         tb_layout.addWidget(left_wrap, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -333,30 +343,30 @@ class BaseStockTab(QWidget):
         for widget in filter_widgets or []:
             self._install_search_escape_behavior(widget)
 
-        filter_wrap = self._build_toolbar_flow_group("tabToolbarFilters", filter_widgets)
+        filter_wrap = self._build_toolbar_flow_group(
+            "tabToolbarFilters",
+            filter_widgets,
+            h_spacing=max(6, tokens["shell"]["toolbar_group_gap"] + 2),
+        )
         if filter_wrap is not None:
             filter_wrap.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             tb_layout.addWidget(filter_wrap, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         else:
             tb_layout.addStretch(1)
 
-        toolbar_hint = str(getattr(self, "toolbar_hint_text", self.DEFAULT_TOOLBAR_HINT) or "").strip()
-        if toolbar_hint:
-            hint_label = QLabel(toolbar_hint)
-            hint_label.setObjectName("tabToolbarHint")
-            hint_label.setProperty("toolbarRole", "meta")
-            hint_label.setToolTip(toolbar_hint)
-            hint_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
-            tb_layout.addWidget(hint_label, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-
         if action_widgets:
             self._equalize_toolbar_action_widths(action_widgets)
-        action_wrap = self._build_toolbar_flow_group("tabToolbarActions", action_widgets)
+        action_wrap = self._build_toolbar_flow_group(
+            "tabToolbarActions",
+            action_widgets,
+            h_spacing=max(6, tokens["shell"]["toolbar_group_gap"] + 2),
+        )
         if action_wrap is not None:
             action_wrap.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
             tb_layout.addWidget(action_wrap, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         return toolbar
+
     def _launch_tdx(self, code: str):
         """跳转通达信并输入股票代码（后台线程执行，不阻塞 UI）"""
         import threading

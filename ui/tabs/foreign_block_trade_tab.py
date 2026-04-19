@@ -393,7 +393,7 @@ class ForeignBlockTradeTab(BaseStockTab):
                 result=f"{visible}/{total}只" if total else "0只",
                 freshness=self._status_freshness or (f"快照 {self._latest_trade_date_text()}" if total else "待刷新"),
                 current_filter=self._current_filter_summary(),
-                next_step=self._status_next_step or "双击查看K线｜右键更多操作",
+                next_step=self._status_next_step or "",
                 extra_segments=tuple(seg for seg in extra_segments if seg),
             )
         )
@@ -582,7 +582,7 @@ class ForeignBlockTradeTab(BaseStockTab):
                         "已保留上次成功结果",
                         _format_incomplete_message(timeout_chunks, failed_chunks).lstrip("；"),
                         freshness="远端失败沿用",
-                        next_step="双击查看K线｜右键更多操作",
+                        next_step="",
                     )
                     if hasattr(self, "table_state"):
                         self.table_state.show_table()
@@ -707,7 +707,7 @@ class ForeignBlockTradeTab(BaseStockTab):
             self._status_metric("席位 ", len(unique_branches)),
             self._status_metric("窗口 ", self.days_to_fetch, "交易日"),
             _format_incomplete_message(timeout_chunks, failed_chunks).lstrip("；"),
-            next_step="双击查看K线｜右键更多操作",
+            next_step="",
         )
         if hasattr(self, "table_state"):
             self.table_state.show_table()
@@ -728,7 +728,7 @@ class ForeignBlockTradeTab(BaseStockTab):
             msg = f"大宗交易抓取失败：{msg}"
         self._block_trade_codes = []
         if getattr(self.model, "row_data", []):
-            self._set_fetch_status("刷新失败", msg, "已保留上次成功结果", freshness="远端失败沿用", next_step="双击查看K线｜右键更多操作")
+            self._set_fetch_status("刷新失败", msg, "已保留上次成功结果", freshness="远端失败沿用", next_step="")
         else:
             self._set_fetch_status("刷新失败", msg, freshness="待刷新", next_step="点击刷新重新尝试")
         if hasattr(self, "table_state"):
