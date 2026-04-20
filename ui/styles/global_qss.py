@@ -519,38 +519,15 @@ QLineEdit:hover {{ border: 1px solid {t['BORDER_BRAND']}; }}
 QLineEdit:focus {{ border: 1px solid {border['focus']}; background-color: {t['BG_INPUT']}; }}
 QLineEdit::placeholder {{ color: {t['TEXT_DISABLED']}; }}
 
-QMessageBox {{
-    background-color: {surface['overlay']};
-}}
-QMessageBox QLabel {{
-    background: transparent;
-    color: {text['primary']};
-    font-size: {font['size_md']}px;
-}}
-QMessageBox QLabel#qt_msgbox_label {{
-    min-width: 336px;
-    padding: {space['xs']}px {space['sm']}px {space['sm']}px 0;
-}}
-QMessageBox QLabel#qt_msgboxex_icon_label {{
-    min-width: 36px;
-    padding: {space['sm']}px {space['md']}px {space['sm']}px {space['sm']}px;
-}}
-QMessageBox QPushButton {{
-    min-width: 88px;
-    margin-top: {space['sm']}px;
-}}
-QMessageBox QPushButton#primaryButton {{
-    min-width: 96px;
-}}
-
-QDialog#settingsDialog, QDialog#scanRangeDialog, QDialog#tradeCalendarDialog, QDialog#tradeDateRangeDialog {{
+QDialog#settingsDialog, QDialog#scanRangeDialog, QDialog#tradeCalendarDialog, QDialog#tradeDateRangeDialog, QDialog#confirmDialog {{
     background: transparent;
     border: none;
 }}
 QDialog#settingsDialog QFrame#dialogContainer,
 QDialog#scanRangeDialog QFrame#dialogContainer,
 QDialog#tradeCalendarDialog QFrame#dialogContainer,
-QDialog#tradeDateRangeDialog QFrame#dialogContainer {{
+QDialog#tradeDateRangeDialog QFrame#dialogContainer,
+QDialog#confirmDialog QFrame#dialogContainer {{
     background-color: {t['BG_ELEVATED']};
     border: 1px solid {t['BORDER_DEFAULT']};
     border-radius: {radius['xl']}px;
@@ -558,7 +535,8 @@ QDialog#tradeDateRangeDialog QFrame#dialogContainer {{
 QDialog#settingsDialog QWidget#dialogTitleBar,
 QDialog#scanRangeDialog QWidget#dialogTitleBar,
 QDialog#tradeCalendarDialog QWidget#dialogTitleBar,
-QDialog#tradeDateRangeDialog QWidget#dialogTitleBar {{
+QDialog#tradeDateRangeDialog QWidget#dialogTitleBar,
+QDialog#confirmDialog QWidget#dialogTitleBar {{
     background-color: {t['BG_TITLEBAR']};
     border-top-left-radius: {radius['xl']}px;
     border-top-right-radius: {radius['xl']}px;
@@ -599,6 +577,20 @@ QLabel#dialogWindowTitle {{
     color: {t['TEXT_PRIMARY']};
     font-size: {font['size_md']}px;
     font-weight: {font['weight_semibold']};
+}}
+QLabel#confirmDialogIcon {{
+    background-color: {t['COLOR_INFO']};
+    color: {t['TEXT_ON_ACCENT']};
+    border-radius: 19px;
+    font-size: {font['size_xl'] + 2}px;
+    font-weight: {font['weight_bold']};
+}}
+QLabel#confirmDialogMessage {{
+    background: transparent;
+    color: {text['primary']};
+    font-size: {font['size_md']}px;
+    line-height: 1.65em;
+    padding-top: {space['xs']}px;
 }}
 QDialog#tradeCalendarDialog QLabel#dialogWindowTitle,
 QDialog#tradeDateRangeDialog QLabel#dialogWindowTitle {{
