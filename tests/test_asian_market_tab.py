@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
 import json
 
+import pytest
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import QApplication
 
 from core.market_calendar import MarketCalendar
 from ui.models.table_models import _c
@@ -42,6 +45,16 @@ class _DummyWorker:
 
     def trigger_refresh(self):
         return None
+
+
+@pytest.fixture(autouse=True)
+def _disable_saved_asian_header_state(monkeypatch):
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "_has_saved_asian_header_state",
+        lambda self, settings_key: False,
+        raising=False,
+    )
 
 
 def test_infer_asian_markets_normalizes_from_code_suffixes():
@@ -86,7 +99,7 @@ def test_asian_market_table_scales_columns_to_fill_view(monkeypatch):
         tab._fit_asian_columns_to_viewport()
 
         column_count = tab.asian_table.model().columnCount()
-        initial_widths = [52, 70, 140, 90, 90, 80, 80, 120, 250, 60, 80, 80, 80]
+        initial_widths = [52, 70, 140, 90, 80, 90, 80, 80, 120, 250, 60, 80, 80, 80]
         total_initial = sum(initial_widths)
         total_scaled = sum(tab.asian_table.columnWidth(i) for i in range(column_count))
         viewport_width = tab.asian_table.viewport().width()
@@ -94,10 +107,56 @@ def test_asian_market_table_scales_columns_to_fill_view(monkeypatch):
         assert column_count == len(initial_widths)
         assert abs(total_scaled - viewport_width) <= column_count
 
-        scaled_ratio = tab.asian_table.columnWidth(8) / tab.asian_table.columnWidth(1)
-        initial_ratio = initial_widths[8] / initial_widths[1]
+        scaled_ratio = tab.asian_table.columnWidth(9) / tab.asian_table.columnWidth(1)
+        initial_ratio = initial_widths[9] / initial_widths[1]
         assert abs(scaled_ratio - initial_ratio) < 0.2
         assert total_scaled != total_initial
+    finally:
+        tab.deleteLater()
+
+
+def test_asian_market_table_keeps_saved_column_widths(monkeypatch):
+    monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "_load_local_cache",
+        lambda self: setattr(self, "row_data", []),
+    )
+    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "_has_saved_asian_header_state",
+        lambda self, settings_key: True,
+        raising=False,
+    )
+
+    saved_widths = [66, 88, 126, 164, 102, 94, 112, 86, 118, 176, 132, 96, 108, 124]
+
+    def fake_bind_header_persistence(self, table, settings_key="header_state"):
+        for column, width in enumerate(saved_widths):
+            if column >= table.model().columnCount():
+                break
+            table.setColumnWidth(column, width)
+        return None
+
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "bind_header_persistence",
+        fake_bind_header_persistence,
+        raising=False,
+    )
+
+    tab = asian_module.AsianMarketTab()
+    try:
+        tab.resize(1200, 720)
+        tab.show()
+        QApplication.processEvents()
+
+        column_count = tab.asian_table.model().columnCount()
+        actual_widths = [tab.asian_table.columnWidth(i) for i in range(column_count)]
+
+        assert tab._auto_fit_columns_pending is False
+        assert actual_widths == saved_widths[:column_count]
     finally:
         tab.deleteLater()
 
@@ -312,7 +371,7 @@ class _RuntimeStatusStub:
     def _load_local_cache(self):
         self.loaded_cache = True
 
-    def _set_asian_status(self, primary, *segments):
+    def _set_asian_status(self, primary, *segments, freshness="", next_step=""):
         self.status_calls.append((primary, segments))
 
 

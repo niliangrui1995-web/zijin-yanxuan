@@ -54,7 +54,7 @@ class VCPTableView(QTableView):
         self._sorted_column = -1
         header.setHighlightSections(False)
         header.setSectionsClickable(True)
-        header.setDefaultAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+        header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
         header.sortIndicatorChanged.connect(self._on_sort_indicator_changed)
         self._apply_screen_width_limit()
 

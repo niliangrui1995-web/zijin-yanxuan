@@ -200,39 +200,32 @@ class KLineChartWindow(QWidget):
 
         # === VCP 摘要带 ===
         self.summary_widget = QWidget()
-        self.summary_widget.setFixedHeight(92)
+        self.summary_widget.setFixedHeight(86)
         summary_layout = QHBoxLayout(self.summary_widget)
-        summary_layout.setContentsMargins(14, 8, 14, 10)
-        summary_layout.setSpacing(10)
+        summary_layout.setContentsMargins(12, 6, 12, 8)
+        summary_layout.setSpacing(8)
 
         self.summary_cards = []
-        self.summary_labels = {}
         self._summary_key_color = ""
         self._summary_value_color = ""
         self._summary_highlight_color = ""
-        summary_groups = (
-            ("形态概览", ("形态", "触发")),
-            ("区间结构", ("区间", "振幅")),
-            ("强度跟踪", ("RPS", "关注")),
-        )
-        for title, keys in summary_groups:
+        for _ in range(3):
             card = QFrame()
             card.setObjectName("klineSummaryCard")
             card_layout = QVBoxLayout(card)
-            card_layout.setContentsMargins(12, 10, 12, 10)
-            card_layout.setSpacing(6)
+            card_layout.setContentsMargins(10, 8, 10, 8)
+            card_layout.setSpacing(4)
 
-            title_lbl = QLabel(title)
+            title_lbl = QLabel("--")
             title_lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
             card_layout.addWidget(title_lbl)
 
             value_labels = []
-            for key in keys:
+            for _row_idx in range(2):
                 label = QLabel("--")
-                label.setMinimumHeight(22)
+                label.setMinimumHeight(20)
                 label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
                 label.setTextFormat(Qt.TextFormat.RichText)
-                self.summary_labels[key] = label
                 value_labels.append(label)
                 card_layout.addWidget(label)
 
@@ -262,6 +255,7 @@ class KLineChartWindow(QWidget):
 
         self._check_fav_status()
         self._refresh_header_context()
+        QTimer.singleShot(0, self._refresh_header_context)
         self._load_and_draw()
 
         # 监听全局主题切换 → 重新渲染 K 线图
@@ -276,7 +270,7 @@ class KLineChartWindow(QWidget):
             self.btn_fav.style().unpolish(self.btn_fav)
             self.btn_fav.style().polish(self.btn_fav)
             self.btn_fav.update()
-            if hasattr(self, "summary_labels"):
+            if hasattr(self, "summary_cards"):
                 self._refresh_header_context()
         except (AttributeError, RuntimeError, TypeError, ValueError) as e:
             log.debug(f"[K线] 检查关注状态失败: {e}")
@@ -307,6 +301,11 @@ class KLineChartWindow(QWidget):
 
     def _refresh_header_context(self):
         refresh_header_context(self)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "summary_cards"):
+            self._refresh_header_context()
 
     def _resolve_vcp_context(self, code: str, name: str, item_data: dict = None) -> dict:
         return resolve_vcp_context(self, code, name, item_data)

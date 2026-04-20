@@ -83,7 +83,7 @@ class ClassicWorkspace(QWidget):
                 "group": "情报源",
                 "group_order": 20,
                 "attr": "tab_lhb",
-                "widget": LhbTab(self.data_provider, self),
+                "widget": LhbTab(self.data_provider, self, autoload_pool=False),
             },
             {
                 "key": "foreign_block",
@@ -107,7 +107,7 @@ class ClassicWorkspace(QWidget):
                 "group": "情报源",
                 "group_order": 50,
                 "attr": "tab_fund_holdings",
-                "widget": FundHoldingsTab(self.data_provider, self),
+                "widget": FundHoldingsTab(self.data_provider, self, autoload=False),
             },
             {
                 "key": "system_log",

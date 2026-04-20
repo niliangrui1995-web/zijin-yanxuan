@@ -201,8 +201,11 @@ class FundHoldingsTab(BaseStockTab):
     )
     _VIEW_STATE_PREFIX = "fund_holdings_view_state_v2"
 
-    def __init__(self, data_provider, parent=None):
+    def __init__(self, data_provider, parent=None, autoload: bool = True):
         super().__init__(data_provider=data_provider, parent=parent)
+        self._autoload = bool(autoload)
+        self._initial_load_started = False
+        self._initial_load_task_id = f"fund_holdings_initial_load_{id(self)}"
         self._latest_quarter_map: dict[str, str] = {}
         self._latest_sync_map: dict[str, dict] = {}
         self._sync_task_id = ""
@@ -222,10 +225,18 @@ class FundHoldingsTab(BaseStockTab):
         self._view_state_save_timer.timeout.connect(self._save_view_state)
 
         self._init_ui()
-        self._reload_from_db()
+        if self._autoload:
+            self._reload_from_db()
+            self._initial_load_started = True
+        else:
+            self._set_initial_loading_state("基金持仓待加载", "首次进入时自动读取本地数据库")
 
         event_bus.sig_cache_reload_completed.connect(self._on_cache_reload_completed)
         event_bus.sig_app_closing.connect(self._save_view_state)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._ensure_initial_load_started()
 
     @staticmethod
     def _create_settings():
@@ -322,13 +333,13 @@ class FundHoldingsTab(BaseStockTab):
         self.table_state = TableStateWrapper(self.table, empty_title="暂无基金持仓数据", loading_title="同步基金持仓数据中...")
 
         header = self.table.horizontalHeader()
-        header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
         header.setStretchLastSection(True)
         default_widths = [70, 90, 70, 70, 75, 180, 96, 90, 80, 90, 110, 110, 110, 240]
         for index, width in enumerate(default_widths):
             header.setSectionResizeMode(index, QHeaderView.ResizeMode.Interactive)
             self.table.setColumnWidth(index, width)
         self.bind_header_persistence(self.table, "fund_holdings_header_state_v3")
+        header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
         header.sortIndicatorChanged.connect(self._on_sort_indicator_changed)
 
         self.table.doubleClicked.connect(self._on_double_click)
@@ -336,6 +347,163 @@ class FundHoldingsTab(BaseStockTab):
         self.table.customContextMenuRequested.connect(self._show_context_menu)
 
         layout.addWidget(self.table_state, 1)
+
+    def _set_initial_loading_state(self, title: str, subtitle: str = ""):
+        self.lbl_status.setText(title)
+        self.table_state.show_loading(title, subtitle)
+
+    def _ensure_initial_load_started(self):
+        if self._autoload or self._initial_load_started:
+            return
+        self._initial_load_started = True
+        self._set_initial_loading_state("正在加载基金持仓数据...", "首次进入时后台构建持仓视图")
+        self._reload_from_db_async()
+
+    @staticmethod
+    def _resolve_tdx_root(data_provider) -> str | None:
+        tdx_vipdoc = str(getattr(data_provider, "tdx_vipdoc", "") or "").strip()
+        return os.path.dirname(tdx_vipdoc) if tdx_vipdoc else None
+
+    @staticmethod
+    def _build_sector_manager(tdx_root: str | None):
+        try:
+            from vcp.sector import SectorManager
+
+            return SectorManager.get_instance(tdx_root)
+        except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _build_concept_sector_text_with_manager(
+        cls,
+        stock_code: str,
+        manager,
+        concept_sector_cache: dict[str, str],
+    ) -> str:
+        code = str(stock_code or "").strip()
+        if not code:
+            return cls._DISPLAY_PLACEHOLDER
+
+        cached = concept_sector_cache.get(code)
+        if cached is not None:
+            return cached
+
+        concept_text = cls._DISPLAY_PLACEHOLDER
+        if manager is not None:
+            try:
+                concepts = []
+                for sector_name in manager.get_sectors(code) or []:
+                    sector_text = str(sector_name or "").strip()
+                    if not sector_text.startswith("GN_"):
+                        continue
+                    concept_name = sector_text.replace("GN_", "", 1).strip()
+                    if concept_name:
+                        concepts.append(concept_name)
+                filtered_concepts = cls._filter_ai_related_concepts(concepts)
+                if filtered_concepts:
+                    concept_text = " | ".join(filtered_concepts)
+            except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
+                concept_text = cls._DISPLAY_PLACEHOLDER
+
+        concept_sector_cache[code] = concept_text
+        return concept_text
+
+    @classmethod
+    def _load_view_payload(cls, data_provider) -> dict:
+        latest_quarter_map = fund_holdings_store.get_latest_quarter_map()
+        latest_sync_map = fund_holdings_store.get_latest_sync_map()
+        change_rows = fund_holdings_store.query_change_rows()
+        concept_sector_cache: dict[str, str] = {}
+        sector_manager = cls._build_sector_manager(cls._resolve_tdx_root(data_provider))
+        view_rows = []
+        for row in change_rows or []:
+            stock_code = str(row.get("stock_code") or "").strip()
+            subject_code = str(row.get("subject_code") or "").strip()
+            quarter_key = str(row.get("quarter_key") or "").strip()
+            change_type = str(row.get("change_type") or "").strip()
+            capital_attribute = str(row.get("capital_attribute") or "").strip()
+            if subject_code == cls._SUBJECT_CODE_QFII and not capital_attribute:
+                capital_attribute = QFII_CAPITAL_ATTRIBUTE_UNMARKED
+            capital_attribute_text = cls._capital_attribute_label(capital_attribute)
+            has_curr = change_type != "退出"
+            has_prev = change_type != "新进"
+
+            view_rows.append(
+                {
+                    "代码": stock_code,
+                    "名称": str(row.get("stock_name") or "").strip(),
+                    "市价": cls._DISPLAY_PLACEHOLDER,
+                    "涨幅%": cls._DISPLAY_PLACEHOLDER,
+                    "市值": cls._DISPLAY_PLACEHOLDER,
+                    "主体": str(row.get("subject_name") or "").strip(),
+                    "资金属性": capital_attribute_text,
+                    "主体代码": subject_code,
+                    "季度": quarter_key,
+                    "变化类型": change_type,
+                    "本期占比": cls._format_pct(row.get("curr_ratio_pct"), show=has_curr),
+                    "本期持股": cls._format_amount(row.get("curr_hold_num_shares"), divisor=10000.0, show=has_curr),
+                    "上期持股": cls._format_amount(row.get("prev_hold_num_shares"), divisor=10000.0, show=has_prev),
+                    "持股变化": cls._format_amount(
+                        row.get("delta_hold_num_shares"),
+                        divisor=10000.0,
+                        show=has_curr or has_prev,
+                        signed=True,
+                    ),
+                    "概念板块": cls._build_concept_sector_text_with_manager(
+                        stock_code,
+                        sector_manager,
+                        concept_sector_cache,
+                    ),
+                    "_capital_attribute_value": capital_attribute,
+                    "_is_latest_subject_quarter": quarter_key == latest_quarter_map.get(subject_code),
+                }
+            )
+        return {
+            "latest_quarter_map": latest_quarter_map,
+            "latest_sync_map": latest_sync_map,
+            "concept_sector_cache": concept_sector_cache,
+            "view_rows": view_rows,
+        }
+
+    def _apply_view_payload(self, payload: dict):
+        self._latest_quarter_map = dict(payload.get("latest_quarter_map") or {})
+        self._latest_sync_map = dict(payload.get("latest_sync_map") or {})
+        self._concept_sector_cache = dict(payload.get("concept_sector_cache") or {})
+        view_rows = list(payload.get("view_rows") or [])
+        self.model.update_data(view_rows)
+        self._refresh_filter_options()
+        self._restore_view_state()
+        self._apply_filters()
+        self._apply_latest_quotes_from_store()
+        self._update_status_summary()
+
+        if not view_rows and not self._sync_active:
+            self.table_state.show_empty("暂无基金持仓数据", "请使用右上角“刷新”同步 QFII 或睿远持仓")
+
+    def _reload_from_db_async(self):
+        def _load_bg():
+            return self._load_view_payload(self.data_provider)
+
+        def _on_success(payload):
+            self._apply_view_payload(payload)
+
+        def _on_error(message: str):
+            self._initial_load_started = False
+            detail = str(message or "").strip() or "未知异常"
+            self.lbl_status.setText(f"基金持仓加载失败：{detail}")
+            self.table_state.show_error(
+                "基金持仓加载失败",
+                detail,
+                action_text="重试",
+                action_callback=self._ensure_initial_load_started,
+            )
+
+        task_manager.run_in_background(
+            _load_bg,
+            on_success=_on_success,
+            on_error=_on_error,
+            task_id=self._initial_load_task_id,
+        )
 
     def _build_change_menu(self):
         self.menu_change.clear()
@@ -1088,7 +1256,28 @@ class FundHoldingsTab(BaseStockTab):
             return
         code = str(row.get("代码") or "").strip()
         if len(code) == 6 and code.isdigit():
-            event_bus.sig_show_kline.emit(code)
+            code_list = []
+            current_idx = 0
+            clicked_visual_row = proxy_index.row()
+            for visual_row in range(self.proxy_model.rowCount()):
+                visual_index = self.proxy_model.index(visual_row, 0)
+                visual_row_dict = self._row_dict_from_index(visual_index)
+                if not isinstance(visual_row_dict, dict):
+                    continue
+                row_dict = dict(visual_row_dict)
+                row_code = str(row_dict.get("代码") or "").strip()
+                if not row_code:
+                    continue
+                row_dict.setdefault("代码", row_code)
+                row_dict.setdefault("名称", str(row_dict.get("名称") or "").strip())
+                code_list.append(row_dict)
+                if visual_row == clicked_visual_row:
+                    current_idx = len(code_list) - 1
+
+            if code_list:
+                event_bus.sig_show_kline_with_list.emit(code, code_list, current_idx)
+            else:
+                event_bus.sig_show_kline.emit(code)
 
     def _show_context_menu(self, pos):
         proxy_index = self.table.indexAt(pos)

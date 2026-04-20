@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+from PyQt6.QtTest import QSignalSpy
+
+from core.event_bus import event_bus
 from ui.tabs import fund_holdings_tab as fund_holdings_module
 
 
@@ -350,6 +353,78 @@ def test_fund_holdings_tab_centers_header_alignment(monkeypatch):
         alignment = tab.table.horizontalHeader().defaultAlignment()
         assert alignment & fund_holdings_module.Qt.AlignmentFlag.AlignHCenter
         assert alignment & fund_holdings_module.Qt.AlignmentFlag.AlignVCenter
+    finally:
+        tab.deleteLater()
+
+
+def test_fund_holdings_kline_uses_clicked_duplicate_row(monkeypatch):
+    _setup_store(
+        monkeypatch,
+        [
+            _build_change_row(
+                subject_code="007119",
+                subject_name="睿远成长价值混合A",
+                quarter_key="2026Q1",
+                compare_quarter_key="2025Q4",
+                change_type="增持",
+                stock_code="300308",
+                stock_name="中际旭创",
+            ),
+            _build_change_row(
+                subject_code="MS",
+                subject_name="MORGAN STANLEY & CO.INTERNATIONAL PLC",
+                quarter_key="2026Q1",
+                compare_quarter_key="2025Q4",
+                change_type="增持",
+                stock_code="300308",
+                stock_name="中际旭创",
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        fund_holdings_module.fund_holdings_store,
+        "get_latest_quarter_map",
+        lambda: {"007119": "2026Q1", "MS": "2026Q1"},
+    )
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "refresh_table_quotes_and_market_caps",
+        lambda self, current_model=None, force_quotes=False, quote_task_id=None: None,
+        raising=False,
+    )
+
+    spy = QSignalSpy(event_bus.sig_show_kline_with_list)
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
+    try:
+        proxy_index = tab.proxy_model.index(1, 0)
+        assert proxy_index.isValid()
+
+        tab._on_double_click(proxy_index)
+
+        assert len(spy) == 1
+        code, code_list, current_idx = spy[0]
+        assert code == "300308"
+        assert current_idx == 1
+        assert code_list[current_idx]["主体"] == "MORGAN STANLEY & CO.INTERNATIONAL PLC"
+    finally:
+        tab.deleteLater()
+
+
+def test_fund_holdings_tab_defers_initial_load_when_autoload_disabled(monkeypatch):
+    _setup_store(monkeypatch, [])
+    scheduled = []
+    monkeypatch.setattr(
+        fund_holdings_module.task_manager,
+        "run_in_background",
+        lambda fn, *args, on_success=None, on_error=None, task_id=None, **kwargs: scheduled.append(task_id or "scheduled"),
+        raising=False,
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
+    try:
+        assert scheduled == []
+        tab._ensure_initial_load_started()
+        assert len(scheduled) == 1
     finally:
         tab.deleteLater()
 

@@ -618,6 +618,7 @@ class BaseStockTab(QWidget):
         # 使用当前类的名字作为配置的分类，确保不冲突
         settings = QSettings("VCPHunter", self.__class__.__name__)
         header = table.horizontalHeader()
+        header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
         sort_column_key = f"{settings_key}/sort_column"
         sort_order_key = f"{settings_key}/sort_order"
         restored_sort = False
@@ -628,6 +629,7 @@ class BaseStockTab(QWidget):
         if settings.contains(settings_key):
             try:
                 header.restoreState(settings.value(settings_key))
+                header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
             except (AttributeError, RuntimeError, TypeError, ValueError) as e:
                 import logging
                 logging.getLogger(__name__).warning(f"恢复列宽配置异常 {settings_key}: {e}")

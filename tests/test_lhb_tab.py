@@ -56,3 +56,17 @@ def test_lhb_should_refresh_after_probe_only_on_count_mismatch():
     assert LhbTab._should_refresh_after_probe(61, {"status": "ok", "count": 61}) is False
     assert LhbTab._should_refresh_after_probe(61, {"status": "empty", "count": 0}) is False
     assert LhbTab._should_refresh_after_probe(61, {"status": "error", "count": 0}) is False
+
+
+def test_lhb_can_defer_pool_bootstrap_until_first_show(monkeypatch):
+    calls = []
+    monkeypatch.setattr(LhbTab, "_start_auto_scheduler", lambda self: calls.append("scheduler"), raising=False)
+    monkeypatch.setattr(LhbTab, "_load_and_display_pool", lambda self: calls.append("load"), raising=False)
+
+    tab = LhbTab(object(), autoload_pool=False)
+    try:
+        assert calls == ["scheduler"]
+        tab._ensure_pool_bootstrap_started()
+        assert calls == ["scheduler", "load"]
+    finally:
+        tab.deleteLater()

@@ -4,10 +4,12 @@ from __future__ import annotations
 import html
 from datetime import timedelta
 
+from PyQt6.QtCore import Qt
+
 from core.logger import get_logger
 from core.market_calendar import MarketCalendar
 from ui.kline_chart_payload import (
-    build_kline_summary_items,
+    build_kline_summary_cards,
     build_kline_window_palette,
     format_kline_market_badge,
     resolve_kline_vcp_context,
@@ -18,6 +20,21 @@ from ui.theme_tokens import build_ui_tokens, get_state_tone
 from ui.viewmodels.watchlist_vm import watchlist_vm
 
 log = get_logger(__name__)
+
+
+def _elide_summary_value(label, key_text: str, value_text: str) -> str:
+    clean_value = str(value_text or "").strip()
+    if not clean_value or clean_value == "--":
+        return clean_value or "--"
+
+    available_width = label.width()
+    if available_width <= 0:
+        return clean_value
+
+    metrics = label.fontMetrics()
+    key_width = metrics.horizontalAdvance(key_text) + 24
+    value_width = max(available_width - key_width, 36)
+    return metrics.elidedText(clean_value, Qt.TextElideMode.ElideRight, value_width)
 
 
 def set_header_badge(window, label, text: str, tone_name: str) -> None:
@@ -68,22 +85,36 @@ def refresh_header_context(window) -> None:
         )
     if hasattr(window, "feed_badge_lbl"):
         apply_header_badges(window)
-    if hasattr(window, "summary_labels"):
-        summary = build_kline_summary_items(
+    if hasattr(window, "summary_cards"):
+        summary_cards = build_kline_summary_cards(
             window.vcp_data,
             getattr(window, "is_fav", False),
         )
-        for key, label in window.summary_labels.items():
-            value = html.escape(str(summary.get(key, "--")))
-            value_color = (
-                window._summary_highlight_color
-                if key == "关注" and value == "已关注"
-                else window._summary_value_color
-            )
-            label.setText(
-                f"<span style='color:{window._summary_key_color};'>{key}</span>"
-                f"&nbsp;&nbsp;<span style='color:{value_color}; font-weight:600;'>{value}</span>"
-            )
+        for card_index, card_widgets in enumerate(window.summary_cards):
+            card_data = summary_cards[card_index] if card_index < len(summary_cards) else {
+                "title": "--",
+                "rows": (),
+            }
+            card_widgets["title"].setText(str(card_data.get("title", "--")))
+            rows = card_data.get("rows", ()) or ()
+            for row_index, label in enumerate(card_widgets["labels"]):
+                row_data = rows[row_index] if row_index < len(rows) else {}
+                key_text = str(row_data.get("label", "--"))
+                raw_value = str(row_data.get("raw_value", "--"))
+                base_value = str(row_data.get("value", raw_value or "--"))
+                display_value = _elide_summary_value(label, key_text, base_value)
+                value_color = (
+                    window._summary_highlight_color
+                    if row_data.get("highlight")
+                    else window._summary_value_color
+                )
+                label.setText(
+                    f"<span style='color:{window._summary_key_color};'>{html.escape(key_text)}</span>"
+                    f"&nbsp;&nbsp;<span style='color:{value_color}; font-weight:600;'>"
+                    f"{html.escape(display_value)}</span>"
+                )
+                tooltip = f"{key_text}: {raw_value}" if raw_value and raw_value != "--" else ""
+                label.setToolTip(tooltip)
 
 
 def resolve_vcp_context(window, code: str, name: str, item_data: dict | None = None) -> dict:

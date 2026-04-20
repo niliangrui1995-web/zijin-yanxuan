@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
 from ui.components import VCPTableView
@@ -157,6 +158,16 @@ def test_vcp_table_view_tooltip_style_uses_larger_font_without_rounded_corners()
         assert "QToolTip" in style
         assert "font-size: 14px;" in style
         assert "border-radius: 0px;" in style
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_header_alignment_is_centered():
+    table = VCPTableView()
+    try:
+        alignment = table.horizontalHeader().defaultAlignment()
+        assert alignment & Qt.AlignmentFlag.AlignHCenter
+        assert alignment & Qt.AlignmentFlag.AlignVCenter
     finally:
         table.deleteLater()
 

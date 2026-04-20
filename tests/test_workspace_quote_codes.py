@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 from types import SimpleNamespace
 
+from PyQt6.QtWidgets import QWidget
+
 from ui.workspaces.classic_workspace import ClassicWorkspace
+import ui.workspaces.classic_workspace as classic_workspace_module
 
 
 def test_workspace_collects_a_share_quote_codes_from_all_tabs():
@@ -61,3 +64,35 @@ def test_workspace_refreshes_all_tabs_after_f5():
         "earnings",
         "scan",
     ]
+
+
+def test_workspace_defers_heavy_tab_autoload(monkeypatch):
+    ctor_kwargs = {}
+
+    def _make_tab(name):
+        class _Tab(QWidget):
+            def __init__(self, *args, **kwargs):
+                super().__init__()
+                ctor_kwargs[name] = dict(kwargs)
+
+        return _Tab
+
+    monkeypatch.setattr(classic_workspace_module, "WatchlistTab", _make_tab("watchlist"))
+    monkeypatch.setattr(classic_workspace_module, "AsianMarketTab", _make_tab("asian_market"))
+    monkeypatch.setattr(classic_workspace_module, "NADailyTab", _make_tab("na_daily"))
+    monkeypatch.setattr(classic_workspace_module, "RtMonitorTab", _make_tab("rt_monitor"))
+    monkeypatch.setattr(classic_workspace_module, "ScanTab", _make_tab("scan"))
+    monkeypatch.setattr(classic_workspace_module, "LhbTab", _make_tab("lhb"))
+    monkeypatch.setattr(classic_workspace_module, "ForeignBlockTradeTab", _make_tab("foreign_block"))
+    monkeypatch.setattr(classic_workspace_module, "EarningsTab", _make_tab("earnings"))
+    monkeypatch.setattr(classic_workspace_module, "FundHoldingsTab", _make_tab("fund_holdings"))
+    monkeypatch.setattr(classic_workspace_module, "LogTab", _make_tab("system_log"))
+
+    workspace = classic_workspace_module.ClassicWorkspace(data_provider=object(), engine=object())
+    try:
+        assert ctor_kwargs["lhb"]["autoload_pool"] is False
+        assert ctor_kwargs["fund_holdings"]["autoload"] is False
+        assert "autoload_pool" not in ctor_kwargs["watchlist"]
+        assert "autoload" not in ctor_kwargs["watchlist"]
+    finally:
+        workspace.deleteLater()

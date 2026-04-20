@@ -35,9 +35,11 @@ log = get_logger(__name__)
 class LhbTab(BaseStockTab):
     """龙虎榜 20 日关注池 Tab"""
 
-    def __init__(self, data_provider, parent=None):
+    def __init__(self, data_provider, parent=None, autoload_pool: bool = True):
         super().__init__(data_provider=data_provider, parent=parent)
 
+        self._autoload_pool = bool(autoload_pool)
+        self._pool_bootstrap_started = False
         self.pool_manager = LhbPoolManager()
         self._backfill_in_progress = False
         # 记录今天是否已经自动抓取过，避免重复拉取
@@ -50,9 +52,12 @@ class LhbTab(BaseStockTab):
         self._status_next_step = ""
 
         self._init_ui()
-        # 启动时先用缓存数据展示，再后台检查缺失天数
-        self._load_and_display_pool()
         self._start_auto_scheduler()
+        if self._autoload_pool:
+            self._ensure_pool_bootstrap_started()
+        else:
+            self.table_state.show_loading("龙虎榜待加载", "首次进入时自动读取本地缓存")
+            self._set_pool_status("等待进入龙虎榜", freshness="未加载", next_step="首次进入时自动读取缓存")
 
         # 订阅中央行情站实时报价 + 大一统市值更新
         self.subscribe_global_quotes()
@@ -63,14 +68,28 @@ class LhbTab(BaseStockTab):
         event_bus.sig_cache_bootstrap_ready.connect(self._on_cache_bootstrap_ready)
         event_bus.sig_cache_reload_completed.connect(self._on_cache_reload_completed)
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._ensure_pool_bootstrap_started()
+
+    def _ensure_pool_bootstrap_started(self):
+        if self._pool_bootstrap_started:
+            return
+        self._pool_bootstrap_started = True
+        self._load_and_display_pool()
+
     def _on_cache_bootstrap_ready(self):
         """处理延迟的 RPS 数据加载，仅执行一次避免和自身发出的同名信号造成无限死循环"""
         if self._rps_injected_flag:
             return
         self._rps_injected_flag = True
+        if not self._pool_bootstrap_started:
+            return
         self._load_and_display_pool()
 
     def _on_cache_reload_completed(self):
+        if not self._pool_bootstrap_started:
+            return
         self._load_and_display_pool()
 
     @staticmethod
@@ -655,17 +674,18 @@ class LhbTab(BaseStockTab):
 
         # 提取当前表格顺序以传递给 K 线窗口
         code_list = []
+        clicked_visual_row = index.row()
         for r in range(self.proxy_model.rowCount()):
             s_idx = self.proxy_model.mapToSource(self.proxy_model.index(r, 0))
             if s_idx.row() < len(self.model.row_data):
-                rd = self.model.row_data[s_idx.row()]
-                code_list.append({'代码': rd.get("代码", ""), '名称': rd.get("名称", "")})
+                rd = dict(self.model.row_data[s_idx.row()] or {})
+                rd.setdefault("代码", rd.get("代码", ""))
+                rd.setdefault("名称", rd.get("名称", ""))
+                code_list.append(rd)
 
         current_idx = 0
-        for i, c in enumerate(code_list):
-            if c['代码'] == code:
-                current_idx = i
-                break
+        if 0 <= clicked_visual_row < len(code_list):
+            current_idx = clicked_visual_row
 
         event_bus.sig_show_kline_with_list.emit(code, code_list, current_idx)
 

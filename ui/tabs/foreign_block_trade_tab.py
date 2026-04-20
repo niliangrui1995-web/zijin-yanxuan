@@ -765,17 +765,18 @@ class ForeignBlockTradeTab(BaseStockTab):
 
         # 提取当前表格顺序以传递给K线窗口
         code_list = []
+        clicked_visual_row = index.row()
         for r in range(self.proxy_model.rowCount()):
             s_idx = self.proxy_model.mapToSource(self.proxy_model.index(r, 0))
             if s_idx.row() < len(self.model.row_data):
-                rd = self.model.row_data[s_idx.row()]
-                code_list.append({'代码': rd.get("代码", ""), '名称': rd.get("名称", "")})
+                rd = dict(self.model.row_data[s_idx.row()] or {})
+                rd.setdefault("代码", rd.get("代码", ""))
+                rd.setdefault("名称", rd.get("名称", ""))
+                code_list.append(rd)
 
         current_idx = 0
-        for i, c in enumerate(code_list):
-            if c['代码'] == code:
-                current_idx = i
-                break
+        if 0 <= clicked_visual_row < len(code_list):
+            current_idx = clicked_visual_row
 
         event_bus.sig_show_kline_with_list.emit(code, code_list, current_idx)
 

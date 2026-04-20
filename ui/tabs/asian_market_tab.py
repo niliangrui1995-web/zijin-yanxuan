@@ -3,7 +3,7 @@ import datetime
 import json
 import os
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QSettings, Qt, QTimer
 from PyQt6.QtWidgets import QCheckBox, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from core.event_bus import event_bus
@@ -150,8 +150,14 @@ class AsianMarketTab(BaseStockTab):
         return asian_worker_trigger_refresh(self)
 
     def _schedule_fit_columns(self):
+        if not getattr(self, "_auto_fit_columns_pending", False):
+            return
         if hasattr(self, "_fit_columns_timer"):
             self._fit_columns_timer.start()
+
+    def _has_saved_asian_header_state(self, settings_key: str) -> bool:
+        settings = QSettings("VCPHunter", self.__class__.__name__)
+        return settings.contains(settings_key)
 
     def _fit_asian_columns_to_viewport(self):
         if not hasattr(self, "asian_table"):
@@ -174,6 +180,7 @@ class AsianMarketTab(BaseStockTab):
         # 预留一点边缘冗余，避免 rounding 导致最后一列被横向滚动条挤爆。
         target_width = max(column_count * 40, viewport_width - 2)
         if abs(total_width - target_width) <= column_count:
+            self._auto_fit_columns_pending = False
             return
 
         scale = target_width / total_width
@@ -204,6 +211,9 @@ class AsianMarketTab(BaseStockTab):
 
         for column, width in enumerate(scaled_widths):
             self.asian_table.setColumnWidth(column, width)
+
+        # 仅在首次无历史配置时铺满一次，后续尊重用户手动调整/已恢复的列宽。
+        self._auto_fit_columns_pending = False
 
     def _format_last_success_segment(self) -> str:
         if not self._last_asian_success_at:
@@ -446,8 +456,12 @@ class AsianMarketTab(BaseStockTab):
             header_view.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
             self.asian_table.setColumnWidth(i, w)
 
-        # 绑定防抖自动保存与恢复配置
-        self.bind_header_persistence(self.asian_table, "header_state_asian_v4")
+        # 绑定防抖自动保存与恢复配置。
+        # 有历史列宽时不再自动铺满，避免恢复后的用户列宽又被二次覆盖。
+        header_settings_key = "header_state_asian_v4"
+        self._auto_fit_columns_pending = not self._has_saved_asian_header_state(header_settings_key)
+        self.bind_header_persistence(self.asian_table, header_settings_key)
+        header_view.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
         self._schedule_fit_columns()
 
     def _show_context_menu(self, pos):
@@ -783,17 +797,18 @@ class AsianMarketTab(BaseStockTab):
         code = self.model.row_data[row].get("代码", "")
         # 按当前表格视觉排序顺序构建列表，让 K 线窗口的"上一只/下一只"跟随用户排序
         code_list = []
+        clicked_visual_row = index.row()
         for r in range(self.proxy_model.rowCount()):
             s_idx = self.proxy_model.mapToSource(self.proxy_model.index(r, 0))
             if s_idx.row() < len(self.model.row_data):
-                rd = self.model.row_data[s_idx.row()]
-                code_list.append({'代码': rd.get("代码", ""), '名称': rd.get("名称", "")})
+                rd = dict(self.model.row_data[s_idx.row()] or {})
+                rd.setdefault("代码", rd.get("代码", ""))
+                rd.setdefault("名称", rd.get("名称", ""))
+                code_list.append(rd)
 
         current_idx = 0
-        for i, c in enumerate(code_list):
-            if c['代码'] == code:
-                current_idx = i
-                break
+        if 0 <= clicked_visual_row < len(code_list):
+            current_idx = clicked_visual_row
 
         # 触发全局画图事件
         event_bus.sig_show_kline_with_list.emit(code, code_list, current_idx)

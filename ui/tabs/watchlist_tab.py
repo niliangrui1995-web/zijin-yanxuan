@@ -130,6 +130,7 @@ class WatchlistTab(BaseStockTab):
             self.table_sp.setColumnWidth(col_idx, int(w * 80))
         # 绑定防抖自动保存与恢复配置（列结构变更后沿用新 key，避免旧状态错位）
         restored_sort = self.bind_header_persistence(self.table_sp, "header_state_watchlist_v8")
+        header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
         if not restored_sort:
             self.table_sp.sortByColumn(-1, Qt.SortOrder.AscendingOrder)
 
@@ -321,6 +322,7 @@ class WatchlistTab(BaseStockTab):
         if code:
             watchlist_data = watchlist_vm.get_watchlist_data()
             code_list = []
+            clicked_visual_row = index.row()
             for r in range(self.proxy_model.rowCount()):
                 s_idx = self.proxy_model.mapToSource(self.proxy_model.index(r, 0))
                 if s_idx.row() < len(self.model.row_data):
@@ -338,10 +340,8 @@ class WatchlistTab(BaseStockTab):
                     code_list.append(merged)
 
             current_idx = 0
-            for i, c in enumerate(code_list):
-                if c['代码'] == code:
-                    current_idx = i
-                    break
+            if 0 <= clicked_visual_row < len(code_list):
+                current_idx = clicked_visual_row
 
             event_bus.sig_show_kline_with_list.emit(code, code_list, current_idx)
 
