@@ -307,11 +307,11 @@ class FundHoldingsTab(BaseStockTab):
         filter_widgets = [self.cmb_subject, self.cmb_capital_attribute, self.btn_quarter, self.btn_change, self.search_box]
 
         self.btn_update = QToolButton()
-        self.btn_update.setText("刷新")
-        self.btn_update.setAccessibleName("刷新基金持仓")
+        self.btn_update.setText("全部更新")
+        self.btn_update.setAccessibleName("更新基金持仓数据库")
         self.btn_update.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.btn_update.clicked.connect(
-            lambda: self._run_sync_action("刷新", fund_holdings_sync_service.sync_latest_all)
+            lambda: self._run_sync_action("全部更新", fund_holdings_sync_service.sync_latest_all)
         )
 
         action_widgets = [self.btn_update]
