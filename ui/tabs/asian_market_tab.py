@@ -258,6 +258,28 @@ class AsianMarketTab(BaseStockTab):
         if not text:
             return
 
+        if "等待缓存同步完成" in text:
+            cache_thread = getattr(self, "cache_thread", None)
+            cache_syncing = bool(
+                getattr(self, "_is_fetching_cache", False)
+                or getattr(self, "_pending_auto_cache_sync", False)
+                or (cache_thread is not None and cache_thread.isRunning())
+            )
+            if cache_syncing:
+                return
+
+            freshness = getattr(self, "_status_freshness", "").strip()
+            if not freshness:
+                freshness = "本地缓存" if getattr(self, "row_data", None) else "待刷新"
+            self._set_asian_status(
+                "盘后静默中",
+                freshness=freshness,
+                next_step="可点击刷新亚洲市场",
+            )
+            if hasattr(self, "table_state") and getattr(self, "row_data", None):
+                self.table_state.show_table()
+            return
+
         error_markers = ("失败", "异常", "429", "检查外网", "切换网络", "空响应")
         if any(marker in text for marker in error_markers):
             self._last_asian_error = text

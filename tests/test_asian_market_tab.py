@@ -56,6 +56,14 @@ class _DummyWorker:
         return None
 
 
+class _CacheThreadStub:
+    def __init__(self, running=False):
+        self._running = running
+
+    def isRunning(self):
+        return self._running
+
+
 @pytest.fixture(autouse=True)
 def _disable_saved_asian_header_state(monkeypatch):
     monkeypatch.setattr(
@@ -506,3 +514,45 @@ def test_asian_market_minute_tick_uses_tracked_market_refresh_window(monkeypatch
         assert tab._asian_runtime_state == "paused_for_cache_sync"
     finally:
         tab.deleteLater()
+
+
+def test_asian_worker_pause_message_turns_into_after_hours_idle_when_cache_not_syncing():
+    class _DummyTab:
+        def __init__(self):
+            self.cache_thread = None
+            self.row_data = [{"代码": "0522.HK"}]
+            self._is_fetching_cache = False
+            self._pending_auto_cache_sync = False
+            self._status_freshness = "本地缓存"
+            self.status_calls = []
+
+        def _set_asian_status(self, primary, *segments, freshness="", next_step=""):
+            self.status_calls.append((primary, segments, freshness, next_step))
+
+    tab = _DummyTab()
+
+    asian_module.AsianMarketTab._on_worker_progress(tab, "亚洲市场后台刷新已暂停，等待缓存同步完成")
+
+    assert tab.status_calls == [
+        ("盘后静默中", tuple(), "本地缓存", "可点击刷新亚洲市场")
+    ]
+
+
+def test_asian_worker_pause_message_does_not_override_active_cache_sync():
+    class _DummyTab:
+        def __init__(self):
+            self.cache_thread = _CacheThreadStub(running=True)
+            self.row_data = [{"代码": "0522.HK"}]
+            self._is_fetching_cache = True
+            self._pending_auto_cache_sync = False
+            self._status_freshness = "本地缓存"
+            self.status_calls = []
+
+        def _set_asian_status(self, primary, *segments, freshness="", next_step=""):
+            self.status_calls.append((primary, segments, freshness, next_step))
+
+    tab = _DummyTab()
+
+    asian_module.AsianMarketTab._on_worker_progress(tab, "亚洲市场后台刷新已暂停，等待缓存同步完成")
+
+    assert tab.status_calls == []
