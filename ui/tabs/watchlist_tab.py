@@ -242,6 +242,7 @@ class WatchlistTab(BaseStockTab):
                 "业绩环比%": info_new.get("业绩环比%", info_old.get("业绩环比%", "")),
                 "龙虎榜": info_new.get("龙虎榜", ""),
                 "龙虎榜日期": info_new.get("龙虎榜日期", ""),
+                "龙虎榜净额(万)": info_new.get("龙虎榜净额(万)", info_old.get("龙虎榜净额(万)", "")),
                 "来源标签": source_tags,
                 "_zongguben": live_entry.get("_zongguben", 0)
             }
@@ -582,22 +583,23 @@ class WatchlistTab(BaseStockTab):
             # 三大阵营的数据注入 (如果原本有数据但不为空，我们不覆盖；如果本次扫到了，坚决覆盖)
             if data.get('na_catalyst'):
                 row_dict['催化剂'] = data['na_catalyst']
-            if data.get('block_trade'):
-                row_dict['大宗交易'] = data['block_trade']
-            if data.get('block_trade_amount_wan') not in (None, ''):
-                row_dict['大宗交易金额(万)'] = data['block_trade_amount_wan']
-            if data.get('earnings'):
-                row_dict['业绩异动'] = data['earnings']
-            if data.get('earnings_qoq_pct') not in (None, ''):
-                row_dict['业绩环比%'] = data['earnings_qoq_pct']
-            if data.get('lhb'):
-                new_lhb = data['lhb']
-                if isinstance(new_lhb, dict):
-                    new_date = new_lhb.get("date", "")
-                    new_text = new_lhb.get("text", "")
-                    # 【逻辑变更】：根据龙虎榜表信息无条件刷新，不考虑历史日期锁定
-                    row_dict["龙虎榜"] = new_text
-                    row_dict["龙虎榜日期"] = new_date
+            row_dict['大宗交易'] = str(data.get('block_trade', '') or '')
+            row_dict['大宗交易金额(万)'] = data.get('block_trade_amount_wan', '')
+            row_dict['业绩异动'] = str(data.get('earnings', '') or '')
+            row_dict['业绩环比%'] = data.get('earnings_qoq_pct', '')
+            new_lhb = data.get('lhb', '')
+            if isinstance(new_lhb, dict):
+                new_date = new_lhb.get("date", "")
+                new_text = new_lhb.get("text", "")
+                new_net = new_lhb.get("net_wan", "")
+                # 【逻辑变更】：根据龙虎榜表信息无条件刷新，不考虑历史日期锁定
+                row_dict["龙虎榜"] = str(new_text or '')
+                row_dict["龙虎榜日期"] = str(new_date or '')
+                row_dict["龙虎榜净额(万)"] = new_net if new_net not in (None, '') else ''
+            else:
+                row_dict["龙虎榜"] = str(new_lhb or '')
+                row_dict["龙虎榜日期"] = ''
+                row_dict["龙虎榜净额(万)"] = ''
 
             source_tags = watchlist_vm.derive_source_tags(
                 row_dict,
@@ -630,21 +632,22 @@ class WatchlistTab(BaseStockTab):
 
             if data.get('na_catalyst'):
                 entry_patch["美股日报"] = str(data['na_catalyst'])
-            if data.get('block_trade'):
-                entry_patch["大宗交易"] = str(data['block_trade'])
-            if data.get('block_trade_amount_wan') not in (None, ''):
-                entry_patch["大宗交易金额(万)"] = data['block_trade_amount_wan']
-            if data.get('earnings'):
-                entry_patch["业绩异动"] = str(data['earnings'])
-            if data.get('earnings_qoq_pct') not in (None, ''):
-                entry_patch["业绩环比%"] = data['earnings_qoq_pct']
-            if data.get('lhb'):
-                new_lhb = data['lhb']
-                if isinstance(new_lhb, dict):
-                    new_date = new_lhb.get("date", "")
-                    new_text = new_lhb.get("text", "")
-                    entry_patch["龙虎榜"] = str(new_text)
-                    entry_patch["龙虎榜日期"] = str(new_date)
+            entry_patch["大宗交易"] = str(data.get('block_trade', '') or '')
+            entry_patch["大宗交易金额(万)"] = data.get('block_trade_amount_wan', '')
+            entry_patch["业绩异动"] = str(data.get('earnings', '') or '')
+            entry_patch["业绩环比%"] = data.get('earnings_qoq_pct', '')
+            new_lhb = data.get('lhb', '')
+            if isinstance(new_lhb, dict):
+                new_date = new_lhb.get("date", "")
+                new_text = new_lhb.get("text", "")
+                new_net = new_lhb.get("net_wan", "")
+                entry_patch["龙虎榜"] = str(new_text or '')
+                entry_patch["龙虎榜日期"] = str(new_date or '')
+                entry_patch["龙虎榜净额(万)"] = new_net if new_net not in (None, '') else ''
+            else:
+                entry_patch["龙虎榜"] = str(new_lhb or '')
+                entry_patch["龙虎榜日期"] = ''
+                entry_patch["龙虎榜净额(万)"] = ''
 
             patch_payload[str(code)] = entry_patch
 
@@ -686,6 +689,7 @@ class WatchlistTab(BaseStockTab):
                 entry["业绩异动"] = str(row_dict.get("业绩异动", ""))
                 entry["业绩环比%"] = row_dict.get("业绩环比%", "")
                 entry["龙虎榜日期"] = str(row_dict.get("龙虎榜日期", ""))
+                entry["龙虎榜净额(万)"] = row_dict.get("龙虎榜净额(万)", "")
                 entry["来源标签"] = watchlist_vm.derive_source_tags(
                     row_dict,
                     existing_tags=row_dict.get("来源标签"),

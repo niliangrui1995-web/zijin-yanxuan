@@ -15,6 +15,7 @@ def test_watchlist_summary_card_prefers_structured_amount_and_qoq_metrics():
             "业绩异动": "32.5%",
             "业绩环比%": 32.5,
             "龙虎榜": "04-20 | 净买1200万",
+            "龙虎榜净额(万)": 1200,
             "RPS强度": "83/90",
         },
         is_fav=True,
@@ -25,4 +26,4 @@ def test_watchlist_summary_card_prefers_structured_amount_and_qoq_metrics():
     assert event_row["label"] == "异动"
     assert "大宗 2,709万" in event_row["value"]
     assert "环比 32.5%" in event_row["value"]
-    assert "龙虎榜" in event_row["value"]
+    assert "龙虎 净买1,200万" in event_row["value"]

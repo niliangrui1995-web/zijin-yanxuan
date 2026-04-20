@@ -62,7 +62,19 @@ def test_workspace_collects_structured_watchlist_radar_metrics():
                 ]
             )
         ),
-        tab_lhb=SimpleNamespace(model=SimpleNamespace(row_data=[])),
+        tab_lhb=SimpleNamespace(
+            model=SimpleNamespace(
+                row_data=[
+                    {
+                        "代码": "300750",
+                        "_最近上榜_raw": "20260420",
+                        "上榜净买额(万)": 1200,
+                        "机构净买(万)": 800,
+                        "外资净买(万)": -150,
+                    }
+                ]
+            )
+        ),
         _safe_float=ClassicWorkspace._safe_float,
         _build_watchlist_block_trade_signal=ClassicWorkspace._build_watchlist_block_trade_signal,
     )
@@ -71,12 +83,13 @@ def test_workspace_collects_structured_watchlist_radar_metrics():
 
     assert na_data == {}
     assert na_subsector_data == {}
-    assert lhb_data == {}
     assert rps_bundle == {"cached": True}
     assert block_data["300750"]["text"] == "机构专用买入2709万"
     assert block_data["300750"]["amount_wan"] == 2709
     assert earn_data["300750"]["text"] == "32.5%"
     assert earn_data["300750"]["qoq_pct"] == 32.5
+    assert lhb_data["300750"]["text"] == "04-20 | 净买1200万 | 机构净买800万 | 外资净卖150万"
+    assert lhb_data["300750"]["net_wan"] == 1200
 
 
 def test_workspace_refreshes_all_tabs_after_f5():

@@ -574,6 +574,9 @@ class ClassicWorkspace(QWidget):
                 lhb_data[code] = {
                     "text": f"{date_mmdd} | {net_s} | {jg_s} | {fgn_s}",
                     "date": raw_date,
+                    "net_wan": net,
+                    "inst_wan": jg,
+                    "foreign_wan": fgn,
                 }
 
         return na_data, na_subsector_data, block_data, earn_data, lhb_data, rps_bundle

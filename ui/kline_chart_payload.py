@@ -248,6 +248,14 @@ def _summary_format_wan_amount(value) -> str:
     return f"{text}万"
 
 
+def _summary_format_signed_wan_amount(value, *, positive_label: str = "净买", negative_label: str = "净卖") -> str:
+    number = _summary_parse_float(value)
+    if number is None:
+        return "--"
+    label = positive_label if number >= 0 else negative_label
+    return f"{label}{_summary_format_wan_amount(abs(number))}"
+
+
 def _summary_format_pct_value(value) -> str:
     number = _summary_parse_float(value)
     if number is None:
@@ -272,7 +280,11 @@ def _build_watchlist_event_text(payload: dict) -> str:
         parts.append("业绩")
 
     if _summary_pick(payload, "龙虎榜", default=""):
-        parts.append("龙虎榜")
+        lhb_net = payload.get("龙虎榜净额(万)")
+        if _summary_parse_float(lhb_net) is not None:
+            parts.append(f"龙虎 {_summary_format_signed_wan_amount(lhb_net)}")
+        else:
+            parts.append("龙虎榜")
 
     if not parts:
         return "--"
