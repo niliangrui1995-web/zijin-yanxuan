@@ -11,6 +11,7 @@ from core.logger import get_logger
 from core.task_manager import task_manager
 from ui.components.command_palette import CommandPaletteDialog
 from ui.components.kline_window_manager import kline_manager
+from ui.components.message_box import show_themed_question
 from ui.components.main_window_shell import (
     DraggableTitleBar,
     MainWindowStatusBar,
@@ -628,14 +629,18 @@ class MainWindowQT(QMainWindow):
     def _action_refresh_f5(self):
         """F5 盘后预计算界面触发层"""
         from PyQt6.QtWidgets import QMessageBox
-        reply = QMessageBox.question(self, "盘后一键预计算",
+        reply = show_themed_question(
+            self,
+            "盘后一键预计算",
             "此操作将执行完整的盘后数据重建流程：\n\n"
             "① 从通达信本地日线(vipdoc)重新读取数据\n"
             "② 预计算全市场RPS排名(120日/250日)\n"
             "③ 预计算板块RPS排名\n"
             "④ 保存缓存供次日盘中监控使用\n\n"
             "请确保已在通达信中完成【盘后数据下载】.\n是否执行?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            yes_text="执行",
+            no_text="取消",
+        )
 
         if reply != QMessageBox.StandardButton.Yes: return
 

@@ -17,6 +17,7 @@ def generate_global_qss(theme: dict = None, density: str | None = None) -> str:
     ui = build_ui_tokens(theme, density)
     font = ui["font"]
     radius = ui["radius"]
+    space = ui["space"]
     control = ui["control"]
     table = ui["table"]
     shell = ui["shell"]
@@ -517,6 +518,30 @@ QLineEdit {{
 QLineEdit:hover {{ border: 1px solid {t['BORDER_BRAND']}; }}
 QLineEdit:focus {{ border: 1px solid {border['focus']}; background-color: {t['BG_INPUT']}; }}
 QLineEdit::placeholder {{ color: {t['TEXT_DISABLED']}; }}
+
+QMessageBox {{
+    background-color: {surface['overlay']};
+}}
+QMessageBox QLabel {{
+    background: transparent;
+    color: {text['primary']};
+    font-size: {font['size_md']}px;
+}}
+QMessageBox QLabel#qt_msgbox_label {{
+    min-width: 336px;
+    padding: {space['xs']}px {space['sm']}px {space['sm']}px 0;
+}}
+QMessageBox QLabel#qt_msgboxex_icon_label {{
+    min-width: 36px;
+    padding: {space['sm']}px {space['md']}px {space['sm']}px {space['sm']}px;
+}}
+QMessageBox QPushButton {{
+    min-width: 88px;
+    margin-top: {space['sm']}px;
+}}
+QMessageBox QPushButton#primaryButton {{
+    min-width: 96px;
+}}
 
 QDialog#settingsDialog, QDialog#scanRangeDialog, QDialog#tradeCalendarDialog, QDialog#tradeDateRangeDialog {{
     background: transparent;
