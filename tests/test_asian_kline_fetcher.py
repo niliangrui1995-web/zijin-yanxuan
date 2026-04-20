@@ -5,15 +5,12 @@ import types
 
 
 def _load_fetcher_module(monkeypatch):
-    fake_yfinance = types.ModuleType("yfinance")
-    fake_yfinance.Ticker = object
     fake_industry = types.ModuleType("industry_dict")
     fake_industry.OLIGARCH_DICT = {}
     fake_industry.VANGUARD_TICKERS = {}
     fake_session = types.ModuleType("vcp.fetchers.yf_session")
     fake_session.build_yf_session = lambda use_cf_proxy=True: object()
 
-    monkeypatch.setitem(sys.modules, "yfinance", fake_yfinance)
     monkeypatch.setitem(sys.modules, "industry_dict", fake_industry)
     monkeypatch.setitem(sys.modules, "vcp.fetchers.yf_session", fake_session)
 
@@ -71,6 +68,75 @@ def test_find_track_uses_local_track_override_for_tuc(monkeypatch):
     monkeypatch.setattr(fetcher, "OLIGARCH_DICT", {}, raising=False)
 
     assert fetcher._find_track("6274.TWO") == "高频PCB与覆铜板材料"
+
+
+def test_fetch_single_kline_routes_to_market_specific_history_source(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    monkeypatch.setattr(
+        fetcher,
+        "_resolve_period_window",
+        lambda period: (fetcher.date(2025, 4, 1), fetcher.date(2026, 4, 20), 260),
+    )
+    monkeypatch.setattr(fetcher, "_find_track", lambda ticker: f"track:{ticker}")
+
+    route_hits = []
+
+    def _make_rows(close_value):
+        return [
+            {
+                "date": "2026-04-17",
+                "open": close_value - 1,
+                "high": close_value + 1,
+                "low": close_value - 2,
+                "close": close_value,
+                "volume": 123456,
+            }
+        ]
+
+    monkeypatch.setattr(
+        fetcher,
+        "_fetch_tw_history_twse",
+        lambda *args, **kwargs: route_hits.append("TW") or _make_rows(100.0),
+    )
+    monkeypatch.setattr(
+        fetcher,
+        "_fetch_tw_history_tpex",
+        lambda *args, **kwargs: route_hits.append("TWO") or _make_rows(200.0),
+    )
+    monkeypatch.setattr(
+        fetcher,
+        "_fetch_kr_history_naver",
+        lambda *args, **kwargs: route_hits.append("KS") or _make_rows(300.0),
+    )
+    monkeypatch.setattr(
+        fetcher,
+        "_fetch_jp_history_yahoo_japan",
+        lambda *args, **kwargs: route_hits.append("T") or _make_rows(400.0),
+    )
+    monkeypatch.setattr(
+        fetcher,
+        "_fetch_hk_history_tencent",
+        lambda *args, **kwargs: route_hits.append("HK") or _make_rows(500.0),
+    )
+
+    cases = [
+        ("TSMC", "2330.TW", "TWD", "twse_stock_day"),
+        ("TUC", "6274.TWO", "TWD", "tpex_trading_stock"),
+        ("Samsung", "005930.KS", "KRW", "naver_history"),
+        ("TEL", "8035.T", "JPY", "yj_history"),
+        ("ASMPT", "0522.HK", "HKD", "tencent_hk_qfq"),
+    ]
+
+    for name, ticker, currency, source in cases:
+        payload = fetcher.fetch_single_kline(name, ticker, period="1y", session=object())
+        assert payload["ticker"] == ticker
+        assert payload["currency"] == currency
+        assert payload["source"] == source
+        assert payload["track"] == f"track:{ticker}"
+        assert payload["kline_count"] == 1
+        assert payload["klines"][0]["date"] == "2026-04-17"
+
+    assert route_hits == ["TW", "TWO", "KS", "T", "HK"]
 
 
 def test_sync_asian_kline_cache_refuses_partial_overwrite(monkeypatch):

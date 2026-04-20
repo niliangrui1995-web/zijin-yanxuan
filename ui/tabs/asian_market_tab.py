@@ -530,6 +530,11 @@ class AsianMarketTab(BaseStockTab):
                 cache_friendly[k] = {
                     "date": v.get("date", ""),
                     "close": v.get("close", 0.0),
+                    "open": v.get("open", 0.0),
+                    "high": v.get("high", 0.0),
+                    "low": v.get("low", 0.0),
+                    "volume": v.get("volume", 0.0),
+                    "previous_close": v.get("previous_close", 0.0),
                     "pct": v.get("pct", 0.0),
                     "pe": v.get("pe"),
                     "pe_source": v.get("pe_source", ""),
@@ -537,7 +542,9 @@ class AsianMarketTab(BaseStockTab):
                     "pct_5": v.get("pct_5", 0.0),
                     "pct_10": v.get("pct_10", 0.0),
                     "pct_20": v.get("pct_20", 0.0),
-                    "currency": v.get("currency", "")
+                    "currency": v.get("currency", ""),
+                    "source": v.get("source", ""),
+                    "quote_quality": v.get("quote_quality", ""),
                 }
             with open(RT_JSON_CACHE, 'w', encoding='utf-8') as f:
                 json.dump(cache_friendly, f, ensure_ascii=False)
@@ -595,6 +602,11 @@ class AsianMarketTab(BaseStockTab):
                             GLOBAL_ASIAN_RT_CACHE[code] = {
                                 "date": data_points[-1].get("date") if data_points else None,
                                 "close": close_val,
+                                "open": float(data_points[-1].get("open", 0)) if data_points else 0.0,
+                                "high": float(data_points[-1].get("high", 0)) if data_points else 0.0,
+                                "low": float(data_points[-1].get("low", 0)) if data_points else 0.0,
+                                "volume": float(data_points[-1].get("volume", 0)) if data_points else 0.0,
+                                "previous_close": float(data_points[-2].get("close", 0)) if len(data_points) >= 2 else 0.0,
                                 "pct": pct_val,
                                 "pe": None,
                                 "pe_source": "",
@@ -603,6 +615,8 @@ class AsianMarketTab(BaseStockTab):
                                 "pct_10": pct_10,
                                 "pct_20": pct_20,
                                 "currency": item.get("currency", ""),
+                                "source": "history_cache",
+                                "quote_quality": "",
                                 "df_today": None,
                             }
 
@@ -675,6 +689,11 @@ class AsianMarketTab(BaseStockTab):
                                 GLOBAL_ASIAN_RT_CACHE[ticker] = {
                                     "date": None,
                                     "close": 0.0,
+                                    "open": 0.0,
+                                    "high": 0.0,
+                                    "low": 0.0,
+                                    "volume": 0.0,
+                                    "previous_close": 0.0,
                                     "pct": 0.0,
                                     "pe": None,
                                     "pe_source": "",
@@ -683,6 +702,8 @@ class AsianMarketTab(BaseStockTab):
                                     "pct_10": 0.0,
                                     "pct_20": 0.0,
                                     "currency": "",
+                                    "source": "",
+                                    "quote_quality": "",
                                     "df_today": None,
                                 }
 

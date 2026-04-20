@@ -8,6 +8,7 @@ import pandas as pd
 
 from core.market_calendar import MarketCalendar
 from core.task_manager import task_manager
+from ui.tabs.asian_market_workers import fetch_asian_realtime_quote
 
 
 def normalize_daily_df_index(df, *, logger):
@@ -231,26 +232,7 @@ def poll_rt_update(window):
         if market != "CN":
             quote = window._build_asian_rt_quote()
             if quote is None:
-                import yfinance as yf
-
-                from ui.tabs.asian_market_tab import GLOBAL_USE_CF_PROXY
-                from vcp.fetchers.yf_session import build_yf_session
-
-                yf_session = build_yf_session(GLOBAL_USE_CF_PROXY)
-                rt_df = yf.Ticker(window.code, session=yf_session).history(period="5d", interval="1d")
-                if not rt_df.empty:
-                    last_row = rt_df.iloc[-1]
-                    rt_date = pd.Timestamp(last_row.name)
-                    if rt_date.tzinfo is not None:
-                        rt_date = rt_date.tz_localize(None)
-                    quote = {
-                        "date": rt_date.strftime("%Y-%m-%d"),
-                        "open": float(last_row["Open"]),
-                        "high": float(last_row["High"]),
-                        "low": float(last_row["Low"]),
-                        "close": float(last_row["Close"]),
-                        "volume": float(last_row.get("Volume", 0) or 0),
-                    }
+                quote = fetch_asian_realtime_quote(window.code)
             if quote is not None:
                 refresh_last_bar(window, quote)
             return

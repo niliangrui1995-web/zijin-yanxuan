@@ -3,7 +3,7 @@
 
 从 industry_dict.py 自动读取 VANGUARD_TICKERS，
 筛选出亚洲市场标的（.TW / .KS / .T / .HK），
-用 yfinance 拉取 250 个交易日的 OHLCV 日线数据，
+按市场免费源拉取约 250 个交易日的 OHLCV 日线数据，
 输出 JSON 文件供前端看板渲染 K 线图。
 
 用法：
@@ -21,9 +21,7 @@ import re
 import sys
 import time
 import uuid
-from datetime import datetime
-
-import yfinance as yf
+from datetime import date, datetime, timedelta
 
 from vcp.fetchers.yf_session import build_yf_session
 
@@ -73,6 +71,18 @@ ASIAN_LOCAL_TRACK_OVERRIDES = {
 }
 
 _ALNUM_RE = re.compile(r"[a-z0-9]+")
+_NUMERIC_TOKEN_RE = re.compile(r"[-+]?\d+(?:,\d{3})*(?:\.\d+)?")
+_YJ_JWT_TOKEN_RE = re.compile(r'jwtToken\\":\\"([^\\]+)\\"')
+_MARKET_CURRENCY_MAP = {
+    ".TW": "TWD",
+    ".TWO": "TWD",
+    ".KS": "KRW",
+    ".T": "JPY",
+    ".HK": "HKD",
+}
+_EMPTY_NUMERIC_MARKERS = {"", "-", "--", "---", "N/A", "n/a", "null", "None"}
+_JP_HISTORY_PAGE_SIZE = 20
+_KR_HISTORY_PAGE_SIZE = 20
 
 
 def _ensure_industry_mappings_loaded() -> None:
@@ -245,6 +255,437 @@ def _build_sync_target_map(
     return filter_asian_tickers(market_filter)
 
 
+def _to_float(value) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    text = str(value).strip()
+    if text in _EMPTY_NUMERIC_MARKERS:
+        return None
+
+    match = _NUMERIC_TOKEN_RE.search(text.replace("%", ""))
+    if not match:
+        return None
+
+    try:
+        return float(match.group(0).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_iso_date(raw_value) -> str | None:
+    text = str(raw_value or "").strip()
+    if not text:
+        return None
+
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y/%m/%d %H:%M:%S", "%Y%m%d"):
+        try:
+            return datetime.strptime(text, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+def _normalize_roc_date(raw_value) -> str | None:
+    text = str(raw_value or "").strip()
+    if not text:
+        return None
+
+    parts = text.split("/")
+    if len(parts) != 3:
+        return _normalize_iso_date(text)
+
+    try:
+        year = int(parts[0]) + 1911
+        month = int(parts[1])
+        day = int(parts[2])
+        return date(year, month, day).isoformat()
+    except ValueError:
+        return None
+
+
+def _date_from_iso(raw_value: str | None) -> date | None:
+    if not raw_value:
+        return None
+    try:
+        return datetime.strptime(raw_value, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _resolve_period_window(period: str) -> tuple[date, date, int]:
+    end_date = datetime.now().date()
+    text = str(period or "1y").strip().lower()
+    match = re.fullmatch(r"(\d+)(d|mo|y)", text)
+    if not match:
+        return end_date - timedelta(days=366), end_date, 260
+
+    count = max(int(match.group(1)), 1)
+    unit = match.group(2)
+    if unit == "d":
+        return end_date - timedelta(days=count), end_date, max(count, 5)
+    if unit == "mo":
+        return end_date - timedelta(days=count * 31), end_date, count * 25
+    return end_date - timedelta(days=count * 366), end_date, count * 260
+
+
+def _iter_month_starts(start_date: date, end_date: date):
+    cursor = date(start_date.year, start_date.month, 1)
+    last_month = date(end_date.year, end_date.month, 1)
+    while cursor <= last_month:
+        yield cursor
+        if cursor.month == 12:
+            cursor = date(cursor.year + 1, 1, 1)
+        else:
+            cursor = date(cursor.year, cursor.month + 1, 1)
+
+
+def _extract_yj_history_value(values: list, index: int) -> float | None:
+    if index >= len(values):
+        return None
+    cell = values[index]
+    if isinstance(cell, dict):
+        return _to_float(cell.get("value"))
+    return _to_float(cell)
+
+
+def _finalize_klines(raw_rows: list[dict], *, start_date: date, end_date: date) -> list[dict]:
+    deduped: dict[str, dict] = {}
+    for row in raw_rows:
+        iso_date = str((row or {}).get("date") or "").strip()
+        row_date = _date_from_iso(iso_date)
+        if row_date is None or row_date < start_date or row_date > end_date:
+            continue
+
+        close_price = _to_float(row.get("close"))
+        if close_price is None:
+            continue
+
+        open_price = _to_float(row.get("open"))
+        high_price = _to_float(row.get("high"))
+        low_price = _to_float(row.get("low"))
+        volume = int(round(_to_float(row.get("volume")) or 0.0))
+
+        if open_price is None:
+            open_price = close_price
+        if high_price is None:
+            high_price = max(open_price, close_price)
+        if low_price is None:
+            low_price = min(open_price, close_price)
+
+        deduped[iso_date] = {
+            "date": iso_date,
+            "open": round(float(open_price), 2),
+            "high": round(float(high_price), 2),
+            "low": round(float(low_price), 2),
+            "close": round(float(close_price), 2),
+            "volume": volume,
+        }
+
+    return [deduped[iso_date] for iso_date in sorted(deduped)]
+
+
+def _fetch_tw_history_twse(
+    ticker: str,
+    http_session,
+    *,
+    start_date: date,
+    end_date: date,
+) -> list[dict]:
+    base_code = str(ticker or "").split(".")[0].strip()
+    if not base_code:
+        return []
+
+    rows: list[dict] = []
+    for month_start in _iter_month_starts(start_date, end_date):
+        url = (
+            "https://www.twse.com.tw/exchangeReport/STOCK_DAY"
+            f"?response=json&date={month_start.strftime('%Y%m01')}&stockNo={base_code}"
+        )
+        response = http_session.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.twse.com.tw/"},
+            timeout=20,
+            verify=False,
+        )
+        payload = response.json()
+        if str(payload.get("stat") or "").upper() != "OK":
+            continue
+
+        for raw in payload.get("data") or []:
+            iso_date = _normalize_roc_date(raw[0] if len(raw) > 0 else "")
+            if not iso_date:
+                continue
+            rows.append(
+                {
+                    "date": iso_date,
+                    "open": _to_float(raw[3] if len(raw) > 3 else None),
+                    "high": _to_float(raw[4] if len(raw) > 4 else None),
+                    "low": _to_float(raw[5] if len(raw) > 5 else None),
+                    "close": _to_float(raw[6] if len(raw) > 6 else None),
+                    "volume": _to_float(raw[1] if len(raw) > 1 else None),
+                }
+            )
+    return rows
+
+
+def _fetch_tw_history_tpex(
+    ticker: str,
+    http_session,
+    *,
+    start_date: date,
+    end_date: date,
+) -> list[dict]:
+    base_code = str(ticker or "").split(".")[0].strip()
+    if not base_code:
+        return []
+
+    rows: list[dict] = []
+    for month_start in _iter_month_starts(start_date, end_date):
+        response = http_session.get(
+            "https://www.tpex.org.tw/www/en-us/afterTrading/tradingStock",
+            params={"code": base_code, "date": month_start.strftime("%Y/%m/01")},
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "Referer": "https://www.tpex.org.tw/en-us/mainboard/trading/info/stock-pricing.html",
+            },
+            timeout=20,
+        )
+        payload = response.json()
+        if str(payload.get("stat") or "").lower() != "ok":
+            continue
+
+        table = (payload.get("tables") or [{}])[0]
+        for raw in table.get("data") or []:
+            iso_date = _normalize_iso_date(raw[0] if len(raw) > 0 else "")
+            if not iso_date:
+                continue
+            rows.append(
+                {
+                    "date": iso_date,
+                    "open": _to_float(raw[3] if len(raw) > 3 else None),
+                    "high": _to_float(raw[4] if len(raw) > 4 else None),
+                    "low": _to_float(raw[5] if len(raw) > 5 else None),
+                    "close": _to_float(raw[6] if len(raw) > 6 else None),
+                    # TPEX historical page exposes trade units; convert back to shares.
+                    "volume": (_to_float(raw[1] if len(raw) > 1 else None) or 0.0) * 1000.0,
+                }
+            )
+    return rows
+
+
+def _fetch_kr_history_naver(
+    ticker: str,
+    http_session,
+    *,
+    start_date: date,
+    end_date: date,
+) -> list[dict]:
+    base_code = str(ticker or "").split(".")[0].strip()
+    if not base_code:
+        return []
+
+    rows: list[dict] = []
+    page = 1
+    while True:
+        response = http_session.get(
+            f"https://m.stock.naver.com/api/stock/{base_code}/price?page={page}",
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "Referer": "https://m.stock.naver.com/",
+            },
+            timeout=20,
+        )
+        payload = response.json() or []
+        if not payload:
+            break
+
+        oldest_row_date: date | None = None
+        for item in payload:
+            iso_date = _normalize_iso_date(item.get("localTradedAt"))
+            row_date = _date_from_iso(iso_date)
+            if row_date is None:
+                continue
+            oldest_row_date = row_date if oldest_row_date is None else min(oldest_row_date, row_date)
+            rows.append(
+                {
+                    "date": iso_date,
+                    "open": _to_float(item.get("openPrice")),
+                    "high": _to_float(item.get("highPrice")),
+                    "low": _to_float(item.get("lowPrice")),
+                    "close": _to_float(item.get("closePrice")),
+                    "volume": _to_float(item.get("accumulatedTradingVolume")),
+                }
+            )
+
+        if len(payload) < _KR_HISTORY_PAGE_SIZE or (oldest_row_date and oldest_row_date < start_date):
+            break
+        page += 1
+    return rows
+
+
+def _fetch_jp_history_yahoo_japan(
+    ticker: str,
+    http_session,
+    *,
+    start_date: date,
+    end_date: date,
+) -> list[dict]:
+    base_code = str(ticker or "").split(".")[0].strip()
+    if not base_code:
+        return []
+
+    history_url = f"https://finance.yahoo.co.jp/quote/{base_code}.T/history"
+    response = http_session.get(
+        history_url,
+        headers={"User-Agent": "Mozilla/5.0", "Referer": history_url},
+        timeout=20,
+    )
+    token_match = _YJ_JWT_TOKEN_RE.search(response.text)
+    if not token_match:
+        return []
+
+    jwt_token = token_match.group(1)
+    rows: list[dict] = []
+    page = 1
+    while True:
+        api_response = http_session.get(
+            "https://finance.yahoo.co.jp/bff-quote-stocks/v1/ajax/history/price",
+            params={
+                "code": f"{base_code}.T",
+                "fromDate": start_date.strftime("%Y%m%d"),
+                "toDate": end_date.strftime("%Y%m%d"),
+                "timeFrameId": "d",
+                "page": page,
+            },
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "Referer": history_url,
+                "x-jwt-token": jwt_token,
+            },
+            timeout=20,
+        )
+        payload = api_response.json()
+        history = ((payload.get("response") or {}).get("history") or {}).get("histories") or []
+        if not history:
+            break
+
+        oldest_row_date: date | None = None
+        for item in history:
+            iso_date = _normalize_iso_date(item.get("date"))
+            row_date = _date_from_iso(iso_date)
+            if row_date is None:
+                continue
+            oldest_row_date = row_date if oldest_row_date is None else min(oldest_row_date, row_date)
+            values = item.get("values") or []
+            rows.append(
+                {
+                    "date": iso_date,
+                    "open": _extract_yj_history_value(values, 0),
+                    "high": _extract_yj_history_value(values, 1),
+                    "low": _extract_yj_history_value(values, 2),
+                    "close": _extract_yj_history_value(values, 3),
+                    "volume": _extract_yj_history_value(values, 4),
+                }
+            )
+
+        if len(history) < _JP_HISTORY_PAGE_SIZE or (oldest_row_date and oldest_row_date < start_date):
+            break
+        page += 1
+    return rows
+
+
+def _fetch_hk_history_tencent(
+    ticker: str,
+    http_session,
+    *,
+    start_date: date,
+    end_date: date,
+    target_rows: int,
+) -> list[dict]:
+    base_code = str(ticker or "").split(".")[0].strip().zfill(5)
+    if not base_code:
+        return []
+
+    row_count = min(max(target_rows + 30, 120), 800)
+    symbol = f"hk{base_code}"
+    response = http_session.get(
+        f"https://web.ifzq.gtimg.cn/appstock/app/hkfqkline/get?param={symbol},day,,,{row_count},qfq",
+        headers={
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://stockapp.finance.qq.com/",
+        },
+        timeout=20,
+    )
+    payload = response.json()
+    market_data = (payload.get("data") or {}).get(symbol) or {}
+    history = market_data.get("qfqday") or market_data.get("day") or []
+
+    rows: list[dict] = []
+    for item in history:
+        if len(item) < 6:
+            continue
+        iso_date = _normalize_iso_date(item[0])
+        if not iso_date:
+            continue
+        rows.append(
+            {
+                "date": iso_date,
+                "open": _to_float(item[1]),
+                "close": _to_float(item[2]),
+                "high": _to_float(item[3]),
+                "low": _to_float(item[4]),
+                "volume": _to_float(item[5]),
+            }
+        )
+    return rows
+
+
+def _fetch_market_history_rows(
+    ticker: str,
+    http_session,
+    *,
+    start_date: date,
+    end_date: date,
+    target_rows: int,
+) -> tuple[list[dict], str]:
+    suffix = _get_market_suffix(ticker)
+    if suffix == ".TW":
+        return (
+            _fetch_tw_history_twse(ticker, http_session, start_date=start_date, end_date=end_date),
+            "twse_stock_day",
+        )
+    if suffix == ".TWO":
+        return (
+            _fetch_tw_history_tpex(ticker, http_session, start_date=start_date, end_date=end_date),
+            "tpex_trading_stock",
+        )
+    if suffix == ".KS":
+        return (
+            _fetch_kr_history_naver(ticker, http_session, start_date=start_date, end_date=end_date),
+            "naver_history",
+        )
+    if suffix == ".T":
+        return (
+            _fetch_jp_history_yahoo_japan(ticker, http_session, start_date=start_date, end_date=end_date),
+            "yj_history",
+        )
+    if suffix == ".HK":
+        return (
+            _fetch_hk_history_tencent(
+                ticker,
+                http_session,
+                start_date=start_date,
+                end_date=end_date,
+                target_rows=target_rows,
+            ),
+            "tencent_hk_qfq",
+        )
+    return [], "unsupported"
+
+
 def fetch_single_kline(
     name: str,
     ticker: str,
@@ -268,32 +709,24 @@ def fetch_single_kline(
         }
     """
     try:
-        yf_session = session or build_yf_session(use_cf_proxy)
-        t = yf.Ticker(ticker, session=yf_session)
-        hist = t.history(period=period)
+        ticker = str(ticker or "").strip().upper()
+        http_session = session or build_yf_session(use_cf_proxy)
+        start_date, end_date, target_rows = _resolve_period_window(period)
+        raw_rows, source = _fetch_market_history_rows(
+            ticker,
+            http_session,
+            start_date=start_date,
+            end_date=end_date,
+            target_rows=target_rows,
+        )
+        klines = _finalize_klines(raw_rows, start_date=start_date, end_date=end_date)
 
-        if hist.empty:
+        if not klines:
             logging.warning(f"⚠️ {name}({ticker}): 无数据")
             return None
 
-        # Why: 获取货币单位，方便前端显示
-        info = t.fast_info
-        currency = getattr(info, "currency", "N/A") if info else "N/A"
-
-        # 向量化构建 K 线数据（比 iterrows 快 5-10 倍）
-        hist_reset = hist.reset_index()
-        hist_reset["date"] = hist_reset.iloc[:, 0].dt.strftime("%Y-%m-%d")
-        klines = [
-            {
-                "date": row["date"],
-                "open": round(float(row["Open"]), 2),
-                "high": round(float(row["High"]), 2),
-                "low": round(float(row["Low"]), 2),
-                "close": round(float(row["Close"]), 2),
-                "volume": int(row["Volume"]),
-            }
-            for row in hist_reset.to_dict("records")
-        ]
+        suffix = _get_market_suffix(ticker)
+        currency = _MARKET_CURRENCY_MAP.get(suffix, "N/A")
 
         return {
             "name": name,
@@ -301,11 +734,20 @@ def fetch_single_kline(
             "market": _get_market_name(ticker),
             "track": _find_track(ticker),
             "currency": currency,
+            "source": source,
             "kline_count": len(klines),
             "klines": klines,
         }
 
-    except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
+    except (
+        AttributeError,
+        KeyError,
+        OSError,
+        RuntimeError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as e:
         logging.error(f"❌ {name}({ticker}): 拉取失败 — {e}")
         return None
 
@@ -322,8 +764,8 @@ def fetch_all_asian_klines(
     Args:
         market_filter: 市场筛选（TW/KR/JP/HK）
         single_ticker: 只拉单只
-        max_workers: 并发线程数（别太高，Yahoo 会限速）
-        period: yfinance 的 period 参数，默认 1y（约 250 个交易日）
+        max_workers: 并发线程数（别太高，免费上游会限速）
+        period: 时间窗口参数，默认 1y（约 250 个交易日）
     """
     # Why: 支持单只调试模式
     if single_ticker:
@@ -585,7 +1027,7 @@ def main():
         "--workers",
         type=int,
         default=6,
-        help="并发线程数（默认 6，太高会被 Yahoo 限速）",
+        help="并发线程数（默认 6，太高会触发上游限速）",
     )
     parser.add_argument(
         "--output-dir",
