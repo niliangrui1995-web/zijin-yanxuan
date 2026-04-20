@@ -35,6 +35,50 @@ def test_workspace_primes_watchlist_with_public_startup_hook():
     assert called == ["watchlist"]
 
 
+def test_workspace_collects_structured_watchlist_radar_metrics():
+    workspace = SimpleNamespace(
+        engine=SimpleNamespace(get_precomputed_rps=lambda: {"cached": True}),
+        tab_na_daily=SimpleNamespace(model=SimpleNamespace(row_data=[])),
+        tab_foreign_block=SimpleNamespace(
+            model=SimpleNamespace(
+                row_data=[
+                    {
+                        "代码": "300750",
+                        "交易详情": "买入",
+                        "买方营业部": "机构专用",
+                        "卖方营业部": "",
+                        "成交金额(万元)": 2709,
+                    }
+                ]
+            )
+        ),
+        tab_earnings=SimpleNamespace(
+            model=SimpleNamespace(
+                row_data=[
+                    {
+                        "代码": "300750",
+                        "环比%": 32.5,
+                    }
+                ]
+            )
+        ),
+        tab_lhb=SimpleNamespace(model=SimpleNamespace(row_data=[])),
+        _safe_float=ClassicWorkspace._safe_float,
+        _build_watchlist_block_trade_signal=ClassicWorkspace._build_watchlist_block_trade_signal,
+    )
+
+    na_data, na_subsector_data, block_data, earn_data, lhb_data, rps_bundle = ClassicWorkspace.collect_watchlist_radar_data(workspace)
+
+    assert na_data == {}
+    assert na_subsector_data == {}
+    assert lhb_data == {}
+    assert rps_bundle == {"cached": True}
+    assert block_data["300750"]["text"] == "机构专用买入2709万"
+    assert block_data["300750"]["amount_wan"] == 2709
+    assert earn_data["300750"]["text"] == "32.5%"
+    assert earn_data["300750"]["qoq_pct"] == 32.5
+
+
 def test_workspace_refreshes_all_tabs_after_f5():
     calls = []
     workspace = SimpleNamespace(

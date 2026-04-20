@@ -519,8 +519,12 @@ class ClassicWorkspace(QWidget):
 
             for code, stats in block_aggregates.items():
                 best_text = str(stats.get("best_text", "") or "")
+                best_amount = float(stats.get("best_amount", 0.0) or 0.0)
                 if best_text:
-                    block_data[code] = best_text
+                    block_data[code] = {
+                        "text": best_text,
+                        "amount_wan": best_amount,
+                    }
 
         earnings_model = getattr(getattr(self, "tab_earnings", None), "model", None)
         if earnings_model is not None:
@@ -536,7 +540,10 @@ class ClassicWorkspace(QWidget):
 
                 qoq_value = self._safe_float(qoq_raw, default=0.0)
                 qoq_display = f"{qoq_value:.2f}".rstrip("0").rstrip(".")
-                earn_data[code] = f"{qoq_display}%"
+                earn_data[code] = {
+                    "text": f"{qoq_display}%",
+                    "qoq_pct": qoq_value,
+                }
 
         lhb_model = getattr(getattr(self, "tab_lhb", None), "model", None)
         if lhb_model is not None:

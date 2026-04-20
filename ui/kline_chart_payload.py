@@ -228,6 +228,57 @@ def _summary_active_labels(payload: dict, mappings: list[tuple[str, tuple[str, .
     return _summary_compact_list(*labels, default=default, max_items=max_items)
 
 
+def _summary_parse_float(value) -> float | None:
+    if value in (None, "", [], {}):
+        return None
+    text = str(value).strip().replace(",", "").replace("%", "")
+    if not text:
+        return None
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _summary_format_wan_amount(value) -> str:
+    number = _summary_parse_float(value)
+    if number is None:
+        return "--"
+    text = f"{number:,.2f}".rstrip("0").rstrip(".")
+    return f"{text}万"
+
+
+def _summary_format_pct_value(value) -> str:
+    number = _summary_parse_float(value)
+    if number is None:
+        return "--"
+    text = f"{number:.2f}".rstrip("0").rstrip(".")
+    return f"{text}%"
+
+
+def _build_watchlist_event_text(payload: dict) -> str:
+    parts = []
+
+    block_amount = payload.get("大宗交易金额(万)")
+    if _summary_parse_float(block_amount) is not None:
+        parts.append(f"大宗 {_summary_format_wan_amount(block_amount)}")
+    elif _summary_pick(payload, "大宗交易", default=""):
+        parts.append("大宗")
+
+    earnings_qoq = payload.get("业绩环比%")
+    if _summary_parse_float(earnings_qoq) is not None:
+        parts.append(f"环比 {_summary_format_pct_value(earnings_qoq)}")
+    elif _summary_pick(payload, "业绩异动", default=""):
+        parts.append("业绩")
+
+    if _summary_pick(payload, "龙虎榜", default=""):
+        parts.append("龙虎榜")
+
+    if not parts:
+        return "--"
+    return " | ".join(dict.fromkeys(parts))
+
+
 def _summary_row(label: str, value, *, highlight: bool = False, limit: int = 12) -> dict:
     raw_value = _summary_clean_text(value)
     return {
@@ -305,14 +356,7 @@ def _build_watchlist_summary_cards(payload: dict) -> list[dict]:
         if isinstance(source_tags, (list, tuple, set)):
             source_text = _summary_compact_list(*source_tags)
 
-    event_text = _summary_active_labels(
-        payload,
-        [
-            ("业绩", ("业绩异动",)),
-            ("大宗", ("大宗交易",)),
-            ("龙虎榜", ("龙虎榜",)),
-        ],
-    )
+    event_text = _build_watchlist_event_text(payload)
 
     return [
         {

@@ -237,7 +237,9 @@ class WatchlistTab(BaseStockTab):
                     or ""
                 ),
                 "大宗交易": info_new.get("大宗交易", ""),
+                "大宗交易金额(万)": info_new.get("大宗交易金额(万)", info_old.get("大宗交易金额(万)", "")),
                 "业绩异动": info_new.get("业绩异动", ""),
+                "业绩环比%": info_new.get("业绩环比%", info_old.get("业绩环比%", "")),
                 "龙虎榜": info_new.get("龙虎榜", ""),
                 "龙虎榜日期": info_new.get("龙虎榜日期", ""),
                 "来源标签": source_tags,
@@ -513,6 +515,22 @@ class WatchlistTab(BaseStockTab):
                     has_rps250 = rps250_series is not None and code in rps250_series
                     rps120_val = float(rps120_series.get(code, 0)) if has_rps120 else 0
                     rps250_val = float(rps250_series.get(code, 0)) if has_rps250 else 0
+                    block_info = block_data.get(code, {})
+                    earnings_info = earn_data.get(code, {})
+
+                    if isinstance(block_info, dict):
+                        block_text = block_info.get("text", "")
+                        block_amount_wan = block_info.get("amount_wan", "")
+                    else:
+                        block_text = block_info or ""
+                        block_amount_wan = ""
+
+                    if isinstance(earnings_info, dict):
+                        earnings_text = earnings_info.get("text", "")
+                        earnings_qoq_pct = earnings_info.get("qoq_pct", "")
+                    else:
+                        earnings_text = earnings_info or ""
+                        earnings_qoq_pct = ""
 
                     rps_display = '--'
                     if rps250_val > 0:
@@ -524,8 +542,10 @@ class WatchlistTab(BaseStockTab):
                         'rps': rps_display,
                         'subsector': na_subsector_data.get(code, ''),
                         'na_catalyst': na_data.get(code, ''),
-                        'block_trade': block_data.get(code, ''),
-                        'earnings': earn_data.get(code, ''),
+                        'block_trade': block_text,
+                        'block_trade_amount_wan': block_amount_wan,
+                        'earnings': earnings_text,
+                        'earnings_qoq_pct': earnings_qoq_pct,
                         'lhb': lhb_data.get(code, '')
                     }
                 except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as _e:
@@ -562,8 +582,14 @@ class WatchlistTab(BaseStockTab):
             # 三大阵营的数据注入 (如果原本有数据但不为空，我们不覆盖；如果本次扫到了，坚决覆盖)
             if data.get('na_catalyst'):
                 row_dict['催化剂'] = data['na_catalyst']
-            if data.get('block_trade'): row_dict['大宗交易'] = data['block_trade']
-            if data.get('earnings'): row_dict['业绩异动'] = data['earnings']
+            if data.get('block_trade'):
+                row_dict['大宗交易'] = data['block_trade']
+            if data.get('block_trade_amount_wan') not in (None, ''):
+                row_dict['大宗交易金额(万)'] = data['block_trade_amount_wan']
+            if data.get('earnings'):
+                row_dict['业绩异动'] = data['earnings']
+            if data.get('earnings_qoq_pct') not in (None, ''):
+                row_dict['业绩环比%'] = data['earnings_qoq_pct']
             if data.get('lhb'):
                 new_lhb = data['lhb']
                 if isinstance(new_lhb, dict):
@@ -606,8 +632,12 @@ class WatchlistTab(BaseStockTab):
                 entry_patch["美股日报"] = str(data['na_catalyst'])
             if data.get('block_trade'):
                 entry_patch["大宗交易"] = str(data['block_trade'])
+            if data.get('block_trade_amount_wan') not in (None, ''):
+                entry_patch["大宗交易金额(万)"] = data['block_trade_amount_wan']
             if data.get('earnings'):
                 entry_patch["业绩异动"] = str(data['earnings'])
+            if data.get('earnings_qoq_pct') not in (None, ''):
+                entry_patch["业绩环比%"] = data['earnings_qoq_pct']
             if data.get('lhb'):
                 new_lhb = data['lhb']
                 if isinstance(new_lhb, dict):
@@ -652,7 +682,9 @@ class WatchlistTab(BaseStockTab):
                 entry["细分板块"] = str(row_dict.get("细分板块", ""))
                 entry["美股日报"] = str(row_dict.get("催化剂", ""))
                 entry["大宗交易"] = str(row_dict.get("大宗交易", ""))
+                entry["大宗交易金额(万)"] = row_dict.get("大宗交易金额(万)", "")
                 entry["业绩异动"] = str(row_dict.get("业绩异动", ""))
+                entry["业绩环比%"] = row_dict.get("业绩环比%", "")
                 entry["龙虎榜日期"] = str(row_dict.get("龙虎榜日期", ""))
                 entry["来源标签"] = watchlist_vm.derive_source_tags(
                     row_dict,
