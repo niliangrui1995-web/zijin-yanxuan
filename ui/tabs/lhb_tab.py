@@ -288,6 +288,58 @@ class LhbTab(BaseStockTab):
             return []
         return MarketCalendar.get_recent_trade_dates(n, ref_date=ref_trade_date)
 
+    @staticmethod
+    def _get_manual_refresh_trade_dates(n: int = POOL_WINDOW) -> tuple[list[str], str, str]:
+        """手动刷新专用窗口。
+
+        规则：
+        1. 若今天是交易日，先探针尝试今天；
+        2. 今天有数据 -> 以今天为 20 日窗口终点；
+        3. 今天为空 -> 回退到上一交易日；
+        4. 今天探针异常 -> 沿用保守参考交易日，避免误清缓存。
+        """
+        from datetime import timedelta
+        from ui.workers.lhb_worker import probe_lhb_detail_count_for_date
+
+        now_cn = MarketCalendar._get_market_now("CN")
+        today = now_cn.date()
+
+        fallback_ref_date = LhbTab._get_lhb_reference_trade_date()
+        if fallback_ref_date is None:
+            return [], "", "warn"
+
+        if not MarketCalendar.is_trade_day(today, market="CN"):
+            return MarketCalendar.get_recent_trade_dates(n, ref_date=fallback_ref_date), "", "info"
+
+        previous_trade_date = MarketCalendar.get_latest_trade_date("CN", ref_date=today - timedelta(days=1))
+        today_str = today.strftime("%Y%m%d")
+
+        try:
+            probe_payload = probe_lhb_detail_count_for_date(today_str, return_meta=True)
+        except (AttributeError, ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.warning(f"[龙虎榜池] 手动刷新探针 {today_str} 失败，沿用参考交易日: {exc}")
+            ref_trade_date = fallback_ref_date
+            message = f"[龙虎榜池] {today_str} 今日探针异常，手动刷新沿用参考交易日 {ref_trade_date.strftime('%Y%m%d')}"
+            return MarketCalendar.get_recent_trade_dates(n, ref_date=ref_trade_date), message, "warn"
+
+        probe_status = str(probe_payload.get("status", "error") or "error")
+        probe_count = int(probe_payload.get("count", 0) or 0)
+
+        if probe_status == "ok" and probe_count > 0:
+            message = f"[龙虎榜池] 手动刷新优先抓取今日数据: {today_str} | 探针{probe_count}条"
+            return MarketCalendar.get_recent_trade_dates(n, ref_date=today), message, "info"
+
+        if probe_status == "empty" or (probe_status == "ok" and probe_count <= 0):
+            if previous_trade_date is None:
+                return [], f"[龙虎榜池] {today_str} 今日暂无可用数据，且未找到上一交易日", "warn"
+            previous_str = previous_trade_date.strftime("%Y%m%d")
+            message = f"[龙虎榜池] {today_str} 今日暂无可用数据，手动刷新回退到上一交易日 {previous_str}"
+            return MarketCalendar.get_recent_trade_dates(n, ref_date=previous_trade_date), message, "info"
+
+        ref_trade_date = fallback_ref_date
+        message = f"[龙虎榜池] {today_str} 今日探针异常，手动刷新沿用参考交易日 {ref_trade_date.strftime('%Y%m%d')}"
+        return MarketCalendar.get_recent_trade_dates(n, ref_date=ref_trade_date), message, "warn"
+
     def _display_pool(self, pool: list[dict]):
         """将池数据渲染到表格"""
         row_data = []
@@ -540,11 +592,13 @@ class LhbTab(BaseStockTab):
             show_toast("正在抓取中，请稍候...", "warning", self)
             return
 
-        trade_dates = self._get_lhb_trade_dates()
+        trade_dates, strategy_message, strategy_level = self._get_manual_refresh_trade_dates()
         if not trade_dates:
             from ui.components.toast_widget import show_toast
             show_toast("交易日历尚未就绪", "warning", self)
             return
+        if strategy_message:
+            event_bus.sig_system_log.emit(strategy_level, self._ensure_log_line(strategy_message))
 
         # 清空全部缓存，强制全量重拉
         self.pool_manager.clear_all()
