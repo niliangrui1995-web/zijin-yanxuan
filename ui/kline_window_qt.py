@@ -357,6 +357,7 @@ class KLineChartWindow(QWidget):
     def _load_asian_chart(self):
         """加载亚洲市场（yfinance 缓存）的 K 线数据"""
         from ui.tabs.asian_market_tab import GLOBAL_ASIAN_RT_CACHE, JSON_CACHE
+        from ui.tabs.asian_market_workers import fetch_asian_realtime_quote, is_cf_proxy_enabled
 
         df = None
         target_stock = load_cached_asian_stock(JSON_CACHE, self.code)
@@ -378,11 +379,27 @@ class KLineChartWindow(QWidget):
             return
 
         if df is not None:
-            if self.code in GLOBAL_ASIAN_RT_CACHE:
+            market = self._get_market()
+            quote = GLOBAL_ASIAN_RT_CACHE.get(self.code)
+            latest_trade_date = MarketCalendar.get_latest_trade_date(market)
+            if quote is None and latest_trade_date is not None and not df.empty:
+                try:
+                    last_date = pd.Timestamp(df.index[-1]).date()
+                except (IndexError, TypeError, ValueError):
+                    last_date = None
+                if last_date is None or last_date < latest_trade_date:
+                    try:
+                        quote = fetch_asian_realtime_quote(self.code, use_cf_proxy=is_cf_proxy_enabled())
+                    except (AttributeError, ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                        self._log.warning(f"[K绾縘 {self.code} 鐩樺悗琛ヨ冻浜氭床鎶ヤ环澶辫触: {exc}")
+                    if quote:
+                        GLOBAL_ASIAN_RT_CACHE[self.code] = quote
+
+            if quote is not None:
                 df = apply_asian_live_quote(
                     df,
-                    GLOBAL_ASIAN_RT_CACHE[self.code],
-                    market=self._get_market(),
+                    quote,
+                    market=market,
                 )
 
             # 统一交由 _render_chart() 去计算指标并生成完整 ECharts，此时必然包含最新日期

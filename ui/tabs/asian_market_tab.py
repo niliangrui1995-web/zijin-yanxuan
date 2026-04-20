@@ -304,7 +304,41 @@ class AsianMarketTab(BaseStockTab):
         super().resizeEvent(event)
         self._schedule_fit_columns()
 
+    def _get_cache_latest_trade_dates(self):
+        try:
+            from core.market_calendar import MarketCalendar
+
+            if not os.path.exists(JSON_CACHE):
+                return {}
+            with open(JSON_CACHE, 'r', encoding='utf-8') as f:
+                raw = json.load(f)
+
+            latest_dates = {}
+            for item in raw.get('stocks', []):
+                ticker = str(item.get('ticker', '') or '').strip().upper()
+                if "." not in ticker:
+                    continue
+                market = MarketCalendar.normalize_market(ticker.split(".")[-1])
+                klines = item.get('klines', [])
+                if not klines:
+                    continue
+                last_date_raw = str(klines[-1].get('date', '')).strip()
+                if not last_date_raw:
+                    continue
+                try:
+                    last_date = datetime.datetime.strptime(last_date_raw[:10], "%Y-%m-%d").date()
+                except (TypeError, ValueError):
+                    continue
+                if latest_dates.get(market) is None or last_date > latest_dates[market]:
+                    latest_dates[market] = last_date
+            return latest_dates
+        except (FileNotFoundError, PermissionError, OSError, TypeError, ValueError, KeyError, json.JSONDecodeError) as e:
+            log.warning(f"[浜氭床椤礭 瑙ｆ瀽缂撳瓨鏈€鏂颁氦鏄撴棩澶辫触: {e}")
+            return {}
+
     def _get_cache_latest_trade_date(self):
+        latest_dates = self._get_cache_latest_trade_dates()
+        return max(latest_dates.values()) if latest_dates else None
         try:
             if not os.path.exists(JSON_CACHE):
                 return None
@@ -329,7 +363,49 @@ class AsianMarketTab(BaseStockTab):
             log.warning(f"[亚洲页] 解析缓存最新交易日失败: {e}")
             return None
 
+    def _get_expected_latest_trade_dates(self):
+        try:
+            from datetime import timedelta
+
+            from core.market_calendar import MarketCalendar
+            markets = set()
+            for row in getattr(self, 'row_data', []) or []:
+                code = str(row.get("\u4ee3\u7801", row.get("code", ""))).strip()
+                if "." in code:
+                    markets.add(MarketCalendar.normalize_market(code.split(".")[-1]))
+            if not markets:
+                markets = {"TW", "HK", "T", "KS"}
+
+            close_cutoff_hhmm = {
+                "TW": 1400,
+                "HK": 1630,
+                "T": 1530,
+                "KS": 1600,
+            }
+
+            latest_expected = {}
+            for mkt in markets:
+                now_mkt = MarketCalendar.now(mkt)
+                today_mkt = now_mkt.date()
+                hhmm = now_mkt.hour * 100 + now_mkt.minute
+                cutoff = close_cutoff_hhmm.get(mkt, 1630)
+
+                if MarketCalendar.is_trade_day(today_mkt, market=mkt) and hhmm < cutoff:
+                    ref_date = today_mkt - timedelta(days=1)
+                else:
+                    ref_date = today_mkt
+
+                trade_date = MarketCalendar.get_latest_trade_date(market=mkt, ref_date=ref_date)
+                if trade_date is not None:
+                    latest_expected[mkt] = trade_date
+            return latest_expected
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
+            log.warning(f"[浜氭床椤礭 璁＄畻鏈熸湜鏈€鏂颁氦鏄撴棩澶辫触: {e}")
+            return {}
+
     def _get_expected_latest_trade_date(self):
+        latest_dates = self._get_expected_latest_trade_dates()
+        return max(latest_dates.values()) if latest_dates else None
         try:
             from datetime import timedelta
 

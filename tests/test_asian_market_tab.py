@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import datetime as dt
 import json
 
 import pytest
@@ -23,6 +24,14 @@ from ui.tabs.asian_market_workers import infer_asian_markets, is_asian_quote_ref
 class _Signal:
     def connect(self, _callback):
         return None
+
+
+class _LabelStub:
+    def __init__(self):
+        self.text = ""
+
+    def setText(self, text):
+        self.text = text
 
 
 class _DummyWorker:
@@ -75,6 +84,66 @@ def test_asian_quote_refresh_uses_tracked_market_union(monkeypatch):
 
     assert is_asian_quote_refresh_time(["0522.HK"]) is True
     assert is_asian_quote_refresh_time(["8035.T"]) is False
+
+
+def test_asian_auto_cache_checks_stale_trade_dates_per_market(monkeypatch):
+    class _DummyTab:
+        def __init__(self):
+            self._is_fetching_cache = False
+            self._pending_auto_cache_sync = False
+            self._cache_sync_wait_deadline = None
+            self.worker = None
+            self.runtime_state = None
+            self.lbl_status = _LabelStub()
+
+        def _get_cache_latest_trade_dates(self):
+            return {
+                "TW": dt.date(2026, 4, 17),
+                "T": dt.date(2026, 4, 17),
+                "KS": dt.date(2026, 4, 20),
+                "HK": dt.date(2026, 4, 20),
+            }
+
+        def _get_expected_latest_trade_dates(self):
+            return {
+                "TW": dt.date(2026, 4, 20),
+                "T": dt.date(2026, 4, 20),
+                "KS": dt.date(2026, 4, 20),
+                "HK": dt.date(2026, 4, 20),
+            }
+
+        def _get_cache_latest_trade_date(self):
+            return dt.date(2026, 4, 20)
+
+        def _get_expected_latest_trade_date(self):
+            return dt.date(2026, 4, 20)
+
+        def _set_runtime_state(self, state):
+            self.runtime_state = state
+
+        def _continue_auto_cache_sync(self):
+            return None
+
+    monkeypatch.setattr(
+        MarketCalendar,
+        "now",
+        classmethod(lambda cls, market="CN": dt.datetime(2026, 4, 20, 17, 0)),
+    )
+    monkeypatch.setattr(
+        MarketCalendar,
+        "from_timestamp",
+        classmethod(lambda cls, ts, market="CN": dt.datetime(2026, 4, 20, 14, 17)),
+    )
+    monkeypatch.setattr(asian_runtime.os.path, "exists", lambda path: True)
+    monkeypatch.setattr(asian_runtime.os.path, "getmtime", lambda path: 1.0)
+    monkeypatch.setattr(asian_runtime.QTimer, "singleShot", staticmethod(lambda *args, **kwargs: None))
+
+    tab = _DummyTab()
+
+    asian_runtime.check_auto_cache(tab)
+
+    assert tab._pending_auto_cache_sync is True
+    assert tab.runtime_state == "paused_for_cache_sync"
 
 
 def test_asian_market_table_scales_columns_to_fill_view(monkeypatch):

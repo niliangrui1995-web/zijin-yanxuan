@@ -75,6 +75,16 @@ def check_auto_cache(tab):
 
     mtime = os.path.getmtime(JSON_CACHE) if os.path.exists(JSON_CACHE) else 0
     cache_dt = MarketCalendar.from_timestamp(mtime, "CN") if mtime else dt.datetime.min
+    cache_latest_trade_dates = (
+        tab._get_cache_latest_trade_dates()
+        if hasattr(tab, "_get_cache_latest_trade_dates")
+        else {}
+    )
+    expected_latest_trade_dates = (
+        tab._get_expected_latest_trade_dates()
+        if hasattr(tab, "_get_expected_latest_trade_dates")
+        else {}
+    )
 
     cache_latest_trade_date = tab._get_cache_latest_trade_date()
     expected_latest_trade_date = tab._get_expected_latest_trade_date()
@@ -83,6 +93,13 @@ def check_auto_cache(tab):
     stale_by_trade_date = expected_latest_trade_date is not None and (
         cache_latest_trade_date is None or cache_latest_trade_date < expected_latest_trade_date
     )
+    stale_markets = []
+    for market, expected_date in expected_latest_trade_dates.items():
+        cache_date = cache_latest_trade_dates.get(market)
+        if expected_date is not None and (cache_date is None or cache_date < expected_date):
+            stale_markets.append((market, cache_date, expected_date))
+    if stale_markets:
+        stale_by_trade_date = True
 
     if not (stale_by_mtime or stale_by_trade_date):
         return

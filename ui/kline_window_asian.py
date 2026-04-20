@@ -255,10 +255,12 @@ def apply_asian_live_quote(df: pd.DataFrame, quote: dict, *, market: str) -> pd.
         merged_df.iloc[-1, merged_df.columns.get_loc("close")] = float(rt_close)
         return merged_df
 
+    allow_append = MarketCalendar.is_quote_refresh_time(market) or quote_trade_date == latest_trade_date
+
     if (
         quote_trade_date > last_date
         and quote_trade_date <= latest_trade_date
-        and MarketCalendar.is_quote_refresh_time(market)
+        and allow_append
     ):
         rt_close_val = float(rt_close) if rt_close else 0.0
         if rt_close_val <= 0:

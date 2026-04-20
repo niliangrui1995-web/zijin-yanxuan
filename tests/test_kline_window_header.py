@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QWidget
 from core.task_manager import task_manager
 from ui import kline_window_qt as kline_module
 from ui.tabs import asian_market_tab as asian_module
+from ui.tabs import asian_market_workers as asian_workers_module
 from vcp.fetchers import asian_kline_fetcher as asian_fetcher_module
 
 
@@ -267,6 +268,92 @@ def test_kline_load_asian_chart_falls_back_to_single_ticket_fetch(monkeypatch, t
         assert float(captured["df"].iloc[-1]["close"]) == 833.0
         assert window.vcp_data["赛道"] == "晶圆制造与材料设备"
         assert window.vcp_data["货币"] == "TWD"
+    finally:
+        if window._rt_timer is not None:
+            window._rt_timer.stop()
+        window.deleteLater()
+
+
+def test_kline_load_asian_chart_fetches_realtime_quote_when_history_is_stale(monkeypatch, tmp_path):
+    cache_file = tmp_path / "asian_klines_latest.json"
+    cache_file.write_text(
+        json.dumps(
+            {
+                "stocks": [
+                    {
+                        "name": "TSMC",
+                        "ticker": "2330.TW",
+                        "market": "台湾",
+                        "track": "晶圆制造与材料设备",
+                        "currency": "TWD",
+                        "klines": [
+                            {"date": "2026-04-16", "open": 2000.0, "high": 2020.0, "low": 1990.0, "close": 2010.0, "volume": 1000},
+                            {"date": "2026-04-17", "open": 2010.0, "high": 2030.0, "low": 2005.0, "close": 2030.0, "volume": 1100},
+                        ],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(kline_module, "QWebEngineView", QWidget)
+    monkeypatch.setattr(kline_module.KLineChartWindow, "_load_and_draw", lambda self: None)
+    monkeypatch.setattr(
+        kline_module.KLineChartWindow,
+        "_check_fav_status",
+        lambda self: setattr(self, "is_fav", False),
+    )
+    monkeypatch.setattr(asian_module, "JSON_CACHE", str(cache_file))
+    monkeypatch.setattr(asian_module, "GLOBAL_ASIAN_RT_CACHE", {})
+    monkeypatch.setattr(asian_workers_module, "is_cf_proxy_enabled", lambda: True)
+    monkeypatch.setattr(
+        asian_workers_module,
+        "fetch_asian_realtime_quote",
+        lambda code, use_cf_proxy=True, yf_session=None: {
+            "date": "2026-04-20",
+            "open": 2030.0,
+            "high": 2055.0,
+            "low": 2025.0,
+            "close": 2025.0,
+            "volume": 3456.0,
+        },
+    )
+    monkeypatch.setattr(
+        kline_module.MarketCalendar,
+        "get_latest_trade_date",
+        classmethod(lambda cls, market="CN", ref_date=None: dt.date(2026, 4, 20)),
+    )
+
+    window = kline_module.KLineChartWindow(
+        None,
+        "2330.TW",
+        "台积电",
+        _LiveProvider(),
+        vcp_data={},
+        code_list=[{"代码": "2330.TW", "名称": "台积电"}],
+        current_idx=0,
+    )
+
+    captured = {}
+
+    def _fake_render(df, loading=False):
+        captured["df"] = df.copy()
+
+    try:
+        monkeypatch.setattr(window, "_render_chart", _fake_render)
+        monkeypatch.setattr(window, "_set_status_message", lambda *args, **kwargs: None)
+
+        window._load_asian_chart()
+
+        assert "df" in captured
+        assert list(captured["df"].index.strftime("%Y-%m-%d")) == [
+            "2026-04-16",
+            "2026-04-17",
+            "2026-04-20",
+        ]
+        assert float(captured["df"].iloc[-1]["close"]) == 2025.0
     finally:
         if window._rt_timer is not None:
             window._rt_timer.stop()
