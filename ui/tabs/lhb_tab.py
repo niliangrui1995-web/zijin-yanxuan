@@ -20,11 +20,12 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from core.event_bus import event_bus
+from core.background_job_runner import background_job_runner as task_manager
+from core.domain_events import domain_events as event_bus
 from core.lhb_pool_manager import POOL_WINDOW, LhbPoolManager
 from core.logger import get_logger
 from core.market_calendar import MarketCalendar
-from core.task_manager import task_manager
+from core.ui_signals import ui_signals
 from ui.components import TableStateWrapper, VCPTableView
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_tab import BaseStockTab
@@ -741,7 +742,7 @@ class LhbTab(BaseStockTab):
         if 0 <= clicked_visual_row < len(code_list):
             current_idx = clicked_visual_row
 
-        event_bus.sig_show_kline_with_list.emit(code, code_list, current_idx)
+        ui_signals.sig_show_kline_with_list.emit(code, code_list, current_idx)
 
     def _show_context_menu(self, pos):
         index = self.table.indexAt(pos)

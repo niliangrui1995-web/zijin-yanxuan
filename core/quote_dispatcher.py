@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from core.event_bus import event_bus
+from core.domain_events import domain_events as event_bus
 from core.global_store import global_store
 from core.logger import get_logger
 from core.quote_snapshot import coerce_number

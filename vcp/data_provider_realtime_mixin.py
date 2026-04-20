@@ -2,8 +2,6 @@ import time
 import urllib.error
 import urllib.request
 
-import pandas as pd
-
 from core.logger import get_logger
 from core.market_calendar import MarketCalendar
 from vcp.data_provider_local import build_offline_quotes
@@ -35,7 +33,7 @@ class TdxDataProviderRealtimeMixin:
         return not self._offline
 
     def set_online_mode(self, online=True):
-        from core.event_bus import event_bus
+        from core.domain_events import domain_events as event_bus
         if online and self._offline:
             self._offline = False
             _log.info("[网络] ✅ 已切换到联网模式（东方财富实时行情）")
@@ -219,66 +217,5 @@ class TdxDataProviderRealtimeMixin:
         )
 
     def build_realtime_df(self, code, quote):
-        """Merge a realtime quote into the latest historical bars and return a DataFrame."""
-        from vcp.engine import VCPEngine
-
-        hist_df = self.get_data(code)
-        if hist_df is None or len(hist_df) < 10: return None
-        if quote.get('close', 0) <= 0 or quote.get('open', 0) <= 0: return None
-
-        slice_df = hist_df.iloc[-260:]
-        combined = slice_df.copy(deep=True)
-        rt_date_str = quote.get('date')
-        if rt_date_str:
-            rt_date = pd.Timestamp(rt_date_str)
-        else:
-            try:
-                trade_dt = MarketCalendar.get_latest_trade_date()
-                if trade_dt:
-                    rt_date = pd.Timestamp(trade_dt)
-                else:
-                    rt_date = pd.Timestamp(MarketCalendar.today("CN"))
-            except (AttributeError, RuntimeError, TypeError, ValueError) as _e:
-                _log.debug(f"[盘中K线] 获取最近交易日失败: {_e}")
-                rt_date = pd.Timestamp(MarketCalendar.today("CN"))
-
-        # 【核心修复】：盘中监控自动进行成交量和成交额“全日预估”
-        # 防止早上9点半的微薄成交量拉低MA25，导致系统误判为“缩量假突破”
-        now = MarketCalendar.now("CN")
-        h, m = now.hour, now.minute
-        ratio = 1.0
-        if MarketCalendar.is_market_active():
-            if 9 <= h <= 11:
-                passed = (m - 30) if h == 9 else (30 + m if h == 10 else (120 if m > 30 else 90 + m))
-            elif 13 <= h < 15:
-                passed = 120 + (h - 13) * 60 + m
-            elif h == 15:
-                passed = 240
-            else: # 中午休市
-                passed = 120
-            passed = max(1, passed)
-            ratio = 240.0 / passed
-
-        scaled_quote = dict(quote)
-        if ratio > 1.05 and 'volume' in scaled_quote:
-            scaled_quote['volume'] = float(scaled_quote['volume'] or 0) * ratio
-        if ratio > 1.05 and 'amount' in scaled_quote:
-            scaled_quote['amount'] = float(scaled_quote['amount'] or 0) * ratio
-
-        if rt_date in slice_df.index:
-            cols = [c for c in ['open', 'high', 'low', 'close', 'volume', 'amount'] if c in combined.columns]
-            today_row = pd.DataFrame(
-                {col: [scaled_quote.get(col, combined.loc[rt_date, col])] for col in cols},
-                index=[rt_date]
-            )
-            combined.update(today_row)
-        else:
-            # 只有当行情数据返回的确实是一个全新的交易日，才允许增加全新行
-            new_row = pd.DataFrame([scaled_quote], index=[rt_date])
-            combined = pd.concat([combined, new_row])
-
-        if hasattr(combined, "attrs"):
-            combined.attrs.pop("vcp_indicators_ready", None)
-            combined.attrs.pop("vcp_core_ready", None)
-            combined.attrs.pop("vcp_chart_ready", None)
-        return VCPEngine.calculate_indicators(combined)
+        """将盘中图表拼接委托给实时行情服务。"""
+        return self._get_realtime_quote_provider().build_realtime_df(code, quote)

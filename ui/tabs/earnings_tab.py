@@ -5,8 +5,9 @@ import pandas as pd
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot
 from PyQt6.QtWidgets import QDialog, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
-from core.event_bus import event_bus
+from core.domain_events import domain_events as event_bus
 from core.logger import get_logger
+from core.ui_signals import ui_signals
 from earnings.scheduler import EarningsScheduler
 from ui.components import MultiSelectFilterButton, TableStateWrapper, VCPTableView, format_multi_select_summary
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
@@ -442,7 +443,7 @@ class EarningsTab(BaseStockTab):
         if 0 <= clicked_visual_row < len(code_list):
             current_idx = clicked_visual_row
 
-        event_bus.sig_show_kline_with_list.emit(code, code_list, current_idx)
+        ui_signals.sig_show_kline_with_list.emit(code, code_list, current_idx)
 
     def closeEvent(self, event):
         self.scheduler.stop_patrol()

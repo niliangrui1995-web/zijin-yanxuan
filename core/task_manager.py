@@ -13,26 +13,14 @@ import uuid
 
 from PyQt6.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal, pyqtSlot
 
+from core.task_errors import UserFacingTaskError
+
 
 class _WorkerSignals(QObject):
     """Worker 内部信号（跨线程回传结果）"""
     finished = pyqtSignal(object)   # 成功: 传回结果
     error = pyqtSignal(str)         # 失败: 传回错误信息
     progress = pyqtSignal(int, str) # 进度: pct, msg
-
-
-class UserFacingTaskError(Exception):
-    """预期内、可恢复的后台任务失败。
-
-    用途：
-    - 日志层按 warning 输出，不打印整段 Traceback 污染终端
-    - UI 层收到更友好的 user_message
-    """
-
-    def __init__(self, user_message: str, log_message: str | None = None):
-        super().__init__(user_message)
-        self.user_message = str(user_message or "").strip()
-        self.log_message = str(log_message or self.user_message).strip()
 
 
 class BackgroundWorker(QRunnable):

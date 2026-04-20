@@ -105,7 +105,7 @@ class EventBusHandler(logging.Handler):
             level = record.levelname.lower()
             if level == "warning":
                 level = "warn"
-            from core.event_bus import event_bus
+            from core.domain_events import domain_events as event_bus
             event_bus.sig_system_log.emit(level, msg + "\n")
         except (ImportError, RuntimeError, AttributeError):
             self.handleError(record)

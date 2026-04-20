@@ -7,6 +7,8 @@ tests/test_app_config.py — AppConfig 单例行为验证
     2. 全局导出的 app_config 与手动 AppConfig() 是同一个实例
     3. get/set 读写正确性
 """
+from PyQt6.QtCore import QSettings
+
 from core.app_config import AppConfig, app_config
 
 
@@ -42,3 +44,31 @@ class TestAppConfigSingleton:
         """读取不存在的 key 时，应返回 default 值"""
         result = app_config.get("_test_/nonexistent_key_xyz", default="fallback")
         assert result == "fallback", "不存在的 key 应返回 default 值"
+
+    def test_section_roundtrip(self):
+        """section 视图应复用统一入口而不是创建新 scope"""
+        section = app_config.section("_test_/section_roundtrip")
+        section.set("value", "ok")
+
+        try:
+            assert section.value("value", "", type=str) == "ok"
+            assert app_config.get("_test_/section_roundtrip/value", "", str) == "ok"
+        finally:
+            app_config.remove("_test_/section_roundtrip")
+
+    def test_section_migrates_legacy_scope(self):
+        """读取旧 scope 时应惰性迁移到统一 Main 配置下"""
+        legacy_scope = "LegacyConfigSectionTest"
+        legacy = QSettings("VCPHunter", legacy_scope)
+        legacy.setValue("legacy_key", 7)
+        legacy.sync()
+
+        section = app_config.section("_test_/legacy_section", legacy_scope=legacy_scope)
+
+        try:
+            assert section.value("legacy_key", 0, type=int) == 7
+            assert app_config.get("_test_/legacy_section/legacy_key", 0, int) == 7
+        finally:
+            app_config.remove("_test_/legacy_section")
+            legacy.remove("legacy_key")
+            legacy.sync()

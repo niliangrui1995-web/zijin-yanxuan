@@ -12,7 +12,7 @@ from core.logger import get_logger
 from core.market_calendar import MarketCalendar
 from core.quote_dispatcher import publish_rt_quotes
 from core.quote_snapshot import enrich_quotes_with_finance
-from core.task_manager import task_manager
+from core.background_job_runner import background_job_runner as task_manager
 
 log = get_logger(__name__)
 _A_SHARE_CODE_RE = re.compile(r"^\d{6}$")

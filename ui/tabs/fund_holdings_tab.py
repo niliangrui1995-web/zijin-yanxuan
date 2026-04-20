@@ -6,7 +6,7 @@ from __future__ import annotations
 import os
 from contextlib import suppress
 
-from PyQt6.QtCore import QSettings, Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QHeaderView,
@@ -17,7 +17,9 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from core.event_bus import event_bus
+from core.app_config import app_config
+from core.background_job_runner import background_job_runner as task_manager
+from core.domain_events import domain_events as event_bus
 from core.fund_holdings_compare import (
     QFII_CAPITAL_ATTRIBUTE_CLIENT,
     QFII_CAPITAL_ATTRIBUTE_SELF_OWNED,
@@ -27,7 +29,7 @@ from core.fund_holdings_compare import (
 )
 from core.fund_holdings_store import fund_holdings_store
 from core.fund_holdings_sync import fund_holdings_sync_service
-from core.task_manager import task_manager
+from core.ui_signals import ui_signals
 from ui.components import (
     MultiSelectFilterButton,
     SearchFilter,
@@ -240,7 +242,10 @@ class FundHoldingsTab(BaseStockTab):
 
     @staticmethod
     def _create_settings():
-        return QSettings("VCPHunter", "FundHoldingsTab")
+        return app_config.section(
+            "tabs/FundHoldingsTab",
+            legacy_scope="FundHoldingsTab",
+        )
 
     def _view_state_key(self, name: str) -> str:
         return f"{self._VIEW_STATE_PREFIX}/{name}"
@@ -1275,9 +1280,9 @@ class FundHoldingsTab(BaseStockTab):
                     current_idx = len(code_list) - 1
 
             if code_list:
-                event_bus.sig_show_kline_with_list.emit(code, code_list, current_idx)
+                ui_signals.sig_show_kline_with_list.emit(code, code_list, current_idx)
             else:
-                event_bus.sig_show_kline.emit(code)
+                ui_signals.sig_show_kline.emit(code)
 
     def _show_context_menu(self, pos):
         proxy_index = self.table.indexAt(pos)

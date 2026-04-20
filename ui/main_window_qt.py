@@ -1,17 +1,18 @@
 import os
 
-from PyQt6.QtCore import QEvent, QSettings, Qt, QTimer, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
 from PyQt6.QtWidgets import QFrame, QLineEdit, QMainWindow, QToolTip, QVBoxLayout, QWidget
 
 from core.app_config import app_config
 from core.cache_manager import CacheManager
-from core.event_bus import event_bus
+from core.background_job_runner import background_job_runner as task_manager
+from core.domain_events import domain_events as event_bus
 from core.logger import get_logger
-from core.task_manager import task_manager
+from core.startup_orchestrator import StartupOrchestrator
+from core.ui_signals import ui_signals
 from ui.components.command_palette import CommandPaletteDialog
 from ui.components.kline_window_manager import kline_manager
-from ui.components.message_box import show_themed_question
 from ui.components.main_window_shell import (
     DraggableTitleBar,
     MainWindowStatusBar,
@@ -19,8 +20,8 @@ from ui.components.main_window_shell import (
     setup_custom_titlebar,
     setup_system_menu,
 )
+from ui.components.message_box import show_themed_question
 from ui.main_window_tables import install_table_copy_hooks
-from ui.startup_loader import StartupLoader
 from ui.workspaces import ClassicWorkspace
 from vcp.constants import APP_VERSION, RPS_CACHE_FILE
 
@@ -71,13 +72,13 @@ class MainWindowQT(QMainWindow):
         # 绑定系统级全局网络状态变更，确保所有角色的状态与UI强同步
         event_bus.sig_network_status_changed.connect(self._update_network_ui)
 
-        self.startup_loader = StartupLoader(self)
+        self.startup_orchestrator = StartupOrchestrator(self)
         self.cache_manager = CacheManager()
         self._f5_cancelled = False
         self._titlebar_sync_state = "idle"
         self._last_sync_freshness = ""
         self._command_palette = None
-        self._settings = QSettings("VCPHunter", "MainWindowQT")
+        self._settings = app_config.section("window", legacy_scope="MainWindowQT")
         self._workspace = None
         self.tabs = None
 
@@ -138,7 +139,7 @@ class MainWindowQT(QMainWindow):
         self._restore_ui_state()
 
         self._splash_update(90, "正在加载数据...")
-        self.startup_loader.schedule_startup()
+        self.startup_orchestrator.schedule_startup()
 
         self._init_central_broadcaster()
         self._update_last_f5_time()
@@ -491,9 +492,9 @@ class MainWindowQT(QMainWindow):
         self._tabs_wrapper_layout.setSpacing(0)
 
         event_bus.sig_rt_quotes_refreshed.connect(self._on_rt_quotes_refreshed)
-        event_bus.sig_task_progress.connect(self._on_task_progress)
-        event_bus.sig_show_kline.connect(self._on_show_kline)
-        event_bus.sig_show_kline_with_list.connect(self._on_show_kline_with_list)
+        ui_signals.sig_task_progress.connect(self._on_task_progress)
+        ui_signals.sig_show_kline.connect(self._on_show_kline)
+        ui_signals.sig_show_kline_with_list.connect(self._on_show_kline_with_list)
 
         self._mount_workspace()
         self._init_gear_menu()
@@ -587,7 +588,7 @@ class MainWindowQT(QMainWindow):
             self.resize(1024, 768)
 
     # F5预计算 / 缓存加载 / 智能启动 / RPS缓存 / RT缓存
-    # 已迁移至 core/rps_precomputer.py + ui/startup_loader.py
+    # 已迁移至 core/rps_precomputer.py + core/startup_orchestrator.py
 
     def _update_last_f5_time(self):
         import datetime

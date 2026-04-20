@@ -5,7 +5,13 @@ from PyQt6.QtCore import QObject
 from PyQt6.QtTest import QSignalSpy
 
 from core.event_bus import event_bus
-from ui.startup_loader import ASIAN_DATA_SYNC_TIMEOUT_SEC, StartupLoader
+from core.startup_orchestrator import (
+    ASIAN_DATA_SYNC_TASK_ID,
+    ASIAN_DATA_SYNC_TIMEOUT_SEC,
+    DEFERRED_LOAD_TASK_ID,
+    SMART_STARTUP_TASK_ID,
+    StartupOrchestrator,
+)
 
 
 class _DummyLabel:
@@ -51,13 +57,23 @@ class _DummyMainWindow(QObject):
         callback()
 
 
-def test_startup_loader_asian_sync_uses_subprocess_timeout(monkeypatch):
-    loader = StartupLoader(_DummyMainWindow())
-    run_calls = []
+class _InlineJobRunner:
+    def __init__(self):
+        self.abandoned = []
 
-    def run_now(fn, *args, **kwargs):
+    def run(self, task_id, fn, *args, **kwargs):
         fn()
-        return kwargs.get("task_id", "")
+        return task_id
+
+    def abandon(self, task_id):
+        self.abandoned.append(task_id)
+        return True
+
+
+def test_startup_orchestrator_asian_sync_uses_subprocess_timeout(monkeypatch):
+    runner = _InlineJobRunner()
+    orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=runner)
+    run_calls = []
 
     def fake_exists(path):
         if path.endswith("asian_klines_latest.json"):
@@ -70,11 +86,10 @@ def test_startup_loader_asian_sync_uses_subprocess_timeout(monkeypatch):
         run_calls.append({"args": args, "kwargs": kwargs})
         return types.SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr("ui.startup_loader.task_manager.run_in_background", run_now)
-    monkeypatch.setattr("ui.startup_loader.os.path.exists", fake_exists)
-    monkeypatch.setattr("ui.startup_loader.subprocess.run", fake_run)
+    monkeypatch.setattr("core.startup_orchestrator.os.path.exists", fake_exists)
+    monkeypatch.setattr("core.startup_orchestrator.subprocess.run", fake_run)
 
-    loader.deferred_data_load()
+    orchestrator.deferred_data_load()
 
     assert run_calls, "expected asian sync subprocess to run"
     cmd = run_calls[0]["args"][0]
@@ -86,27 +101,22 @@ def test_startup_loader_asian_sync_uses_subprocess_timeout(monkeypatch):
     assert run_calls[0]["kwargs"]["text"] is True
 
 
-def test_startup_loader_deferred_load_emits_cache_bootstrap_ready(monkeypatch):
-    loader = StartupLoader(_DummyMainWindow())
+def test_startup_orchestrator_deferred_load_emits_cache_bootstrap_ready(monkeypatch):
+    orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
     spy = QSignalSpy(event_bus.sig_cache_bootstrap_ready)
-
-    def run_now(fn, *args, **kwargs):
-        fn()
-        return kwargs.get("task_id", "")
 
     def fake_exists(path):
         return not path.endswith("asian_kline_fetcher.py")
 
-    monkeypatch.setattr("ui.startup_loader.task_manager.run_in_background", run_now)
-    monkeypatch.setattr("ui.startup_loader.os.path.exists", fake_exists)
+    monkeypatch.setattr("core.startup_orchestrator.os.path.exists", fake_exists)
 
-    loader.deferred_data_load()
+    orchestrator.deferred_data_load()
 
     assert len(spy) == 1
 
 
-def test_startup_loader_asian_sync_logs_succinct_failure_message(monkeypatch):
-    loader = StartupLoader(_DummyMainWindow())
+def test_startup_orchestrator_asian_sync_logs_succinct_failure_message(monkeypatch):
+    orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
     records = {"warning": [], "debug": []}
 
     class _FakeLog:
@@ -122,10 +132,6 @@ def test_startup_loader_asian_sync_logs_succinct_failure_message(monkeypatch):
         def error(self, _message):
             return None
 
-    def run_now(fn, *args, **kwargs):
-        fn()
-        return kwargs.get("task_id", "")
-
     def fake_exists(path):
         if path.endswith("asian_klines_latest.json"):
             return False
@@ -140,12 +146,11 @@ def test_startup_loader_asian_sync_logs_succinct_failure_message(monkeypatch):
             stderr="连接雅虎接口失败\nHTTP 429 Too Many Requests",
         )
 
-    monkeypatch.setattr("ui.startup_loader.task_manager.run_in_background", run_now)
-    monkeypatch.setattr("ui.startup_loader.os.path.exists", fake_exists)
-    monkeypatch.setattr("ui.startup_loader.subprocess.run", fake_run)
-    monkeypatch.setattr("ui.startup_loader.log", _FakeLog())
+    monkeypatch.setattr("core.startup_orchestrator.os.path.exists", fake_exists)
+    monkeypatch.setattr("core.startup_orchestrator.subprocess.run", fake_run)
+    monkeypatch.setattr("core.startup_orchestrator.log", _FakeLog())
 
-    loader.deferred_data_load()
+    orchestrator.deferred_data_load()
 
     assert records["warning"] == [
         "[启动] 亚洲市场静默同步失败，已跳过本次更新（退出码 1：连接雅虎接口失败 | HTTP 429 Too Many Requests）"
@@ -155,8 +160,8 @@ def test_startup_loader_asian_sync_logs_succinct_failure_message(monkeypatch):
     ]
 
 
-def test_startup_loader_offline_network_log_is_visible_info(monkeypatch):
-    loader = StartupLoader(_DummyMainWindow())
+def test_startup_orchestrator_offline_network_log_is_visible_info(monkeypatch):
+    orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
     records = {"info": [], "debug": [], "error": []}
 
     class _FakeLog:
@@ -169,29 +174,23 @@ def test_startup_loader_offline_network_log_is_visible_info(monkeypatch):
         def error(self, message):
             records["error"].append(message)
 
-    def run_now(fn, *args, **kwargs):
-        fn()
-        return kwargs.get("task_id", "")
+    monkeypatch.setattr("core.startup_orchestrator.log", _FakeLog())
 
-    monkeypatch.setattr("ui.startup_loader.task_manager.run_in_background", run_now)
-    monkeypatch.setattr("ui.startup_loader.log", _FakeLog())
-
-    loader.smart_startup()
+    orchestrator.smart_startup()
 
     assert records["info"] == ["[智能启动] 网络不可用，保持离线模式"]
     assert records["error"] == []
     assert records["debug"] == []
 
 
-def test_startup_loader_shutdown_abandons_background_tasks(monkeypatch):
-    loader = StartupLoader(_DummyMainWindow())
-    abandoned = []
+def test_startup_orchestrator_shutdown_abandons_background_tasks():
+    runner = _InlineJobRunner()
+    orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=runner)
 
-    monkeypatch.setattr(
-        "ui.startup_loader.task_manager.abandon_task",
-        lambda task_id: abandoned.append(task_id) or True,
-    )
+    orchestrator.shutdown()
 
-    loader.shutdown()
-
-    assert abandoned == ["deferred_load", "asian_data_sync_bg", "smart_startup"]
+    assert runner.abandoned == [
+        DEFERRED_LOAD_TASK_ID,
+        ASIAN_DATA_SYNC_TASK_ID,
+        SMART_STARTUP_TASK_ID,
+    ]

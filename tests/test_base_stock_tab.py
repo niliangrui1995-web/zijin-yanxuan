@@ -2,6 +2,7 @@
 from PyQt6.QtTest import QSignalSpy
 from PyQt6.QtWidgets import QApplication, QHBoxLayout, QLabel, QLineEdit, QToolButton, QWidget
 
+import ui.tabs.base_stock_tab as base_stock_tab_module
 from core.event_bus import event_bus
 from core.quote_dispatcher import publish_rt_quotes
 from ui.tabs.base_stock_tab import BaseStockTab
@@ -45,6 +46,60 @@ def test_base_stock_status_summary_skips_empty_segments():
         BaseStockTab.format_status_summary("状态 已启动", "", None, "下一步 拉取报价")
         == "状态 已启动 | 下一步 拉取报价"
     )
+
+
+def test_base_stock_external_quote_jumps_delegate_to_terminal_launcher(monkeypatch):
+    tab = BaseStockTab()
+    calls = []
+
+    monkeypatch.setattr(tab._quote_terminal_launcher, "launch_tdx", lambda code: calls.append(("tdx", code)))
+    monkeypatch.setattr(
+        tab._quote_terminal_launcher,
+        "launch_eastmoney",
+        lambda code: calls.append(("eastmoney", code)),
+    )
+
+    try:
+        tab.launch_tdx("600519")
+        tab.launch_eastmoney("000001")
+        assert calls == [("tdx", "600519"), ("eastmoney", "000001")]
+    finally:
+        tab.deleteLater()
+
+
+def test_base_stock_header_persistence_delegates_to_view_state_binding(monkeypatch):
+    tab = BaseStockTab()
+    table = object()
+    settings = object()
+    captured = {}
+
+    monkeypatch.setattr(tab, "_settings_section", lambda: settings)
+    monkeypatch.setattr(
+        base_stock_tab_module,
+        "bind_table_view_state",
+        lambda owner, bound_table, bound_settings, savers, settings_key="header_state": captured.update(
+            {
+                "owner": owner,
+                "table": bound_table,
+                "settings": bound_settings,
+                "savers": savers,
+                "settings_key": settings_key,
+            }
+        )
+        or True,
+    )
+
+    try:
+        assert tab.bind_header_persistence(table, "header_state_watchlist_v8") is True
+        assert captured == {
+            "owner": tab,
+            "table": table,
+            "settings": settings,
+            "savers": tab._header_state_savers,
+            "settings_key": "header_state_watchlist_v8",
+        }
+    finally:
+        tab.deleteLater()
 
 
 def test_base_stock_tab_defers_quote_refresh_until_visible(monkeypatch):

@@ -6,8 +6,9 @@ import os
 from PyQt6.QtCore import QSettings, Qt, QTimer
 from PyQt6.QtWidgets import QCheckBox, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
-from core.event_bus import event_bus
+from core.domain_events import domain_events as event_bus
 from core.logger import get_logger
+from core.ui_signals import ui_signals
 from ui.components import TableStateWrapper, VCPTableView
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.asian_market_meta import (
@@ -930,7 +931,7 @@ class AsianMarketTab(BaseStockTab):
             current_idx = clicked_visual_row
 
         # 触发全局画图事件
-        event_bus.sig_show_kline_with_list.emit(code, code_list, current_idx)
+        ui_signals.sig_show_kline_with_list.emit(code, code_list, current_idx)
 
     def closeEvent(self, event):
         if hasattr(self, "auto_cache_timer") and self.auto_cache_timer is not None:

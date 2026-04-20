@@ -15,10 +15,11 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from core.event_bus import event_bus
+from core.background_job_runner import background_job_runner as task_manager
+from core.domain_events import domain_events as event_bus
 from core.logger import get_logger
-from core.task_manager import task_manager
 from core.throttler import SignalThrottler
+from core.ui_signals import ui_signals
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.toast_widget import show_toast
 from ui.models.table_models import RtSortFilterProxyModel, RtTableModel, StockItemDelegate
@@ -229,7 +230,7 @@ class RtMonitorTab(BaseStockTab):
             self.lbl_rt_info.setText(info_text)
 
         if emit_progress:
-            event_bus.sig_task_progress.emit("rt_monitor", 1 if running else 0, "start" if running else "stop")
+            ui_signals.sig_task_progress.emit("rt_monitor", 1 if running else 0, "start" if running else "stop")
 
     def _set_rt_button_stopping(self, info_text: str | None = None):
         self.btn_rt_start.setText("正在停止...")
@@ -614,9 +615,9 @@ class RtMonitorTab(BaseStockTab):
                 current_idx = len(code_list) - 1
 
         if code_list and current_idx != -1:
-            event_bus.sig_show_kline_with_list.emit(current_code, code_list, current_idx)
+            ui_signals.sig_show_kline_with_list.emit(current_code, code_list, current_idx)
         else:
-            event_bus.sig_show_kline.emit(current_code)
+            ui_signals.sig_show_kline.emit(current_code)
 
     def _show_context_menu(self, pos):
         """盘中监控表格右键菜单 — 委托给统一菜单工厂 (#2)"""

@@ -15,9 +15,10 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from core.event_bus import event_bus
+from core.domain_events import domain_events as event_bus
 from core.logger import get_logger
 from core.market_calendar import MarketCalendar
+from core.ui_signals import ui_signals
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.scan_dialogs import VCPScanRangeDialog, VCPScanSettingsDialog
 from ui.components.toast_widget import show_toast
@@ -488,9 +489,9 @@ class ScanTab(BaseStockTab):
 
         try:
             current_idx = visual_rows.index(row)
-            event_bus.sig_show_kline_with_list.emit(current_code, code_list, current_idx)
+            ui_signals.sig_show_kline_with_list.emit(current_code, code_list, current_idx)
         except ValueError:
-            event_bus.sig_show_kline.emit(current_code)
+            ui_signals.sig_show_kline.emit(current_code)
 
     def _on_search_text_changed(self, text):
         self.proxy_model.setFilterText(text)
@@ -544,7 +545,7 @@ class ScanTab(BaseStockTab):
         self._last_incremental_stats = None
         self._scan_cancel_requested = False
         self._set_scan_action_state("running")
-        event_bus.sig_task_progress.emit("scan", 1, "准备新增补扫..." if merge_mode else "准备扫描...")
+        ui_signals.sig_task_progress.emit("scan", 1, "准备新增补扫..." if merge_mode else "准备扫描...")
         self._pending_scan_results = None
 
         params = VCPParams(
@@ -558,7 +559,7 @@ class ScanTab(BaseStockTab):
         self._save_scan_params()
 
         self.worker = ScanWorker(self.data_provider, self.engine, sd, ed, params)
-        self.worker.progress.connect(lambda p, m: event_bus.sig_task_progress.emit("scan", p, m))
+        self.worker.progress.connect(lambda p, m: ui_signals.sig_task_progress.emit("scan", p, m))
         self.worker.result_ready.connect(self._on_scan_results)
         self.worker.finished_scan.connect(self._on_scan_finished)
         self.worker.finished.connect(self._on_worker_thread_finished)
@@ -576,7 +577,7 @@ class ScanTab(BaseStockTab):
         if success:
             self._save_scan_cache(self._pending_scan_results or [])
         final_msg = self._build_incremental_finish_message() if success and self._scan_mode == "incremental" else msg
-        event_bus.sig_task_progress.emit("scan", 100 if success else 0, final_msg)
+        ui_signals.sig_task_progress.emit("scan", 100 if success else 0, final_msg)
 
     def _on_worker_thread_finished(self):
         if self.worker:
@@ -759,7 +760,7 @@ class ScanTab(BaseStockTab):
                 "info",
                 f"[扫描缓存] 已加载 {len(results)} 条记录 (保存于 {saved_at[:16]}){params_hint}"
             )
-            event_bus.sig_task_progress.emit("scan", 100, f"已加载 {len(results)} 条扫描缓存")
+            ui_signals.sig_task_progress.emit("scan", 100, f"已加载 {len(results)} 条扫描缓存")
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError, sqlite3.Error, json.JSONDecodeError) as e:
             event_bus.sig_system_log.emit("error", f"[扫描缓存] 加载失败: {e}")
 

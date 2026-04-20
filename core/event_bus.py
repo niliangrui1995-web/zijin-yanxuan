@@ -1,89 +1,37 @@
-# core/event_bus.py
-# ================================================================================
-# 紫金研选 全局核心事件总线 (Event Bus) - 单例模式
-#
-# v4 重构: 收敛为专用高频信号，避免通用 event_type 路由带来的维护成本。
-# ================================================================================
-from PyQt6.QtCore import QObject, pyqtSignal
+# -*- coding: utf-8 -*-
+"""Legacy compatibility facade for the split event buses.
+
+New code should import:
+- ``core.domain_events.domain_events`` for application/domain events
+- ``core.ui_signals.ui_signals`` for UI navigation/progress signals
+"""
+
+from core.domain_events import domain_events
+from core.ui_signals import ui_signals
 
 
-class GlobalEventBus(QObject):
-    """
-    紫金研选全局事件总线 — 解耦 UI 组件与数据层的唯一通道
+class GlobalEventBus:
+    """兼容旧代码的聚合视图。"""
 
-    统一承载应用级、UI级与高频数据广播信号
-    """
-    _instance = None
+    def __init__(self):
+        self.sig_system_log = domain_events.sig_system_log
+        self.sig_network_status_changed = domain_events.sig_network_status_changed
+        self.sig_app_closing = domain_events.sig_app_closing
+        self.sig_rt_quotes = domain_events.sig_rt_quotes
+        self.sig_rt_quotes_refreshed = domain_events.sig_rt_quotes_refreshed
+        self.sig_vcp_watchlist_ready = domain_events.sig_vcp_watchlist_ready
+        self.sig_cache_bootstrap_ready = domain_events.sig_cache_bootstrap_ready
+        self.sig_cache_reload_completed = domain_events.sig_cache_reload_completed
+        self.sig_earnings_updated = domain_events.sig_earnings_updated
+        self.sig_asian_klines_ready = domain_events.sig_asian_klines_ready
+        self.sig_na_daily_updated = domain_events.sig_na_daily_updated
+        self.sig_block_trade_updated = domain_events.sig_block_trade_updated
+        self.sig_lhb_pool_updated = domain_events.sig_lhb_pool_updated
+        self.sig_watchlist_changed = domain_events.sig_watchlist_changed
 
-    # ====== [系统级信号] ======
-
-    # 日志事件 — level: 'info'|'warn'|'error', msg: 消息
-    sig_system_log = pyqtSignal(str, str)
-
-    # 网络状态变更 — is_online: bool, detail: str
-    sig_network_status_changed = pyqtSignal(bool, str)
-
-    # 应用关闭通知（各组件保存缓存）
-    sig_app_closing = pyqtSignal()
-
-    # ==== [v4 专属：高速点对点数据通讯专线] ====
-    # 代替老旧的巨石信号 sig_data_updated (消除 if-else 地狱)
-
-    # 1. 实时行情广播 — payload: dict { code: {close, pct, ...} }
-    # 接收方：scan_tab, rt_monitor_tab, watchlist_tab, main_window 等
-    sig_rt_quotes = pyqtSignal(object)
-
-    # 2. 盘中监控刷新完成 — payload: list[dict] (含 VCP 评分完整结果)
-    # 接收方：main_window 等
-    sig_rt_quotes_refreshed = pyqtSignal(object)
-
-    # 3. 关注池 VCP 数据就绪 — payload: list[dict]
-    sig_vcp_watchlist_ready = pyqtSignal(object)
-
-    # 4. 本地缓存事件
-    # bootstrap: 启动期离线缓存首次就绪
-    # reload: F5 或显式缓存重建完成
-    sig_cache_bootstrap_ready = pyqtSignal()
-    sig_cache_reload_completed = pyqtSignal()
-
-    # 5. 业绩异动数据更新完成
-    # 接收方：watchlist_tab 等
-    sig_earnings_updated = pyqtSignal()
-
-    # 6. 亚洲 K 线离线缓存就绪
-    # 接收方：asian_market_tab
-    sig_asian_klines_ready = pyqtSignal()
-
-    # 7. 美股日报最近5份内容更新完成
-    # 接收方：watchlist_tab
-    sig_na_daily_updated = pyqtSignal()
-
-    # 8. 大宗交易数据更新完成
-    # 接收方：watchlist_tab
-    sig_block_trade_updated = pyqtSignal()
-    sig_lhb_pool_updated = pyqtSignal()
-
-    # ====== [任务控制信号] ======
-
-    # 后台任务进度 — task_id (str|TaskEvent), progress_pct, status_msg
-    sig_task_progress = pyqtSignal(str, int, str)
-
-    # ====== [用户操作信号] ======
-
-    # K线图请求 — 仅 code
-    sig_show_kline = pyqtSignal(str)
-
-    # K线图请求带列表 — code, code_list, current_idx
-    sig_show_kline_with_list = pyqtSignal(str, object, int)
-
-    # 关注池变更 — action: 'add'/'remove', code
-    sig_watchlist_changed = pyqtSignal(str, str)
-
-    def __new__(cls, *args, **kwargs):
-        if not cls._instance:
-            cls._instance = super(GlobalEventBus, cls).__new__(cls, *args, **kwargs)
-        return cls._instance
+        self.sig_task_progress = ui_signals.sig_task_progress
+        self.sig_show_kline = ui_signals.sig_show_kline
+        self.sig_show_kline_with_list = ui_signals.sig_show_kline_with_list
 
 
-# 全局单例
 event_bus = GlobalEventBus()

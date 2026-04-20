@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.event_bus import event_bus
+from core.domain_events import domain_events as event_bus
 from ui.components import MultiSelectFilterButton, format_multi_select_summary
 from ui.theme_tokens import build_ui_tokens
 

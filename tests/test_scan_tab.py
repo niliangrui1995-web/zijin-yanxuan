@@ -115,23 +115,23 @@ def test_scan_action_state_switches_the_correct_button_for_incremental_mode(monk
         tab._scan_target_date = "2026-04-17"
         tab._set_scan_action_state("running")
 
-        assert tab.btn_scan_action.text() == "区间扫描"
+        assert tab.btn_scan_action.text() == "开始扫描"
         assert tab.btn_scan_action.isEnabled() is False
-        assert tab.btn_scan_increment.text() == "终止新增扫描"
+        assert tab.btn_scan_increment.text() == "停止补扫"
         assert tab.btn_scan_increment.isEnabled() is True
 
         tab._set_scan_action_state("stopping")
 
-        assert tab.btn_scan_action.text() == "区间扫描"
+        assert tab.btn_scan_action.text() == "开始扫描"
         assert tab.btn_scan_action.isEnabled() is False
-        assert tab.btn_scan_increment.text() == "正在终止新增..."
+        assert tab.btn_scan_increment.text() == "正在停止补扫..."
         assert tab.btn_scan_increment.isEnabled() is False
 
         tab._set_scan_action_state("idle")
 
-        assert tab.btn_scan_action.text() == "区间扫描"
+        assert tab.btn_scan_action.text() == "开始扫描"
         assert tab.btn_scan_action.isEnabled() is True
-        assert tab.btn_scan_increment.text() == "新增扫描"
+        assert tab.btn_scan_increment.text() == "新增补扫"
         assert tab.btn_scan_increment.isEnabled() is True
     finally:
         tab.deleteLater()

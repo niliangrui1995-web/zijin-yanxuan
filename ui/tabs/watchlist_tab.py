@@ -7,11 +7,12 @@ from datetime import datetime
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QAbstractItemView, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
-from core.event_bus import event_bus
+from core.domain_events import domain_events as event_bus
 from core.exceptions import CacheIOError, DataFormatError
 from core.json_cache import load_json_file
 from core.logger import get_logger
-from core.task_manager import task_manager
+from core.background_job_runner import background_job_runner as task_manager
+from core.ui_signals import ui_signals
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.toast_widget import show_toast
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
@@ -346,7 +347,7 @@ class WatchlistTab(BaseStockTab):
             if 0 <= clicked_visual_row < len(code_list):
                 current_idx = clicked_visual_row
 
-            event_bus.sig_show_kline_with_list.emit(code, code_list, current_idx)
+            ui_signals.sig_show_kline_with_list.emit(code, code_list, current_idx)
 
     def _show_context_menu(self, pos):
         """关注池右键菜单 — 委托给统一菜单工厂 (#2)"""

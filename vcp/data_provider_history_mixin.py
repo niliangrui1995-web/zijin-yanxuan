@@ -434,64 +434,8 @@ class TdxDataProviderHistoryMixin:
         return None
 
     def get_data_fresh_for_chart(self, code, force_sync=False):
-        """Return latest daily bars by combining local cache and online incremental data.
-
-        force_sync=True 时跳过盘前/盘后的缓存短路判断，强制尝试联网补全。
-        """
-        from vcp.engine import VCPEngine
-
-        existing_df = self.get_data(code)
-        if not force_sync and self._is_before_930_today():
-            return existing_df
-        if (
-            not force_sync
-            and self._is_after_1500_today()
-            and existing_df is not None
-            and len(existing_df) > 0
-        ):
-            try:
-                if pd.Timestamp(existing_df.index.max()).date() >= MarketCalendar.today("CN"):
-                    return existing_df
-            except (TypeError, ValueError) as _e:
-                _log.debug(f"[K线 {code}] 缓存日期检查异常: {_e}")
-        if not self.server_pool:
-            return existing_df
-        api = self._get_thread_api()
-        try:
-            if existing_df is not None and len(existing_df) >= 250:
-                new = self._fetch_standard_data(api, code, count=INCREMENTAL_BARS)
-                if new is not None and len(new) > 0:
-                    import polars as pl
-                    if isinstance(new, pl.DataFrame):
-                        new = new.to_pandas()
-                        if 'datetime' in new.columns:
-                            new = new.set_index('datetime')
-
-                    last_existing = existing_df.index.max()
-                    first_new = new.index.min()
-                    gap_days = (first_new - last_existing).days
-                    if gap_days > 10:
-                        full_df = self._fetch_standard_data(api, code, count=MAX_HISTORY_BARS)
-                        if full_df is not None and len(full_df) >= 250:
-                            full_df = VCPEngine.calculate_indicators(full_df)
-                            with self.cache_lock:
-                                self.cache_data[code] = full_df
-                            return full_df
-                    combined = pd.concat([existing_df, new])
-                    merged = combined[~combined.index.duplicated(keep='last')].iloc[-MAX_HISTORY_BARS:]
-                    merged = VCPEngine.calculate_indicators(merged)
-                    with self.cache_lock:
-                        self.cache_data[code] = merged
-                    return merged
-            else:
-                full_df = self._fetch_standard_data(api, code, count=MAX_HISTORY_BARS)
-                if full_df is not None and len(full_df) >= 250:
-                    full_df = VCPEngine.calculate_indicators(full_df)
-                    with self.cache_lock:
-                        self.cache_data[code] = full_df
-                    return full_df
-        except (TimeoutError, OSError, ConnectionError) as e:
-            _log.error(f"[K线 {code}] 联网补全失败(网络层)，继续使用缓存: {e}")
-        except (ValueError, TypeError, KeyError, ArithmeticError) as e:
-            _log.error(f"[K线 {code}] 联网补全失败(数据层)，继续使用缓存: {e}")
-        return existing_df
+        """按需委托给本地历史服务做图表补全。"""
+        return self._get_local_history_provider().get_data_fresh_for_chart(
+            code,
+            force_sync=force_sync,
+        )

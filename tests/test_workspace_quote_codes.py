@@ -3,8 +3,8 @@ from types import SimpleNamespace
 
 from PyQt6.QtWidgets import QWidget
 
-from ui.workspaces.classic_workspace import ClassicWorkspace
 import ui.workspaces.classic_workspace as classic_workspace_module
+from ui.workspaces.classic_workspace import ClassicWorkspace
 
 
 def test_workspace_collects_a_share_quote_codes_from_all_tabs():
@@ -75,8 +75,6 @@ def test_workspace_collects_structured_watchlist_radar_metrics():
                 ]
             )
         ),
-        _safe_float=ClassicWorkspace._safe_float,
-        _build_watchlist_block_trade_signal=ClassicWorkspace._build_watchlist_block_trade_signal,
     )
 
     na_data, na_subsector_data, block_data, earn_data, lhb_data, rps_bundle = ClassicWorkspace.collect_watchlist_radar_data(workspace)

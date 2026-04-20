@@ -35,9 +35,9 @@ def test_rt_monitor_last_columns_are_interactive(monkeypatch):
         assert captured["settings_key"] == "header_state_rt_v5"
         assert tab.table_rt.columnWidth(tab.source_model.headers.index("热点板块")) >= 220
         assert isinstance(tab.table_rt.itemDelegate(), StockItemDelegate)
-        assert tab.btn_rt_start.text() == "启动监控"
+        assert tab.btn_rt_start.text() == "开始监控"
         assert tab.rt_search.accessibleName() == "盘中监控筛选"
-        assert tab._format_status_text("已启动", "拉取报价") == "状态 已启动 | 下一步 拉取报价"
+        assert tab.format_status_summary("状态 已启动", "下一步 拉取报价") == "状态 已启动 | 下一步 拉取报价"
     finally:
         tab.deleteLater()
 
@@ -87,12 +87,11 @@ def test_rt_monitor_header_summary_includes_filter_count_and_recent_time(monkeyp
         tab.rt_search.setText("贵州")
 
         summary = tab.lbl_rt_info.text()
-        assert "结果 2只" in summary
-        assert "显示 1/2" in summary
-        assert "搜索 贵州" in summary
+        assert "结果 1/2只" in summary
+        assert "筛选 贵州" in summary
         assert "待突破池 12只" in summary
         assert "最近 10:32" in summary
-        assert "状态 实时" in summary
+        assert "数据 实时" in summary
         assert "说明 第2轮 完成(0.8s)" in summary
         assert "下一步 30s后第3轮" in summary
     finally:

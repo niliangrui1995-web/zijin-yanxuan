@@ -7,7 +7,7 @@ from datetime import datetime
 import pandas as pd
 
 from core.market_calendar import MarketCalendar
-from core.task_manager import task_manager
+from core.background_job_runner import background_job_runner as task_manager
 from ui.tabs.asian_market_workers import fetch_asian_realtime_quote
 
 

@@ -100,8 +100,8 @@ def test_watchlist_toolbar_uses_add_stock_button_and_accepts_a_share_code(monkey
 
     added_calls = []
 
-    def _fake_add_stock(code, name, vcp_data=None):
-        added_calls.append((code, name, dict(vcp_data or {})))
+    def _fake_add_stock(code, name, vcp_data=None, source_tags=None):
+        added_calls.append((code, name, dict(vcp_data or {}), list(source_tags or [])))
         return True
 
     monkeypatch.setattr(watchlist_vm, "add_stock", _fake_add_stock)
@@ -122,6 +122,7 @@ def test_watchlist_toolbar_uses_add_stock_button_and_accepts_a_share_code(monkey
                 "600519",
                 "贵州茅台",
                 {"代码": "600519", "名称": "贵州茅台", "code": "600519", "name": "贵州茅台"},
+                ["手动"],
             )
         ]
         assert tab.add_stock_input.text() == ""
@@ -171,9 +172,9 @@ def test_watchlist_status_summary_includes_recent_refresh(monkeypatch):
         tab._update_status_summary()
         summary = tab.lbl_sp_status.text()
 
-        assert "池内1只" in summary
-        assert "匹配 1/1" in summary
-        assert "最近 10:21" in summary
+        assert "结果 1/1只" in summary
+        assert "时效 10:21" in summary
+        assert "来源 战报｜龙虎｜业绩｜大宗" in summary
     finally:
         tab.deleteLater()
 

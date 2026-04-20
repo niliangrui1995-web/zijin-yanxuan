@@ -24,7 +24,7 @@ from core.fund_holdings_compare import (
     quarter_sort_value,
 )
 from core.fund_holdings_store import fund_holdings_store
-from core.task_manager import UserFacingTaskError
+from core.task_errors import UserFacingTaskError
 
 _USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 _QFII_API_URL = "https://datacenter-web.eastmoney.com/api/data/v1/get"

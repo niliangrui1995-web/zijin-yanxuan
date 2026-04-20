@@ -319,7 +319,7 @@ class MarketCapRefreshBatcher:
             cls._waiters.clear()
             return
 
-        from core.task_manager import task_manager
+        from core.background_job_runner import background_job_runner as task_manager
 
         is_active_task = getattr(task_manager, "is_active_task", None)
         if callable(is_active_task) and is_active_task(cls._task_id):
@@ -409,7 +409,7 @@ def refresh_table_quotes_and_market_caps(owner, current_model=None, force_quotes
     if not target_codes:
         return
 
-    from core.task_manager import task_manager
+    from core.background_job_runner import background_job_runner as task_manager
 
     task_id = str(quote_task_id or f"{owner.__class__.__name__.lower()}_quotes")
     is_active_task = getattr(task_manager, "is_active_task", None)
@@ -499,13 +499,13 @@ def subscribe_global_quotes(owner, current_model=None) -> None:
 
     if owner._quote_signal_connected:
         try:
-            from core.event_bus import event_bus
+            from core.domain_events import domain_events as event_bus
 
             event_bus.sig_rt_quotes.disconnect(owner._on_rt_quotes_direct)
         except (TypeError, RuntimeError):
             pass
 
-    from core.event_bus import event_bus
+    from core.domain_events import domain_events as event_bus
 
     event_bus.sig_rt_quotes.connect(owner._on_rt_quotes_direct)
     owner._quote_signal_connected = True

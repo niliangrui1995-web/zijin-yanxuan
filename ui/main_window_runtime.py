@@ -123,8 +123,8 @@ def shutdown_main_window(main_window, *, event_bus, task_manager):
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             log.error(f"[关闭] {label}异常: {exc}")
 
-    if hasattr(main_window, "startup_loader"):
-        _run("停止启动加载器", main_window.startup_loader.shutdown)
+    if hasattr(main_window, "startup_orchestrator"):
+        _run("停止启动编排器", main_window.startup_orchestrator.shutdown)
 
     if hasattr(main_window, "central_quotes_svc"):
         _run("停止中央报价服务", main_window.central_quotes_svc.shutdown)

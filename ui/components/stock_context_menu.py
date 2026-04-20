@@ -12,7 +12,7 @@ ui/components/stock_context_menu.py
 from PyQt6.QtGui import QCursor
 from PyQt6.QtWidgets import QApplication, QMenu
 
-from core.event_bus import event_bus
+from core.ui_signals import ui_signals as event_bus
 from ui.styles.context_menu_qss import generate_context_menu_qss
 from ui.viewmodels.watchlist_vm import watchlist_vm
 
@@ -103,13 +103,12 @@ def build_stock_context_menu(
         watchlist_vm.move_to_bottom(code)
 
     elif action == act_tdx:
-        # 通过基类方法跳转(parent 需要继承 BaseStockTab)
-        if hasattr(parent, '_launch_tdx'):
-            parent._launch_tdx(code)
+        if hasattr(parent, "launch_tdx"):
+            parent.launch_tdx(code)
 
     elif action == act_em:
-        if hasattr(parent, '_launch_eastmoney'):
-            parent._launch_eastmoney(code)
+        if hasattr(parent, "launch_eastmoney"):
+            parent.launch_eastmoney(code)
 
     elif action == act_gemini:
         url = "https://gemini.google.com/u/6/app?utm_source=app_launcher&utm_medium=owned&utm_campaign=base_all&pageId=none"

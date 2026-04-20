@@ -71,14 +71,14 @@ vcp_hunter_qt.pyw
   -> TdxDataProvider(offline=True)
   -> VCPEngine
   -> ClassicWorkspace
-  -> StartupLoader
+  -> StartupOrchestrator
 ```
 
 关键点：
 
 - 入口文件是 `vcp_hunter_qt.pyw`，负责单实例限制、崩溃日志和 `QApplication` 初始化。
 - 程序默认先以“离线优先”启动，优先保证冷启动可用。
-- `StartupLoader` 在启动后异步完成：
+- `StartupOrchestrator` 在启动后异步完成：
   - 本地缓存恢复
   - RPS 预计算缓存恢复
   - 亚洲市场 JSON 缓存静默同步
@@ -161,7 +161,7 @@ CentralQuotesService
 ├─ ui/                           # PyQt6 界面层
 │  ├─ main_window_qt.py
 │  ├─ kline_window_qt.py
-│  ├─ startup_loader.py
+│  ├─ startup_orchestrator.py
 │  ├─ workspaces/
 │  ├─ components/
 │  ├─ models/
@@ -291,7 +291,7 @@ python -m pip install -r requirements.txt
 ### 启动模式
 
 - 冷启动：默认离线
-- 启动后：`StartupLoader` 异步探测网络
+- 启动后：`StartupOrchestrator` 异步探测网络
 - 网络可用：自动切换在线模式并触发相关页面刷新
 
 这种设计的目标是：

@@ -1,8 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-ui/startup_loader.py
-负责主窗口冷启动、缓存恢复和智能联机启动。
-"""
+"""主窗口冷启动与后台预热编排。"""
 
 from __future__ import annotations
 
@@ -13,12 +10,15 @@ import sys
 
 from PyQt6.QtCore import QTimer
 
-from core.event_bus import event_bus
+from core.background_job_runner import background_job_runner
+from core.domain_events import domain_events as event_bus
 from core.logger import get_logger
-from core.task_manager import task_manager
 
 log = get_logger(__name__)
 ASIAN_DATA_SYNC_TIMEOUT_SEC = 120
+DEFERRED_LOAD_TASK_ID = "deferred_load"
+ASIAN_DATA_SYNC_TASK_ID = "asian_data_sync_bg"
+SMART_STARTUP_TASK_ID = "smart_startup"
 
 
 def _normalize_log_detail(text: str, limit: int = 120) -> str:
@@ -44,11 +44,12 @@ def _format_subprocess_failure(exc: Exception) -> tuple[str, str]:
     return message, message
 
 
-class StartupLoader:
+class StartupOrchestrator:
     """主窗口启动流程协调器。"""
 
-    def __init__(self, main_window):
+    def __init__(self, main_window, job_runner=None):
         self.mw = main_window
+        self._job_runner = job_runner or background_job_runner
         self._closed = False
         self._deferred_timer = QTimer(main_window)
         self._deferred_timer.setSingleShot(True)
@@ -67,8 +68,8 @@ class StartupLoader:
         self._closed = True
         self._deferred_timer.stop()
         self._smart_timer.stop()
-        for task_id in ("deferred_load", "asian_data_sync_bg", "smart_startup"):
-            task_manager.abandon_task(task_id)
+        for task_id in (DEFERRED_LOAD_TASK_ID, ASIAN_DATA_SYNC_TASK_ID, SMART_STARTUP_TASK_ID):
+            self._job_runner.abandon(task_id)
 
     def _alive(self):
         return (
@@ -97,11 +98,11 @@ class StartupLoader:
                 count = len(self.mw.data_provider.cache_data)
                 self._safe_call_in_ui(
                     lambda: getattr(self.mw, "lbl_code_count", None)
-                    and self.mw.lbl_code_count.setText(f"标的池: {count}")
+                    and self.mw.lbl_code_count.setText(f"标的池 {count}")
                 )
                 self._safe_call_in_ui(
                     lambda: self.mw.lbl_status.setText(
-                        f"已加载 {count} 只标的缓存 (日期: {cache_date})"
+                        f"已加载 {count} 只标的缓存(日线: {cache_date})"
                     )
                 )
                 self._safe_call_in_ui(
@@ -129,7 +130,7 @@ class StartupLoader:
 
             self._safe_call_in_ui(lambda: event_bus.sig_cache_bootstrap_ready.emit())
 
-        task_manager.run_in_background(_load_bg, task_id="deferred_load")
+        self._job_runner.run(DEFERRED_LOAD_TASK_ID, _load_bg)
 
         def _check_asian_data_bg():
             if not self._alive():
@@ -189,7 +190,7 @@ class StartupLoader:
                     if raw_detail:
                         log.debug(f"[启动] 亚洲市场静默同步原始输出: {raw_detail}")
 
-        task_manager.run_in_background(_check_asian_data_bg, task_id="asian_data_sync_bg")
+        self._job_runner.run(ASIAN_DATA_SYNC_TASK_ID, _check_asian_data_bg)
 
     def smart_startup(self):
         """异步检测网络；可联机时切到在线模式并驱动后续刷新。"""
@@ -231,7 +232,7 @@ class StartupLoader:
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 log.error(f"[智能启动] 网络检测异常: {exc}")
 
-        task_manager.run_in_background(_check_and_go_online, task_id="smart_startup")
+        self._job_runner.run(SMART_STARTUP_TASK_ID, _check_and_go_online)
 
     def auto_start_rt_if_ready(self):
         """启动完成后按条件自动开启盘中监控。"""

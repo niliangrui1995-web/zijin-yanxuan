@@ -20,7 +20,7 @@ def toggle_network(main_window):
                 log.error(f"[网络] 切换联网失败: {exc}")
                 main_window._call_in_ui(lambda: main_window._update_network_ui(False))
 
-        from core.task_manager import task_manager
+        from core.background_job_runner import background_job_runner as task_manager
 
         task_manager.run_in_background(_go_online, task_id="go_online")
         return
@@ -76,7 +76,7 @@ def force_reconnect(main_window):
 
         show_toast("东方财富实时行情检测失败，请检查网络。", "error", main_window, duration=3500)
 
-    from core.task_manager import task_manager
+    from core.background_job_runner import background_job_runner as task_manager
 
     task_manager.run_in_background(
         _reconnect_task,
