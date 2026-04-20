@@ -295,6 +295,18 @@ class LhbPoolManager:
         """判断是否为 ST 股票（名称含 ST，不区分大小写）"""
         return "ST" in name.upper()
 
+    @staticmethod
+    def _count_rps250_eligible_symbols(data_provider) -> int:
+        cache_data = getattr(data_provider, "cache_data", {}) or {}
+        count = 0
+        for df in cache_data.values():
+            try:
+                if df is not None and len(df) >= 250:
+                    count += 1
+            except TypeError:
+                continue
+        return count
+
     def compute_pool(self, data_provider=None, engine=None) -> list[dict]:
         """从缓存的多日数据中计算关注池。
 
@@ -364,17 +376,39 @@ class LhbPoolManager:
             if rps_bundle is not None:
                 rps250_dict = rps_bundle.get('rps250', {})
                 if rps250_dict:
+                    disqualify_missing_rps = True
+                    eligible_count = self._count_rps250_eligible_symbols(data_provider)
+                    minimum_coverage = max(1000, int(eligible_count * 0.5)) if eligible_count >= 500 else 0
+                    if eligible_count >= 500 and len(rps250_dict) < minimum_coverage:
+                        disqualify_missing_rps = False
+                        log.warning(
+                            f"[龙虎榜池] RPS缓存覆盖不足({len(rps250_dict)}/{eligible_count})，"
+                            "本次缺失RPS不按次新剔除"
+                        )
+
                     disqualified_rps: set[str] = set()
+                    below_threshold_rps: set[str] = set()
                     for code in qualifying_codes:
                         rps_val = rps250_dict.get(code)
-                        # 【核心】如果完全没有 RPS250（例如上市期 < 250 天的次新股）或者 RPS250 < 85，一律视为不合格并剔除
-                        if rps_val is None or rps_val < 85:
+                        # 【核心】如果 RPS 缓存覆盖正常，缺失 RPS 仍按次新/无效处理；
+                        # 若缓存覆盖明显异常，则只剔除明确 RPS250 < 85 的标的，避免误杀。
+                        if rps_val is None:
+                            if disqualify_missing_rps:
+                                disqualified_rps.add(code)
+                            continue
+                        if rps_val < 85:
                             disqualified_rps.add(code)
+                            below_threshold_rps.add(code)
                     if disqualified_rps:
                         qualifying_codes -= disqualified_rps
-                        log.info(
-                            f"[龙虎榜池] 剔除次新及RPS250<85共 {len(disqualified_rps)} 只"
-                        )
+                        if disqualify_missing_rps:
+                            log.info(
+                                f"[龙虎榜池] 剔除次新及RPS250<85共 {len(disqualified_rps)} 只"
+                            )
+                        else:
+                            log.info(
+                                f"[龙虎榜池] RPS缓存覆盖异常，当前仅剔除RPS250<85共 {len(below_threshold_rps)} 只"
+                            )
 
         if not qualifying_codes:
             return []

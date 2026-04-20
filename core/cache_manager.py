@@ -57,35 +57,83 @@ class CacheManager:
         return 0
 
     @staticmethod
+    def _count_rps250_eligible_symbols(cache_data: dict) -> int:
+        count = 0
+        for df in (cache_data or {}).values():
+            try:
+                if df is not None and len(df) >= 250:
+                    count += 1
+            except TypeError:
+                continue
+        return count
+
+    @classmethod
+    def _should_rebuild_rps_payload(cls, payload: dict, data_provider=None) -> tuple[bool, int, int]:
+        cache_data = getattr(data_provider, "cache_data", {}) or {}
+        eligible_count = cls._count_rps250_eligible_symbols(cache_data)
+        if eligible_count < 500:
+            return False, 0, eligible_count
+
+        loaded_count = cls._count_valid_rps_values((payload or {}).get("rps250"))
+        minimum_count = max(1000, int(eligible_count * 0.5))
+        return loaded_count < minimum_count, loaded_count, eligible_count
+
+    @staticmethod
+    def _extract_latest_trade_date_from_frame(df) -> str:
+        if df is None:
+            return ""
+
+        try:
+            if len(df) <= 0:
+                return ""
+        except TypeError:
+            return ""
+
+        columns = getattr(df, "columns", None)
+        if columns is not None and len(columns) > 0:
+            for column_name in ("datetime", "date", "日期"):
+                if column_name not in columns:
+                    continue
+                try:
+                    series = df[column_name]
+                    if hasattr(series, "to_list"):
+                        last_value = series.to_list()[-1]
+                    else:
+                        last_value = series.iloc[-1]
+                except (AttributeError, IndexError, KeyError, TypeError):
+                    continue
+
+                try:
+                    if hasattr(last_value, "strftime"):
+                        return last_value.strftime("%Y%m%d")
+                    date_str = str(last_value).strip().replace("-", "")[:8]
+                    return date_str if len(date_str) == 8 and date_str.isdigit() else ""
+                except (AttributeError, TypeError, ValueError):
+                    continue
+
+        try:
+            index = getattr(df, "index", None)
+            if index is None or len(index) <= 0:
+                return ""
+            last_value = index[-1]
+        except (IndexError, TypeError):
+            return ""
+
+        try:
+            if hasattr(last_value, "strftime"):
+                return last_value.strftime("%Y%m%d")
+            date_str = str(last_value).strip().replace("-", "")[:8]
+            return date_str if len(date_str) == 8 and date_str.isdigit() else ""
+        except (AttributeError, TypeError, ValueError):
+            return ""
+
+    @staticmethod
     def _infer_latest_rps_trade_date(cache_data: dict) -> str:
         latest_date = ""
         for df in (cache_data or {}).values():
-            if df is None:
-                continue
-
-            try:
-                if len(df) <= 0:
-                    continue
-            except TypeError:
-                continue
-
-            try:
-                index = getattr(df, "index", None)
-                if index is None or len(index) <= 0:
-                    continue
-                last_value = index[-1]
-            except (IndexError, TypeError):
-                continue
-
-            try:
-                if hasattr(last_value, "strftime"):
-                    date_str = last_value.strftime("%Y%m%d")
-                else:
-                    date_str = str(last_value).strip().replace("-", "")[:8]
-                if len(date_str) == 8 and date_str.isdigit() and date_str > latest_date:
-                    latest_date = date_str
-            except (AttributeError, TypeError, ValueError):
-                continue
+            date_str = CacheManager._extract_latest_trade_date_from_frame(df)
+            if date_str and date_str > latest_date:
+                latest_date = date_str
 
         return latest_date
 
@@ -141,6 +189,25 @@ class CacheManager:
                 rps250 = payload.get("rps250")
                 if rps120 is None or rps250 is None:
                     raise BusinessRuleError("rps120/rps250 missing in cache payload")
+
+                should_rebuild, loaded_count, eligible_count = self._should_rebuild_rps_payload(
+                    payload,
+                    data_provider=data_provider,
+                )
+                if should_rebuild and data_provider is not None:
+                    log.warning(
+                        f"[RPS][RULE] 磁盘预计算RPS覆盖不足({loaded_count}/{eligible_count})，"
+                        "尝试基于本地K线缓存重建"
+                    )
+                    try:
+                        if self._rebuild_rps_from_cache(
+                            engine,
+                            data_provider,
+                            set_status_callback=set_status_callback,
+                        ):
+                            return
+                    except BusinessRuleError as exc:
+                        log.warning(f"[RPS][RULE] 预计算RPS重建失败，回退到磁盘缓存: {exc}")
 
                 engine.set_precomputed_rps(cached_date, rps120, rps250)
                 remove_cache_file(self._legacy_pickle_path(self.rps_path))

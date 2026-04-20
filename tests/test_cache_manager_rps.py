@@ -1,6 +1,7 @@
 import json
 
 import pandas as pd
+import polars as pl
 
 from core.cache_manager import CacheManager
 
@@ -32,6 +33,15 @@ class DummyProvider:
         self.cache_data = cache_data
 
 
+class FakeFrame:
+    def __init__(self, rows: int, last_date: str = "2026-04-10"):
+        self._rows = rows
+        self.index = pd.DatetimeIndex([pd.Timestamp(last_date)])
+
+    def __len__(self):
+        return self._rows
+
+
 def test_try_load_rps_from_disk_rebuilds_json_cache_when_missing(tmp_path):
     cache_path = tmp_path / "vcp_rps_precomputed.json"
     legacy_path = tmp_path / "vcp_rps_precomputed.pkl"
@@ -58,3 +68,50 @@ def test_try_load_rps_from_disk_rebuilds_json_cache_when_missing(tmp_path):
     assert payload["date"] == "20260410"
     assert payload["rps120"]["600000"] == 95.0
     assert payload["rps250"]["000001"] == 85.0
+
+
+def test_try_load_rps_from_disk_rebuilds_incomplete_json_cache(tmp_path):
+    cache_path = tmp_path / "vcp_rps_precomputed.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "date": "20260420",
+                "rps120": {"600000": 95.0},
+                "rps250": {"600000": 92.0},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    engine = DummyEngine()
+    provider = DummyProvider(
+        {f"{i:06d}": FakeFrame(260) for i in range(600000, 601200)}
+    )
+    manager = CacheManager()
+    manager.rps_path = str(cache_path)
+
+    manager.try_load_rps_from_disk(engine, data_provider=provider)
+
+    assert engine.calls == [([f"{i:06d}" for i in range(600000, 601200)], "20260410", "20260410")]
+    assert engine.bundle is not None
+    assert engine.bundle["date"] == "20260410"
+
+    payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert payload["date"] == "20260410"
+    assert len(payload["rps250"]) == 2
+
+
+def test_infer_latest_rps_trade_date_supports_polars_datetime_column():
+    frame = pl.DataFrame(
+        {
+            "datetime": [
+                "2026-04-15 00:00:00",
+                "2026-04-16 00:00:00",
+                "2026-04-17 00:00:00",
+            ],
+            "close": [1.0, 2.0, 3.0],
+        }
+    ).with_columns(pl.col("datetime").str.strptime(pl.Datetime, format="%Y-%m-%d %H:%M:%S"))
+
+    assert CacheManager._infer_latest_rps_trade_date({"600000": frame}) == "20260417"

@@ -1,3 +1,5 @@
+import datetime
+
 import pandas as pd
 
 from ui.models.table_models import StockTableModel
@@ -97,3 +99,61 @@ def test_block_trade_exact_filters_support_multi_select():
 
     proxy.setExactFilters("_branch", {"高盛", "瑞银"})
     assert proxy.rowCount() == 2
+
+
+def test_should_trigger_auto_refresh_only_after_20_on_trade_day():
+    now = datetime.datetime(2026, 4, 20, 20, 5, 0)
+    before_20 = datetime.datetime(2026, 4, 20, 19, 59, 0)
+    assert not ForeignBlockTradeTab._should_trigger_auto_refresh(
+        before_20,
+        is_trade_day=True,
+        last_auto_refresh_date="",
+        last_success_at=datetime.datetime(2026, 4, 20, 14, 30, 0),
+        pending_auto_refresh_date="",
+    )
+    assert ForeignBlockTradeTab._should_trigger_auto_refresh(
+        now,
+        is_trade_day=True,
+        last_auto_refresh_date="",
+        last_success_at=datetime.datetime(2026, 4, 20, 14, 30, 0),
+        pending_auto_refresh_date="",
+    )
+
+
+def test_should_trigger_auto_refresh_skips_when_today_after_20_already_saved_or_pending():
+    now = datetime.datetime(2026, 4, 20, 20, 5, 0)
+    assert not ForeignBlockTradeTab._should_trigger_auto_refresh(
+        now,
+        is_trade_day=True,
+        last_auto_refresh_date="",
+        last_success_at=datetime.datetime(2026, 4, 20, 20, 1, 0),
+        pending_auto_refresh_date="",
+    )
+    assert not ForeignBlockTradeTab._should_trigger_auto_refresh(
+        now,
+        is_trade_day=True,
+        last_auto_refresh_date="20260420",
+        last_success_at=None,
+        pending_auto_refresh_date="",
+    )
+    assert not ForeignBlockTradeTab._should_trigger_auto_refresh(
+        now,
+        is_trade_day=True,
+        last_auto_refresh_date="",
+        last_success_at=None,
+        pending_auto_refresh_date="20260420",
+    )
+
+
+def test_extract_cache_filter_options_and_save_gate():
+    dates, branches = ForeignBlockTradeTab._extract_cache_filter_options(
+        [
+            {"交易日期": "2026-04-18", "买方营业部": "高盛上海营业部", "卖方营业部": "普通营业部"},
+            {"交易日期": "2026-04-20", "买方营业部": "普通营业部", "卖方营业部": "瑞银证券上海浦东新区营业部"},
+            {"交易日期": "2026-04-19", "买方营业部": "机构专用", "卖方营业部": "普通营业部"},
+        ]
+    )
+    assert dates == ["2026-04-20", "2026-04-19", "2026-04-18"]
+    assert branches == ["瑞银证券上海浦东新区营业部", "高盛上海营业部"]
+    assert ForeignBlockTradeTab._should_save_cache([], [])
+    assert not ForeignBlockTradeTab._should_save_cache(["20260420-20260420"], [])

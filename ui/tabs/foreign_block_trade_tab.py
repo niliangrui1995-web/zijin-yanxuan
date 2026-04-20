@@ -15,6 +15,8 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QComboBox, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from core.event_bus import event_bus
+from core.exceptions import CacheIOError, DataFormatError
+from core.json_cache import load_json_file, save_json_file
 from ui.components import (
     MultiSelectFilterButton,
     SearchFilter,
@@ -86,12 +88,15 @@ class BlockTradeFilterProxyModel(RtSortFilterProxyModel):
         return filter_text in buyer_text or filter_text in seller_text
 
 from core.logger import get_logger
+from core.market_calendar import MarketCalendar
 from core.task_manager import UserFacingTaskError, task_manager
 from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
 
 FOREIGN_KEYWORDS = ["高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴", "渣打", "野村", "汇丰", "星展", "大和"]
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_BLOCK_TRADE_CACHE_FILE = os.path.join(_PROJECT_ROOT, "data", "Cache", "foreign_block_trade_latest.json")
 
 # 模块级K线缓存：每只股票的文件只读一次，后续直接从内存取
 _kline_cache: dict = {}
@@ -222,12 +227,13 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._status_freshness = ""
         self._status_next_step = ""
         self._had_rows_before_refresh = False
+        self._last_auto_refresh_date = ""
+        self._pending_auto_refresh_date = ""
 
         self.days_to_fetch = 20  # 默认拉取最近20个交易日
         self._init_ui()
-
-        # 延迟加载缓存
-        QTimer.singleShot(3200, self._load_block_trade_data)
+        self._load_local_cache()
+        self._start_auto_scheduler()
 
         # 订阅中央广播站报价及开启大一统市值更新
         self.subscribe_global_quotes()
@@ -341,6 +347,181 @@ class ForeignBlockTradeTab(BaseStockTab):
         ]
         dates = [date for date in dates if date]
         return max(dates) if dates else ""
+
+    @staticmethod
+    def _should_trigger_auto_refresh(
+        now: datetime.datetime,
+        *,
+        is_trade_day: bool,
+        last_auto_refresh_date: str,
+        last_success_at: datetime.datetime | None = None,
+        pending_auto_refresh_date: str = "",
+    ) -> bool:
+        today_compact = now.strftime("%Y%m%d")
+        if pending_auto_refresh_date == today_compact:
+            return False
+        if now.hour < 20:
+            return False
+        if not is_trade_day:
+            return False
+        if last_auto_refresh_date == today_compact:
+            return False
+        if (
+            last_success_at is not None
+            and last_success_at.date() == now.date()
+            and last_success_at.hour >= 20
+        ):
+            return False
+        return True
+
+    @staticmethod
+    def _should_save_cache(timeout_chunks, failed_chunks) -> bool:
+        return not timeout_chunks and not failed_chunks
+
+    @staticmethod
+    def _extract_cache_filter_options(row_data: list[dict]) -> tuple[list[str], list[str]]:
+        dates = sorted(
+            {
+                str(row.get("交易日期", "")).strip()
+                for row in (row_data or [])
+                if isinstance(row, dict) and str(row.get("交易日期", "")).strip()
+            },
+            reverse=True,
+        )
+        raw_branches = set()
+        for row in (row_data or []):
+            if not isinstance(row, dict):
+                continue
+            raw_branches.add(str(row.get("买方营业部", "") or "").strip())
+            raw_branches.add(str(row.get("卖方营业部", "") or "").strip())
+        branches = sorted(
+            branch
+            for branch in raw_branches
+            if branch and any(keyword in branch for keyword in FOREIGN_KEYWORDS)
+        )
+        return dates, branches
+
+    def _apply_row_data(self, row_data: list[dict], *, preserve_selection: bool = True):
+        unique_dates, unique_branches = self._extract_cache_filter_options(row_data)
+        self.cmb_filter_date.set_options(unique_dates, preserve_selection=preserve_selection)
+        self.cmb_filter_branch.set_options(unique_branches, preserve_selection=preserve_selection)
+        self._refresh_filter_button_text(self.cmb_filter_date, "日期", "全部")
+        self._refresh_filter_button_text(self.cmb_filter_branch, "席位", "全部")
+        self._block_trade_codes = list(
+            dict.fromkeys(
+                row.get("代码", "")
+                for row in (row_data or [])
+                if isinstance(row, dict) and str(row.get("代码", "")).strip()
+            )
+        )
+        self.model.update_data(row_data or [])
+        return unique_dates, unique_branches
+
+    def _build_cache_payload(self, row_data: list[dict]) -> dict:
+        latest_trade_date = ""
+        if row_data:
+            latest_trade_date = max(
+                [
+                    str(row.get("交易日期", "")).strip()
+                    for row in row_data
+                    if isinstance(row, dict) and str(row.get("交易日期", "")).strip()
+                ],
+                default="",
+            )
+        return {
+            "saved_at": datetime.datetime.now().isoformat(timespec="seconds"),
+            "days_to_fetch": int(self.days_to_fetch),
+            "latest_trade_date": latest_trade_date,
+            "rows": row_data or [],
+        }
+
+    def _save_local_cache(self, row_data: list[dict]) -> bool:
+        try:
+            os.makedirs(os.path.dirname(_BLOCK_TRADE_CACHE_FILE), exist_ok=True)
+            save_json_file(_BLOCK_TRADE_CACHE_FILE, self._build_cache_payload(row_data))
+            log.info(
+                f"[外资大宗] 已保存本地缓存: {os.path.basename(_BLOCK_TRADE_CACHE_FILE)} "
+                f"(rows={len(row_data or [])}, latest={self._latest_trade_date_text() or '-'})"
+            )
+            return True
+        except CacheIOError as exc:
+            log.warning(f"[外资大宗] 保存本地缓存失败: {exc}")
+            return False
+
+    def _load_local_cache(self):
+        try:
+            payload = load_json_file(_BLOCK_TRADE_CACHE_FILE)
+            rows = payload.get("rows", []) if isinstance(payload, dict) else []
+            if not isinstance(rows, list):
+                raise DataFormatError("block trade cache rows invalid")
+            latest_trade_date = str(payload.get("latest_trade_date", "")).strip() if isinstance(payload, dict) else ""
+            saved_at = str(payload.get("saved_at", "")).strip() if isinstance(payload, dict) else ""
+            try:
+                self._last_success_at = datetime.datetime.fromisoformat(saved_at) if saved_at else None
+            except ValueError:
+                self._last_success_at = None
+
+            unique_dates, unique_branches = self._apply_row_data(rows, preserve_selection=False)
+            if rows:
+                self._set_fetch_status(
+                    "已加载本地缓存",
+                    self._status_metric("命中 ", len(rows), "笔"),
+                    self._status_metric("日期 ", len(unique_dates)),
+                    self._status_metric("席位 ", len(unique_branches)),
+                    freshness=f"快照 {latest_trade_date or self._latest_trade_date_text()}",
+                    next_step="等待20:00自动更新",
+                )
+                if hasattr(self, "table_state"):
+                    self.table_state.show_table()
+                self.refresh_table_quotes_and_market_caps(quote_task_id="foreign_block_trade_quotes")
+            else:
+                self._set_fetch_status(
+                    "本地缓存为空",
+                    freshness="待20:00更新",
+                    next_step="等待20:00自动更新",
+                )
+                if hasattr(self, "table_state"):
+                    self.table_state.show_empty(
+                        "暂无大宗交易数据",
+                        "当前本地缓存为空，等待每日20:00自动更新。",
+                    )
+            event_bus.sig_block_trade_updated.emit()
+        except (CacheIOError, DataFormatError) as exc:
+            log.debug(f"[外资大宗] 本地缓存不可用，跳过加载: {exc}")
+            self._set_fetch_status("等待20:00更新", freshness="待刷新", next_step="等待每日自动缓存")
+
+    def _start_auto_scheduler(self):
+        self._auto_timer = QTimer(self)
+        self._auto_timer.timeout.connect(self._check_auto_refresh)
+        self._auto_timer.start(5 * 60 * 1000)
+        QTimer.singleShot(10_000, self._check_auto_refresh)
+
+    def _check_auto_refresh(self):
+        if self._is_loading or task_manager.is_active_task("foreign_block_trade"):
+            return
+
+        now = MarketCalendar.now("CN")
+        today_compact = now.strftime("%Y%m%d")
+        if (
+            self._last_success_at is not None
+            and self._last_success_at.date() == now.date()
+            and self._last_success_at.hour >= 20
+        ):
+            self._last_auto_refresh_date = today_compact
+
+        is_trade_day = MarketCalendar.is_trade_day(now.date(), market="CN")
+        if not self._should_trigger_auto_refresh(
+            now,
+            is_trade_day=is_trade_day,
+            last_auto_refresh_date=self._last_auto_refresh_date,
+            last_success_at=self._last_success_at,
+            pending_auto_refresh_date=self._pending_auto_refresh_date,
+        ):
+            return
+
+        self._pending_auto_refresh_date = today_compact
+        event_bus.sig_system_log.emit("info", self._ensure_log_line(f"[外资大宗] 触发每日20:00自动刷新: {today_compact}"))
+        self._load_block_trade_data()
 
     def _refresh_filter_button_text(self, button, prefix: str, all_text: str):
         text, tooltip = format_multi_select_summary(
@@ -575,6 +756,11 @@ class ForeignBlockTradeTab(BaseStockTab):
 
         if not data_list:
             self._block_trade_codes = []
+            if self._pending_auto_refresh_date and not timeout_chunks and not failed_chunks:
+                self._last_auto_refresh_date = self._pending_auto_refresh_date
+            if not timeout_chunks and not failed_chunks:
+                self._apply_row_data([], preserve_selection=False)
+                self._save_local_cache([])
             if timeout_chunks or failed_chunks:
                 if self._had_rows_before_refresh:
                     self._set_fetch_status(
@@ -614,7 +800,10 @@ class ForeignBlockTradeTab(BaseStockTab):
                         "暂无大宗交易数据",
                         "当前窗口内没有命中监控席位的大宗交易记录。",
                     )
+                if self._pending_auto_refresh_date:
+                    self._last_auto_refresh_date = self._pending_auto_refresh_date
             event_bus.sig_block_trade_updated.emit()
+            self._pending_auto_refresh_date = ""
             return
 
         df = pd.DataFrame(data_list)
@@ -631,22 +820,6 @@ class ForeignBlockTradeTab(BaseStockTab):
             '成交额': 'sum'
         })
         df = df.sort_values(by=['交易日期', '证券代码'], ascending=[False, True])
-        # 提取筛选器选项
-        unique_dates = sorted(df['交易日期'].dropna().unique().tolist(), key=lambda x: str(x), reverse=True)
-        # 提取相关外资席位
-        raw_branches = set(df['买方营业部'].dropna().tolist() + df['卖方营业部'].dropna().tolist())
-        target_branches = set()
-        for b in raw_branches:
-            b_str = str(b)
-            if any(kw in b_str for kw in FOREIGN_KEYWORDS):
-                target_branches.add(b_str)
-        unique_branches = sorted(list(target_branches))
-
-        self.cmb_filter_date.set_options([str(x) for x in unique_dates], preserve_selection=True)
-        self.cmb_filter_branch.set_options(unique_branches, preserve_selection=True)
-        self._refresh_filter_button_text(self.cmb_filter_date, "日期", "全部")
-        self._refresh_filter_button_text(self.cmb_filter_branch, "席位", "全部")
-
         row_data = []
         for row, (_, record) in enumerate(df.iterrows()):
             trade_date = str(record.get("交易日期", ""))
@@ -692,14 +865,7 @@ class ForeignBlockTradeTab(BaseStockTab):
             }
             row_data.append(row_dict)
 
-        self._block_trade_codes = list(
-            dict.fromkeys(
-                row.get("代码", "")
-                for row in row_data
-                if str(row.get("代码", "")).strip()
-            )
-        )
-        self.model.update_data(row_data)
+        unique_dates, unique_branches = self._apply_row_data(row_data)
         self._last_success_at = datetime.datetime.now()
         self._set_fetch_status(
             self._status_metric("命中 ", len(df), "笔"),
@@ -711,6 +877,13 @@ class ForeignBlockTradeTab(BaseStockTab):
         )
         if hasattr(self, "table_state"):
             self.table_state.show_table()
+        if self._should_save_cache(timeout_chunks, failed_chunks):
+            self._save_local_cache(row_data)
+            if self._pending_auto_refresh_date:
+                self._last_auto_refresh_date = self._pending_auto_refresh_date
+        elif timeout_chunks or failed_chunks:
+            log.warning("[外资大宗] 本轮结果不完整，已跳过覆盖本地缓存")
+        self._pending_auto_refresh_date = ""
 
         # 强制应用当前的筛选状态
         self._filter_table_combo()
@@ -721,6 +894,7 @@ class ForeignBlockTradeTab(BaseStockTab):
     def _on_data_fetch_failed(self, error_message: str):
         self._is_loading = False
         self.btn_refresh.setEnabled(True)
+        self._pending_auto_refresh_date = ""
         msg = str(error_message or "").strip()
         if not msg:
             msg = "大宗交易抓取失败，请稍后重试。"

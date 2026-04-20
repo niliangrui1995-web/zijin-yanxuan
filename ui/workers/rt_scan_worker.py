@@ -49,6 +49,29 @@ class RtScanWorker(QThread):
     def stop(self):
         self._is_running = False
 
+    @staticmethod
+    def _is_persistable_rps_snapshot(valid_count: int) -> bool:
+        return int(valid_count or 0) >= 1000
+
+    def _persist_rps_snapshot(self, resolved_date: str, valid_count: int) -> bool:
+        if not self._is_persistable_rps_snapshot(valid_count):
+            log.warning(
+                f"[盘中] RPS样本过小({int(valid_count or 0)}只)，"
+                "仅在线程内复用，不覆盖磁盘/全局缓存"
+            )
+            return False
+
+        try:
+            rps_pkg = {'date': resolved_date, 'rps120': self._rps120, 'rps250': self._rps250}
+            save_json_file(RPS_CACHE_FILE, rps_pkg)
+            remove_cache_file(RPS_CACHE_FILE.replace(".json", ".pkl"))
+            self.engine.set_precomputed_rps(resolved_date, self._rps120, self._rps250)
+            log.debug(f"[盘中] RPS 已保存磁盘 ({resolved_date})")
+            return True
+        except CacheIOError as e:
+            log.error(f"[盘中] RPS 磁盘保存失败: {e}")
+            return False
+
     def _cleanup_caches(self):
         """线程退出时释放内存。
         为什么不在 stop() 里做？stop() 是 UI 线程调用的，
@@ -157,14 +180,7 @@ class RtScanWorker(QThread):
                         log.info(f"[盘中] 现算 RPS 完成 ({valid_count} 只)，已释放中间矩阵")
 
                         # 保存到磁盘(与 F5 格式一致,下次启动可直接加载)
-                        try:
-                            rps_pkg = {'date': today_str, 'rps120': self._rps120, 'rps250': self._rps250}
-                            save_json_file(RPS_CACHE_FILE, rps_pkg)
-                            remove_cache_file(RPS_CACHE_FILE.replace(".json", ".pkl"))
-                            self.engine.set_precomputed_rps(today_str, self._rps120, self._rps250)
-                            log.debug(f"[盘中] RPS 已保存磁盘 ({today_str})")
-                        except CacheIOError as e:
-                            log.error(f"[盘中] RPS 磁盘保存失败: {e}")
+                        self._persist_rps_snapshot(d_str, valid_count)
                     else:
                         self.progress.emit("❌ RPS 计算失败:无价格数据")
                         return

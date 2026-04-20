@@ -5,11 +5,20 @@ from core.lhb_pool_manager import LhbPoolManager
 
 
 class _DummyProvider:
-    def __init__(self, mapping):
+    def __init__(self, mapping, cache_data=None):
         self._mapping = mapping
+        self.cache_data = cache_data or {}
 
     def get_data(self, code):
         return self._mapping.get(code)
+
+
+class _DummyEngine:
+    def __init__(self, bundle):
+        self._bundle = bundle
+
+    def get_precomputed_rps(self):
+        return self._bundle
 
 
 def _build_manager(monkeypatch):
@@ -123,3 +132,48 @@ def test_get_dates_pending_validation_marks_unverified_and_broken_meta(monkeypat
 
     manager._day_meta["20260407"]["record_count"] = 99
     assert manager.get_dates_pending_validation(["20260407"], "20260414") == ["20260407"]
+
+
+def test_compute_pool_keeps_missing_rps_when_rps_cache_coverage_is_abnormal(monkeypatch):
+    manager = _build_manager(monkeypatch)
+    manager._data = {
+        "20260417": [
+            {
+                "代码": "000001",
+                "名称": "已有RPS",
+                "上榜日期": "20260417",
+                "上榜净买额(万)": 8600,
+                "机构净买(万)": 2600,
+                "外资净买(万)": 300,
+                "涨幅%": 3.2,
+            },
+            {
+                "代码": "000002",
+                "名称": "缺失RPS",
+                "上榜日期": "20260417",
+                "上榜净买额(万)": 9100,
+                "机构净买(万)": 3100,
+                "外资净买(万)": 500,
+                "涨幅%": 4.5,
+            },
+        ]
+    }
+
+    provider = _DummyProvider(
+        {
+            "000001": _make_kline(20, list(range(1, 21))),
+            "000002": _make_kline(20, list(range(2, 22))),
+        },
+        cache_data={f"{i:06d}": [0] * 250 for i in range(1200)},
+    )
+    engine = _DummyEngine(
+        {
+            "date": "20260420",
+            "rps120": {"000001": 90},
+            "rps250": {"000001": 91},
+        }
+    )
+
+    pool = manager.compute_pool(data_provider=provider, engine=engine)
+
+    assert [row["代码"] for row in pool] == ["000002", "000001"]
