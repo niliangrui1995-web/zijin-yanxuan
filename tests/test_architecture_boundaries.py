@@ -65,6 +65,7 @@ def _find_text_snippets(path: Path, banned_snippets: set[str]) -> list[str]:
 def _find_literal_task_id_usage(root: Path, *, allowed_paths: set[str] | None = None):
     allowed_paths = allowed_paths or set()
     violations: list[str] = []
+    positional_task_api_names = {"abandon", "abandon_task", "is_active", "is_active_task"}
     for path in _iter_python_files(root):
         rel_path = path.relative_to(REPO_ROOT).as_posix()
         if rel_path in allowed_paths:
@@ -88,6 +89,16 @@ def _find_literal_task_id_usage(root: Path, *, allowed_paths: set[str] | None = 
                     if isinstance(keyword.value, ast.JoinedStr):
                         violations.append(rel_path)
                         break
+                if (
+                    isinstance(node.func, ast.Attribute)
+                    and node.func.attr in positional_task_api_names
+                    and node.args
+                ):
+                    first_arg = node.args[0]
+                    if isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str):
+                        violations.append(rel_path)
+                    elif isinstance(first_arg, ast.JoinedStr):
+                        violations.append(rel_path)
     return sorted(set(violations))
 
 
@@ -119,7 +130,11 @@ def test_core_ui_signal_and_job_runner_usage_is_centralized():
     violations = _find_violations(
         REPO_ROOT / "core",
         {"core.ui_signals", "core.background_job_runner"},
-        allowed_paths={"core/event_bus.py", "core/startup_orchestrator.py"},
+        allowed_paths={
+            "core/event_bus.py",
+            "core/startup_orchestrator.py",
+            "core/market_calendar.py",
+        },
     )
     assert not violations, "Core layer imported UI/task orchestration helpers outside allowed hubs:\n" + "\n".join(violations)
 

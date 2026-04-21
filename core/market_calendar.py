@@ -16,6 +16,7 @@ from core.exceptions import (
     DataFormatError,
     NetworkServiceError,
 )
+from core.background_job_runner import background_job_runner as task_manager
 from core.logger import get_logger
 from core.market_calendar_holidays import (
     ensure_holiday_table,
@@ -25,7 +26,6 @@ from core.market_calendar_holidays import (
     normalize_holiday_days,
     save_holidays_to_store,
 )
-from core.task_manager import task_manager
 from infra.tasks import task_registry
 
 log = get_logger(__name__)
@@ -481,7 +481,7 @@ class MarketCalendar:
                 raise DataFormatError("akshare trade_date column missing")
             dates = [str(d)[:10] for d in df["trade_date"]]
             cleaned = cls._normalize_holiday_days(dates)
-            from core.data_store import DataStore
+            from infra.storage import DataStore
 
             DataStore().save_json("trade_dates", {"month": cur_month, "dates": sorted(cleaned)})
             return cleaned
@@ -503,7 +503,7 @@ class MarketCalendar:
 
     @classmethod
     def load_trade_dates(cls) -> set[str] | None:
-        from core.data_store import DataStore
+        from infra.storage import DataStore
 
         now = cls.now("CN")
         cur_month = now.strftime("%Y-%m")

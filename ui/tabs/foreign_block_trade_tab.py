@@ -106,6 +106,8 @@ log = get_logger(__name__)
 FOREIGN_KEYWORDS = ["高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴", "渣打", "野村", "汇丰", "星展", "大和"]
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _BLOCK_TRADE_CACHE_FILE = os.path.join(_PROJECT_ROOT, "data", "Cache", "foreign_block_trade_latest.json")
+_FOREIGN_BLOCK_TRADE_TASK = task_registry.workspace("foreign_block_trade")
+_FOREIGN_BLOCK_TRADE_QUOTE_TASK = task_registry.quote_refresh("foreign_block_trade")
 
 # 模块级K线缓存：每只股票的文件只读一次，后续直接从内存取
 _kline_cache: dict = {}
@@ -478,7 +480,7 @@ class ForeignBlockTradeTab(BaseStockTab):
                 if hasattr(self, "table_state"):
                     self.table_state.show_table()
                 self.refresh_table_quotes_and_market_caps(
-                    quote_task_id=task_registry.quote_refresh("foreign_block_trade").task_id
+                    quote_task_id=_FOREIGN_BLOCK_TRADE_QUOTE_TASK.task_id
                 )
             else:
                 self._set_fetch_status(
@@ -503,7 +505,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         QTimer.singleShot(10_000, self._check_auto_refresh)
 
     def _check_auto_refresh(self):
-        if self._is_loading or task_manager.is_active_task("foreign_block_trade"):
+        if self._is_loading or task_manager.is_active_task(_FOREIGN_BLOCK_TRADE_TASK):
             return
 
         now = MarketCalendar.now("CN")
@@ -623,7 +625,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         return "--", COLOR_FLAT
 
     def _load_block_trade_data(self):
-        if self._is_loading or task_manager.is_active_task("foreign_block_trade"):
+        if self._is_loading or task_manager.is_active_task(_FOREIGN_BLOCK_TRADE_TASK):
             self._set_fetch_status("大宗抓取中", "上一轮任务尚未结束", freshness="快照", next_step="等待当前轮次结束")
             return
         self._is_loading = True
@@ -743,7 +745,7 @@ class ForeignBlockTradeTab(BaseStockTab):
 
         task_manager.run_in_background(
             _fetch_task,
-            task_id=task_registry.workspace("foreign_block_trade").task_id,
+            task_id=_FOREIGN_BLOCK_TRADE_TASK.task_id,
             on_success=self._on_data_fetched,
             on_error=self._on_data_fetch_failed
         )
@@ -912,7 +914,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         event_bus.sig_block_trade_updated.emit()
 
         self.refresh_table_quotes_and_market_caps(
-            quote_task_id=task_registry.quote_refresh("foreign_block_trade").task_id
+            quote_task_id=_FOREIGN_BLOCK_TRADE_QUOTE_TASK.task_id
         )
 
     def _on_data_fetch_failed(self, error_message: str):

@@ -5,18 +5,20 @@ from __future__ import annotations
 
 import datetime
 import os
-import subprocess
-import sys
 
 from PyQt6.QtCore import QTimer
 
 from core.background_job_runner import background_job_runner
 from core.domain_events import domain_events as event_bus
 from core.logger import get_logger
+from infra.features import service_toggle_registry
 from infra.tasks import (
+    ProcessExecutionError,
+    ProcessTimeoutError,
     STARTUP_ASIAN_DATA_SYNC,
     STARTUP_DEFERRED_LOAD,
     STARTUP_SMART,
+    run_python_module,
 )
 
 log = get_logger(__name__)
@@ -37,7 +39,7 @@ def _normalize_log_detail(text: str, limit: int = 120) -> str:
 
 
 def _format_subprocess_failure(exc: Exception) -> tuple[str, str]:
-    if isinstance(exc, subprocess.CalledProcessError):
+    if isinstance(exc, ProcessExecutionError):
         raw_detail = str(exc.stderr or "").strip() or str(exc.stdout or "").strip()
         summary = f"退出码 {exc.returncode}"
         summary_detail = _normalize_log_detail(raw_detail)
@@ -163,39 +165,34 @@ class StartupOrchestrator:
             if needs_update and os.path.exists(module_entry):
                 log.info("[启动] 亚洲市场 JSON 非最新，后台静默增量同步中...")
                 try:
-                    creationflags = 0x08000000 if os.name == "nt" else 0
-                    subprocess.run(
-                        [
-                            sys.executable,
-                            "-m",
-                            "vcp.fetchers.asian_kline_fetcher",
-                            "--strict-sync",
-                            "--output-dir",
-                            output_dir,
-                        ],
+                    run_python_module(
+                        "vcp.fetchers.asian_kline_fetcher",
+                        ["--strict-sync", "--output-dir", output_dir],
                         check=True,
                         cwd=project_root,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
+                        capture_output=True,
                         text=True,
                         encoding="utf-8",
                         errors="ignore",
-                        creationflags=creationflags,
                         timeout=ASIAN_DATA_SYNC_TIMEOUT_SEC,
+                        no_window=True,
                     )
                     log.info("[启动] 亚洲市场静默同步完成，触发界面刷新。")
                     self._safe_call_in_ui(lambda: event_bus.sig_asian_klines_ready.emit())
-                except subprocess.TimeoutExpired:
+                except ProcessTimeoutError:
                     log.warning(
                         f"[启动] 亚洲市场后台静默同步超时({ASIAN_DATA_SYNC_TIMEOUT_SEC}s)，已跳过本次同步"
                     )
-                except (OSError, subprocess.CalledProcessError, ValueError) as exc:
+                except (OSError, ProcessExecutionError, ValueError) as exc:
                     summary, raw_detail = _format_subprocess_failure(exc)
                     log.warning(f"[启动] 亚洲市场静默同步失败，已跳过本次更新（{summary}）")
                     if raw_detail:
                         log.debug(f"[启动] 亚洲市场静默同步原始输出: {raw_detail}")
 
-        self._job_runner.run(STARTUP_ASIAN_DATA_SYNC, _check_asian_data_bg)
+        if service_toggle_registry.is_enabled("silent_asian_sync"):
+            self._job_runner.run(STARTUP_ASIAN_DATA_SYNC, _check_asian_data_bg)
+        else:
+            log.info("[鍚姩] silent_asian_sync toggle disabled, skip background sync")
 
     def smart_startup(self):
         """异步检测网络；可联机时切到在线模式并驱动后续刷新。"""
@@ -243,6 +240,9 @@ class StartupOrchestrator:
         """启动完成后按条件自动开启盘中监控。"""
         try:
             if not self._alive():
+                return
+            if not service_toggle_registry.is_enabled("workspace_auto_rt_monitor"):
+                log.info("[smart_startup] workspace_auto_rt_monitor toggle disabled")
                 return
 
             from core.market_calendar import MarketCalendar

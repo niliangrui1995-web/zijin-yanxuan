@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 
 
 @dataclass(frozen=True)
@@ -14,11 +15,17 @@ class ServiceToggle:
 
 
 class ServiceToggleRegistry:
+    ENV_PREFIX = "VCP_TOGGLE_"
+
     def __init__(self):
         self._toggles: dict[str, ServiceToggle] = {}
 
+    @staticmethod
+    def _normalize(key: str) -> str:
+        return str(key or "").strip()
+
     def register(self, key: str, *, enabled_by_default: bool = True, description: str = "") -> ServiceToggle:
-        normalized = str(key or "").strip()
+        normalized = self._normalize(key)
         if not normalized:
             raise ValueError("toggle key must not be blank")
         existing = self._toggles.get(normalized)
@@ -33,8 +40,27 @@ class ServiceToggleRegistry:
         return toggle
 
     def get(self, key: str) -> ServiceToggle | None:
-        normalized = str(key or "").strip()
+        normalized = self._normalize(key)
         return self._toggles.get(normalized) if normalized else None
+
+    def override_env_name(self, key: str) -> str:
+        normalized = self._normalize(key)
+        if not normalized:
+            raise ValueError("toggle key must not be blank")
+        sanitized = "".join(char if char.isalnum() else "_" for char in normalized.upper())
+        return f"{self.ENV_PREFIX}{sanitized}"
+
+    def _read_env_override(self, key: str) -> bool | None:
+        raw = os.getenv(self.override_env_name(key))
+        if raw is None:
+            return None
+
+        normalized = raw.strip().lower()
+        if normalized in {"1", "true", "yes", "on", "enable", "enabled"}:
+            return True
+        if normalized in {"0", "false", "no", "off", "disable", "disabled"}:
+            return False
+        return None
 
     def is_enabled(self, key: str, overrides: dict[str, bool] | None = None) -> bool:
         toggle = self.get(key)
@@ -42,6 +68,11 @@ class ServiceToggleRegistry:
             raise KeyError(f"toggle is not registered: {key}")
         if overrides and toggle.key in overrides:
             return bool(overrides[toggle.key])
+
+        env_override = self._read_env_override(toggle.key)
+        if env_override is not None:
+            return env_override
+
         return bool(toggle.enabled_by_default)
 
     def snapshot(self) -> dict[str, ServiceToggle]:

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from core.app_config import app_config
 from core.logger import get_logger
+from infra.features import service_toggle_registry
 from ui.main_window_tables import install_table_copy_hooks
 from ui.workspaces import ClassicWorkspace
 from ui.workers.central_quotes_worker import CentralQuotesService
@@ -54,6 +55,11 @@ class ApplicationBootstrap:
         return workspace
 
     def install_central_quotes(self):
+        if not service_toggle_registry.is_enabled("central_quotes_service"):
+            log.info("[UI] central_quotes_service disabled by toggle")
+            self._window.central_quotes_svc = None
+            return None
+
         code_supplier = getattr(getattr(self._window, "_workspace", None), "get_realtime_quote_codes", None)
         self._window.central_quotes_svc = CentralQuotesService(
             self._window,
@@ -61,4 +67,3 @@ class ApplicationBootstrap:
             code_supplier=code_supplier,
         )
         return self._window.central_quotes_svc
-

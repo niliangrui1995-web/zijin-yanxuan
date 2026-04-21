@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.domain_events import domain_events as event_bus
+from ui.components.task_status_panel import TaskStatusPanel
 from ui.components import MultiSelectFilterButton, format_multi_select_summary
 from ui.theme_tokens import build_ui_tokens
 
@@ -134,7 +135,9 @@ class LogTab(QWidget):
 
         tb_layout.addWidget(action_wrap, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
+        self.task_status_panel = TaskStatusPanel(self)
         layout.addWidget(toolbar)
+        layout.addWidget(self.task_status_panel)
         layout.addWidget(self.log_text)
 
     def showEvent(self, event):
@@ -336,6 +339,9 @@ class LogTab(QWidget):
         log_flush_timer = getattr(self, "_log_flush_timer", None)
         if log_flush_timer is not None:
             log_flush_timer.stop()
+        task_status_panel = getattr(self, "task_status_panel", None)
+        if task_status_panel is not None:
+            task_status_panel.shutdown()
 
     def _on_log_msg(self, level, text):
         self._log_buffer.append((level, text))

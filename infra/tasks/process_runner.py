@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from collections.abc import Sequence
 
 CREATE_NO_WINDOW = 0x08000000
@@ -40,3 +41,41 @@ def run_process(command: Sequence[str], **kwargs):
 
 def spawn_process(command: Sequence[str], **kwargs):
     return subprocess.Popen(command, **kwargs)
+
+
+def build_python_module_command(
+    module_name: str,
+    module_args: Sequence[str] | None = None,
+    *,
+    python_executable: str | None = None,
+) -> list[str]:
+    normalized_module = str(module_name or "").strip()
+    if not normalized_module:
+        raise ValueError("module_name must not be blank")
+
+    command = [python_executable or sys.executable, "-m", normalized_module]
+    for arg in module_args or ():
+        text = str(arg or "").strip()
+        if text:
+            command.append(text)
+    return command
+
+
+def run_python_module(
+    module_name: str,
+    module_args: Sequence[str] | None = None,
+    *,
+    python_executable: str | None = None,
+    no_window: bool = False,
+    **kwargs,
+):
+    if no_window:
+        kwargs.setdefault("creationflags", windows_no_window_creationflags())
+    return run_process(
+        build_python_module_command(
+            module_name,
+            module_args,
+            python_executable=python_executable,
+        ),
+        **kwargs,
+    )

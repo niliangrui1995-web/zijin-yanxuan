@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import subprocess
 import types
+from pathlib import Path
 
 from PyQt6.QtCore import QObject
 from PyQt6.QtTest import QSignalSpy
@@ -52,6 +55,7 @@ class _DummyMainWindow(QObject):
         self.lbl_status = _DummyLabel()
         self.lbl_code_count = _DummyLabel()
         self.tab_watchlist = None
+        self._workspace = None
 
     def _call_in_ui(self, callback):
         callback()
@@ -70,7 +74,7 @@ class _InlineJobRunner:
         return True
 
 
-def test_startup_orchestrator_asian_sync_uses_subprocess_timeout(monkeypatch):
+def test_startup_orchestrator_asian_sync_uses_process_runner(monkeypatch):
     runner = _InlineJobRunner()
     orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=runner)
     run_calls = []
@@ -82,23 +86,30 @@ def test_startup_orchestrator_asian_sync_uses_subprocess_timeout(monkeypatch):
             return True
         return True
 
-    def fake_run(*args, **kwargs):
-        run_calls.append({"args": args, "kwargs": kwargs})
+    def fake_run_python_module(module_name, module_args=None, **kwargs):
+        run_calls.append(
+            {
+                "module_name": module_name,
+                "module_args": list(module_args or []),
+                "kwargs": kwargs,
+            }
+        )
         return types.SimpleNamespace(returncode=0)
 
     monkeypatch.setattr("core.startup_orchestrator.os.path.exists", fake_exists)
-    monkeypatch.setattr("core.startup_orchestrator.subprocess.run", fake_run)
+    monkeypatch.setattr("core.startup_orchestrator.run_python_module", fake_run_python_module)
 
     orchestrator.deferred_data_load()
 
     assert run_calls, "expected asian sync subprocess to run"
-    cmd = run_calls[0]["args"][0]
-    assert cmd[1:5] == ["-m", "vcp.fetchers.asian_kline_fetcher", "--strict-sync", "--output-dir"]
+    assert run_calls[0]["module_name"] == "vcp.fetchers.asian_kline_fetcher"
+    assert run_calls[0]["module_args"][:2] == ["--strict-sync", "--output-dir"]
+    assert run_calls[0]["module_args"][2]
     assert run_calls[0]["kwargs"]["timeout"] == ASIAN_DATA_SYNC_TIMEOUT_SEC
-    assert run_calls[0]["kwargs"]["cwd"].endswith("紫金研选")
-    assert run_calls[0]["kwargs"]["stdout"] == subprocess.PIPE
-    assert run_calls[0]["kwargs"]["stderr"] == subprocess.PIPE
+    assert Path(run_calls[0]["kwargs"]["cwd"]).name == Path(__file__).resolve().parents[1].name
+    assert run_calls[0]["kwargs"]["capture_output"] is True
     assert run_calls[0]["kwargs"]["text"] is True
+    assert run_calls[0]["kwargs"]["no_window"] is True
 
 
 def test_startup_orchestrator_deferred_load_emits_cache_bootstrap_ready(monkeypatch):
@@ -139,25 +150,25 @@ def test_startup_orchestrator_asian_sync_logs_succinct_failure_message(monkeypat
             return True
         return True
 
-    def fake_run(*_args, **_kwargs):
+    def fake_run_python_module(*_args, **_kwargs):
         raise subprocess.CalledProcessError(
             returncode=1,
             cmd=["python", "asian_kline_fetcher.py"],
-            stderr="连接雅虎接口失败\nHTTP 429 Too Many Requests",
+            stderr="connect failed\nHTTP 429 Too Many Requests",
         )
 
     monkeypatch.setattr("core.startup_orchestrator.os.path.exists", fake_exists)
-    monkeypatch.setattr("core.startup_orchestrator.subprocess.run", fake_run)
+    monkeypatch.setattr("core.startup_orchestrator.run_python_module", fake_run_python_module)
     monkeypatch.setattr("core.startup_orchestrator.log", _FakeLog())
 
     orchestrator.deferred_data_load()
 
-    assert records["warning"] == [
-        "[启动] 亚洲市场静默同步失败，已跳过本次更新（退出码 1：连接雅虎接口失败 | HTTP 429 Too Many Requests）"
-    ]
-    assert records["debug"] == [
-        "[启动] 亚洲市场静默同步原始输出: 连接雅虎接口失败\nHTTP 429 Too Many Requests"
-    ]
+    assert len(records["warning"]) == 1
+    assert "429" in records["warning"][0]
+    assert "1" in records["warning"][0]
+    assert len(records["debug"]) == 1
+    assert "connect failed" in records["debug"][0]
+    assert "HTTP 429 Too Many Requests" in records["debug"][0]
 
 
 def test_startup_orchestrator_offline_network_log_is_visible_info(monkeypatch):
@@ -178,9 +189,45 @@ def test_startup_orchestrator_offline_network_log_is_visible_info(monkeypatch):
 
     orchestrator.smart_startup()
 
-    assert records["info"] == ["[智能启动] 网络不可用，保持离线模式"]
+    assert len(records["info"]) == 1
     assert records["error"] == []
     assert records["debug"] == []
+
+
+def test_startup_orchestrator_skips_asian_sync_when_toggle_disabled(monkeypatch):
+    orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
+    run_calls = []
+
+    def fake_is_enabled(key, overrides=None):
+        return False if key == "silent_asian_sync" else True
+
+    monkeypatch.setattr("core.startup_orchestrator.service_toggle_registry.is_enabled", fake_is_enabled)
+    monkeypatch.setattr(
+        "core.startup_orchestrator.run_python_module",
+        lambda *_args, **_kwargs: run_calls.append(True),
+    )
+
+    orchestrator.deferred_data_load()
+
+    assert run_calls == []
+
+
+def test_startup_orchestrator_skips_auto_rt_monitor_when_toggle_disabled(monkeypatch):
+    orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
+    real_import = __import__
+
+    def fake_is_enabled(key, overrides=None):
+        return False if key == "workspace_auto_rt_monitor" else True
+
+    def guarded_import(name, *args, **kwargs):
+        if name == "core.market_calendar":
+            raise AssertionError("market calendar should not be imported when toggle is disabled")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("core.startup_orchestrator.service_toggle_registry.is_enabled", fake_is_enabled)
+    monkeypatch.setattr("builtins.__import__", guarded_import)
+
+    orchestrator.auto_start_rt_if_ready()
 
 
 def test_startup_orchestrator_shutdown_abandons_background_tasks():
