@@ -8,6 +8,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from typing import Any
 
 from core.logger import get_logger
 
@@ -35,6 +36,140 @@ def _normalize_tags(tags: dict | None) -> dict[str, str]:
     return normalized
 
 
+def _coerce_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _format_elapsed_ms(value: Any) -> str:
+    elapsed_ms = _coerce_float(value)
+    if elapsed_ms is None:
+        return ""
+    if elapsed_ms >= 1000:
+        seconds = elapsed_ms / 1000.0
+        return f"{seconds:.1f}秒"
+    return f"{int(round(elapsed_ms))}ms"
+
+
+def _format_count(value: Any, suffix: str = "") -> str:
+    count = _coerce_float(value)
+    if count is None:
+        return ""
+    rounded = int(round(count))
+    return f"{rounded}{suffix}"
+
+
+def _compact_join(*parts: str) -> str:
+    return " | ".join(part for part in parts if part)
+
+
+def _format_metric_event(fields: dict[str, Any]) -> str:
+    metric = str(fields.get("metric") or "").strip() or "unknown_metric"
+    unit = str(fields.get("unit") or "").strip()
+    value = fields.get("value")
+    tags = fields.get("tags") or {}
+
+    if unit == "ms":
+        value_text = _format_elapsed_ms(value)
+    elif unit == "count":
+        value_text = _format_count(value)
+    else:
+        numeric_value = _coerce_float(value)
+        value_text = str(value) if numeric_value is None else f"{numeric_value:g}"
+        if unit:
+            value_text = f"{value_text}{unit}"
+
+    extra = ""
+    if isinstance(tags, dict) and tags:
+        compact_tags = ",".join(
+            f"{str(key).strip()}={str(tag_value).strip()}"
+            for key, tag_value in sorted(tags.items())
+            if str(key).strip()
+        )
+        extra = compact_tags
+
+    return _compact_join(f"[指标] {metric}", value_text, extra)
+
+
+def _format_event_summary(event: str, fields: dict[str, Any]) -> str:
+    normalized_event = str(event or "").strip() or "unknown"
+
+    if normalized_event == "quotes.refresh.completed":
+        status = "刷新异常" if fields.get("provider_failed") else "刷新完成"
+        extra = ""
+        if not fields.get("valid_quotes"):
+            extra = "无有效行情"
+        return _compact_join(
+            f"[行情] {status}",
+            _format_count(fields.get("batch_size"), "只"),
+            _format_elapsed_ms(fields.get("elapsed_ms")),
+            extra,
+        )
+
+    if normalized_event == "kline.opened":
+        code = str(fields.get("code") or "").strip()
+        name = str(fields.get("name") or "").strip()
+        active_windows = _format_count(fields.get("active_windows"), "窗")
+        title = " ".join(part for part in (code, name) if part).strip() or "新窗口"
+        window_text = f"第{active_windows}" if active_windows else ""
+        return _compact_join(
+            f"[K线] {title}",
+            window_text,
+            _format_elapsed_ms(fields.get("elapsed_ms")),
+        )
+
+    if normalized_event == "workspace.mounted":
+        return _compact_join(
+            "[启动] 工作区已加载",
+            _format_count(fields.get("tab_count"), "页"),
+            _format_elapsed_ms(fields.get("elapsed_ms")),
+        )
+
+    if normalized_event == "startup.deferred_load.completed":
+        cache_date = str(fields.get("cache_date") or "").strip()
+        cache_state = "已载入缓存" if fields.get("cache_loaded") else "未找到缓存"
+        return _compact_join(
+            "[启动] 缓存加载完成",
+            cache_state,
+            cache_date,
+            _format_elapsed_ms(fields.get("elapsed_ms")),
+        )
+
+    if normalized_event == "startup.asian_sync.completed":
+        return _compact_join(
+            "[启动] 亚洲同步完成",
+            _format_elapsed_ms(fields.get("elapsed_ms")),
+        )
+
+    if normalized_event == "startup.network_probe.completed":
+        network_state = "在线" if fields.get("online") else "离线"
+        return _compact_join(
+            "[启动] 网络检测完成",
+            network_state,
+            _format_elapsed_ms(fields.get("elapsed_ms")),
+        )
+
+    if normalized_event == "main_window.first_paint":
+        return _compact_join(
+            "[启动] 主界面已显示",
+            _format_elapsed_ms(fields.get("elapsed_ms")),
+        )
+
+    if normalized_event == "metric.recorded":
+        return _format_metric_event(fields)
+
+    field_parts = []
+    for key, value in sorted(fields.items()):
+        if value is None or value == "":
+            continue
+        field_parts.append(f"{key}={value}")
+        if len(field_parts) >= 4:
+            break
+    return _compact_join(f"[事件] {normalized_event}", *field_parts)
+
+
 def emit_structured_log(event: str, *, logger=None, level: str = "info", **fields) -> dict:
     payload = {
         "event": str(event or "").strip() or "unknown",
@@ -45,8 +180,12 @@ def emit_structured_log(event: str, *, logger=None, level: str = "info", **field
         },
     }
     target_logger = logger or _log
-    writer = getattr(target_logger, str(level or "info").lower(), None) or target_logger.info
-    writer("[structured] %s", json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    normalized_level = str(level or "info").lower()
+    writer = getattr(target_logger, normalized_level, None) or target_logger.info
+    if normalized_level == "debug":
+        writer("[structured] %s", json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        writer(_format_event_summary(payload["event"], payload["fields"]))
     return payload
 
 
@@ -57,7 +196,7 @@ def record_metric(
     unit: str = "",
     tags: dict | None = None,
     logger=None,
-    level: str = "info",
+    level: str = "debug",
 ) -> MetricSample:
     sample = MetricSample(
         name=str(name or "").strip() or "unknown_metric",
