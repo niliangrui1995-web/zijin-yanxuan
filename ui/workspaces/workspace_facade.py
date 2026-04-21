@@ -86,6 +86,9 @@ class WorkspaceFacade:
     def run_fund_holdings_sync(self) -> bool:
         return self._call_bool(self._get_tab("fund_holdings"), "run_full_sync")
 
+    def run_fund_holdings_auto_sync_after_f5(self) -> bool:
+        return self._call_bool(self._get_tab("fund_holdings"), "run_auto_sync_after_f5")
+
     def select_code_row(self, code: str, preferred_tab_index: int | None = None) -> bool:
         return self._workspace_navigation_service.select_code_row(code, preferred_tab_index)
 

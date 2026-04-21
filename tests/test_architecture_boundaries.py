@@ -204,6 +204,20 @@ def test_main_window_does_not_call_tab_private_hooks_for_workspace_actions():
     assert not violations, "Main window still depends on tab private hooks:\n" + "\n".join(violations)
 
 
+def test_main_window_runtime_does_not_reach_into_workspace_tab_attributes():
+    violations = _find_text_snippets(
+        REPO_ROOT / "ui" / "main_window_runtime.py",
+        {
+            'getattr(workspace, "tab_',
+            "tab_fund_holdings",
+        },
+    )
+    assert not violations, (
+        "Main window runtime still reaches into concrete workspace tab attributes:\n"
+        + "\n".join(violations)
+    )
+
+
 def test_ui_layer_uses_task_registry_instead_of_literal_task_ids():
     violations = _find_literal_task_id_usage(REPO_ROOT / "ui")
     assert not violations, "UI layer still contains literal background task ids:\n" + "\n".join(violations)

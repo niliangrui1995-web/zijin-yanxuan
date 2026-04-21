@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Iterable
 
+from core.observability import emit_structured_log
+
 if TYPE_CHECKING:
     from PyQt6.QtCore import QSettings
 
@@ -37,9 +39,11 @@ class SettingsMigrator:
         self,
         settings: "QSettings",
         steps: Iterable[SettingsMigrationStep] = DEFAULT_SETTINGS_MIGRATIONS,
+        telemetry_writer: Callable[..., object] | None = None,
     ) -> None:
         self._settings = settings
         self._steps = tuple(sorted(steps, key=lambda step: step.target_version))
+        self._telemetry_writer = telemetry_writer or emit_structured_log
 
     def current_version(self) -> int:
         return int(self._settings.value(SettingsSchemaVersion.KEY, 0, type=int) or 0)
@@ -49,8 +53,22 @@ class SettingsMigrator:
         for step in self._steps:
             if step.target_version <= version:
                 continue
+            from_version = version
             step.handler(self._settings)
             self._settings.setValue(SettingsSchemaVersion.KEY, step.target_version)
             version = step.target_version
+            self._record_step(from_version, step)
         self._settings.sync()
         return version
+
+    def _record_step(self, from_version: int, step: SettingsMigrationStep) -> None:
+        if not callable(self._telemetry_writer):
+            return
+        self._telemetry_writer(
+            "settings.schema_migrated",
+            organization=str(self._settings.organizationName() or "").strip(),
+            application=str(self._settings.applicationName() or "").strip(),
+            from_version=int(from_version),
+            to_version=int(step.target_version),
+            description=str(step.description or "").strip(),
+        )

@@ -140,6 +140,18 @@ def test_workspace_refreshes_all_tabs_after_f5():
     ]
 
 
+def test_workspace_runs_fund_holdings_auto_sync_through_public_facade():
+    calls = []
+    workspace = _make_workspace(
+        tabs={
+            "fund_holdings": SimpleNamespace(run_auto_sync_after_f5=lambda: (calls.append("fund") or True)),
+        }
+    )
+
+    assert ClassicWorkspace.run_fund_holdings_auto_sync_after_f5(workspace) is True
+    assert calls == ["fund"]
+
+
 def test_workspace_defers_heavy_tab_autoload(monkeypatch):
     ctor_kwargs = {}
 

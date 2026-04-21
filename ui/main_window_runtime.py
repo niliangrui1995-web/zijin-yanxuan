@@ -91,8 +91,7 @@ def finish_f5_reload(main_window, *, count, elapsed, event_bus):
     except (AttributeError, RuntimeError, TypeError) as exc:
         log.error(f"[F5] 广播缓存重载完成信号异常: {exc}")
 
-    fund_holdings_tab = getattr(workspace, "tab_fund_holdings", None)
-    auto_sync_after_f5 = getattr(fund_holdings_tab, "run_auto_sync_after_f5", None)
+    auto_sync_after_f5 = getattr(workspace, "run_fund_holdings_auto_sync_after_f5", None)
     if callable(auto_sync_after_f5):
         try:
             auto_sync_after_f5()

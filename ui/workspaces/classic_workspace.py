@@ -195,6 +195,9 @@ class ClassicWorkspace(QWidget):
     def run_fund_holdings_sync(self) -> bool:
         return _resolve_workspace_facade(self).run_fund_holdings_sync()
 
+    def run_fund_holdings_auto_sync_after_f5(self) -> bool:
+        return _resolve_workspace_facade(self).run_fund_holdings_auto_sync_after_f5()
+
     def select_code_row(self, code: str, preferred_tab_index: int | None = None) -> bool:
         return _resolve_workspace_facade(self).select_code_row(code, preferred_tab_index)
 

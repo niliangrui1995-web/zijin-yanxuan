@@ -10,6 +10,7 @@ tests/test_app_config.py — AppConfig 单例行为验证
 from PyQt6.QtCore import QSettings
 
 from core.app_config import AppConfig, app_config
+from infra.settings.settings_repository import SettingsRepository
 from infra.settings.settings_schema import SettingsMigrator, SettingsSchemaVersion
 
 
@@ -91,3 +92,64 @@ class TestAppConfigSingleton:
         finally:
             settings.remove(SettingsSchemaVersion.KEY)
             settings.sync()
+
+    def test_settings_migrator_records_schema_migration_event(self):
+        settings = QSettings("VCPHunter", "SchemaMigratorTelemetryTest")
+        telemetry = []
+        settings.setValue(SettingsSchemaVersion.KEY, 0)
+        settings.sync()
+
+        try:
+            migrator = SettingsMigrator(
+                settings,
+                telemetry_writer=lambda event, **fields: telemetry.append((event, fields)),
+            )
+            assert migrator.migrate() == SettingsSchemaVersion.CURRENT
+        finally:
+            settings.remove(SettingsSchemaVersion.KEY)
+            settings.sync()
+
+        assert telemetry == [
+            (
+                "settings.schema_migrated",
+                {
+                    "organization": "VCPHunter",
+                    "application": "SchemaMigratorTelemetryTest",
+                    "from_version": 0,
+                    "to_version": SettingsSchemaVersion.CURRENT,
+                    "description": "bootstrap centralized settings repository",
+                },
+            )
+        ]
+
+    def test_repository_records_legacy_scope_migration_event(self):
+        telemetry = []
+        repo = SettingsRepository(
+            "VCPHunter",
+            "SettingsRepositoryTelemetryTest",
+            telemetry_writer=lambda event, **fields: telemetry.append((event, fields)),
+        )
+        legacy_scope = "LegacyConfigSectionTelemetryTest"
+        legacy = QSettings("VCPHunter", legacy_scope)
+        legacy.setValue("legacy_key", 7)
+        legacy.sync()
+
+        section = repo.section("_test_/legacy_telemetry", legacy_scope=legacy_scope)
+
+        try:
+            assert section.value("legacy_key", 0, type=int) == 7
+        finally:
+            repo.remove("_test_/legacy_telemetry")
+            legacy.remove("legacy_key")
+            legacy.sync()
+
+        assert (
+            "settings.legacy_key_migrated",
+            {
+                "organization": "VCPHunter",
+                "application": "SettingsRepositoryTelemetryTest",
+                "legacy_scope": legacy_scope,
+                "legacy_key": "legacy_key",
+                "target_key": "_test_/legacy_telemetry/legacy_key",
+            },
+        ) in telemetry

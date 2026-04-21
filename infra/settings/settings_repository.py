@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QSettings
 
+from core.observability import emit_structured_log
 from infra.settings.settings_schema import SettingsMigrator
 
 
@@ -13,10 +14,14 @@ class SettingsSection:
         root_settings: QSettings,
         prefix: str = "",
         legacy_settings: QSettings | None = None,
+        legacy_scope: str = "",
+        telemetry_writer=None,
     ) -> None:
         self._root_settings = root_settings
         self._prefix = str(prefix or "").strip("/")
         self._legacy_settings = legacy_settings
+        self._legacy_scope = str(legacy_scope or "").strip()
+        self._telemetry_writer = telemetry_writer
 
     def _full_key(self, key: str) -> str:
         clean_key = str(key or "").strip("/")
@@ -34,8 +39,22 @@ class SettingsSection:
             value = self._legacy_settings.value(key, default, type=value_type)
         else:
             value = self._legacy_settings.value(key, default)
-        self._root_settings.setValue(self._full_key(key), value)
+        full_key = self._full_key(key)
+        self._root_settings.setValue(full_key, value)
+        self._record_legacy_migration(key, full_key)
         return value, True
+
+    def _record_legacy_migration(self, key: str, full_key: str) -> None:
+        if not callable(self._telemetry_writer):
+            return
+        self._telemetry_writer(
+            "settings.legacy_key_migrated",
+            organization=str(self._root_settings.organizationName() or "").strip(),
+            application=str(self._root_settings.applicationName() or "").strip(),
+            legacy_scope=self._legacy_scope,
+            legacy_key=str(key or "").strip(),
+            target_key=str(full_key or "").strip(),
+        )
 
     def get(self, key: str, default=None, value_type=None):
         full_key = self._full_key(key)
@@ -78,10 +97,19 @@ class SettingsSection:
 
 
 class SettingsRepository:
-    def __init__(self, organization: str = "VCPHunter", application: str = "Main") -> None:
+    def __init__(
+        self,
+        organization: str = "VCPHunter",
+        application: str = "Main",
+        telemetry_writer=None,
+    ) -> None:
         self._settings = QSettings(organization, application)
         self._legacy_settings_cache: dict[str, QSettings] = {}
-        self._migrator = SettingsMigrator(self._settings)
+        self._telemetry_writer = telemetry_writer or emit_structured_log
+        self._migrator = SettingsMigrator(
+            self._settings,
+            telemetry_writer=self._telemetry_writer,
+        )
         self._schema_version = self._migrator.migrate()
         self._organization = organization
         self._application = application
@@ -118,4 +146,10 @@ class SettingsRepository:
             if legacy_settings is None:
                 legacy_settings = QSettings(self._organization, legacy_scope)
                 self._legacy_settings_cache[legacy_scope] = legacy_settings
-        return SettingsSection(self._settings, prefix=prefix, legacy_settings=legacy_settings)
+        return SettingsSection(
+            self._settings,
+            prefix=prefix,
+            legacy_settings=legacy_settings,
+            legacy_scope=legacy_scope or "",
+            telemetry_writer=self._telemetry_writer,
+        )

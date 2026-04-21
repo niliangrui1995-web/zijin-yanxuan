@@ -53,9 +53,7 @@ def test_main_window_f5_done_triggers_fund_holdings_auto_sync(monkeypatch):
             refresh_after_cache_reload=lambda: calls.append("refresh_after_cache_reload")
         ),
         _workspace=SimpleNamespace(
-            tab_fund_holdings=SimpleNamespace(
-                run_auto_sync_after_f5=lambda: calls.append("fund_holdings_auto_sync")
-            )
+            run_fund_holdings_auto_sync_after_f5=lambda: calls.append("fund_holdings_auto_sync")
         ),
     )
 
