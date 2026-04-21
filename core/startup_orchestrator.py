@@ -12,6 +12,7 @@ from PyQt6.QtCore import QTimer
 from core.background_job_runner import background_job_runner
 from core.logger import get_logger
 from core.observability import emit_structured_log, record_metric
+from core.process_watchdog import log_process_snapshot
 from domains.runtime import domain_events as event_bus
 from infra.features import service_toggle_registry
 from infra.tasks import (
@@ -102,6 +103,7 @@ class StartupOrchestrator:
             started_at = time.perf_counter()
             if not self._alive():
                 return
+            log_process_snapshot("startup.deferred_load.begin", logger=log)
 
             cache_date = self.mw.data_provider.load_cache_from_disk()
             if cache_date and self._alive():
@@ -140,6 +142,11 @@ class StartupOrchestrator:
 
             self._safe_call_in_ui(lambda: event_bus.sig_cache_bootstrap_ready.emit())
             elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+            log_process_snapshot(
+                "startup.deferred_load.end",
+                logger=log,
+                extra={"cache_loaded": bool(cache_date), "elapsed_ms": int(round(elapsed_ms))},
+            )
             record_metric(
                 "startup_deferred_load_ms",
                 elapsed_ms,
@@ -180,6 +187,7 @@ class StartupOrchestrator:
                     needs_update = True
 
             if needs_update and os.path.exists(module_entry):
+                log_process_snapshot("startup.asian_sync.begin", logger=log)
                 log.info("[启动] 亚洲市场 JSON 非最新，后台静默增量同步中...")
                 try:
                     run_python_module(
@@ -198,16 +206,33 @@ class StartupOrchestrator:
                     self._safe_call_in_ui(lambda: event_bus.sig_asian_klines_ready.emit())
                     elapsed_ms = (time.perf_counter() - started_at) * 1000.0
                     record_metric("startup_asian_sync_ms", elapsed_ms, unit="ms")
+                    log_process_snapshot(
+                        "startup.asian_sync.end",
+                        logger=log,
+                        extra={"elapsed_ms": int(round(elapsed_ms)), "status": "success"},
+                    )
                     emit_structured_log(
                         "startup.asian_sync.completed",
                         elapsed_ms=round(elapsed_ms, 3),
                         output_dir=output_dir,
                     )
                 except ProcessTimeoutError:
+                    log_process_snapshot(
+                        "startup.asian_sync.end",
+                        logger=log,
+                        level="warning",
+                        extra={"status": "timeout"},
+                    )
                     log.warning(
                         f"[启动] 亚洲市场后台静默同步超时({ASIAN_DATA_SYNC_TIMEOUT_SEC}s)，已跳过本次同步"
                     )
                 except (OSError, ProcessExecutionError, ValueError) as exc:
+                    log_process_snapshot(
+                        "startup.asian_sync.end",
+                        logger=log,
+                        level="warning",
+                        extra={"status": "failed"},
+                    )
                     summary, raw_detail = _format_subprocess_failure(exc)
                     log.warning(f"[启动] 亚洲市场静默同步失败，已跳过本次更新（{summary}）")
                     if raw_detail:
@@ -226,6 +251,7 @@ class StartupOrchestrator:
             try:
                 if not self._alive():
                     return
+                log_process_snapshot("startup.smart.begin", logger=log)
                 online = self.mw.data_provider.test_network(timeout=3)
                 if online:
                     if not self._alive():
@@ -264,12 +290,23 @@ class StartupOrchestrator:
                     unit="ms",
                     tags={"online": str(bool(online)).lower()},
                 )
+                log_process_snapshot(
+                    "startup.smart.end",
+                    logger=log,
+                    extra={"elapsed_ms": int(round(elapsed_ms)), "online": bool(online)},
+                )
                 emit_structured_log(
                     "startup.network_probe.completed",
                     elapsed_ms=round(elapsed_ms, 3),
                     online=bool(online),
                 )
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                log_process_snapshot(
+                    "startup.smart.end",
+                    logger=log,
+                    level="warning",
+                    extra={"status": "failed"},
+                )
                 log.error(f"[智能启动] 网络检测异常: {exc}")
 
         self._job_runner.run(STARTUP_SMART, _check_and_go_online)

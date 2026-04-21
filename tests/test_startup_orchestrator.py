@@ -80,6 +80,7 @@ def test_startup_orchestrator_asian_sync_uses_process_runner(monkeypatch):
     run_calls = []
 
     def fake_exists(path):
+        path = str(path)
         if path.endswith("asian_klines_latest.json"):
             return False
         if path.endswith("asian_kline_fetcher.py"):
@@ -117,13 +118,32 @@ def test_startup_orchestrator_deferred_load_emits_cache_bootstrap_ready(monkeypa
     spy = QSignalSpy(event_bus.sig_cache_bootstrap_ready)
 
     def fake_exists(path):
-        return not path.endswith("asian_kline_fetcher.py")
+        return not str(path).endswith("asian_kline_fetcher.py")
 
     monkeypatch.setattr("core.startup_orchestrator.os.path.exists", fake_exists)
 
     orchestrator.deferred_data_load()
 
     assert len(spy) == 1
+
+
+def test_startup_orchestrator_deferred_load_records_process_snapshots(monkeypatch):
+    orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
+    labels = []
+
+    def fake_exists(path):
+        return not str(path).endswith("asian_kline_fetcher.py")
+
+    monkeypatch.setattr("core.startup_orchestrator.os.path.exists", fake_exists)
+    monkeypatch.setattr(
+        "core.startup_orchestrator.log_process_snapshot",
+        lambda label, **_kwargs: labels.append(label),
+    )
+
+    orchestrator.deferred_data_load()
+
+    assert "startup.deferred_load.begin" in labels
+    assert "startup.deferred_load.end" in labels
 
 
 def test_startup_orchestrator_asian_sync_logs_succinct_failure_message(monkeypatch):
@@ -144,6 +164,7 @@ def test_startup_orchestrator_asian_sync_logs_succinct_failure_message(monkeypat
             return None
 
     def fake_exists(path):
+        path = str(path)
         if path.endswith("asian_klines_latest.json"):
             return False
         if path.endswith("asian_kline_fetcher.py"):
@@ -160,6 +181,7 @@ def test_startup_orchestrator_asian_sync_logs_succinct_failure_message(monkeypat
     monkeypatch.setattr("core.startup_orchestrator.os.path.exists", fake_exists)
     monkeypatch.setattr("core.startup_orchestrator.run_python_module", fake_run_python_module)
     monkeypatch.setattr("core.startup_orchestrator.log", _FakeLog())
+    monkeypatch.setattr("core.startup_orchestrator.log_process_snapshot", lambda *_args, **_kwargs: None)
 
     orchestrator.deferred_data_load()
 
@@ -186,12 +208,27 @@ def test_startup_orchestrator_offline_network_log_is_visible_info(monkeypatch):
             records["error"].append(message)
 
     monkeypatch.setattr("core.startup_orchestrator.log", _FakeLog())
+    monkeypatch.setattr("core.startup_orchestrator.log_process_snapshot", lambda *_args, **_kwargs: None)
 
     orchestrator.smart_startup()
 
     assert len(records["info"]) == 1
     assert records["error"] == []
     assert records["debug"] == []
+
+
+def test_startup_orchestrator_smart_startup_records_process_snapshots(monkeypatch):
+    orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
+    labels = []
+
+    monkeypatch.setattr(
+        "core.startup_orchestrator.log_process_snapshot",
+        lambda label, **_kwargs: labels.append(label),
+    )
+
+    orchestrator.smart_startup()
+
+    assert labels == ["startup.smart.begin", "startup.smart.end"]
 
 
 def test_startup_orchestrator_skips_asian_sync_when_toggle_disabled(monkeypatch):

@@ -21,6 +21,7 @@ from core.cache_manager import CacheManager
 from app.services.ui_runtime_service import domain_events as event_bus
 from core.logger import get_logger
 from core.observability import emit_structured_log, record_metric
+from core.process_watchdog import ProcessWatchdog, log_process_snapshot
 from app.services.ui_runtime_service import ui_signal_hub
 from ui.components.command_palette import CommandPaletteDialog
 from ui.components.kline_window_manager import kline_manager
@@ -65,6 +66,7 @@ class MainWindowQT(QMainWindow):
 
     def __init__(self, splash=None):
         super().__init__()
+        self._project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self._launch_started_at = time.perf_counter()
         self._first_paint_recorded = False
         self._is_closing = False
@@ -77,6 +79,12 @@ class MainWindowQT(QMainWindow):
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
         self.setMinimumSize(1000, 600)
         self._sig_ui_call.connect(self._run_ui_callback)
+        self._process_watchdog = ProcessWatchdog(
+            project_root=self._project_root,
+            logger=log,
+        )
+        self._process_watchdog.start(self)
+        log_process_snapshot("main_window.init.begin", logger=log)
 
         # 拖拽相关状态
         self._drag_pos = None
@@ -155,6 +163,7 @@ class MainWindowQT(QMainWindow):
 
         self._init_central_broadcaster()
         self._update_last_f5_time()
+        log_process_snapshot("main_window.init.ready", logger=log)
 
     def _init_central_broadcaster(self):
         self._bootstrap.install_central_quotes()
@@ -524,6 +533,8 @@ class MainWindowQT(QMainWindow):
 
     def showEvent(self, event):
         super().showEvent(event)
+        if hasattr(self, "_process_watchdog"):
+            self._process_watchdog.pulse("showEvent")
         if self._first_paint_recorded:
             return
         self._first_paint_recorded = True
@@ -540,6 +551,8 @@ class MainWindowQT(QMainWindow):
         from ui.main_window_runtime import shutdown_main_window
 
         shutdown_main_window(self, event_bus=event_bus, task_manager=task_manager)
+        if hasattr(self, "_process_watchdog"):
+            self._process_watchdog.stop()
 
         super().closeEvent(event)
 

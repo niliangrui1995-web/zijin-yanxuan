@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Runtime environment diagnostics for the desktop app."""
+"""Runtime environment diagnostics and interpreter selection helpers."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import importlib
 import os
 import re
 import sys
+from datetime import datetime
 from importlib import metadata
 
 from core.logger import get_logger
@@ -47,6 +48,123 @@ def _is_windows() -> bool:
     return os.name == "nt"
 
 
+def project_venv_python_candidates(project_root: str) -> list[str]:
+    root = os.path.abspath(project_root or "")
+    if not root:
+        return []
+
+    candidates: list[str] = []
+    if _is_windows():
+        scripts_dir = os.path.join(root, ".venv", "Scripts")
+        for executable_name in ("python.exe", "pythonw.exe"):
+            candidate = os.path.abspath(os.path.join(scripts_dir, executable_name))
+            if os.path.exists(candidate):
+                candidates.append(candidate)
+        return candidates
+
+    candidate = os.path.abspath(os.path.join(root, ".venv", "bin", "python"))
+    if os.path.exists(candidate):
+        candidates.append(candidate)
+    return candidates
+
+
+def resolve_project_python(project_root: str, executable: str | None = None) -> str:
+    candidates = project_venv_python_candidates(project_root)
+    if not candidates:
+        return ""
+
+    current_name = os.path.basename(os.path.abspath(executable or sys.executable)).lower()
+    if _is_windows():
+        preferred_names = ("pythonw.exe", "python.exe") if current_name == "pythonw.exe" else (
+            "python.exe",
+            "pythonw.exe",
+        )
+        for preferred_name in preferred_names:
+            for candidate in candidates:
+                if os.path.basename(candidate).lower() == preferred_name:
+                    return candidate
+
+    return candidates[0]
+
+
+def should_relaunch_into_project_venv(
+    project_root: str,
+    *,
+    executable: str | None = None,
+    env: dict[str, str] | None = None,
+) -> bool:
+    current_env = env or os.environ
+    if current_env.get("VCP_SKIP_VENV_RELAUNCH") == "1":
+        return False
+    if current_env.get("VCP_ALREADY_RELAUNCHED") == "1":
+        return False
+
+    preferred_candidates = project_venv_python_candidates(project_root)
+    if not preferred_candidates:
+        return False
+
+    current_executable = os.path.abspath(executable or sys.executable)
+    normalized_candidates = {os.path.normcase(path) for path in preferred_candidates}
+    return os.path.normcase(current_executable) not in normalized_candidates
+
+
+def _append_bootstrap_log(project_root: str, message: str) -> None:
+    root = os.path.abspath(project_root or "")
+    if not root:
+        return
+
+    log_dir = os.path.join(root, "data", "logs")
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, f"bootstrap_{datetime.now().strftime('%Y%m%d')}.log")
+        with open(log_path, "a", encoding="utf-8") as file_obj:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            file_obj.write(f"{timestamp} {message}\n")
+    except OSError:
+        return
+
+
+def relaunch_into_project_venv_if_needed(
+    project_root: str,
+    *,
+    executable: str | None = None,
+    argv: list[str] | tuple[str, ...] | None = None,
+    env: dict[str, str] | None = None,
+    script_path: str | None = None,
+    execve=os.execve,
+) -> bool:
+    if not should_relaunch_into_project_venv(
+        project_root,
+        executable=executable,
+        env=env,
+    ):
+        return False
+
+    target_python = resolve_project_python(project_root, executable=executable)
+    if not target_python:
+        return False
+
+    argv_list = list(argv or sys.argv or [])
+    raw_script = script_path or (argv_list[0] if argv_list else "")
+    if not raw_script:
+        return False
+
+    current_executable = os.path.abspath(executable or sys.executable)
+    target_script = os.path.abspath(raw_script)
+    child_env = dict(os.environ)
+    if env:
+        child_env.update(env)
+    child_env["VCP_ALREADY_RELAUNCHED"] = "1"
+
+    child_argv = [target_python, target_script, *argv_list[1:]]
+    _append_bootstrap_log(
+        project_root,
+        f"[runtime_env] relaunch {current_executable} -> {target_python}",
+    )
+    execve(target_python, child_argv, child_env)
+    return True
+
+
 def collect_runtime_env_issues(
     project_root: str,
     executable: str | None = None,
@@ -59,12 +177,14 @@ def collect_runtime_env_issues(
     current_executable = os.path.abspath(executable or sys.executable)
 
     if project_root:
-        preferred_python = os.path.join(project_root, ".venv", "Scripts", "python.exe")
-        if os.path.exists(preferred_python):
-            preferred_python = os.path.abspath(preferred_python)
-            if os.path.normcase(preferred_python) != os.path.normcase(current_executable):
+        preferred_candidates = project_venv_python_candidates(project_root)
+        if preferred_candidates:
+            normalized_candidates = {os.path.normcase(path) for path in preferred_candidates}
+            preferred_python = resolve_project_python(project_root, executable=current_executable)
+            if os.path.normcase(current_executable) not in normalized_candidates:
                 issues.append(
-                    f"当前解释器不是项目 .venv: {current_executable} (建议使用 {preferred_python})"
+                    f"current executable is not project .venv: {current_executable} "
+                    f"(recommended: {preferred_python})"
                 )
 
     if _is_windows():
@@ -72,22 +192,22 @@ def collect_runtime_env_issues(
             try:
                 import_module(module_name)
             except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
-                issues.append(f"缺少运行时依赖: {dependency_name} ({module_name})")
+                issues.append(f"missing runtime dependency: {dependency_name} ({module_name})")
 
     requests_version = package_version("requests")
     if requests_version and _version_lt(requests_version, "2.33.0"):
-        issues.append(f"requests 版本过低: {requests_version} (需要 >= 2.33.0)")
+        issues.append(f"requests version too old: {requests_version} (need >= 2.33.0)")
 
     yfinance_version = package_version("yfinance")
     curl_cffi_version = package_version("curl_cffi") or package_version("curl-cffi")
     if yfinance_version.startswith("1.2."):
         if not curl_cffi_version:
-            issues.append("yfinance 1.2.x 缺少 curl_cffi 依赖")
-        else:
-            if _version_lt(curl_cffi_version, "0.7.0") or _version_ge(curl_cffi_version, "0.14.0"):
-                issues.append(
-                    f"curl_cffi 与 yfinance 1.2.x 不兼容: {curl_cffi_version} (需要 >=0.7,<0.14)"
-                )
+            issues.append("yfinance 1.2.x requires curl_cffi")
+        elif _version_lt(curl_cffi_version, "0.7.0") or _version_ge(curl_cffi_version, "0.14.0"):
+            issues.append(
+                f"curl_cffi incompatible with yfinance 1.2.x: {curl_cffi_version} "
+                "(need >=0.7,<0.14)"
+            )
 
     return issues
 
@@ -98,7 +218,7 @@ def log_runtime_env_report(project_root: str) -> list[str]:
     issues = collect_runtime_env_issues(project_root)
     if issues:
         for issue in issues:
-            log.warning(f"[环境自检] {issue}")
+            log.warning(f"[runtime_env] {issue}")
     else:
-        log.info(f"[环境自检] 通过 ({sys.executable})")
+        log.info(f"[runtime_env] ok ({sys.executable})")
     return issues
