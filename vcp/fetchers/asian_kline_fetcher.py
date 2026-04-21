@@ -23,7 +23,12 @@ import time
 import uuid
 from datetime import date, datetime, timedelta
 
-from vcp.fetchers.yf_session import build_yf_session
+from vcp.fetchers.yf_session import (
+    build_yf_session,
+    get_yf_rate_limit_status,
+    is_yf_rate_limit_error,
+    mark_yf_rate_limited,
+)
 
 # Why: 行业字典暂未收入本项目工程，通过项目根目录向上推导兄弟目录，避免硬编码特定机器的绝对路径
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -708,6 +713,16 @@ def fetch_single_kline(
             ]
         }
     """
+    rate_limit_status = get_yf_rate_limit_status()
+    if rate_limit_status["active"]:
+        logging.warning(
+            "⚠️ %s(%s): Yahoo Finance 冷却中，跳过请求 (剩余 %.0fs)",
+            name,
+            ticker,
+            rate_limit_status["remaining_sec"],
+        )
+        return None
+
     try:
         ticker = str(ticker or "").strip().upper()
         http_session = session or build_yf_session(use_cf_proxy)
@@ -739,17 +754,26 @@ def fetch_single_kline(
             "klines": klines,
         }
 
-    except (
-        AttributeError,
-        KeyError,
-        OSError,
-        RuntimeError,
-        TypeError,
-        ValueError,
-        json.JSONDecodeError,
-    ) as e:
-        logging.error(f"❌ {name}({ticker}): 拉取失败 — {e}")
-        return None
+    except Exception as e:
+        if is_yf_rate_limit_error(e):
+            remaining_sec = mark_yf_rate_limited(e)
+            logging.warning(f"⚠️ {name}({ticker}): Yahoo Finance 限流，冷却 {remaining_sec:.0f}s — {e}")
+            return None
+        if isinstance(
+            e,
+            (
+                AttributeError,
+                KeyError,
+                OSError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+                json.JSONDecodeError,
+            ),
+        ):
+            logging.error(f"❌ {name}({ticker}): 拉取失败 — {e}")
+            return None
+        raise
 
 
 def fetch_all_asian_klines(
@@ -795,6 +819,9 @@ def fetch_all_asian_klines(
     yf_session = build_yf_session(use_cf_proxy)
 
     for name, ticker in tickers.items():
+        if get_yf_rate_limit_status()["active"]:
+            logging.warning("⚠️ Yahoo Finance 已进入冷却，提前结束本轮亚洲 K 线抓取")
+            break
         time.sleep(0.3)
         try:
             data = fetch_single_kline(
@@ -812,9 +839,16 @@ def fetch_all_asian_klines(
                 )
             else:
                 failed.append(f"{name}({ticker})")
-        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
+        except Exception as e:
             failed.append(f"{name}({ticker})")
-            logging.error(f"  ❌ {name}({ticker}): {e}")
+            if is_yf_rate_limit_error(e):
+                remaining_sec = mark_yf_rate_limited(e)
+                logging.warning(f"  ⚠️ {name}({ticker}): Yahoo Finance 限流，冷却 {remaining_sec:.0f}s — {e}")
+                break
+            if isinstance(e, (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError)):
+                logging.error(f"  ❌ {name}({ticker}): {e}")
+                continue
+            raise
 
     # Why: 按市场分组排序，便于前端渲染
     results.sort(key=lambda x: (x["market"], x["name"]))
@@ -905,6 +939,9 @@ def sync_asian_kline_cache(
         for ticker in list(missing):
             name = ticker_to_name.get(ticker, ticker)
             try:
+                if get_yf_rate_limit_status()["active"]:
+                    logging.warning("⚠️ Yahoo Finance 冷却中，停止单票补抓")
+                    break
                 one = fetch_single_kline(
                     name,
                     ticker,
@@ -915,8 +952,15 @@ def sync_asian_kline_cache(
                 if one:
                     row_map[ticker] = one
                     single_recovered.append(ticker)
-            except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                logging.warning(f"⚠️ 单票补抓失败 {ticker}: {exc}")
+            except Exception as exc:
+                if is_yf_rate_limit_error(exc):
+                    remaining_sec = mark_yf_rate_limited(exc)
+                    logging.warning(f"⚠️ 单票补抓触发 Yahoo Finance 限流 {ticker}: 冷却 {remaining_sec:.0f}s — {exc}")
+                    break
+                if isinstance(exc, (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError)):
+                    logging.warning(f"⚠️ 单票补抓失败 {ticker}: {exc}")
+                    continue
+                raise
         missing = sorted(target_tickers - set(row_map.keys()))
 
     reused: list[str] = []

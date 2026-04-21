@@ -3,6 +3,8 @@ import importlib
 import sys
 import types
 
+from yfinance.exceptions import YFRateLimitError
+
 
 def _load_fetcher_module(monkeypatch):
     fake_industry = types.ModuleType("industry_dict")
@@ -10,6 +12,14 @@ def _load_fetcher_module(monkeypatch):
     fake_industry.VANGUARD_TICKERS = {}
     fake_session = types.ModuleType("vcp.fetchers.yf_session")
     fake_session.build_yf_session = lambda use_cf_proxy=True: object()
+    fake_session.get_yf_rate_limit_status = lambda: {
+        "active": False,
+        "remaining_sec": 0.0,
+        "reason": "",
+        "until_ts": 0.0,
+    }
+    fake_session.is_yf_rate_limit_error = lambda exc: False
+    fake_session.mark_yf_rate_limited = lambda exc=None, cooldown_sec=None: 0.0
 
     monkeypatch.setitem(sys.modules, "industry_dict", fake_industry)
     monkeypatch.setitem(sys.modules, "vcp.fetchers.yf_session", fake_session)
@@ -296,3 +306,29 @@ def test_sync_asian_kline_cache_keeps_existing_snapshot_when_full_fetch_is_empty
     assert report["reused"] == ["2330.TW", "3711.TW"]
     assert report["cache_preserved"] is True
     assert saved_payloads == []
+
+
+def test_fetch_single_kline_returns_none_when_yahoo_rate_limited(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    monkeypatch.setattr(
+        fetcher,
+        "_resolve_period_window",
+        lambda period: (fetcher.date(2025, 4, 1), fetcher.date(2026, 4, 20), 260),
+    )
+
+    def _raise_rate_limit(*args, **kwargs):
+        raise YFRateLimitError()
+
+    marks = []
+    monkeypatch.setattr(fetcher, "_fetch_market_history_rows", _raise_rate_limit)
+    monkeypatch.setattr(fetcher, "is_yf_rate_limit_error", lambda exc: isinstance(exc, YFRateLimitError))
+    monkeypatch.setattr(
+        fetcher,
+        "mark_yf_rate_limited",
+        lambda exc=None, cooldown_sec=None: marks.append(str(exc)) or 30.0,
+    )
+
+    payload = fetcher.fetch_single_kline("TSMC", "2330.TW", period="1y", session=object())
+
+    assert payload is None
+    assert marks == ["Too Many Requests. Rate limited. Try after a while."]

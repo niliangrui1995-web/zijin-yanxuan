@@ -9,6 +9,11 @@ import pandas as pd
 from app.services.ui_runtime_service import MarketCalendar
 from app.services.ui_runtime_service import background_job_runner as task_manager
 from app.services.ui_runtime_service import task_registry
+from vcp.fetchers.yf_session import (
+    get_yf_rate_limit_status,
+    is_yf_rate_limit_error,
+    mark_yf_rate_limited,
+)
 
 
 def normalize_daily_df_index(df, *, logger):
@@ -231,6 +236,8 @@ def poll_rt_update(window):
     try:
         if market != "CN":
             quote = window._build_asian_rt_quote()
+            if quote is None and get_yf_rate_limit_status()["active"]:
+                return
             if quote is None:
                 from ui.tabs.asian_market_workers import fetch_asian_realtime_quote
 
@@ -242,8 +249,15 @@ def poll_rt_update(window):
         quotes = window.data_provider.fetch_realtime_quotes_batch([window.code])
         if quotes and window.code in quotes:
             refresh_last_bar(window, quotes[window.code])
-    except (AttributeError, ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
-        window._log.warning(f"[K线] {window.code} 实时刷新异常: {exc}")
+    except Exception as exc:
+        if is_yf_rate_limit_error(exc):
+            remaining_sec = mark_yf_rate_limited(exc)
+            window._log.warning(f"[K线] {window.code} 实时刷新遇到 Yahoo Finance 限流，冷却 {remaining_sec:.0f}s: {exc}")
+            return
+        if isinstance(exc, (AttributeError, ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError)):
+            window._log.warning(f"[K线] {window.code} 实时刷新异常: {exc}")
+            return
+        raise
 
 
 def refresh_last_bar(window, quote):

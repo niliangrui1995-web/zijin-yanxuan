@@ -1,9 +1,14 @@
 from pathlib import Path
 
 from curl_cffi import requests as curl_requests
+from yfinance.exceptions import YFRateLimitError
 
 from vcp.fetchers.yf_session import (
     build_yf_session,
+    clear_yf_rate_limit,
+    get_yf_rate_limit_status,
+    is_yf_rate_limit_error,
+    mark_yf_rate_limited,
     resolve_curl_cffi_verify_path,
     rewrite_yfinance_url,
 )
@@ -65,3 +70,23 @@ def test_resolve_curl_cffi_verify_path_copies_non_ascii_bundle(tmp_path, monkeyp
     assert Path(resolved).exists()
     assert Path(resolved).read_text(encoding="utf-8") == "dummy-cert"
     resolved.encode("ascii")
+
+
+def test_is_yf_rate_limit_error_matches_yfinance_and_429_messages():
+    assert is_yf_rate_limit_error(YFRateLimitError()) is True
+    assert is_yf_rate_limit_error(RuntimeError("HTTP 429 Too Many Requests")) is True
+    assert is_yf_rate_limit_error(ValueError("plain error")) is False
+
+
+def test_mark_yf_rate_limited_tracks_shared_cooldown():
+    clear_yf_rate_limit()
+    try:
+        remaining = mark_yf_rate_limited("HTTP 429 Too Many Requests", cooldown_sec=12)
+        status = get_yf_rate_limit_status()
+
+        assert remaining > 0
+        assert status["active"] is True
+        assert 0 < status["remaining_sec"] <= 12
+        assert "429" in status["reason"]
+    finally:
+        clear_yf_rate_limit()

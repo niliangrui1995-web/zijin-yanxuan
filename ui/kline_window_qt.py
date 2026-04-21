@@ -17,6 +17,7 @@ from app.services.ui_runtime_service import domain_events as event_bus
 from core.logger import get_logger
 from app.services.ui_runtime_service import MarketCalendar
 from app.services.ui_runtime_service import watchlist_vm
+from vcp.fetchers.yf_session import is_yf_rate_limit_error, mark_yf_rate_limited
 
 log = get_logger(__name__)
 import pandas as pd
@@ -397,8 +398,19 @@ class KLineChartWindow(QWidget):
                 if last_date is None or last_date < latest_trade_date:
                     try:
                         quote = fetch_asian_realtime_quote(self.code, use_cf_proxy=is_cf_proxy_enabled())
-                    except (AttributeError, ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                        self._log.warning(f"[K绾縘 {self.code} 鐩樺悗琛ヨ冻浜氭床鎶ヤ环澶辫触: {exc}")
+                    except Exception as exc:
+                        if is_yf_rate_limit_error(exc):
+                            remaining_sec = mark_yf_rate_limited(exc)
+                            self._log.warning(
+                                f"[K线] {self.code} 盘后补足亚洲报价触发 Yahoo Finance 限流，冷却 {remaining_sec:.0f}s: {exc}"
+                            )
+                        elif isinstance(
+                            exc,
+                            (AttributeError, ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError),
+                        ):
+                            self._log.warning(f"[K线] {self.code} 盘后补足亚洲报价失败: {exc}")
+                        else:
+                            raise
                     if quote:
                         GLOBAL_ASIAN_RT_CACHE[self.code] = quote
 

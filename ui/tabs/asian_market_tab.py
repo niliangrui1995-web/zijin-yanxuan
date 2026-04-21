@@ -67,6 +67,49 @@ from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
 
+
+def _safe_float(value) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _resolve_cached_rt_previous_close(info: dict, data_points: list[dict]) -> float | None:
+    if not data_points:
+        return None
+
+    rt_date = str((info or {}).get("date") or "").strip()
+    history_date = str(data_points[-1].get("date") or "").strip()
+    history_close = _safe_float(data_points[-1].get("close"))
+    history_prev = _safe_float(data_points[-2].get("close")) if len(data_points) >= 2 else 0.0
+
+    if rt_date and history_date and rt_date > history_date and history_close > 0:
+        return history_close
+    if history_prev > 0:
+        return history_prev
+    if history_close > 0:
+        return history_close
+    return None
+
+
+def _normalize_cached_rt_entry(info: dict, data_points: list[dict]) -> dict:
+    normalized = dict(info or {})
+    source = str(normalized.get("source") or "").strip().lower()
+    if source != "yfinance":
+        return normalized
+
+    close_value = _safe_float(normalized.get("close"))
+    prev_close = _resolve_cached_rt_previous_close(normalized, data_points)
+    if prev_close is None or prev_close <= 0:
+        return normalized
+
+    normalized["previous_close"] = prev_close
+    if close_value > 0:
+        normalized["pct"] = ((close_value / prev_close) - 1.0) * 100.0
+    return normalized
+
+
 class AsianMarketTab(BaseStockTab):
     """亚洲寡头行情面板"""
     def __init__(self, data_provider=None, parent=None):
@@ -662,6 +705,7 @@ class AsianMarketTab(BaseStockTab):
                 self.table_state.show_loading("正在加载本地缓存...", "请稍候")
 
             self.row_data = []
+            history_points_by_code = {}
             if os.path.exists(JSON_CACHE):
                 try:
                     with open(JSON_CACHE, "r", encoding="utf-8") as f:
@@ -677,6 +721,7 @@ class AsianMarketTab(BaseStockTab):
                             continue
 
                         data_points = item.get("klines", [])
+                        history_points_by_code[code] = data_points
                         close_val = 0.0
                         pct_val = 0.0
                         if len(data_points) >= 2:
@@ -821,7 +866,10 @@ class AsianMarketTab(BaseStockTab):
                         if code not in rt_cache:
                             continue
 
-                        info = rt_cache[code]
+                        info = _normalize_cached_rt_entry(
+                            rt_cache[code],
+                            history_points_by_code.get(code, []),
+                        )
                         close_number = float(info.get("close", 0.0))
                         row_dict["现价"] = f"{close_number:.3f}" if 0 < close_number < 10 else (f"{close_number:.2f}" if close_number > 0 else "--")
                         row_dict["涨幅%"] = info.get("pct", 0.0)

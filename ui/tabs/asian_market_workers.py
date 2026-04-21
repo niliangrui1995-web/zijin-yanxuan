@@ -17,6 +17,11 @@ from PyQt6.QtCore import QThread, pyqtSignal
 from app.services import CACHE_DIR, build_yf_session, sync_asian_kline_cache
 from core.logger import get_logger
 from app.services.ui_runtime_service import MarketCalendar
+from vcp.fetchers.yf_session import (
+    get_yf_rate_limit_status,
+    is_yf_rate_limit_error,
+    mark_yf_rate_limited,
+)
 
 log = get_logger(__name__)
 
@@ -25,6 +30,7 @@ RT_JSON_CACHE = os.path.join(CACHE_DIR, "asian_rt_latest.json")
 GLOBAL_ASIAN_RT_CACHE: dict[str, dict] = {}
 _ASIAN_MARKET_CODES = ("TW", "HK", "T", "KS")
 _PE_REFRESH_INTERVAL_SEC = 12 * 60 * 60
+_YF_FETCH_MAX_WORKERS = 2
 
 _USE_CF_PROXY = True
 _EMPTY_NUMERIC_MARKERS = {"", "-", "--", "---", "—", "－", "None", "null"}
@@ -122,6 +128,65 @@ def _normalize_trade_date(raw_value) -> str | None:
         except ValueError:
             continue
     return None
+
+
+def _history_previous_close(df, quote_date: str | None = None) -> float | None:
+    if df is None or getattr(df, "empty", True):
+        return None
+
+    if len(df) == 1:
+        return _to_float(df.iloc[-1].get("Close"))
+
+    quote_iso = _normalize_trade_date(quote_date)
+    last_date = None
+    try:
+        last_idx = df.index[-1]
+        if getattr(last_idx, "tzinfo", None) is not None:
+            last_idx = last_idx.tz_localize(None)
+        last_date = str(last_idx)[:10]
+    except (AttributeError, IndexError, TypeError, ValueError):
+        last_date = None
+
+    if quote_iso and last_date and quote_iso > last_date:
+        return _to_float(df.iloc[-1].get("Close"))
+
+    return _to_float(df.iloc[-2].get("Close"))
+
+
+def _resolve_previous_close(*, realtime_quote: dict | None, fast_info, df) -> float | None:
+    quote_payload = realtime_quote or {}
+    quote_source = str(quote_payload.get("source") or "").strip().lower()
+    quote_prev = _to_float(quote_payload.get("previous_close"))
+    if quote_prev is not None and quote_prev > 0 and quote_source != "yfinance":
+        return quote_prev
+
+    regular_prev = _to_float(fast_info.get("regularMarketPreviousClose"))
+    if regular_prev is not None and regular_prev > 0:
+        return regular_prev
+
+    history_prev = _history_previous_close(df, quote_payload.get("date"))
+    if history_prev is not None and history_prev > 0:
+        return history_prev
+
+    if quote_prev is not None and quote_prev > 0:
+        return quote_prev
+
+    fast_prev = _to_float(fast_info.get("previousClose"))
+    if fast_prev is not None and fast_prev > 0:
+        return fast_prev
+
+    if df is None or getattr(df, "empty", True):
+        return None
+    last_close = _to_float(df.iloc[-1].get("Close"))
+    return last_close if last_close is not None and last_close > 0 else None
+
+
+def _format_cooldown_eta(seconds: float) -> str:
+    remaining = max(1, int(round(float(seconds or 0.0))))
+    if remaining >= 60:
+        minutes = (remaining + 59) // 60
+        return f"{minutes} 分钟"
+    return f"{remaining} 秒"
 
 
 def _pick_twse_price(info: dict, prev_close: float | None) -> tuple[float | None, str]:
@@ -306,7 +371,11 @@ def _fetch_yfinance_realtime_quote(code: str, yf_session) -> dict | None:
     if close_price is None or close_price <= 0:
         return None
 
-    prev_close = _to_float(fast_info.get("previousClose"))
+    prev_close = _resolve_previous_close(
+        realtime_quote={"source": "yfinance"},
+        fast_info=fast_info,
+        df=df,
+    )
     if prev_close is None or prev_close <= 0:
         prev_close = float(df.iloc[-2]["Close"]) if len(df) >= 2 else float(df.iloc[-1]["Close"])
 
@@ -371,18 +440,41 @@ def fetch_asian_realtime_quote(
     if quote:
         return quote
 
+    rate_limit_status = get_yf_rate_limit_status()
+    if rate_limit_status["active"]:
+        log.debug(
+            "[AsianTab] 跳过 yfinance 实时回退 %s: 冷却剩余 %s",
+            normalized_code,
+            _format_cooldown_eta(rate_limit_status["remaining_sec"]),
+        )
+        return None
+
     try:
         return _fetch_yfinance_realtime_quote(normalized_code, session)
-    except (
-        AttributeError,
-        KeyError,
-        OSError,
-        RuntimeError,
-        TypeError,
-        ValueError,
-    ) as exc:
-        log.debug(f"[AsianTab] yfinance 实时回退失败 {normalized_code}: {exc}")
-        return None
+    except Exception as exc:
+        if is_yf_rate_limit_error(exc):
+            remaining_sec = mark_yf_rate_limited(exc)
+            log.warning(
+                "[AsianTab] yfinance 实时回退触发限流 %s: %s | 冷却 %s",
+                normalized_code,
+                exc,
+                _format_cooldown_eta(remaining_sec),
+            )
+            return None
+        if isinstance(
+            exc,
+            (
+                AttributeError,
+                KeyError,
+                OSError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+            ),
+        ):
+            log.debug(f"[AsianTab] yfinance 实时回退失败 {normalized_code}: {exc}")
+            return None
+        raise
 
 
 class AsianMarketWorker(QThread):
@@ -428,10 +520,26 @@ class AsianMarketWorker(QThread):
         return self._is_running
 
     def _fetch_single_code(self, code: str, yf_session, info_session):
-        ticker = yf.Ticker(code, session=yf_session)
-        realtime_quote = fetch_asian_realtime_quote(code, yf_session=yf_session)
-        fast_info = ticker.fast_info
-        df = ticker.history(period="2mo", interval="1d", timeout=15)
+        if get_yf_rate_limit_status()["active"]:
+            return code, None
+
+        try:
+            ticker = yf.Ticker(code, session=yf_session)
+            realtime_quote = fetch_asian_realtime_quote(code, yf_session=yf_session)
+            fast_info = ticker.fast_info
+            df = ticker.history(period="2mo", interval="1d", timeout=15)
+        except Exception as exc:
+            if is_yf_rate_limit_error(exc):
+                remaining_sec = mark_yf_rate_limited(exc)
+                log.warning(
+                    "[AsianTab] 单票触发 Yahoo Finance 限流 %s: %s | 冷却 %s",
+                    code,
+                    exc,
+                    _format_cooldown_eta(remaining_sec),
+                )
+                return code, None
+            raise
+
         if df.empty:
             return code, None
 
@@ -451,8 +559,10 @@ class AsianMarketWorker(QThread):
         if day_low is None or day_low <= 0:
             day_low = float(df.iloc[-1]["Low"])
 
-        prev_close = _to_float((realtime_quote or {}).get("previous_close")) or _to_float(
-            fast_info.get("previousClose")
+        prev_close = _resolve_previous_close(
+            realtime_quote=realtime_quote,
+            fast_info=fast_info,
+            df=df,
         )
         if prev_close is None or prev_close <= 0:
             prev_close = float(df.iloc[-2]["Close"]) if len(df) >= 2 else float(df.iloc[-1]["Close"])
@@ -499,15 +609,29 @@ class AsianMarketWorker(QThread):
                     pe_value = None
                     pe_source = ""
                 pe_updated_at = time.time()
-            except (
-                AttributeError,
-                KeyError,
-                OSError,
-                RuntimeError,
-                TypeError,
-                ValueError,
-            ) as exc:
-                log.debug(f"[AsianTab] PE 拉取失败 {code}: {exc}")
+            except Exception as exc:
+                if is_yf_rate_limit_error(exc):
+                    remaining_sec = mark_yf_rate_limited(exc)
+                    log.warning(
+                        "[AsianTab] PE 拉取触发 Yahoo Finance 限流 %s: %s | 冷却 %s",
+                        code,
+                        exc,
+                        _format_cooldown_eta(remaining_sec),
+                    )
+                elif isinstance(
+                    exc,
+                    (
+                        AttributeError,
+                        KeyError,
+                        OSError,
+                        RuntimeError,
+                        TypeError,
+                        ValueError,
+                    ),
+                ):
+                    log.debug(f"[AsianTab] PE 拉取失败 {code}: {exc}")
+                else:
+                    raise
 
         payload = {
             "date": quote_date,
@@ -542,13 +666,16 @@ class AsianMarketWorker(QThread):
 
     def _fetch_updates(self) -> dict:
         updates = {}
+        if get_yf_rate_limit_status()["active"]:
+            return updates
         yf_session = build_yf_session(is_cf_proxy_enabled())
         info_session = build_yf_session(False) if is_cf_proxy_enabled() else yf_session
         codes = [str(code).strip() for code in self.codes if str(code).strip()]
         if not codes:
             return updates
 
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+        max_workers = max(1, min(_YF_FETCH_MAX_WORKERS, len(codes)))
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
         futures = {
             executor.submit(self._fetch_single_code, code, yf_session, info_session): code
             for code in codes
@@ -562,16 +689,31 @@ class AsianMarketWorker(QThread):
                     result_code, payload = future.result(timeout=1)
                     if payload:
                         updates[result_code] = payload
-                except (
-                    concurrent.futures.CancelledError,
-                    AttributeError,
-                    KeyError,
-                    OSError,
-                    RuntimeError,
-                    TypeError,
-                    ValueError,
-                ) as exc:
-                    log.debug(f"[AsianTab] 单票拉取失败 {code}: {exc}")
+                except Exception as exc:
+                    if is_yf_rate_limit_error(exc):
+                        remaining_sec = mark_yf_rate_limited(exc)
+                        log.warning(
+                            "[AsianTab] future 结果触发 Yahoo Finance 限流 %s: %s | 冷却 %s",
+                            code,
+                            exc,
+                            _format_cooldown_eta(remaining_sec),
+                        )
+                        continue
+                    if isinstance(
+                        exc,
+                        (
+                            concurrent.futures.CancelledError,
+                            AttributeError,
+                            KeyError,
+                            OSError,
+                            RuntimeError,
+                            TypeError,
+                            ValueError,
+                        ),
+                    ):
+                        log.debug(f"[AsianTab] 单票拉取失败 {code}: {exc}")
+                        continue
+                    raise
         except concurrent.futures.TimeoutError:
             log.warning("[AsianTab] 本轮亚洲报价抓取达到 45 秒上限，等待在途请求收尾")
         finally:
@@ -599,6 +741,19 @@ class AsianMarketWorker(QThread):
                     return
                 continue
 
+            rate_limit_status = get_yf_rate_limit_status()
+            if rate_limit_status["active"]:
+                self._emit_status_once(
+                    "Yahoo Finance 限流冷却中，约 "
+                    f"{_format_cooldown_eta(rate_limit_status['remaining_sec'])} 后重试，当前沿用本地缓存"
+                )
+                self._manual_refresh_requested = False
+                self._cycle_done.set()
+                sleep_for = min(120.0 if auto_refresh_allowed else 30.0, max(5.0, rate_limit_status["remaining_sec"]))
+                if not self._sleep_with_break(sleep_for):
+                    return
+                continue
+
             self._last_status = ""
             self._cycle_done.clear()
             try:
@@ -613,18 +768,27 @@ class AsianMarketWorker(QThread):
                     )
                     self.progress.emit(message)
                     log.info(f"[AsianTab] {message}")
-            except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            except Exception as exc:
                 error_text = str(exc)
-                if "Too Many Requests" in error_text or "429" in error_text:
-                    hint = "Yahoo Finance 返回 429，请稍后重试或切换网络出口"
-                elif "Timeout" in error_text or "Connection" in error_text or "Max retries" in error_text:
-                    hint = "连接 Yahoo Finance 失败，请检查外网或代理"
-                elif "NoneType" in error_text and "subscriptable" in error_text:
-                    hint = "上游返回了空响应，请切换网络后重试"
+                if is_yf_rate_limit_error(exc):
+                    remaining_sec = mark_yf_rate_limited(exc)
+                    hint = (
+                        "Yahoo Finance 返回 429，已进入冷却，约 "
+                        f"{_format_cooldown_eta(remaining_sec)} 后重试，当前沿用本地缓存"
+                    )
+                    self.progress.emit(hint)
+                    log.warning(f"[AsianTab] {hint} | Native Error: {exc}")
+                elif isinstance(exc, (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError)):
+                    if "Timeout" in error_text or "Connection" in error_text or "Max retries" in error_text:
+                        hint = "连接 Yahoo Finance 失败，请检查外网或代理"
+                    elif "NoneType" in error_text and "subscriptable" in error_text:
+                        hint = "上游返回了空响应，请切换网络后重试"
+                    else:
+                        hint = f"亚洲行情拉取异常: {error_text}"
+                    self.progress.emit(hint)
+                    log.error(f"[AsianTab] {hint} | Native Error: {exc}")
                 else:
-                    hint = f"亚洲行情拉取异常: {error_text}"
-                self.progress.emit(hint)
-                log.error(f"[AsianTab] {hint} | Native Error: {exc}")
+                    raise
             finally:
                 self._manual_refresh_requested = False
                 self._cycle_done.set()

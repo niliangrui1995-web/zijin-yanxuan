@@ -390,6 +390,63 @@ def test_asian_market_placeholder_rows_fill_track_for_missing_cache(monkeypatch,
         tab.deleteLater()
 
 
+def test_asian_market_load_local_cache_normalizes_stale_yfinance_pct(monkeypatch, tmp_path):
+    history_payload = {
+        "stocks": [
+            {
+                "name": "Nittobo",
+                "ticker": "3110.T",
+                "market": "日本",
+                "track": "高频PCB与覆铜板材料",
+                "currency": "JPY",
+                "klines": [
+                    {"date": "2026-04-17", "open": 26820.0, "high": 27970.0, "low": 26680.0, "close": 27510.0, "volume": 2656700.0},
+                    {"date": "2026-04-20", "open": 27300.0, "high": 27850.0, "low": 26610.0, "close": 26720.0, "volume": 1689500.0},
+                ],
+            }
+        ]
+    }
+    rt_payload = {
+        "3110.T": {
+            "date": "2026-04-21",
+            "close": 26540.0,
+            "open": 26850.0,
+            "high": 27690.0,
+            "low": 26460.0,
+            "volume": 1540700.0,
+            "previous_close": 27450.0,
+            "pct": -3.3151183970856146,
+            "currency": "JPY",
+            "source": "yfinance",
+            "quote_quality": "last",
+        }
+    }
+    cache_file = tmp_path / "asian_klines_latest.json"
+    rt_cache_file = tmp_path / "asian_rt_latest.json"
+    cache_file.write_text(json.dumps(history_payload, ensure_ascii=False), encoding="utf-8")
+    rt_cache_file.write_text(json.dumps(rt_payload, ensure_ascii=False), encoding="utf-8")
+
+    monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
+    monkeypatch.setattr(asian_module, "JSON_CACHE", str(cache_file))
+    monkeypatch.setattr(asian_module, "RT_JSON_CACHE", str(rt_cache_file))
+    monkeypatch.setattr(asian_module, "GLOBAL_ASIAN_RT_CACHE", {})
+    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+
+    tab = asian_module.AsianMarketTab()
+    try:
+        row = next(item for item in tab.row_data if item["代码"] == "3110.T")
+        assert round(row["涨幅%"], 4) == round((26540.0 / 26720.0 - 1.0) * 100.0, 4)
+        assert asian_module.GLOBAL_ASIAN_RT_CACHE["3110.T"]["previous_close"] == 26720.0
+    finally:
+        tab.deleteLater()
+
+
 def test_asian_market_status_rows_refresh_without_quote_tick(monkeypatch):
     monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
     monkeypatch.setattr(
