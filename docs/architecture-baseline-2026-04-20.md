@@ -4,7 +4,7 @@
 
 本基线用于定义 2026-04-20 起仓库允许的主干分层、跨层协作方式和 CI 闸门。后续演进默认以此为约束，不再接受“先从 UI 里摸进去、以后再整理”的回退式改动。
 
-## 当前分层
+## 当前主干分层
 
 ### `ui/`
 
@@ -19,21 +19,29 @@
 - 当前关键入口：`app/services/kline_open_service.py`、`app/services/ui_runtime_service.py`、`app/services/runtime_services.py`、`app/services/scan_runtime_service.py`。
 - 只组织请求上下文，不直接持有 Qt 控件生命周期。
 
-### `core/`
-
-- 负责应用级公共能力、事件总线、兼容门面、全局配置门面。
-- `core/app_config.py` 是版本化设置仓储的兼容入口，不再是自由扩展的状态黑洞。
-- `core/task_manager.py`、`core/market_calendar.py`、`core/quote_snapshot.py`、`core/quote_dispatcher.py` 仅保留兼容导出，不再承载新增真实实现。
-
 ### `domains/`
 
-- 负责领域规则与稳定入口，当前包含 `scan / earnings / quotes / watchlist / fund_holdings / market_calendar`。
+- 负责领域规则与稳定入口，当前包含 `scan / earnings / quotes / watchlist / fund_holdings / market_calendar / runtime`。
 - `domains/*` 由 `app/*` 统一编排接入；UI 不直接 import 领域模块。
+- 领域事件真实实现位于 `domains/runtime/domain_events.py`。
 
 ### `infra/`
 
 - 负责系统边界适配：`settings / navigation / tasks / market_data / storage`。
 - 与外部系统、操作系统、进程/窗口自动化相关逻辑必须优先落在这里。
+
+### `ui/signals`
+
+- 承载 UI 导航与任务进度等界面信号。
+- 真实实现位于 `ui/signals/ui_signal_bus.py`。
+
+## 兼容层与过渡层
+
+### `core/`
+
+- 负责公共工具与历史兼容门面。
+- `core/app_config.py` 是版本化设置仓储的兼容入口，不再是自由扩展的状态黑洞。
+- `core/task_manager.py`、`core/market_calendar.py`、`core/quote_snapshot.py`、`core/quote_dispatcher.py`、`core/domain_events.py`、`core/ui_signals.py` 仅保留兼容导出，不再承载新增真实实现。
 
 ### `vcp/`
 
@@ -51,6 +59,7 @@
 - `MainWindowQT` 的命令面板和 K 线打开链路改为调用 workspace/app service 公共入口。
 - 观察池雷达与实时报价汇总改为通过 `WorkspaceFacade` / capability 协议聚合，不再摸 tab 私有表格或 `model.row_data`。
 - 关注池、基金持仓、业绩调度、报价快照等主路径已经通过 `app/services/ui_runtime_service.py`、`app/services/*` 收口，再由 app 层委托 `domains/*` 与 `infra/*`。
+- 领域事件与 UI 信号的真实实现分别迁入 `domains/runtime/domain_events.py` 与 `ui/signals/ui_signal_bus.py`；`core/event_bus.py`、`core/domain_events.py`、`core/ui_signals.py` 仅保留兼容桥接。
 - `vcp/data_provider.py`、`vcp/engine.py` 已退化为兼容 alias shim，真实实现分别落在 `infra/market_data/tdx_data_provider.py` 与 `app/services/scan_engine_facade.py`。
 
 ## 禁止事项

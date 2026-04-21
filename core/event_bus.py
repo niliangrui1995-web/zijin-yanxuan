@@ -2,8 +2,8 @@
 """Legacy compatibility facade for the split event buses.
 
 New code should import:
-- ``core.domain_events.domain_events`` for application/domain events
-- ``core.ui_signals.ui_signals`` for UI navigation/progress signals
+- ``domains.runtime.domain_events`` for application/domain events
+- ``ui.signals.ui_signal_bus`` for UI navigation/progress signals
 """
 
 from core.domain_events import domain_events

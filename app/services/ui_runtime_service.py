@@ -10,8 +10,7 @@ from __future__ import annotations
 
 from core.app_config import app_config
 from core.background_job_runner import background_job_runner
-from core.domain_events import domain_events
-from core.ui_signals import ui_signals
+from domains.runtime import domain_events
 from domains.earnings import EarningsScheduler
 from domains.fund_holdings import (
     QFII_CAPITAL_ATTRIBUTE_CLIENT,
@@ -52,6 +51,8 @@ from infra.tasks import (
     task_registry,
     windows_no_window_creationflags,
 )
+
+ui_signals = ui_signal_hub
 
 __all__ = [
     "CENTRAL_QUOTES_POLL",

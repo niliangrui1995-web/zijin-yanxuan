@@ -17,7 +17,10 @@
 ## Decision
 
 - UI 只负责交互触发与结果展示。
+- 领域/应用事件的真实实现落在 `domains/runtime/domain_events.py`。
+- UI 导航与进度信号的真实实现落在 `ui/signals/ui_signal_bus.py`。
 - 任务/进程执行下沉到 `infra/tasks`、`infra/navigation`。
+- `core/event_bus.py`、`core/domain_events.py`、`core/ui_signals.py` 仅保留兼容桥接职责。
 - 架构测试持续禁止 UI 直接 import 系统自动化模块。
 - 后续 task registry 继续收口任务命名与工厂装配。
 

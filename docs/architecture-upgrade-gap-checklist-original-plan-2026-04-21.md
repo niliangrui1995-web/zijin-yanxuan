@@ -22,6 +22,12 @@
 - UI 运行时边界：
   - `app/services/ui_runtime_service.py`
   - `tests/test_architecture_boundaries.py`
+- 事件分层真实落点：
+  - `domains/runtime/domain_events.py`
+  - `ui/signals/ui_signal_bus.py`
+  - `core/domain_events.py`
+  - `core/ui_signals.py`
+  - `tests/test_event_bus_layers.py`
 - Workspace / Tab capability：
   - `ui/workspaces/tab_capabilities.py`
   - `ui/workspaces/workspace_facade.py`
@@ -46,5 +52,6 @@
 ## 结论
 
 - 按原始方案口径，本轮进入时仍有 4 个核心 gap。
-- 截至当前代码与文档状态，这 4 项已全部收口；未再发现新的 P0 / P1 级未闭环项。
+- 后续补齐了事件实现真实落点和治理文档口径后，原始方案要求已全部收口。
+- 截至当前代码与文档状态，未再发现新的 P0 / P1 / P2 级未闭环项。
 - 后续若出现 UI 重新直接依赖 `domains/*`、`infra/*` 或 workspace 重新摸 tab 私有状态，应视为对原始方案的直接回退。

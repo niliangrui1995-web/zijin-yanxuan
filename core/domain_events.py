@@ -1,39 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Application/domain event channels shared across core, vcp and UI."""
+"""Legacy compatibility alias for the canonical domain-event module."""
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from __future__ import annotations
 
+import importlib
+import sys
 
-class DomainEventBus(QObject):
-    """领域/应用事件总线。
+_domain_events_module = importlib.import_module("domains.runtime.domain_events")
 
-    承载状态变更、缓存同步、日志广播等跨层事件，不承载 UI 导航请求。
-    """
-
-    _instance = None
-
-    sig_system_log = pyqtSignal(str, str)
-    sig_network_status_changed = pyqtSignal(bool, str)
-    sig_app_closing = pyqtSignal()
-
-    sig_rt_quotes = pyqtSignal(object)
-    sig_rt_quotes_refreshed = pyqtSignal(object)
-    sig_vcp_watchlist_ready = pyqtSignal(object)
-
-    sig_cache_bootstrap_ready = pyqtSignal()
-    sig_cache_reload_completed = pyqtSignal()
-    sig_earnings_updated = pyqtSignal()
-    sig_asian_klines_ready = pyqtSignal()
-    sig_na_daily_updated = pyqtSignal()
-    sig_block_trade_updated = pyqtSignal()
-    sig_lhb_pool_updated = pyqtSignal()
-
-    sig_watchlist_changed = pyqtSignal(str, str)
-
-    def __new__(cls, *args, **kwargs):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls, *args, **kwargs)
-        return cls._instance
-
-
-domain_events = DomainEventBus()
+sys.modules[__name__] = _domain_events_module

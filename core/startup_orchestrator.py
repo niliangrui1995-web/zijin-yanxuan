@@ -10,9 +10,9 @@ import time
 from PyQt6.QtCore import QTimer
 
 from core.background_job_runner import background_job_runner
-from core.domain_events import domain_events as event_bus
 from core.logger import get_logger
 from core.observability import emit_structured_log, record_metric
+from domains.runtime import domain_events as event_bus
 from infra.features import service_toggle_registry
 from infra.tasks import (
     ProcessExecutionError,

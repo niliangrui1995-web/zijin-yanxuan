@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Infrastructure-facing export for UI signal hub access."""
+"""Compatibility export for the canonical UI signal hub."""
 
 from __future__ import annotations
 

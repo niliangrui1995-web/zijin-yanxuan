@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from core.domain_events import domain_events as event_bus
 from core.global_store import global_store
 from core.logger import get_logger
+from domains.runtime import domain_events as event_bus
 from domains.quotes.snapshot import coerce_number
 
 log = get_logger(__name__)

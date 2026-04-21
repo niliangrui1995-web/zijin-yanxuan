@@ -6,7 +6,7 @@ import re
 import time
 import webbrowser
 
-from core.domain_events import domain_events as event_bus
+from domains.runtime import domain_events as event_bus
 from infra.tasks import ProcessSubprocessError, spawn_process
 
 
@@ -270,4 +270,3 @@ class ExternalTerminalNavigator:
         except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
             event_bus.sig_system_log.emit("error", f"[东方财富] 跳转失败: {exc}")
             self._open_quote_web_fallback(code, "东方财富跳转异常")
-

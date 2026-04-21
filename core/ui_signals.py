@@ -1,22 +1,11 @@
 # -*- coding: utf-8 -*-
-"""UI navigation and progress signal channels."""
+"""Legacy compatibility alias for the canonical UI-signal module."""
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from __future__ import annotations
 
+import importlib
+import sys
 
-class UISignalBus(QObject):
-    """UI 专用信号总线。"""
+_ui_signal_bus_module = importlib.import_module("ui.signals.ui_signal_bus")
 
-    _instance = None
-
-    sig_task_progress = pyqtSignal(str, int, str)
-    sig_show_kline = pyqtSignal(str)
-    sig_show_kline_with_list = pyqtSignal(str, object, int)
-
-    def __new__(cls, *args, **kwargs):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls, *args, **kwargs)
-        return cls._instance
-
-
-ui_signals = UISignalBus()
+sys.modules[__name__] = _ui_signal_bus_module

@@ -304,6 +304,22 @@ def test_domain_and_market_data_layers_use_domains_market_calendar_entrypoint():
     )
 
 
+def test_non_core_layers_do_not_import_legacy_event_signal_shims():
+    violations = []
+    for root in ("app", "domains", "infra", "vcp"):
+        violations.extend(
+            _find_violations(
+                REPO_ROOT / root,
+                {"core.domain_events", "core.ui_signals"},
+                allowed_paths={"infra/events/ui_signal_hub.py"},
+            )
+        )
+    assert not violations, (
+        "Non-core layers still depend on legacy event/signal compatibility shims:\n"
+        + "\n".join(violations)
+    )
+
+
 def test_module_owner_registry_exists():
     assert (REPO_ROOT / "docs" / "module-owners.md").exists()
 

@@ -4,8 +4,8 @@ import sqlite3
 import threading
 from copy import deepcopy
 
-from core.domain_events import domain_events as event_bus
 from core.logger import get_logger
+from domains.runtime import domain_events as event_bus
 from vcp.constants import SPECIAL_LATEST_DATA
 
 log = get_logger(__name__)

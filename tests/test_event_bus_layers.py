@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+import importlib
+
 from PyQt6.QtCore import QCoreApplication
 from PyQt6.QtTest import QSignalSpy
 
@@ -40,3 +42,17 @@ def test_split_buses_can_be_observed_through_legacy_compatibility():
 
     assert len(domain_spy) == 1
     assert len(ui_spy) == 1
+
+
+def test_core_domain_events_module_is_a_thin_alias_shim():
+    legacy_module = importlib.import_module("core.domain_events")
+    target_module = importlib.import_module("domains.runtime.domain_events")
+
+    assert legacy_module is target_module
+
+
+def test_core_ui_signals_module_is_a_thin_alias_shim():
+    legacy_module = importlib.import_module("core.ui_signals")
+    target_module = importlib.import_module("ui.signals.ui_signal_bus")
+
+    assert legacy_module is target_module

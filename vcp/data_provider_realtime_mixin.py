@@ -33,7 +33,7 @@ class TdxDataProviderRealtimeMixin:
         return not self._offline
 
     def set_online_mode(self, online=True):
-        from core.domain_events import domain_events as event_bus
+        from domains.runtime import domain_events as event_bus
         if online and self._offline:
             self._offline = False
             _log.info("[网络] ✅ 已切换到联网模式（东方财富实时行情）")
