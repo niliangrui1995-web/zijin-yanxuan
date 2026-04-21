@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from ui.components.toast_widget import Toast
+from ui.theme import theme_manager
 
 
 def test_warning_toast_keeps_icon_visible():
@@ -32,7 +33,7 @@ def test_toast_text_uses_primary_theme_color():
         toast.show_toast("同步完成", "success")
 
         assert "color:" in toast.lbl_text.styleSheet()
-        assert "#172033" in toast.lbl_text.styleSheet() or "#E5E7EB" in toast.lbl_text.styleSheet()
+        assert theme_manager.current_theme["TEXT_PRIMARY"] in toast.lbl_text.styleSheet()
     finally:
         toast.hide_toast()
         toast.close()

@@ -10,6 +10,7 @@ from PyQt6.QtCore import QObject, QTimer, pyqtSlot
 from app.services import batch_get_finance_info
 from core.global_store import global_store
 from core.logger import get_logger
+from core.observability import emit_structured_log, record_metric
 from domains.market_calendar import MarketCalendar
 from core.background_job_runner import background_job_runner as task_manager
 from domains.quotes import enrich_quotes_with_finance, publish_rt_quotes
@@ -325,6 +326,7 @@ class CentralQuotesService(QObject):
             if fetch_token != self._fetch_generation:
                 return
 
+            elapsed_ms = max(0.0, (time.time() - self._fetch_start_time) * 1000.0)
             self._is_fetching = False
             self._fetch_start_time = 0.0
             self._fetch_warned_slow = False
@@ -350,6 +352,26 @@ class CentralQuotesService(QObject):
                 self._record_failure(provider_stats.get("last_error") or "提供方返回离线兜底快照")
             else:
                 self._reset_failures()
+
+            record_metric(
+                "quote_refresh_batch_size",
+                len(codes),
+                unit="count",
+                tags={"valid_quotes": str(bool(has_valid)).lower()},
+            )
+            record_metric(
+                "quote_refresh_ms",
+                elapsed_ms,
+                unit="ms",
+                tags={"valid_quotes": str(bool(has_valid)).lower()},
+            )
+            emit_structured_log(
+                "quotes.refresh.completed",
+                batch_size=len(codes),
+                elapsed_ms=round(elapsed_ms, 3),
+                valid_quotes=bool(has_valid),
+                provider_failed=bool(provider_failed),
+            )
 
             if has_valid:
                 self.publish_external_quotes(

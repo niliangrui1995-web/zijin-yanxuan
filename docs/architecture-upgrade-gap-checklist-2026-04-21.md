@@ -16,6 +16,8 @@
 | `foreign_block_trade_tab` 仍散落字面量任务 ID | Task 3 | 统一改为 typed task registry 常量 | 已落地 |
 | 日志页没有任务进度可视化面板 | Task 5 | `sig_task_progress` 在 UI 上可观测，日志页直接展示最新任务状态 | 已落地 |
 | 架构边界与 toggle 回归测试不足 | Task 3 / Task 5 | 补齐 startup、bootstrap、log tab、boundary、toggle 测试 | 已落地 |
+| 网络状态 UI 兼容链路缺失 | Phase 5 / 发布闸门 | `update_network_ui()` 同时覆盖状态栏 tone 与 `status_dot` 颜色更新 | 已落地 |
+| 关键性能指标只停留在文档层 | Phase 4 / 可观测性治理 | 主窗口首绘、工作区装配、启动预热、行情轮询、K 线打开接入统一指标采集 | 已落地 |
 
 ## 本轮新增/收口文件
 
@@ -25,6 +27,8 @@
 - `ui/presenters/task_status_presenter.py`
 - `ui/components/task_status_panel.py`
 - `tests/test_application_bootstrap.py`
+- `core/observability.py`
+- `tests/test_observability.py`
 
 ## 后续收口（本次已完成）
 

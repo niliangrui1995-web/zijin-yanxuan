@@ -3,8 +3,11 @@
 
 from __future__ import annotations
 
+import time
+
 from core.app_config import app_config
 from core.logger import get_logger
+from core.observability import emit_structured_log, record_metric
 from infra.features import service_toggle_registry
 
 log = get_logger(__name__)
@@ -31,11 +34,27 @@ class ApplicationBootstrap:
         return list(iter_tables() or []) if callable(iter_tables) else []
 
     def mount_workspace(self):
+        started_at = time.perf_counter()
         workspace = self._call_host(
             "create_workspace",
             parent=getattr(self._window, "tabs_wrapper", None),
         )
         self._call_host("replace_workspace", workspace)
+        elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+        record_metric(
+            "workspace_mount_ms",
+            elapsed_ms,
+            unit="ms",
+            tags={"workspace_mode": str(getattr(workspace, "mode", "unknown"))},
+        )
+        tab_specs = getattr(workspace, "tab_specs", None)
+        tab_count = len(tab_specs()) if callable(tab_specs) else 0
+        emit_structured_log(
+            "workspace.mounted",
+            workspace_mode=str(getattr(workspace, "mode", "unknown")),
+            tab_count=tab_count,
+            elapsed_ms=round(elapsed_ms, 3),
+        )
         return workspace
 
     def install_central_quotes(self):

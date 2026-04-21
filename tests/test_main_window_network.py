@@ -18,6 +18,14 @@ class _DummyStatusDot:
         self.color = color
 
 
+class _DummyStatusBar:
+    def __init__(self):
+        self.tones = []
+
+    def set_status_tone(self, tone):
+        self.tones.append(tone)
+
+
 class _DummyWindow:
     def __init__(self):
         self.act_network = _DummyAction()
@@ -34,3 +42,13 @@ def test_update_network_ui_uses_readable_chinese_labels():
     update_network_ui(window, False)
     assert window.act_network.text_value == "网络状态：离线"
     assert window.status_dot.color == "#EF4444"
+
+
+def test_update_network_ui_updates_status_bar_tone_when_available():
+    window = _DummyWindow()
+    window._status_bar_widget = _DummyStatusBar()
+
+    update_network_ui(window, True)
+    update_network_ui(window, False)
+
+    assert window._status_bar_widget.tones == ["online", "offline"]

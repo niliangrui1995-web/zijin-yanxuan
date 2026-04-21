@@ -44,10 +44,16 @@ jobs:
             tests/test_application_bootstrap.py \
             tests/test_domain_entrypoints.py \
             tests/test_event_bus_layers.py \
+            tests/test_log_tab.py \
             tests/test_market_data_ports.py \
+            tests/test_main_window_f5_done.py \
+            tests/test_main_window_network.py \
             tests/test_workspace_quote_codes.py \
             tests/test_kline_open_service.py \
             tests/test_main_window_shell.py \
+            tests/test_observability.py \
+            tests/test_service_toggle_registry.py \
+            tests/test_startup_orchestrator.py \
             -q
       - name: Service regression suite
         run: |

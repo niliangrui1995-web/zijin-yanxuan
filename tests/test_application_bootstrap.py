@@ -3,6 +3,7 @@ from __future__ import annotations
 import types
 
 from app.bootstrap.application_bootstrap import ApplicationBootstrap
+from core.observability import clear_metric_history, metric_history
 
 
 class _DummyWindow:
@@ -67,6 +68,7 @@ def test_install_central_quotes_wires_code_supplier(monkeypatch):
 
 
 def test_mount_workspace_uses_host_factory_and_replace_hook():
+    clear_metric_history()
     window = _DummyWindow()
     bootstrap = ApplicationBootstrap(window)
 
@@ -75,3 +77,6 @@ def test_mount_workspace_uses_host_factory_and_replace_hook():
     assert workspace == {"workspace": True}
     assert window.workspace_parent is window.tabs_wrapper
     assert window.replaced_workspace == {"workspace": True}
+    samples = metric_history("workspace_mount_ms")
+    assert samples
+    assert samples[-1].unit == "ms"

@@ -618,6 +618,33 @@ def build_kline_summary_cards(vcp_data: dict | None, is_fav: bool = False) -> li
     return cards
 
 
+def build_kline_summary_items(vcp_data: dict | None, is_fav: bool = False) -> dict[str, str]:
+    payload = vcp_data or {}
+
+    trigger_text = _summary_pick(payload, "触发日期", "日期", "时间", "trigger_date", default="--")
+    trigger_date = trigger_text[:10] if trigger_text != "--" else "--"
+
+    high_price = _summary_parse_float(
+        _summary_pick(payload, "区间最高价", "box_high", default="")
+    )
+    low_price = _summary_parse_float(
+        _summary_pick(payload, "区间最低点", "box_low", default="")
+    )
+    if high_price is not None and low_price is not None:
+        range_text = f"{low_price:.2f} - {high_price:.2f}"
+    else:
+        range_text = "--"
+
+    return {
+        "形态": _summary_pick(payload, "突破状态", "形态", default="--"),
+        "触发": trigger_date,
+        "区间": range_text,
+        "振幅": _summary_pick_pct(payload, "区间振幅", "振幅", default="--"),
+        "RPS": _summary_pick(payload, "RPS强度", "rps_str", default="--"),
+        "关注": "已关注" if is_fav else "未关注",
+    }
+
+
 def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme_colors: dict) -> str:
     js_url = QUrl.fromLocalFile(echarts_js_path).toString()
     data_json = json.dumps(echarts_data, ensure_ascii=False)

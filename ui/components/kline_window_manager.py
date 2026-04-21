@@ -10,7 +10,10 @@ K 线窗口管理器 — 单例模式 (#1)
 现在统一收口到这里，任何人想开 K 线图只需调用 open_chart()。
 """
 
+import time
+
 from core.logger import get_logger
+from core.observability import emit_structured_log, record_metric
 
 log = get_logger(__name__)
 
@@ -50,6 +53,7 @@ class KLineWindowManager:
             code_list: 上下文列表(支持翻页)
             current_idx: 当前索引
         """
+        started_at = time.perf_counter()
         from ui.kline_window_qt import KLineChartWindow
 
         # 清理已关闭/已销毁的窗口
@@ -106,6 +110,21 @@ class KLineWindowManager:
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as _e:
             log.debug(f"[K线管理] 置前激活窗口失败: {_e}")
         self._charts.append(chart)
+        elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+        record_metric(
+            "kline_open_ms",
+            elapsed_ms,
+            unit="ms",
+            tags={"code": str(code or "").strip()},
+        )
+        record_metric("kline_active_windows", len(self._charts), unit="count")
+        emit_structured_log(
+            "kline.opened",
+            code=str(code or "").strip(),
+            name=str(name or "").strip(),
+            active_windows=len(self._charts),
+            elapsed_ms=round(elapsed_ms, 3),
+        )
         return chart
 
     @property

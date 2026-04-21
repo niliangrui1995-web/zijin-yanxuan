@@ -24,6 +24,8 @@
 - 目标目录：`domains/scan`、`domains/earnings`、`domains/quotes`、`domains/watchlist`、`domains/fund_holdings`、`domains/market_calendar` 与 `infra/market_data`、`infra/tasks` 已补齐。
 - 真实调用方：关注池、基金持仓、业绩调度、报价快照、后台任务默认入口已切到新的稳定包路径。
 - 治理闭环：架构测试、兼容入口测试、CI 清单、README、baseline 已同步。
+- 可观测性：`core/observability.py` 已接入主窗口首绘、工作区装配、启动预热、行情轮询和 K 线打开等关键链路。
+- 网络状态链路：`update_network_ui()` 同时兼容状态栏 tone 与 `status_dot` 颜色更新。
 
 ## 未落地项
 

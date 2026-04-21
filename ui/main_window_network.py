@@ -4,6 +4,25 @@ from infra.tasks import NETWORK_FORCE_RECONNECT, NETWORK_GO_ONLINE
 log = get_logger(__name__)
 
 
+def _resolve_status_dot_color(tone: str) -> str:
+    mapping = {
+        "online": "#22C55E",
+        "busy": "#F59E0B",
+        "offline": "#EF4444",
+    }
+    return mapping.get(tone, mapping["offline"])
+
+
+def _set_status_tone(main_window, tone: str):
+    status_bar_widget = getattr(main_window, "_status_bar_widget", None)
+    if status_bar_widget is not None and hasattr(status_bar_widget, "set_status_tone"):
+        status_bar_widget.set_status_tone(tone)
+
+    status_dot = getattr(main_window, "status_dot", None)
+    if status_dot is not None and hasattr(status_dot, "set_color"):
+        status_dot.set_color(_resolve_status_dot_color(tone))
+
+
 def toggle_network(main_window):
     if main_window.data_provider._offline:
 
@@ -37,13 +56,11 @@ def update_network_ui(main_window, online: bool, detail: str = ""):
         return
     if online:
         main_window.act_network.setText("网络状态：在线")
-        if hasattr(main_window, "_status_bar_widget") and main_window._status_bar_widget:
-            main_window._status_bar_widget.set_status_tone("online")
+        _set_status_tone(main_window, "online")
         return
 
     main_window.act_network.setText("网络状态：离线")
-    if hasattr(main_window, "_status_bar_widget") and main_window._status_bar_widget:
-        main_window._status_bar_widget.set_status_tone("offline")
+    _set_status_tone(main_window, "offline")
 
 
 def force_reconnect(main_window):

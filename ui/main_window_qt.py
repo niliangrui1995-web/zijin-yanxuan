@@ -1,4 +1,5 @@
 import os
+import time
 
 from app.bootstrap import ApplicationBootstrap
 from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal, pyqtSlot
@@ -19,6 +20,7 @@ from core.background_job_runner import background_job_runner as task_manager
 from core.cache_manager import CacheManager
 from core.domain_events import domain_events as event_bus
 from core.logger import get_logger
+from core.observability import emit_structured_log, record_metric
 from infra.events import ui_signal_hub
 from ui.components.command_palette import CommandPaletteDialog
 from ui.components.kline_window_manager import kline_manager
@@ -63,6 +65,8 @@ class MainWindowQT(QMainWindow):
 
     def __init__(self, splash=None):
         super().__init__()
+        self._launch_started_at = time.perf_counter()
+        self._first_paint_recorded = False
         self._is_closing = False
         self._splash = splash
         self.setWindowTitle('紫金研选量化终端')
@@ -518,7 +522,18 @@ class MainWindowQT(QMainWindow):
 
         finish_f5_reload(self, count=count, elapsed=elapsed, event_bus=event_bus)
 
-    # showEvent 空覆写已删除 — 无自定义逻辑，交给 QMainWindow 默认处理
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._first_paint_recorded:
+            return
+        self._first_paint_recorded = True
+        elapsed_ms = (time.perf_counter() - self._launch_started_at) * 1000.0
+        record_metric("main_window_first_paint_ms", elapsed_ms, unit="ms")
+        emit_structured_log(
+            "main_window.first_paint",
+            elapsed_ms=round(elapsed_ms, 3),
+            workspace_mode=str(getattr(getattr(self, "_workspace", None), "mode", "unknown")),
+        )
 
     def closeEvent(self, event):
         """应用关闭：广播信号让各组件自行保存，然后清理资源"""
@@ -634,4 +649,3 @@ class MainWindowQT(QMainWindow):
         from ui.main_window_visuals import apply_theme
 
         apply_theme(self)
-

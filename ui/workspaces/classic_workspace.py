@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from PyQt6.QtWidgets import QTabWidget, QVBoxLayout, QWidget
 
+from core.logger import get_logger
 from ui.tabs.asian_market_tab import AsianMarketTab
 from ui.tabs.earnings_tab import EarningsTab
 from ui.tabs.foreign_block_trade_tab import ForeignBlockTradeTab
@@ -14,6 +15,8 @@ from ui.tabs.rt_monitor_tab import RtMonitorTab
 from ui.tabs.scan_tab import ScanTab
 from ui.tabs.watchlist_tab import WatchlistTab
 from ui.workspaces.workspace_facade import WorkspaceFacade
+
+log = get_logger(__name__)
 
 
 def _resolve_workspace_facade(workspace) -> WorkspaceFacade:

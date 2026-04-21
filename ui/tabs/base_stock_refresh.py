@@ -11,6 +11,7 @@ import logging
 import os
 import threading
 import weakref
+from importlib import import_module
 
 from PyQt6.QtCore import QCoreApplication, QTimer
 
@@ -28,6 +29,14 @@ _FINANCE_CACHE_LOCK = threading.RLock()
 _FINANCE_CACHE_PATH: str | None = None
 _FINANCE_CACHE_SIGNATURE: tuple[int, int] | None = None
 _FINANCE_CACHE_PAYLOAD: dict | None = None
+
+
+def _current_finance_cache_file() -> str:
+    try:
+        vcp_constants = import_module("vcp.constants")
+        return str(getattr(vcp_constants, "FINANCE_CACHE_FILE", FINANCE_CACHE_FILE))
+    except (ImportError, RuntimeError, TypeError, ValueError):
+        return str(FINANCE_CACHE_FILE)
 
 
 def collect_table_codes(owner, current_model=None) -> list[str]:
@@ -114,7 +123,7 @@ def load_cached_finance_snapshot(codes) -> dict[str, dict]:
         return {}
 
     try:
-        cache_payload = _load_shared_finance_cache_payload(FINANCE_CACHE_FILE)
+        cache_payload = _load_shared_finance_cache_payload(_current_finance_cache_file())
     except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
         return {}
 

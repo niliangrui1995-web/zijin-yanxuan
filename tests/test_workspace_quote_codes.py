@@ -170,3 +170,23 @@ def test_workspace_defers_heavy_tab_autoload(monkeypatch):
         assert "autoload" not in ctor_kwargs["watchlist"]
     finally:
         workspace.deleteLater()
+
+
+def test_workspace_shutdown_continues_after_tab_failure():
+    calls = []
+
+    class _BrokenTab:
+        def shutdown(self):
+            calls.append("broken")
+            raise RuntimeError("boom")
+
+    workspace = _make_workspace(
+        tabs={
+            "broken": _BrokenTab(),
+            "good": SimpleNamespace(shutdown=lambda: calls.append("good")),
+        }
+    )
+
+    ClassicWorkspace.shutdown(workspace)
+
+    assert calls == ["broken", "good"]

@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import datetime
 import os
+import time
 
 from PyQt6.QtCore import QTimer
 
 from core.background_job_runner import background_job_runner
 from core.domain_events import domain_events as event_bus
 from core.logger import get_logger
+from core.observability import emit_structured_log, record_metric
 from infra.features import service_toggle_registry
 from infra.tasks import (
     ProcessExecutionError,
@@ -97,6 +99,7 @@ class StartupOrchestrator:
         """延迟恢复历史缓存、实时缓存和 RPS 缓存。"""
 
         def _load_bg():
+            started_at = time.perf_counter()
             if not self._alive():
                 return
 
@@ -136,10 +139,24 @@ class StartupOrchestrator:
             )
 
             self._safe_call_in_ui(lambda: event_bus.sig_cache_bootstrap_ready.emit())
+            elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+            record_metric(
+                "startup_deferred_load_ms",
+                elapsed_ms,
+                unit="ms",
+                tags={"cache_loaded": str(bool(cache_date)).lower()},
+            )
+            emit_structured_log(
+                "startup.deferred_load.completed",
+                elapsed_ms=round(elapsed_ms, 3),
+                cache_loaded=bool(cache_date),
+                cache_date=str(cache_date or ""),
+            )
 
         self._job_runner.run(STARTUP_DEFERRED_LOAD, _load_bg)
 
         def _check_asian_data_bg():
+            started_at = time.perf_counter()
             if not self._alive():
                 return
 
@@ -179,6 +196,13 @@ class StartupOrchestrator:
                     )
                     log.info("[启动] 亚洲市场静默同步完成，触发界面刷新。")
                     self._safe_call_in_ui(lambda: event_bus.sig_asian_klines_ready.emit())
+                    elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+                    record_metric("startup_asian_sync_ms", elapsed_ms, unit="ms")
+                    emit_structured_log(
+                        "startup.asian_sync.completed",
+                        elapsed_ms=round(elapsed_ms, 3),
+                        output_dir=output_dir,
+                    )
                 except ProcessTimeoutError:
                     log.warning(
                         f"[启动] 亚洲市场后台静默同步超时({ASIAN_DATA_SYNC_TIMEOUT_SEC}s)，已跳过本次同步"
@@ -198,10 +222,12 @@ class StartupOrchestrator:
         """异步检测网络；可联机时切到在线模式并驱动后续刷新。"""
 
         def _check_and_go_online():
+            started_at = time.perf_counter()
             try:
                 if not self._alive():
                     return
-                if self.mw.data_provider.test_network(timeout=3):
+                online = self.mw.data_provider.test_network(timeout=3)
+                if online:
                     if not self._alive():
                         return
                     self.mw.data_provider.set_online_mode(True)
@@ -231,6 +257,18 @@ class StartupOrchestrator:
                     self._safe_call_in_ui(self.auto_start_rt_if_ready)
                 else:
                     log.info("[智能启动] 网络不可用，保持离线模式")
+                elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+                record_metric(
+                    "smart_startup_network_probe_ms",
+                    elapsed_ms,
+                    unit="ms",
+                    tags={"online": str(bool(online)).lower()},
+                )
+                emit_structured_log(
+                    "startup.network_probe.completed",
+                    elapsed_ms=round(elapsed_ms, 3),
+                    online=bool(online),
+                )
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 log.error(f"[智能启动] 网络检测异常: {exc}")
 
