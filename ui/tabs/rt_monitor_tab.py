@@ -15,11 +15,13 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from core.app_config import app_config
 from core.background_job_runner import background_job_runner as task_manager
 from core.domain_events import domain_events as event_bus
 from core.logger import get_logger
 from core.throttler import SignalThrottler
 from core.ui_signals import ui_signals
+from infra.tasks import task_registry
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.toast_widget import show_toast
 from ui.models.table_models import RtSortFilterProxyModel, RtTableModel, StockItemDelegate
@@ -45,8 +47,7 @@ class RtMonitorTab(BaseStockTab):
     def __init__(self, data_provider, engine, parent=None):
         super().__init__(data_provider=data_provider, parent=parent)
         self.engine = engine
-        from PyQt6.QtCore import QSettings
-        self._settings = QSettings("VCPHunter", "RtMonitorTab")
+        self._settings = app_config.section("rt", legacy_scope="RtMonitorTab")
         self._init_ui()
 
         # 核心：实时数据流 UI 防抖拦截器 (针对未来的海量 tick 数据)
@@ -290,7 +291,7 @@ class RtMonitorTab(BaseStockTab):
         self.btn_rt_start.setObjectName("primaryButton")
         self.btn_rt_start.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_rt_start.setProperty("toolbarWidthHints", ["开始监控", "停止监控", "正在停止..."])
-        self.btn_rt_start.clicked.connect(lambda *args: self._toggle_rt_monitor())
+        self.btn_rt_start.clicked.connect(lambda *args: self.toggle_rt_monitor())
 
         # 清空盘中记录按钮
         self.btn_rt_clear = QPushButton("清空记录")
@@ -465,10 +466,29 @@ class RtMonitorTab(BaseStockTab):
                     _try_connect,
                     on_success=_on_connect_result,
                     on_error=_on_connect_error,
-                    task_id="rt_connect"
+                    task_id=task_registry.workspace("rt_connect").task_id
                 )
                 return
             self._start_rt_worker()
+
+    def is_rt_running(self) -> bool:
+        return self._is_rt_running()
+
+    def toggle_rt_monitor(self, auto: bool = False) -> bool:
+        self._toggle_rt_monitor(auto=auto)
+        return True
+
+    def shutdown(self) -> None:
+        auto_timer = getattr(self, "_auto_timer", None)
+        if auto_timer is not None:
+            auto_timer.stop()
+        if self._is_rt_running():
+            self._manual_stop_requested = False
+            self._rt_stop_requested = True
+            self._toggle_rt_monitor(auto=True)
+        worker = getattr(self, "rt_worker", None)
+        if worker is not None and worker.isRunning():
+            worker.wait(2000)
 
     def _start_rt_worker(self):
         interval_sec = self._get_interval_seconds()

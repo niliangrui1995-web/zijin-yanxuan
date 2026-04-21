@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
 
 from core.app_config import app_config
 from core.domain_events import domain_events as event_bus
+from infra.navigation import ExternalTerminalNavigator
 from ui.status_registry import format_status_summary, format_workspace_status
 from ui.tabs.base_stock_refresh import (
     async_update_market_caps as run_async_market_caps,
@@ -56,7 +57,6 @@ from ui.tabs.base_stock_refresh import (
 from ui.tabs.base_stock_refresh import (
     subscribe_global_quotes as subscribe_quote_stream,
 )
-from ui.tabs.quote_terminal_launcher import QuoteTerminalLauncher
 from ui.tabs.tab_quote_bridge import (
     apply_quote_snapshot,
     publish_quote_payload,
@@ -75,7 +75,7 @@ class BaseStockTab(QWidget):
         self._deferred_quote_refresh = False
         self._missing_quote_publisher_warned = False
         self._header_state_savers = []
-        self._quote_terminal_launcher = QuoteTerminalLauncher(self)
+        self._quote_terminal_launcher = ExternalTerminalNavigator(self)
         event_bus.sig_app_closing.connect(self._flush_header_persistence)
 
     def _resolve_active_quote_model(self):
@@ -118,6 +118,19 @@ class BaseStockTab(QWidget):
 
     def refresh_table_from_latest_snapshot(self, current_model=None):
         refresh_quotes_from_latest_snapshot(self, current_model=current_model)
+
+    def get_row_data(self, current_model=None) -> list[dict]:
+        model = current_model or self._resolve_active_quote_model()
+        row_data = getattr(model, "row_data", None) or []
+        return [row for row in row_data if isinstance(row, dict)]
+
+    def get_realtime_quote_codes(self, current_model=None) -> set[str]:
+        codes: set[str] = set()
+        for row in self.get_row_data(current_model=current_model):
+            code = str(row.get("代码", "")).strip()
+            if len(code) == 6 and code.isdigit():
+                codes.add(code)
+        return codes
 
     @staticmethod
     def _prepare_toolbar_widget(widget: QWidget | None):
@@ -344,11 +357,11 @@ class BaseStockTab(QWidget):
 
     @staticmethod
     def _normalize_quote_code(code: str) -> str:
-        return QuoteTerminalLauncher._normalize_quote_code(code)
+        return ExternalTerminalNavigator._normalize_quote_code(code)
 
     @classmethod
     def _detect_quote_prefix(cls, code: str) -> str:
-        return QuoteTerminalLauncher._detect_quote_prefix(code)
+        return ExternalTerminalNavigator._detect_quote_prefix(code)
 
     def launch_tdx(self, code: str):
         """跳转通达信并输入股票代码（后台线程执行，不阻塞 UI）"""

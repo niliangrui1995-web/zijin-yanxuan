@@ -9,6 +9,7 @@ from core.domain_events import domain_events as event_bus
 from core.logger import get_logger
 from core.ui_signals import ui_signals
 from earnings.scheduler import EarningsScheduler
+from infra.tasks import task_registry
 from ui.components import MultiSelectFilterButton, TableStateWrapper, VCPTableView, format_multi_select_summary
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_tab import BaseStockTab
@@ -293,7 +294,9 @@ class EarningsTab(BaseStockTab):
 
         if changed:
             self.model.update_data(self.row_data)
-            self.refresh_table_quotes_and_market_caps(quote_task_id="earnings_quotes")
+            self.refresh_table_quotes_and_market_caps(
+                quote_task_id=task_registry.quote_refresh("earnings").task_id
+            )
 
         if hasattr(self, "table_state"):
             if self.row_data:
@@ -445,8 +448,11 @@ class EarningsTab(BaseStockTab):
 
         ui_signals.sig_show_kline_with_list.emit(code, code_list, current_idx)
 
-    def closeEvent(self, event):
+    def shutdown(self) -> None:
         self.scheduler.stop_patrol()
+
+    def closeEvent(self, event):
+        self.shutdown()
         super().closeEvent(event)
 
     def showEvent(self, event):

@@ -7,16 +7,34 @@ import ui.workspaces.classic_workspace as classic_workspace_module
 from ui.workspaces.classic_workspace import ClassicWorkspace
 
 
-def test_workspace_collects_a_share_quote_codes_from_all_tabs():
-    workspace = SimpleNamespace(
-        tab_scan=SimpleNamespace(source_model=SimpleNamespace(row_data=[{"代码": "000001"}, {"代码": "abc"}])),
-        tab_rt=SimpleNamespace(source_model=SimpleNamespace(row_data=[{"代码": "600000"}])),
-        tab_watchlist=SimpleNamespace(model=SimpleNamespace(row_data=[{"代码": "000001"}, {"代码": "300001"}])),
-        tab_foreign_block=SimpleNamespace(model=None, _block_trade_codes=["600000", "688001", "bad"]),
-        tab_fund_holdings=SimpleNamespace(model=SimpleNamespace(row_data=[{"代码": "002594"}, {"代码": "00700"}])),
-        tab_na_daily=SimpleNamespace(model=SimpleNamespace(row_data=[{"代码": "002415"}])),
-        tab_earnings=SimpleNamespace(model=SimpleNamespace(row_data=[{"代码": "300001"}])),
-        tab_lhb=SimpleNamespace(model=SimpleNamespace(row_data=[{"代码": "601318"}])),
+def _make_workspace(*, tabs=None, engine=None):
+    ordered_tabs = dict(tabs or {})
+    workspace = SimpleNamespace(engine=engine)
+    workspace.get_tab = lambda key: ordered_tabs.get(key)
+    workspace.iter_tabs = lambda: [tab for tab in ordered_tabs.values() if tab is not None]
+    return workspace
+
+
+def _make_rows_tab(rows):
+    return SimpleNamespace(get_row_data=lambda current_model=None: list(rows or []))
+
+
+def _make_quote_tab(codes):
+    return SimpleNamespace(get_realtime_quote_codes=lambda: set(codes or set()))
+
+
+def test_workspace_collects_a_share_quote_codes_from_public_tab_apis():
+    workspace = _make_workspace(
+        tabs={
+            "scan": _make_quote_tab({"000001"}),
+            "rt_monitor": _make_quote_tab({"600000"}),
+            "watchlist": _make_quote_tab({"000001", "300001"}),
+            "foreign_block": _make_quote_tab({"600000", "688001"}),
+            "na_daily": _make_quote_tab({"002415"}),
+            "earnings": _make_quote_tab({"300001"}),
+            "lhb": _make_quote_tab({"601318"}),
+            "fund_holdings": _make_quote_tab({"002594", "00700"}),
+        }
     )
 
     codes = ClassicWorkspace.get_realtime_quote_codes(workspace)
@@ -26,8 +44,10 @@ def test_workspace_collects_a_share_quote_codes_from_all_tabs():
 
 def test_workspace_primes_watchlist_with_public_startup_hook():
     called = []
-    workspace = SimpleNamespace(
-        tab_watchlist=SimpleNamespace(prime_startup_state=lambda: called.append("watchlist")),
+    workspace = _make_workspace(
+        tabs={
+            "watchlist": SimpleNamespace(prime_startup_state=lambda: called.append("watchlist")),
+        }
     )
 
     ClassicWorkspace.schedule_watchlist_special_quotes(workspace, task_manager=None)
@@ -36,12 +56,12 @@ def test_workspace_primes_watchlist_with_public_startup_hook():
 
 
 def test_workspace_collects_structured_watchlist_radar_metrics():
-    workspace = SimpleNamespace(
+    workspace = _make_workspace(
         engine=SimpleNamespace(get_precomputed_rps=lambda: {"cached": True}),
-        tab_na_daily=SimpleNamespace(model=SimpleNamespace(row_data=[])),
-        tab_foreign_block=SimpleNamespace(
-            model=SimpleNamespace(
-                row_data=[
+        tabs={
+            "na_daily": _make_rows_tab([]),
+            "foreign_block": _make_rows_tab(
+                [
                     {
                         "代码": "300750",
                         "交易详情": "买入",
@@ -50,21 +70,17 @@ def test_workspace_collects_structured_watchlist_radar_metrics():
                         "成交金额(万元)": 2709,
                     }
                 ]
-            )
-        ),
-        tab_earnings=SimpleNamespace(
-            model=SimpleNamespace(
-                row_data=[
+            ),
+            "earnings": _make_rows_tab(
+                [
                     {
                         "代码": "300750",
                         "环比%": 32.5,
                     }
                 ]
-            )
-        ),
-        tab_lhb=SimpleNamespace(
-            model=SimpleNamespace(
-                row_data=[
+            ),
+            "lhb": _make_rows_tab(
+                [
                     {
                         "代码": "300750",
                         "_最近上榜_raw": "20260420",
@@ -73,11 +89,13 @@ def test_workspace_collects_structured_watchlist_radar_metrics():
                         "外资净买(万)": -150,
                     }
                 ]
-            )
-        ),
+            ),
+        },
     )
 
-    na_data, na_subsector_data, block_data, earn_data, lhb_data, rps_bundle = ClassicWorkspace.collect_watchlist_radar_data(workspace)
+    na_data, na_subsector_data, block_data, earn_data, lhb_data, rps_bundle = ClassicWorkspace.collect_watchlist_radar_data(
+        workspace
+    )
 
     assert na_data == {}
     assert na_subsector_data == {}
@@ -92,18 +110,19 @@ def test_workspace_collects_structured_watchlist_radar_metrics():
 
 def test_workspace_refreshes_all_tabs_after_f5():
     calls = []
-    workspace = SimpleNamespace(
-        tab_watchlist=SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("watchlist")),
-        tab_lhb=SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("lhb")),
-        tab_na_daily=SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("na_daily")),
-        tab_asian_market=SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("asian")),
-        tab_rt=SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("rt")),
-        tab_foreign_block=SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("foreign")),
-        tab_fund_holdings=SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("fund")),
-        tab_earnings=SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("earnings")),
-        tab_scan=SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("scan")),
-        tab_log=SimpleNamespace(),
-    )
+    tabs = {
+        "watchlist": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("watchlist")),
+        "lhb": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("lhb")),
+        "na_daily": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("na_daily")),
+        "asian_market": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("asian")),
+        "rt_monitor": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("rt")),
+        "foreign_block": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("foreign")),
+        "fund_holdings": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("fund")),
+        "earnings": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("earnings")),
+        "scan": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("scan")),
+        "system_log": SimpleNamespace(),
+    }
+    workspace = _make_workspace(tabs=tabs)
     workspace.iter_refreshable_tabs = lambda: ClassicWorkspace.iter_refreshable_tabs(workspace)
 
     ClassicWorkspace.refresh_all_tabs_after_f5(workspace)

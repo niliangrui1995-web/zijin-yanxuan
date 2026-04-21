@@ -1,9 +1,36 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+KEY_CODE = "\u4ee3\u7801"
+KEY_NAME = "\u540d\u79f0"
+KEY_CATALYST = "\u50ac\u5316\u5242"
+KEY_CATALYST_EMOJI = "\U0001f4e0\u50ac\u5316\u5242"
+KEY_SUBSECTOR = "\u7ec6\u5206\u677f\u5757"
+KEY_DETAIL = "\u4ea4\u6613\u8be6\u60c5"
+KEY_BUY_BRANCH = "\u4e70\u65b9\u8425\u4e1a\u90e8"
+KEY_SELL_BRANCH = "\u5356\u65b9\u8425\u4e1a\u90e8"
+KEY_AMOUNT_WAN = "\u6210\u4ea4\u91d1\u989d(\u4e07\u5143)"
+KEY_QOQ_PCT = "\u73af\u6bd4%"
+KEY_LAST_LISTED_RAW = "_\u6700\u8fd1\u4e0a\u699c_raw"
+KEY_LAST_LISTED = "\u6700\u8fd1\u4e0a\u699c"
+KEY_NET_WAN = "\u4e0a\u699c\u51c0\u4e70\u989d(\u4e07)"
+KEY_INST_WAN = "\u673a\u6784\u51c0\u4e70(\u4e07)"
+KEY_FOREIGN_WAN = "\u5916\u8d44\u51c0\u4e70(\u4e07)"
+
+TEXT_BUY = "\u4e70\u5165"
+TEXT_SELL = "\u5356\u51fa"
+TEXT_INST_ONLY = "\u673a\u6784\u4e13\u7528"
+TEXT_BLOCK_TRADE_MATCH = "\u5927\u5b97\u5bf9\u5012"
+TEXT_INST_NET_BUY = "\u673a\u6784\u51c0\u4e70"
+TEXT_INST_NET_SELL = "\u673a\u6784\u51c0\u5356"
+TEXT_FOREIGN_NET_BUY = "\u5916\u8d44\u51c0\u4e70"
+TEXT_FOREIGN_NET_SELL = "\u5916\u8d44\u51c0\u5356"
+TEXT_NET_BUY = "\u51c0\u4e70"
+TEXT_NET_SELL = "\u51c0\u5356"
+
 
 class WatchlistRadarService:
-    """聚合关注池依赖的跨 Tab 雷达数据。"""
+    """Collects cross-tab radar data for the watchlist view."""
 
     def __init__(self, workspace):
         self._workspace = workspace
@@ -26,8 +53,8 @@ class WatchlistRadarService:
         for keyword in foreign_keywords:
             if keyword in text:
                 return keyword
-        if "机构专用" in text:
-            return "机构专用"
+        if TEXT_INST_ONLY in text:
+            return TEXT_INST_ONLY
         return ""
 
     @classmethod
@@ -46,44 +73,45 @@ class WatchlistRadarService:
         sell_label = cls._compact_block_trade_branch(sell, foreign_keywords)
         detail_text = str(detail or "")
 
-        if "买入" in detail_text:
+        if TEXT_BUY in detail_text:
             if buy_label:
-                return f"{buy_label}买入{amount:.0f}万", amount
+                return f"{buy_label}{TEXT_BUY}{amount:.0f}\u4e07", amount
             if sell_label:
-                return f"{sell_label}卖出{amount:.0f}万", amount
+                return f"{sell_label}{TEXT_SELL}{amount:.0f}\u4e07", amount
 
-        if "卖出" in detail_text:
+        if TEXT_SELL in detail_text:
             if sell_label:
-                return f"{sell_label}卖出{amount:.0f}万", amount
+                return f"{sell_label}{TEXT_SELL}{amount:.0f}\u4e07", amount
             if buy_label:
-                return f"{buy_label}买入{amount:.0f}万", amount
+                return f"{buy_label}{TEXT_BUY}{amount:.0f}\u4e07", amount
 
         if buy and sell and buy == sell:
-            return f"大宗对倒 {amount:.0f}万", amount
+            return f"{TEXT_BLOCK_TRADE_MATCH} {amount:.0f}\u4e07", amount
 
         return "", 0.0
 
+    def _get_tab(self, key: str):
+        get_tab = getattr(self._workspace, "get_tab", None)
+        if not callable(get_tab):
+            return None
+        return get_tab(key)
+
+    @staticmethod
+    def _get_rows(tab) -> list[dict]:
+        get_row_data = getattr(tab, "get_row_data", None)
+        if not callable(get_row_data):
+            return []
+        return list(get_row_data() or [])
+
     def refresh_watchlist_names(self, code2name: dict[str, str]) -> bool:
-        model = getattr(getattr(self._workspace, "tab_watchlist", None), "model", None)
-        if model is None:
+        watchlist_tab = self._get_tab("watchlist")
+        refresh_names = getattr(watchlist_tab, "refresh_watchlist_names", None)
+        if not callable(refresh_names):
             return False
-
-        changed = False
-        for row in getattr(model, "row_data", []) or []:
-            code = str(row.get("代码", "")).strip()
-            name = str(row.get("名称", "")).strip()
-            if code and (not name or name == code):
-                resolved = str(code2name.get(code, code)).strip()
-                if resolved and resolved != name:
-                    row["名称"] = resolved
-                    changed = True
-
-        if changed:
-            model.layoutChanged.emit()
-        return changed
+        return bool(refresh_names(code2name))
 
     def prime_watchlist_state(self) -> None:
-        watchlist_tab = getattr(self._workspace, "tab_watchlist", None)
+        watchlist_tab = self._get_tab("watchlist")
         prime_state = getattr(watchlist_tab, "prime_startup_state", None)
         if callable(prime_state):
             prime_state()
@@ -94,29 +122,27 @@ class WatchlistRadarService:
         engine = getattr(workspace, "engine", None)
         rps_bundle = engine.get_precomputed_rps() if hasattr(engine, "get_precomputed_rps") else None
 
-        na_model = getattr(getattr(workspace, "tab_na_daily", None), "model", None)
-        if na_model is not None:
-            for row in getattr(na_model, "row_data", []) or []:
-                code = str(row.get("代码", "")).strip()
-                if not code:
-                    continue
-                na_data[code] = str(row.get("催化剂", "") or row.get("📨催化剂", ""))
-                na_subsector_data[code] = str(row.get("细分板块", "") or "")
+        for row in self._get_rows(self._get_tab("na_daily")):
+            code = str(row.get(KEY_CODE, "")).strip()
+            if not code:
+                continue
+            na_data[code] = str(row.get(KEY_CATALYST, "") or row.get(KEY_CATALYST_EMOJI, ""))
+            na_subsector_data[code] = str(row.get(KEY_SUBSECTOR, "") or "")
 
-        foreign_model = getattr(getattr(workspace, "tab_foreign_block", None), "model", None)
-        if foreign_model is not None:
+        foreign_block_tab = self._get_tab("foreign_block")
+        if foreign_block_tab is not None:
             from ui.tabs.foreign_block_trade_tab import FOREIGN_KEYWORDS
 
             block_aggregates: dict[str, dict] = {}
-            for row in getattr(foreign_model, "row_data", []) or []:
-                code = str(row.get("代码", "")).strip()
+            for row in self._get_rows(foreign_block_tab):
+                code = str(row.get(KEY_CODE, "")).strip()
                 if not code:
                     continue
 
-                detail = str(row.get("交易详情", "") or "")
-                buy = str(row.get("买方营业部", "") or "")
-                sell = str(row.get("卖方营业部", "") or "")
-                amount = self._safe_float(row.get("成交金额(万元)", 0))
+                detail = str(row.get(KEY_DETAIL, "") or "")
+                buy = str(row.get(KEY_BUY_BRANCH, "") or "")
+                sell = str(row.get(KEY_SELL_BRANCH, "") or "")
+                amount = self._safe_float(row.get(KEY_AMOUNT_WAN, 0))
 
                 bucket = block_aggregates.setdefault(
                     code,
@@ -147,55 +173,59 @@ class WatchlistRadarService:
                         "amount_wan": best_amount,
                     }
 
-        earnings_model = getattr(getattr(workspace, "tab_earnings", None), "model", None)
-        if earnings_model is not None:
-            for row in getattr(earnings_model, "row_data", []) or []:
-                code = str(row.get("代码", "")).strip()
-                if not code:
-                    continue
+        for row in self._get_rows(self._get_tab("earnings")):
+            code = str(row.get(KEY_CODE, "")).strip()
+            if not code:
+                continue
 
-                qoq_raw = row.get("环比%")
-                qoq_text = str(qoq_raw).strip()
-                if not qoq_text:
-                    continue
+            qoq_raw = row.get(KEY_QOQ_PCT)
+            qoq_text = str(qoq_raw).strip()
+            if not qoq_text:
+                continue
 
-                qoq_value = self._safe_float(qoq_raw, default=0.0)
-                qoq_display = f"{qoq_value:.2f}".rstrip("0").rstrip(".")
-                earn_data[code] = {
-                    "text": f"{qoq_display}%",
-                    "qoq_pct": qoq_value,
-                }
+            qoq_value = self._safe_float(qoq_raw, default=0.0)
+            qoq_display = f"{qoq_value:.2f}".rstrip("0").rstrip(".")
+            earn_data[code] = {
+                "text": f"{qoq_display}%",
+                "qoq_pct": qoq_value,
+            }
 
-        lhb_model = getattr(getattr(workspace, "tab_lhb", None), "model", None)
-        if lhb_model is not None:
-            for row in getattr(lhb_model, "row_data", []) or []:
-                code = str(row.get("代码", "")).strip()
-                if not code or code in lhb_data:
-                    continue
+        for row in self._get_rows(self._get_tab("lhb")):
+            code = str(row.get(KEY_CODE, "")).strip()
+            if not code or code in lhb_data:
+                continue
 
-                raw_date = str(row.get("_最近上榜_raw", "") or row.get("最近上榜", "") or "")
-                if len(raw_date) == 8:
-                    date_mmdd = f"{raw_date[4:6]}-{raw_date[6:8]}"
-                elif "-" in raw_date:
-                    parts = raw_date.split("-")
-                    date_mmdd = "-".join(parts[-2:]) if len(parts) >= 2 else raw_date
-                else:
-                    date_mmdd = raw_date
+            raw_date = str(row.get(KEY_LAST_LISTED_RAW, "") or row.get(KEY_LAST_LISTED, "") or "")
+            if len(raw_date) == 8:
+                date_mmdd = f"{raw_date[4:6]}-{raw_date[6:8]}"
+            elif "-" in raw_date:
+                parts = raw_date.split("-")
+                date_mmdd = "-".join(parts[-2:]) if len(parts) >= 2 else raw_date
+            else:
+                date_mmdd = raw_date
 
-                net = self._safe_float(row.get("上榜净买额(万)", 0))
-                jg = self._safe_float(row.get("机构净买(万)", 0))
-                fgn = self._safe_float(row.get("外资净买(万)", 0))
+            net = self._safe_float(row.get(KEY_NET_WAN, 0))
+            inst = self._safe_float(row.get(KEY_INST_WAN, 0))
+            foreign = self._safe_float(row.get(KEY_FOREIGN_WAN, 0))
 
-                net_s = f"净卖{abs(net):.0f}万" if net < 0 else f"净买{net:.0f}万"
-                jg_s = f"机构净卖{abs(jg):.0f}万" if jg < 0 else f"机构净买{jg:.0f}万"
-                fgn_s = f"外资净卖{abs(fgn):.0f}万" if fgn < 0 else f"外资净买{fgn:.0f}万"
+            net_text = f"{TEXT_NET_SELL}{abs(net):.0f}\u4e07" if net < 0 else f"{TEXT_NET_BUY}{net:.0f}\u4e07"
+            inst_text = (
+                f"{TEXT_INST_NET_SELL}{abs(inst):.0f}\u4e07"
+                if inst < 0
+                else f"{TEXT_INST_NET_BUY}{inst:.0f}\u4e07"
+            )
+            foreign_text = (
+                f"{TEXT_FOREIGN_NET_SELL}{abs(foreign):.0f}\u4e07"
+                if foreign < 0
+                else f"{TEXT_FOREIGN_NET_BUY}{foreign:.0f}\u4e07"
+            )
 
-                lhb_data[code] = {
-                    "text": f"{date_mmdd} | {net_s} | {jg_s} | {fgn_s}",
-                    "date": raw_date,
-                    "net_wan": net,
-                    "inst_wan": jg,
-                    "foreign_wan": fgn,
-                }
+            lhb_data[code] = {
+                "text": f"{date_mmdd} | {net_text} | {inst_text} | {foreign_text}",
+                "date": raw_date,
+                "net_wan": net,
+                "inst_wan": inst,
+                "foreign_wan": foreign,
+            }
 
         return na_data, na_subsector_data, block_data, earn_data, lhb_data, rps_bundle

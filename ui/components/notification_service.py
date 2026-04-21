@@ -5,9 +5,9 @@ ui/components/notification_service.py
 """
 
 import os
-import subprocess
 
 from core.logger import get_logger
+from infra.tasks import ProcessSubprocessError, run_process, windows_no_window_creationflags
 
 log = get_logger(__name__)
 
@@ -24,7 +24,7 @@ def notify_breakout(code: str, name: str, status: str, *, sound: bool = True):
     except (ImportError, RuntimeError, AttributeError, OSError) as e:
         try:
             _send_windows_toast(title, message)
-        except (OSError, subprocess.SubprocessError, RuntimeError) as toast_error:
+        except (OSError, ProcessSubprocessError, RuntimeError) as toast_error:
             log.debug(f"[通知] tray/toast 均发送失败: {e}; {toast_error}")
 
     if sound:
@@ -79,11 +79,11 @@ def _send_windows_toast(title: str, message: str):
     $toast = [Windows.UI.Notifications.ToastNotification]::new($template)
     [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('VCPHunter').Show($toast)
     """
-    subprocess.run(
+    run_process(
         ["powershell", "-Command", ps_script],
         capture_output=True,
         timeout=5,
-        creationflags=0x08000000,  # CREATE_NO_WINDOW
+        creationflags=windows_no_window_creationflags(),
         check=False,
     )
 
@@ -93,4 +93,3 @@ def _play_alert_sound():
     if os.name == "nt":
         import winsound
         winsound.MessageBeep(winsound.MB_ICONASTERISK)
-

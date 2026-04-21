@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from core.background_job_runner import BackgroundJobRunner
+from infra.tasks import task_registry
 
 
 class _FakeManager:
@@ -63,4 +64,26 @@ def test_background_job_runner_resolves_manager_lazily(monkeypatch):
         ("cancel_all",),
         ("shutdown",),
         ("active_count",),
+    ]
+
+
+def test_background_job_runner_accepts_typed_task_key(monkeypatch):
+    import core.task_manager as task_manager_module
+
+    fake_manager = _FakeManager()
+    runner = BackgroundJobRunner()
+    task_key = task_registry.workspace("test_typed_task")
+
+    monkeypatch.setattr(task_manager_module, "task_manager", fake_manager)
+
+    assert runner.run(task_key, lambda: "ignored") == "test_typed_task"
+    assert runner.run_in_background(lambda: "ignored", task_id=task_key) == "test_typed_task"
+    assert runner.abandon(task_key) is True
+    assert runner.is_active(task_key) is False
+
+    assert fake_manager.calls == [
+        ("run_in_background", "test_typed_task", (), {}),
+        ("run_in_background", "test_typed_task", (), {}),
+        ("abandon_task", "test_typed_task"),
+        ("is_active_task", "test_typed_task"),
     ]

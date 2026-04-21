@@ -7,6 +7,7 @@ from PyQt6.QtCore import QTimer
 
 from core.global_store import global_store
 from core.logger import get_logger
+from infra.tasks import WINDOW_F5_PRECOMPUTE
 
 log = get_logger(__name__)
 
@@ -57,7 +58,7 @@ def start_f5_precompute(main_window, *, task_manager):
             set_status_callback=_set_status_cb,
             done_callback=_done_cb,
         ),
-        task_id="f5_precompute",
+        task_id=WINDOW_F5_PRECOMPUTE,
     )
 
 

@@ -20,40 +20,20 @@ class QuoteUniverseService:
     def collect_realtime_quote_codes(self) -> set[str]:
         workspace = self._workspace
         codes: set[str] = set()
-        extract_codes = self._extract_a_share_codes
-
-        scan_model = getattr(getattr(workspace, "tab_scan", None), "source_model", None)
-        if scan_model is not None:
-            codes.update(extract_codes(getattr(scan_model, "row_data", None)))
-
-        rt_model = getattr(getattr(workspace, "tab_rt", None), "source_model", None)
-        if rt_model is not None:
-            codes.update(extract_codes(getattr(rt_model, "row_data", None)))
-
-        watchlist_model = getattr(getattr(workspace, "tab_watchlist", None), "model", None)
-        if watchlist_model is not None:
-            codes.update(extract_codes(getattr(watchlist_model, "row_data", None)))
-
-        foreign_block = getattr(workspace, "tab_foreign_block", None)
-        foreign_model = getattr(foreign_block, "model", None)
-        if foreign_model is not None:
-            codes.update(extract_codes(getattr(foreign_model, "row_data", None)))
-        elif foreign_block is not None:
-            for code in getattr(foreign_block, "_block_trade_codes", []) or []:
-                code_text = str(code or "").strip()
-                if len(code_text) == 6 and code_text.isdigit():
-                    codes.add(code_text)
-
-        na_daily_model = getattr(getattr(workspace, "tab_na_daily", None), "model", None)
-        if na_daily_model is not None:
-            codes.update(extract_codes(getattr(na_daily_model, "row_data", None)))
-
-        earnings_model = getattr(getattr(workspace, "tab_earnings", None), "model", None)
-        if earnings_model is not None:
-            codes.update(extract_codes(getattr(earnings_model, "row_data", None)))
-
-        lhb_model = getattr(getattr(workspace, "tab_lhb", None), "model", None)
-        if lhb_model is not None:
-            codes.update(extract_codes(getattr(lhb_model, "row_data", None)))
+        get_tab = getattr(workspace, "get_tab", None)
+        tab_keys = (
+            "scan",
+            "rt_monitor",
+            "watchlist",
+            "foreign_block",
+            "na_daily",
+            "earnings",
+            "lhb",
+        )
+        for key in tab_keys:
+            tab = get_tab(key) if callable(get_tab) else None
+            collect_codes = getattr(tab, "get_realtime_quote_codes", None)
+            if callable(collect_codes):
+                codes.update(collect_codes())
 
         return codes

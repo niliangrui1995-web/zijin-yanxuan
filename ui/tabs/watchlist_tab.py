@@ -13,6 +13,7 @@ from core.json_cache import load_json_file
 from core.logger import get_logger
 from core.background_job_runner import background_job_runner as task_manager
 from core.ui_signals import ui_signals
+from infra.tasks import task_registry
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.toast_widget import show_toast
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
@@ -250,7 +251,9 @@ class WatchlistTab(BaseStockTab):
             final_list.append(row_data)
 
         self.model.update_data(final_list)
-        self.refresh_table_quotes_and_market_caps(quote_task_id="watchlist_quotes")
+        self.refresh_table_quotes_and_market_caps(
+            quote_task_id=task_registry.quote_refresh("watchlist").task_id
+        )
         self._update_status_summary()
 
     def _update_status_summary(self):
@@ -742,8 +745,28 @@ class WatchlistTab(BaseStockTab):
         """工作区联动：启动后主动补一次关注池行情与附加指标。"""
         if not self.model or not getattr(self.model, "row_data", None):
             return
-        self.refresh_table_quotes_and_market_caps(quote_task_id="smart_startup_watchlist")
+        self.refresh_table_quotes_and_market_caps(
+            quote_task_id=task_registry.quote_refresh("smart_startup_watchlist").task_id
+        )
         self._request_vcp_calc(delay_ms=0)
+
+    def refresh_watchlist_names(self, code2name: dict[str, str]) -> bool:
+        if not self.model:
+            return False
+
+        changed = False
+        for row in getattr(self.model, "row_data", []) or []:
+            code = str(row.get("代码", "")).strip()
+            name = str(row.get("名称", "")).strip()
+            if code and (not name or name == code):
+                resolved = str(code2name.get(code, code)).strip()
+                if resolved and resolved != name:
+                    row["名称"] = resolved
+                    changed = True
+
+        if changed:
+            self.model.layoutChanged.emit()
+        return changed
 
     def _do_vcp_calc(self):
         """实际计算"""
@@ -755,7 +778,7 @@ class WatchlistTab(BaseStockTab):
                 task_manager.run_in_background(
                     self._refresh_vcp_indicators, codes_with_rows, radar_data_tuple,
                     on_error=lambda e: log.error(f"[关注池] 附加指标后台计算异常: {e}"),
-                    task_id="watchlist_vcp_refresh"
+                    task_id=task_registry.workspace("watchlist_vcp_refresh").task_id
                 )
 
     # ================================================================

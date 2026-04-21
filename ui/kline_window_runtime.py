@@ -8,6 +8,7 @@ import pandas as pd
 
 from core.market_calendar import MarketCalendar
 from core.background_job_runner import background_job_runner as task_manager
+from infra.tasks import task_registry
 from ui.tabs.asian_market_workers import fetch_asian_realtime_quote
 
 
@@ -215,7 +216,7 @@ def load_and_draw(window):
     task_manager.run_in_background(
         _bg_fetch,
         on_success=_on_fetch_success,
-        task_id=f"kline_{window.code}",
+        task_id=task_registry.window(f"kline_{window.code}").task_id,
     )
 
 

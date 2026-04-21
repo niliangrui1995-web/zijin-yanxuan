@@ -10,6 +10,7 @@ tests/test_app_config.py — AppConfig 单例行为验证
 from PyQt6.QtCore import QSettings
 
 from core.app_config import AppConfig, app_config
+from infra.settings.settings_schema import SettingsMigrator, SettingsSchemaVersion
 
 
 class TestAppConfigSingleton:
@@ -72,3 +73,21 @@ class TestAppConfigSingleton:
             app_config.remove("_test_/legacy_section")
             legacy.remove("legacy_key")
             legacy.sync()
+
+    def test_repository_writes_current_schema_version(self):
+        assert app_config.schema_version == SettingsSchemaVersion.CURRENT
+        assert app_config.get(SettingsSchemaVersion.KEY, 0, int) == SettingsSchemaVersion.CURRENT
+
+    def test_settings_migrator_upgrades_legacy_version_marker(self):
+        settings = QSettings("VCPHunter", "SchemaMigratorTest")
+        settings.setValue(SettingsSchemaVersion.KEY, 0)
+        settings.sync()
+
+        try:
+            migrator = SettingsMigrator(settings)
+            assert migrator.current_version() == 0
+            assert migrator.migrate() == SettingsSchemaVersion.CURRENT
+            assert settings.value(SettingsSchemaVersion.KEY, 0, type=int) == SettingsSchemaVersion.CURRENT
+        finally:
+            settings.remove(SettingsSchemaVersion.KEY)
+            settings.sync()

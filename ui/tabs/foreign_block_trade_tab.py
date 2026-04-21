@@ -7,7 +7,6 @@ ui/tabs/foreign_block_trade_tab.py
 import datetime
 import json
 import os
-import subprocess
 import sys
 
 import pandas as pd
@@ -20,6 +19,14 @@ from core.exceptions import CacheIOError, DataFormatError
 from core.json_cache import load_json_file, save_json_file
 from core.task_errors import UserFacingTaskError
 from core.ui_signals import ui_signals
+from infra.tasks import (
+    ProcessExecutionError,
+    ProcessTimeoutError,
+    build_domestic_process_env,
+    run_process,
+    task_registry,
+    windows_no_window_creationflags,
+)
 from ui.components import (
     MultiSelectFilterButton,
     SearchFilter,
@@ -102,10 +109,6 @@ _BLOCK_TRADE_CACHE_FILE = os.path.join(_PROJECT_ROOT, "data", "Cache", "foreign_
 
 # 模块级K线缓存：每只股票的文件只读一次，后续直接从内存取
 _kline_cache: dict = {}
-_PROXY_ENV_KEYS = [
-    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
-    "http_proxy", "https_proxy", "all_proxy",
-]
 _BLOCK_TRADE_CHUNK_TIMEOUT = 15
 _BLOCK_TRADE_CALENDAR_TIMEOUT = 10
 _BLOCK_TRADE_MAX_RETRIES = 2
@@ -140,15 +143,9 @@ elif mode == "block_trade":
 
 
 def _run_domestic_akshare(mode: str, *args, timeout: int = 15):
-    env = os.environ.copy()
-    for key in _PROXY_ENV_KEYS:
-        env.pop(key, None)
-    env["NO_PROXY"] = "*"
-    env["no_proxy"] = "*"
-    env["PYTHONIOENCODING"] = "utf-8"
-    creationflags = 0x08000000 if os.name == "nt" else 0
+    env = build_domestic_process_env(extra={"PYTHONIOENCODING": "utf-8"})
     cmd = [sys.executable, "-c", _AKSHARE_FETCH_SNIPPET, mode, *args]
-    proc = subprocess.run(
+    proc = run_process(
         cmd,
         capture_output=True,
         text=True,
@@ -156,7 +153,7 @@ def _run_domestic_akshare(mode: str, *args, timeout: int = 15):
         errors="ignore",
         timeout=timeout,
         env=env,
-        creationflags=creationflags,
+        creationflags=windows_no_window_creationflags(),
         check=True,
     )
     payload = (proc.stdout or "").strip()
@@ -287,7 +284,7 @@ class ForeignBlockTradeTab(BaseStockTab):
 
         self.btn_refresh = QPushButton("刷新")
         self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_refresh.clicked.connect(self._load_block_trade_data)
+        self.btn_refresh.clicked.connect(self.run_post_online_refresh)
 
         action_widgets = [self.btn_refresh]
         toolbar = self.build_tab_toolbar("外资大宗", self.lbl_status, filter_widgets, action_widgets)
@@ -480,7 +477,9 @@ class ForeignBlockTradeTab(BaseStockTab):
                 )
                 if hasattr(self, "table_state"):
                     self.table_state.show_table()
-                self.refresh_table_quotes_and_market_caps(quote_task_id="foreign_block_trade_quotes")
+                self.refresh_table_quotes_and_market_caps(
+                    quote_task_id=task_registry.quote_refresh("foreign_block_trade").task_id
+                )
             else:
                 self._set_fetch_status(
                     "本地缓存为空",
@@ -665,10 +664,10 @@ class ForeignBlockTradeTab(BaseStockTab):
                 else:
                     start_date_val = past_dates[0] if past_dates else (today_date - datetime.timedelta(days=self.days_to_fetch))
                 start_dt = datetime.datetime.combine(start_date_val, datetime.time())
-            except subprocess.TimeoutExpired:
+            except ProcessTimeoutError:
                 log.warning("[大宗交易] 获取交易日历超时，回退到自然日估算")
                 start_dt = end_dt - datetime.timedelta(days=int(self.days_to_fetch * 1.5))
-            except (json.JSONDecodeError, OSError, RuntimeError, subprocess.CalledProcessError, TypeError, ValueError) as e:
+            except (json.JSONDecodeError, OSError, RuntimeError, ProcessExecutionError, TypeError, ValueError) as e:
                 log.warning(f"获取交易日历失败，使用自然日重估: {e}")
                 start_dt = end_dt - datetime.timedelta(days=int(self.days_to_fetch * 1.5))
 
@@ -710,12 +709,12 @@ class ForeignBlockTradeTab(BaseStockTab):
                         chunk_done = True
                         finished_chunks += 1
                         break
-                    except subprocess.TimeoutExpired:
+                    except ProcessTimeoutError:
                         chunk_timed_out = True
                         log.warning(f"[大宗交易] {chunk_key} 请求超时，可能是国内数据源响应慢或当前网络代理影响")
                         if attempt < _BLOCK_TRADE_MAX_RETRIES - 1:
                             time.sleep(1)
-                    except (json.JSONDecodeError, OSError, RuntimeError, subprocess.CalledProcessError, TypeError, ValueError) as e:
+                    except (json.JSONDecodeError, OSError, RuntimeError, ProcessExecutionError, TypeError, ValueError) as e:
                         log.warning(f"[大宗交易] {chunk_key} 第{attempt+1}次失败: {e}")
                         if attempt < _BLOCK_TRADE_MAX_RETRIES - 1:
                             time.sleep(1)
@@ -744,10 +743,26 @@ class ForeignBlockTradeTab(BaseStockTab):
 
         task_manager.run_in_background(
             _fetch_task,
-            task_id="foreign_block_trade",
+            task_id=task_registry.workspace("foreign_block_trade").task_id,
             on_success=self._on_data_fetched,
             on_error=self._on_data_fetch_failed
         )
+
+    def run_post_online_refresh(self) -> bool:
+        self._load_block_trade_data()
+        return True
+
+    def get_realtime_quote_codes(self, current_model=None) -> set[str]:
+        codes = super().get_realtime_quote_codes(current_model=current_model)
+        if codes:
+            return codes
+
+        fallback_codes: set[str] = set()
+        for code in self._block_trade_codes or []:
+            code_text = str(code or "").strip()
+            if len(code_text) == 6 and code_text.isdigit():
+                fallback_codes.add(code_text)
+        return fallback_codes
 
     def _on_data_fetched(self, payload):
         self._is_loading = False
@@ -896,7 +911,9 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._filter_table_combo()
         event_bus.sig_block_trade_updated.emit()
 
-        self.refresh_table_quotes_and_market_caps(quote_task_id="foreign_block_trade_quotes")
+        self.refresh_table_quotes_and_market_caps(
+            quote_task_id=task_registry.quote_refresh("foreign_block_trade").task_id
+        )
 
     def _on_data_fetch_failed(self, error_message: str):
         self._is_loading = False

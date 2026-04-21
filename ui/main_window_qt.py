@@ -1,19 +1,22 @@
 import os
 
+from app.bootstrap import ApplicationBootstrap
 from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
 from PyQt6.QtWidgets import QFrame, QLineEdit, QMainWindow, QToolTip, QVBoxLayout, QWidget
 
+from app.services import build_kline_open_request
+from app.use_cases import WindowCommandService
 from core.app_config import app_config
-from core.cache_manager import CacheManager
 from core.background_job_runner import background_job_runner as task_manager
+from core.cache_manager import CacheManager
 from core.domain_events import domain_events as event_bus
 from core.logger import get_logger
 from core.startup_orchestrator import StartupOrchestrator
-from core.ui_signals import ui_signals
+from infra.events import ui_signal_hub
 from ui.components.command_palette import CommandPaletteDialog
 from ui.components.kline_window_manager import kline_manager
-from ui.components.main_window_shell import (
+from ui.shell import (
     DraggableTitleBar,
     MainWindowStatusBar,
     inject_standalone_tabbar,
@@ -22,7 +25,6 @@ from ui.components.main_window_shell import (
 )
 from ui.components.message_box import show_themed_question
 from ui.main_window_tables import install_table_copy_hooks
-from ui.workspaces import ClassicWorkspace
 from vcp.constants import APP_VERSION, RPS_CACHE_FILE
 
 # 核心引擎与数据层
@@ -81,6 +83,8 @@ class MainWindowQT(QMainWindow):
         self._settings = app_config.section("window", legacy_scope="MainWindowQT")
         self._workspace = None
         self.tabs = None
+        self._bootstrap = ApplicationBootstrap(self)
+        self._command_service = WindowCommandService(self)
 
         self._splash_update(60, "正在构建主界面模块...")
         self.data_provider = TdxDataProvider(offline=True)
@@ -145,9 +149,7 @@ class MainWindowQT(QMainWindow):
         self._update_last_f5_time()
 
     def _init_central_broadcaster(self):
-        from ui.workers.central_quotes_worker import CentralQuotesService
-        code_supplier = getattr(self._workspace, "get_realtime_quote_codes", None)
-        self.central_quotes_svc = CentralQuotesService(self, self.data_provider, code_supplier=code_supplier)
+        self._bootstrap.install_central_quotes()
 
     # 联网成功后的各 Tab 刷新逻辑由 _on_smart_startup_online_done 负责
 
@@ -224,164 +226,13 @@ class MainWindowQT(QMainWindow):
             self.tabs.setCurrentIndex(int(tab_index))
 
     def _build_command_palette_entries(self) -> list[dict]:
-        from ui.theme import theme_manager
+        return self._command_service.build_commands()
 
-        commands: list[dict] = [
-            {
-                "title": "全局同步",
-                "subtitle": "执行盘后缓存与预计算同步",
-                "shortcut": "F5",
-                "keywords": ["同步", "f5", "刷新", "全局同步"],
-                "handler": self._action_refresh_f5,
-            }
-        ]
-
-        workspace = getattr(self, "_workspace", None)
-        tab_specs = workspace.tab_specs() if workspace is not None and hasattr(workspace, "tab_specs") else []
-        for index, spec in enumerate(tab_specs):
-            title = str(spec.get("title") or "").strip()
-            group = str(spec.get("group") or "").strip()
-            if not title:
-                continue
-            commands.append(
-                {
-                    "title": f"打开{title}",
-                    "subtitle": f"{group} · 切换到{title}页面" if group else f"切换到{title}页面",
-                    "keywords": [title, group, "页面", "导航"],
-                    "handler": lambda i=index: self._activate_workspace_tab(i),
-                }
-            )
-
-        rt_tab = getattr(workspace, "tab_rt", None)
-        if rt_tab is not None and hasattr(rt_tab, "_toggle_rt_monitor"):
-            running = bool(getattr(rt_tab, "_is_rt_running", lambda: False)())
-            commands.append(
-                {
-                    "title": "停止盘中监控" if running else "开始盘中监控",
-                    "subtitle": "切换盘中监控运行状态",
-                    "keywords": ["盘中监控", "开始", "停止", "监控"],
-                    "handler": lambda: rt_tab._toggle_rt_monitor(),
-                }
-            )
-
-        scan_tab = getattr(workspace, "tab_scan", None)
-        if scan_tab is not None:
-            if hasattr(scan_tab, "_on_incremental_scan_clicked"):
-                commands.append(
-                    {
-                        "title": "新增补扫",
-                        "subtitle": "仅扫描最近可用交易日",
-                        "keywords": ["扫描", "补扫", "新增补扫"],
-                        "handler": scan_tab._on_incremental_scan_clicked,
-                    }
-                )
-            if hasattr(scan_tab, "_show_scan_settings"):
-                commands.append(
-                    {
-                        "title": "扫描参数",
-                        "subtitle": "打开 VCP 扫描参数面板",
-                        "keywords": ["扫描", "参数"],
-                        "handler": scan_tab._show_scan_settings,
-                }
-            )
-
-        lhb_tab = getattr(workspace, "tab_lhb", None)
-        if lhb_tab is not None and hasattr(lhb_tab, "_manual_refresh"):
-            commands.append(
-                {
-                    "title": "历史回补龙虎榜",
-                    "subtitle": "执行龙虎榜历史回补并刷新表格",
-                    "keywords": ["龙虎榜", "刷新", "历史回补"],
-                    "handler": lhb_tab._manual_refresh,
-                }
-            )
-
-        fund_tab = getattr(workspace, "tab_fund_holdings", None)
-        if fund_tab is not None and hasattr(fund_tab, "btn_update"):
-            commands.append(
-                {
-                    "title": "刷新基金持仓",
-                    "subtitle": "拉取最新基金持仓并刷新表格",
-                    "keywords": ["基金持仓", "刷新", "持仓同步"],
-                    "handler": lambda: fund_tab.btn_update.click(),
-                }
-            )
-
-        for theme_name in theme_manager.theme_names():
-            commands.append(
-                {
-                    "title": f"切换主题：{theme_name}",
-                    "subtitle": "立即切换界面主题",
-                    "keywords": ["主题", "切换主题", theme_name],
-                    "handler": lambda n=theme_name: theme_manager.switch_theme(n),
-                }
-            )
-
-        commands.extend(
-            [
-                {
-                    "title": "表格密度：紧凑",
-                    "subtitle": "切换为紧凑表格密度",
-                    "keywords": ["表格密度", "紧凑", "密度"],
-                    "handler": lambda: self._apply_table_density("紧凑"),
-                },
-                {
-                    "title": "表格密度：舒适",
-                    "subtitle": "切换为舒适表格密度",
-                    "keywords": ["表格密度", "舒适", "密度"],
-                    "handler": lambda: self._apply_table_density("舒适"),
-                },
-            ]
-        )
-
-        return commands
+    def _build_workspace_command_palette_entries(self) -> list[dict]:
+        return self._command_service.build_commands()
 
     def _build_stock_command_entries(self, query: str) -> list[dict]:
-        raw_query = str(query or "").strip()
-        if not raw_query:
-            return []
-
-        if not raw_query.isdigit() and len(raw_query) < 2:
-            return []
-
-        code_name_map = getattr(self.data_provider, "code2name", None) or {}
-        if not code_name_map:
-            return []
-
-        query_lower = raw_query.lower()
-        matches: list[tuple[int, str, str]] = []
-
-        for code, name in code_name_map.items():
-            code_text = str(code or "").strip()
-            name_text = str(name or "").strip()
-            if len(code_text) != 6 or not code_text.isdigit() or not name_text:
-                continue
-
-            score: int | None = None
-            if code_text == raw_query:
-                score = 0
-            elif name_text == raw_query or name_text.lower() == query_lower:
-                score = 1
-            elif code_text.startswith(raw_query):
-                score = 2
-            elif query_lower in name_text.lower():
-                score = 3
-
-            if score is not None:
-                matches.append((score, code_text, name_text))
-
-        matches.sort(key=lambda item: (item[0], item[1]))
-        commands: list[dict] = []
-        for _, code_text, name_text in matches[:12]:
-            commands.append(
-                {
-                    "title": f"打开K线：{code_text} {name_text}",
-                    "subtitle": "按代码或名称快速打开个股 K 线",
-                    "keywords": [code_text, name_text, "K线", "个股"],
-                    "handler": lambda c=code_text: self._on_show_kline(c),
-                }
-            )
-        return commands
+        return self._command_service.build_stock_commands(query)
 
     def _open_command_palette(self):
         if self._command_palette is None:
@@ -492,9 +343,9 @@ class MainWindowQT(QMainWindow):
         self._tabs_wrapper_layout.setSpacing(0)
 
         event_bus.sig_rt_quotes_refreshed.connect(self._on_rt_quotes_refreshed)
-        ui_signals.sig_task_progress.connect(self._on_task_progress)
-        ui_signals.sig_show_kline.connect(self._on_show_kline)
-        ui_signals.sig_show_kline_with_list.connect(self._on_show_kline_with_list)
+        ui_signal_hub.sig_task_progress.connect(self._on_task_progress)
+        ui_signal_hub.sig_show_kline.connect(self._on_show_kline)
+        ui_signal_hub.sig_show_kline_with_list.connect(self._on_show_kline_with_list)
 
         self._mount_workspace()
         self._init_gear_menu()
@@ -516,35 +367,13 @@ class MainWindowQT(QMainWindow):
         app_config.last_active_tab = index
 
     def _workspace_tables(self):
-        from ui.main_window_runtime import workspace_tables
-
-        return workspace_tables(self)
+        return self._bootstrap.workspace_tables()
 
     def _install_table_copy_hooks(self):
         install_table_copy_hooks(self._workspace_tables())
 
     def _mount_workspace(self):
-        workspace = ClassicWorkspace(self.data_provider, self.engine, host=self, parent=self.tabs_wrapper)
-
-        if self._workspace is not None:
-            try:
-                self._workspace.shutdown()
-            except (AttributeError, OSError, RuntimeError, TypeError) as exc:
-                log.error(f"[UI] 停止旧工作区失败: {exc}")
-            self._tabs_wrapper_layout.removeWidget(self._workspace)
-            self._workspace.deleteLater()
-
-        self._workspace = workspace
-        self.tabs = workspace.tabs
-        self._tabs_wrapper_layout.addWidget(workspace, 1)
-        workspace.restore_last_tab(app_config.last_active_tab)
-        self._install_table_copy_hooks()
-
-        try:
-            self.tabs.currentChanged.disconnect(self._remember_last_active_tab)
-        except (TypeError, RuntimeError):
-            pass
-        self.tabs.currentChanged.connect(self._remember_last_active_tab)
+        self._bootstrap.mount_workspace()
 
     def _save_ui_state(self):
         """Persist window geometry with version tag."""
@@ -696,8 +525,6 @@ class MainWindowQT(QMainWindow):
 
     def _on_show_kline_with_list(self, code: str, code_list: list, current_idx: int):
         """响应带列表上下文的 K 线图请求 — 委托给 KLineWindowManager (#1)"""
-        name = getattr(self.data_provider, 'code2name', {}).get(code, code)
-        vcp_data = {'code': code, 'name': name}
         workspace = getattr(self, "_workspace", None)
         source_tab_index = self.tabs.currentIndex() if self.tabs is not None else -1
         source_tab_key = ""
@@ -706,39 +533,24 @@ class MainWindowQT(QMainWindow):
             if 0 <= source_tab_index < len(tab_specs):
                 source_tab_key = str(tab_specs[source_tab_index].get("key") or "").strip()
 
-        normalized_code_list = []
-        for item in code_list or []:
-            enriched = dict(item) if isinstance(item, dict) else {}
-            if source_tab_index >= 0:
-                enriched.setdefault("__source_tab_index", source_tab_index)
-            if source_tab_key:
-                enriched.setdefault("__source_tab_key", source_tab_key)
-            normalized_code_list.append(enriched)
-        if normalized_code_list and 0 <= current_idx < len(normalized_code_list):
-            item_data = normalized_code_list[current_idx]
-            if isinstance(item_data, dict):
-                if item_data.get('代码') == code:
-                    name = item_data.get('名称', name)
-                vcp_data = dict(item_data)
-
-        # 核心需求：全局 VCP 状态穿透投影
-        # 如果从其他 Tab (如龙虎榜、美股) 打开 K 线，只要它在当前的 VCP 扫描结果中
-        # 就自动把它在 VCP 表格中的突破点、箱体等画线数据合并进来
-        scan_res = workspace.find_scan_result(code) if workspace is not None else None
-        if isinstance(scan_res, dict):
-            for k, v in scan_res.items():
-                if k not in vcp_data or not vcp_data.get(k):
-                    vcp_data[k] = v
-                    break
+        request = build_kline_open_request(
+            code=code,
+            code_name_map=getattr(self.data_provider, "code2name", {}),
+            code_list=code_list,
+            current_idx=current_idx,
+            workspace=workspace,
+            source_tab_index=source_tab_index,
+            source_tab_key=source_tab_key,
+        )
 
         kline_manager.open_chart(
             main_window=self,
-            code=code,
-            name=name,
+            code=request["code"],
+            name=request["name"],
             data_provider=self.data_provider,
-            vcp_data=vcp_data,
-            code_list=normalized_code_list,
-            current_idx=current_idx,
+            vcp_data=request["vcp_data"],
+            code_list=request["code_list"],
+            current_idx=request["current_idx"],
         )
 
     # ================================================================

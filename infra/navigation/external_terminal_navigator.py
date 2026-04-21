@@ -3,15 +3,15 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
 import time
 import webbrowser
 
 from core.domain_events import domain_events as event_bus
+from infra.tasks import ProcessSubprocessError, spawn_process
 
 
-class QuoteTerminalLauncher:
-    """封装股票终端跳转与输入代码的 UI 外联逻辑。"""
+class ExternalTerminalNavigator:
+    """Infrastructure service for quote terminal navigation and code input."""
 
     def __init__(self, owner):
         self._owner = owner
@@ -206,7 +206,7 @@ class QuoteTerminalLauncher:
 
             hwnd = find_tdx_window()
             if not hwnd:
-                subprocess.Popen([tdx_path])
+                spawn_process([tdx_path])
                 for _ in range(12):
                     time.sleep(0.5)
                     hwnd = find_tdx_window()
@@ -224,7 +224,7 @@ class QuoteTerminalLauncher:
             ImportError,
             OSError,
             RuntimeError,
-            subprocess.SubprocessError,
+            ProcessSubprocessError,
             TypeError,
             ValueError,
         ) as exc:
@@ -270,3 +270,4 @@ class QuoteTerminalLauncher:
         except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
             event_bus.sig_system_log.emit("error", f"[东方财富] 跳转失败: {exc}")
             self._open_quote_web_fallback(code, "东方财富跳转异常")
+

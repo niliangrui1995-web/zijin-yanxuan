@@ -26,6 +26,7 @@ from core.market_calendar_holidays import (
     save_holidays_to_store,
 )
 from core.task_manager import task_manager
+from infra.tasks import task_registry
 
 log = get_logger(__name__)
 
@@ -434,7 +435,9 @@ class MarketCalendar:
             _bg_fetch,
             on_success=_on_success,
             on_error=_on_error,
-            task_id=f"holiday_refresh_{market}_{min(pending_years)}_{max(pending_years)}",
+            task_id=task_registry.startup(
+                f"holiday_refresh_{market}_{min(pending_years)}_{max(pending_years)}"
+            ).task_id,
         )
 
     @classmethod
@@ -495,7 +498,7 @@ class MarketCalendar:
             _bg_fetch_calendar,
             on_success=_on_success,
             on_error=_on_error,
-            task_id="cn_trade_calendar_refresh",
+            task_id=task_registry.startup("cn_trade_calendar_refresh").task_id,
         )
 
     @classmethod

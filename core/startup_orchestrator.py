@@ -13,12 +13,17 @@ from PyQt6.QtCore import QTimer
 from core.background_job_runner import background_job_runner
 from core.domain_events import domain_events as event_bus
 from core.logger import get_logger
+from infra.tasks import (
+    STARTUP_ASIAN_DATA_SYNC,
+    STARTUP_DEFERRED_LOAD,
+    STARTUP_SMART,
+)
 
 log = get_logger(__name__)
 ASIAN_DATA_SYNC_TIMEOUT_SEC = 120
-DEFERRED_LOAD_TASK_ID = "deferred_load"
-ASIAN_DATA_SYNC_TASK_ID = "asian_data_sync_bg"
-SMART_STARTUP_TASK_ID = "smart_startup"
+DEFERRED_LOAD_TASK_ID = STARTUP_DEFERRED_LOAD.task_id
+ASIAN_DATA_SYNC_TASK_ID = STARTUP_ASIAN_DATA_SYNC.task_id
+SMART_STARTUP_TASK_ID = STARTUP_SMART.task_id
 
 
 def _normalize_log_detail(text: str, limit: int = 120) -> str:
@@ -130,7 +135,7 @@ class StartupOrchestrator:
 
             self._safe_call_in_ui(lambda: event_bus.sig_cache_bootstrap_ready.emit())
 
-        self._job_runner.run(DEFERRED_LOAD_TASK_ID, _load_bg)
+        self._job_runner.run(STARTUP_DEFERRED_LOAD, _load_bg)
 
         def _check_asian_data_bg():
             if not self._alive():
@@ -190,7 +195,7 @@ class StartupOrchestrator:
                     if raw_detail:
                         log.debug(f"[启动] 亚洲市场静默同步原始输出: {raw_detail}")
 
-        self._job_runner.run(ASIAN_DATA_SYNC_TASK_ID, _check_asian_data_bg)
+        self._job_runner.run(STARTUP_ASIAN_DATA_SYNC, _check_asian_data_bg)
 
     def smart_startup(self):
         """异步检测网络；可联机时切到在线模式并驱动后续刷新。"""
@@ -232,7 +237,7 @@ class StartupOrchestrator:
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 log.error(f"[智能启动] 网络检测异常: {exc}")
 
-        self._job_runner.run(SMART_STARTUP_TASK_ID, _check_and_go_online)
+        self._job_runner.run(STARTUP_SMART, _check_and_go_online)
 
     def auto_start_rt_if_ready(self):
         """启动完成后按条件自动开启盘中监控。"""

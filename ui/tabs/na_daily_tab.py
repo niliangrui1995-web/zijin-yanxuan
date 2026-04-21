@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLa
 from core.domain_events import domain_events as event_bus
 from core.logger import get_logger
 from core.ui_signals import ui_signals
+from infra.tasks import task_registry
 from ui.components import TableStateWrapper, VCPTableView
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_tab import BaseStockTab
@@ -361,7 +362,9 @@ class NADailyTab(BaseStockTab):
                 self.table_state.show_empty("暂无战报数据")
 
         if self._na_daily_codes:
-            self.refresh_table_quotes_and_market_caps(quote_task_id="na_daily_quotes")
+            self.refresh_table_quotes_and_market_caps(
+                quote_task_id=task_registry.quote_refresh("na_daily").task_id
+            )
 
         event_bus.sig_na_daily_updated.emit()
 
@@ -386,6 +389,15 @@ class NADailyTab(BaseStockTab):
 
         final_list, report_files, report_signature = self._build_na_daily_rows()
         self._apply_na_daily_rows(final_list, report_files, report_signature)
+
+    def run_post_online_refresh(self) -> bool:
+        self._load_na_daily_report()
+        return True
+
+    def shutdown(self) -> None:
+        patrol_timer = getattr(self, "_patrol_timer", None)
+        if patrol_timer is not None:
+            patrol_timer.stop()
 
 
     def _on_double_click(self, index):

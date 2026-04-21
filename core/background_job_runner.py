@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from infra.tasks.typed_task_registry import TaskKeyLike, task_id_of
+
 
 def _resolve_default_manager():
     from core.task_manager import task_manager
@@ -16,44 +18,54 @@ class BackgroundJobRunner:
     def _resolve_manager(self):
         return self._manager or _resolve_default_manager()
 
-    def run(self, task_id: str, fn, *args, on_success=None, on_error=None, **kwargs) -> str:
+    def run(self, task_id: TaskKeyLike, fn, *args, on_success=None, on_error=None, **kwargs) -> str:
+        normalized_task_id = task_id_of(task_id)
         return self._resolve_manager().run_in_background(
             fn,
             *args,
             on_success=on_success,
             on_error=on_error,
-            task_id=task_id,
+            task_id=normalized_task_id,
             **kwargs,
         )
 
-    def run_in_background(self, fn, *args, on_success=None, on_error=None, task_id: str = None, **kwargs) -> str:
+    def run_in_background(
+        self,
+        fn,
+        *args,
+        on_success=None,
+        on_error=None,
+        task_id: TaskKeyLike = None,
+        **kwargs,
+    ) -> str:
+        normalized_task_id = task_id_of(task_id)
         return self._resolve_manager().run_in_background(
             fn,
             *args,
             on_success=on_success,
             on_error=on_error,
-            task_id=task_id,
+            task_id=normalized_task_id,
             **kwargs,
         )
 
-    def abandon(self, task_id: str) -> bool:
+    def abandon(self, task_id: TaskKeyLike) -> bool:
         manager = self._resolve_manager()
         abandon_task = getattr(manager, "abandon_task", None)
         if callable(abandon_task):
-            return bool(abandon_task(task_id))
+            return bool(abandon_task(task_id_of(task_id)))
         return False
 
-    def abandon_task(self, task_id: str) -> bool:
+    def abandon_task(self, task_id: TaskKeyLike) -> bool:
         return self.abandon(task_id)
 
-    def is_active(self, task_id: str) -> bool:
+    def is_active(self, task_id: TaskKeyLike) -> bool:
         manager = self._resolve_manager()
         is_active_task = getattr(manager, "is_active_task", None)
         if callable(is_active_task):
-            return bool(is_active_task(task_id))
+            return bool(is_active_task(task_id_of(task_id)))
         return False
 
-    def is_active_task(self, task_id: str) -> bool:
+    def is_active_task(self, task_id: TaskKeyLike) -> bool:
         return self.is_active(task_id)
 
     def cancel_all(self):

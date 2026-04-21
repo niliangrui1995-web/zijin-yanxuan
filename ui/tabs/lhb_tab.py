@@ -26,6 +26,7 @@ from core.lhb_pool_manager import POOL_WINDOW, LhbPoolManager
 from core.logger import get_logger
 from core.market_calendar import MarketCalendar
 from core.ui_signals import ui_signals
+from infra.tasks import task_registry
 from ui.components import TableStateWrapper, VCPTableView
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_tab import BaseStockTab
@@ -371,7 +372,9 @@ class LhbTab(BaseStockTab):
         # 触发全局通知，让关注池 Tab 能扫描到龙虎榜数据
         event_bus.sig_lhb_pool_updated.emit()
 
-        self.refresh_table_quotes_and_market_caps(quote_task_id="lhb_quotes")
+        self.refresh_table_quotes_and_market_caps(
+            quote_task_id=task_registry.quote_refresh("lhb").task_id
+        )
 
     # ================================================================
     # 后台回填缺失天数
@@ -580,7 +583,7 @@ class LhbTab(BaseStockTab):
             _bg_backfill,
             on_success=_on_backfill_done,
             on_error=_on_backfill_error,
-            task_id="lhb_pool_backfill",
+            task_id=task_registry.workspace("lhb_pool_backfill").task_id,
         )
 
     # ================================================================
@@ -604,6 +607,10 @@ class LhbTab(BaseStockTab):
         # 清空全部缓存，强制全量重拉
         self.pool_manager.clear_all()
         self._start_backfill(trade_dates)
+
+    def refresh_history(self) -> bool:
+        self._manual_refresh()
+        return True
 
     # ================================================================
     # 每日 20:00 定时自动抓取
@@ -654,6 +661,11 @@ class LhbTab(BaseStockTab):
         event_bus.sig_system_log.emit("info", self._ensure_log_line(f"[龙虎榜池] 触发每日20:00自动抓取: {today_str}"))
         self._fetch_single_day(today_str)
 
+    def shutdown(self) -> None:
+        auto_timer = getattr(self, "_auto_timer", None)
+        if auto_timer is not None:
+            auto_timer.stop()
+
     def _fetch_single_day(self, date_str: str):
         """抓取单天数据并刷新池"""
         self.btn_refresh.setEnabled(False)
@@ -703,7 +715,7 @@ class LhbTab(BaseStockTab):
             _bg_fetch,
             on_success=_on_done,
             on_error=_on_error,
-            task_id="lhb_pool_daily_fetch",
+            task_id=task_registry.workspace("lhb_pool_daily_fetch").task_id,
         )
 
     # ================================================================

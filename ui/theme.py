@@ -9,7 +9,9 @@ ui/theme.py
 """
 from datetime import datetime as _datetime
 
-from PyQt6.QtCore import QObject, QSettings, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+
+from core.app_config import app_config
 
 # ============================================================
 # 墨渊主题（暗色，即当前默认主题）
@@ -515,7 +517,7 @@ class ThemeManager(QObject):
         if self._initialized:
             return
         self._initialized = True
-        self._settings = QSettings("VCPHunter", "ThemeManager")
+        self._settings = app_config.section("ui/theme", legacy_scope="ThemeManager")
         # 从持久化配置恢复上次选择的主题，默认"墨渊"
         saved = self._settings.value("current_theme", "墨渊")
         self._current_name = saved if saved in self.THEMES else "墨渊"

@@ -3,7 +3,7 @@ import datetime
 import json
 import os
 
-from PyQt6.QtCore import QSettings, Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QCheckBox, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from core.domain_events import domain_events as event_bus
@@ -157,8 +157,7 @@ class AsianMarketTab(BaseStockTab):
             self._fit_columns_timer.start()
 
     def _has_saved_asian_header_state(self, settings_key: str) -> bool:
-        settings = QSettings("VCPHunter", self.__class__.__name__)
-        return settings.contains(settings_key)
+        return self._settings_section().contains(settings_key)
 
     def _fit_asian_columns_to_viewport(self):
         if not hasattr(self, "asian_table"):
@@ -933,12 +932,15 @@ class AsianMarketTab(BaseStockTab):
         # 触发全局画图事件
         ui_signals.sig_show_kline_with_list.emit(code, code_list, current_idx)
 
-    def closeEvent(self, event):
+    def shutdown(self) -> None:
         if hasattr(self, "auto_cache_timer") and self.auto_cache_timer is not None:
             self.auto_cache_timer.stop()
         if getattr(self, "cache_thread", None) is not None and self.cache_thread.isRunning():
             self.cache_thread.wait(5000)
-        if hasattr(self, 'worker'):
+        if hasattr(self, "worker") and self.worker is not None:
             self.worker.stop()
-            self.worker.wait(3000)  # 3 秒超时，防止卡死
+            self.worker.wait(3000)
+
+    def closeEvent(self, event):
+        self.shutdown()
         super().closeEvent(event)

@@ -15,10 +15,12 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from core.app_config import app_config
 from core.domain_events import domain_events as event_bus
 from core.logger import get_logger
 from core.market_calendar import MarketCalendar
 from core.ui_signals import ui_signals
+from infra.tasks import task_registry
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.scan_dialogs import VCPScanRangeDialog, VCPScanSettingsDialog
 from ui.components.toast_widget import show_toast
@@ -58,8 +60,7 @@ class ScanTab(BaseStockTab):
 
     def _init_settings_widgets(self):
         """初始化扫描策略的内部存储控件，从 QSettings 恢复上次参数 (#8)"""
-        from PyQt6.QtCore import QSettings
-        self._settings = QSettings("VCPHunter", "ScanTab")
+        self._settings = app_config.section("scan", legacy_scope="ScanTab")
 
         self.spn_scan_rps = QSpinBox()
         self.spn_scan_rps.setRange(50, 99)
@@ -388,7 +389,7 @@ class ScanTab(BaseStockTab):
         self.btn_scan_increment.setProperty("class", "secondary")
         self.btn_scan_increment.setProperty("toolbarWidthHints", ["新增补扫", "停止补扫", "正在停止补扫..."])
         self.btn_scan_increment.setToolTip("只扫描最近可用交易日，并将结果追加/刷新到当前表格")
-        self.btn_scan_increment.clicked.connect(self._on_incremental_scan_clicked)
+        self.btn_scan_increment.clicked.connect(self.run_incremental_scan)
 
         # 扫描参数设置按钮
         self.btn_scan_settings = QToolButton()
@@ -399,7 +400,7 @@ class ScanTab(BaseStockTab):
         self.btn_scan_settings.setAutoRaise(False)
         self.btn_scan_settings.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_scan_settings.setToolTip("VCP扫描参数设置")
-        self.btn_scan_settings.clicked.connect(self._show_scan_settings)
+        self.btn_scan_settings.clicked.connect(self.open_scan_settings)
 
         action_widgets = [self.btn_scan_action, self.btn_scan_increment, self.btn_scan_settings]
         toolbar = self.build_tab_toolbar("VCP 扫描", self.lbl_scan_status, filter_widgets, action_widgets)
@@ -528,6 +529,17 @@ class ScanTab(BaseStockTab):
         if not (self.worker and self.worker.isRunning()):
             self._refresh_scan_status()
 
+    def get_scan_results(self) -> list[dict]:
+        return list(self._current_results or [])
+
+    def run_incremental_scan(self) -> bool:
+        self._on_incremental_scan_clicked()
+        return True
+
+    def open_scan_settings(self) -> bool:
+        self._show_scan_settings()
+        return True
+
     # ==========================
     # 核心引擎调度与任务生命周期
     # ==========================
@@ -572,6 +584,11 @@ class ScanTab(BaseStockTab):
             self.worker.cancel()
             return True
         return False
+
+    def shutdown(self) -> None:
+        if self.worker is not None and self.worker.isRunning():
+            self.cancel_scan()
+            self.worker.wait(2000)
 
     def _on_scan_finished(self, success, msg):
         if success:
@@ -680,7 +697,7 @@ class ScanTab(BaseStockTab):
             self.refresh_table_quotes_and_market_caps(
                 current_model=self.source_model,
                 force_quotes=True,
-                quote_task_id="scan_quotes",
+                quote_task_id=task_registry.quote_refresh("scan").task_id,
             )
             if hasattr(self, "table_state"):
                 self.table_state.show_table()

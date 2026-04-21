@@ -30,6 +30,7 @@ from core.fund_holdings_compare import (
 from core.fund_holdings_store import fund_holdings_store
 from core.fund_holdings_sync import fund_holdings_sync_service
 from core.ui_signals import ui_signals
+from infra.tasks import task_registry
 from ui.components import (
     MultiSelectFilterButton,
     SearchFilter,
@@ -207,7 +208,9 @@ class FundHoldingsTab(BaseStockTab):
         super().__init__(data_provider=data_provider, parent=parent)
         self._autoload = bool(autoload)
         self._initial_load_started = False
-        self._initial_load_task_id = f"fund_holdings_initial_load_{id(self)}"
+        self._initial_load_task_id = self._build_workspace_task_id(
+            f"initial_load_{id(self)}"
+        )
         self._latest_quarter_map: dict[str, str] = {}
         self._latest_sync_map: dict[str, dict] = {}
         self._sync_task_id = ""
@@ -249,6 +252,13 @@ class FundHoldingsTab(BaseStockTab):
 
     def _view_state_key(self, name: str) -> str:
         return f"{self._VIEW_STATE_PREFIX}/{name}"
+
+    @staticmethod
+    def _build_workspace_task_id(name: str) -> str:
+        normalized = str(name or "").strip().replace("::", "_")
+        if not normalized:
+            normalized = "task"
+        return task_registry.workspace(f"fund_holdings_{normalized}").task_id
 
     def _selected_subject_names(self) -> set[str]:
         return self.cmb_subject.selected_values()
@@ -310,9 +320,7 @@ class FundHoldingsTab(BaseStockTab):
         self.btn_update.setText("全部更新")
         self.btn_update.setAccessibleName("更新基金持仓数据库")
         self.btn_update.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-        self.btn_update.clicked.connect(
-            lambda: self._run_sync_action("全部更新", fund_holdings_sync_service.sync_latest_all)
-        )
+        self.btn_update.clicked.connect(self.run_full_sync)
 
         action_widgets = [self.btn_update]
         toolbar = self.build_tab_toolbar("基金持仓", self.lbl_status, filter_widgets, action_widgets)
@@ -897,7 +905,10 @@ class FundHoldingsTab(BaseStockTab):
         if self._sync_active:
             return
 
-        self._sync_task_id = f"fund_holdings_sync::{label}"
+        callable_name = getattr(sync_callable, "__name__", "task")
+        self._sync_task_id = self._build_workspace_task_id(
+            f"sync_{callable_name}"
+        )
         self._set_sync_active(True, "同步基金持仓中...", label)
         total = len(getattr(self.model, "row_data", []) or [])
         visible = self.proxy_model.rowCount() if hasattr(self, "proxy_model") else total
@@ -965,6 +976,12 @@ class FundHoldingsTab(BaseStockTab):
         if self._sync_active:
             return False
         self._run_sync_action("F5后自动更新", fund_holdings_sync_service.sync_latest_all)
+        return True
+
+    def run_full_sync(self) -> bool:
+        if self._sync_active:
+            return False
+        self._run_sync_action("全部更新", fund_holdings_sync_service.sync_latest_all)
         return True
 
     def _reload_from_db(self):

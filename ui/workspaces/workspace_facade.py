@@ -23,19 +23,23 @@ class WorkspaceFacade:
         self._watchlist_radar_service.prime_watchlist_state()
 
     def run_post_online_refresh(self, task_manager) -> None:
-        workspace = self._workspace
-        for attr_name in ("tab_na_daily", "tab_foreign_block"):
-            tab = getattr(workspace, attr_name, None)
-            auto_refresh = getattr(tab, "_auto_refresh_realtime", None)
-            if callable(auto_refresh):
-                auto_refresh(force=True)
+        get_tab = getattr(self._workspace, "get_tab", None)
+        for key in ("na_daily", "foreign_block"):
+            tab = get_tab(key) if callable(get_tab) else None
+            refresh = getattr(tab, "run_post_online_refresh", None)
+            if callable(refresh):
+                refresh()
 
         self.schedule_watchlist_special_quotes(task_manager)
 
     def auto_start_rt_monitor(self) -> bool:
-        rt_tab = getattr(self._workspace, "tab_rt", None)
-        toggle_monitor = getattr(rt_tab, "_toggle_rt_monitor", None)
+        get_tab = getattr(self._workspace, "get_tab", None)
+        rt_tab = get_tab("rt_monitor") if callable(get_tab) else None
+        toggle_monitor = getattr(rt_tab, "toggle_rt_monitor", None)
+        is_running = getattr(rt_tab, "is_rt_running", None)
         if not callable(toggle_monitor):
+            return False
+        if callable(is_running) and is_running():
             return False
         toggle_monitor(auto=True)
         return True

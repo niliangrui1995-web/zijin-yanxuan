@@ -1,4 +1,6 @@
 from core.logger import get_logger
+from infra.tasks import NETWORK_FORCE_RECONNECT, NETWORK_GO_ONLINE
+
 log = get_logger(__name__)
 
 
@@ -22,7 +24,7 @@ def toggle_network(main_window):
 
         from core.background_job_runner import background_job_runner as task_manager
 
-        task_manager.run_in_background(_go_online, task_id="go_online")
+        task_manager.run_in_background(_go_online, task_id=NETWORK_GO_ONLINE)
         return
 
     main_window.data_provider.set_online_mode(False)
@@ -81,5 +83,5 @@ def force_reconnect(main_window):
     task_manager.run_in_background(
         _reconnect_task,
         on_success=lambda res: main_window._call_in_ui(lambda: _on_done(res)),
-        task_id="force_reconnect",
+        task_id=NETWORK_FORCE_RECONNECT,
     )

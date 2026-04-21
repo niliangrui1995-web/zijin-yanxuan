@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGET_DIRS = ("core", "ui", "vcp", "tests", "scripts")
+DEFAULT_TARGET_DIRS = ("core", "ui", "vcp", "tests", "scripts", "app", "infra", "docs", ".github")
 TARGET_SUFFIXES = {
     ".py",
     ".md",
@@ -16,13 +17,28 @@ TARGET_SUFFIXES = {
 }
 
 
-def iter_target_files():
-    for rel_dir in TARGET_DIRS:
-        base = ROOT / rel_dir
-        if not base.exists():
-            continue
-        for path in base.rglob("*"):
-            if path.is_file() and path.suffix.lower() in TARGET_SUFFIXES:
+def _iter_files_under(base: Path):
+    if base.is_file():
+        if base.suffix.lower() in TARGET_SUFFIXES:
+            yield base
+        return
+
+    if not base.exists() or not base.is_dir():
+        return
+
+    for path in base.rglob("*"):
+        if path.is_file() and path.suffix.lower() in TARGET_SUFFIXES:
+            yield path
+
+
+def iter_target_files(targets: list[str] | None = None):
+    candidate_targets = targets or list(DEFAULT_TARGET_DIRS)
+    seen: set[Path] = set()
+    for raw_target in candidate_targets:
+        base = (ROOT / raw_target).resolve() if not Path(raw_target).is_absolute() else Path(raw_target).resolve()
+        for path in _iter_files_under(base):
+            if path not in seen:
+                seen.add(path)
                 yield path
 
 
@@ -35,10 +51,14 @@ def scan_text_issues(text: str) -> list[str]:
     return issues
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Scan source files for UTF-8 and text corruption issues.")
+    parser.add_argument("paths", nargs="*", help="Optional files or directories to scan, relative to repo root.")
+    args = parser.parse_args(argv)
+
     invalid_files: list[str] = []
     suspicious_files: list[tuple[str, list[str]]] = []
-    for path in iter_target_files():
+    for path in iter_target_files(args.paths):
         try:
             text = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:

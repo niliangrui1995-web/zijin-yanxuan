@@ -21,6 +21,7 @@ from core.quote_snapshot import (
     enrich_quotes_with_finance,
     is_a_share_code,
 )
+from infra.tasks import SHARED_MARKET_CAPS, task_id_of, task_registry
 
 _FINANCE_CACHE_LOCK = threading.RLock()
 _FINANCE_CACHE_PATH: str | None = None
@@ -242,7 +243,7 @@ def _invoke_after_market_caps_updated(owner) -> None:
 class MarketCapRefreshBatcher:
     """跨 Tab 合并缺失股本请求，避免重复 IO。"""
 
-    _task_id = "shared_market_caps"
+    _task_id = SHARED_MARKET_CAPS.task_id
     _debounce_ms = 40
     _scheduled = False
     _pending_codes: set[str] = set()
@@ -365,7 +366,7 @@ class MarketCapRefreshBatcher:
 
         task_manager.run_in_background(
             _bg_cap,
-            task_id=cls._task_id,
+            task_id=SHARED_MARKET_CAPS,
             on_success=_on_success,
             on_error=_on_error,
         )
@@ -411,7 +412,9 @@ def refresh_table_quotes_and_market_caps(owner, current_model=None, force_quotes
 
     from core.background_job_runner import background_job_runner as task_manager
 
-    task_id = str(quote_task_id or f"{owner.__class__.__name__.lower()}_quotes")
+    task_id = task_id_of(quote_task_id)
+    if not task_id:
+        task_id = task_registry.quote_refresh(owner.__class__.__name__.lower()).task_id
     is_active_task = getattr(task_manager, "is_active_task", None)
     if callable(is_active_task) and is_active_task(task_id):
         return

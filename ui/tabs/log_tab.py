@@ -332,6 +332,11 @@ class LogTab(QWidget):
         self._log_flush_timer.timeout.connect(self._flush_log_buffer)
         self._log_flush_timer.start(200)
 
+    def shutdown(self) -> None:
+        log_flush_timer = getattr(self, "_log_flush_timer", None)
+        if log_flush_timer is not None:
+            log_flush_timer.stop()
+
     def _on_log_msg(self, level, text):
         self._log_buffer.append((level, text))
         self._log_history.append((level, text))

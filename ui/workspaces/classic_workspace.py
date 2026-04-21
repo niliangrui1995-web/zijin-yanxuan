@@ -132,6 +132,7 @@ class ClassicWorkspace(QWidget):
             setattr(self, spec["attr"], spec["widget"])
             self.tabs.addTab(spec["widget"], spec["title"])
 
+        self._tabs_by_key = {str(spec["key"]): spec["widget"] for spec in self._tab_specs}
         self._workspace_facade = WorkspaceFacade(self)
 
     def tab_specs(self) -> list[dict]:
@@ -167,47 +168,35 @@ class ClassicWorkspace(QWidget):
     def current_tab_index(self) -> int:
         return self.tabs.currentIndex()
 
+    def get_tab(self, key: str):
+        return self._tabs_by_key.get(str(key or "").strip())
+
+    def iter_tabs(self) -> list:
+        return [spec["widget"] for spec in self._tab_specs if spec.get("widget") is not None]
+
     def get_realtime_quote_codes(self) -> set[str]:
         return _resolve_workspace_facade(self).get_realtime_quote_codes()
 
     def get_scan_results(self) -> list[dict]:
-        return list(getattr(getattr(self, "tab_scan", None), "_current_results", []) or [])
+        scan_tab = self.get_tab("scan")
+        get_scan_results = getattr(scan_tab, "get_scan_results", None)
+        if not callable(get_scan_results):
+            return []
+        return list(get_scan_results() or [])
 
     def get_rt_table(self):
-        return getattr(getattr(self, "tab_rt", None), "table_rt", None)
+        return getattr(self.get_tab("rt_monitor"), "table_rt", None)
 
     def iter_tables(self) -> list:
-        return [
-            table
-            for table in [
-                getattr(getattr(self, "tab_scan", None), "table_scan", None),
-                self.get_rt_table(),
-                getattr(getattr(self, "tab_watchlist", None), "table_sp", None),
-                getattr(getattr(self, "tab_na_daily", None), "na_daily_table", None),
-                getattr(getattr(self, "tab_console", None), "table", None),
-                getattr(getattr(self, "tab_lhb", None), "table", None),
-                getattr(getattr(self, "tab_foreign_block", None), "table", None),
-                getattr(getattr(self, "tab_fund_holdings", None), "table", None),
-                getattr(getattr(self, "tab_asian_market", None), "asian_table", None),
-                getattr(getattr(self, "tab_earnings", None), "table", None),
-            ]
-            if table is not None
-        ]
+        tables = []
+        for tab in self.iter_tabs():
+            tables.extend(self._iter_tab_tables(tab))
+        return tables
 
     def iter_refreshable_tabs(self) -> list:
         return [
             tab
-            for tab in [
-                getattr(self, "tab_watchlist", None),
-                getattr(self, "tab_lhb", None),
-                getattr(self, "tab_na_daily", None),
-                getattr(self, "tab_asian_market", None),
-                getattr(self, "tab_rt", None),
-                getattr(self, "tab_foreign_block", None),
-                getattr(self, "tab_fund_holdings", None),
-                getattr(self, "tab_earnings", None),
-                getattr(self, "tab_scan", None),
-            ]
+            for tab in self.iter_tabs()
             if tab is not None and hasattr(tab, "refresh_table_from_latest_snapshot")
         ]
 
@@ -218,17 +207,8 @@ class ClassicWorkspace(QWidget):
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 log.warning(f"[F5] {tab.__class__.__name__} 表格快照回灌失败: {exc}")
 
-    def find_scan_result(self, code: str) -> dict | None:
-        code_text = str(code or "").strip()
-        if not code_text:
-            return None
-        for row in self.get_scan_results():
-            if isinstance(row, dict) and str(row.get("代码", "")).strip() == code_text:
-                return row
-        return None
-
     def select_scan_row(self, index: int) -> bool:
-        table = getattr(getattr(self, "tab_scan", None), "table_scan", None)
+        table = getattr(self.get_tab("scan"), "table_scan", None)
         if table is None or index < 0:
             return False
         try:
@@ -236,6 +216,49 @@ class ClassicWorkspace(QWidget):
         except (AttributeError, RuntimeError, TypeError):
             return False
         return True
+
+    def is_rt_monitor_running(self) -> bool:
+        rt_tab = self.get_tab("rt_monitor")
+        is_running = getattr(rt_tab, "is_rt_running", None)
+        if not callable(is_running):
+            return False
+        return bool(is_running())
+
+    def toggle_rt_monitor(self) -> bool:
+        rt_tab = self.get_tab("rt_monitor")
+        toggle_monitor = getattr(rt_tab, "toggle_rt_monitor", None)
+        if not callable(toggle_monitor):
+            return False
+        toggle_monitor()
+        return True
+
+    def run_incremental_scan(self) -> bool:
+        scan_tab = self.get_tab("scan")
+        run_incremental_scan = getattr(scan_tab, "run_incremental_scan", None)
+        if not callable(run_incremental_scan):
+            return False
+        return bool(run_incremental_scan())
+
+    def open_scan_settings(self) -> bool:
+        scan_tab = self.get_tab("scan")
+        open_scan_settings = getattr(scan_tab, "open_scan_settings", None)
+        if not callable(open_scan_settings):
+            return False
+        return bool(open_scan_settings())
+
+    def refresh_lhb_history(self) -> bool:
+        lhb_tab = self.get_tab("lhb")
+        refresh_history = getattr(lhb_tab, "refresh_history", None)
+        if not callable(refresh_history):
+            return False
+        return bool(refresh_history())
+
+    def run_fund_holdings_sync(self) -> bool:
+        fund_holdings_tab = self.get_tab("fund_holdings")
+        run_full_sync = getattr(fund_holdings_tab, "run_full_sync", None)
+        if not callable(run_full_sync):
+            return False
+        return bool(run_full_sync())
 
     @staticmethod
     def _iter_tab_tables(tab) -> list:
@@ -356,35 +379,11 @@ class ClassicWorkspace(QWidget):
         return None
 
     def shutdown(self):
-        rt_worker = getattr(self.tab_rt, "rt_worker", None)
-        if rt_worker is not None and rt_worker.isRunning():
-            self.tab_rt._manual_stop_requested = False
-            self.tab_rt._rt_stop_requested = True
-            self.tab_rt._toggle_rt_monitor(auto=True)
-            rt_worker.wait(2000)
-
-        scan_worker = getattr(self.tab_scan, "worker", None)
-        if scan_worker is not None and scan_worker.isRunning():
-            self.tab_scan.cancel_scan()
-            scan_worker.wait(2000)
-
-        asian_auto_timer = getattr(self.tab_asian_market, "auto_cache_timer", None)
-        if asian_auto_timer is not None:
-            asian_auto_timer.stop()
-
-        asian_cache_thread = getattr(self.tab_asian_market, "cache_thread", None)
-        if asian_cache_thread is not None and asian_cache_thread.isRunning():
-            asian_cache_thread.wait(2000)
-
-        asian_worker = getattr(self.tab_asian_market, "worker", None)
-        if asian_worker is not None and asian_worker.isRunning():
-            asian_worker.stop()
-            asian_worker.wait(2000)
-
-        auto_timer = getattr(self.tab_rt, "_auto_timer", None)
-        if auto_timer is not None:
-            auto_timer.stop()
-
-        log_flush_timer = getattr(self.tab_log, "_log_flush_timer", None)
-        if log_flush_timer is not None:
-            log_flush_timer.stop()
+        for tab in self.iter_tabs():
+            shutdown = getattr(tab, "shutdown", None)
+            if not callable(shutdown):
+                continue
+            try:
+                shutdown()
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                log.warning(f"[Workspace] {tab.__class__.__name__} shutdown failed: {exc}")

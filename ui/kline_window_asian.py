@@ -7,6 +7,7 @@ import os
 import pandas as pd
 
 from core.market_calendar import MarketCalendar
+from infra.tasks import task_registry
 from ui.kline_chart_payload import merge_kline_context
 
 
@@ -119,7 +120,7 @@ def schedule_asian_history_backfill(window, *, task_manager, fetch_single_kline)
         _bg_fetch,
         on_success=_on_fetch_success,
         on_error=_on_fetch_error,
-        task_id=f"kline_asian_{window.code}",
+        task_id=task_registry.window(f"kline_asian_{window.code}").task_id,
     )
 
 

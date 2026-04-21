@@ -19,8 +19,36 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt pytest ruff
       - name: Ruff guardrail
-        run: ruff check .
-      - name: Check UTF-8 source files
-        run: python scripts/check_utf8.py
-      - name: Run test suite
-        run: pytest -q
+        run: |
+          ruff check \
+            scripts/check_utf8.py \
+            tests/test_architecture_boundaries.py \
+            tests/test_app_config.py \
+            tests/test_workspace_quote_codes.py \
+            tests/test_kline_open_service.py \
+            app/services/kline_open_service.py \
+            core/app_config.py \
+            infra/settings \
+            ui/main_window_qt.py \
+            ui/workspaces/classic_workspace.py \
+            ui/workspaces/workspace_facade.py \
+            ui/workspaces/quote_universe_service.py \
+            ui/workspaces/watchlist_radar_service.py
+      - name: UTF-8 guardrail
+        run: python scripts/check_utf8.py core ui vcp tests scripts app infra docs .github
+      - name: Architecture regression suite
+        run: |
+          pytest \
+            tests/test_architecture_boundaries.py \
+            tests/test_app_config.py \
+            tests/test_workspace_quote_codes.py \
+            tests/test_kline_open_service.py \
+            tests/test_main_window_shell.py \
+            -q
+      - name: Service regression suite
+        run: |
+          pytest \
+            tests/test_provider_services.py \
+            tests/test_engine_services.py \
+            tests/test_background_job_runner.py \
+            -q
