@@ -15,11 +15,13 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from app.services import VCPParams
 from core.app_config import app_config
 from core.domain_events import domain_events as event_bus
 from core.logger import get_logger
-from core.market_calendar import MarketCalendar
+from domains.market_calendar import MarketCalendar
 from core.ui_signals import ui_signals
+from domains.watchlist import watchlist_vm
 from infra.tasks import task_registry
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.scan_dialogs import VCPScanRangeDialog, VCPScanSettingsDialog
@@ -28,9 +30,7 @@ from ui.components.toast_widget import show_toast
 # Removed unused imports from ui.theme and PyQt6
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_tab import BaseStockTab
-from ui.viewmodels.watchlist_vm import watchlist_vm
 from ui.workers.scan_worker import ScanWorker
-from vcp.engine import VCPParams
 
 log = get_logger(__name__)
 

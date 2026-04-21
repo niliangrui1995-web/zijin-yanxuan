@@ -98,7 +98,7 @@ class BlockTradeFilterProxyModel(RtSortFilterProxyModel):
         return filter_text in buyer_text or filter_text in seller_text
 
 from core.logger import get_logger
-from core.market_calendar import MarketCalendar
+from domains.market_calendar import MarketCalendar
 from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)

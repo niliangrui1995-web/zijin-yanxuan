@@ -7,7 +7,8 @@ from datetime import timedelta
 from PyQt6.QtCore import Qt
 
 from core.logger import get_logger
-from core.market_calendar import MarketCalendar
+from domains.market_calendar import MarketCalendar
+from domains.watchlist import watchlist_vm
 from ui.kline_chart_payload import (
     build_kline_summary_cards,
     build_kline_window_palette,
@@ -17,7 +18,6 @@ from ui.kline_chart_payload import (
 from ui.status_registry import resolve_kline_runtime_badges
 from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens, get_state_tone
-from ui.viewmodels.watchlist_vm import watchlist_vm
 
 log = get_logger(__name__)
 

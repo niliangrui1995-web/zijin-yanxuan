@@ -38,6 +38,24 @@ def _find_violations(root: Path, banned_modules: set[str], *, allowed_paths: set
     return violations
 
 
+def _find_prefix_violations(root: Path, banned_prefixes: set[str], *, allowed_paths: set[str] | None = None):
+    allowed_paths = allowed_paths or set()
+    violations: list[str] = []
+    for path in _iter_python_files(root):
+        rel_path = path.relative_to(REPO_ROOT).as_posix()
+        if rel_path in allowed_paths:
+            continue
+        imported = _collect_imports(path)
+        matched = sorted(
+            module
+            for module in imported
+            if any(module == prefix or module.startswith(f"{prefix}.") for prefix in banned_prefixes)
+        )
+        if matched:
+            violations.append(f"{rel_path}: {', '.join(matched)}")
+    return violations
+
+
 def _find_qsettings_imports(root: Path, *, allowed_paths: set[str] | None = None):
     allowed_paths = allowed_paths or set()
     violations: list[str] = []
@@ -171,3 +189,89 @@ def test_ui_layer_uses_task_registry_instead_of_literal_task_ids():
 
 def test_legacy_quote_terminal_shim_has_been_removed():
     assert not (REPO_ROOT / "infra" / "navigation" / "quote_terminal_service.py").exists()
+
+
+def test_app_layer_does_not_import_ui_modules_directly():
+    violations = _find_prefix_violations(
+        REPO_ROOT / "app",
+        {"ui"},
+    )
+    assert not violations, "App layer imported UI modules directly:\n" + "\n".join(violations)
+
+
+def test_window_command_service_avoids_ui_theme_and_private_window_hooks():
+    path = REPO_ROOT / "app" / "use_cases" / "window_command_service.py"
+    imports = _collect_imports(path)
+    assert "ui.theme" not in imports
+
+    violations = _find_text_snippets(
+        path,
+        {
+            "_action_refresh_f5",
+            "_activate_workspace_tab",
+            "_apply_table_density",
+            "_on_show_kline",
+        },
+    )
+    assert not violations, "Window command service still references private main-window hooks:\n" + "\n".join(violations)
+
+
+def test_main_window_runtime_bootstrap_goes_through_app_services():
+    path = REPO_ROOT / "ui" / "main_window_qt.py"
+    imports = _collect_imports(path)
+    forbidden = {
+        "core.startup_orchestrator",
+        "vcp.data_provider",
+        "vcp.engine",
+    }
+    matched = sorted(forbidden & imports)
+    assert not matched, "Main window still imports legacy runtime bootstrap modules directly:\n" + "\n".join(matched)
+
+
+def test_selected_ui_modules_do_not_import_vcp_engine_directly():
+    module_paths = [
+        "ui/kline_window_qt.py",
+        "ui/tabs/base_stock_refresh.py",
+        "ui/tabs/lhb_tab.py",
+        "ui/tabs/scan_tab.py",
+        "ui/workers/central_quotes_worker.py",
+        "ui/workers/rt_scan_worker.py",
+        "ui/workers/scan_worker.py",
+    ]
+    violations: list[str] = []
+    for rel_path in module_paths:
+        imports = _collect_imports(REPO_ROOT / rel_path)
+        if "vcp.engine" in imports:
+            violations.append(rel_path)
+    assert not violations, "Selected UI runtime modules still depend on vcp.engine directly:\n" + "\n".join(violations)
+
+
+def test_ui_layer_does_not_import_vcp_modules_directly():
+    violations = _find_prefix_violations(
+        REPO_ROOT / "ui",
+        {"vcp"},
+    )
+    assert not violations, "UI layer still imports legacy vcp modules directly:\n" + "\n".join(violations)
+
+
+def test_ui_layer_uses_domains_market_calendar_entrypoint():
+    violations = _find_violations(
+        REPO_ROOT / "ui",
+        {"core.market_calendar"},
+    )
+    assert not violations, "UI layer still imports core.market_calendar compatibility path:\n" + "\n".join(violations)
+
+
+def test_domain_and_market_data_layers_use_domains_market_calendar_entrypoint():
+    violations = []
+    violations.extend(_find_violations(REPO_ROOT / "domains" / "scan", {"core.market_calendar"}))
+    violations.extend(_find_violations(REPO_ROOT / "domains" / "earnings", {"core.market_calendar"}))
+    violations.extend(_find_violations(REPO_ROOT / "infra" / "market_data", {"core.market_calendar"}))
+    assert not violations, (
+        "Domain/market-data layers still import core.market_calendar compatibility path:\n"
+        + "\n".join(violations)
+    )
+
+
+def test_module_owner_registry_exists():
+    assert (REPO_ROOT / "docs" / "module-owners.md").exists()

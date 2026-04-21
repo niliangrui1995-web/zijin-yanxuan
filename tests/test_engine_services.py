@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from domains.scan import IndicatorService, RpsService
 from vcp.engine import VCPEngine
-from vcp.indicator_service import IndicatorService
-from vcp.rps_service import RpsService
 
 
 def test_engine_uses_rps_service_for_precomputed_bundle():

@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QTabWidget, QVBoxLayout, QWidget
 
-from core.logger import get_logger
 from ui.tabs.asian_market_tab import AsianMarketTab
 from ui.tabs.earnings_tab import EarningsTab
 from ui.tabs.foreign_block_trade_tab import ForeignBlockTradeTab
@@ -16,8 +14,6 @@ from ui.tabs.rt_monitor_tab import RtMonitorTab
 from ui.tabs.scan_tab import ScanTab
 from ui.tabs.watchlist_tab import WatchlistTab
 from ui.workspaces.workspace_facade import WorkspaceFacade
-
-log = get_logger(__name__)
 
 
 def _resolve_workspace_facade(workspace) -> WorkspaceFacade:
@@ -139,27 +135,10 @@ class ClassicWorkspace(QWidget):
         return list(self._tab_specs)
 
     def nav_groups(self) -> list[str]:
-        groups: list[str] = []
-        for spec in self._tab_specs:
-            group = str(spec.get("group", "")).strip()
-            if group and group not in groups:
-                groups.append(group)
-        return groups
+        return _resolve_workspace_facade(self).nav_groups()
 
     def tab_indices_by_group(self) -> dict[str, list[int]]:
-        result: dict[str, list[int]] = {}
-        for index, spec in enumerate(self._tab_specs):
-            group = str(spec.get("group", "")).strip()
-            result.setdefault(group, []).append(index)
-        for group, indices in result.items():
-            result[group] = sorted(
-                indices,
-                key=lambda idx: (
-                    int(self._tab_specs[idx].get("group_order", idx) or idx),
-                    idx,
-                ),
-            )
-        return result
+        return _resolve_workspace_facade(self).tab_indices_by_group()
 
     def restore_last_tab(self, index: int):
         if 0 <= index < self.tabs.count():
@@ -188,34 +167,16 @@ class ClassicWorkspace(QWidget):
         return getattr(self.get_tab("rt_monitor"), "table_rt", None)
 
     def iter_tables(self) -> list:
-        tables = []
-        for tab in self.iter_tabs():
-            tables.extend(self._iter_tab_tables(tab))
-        return tables
+        return _resolve_workspace_facade(self).iter_tables()
 
     def iter_refreshable_tabs(self) -> list:
-        return [
-            tab
-            for tab in self.iter_tabs()
-            if tab is not None and hasattr(tab, "refresh_table_from_latest_snapshot")
-        ]
+        return _resolve_workspace_facade(self).iter_refreshable_tabs()
 
     def refresh_all_tabs_after_f5(self) -> None:
-        for tab in self.iter_refreshable_tabs():
-            try:
-                tab.refresh_table_from_latest_snapshot()
-            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                log.warning(f"[F5] {tab.__class__.__name__} 表格快照回灌失败: {exc}")
+        _resolve_workspace_facade(self).refresh_all_tabs_after_f5()
 
     def select_scan_row(self, index: int) -> bool:
-        table = getattr(self.get_tab("scan"), "table_scan", None)
-        if table is None or index < 0:
-            return False
-        try:
-            table.selectRow(index)
-        except (AttributeError, RuntimeError, TypeError):
-            return False
-        return True
+        return _resolve_workspace_facade(self).select_scan_row(index)
 
     def is_rt_monitor_running(self) -> bool:
         rt_tab = self.get_tab("rt_monitor")
@@ -260,105 +221,8 @@ class ClassicWorkspace(QWidget):
             return False
         return bool(run_full_sync())
 
-    @staticmethod
-    def _iter_tab_tables(tab) -> list:
-        tables = []
-        for attr_name in ("table_sp", "table_scan", "table_rt", "na_daily_table", "asian_table", "table"):
-            table = getattr(tab, attr_name, None)
-            if table is not None and hasattr(table, "model") and table not in tables:
-                tables.append(table)
-        return tables
-
-    @staticmethod
-    def _find_code_column(model) -> int:
-        if model is None:
-            return -1
-        try:
-            column_count = int(model.columnCount())
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            return -1
-
-        for column in range(column_count):
-            try:
-                header_text = str(
-                    model.headerData(column, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) or ""
-                ).strip()
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                header_text = ""
-            if header_text == "代码":
-                return column
-        return -1
-
-    @classmethod
-    def _select_code_in_tab(cls, tab, code: str) -> bool:
-        code_text = str(code or "").strip()
-        if not code_text:
-            return False
-
-        for table in cls._iter_tab_tables(tab):
-            model = table.model()
-            code_column = cls._find_code_column(model)
-            if code_column < 0:
-                continue
-
-            try:
-                row_count = int(model.rowCount())
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                continue
-
-            for row in range(row_count):
-                try:
-                    index = model.index(row, code_column)
-                    row_code = str(model.data(index, Qt.ItemDataRole.DisplayRole) or "").strip()
-                except (AttributeError, RuntimeError, TypeError, ValueError):
-                    continue
-                if row_code != code_text:
-                    continue
-
-                try:
-                    table.clearSelection()
-                    table.setCurrentIndex(index)
-                    table.selectRow(row)
-                    table.scrollTo(index)
-                except (AttributeError, RuntimeError, TypeError, ValueError):
-                    return False
-                return True
-
-        return False
-
     def select_code_row(self, code: str, preferred_tab_index: int | None = None) -> bool:
-        code_text = str(code or "").strip()
-        if not code_text:
-            return False
-
-        tab_widget = getattr(self, "tabs", None)
-        if tab_widget is None:
-            return False
-
-        current_index = tab_widget.currentIndex()
-        candidate_indices: list[int] = []
-
-        if 0 <= current_index < tab_widget.count():
-            candidate_indices.append(current_index)
-
-        if isinstance(preferred_tab_index, int) and 0 <= preferred_tab_index < tab_widget.count():
-            if preferred_tab_index not in candidate_indices:
-                candidate_indices.append(preferred_tab_index)
-
-        for tab_index in range(tab_widget.count()):
-            if tab_index not in candidate_indices:
-                candidate_indices.append(tab_index)
-
-        for tab_index in candidate_indices:
-            tab = tab_widget.widget(tab_index)
-            if tab is None:
-                continue
-            if self._select_code_in_tab(tab, code_text):
-                if tab_index != current_index:
-                    tab_widget.setCurrentIndex(tab_index)
-                return True
-
-        return False
+        return _resolve_workspace_facade(self).select_code_row(code, preferred_tab_index)
 
     def refresh_watchlist_names(self, code2name: dict[str, str]) -> bool:
         return _resolve_workspace_facade(self).refresh_watchlist_names(code2name)

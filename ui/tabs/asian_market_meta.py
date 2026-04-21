@@ -124,7 +124,7 @@ def get_ch_names_mapping() -> dict:
 
 
 def get_market_status(market: str) -> str:
-    from core.market_calendar import MarketCalendar
+    from domains.market_calendar import MarketCalendar
     from ui.status_registry import resolve_market_status_badge
 
     canonical = MarketCalendar.normalize_market(market)

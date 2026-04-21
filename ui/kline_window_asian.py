@@ -6,7 +6,7 @@ import os
 
 import pandas as pd
 
-from core.market_calendar import MarketCalendar
+from domains.market_calendar import MarketCalendar
 from infra.tasks import task_registry
 from ui.kline_chart_payload import merge_kline_context
 

@@ -5,9 +5,9 @@ import gc
 import pandas as pd
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from app.services import batch_check_market_cap, calculate_scan_indicators
 from core.logger import get_logger
 from core.sector_rps_helper import enrich_hot_sector_rows, load_sector_rps_snapshot
-from vcp.engine import VCPEngine
 
 log = get_logger(__name__)
 
@@ -121,7 +121,7 @@ class ScanWorker(QThread):
                             # 【并发安全与缓存加速】避免区间扫描的每日历次重复计算指标。
                             # 先在 copy 上计算以保障安全，然后通过 dict 更新覆盖缓存，一劳永逸。
                             if 'entangle' not in df.columns:
-                                df = VCPEngine.calculate_indicators(df.copy())
+                                df = calculate_scan_indicators(df.copy())
                                 with self.data_provider.cache_lock:
                                     self.data_provider.cache_data[code] = df
                             df_safe = df
@@ -177,7 +177,7 @@ class ScanWorker(QThread):
                         _scan_close[c] = float(_cd.iloc[-1]['close'])
 
                 # 批量查询市值
-                cap_results = VCPEngine.batch_check_market_cap(unique_codes, close_prices=_scan_close)
+                cap_results = batch_check_market_cap(unique_codes, close_prices=_scan_close)
 
                 for res in all_results:
                     c = res['代码']

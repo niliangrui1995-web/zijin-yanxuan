@@ -41,6 +41,10 @@ jobs:
           pytest \
             tests/test_architecture_boundaries.py \
             tests/test_app_config.py \
+            tests/test_application_bootstrap.py \
+            tests/test_domain_entrypoints.py \
+            tests/test_event_bus_layers.py \
+            tests/test_market_data_ports.py \
             tests/test_workspace_quote_codes.py \
             tests/test_kline_open_service.py \
             tests/test_main_window_shell.py \
@@ -51,4 +55,5 @@ jobs:
             tests/test_provider_services.py \
             tests/test_engine_services.py \
             tests/test_background_job_runner.py \
+            tests/test_task_manager.py \
             -q

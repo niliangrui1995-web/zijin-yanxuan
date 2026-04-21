@@ -6,7 +6,7 @@ from PyQt6.QtCore import QAbstractTableModel, QMimeData, QModelIndex, Qt, pyqtSi
 from PyQt6.QtGui import QColor, QFont
 
 from core.buy_point import BUY_POINT_STYLE_TEXT, calculate_buy_point_from_history
-from core.quote_snapshot import resolve_quote_metrics
+from domains.quotes.snapshot import resolve_quote_metrics
 from ui.models.table_model_helpers import (
     SERIAL_HEADER,
     _alignment_for_cell,
@@ -247,7 +247,7 @@ class StockTableModel(QAbstractTableModel):
                     if history_date == today_str:
                         temp_hist = history[:-1] + [rt_close]
                     else:
-                        from core.market_calendar import MarketCalendar
+                        from domains.market_calendar import MarketCalendar
 
                         if now_time >= "09:15" and MarketCalendar.is_trade_day(today_str):
                             temp_hist = history[1:] + [rt_close]
@@ -342,7 +342,7 @@ class StockTableModel(QAbstractTableModel):
             if key == SERIAL_HEADER:
                 return QColor(_c("TEXT_SECONDARY"))
             if key == "名称":
-                from ui.viewmodels.watchlist_vm import watchlist_vm
+                from domains.watchlist import watchlist_vm
 
                 code = str(item_dict.get("代码", ""))
                 if watchlist_vm.is_in_watchlist(code):

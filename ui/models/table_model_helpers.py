@@ -10,7 +10,7 @@ from functools import lru_cache
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 
-from core.quote_snapshot import resolve_quote_metrics
+from domains.quotes.snapshot import resolve_quote_metrics
 from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens
 

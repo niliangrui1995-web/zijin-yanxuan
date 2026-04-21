@@ -4,16 +4,13 @@ from __future__ import annotations
 import pandas as pd
 import polars as pl
 
-from vcp.breakout_monitor_service import BreakoutMonitorService
+from domains.scan import BreakoutMonitorService, IndicatorService, RpsService, VcpScannerService
 from vcp.engine_external import (
     batch_check_institution,
     batch_check_market_cap,
     batch_get_finance_info,
 )
-from vcp.indicator_service import IndicatorService
 from vcp.models import VCPParams
-from vcp.rps_service import RpsService
-from vcp.vcp_scanner_service import VcpScannerService
 
 
 class VCPEngine:

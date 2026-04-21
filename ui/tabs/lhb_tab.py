@@ -20,11 +20,12 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from app.services import create_scan_engine
 from core.background_job_runner import background_job_runner as task_manager
 from core.domain_events import domain_events as event_bus
 from core.lhb_pool_manager import POOL_WINDOW, LhbPoolManager
 from core.logger import get_logger
-from core.market_calendar import MarketCalendar
+from domains.market_calendar import MarketCalendar
 from core.ui_signals import ui_signals
 from infra.tasks import task_registry
 from ui.components import TableStateWrapper, VCPTableView
@@ -98,8 +99,7 @@ class LhbTab(BaseStockTab):
     def _get_engine():
         """懒加载获取 VCPEngine 单例，用于读取 F5 预算的 RPS250 缓存"""
         try:
-            from vcp.engine import VCPEngine
-            return VCPEngine.get_instance()
+            return create_scan_engine()
         except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
             return None
 

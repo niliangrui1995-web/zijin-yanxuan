@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from vcp.adjustment_service import AdjustmentService
+from infra.market_data import AdjustmentService, LocalHistoryProvider, RealtimeQuoteProvider
 from vcp.data_provider import TdxDataProvider
-from vcp.local_history_provider import LocalHistoryProvider
-from vcp.realtime_quote_provider import RealtimeQuoteProvider
 
 
 def test_provider_lazy_services_available_on_bare_instance():

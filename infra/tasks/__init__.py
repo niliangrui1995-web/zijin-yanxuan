@@ -9,6 +9,7 @@ from infra.tasks.process_runner import (
     spawn_process,
     windows_no_window_creationflags,
 )
+from infra.tasks.task_scheduler import BackgroundWorker, GlobalTaskManager, UserFacingTaskError, task_manager
 from infra.tasks.typed_task_registry import (
     CENTRAL_QUOTES_POLL,
     NETWORK_FORCE_RECONNECT,
@@ -29,6 +30,8 @@ __all__ = [
     "CENTRAL_QUOTES_POLL",
     "NETWORK_FORCE_RECONNECT",
     "NETWORK_GO_ONLINE",
+    "BackgroundWorker",
+    "GlobalTaskManager",
     "ProcessExecutionError",
     "ProcessSubprocessError",
     "ProcessTimeoutError",
@@ -39,12 +42,14 @@ __all__ = [
     "TaskKey",
     "TaskKeyLike",
     "TypedTaskRegistry",
+    "UserFacingTaskError",
     "WINDOW_F5_PRECOMPUTE",
     "build_python_module_command",
     "build_domestic_process_env",
     "run_process",
     "run_python_module",
     "spawn_process",
+    "task_manager",
     "task_id_of",
     "task_registry",
     "windows_no_window_creationflags",

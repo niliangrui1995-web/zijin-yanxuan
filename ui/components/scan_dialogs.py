@@ -19,8 +19,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from core.market_calendar import MarketCalendar
-from ui.components.main_window_shell import DraggableTitleBar
+from domains.market_calendar import MarketCalendar
+from ui.components.shared_title_bar import DraggableTitleBar
 from ui.components.trade_calendar import TradeDateEdit
 from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens

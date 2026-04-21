@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.market_calendar import MarketCalendar
+from domains.market_calendar import MarketCalendar
 
 _MARKET_STATUS_ICON = {
     "交易中": "🟢",

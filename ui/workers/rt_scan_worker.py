@@ -5,13 +5,20 @@ import math
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from app.services import (
+    RPS_CACHE_FILE,
+    VCPParams,
+    batch_check_market_cap,
+    batch_get_finance_info,
+    build_rps_matrix,
+    precompute_ready_pool,
+    quick_check_breakout,
+)
 from core.exceptions import CacheIOError
 from core.json_cache import remove_cache_file, save_json_file
 from core.logger import get_logger
-from core.market_calendar import MarketCalendar
+from domains.market_calendar import MarketCalendar
 from core.sector_rps_helper import enrich_hot_sector_rows, load_sector_rps_snapshot
-from vcp.constants import RPS_CACHE_FILE
-from vcp.engine import VCPEngine, VCPParams
 
 log = get_logger(__name__)
 
@@ -164,8 +171,7 @@ class RtScanWorker(QThread):
                 try:
                     import gc
 
-                    from vcp.polars_engine import build_rps_matrix_pl
-                    rps_matrix = build_rps_matrix_pl(self._all_data, today_str, today_str)
+                    rps_matrix = build_rps_matrix(self._all_data, today_str, today_str)
                     if rps_matrix:
                         d_str = list(rps_matrix.keys())[-1]
                         d_rps = rps_matrix[d_str]
@@ -205,7 +211,7 @@ class RtScanWorker(QThread):
                 min_amount_20d=8e7,
                 min_history_days=250,
             )
-            new_pool = VCPEngine.precompute_ready_pool(
+            new_pool = precompute_ready_pool(
                 self._all_data, self._rps120, self._rps250, rt_params,
                 code2name=self.data_provider.code2name,
                 progress_callback=lambda msg: self.progress.emit(msg),
@@ -236,7 +242,7 @@ class RtScanWorker(QThread):
         # ===== 阶段4: 拉取实时报价 =====
         codes_to_fetch = list(self._ready_pool.keys())
         # 加入关注池代码(即使不在待突破池中)
-        from ui.viewmodels.watchlist_vm import watchlist_vm
+        from domains.watchlist import watchlist_vm
         special_codes = set(watchlist_vm.get_all_codes())
 
         # 【修复 BUG】清理已剔除出待突破池的历史爆破信号，防止"诈尸"
@@ -278,7 +284,7 @@ class RtScanWorker(QThread):
         codes_need_zbg = [c for c in quotes.keys() if c not in self._zbg_cache]
         if codes_need_zbg:
             try:
-                finance_data = VCPEngine.batch_get_finance_info(codes_need_zbg)
+                finance_data = batch_get_finance_info(codes_need_zbg)
                 for c in codes_need_zbg:
                     info = finance_data.get(c, {}) if isinstance(finance_data, dict) else {}
                     zbg = float(info.get('zongguben', 0) or 0)
@@ -365,7 +371,7 @@ class RtScanWorker(QThread):
             if pool_entry is None:
                 continue  # 不在待突破池
 
-            ok, breakout_status, score = VCPEngine.rt_quick_check(quote, pool_entry)
+            ok, breakout_status, score = quick_check_breakout(quote, pool_entry)
             if not ok:
                 continue  # 非红盘 -- 盘中监控不展示
 
@@ -439,7 +445,7 @@ class RtScanWorker(QThread):
                             rt_price = float(hist.iloc[-1]['close'])
 
                     close_prices[c] = rt_price
-                cap_results = VCPEngine.batch_check_market_cap(codes_need_cap, close_prices=close_prices)
+                cap_results = batch_check_market_cap(codes_need_cap, close_prices=close_prices)
                 for c in codes_need_cap:
                     cap = cap_results.get(c)
                     if cap and cap > 0:

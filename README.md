@@ -55,10 +55,10 @@ Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatil
 - A 股实时行情：东方财富 HTTP，异常时回退新浪批量报价
 - 财务/股本补充：东方财富接口
 - 海外/亚洲辅助数据：AkShare、yfinance、`curl_cffi`
-- 任务调度：`core/task_manager.py`
+- 任务调度：`infra/tasks/task_scheduler.py` + `core/background_job_runner.py`
 - 全局通信：`core/event_bus.py`
 - 日志：`core/logger.py`
-- 配置持久化：`QSettings` + `core/app_config.py`
+- 配置持久化：`infra/settings` + `core/app_config.py`
 - 本地缓存：`data/Cache/*.json`、`data/vcp_hunter.db`
 
 ## 架构概览
@@ -112,7 +112,7 @@ CentralQuotesService
 
 - 中央广播：`ui/workers/central_quotes_worker.py`
 - 全局快照存储：`core/global_store.py`
-- 快照合并与指标解析：`core/quote_snapshot.py`
+- 快照合并与指标解析：`domains/quotes/*`（`core/quote_snapshot.py` / `core/quote_dispatcher.py` 仅兼容导出）
 - 表格模型：`ui/models/table_models.py`
 
 这条链路的当前行为是：
@@ -126,18 +126,20 @@ CentralQuotesService
 ### 4. 数据层与策略层
 
 - `vcp/data_provider.py`
-  - 本地通达信日线读取
-  - 东方财富实时行情批量获取
-  - 新浪批量回退
-  - 运行时微缓存与冷却保护
+  - 作为聚合门面，编排 `infra/market_data/*` 读取本地日线、实时行情和复权处理
+  - 保留历史兼容入口，但真实 provider 子服务已迁入 `infra/market_data`
 - `vcp/engine.py`
-  - VCP 指标计算
-  - RPS 矩阵构建
-  - 多维条件评分
-- `vcp/engine_external.py`
-  - 财务、股本、机构股东等外部补充信息
-- `core/market_calendar.py`
-  - 多市场交易日、交易时段、报价刷新时段判断
+  - 作为聚合门面，统一调度 `domains/scan/*` 完成 VCP 指标、RPS 和待突破池计算
+- `domains/earnings/*`
+  - 负责业绩高增扫描与巡检调度；顶层 `earnings/*` 已退化为兼容壳
+- `domains/fund_holdings/*`
+  - 负责基金持仓比对、存储与同步
+- `domains/watchlist/*`
+  - 负责关注池视图模型与来源标签规则
+- `domains/quotes/*`
+  - 负责实时报价 payload 标准化、快照合并、市值补齐
+- `domains/market_calendar/*`
+  - 负责多市场交易日、交易时段、报价刷新时段判断；`core/market_calendar.py` 仅保留兼容导出
 
 ## 目录结构
 
@@ -157,7 +159,21 @@ CentralQuotesService
 │  ├─ quote_snapshot.py
 │  ├─ runtime_env.py
 │  └─ task_manager.py
-├─ earnings/                     # 业绩异动调度与引擎
+├─ app/                          # 应用编排层（bootstrap / use cases / services）
+├─ domains/                      # 领域服务稳定入口
+│  ├─ earnings/
+│  ├─ fund_holdings/
+│  ├─ market_calendar/
+│  ├─ quotes/
+│  ├─ scan/
+│  └─ watchlist/
+├─ earnings/                     # 业绩领域兼容壳
+├─ infra/                        # 基础设施适配层
+│  ├─ market_data/
+│  ├─ navigation/
+│  ├─ settings/
+│  ├─ storage/
+│  └─ tasks/
 ├─ ui/                           # PyQt6 界面层
 │  ├─ main_window_qt.py
 │  ├─ kline_window_qt.py
@@ -168,7 +184,7 @@ CentralQuotesService
 │  ├─ styles/
 │  ├─ tabs/
 │  └─ workers/
-├─ vcp/                          # 数据层与 VCP 策略层
+├─ vcp/                          # VCP 聚合门面与兼容入口
 │  ├─ constants.py
 │  ├─ data_provider.py
 │  ├─ data_provider_local.py
@@ -183,6 +199,14 @@ CentralQuotesService
 ├─ docs/                         # 补充说明文档
 └─ data/                         # 运行时生成的数据、缓存和日志
 ```
+
+## 当前分层结论
+
+- `app/` 只依赖宿主公开接口，不再直接 import `ui.*` 具体实现。
+- `domains/` 提供 `scan / earnings / quotes / watchlist / fund_holdings / market_calendar` 的稳定入口。
+- `infra/` 承载 `market_data / settings / navigation / storage / tasks` 等外部边界适配。
+- `ui/` 主要负责 Qt 装配、页面状态和事件接线。
+- `core/` 保留事件总线、兼容门面和跨层共享能力，不再承载新增真实领域实现。
 
 ## 运行要求
 
@@ -373,7 +397,7 @@ pre-commit run --all-files
 如果你准备继续沿当前架构演进，建议保持下面几条不变：
 
 - 新 Tab 尽量继承 `BaseStockTab`
-- 新的盘中表格字段尽量接入 `core/quote_snapshot.py`
+- 新的盘中表格字段尽量接入 `domains/quotes/*` 稳定入口
 - 高频 UI 刷新继续走中央广播链，而不是各页单独造轮子
 - 需要跨页共享的运行时状态，优先进入 `GlobalStore`
 - 涉及市场时间判断时，统一走 `MarketCalendar`
@@ -388,3 +412,7 @@ pre-commit run --all-files
 ## 许可证
 
 Private / Internal Use Only.
+
+## Architecture Governance
+
+- Module owner registry: `docs/module-owners.md`

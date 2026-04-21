@@ -7,12 +7,12 @@ import time
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSlot
 
+from app.services import batch_get_finance_info
 from core.global_store import global_store
 from core.logger import get_logger
-from core.market_calendar import MarketCalendar
-from core.quote_dispatcher import publish_rt_quotes
-from core.quote_snapshot import enrich_quotes_with_finance
+from domains.market_calendar import MarketCalendar
 from core.background_job_runner import background_job_runner as task_manager
+from domains.quotes import enrich_quotes_with_finance, publish_rt_quotes
 from infra.tasks import CENTRAL_QUOTES_POLL
 
 log = get_logger(__name__)
@@ -112,9 +112,7 @@ class CentralQuotesService(QObject):
         finance_codes = self._get_missing_finance_codes(codes)
         if finance_codes:
             try:
-                from vcp.engine import VCPEngine
-
-                finance_data = VCPEngine.batch_get_finance_info(finance_codes) or {}
+                finance_data = batch_get_finance_info(finance_codes) or {}
             except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 log.debug(f"[报价站] 批量补股本失败: {exc}")
 

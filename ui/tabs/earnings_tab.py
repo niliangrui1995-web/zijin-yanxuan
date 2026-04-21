@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import QDialog, QHeaderView, QLabel, QLineEdit, QPushButton
 from core.domain_events import domain_events as event_bus
 from core.logger import get_logger
 from core.ui_signals import ui_signals
-from earnings.scheduler import EarningsScheduler
+from domains.earnings import EarningsScheduler
 from infra.tasks import task_registry
 from ui.components import MultiSelectFilterButton, TableStateWrapper, VCPTableView, format_multi_select_summary
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
@@ -250,7 +250,7 @@ class EarningsTab(BaseStockTab):
         if trade_days <= 0:
             return None
         try:
-            from core.market_calendar import MarketCalendar
+            from domains.market_calendar import MarketCalendar
 
             recent_trade_dates = MarketCalendar.get_recent_trade_dates(trade_days)
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as _e:

@@ -8,16 +8,26 @@ class WindowCommandService:
     def __init__(self, main_window):
         self._window = main_window
 
-    def build_commands(self) -> list[dict]:
-        from ui.theme import theme_manager
+    def _invoke_host(self, method_name: str, *args, **kwargs):
+        callback = getattr(self._window, method_name, None)
+        if not callable(callback):
+            return None
+        return callback(*args, **kwargs)
 
+    def _theme_names(self) -> list[str]:
+        theme_names = getattr(self._window, "theme_names", None)
+        if not callable(theme_names):
+            return []
+        return list(theme_names() or [])
+
+    def build_commands(self) -> list[dict]:
         commands: list[dict] = [
             {
                 "title": "全局同步",
                 "subtitle": "执行盘后缓存与预计算同步",
                 "shortcut": "F5",
                 "keywords": ["同步", "f5", "刷新", "全局同步"],
-                "handler": self._window._action_refresh_f5,
+                "handler": lambda: self._invoke_host("trigger_global_sync"),
             }
         ]
 
@@ -33,7 +43,7 @@ class WindowCommandService:
                     "title": f"打开{title}",
                     "subtitle": f"{group} · 切换到{title}页面" if group else f"切换到{title}页面",
                     "keywords": [title, group, "页面", "导航"],
-                    "handler": lambda i=index: self._window._activate_workspace_tab(i),
+                    "handler": lambda i=index: self._invoke_host("activate_workspace_tab", i),
                 }
             )
 
@@ -86,13 +96,13 @@ class WindowCommandService:
                     }
                 )
 
-        for theme_name in theme_manager.theme_names():
+        for theme_name in self._theme_names():
             commands.append(
                 {
                     "title": f"切换主题：{theme_name}",
                     "subtitle": "立即切换界面主题",
                     "keywords": ["主题", "切换主题", theme_name],
-                    "handler": lambda n=theme_name: theme_manager.switch_theme(n),
+                    "handler": lambda n=theme_name: self._invoke_host("switch_theme", n),
                 }
             )
 
@@ -102,13 +112,13 @@ class WindowCommandService:
                     "title": "表格密度：紧凑",
                     "subtitle": "切换为紧凑表格密度",
                     "keywords": ["表格密度", "紧凑", "密度"],
-                    "handler": lambda: self._window._apply_table_density("紧凑"),
+                    "handler": lambda: self._invoke_host("apply_table_density", "紧凑"),
                 },
                 {
                     "title": "表格密度：舒适",
                     "subtitle": "切换为舒适表格密度",
                     "keywords": ["表格密度", "舒适", "密度"],
-                    "handler": lambda: self._window._apply_table_density("舒适"),
+                    "handler": lambda: self._invoke_host("apply_table_density", "舒适"),
                 },
             ]
         )
@@ -156,8 +166,7 @@ class WindowCommandService:
                     "title": f"打开K线：{code_text} {name_text}",
                     "subtitle": "按代码或名称快速打开个股 K 线",
                     "keywords": [code_text, name_text, "K线", "个股"],
-                    "handler": lambda c=code_text: self._window._on_show_kline(c),
+                    "handler": lambda c=code_text: self._invoke_host("open_security_chart", c),
                 }
             )
         return commands
-

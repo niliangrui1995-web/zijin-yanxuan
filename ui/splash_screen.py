@@ -6,7 +6,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import QApplication, QLabel, QProgressBar, QVBoxLayout, QWidget
 
-from vcp.constants import APP_VERSION
+from app.services import APP_VERSION
 
 
 class SplashScreen(QWidget):

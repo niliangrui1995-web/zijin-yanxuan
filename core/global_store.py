@@ -3,7 +3,7 @@ from collections.abc import Mapping
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from core.quote_snapshot import get_missing_a_share_finance_codes, merge_quote_snapshot_inplace
+from domains.quotes.snapshot import get_missing_a_share_finance_codes, merge_quote_snapshot_inplace
 
 
 class GlobalStore(QObject):

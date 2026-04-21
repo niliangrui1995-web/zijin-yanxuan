@@ -26,6 +26,17 @@
 - `ui/components/task_status_panel.py`
 - `tests/test_application_bootstrap.py`
 
+## 后续收口（本次已完成）
+
+| 收口项 | 结果 |
+| --- | --- |
+| `ApplicationBootstrap` / `WindowCommandService` 去 UI 具体实现与私有方法耦合 | 已完成，改走 `MainWindowQT` 公开接口 |
+| `ClassicWorkspace` 表格/导航/刷新编排下沉 | 已完成，新增 `workspace_table_service.py` / `workspace_navigation_service.py` |
+| `task_manager` 真实实现下沉至 `infra/tasks` | 已完成，`core/task_manager.py` 保留兼容导出 |
+| `domains/*` 与 `infra/market_data/*` 目标目录补齐 | 已完成，旧 `vcp/*` / `earnings/*` / `core/*` 路径收敛为兼容层 |
+| UI 与核心主路径切换到稳定入口 | 已完成，关注池/基金持仓/业绩/报价快照/后台任务默认入口已切换 |
+| README / baseline / checklist / CI 同步 | 已完成 |
+
 ## 验证要求
 
 - 架构边界测试通过

@@ -12,10 +12,11 @@ K 线图窗口 — ECharts 5.5.0 + QWebEngineView 高性能版
 """
 import os as _os
 
-import vcp.fetchers.asian_kline_fetcher as asian_kline_fetcher_module
+from app.services.scan_runtime_service import calculate_scan_indicators
 from core.domain_events import domain_events as event_bus
 from core.logger import get_logger
-from core.market_calendar import MarketCalendar
+from domains.market_calendar import MarketCalendar
+from domains.watchlist import watchlist_vm
 
 log = get_logger(__name__)
 import pandas as pd
@@ -51,13 +52,19 @@ from ui.kline_window_runtime import (
     refresh_last_bar,
 )
 from ui.theme import theme_manager
-from ui.viewmodels.watchlist_vm import watchlist_vm
 
 # ECharts JS 本地路径（断网也能用）
 _ECHARTS_JS_PATH = _os.path.join(
     _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
     "assets", "echarts.min.js"
 )
+
+
+def fetch_single_kline(*args, **kwargs):
+    # Avoid importing the full app.services facade during K-line window import.
+    from app.services.asian_market_service import fetch_single_kline as _fetch_single_kline
+
+    return _fetch_single_kline(*args, **kwargs)
 
 
 class KLineChartWindow(QWidget):
@@ -105,7 +112,7 @@ class KLineChartWindow(QWidget):
         container_layout.setSpacing(0)
 
         # 自定义拖拽标题栏
-        from ui.components.main_window_shell import DraggableTitleBar
+        from ui.components.shared_title_bar import DraggableTitleBar
         self.title_bar = DraggableTitleBar(self)
         self.title_bar.setFixedHeight(36)
         tb_layout = QHBoxLayout(self.title_bar)
@@ -374,7 +381,7 @@ class KLineChartWindow(QWidget):
             schedule_asian_history_backfill(
                 self,
                 task_manager=task_manager,
-                fetch_single_kline=asian_kline_fetcher_module.fetch_single_kline,
+                fetch_single_kline=fetch_single_kline,
             )
             return
 
@@ -410,8 +417,6 @@ class KLineChartWindow(QWidget):
     # ======================== 图表渲染 ========================
     def _render_chart(self, df, loading=False):
         """将 DataFrame 转换成 ECharts 数据格式并渲染到 WebEngine"""
-        from vcp.engine import VCPEngine
-
         # 兼容 Polars DataFrame
         if not hasattr(df, 'iloc'):
             df = df.to_pandas()
@@ -428,7 +433,7 @@ class KLineChartWindow(QWidget):
             return
 
         # 始终要求重算完整指标，避免合并了今天盘中的新K线后由于缺少最新日期的MACD导致JS渲染因含有NaN而雪崩不画K线
-        df = VCPEngine.calculate_indicators(df)
+        df = calculate_scan_indicators(df)
 
         if loading:
             self._set_status_message(f"已载入本地缓存 · {len(df)} 条日线", tone="info")

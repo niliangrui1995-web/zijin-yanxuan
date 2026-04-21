@@ -6,10 +6,9 @@ from datetime import datetime
 
 import pandas as pd
 
-from core.market_calendar import MarketCalendar
+from domains.market_calendar import MarketCalendar
 from core.background_job_runner import background_job_runner as task_manager
 from infra.tasks import task_registry
-from ui.tabs.asian_market_workers import fetch_asian_realtime_quote
 
 
 def normalize_daily_df_index(df, *, logger):
@@ -233,6 +232,8 @@ def poll_rt_update(window):
         if market != "CN":
             quote = window._build_asian_rt_quote()
             if quote is None:
+                from ui.tabs.asian_market_workers import fetch_asian_realtime_quote
+
                 quote = fetch_asian_realtime_quote(window.code)
             if quote is not None:
                 refresh_last_bar(window, quote)

@@ -7,19 +7,19 @@ from datetime import datetime
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QAbstractItemView, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
+from app.services import RPS_CACHE_FILE
 from core.domain_events import domain_events as event_bus
 from core.exceptions import CacheIOError, DataFormatError
 from core.json_cache import load_json_file
 from core.logger import get_logger
 from core.background_job_runner import background_job_runner as task_manager
 from core.ui_signals import ui_signals
+from domains.watchlist import watchlist_vm
 from infra.tasks import task_registry
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.toast_widget import show_toast
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_tab import BaseStockTab
-from ui.viewmodels.watchlist_vm import watchlist_vm
-from vcp.constants import RPS_CACHE_FILE
 
 log = get_logger(__name__)
 

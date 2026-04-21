@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 from PyQt6.QtCore import QUrl
 
-from core.market_calendar import MarketCalendar
+from domains.market_calendar import MarketCalendar
 from ui.theme import theme_manager
 
 

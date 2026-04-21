@@ -2,7 +2,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QApplication, QDialog, QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QToolButton, QToolTip, QVBoxLayout
 
-from ui.components.main_window_shell import DraggableTitleBar, apply_chrome_theme
+from ui.components.main_window_shell import apply_chrome_theme
+from ui.components.shared_title_bar import DraggableTitleBar
 from ui.components.trade_calendar import TradeCalendarWidget
 from ui.styles.global_qss import generate_global_qss
 from ui.theme import theme_manager

@@ -17,18 +17,19 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from app.services import get_sector_manager
 from core.app_config import app_config
 from core.background_job_runner import background_job_runner as task_manager
 from core.domain_events import domain_events as event_bus
-from core.fund_holdings_compare import (
+from domains.fund_holdings import (
     QFII_CAPITAL_ATTRIBUTE_CLIENT,
     QFII_CAPITAL_ATTRIBUTE_SELF_OWNED,
     QFII_CAPITAL_ATTRIBUTE_UNMARKED,
     SUBJECT_QFII,
     SUBJECT_RUIYUAN,
+    fund_holdings_store,
+    fund_holdings_sync_service,
 )
-from core.fund_holdings_store import fund_holdings_store
-from core.fund_holdings_sync import fund_holdings_sync_service
 from core.ui_signals import ui_signals
 from infra.tasks import task_registry
 from ui.components import (
@@ -380,9 +381,7 @@ class FundHoldingsTab(BaseStockTab):
     @staticmethod
     def _build_sector_manager(tdx_root: str | None):
         try:
-            from vcp.sector import SectorManager
-
-            return SectorManager.get_instance(tdx_root)
+            return get_sector_manager(tdx_root)
         except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
             return None
 
@@ -1088,9 +1087,7 @@ class FundHoldingsTab(BaseStockTab):
         tdx_vipdoc = str(getattr(self.data_provider, "tdx_vipdoc", "") or "").strip()
         tdx_root = os.path.dirname(tdx_vipdoc) if tdx_vipdoc else None
         try:
-            from vcp.sector import SectorManager
-
-            self._sector_manager = SectorManager.get_instance(tdx_root)
+            self._sector_manager = get_sector_manager(tdx_root)
         except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
             self._sector_manager = None
         return self._sector_manager

@@ -61,7 +61,7 @@ def worker_trigger_refresh(tab):
 
 
 def check_auto_cache(tab):
-    from core.market_calendar import MarketCalendar
+    from domains.market_calendar import MarketCalendar
 
     if tab._is_fetching_cache or tab._pending_auto_cache_sync:
         return

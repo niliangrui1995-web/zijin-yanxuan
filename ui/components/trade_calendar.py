@@ -3,7 +3,7 @@ from PyQt6.QtCore import QDate, QRectF, Qt
 from PyQt6.QtGui import QColor, QFont, QPen, QTextCharFormat
 from PyQt6.QtWidgets import QCalendarWidget, QDateEdit, QTableView
 
-from core.market_calendar import MarketCalendar
+from domains.market_calendar import MarketCalendar
 from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens
 

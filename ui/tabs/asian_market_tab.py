@@ -6,6 +6,7 @@ import os
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QCheckBox, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
+from app.services import filter_asian_tickers, find_asian_track
 from core.domain_events import domain_events as event_bus
 from core.logger import get_logger
 from core.ui_signals import ui_signals
@@ -328,7 +329,7 @@ class AsianMarketTab(BaseStockTab):
 
     def _get_cache_latest_trade_dates(self):
         try:
-            from core.market_calendar import MarketCalendar
+            from domains.market_calendar import MarketCalendar
 
             if not os.path.exists(JSON_CACHE):
                 return {}
@@ -389,7 +390,7 @@ class AsianMarketTab(BaseStockTab):
         try:
             from datetime import timedelta
 
-            from core.market_calendar import MarketCalendar
+            from domains.market_calendar import MarketCalendar
             markets = set()
             for row in getattr(self, 'row_data', []) or []:
                 code = str(row.get("\u4ee3\u7801", row.get("code", ""))).strip()
@@ -431,7 +432,7 @@ class AsianMarketTab(BaseStockTab):
         try:
             from datetime import timedelta
 
-            from core.market_calendar import MarketCalendar
+            from domains.market_calendar import MarketCalendar
             markets = set()
             for row in getattr(self, 'row_data', []) or []:
                 code = str(row.get("代码", "")).strip()
@@ -743,8 +744,6 @@ class AsianMarketTab(BaseStockTab):
                         )
 
                     try:
-                        from vcp.fetchers.asian_kline_fetcher import _find_track, filter_asian_tickers
-
                         target_map = filter_asian_tickers() or {}
                     except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as fetch_exc:
                         target_map = {}
@@ -774,7 +773,7 @@ class AsianMarketTab(BaseStockTab):
                                     "PE": "--",
                                     "市场": format_market_display(market_code, ticker),
                                     "状态": get_market_status(market_code),
-                                    "赛道": _find_track(ticker),
+                                    "赛道": find_asian_track(ticker),
                                     "角色定位": roles_map.get(ticker, en_name),
                                     "货币": "---",
                                     "5日涨跌%": 0.0,

@@ -14,12 +14,13 @@ import weakref
 
 from PyQt6.QtCore import QCoreApplication, QTimer
 
-from core.quote_dispatcher import publish_rt_quotes
-from core.quote_snapshot import (
+from app.services import FINANCE_CACHE_FILE, batch_get_finance_info
+from domains.quotes import (
     build_finance_quote_payload,
     coerce_number,
     enrich_quotes_with_finance,
     is_a_share_code,
+    publish_rt_quotes,
 )
 from infra.tasks import SHARED_MARKET_CAPS, task_id_of, task_registry
 
@@ -113,8 +114,6 @@ def load_cached_finance_snapshot(codes) -> dict[str, dict]:
         return {}
 
     try:
-        from vcp.constants import FINANCE_CACHE_FILE
-
         cache_payload = _load_shared_finance_cache_payload(FINANCE_CACHE_FILE)
     except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
         return {}
@@ -336,10 +335,8 @@ class MarketCapRefreshBatcher:
             if app_obj is None or app_obj.closingDown():
                 return {}
 
-            from vcp.engine import VCPEngine
-
             try:
-                return VCPEngine.batch_get_finance_info(batch_codes)
+                return batch_get_finance_info(batch_codes)
             except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 logging.getLogger(__name__).error(f"[市值统一刷新] 获取股本失败: {exc}")
                 return {}

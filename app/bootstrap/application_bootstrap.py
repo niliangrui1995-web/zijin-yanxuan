@@ -6,9 +6,6 @@ from __future__ import annotations
 from core.app_config import app_config
 from core.logger import get_logger
 from infra.features import service_toggle_registry
-from ui.main_window_tables import install_table_copy_hooks
-from ui.workspaces import ClassicWorkspace
-from ui.workers.central_quotes_worker import CentralQuotesService
 
 log = get_logger(__name__)
 
@@ -17,41 +14,28 @@ class ApplicationBootstrap:
     def __init__(self, main_window):
         self._window = main_window
 
+    def _call_host(self, method_name: str, *args, **kwargs):
+        callback = getattr(self._window, method_name, None)
+        if not callable(callback):
+            raise AttributeError(f"Main window is missing required bootstrap hook: {method_name}")
+        return callback(*args, **kwargs)
+
     def workspace_tables(self):
+        iter_workspace_tables = getattr(self._window, "iter_workspace_tables", None)
+        if callable(iter_workspace_tables):
+            return list(iter_workspace_tables() or [])
         workspace = getattr(self._window, "_workspace", None)
         if workspace is None:
             return []
         iter_tables = getattr(workspace, "iter_tables", None)
-        return iter_tables() if callable(iter_tables) else []
+        return list(iter_tables() or []) if callable(iter_tables) else []
 
     def mount_workspace(self):
-        workspace = ClassicWorkspace(
-            self._window.data_provider,
-            self._window.engine,
-            host=self._window,
-            parent=self._window.tabs_wrapper,
+        workspace = self._call_host(
+            "create_workspace",
+            parent=getattr(self._window, "tabs_wrapper", None),
         )
-
-        existing_workspace = getattr(self._window, "_workspace", None)
-        if existing_workspace is not None:
-            try:
-                existing_workspace.shutdown()
-            except (AttributeError, OSError, RuntimeError, TypeError) as exc:
-                log.error(f"[UI] 停止旧工作区失败: {exc}")
-            self._window._tabs_wrapper_layout.removeWidget(existing_workspace)
-            existing_workspace.deleteLater()
-
-        self._window._workspace = workspace
-        self._window.tabs = workspace.tabs
-        self._window._tabs_wrapper_layout.addWidget(workspace, 1)
-        workspace.restore_last_tab(app_config.last_active_tab)
-        install_table_copy_hooks(self.workspace_tables())
-
-        try:
-            self._window.tabs.currentChanged.disconnect(self._window._remember_last_active_tab)
-        except (TypeError, RuntimeError):
-            pass
-        self._window.tabs.currentChanged.connect(self._window._remember_last_active_tab)
+        self._call_host("replace_workspace", workspace)
         return workspace
 
     def install_central_quotes(self):
@@ -61,9 +45,8 @@ class ApplicationBootstrap:
             return None
 
         code_supplier = getattr(getattr(self._window, "_workspace", None), "get_realtime_quote_codes", None)
-        self._window.central_quotes_svc = CentralQuotesService(
-            self._window,
-            self._window.data_provider,
+        self._window.central_quotes_svc = self._call_host(
+            "create_central_quotes_service",
             code_supplier=code_supplier,
         )
         return self._window.central_quotes_svc

@@ -49,7 +49,7 @@ class NADailyTab(BaseStockTab):
 
     def _patrol_tick(self):
         """统一巡逻：盘中增量检查 + 定时全量刷新 + 首次市值拉取"""
-        from core.market_calendar import MarketCalendar
+        from domains.market_calendar import MarketCalendar
         is_active = MarketCalendar.is_market_active()
 
         # 1. 盘中：每30秒检查战报文件是否有增量

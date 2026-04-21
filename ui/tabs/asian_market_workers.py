@@ -14,10 +14,9 @@ import time
 import yfinance as yf
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from app.services import CACHE_DIR, build_yf_session, sync_asian_kline_cache
 from core.logger import get_logger
-from core.market_calendar import MarketCalendar
-from vcp.constants import CACHE_DIR
-from vcp.fetchers.yf_session import build_yf_session
+from domains.market_calendar import MarketCalendar
 
 log = get_logger(__name__)
 
@@ -648,9 +647,6 @@ class AsianCacheFetcherThread(QThread):
 
     def run(self):
         try:
-            from vcp.fetchers.asian_kline_fetcher import (
-                sync_asian_kline_cache,
-            )
             success, message, _report = sync_asian_kline_cache(
                 max_workers=3,
                 period="1y",

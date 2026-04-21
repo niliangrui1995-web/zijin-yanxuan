@@ -244,7 +244,7 @@ class RtMonitorTab(BaseStockTab):
             self.lbl_rt_info.setText(info_text)
 
     def _check_auto_start_stop(self):
-        from core.market_calendar import MarketCalendar
+        from domains.market_calendar import MarketCalendar
         is_active = MarketCalendar.is_market_active()
         is_running = self._is_rt_running()
 
@@ -517,7 +517,7 @@ class RtMonitorTab(BaseStockTab):
             self.rt_worker = None
 
         try:
-            from core.market_calendar import MarketCalendar
+            from domains.market_calendar import MarketCalendar
             active = MarketCalendar.is_market_active()
         except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
             active = False

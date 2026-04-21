@@ -13,8 +13,8 @@ from PyQt6.QtGui import QCursor
 from PyQt6.QtWidgets import QApplication, QMenu
 
 from core.ui_signals import ui_signals as event_bus
+from domains.watchlist import watchlist_vm
 from ui.styles.context_menu_qss import generate_context_menu_qss
-from ui.viewmodels.watchlist_vm import watchlist_vm
 
 
 def build_stock_context_menu(

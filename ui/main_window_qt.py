@@ -5,14 +5,20 @@ from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
 from PyQt6.QtWidgets import QFrame, QLineEdit, QMainWindow, QToolTip, QVBoxLayout, QWidget
 
-from app.services import build_kline_open_request
+from app.services import (
+    APP_VERSION,
+    RPS_CACHE_FILE,
+    build_kline_open_request,
+    create_data_provider,
+    create_scan_engine,
+    create_startup_orchestrator,
+)
 from app.use_cases import WindowCommandService
 from core.app_config import app_config
 from core.background_job_runner import background_job_runner as task_manager
 from core.cache_manager import CacheManager
 from core.domain_events import domain_events as event_bus
 from core.logger import get_logger
-from core.startup_orchestrator import StartupOrchestrator
 from infra.events import ui_signal_hub
 from ui.components.command_palette import CommandPaletteDialog
 from ui.components.kline_window_manager import kline_manager
@@ -25,11 +31,10 @@ from ui.shell import (
 )
 from ui.components.message_box import show_themed_question
 from ui.main_window_tables import install_table_copy_hooks
-from vcp.constants import APP_VERSION, RPS_CACHE_FILE
+from ui.workers.central_quotes_worker import CentralQuotesService
+from ui.workspaces import ClassicWorkspace
 
 # 核心引擎与数据层
-from vcp.data_provider import TdxDataProvider
-from vcp.engine import VCPEngine
 
 log = get_logger(__name__)
 
@@ -74,7 +79,7 @@ class MainWindowQT(QMainWindow):
         # 绑定系统级全局网络状态变更，确保所有角色的状态与UI强同步
         event_bus.sig_network_status_changed.connect(self._update_network_ui)
 
-        self.startup_orchestrator = StartupOrchestrator(self)
+        self.startup_orchestrator = create_startup_orchestrator(self)
         self.cache_manager = CacheManager()
         self._f5_cancelled = False
         self._titlebar_sync_state = "idle"
@@ -87,9 +92,8 @@ class MainWindowQT(QMainWindow):
         self._command_service = WindowCommandService(self)
 
         self._splash_update(60, "正在构建主界面模块...")
-        self.data_provider = TdxDataProvider(offline=True)
-        self.data_provider.code2name = self.data_provider.ensure_code_name_map()
-        self.engine = VCPEngine.get_instance()
+        self.data_provider = create_data_provider(offline=True)
+        self.engine = create_scan_engine()
 
         # 全局样式（动态生成，支持主题切换）
         from ui.styles.global_qss import generate_global_qss
@@ -224,6 +228,66 @@ class MainWindowQT(QMainWindow):
     def _activate_workspace_tab(self, tab_index: int):
         if self.tabs is not None and 0 <= int(tab_index) < self.tabs.count():
             self.tabs.setCurrentIndex(int(tab_index))
+
+    def trigger_global_sync(self):
+        self._action_refresh_f5()
+
+    def activate_workspace_tab(self, tab_index: int):
+        self._activate_workspace_tab(tab_index)
+
+    def apply_table_density(self, mode: str, persist: bool = True):
+        self._apply_table_density(mode, persist=persist)
+
+    def open_security_chart(self, code: str):
+        self._on_show_kline(code)
+
+    def theme_names(self) -> list[str]:
+        from ui.theme import theme_manager
+
+        return list(theme_manager.theme_names())
+
+    def switch_theme(self, theme_name: str):
+        from ui.theme import theme_manager
+
+        theme_manager.switch_theme(theme_name)
+
+    def create_workspace(self, parent=None):
+        return ClassicWorkspace(
+            self.data_provider,
+            self.engine,
+            host=self,
+            parent=parent if parent is not None else self.tabs_wrapper,
+        )
+
+    def replace_workspace(self, workspace):
+        existing_workspace = getattr(self, "_workspace", None)
+        if existing_workspace is not None:
+            try:
+                existing_workspace.shutdown()
+            except (AttributeError, OSError, RuntimeError, TypeError) as exc:
+                log.error(f"[UI] 停止旧工作区失败: {exc}")
+            self._tabs_wrapper_layout.removeWidget(existing_workspace)
+            existing_workspace.deleteLater()
+
+        self._workspace = workspace
+        self.tabs = workspace.tabs
+        self._tabs_wrapper_layout.addWidget(workspace, 1)
+        workspace.restore_last_tab(app_config.last_active_tab)
+        self.install_workspace_table_copy_hooks()
+
+        try:
+            self.tabs.currentChanged.disconnect(self._remember_last_active_tab)
+        except (TypeError, RuntimeError):
+            pass
+        self.tabs.currentChanged.connect(self._remember_last_active_tab)
+        return workspace
+
+    def create_central_quotes_service(self, *, code_supplier=None):
+        return CentralQuotesService(
+            self,
+            self.data_provider,
+            code_supplier=code_supplier,
+        )
 
     def _build_command_palette_entries(self) -> list[dict]:
         return self._command_service.build_commands()
@@ -367,10 +431,20 @@ class MainWindowQT(QMainWindow):
         app_config.last_active_tab = index
 
     def _workspace_tables(self):
-        return self._bootstrap.workspace_tables()
+        return self.iter_workspace_tables()
+
+    def iter_workspace_tables(self):
+        workspace = getattr(self, "_workspace", None)
+        if workspace is None:
+            return []
+        iter_tables = getattr(workspace, "iter_tables", None)
+        return list(iter_tables() or []) if callable(iter_tables) else []
 
     def _install_table_copy_hooks(self):
-        install_table_copy_hooks(self._workspace_tables())
+        self.install_workspace_table_copy_hooks()
+
+    def install_workspace_table_copy_hooks(self):
+        install_table_copy_hooks(self.iter_workspace_tables())
 
     def _mount_workspace(self):
         self._bootstrap.mount_workspace()
