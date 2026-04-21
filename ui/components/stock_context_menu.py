@@ -12,8 +12,8 @@ ui/components/stock_context_menu.py
 from PyQt6.QtGui import QCursor
 from PyQt6.QtWidgets import QApplication, QMenu
 
-from core.ui_signals import ui_signals as event_bus
-from domains.watchlist import watchlist_vm
+from app.services.ui_runtime_service import ui_signals as event_bus
+from app.services.ui_runtime_service import watchlist_vm
 from ui.styles.context_menu_qss import generate_context_menu_qss
 
 
@@ -117,3 +117,4 @@ def build_stock_context_menu(
 
     elif action == act_export and show_export and export_callback:
         export_callback()
+

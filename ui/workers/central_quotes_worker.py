@@ -8,13 +8,13 @@ import time
 from PyQt6.QtCore import QObject, QTimer, pyqtSlot
 
 from app.services import batch_get_finance_info
+from app.services.ui_runtime_service import CENTRAL_QUOTES_POLL
+from app.services.ui_runtime_service import MarketCalendar
+from app.services.ui_runtime_service import background_job_runner as task_manager
+from app.services.ui_runtime_service import enrich_quotes_with_finance, publish_rt_quotes
 from core.global_store import global_store
 from core.logger import get_logger
 from core.observability import emit_structured_log, record_metric
-from domains.market_calendar import MarketCalendar
-from core.background_job_runner import background_job_runner as task_manager
-from domains.quotes import enrich_quotes_with_finance, publish_rt_quotes
-from infra.tasks import CENTRAL_QUOTES_POLL
 
 log = get_logger(__name__)
 _A_SHARE_CODE_RE = re.compile(r"^\d{6}$")
@@ -404,3 +404,4 @@ class CentralQuotesService(QObject):
         self._closed = True
         self._timer.stop()
         self._fetch_generation += 1
+

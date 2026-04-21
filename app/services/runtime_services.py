@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from core.startup_orchestrator import StartupOrchestrator
-from vcp.data_provider import TdxDataProvider
+from infra.market_data.tdx_data_provider import TdxDataProvider
 
 
 def create_data_provider(*, offline: bool = True) -> TdxDataProvider:

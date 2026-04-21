@@ -7,8 +7,8 @@ from datetime import timedelta
 from PyQt6.QtCore import Qt
 
 from core.logger import get_logger
-from domains.market_calendar import MarketCalendar
-from domains.watchlist import watchlist_vm
+from app.services.ui_runtime_service import MarketCalendar
+from app.services.ui_runtime_service import watchlist_vm
 from ui.kline_chart_payload import (
     build_kline_summary_cards,
     build_kline_window_palette,
@@ -371,3 +371,4 @@ def get_cn_target_trade_date():
         )
 
     return latest
+

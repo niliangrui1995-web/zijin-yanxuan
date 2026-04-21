@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from ui.workspaces.quote_universe_service import QuoteUniverseService
+from ui.workspaces.tab_capabilities import RtMonitorControlCapability, ScanResultsCapability, TableCollectionCapability
+from ui.workspaces.watchlist_radar_service import WatchlistRadarService
 from ui.workspaces.workspace_navigation_service import WorkspaceNavigationService
 from ui.workspaces.workspace_table_service import WorkspaceTableService
-from ui.workspaces.quote_universe_service import QuoteUniverseService
-from ui.workspaces.watchlist_radar_service import WatchlistRadarService
 
 
 class WorkspaceFacade:
@@ -17,11 +18,37 @@ class WorkspaceFacade:
         self._quote_universe_service = QuoteUniverseService(workspace)
         self._watchlist_radar_service = WatchlistRadarService(workspace)
 
+    def _get_tab(self, key: str):
+        get_tab = getattr(self._workspace, "get_tab", None)
+        if not callable(get_tab):
+            return None
+        return get_tab(key)
+
+    @staticmethod
+    def _call_bool(tab, method_name: str, *args, **kwargs) -> bool:
+        callback = getattr(tab, method_name, None)
+        if not callable(callback):
+            return False
+        return bool(callback(*args, **kwargs))
+
     def nav_groups(self) -> list[str]:
         return self._workspace_navigation_service.nav_groups()
 
     def tab_indices_by_group(self) -> dict[str, list[int]]:
         return self._workspace_navigation_service.tab_indices_by_group()
+
+    def get_scan_results(self) -> list[dict]:
+        tab = self._get_tab("scan")
+        if not isinstance(tab, ScanResultsCapability):
+            return []
+        return list(tab.get_scan_results() or [])
+
+    def get_rt_table(self):
+        tab = self._get_tab("rt_monitor")
+        if isinstance(tab, TableCollectionCapability):
+            tables = list(tab.iter_tables() or [])
+            return tables[0] if tables else None
+        return None
 
     def iter_tables(self) -> list:
         return self._workspace_table_service.iter_tables()
@@ -34,6 +61,30 @@ class WorkspaceFacade:
 
     def select_scan_row(self, index: int) -> bool:
         return self._workspace_navigation_service.select_scan_row(index)
+
+    def is_rt_monitor_running(self) -> bool:
+        tab = self._get_tab("rt_monitor")
+        if not isinstance(tab, RtMonitorControlCapability):
+            return False
+        return bool(tab.is_rt_running())
+
+    def toggle_rt_monitor(self) -> bool:
+        tab = self._get_tab("rt_monitor")
+        if not isinstance(tab, RtMonitorControlCapability):
+            return False
+        return bool(tab.toggle_rt_monitor())
+
+    def run_incremental_scan(self) -> bool:
+        return self._call_bool(self._get_tab("scan"), "run_incremental_scan")
+
+    def open_scan_settings(self) -> bool:
+        return self._call_bool(self._get_tab("scan"), "open_scan_settings")
+
+    def refresh_lhb_history(self) -> bool:
+        return self._call_bool(self._get_tab("lhb"), "refresh_history")
+
+    def run_fund_holdings_sync(self) -> bool:
+        return self._call_bool(self._get_tab("fund_holdings"), "run_full_sync")
 
     def select_code_row(self, code: str, preferred_tab_index: int | None = None) -> bool:
         return self._workspace_navigation_service.select_code_row(code, preferred_tab_index)
@@ -48,26 +99,18 @@ class WorkspaceFacade:
         self._watchlist_radar_service.prime_watchlist_state()
 
     def run_post_online_refresh(self, task_manager) -> None:
-        get_tab = getattr(self._workspace, "get_tab", None)
         for key in ("na_daily", "foreign_block"):
-            tab = get_tab(key) if callable(get_tab) else None
-            refresh = getattr(tab, "run_post_online_refresh", None)
-            if callable(refresh):
-                refresh()
+            self._call_bool(self._get_tab(key), "run_post_online_refresh")
 
         self.schedule_watchlist_special_quotes(task_manager)
 
     def auto_start_rt_monitor(self) -> bool:
-        get_tab = getattr(self._workspace, "get_tab", None)
-        rt_tab = get_tab("rt_monitor") if callable(get_tab) else None
-        toggle_monitor = getattr(rt_tab, "toggle_rt_monitor", None)
-        is_running = getattr(rt_tab, "is_rt_running", None)
-        if not callable(toggle_monitor):
+        tab = self._get_tab("rt_monitor")
+        if not isinstance(tab, RtMonitorControlCapability):
             return False
-        if callable(is_running) and is_running():
+        if tab.is_rt_running():
             return False
-        toggle_monitor(auto=True)
-        return True
+        return bool(tab.toggle_rt_monitor(auto=True))
 
     def collect_watchlist_radar_data(self) -> tuple[dict, dict, dict, dict, dict, dict | None]:
         return self._watchlist_radar_service.collect_radar_data()

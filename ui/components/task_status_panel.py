@@ -6,7 +6,7 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QSizePolicy, QVBoxLayout
 
-from infra.events import ui_signal_hub
+from app.services.ui_runtime_service import ui_signal_hub
 from ui.presenters.task_status_presenter import (
     TaskStatusEntry,
     build_task_status_entry,
@@ -79,3 +79,4 @@ class TaskStatusPanel(QFrame):
             ui_signal_hub.sig_task_progress.disconnect(self._on_task_progress)
         except (RuntimeError, TypeError):
             pass
+

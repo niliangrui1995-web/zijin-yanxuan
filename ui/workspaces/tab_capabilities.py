@@ -1,0 +1,52 @@
+# -*- coding: utf-8 -*-
+"""Explicit workspace/tab capability protocols.
+
+The workspace layer should orchestrate tabs through public capabilities instead
+of reaching into concrete widget internals such as ``table_scan`` or
+``model.row_data``.
+"""
+
+from __future__ import annotations
+
+from typing import Protocol, runtime_checkable
+
+
+@runtime_checkable
+class TableCollectionCapability(Protocol):
+    def iter_tables(self) -> list: ...
+
+
+@runtime_checkable
+class SnapshotRefreshCapability(Protocol):
+    def refresh_table_from_latest_snapshot(self) -> None: ...
+
+
+@runtime_checkable
+class PrimaryRowSelectionCapability(Protocol):
+    def select_primary_row(self, index: int) -> bool: ...
+
+
+@runtime_checkable
+class CodeRowSelectionCapability(Protocol):
+    def select_code_row(self, code: str) -> bool: ...
+
+
+@runtime_checkable
+class QuoteUniverseCapability(Protocol):
+    def get_realtime_quote_codes(self) -> set[str]: ...
+
+
+@runtime_checkable
+class ScanResultsCapability(Protocol):
+    def get_scan_results(self) -> list[dict]: ...
+
+
+@runtime_checkable
+class RtMonitorControlCapability(Protocol):
+    def is_rt_running(self) -> bool: ...
+    def toggle_rt_monitor(self, auto: bool = False) -> bool: ...
+
+
+@runtime_checkable
+class ForeignKeywordCapability(Protocol):
+    def get_foreign_keywords(self) -> list[str]: ...

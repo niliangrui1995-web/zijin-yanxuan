@@ -21,13 +21,13 @@ from PyQt6.QtWidgets import (
 )
 
 from app.services import create_scan_engine
-from core.background_job_runner import background_job_runner as task_manager
-from core.domain_events import domain_events as event_bus
+from app.services.ui_runtime_service import background_job_runner as task_manager
+from app.services.ui_runtime_service import domain_events as event_bus
 from core.lhb_pool_manager import POOL_WINDOW, LhbPoolManager
 from core.logger import get_logger
-from domains.market_calendar import MarketCalendar
-from core.ui_signals import ui_signals
-from infra.tasks import task_registry
+from app.services.ui_runtime_service import MarketCalendar
+from app.services.ui_runtime_service import ui_signals
+from app.services.ui_runtime_service import task_registry
 from ui.components import TableStateWrapper, VCPTableView
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_tab import BaseStockTab
@@ -773,3 +773,4 @@ class LhbTab(BaseStockTab):
 
         from ui.components.stock_context_menu import build_stock_context_menu
         build_stock_context_menu(self, code, name, vcp_data=row_data)
+

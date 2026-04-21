@@ -1,5 +1,7 @@
 # 架构升级未落地项整改清单（2026-04-21）
 
+> 说明：本文件保留 2026-04-21 当天整改视角下的历史快照。按原始外部方案重新审计后的权威 gap 口径，见 `docs/architecture-upgrade-gap-checklist-original-plan-2026-04-21.md`。
+
 ## 依据
 
 - 外部方案：`C:/Users/Administrator/Desktop/紫金研选_架构升级落地方案_2026-04-20.docx`

@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 from PyQt6.QtCore import QUrl
 
-from domains.market_calendar import MarketCalendar
+from app.services.ui_runtime_service import MarketCalendar
 from ui.theme import theme_manager
 
 
@@ -1223,3 +1223,4 @@ def build_kline_echarts_payload(df: pd.DataFrame, *, code: str, name: str, vcp_d
         inject_vcp_overlays(result, dates, vcp_data)
 
     return result
+

@@ -11,10 +11,10 @@ import re
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
-from core.domain_events import domain_events as event_bus
+from app.services.ui_runtime_service import domain_events as event_bus
 from core.logger import get_logger
-from core.ui_signals import ui_signals
-from infra.tasks import task_registry
+from app.services.ui_runtime_service import ui_signals
+from app.services.ui_runtime_service import task_registry
 from ui.components import TableStateWrapper, VCPTableView
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_tab import BaseStockTab
@@ -49,7 +49,7 @@ class NADailyTab(BaseStockTab):
 
     def _patrol_tick(self):
         """统一巡逻：盘中增量检查 + 定时全量刷新 + 首次市值拉取"""
-        from domains.market_calendar import MarketCalendar
+        from app.services.ui_runtime_service import MarketCalendar
         is_active = MarketCalendar.is_market_active()
 
         # 1. 盘中：每30秒检查战报文件是否有增量
@@ -541,3 +541,4 @@ class NADailyTab(BaseStockTab):
                             strategy = cells[4].replace('**', '').strip() if len(cells) > 4 else ""
                             result[code] = {"priority": priority, "reason": reason, "strategy": strategy}
         return result
+

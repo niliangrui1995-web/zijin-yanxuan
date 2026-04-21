@@ -7,7 +7,7 @@ ui/components/notification_service.py
 import os
 
 from core.logger import get_logger
-from infra.tasks import ProcessSubprocessError, run_process, windows_no_window_creationflags
+from app.services.ui_runtime_service import ProcessSubprocessError, run_process, windows_no_window_creationflags
 
 log = get_logger(__name__)
 
@@ -93,3 +93,4 @@ def _play_alert_sound():
     if os.name == "nt":
         import winsound
         winsound.MessageBeep(winsound.MB_ICONASTERISK)
+

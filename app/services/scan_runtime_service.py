@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from domains.scan import BreakoutMonitorService, IndicatorService
-from vcp.engine import VCPEngine
+from app.services.scan_engine_facade import VCPEngine
 from vcp.models import VCPParams
 
 

@@ -3,7 +3,7 @@ from PyQt6.QtCore import QDate, QRectF, Qt
 from PyQt6.QtGui import QColor, QFont, QPen, QTextCharFormat
 from PyQt6.QtWidgets import QCalendarWidget, QDateEdit, QTableView
 
-from domains.market_calendar import MarketCalendar
+from app.services.ui_runtime_service import MarketCalendar
 from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens
 
@@ -252,3 +252,4 @@ class TradeDateEdit(QDateEdit):
             self.setDate(date)
         if fixed_width:
             self.setFixedWidth(fixed_width)
+

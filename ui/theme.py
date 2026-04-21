@@ -11,7 +11,7 @@ from datetime import datetime as _datetime
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
-from core.app_config import app_config
+from app.services.ui_runtime_service import app_config
 
 # ============================================================
 # 墨渊主题（暗色，即当前默认主题）
@@ -626,3 +626,4 @@ theme_manager.sig_theme_changed.connect(lambda _: _refresh_compat_vars())
 # ============================================================
 # 字体（不随主题变化）
 # ============================================================
+

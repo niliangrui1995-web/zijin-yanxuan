@@ -5,11 +5,11 @@ import pandas as pd
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot
 from PyQt6.QtWidgets import QDialog, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
-from core.domain_events import domain_events as event_bus
+from app.services.ui_runtime_service import domain_events as event_bus
 from core.logger import get_logger
-from core.ui_signals import ui_signals
-from domains.earnings import EarningsScheduler
-from infra.tasks import task_registry
+from app.services.ui_runtime_service import ui_signals
+from app.services.ui_runtime_service import EarningsScheduler
+from app.services.ui_runtime_service import task_registry
 from ui.components import MultiSelectFilterButton, TableStateWrapper, VCPTableView, format_multi_select_summary
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_tab import BaseStockTab
@@ -250,7 +250,7 @@ class EarningsTab(BaseStockTab):
         if trade_days <= 0:
             return None
         try:
-            from domains.market_calendar import MarketCalendar
+            from app.services.ui_runtime_service import MarketCalendar
 
             recent_trade_dates = MarketCalendar.get_recent_trade_dates(trade_days)
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as _e:
@@ -509,3 +509,4 @@ class EarningsTab(BaseStockTab):
 
         if updated > 0:
             log.debug(f"[业绩监控] PE(TTM) 已刷新 {updated} 行")
+

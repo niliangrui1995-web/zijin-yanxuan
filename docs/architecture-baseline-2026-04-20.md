@@ -9,13 +9,14 @@
 ### `ui/`
 
 - 负责 Qt 组件、页面状态展示、交互事件接线。
-- 允许依赖 `app/`、`core/`、`infra/` 暴露出的稳定入口。
+- 运行时业务依赖统一经 `app/` 暴露的稳定入口接入；`ui/` 内部模块之间可直接协作，通用日志等基础工具可保留轻量依赖。
+- 不允许直接 import `domains/*`、`infra/*`、`vcp/*`，以及 `core.app_config`、`core.background_job_runner`、`core.domain_events`、`core.ui_signals`、`core.market_calendar` 这类运行时兼容入口。
 - 不允许直接管理系统进程、窗口句柄、裸 `QSettings`、跨 tab 私有方法。
 
 ### `app/`
 
 - 负责跨页面、跨用例的应用服务编排。
-- 当前新增服务：`app/services/kline_open_service.py`。
+- 当前关键入口：`app/services/kline_open_service.py`、`app/services/ui_runtime_service.py`、`app/services/runtime_services.py`、`app/services/scan_runtime_service.py`。
 - 只组织请求上下文，不直接持有 Qt 控件生命周期。
 
 ### `core/`
@@ -27,7 +28,7 @@
 ### `domains/`
 
 - 负责领域规则与稳定入口，当前包含 `scan / earnings / quotes / watchlist / fund_holdings / market_calendar`。
-- UI 和 app 应优先依赖 `domains/*` 暴露的稳定契约，而不是继续摸旧兼容层。
+- `domains/*` 由 `app/*` 统一编排接入；UI 不直接 import 领域模块。
 
 ### `infra/`
 
@@ -48,13 +49,16 @@
 - `ClassicWorkspace` 不再向外暴露 tab 私有细节作为协作契约。
 - `ClassicWorkspace` 的表格遍历、跨页定位、刷新编排已下沉到 `workspace_facade + workspace_*_service`。
 - `MainWindowQT` 的命令面板和 K 线打开链路改为调用 workspace/app service 公共入口。
-- 观察池雷达与实时报价汇总改为通过 `get_tab()` + tab 公共方法聚合。
-- 关注池、基金持仓、业绩调度、报价快照等主路径已经切换到 `domains/*` 稳定入口。
+- 观察池雷达与实时报价汇总改为通过 `WorkspaceFacade` / capability 协议聚合，不再摸 tab 私有表格或 `model.row_data`。
+- 关注池、基金持仓、业绩调度、报价快照等主路径已经通过 `app/services/ui_runtime_service.py`、`app/services/*` 收口，再由 app 层委托 `domains/*` 与 `infra/*`。
+- `vcp/data_provider.py`、`vcp/engine.py` 已退化为兼容 alias shim，真实实现分别落在 `infra/market_data/tdx_data_provider.py` 与 `app/services/scan_engine_facade.py`。
 
 ## 禁止事项
 
 - `ui/` 直接 import `subprocess`、`pyautogui`、`win32con`、`win32gui`
 - `ui/` 直接 import `core.event_bus`、`core.task_manager`
+- `ui/` 直接 import `domains/*`、`infra/*`、`vcp/*`
+- `ui/` 直接 import `core.app_config`、`core.background_job_runner`、`core.domain_events`、`core.ui_signals`、`core.market_calendar`
 - `ui/` 直接 import `QSettings`
 - 主窗口直接调用 tab 私有方法，如 `_show_scan_settings`、`_manual_refresh`
 - 新增 `workspace.tab_xxx._private_call()` 形式的跨页访问
@@ -81,5 +85,5 @@
 1. 新增跨页面能力时，先判断应落在 `app/services` 还是 `ui/workspaces/workspace_facade.py`。
 2. 新增持久化键时，必须同步更新 `docs/qsettings-key-registry.md`。
 3. 新增边界规则时，优先写成 `tests/test_architecture_boundaries.py` 中的自动化检查。
-4. 兼容桥仅用于历史入口兜底；新增真实调用方必须直接依赖 `domains/*` 或 `infra/*` 稳定入口。
+4. 兼容桥仅用于历史入口兜底；新增真实调用方应先落到 `app/*` 统一编排，再由 app 委托 `domains/*` 或 `infra/*`。
 5. 迁移完成的兼容桥必须在同一批或下一批任务内删除，禁止长期保留。

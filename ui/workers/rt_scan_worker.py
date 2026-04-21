@@ -17,7 +17,7 @@ from app.services import (
 from core.exceptions import CacheIOError
 from core.json_cache import remove_cache_file, save_json_file
 from core.logger import get_logger
-from domains.market_calendar import MarketCalendar
+from app.services.ui_runtime_service import MarketCalendar
 from core.sector_rps_helper import enrich_hot_sector_rows, load_sector_rps_snapshot
 
 log = get_logger(__name__)
@@ -242,7 +242,7 @@ class RtScanWorker(QThread):
         # ===== 阶段4: 拉取实时报价 =====
         codes_to_fetch = list(self._ready_pool.keys())
         # 加入关注池代码(即使不在待突破池中)
-        from domains.watchlist import watchlist_vm
+        from app.services.ui_runtime_service import watchlist_vm
         special_codes = set(watchlist_vm.get_all_codes())
 
         # 【修复 BUG】清理已剔除出待突破池的历史爆破信号，防止"诈尸"
@@ -508,3 +508,4 @@ class RtScanWorker(QThread):
                 f"zbg_cache={len(self._zbg_cache)}"
             )
         self.rt_result_ready.emit(all_signals)
+

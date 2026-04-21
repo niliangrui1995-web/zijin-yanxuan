@@ -61,7 +61,7 @@ def worker_trigger_refresh(tab):
 
 
 def check_auto_cache(tab):
-    from domains.market_calendar import MarketCalendar
+    from app.services.ui_runtime_service import MarketCalendar
 
     if tab._is_fetching_cache or tab._pending_auto_cache_sync:
         return
@@ -277,3 +277,4 @@ def on_asian_klines_ready(tab):
     tab._load_local_cache()
     tab._last_asian_success_at = dt.datetime.now()
     _set_tab_status(tab, "本地缓存已更新", "K 线数据已重载", freshness="本地缓存")
+

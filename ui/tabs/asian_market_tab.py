@@ -7,9 +7,9 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QCheckBox, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from app.services import filter_asian_tickers, find_asian_track
-from core.domain_events import domain_events as event_bus
+from app.services.ui_runtime_service import domain_events as event_bus
 from core.logger import get_logger
-from core.ui_signals import ui_signals
+from app.services.ui_runtime_service import ui_signals
 from ui.components import TableStateWrapper, VCPTableView
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.asian_market_meta import (
@@ -329,7 +329,7 @@ class AsianMarketTab(BaseStockTab):
 
     def _get_cache_latest_trade_dates(self):
         try:
-            from domains.market_calendar import MarketCalendar
+            from app.services.ui_runtime_service import MarketCalendar
 
             if not os.path.exists(JSON_CACHE):
                 return {}
@@ -390,7 +390,7 @@ class AsianMarketTab(BaseStockTab):
         try:
             from datetime import timedelta
 
-            from domains.market_calendar import MarketCalendar
+            from app.services.ui_runtime_service import MarketCalendar
             markets = set()
             for row in getattr(self, 'row_data', []) or []:
                 code = str(row.get("\u4ee3\u7801", row.get("code", ""))).strip()
@@ -432,7 +432,7 @@ class AsianMarketTab(BaseStockTab):
         try:
             from datetime import timedelta
 
-            from domains.market_calendar import MarketCalendar
+            from app.services.ui_runtime_service import MarketCalendar
             markets = set()
             for row in getattr(self, 'row_data', []) or []:
                 code = str(row.get("代码", "")).strip()
@@ -943,3 +943,4 @@ class AsianMarketTab(BaseStockTab):
     def closeEvent(self, event):
         self.shutdown()
         super().closeEvent(event)
+

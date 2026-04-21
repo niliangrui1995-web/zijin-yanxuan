@@ -11,7 +11,7 @@ from ui.theme import theme_manager
 
 
 def _normalize_density(density: str | None = None) -> str:
-    from core.app_config import app_config
+    from app.services.ui_runtime_service import app_config
 
     mode = density or app_config.table_density
     return mode if mode in ("紧凑", "舒适") else "舒适"
@@ -254,3 +254,4 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
 def get_state_tone(tone: str, theme: dict | None = None, density: str | None = None) -> dict:
     tokens = build_ui_tokens(theme, density)
     return tokens["state"].get(tone, tokens["state"]["neutral"])
+

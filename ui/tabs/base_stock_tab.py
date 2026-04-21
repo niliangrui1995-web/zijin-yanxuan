@@ -23,9 +23,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.app_config import app_config
-from core.domain_events import domain_events as event_bus
-from infra.navigation import ExternalTerminalNavigator
+from app.services.ui_runtime_service import app_config
+from app.services.ui_runtime_service import domain_events as event_bus
+from app.services.ui_runtime_service import ExternalTerminalNavigator
 from ui.status_registry import format_status_summary, format_workspace_status
 from ui.tabs.base_stock_refresh import (
     async_update_market_caps as run_async_market_caps,
@@ -68,6 +68,8 @@ from ui.theme_tokens import build_ui_tokens
 
 class BaseStockTab(QWidget):
     """股票列表 Tab 基类 - 提供通用方法"""
+
+    _TABLE_ATTR_CANDIDATES = ("table_sp", "table_scan", "table_rt", "na_daily_table", "asian_table", "table")
 
     def __init__(self, data_provider=None, parent=None):
         super().__init__(parent)
@@ -131,6 +133,87 @@ class BaseStockTab(QWidget):
             if len(code) == 6 and code.isdigit():
                 codes.add(code)
         return codes
+
+    def iter_tables(self) -> list:
+        tables = []
+        for attr_name in self._TABLE_ATTR_CANDIDATES:
+            table = getattr(self, attr_name, None)
+            if table is not None and hasattr(table, "model") and table not in tables:
+                tables.append(table)
+        return tables
+
+    def get_primary_table(self):
+        tables = self.iter_tables()
+        return tables[0] if tables else None
+
+    def select_primary_row(self, index: int) -> bool:
+        table = self.get_primary_table()
+        if table is None or int(index) < 0:
+            return False
+        try:
+            table.selectRow(int(index))
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return False
+        return True
+
+    @staticmethod
+    def _find_code_column(model) -> int:
+        if model is None:
+            return -1
+        try:
+            column_count = int(model.columnCount())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return -1
+
+        for column in range(column_count):
+            try:
+                header_text = str(
+                    model.headerData(column, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) or ""
+                ).strip()
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                header_text = ""
+            if header_text == "代码":
+                return column
+        return -1
+
+    def select_code_row(self, code: str) -> bool:
+        code_text = str(code or "").strip()
+        if not code_text:
+            return False
+
+        for table in self.iter_tables():
+            try:
+                model = table.model()
+            except (AttributeError, RuntimeError, TypeError):
+                continue
+            code_column = self._find_code_column(model)
+            if code_column < 0:
+                continue
+
+            try:
+                row_count = int(model.rowCount())
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                continue
+
+            for row in range(row_count):
+                try:
+                    index = model.index(row, code_column)
+                    row_code = str(model.data(index, Qt.ItemDataRole.DisplayRole) or "").strip()
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    continue
+                if row_code != code_text:
+                    continue
+
+                try:
+                    table.clearSelection()
+                    table.setCurrentIndex(index)
+                    table.selectRow(row)
+                    table.scrollTo(index)
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    return False
+                return True
+
+        return False
 
     @staticmethod
     def _prepare_toolbar_widget(widget: QWidget | None):
@@ -416,3 +499,4 @@ class BaseStockTab(QWidget):
     def async_update_market_caps(self):
         """异步补齐缺失股本，并通过共享批次去重后回灌动态市值。"""
         run_async_market_caps(self)
+

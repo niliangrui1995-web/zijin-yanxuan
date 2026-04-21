@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from domains.market_calendar import MarketCalendar
+from app.services.ui_runtime_service import MarketCalendar
 
 _MARKET_STATUS_ICON = {
     "交易中": "🟢",
@@ -205,3 +205,4 @@ def format_runtime_status_text(
         parts.append(f"下一步 {next_text}")
 
     return format_status_summary(*parts)
+

@@ -18,20 +18,20 @@ from PyQt6.QtWidgets import (
 )
 
 from app.services import get_sector_manager
-from core.app_config import app_config
-from core.background_job_runner import background_job_runner as task_manager
-from core.domain_events import domain_events as event_bus
-from domains.fund_holdings import (
+from app.services.ui_runtime_service import (
     QFII_CAPITAL_ATTRIBUTE_CLIENT,
     QFII_CAPITAL_ATTRIBUTE_SELF_OWNED,
     QFII_CAPITAL_ATTRIBUTE_UNMARKED,
     SUBJECT_QFII,
     SUBJECT_RUIYUAN,
+    app_config,
+    background_job_runner as task_manager,
+    domain_events as event_bus,
     fund_holdings_store,
     fund_holdings_sync_service,
+    task_registry,
+    ui_signals,
 )
-from core.ui_signals import ui_signals
-from infra.tasks import task_registry
 from ui.components import (
     MultiSelectFilterButton,
     SearchFilter,
@@ -1316,3 +1316,4 @@ class FundHoldingsTab(BaseStockTab):
     def closeEvent(self, event):
         self._save_view_state()
         super().closeEvent(event)
+

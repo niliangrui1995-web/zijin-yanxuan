@@ -6,9 +6,9 @@ from datetime import datetime
 
 import pandas as pd
 
-from domains.market_calendar import MarketCalendar
-from core.background_job_runner import background_job_runner as task_manager
-from infra.tasks import task_registry
+from app.services.ui_runtime_service import MarketCalendar
+from app.services.ui_runtime_service import background_job_runner as task_manager
+from app.services.ui_runtime_service import task_registry
 
 
 def normalize_daily_df_index(df, *, logger):
@@ -322,3 +322,4 @@ def refresh_last_bar(window, quote):
         f"实时更新 {now_str} · {rt_close:.2f} · {sign}{pct:.2f}% · 成交量 {rt_vol / 10000:.0f}万",
         tone="realtime",
     )
+

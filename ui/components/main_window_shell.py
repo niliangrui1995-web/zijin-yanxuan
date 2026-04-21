@@ -672,7 +672,7 @@ def inject_standalone_tabbar(window) -> QTabBar:
 
 
 def setup_system_menu(window) -> SystemMenuRefs:
-    from core.app_config import app_config
+    from app.services.ui_runtime_service import app_config
     from ui.theme import theme_manager
 
     btn_sys_menu = QToolButton()
@@ -848,3 +848,4 @@ def apply_chrome_theme(window) -> None:
         window._titlebar_nav_host.setStyleSheet("QWidget#titleBarNavHost { background: transparent; }")
 
     refresh_system_menu_theme(window)
+

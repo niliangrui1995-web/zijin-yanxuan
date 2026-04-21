@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+
 import pandas as pd
 
 from domains.scan import IndicatorService, RpsService
@@ -37,3 +39,10 @@ def test_indicator_service_calculates_core_columns_for_pandas_frame():
     assert "SMA50" in result.columns
     assert "entangle" in result.columns
     assert result.attrs["vcp_indicators_ready"] is True
+
+
+def test_legacy_vcp_engine_module_is_a_thin_alias_shim():
+    legacy_module = importlib.import_module("vcp.engine")
+    target_module = importlib.import_module("app.services.scan_engine_facade")
+
+    assert legacy_module is target_module

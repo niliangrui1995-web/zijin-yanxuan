@@ -10,7 +10,7 @@ from functools import lru_cache
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 
-from domains.quotes.snapshot import resolve_quote_metrics
+from app.services.ui_runtime_service import resolve_quote_metrics
 from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens
 
@@ -18,7 +18,7 @@ SERIAL_HEADER = "序号"
 
 def _current_table_density():
     try:
-        from core.app_config import app_config
+        from app.services.ui_runtime_service import app_config
 
         return getattr(app_config, "table_density", None)
     except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
@@ -345,4 +345,5 @@ def _emit_model_row_ranges(model, changed_rows, start_col: int, end_col: int, ro
         start_row = prev_row = row
 
     model.dataChanged.emit(model.index(start_row, start_col), model.index(prev_row, end_col), roles)
+
 

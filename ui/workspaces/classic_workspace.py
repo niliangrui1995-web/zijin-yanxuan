@@ -160,14 +160,10 @@ class ClassicWorkspace(QWidget):
         return _resolve_workspace_facade(self).get_realtime_quote_codes()
 
     def get_scan_results(self) -> list[dict]:
-        scan_tab = self.get_tab("scan")
-        get_scan_results = getattr(scan_tab, "get_scan_results", None)
-        if not callable(get_scan_results):
-            return []
-        return list(get_scan_results() or [])
+        return _resolve_workspace_facade(self).get_scan_results()
 
     def get_rt_table(self):
-        return getattr(self.get_tab("rt_monitor"), "table_rt", None)
+        return _resolve_workspace_facade(self).get_rt_table()
 
     def iter_tables(self) -> list:
         return _resolve_workspace_facade(self).iter_tables()
@@ -182,47 +178,22 @@ class ClassicWorkspace(QWidget):
         return _resolve_workspace_facade(self).select_scan_row(index)
 
     def is_rt_monitor_running(self) -> bool:
-        rt_tab = self.get_tab("rt_monitor")
-        is_running = getattr(rt_tab, "is_rt_running", None)
-        if not callable(is_running):
-            return False
-        return bool(is_running())
+        return _resolve_workspace_facade(self).is_rt_monitor_running()
 
     def toggle_rt_monitor(self) -> bool:
-        rt_tab = self.get_tab("rt_monitor")
-        toggle_monitor = getattr(rt_tab, "toggle_rt_monitor", None)
-        if not callable(toggle_monitor):
-            return False
-        toggle_monitor()
-        return True
+        return _resolve_workspace_facade(self).toggle_rt_monitor()
 
     def run_incremental_scan(self) -> bool:
-        scan_tab = self.get_tab("scan")
-        run_incremental_scan = getattr(scan_tab, "run_incremental_scan", None)
-        if not callable(run_incremental_scan):
-            return False
-        return bool(run_incremental_scan())
+        return _resolve_workspace_facade(self).run_incremental_scan()
 
     def open_scan_settings(self) -> bool:
-        scan_tab = self.get_tab("scan")
-        open_scan_settings = getattr(scan_tab, "open_scan_settings", None)
-        if not callable(open_scan_settings):
-            return False
-        return bool(open_scan_settings())
+        return _resolve_workspace_facade(self).open_scan_settings()
 
     def refresh_lhb_history(self) -> bool:
-        lhb_tab = self.get_tab("lhb")
-        refresh_history = getattr(lhb_tab, "refresh_history", None)
-        if not callable(refresh_history):
-            return False
-        return bool(refresh_history())
+        return _resolve_workspace_facade(self).refresh_lhb_history()
 
     def run_fund_holdings_sync(self) -> bool:
-        fund_holdings_tab = self.get_tab("fund_holdings")
-        run_full_sync = getattr(fund_holdings_tab, "run_full_sync", None)
-        if not callable(run_full_sync):
-            return False
-        return bool(run_full_sync())
+        return _resolve_workspace_facade(self).run_fund_holdings_sync()
 
     def select_code_row(self, code: str, preferred_tab_index: int | None = None) -> bool:
         return _resolve_workspace_facade(self).select_code_row(code, preferred_tab_index)

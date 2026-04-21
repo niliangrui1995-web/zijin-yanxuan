@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from core.logger import get_logger
+from ui.workspaces.tab_capabilities import SnapshotRefreshCapability, TableCollectionCapability
 
 log = get_logger(__name__)
 
@@ -18,12 +19,9 @@ class WorkspaceTableService:
 
     @staticmethod
     def _iter_tab_tables(tab) -> list:
-        tables = []
-        for attr_name in ("table_sp", "table_scan", "table_rt", "na_daily_table", "asian_table", "table"):
-            table = getattr(tab, attr_name, None)
-            if table is not None and hasattr(table, "model") and table not in tables:
-                tables.append(table)
-        return tables
+        if isinstance(tab, TableCollectionCapability):
+            return list(tab.iter_tables() or [])
+        return []
 
     def iter_tables(self) -> list:
         tables = []
@@ -35,7 +33,7 @@ class WorkspaceTableService:
         return [
             tab
             for tab in self._iter_tabs()
-            if tab is not None and hasattr(tab, "refresh_table_from_latest_snapshot")
+            if isinstance(tab, SnapshotRefreshCapability)
         ]
 
     def refresh_all_tabs_after_f5(self) -> None:

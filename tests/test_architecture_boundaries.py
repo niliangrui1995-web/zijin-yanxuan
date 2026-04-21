@@ -80,6 +80,17 @@ def _find_text_snippets(path: Path, banned_snippets: set[str]) -> list[str]:
     return sorted(snippet for snippet in banned_snippets if snippet in content)
 
 
+def _find_text_snippets_in_files(paths: list[Path], banned_snippets: set[str]) -> list[str]:
+    violations: list[str] = []
+    for path in paths:
+        matched = _find_text_snippets(path, banned_snippets)
+        if not matched:
+            continue
+        rel_path = path.relative_to(REPO_ROOT).as_posix()
+        violations.append(f"{rel_path}: {', '.join(matched)}")
+    return violations
+
+
 def _find_literal_task_id_usage(root: Path, *, allowed_paths: set[str] | None = None):
     allowed_paths = allowed_paths or set()
     violations: list[str] = []
@@ -134,6 +145,17 @@ def test_ui_layer_does_not_import_system_automation_modules_directly():
         {"subprocess", "pyautogui", "win32con", "win32gui"},
     )
     assert not violations, "UI layer imported system/process automation modules directly:\n" + "\n".join(violations)
+
+
+def test_ui_layer_does_not_import_domains_or_infra_runtime_modules_directly():
+    violations = _find_prefix_violations(
+        REPO_ROOT / "ui",
+        {"domains", "infra"},
+    )
+    assert not violations, (
+        "UI layer bypassed app services and imported domain/infra modules directly:\n"
+        + "\n".join(violations)
+    )
 
 
 def test_vcp_layer_does_not_depend_on_ui_signals_or_job_runner():
@@ -254,12 +276,21 @@ def test_ui_layer_does_not_import_vcp_modules_directly():
     assert not violations, "UI layer still imports legacy vcp modules directly:\n" + "\n".join(violations)
 
 
-def test_ui_layer_uses_domains_market_calendar_entrypoint():
+def test_ui_layer_does_not_import_core_runtime_facades_directly():
     violations = _find_violations(
         REPO_ROOT / "ui",
-        {"core.market_calendar"},
+        {
+            "core.app_config",
+            "core.background_job_runner",
+            "core.domain_events",
+            "core.market_calendar",
+            "core.ui_signals",
+        },
     )
-    assert not violations, "UI layer still imports core.market_calendar compatibility path:\n" + "\n".join(violations)
+    assert not violations, (
+        "UI layer still imports core runtime/config compatibility modules directly:\n"
+        + "\n".join(violations)
+    )
 
 
 def test_domain_and_market_data_layers_use_domains_market_calendar_entrypoint():
@@ -275,3 +306,33 @@ def test_domain_and_market_data_layers_use_domains_market_calendar_entrypoint():
 
 def test_module_owner_registry_exists():
     assert (REPO_ROOT / "docs" / "module-owners.md").exists()
+
+
+def test_workspace_facade_and_services_do_not_reach_into_tab_private_state():
+    workspace_files = [
+        REPO_ROOT / "ui" / "workspaces" / "classic_workspace.py",
+        REPO_ROOT / "ui" / "workspaces" / "quote_universe_service.py",
+        REPO_ROOT / "ui" / "workspaces" / "watchlist_radar_service.py",
+        REPO_ROOT / "ui" / "workspaces" / "workspace_facade.py",
+        REPO_ROOT / "ui" / "workspaces" / "workspace_navigation_service.py",
+        REPO_ROOT / "ui" / "workspaces" / "workspace_table_service.py",
+    ]
+    violations = _find_text_snippets_in_files(
+        workspace_files,
+        {
+            ".asian_table",
+            ".model.row_data",
+            ".na_daily_table",
+            ".table_rt",
+            ".table_scan",
+            "FOREIGN_KEYWORDS",
+            "_auto_refresh_realtime(",
+            "_toggle_rt_monitor(",
+            "find_scan_result(",
+            "workspace.tab_",
+        },
+    )
+    assert not violations, (
+        "Workspace facade/services still reach into tab private state instead of public capabilities:\n"
+        + "\n".join(violations)
+    )

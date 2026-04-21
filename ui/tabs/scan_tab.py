@@ -16,13 +16,13 @@ from PyQt6.QtWidgets import (
 )
 
 from app.services import VCPParams
-from core.app_config import app_config
-from core.domain_events import domain_events as event_bus
+from app.services.ui_runtime_service import app_config
+from app.services.ui_runtime_service import domain_events as event_bus
 from core.logger import get_logger
-from domains.market_calendar import MarketCalendar
-from core.ui_signals import ui_signals
-from domains.watchlist import watchlist_vm
-from infra.tasks import task_registry
+from app.services.ui_runtime_service import MarketCalendar
+from app.services.ui_runtime_service import ui_signals
+from app.services.ui_runtime_service import watchlist_vm
+from app.services.ui_runtime_service import task_registry
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.scan_dialogs import VCPScanRangeDialog, VCPScanSettingsDialog
 from ui.components.toast_widget import show_toast
@@ -812,3 +812,4 @@ class ScanTab(BaseStockTab):
         )
 
     # _launch_tdx 已迁移至 BaseStockTab 基类
+

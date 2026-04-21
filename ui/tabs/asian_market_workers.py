@@ -16,7 +16,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 from app.services import CACHE_DIR, build_yf_session, sync_asian_kline_cache
 from core.logger import get_logger
-from domains.market_calendar import MarketCalendar
+from app.services.ui_runtime_service import MarketCalendar
 
 log = get_logger(__name__)
 
@@ -657,3 +657,4 @@ class AsianCacheFetcherThread(QThread):
         except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
             self.result_success = False
             self.result_message = f"盘后拉取异常: {exc}"
+

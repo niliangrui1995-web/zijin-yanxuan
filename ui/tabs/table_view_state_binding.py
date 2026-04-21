@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 
-from infra.settings.table_view_state_store import TableViewStateStore
+from app.services.ui_runtime_service import TableViewStateStore
 
 
 def bind_table_view_state(owner, table, settings, header_state_savers: list, settings_key: str = "header_state") -> bool:
@@ -14,3 +14,4 @@ def bind_table_view_state(owner, table, settings, header_state_savers: list, set
     except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
         logging.getLogger(__name__).warning(f"绑定表格状态失败 {settings_key}: {exc}")
         return False
+

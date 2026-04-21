@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from ui.workspaces.tab_capabilities import ForeignKeywordCapability
+
 KEY_CODE = "\u4ee3\u7801"
 KEY_NAME = "\u540d\u79f0"
 KEY_CATALYST = "\u50ac\u5316\u5242"
@@ -131,7 +133,11 @@ class WatchlistRadarService:
 
         foreign_block_tab = self._get_tab("foreign_block")
         if foreign_block_tab is not None:
-            from ui.tabs.foreign_block_trade_tab import FOREIGN_KEYWORDS
+            foreign_keywords = (
+                foreign_block_tab.get_foreign_keywords()
+                if isinstance(foreign_block_tab, ForeignKeywordCapability)
+                else []
+            )
 
             block_aggregates: dict[str, dict] = {}
             for row in self._get_rows(foreign_block_tab):
@@ -157,7 +163,7 @@ class WatchlistRadarService:
                     buy,
                     sell,
                     amount,
-                    FOREIGN_KEYWORDS,
+                    foreign_keywords,
                 )
                 best_amount = float(bucket.get("best_amount", 0.0) or 0.0)
                 if signal_text and signal_amount >= best_amount:

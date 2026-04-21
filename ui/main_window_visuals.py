@@ -11,7 +11,7 @@ from ui.theme_tokens import build_ui_tokens
 
 
 def apply_table_density(main_window, mode: str, persist: bool = True):
-    from core.app_config import app_config
+    from app.services.ui_runtime_service import app_config
     from ui.components import VCPTableView
 
     if mode not in ("紧凑", "舒适"):
@@ -155,3 +155,4 @@ def apply_theme(main_window):
         main_window,
         duration=2000,
     )
+

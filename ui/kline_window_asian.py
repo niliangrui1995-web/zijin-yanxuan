@@ -6,8 +6,8 @@ import os
 
 import pandas as pd
 
-from domains.market_calendar import MarketCalendar
-from infra.tasks import task_registry
+from app.services.ui_runtime_service import MarketCalendar
+from app.services.ui_runtime_service import task_registry
 from ui.kline_chart_payload import merge_kline_context
 
 
@@ -283,3 +283,4 @@ def apply_asian_live_quote(df: pd.DataFrame, quote: dict, *, market: str) -> pd.
         merged_df = pd.concat([merged_df, new_row])
 
     return merged_df
+

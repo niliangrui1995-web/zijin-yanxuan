@@ -13,10 +13,10 @@ K 线图窗口 — ECharts 5.5.0 + QWebEngineView 高性能版
 import os as _os
 
 from app.services.scan_runtime_service import calculate_scan_indicators
-from core.domain_events import domain_events as event_bus
+from app.services.ui_runtime_service import domain_events as event_bus
 from core.logger import get_logger
-from domains.market_calendar import MarketCalendar
-from domains.watchlist import watchlist_vm
+from app.services.ui_runtime_service import MarketCalendar
+from app.services.ui_runtime_service import watchlist_vm
 
 log = get_logger(__name__)
 import pandas as pd
@@ -377,7 +377,7 @@ class KLineChartWindow(QWidget):
             )
 
         if df is None:
-            from core.background_job_runner import background_job_runner as task_manager
+            from app.services.ui_runtime_service import background_job_runner as task_manager
             schedule_asian_history_backfill(
                 self,
                 task_manager=task_manager,
@@ -594,3 +594,4 @@ class KLineChartWindow(QWidget):
 
         log.debug(f"[K线] {self.code} 窗口关闭")
         super().closeEvent(event)
+

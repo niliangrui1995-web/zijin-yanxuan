@@ -15,13 +15,13 @@ from app.services import (
     create_startup_orchestrator,
 )
 from app.use_cases import WindowCommandService
-from core.app_config import app_config
-from core.background_job_runner import background_job_runner as task_manager
+from app.services.ui_runtime_service import app_config
+from app.services.ui_runtime_service import background_job_runner as task_manager
 from core.cache_manager import CacheManager
-from core.domain_events import domain_events as event_bus
+from app.services.ui_runtime_service import domain_events as event_bus
 from core.logger import get_logger
 from core.observability import emit_structured_log, record_metric
-from infra.events import ui_signal_hub
+from app.services.ui_runtime_service import ui_signal_hub
 from ui.components.command_palette import CommandPaletteDialog
 from ui.components.kline_window_manager import kline_manager
 from ui.shell import (
@@ -649,3 +649,4 @@ class MainWindowQT(QMainWindow):
         from ui.main_window_visuals import apply_theme
 
         apply_theme(self)
+

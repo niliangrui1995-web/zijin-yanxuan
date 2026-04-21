@@ -13,20 +13,21 @@ import pandas as pd
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QComboBox, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
-from core.background_job_runner import background_job_runner as task_manager
-from core.domain_events import domain_events as event_bus
+from app.services.ui_runtime_service import (
+    MarketCalendar,
+    ProcessExecutionError,
+    ProcessTimeoutError,
+    background_job_runner as task_manager,
+    build_domestic_process_env,
+    domain_events as event_bus,
+    run_process,
+    task_registry,
+    ui_signals,
+    windows_no_window_creationflags,
+)
 from core.exceptions import CacheIOError, DataFormatError
 from core.json_cache import load_json_file, save_json_file
 from core.task_errors import UserFacingTaskError
-from core.ui_signals import ui_signals
-from infra.tasks import (
-    ProcessExecutionError,
-    ProcessTimeoutError,
-    build_domestic_process_env,
-    run_process,
-    task_registry,
-    windows_no_window_creationflags,
-)
 from ui.components import (
     MultiSelectFilterButton,
     SearchFilter,
@@ -98,7 +99,6 @@ class BlockTradeFilterProxyModel(RtSortFilterProxyModel):
         return filter_text in buyer_text or filter_text in seller_text
 
 from core.logger import get_logger
-from domains.market_calendar import MarketCalendar
 from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
@@ -754,6 +754,10 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._load_block_trade_data()
         return True
 
+    @staticmethod
+    def get_foreign_keywords() -> list[str]:
+        return list(FOREIGN_KEYWORDS)
+
     def get_realtime_quote_codes(self, current_model=None) -> set[str]:
         codes = super().get_realtime_quote_codes(current_model=current_model)
         if codes:
@@ -994,3 +998,4 @@ class ForeignBlockTradeTab(BaseStockTab):
 
         from ui.components.stock_context_menu import build_stock_context_menu
         build_stock_context_menu(self, code, name, vcp_data=row_data)
+

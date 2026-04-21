@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from domains.market_calendar import MarketCalendar
+from app.services.ui_runtime_service import MarketCalendar
 from ui.components.shared_title_bar import DraggableTitleBar
 from ui.components.trade_calendar import TradeDateEdit
 from ui.theme import theme_manager
@@ -527,3 +527,4 @@ class VCPScanSettingsDialog(_ThemedDialog):
 
     def user_presets(self) -> dict[str, dict[str, float]]:
         return self._user_presets
+

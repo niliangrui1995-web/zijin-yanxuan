@@ -16,14 +16,16 @@ from importlib import import_module
 from PyQt6.QtCore import QCoreApplication, QTimer
 
 from app.services import FINANCE_CACHE_FILE, batch_get_finance_info
-from domains.quotes import (
+from app.services.ui_runtime_service import (
+    SHARED_MARKET_CAPS,
     build_finance_quote_payload,
     coerce_number,
     enrich_quotes_with_finance,
     is_a_share_code,
     publish_rt_quotes,
+    task_id_of,
+    task_registry,
 )
-from infra.tasks import SHARED_MARKET_CAPS, task_id_of, task_registry
 
 _FINANCE_CACHE_LOCK = threading.RLock()
 _FINANCE_CACHE_PATH: str | None = None
@@ -328,7 +330,7 @@ class MarketCapRefreshBatcher:
             cls._waiters.clear()
             return
 
-        from core.background_job_runner import background_job_runner as task_manager
+        from app.services.ui_runtime_service import background_job_runner as task_manager
 
         is_active_task = getattr(task_manager, "is_active_task", None)
         if callable(is_active_task) and is_active_task(cls._task_id):
@@ -416,7 +418,7 @@ def refresh_table_quotes_and_market_caps(owner, current_model=None, force_quotes
     if not target_codes:
         return
 
-    from core.background_job_runner import background_job_runner as task_manager
+    from app.services.ui_runtime_service import background_job_runner as task_manager
 
     task_id = task_id_of(quote_task_id)
     if not task_id:
@@ -508,13 +510,13 @@ def subscribe_global_quotes(owner, current_model=None) -> None:
 
     if owner._quote_signal_connected:
         try:
-            from core.domain_events import domain_events as event_bus
+            from app.services.ui_runtime_service import domain_events as event_bus
 
             event_bus.sig_rt_quotes.disconnect(owner._on_rt_quotes_direct)
         except (TypeError, RuntimeError):
             pass
 
-    from core.domain_events import domain_events as event_bus
+    from app.services.ui_runtime_service import domain_events as event_bus
 
     event_bus.sig_rt_quotes.connect(owner._on_rt_quotes_direct)
     owner._quote_signal_connected = True
@@ -569,3 +571,4 @@ def async_update_market_caps(owner) -> None:
         return
 
     MarketCapRefreshBatcher.enqueue(owner, codes_need_cap)
+

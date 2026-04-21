@@ -7,7 +7,7 @@ from PyQt6.QtCore import QTimer
 
 from core.global_store import global_store
 from core.logger import get_logger
-from infra.tasks import WINDOW_F5_PRECOMPUTE
+from app.services.ui_runtime_service import WINDOW_F5_PRECOMPUTE
 
 log = get_logger(__name__)
 
@@ -144,3 +144,4 @@ def shutdown_main_window(main_window, *, event_bus, task_manager):
     _run("广播关闭信号", event_bus.sig_app_closing.emit)
     _run("重置全局快照状态", global_store.reset_runtime_state)
     _run("TaskManager 关停", task_manager.shutdown)
+

@@ -15,13 +15,13 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from core.app_config import app_config
-from core.background_job_runner import background_job_runner as task_manager
-from core.domain_events import domain_events as event_bus
+from app.services.ui_runtime_service import app_config
+from app.services.ui_runtime_service import background_job_runner as task_manager
+from app.services.ui_runtime_service import domain_events as event_bus
 from core.logger import get_logger
 from core.throttler import SignalThrottler
-from core.ui_signals import ui_signals
-from infra.tasks import task_registry
+from app.services.ui_runtime_service import ui_signals
+from app.services.ui_runtime_service import task_registry
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.toast_widget import show_toast
 from ui.models.table_models import RtSortFilterProxyModel, RtTableModel, StockItemDelegate
@@ -244,7 +244,7 @@ class RtMonitorTab(BaseStockTab):
             self.lbl_rt_info.setText(info_text)
 
     def _check_auto_start_stop(self):
-        from domains.market_calendar import MarketCalendar
+        from app.services.ui_runtime_service import MarketCalendar
         is_active = MarketCalendar.is_market_active()
         is_running = self._is_rt_running()
 
@@ -517,7 +517,7 @@ class RtMonitorTab(BaseStockTab):
             self.rt_worker = None
 
         try:
-            from domains.market_calendar import MarketCalendar
+            from app.services.ui_runtime_service import MarketCalendar
             active = MarketCalendar.is_market_active()
         except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
             active = False
@@ -662,4 +662,5 @@ class RtMonitorTab(BaseStockTab):
         )
 
     # _launch_tdx 已迁移至 BaseStockTab 基类
+
 

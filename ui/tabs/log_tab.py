@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.domain_events import domain_events as event_bus
+from app.services.ui_runtime_service import domain_events as event_bus
 from ui.components.task_status_panel import TaskStatusPanel
 from ui.components import MultiSelectFilterButton, format_multi_select_summary
 from ui.theme_tokens import build_ui_tokens
@@ -375,3 +375,4 @@ class LogTab(QWidget):
         if filtered_entries:
             self._append_log_entries(filtered_entries, clear_existing=False)
         self._refresh_status_summary()
+
