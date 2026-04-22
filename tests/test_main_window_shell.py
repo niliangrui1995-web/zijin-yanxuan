@@ -10,7 +10,20 @@ from ui.components.main_window_shell import (
     setup_custom_titlebar,
     setup_system_menu,
 )
-from ui.window_flags import build_frameless_main_window_flags
+from ui.window_flags import (
+    GWL_STYLE,
+    SWP_FRAMECHANGED,
+    SWP_NOACTIVATE,
+    SWP_NOMOVE,
+    SWP_NOSIZE,
+    SWP_NOZORDER,
+    WS_CAPTION,
+    WS_MAXIMIZEBOX,
+    WS_MINIMIZEBOX,
+    WS_SYSMENU,
+    apply_windows_frameless_taskbar_fix,
+    build_frameless_main_window_flags,
+)
 
 
 class DummyShellWindow(QMainWindow):
@@ -152,8 +165,57 @@ def test_build_frameless_main_window_flags_preserves_native_window_controls():
 
     assert flags & Qt.WindowType.Window
     assert flags & Qt.WindowType.FramelessWindowHint
-    assert flags & Qt.WindowType.CustomizeWindowHint
-    assert flags & Qt.WindowType.WindowSystemMenuHint
-    assert flags & Qt.WindowType.WindowMinimizeButtonHint
-    assert flags & Qt.WindowType.WindowMaximizeButtonHint
-    assert flags & Qt.WindowType.WindowCloseButtonHint
+    assert not flags & Qt.WindowType.CustomizeWindowHint
+    assert not flags & Qt.WindowType.WindowSystemMenuHint
+
+
+class DummyNativeWindow:
+    @staticmethod
+    def winId():
+        return 9527
+
+
+class DummyUser32:
+    def __init__(self, style):
+        self.style = style
+        self.set_window_long_calls = []
+        self.set_window_pos_calls = []
+
+    def GetWindowLongPtrW(self, hwnd, index):
+        assert hwnd == 9527
+        assert index == GWL_STYLE
+        return self.style
+
+    def SetWindowLongPtrW(self, hwnd, index, style):
+        self.set_window_long_calls.append((hwnd, index, style))
+        self.style = style
+        return style
+
+    def SetWindowPos(self, hwnd, insert_after, x, y, cx, cy, flags):
+        self.set_window_pos_calls.append((hwnd, insert_after, x, y, cx, cy, flags))
+        return 1
+
+
+def test_apply_windows_frameless_taskbar_fix_updates_native_styles(monkeypatch):
+    monkeypatch.setattr("ui.window_flags.os.name", "nt")
+    user32 = DummyUser32(WS_CAPTION)
+
+    changed = apply_windows_frameless_taskbar_fix(DummyNativeWindow(), user32=user32)
+
+    assert changed is True
+    assert user32.style & WS_SYSMENU
+    assert user32.style & WS_MINIMIZEBOX
+    assert user32.style & WS_MAXIMIZEBOX
+    assert not user32.style & WS_CAPTION
+    assert user32.set_window_long_calls == [(9527, GWL_STYLE, user32.style)]
+    assert user32.set_window_pos_calls == [
+        (
+            9527,
+            0,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        )
+    ]

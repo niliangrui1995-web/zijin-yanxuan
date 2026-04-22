@@ -35,7 +35,7 @@ from ui.shell import (
 from ui.components.message_box import show_themed_question
 from ui.main_window_tables import install_table_copy_hooks
 from ui.workers.central_quotes_worker import CentralQuotesService
-from ui.window_flags import build_frameless_main_window_flags
+from ui.window_flags import apply_windows_frameless_taskbar_fix, build_frameless_main_window_flags
 from ui.workspaces import ClassicWorkspace
 
 # 核心引擎与数据层
@@ -71,6 +71,7 @@ class MainWindowQT(QMainWindow):
         self._launch_started_at = time.perf_counter()
         self._first_paint_recorded = False
         self._is_closing = False
+        self._native_taskbar_fix_applied = False
         self._splash = splash
         self.setWindowTitle('紫金研选量化终端')
 
@@ -534,6 +535,9 @@ class MainWindowQT(QMainWindow):
 
     def showEvent(self, event):
         super().showEvent(event)
+        if not self._native_taskbar_fix_applied:
+            self._native_taskbar_fix_applied = True
+            apply_windows_frameless_taskbar_fix(self)
         if hasattr(self, "_process_watchdog"):
             self._process_watchdog.pulse("showEvent")
         if self._first_paint_recorded:
