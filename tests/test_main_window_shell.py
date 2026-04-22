@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QFrame, QMainWindow, QTabWidget, QVBoxLayout, QWidget
 
 from ui.components.main_window_shell import (
@@ -9,6 +10,7 @@ from ui.components.main_window_shell import (
     setup_custom_titlebar,
     setup_system_menu,
 )
+from ui.window_flags import build_frameless_main_window_flags
 
 
 class DummyShellWindow(QMainWindow):
@@ -143,3 +145,15 @@ def test_shell_navigation_widget_restores_last_subtab_per_group():
     finally:
         nav.deleteLater()
         tabs.deleteLater()
+
+
+def test_build_frameless_main_window_flags_preserves_native_window_controls():
+    flags = build_frameless_main_window_flags()
+
+    assert flags & Qt.WindowType.Window
+    assert flags & Qt.WindowType.FramelessWindowHint
+    assert flags & Qt.WindowType.CustomizeWindowHint
+    assert flags & Qt.WindowType.WindowSystemMenuHint
+    assert flags & Qt.WindowType.WindowMinimizeButtonHint
+    assert flags & Qt.WindowType.WindowMaximizeButtonHint
+    assert flags & Qt.WindowType.WindowCloseButtonHint

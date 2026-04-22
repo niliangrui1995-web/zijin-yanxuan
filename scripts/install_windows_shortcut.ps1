@@ -1,6 +1,6 @@
 param(
     [string]$ShortcutPath,
-    [string]$ShortcutName = "ZijinQuantTerminal",
+    [string]$ShortcutName = "",
     [string]$AppUserModelId = "com.zijinresearch.vcphunter.quantterminal",
     [switch]$ForceDevLauncher,
     [switch]$StartMenu,
@@ -10,8 +10,17 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+function Get-AppDisplayName {
+    return (-join @([char]0x7D2B, [char]0x91D1, [char]0x6295, [char]0x7814))
+}
+
+$DisplayName = Get-AppDisplayName
+if (-not $ShortcutName) {
+    $ShortcutName = $DisplayName
+}
+
 $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
-$PackagedExe = Join-Path $RepoRoot "dist\ZijinQuantTerminal\ZijinQuantTerminal.exe"
+$PackagedExe = Join-Path $RepoRoot ("dist\{0}\{0}.exe" -f $DisplayName)
 $PythonExe = Join-Path $RepoRoot ".venv\Scripts\pythonw.exe"
 $EntryScript = Join-Path $RepoRoot "vcp_hunter_qt.pyw"
 $IconPath = Join-Path $RepoRoot "bull_icon.ico"
@@ -174,7 +183,7 @@ function Resolve-Launcher {
             TargetPath = $PackagedExe
             Arguments = ""
             IconLocation = $PackagedExe
-            Description = "Launch ZijinQuantTerminal"
+            Description = ("Launch {0}" -f $DisplayName)
         }
     }
 
@@ -186,7 +195,7 @@ function Resolve-Launcher {
         TargetPath = $PythonExe
         Arguments = ('"{0}"' -f $EntryScript)
         IconLocation = $IconPath
-        Description = "Launch ZijinQuantTerminal (dev)"
+        Description = ("Launch {0} (dev)" -f $DisplayName)
     }
 }
 
@@ -224,7 +233,7 @@ if ($ShortcutPath) {
     }
 
     if ($StartMenu) {
-        $startMenuDir = Join-Path ([Environment]::GetFolderPath("Programs")) "ZijinQuantTerminal"
+        $startMenuDir = Join-Path ([Environment]::GetFolderPath("Programs")) $DisplayName
         $OutputPaths += (Join-Path $startMenuDir "$ShortcutName.lnk")
     }
 }

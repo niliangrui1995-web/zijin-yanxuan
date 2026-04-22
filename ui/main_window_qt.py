@@ -35,6 +35,7 @@ from ui.shell import (
 from ui.components.message_box import show_themed_question
 from ui.main_window_tables import install_table_copy_hooks
 from ui.workers.central_quotes_worker import CentralQuotesService
+from ui.window_flags import build_frameless_main_window_flags
 from ui.workspaces import ClassicWorkspace
 
 # 核心引擎与数据层
@@ -76,7 +77,7 @@ class MainWindowQT(QMainWindow):
         # 记录默认逻辑工作区
         self.setWindowIcon(QIcon(os.path.join(os.path.dirname(os.path.dirname(__file__)), "bull_icon.ico")))
         # 无边框改造：去掉原生标题栏，由自定义标题栏接管
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
+        self.setWindowFlags(build_frameless_main_window_flags())
         self.setMinimumSize(1000, 600)
         self._sig_ui_call.connect(self._run_ui_callback)
         self._process_watchdog = ProcessWatchdog(

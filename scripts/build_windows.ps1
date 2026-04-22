@@ -1,6 +1,6 @@
 param(
     [string]$PythonExe,
-    [string]$OutputName = "ZijinQuantTerminal",
+    [string]$OutputName = "",
     [switch]$OneFile,
     [switch]$SkipInstallPyInstaller,
     [switch]$DryRun
@@ -9,12 +9,20 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+function Get-AppDisplayName {
+    return (-join @([char]0x7D2B, [char]0x91D1, [char]0x6295, [char]0x7814))
+}
+
 $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $EntryScript = Join-Path $RepoRoot "vcp_hunter_qt.pyw"
 $IconPath = Join-Path $RepoRoot "bull_icon.ico"
 $AssetsPath = Join-Path $RepoRoot "assets"
 $DistPath = Join-Path $RepoRoot "dist"
 $WorkPath = Join-Path $RepoRoot "build\pyinstaller"
+
+if (-not $OutputName) {
+    $OutputName = Get-AppDisplayName
+}
 
 function Get-FullPathSafe {
     param([Parameter(Mandatory = $true)][string]$Path)
