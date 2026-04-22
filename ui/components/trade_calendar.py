@@ -229,7 +229,13 @@ class TradeCalendarWidget(QCalendarWidget):
             dot_color.setAlpha(220 if is_dark else 180)
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(dot_color)
-            painter.drawEllipse(chip_rect.center().x() - 2.2, chip_rect.bottom() - 6.0, 4.4, 4.4)
+            dot_rect = QRectF(
+                chip_rect.center().x() - 2.2,
+                chip_rect.bottom() - 6.0,
+                4.4,
+                4.4,
+            )
+            painter.drawEllipse(dot_rect)
 
         painter.restore()
 
