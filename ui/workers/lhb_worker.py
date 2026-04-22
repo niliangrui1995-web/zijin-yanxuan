@@ -86,6 +86,13 @@ def _normalize_reason_key(reason: str) -> str:
     return " | ".join(sorted(dict.fromkeys(parts)))
 
 
+def _reason_tokens(reason: str) -> set[str]:
+    reason_key = _normalize_reason_key(reason)
+    if not reason_key:
+        return set()
+    return {part.strip() for part in reason_key.split("|") if part.strip()}
+
+
 def _build_jg_info(row: pd.Series) -> dict:
     info = dict(DEFAULT_JG_INFO)
     info.update(
@@ -185,7 +192,11 @@ def _resolve_jg_info(
     return _merge_jg_candidates(candidates)
 
 
-def _build_foreign_row_key(row: pd.Series) -> tuple:
+def _match_foreign_keyword(branch_name: str) -> str | None:
+    return next((kw for kw in FOREIGN_KEYWORDS if kw in str(branch_name or "")), None)
+
+
+def _build_foreign_row_key(row: pd.Series, *, include_reason: bool = True) -> tuple:
     def _num(name: str) -> float:
         value = row.get(name, 0)
         if pd.isna(value):
@@ -195,13 +206,64 @@ def _build_foreign_row_key(row: pd.Series) -> tuple:
         except (TypeError, ValueError):
             return 0.0
 
-    return (
+    row_key = (
         str(row.get("交易营业部名称", "")).strip(),
-        str(row.get("类型", "")).strip(),
         _num("买入金额"),
         _num("卖出金额"),
         _num("净额"),
     )
+    if include_reason:
+        row_key += (_normalize_reason_key(row.get("类型", "")),)
+    return row_key
+
+
+def _foreign_reason_matches(detail_reason: str, target_reason: str) -> bool:
+    target_tokens = _reason_tokens(target_reason)
+    if not target_tokens:
+        return True
+
+    detail_tokens = _reason_tokens(detail_reason)
+    if not detail_tokens:
+        return False
+
+    return (
+        detail_tokens == target_tokens
+        or detail_tokens.issubset(target_tokens)
+        or target_tokens.issubset(detail_tokens)
+        or bool(detail_tokens & target_tokens)
+    )
+
+
+def _collect_foreign_branch_details(detail_df: pd.DataFrame, reason: str) -> dict[str, float]:
+    if detail_df is None or detail_df.empty:
+        return {}
+
+    branch_details_map: dict[str, float] = {}
+    seen_detail_rows: set[tuple] = set()
+
+    for _, s_row in detail_df.iterrows():
+        yyb_name = str(s_row.get("交易营业部名称", ""))
+        matched_kw = _match_foreign_keyword(yyb_name)
+        if not matched_kw:
+            continue
+        if not _foreign_reason_matches(s_row.get("类型", ""), reason):
+            continue
+
+        # 同一席位明细会在买入/卖出接口重复出现；多原因合并行也可能重复返回同一笔数据。
+        detail_row_key = _build_foreign_row_key(s_row, include_reason=False)
+        if detail_row_key in seen_detail_rows:
+            continue
+        seen_detail_rows.add(detail_row_key)
+
+        net_str = str(s_row.get("净额", "0"))
+        try:
+            net_val = float(net_str)
+        except (TypeError, ValueError):
+            net_val = 0.0
+        net_wan = net_val / 10000.0
+        branch_details_map[matched_kw] = branch_details_map.get(matched_kw, 0.0) + net_wan
+
+    return branch_details_map
 
 
 def _load_lhb_detail_frame(date_str: str) -> tuple[pd.DataFrame, str, str]:
@@ -309,6 +371,7 @@ def fetch_lhb_data_for_date(
                 foreign_sells.setdefault(s_name.strip(), set()).add(short_branch)
 
     # 4. 缝合主表
+    foreign_detail_cache: dict[str, pd.DataFrame] = {}
     results = []
     for _, row in df_detail.iterrows():
         code = str(row.get('代码', '')).zfill(6)
@@ -348,42 +411,28 @@ def fetch_lhb_data_for_date(
         foreign_net_sum = 0.0
 
         if has_foreign:
-            dfs = []
-            try:
-                df_buy = ak.stock_lhb_stock_detail_em(symbol=code, date=date_str, flag="买入")
-                if df_buy is not None and not df_buy.empty:
-                    dfs.append(df_buy)
-            except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
-                pass
+            if code not in foreign_detail_cache:
+                dfs = []
+                try:
+                    df_buy = ak.stock_lhb_stock_detail_em(symbol=code, date=date_str, flag="买入")
+                    if df_buy is not None and not df_buy.empty:
+                        dfs.append(df_buy)
+                except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
+                    pass
 
-            try:
-                df_sell = ak.stock_lhb_stock_detail_em(symbol=code, date=date_str, flag="卖出")
-                if df_sell is not None and not df_sell.empty:
-                    dfs.append(df_sell)
-            except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
-                pass
+                try:
+                    df_sell = ak.stock_lhb_stock_detail_em(symbol=code, date=date_str, flag="卖出")
+                    if df_sell is not None and not df_sell.empty:
+                        dfs.append(df_sell)
+                except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
+                    pass
 
-            if dfs:
-                df_concat = pd.concat(dfs, ignore_index=True)
-                seen_detail_rows = set()
-                for _, s_row in df_concat.iterrows():
-                    yyb_name = str(s_row.get("交易营业部名称", ""))
-                    matched_kw = next((kw for kw in FOREIGN_KEYWORDS if kw in yyb_name), None)
-                    if matched_kw:
-                        detail_row_key = _build_foreign_row_key(s_row)
-                        if detail_row_key in seen_detail_rows:
-                            continue
-                        seen_detail_rows.add(detail_row_key)
-                        net_str = str(s_row.get("净额", "0"))
-                        try:
-                            net_val = float(net_str)
-                        except (TypeError, ValueError):
-                            net_val = 0.0
-                        net_wan = net_val / 10000.0
-                        branch_details_map[matched_kw] = branch_details_map.get(matched_kw, 0.0) + net_wan
+                foreign_detail_cache[code] = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
 
-                for amt in branch_details_map.values():
-                    foreign_net_sum += amt
+            detail_df = foreign_detail_cache.get(code, pd.DataFrame())
+            if not detail_df.empty:
+                branch_details_map = _collect_foreign_branch_details(detail_df, reason)
+                foreign_net_sum = sum(branch_details_map.values())
             else:
                 # 降级保底：API完全拉不出买卖明细，无法计算净额，归零并标注失败
                 foreign_net_sum = 0.0
@@ -465,5 +514,4 @@ def fetch_lhb_pool_for_date(
         emit_success_log=emit_success_log,
         return_meta=return_meta,
     )
-
 
