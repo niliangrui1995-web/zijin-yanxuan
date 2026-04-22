@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import akshare as ak
 import numpy as np
 import pandas as pd
+import requests
 
 # 🌟 彻底封堵 tqdm 乱码进度条的“核弹级”补丁 🌟
 # 因为 akshare 在多线程后台调用时会锁定真实的底层终端，简单的截断 stdout 没用。
@@ -47,6 +48,10 @@ logger = get_logger()
 EARNINGS_QOQ_MIN_PCT = 30.0
 
 _POOL_CACHE = {}
+_THS_FINANCIAL_BENEFIT_CACHE = {}
+_THS_FINANCIAL_BENEFIT_CACHE_TTL_SEC = 30 * 60
+_THS_FINANCIAL_BENEFIT_FALLBACK_TTL_SEC = 6 * 60 * 60
+_THS_REQUEST_TIMEOUT = (5, 15)
 _AKSHARE_FETCH_ERRORS = (
     AttributeError,
     ConnectionError,
@@ -68,6 +73,17 @@ _EARNINGS_CACHE_ERRORS = (
     json.JSONDecodeError,
 )
 _EARNINGS_COMPUTE_ERRORS = _AKSHARE_FETCH_ERRORS + (ArithmeticError,)
+
+try:
+    from akshare.stock_fundamental.stock_finance_ths import headers as _AKSHARE_THS_HEADERS
+except (AttributeError, ImportError):
+    _AKSHARE_THS_HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/114.0.0.0 Safari/537.36"
+        )
+    }
 
 
 def _parse_amount(value):
@@ -94,6 +110,141 @@ def _parse_amount(value):
     except (ValueError, TypeError):
         return np.nan
 
+
+def _preview_remote_text(raw_text, limit: int = 120) -> str:
+    preview = " ".join((raw_text or "").split())
+    if not preview:
+        return "<empty>"
+    if len(preview) > limit:
+        return f"{preview[:limit]}..."
+    return preview
+
+
+def _ths_financial_benefit_cache_key(symbol: str, indicator: str) -> str:
+    return f"{str(symbol).zfill(6)}::{indicator}"
+
+
+def _get_cached_ths_financial_benefit(
+    symbol: str,
+    indicator: str,
+    *,
+    max_age_sec: int,
+) -> tuple[pd.DataFrame | None, float | None]:
+    cache_key = _ths_financial_benefit_cache_key(symbol, indicator)
+    cached = _THS_FINANCIAL_BENEFIT_CACHE.get(cache_key)
+    if cached is None:
+        return None, None
+
+    cached_time, cached_df = cached
+    age_sec = time.time() - cached_time
+    if age_sec > max_age_sec:
+        return None, None
+    return cached_df.copy(), age_sec
+
+
+def _set_cached_ths_financial_benefit(symbol: str, indicator: str, df: pd.DataFrame) -> pd.DataFrame:
+    cache_key = _ths_financial_benefit_cache_key(symbol, indicator)
+    cached_df = df.copy()
+    _THS_FINANCIAL_BENEFIT_CACHE[cache_key] = (time.time(), cached_df)
+    return cached_df.copy()
+
+
+def _format_ths_payload_error(symbol: str, response_text: str, detail: str, status_code: int | None = None) -> str:
+    parts = [f"symbol={str(symbol).zfill(6)}"]
+    if status_code is not None:
+        parts.append(f"status={status_code}")
+    parts.append(f"len={len(response_text or '')}")
+    parts.append(f"preview={_preview_remote_text(response_text)}")
+    parts.append(detail)
+    return "THS 返回异常: " + ", ".join(parts)
+
+
+def _fetch_stock_financial_benefit_ths(symbol: str, indicator: str = "按报告期") -> pd.DataFrame:
+    indicator_map = {
+        "按报告期": "report",
+        "按单季度": "simple",
+        "按年度": "year",
+    }
+    section_key = indicator_map.get(indicator)
+    if section_key is None:
+        raise ValueError(f"不支持的同花顺利润表口径: {indicator}")
+
+    cached_df, _ = _get_cached_ths_financial_benefit(
+        symbol,
+        indicator,
+        max_age_sec=_THS_FINANCIAL_BENEFIT_CACHE_TTL_SEC,
+    )
+    if cached_df is not None:
+        return cached_df
+
+    symbol = str(symbol).zfill(6)
+    url = f"https://basic.10jqka.com.cn/api/stock/finance/{symbol}_benefit.json"
+    headers = dict(_AKSHARE_THS_HEADERS)
+    headers.setdefault("Accept", "application/json, text/plain, */*")
+    headers.setdefault("Referer", f"https://basic.10jqka.com.cn/new/{symbol}/finance.html")
+
+    try:
+        response = requests.get(url, headers=headers, timeout=_THS_REQUEST_TIMEOUT)
+    except requests.RequestException as exc:
+        raise RuntimeError(f"THS 请求失败: symbol={symbol}, {exc}") from exc
+
+    response_text = response.text or ""
+    if response.status_code != 200:
+        raise RuntimeError(
+            _format_ths_payload_error(
+                symbol,
+                response_text,
+                "HTTP 状态异常",
+                response.status_code,
+            )
+        )
+
+    stripped_text = response_text.strip()
+    if not stripped_text:
+        raise ValueError(_format_ths_payload_error(symbol, response_text, "响应体为空", response.status_code))
+    if stripped_text[0] not in "{[":
+        raise ValueError(_format_ths_payload_error(symbol, response_text, "返回内容不是 JSON", response.status_code))
+
+    try:
+        payload = json.loads(stripped_text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            _format_ths_payload_error(symbol, response_text, f"外层 JSON 解析失败: {exc}", response.status_code)
+        ) from exc
+
+    flash_data = payload.get("flashData")
+    if not flash_data:
+        raise ValueError(_format_ths_payload_error(symbol, response_text, "缺少 flashData", response.status_code))
+
+    try:
+        data_json = json.loads(flash_data)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"THS flashData 解析失败: symbol={symbol}, {exc}") from exc
+
+    title_data = data_json.get("title") or []
+    section_data = data_json.get(section_key) or []
+    if not isinstance(title_data, list) or not title_data:
+        raise ValueError(f"THS 数据结构异常: symbol={symbol}, title 缺失")
+    if not isinstance(section_data, list) or not section_data:
+        return _set_cached_ths_financial_benefit(symbol, indicator, pd.DataFrame(columns=["报告期"]))
+
+    header_row = section_data[0]
+    data_rows = section_data[1:]
+    if not isinstance(header_row, list):
+        raise ValueError(f"THS 数据结构异常: symbol={symbol}, {section_key} 表头缺失")
+
+    df_index = [item[0] if isinstance(item, list) else item for item in title_data]
+    if data_rows and len(df_index[1:]) != len(data_rows):
+        raise ValueError(
+            f"THS 数据结构异常: symbol={symbol}, title={len(df_index[1:])}, rows={len(data_rows)}"
+        )
+
+    temp_df = pd.DataFrame(data_rows, columns=header_row, index=df_index[1:])
+    temp_df = temp_df.T
+    temp_df.reset_index(inplace=True)
+    temp_df.rename(columns={"index": "报告期"}, inplace=True)
+    return _set_cached_ths_financial_benefit(symbol, indicator, temp_df)
+
 def safe_ak_fetch(fetch_func, *args, **kwargs):
     """带退避的强力护甲 + 大白话进度解说"""
     retries = 3
@@ -106,6 +257,7 @@ def safe_ak_fetch(fetch_func, *args, **kwargs):
     elif "yjbb" in fname: func_cn = "【正式财报池】"
     elif "yjkb" in fname: func_cn = "【业绩快报池】"
     elif "financial_benefit" in fname: func_cn = "【同花顺历史底稿】"
+    is_ths_financial = "financial_benefit" in fname
 
     # 提取报备日期供打印
     param_str = kwargs.get('date', kwargs.get('symbol', '全局获取'))
@@ -123,12 +275,15 @@ def safe_ak_fetch(fetch_func, *args, **kwargs):
     for i in range(retries):
         try:
             # 只有抓历史底稿时过于频繁，为了不刷屏少打印开始。大型池子打印。
-            if "financial_benefit" not in fname:
+            if not is_ths_financial:
                 logger.info(f"[业绩引擎] 拉取 {func_cn} ({param_str})...")
 
-            res = fetch_func(*args, **kwargs)
+            if fetch_func is ak.stock_financial_benefit_ths:
+                res = _fetch_stock_financial_benefit_ths(*args, **kwargs)
+            else:
+                res = fetch_func(*args, **kwargs)
 
-            if "financial_benefit" not in fname:
+            if not is_ths_financial:
                 logger.info(f"[业绩引擎] ✅ {func_cn} ({param_str}) 拉取完成")
                 _POOL_CACHE[f"{fname}_{param_str}"] = (time.time(), res.copy() if not res.empty else res)
 
@@ -137,11 +292,24 @@ def safe_ak_fetch(fetch_func, *args, **kwargs):
         except _AKSHARE_FETCH_ERRORS as e:
             error_msg = str(e)
             if "NoneType" in error_msg or "not subscriptable" in error_msg:
-                if "financial_benefit" not in fname:
+                if not is_ths_financial:
                     logger.info(f"[业绩引擎] {func_cn} ({param_str}) 暂无数据，跳过")
                 return pd.DataFrame()
 
             if i == retries - 1:
+                if fetch_func is ak.stock_financial_benefit_ths:
+                    indicator = kwargs.get("indicator", "按报告期")
+                    stale_df, age_sec = _get_cached_ths_financial_benefit(
+                        param_str,
+                        indicator,
+                        max_age_sec=_THS_FINANCIAL_BENEFIT_FALLBACK_TTL_SEC,
+                    )
+                    if stale_df is not None:
+                        logger.warning(
+                            f"[业绩引擎] ⚠️ {func_cn} ({param_str}) 连续失败，回退使用 "
+                            f"{int(age_sec)}s 前缓存: {e}"
+                        )
+                        return stale_df
                 logger.error(f"[业绩引擎] ❌ {func_cn} ({param_str}) 重试 {retries} 次后仍失败: {e}")
                 raise e
 
