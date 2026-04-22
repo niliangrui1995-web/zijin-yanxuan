@@ -1,7 +1,11 @@
+from unittest.mock import patch
+
 from core.runtime_env import (
+    WINDOWS_APP_USER_MODEL_ID,
     collect_runtime_env_issues,
     relaunch_into_project_venv_if_needed,
     resolve_project_python,
+    set_windows_app_user_model_id,
     should_relaunch_into_project_venv,
 )
 
@@ -111,3 +115,29 @@ def test_relaunch_into_project_venv_execs_target_python(tmp_path):
         "--flag",
     ]
     assert env["VCP_ALREADY_RELAUNCHED"] == "1"
+
+
+def test_set_windows_app_user_model_id_calls_windows_api():
+    calls = []
+
+    class FakeShell32:
+        def SetCurrentProcessExplicitAppUserModelID(self, value):
+            calls.append(value)
+            return 0
+
+    with patch("core.runtime_env._is_windows", return_value=True):
+        applied = set_windows_app_user_model_id(shell32=FakeShell32())
+
+    assert applied is True
+    assert calls == [WINDOWS_APP_USER_MODEL_ID]
+
+
+def test_set_windows_app_user_model_id_handles_windows_api_failure():
+    class FakeShell32:
+        def SetCurrentProcessExplicitAppUserModelID(self, value):
+            return 5
+
+    with patch("core.runtime_env._is_windows", return_value=True):
+        applied = set_windows_app_user_model_id(shell32=FakeShell32())
+
+    assert applied is False

@@ -20,6 +20,7 @@ _WINDOWS_RUNTIME_MODULES = (
     ("yfinance", "yfinance"),
     ("win32gui", "pywin32"),
 )
+WINDOWS_APP_USER_MODEL_ID = "com.zijinresearch.vcphunter.quantterminal"
 
 
 def _parse_version_tuple(version_text: str) -> tuple[int, ...]:
@@ -46,6 +47,31 @@ def _safe_package_version(package_name: str) -> str:
 
 def _is_windows() -> bool:
     return os.name == "nt"
+
+
+def set_windows_app_user_model_id(
+    app_id: str = WINDOWS_APP_USER_MODEL_ID,
+    *,
+    shell32=None,
+) -> bool:
+    if not _is_windows():
+        return False
+
+    normalized_app_id = str(app_id or "").strip()
+    if not normalized_app_id:
+        return False
+
+    try:
+        import ctypes
+
+        shell32_api = shell32 or ctypes.windll.shell32
+        set_app_id = shell32_api.SetCurrentProcessExplicitAppUserModelID
+        if hasattr(set_app_id, "argtypes"):
+            set_app_id.argtypes = [ctypes.c_wchar_p]
+            set_app_id.restype = ctypes.c_long
+        return set_app_id(normalized_app_id) == 0
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        return False
 
 
 def project_venv_python_candidates(project_root: str) -> list[str]:
