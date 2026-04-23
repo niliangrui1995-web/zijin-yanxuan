@@ -535,6 +535,16 @@ class ScanTab(BaseStockTab):
         self._on_incremental_scan_clicked()
         return True
 
+    def run_auto_incremental_scan_after_f5(self) -> bool:
+        if self.worker is not None and self.worker.isRunning():
+            log.info("[扫描] F5后自动补扫跳过：当前已有扫描任务运行中")
+            return False
+        self._on_incremental_scan_clicked()
+        return True
+
+    def refresh_data_after_f5(self) -> bool:
+        return self.run_auto_incremental_scan_after_f5()
+
     def open_scan_settings(self) -> bool:
         self._show_scan_settings()
         return True

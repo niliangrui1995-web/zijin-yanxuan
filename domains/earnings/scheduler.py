@@ -139,6 +139,14 @@ class EarningsScheduler(QObject):
         logger.info(f"[业绩调度] 手动扫描: {date_list[0]} ~ {date_list[-1]}")
         self._run_in_background("gap_fill", missing_dates=date_list)
 
+    def trigger_routine_scan(self, reason: str = "manual") -> bool:
+        if self.active_workers:
+            logger.info(f"[业绩调度] 即时巡检跳过({reason})：已有后台任务运行中")
+            return False
+        logger.info(f"[业绩调度] 触发即时巡检({reason})")
+        self._run_in_background("routine")
+        return True
+
     def _check_schedule(self):
         now = MarketCalendar.now("CN")
 

@@ -178,6 +178,39 @@ def test_workspace_runs_fund_holdings_auto_sync_through_public_facade():
     assert calls == ["fund"]
 
 
+def test_workspace_refreshes_information_sources_after_f5():
+    calls = []
+    specs = [
+        {"key": "watchlist", "group": "主工作台"},
+        {"key": "scan", "group": "情报源"},
+        {"key": "foreign_block", "group": "情报源"},
+        {"key": "earnings", "group": "情报源"},
+        {"key": "fund_holdings", "group": "情报源"},
+        {"key": "system_log", "group": "系统"},
+    ]
+    workspace = _make_workspace(
+        tabs={
+            "watchlist": SimpleNamespace(refresh_data_after_f5=lambda: calls.append("watchlist")),
+            "scan": SimpleNamespace(refresh_data_after_f5=lambda: (calls.append("scan") or True)),
+            "foreign_block": SimpleNamespace(refresh_data_after_f5=lambda: (calls.append("foreign") or True)),
+            "earnings": SimpleNamespace(refresh_data_after_f5=lambda: (calls.append("earnings") or True)),
+            "fund_holdings": SimpleNamespace(refresh_data_after_f5=lambda: (calls.append("fund") or True)),
+            "system_log": SimpleNamespace(refresh_data_after_f5=lambda: calls.append("log")),
+        }
+    )
+    workspace.tab_specs = lambda: list(specs)
+
+    results = ClassicWorkspace.refresh_information_sources_after_f5(workspace)
+
+    assert calls == ["scan", "foreign", "earnings", "fund"]
+    assert results == {
+        "scan": True,
+        "foreign_block": True,
+        "earnings": True,
+        "fund_holdings": True,
+    }
+
+
 def test_workspace_defers_heavy_tab_autoload(monkeypatch):
     ctor_kwargs = {}
 

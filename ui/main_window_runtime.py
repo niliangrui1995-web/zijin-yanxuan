@@ -91,12 +91,19 @@ def finish_f5_reload(main_window, *, count, elapsed, event_bus):
     except (AttributeError, RuntimeError, TypeError) as exc:
         log.error(f"[F5] 广播缓存重载完成信号异常: {exc}")
 
-    auto_sync_after_f5 = getattr(workspace, "run_fund_holdings_auto_sync_after_f5", None)
-    if callable(auto_sync_after_f5):
+    refresh_information_sources_after_f5 = getattr(workspace, "refresh_information_sources_after_f5", None)
+    if callable(refresh_information_sources_after_f5):
         try:
-            auto_sync_after_f5()
+            refresh_information_sources_after_f5()
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-            log.error(f"[F5] 基金持仓自动更新异常: {exc}")
+            log.error(f"[F5] 情报源自动刷新异常: {exc}")
+    else:
+        auto_sync_after_f5 = getattr(workspace, "run_fund_holdings_auto_sync_after_f5", None)
+        if callable(auto_sync_after_f5):
+            try:
+                auto_sync_after_f5()
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                log.error(f"[F5] 基金持仓自动更新异常: {exc}")
 
     if count > 0:
         if hasattr(main_window, "lbl_status"):

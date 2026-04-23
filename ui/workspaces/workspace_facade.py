@@ -1,11 +1,19 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from ui.workspaces.quote_universe_service import QuoteUniverseService
-from ui.workspaces.tab_capabilities import RtMonitorControlCapability, ScanResultsCapability, TableCollectionCapability
+from core.logger import get_logger
+from ui.workspaces.quote_universe_service import INFO_SOURCE_GROUP, QuoteUniverseService
+from ui.workspaces.tab_capabilities import (
+    PostF5DataRefreshCapability,
+    RtMonitorControlCapability,
+    ScanResultsCapability,
+    TableCollectionCapability,
+)
 from ui.workspaces.watchlist_radar_service import WatchlistRadarService
 from ui.workspaces.workspace_navigation_service import WorkspaceNavigationService
 from ui.workspaces.workspace_table_service import WorkspaceTableService
+
+log = get_logger(__name__)
 
 
 class WorkspaceFacade:
@@ -58,6 +66,27 @@ class WorkspaceFacade:
 
     def refresh_all_tabs_after_f5(self) -> None:
         self._workspace_table_service.refresh_all_tabs_after_f5()
+
+    def refresh_information_sources_after_f5(self) -> dict[str, bool]:
+        """F5 完成后触发情报源自身的数据刷新，不只回灌行情快照。"""
+        tab_specs = getattr(self._workspace, "tab_specs", None)
+        specs = list(tab_specs() or []) if callable(tab_specs) else []
+        results: dict[str, bool] = {}
+        for spec in specs:
+            if str(spec.get("group", "")).strip() != INFO_SOURCE_GROUP:
+                continue
+            key = str(spec.get("key", "")).strip()
+            if not key:
+                continue
+            tab = self._get_tab(key)
+            if not isinstance(tab, PostF5DataRefreshCapability):
+                continue
+            try:
+                results[key] = bool(tab.refresh_data_after_f5())
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                results[key] = False
+                log.warning(f"[F5] {key} 情报源数据刷新失败: {exc}")
+        return results
 
     def select_scan_row(self, index: int) -> bool:
         return self._workspace_navigation_service.select_scan_row(index)

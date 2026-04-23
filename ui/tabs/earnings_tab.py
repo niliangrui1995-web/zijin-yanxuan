@@ -449,6 +449,15 @@ class EarningsTab(BaseStockTab):
         """业绩异动不向中央报价站贡献代码，避免盘中触发联网补价。"""
         return set()
 
+    def refresh_data_after_f5(self) -> bool:
+        runner = getattr(self.scheduler, "trigger_routine_scan", None)
+        if not callable(runner):
+            return False
+        started = bool(runner(reason="F5后自动更新"))
+        if started:
+            self._set_window_status("F5后业绩巡检中", "即时检查")
+        return started
+
     def _apply_latest_quotes_from_store(self):
         self.refresh_table_from_latest_snapshot()
         self._recalc_pe_ttm()

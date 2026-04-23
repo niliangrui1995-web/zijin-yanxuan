@@ -977,6 +977,9 @@ class FundHoldingsTab(BaseStockTab):
         self._run_sync_action("F5后自动更新", fund_holdings_sync_service.sync_latest_all)
         return True
 
+    def refresh_data_after_f5(self) -> bool:
+        return self.run_auto_sync_after_f5()
+
     def run_full_sync(self) -> bool:
         if self._sync_active:
             return False

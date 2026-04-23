@@ -22,6 +22,11 @@ class SnapshotRefreshCapability(Protocol):
 
 
 @runtime_checkable
+class PostF5DataRefreshCapability(Protocol):
+    def refresh_data_after_f5(self) -> bool: ...
+
+
+@runtime_checkable
 class PrimaryRowSelectionCapability(Protocol):
     def select_primary_row(self, index: int) -> bool: ...
 

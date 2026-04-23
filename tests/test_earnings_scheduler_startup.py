@@ -39,3 +39,30 @@ def test_build_startup_scan_dates_returns_empty_when_window_is_already_covered(m
     dates = EarningsScheduler._build_startup_scan_dates("2026-04-16", has_cached_records=True)
 
     assert dates == []
+
+
+def test_trigger_routine_scan_runs_once_when_idle(monkeypatch):
+    scheduler = EarningsScheduler()
+    calls = []
+    monkeypatch.setattr(
+        scheduler,
+        "_run_in_background",
+        lambda mode, missing_dates=None, target_date=None: calls.append((mode, missing_dates, target_date)),
+    )
+    try:
+        assert scheduler.trigger_routine_scan(reason="test") is True
+        assert calls == [("routine", None, None)]
+    finally:
+        scheduler.stop_patrol()
+
+
+def test_trigger_routine_scan_skips_when_worker_active(monkeypatch):
+    scheduler = EarningsScheduler()
+    calls = []
+    monkeypatch.setattr(scheduler, "_run_in_background", lambda *args, **kwargs: calls.append(args))
+    scheduler.active_workers.add(object())
+    try:
+        assert scheduler.trigger_routine_scan(reason="test") is False
+        assert calls == []
+    finally:
+        scheduler.stop_patrol()

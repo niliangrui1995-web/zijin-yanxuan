@@ -174,6 +174,9 @@ class ClassicWorkspace(QWidget):
     def refresh_all_tabs_after_f5(self) -> None:
         _resolve_workspace_facade(self).refresh_all_tabs_after_f5()
 
+    def refresh_information_sources_after_f5(self) -> dict[str, bool]:
+        return _resolve_workspace_facade(self).refresh_information_sources_after_f5()
+
     def select_scan_row(self, index: int) -> bool:
         return _resolve_workspace_facade(self).select_scan_row(index)
 

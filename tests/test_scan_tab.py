@@ -63,6 +63,39 @@ def test_scan_tab_does_not_join_realtime_quote_universe(monkeypatch):
         tab.deleteLater()
 
 
+def test_scan_tab_auto_f5_incremental_scan_skips_running_worker(monkeypatch):
+    monkeypatch.setattr("ui.tabs.scan_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+
+    class _RunningWorker:
+        def isRunning(self):
+            return True
+
+    tab = ScanTab(data_provider=None, engine=None)
+    calls = []
+    try:
+        tab.worker = _RunningWorker()
+        tab._on_incremental_scan_clicked = lambda: calls.append("start")
+
+        assert tab.run_auto_incremental_scan_after_f5() is False
+        assert calls == []
+    finally:
+        tab.deleteLater()
+
+
+def test_scan_tab_auto_f5_incremental_scan_starts_when_idle(monkeypatch):
+    monkeypatch.setattr("ui.tabs.scan_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+
+    tab = ScanTab(data_provider=None, engine=None)
+    calls = []
+    try:
+        tab._on_incremental_scan_clicked = lambda: calls.append("start")
+
+        assert tab.run_auto_incremental_scan_after_f5() is True
+        assert calls == ["start"]
+    finally:
+        tab.deleteLater()
+
+
 def test_merge_scan_results_keeps_existing_rows_when_incremental_scan_has_no_hits(monkeypatch):
     monkeypatch.setattr("ui.tabs.scan_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
 
