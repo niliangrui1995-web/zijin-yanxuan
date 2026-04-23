@@ -57,7 +57,7 @@ def _fetch_eastmoney_finance_info(codes):
         batch = normalized_codes[start:start + batch_size]
         secids = ",".join(_to_eastmoney_secid(code) for code in batch)
         url = (
-            "https://push2.eastmoney.com/api/qt/ulist.np/get"
+            "https://push2.eastmoney.com/api/qt/ulist/get"
             f"?fltt=2&np=3&ut=bd1d9ddb04089700cf9c27f6f7426281"
             f"&invt=2&fields={fields}&secids={secids}"
         )

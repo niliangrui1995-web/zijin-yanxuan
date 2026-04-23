@@ -110,7 +110,7 @@ def request_eastmoney_quote_batch(provider, codes, inferred_trade_date: str):
 
     for host in hosts:
         url = (
-            f"https://{host}/api/qt/ulist.np/get"
+            f"https://{host}/api/qt/ulist/get"
             f"?fltt=2&np=3&ut=bd1d9ddb04089700cf9c27f6f7426281"
             f"&invt=2&fields={fields}&secids={secids}"
         )

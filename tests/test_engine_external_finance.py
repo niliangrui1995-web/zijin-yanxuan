@@ -50,6 +50,8 @@ def test_batch_get_finance_info_uses_eastmoney_market_cap_fields(monkeypatch, tm
     result = engine_external.batch_get_finance_info(["000001"])
 
     assert seen_urls
+    assert "/api/qt/ulist/get" in seen_urls[0]
+    assert "/api/qt/ulist.np/get" not in seen_urls[0]
     assert "fields=f12,f2,f18,f20,f21" in seen_urls[0]
     assert "secids=0.000001" in seen_urls[0]
     assert result["000001"]["zongguben"] == pytest.approx(217540343000 / 11.19)

@@ -69,6 +69,8 @@ def test_fetch_realtime_quotes_batch_uses_eastmoney_live_quotes_without_tdx_pool
     def _fake_urlopen(request, timeout=8):
         del timeout
         url = request.full_url
+        assert "/api/qt/ulist/get" in url
+        assert "/api/qt/ulist.np/get" not in url
         assert "secids=0.000001,1.600519" in url
         return _FakeHttpResponse(
             {
