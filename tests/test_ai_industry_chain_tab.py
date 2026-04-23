@@ -5,7 +5,9 @@ from copy import deepcopy
 import pandas as pd
 import pytest
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtTest import QSignalSpy
 
+from app.services.ui_runtime_service import domain_events as event_bus
 from core.global_store import global_store
 from app.services.ui_runtime_service import watchlist_vm
 from ui.tabs.ai_industry_chain_tab import AIIndustryChainTab
@@ -103,6 +105,34 @@ def test_ai_industry_chain_uses_plain_pct_headers_for_quotes(monkeypatch, tmp_pa
         tab.deleteLater()
 
 
+def test_ai_industry_chain_reset_view_restores_source_order(monkeypatch, tmp_path):
+    workbook_path = tmp_path / "AI产业链.xlsx"
+    _write_workbook(workbook_path)
+    monkeypatch.setattr(QTimer, "singleShot", lambda *args, **kwargs: None)
+
+    tab = AIIndustryChainTab(DummyProvider(), workbook_path=workbook_path)
+    monkeypatch.setattr(tab, "refresh_table_quotes_and_market_caps", lambda **kwargs: None)
+
+    try:
+        tab._load_chain_data()
+        code_col = tab.model.headers.index("代码")
+
+        tab.table.sortByColumn(code_col, Qt.SortOrder.DescendingOrder)
+        assert tab.proxy_model.sortColumn() == code_col
+
+        tab._reset_view()
+
+        assert tab.proxy_model.sortColumn() == -1
+        visible_codes = []
+        for row in range(tab.proxy_model.rowCount()):
+            source_row = tab.proxy_model.mapToSource(tab.proxy_model.index(row, 0)).row()
+            visible_codes.append(tab.model.row_data[source_row]["代码"])
+        assert visible_codes == ["002384", "688498"]
+    finally:
+        tab.close()
+        tab.deleteLater()
+
+
 def test_ai_industry_chain_refreshes_from_global_snapshot_without_fetch(monkeypatch, tmp_path):
     workbook_path = tmp_path / "AI产业链.xlsx"
     _write_workbook(workbook_path)
@@ -185,3 +215,21 @@ def test_ai_industry_chain_watchlist_payload_maps_segment_and_source(monkeypatch
         assert "涨幅" not in entry
     finally:
         watchlist_vm._cache = original_cache
+
+
+def test_ai_industry_chain_emits_updated_event_after_successful_load(monkeypatch, tmp_path):
+    workbook_path = tmp_path / "AI产业链.xlsx"
+    _write_workbook(workbook_path)
+    monkeypatch.setattr(QTimer, "singleShot", lambda *args, **kwargs: None)
+
+    tab = AIIndustryChainTab(DummyProvider(), workbook_path=workbook_path)
+    monkeypatch.setattr(tab, "refresh_table_quotes_and_market_caps", lambda **kwargs: None)
+    spy = QSignalSpy(event_bus.sig_ai_industry_chain_updated)
+
+    try:
+        tab._load_chain_data()
+
+        assert len(spy) == 1
+    finally:
+        tab.close()
+        tab.deleteLater()

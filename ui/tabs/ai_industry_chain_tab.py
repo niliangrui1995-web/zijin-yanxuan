@@ -7,6 +7,7 @@ from pathlib import Path
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
+from app.services.ui_runtime_service import domain_events as event_bus
 from app.services.ui_runtime_service import task_registry, ui_signals
 from core.logger import get_logger
 from ui.components import TableStateWrapper, VCPTableView
@@ -60,7 +61,10 @@ class AIIndustryChainTab(BaseStockTab):
         btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_refresh.clicked.connect(self._load_chain_data)
 
-        toolbar = self.build_tab_toolbar("AI产业链", self.status_label, [self.search_box], [btn_refresh])
+        btn_reset = QPushButton("解除排序")
+        btn_reset.clicked.connect(self._reset_view)
+
+        toolbar = self.build_tab_toolbar("AI产业链", self.status_label, [self.search_box], [btn_refresh, btn_reset])
         layout.addWidget(toolbar)
 
         self.table = VCPTableView(default_row_height=30)
@@ -97,6 +101,20 @@ class AIIndustryChainTab(BaseStockTab):
     def _on_search_text_changed(self, text):
         self.proxy_model.setFilterText(text)
         self._refresh_chain_status()
+
+    def _reset_view(self):
+        self.table.sortByColumn(-1, Qt.SortOrder.AscendingOrder)
+        rows = getattr(self.model, "row_data", []) or []
+        if not rows:
+            self._refresh_chain_status()
+            return
+        self._set_chain_status(
+            "AI产业链已就绪",
+            self._status_metric("标的 ", len(self._chain_codes), "只"),
+            self._status_metric("映射 ", len(rows), "条"),
+            freshness=self._workbook_freshness(),
+            next_step="已解除排序",
+        )
 
     def _current_filter_summary(self) -> str:
         keyword = str(self.search_box.text() or "").strip()
@@ -303,6 +321,7 @@ class AIIndustryChainTab(BaseStockTab):
             self.refresh_table_quotes_and_market_caps(
                 quote_task_id=task_registry.quote_refresh("ai_industry_chain").task_id
             )
+            event_bus.sig_ai_industry_chain_updated.emit()
         else:
             self.table_state.show_empty("暂无AI产业链数据")
             self._set_chain_status("AI产业链为空", freshness=self._workbook_freshness(), next_step="检查Excel内容")

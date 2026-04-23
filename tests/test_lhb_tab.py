@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import datetime as dt
+from types import SimpleNamespace
 
 from core.market_calendar import MarketCalendar
 from ui.tabs.lhb_tab import LhbTab
@@ -129,5 +130,36 @@ def test_lhb_can_defer_pool_bootstrap_until_first_show(monkeypatch):
         assert calls == ["scheduler"]
         tab._ensure_pool_bootstrap_started()
         assert calls == ["scheduler", "load"]
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_watchlist_radar_rows_reads_cache_without_bootstrap(monkeypatch):
+    monkeypatch.setattr(LhbTab, "_start_auto_scheduler", lambda self: None, raising=False)
+    monkeypatch.setattr(LhbTab, "_load_and_display_pool", lambda self: (_ for _ in ()).throw(AssertionError("should not load full tab")), raising=False)
+    monkeypatch.setattr(LhbTab, "_get_engine", staticmethod(lambda: None), raising=False)
+
+    tab = LhbTab(object(), autoload_pool=False)
+    calls = []
+    tab.pool_manager = SimpleNamespace(
+        compute_pool=lambda data_provider=None, engine=None: calls.append((data_provider, engine)) or [
+            {
+                "代码": "300750",
+                "名称": "宁德时代",
+                "最近上榜": "20260420",
+                "上榜净买额(万)": 1200,
+                "机构净买(万)": 800,
+                "外资净买(万)": -150,
+            }
+        ]
+    )
+
+    try:
+        rows = tab.get_watchlist_radar_rows()
+
+        assert calls == [(None, None)]
+        assert rows[0]["代码"] == "300750"
+        assert rows[0]["最近上榜"] == "04-20"
+        assert rows[0]["_最近上榜_raw"] == "20260420"
     finally:
         tab.deleteLater()

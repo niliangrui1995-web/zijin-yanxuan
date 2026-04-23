@@ -179,6 +179,29 @@ def test_watchlist_status_summary_includes_recent_refresh(monkeypatch):
         tab.deleteLater()
 
 
+def test_watchlist_requests_recalc_after_ai_chain_update(monkeypatch):
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)
+    monkeypatch.setattr(watchlist_module.QTimer, "singleShot", staticmethod(lambda *_args, **_kwargs: None))
+
+    calls = []
+    current = {}
+    monkeypatch.setattr(
+        watchlist_module.WatchlistTab,
+        "_request_vcp_calc",
+        lambda self, delay_ms=500: calls.append(delay_ms) if current.get("tab") is self else None,
+    )
+
+    tab = watchlist_module.WatchlistTab(_DummyProvider())
+    current["tab"] = tab
+    try:
+        watchlist_module.event_bus.sig_ai_industry_chain_updated.emit()
+
+        assert calls == [500]
+    finally:
+        tab.deleteLater()
+
+
 def test_watchlist_clears_stale_special_columns_when_current_round_has_no_signal(monkeypatch):
     monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
     monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)

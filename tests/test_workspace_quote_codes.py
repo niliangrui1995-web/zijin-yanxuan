@@ -19,6 +19,10 @@ def _make_rows_tab(rows):
     return SimpleNamespace(get_row_data=lambda current_model=None: list(rows or []))
 
 
+def _make_lhb_radar_tab(rows):
+    return SimpleNamespace(get_watchlist_radar_rows=lambda: list(rows or []))
+
+
 def _make_quote_tab(codes):
     return SimpleNamespace(get_realtime_quote_codes=lambda: set(codes or set()))
 
@@ -168,6 +172,29 @@ def test_workspace_watchlist_subsector_prefers_ai_chain_over_na_daily():
         "300750": "液冷 / 储能链",
         "002415": "北美战报独有分类",
     }
+
+
+def test_workspace_collects_lhb_radar_from_deferred_cache_reader():
+    workspace = _make_workspace(
+        tabs={
+            "lhb": _make_lhb_radar_tab(
+                [
+                    {
+                        "代码": "300750",
+                        "_最近上榜_raw": "20260420",
+                        "上榜净买额(万)": 1200,
+                        "机构净买(万)": 800,
+                        "外资净买(万)": -150,
+                    }
+                ]
+            ),
+        },
+    )
+
+    *_, lhb_data, _ = ClassicWorkspace.collect_watchlist_radar_data(workspace)
+
+    assert lhb_data["300750"]["text"] == "04-20 | 净买1200万 | 机构净买800万 | 外资净卖150万"
+    assert lhb_data["300750"]["date"] == "20260420"
 
 
 def test_workspace_refreshes_all_tabs_after_f5():

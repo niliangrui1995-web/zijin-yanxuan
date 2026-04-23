@@ -25,6 +25,7 @@ class DomainEventBus(QObject):
     sig_earnings_updated = pyqtSignal()
     sig_asian_klines_ready = pyqtSignal()
     sig_na_daily_updated = pyqtSignal()
+    sig_ai_industry_chain_updated = pyqtSignal()
     sig_block_trade_updated = pyqtSignal()
     sig_lhb_pool_updated = pyqtSignal()
 

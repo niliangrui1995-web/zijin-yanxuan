@@ -101,6 +101,9 @@ class WatchlistRadarService:
 
     @staticmethod
     def _get_rows(tab) -> list[dict]:
+        radar_reader = getattr(tab, "get_watchlist_radar_rows", None)
+        if callable(radar_reader):
+            return list(radar_reader() or [])
         get_row_data = getattr(tab, "get_row_data", None)
         if not callable(get_row_data):
             return []

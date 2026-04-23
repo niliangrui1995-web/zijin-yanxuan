@@ -25,6 +25,7 @@ class GlobalEventBus:
         self.sig_earnings_updated = domain_events.sig_earnings_updated
         self.sig_asian_klines_ready = domain_events.sig_asian_klines_ready
         self.sig_na_daily_updated = domain_events.sig_na_daily_updated
+        self.sig_ai_industry_chain_updated = domain_events.sig_ai_industry_chain_updated
         self.sig_block_trade_updated = domain_events.sig_block_trade_updated
         self.sig_lhb_pool_updated = domain_events.sig_lhb_pool_updated
         self.sig_watchlist_changed = domain_events.sig_watchlist_changed

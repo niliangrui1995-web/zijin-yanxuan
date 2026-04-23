@@ -48,6 +48,7 @@ class WatchlistTab(BaseStockTab):
         event_bus.sig_cache_reload_completed.connect(self._on_cache_or_earnings_updated)
         event_bus.sig_earnings_updated.connect(self._on_cache_or_earnings_updated)
         event_bus.sig_na_daily_updated.connect(self._on_na_daily_updated)
+        event_bus.sig_ai_industry_chain_updated.connect(self._on_ai_industry_chain_updated)
         event_bus.sig_block_trade_updated.connect(self._on_block_trade_updated)
         event_bus.sig_lhb_pool_updated.connect(self._on_cache_or_earnings_updated)
         event_bus.sig_vcp_watchlist_ready.connect(self._on_vcp_watchlist_ready)
@@ -722,6 +723,10 @@ class WatchlistTab(BaseStockTab):
 
     def _on_na_daily_updated(self):
         """美股日报最近5份内容刷新后，同步关注池的细分板块/催化剂缓存。"""
+        self._request_vcp_calc()
+
+    def _on_ai_industry_chain_updated(self):
+        """AI产业链刷新后，同步关注池的细分板块来源。"""
         self._request_vcp_calc()
 
     def _on_block_trade_updated(self):

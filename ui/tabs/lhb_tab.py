@@ -342,17 +342,32 @@ class LhbTab(BaseStockTab):
         message = f"[龙虎榜池] {today_str} 今日探针异常，手动刷新沿用参考交易日 {ref_trade_date.strftime('%Y%m%d')}"
         return MarketCalendar.get_recent_trade_dates(n, ref_date=ref_trade_date), message, "warn"
 
+    @staticmethod
+    def _format_pool_row(rec: dict) -> dict:
+        row_dict = dict(rec or {})
+        # "最近上榜" 格式化：yyyyMMdd -> MM-dd 更紧凑，同时保留原始日期给关注池汇总使用
+        raw_date = str(row_dict.get("最近上榜", ""))
+        if len(raw_date) == 8:
+            row_dict["_最近上榜_raw"] = raw_date
+            row_dict["最近上榜"] = f"{raw_date[4:6]}-{raw_date[6:8]}"
+        return row_dict
+
+    def get_watchlist_radar_rows(self) -> list[dict]:
+        """给关注池读取龙虎榜信号；未打开本 tab 时也只读本地池缓存，不触发整页加载。"""
+        rows = self.get_row_data()
+        if rows:
+            return rows
+
+        try:
+            pool = self.pool_manager.compute_pool(data_provider=None, engine=self._get_engine())
+        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.debug(f"[龙虎榜池] 关注池读取本地池缓存失败: {exc}")
+            return []
+        return [self._format_pool_row(rec) for rec in pool]
+
     def _display_pool(self, pool: list[dict]):
         """将池数据渲染到表格"""
-        row_data = []
-        for rec in pool:
-            row_dict = dict(rec)
-            # "最近上榜" 格式化：yyyyMMdd -> MM-dd 更紧凑
-            raw_date = str(row_dict.get("最近上榜", ""))
-            if len(raw_date) == 8:
-                row_dict["_最近上榜_raw"] = raw_date
-                row_dict["最近上榜"] = f"{raw_date[4:6]}-{raw_date[6:8]}"
-            row_data.append(row_dict)
+        row_data = [self._format_pool_row(rec) for rec in pool]
 
         self.model.update_data(row_data)
 
