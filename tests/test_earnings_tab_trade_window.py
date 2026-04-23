@@ -44,6 +44,22 @@ def test_earnings_tab_does_not_join_realtime_quote_universe():
     assert EarningsTab.get_realtime_quote_codes(None) == set()
 
 
+def test_apply_latest_quotes_does_not_trigger_online_market_cap_backfill():
+    class DummyTab:
+        pass
+
+    tab = DummyTab()
+    calls = []
+
+    tab.refresh_table_from_latest_snapshot = lambda: calls.append("snapshot")
+    tab.async_update_market_caps = lambda: calls.append("unexpected_market_caps")
+    tab._recalc_pe_ttm = lambda: calls.append("pe")
+
+    EarningsTab._apply_latest_quotes_from_store(tab)
+
+    assert calls == ["snapshot", "pe"]
+
+
 def test_filter_out_st_dataframe_removes_st_rows():
     df = pd.DataFrame(
         [

@@ -26,6 +26,7 @@ from app.services.ui_runtime_service import (
     task_id_of,
     task_registry,
 )
+from vcp.data_provider_local import load_local_tdx_capital_snapshot
 
 _FINANCE_CACHE_LOCK = threading.RLock()
 _FINANCE_CACHE_PATH: str | None = None
@@ -118,7 +119,7 @@ def collect_missing_finance_codes(owner, current_model=None) -> list[str]:
     return list(dict.fromkeys(missing))
 
 
-def load_cached_finance_snapshot(codes) -> dict[str, dict]:
+def load_cached_finance_snapshot(codes, *, tdx_vipdoc: str | None = None) -> dict[str, dict]:
     normalized_codes = [
         str(code or "").strip()
         for code in dict.fromkeys(codes or [])
@@ -127,19 +128,27 @@ def load_cached_finance_snapshot(codes) -> dict[str, dict]:
     if not normalized_codes:
         return {}
 
+    finance_snapshot: dict[str, dict] = {}
+    if tdx_vipdoc:
+        try:
+            finance_snapshot.update(load_local_tdx_capital_snapshot(normalized_codes, tdx_vipdoc))
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            pass
+
     try:
         cache_payload = _load_shared_finance_cache_payload(_current_finance_cache_file())
     except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
-        return {}
+        return finance_snapshot
 
-    finance_snapshot: dict[str, dict] = {}
     for code in normalized_codes:
         cached_entry = dict(cache_payload.get(code) or {})
         info = dict(cached_entry.get("info") or {})
         if not info:
             continue
-        info.setdefault("source", "finance_cache")
-        finance_snapshot[code] = info
+        merged = finance_snapshot.setdefault(code, {})
+        for key, value in info.items():
+            merged.setdefault(key, value)
+        merged.setdefault("source", "finance_cache")
     return finance_snapshot
 
 
@@ -182,7 +191,15 @@ def _resolve_cached_finance_loader(owner):
     loader = getattr(owner, "_load_cached_finance_snapshot", None)
     if callable(loader):
         return loader
-    return load_cached_finance_snapshot
+
+    def _load(codes):
+        data_provider = getattr(owner, "data_provider", None)
+        return load_cached_finance_snapshot(
+            codes,
+            tdx_vipdoc=getattr(data_provider, "tdx_vipdoc", None),
+        )
+
+    return _load
 
 
 def prime_local_quote_snapshot(owner, current_model=None) -> dict:
@@ -574,4 +591,3 @@ def async_update_market_caps(owner) -> None:
         return
 
     MarketCapRefreshBatcher.enqueue(owner, codes_need_cap)
-

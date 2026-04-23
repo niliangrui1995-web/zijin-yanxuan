@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import os
+import struct
+import threading
 from datetime import datetime
 
 import pandas as pd
@@ -15,6 +17,10 @@ from vcp.constants import CACHE_DIR, MAX_HISTORY_BARS
 from vcp.utils import ensure_pandas_dataframe, read_tdx_day_file
 
 _log = get_logger(__name__)
+_BASE_DBF_LOCK = threading.RLock()
+_BASE_DBF_PATH: str | None = None
+_BASE_DBF_SIGNATURE: tuple[int, int] | None = None
+_BASE_DBF_CAPITALS: dict[str, dict] | None = None
 
 
 def serialize_gbbq_cache(data_map: dict) -> dict:
@@ -33,6 +39,126 @@ def deserialize_gbbq_cache(payload: dict) -> dict:
             continue
         restored[str(code)] = pd.DataFrame(rows)
     return restored
+
+
+def _dbf_signature(path: str) -> tuple[int, int] | None:
+    try:
+        stat_result = os.stat(path)
+    except (FileNotFoundError, OSError, TypeError, ValueError):
+        return None
+    return (int(stat_result.st_mtime_ns), int(stat_result.st_size))
+
+
+def _parse_tdx_base_dbf(path: str) -> dict[str, dict]:
+    global _BASE_DBF_PATH, _BASE_DBF_SIGNATURE, _BASE_DBF_CAPITALS
+
+    signature = _dbf_signature(path)
+    with _BASE_DBF_LOCK:
+        if (
+            _BASE_DBF_PATH == path
+            and _BASE_DBF_SIGNATURE == signature
+            and _BASE_DBF_CAPITALS is not None
+        ):
+            return _BASE_DBF_CAPITALS
+
+        if signature is None:
+            _BASE_DBF_PATH = path
+            _BASE_DBF_SIGNATURE = None
+            _BASE_DBF_CAPITALS = {}
+            return _BASE_DBF_CAPITALS
+
+        try:
+            with open(path, "rb") as handle:
+                raw = handle.read()
+        except OSError as exc:
+            _log.debug(f"[数据中台] 读取通达信 base.dbf 失败: {exc}")
+            _BASE_DBF_PATH = path
+            _BASE_DBF_SIGNATURE = signature
+            _BASE_DBF_CAPITALS = {}
+            return _BASE_DBF_CAPITALS
+
+        try:
+            record_count = struct.unpack("<I", raw[4:8])[0]
+            header_len = struct.unpack("<H", raw[8:10])[0]
+            record_len = struct.unpack("<H", raw[10:12])[0]
+
+            fields = []
+            offset = 32
+            record_offset = 1
+            while offset + 32 <= header_len and raw[offset] != 0x0D:
+                desc = raw[offset:offset + 32]
+                name = desc[:11].split(b"\x00", 1)[0].decode("gbk", errors="ignore").strip()
+                length = int(desc[16])
+                fields.append((name, record_offset, length))
+                record_offset += length
+                offset += 32
+
+            code_field = next((item for item in fields if item[0] == "GPDM"), None)
+            capital_field = next((item for item in fields if item[0] == "ZGB"), None)
+            if not code_field or not capital_field or record_len <= 0:
+                raise ValueError("base.dbf 缺少 GPDM/ZGB 字段")
+
+            capitals: dict[str, dict] = {}
+            for i in range(record_count):
+                start = header_len + i * record_len
+                end = start + record_len
+                if end > len(raw):
+                    break
+                record = raw[start:end]
+                if record[:1] == b"*":
+                    continue
+
+                _, code_pos, code_len = code_field
+                _, capital_pos, capital_len = capital_field
+                code = record[code_pos:code_pos + code_len].decode("gbk", errors="ignore").strip()
+                zgb_text = record[capital_pos:capital_pos + capital_len].decode("gbk", errors="ignore").strip()
+                if len(code) != 6 or not code.isdigit() or not zgb_text:
+                    continue
+
+                zgb_wan_shares = float(zgb_text)
+                if zgb_wan_shares <= 0:
+                    continue
+                capitals[code] = {
+                    "zongguben": zgb_wan_shares * 10000.0,
+                    "source": "tdx_base",
+                }
+        except (IndexError, struct.error, TypeError, ValueError) as exc:
+            _log.debug(f"[数据中台] 解析通达信 base.dbf 失败: {exc}")
+            capitals = {}
+
+        _BASE_DBF_PATH = path
+        _BASE_DBF_SIGNATURE = signature
+        _BASE_DBF_CAPITALS = capitals
+        return _BASE_DBF_CAPITALS
+
+
+def load_local_tdx_capital_snapshot(codes, tdx_vipdoc: str | None) -> dict[str, dict]:
+    """Read total share capital from local Tongdaxin ``base.dbf``.
+
+    The ``ZGB`` field is stored in ten-thousand shares, while quote snapshots use
+    raw shares for dynamic market-cap calculation.
+    """
+
+    normalized_codes = [
+        str(code or "").strip().zfill(6)
+        for code in dict.fromkeys(codes or [])
+        if str(code or "").strip()
+    ]
+    normalized_codes = [
+        code for code in normalized_codes
+        if len(code) == 6 and code.isdigit()
+    ]
+    if not normalized_codes or not tdx_vipdoc:
+        return {}
+
+    tdx_root = os.path.dirname(tdx_vipdoc)
+    base_dbf_path = os.path.join(tdx_root, "T0002", "hq_cache", "base.dbf")
+    capital_map = _parse_tdx_base_dbf(base_dbf_path)
+    return {
+        code: dict(capital_map[code])
+        for code in normalized_codes
+        if code in capital_map
+    }
 
 
 def load_local_gbbq(

@@ -1,7 +1,9 @@
+import struct
+
 import pandas as pd
 import pytest
 
-from vcp.data_provider_local import apply_forward_adjustment, build_offline_quotes
+from vcp.data_provider_local import apply_forward_adjustment, build_offline_quotes, load_local_tdx_capital_snapshot
 
 
 def test_apply_forward_adjustment_handles_integer_volume_columns():
@@ -74,3 +76,40 @@ def test_build_offline_quotes_handles_non_pandas_dataframe():
     assert quotes["000001"]["close"] == pytest.approx(10.6)
     assert quotes["000001"]["last_close"] == pytest.approx(10.2)
     assert quotes["000001"]["date"] == "2026-04-10"
+
+
+def test_load_local_tdx_capital_snapshot_reads_base_dbf(tmp_path):
+    hq_cache = tmp_path / "T0002" / "hq_cache"
+    hq_cache.mkdir(parents=True)
+    base_dbf = hq_cache / "base.dbf"
+
+    fields = [("GPDM", "C", 6, 0), ("ZGB", "N", 14, 2)]
+    header_len = 32 + len(fields) * 32 + 1
+    record_len = 1 + sum(field[2] for field in fields)
+    header = bytearray(32)
+    header[0] = 0x03
+    header[4:8] = struct.pack("<I", 2)
+    header[8:10] = struct.pack("<H", header_len)
+    header[10:12] = struct.pack("<H", record_len)
+
+    field_desc = bytearray()
+    for name, field_type, length, decimals in fields:
+        desc = bytearray(32)
+        desc[:len(name)] = name.encode("ascii")
+        desc[11] = ord(field_type)
+        desc[16] = length
+        desc[17] = decimals
+        field_desc.extend(desc)
+
+    records = [
+        b" " + b"000001" + f"{1940591.87:14.2f}".encode("ascii"),
+        b" " + b"688129" + f"{12047.87:14.2f}".encode("ascii"),
+    ]
+    base_dbf.write_bytes(bytes(header) + bytes(field_desc) + b"\r" + b"".join(records) + b"\x1a")
+
+    snapshot = load_local_tdx_capital_snapshot(["000001", "688129", "300001"], str(tmp_path / "vipdoc"))
+
+    assert snapshot["000001"]["zongguben"] == pytest.approx(19_405_918_700)
+    assert snapshot["688129"]["zongguben"] == pytest.approx(120_478_700)
+    assert snapshot["000001"]["source"] == "tdx_base"
+    assert "300001" not in snapshot

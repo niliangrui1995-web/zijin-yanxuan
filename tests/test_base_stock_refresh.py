@@ -134,3 +134,44 @@ def test_load_cached_finance_snapshot_reuses_shared_file_cache(monkeypatch, tmp_
         }
     }
     assert load_calls == [str(cache_file), str(cache_file)]
+
+
+def test_load_cached_finance_snapshot_prefers_local_tdx_capital(monkeypatch, tmp_path):
+    from ui.tabs import base_stock_refresh as refresh_module
+    from vcp import constants as vcp_constants
+
+    cache_file = tmp_path / "finance.json"
+    save_json_file(
+        str(cache_file),
+        {
+            "000001": {
+                "info": {
+                    "zongguben": 1000000000,
+                    "market_cap": 11000000000,
+                    "source": "finance_cache",
+                },
+            }
+        },
+    )
+
+    monkeypatch.setattr(vcp_constants, "FINANCE_CACHE_FILE", str(cache_file))
+    monkeypatch.setattr(
+        refresh_module,
+        "load_local_tdx_capital_snapshot",
+        lambda codes, tdx_vipdoc: {
+            "000001": {
+                "zongguben": 2000000000,
+                "source": "tdx_base",
+            }
+        },
+    )
+
+    refresh_module._FINANCE_CACHE_PATH = None
+    refresh_module._FINANCE_CACHE_SIGNATURE = None
+    refresh_module._FINANCE_CACHE_PAYLOAD = None
+
+    snapshot = refresh_module.load_cached_finance_snapshot(["000001"], tdx_vipdoc="D:/HT/vipdoc")
+
+    assert snapshot["000001"]["zongguben"] == 2000000000
+    assert snapshot["000001"]["market_cap"] == 11000000000
+    assert snapshot["000001"]["source"] == "tdx_base"
