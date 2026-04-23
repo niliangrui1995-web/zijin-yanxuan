@@ -34,6 +34,10 @@ def test_determine_direction_keeps_only_foreign_actions():
     assert ForeignBlockTradeTab._determine_direction(None, "机构专用", "普通营业部")[0] == "--"
 
 
+def test_block_trade_tab_does_not_join_realtime_quote_universe():
+    assert ForeignBlockTradeTab.get_realtime_quote_codes(None) == set()
+
+
 def test_block_trade_search_only_matches_code_name_and_foreign_branch():
     model = StockTableModel(["代码", "名称", "交易详情", "买方营业部", "卖方营业部"])
     model.update_data([

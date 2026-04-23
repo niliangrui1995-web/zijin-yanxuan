@@ -9,7 +9,6 @@ from app.services.ui_runtime_service import domain_events as event_bus
 from core.logger import get_logger
 from app.services.ui_runtime_service import ui_signals
 from app.services.ui_runtime_service import EarningsScheduler
-from app.services.ui_runtime_service import task_registry
 from ui.components import MultiSelectFilterButton, TableStateWrapper, VCPTableView, format_multi_select_summary
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_tab import BaseStockTab
@@ -27,8 +26,8 @@ class EarningsTab(BaseStockTab):
         self._manual_fetch_range: tuple[str, str] | None = None
         self._init_ui()
 
-        # 订阅中央广播站报价及开启大一统市值更新
-        self.subscribe_global_quotes()
+        # 业绩页只消费 F5/本地快照，不加入盘中实时行情轮询。
+        event_bus.sig_cache_reload_completed.connect(self._on_cache_reload_completed)
 
         # 挂载后台总调度器
         self.scheduler = EarningsScheduler(self)
@@ -294,9 +293,7 @@ class EarningsTab(BaseStockTab):
 
         if changed:
             self.model.update_data(self.row_data)
-            self.refresh_table_quotes_and_market_caps(
-                quote_task_id=task_registry.quote_refresh("earnings").task_id
-            )
+            self._apply_latest_quotes_from_store()
 
         if hasattr(self, "table_state"):
             if self.row_data:
@@ -447,6 +444,17 @@ class EarningsTab(BaseStockTab):
             current_idx = clicked_visual_row
 
         ui_signals.sig_show_kline_with_list.emit(code, code_list, current_idx)
+
+    def get_realtime_quote_codes(self, current_model=None) -> set[str]:
+        """业绩异动不向中央报价站贡献代码，避免盘中触发联网补价。"""
+        return set()
+
+    def _apply_latest_quotes_from_store(self):
+        self.refresh_table_from_latest_snapshot()
+        self._recalc_pe_ttm()
+
+    def _on_cache_reload_completed(self):
+        self._apply_latest_quotes_from_store()
 
     def shutdown(self) -> None:
         self.scheduler.stop_patrol()

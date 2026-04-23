@@ -3,6 +3,17 @@ from __future__ import annotations
 
 from ui.workspaces.tab_capabilities import QuoteUniverseCapability
 
+INFO_SOURCE_GROUP = "情报源"
+DEFAULT_REALTIME_TAB_KEYS = (
+    "scan",
+    "rt_monitor",
+    "watchlist",
+    "foreign_block",
+    "na_daily",
+    "earnings",
+    "lhb",
+)
+
 
 class QuoteUniverseService:
     """汇总工作区内需要订阅实时行情的 A 股代码集合。"""
@@ -10,20 +21,32 @@ class QuoteUniverseService:
     def __init__(self, workspace):
         self._workspace = workspace
 
+    def _tab_specs(self) -> list[dict]:
+        workspace = self._workspace
+        specs = getattr(workspace, "_tab_specs", None)
+        if specs is not None:
+            return list(specs)
+        tab_specs = getattr(workspace, "tab_specs", None)
+        return list(tab_specs() or []) if callable(tab_specs) else []
+
+    def _realtime_tab_keys(self) -> tuple[str, ...]:
+        specs = self._tab_specs()
+        if not specs:
+            return DEFAULT_REALTIME_TAB_KEYS
+
+        keys = []
+        for spec in specs:
+            key = str(spec.get("key", "")).strip()
+            group = str(spec.get("group", "")).strip()
+            if key and group != INFO_SOURCE_GROUP:
+                keys.append(key)
+        return tuple(keys)
+
     def collect_realtime_quote_codes(self) -> set[str]:
         workspace = self._workspace
         codes: set[str] = set()
         get_tab = getattr(workspace, "get_tab", None)
-        tab_keys = (
-            "scan",
-            "rt_monitor",
-            "watchlist",
-            "foreign_block",
-            "na_daily",
-            "earnings",
-            "lhb",
-        )
-        for key in tab_keys:
+        for key in self._realtime_tab_keys():
             tab = get_tab(key) if callable(get_tab) else None
             if isinstance(tab, QuoteUniverseCapability):
                 codes.update(tab.get_realtime_quote_codes())

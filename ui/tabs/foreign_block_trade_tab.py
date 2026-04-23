@@ -107,7 +107,6 @@ FOREIGN_KEYWORDS = ["高盛", "摩根大通", "摩根士丹利", "瑞银", "法�
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _BLOCK_TRADE_CACHE_FILE = os.path.join(_PROJECT_ROOT, "data", "Cache", "foreign_block_trade_latest.json")
 _FOREIGN_BLOCK_TRADE_TASK = task_registry.workspace("foreign_block_trade")
-_FOREIGN_BLOCK_TRADE_QUOTE_TASK = task_registry.quote_refresh("foreign_block_trade")
 
 # 模块级K线缓存：每只股票的文件只读一次，后续直接从内存取
 _kline_cache: dict = {}
@@ -236,8 +235,8 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._load_local_cache()
         self._start_auto_scheduler()
 
-        # 订阅中央广播站报价及开启大一统市值更新
-        self.subscribe_global_quotes()
+        # 大宗交易页只消费 F5/本地快照，不加入盘中实时行情轮询。
+        event_bus.sig_cache_reload_completed.connect(self._on_cache_reload_completed)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -479,9 +478,7 @@ class ForeignBlockTradeTab(BaseStockTab):
                 )
                 if hasattr(self, "table_state"):
                     self.table_state.show_table()
-                self.refresh_table_quotes_and_market_caps(
-                    quote_task_id=_FOREIGN_BLOCK_TRADE_QUOTE_TASK.task_id
-                )
+                self._apply_latest_quotes_from_store()
             else:
                 self._set_fetch_status(
                     "本地缓存为空",
@@ -759,16 +756,14 @@ class ForeignBlockTradeTab(BaseStockTab):
         return list(FOREIGN_KEYWORDS)
 
     def get_realtime_quote_codes(self, current_model=None) -> set[str]:
-        codes = super().get_realtime_quote_codes(current_model=current_model)
-        if codes:
-            return codes
+        """大宗交易不向中央报价站贡献代码，避免盘中触发联网补价。"""
+        return set()
 
-        fallback_codes: set[str] = set()
-        for code in self._block_trade_codes or []:
-            code_text = str(code or "").strip()
-            if len(code_text) == 6 and code_text.isdigit():
-                fallback_codes.add(code_text)
-        return fallback_codes
+    def _apply_latest_quotes_from_store(self):
+        self.refresh_table_from_latest_snapshot()
+
+    def _on_cache_reload_completed(self):
+        self._apply_latest_quotes_from_store()
 
     def _on_data_fetched(self, payload):
         self._is_loading = False
@@ -917,9 +912,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._filter_table_combo()
         event_bus.sig_block_trade_updated.emit()
 
-        self.refresh_table_quotes_and_market_caps(
-            quote_task_id=_FOREIGN_BLOCK_TRADE_QUOTE_TASK.task_id
-        )
+        self._apply_latest_quotes_from_store()
 
     def _on_data_fetch_failed(self, error_message: str):
         self._is_loading = False

@@ -42,6 +42,32 @@ def test_workspace_collects_a_share_quote_codes_from_public_tab_apis():
     assert codes == {"000001", "600000", "300001", "688001", "002415", "601318"}
 
 
+def test_workspace_quote_universe_skips_information_source_group():
+    specs = [
+        {"key": "watchlist", "group": "主工作台"},
+        {"key": "lhb", "group": "主工作台"},
+        {"key": "scan", "group": "情报源"},
+        {"key": "foreign_block", "group": "情报源"},
+        {"key": "earnings", "group": "情报源"},
+        {"key": "fund_holdings", "group": "情报源"},
+    ]
+    workspace = _make_workspace(
+        tabs={
+            "watchlist": _make_quote_tab({"000001"}),
+            "lhb": _make_quote_tab({"601318"}),
+            "scan": _make_quote_tab({"000002"}),
+            "foreign_block": _make_quote_tab({"600000"}),
+            "earnings": _make_quote_tab({"300001"}),
+            "fund_holdings": _make_quote_tab({"002594"}),
+        }
+    )
+    workspace.tab_specs = lambda: list(specs)
+
+    codes = ClassicWorkspace.get_realtime_quote_codes(workspace)
+
+    assert codes == {"000001", "601318"}
+
+
 def test_workspace_primes_watchlist_with_public_startup_hook():
     called = []
     workspace = _make_workspace(
@@ -178,6 +204,9 @@ def test_workspace_defers_heavy_tab_autoload(monkeypatch):
     try:
         assert ctor_kwargs["lhb"]["autoload_pool"] is False
         assert ctor_kwargs["fund_holdings"]["autoload"] is False
+        groups = {spec["key"]: spec["group"] for spec in workspace.tab_specs()}
+        assert groups["lhb"] == "主工作台"
+        assert groups["scan"] == "情报源"
         assert "autoload_pool" not in ctor_kwargs["watchlist"]
         assert "autoload" not in ctor_kwargs["watchlist"]
     finally:

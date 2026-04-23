@@ -22,7 +22,6 @@ from core.logger import get_logger
 from app.services.ui_runtime_service import MarketCalendar
 from app.services.ui_runtime_service import ui_signals
 from app.services.ui_runtime_service import watchlist_vm
-from app.services.ui_runtime_service import task_registry
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.scan_dialogs import VCPScanRangeDialog, VCPScanSettingsDialog
 from ui.components.toast_widget import show_toast
@@ -55,8 +54,8 @@ class ScanTab(BaseStockTab):
         # 启动时自动加载上次缓存的扫描结果
         QTimer.singleShot(300, self._load_scan_cache)
 
-        # 统一订阅及后台刷新
-        self.subscribe_global_quotes()
+        # 情报源只消费 F5/本地快照，不加入盘中实时行情轮询。
+        event_bus.sig_cache_reload_completed.connect(self._on_cache_reload_completed)
 
     def _init_settings_widgets(self):
         """初始化扫描策略的内部存储控件，从 QSettings 恢复上次参数 (#8)"""
@@ -540,6 +539,16 @@ class ScanTab(BaseStockTab):
         self._show_scan_settings()
         return True
 
+    def get_realtime_quote_codes(self, current_model=None) -> set[str]:
+        """VCP 扫描不向中央报价站贡献代码，避免盘中触发联网补价。"""
+        return set()
+
+    def _apply_latest_quotes_from_store(self):
+        self.refresh_table_from_latest_snapshot(current_model=self.source_model)
+
+    def _on_cache_reload_completed(self):
+        self._apply_latest_quotes_from_store()
+
     # ==========================
     # 核心引擎调度与任务生命周期
     # ==========================
@@ -694,11 +703,7 @@ class ScanTab(BaseStockTab):
                 formatted_list.append(formatted_row)
 
             self.source_model.update_data(formatted_list)
-            self.refresh_table_quotes_and_market_caps(
-                current_model=self.source_model,
-                force_quotes=True,
-                quote_task_id=task_registry.quote_refresh("scan").task_id,
-            )
+            self._apply_latest_quotes_from_store()
             if hasattr(self, "table_state"):
                 self.table_state.show_table()
             self._refresh_scan_status()

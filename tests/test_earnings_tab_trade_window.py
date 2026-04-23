@@ -40,6 +40,10 @@ def test_earnings_display_trade_days_is_10():
     assert EARNINGS_DISPLAY_TRADE_DAYS == 10
 
 
+def test_earnings_tab_does_not_join_realtime_quote_universe():
+    assert EarningsTab.get_realtime_quote_codes(None) == set()
+
+
 def test_filter_out_st_dataframe_removes_st_rows():
     df = pd.DataFrame(
         [

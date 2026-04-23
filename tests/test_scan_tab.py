@@ -53,6 +53,16 @@ def test_merge_scan_results_prefers_newer_trade_date(monkeypatch):
         tab.deleteLater()
 
 
+def test_scan_tab_does_not_join_realtime_quote_universe(monkeypatch):
+    monkeypatch.setattr("ui.tabs.scan_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+
+    tab = ScanTab(data_provider=None, engine=None)
+    try:
+        assert tab.get_realtime_quote_codes() == set()
+    finally:
+        tab.deleteLater()
+
+
 def test_merge_scan_results_keeps_existing_rows_when_incremental_scan_has_no_hits(monkeypatch):
     monkeypatch.setattr("ui.tabs.scan_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
 
