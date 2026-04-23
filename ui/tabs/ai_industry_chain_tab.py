@@ -23,7 +23,7 @@ PLACEHOLDER = "--"
 
 class AIIndustryChainTab(BaseStockTab):
     COLUMNS = [
-        "代码", "名称", "现价", "涨幅", "市值", "细分环节",
+        "代码", "名称", "现价", "涨幅", "市值", "细分板块",
         "5日涨幅", "10日涨幅", "20日涨幅", "备注",
     ]
 
@@ -52,7 +52,7 @@ class AIIndustryChainTab(BaseStockTab):
 
         self.status_label = QLabel("未加载")
         self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("筛选代码、名称、环节或备注...")
+        self.search_box.setPlaceholderText("筛选代码、名称、板块或备注...")
         self.search_box.setMinimumWidth(180)
         self.search_box.setMaximumWidth(280)
         self.search_box.textChanged.connect(self._on_search_text_changed)
@@ -71,7 +71,7 @@ class AIIndustryChainTab(BaseStockTab):
         self.table_state = TableStateWrapper(self.table, empty_title="暂无AI产业链数据", loading_title="加载中...")
 
         self.model = StockTableModel(self.COLUMNS)
-        self.model.set_plain_style_headers(["细分环节", "备注"])
+        self.model.set_plain_style_headers(["细分板块", "备注"])
         self.proxy_model = RtSortFilterProxyModel(self.table)
         self.proxy_model.setSourceModel(self.model)
         self.table.setModel(self.proxy_model)
@@ -197,7 +197,7 @@ class AIIndustryChainTab(BaseStockTab):
                 "现价": PLACEHOLDER,
                 "涨幅": PLACEHOLDER,
                 "市值": PLACEHOLDER,
-                "细分环节": _get(raw_row, "细分环节"),
+                "细分板块": _get(raw_row, "细分板块") or _get(raw_row, "细分环节"),
                 "5日涨幅": PLACEHOLDER,
                 "10日涨幅": PLACEHOLDER,
                 "20日涨幅": PLACEHOLDER,
@@ -383,7 +383,7 @@ class AIIndustryChainTab(BaseStockTab):
     @staticmethod
     def _build_watchlist_payload(row: dict) -> dict:
         payload = dict(row or {})
-        segment = str(payload.get("细分环节") or "").strip()
+        segment = str(payload.get("细分板块") or payload.get("细分环节") or "").strip()
         if segment and not str(payload.get("细分板块") or "").strip():
             payload["细分板块"] = segment
 

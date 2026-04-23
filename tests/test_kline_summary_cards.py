@@ -27,3 +27,19 @@ def test_watchlist_summary_card_prefers_structured_amount_and_qoq_metrics():
     assert "大宗 2,709万" in event_row["value"]
     assert "环比 32.5%" in event_row["value"]
     assert "龙虎 净买1,200万" in event_row["value"]
+
+
+def test_generic_kline_summary_formats_plain_pct_value():
+    cards = build_kline_summary_cards(
+        {
+            "代码": "002384",
+            "名称": "东山精密",
+            "现价": "12.61",
+            "涨幅": 6.6988159322922,
+        }
+    )
+
+    pct_row = cards[0]["rows"][1]
+
+    assert pct_row["label"] == "涨幅"
+    assert pct_row["value"] == "6.70%"

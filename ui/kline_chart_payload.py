@@ -541,6 +541,7 @@ def _build_fund_holdings_summary_cards(payload: dict) -> list[dict]:
 
 
 def _build_generic_summary_cards(payload: dict) -> list[dict]:
+    pct_value = _summary_pick(payload, "涨幅%", "涨幅", default="")
     return [
         {
             "title": "交易快照",
@@ -552,12 +553,10 @@ def _build_generic_summary_cards(payload: dict) -> list[dict]:
                         ("价格", ("收盘", "close")),
                     ],
                 ),
-                _summary_option_row(
-                    payload,
-                    [
-                        ("涨幅", ("涨幅%", "涨幅")),
-                        ("状态", ("状态",)),
-                    ],
+                (
+                    _summary_row("涨幅", _summary_pick_pct(payload, "涨幅%", "涨幅"))
+                    if pct_value
+                    else _summary_option_row(payload, [("状态", ("状态",))])
                 ),
             ],
         },

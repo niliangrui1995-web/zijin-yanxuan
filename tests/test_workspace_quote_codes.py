@@ -97,7 +97,7 @@ def test_workspace_collects_structured_watchlist_radar_metrics():
                 [
                     {
                         "代码": "300750",
-                        "细分环节": "液冷 / 储能链",
+                        "细分板块": "液冷 / 储能链",
                     }
                 ]
             ),
@@ -160,7 +160,8 @@ def test_workspace_watchlist_subsector_prefers_ai_chain_over_na_daily():
             ),
             "ai_industry_chain": _make_rows_tab(
                 [
-                    {"代码": "300750", "细分环节": "液冷 / 储能链"},
+                    {"代码": "300750", "细分板块": "液冷 / 储能链"},
+                    {"代码": "300750", "细分板块": "后续重复分类"},
                 ]
             ),
         },

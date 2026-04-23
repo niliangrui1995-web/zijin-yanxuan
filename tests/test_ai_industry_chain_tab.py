@@ -37,7 +37,7 @@ def _write_workbook(path: Path):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "AI产业链"
-    ws.append(["细分环节", "代码", "公司名称", "备注"])
+    ws.append(["细分板块", "代码", "公司名称", "备注"])
     ws.append(["200G EML / InP激光器", "002384", "东山精密", "高速光芯片/光模块链条"])
     ws.append(["光DSP / 200G SerDes", "暂无", "暂无合格A股纯标的", "不硬凑"])
     ws.append(["CW / UHP激光器", "688498", "源杰科技", "布局CW激光器"])
@@ -61,14 +61,14 @@ def test_ai_industry_chain_loads_workbook_and_period_returns(monkeypatch, tmp_pa
         tab._load_chain_data()
 
         assert tab.model.headers == [
-            "序号", "代码", "名称", "现价", "涨幅", "市值", "细分环节",
+            "序号", "代码", "名称", "现价", "涨幅", "市值", "细分板块",
             "5日涨幅", "10日涨幅", "20日涨幅", "备注",
         ]
         assert len(tab.model.row_data) == 2
         first = tab.model.row_data[0]
         assert first["代码"] == "002384"
         assert first["名称"] == "东山精密"
-        assert first["细分环节"] == "200G EML / InP激光器"
+        assert first["细分板块"] == "200G EML / InP激光器"
         assert first["备注"] == "高速光芯片/光模块链条"
         assert first["5日涨幅"] == pytest.approx((21 / 16 - 1) * 100)
         assert first["10日涨幅"] == pytest.approx((21 / 11 - 1) * 100)
@@ -198,7 +198,7 @@ def test_ai_industry_chain_watchlist_payload_maps_segment_and_source(monkeypatch
         "现价": "13.20",
         "涨幅": 10.0,
         "市值": "132亿",
-        "细分环节": "200G EML / InP激光器",
+        "细分板块": "200G EML / InP激光器",
         "备注": "高速光芯片/光模块链条",
     })
 

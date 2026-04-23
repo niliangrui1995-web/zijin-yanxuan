@@ -8,7 +8,7 @@ KEY_NAME = "\u540d\u79f0"
 KEY_CATALYST = "\u50ac\u5316\u5242"
 KEY_CATALYST_EMOJI = "\U0001f4e0\u50ac\u5316\u5242"
 KEY_SUBSECTOR = "\u7ec6\u5206\u677f\u5757"
-KEY_CHAIN_SEGMENT = "\u7ec6\u5206\u73af\u8282"
+KEY_OLD_CHAIN_SEGMENT = "\u7ec6\u5206\u73af\u8282"
 KEY_DETAIL = "\u4ea4\u6613\u8be6\u60c5"
 KEY_BUY_BRANCH = "\u4e70\u65b9\u8425\u4e1a\u90e8"
 KEY_SELL_BRANCH = "\u5356\u65b9\u8425\u4e1a\u90e8"
@@ -135,13 +135,17 @@ class WatchlistRadarService:
             na_data[code] = str(row.get(KEY_CATALYST, "") or row.get(KEY_CATALYST_EMOJI, ""))
             na_subsector_data[code] = str(row.get(KEY_SUBSECTOR, "") or "")
 
+        seen_ai_chain_codes: set[str] = set()
         for row in self._get_rows(self._get_tab("ai_industry_chain")):
             code = str(row.get(KEY_CODE, "")).strip()
             if not code:
                 continue
-            segment = str(row.get(KEY_CHAIN_SEGMENT, "") or "").strip()
+            if code in seen_ai_chain_codes:
+                continue
+            segment = str(row.get(KEY_SUBSECTOR, "") or row.get(KEY_OLD_CHAIN_SEGMENT, "") or "").strip()
             if segment:
                 na_subsector_data[code] = segment
+                seen_ai_chain_codes.add(code)
 
         foreign_block_tab = self._get_tab("foreign_block")
         if foreign_block_tab is not None:
