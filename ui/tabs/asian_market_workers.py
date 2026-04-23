@@ -519,68 +519,171 @@ class AsianMarketWorker(QThread):
             time.sleep(0.1)
         return self._is_running
 
-    def _fetch_single_code(self, code: str, yf_session, info_session):
+    def _handle_optional_yahoo_error(self, code: str, exc: Exception, context: str) -> bool:
+        if is_yf_rate_limit_error(exc):
+            remaining_sec = mark_yf_rate_limited(exc)
+            log.warning(
+                "[AsianTab] %s 触发 Yahoo Finance 限流 %s: %s | 冷却 %s",
+                context,
+                code,
+                exc,
+                _format_cooldown_eta(remaining_sec),
+            )
+            return True
+        if isinstance(
+            exc,
+            (
+                AttributeError,
+                KeyError,
+                OSError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+            ),
+        ):
+            log.debug(f"[AsianTab] {context}失败 {code}: {exc}")
+            return False
+        raise exc
+
+    def _fetch_yahoo_enrichment(self, code: str, yf_session):
         if get_yf_rate_limit_status()["active"]:
-            return code, None
+            return {}, None, None
+
+        ticker = yf.Ticker(code, session=yf_session)
+        fast_info = {}
+        df = None
 
         try:
-            ticker = yf.Ticker(code, session=yf_session)
-            realtime_quote = fetch_asian_realtime_quote(code, yf_session=yf_session)
-            fast_info = ticker.fast_info
-            df = ticker.history(period="2mo", interval="1d", timeout=15)
+            fast_info = dict(ticker.fast_info or {})
         except Exception as exc:
-            if is_yf_rate_limit_error(exc):
-                remaining_sec = mark_yf_rate_limited(exc)
-                log.warning(
-                    "[AsianTab] 单票触发 Yahoo Finance 限流 %s: %s | 冷却 %s",
-                    code,
-                    exc,
-                    _format_cooldown_eta(remaining_sec),
-                )
-                return code, None
-            raise
+            if self._handle_optional_yahoo_error(code, exc, "Yahoo fast_info"):
+                return fast_info, df, ticker
 
-        if df.empty:
-            return code, None
+        if get_yf_rate_limit_status()["active"]:
+            return fast_info, df, ticker
+
+        try:
+            history_df = ticker.history(period="2mo", interval="1d", timeout=15)
+            if not getattr(history_df, "empty", True):
+                df = history_df
+        except Exception as exc:
+            self._handle_optional_yahoo_error(code, exc, "Yahoo 日线补充")
+
+        return fast_info, df, ticker
+
+    def _refresh_pe_if_needed(
+        self,
+        code: str,
+        *,
+        ticker,
+        info_session,
+        pe_value,
+        pe_source: str,
+        pe_updated_at: float,
+    ):
+        if (time.time() - pe_updated_at) < _PE_REFRESH_INTERVAL_SEC:
+            return pe_value, pe_source, pe_updated_at
+
+        market = MarketCalendar.normalize_market(MarketCalendar.infer_market(code))
+        if MarketCalendar.is_quote_refresh_time(market):
+            return pe_value, pe_source, pe_updated_at
+
+        if get_yf_rate_limit_status()["active"]:
+            return pe_value, pe_source, pe_updated_at
+
+        try:
+            info_ticker = ticker if ticker is not None else yf.Ticker(code, session=info_session)
+            info = info_ticker.info
+            trailing_pe = self._normalize_pe(info.get("trailingPE"))
+            forward_pe = self._normalize_pe(info.get("forwardPE"))
+            if trailing_pe is not None:
+                pe_value = trailing_pe
+                pe_source = "trailing"
+            elif forward_pe is not None:
+                pe_value = forward_pe
+                pe_source = "forward"
+            else:
+                pe_value = None
+                pe_source = ""
+            pe_updated_at = time.time()
+        except Exception as exc:
+            self._handle_optional_yahoo_error(code, exc, "PE 拉取")
+
+        return pe_value, pe_source, pe_updated_at
+
+    def _fetch_single_code(self, code: str, yf_session, info_session):
+        realtime_quote = None
+        try:
+            realtime_quote = fetch_asian_realtime_quote(code, yf_session=yf_session)
+        except Exception as exc:
+            self._handle_optional_yahoo_error(code, exc, "单票实时回退")
+
+        fast_info = {}
+        df = (realtime_quote or {}).get("df_today")
+        ticker = None
+        quote_source = str((realtime_quote or {}).get("source") or "").strip().lower()
+        if not realtime_quote or quote_source == "yfinance":
+            fast_info, history_df, ticker = self._fetch_yahoo_enrichment(code, yf_session)
+            if history_df is not None:
+                df = history_df
 
         close_price = _to_float((realtime_quote or {}).get("close")) or _to_float(fast_info.get("lastPrice"))
-        if close_price is None or close_price <= 0:
+        if (close_price is None or close_price <= 0) and df is not None and not getattr(df, "empty", True):
             close_price = float(df.iloc[-1]["Close"])
+        if close_price is None or close_price <= 0:
+            return code, None
 
         day_open = _to_float((realtime_quote or {}).get("open")) or _to_float(fast_info.get("open"))
-        if day_open is None or day_open <= 0:
+        if (day_open is None or day_open <= 0) and df is not None and not getattr(df, "empty", True):
             day_open = float(df.iloc[-1]["Open"])
+        if day_open is None or day_open <= 0:
+            day_open = close_price
 
         day_high = _to_float((realtime_quote or {}).get("high")) or _to_float(fast_info.get("dayHigh"))
-        if day_high is None or day_high <= 0:
+        if (day_high is None or day_high <= 0) and df is not None and not getattr(df, "empty", True):
             day_high = float(df.iloc[-1]["High"])
+        if day_high is None or day_high <= 0:
+            day_high = max(day_open, close_price)
 
         day_low = _to_float((realtime_quote or {}).get("low")) or _to_float(fast_info.get("dayLow"))
-        if day_low is None or day_low <= 0:
+        if (day_low is None or day_low <= 0) and df is not None and not getattr(df, "empty", True):
             day_low = float(df.iloc[-1]["Low"])
+        if day_low is None or day_low <= 0:
+            day_low = min(day_open, close_price)
 
         prev_close = _resolve_previous_close(
             realtime_quote=realtime_quote,
             fast_info=fast_info,
             df=df,
         )
-        if prev_close is None or prev_close <= 0:
+        if (
+            (prev_close is None or prev_close <= 0)
+            and df is not None
+            and not getattr(df, "empty", True)
+        ):
             prev_close = float(df.iloc[-2]["Close"]) if len(df) >= 2 else float(df.iloc[-1]["Close"])
+        if prev_close is None or prev_close <= 0:
+            prev_close = _to_float((GLOBAL_ASIAN_RT_CACHE.get(code, {}) or {}).get("previous_close")) or close_price
 
         pct = 0.0
         if prev_close > 0:
             pct = ((close_price / prev_close) - 1.0) * 100.0
 
+        cached_payload = GLOBAL_ASIAN_RT_CACHE.get(code, {}) or {}
+
         def _past_pct(days_ago: int) -> float:
+            cache_key = f"pct_{days_ago}"
+            if df is None or getattr(df, "empty", True):
+                return _to_float(cached_payload.get(cache_key)) or 0.0
             if len(df) <= days_ago:
-                return 0.0
+                return _to_float(cached_payload.get(cache_key)) or 0.0
             past_close = float(df.iloc[-(days_ago + 1)]["Close"])
             if past_close <= 0:
-                return 0.0
+                return _to_float(cached_payload.get(cache_key)) or 0.0
             return ((close_price / past_close) - 1.0) * 100.0
 
         quote_date = (realtime_quote or {}).get("date")
-        if not quote_date:
+        if not quote_date and df is not None and not getattr(df, "empty", True):
             try:
                 last_idx = df.index[-1]
                 if getattr(last_idx, "tzinfo", None) is not None:
@@ -589,49 +692,17 @@ class AsianMarketWorker(QThread):
             except (AttributeError, IndexError, TypeError, ValueError):
                 quote_date = None
 
-        cached_payload = GLOBAL_ASIAN_RT_CACHE.get(code, {}) or {}
         pe_value = cached_payload.get("pe")
         pe_source = cached_payload.get("pe_source", "")
         pe_updated_at = float(cached_payload.get("pe_updated_at", 0.0) or 0.0)
-        if (time.time() - pe_updated_at) >= _PE_REFRESH_INTERVAL_SEC:
-            try:
-                info_ticker = ticker if info_session is yf_session else yf.Ticker(code, session=info_session)
-                info = info_ticker.info
-                trailing_pe = self._normalize_pe(info.get("trailingPE"))
-                forward_pe = self._normalize_pe(info.get("forwardPE"))
-                if trailing_pe is not None:
-                    pe_value = trailing_pe
-                    pe_source = "trailing"
-                elif forward_pe is not None:
-                    pe_value = forward_pe
-                    pe_source = "forward"
-                else:
-                    pe_value = None
-                    pe_source = ""
-                pe_updated_at = time.time()
-            except Exception as exc:
-                if is_yf_rate_limit_error(exc):
-                    remaining_sec = mark_yf_rate_limited(exc)
-                    log.warning(
-                        "[AsianTab] PE 拉取触发 Yahoo Finance 限流 %s: %s | 冷却 %s",
-                        code,
-                        exc,
-                        _format_cooldown_eta(remaining_sec),
-                    )
-                elif isinstance(
-                    exc,
-                    (
-                        AttributeError,
-                        KeyError,
-                        OSError,
-                        RuntimeError,
-                        TypeError,
-                        ValueError,
-                    ),
-                ):
-                    log.debug(f"[AsianTab] PE 拉取失败 {code}: {exc}")
-                else:
-                    raise
+        pe_value, pe_source, pe_updated_at = self._refresh_pe_if_needed(
+            code,
+            ticker=ticker,
+            info_session=info_session,
+            pe_value=pe_value,
+            pe_source=pe_source,
+            pe_updated_at=pe_updated_at,
+        )
 
         payload = {
             "date": quote_date,
@@ -666,8 +737,6 @@ class AsianMarketWorker(QThread):
 
     def _fetch_updates(self) -> dict:
         updates = {}
-        if get_yf_rate_limit_status()["active"]:
-            return updates
         yf_session = build_yf_session(is_cf_proxy_enabled())
         info_session = build_yf_session(False) if is_cf_proxy_enabled() else yf_session
         codes = [str(code).strip() for code in self.codes if str(code).strip()]
@@ -745,16 +814,11 @@ class AsianMarketWorker(QThread):
             if rate_limit_status["active"]:
                 self._emit_status_once(
                     "Yahoo Finance 限流冷却中，约 "
-                    f"{_format_cooldown_eta(rate_limit_status['remaining_sec'])} 后重试，当前沿用本地缓存"
+                    f"{_format_cooldown_eta(rate_limit_status['remaining_sec'])} 后重试，仍尝试交易所实时报价"
                 )
-                self._manual_refresh_requested = False
-                self._cycle_done.set()
-                sleep_for = min(120.0 if auto_refresh_allowed else 30.0, max(5.0, rate_limit_status["remaining_sec"]))
-                if not self._sleep_with_break(sleep_for):
-                    return
-                continue
+            else:
+                self._last_status = ""
 
-            self._last_status = ""
             self._cycle_done.clear()
             try:
                 now = MarketCalendar.now("CN")
