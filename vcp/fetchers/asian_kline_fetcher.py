@@ -68,11 +68,22 @@ MARKET_SHORTCUT = {
 ASIAN_LOCAL_TICKER_OVERRIDES = {
     "TSMC": "2330.TW",
     "TUC": "6274.TWO",
+    "SCREEN Holdings": "7735.T",
+    "Nidec": "6594.T",
+    "AMADA": "6113.T",
+    "Union Tool": "6278.T",
+    "Ushio": "6925.T",
 }
 
 # Why: 亚洲页允许补充少量本地维护的赛道归属，避免上游产业字典尚未同步时出现“未知赛道”。
 ASIAN_LOCAL_TRACK_OVERRIDES = {
     "6274.TWO": "高频PCB与覆铜板材料",
+    "8035.T": "晶圆制造与材料设备",
+    "7735.T": "AI PCB生产设备",
+    "6594.T": "AI PCB生产设备",
+    "6113.T": "AI PCB生产设备",
+    "6278.T": "AI PCB生产设备",
+    "6925.T": "AI PCB生产设备",
 }
 
 _ALNUM_RE = re.compile(r"[a-z0-9]+")

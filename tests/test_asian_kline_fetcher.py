@@ -57,6 +57,19 @@ def test_filter_asian_tickers_includes_local_tuc_override(monkeypatch):
     assert tickers["TUC"] == "6274.TWO"
 
 
+def test_filter_asian_tickers_includes_ai_pcb_equipment_japan_names(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    monkeypatch.setattr(fetcher, "VANGUARD_TICKERS", {}, raising=False)
+
+    tickers = fetcher.filter_asian_tickers()
+
+    assert tickers["SCREEN Holdings"] == "7735.T"
+    assert tickers["Nidec"] == "6594.T"
+    assert tickers["AMADA"] == "6113.T"
+    assert tickers["Union Tool"] == "6278.T"
+    assert tickers["Ushio"] == "6925.T"
+
+
 def test_find_track_works_with_local_tsmc_tw_override(monkeypatch):
     fetcher = _load_fetcher_module(monkeypatch)
     monkeypatch.setattr(fetcher, "VANGUARD_TICKERS", {"TSMC": "TSM"}, raising=False)
@@ -78,6 +91,34 @@ def test_find_track_uses_local_track_override_for_tuc(monkeypatch):
     monkeypatch.setattr(fetcher, "OLIGARCH_DICT", {}, raising=False)
 
     assert fetcher._find_track("6274.TWO") == "高频PCB与覆铜板材料"
+    assert fetcher._find_track("8035.T") == "晶圆制造与材料设备"
+
+
+def test_find_track_uses_local_track_override_for_ai_pcb_equipment(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    monkeypatch.setattr(fetcher, "VANGUARD_TICKERS", {}, raising=False)
+    monkeypatch.setattr(fetcher, "OLIGARCH_DICT", {}, raising=False)
+
+    for ticker in ["7735.T", "6594.T", "6113.T", "6278.T", "6925.T"]:
+        assert fetcher._find_track(ticker) == "AI PCB生产设备"
+
+
+def test_asian_market_meta_labels_ai_pcb_equipment_names_and_roles():
+    from ui.tabs.asian_market_meta import get_ch_names_mapping, get_role_mapping
+
+    names = get_ch_names_mapping()
+    roles = get_role_mapping()
+
+    assert names["7735.T"] == "SCREEN"
+    assert names["6594.T"] == "尼得科"
+    assert names["6113.T"] == "天田"
+    assert names["6278.T"] == "Union Tool"
+    assert names["6925.T"] == "牛尾电机"
+    assert roles["7735.T"] == "LDI/直接成像设备"
+    assert roles["6594.T"] == "PCB电测/光学检测+精密马达"
+    assert roles["6113.T"] == "机械钻孔+激光钻孔"
+    assert roles["6278.T"] == "PCB微钻/钻针耗材"
+    assert roles["6925.T"] == "曝光/直接成像设备"
 
 
 def test_fetch_single_kline_routes_to_market_specific_history_source(monkeypatch):
