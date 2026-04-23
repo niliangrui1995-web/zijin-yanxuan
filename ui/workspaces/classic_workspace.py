@@ -4,6 +4,7 @@ from __future__ import annotations
 from PyQt6.QtWidgets import QTabWidget, QVBoxLayout, QWidget
 
 from core.logger import get_logger
+from ui.tabs.ai_industry_chain_tab import AIIndustryChainTab
 from ui.tabs.asian_market_tab import AsianMarketTab
 from ui.tabs.earnings_tab import EarningsTab
 from ui.tabs.foreign_block_trade_tab import ForeignBlockTradeTab
@@ -68,6 +69,14 @@ class ClassicWorkspace(QWidget):
                 "group_order": 30,
                 "attr": "tab_na_daily",
                 "widget": NADailyTab(self.data_provider, self),
+            },
+            {
+                "key": "ai_industry_chain",
+                "title": "AI产业链",
+                "group": "主工作台",
+                "group_order": 35,
+                "attr": "tab_ai_industry_chain",
+                "widget": AIIndustryChainTab(self.data_provider, self),
             },
             {
                 "key": "lhb",

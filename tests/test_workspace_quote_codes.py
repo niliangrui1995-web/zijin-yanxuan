@@ -31,6 +31,7 @@ def test_workspace_collects_a_share_quote_codes_from_public_tab_apis():
             "watchlist": _make_quote_tab({"000001", "300001"}),
             "foreign_block": _make_quote_tab({"600000", "688001"}),
             "na_daily": _make_quote_tab({"002415"}),
+            "ai_industry_chain": _make_quote_tab({"688498"}),
             "earnings": _make_quote_tab({"300001"}),
             "lhb": _make_quote_tab({"601318"}),
             "fund_holdings": _make_quote_tab({"002594", "00700"}),
@@ -39,12 +40,13 @@ def test_workspace_collects_a_share_quote_codes_from_public_tab_apis():
 
     codes = ClassicWorkspace.get_realtime_quote_codes(workspace)
 
-    assert codes == {"000001", "600000", "300001", "688001", "002415", "601318"}
+    assert codes == {"000001", "600000", "300001", "688001", "002415", "688498", "601318"}
 
 
 def test_workspace_quote_universe_skips_information_source_group():
     specs = [
         {"key": "watchlist", "group": "主工作台"},
+        {"key": "ai_industry_chain", "group": "主工作台"},
         {"key": "lhb", "group": "主工作台"},
         {"key": "scan", "group": "情报源"},
         {"key": "foreign_block", "group": "情报源"},
@@ -54,6 +56,7 @@ def test_workspace_quote_universe_skips_information_source_group():
     workspace = _make_workspace(
         tabs={
             "watchlist": _make_quote_tab({"000001"}),
+            "ai_industry_chain": _make_quote_tab({"688498"}),
             "lhb": _make_quote_tab({"601318"}),
             "scan": _make_quote_tab({"000002"}),
             "foreign_block": _make_quote_tab({"600000"}),
@@ -65,7 +68,7 @@ def test_workspace_quote_universe_skips_information_source_group():
 
     codes = ClassicWorkspace.get_realtime_quote_codes(workspace)
 
-    assert codes == {"000001", "601318"}
+    assert codes == {"000001", "688498", "601318"}
 
 
 def test_workspace_primes_watchlist_with_public_startup_hook():
@@ -86,6 +89,14 @@ def test_workspace_collects_structured_watchlist_radar_metrics():
         engine=SimpleNamespace(get_precomputed_rps=lambda: {"cached": True}),
         tabs={
             "na_daily": _make_rows_tab([]),
+            "ai_industry_chain": _make_rows_tab(
+                [
+                    {
+                        "代码": "300750",
+                        "细分环节": "液冷 / 储能链",
+                    }
+                ]
+            ),
             "foreign_block": _make_rows_tab(
                 [
                     {
@@ -124,7 +135,7 @@ def test_workspace_collects_structured_watchlist_radar_metrics():
     )
 
     assert na_data == {}
-    assert na_subsector_data == {}
+    assert na_subsector_data == {"300750": "液冷 / 储能链"}
     assert rps_bundle == {"cached": True}
     assert block_data["300750"]["text"] == "机构专用买入2709万"
     assert block_data["300750"]["amount_wan"] == 2709
@@ -134,12 +145,38 @@ def test_workspace_collects_structured_watchlist_radar_metrics():
     assert lhb_data["300750"]["net_wan"] == 1200
 
 
+def test_workspace_watchlist_subsector_prefers_ai_chain_over_na_daily():
+    workspace = _make_workspace(
+        tabs={
+            "na_daily": _make_rows_tab(
+                [
+                    {"代码": "300750", "细分板块": "北美战报旧分类"},
+                    {"代码": "002415", "细分板块": "北美战报独有分类"},
+                ]
+            ),
+            "ai_industry_chain": _make_rows_tab(
+                [
+                    {"代码": "300750", "细分环节": "液冷 / 储能链"},
+                ]
+            ),
+        },
+    )
+
+    _, na_subsector_data, *_ = ClassicWorkspace.collect_watchlist_radar_data(workspace)
+
+    assert na_subsector_data == {
+        "300750": "液冷 / 储能链",
+        "002415": "北美战报独有分类",
+    }
+
+
 def test_workspace_refreshes_all_tabs_after_f5():
     calls = []
     tabs = {
         "watchlist": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("watchlist")),
         "lhb": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("lhb")),
         "na_daily": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("na_daily")),
+        "ai_industry_chain": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("ai_chain")),
         "asian_market": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("asian")),
         "rt_monitor": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("rt")),
         "foreign_block": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("foreign")),
@@ -157,6 +194,7 @@ def test_workspace_refreshes_all_tabs_after_f5():
         "watchlist",
         "lhb",
         "na_daily",
+        "ai_chain",
         "asian",
         "rt",
         "foreign",
@@ -225,6 +263,7 @@ def test_workspace_defers_heavy_tab_autoload(monkeypatch):
     monkeypatch.setattr(classic_workspace_module, "WatchlistTab", _make_tab("watchlist"))
     monkeypatch.setattr(classic_workspace_module, "AsianMarketTab", _make_tab("asian_market"))
     monkeypatch.setattr(classic_workspace_module, "NADailyTab", _make_tab("na_daily"))
+    monkeypatch.setattr(classic_workspace_module, "AIIndustryChainTab", _make_tab("ai_industry_chain"))
     monkeypatch.setattr(classic_workspace_module, "RtMonitorTab", _make_tab("rt_monitor"))
     monkeypatch.setattr(classic_workspace_module, "ScanTab", _make_tab("scan"))
     monkeypatch.setattr(classic_workspace_module, "LhbTab", _make_tab("lhb"))
@@ -240,7 +279,9 @@ def test_workspace_defers_heavy_tab_autoload(monkeypatch):
         groups = {spec["key"]: spec["group"] for spec in workspace.tab_specs()}
         tab_keys = [spec["key"] for spec in workspace.tab_specs()]
         assert groups["lhb"] == "主工作台"
+        assert groups["ai_industry_chain"] == "主工作台"
         assert groups["scan"] == "情报源"
+        assert tab_keys.index("na_daily") < tab_keys.index("ai_industry_chain") < tab_keys.index("lhb")
         assert tab_keys.index("lhb") < tab_keys.index("rt_monitor")
         assert "autoload_pool" not in ctor_kwargs["watchlist"]
         assert "autoload" not in ctor_kwargs["watchlist"]

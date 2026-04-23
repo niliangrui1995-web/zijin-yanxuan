@@ -15,6 +15,7 @@ from ui.models.table_model_helpers import (
     _emit_model_row_ranges,
     _is_date_like_header,
     _is_numeric_header,
+    _is_pct_like_header,
     _is_status_header,
     _numeric_heat_color,
     _status_badge_color,
@@ -94,7 +95,7 @@ class StockTableModel(QAbstractTableModel):
     def _hydrate_latest_quotes_from_store(self):
         if not self._data or "代码" not in self._headers:
             return
-        if not any(header in self._headers for header in ("现价", "市价", "涨幅%", "市值", "买点")):
+        if not any(header in self._headers for header in ("现价", "市价", "涨幅%", "涨幅", "市值", "买点")):
             return
         try:
             from core.global_store import global_store
@@ -165,7 +166,7 @@ class StockTableModel(QAbstractTableModel):
             old_val = self._data[row].get(col_name)
             self._data[row][col_name] = new_val
 
-            if col_name in ["现价", "市价", "最新价", "最新", "涨幅%"]:
+            if col_name in ["现价", "市价", "最新价", "最新", "涨幅%", "涨幅"]:
                 try:
                     diff = float(str(new_val).strip('%').strip('+')) - float(str(old_val).strip('%').strip('+'))
                     if abs(diff) > 0.0001:
@@ -193,7 +194,7 @@ class StockTableModel(QAbstractTableModel):
 
         changed_rows = []
         quote_cols = []
-        for header in ("现价", "市价", "涨幅%", "市值"):
+        for header in ("现价", "市价", "涨幅%", "涨幅", "市值"):
             if header in self._headers:
                 quote_cols.append(self._headers.index(header))
         start_col = min(quote_cols) if quote_cols else None
@@ -220,9 +221,11 @@ class StockTableModel(QAbstractTableModel):
                     if price_key in self._headers and item_dict.get(price_key) != price_text:
                         self.set_cell_value(row, price_key, price_text, emit_signal=False)
                         row_changed = True
-            if pct is not None and item_dict.get("涨幅%") != pct:
-                self.set_cell_value(row, "涨幅%", pct, emit_signal=False)
-                row_changed = True
+            if pct is not None:
+                for pct_key in ("涨幅%", "涨幅"):
+                    if pct_key in self._headers and item_dict.get(pct_key) != pct:
+                        self.set_cell_value(row, pct_key, pct, emit_signal=False)
+                        row_changed = True
 
             if "市值" in self._headers:
                 cap_text = metrics.get("market_cap_text")
@@ -303,7 +306,7 @@ class StockTableModel(QAbstractTableModel):
                 if len(s_val) == 8 and s_val.isdigit() and s_val.startswith("20"):
                     return s_val
 
-            if "%" in key:
+            if _is_pct_like_header(key):
                 s_val = str(raw_val)
                 if s_val == "--" or s_val == "":
                     return s_val
@@ -350,11 +353,11 @@ class StockTableModel(QAbstractTableModel):
             if self._uses_plain_style(key) or _is_date_like_header(key):
                 return QColor(_c("TEXT_PRIMARY"))
 
-            if ("%" in key and "换手" not in key) or key in ["涨跌", "净额", "现价", "收盘", "最新价"]:
+            if (_is_pct_like_header(key) and "换手" not in key) or key in ["净额", "现价", "收盘", "最新价"]:
                 try:
                     target_pct = raw_val
                     if key in ["现价", "收盘", "最新价"]:
-                        target_pct = item_dict.get("涨幅%") or item_dict.get("涨跌") or "0"
+                        target_pct = item_dict.get("涨幅%") or item_dict.get("涨幅") or item_dict.get("涨跌") or "0"
 
                     pct = float(str(target_pct).replace('%', '').replace('+', '').replace(',', ''))
                     if pct >= 9.0:
@@ -532,4 +535,3 @@ class StockTableModel(QAbstractTableModel):
             if role == Qt.ItemDataRole.TextAlignmentRole:
                 return int(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
         return None
-

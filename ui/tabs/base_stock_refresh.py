@@ -77,7 +77,10 @@ def collect_quote_refresh_codes(owner, current_model=None, force: bool = False) 
         price_blank = owner._is_blank_quote_value(
             row_dict.get("现价", row_dict.get("市价"))
         )
-        pct_blank = owner._is_blank_quote_value(row_dict.get("涨幅%"), zero_is_blank=False)
+        pct_blank = owner._is_blank_quote_value(
+            row_dict.get("涨幅%", row_dict.get("涨幅")),
+            zero_is_blank=False,
+        )
         if price_blank or pct_blank:
             target_codes.append(code)
 

@@ -281,7 +281,7 @@ class WatchlistViewModel:
         if vcp_data and isinstance(vcp_data, dict):
             for k, v in vcp_data.items():
                 # 海鲜数据不写硬盘：坚决防守，切断时效性极强的实时数据污染持久层
-                if k in ["现价", "涨幅%", "市值", "最低", "最高", "开盘", "昨收", "成交额", "换手%"]:
+                if k in ["现价", "涨幅%", "涨幅", "市值", "最低", "最高", "开盘", "昨收", "成交额", "换手%"]:
                     continue
                 if hasattr(v, 'item'):
                     entry[k] = v.item()

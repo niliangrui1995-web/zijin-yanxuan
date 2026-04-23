@@ -9,6 +9,7 @@ pytdx>=1.72
 pandas>=1.5.0
 numpy>=1.23.0
 requests>=2.33.0
+openpyxl>=3.1.0
 
 # Performance helpers
 polars>=0.20.0

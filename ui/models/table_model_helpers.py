@@ -87,9 +87,11 @@ def _apply_quote_metrics_to_row(item_dict: dict, quote: dict) -> tuple[bool, dic
                 row_changed = True
 
     pct = metrics.get("pct")
-    if pct is not None and item_dict.get("涨幅%") != pct:
-        item_dict["涨幅%"] = pct
-        row_changed = True
+    if pct is not None:
+        for pct_key in ("涨幅%", "涨幅"):
+            if pct_key in item_dict and item_dict.get(pct_key) != pct:
+                item_dict[pct_key] = pct
+                row_changed = True
 
     cap_text = metrics.get("market_cap_text")
     if cap_text and item_dict.get("市值") != cap_text:
@@ -159,6 +161,8 @@ def _is_date_like_header(header: str) -> bool:
 def _is_numeric_header(header: str) -> bool:
     if header == SERIAL_HEADER or _is_status_header(header):
         return False
+    if header in {"细分板块", "细分环节"}:
+        return False
     if header in {"PE"}:
         return True
     keywords = (
@@ -181,6 +185,10 @@ def _is_numeric_header(header: str) -> bool:
     return any(keyword in header for keyword in keywords)
 
 
+def _is_pct_like_header(header: str) -> bool:
+    return "%" in header or "涨幅" in header or header == "涨跌"
+
+
 def _numeric_heat_color(header: str, raw_val):
     value = _parse_numeric_value(raw_val)
     if value is None:
@@ -190,7 +198,7 @@ def _numeric_heat_color(header: str, raw_val):
     alpha = 0
     base = None
 
-    if "%" in header or header in {"涨跌", "现价", "市价", "收盘", "最新价"}:
+    if _is_pct_like_header(header) or header in {"现价", "市价", "收盘", "最新价"}:
         if abs(value) < 0.01:
             return None
         base = _c("COLOR_RISE") if value > 0 else _c("COLOR_FALL")
@@ -345,5 +353,4 @@ def _emit_model_row_ranges(model, changed_rows, start_col: int, end_col: int, ro
         start_row = prev_row = row
 
     model.dataChanged.emit(model.index(start_row, start_col), model.index(prev_row, end_col), roles)
-
 
