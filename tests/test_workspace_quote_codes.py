@@ -205,8 +205,10 @@ def test_workspace_defers_heavy_tab_autoload(monkeypatch):
         assert ctor_kwargs["lhb"]["autoload_pool"] is False
         assert ctor_kwargs["fund_holdings"]["autoload"] is False
         groups = {spec["key"]: spec["group"] for spec in workspace.tab_specs()}
+        tab_keys = [spec["key"] for spec in workspace.tab_specs()]
         assert groups["lhb"] == "主工作台"
         assert groups["scan"] == "情报源"
+        assert tab_keys.index("lhb") < tab_keys.index("rt_monitor")
         assert "autoload_pool" not in ctor_kwargs["watchlist"]
         assert "autoload" not in ctor_kwargs["watchlist"]
     finally:
