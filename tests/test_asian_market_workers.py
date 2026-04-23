@@ -6,6 +6,26 @@ from yfinance.exceptions import YFRateLimitError
 from ui.tabs import asian_market_workers as workers
 
 
+class _FakeResponse:
+    def __init__(self, *, text="", data=None, status_code=200):
+        self.text = text
+        self._data = data
+        self.status_code = status_code
+
+    def json(self):
+        return self._data
+
+
+class _FakeSession:
+    def __init__(self, response):
+        self.response = response
+        self.urls = []
+
+    def get(self, url, **kwargs):
+        self.urls.append(url)
+        return self.response
+
+
 def test_fetch_asian_realtime_quote_skips_yfinance_fallback_during_cooldown(monkeypatch):
     monkeypatch.setattr(workers, "_fetch_tw_realtime_quote", lambda code, session: None)
     monkeypatch.setattr(
@@ -313,3 +333,147 @@ def test_fetch_single_code_prefers_resolved_previous_close_for_pct(monkeypatch):
     assert payload is not None
     assert payload["previous_close"] == 26720.0
     assert round(payload["pct"], 4) == round((26460.0 / 26720.0 - 1.0) * 100.0, 4)
+
+
+def test_twse_pe_fallback_parses_daily_pe_endpoint():
+    session = _FakeSession(
+        _FakeResponse(
+            data={
+                "fields": ["證券代號", "證券名稱", "收盤價", "本益比"],
+                "data": [
+                    ["2317", "鴻海", "180.00", "18.20"],
+                    ["2330", "台積電", "2080.00", "28.46"],
+                ],
+            },
+        )
+    )
+
+    pe, source = workers._fetch_asian_pe_fallback("2330.TW", session)
+
+    assert pe == 28.46
+    assert source == "twse_per"
+    assert "BWIBBU_d" in session.urls[0]
+
+
+def test_tpex_pe_fallback_parses_openapi_endpoint():
+    session = _FakeSession(
+        _FakeResponse(
+            data=[
+                {"SecuritiesCompanyCode": "6488", "PriceEarningRatio": "39.24"},
+                {"SecuritiesCompanyCode": "8299", "PriceEarningRatio": "-"},
+            ],
+        )
+    )
+
+    pe, source = workers._fetch_asian_pe_fallback("6488.TWO", session)
+
+    assert pe == 39.24
+    assert source == "tpex_per"
+    assert "tpex_mainboard_peratio_analysis" in session.urls[0]
+
+
+def test_kr_naver_pe_fallback_parses_per_element():
+    session = _FakeSession(
+        _FakeResponse(text='<table><tr><td><em id="_per">20.78</em></td></tr></table>')
+    )
+
+    pe, source = workers._fetch_asian_pe_fallback("000660.KS", session)
+
+    assert pe == 20.78
+    assert source == "naver_per"
+    assert "main.naver" in session.urls[0]
+
+
+def test_jp_yahoo_pe_fallback_parses_per_data_item():
+    session = _FakeSession(
+        _FakeResponse(
+            text=(
+                '<dt><a><span>PER</span><span>（会社予想）</span></a></dt>'
+                '<dd><span>(連)</span><span>22.20</span><span>倍</span></dd>'
+            )
+        )
+    )
+
+    pe, source = workers._fetch_asian_pe_fallback("7735.T", session)
+
+    assert pe == 22.20
+    assert source == "yahoo_jp_per"
+    assert "finance.yahoo.co.jp" in session.urls[0]
+
+
+def test_jp_pe_fallback_uses_kabutan_when_yahoo_page_errors(monkeypatch):
+    session = _FakeSession(_FakeResponse(text="upstream error", status_code=500))
+    request_urls = []
+
+    def _fake_requests_get(url, **kwargs):
+        request_urls.append(url)
+        if "kabutan.jp" in url:
+            return _FakeResponse(
+                text="<table><tr><th>PER</th><td>24.3</td></tr></table>",
+                status_code=200,
+            )
+        return _FakeResponse(text="upstream error", status_code=500)
+
+    monkeypatch.setattr(workers.requests, "get", _fake_requests_get)
+
+    pe, source = workers._fetch_asian_pe_fallback("6113.T", session)
+
+    assert pe == 24.3
+    assert source == "kabutan_per"
+    assert any("kabutan.jp" in url for url in request_urls)
+
+
+def test_fetch_single_code_uses_market_pe_fallback_when_yahoo_info_empty(monkeypatch):
+    class _Ticker:
+        @property
+        def info(self):
+            return {}
+
+    pe_session = _FakeSession(
+        _FakeResponse(
+            data={
+                "fields": ["證券代號", "證券名稱", "收盤價", "本益比"],
+                "data": [["2330", "台積電", "2080.00", "28.46"]],
+            },
+        )
+    )
+    monkeypatch.setattr(workers.yf, "Ticker", lambda *args, **kwargs: _Ticker())
+    monkeypatch.setattr(
+        workers,
+        "get_yf_rate_limit_status",
+        lambda: {
+            "active": False,
+            "remaining_sec": 0.0,
+            "reason": "",
+            "until_ts": 0.0,
+        },
+    )
+    monkeypatch.setattr(
+        workers.MarketCalendar,
+        "is_quote_refresh_time",
+        classmethod(lambda cls, market="CN": False),
+    )
+    monkeypatch.setattr(
+        workers,
+        "fetch_asian_realtime_quote",
+        lambda code, yf_session=None: {
+            "date": "2026-04-23",
+            "close": 2080.0,
+            "open": 2070.0,
+            "high": 2100.0,
+            "low": 2065.0,
+            "volume": 12345.0,
+            "previous_close": 2050.0,
+            "currency": "TWD",
+            "source": "twse_mis",
+            "quote_quality": "last",
+        },
+    )
+    monkeypatch.setattr(workers, "GLOBAL_ASIAN_RT_CACHE", {})
+
+    worker = workers.AsianMarketWorker(["2330.TW"])
+    code, payload = worker._fetch_single_code("2330.TW", object(), pe_session)
+
+    assert code == "2330.TW"
+    assert payload["pe"] == 28.46
+    assert payload["pe_source"] == "twse_per"

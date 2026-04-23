@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import concurrent.futures
 import datetime
+import html as html_lib
 import json
 import os
 import re
 import threading
 import time
 
+import requests
 import yfinance as yf
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -100,6 +102,21 @@ def _to_float(value) -> float | None:
         return float(match.group(0))
     except (TypeError, ValueError):
         return None
+
+
+def _normalize_pe_value(value) -> float | None:
+    pe_value = _to_float(value)
+    return pe_value if pe_value is not None and pe_value > 0 else None
+
+
+def _pe_result(value, source: str) -> tuple[float | None, str]:
+    pe_value = _normalize_pe_value(value)
+    return (pe_value, source) if pe_value is not None else (None, "")
+
+
+def _strip_html_text(value) -> str:
+    text = re.sub(r"<[^>]+>", " ", str(value or ""))
+    return re.sub(r"\s+", " ", html_lib.unescape(text)).strip()
 
 
 def _first_book_price(raw_value) -> float | None:
@@ -403,6 +420,188 @@ def _fetch_yfinance_realtime_quote(code: str, yf_session) -> dict | None:
     }
 
 
+def _fetch_twse_pe(code: str, http_session) -> tuple[float | None, str]:
+    base_code = str(code or "").split(".")[0].strip()
+    if not base_code:
+        return None, ""
+
+    response = http_session.get(
+        "https://www.twse.com.tw/rwd/zh/afterTrading/BWIBBU_d"
+        "?response=json&selectType=ALL",
+        headers={**_DEFAULT_HTTP_HEADERS, "Referer": "https://www.twse.com.tw/"},
+        timeout=15,
+    )
+    data = response.json()
+    fields = list(data.get("fields") or [])
+    rows = data.get("data") or []
+    if not fields or not rows:
+        return None, ""
+
+    try:
+        code_idx = fields.index("證券代號")
+        pe_idx = fields.index("本益比")
+    except ValueError:
+        return None, ""
+
+    for row in rows:
+        if len(row) <= max(code_idx, pe_idx):
+            continue
+        if str(row[code_idx]).strip() != base_code:
+            continue
+        return _pe_result(row[pe_idx], "twse_per")
+    return None, ""
+
+
+def _fetch_tpex_pe(code: str, http_session) -> tuple[float | None, str]:
+    base_code = str(code or "").split(".")[0].strip()
+    if not base_code:
+        return None, ""
+
+    response = http_session.get(
+        "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis",
+        headers={**_DEFAULT_HTTP_HEADERS, "Referer": "https://www.tpex.org.tw/"},
+        timeout=15,
+    )
+    rows = response.json()
+    if not isinstance(rows, list):
+        return None, ""
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("SecuritiesCompanyCode") or "").strip() != base_code:
+            continue
+        return _pe_result(row.get("PriceEarningRatio"), "tpex_per")
+    return None, ""
+
+
+def _fetch_kr_naver_pe(code: str, http_session) -> tuple[float | None, str]:
+    base_code = str(code or "").split(".")[0].strip()
+    if not base_code:
+        return None, ""
+
+    response = http_session.get(
+        f"https://finance.naver.com/item/main.naver?code={base_code}",
+        headers={**_DEFAULT_HTTP_HEADERS, "Referer": "https://finance.naver.com/"},
+        timeout=15,
+    )
+    match = re.search(
+        r"<em\s+id=[\"']_per[\"'][^>]*>(.*?)</em>",
+        response.text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return None, ""
+    return _pe_result(_strip_html_text(match.group(1)), "naver_per")
+
+
+def _parse_jp_yahoo_pe_from_html(page_text: str) -> tuple[float | None, str]:
+    json_match = re.search(
+        r'"per"\s*:\s*\{[^{}]*"value"\s*:\s*"([^"]+)"',
+        page_text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if json_match:
+        pe_value = _normalize_pe_value(json_match.group(1))
+        if pe_value is not None:
+            return pe_value, "yahoo_jp_per"
+
+    item_match = re.search(
+        r"<span[^>]*>\s*PER\s*</span>.*?</dt>\s*<dd[^>]*>(.*?)</dd>",
+        page_text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if not item_match:
+        return None, ""
+    return _pe_result(_strip_html_text(item_match.group(1)), "yahoo_jp_per")
+
+
+def _fetch_jp_kabutan_pe(base_code: str) -> tuple[float | None, str]:
+    response = requests.get(
+        f"https://kabutan.jp/stock/?code={base_code}",
+        headers={
+            **_DEFAULT_HTTP_HEADERS,
+            "Accept-Language": "ja,en;q=0.8,zh-CN;q=0.6",
+            "Referer": "https://kabutan.jp/",
+        },
+        timeout=15,
+    )
+    if int(getattr(response, "status_code", 200) or 200) >= 400:
+        return None, ""
+
+    match = re.search(
+        r"<th[^>]*>\s*PER\s*</th>\s*<td[^>]*>(.*?)</td>",
+        response.text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return None, ""
+    return _pe_result(_strip_html_text(match.group(1)), "kabutan_per")
+
+
+def _fetch_jp_yahoo_pe(code: str, http_session) -> tuple[float | None, str]:
+    base_code = str(code or "").split(".")[0].strip()
+    if not base_code:
+        return None, ""
+
+    url = f"https://finance.yahoo.co.jp/quote/{base_code}.T"
+    headers = {
+        **_DEFAULT_HTTP_HEADERS,
+        "Accept-Language": "ja,en;q=0.8,zh-CN;q=0.6",
+        "Referer": "https://finance.yahoo.co.jp/",
+    }
+    response = http_session.get(
+        url,
+        headers=headers,
+        timeout=15,
+    )
+    page_text = response.text
+    pe_value, source = _parse_jp_yahoo_pe_from_html(page_text)
+    if pe_value is not None:
+        return pe_value, source
+
+    status_code = int(getattr(response, "status_code", 200) or 200)
+    yahoo_error_page = "ご覧になろうとしているページは現在表示できません" in page_text
+    if status_code < 400 and not yahoo_error_page:
+        return _fetch_jp_kabutan_pe(base_code)
+
+    retry_response = requests.get(url, headers=headers, timeout=15)
+    if int(getattr(retry_response, "status_code", 200) or 200) < 400:
+        pe_value, source = _parse_jp_yahoo_pe_from_html(retry_response.text)
+        if pe_value is not None:
+            return pe_value, source
+    return _fetch_jp_kabutan_pe(base_code)
+
+
+def _fetch_asian_pe_fallback(code: str, http_session) -> tuple[float | None, str]:
+    normalized_code = str(code or "").strip().upper()
+    if not normalized_code or "." not in normalized_code or http_session is None:
+        return None, ""
+
+    suffix = normalized_code.split(".")[-1]
+    try:
+        if suffix == "TW":
+            return _fetch_twse_pe(normalized_code, http_session)
+        if suffix == "TWO":
+            return _fetch_tpex_pe(normalized_code, http_session)
+        if suffix == "KS":
+            return _fetch_kr_naver_pe(normalized_code, http_session)
+        if suffix == "T":
+            return _fetch_jp_yahoo_pe(normalized_code, http_session)
+    except (
+        AttributeError,
+        KeyError,
+        OSError,
+        RuntimeError,
+        TypeError,
+        ValueError,
+        requests.RequestException,
+        json.JSONDecodeError,
+    ) as exc:
+        log.debug(f"[AsianTab] PE 兜底源拉取失败 {normalized_code}: {exc}")
+    return None, ""
+
+
 def fetch_asian_realtime_quote(
     code: str,
     *,
@@ -585,29 +784,31 @@ class AsianMarketWorker(QThread):
             return pe_value, pe_source, pe_updated_at
 
         market = MarketCalendar.normalize_market(MarketCalendar.infer_market(code))
-        if MarketCalendar.is_quote_refresh_time(market):
-            return pe_value, pe_source, pe_updated_at
+        yf_status = get_yf_rate_limit_status()
+        yahoo_allowed = (
+            not MarketCalendar.is_quote_refresh_time(market)
+            and not yf_status["active"]
+        )
 
-        if get_yf_rate_limit_status()["active"]:
-            return pe_value, pe_source, pe_updated_at
-
-        try:
-            info_ticker = ticker if ticker is not None else yf.Ticker(code, session=info_session)
-            info = info_ticker.info
-            trailing_pe = self._normalize_pe(info.get("trailingPE"))
-            forward_pe = self._normalize_pe(info.get("forwardPE"))
-            if trailing_pe is not None:
-                pe_value = trailing_pe
-                pe_source = "trailing"
-            elif forward_pe is not None:
-                pe_value = forward_pe
-                pe_source = "forward"
-            else:
+        if yahoo_allowed:
+            try:
+                info_ticker = ticker if ticker is not None else yf.Ticker(code, session=info_session)
+                info = info_ticker.info
+                trailing_pe = self._normalize_pe(info.get("trailingPE"))
+                forward_pe = self._normalize_pe(info.get("forwardPE"))
+                if trailing_pe is not None:
+                    return trailing_pe, "trailing", time.time()
+                if forward_pe is not None:
+                    return forward_pe, "forward", time.time()
                 pe_value = None
                 pe_source = ""
-            pe_updated_at = time.time()
-        except Exception as exc:
-            self._handle_optional_yahoo_error(code, exc, "PE 拉取")
+                pe_updated_at = time.time()
+            except Exception as exc:
+                self._handle_optional_yahoo_error(code, exc, "PE 拉取")
+
+        fallback_pe, fallback_source = _fetch_asian_pe_fallback(code, info_session)
+        if fallback_pe is not None:
+            return fallback_pe, fallback_source, time.time()
 
         return pe_value, pe_source, pe_updated_at
 
@@ -729,11 +930,7 @@ class AsianMarketWorker(QThread):
 
     @staticmethod
     def _normalize_pe(value):
-        try:
-            pe_value = float(value)
-        except (TypeError, ValueError):
-            return None
-        return pe_value if pe_value > 0 else None
+        return _normalize_pe_value(value)
 
     def _fetch_updates(self) -> dict:
         updates = {}
