@@ -63,11 +63,17 @@ def test_filter_asian_tickers_includes_ai_pcb_equipment_japan_names(monkeypatch)
 
     tickers = fetcher.filter_asian_tickers()
 
+    assert tickers["Shin-Etsu"] == "4063.T"
+    assert tickers["SUMCO"] == "3436.T"
     assert tickers["SCREEN Holdings"] == "7735.T"
     assert tickers["Nidec"] == "6594.T"
     assert tickers["AMADA"] == "6113.T"
     assert tickers["Union Tool"] == "6278.T"
     assert tickers["Ushio"] == "6925.T"
+    assert tickers["Accretech"] == "7729.T"
+    assert tickers["MJC"] == "6871.T"
+    assert tickers["Fujikura"] == "5803.T"
+    assert tickers["SKC"] == "011790.KS"
 
 
 def test_find_track_works_with_local_tsmc_tw_override(monkeypatch):
@@ -77,12 +83,12 @@ def test_find_track_works_with_local_tsmc_tw_override(monkeypatch):
         fetcher,
         "OLIGARCH_DICT",
         {
-            "定制化ASIC与代工": ["TSMC (台积电)"],
+            "先进制程代工": ["TSMC (台积电)"],
         },
         raising=False,
     )
 
-    assert fetcher._find_track("2330.TW") == "定制化ASIC与代工"
+    assert fetcher._find_track("2330.TW") == "先进制程代工"
 
 
 def test_find_track_uses_local_track_override_for_tuc(monkeypatch):
@@ -91,7 +97,21 @@ def test_find_track_uses_local_track_override_for_tuc(monkeypatch):
     monkeypatch.setattr(fetcher, "OLIGARCH_DICT", {}, raising=False)
 
     assert fetcher._find_track("6274.TWO") == "高频PCB与覆铜板材料"
-    assert fetcher._find_track("8035.T") == "晶圆制造与材料设备"
+    assert fetcher._find_track("8035.T") == "前道晶圆设备与量测"
+
+
+def test_find_track_uses_local_track_override_for_refined_japan_sectors(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    monkeypatch.setattr(fetcher, "VANGUARD_TICKERS", {}, raising=False)
+    monkeypatch.setattr(fetcher, "OLIGARCH_DICT", {}, raising=False)
+
+    assert fetcher._find_track("4063.T") == "关键晶圆材料与特种工艺"
+    assert fetcher._find_track("3436.T") == "关键晶圆材料与特种工艺"
+    assert fetcher._find_track("7729.T") == "半导体测试设备与探针卡"
+    assert fetcher._find_track("6871.T") == "半导体测试设备与探针卡"
+    assert fetcher._find_track("5802.T") == "光芯片与硅光"
+    assert fetcher._find_track("5803.T") == "光通信无源器件与精密零部件"
+    assert fetcher._find_track("011790.KS") == "IC载板与封装材料"
 
 
 def test_find_track_uses_local_track_override_for_ai_pcb_equipment(monkeypatch):
@@ -100,7 +120,7 @@ def test_find_track_uses_local_track_override_for_ai_pcb_equipment(monkeypatch):
     monkeypatch.setattr(fetcher, "OLIGARCH_DICT", {}, raising=False)
 
     for ticker in ["7735.T", "6594.T", "6113.T", "6278.T", "6925.T"]:
-        assert fetcher._find_track(ticker) == "AI PCB生产设备"
+        assert fetcher._find_track(ticker) == "AI PCB设备与关键耗材"
 
 
 def test_asian_market_meta_labels_ai_pcb_equipment_names_and_roles():
@@ -114,11 +134,24 @@ def test_asian_market_meta_labels_ai_pcb_equipment_names_and_roles():
     assert names["6113.T"] == "天田"
     assert names["6278.T"] == "Union Tool"
     assert names["6925.T"] == "牛尾电机"
+    assert names["4063.T"] == "信越化学"
+    assert names["3436.T"] == "SUMCO"
+    assert names["7729.T"] == "东京精密"
+    assert names["6871.T"] == "日本微电子"
+    assert names["5803.T"] == "藤仓"
+    assert names["011790.KS"] == "SKC"
     assert roles["7735.T"] == "LDI/直接成像设备"
     assert roles["6594.T"] == "PCB电测/光学检测+精密马达"
     assert roles["6113.T"] == "机械钻孔+激光钻孔"
     assert roles["6278.T"] == "PCB微钻/钻针耗材"
     assert roles["6925.T"] == "曝光/直接成像设备"
+    assert roles["4063.T"] == "硅片+半导体材料龙头"
+    assert roles["3436.T"] == "半导体硅片龙头"
+    assert roles["7729.T"] == "探针台/精密计量设备"
+    assert roles["6871.T"] == "存储探针卡/晶圆测试耗材"
+    assert roles["5802.T"] == "光器件/光芯片上游核心"
+    assert roles["5803.T"] == "光纤/光连接精密组件"
+    assert roles["011790.KS"] == "玻璃基板/封装材料载体"
 
 
 def test_fetch_single_kline_routes_to_market_specific_history_source(monkeypatch):

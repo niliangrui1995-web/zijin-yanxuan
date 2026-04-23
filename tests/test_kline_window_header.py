@@ -219,7 +219,7 @@ def test_kline_load_asian_chart_falls_back_to_single_ticket_fetch(monkeypatch, t
             "name": "TSMC",
             "ticker": "2330.TW",
             "market": "台湾",
-            "track": "晶圆制造与材料设备",
+            "track": "先进制程代工",
             "currency": "TWD",
             "klines": [
                 {"date": "2026-04-14", "open": 820.0, "high": 828.0, "low": 818.0, "close": 826.0, "volume": 1000},
@@ -266,7 +266,7 @@ def test_kline_load_asian_chart_falls_back_to_single_ticket_fetch(monkeypatch, t
         assert "df" in captured
         assert list(captured["df"].index.strftime("%Y-%m-%d")) == ["2026-04-14", "2026-04-15"]
         assert float(captured["df"].iloc[-1]["close"]) == 833.0
-        assert window.vcp_data["赛道"] == "晶圆制造与材料设备"
+        assert window.vcp_data["赛道"] == "先进制程代工"
         assert window.vcp_data["货币"] == "TWD"
     finally:
         if window._rt_timer is not None:
@@ -284,7 +284,7 @@ def test_kline_load_asian_chart_fetches_realtime_quote_when_history_is_stale(mon
                         "name": "TSMC",
                         "ticker": "2330.TW",
                         "market": "台湾",
-                        "track": "晶圆制造与材料设备",
+                        "track": "先进制程代工",
                         "currency": "TWD",
                         "klines": [
                             {"date": "2026-04-16", "open": 2000.0, "high": 2020.0, "low": 1990.0, "close": 2010.0, "volume": 1000},

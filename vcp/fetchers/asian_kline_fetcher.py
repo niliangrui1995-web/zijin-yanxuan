@@ -2,7 +2,7 @@
 """亚洲寡头 250 日 K 线数据拉取器。
 
 从 industry_dict.py 自动读取 VANGUARD_TICKERS，
-筛选出亚洲市场标的（.TW / .KS / .T / .HK），
+筛选出亚洲市场标的（.TW / .TWO / .KS / .T / .HK），
 按市场免费源拉取约 250 个交易日的 OHLCV 日线数据，
 输出 JSON 文件供前端看板渲染 K 线图。
 
@@ -68,22 +68,35 @@ MARKET_SHORTCUT = {
 ASIAN_LOCAL_TICKER_OVERRIDES = {
     "TSMC": "2330.TW",
     "TUC": "6274.TWO",
+    "Shin-Etsu": "4063.T",
+    "SUMCO": "3436.T",
     "SCREEN Holdings": "7735.T",
     "Nidec": "6594.T",
     "AMADA": "6113.T",
     "Union Tool": "6278.T",
     "Ushio": "6925.T",
+    "Accretech": "7729.T",
+    "MJC": "6871.T",
+    "Fujikura": "5803.T",
+    "SKC": "011790.KS",
 }
 
 # Why: 亚洲页允许补充少量本地维护的赛道归属，避免上游产业字典尚未同步时出现“未知赛道”。
 ASIAN_LOCAL_TRACK_OVERRIDES = {
     "6274.TWO": "高频PCB与覆铜板材料",
-    "8035.T": "晶圆制造与材料设备",
-    "7735.T": "AI PCB生产设备",
-    "6594.T": "AI PCB生产设备",
-    "6113.T": "AI PCB生产设备",
-    "6278.T": "AI PCB生产设备",
-    "6925.T": "AI PCB生产设备",
+    "8035.T": "前道晶圆设备与量测",
+    "4063.T": "关键晶圆材料与特种工艺",
+    "3436.T": "关键晶圆材料与特种工艺",
+    "7735.T": "AI PCB设备与关键耗材",
+    "6594.T": "AI PCB设备与关键耗材",
+    "6113.T": "AI PCB设备与关键耗材",
+    "6278.T": "AI PCB设备与关键耗材",
+    "6925.T": "AI PCB设备与关键耗材",
+    "7729.T": "半导体测试设备与探针卡",
+    "6871.T": "半导体测试设备与探针卡",
+    "5802.T": "光芯片与硅光",
+    "5803.T": "光通信无源器件与精密零部件",
+    "011790.KS": "IC载板与封装材料",
 }
 
 _ALNUM_RE = re.compile(r"[a-z0-9]+")
@@ -713,10 +726,10 @@ def fetch_single_kline(
 
     Returns:
         {
-            "name": "TEL",
+            "name": "Tokyo Electron",
             "ticker": "8035.T",
             "market": "日本",
-            "track": "晶圆制造与材料设备",
+            "track": "前道晶圆设备与量测",
             "currency": "JPY",
             "klines": [
                 {"date": "2025-04-01", "open": 100, "high": 105, "low": 98, "close": 103, "volume": 12345},
