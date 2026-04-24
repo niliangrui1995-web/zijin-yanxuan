@@ -167,19 +167,6 @@ class StockCandidateTab(BaseStockTab):
             count += 1
         return count
 
-    @staticmethod
-    def _effective_type_count(signals: list[StockSignal]) -> int:
-        type_keys = []
-        for signal in signals:
-            source_tab = str(signal.source_tab or "").strip()
-            if source_tab in StockCandidateTab.REQUIRED_SOURCE_TABS:
-                type_key = StockCandidateTab.ANCHOR_SOURCE_GROUP
-            else:
-                type_key = str(signal.signal_type or "").strip()
-            if type_key and type_key not in type_keys:
-                type_keys.append(type_key)
-        return len(type_keys)
-
     def _build_candidate_rows(self, context: dict[str, list[StockSignal]]) -> list[dict]:
         rows = []
         workspace = self._workspace()
@@ -234,8 +221,12 @@ class StockCandidateTab(BaseStockTab):
             latest_time = max((StockCandidateTab._signal_time(signal) for signal in clean_signals), default="")
             effective_source_count = len(source_groups)
             effective_signal_count = StockCandidateTab._effective_signal_count(clean_signals)
-            effective_type_count = StockCandidateTab._effective_type_count(clean_signals)
-            score = effective_source_count * 10 + effective_signal_count + effective_type_count
+            score_type_count = len({
+                str(signal.signal_type or "").strip()
+                for signal in clean_signals
+                if str(signal.signal_type or "").strip()
+            })
+            score = len(sources) * 10 + len(clean_signals) + score_type_count
 
             rows.append(
                 {

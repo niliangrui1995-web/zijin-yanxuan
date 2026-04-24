@@ -180,7 +180,7 @@ def test_stock_candidate_counts_na_daily_and_ai_chain_as_one_source_group():
     assert rows[0]["来源"] == "北美战报｜AI产业链｜龙虎榜"
     assert rows[0]["来源数"] == 2
     assert rows[0]["信号数"] == 2
-    assert rows[0]["共振分"] == 24
+    assert rows[0]["共振分"] == 36
 
 
 def test_stock_candidate_listens_to_global_quote_updates(monkeypatch):
