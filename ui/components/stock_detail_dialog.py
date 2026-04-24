@@ -4,19 +4,24 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QDialog,
+    QFrame,
+    QGraphicsDropShadowEffect,
     QHeaderView,
     QHBoxLayout,
     QLabel,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from app.services.ui_runtime_service import ui_signals, watchlist_vm
+from ui.components.shared_title_bar import DraggableTitleBar
 from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens
 from ui.workspaces.stock_signal import StockSignal
@@ -107,12 +112,50 @@ class StockDetailDialog(QDialog):
         self._activate_callback = activate_callback
         self._context = dict(context or {})
 
+        self.setObjectName("stockDetailDialog")
         self.setWindowTitle(f"股票全景 - {self._name or self._code}")
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.resize(820, 460)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(12)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(0)
+
+        self._container = QFrame(self)
+        self._container.setObjectName("dialogContainer")
+        layout.addWidget(self._container)
+
+        self._shadow = QGraphicsDropShadowEffect(self._container)
+        self._container.setGraphicsEffect(self._shadow)
+
+        container_layout = QVBoxLayout(self._container)
+        container_layout.setContentsMargins(1, 1, 1, 14)
+        container_layout.setSpacing(0)
+
+        self._title_bar = DraggableTitleBar(self._container)
+        self._title_bar.setObjectName("dialogTitleBar")
+        title_bar_layout = QHBoxLayout(self._title_bar)
+        title_bar_layout.setContentsMargins(14, 0, 8, 0)
+        title_bar_layout.setSpacing(0)
+
+        self._window_title_label = QLabel(self.windowTitle(), self._title_bar)
+        self._window_title_label.setObjectName("dialogWindowTitle")
+        title_bar_layout.addWidget(self._window_title_label)
+        title_bar_layout.addStretch(1)
+
+        self._title_close_button = QToolButton(self._title_bar)
+        self._title_close_button.setObjectName("dialogCloseButton")
+        self._title_close_button.setText("×")
+        self._title_close_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._title_close_button.clicked.connect(self.reject)
+        title_bar_layout.addWidget(self._title_close_button)
+        container_layout.addWidget(self._title_bar)
+
+        content_layout = QVBoxLayout()
+        content_layout.setContentsMargins(16, 14, 16, 0)
+        content_layout.setSpacing(12)
+        container_layout.addLayout(content_layout)
 
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
@@ -126,7 +169,7 @@ class StockDetailDialog(QDialog):
         self.lbl_meta.setObjectName("stockDetailMeta")
         self.lbl_meta.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         header_layout.addWidget(self.lbl_meta)
-        layout.addLayout(header_layout)
+        content_layout.addLayout(header_layout)
 
         self.table = QTableWidget(self)
         self.table.setObjectName("stockDetailTable")
@@ -140,7 +183,7 @@ class StockDetailDialog(QDialog):
         self.table.itemSelectionChanged.connect(self._sync_actions)
         self.table.cellDoubleClicked.connect(lambda _row, _col: self._activate_selected_source())
         self._populate_table()
-        layout.addWidget(self.table, 1)
+        content_layout.addWidget(self.table, 1)
 
         action_layout = QHBoxLayout()
         action_layout.setContentsMargins(0, 0, 0, 0)
@@ -162,9 +205,11 @@ class StockDetailDialog(QDialog):
         self.btn_close = QPushButton("关闭", self)
         self.btn_close.clicked.connect(self.accept)
         action_layout.addWidget(self.btn_close)
-        layout.addLayout(action_layout)
+        content_layout.addLayout(action_layout)
 
         self._apply_theme()
+        self._apply_shell_metrics()
+        theme_manager.sig_theme_changed.connect(self._on_theme_changed)
         self._sync_actions()
 
     def _build_title(self) -> str:
@@ -247,13 +292,61 @@ class StockDetailDialog(QDialog):
         watchlist_vm.toggle_stock(self._code, clean_name, self._detail_payload())
         self._sync_actions()
 
+    def _apply_shell_metrics(self) -> None:
+        tokens = build_ui_tokens(theme_manager.current_theme)
+        titlebar_height = tokens["shell"]["titlebar_height"]
+        is_dark = tokens["is_dark"]
+        self._title_bar.setFixedHeight(titlebar_height)
+        self._title_close_button.setFixedSize(36, titlebar_height)
+        self._shadow.setBlurRadius(32 if is_dark else 24)
+        self._shadow.setOffset(0, 10 if is_dark else 8)
+        self._shadow.setColor(QColor(0, 0, 0, 96 if is_dark else 42))
+
+    def _on_theme_changed(self, _theme_name: str) -> None:
+        self._apply_theme()
+        self._apply_shell_metrics()
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.update()
+
     def _apply_theme(self) -> None:
         theme = theme_manager.current_theme
         tokens = build_ui_tokens(theme)
         self.setStyleSheet(
             f"""
-            QDialog {{
-                background: {tokens["surface"]["panel"]};
+            QDialog#stockDetailDialog {{
+                background: transparent;
+                border: none;
+            }}
+            QDialog#stockDetailDialog QFrame#dialogContainer {{
+                background: {tokens["surface"]["overlay"]};
+                border: 1px solid {tokens["border"]["default"]};
+                border-radius: {tokens["radius"]["xl"]}px;
+            }}
+            QDialog#stockDetailDialog QWidget#dialogTitleBar {{
+                background: {theme["BG_TITLEBAR"]};
+                border-top-left-radius: {tokens["radius"]["xl"]}px;
+                border-top-right-radius: {tokens["radius"]["xl"]}px;
+                border-bottom: 1px solid {theme["TITLEBAR_BORDER"]};
+            }}
+            QDialog#stockDetailDialog QLabel#dialogWindowTitle {{
+                color: {theme["TEXT_PRIMARY"]};
+                font-size: {tokens["font"]["size_md"]}px;
+                font-weight: {tokens["font"]["weight_semibold"]};
+            }}
+            QDialog#stockDetailDialog QToolButton#dialogCloseButton {{
+                background: transparent;
+                border: none;
+                color: {theme["TEXT_MUTED"]};
+                font-size: {tokens["font"]["size_md"]}px;
+                font-weight: {tokens["font"]["weight_bold"]};
+            }}
+            QDialog#stockDetailDialog QToolButton#dialogCloseButton:hover {{
+                background: {theme["COLOR_ERROR_HOVER"]};
+                color: {theme["TEXT_ON_DANGER"]};
+                border-radius: {tokens["radius"]["sm"]}px;
+            }}
+            QDialog#stockDetailDialog QLabel {{
                 color: {theme["TEXT_PRIMARY"]};
             }}
             QLabel#stockDetailTitle {{
@@ -282,7 +375,7 @@ class StockDetailDialog(QDialog):
                 padding: 4px 8px;
                 font-size: {tokens["font"]["size_sm"]}px;
             }}
-            QPushButton {{
+            QDialog#stockDetailDialog QPushButton {{
                 min-height: {tokens["control"]["button_height"]}px;
                 padding: 0 {tokens["control"]["button_padding_x"]}px;
                 border-radius: {tokens["radius"]["sm"]}px;
@@ -290,10 +383,10 @@ class StockDetailDialog(QDialog):
                 background: {theme["BG_BUTTON"]};
                 color: {theme["TEXT_PRIMARY"]};
             }}
-            QPushButton:hover {{
+            QDialog#stockDetailDialog QPushButton:hover {{
                 background: {theme["BG_BUTTON_HOVER"]};
             }}
-            QPushButton:disabled {{
+            QDialog#stockDetailDialog QPushButton:disabled {{
                 color: {theme["TEXT_DISABLED"]};
             }}
             """

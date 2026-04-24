@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QSignalSpy
+from PyQt6.QtWidgets import QFrame, QLabel, QToolButton
 
 from app.services.ui_runtime_service import ui_signals
 from ui.components import stock_detail_dialog as stock_detail_module
@@ -71,3 +73,20 @@ def test_stock_detail_dialog_actions_emit_kline_and_toggle_watchlist(monkeypatch
     assert toggled["payload"]["代码"] == "300750"
     assert toggled["payload"]["涨幅%"] == 5.2
     assert dialog.btn_watchlist.text() == "移出关注池"
+
+
+def test_stock_detail_dialog_uses_themed_frameless_shell():
+    dialog = StockDetailDialog(
+        "603186",
+        "华正新材",
+        [StockSignal(code="603186", source_tab="na_daily", signal_type="catalyst", summary="北美战报")],
+    )
+    try:
+        assert dialog.objectName() == "stockDetailDialog"
+        assert dialog.windowFlags() & Qt.WindowType.FramelessWindowHint
+        assert dialog.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        assert dialog.findChild(QFrame, "dialogContainer") is not None
+        assert dialog.findChild(QLabel, "dialogWindowTitle").text() == "股票全景 - 华正新材"
+        assert dialog.findChild(QToolButton, "dialogCloseButton") is not None
+    finally:
+        dialog.close()
