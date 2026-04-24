@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from PyQt6.QtWidgets import QWidget
 
 import ui.workspaces.classic_workspace as classic_workspace_module
+from ui.components.smooth_tab_widget import SmoothTabWidget
 from ui.workspaces.classic_workspace import ClassicWorkspace
 from ui.workspaces.stock_context_service import StockContextService
 from ui.workspaces.stock_signal import StockSignal
@@ -644,6 +645,7 @@ def test_workspace_defers_heavy_tab_autoload(monkeypatch):
         assert tab_keys.index("ai_industry_chain") < tab_keys.index("lhb") < tab_keys.index("rt_monitor")
         assert "autoload_pool" not in ctor_kwargs["watchlist"]
         assert "autoload" not in ctor_kwargs["watchlist"]
+        assert isinstance(workspace.tabs, SmoothTabWidget)
     finally:
         workspace.deleteLater()
 

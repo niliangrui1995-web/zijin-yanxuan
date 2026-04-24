@@ -84,9 +84,59 @@ class StockTableModel(QAbstractTableModel):
     def columnCount(self, parent=QModelIndex()):
         return len(self._headers)
 
+    @staticmethod
+    def _row_identity(row) -> str:
+        if not isinstance(row, dict):
+            return ""
+        return str(row.get("浠ｇ爜") or row.get("代码") or "").strip()
+
+    def _can_update_incrementally(self, rows: list) -> bool:
+        if len(rows) != len(self._data) or not rows:
+            return False
+        if rows is self._data or any(old is new for old, new in zip(self._data, rows)):
+            return False
+        old_ids = [self._row_identity(row) for row in self._data]
+        new_ids = [self._row_identity(row) for row in rows]
+        return bool(all(old_ids)) and old_ids == new_ids
+
+    def _emit_incremental_rows(self, rows: list) -> None:
+        _sync_serial_values(rows)
+        changed_rows = []
+        for row_idx, new_row in enumerate(rows):
+            if self._data[row_idx] != new_row:
+                self._data[row_idx] = new_row
+                changed_rows.append(row_idx)
+
+        if not changed_rows:
+            return
+
+        self._flash_records.clear()
+        _emit_model_row_ranges(
+            self,
+            changed_rows,
+            0,
+            max(0, self.columnCount() - 1),
+            [
+                Qt.ItemDataRole.DisplayRole,
+                Qt.ItemDataRole.ToolTipRole,
+                Qt.ItemDataRole.ForegroundRole,
+                Qt.ItemDataRole.BackgroundRole,
+                Qt.ItemDataRole.FontRole,
+                Qt.ItemDataRole.TextAlignmentRole,
+                Qt.ItemDataRole.UserRole,
+                Qt.ItemDataRole.UserRole + 2,
+            ],
+        )
+
     def update_data(self, new_data):
+        rows = list(new_data or [])
+        if self._can_update_incrementally(rows):
+            self._emit_incremental_rows(rows)
+            self._hydrate_latest_quotes_from_store()
+            return
+
         self.beginResetModel()
-        self._data = new_data
+        self._data = rows
         _sync_serial_values(self._data)
         self._flash_records.clear()
         self.endResetModel()

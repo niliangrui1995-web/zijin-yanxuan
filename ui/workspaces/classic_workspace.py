@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from PyQt6.QtWidgets import QTabWidget, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QVBoxLayout, QWidget
 
 from core.logger import get_logger
+from ui.components.smooth_tab_widget import SmoothTabWidget
 from ui.tabs.ai_industry_chain_tab import AIIndustryChainTab
 from ui.tabs.asian_market_tab import AsianMarketTab
 from ui.tabs.earnings_tab import EarningsTab
@@ -44,7 +45,7 @@ class ClassicWorkspace(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        self.tabs = QTabWidget(self)
+        self.tabs = SmoothTabWidget(self)
         self.tabs.setDocumentMode(True)
         layout.addWidget(self.tabs, 1)
 
@@ -150,6 +151,7 @@ class ClassicWorkspace(QWidget):
         for spec in self._tab_specs:
             setattr(self, spec["attr"], spec["widget"])
             self.tabs.addTab(spec["widget"], spec["title"])
+        self.tabs.prewarm_pages()
 
         self._tabs_by_key = {str(spec["key"]): spec["widget"] for spec in self._tab_specs}
         self._workspace_facade = WorkspaceFacade(self)

@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QFrame,
+    QGraphicsOpacityEffect,
     QLabel,
     QMenu,
     QPushButton,
@@ -539,6 +540,7 @@ class TableStateWrapper(QWidget):
         self._table = table
         self._empty_title = empty_title
         self._loading_title = loading_title
+        self._state_animation = None
 
         self._overlay = TableStateOverlay(self)
 
@@ -573,19 +575,19 @@ class TableStateWrapper(QWidget):
         return self._table
 
     def show_table(self):
-        self._stack.setCurrentWidget(self._table)
+        self._set_current_widget(self._table)
 
     def show_empty(self, title: str | None = None, subtitle: str = ""):
         self._overlay.set_state("empty", title or self._empty_title, subtitle)
-        self._stack.setCurrentWidget(self._overlay)
+        self._set_current_widget(self._overlay)
 
     def show_loading(self, title: str | None = None, subtitle: str = ""):
         self._overlay.set_state("loading", title or self._loading_title, subtitle)
-        self._stack.setCurrentWidget(self._overlay)
+        self._set_current_widget(self._overlay)
 
     def show_offline(self, title: str = "离线模式", subtitle: str = ""):
         self._overlay.set_state("offline", title, subtitle)
-        self._stack.setCurrentWidget(self._overlay)
+        self._set_current_widget(self._overlay)
 
     def show_error(
         self,
@@ -604,7 +606,7 @@ class TableStateWrapper(QWidget):
             action_text=action_text,
             action_callback=action_callback,
         )
-        self._stack.setCurrentWidget(self._overlay)
+        self._set_current_widget(self._overlay)
 
     def show_cached(
         self,
@@ -623,15 +625,52 @@ class TableStateWrapper(QWidget):
             action_text=action_text,
             action_callback=action_callback,
         )
-        self._stack.setCurrentWidget(self._overlay)
+        self._set_current_widget(self._overlay)
 
     def show_success(self, title: str = "更新完成", subtitle: str = "", *, meta: str = ""):
         self._overlay.set_state("success", title, subtitle, meta=meta)
-        self._stack.setCurrentWidget(self._overlay)
+        self._set_current_widget(self._overlay)
 
     def show_info(self, title: str = "状态更新", subtitle: str = "", *, meta: str = ""):
         self._overlay.set_state("info", title, subtitle, meta=meta)
-        self._stack.setCurrentWidget(self._overlay)
+        self._set_current_widget(self._overlay)
+
+    def _set_current_widget(self, widget: QWidget) -> None:
+        if self._stack.currentWidget() is widget:
+            return
+        self._stack.setCurrentWidget(widget)
+        self._fade_in_widget(widget)
+
+    def _fade_in_widget(self, widget: QWidget) -> None:
+        animation = self._state_animation
+        if animation is not None:
+            try:
+                animation.stop()
+            except RuntimeError:
+                pass
+            self._state_animation = None
+
+        if not self.isVisible() or widget.width() <= 0 or widget.height() <= 0:
+            return
+
+        effect = QGraphicsOpacityEffect(widget)
+        effect.setOpacity(0.0)
+        widget.setGraphicsEffect(effect)
+
+        animation = QPropertyAnimation(effect, b"opacity", self)
+        animation.setDuration(build_ui_tokens()["motion"]["fast"])
+        animation.setStartValue(0.0)
+        animation.setEndValue(1.0)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        def _cleanup():
+            if widget.graphicsEffect() is effect:
+                widget.setGraphicsEffect(None)
+            self._state_animation = None
+
+        animation.finished.connect(_cleanup)
+        self._state_animation = animation
+        animation.start()
 
 
 class SearchFilter:
