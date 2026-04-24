@@ -15,6 +15,7 @@ from ui.tabs.na_daily_tab import NADailyTab
 from ui.tabs.rt_monitor_tab import RtMonitorTab
 from ui.tabs.scan_tab import ScanTab
 from ui.tabs.watchlist_tab import WatchlistTab
+from ui.workspaces.stock_signal import StockSignal
 from ui.workspaces.workspace_facade import WorkspaceFacade
 
 log = get_logger(__name__)
@@ -227,6 +228,12 @@ class ClassicWorkspace(QWidget):
 
     def collect_watchlist_radar_data(self) -> tuple[dict, dict, dict, dict, dict, dict | None]:
         return _resolve_workspace_facade(self).collect_watchlist_radar_data()
+
+    def collect_stock_signals(self) -> list[StockSignal]:
+        return _resolve_workspace_facade(self).collect_stock_signals()
+
+    def collect_stock_context(self) -> dict[str, list[StockSignal]]:
+        return _resolve_workspace_facade(self).collect_stock_context()
 
     def open_security_detail(self, code: str, context=None):
         return None

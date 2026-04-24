@@ -342,7 +342,7 @@ def test_workspace_facade_and_services_do_not_reach_into_tab_private_state():
     workspace_files = [
         REPO_ROOT / "ui" / "workspaces" / "classic_workspace.py",
         REPO_ROOT / "ui" / "workspaces" / "quote_universe_service.py",
-        REPO_ROOT / "ui" / "workspaces" / "watchlist_radar_service.py",
+        REPO_ROOT / "ui" / "workspaces" / "stock_context_service.py",
         REPO_ROOT / "ui" / "workspaces" / "workspace_facade.py",
         REPO_ROOT / "ui" / "workspaces" / "workspace_navigation_service.py",
         REPO_ROOT / "ui" / "workspaces" / "workspace_table_service.py",

@@ -9,7 +9,8 @@ from ui.workspaces.tab_capabilities import (
     ScanResultsCapability,
     TableCollectionCapability,
 )
-from ui.workspaces.watchlist_radar_service import WatchlistRadarService
+from ui.workspaces.stock_context_service import StockContextService
+from ui.workspaces.stock_signal import StockSignal
 from ui.workspaces.workspace_navigation_service import WorkspaceNavigationService
 from ui.workspaces.workspace_table_service import WorkspaceTableService
 
@@ -24,7 +25,7 @@ class WorkspaceFacade:
         self._workspace_navigation_service = WorkspaceNavigationService(workspace)
         self._workspace_table_service = WorkspaceTableService(workspace)
         self._quote_universe_service = QuoteUniverseService(workspace)
-        self._watchlist_radar_service = WatchlistRadarService(workspace)
+        self._stock_context_service = StockContextService(workspace)
 
     def _get_tab(self, key: str):
         get_tab = getattr(self._workspace, "get_tab", None)
@@ -125,10 +126,10 @@ class WorkspaceFacade:
         return self._quote_universe_service.collect_realtime_quote_codes()
 
     def refresh_watchlist_names(self, code2name: dict[str, str]) -> bool:
-        return self._watchlist_radar_service.refresh_watchlist_names(code2name)
+        return self._stock_context_service.refresh_watchlist_names(code2name)
 
     def schedule_watchlist_special_quotes(self, task_manager) -> None:
-        self._watchlist_radar_service.prime_watchlist_state()
+        self._stock_context_service.prime_watchlist_state()
 
     def run_post_online_refresh(self, task_manager) -> None:
         for key in ("na_daily", "foreign_block"):
@@ -145,4 +146,10 @@ class WorkspaceFacade:
         return bool(tab.toggle_rt_monitor(auto=True))
 
     def collect_watchlist_radar_data(self) -> tuple[dict, dict, dict, dict, dict, dict | None]:
-        return self._watchlist_radar_service.collect_radar_data()
+        return self._stock_context_service.collect_watchlist_radar_data()
+
+    def collect_stock_signals(self) -> list[StockSignal]:
+        return self._stock_context_service.iter_stock_signals()
+
+    def collect_stock_context(self) -> dict[str, list[StockSignal]]:
+        return self._stock_context_service.collect_signals_by_code()

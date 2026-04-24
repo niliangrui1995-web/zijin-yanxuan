@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import QWidget
 
 import ui.workspaces.classic_workspace as classic_workspace_module
 from ui.workspaces.classic_workspace import ClassicWorkspace
+from ui.workspaces.stock_signal import StockSignal
 
 
 def _make_workspace(*, tabs=None, engine=None):
@@ -147,6 +148,69 @@ def test_workspace_collects_structured_watchlist_radar_metrics():
     assert earn_data["300750"]["qoq_pct"] == 32.5
     assert lhb_data["300750"]["text"] == "04-20 | 净买1200万 | 机构净买800万 | 外资净卖150万"
     assert lhb_data["300750"]["net_wan"] == 1200
+
+
+def test_workspace_collects_stock_context_signals_by_code():
+    workspace = _make_workspace(
+        tabs={
+            "na_daily": _make_rows_tab(
+                [
+                    {
+                        "代码": "300750",
+                        "名称": "宁德时代",
+                        "催化剂": "北美订单催化",
+                        "细分板块": "储能链",
+                    }
+                ]
+            ),
+            "earnings": _make_rows_tab(
+                [
+                    {
+                        "代码": "300750",
+                        "环比%": 32.5,
+                    }
+                ]
+            ),
+        },
+    )
+
+    context = ClassicWorkspace.collect_stock_context(workspace)
+
+    signals = context["300750"]
+    assert {(signal.source_tab, signal.signal_type) for signal in signals} == {
+        ("na_daily", "catalyst"),
+        ("na_daily", "subsector"),
+        ("earnings", "earnings"),
+    }
+    assert [signal.summary for signal in signals if signal.signal_type == "catalyst"] == ["北美订单催化"]
+
+
+def test_workspace_accepts_direct_stock_signal_capability():
+    workspace = _make_workspace(
+        tabs={
+            "custom": SimpleNamespace(
+                iter_stock_signals=lambda: [
+                    StockSignal(
+                        code="688498",
+                        source_tab="custom",
+                        signal_type="research_note",
+                        summary="自定义研究信号",
+                    )
+                ]
+            )
+        },
+    )
+
+    signals = ClassicWorkspace.collect_stock_signals(workspace)
+
+    assert signals == [
+        StockSignal(
+            code="688498",
+            source_tab="custom",
+            signal_type="research_note",
+            summary="自定义研究信号",
+        )
+    ]
 
 
 def test_workspace_watchlist_subsector_prefers_ai_chain_over_na_daily():

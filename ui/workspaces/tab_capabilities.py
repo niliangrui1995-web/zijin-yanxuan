@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
+from ui.workspaces.stock_signal import StockSignal
+
 
 @runtime_checkable
 class TableCollectionCapability(Protocol):
@@ -39,6 +41,11 @@ class CodeRowSelectionCapability(Protocol):
 @runtime_checkable
 class QuoteUniverseCapability(Protocol):
     def get_realtime_quote_codes(self) -> set[str]: ...
+
+
+@runtime_checkable
+class StockSignalSourceCapability(Protocol):
+    def iter_stock_signals(self) -> list[StockSignal]: ...
 
 
 @runtime_checkable
