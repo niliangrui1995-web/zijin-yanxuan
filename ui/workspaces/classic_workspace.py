@@ -14,6 +14,7 @@ from ui.tabs.log_tab import LogTab
 from ui.tabs.na_daily_tab import NADailyTab
 from ui.tabs.rt_monitor_tab import RtMonitorTab
 from ui.tabs.scan_tab import ScanTab
+from ui.tabs.stock_candidate_tab import StockCandidateTab
 from ui.tabs.watchlist_tab import WatchlistTab
 from ui.workspaces.stock_signal import StockSignal
 from ui.workspaces.workspace_facade import WorkspaceFacade
@@ -86,6 +87,14 @@ class ClassicWorkspace(QWidget):
                 "group_order": 40,
                 "attr": "tab_lhb",
                 "widget": LhbTab(self.data_provider, self, autoload_pool=False),
+            },
+            {
+                "key": "stock_candidates",
+                "title": "综合候选",
+                "group": "主工作台",
+                "group_order": 45,
+                "attr": "tab_stock_candidates",
+                "widget": StockCandidateTab(self.data_provider, self),
             },
             {
                 "key": "rt_monitor",
@@ -236,7 +245,58 @@ class ClassicWorkspace(QWidget):
         return _resolve_workspace_facade(self).collect_stock_context()
 
     def open_security_detail(self, code: str, context=None):
-        return None
+        code_text = str(code or "").strip()
+        if not code_text:
+            return False
+
+        context = context if isinstance(context, dict) else {}
+        name = str(context.get("name") or context.get("名称") or "").strip()
+        if not name:
+            code2name = getattr(self.data_provider, "code2name", {}) or {}
+            name = str(code2name.get(code_text, "") or "").strip()
+
+        tab_titles = {
+            str(spec.get("key") or "").strip(): str(spec.get("title") or "").strip()
+            for spec in self.tab_specs()
+        }
+        signals = self.collect_stock_context().get(code_text, [])
+
+        from ui.components.stock_detail_dialog import StockDetailDialog
+
+        dialog = StockDetailDialog(
+            code_text,
+            name,
+            signals,
+            tab_titles=tab_titles,
+            activate_callback=self._activate_stock_signal_source,
+            parent=self.window(),
+        )
+        dialog.exec()
+        return True
+
+    def _tab_index_for_key(self, key: str) -> int:
+        key_text = str(key or "").strip()
+        if not key_text:
+            return -1
+        for index, spec in enumerate(self.tab_specs()):
+            if str(spec.get("key") or "").strip() == key_text:
+                return index
+        return -1
+
+    def _activate_stock_signal_source(self, signal: StockSignal) -> bool:
+        code_text = signal.normalized_code()
+        if not code_text:
+            return False
+
+        source_index = ClassicWorkspace._tab_index_for_key(self, signal.source_tab)
+        if source_index >= 0:
+            self.tabs.setCurrentIndex(source_index)
+            tab = self.get_tab(signal.source_tab)
+            select_code_row = getattr(tab, "select_code_row", None)
+            if callable(select_code_row):
+                return bool(select_code_row(code_text))
+
+        return self.select_code_row(code_text, preferred_tab_index=source_index if source_index >= 0 else None)
 
     def shutdown(self):
         for tab in self.iter_tabs():

@@ -17,6 +17,23 @@ from app.services.ui_runtime_service import watchlist_vm
 from ui.styles.context_menu_qss import generate_context_menu_qss
 
 
+def _resolve_workspace(parent):
+    window = parent.window() if hasattr(parent, "window") else None
+    workspace = getattr(window, "_workspace", None)
+    if workspace is not None:
+        return workspace
+
+    cursor = parent
+    visited = set()
+    while cursor is not None and id(cursor) not in visited:
+        visited.add(id(cursor))
+        workspace = getattr(cursor, "_workspace", None)
+        if workspace is not None:
+            return workspace
+        cursor = cursor.parent() if hasattr(cursor, "parent") else None
+    return None
+
+
 def build_stock_context_menu(
     parent,
     code: str,
@@ -47,6 +64,9 @@ def build_stock_context_menu(
 
     # --- 查看操作 ---
     act_chart = menu.addAction("查看 K 线图")
+    workspace = _resolve_workspace(parent)
+    open_security_detail = getattr(workspace, "open_security_detail", None)
+    act_detail = menu.addAction("查看股票全景") if callable(open_security_detail) else None
     act_copy = menu.addAction("复制代码")
     menu.addSeparator()
 
@@ -87,6 +107,15 @@ def build_stock_context_menu(
             event_bus.sig_show_kline_with_list.emit(code, [kline_item], 0)
         else:
             event_bus.sig_show_kline.emit(code)
+
+    elif action == act_detail and act_detail is not None:
+        open_security_detail(
+            code,
+            {
+                "name": name,
+                "vcp_data": vcp_data if isinstance(vcp_data, dict) else {},
+            },
+        )
 
     elif action == act_copy:
         QApplication.clipboard().setText(code)

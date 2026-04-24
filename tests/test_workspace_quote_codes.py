@@ -213,6 +213,73 @@ def test_workspace_accepts_direct_stock_signal_capability():
     ]
 
 
+def test_workspace_open_security_detail_builds_stock_dialog(monkeypatch):
+    created = {}
+
+    class FakeStockDetailDialog:
+        def __init__(self, code, name, signals, *, tab_titles, activate_callback, parent):
+            created["code"] = code
+            created["name"] = name
+            created["signals"] = list(signals)
+            created["tab_titles"] = dict(tab_titles)
+            created["activate_callback"] = activate_callback
+            created["parent"] = parent
+
+        @staticmethod
+        def exec():
+            created["exec"] = True
+
+    monkeypatch.setattr("ui.components.stock_detail_dialog.StockDetailDialog", FakeStockDetailDialog)
+    signal = StockSignal(
+        code="300750",
+        source_tab="earnings",
+        signal_type="earnings",
+        summary="32.5%",
+    )
+    workspace = SimpleNamespace(
+        data_provider=SimpleNamespace(code2name={"300750": "宁德时代"}),
+        collect_stock_context=lambda: {"300750": [signal]},
+        tab_specs=lambda: [{"key": "earnings", "title": "业绩异动"}],
+        window=lambda: None,
+        _activate_stock_signal_source=lambda _signal: True,
+    )
+
+    assert ClassicWorkspace.open_security_detail(workspace, "300750", {}) is True
+
+    assert created["code"] == "300750"
+    assert created["name"] == "宁德时代"
+    assert created["signals"] == [signal]
+    assert created["tab_titles"] == {"earnings": "业绩异动"}
+    assert created["exec"] is True
+
+
+def test_workspace_activates_stock_signal_source_tab():
+    selected = []
+
+    class FakeTabs:
+        @staticmethod
+        def setCurrentIndex(index):
+            selected.append(index)
+
+    source_tab = SimpleNamespace(select_code_row=lambda code: selected.append(code) or True)
+    workspace = _make_workspace(tabs={"earnings": source_tab})
+    workspace.tabs = FakeTabs()
+    workspace.tab_specs = lambda: [{"key": "earnings", "title": "业绩异动"}]
+
+    ok = ClassicWorkspace._activate_stock_signal_source(
+        workspace,
+        StockSignal(
+            code="300750",
+            source_tab="earnings",
+            signal_type="earnings",
+            summary="32.5%",
+        ),
+    )
+
+    assert ok is True
+    assert selected == [0, "300750"]
+
+
 def test_workspace_watchlist_subsector_prefers_ai_chain_over_na_daily():
     workspace = _make_workspace(
         tabs={
@@ -358,6 +425,7 @@ def test_workspace_defers_heavy_tab_autoload(monkeypatch):
     monkeypatch.setattr(classic_workspace_module, "AIIndustryChainTab", _make_tab("ai_industry_chain"))
     monkeypatch.setattr(classic_workspace_module, "RtMonitorTab", _make_tab("rt_monitor"))
     monkeypatch.setattr(classic_workspace_module, "ScanTab", _make_tab("scan"))
+    monkeypatch.setattr(classic_workspace_module, "StockCandidateTab", _make_tab("stock_candidates"))
     monkeypatch.setattr(classic_workspace_module, "LhbTab", _make_tab("lhb"))
     monkeypatch.setattr(classic_workspace_module, "ForeignBlockTradeTab", _make_tab("foreign_block"))
     monkeypatch.setattr(classic_workspace_module, "EarningsTab", _make_tab("earnings"))
@@ -372,9 +440,10 @@ def test_workspace_defers_heavy_tab_autoload(monkeypatch):
         tab_keys = [spec["key"] for spec in workspace.tab_specs()]
         assert groups["lhb"] == "主工作台"
         assert groups["ai_industry_chain"] == "主工作台"
+        assert groups["stock_candidates"] == "主工作台"
         assert groups["scan"] == "情报源"
         assert tab_keys.index("na_daily") < tab_keys.index("ai_industry_chain") < tab_keys.index("lhb")
-        assert tab_keys.index("lhb") < tab_keys.index("rt_monitor")
+        assert tab_keys.index("lhb") < tab_keys.index("stock_candidates") < tab_keys.index("rt_monitor")
         assert "autoload_pool" not in ctor_kwargs["watchlist"]
         assert "autoload" not in ctor_kwargs["watchlist"]
     finally:
