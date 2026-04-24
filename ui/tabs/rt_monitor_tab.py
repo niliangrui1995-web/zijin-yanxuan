@@ -23,6 +23,7 @@ from core.throttler import SignalThrottler
 from app.services.ui_runtime_service import ui_signals
 from app.services.ui_runtime_service import task_registry
 from ui.components import TableStateWrapper, VCPTableView
+from ui.components.thread_shutdown import request_thread_shutdown
 from ui.components.toast_widget import show_toast
 from ui.models.table_models import RtSortFilterProxyModel, RtTableModel, StockItemDelegate
 from ui.tabs.base_stock_tab import BaseStockTab
@@ -483,13 +484,17 @@ class RtMonitorTab(BaseStockTab):
         auto_timer = getattr(self, "_auto_timer", None)
         if auto_timer is not None:
             auto_timer.stop()
-        if self._is_rt_running():
+        worker = getattr(self, "rt_worker", None)
+        if worker is not None:
             self._manual_stop_requested = False
             self._rt_stop_requested = True
-            self._toggle_rt_monitor(auto=True)
-        worker = getattr(self, "rt_worker", None)
-        if worker is not None and worker.isRunning():
-            worker.wait(2000)
+            request_thread_shutdown(
+                worker,
+                label="RT monitor worker",
+                stop=getattr(worker, "stop", None),
+                timeout_ms=2000,
+                logger=log,
+            )
 
     def _start_rt_worker(self):
         interval_sec = self._get_interval_seconds()
@@ -663,5 +668,4 @@ class RtMonitorTab(BaseStockTab):
         )
 
     # _launch_tdx 已迁移至 BaseStockTab 基类
-
 

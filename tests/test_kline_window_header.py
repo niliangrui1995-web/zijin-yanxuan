@@ -7,6 +7,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QWidget
 
 from core.task_manager import task_manager
+from ui.kline_chart_payload import build_kline_html, build_kline_theme_colors
 from ui import kline_window_qt as kline_module
 from ui.tabs import asian_market_tab as asian_module
 from ui.tabs import asian_market_workers as asian_workers_module
@@ -19,6 +20,28 @@ class _DummyProvider:
 
 class _LiveProvider:
     _offline = False
+
+
+def test_kline_html_exposes_incremental_replace_bridge():
+    payload = {
+        "dates": ["2026-04-24"],
+        "klines": [[10.0, 11.0, 9.8, 11.2]],
+        "vols": [{"value": 1000}],
+        "ma10": [10.5],
+        "ma20": [10.5],
+        "ma50": [10.5],
+        "ma150": [10.5],
+        "ma200": [10.5],
+        "volMa20": [1000],
+        "macd": [0.1],
+        "diff": [0.1],
+        "dea": [0.1],
+    }
+
+    html = build_kline_html("T", payload, __file__, build_kline_theme_colors())
+
+    assert "let rawData =" in html
+    assert "window.replaceKlineData" in html
 
 
 class _LunchQuoteProvider:

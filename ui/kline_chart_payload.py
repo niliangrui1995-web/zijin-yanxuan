@@ -689,7 +689,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
     <div id="chart"></div>
 
     <script>
-        const rawData = {data_json};
+        let rawData = {data_json};
 
         const upColor = '{theme_colors['up_color']}';
         const downColor = '{theme_colors['down_color']}';
@@ -973,6 +973,24 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
         }}
 
         chart.setOption(buildOption());
+
+        window.replaceKlineData = function (payload) {{
+            if (!payload || !payload.data) return false;
+            rawData = payload.data;
+            if (payload.title) {{
+                document.title = payload.title;
+            }}
+
+            const currentOption = chart.getOption ? chart.getOption() : null;
+            const dataZoom = currentOption && currentOption.dataZoom ? currentOption.dataZoom : null;
+            const nextOption = buildOption();
+            if (dataZoom) {{
+                nextOption.dataZoom = dataZoom;
+            }}
+            chart.setOption(nextOption, true, true);
+            chart.resize();
+            return true;
+        }};
 
         window.updateLastBar = function (payload) {{
             if (!payload || !payload.date) return;

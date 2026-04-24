@@ -11,6 +11,7 @@ from app.services.ui_runtime_service import domain_events as event_bus
 from core.logger import get_logger
 from app.services.ui_runtime_service import ui_signals
 from ui.components import TableStateWrapper, VCPTableView
+from ui.components.thread_shutdown import request_thread_shutdown
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.asian_market_meta import (
     format_market_display,
@@ -982,13 +983,25 @@ class AsianMarketTab(BaseStockTab):
     def shutdown(self) -> None:
         if hasattr(self, "auto_cache_timer") and self.auto_cache_timer is not None:
             self.auto_cache_timer.stop()
-        if getattr(self, "cache_thread", None) is not None and self.cache_thread.isRunning():
-            self.cache_thread.wait(5000)
-        if hasattr(self, "worker") and self.worker is not None:
-            self.worker.stop()
-            self.worker.wait(3000)
+        cache_thread = getattr(self, "cache_thread", None)
+        if cache_thread is not None:
+            request_thread_shutdown(
+                cache_thread,
+                label="Asian cache sync",
+                stop=getattr(cache_thread, "requestInterruption", None),
+                timeout_ms=5000,
+                logger=log,
+            )
+        worker = getattr(self, "worker", None)
+        if worker is not None:
+            request_thread_shutdown(
+                worker,
+                label="Asian market worker",
+                stop=getattr(worker, "stop", None),
+                timeout_ms=3000,
+                logger=log,
+            )
 
     def closeEvent(self, event):
         self.shutdown()
         super().closeEvent(event)
-

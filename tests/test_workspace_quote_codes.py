@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from types import SimpleNamespace
 
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtWidgets import QApplication, QWidget
 
 import ui.workspaces.classic_workspace as classic_workspace_module
 from ui.components.smooth_tab_widget import SmoothTabWidget
@@ -560,6 +560,34 @@ def test_workspace_refreshes_all_tabs_after_f5():
         "earnings",
         "scan",
     ]
+
+
+def test_workspace_schedules_refreshes_all_tabs_after_f5():
+    app = QApplication.instance() or QApplication([])
+    calls = []
+    done = []
+    tabs = {
+        "watchlist": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("watchlist")),
+        "lhb": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("lhb")),
+        "system_log": SimpleNamespace(),
+    }
+    workspace = _make_workspace(tabs=tabs)
+    workspace.iter_refreshable_tabs = lambda: ClassicWorkspace.iter_refreshable_tabs(workspace)
+
+    assert ClassicWorkspace.refresh_all_tabs_after_f5_scheduled(
+        workspace,
+        on_finished=lambda: done.append("done"),
+        interval_ms=0,
+    ) is True
+
+    for _ in range(10):
+        app.processEvents()
+        if done:
+            break
+
+    assert calls == ["watchlist", "lhb"]
+    assert done == ["done"]
+    assert getattr(workspace, "_f5_refresh_scheduler", None) is None
 
 
 def test_workspace_runs_fund_holdings_auto_sync_through_public_facade():

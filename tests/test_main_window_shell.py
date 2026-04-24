@@ -160,6 +160,34 @@ def test_shell_navigation_widget_restores_last_subtab_per_group():
         tabs.deleteLater()
 
 
+def test_shell_navigation_widget_does_not_rebuild_tabbar_inside_same_group():
+    tabs = QTabWidget()
+    nav = ShellNavigationWidget()
+    try:
+        tabs.addTab(QWidget(), "Scan")
+        tabs.addTab(QWidget(), "Watch")
+        tabs.addTab(QWidget(), "NA")
+        tabs.addTab(QWidget(), "Asia")
+
+        nav.bind_workspace(DummyGroupedWorkspace(), tabs)
+        first_group, second_group = list(DummyGroupedWorkspace.tab_indices_by_group())
+        initial_rebuild_count = nav._tabbar_rebuild_count
+
+        tabs.setCurrentIndex(1)
+
+        assert tabs.currentIndex() == 1
+        assert nav.tabbar.currentIndex() == 1
+        assert nav._tabbar_rebuild_count == initial_rebuild_count
+
+        nav._switch_group(second_group)
+
+        assert nav._tabbar_rebuild_count == initial_rebuild_count + 1
+        assert nav.tabbar.count() == 2
+    finally:
+        nav.deleteLater()
+        tabs.deleteLater()
+
+
 def test_build_frameless_main_window_flags_preserves_native_window_controls():
     flags = build_frameless_main_window_flags()
 

@@ -68,6 +68,12 @@ class WorkspaceFacade:
     def refresh_all_tabs_after_f5(self) -> None:
         self._workspace_table_service.refresh_all_tabs_after_f5()
 
+    def refresh_all_tabs_after_f5_scheduled(self, *, on_finished=None, interval_ms: int = 0) -> bool:
+        return self._workspace_table_service.refresh_all_tabs_after_f5_scheduled(
+            on_finished=on_finished,
+            interval_ms=interval_ms,
+        )
+
     def refresh_information_sources_after_f5(self) -> dict[str, bool]:
         """F5 完成后触发情报源自身的数据刷新，不只回灌行情快照。"""
         tab_specs = getattr(self._workspace, "tab_specs", None)

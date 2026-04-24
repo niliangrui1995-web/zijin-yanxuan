@@ -24,6 +24,7 @@ from app.services.ui_runtime_service import ui_signals
 from app.services.ui_runtime_service import watchlist_vm
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.scan_dialogs import VCPScanRangeDialog, VCPScanSettingsDialog
+from ui.components.thread_shutdown import request_thread_shutdown
 from ui.components.toast_widget import show_toast
 
 # Removed unused imports from ui.theme and PyQt6
@@ -622,9 +623,14 @@ class ScanTab(BaseStockTab):
         return False
 
     def shutdown(self) -> None:
-        if self.worker is not None and self.worker.isRunning():
-            self.cancel_scan()
-            self.worker.wait(2000)
+        if self.worker is not None:
+            request_thread_shutdown(
+                self.worker,
+                label="Scan worker",
+                stop=self.cancel_scan,
+                timeout_ms=2000,
+                logger=log,
+            )
 
     def _on_scan_finished(self, success, msg):
         if success:

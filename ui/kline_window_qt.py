@@ -10,6 +10,7 @@ K 线图窗口 — ECharts 5.5.0 + QWebEngineView 高性能版
 - 盘中 60 秒增量热更新（无闪烁）
 - 十字光标 + 顶部工具栏实时联动
 """
+import json
 import os as _os
 
 from app.services.scan_runtime_service import calculate_scan_indicators
@@ -483,6 +484,17 @@ class KLineChartWindow(QWidget):
         base_url = QUrl.fromLocalFile(
             _os.path.dirname(_os.path.abspath(_ECHARTS_JS_PATH)) + "/"
         )
+        if getattr(self, "_first_render_done", False):
+            self._replace_chart_data_or_reload(
+                html_content,
+                base_url,
+                title=f"{self.name} ({self.code}) 鏃ョ嚎",
+                echarts_data=echarts_data,
+            )
+            if not loading:
+                self._start_rt_timer()
+            return
+
         self.browser.setHtml(html_content, base_url)
         self._first_render_done = True
 
@@ -491,6 +503,35 @@ class KLineChartWindow(QWidget):
             self._start_rt_timer()
 
     # ======================== 盘中增量更新 ========================
+    def _replace_chart_data_or_reload(self, html_content: str, base_url: QUrl, *, title: str, echarts_data: dict):
+        payload_json = json.dumps(
+            {"title": title, "data": echarts_data},
+            ensure_ascii=False,
+        )
+        script = (
+            "(function(payload) {"
+            " if (typeof window.replaceKlineData !== 'function') return false;"
+            " return window.replaceKlineData(payload);"
+            f" }})({payload_json});"
+        )
+
+        def _fallback_if_needed(applied):
+            if applied:
+                return
+            try:
+                self.browser.setHtml(html_content, base_url)
+            except (AttributeError, RuntimeError, TypeError) as exc:
+                self._log.debug(f"[K绾縘 JS澧為噺娓叉煋鍥為€€澶辫触: {exc}")
+
+        try:
+            self.browser.page().runJavaScript(script, _fallback_if_needed)
+        except (AttributeError, RuntimeError, TypeError) as exc:
+            self._log.debug(f"[K绾縘 JS澧為噺娓叉煋涓嶅彲鐢? {exc}")
+            try:
+                self.browser.setHtml(html_content, base_url)
+            except (AttributeError, RuntimeError, TypeError) as fallback_exc:
+                self._log.debug(f"[K绾縘 HTML鍥為€€娓叉煋澶辫触: {fallback_exc}")
+
     def _start_rt_timer(self):
         """启动盘中实时刷新定时器（60秒间隔），只在交易时段运行"""
         market = self._get_market()
@@ -606,4 +647,3 @@ class KLineChartWindow(QWidget):
 
         log.debug(f"[K线] {self.code} 窗口关闭")
         super().closeEvent(event)
-

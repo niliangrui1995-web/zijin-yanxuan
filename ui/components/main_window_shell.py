@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 from PyQt6.QtCore import Qt, QTimer
@@ -21,9 +22,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.logger import get_logger
 from ui.components import PulsingDot
 from ui.components.shared_title_bar import DraggableTitleBar
 from ui.theme_tokens import build_ui_tokens, get_state_tone
+
+
+log = get_logger(__name__)
 
 
 def _titlebar_shell_style(theme: dict) -> str:
@@ -297,6 +302,9 @@ class ShellNavigationWidget(QWidget):
         self._group_to_indices: dict[str, list[int]] = {}
         self._last_index_by_group: dict[str, int] = {}
         self._visible_indices: list[int] = []
+        self._current_group = ""
+        self._tabbar_rebuild_count = 0
+        self._slow_switch_threshold_ms = 12.0
         self._group_buttons: dict[str, QPushButton] = {}
 
         layout = QHBoxLayout(self)
@@ -333,6 +341,8 @@ class ShellNavigationWidget(QWidget):
         self._workspace = workspace
         self._tabs = tabs
         self._group_to_indices = {}
+        self._current_group = ""
+        self._visible_indices = []
 
         if workspace is not None and hasattr(workspace, "tab_indices_by_group"):
             self._group_to_indices = workspace.tab_indices_by_group()
@@ -379,6 +389,7 @@ class ShellNavigationWidget(QWidget):
         self.group_wrap.setVisible(bool(groups))
 
     def _switch_group(self, group: str, preferred_index: int | None = None) -> None:
+        started_at = time.perf_counter()
         indices = list(self._group_to_indices.get(group, []))
         if not indices or self._tabs is None:
             return
@@ -389,26 +400,62 @@ class ShellNavigationWidget(QWidget):
         if target_index not in indices:
             target_index = current_index if current_index in indices else indices[0]
 
-        self._visible_indices = indices
+        needs_rebuild = (
+            group != self._current_group
+            or self._visible_indices != indices
+            or not self._tabbar_matches_indices(indices)
+        )
         self._remember_group_index(group, target_index)
 
         self._syncing = True
+        previous_signal_state = self.tabbar.blockSignals(True)
+        updates_disabled = False
         try:
-            self.tabbar.blockSignals(True)
-            while self.tabbar.count() > 0:
-                self.tabbar.removeTab(self.tabbar.count() - 1)
-            for global_index in indices:
-                self.tabbar.addTab(self._tabs.tabText(global_index))
-            self.tabbar.setCurrentIndex(indices.index(target_index))
+            if needs_rebuild:
+                self.tabbar.setUpdatesEnabled(False)
+                updates_disabled = True
+                while self.tabbar.count() > 0:
+                    self.tabbar.removeTab(self.tabbar.count() - 1)
+                for global_index in indices:
+                    self.tabbar.addTab(self._tabs.tabText(global_index))
+                self._tabbar_rebuild_count += 1
+
+            visible_target = indices.index(target_index)
+            if self.tabbar.currentIndex() != visible_target:
+                self.tabbar.setCurrentIndex(visible_target)
             if self._tabs.currentIndex() != target_index:
                 self._tabs.setCurrentIndex(target_index)
 
             button = self._group_buttons.get(group)
             if button is not None and not button.isChecked():
                 button.setChecked(True)
+
+            self._visible_indices = indices
+            self._current_group = group
         finally:
-            self.tabbar.blockSignals(False)
+            if updates_disabled:
+                self.tabbar.setUpdatesEnabled(True)
+            self.tabbar.blockSignals(previous_signal_state)
             self._syncing = False
+
+        elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+        if elapsed_ms >= self._slow_switch_threshold_ms:
+            log.debug(
+                "shell navigation switch %.1fms group=%s target=%s rebuild=%s tabs=%s",
+                elapsed_ms,
+                group,
+                target_index,
+                needs_rebuild,
+                len(indices),
+            )
+
+    def _tabbar_matches_indices(self, indices: list[int]) -> bool:
+        if self._tabs is None or self.tabbar.count() != len(indices):
+            return False
+        for visible_index, global_index in enumerate(indices):
+            if self.tabbar.tabText(visible_index) != self._tabs.tabText(global_index):
+                return False
+        return True
 
     def _find_group_for_index(self, tab_index: int) -> str:
         for group, indices in self._group_to_indices.items():

@@ -196,6 +196,12 @@ class ClassicWorkspace(QWidget):
     def refresh_all_tabs_after_f5(self) -> None:
         _resolve_workspace_facade(self).refresh_all_tabs_after_f5()
 
+    def refresh_all_tabs_after_f5_scheduled(self, *, on_finished=None, interval_ms: int = 0) -> bool:
+        return _resolve_workspace_facade(self).refresh_all_tabs_after_f5_scheduled(
+            on_finished=on_finished,
+            interval_ms=interval_ms,
+        )
+
     def refresh_information_sources_after_f5(self) -> dict[str, bool]:
         return _resolve_workspace_facade(self).refresh_information_sources_after_f5()
 

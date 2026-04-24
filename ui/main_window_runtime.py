@@ -79,8 +79,17 @@ def finish_f5_reload(main_window, *, count, elapsed, event_bus):
         except (AttributeError, RuntimeError, TypeError) as exc:
             log.error(f"[F5] 刷新全局报价快照异常: {exc}")
 
+    scheduled_refresh_started = False
+    refresh_all_tabs_after_f5_scheduled = getattr(workspace, "refresh_all_tabs_after_f5_scheduled", None)
+    if callable(refresh_all_tabs_after_f5_scheduled):
+        try:
+            scheduled_refresh_started = bool(refresh_all_tabs_after_f5_scheduled(interval_ms=0))
+        except (AttributeError, RuntimeError, TypeError) as exc:
+            scheduled_refresh_started = False
+            log.error(f"[F5] 工作区快照分帧刷新异常: {exc}")
+
     refresh_all_tabs_after_f5 = getattr(workspace, "refresh_all_tabs_after_f5", None)
-    if callable(refresh_all_tabs_after_f5):
+    if not scheduled_refresh_started and callable(refresh_all_tabs_after_f5):
         try:
             refresh_all_tabs_after_f5()
         except (AttributeError, RuntimeError, TypeError) as exc:
@@ -150,4 +159,3 @@ def shutdown_main_window(main_window, *, event_bus, task_manager):
     _run("广播关闭信号", event_bus.sig_app_closing.emit)
     _run("重置全局快照状态", global_store.reset_runtime_state)
     _run("TaskManager 关停", task_manager.shutdown)
-

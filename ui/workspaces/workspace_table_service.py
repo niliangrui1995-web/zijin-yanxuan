@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from PyQt6.QtCore import QObject
+
 from core.logger import get_logger
+from ui.components.frame_task_scheduler import FrameTaskScheduler
 from ui.workspaces.tab_capabilities import SnapshotRefreshCapability, TableCollectionCapability
 
 log = get_logger(__name__)
@@ -42,3 +45,52 @@ class WorkspaceTableService:
                 tab.refresh_table_from_latest_snapshot()
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 log.warning(f"[F5] {tab.__class__.__name__} 表格快照回灌失败: {exc}")
+
+    def refresh_all_tabs_after_f5_scheduled(
+        self,
+        *,
+        on_finished=None,
+        interval_ms: int = 0,
+        frame_budget_ms: int = 6,
+    ) -> bool:
+        tabs = self.iter_refreshable_tabs()
+        if not tabs:
+            if callable(on_finished):
+                from PyQt6.QtCore import QTimer
+
+                QTimer.singleShot(0, on_finished)
+            return False
+
+        existing = getattr(self._workspace, "_f5_refresh_scheduler", None)
+        if existing is not None and getattr(existing, "is_running", lambda: False)():
+            existing.cancel()
+
+        tasks = [
+            (
+                tab.__class__.__name__,
+                lambda tab=tab: tab.refresh_table_from_latest_snapshot(),
+            )
+            for tab in tabs
+        ]
+        parent = self._workspace if isinstance(self._workspace, QObject) else None
+        scheduler = FrameTaskScheduler(
+            parent,
+            interval_ms=interval_ms,
+            frame_budget_ms=frame_budget_ms,
+            max_tasks_per_frame=1,
+        )
+        scheduler.taskFailed.connect(
+            lambda label, message: log.warning(f"[F5] {label} 分帧刷新失败: {message}")
+        )
+
+        def _cleanup():
+            if getattr(self._workspace, "_f5_refresh_scheduler", None) is scheduler:
+                setattr(self._workspace, "_f5_refresh_scheduler", None)
+            if callable(on_finished):
+                on_finished()
+            scheduler.deleteLater()
+
+        scheduler.finished.connect(_cleanup)
+        setattr(self._workspace, "_f5_refresh_scheduler", scheduler)
+        scheduler.start(tasks)
+        return True

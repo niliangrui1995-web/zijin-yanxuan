@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from PyQt6.QtTest import QSignalSpy
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtWidgets import QApplication, QWidget
 
 from ui.components.smooth_tab_widget import SmoothTabWidget
 from ui.models.table_models import StockTableModel
@@ -18,6 +18,25 @@ def test_smooth_tab_widget_keeps_qtabwidget_contract_when_hidden():
         assert tabs.count() == 2
         assert tabs._pending_transition is None
     finally:
+        tabs.deleteLater()
+
+
+def test_smooth_tab_widget_skips_expensive_snapshots_when_visible():
+    app = QApplication.instance() or QApplication([])
+    tabs = SmoothTabWidget()
+    try:
+        tabs.addTab(QWidget(), "A")
+        tabs.addTab(QWidget(), "B")
+        tabs.resize(240, 160)
+        tabs.setMaxSnapshotPixels(1)
+        tabs.show()
+        app.processEvents()
+
+        tabs._prepare_transition(1)
+
+        assert tabs._pending_transition is None
+    finally:
+        tabs.close()
         tabs.deleteLater()
 
 
