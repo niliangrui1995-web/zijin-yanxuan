@@ -38,6 +38,8 @@ class ScanTab(BaseStockTab):
     静态扫描 (VCP 区间扫描) 独立组件
     包含扫描渲染、策略表格、本地JSON缓存，并通过事件总线驱动进度。
     """
+    AUTO_F5_INCREMENTAL_SCAN_DATE_KEY = "last_auto_incremental_after_f5_date"
+
     def __init__(self, data_provider, engine, parent=None):
         super().__init__(data_provider=data_provider, parent=parent)
         self.engine = engine
@@ -508,13 +510,12 @@ class ScanTab(BaseStockTab):
         start_date, end_date = dlg.selected_range()
         self.start_scan(start_date, end_date, merge_mode=False)
 
-    def _on_incremental_scan_clicked(self):
+    def _on_incremental_scan_clicked(self) -> bool:
         if self.worker and self.worker.isRunning():
-            self.cancel_scan()
-            return
+            return self.cancel_scan()
 
         target_date = self._resolve_incremental_scan_date()
-        self.start_scan(target_date, target_date, merge_mode=True)
+        return self.start_scan(target_date, target_date, merge_mode=True)
 
     def _show_scan_settings(self):
         dlg = VCPScanSettingsDialog(self._get_scan_params(), self._load_user_presets(), self)
@@ -532,14 +533,29 @@ class ScanTab(BaseStockTab):
         return list(self._current_results or [])
 
     def run_incremental_scan(self) -> bool:
-        self._on_incremental_scan_clicked()
-        return True
+        return self._on_incremental_scan_clicked()
 
     def run_auto_incremental_scan_after_f5(self) -> bool:
         if self.worker is not None and self.worker.isRunning():
             log.info("[扫描] F5后自动补扫跳过：当前已有扫描任务运行中")
             return False
-        self._on_incremental_scan_clicked()
+
+        target_date = self._resolve_incremental_scan_date()
+        target_key = self._normalize_scan_date(target_date)
+        last_key = self._normalize_scan_date(
+            self._settings.value(self.AUTO_F5_INCREMENTAL_SCAN_DATE_KEY, "")
+        )
+        if target_key and target_key == last_key:
+            log.info(f"[扫描] F5后自动补扫跳过：{target_key} 已自动触发")
+            return False
+
+        started = self.start_scan(target_date, target_date, merge_mode=True)
+        if not started:
+            return False
+
+        if target_key:
+            self._settings.setValue(self.AUTO_F5_INCREMENTAL_SCAN_DATE_KEY, target_key)
+            self._settings.sync()
         return True
 
     def refresh_data_after_f5(self) -> bool:
@@ -562,9 +578,9 @@ class ScanTab(BaseStockTab):
     # ==========================
     # 核心引擎调度与任务生命周期
     # ==========================
-    def start_scan(self, sd: str, ed: str, merge_mode: bool = False):
+    def start_scan(self, sd: str, ed: str, merge_mode: bool = False) -> bool:
         if self.worker is not None and self.worker.isRunning():
-            return
+            return False
 
         sd = sd.replace('-', '')
         ed = ed.replace('-', '')
@@ -595,6 +611,7 @@ class ScanTab(BaseStockTab):
         self.worker.finished_scan.connect(self._on_scan_finished)
         self.worker.finished.connect(self._on_worker_thread_finished)
         self.worker.start()
+        return True
 
     def cancel_scan(self):
         if self.worker and self.worker.isRunning() and not self._scan_cancel_requested:

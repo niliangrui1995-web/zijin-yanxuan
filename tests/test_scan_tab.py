@@ -13,6 +13,21 @@ class _DummyProvider:
         return dict(self.code2name)
 
 
+class _FakeSettings:
+    def __init__(self, values=None):
+        self.values = dict(values or {})
+        self.synced = False
+
+    def value(self, key, default=None, type=None):
+        return self.values.get(key, default)
+
+    def setValue(self, key, value):
+        self.values[key] = value
+
+    def sync(self):
+        self.synced = True
+
+
 def test_scan_tab_idle_status_summary_is_not_blank(monkeypatch):
     monkeypatch.setattr("ui.tabs.scan_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
 
@@ -88,10 +103,31 @@ def test_scan_tab_auto_f5_incremental_scan_starts_when_idle(monkeypatch):
     tab = ScanTab(data_provider=None, engine=None)
     calls = []
     try:
-        tab._on_incremental_scan_clicked = lambda: calls.append("start")
+        tab._settings = _FakeSettings()
+        tab._resolve_incremental_scan_date = lambda: "2026-04-24"
+        tab.start_scan = lambda sd, ed, merge_mode=False: calls.append((sd, ed, merge_mode)) or True
 
         assert tab.run_auto_incremental_scan_after_f5() is True
-        assert calls == ["start"]
+        assert calls == [("2026-04-24", "2026-04-24", True)]
+        assert tab._settings.values[ScanTab.AUTO_F5_INCREMENTAL_SCAN_DATE_KEY] == "20260424"
+        assert tab._settings.synced is True
+    finally:
+        tab.deleteLater()
+
+
+def test_scan_tab_auto_f5_incremental_scan_skips_same_trade_date(monkeypatch):
+    monkeypatch.setattr("ui.tabs.scan_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+
+    tab = ScanTab(data_provider=None, engine=None)
+    calls = []
+    try:
+        tab._settings = _FakeSettings({ScanTab.AUTO_F5_INCREMENTAL_SCAN_DATE_KEY: "20260424"})
+        tab._resolve_incremental_scan_date = lambda: "2026-04-24"
+        tab.start_scan = lambda sd, ed, merge_mode=False: calls.append((sd, ed, merge_mode)) or True
+
+        assert tab.run_auto_incremental_scan_after_f5() is False
+        assert calls == []
+        assert tab._settings.synced is False
     finally:
         tab.deleteLater()
 
