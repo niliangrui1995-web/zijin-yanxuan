@@ -362,6 +362,11 @@ def test_workspace_accepts_direct_stock_signal_capability():
 def test_workspace_open_security_detail_builds_stock_dialog(monkeypatch):
     created = {}
 
+    class FakeSignal:
+        @staticmethod
+        def connect(callback):
+            created["destroyed_callback"] = callback
+
     class FakeStockDetailDialog:
         def __init__(self, code, name, signals, *, tab_titles, activate_callback, context, parent):
             created["code"] = code
@@ -371,10 +376,16 @@ def test_workspace_open_security_detail_builds_stock_dialog(monkeypatch):
             created["activate_callback"] = activate_callback
             created["context"] = dict(context)
             created["parent"] = parent
+            self.destroyed = FakeSignal()
 
-        @staticmethod
-        def exec():
-            created["exec"] = True
+        def show(self):
+            created["show"] = True
+
+        def raise_(self):
+            created["raise"] = True
+
+        def activateWindow(self):
+            created["activate"] = True
 
     monkeypatch.setattr("ui.components.stock_detail_dialog.StockDetailDialog", FakeStockDetailDialog)
     signal = StockSignal(
@@ -398,7 +409,46 @@ def test_workspace_open_security_detail_builds_stock_dialog(monkeypatch):
     assert created["signals"] == [signal]
     assert created["tab_titles"] == {"earnings": "业绩异动"}
     assert created["context"] == {"市价": "183.50"}
-    assert created["exec"] is True
+    assert created["show"] is True
+    assert created["raise"] is True
+    assert created["activate"] is True
+    assert workspace._stock_detail_dialogs["300750"] is not None
+
+
+def test_workspace_open_security_detail_reuses_visible_stock_dialog(monkeypatch):
+    events = []
+
+    class ExistingDialog:
+        @staticmethod
+        def isVisible():
+            return True
+
+        @staticmethod
+        def raise_():
+            events.append("raise")
+
+        @staticmethod
+        def activateWindow():
+            events.append("activate")
+
+    class FailStockDetailDialog:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("visible stock detail dialog should be reused")
+
+    monkeypatch.setattr("ui.components.stock_detail_dialog.StockDetailDialog", FailStockDetailDialog)
+    existing = ExistingDialog()
+    workspace = SimpleNamespace(
+        data_provider=SimpleNamespace(code2name={"300750": "宁德时代"}),
+        collect_stock_context=lambda: {"300750": []},
+        tab_specs=lambda: [{"key": "earnings", "title": "业绩异动"}],
+        window=lambda: None,
+        _activate_stock_signal_source=lambda _signal: True,
+        _stock_detail_dialogs={"300750": existing},
+    )
+
+    assert ClassicWorkspace.open_security_detail(workspace, "300750", {"vcp_data": {}}) is True
+    assert workspace._stock_detail_dialogs["300750"] is existing
+    assert events == ["raise", "activate"]
 
 
 def test_workspace_activates_stock_signal_source_tab():

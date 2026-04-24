@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QDialog,
@@ -116,6 +116,7 @@ class StockDetailDialog(QDialog):
         self.setWindowTitle(f"股票全景 - {self._name or self._code}")
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.resize(820, 460)
 
         layout = QVBoxLayout(self)
@@ -235,6 +236,8 @@ class StockDetailDialog(QDialog):
         if not self._rows:
             item = QTableWidgetItem("暂无跨 Tab 信号")
             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item.setToolTip(item.text())
+            item.setData(Qt.ItemDataRole.ToolTipRole, item.text())
             self.table.setSpan(0, 0, 1, 5)
             self.table.setItem(0, 0, item)
         else:
@@ -248,6 +251,9 @@ class StockDetailDialog(QDialog):
                 ]
                 for col_idx, value in enumerate(values):
                     item = QTableWidgetItem(str(value or ""))
+                    if item.text():
+                        item.setToolTip(item.text())
+                        item.setData(Qt.ItemDataRole.ToolTipRole, item.text())
                     item.setData(Qt.ItemDataRole.UserRole, row["signal"])
                     if col_idx in (3, 4):
                         item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -283,7 +289,9 @@ class StockDetailDialog(QDialog):
     def _open_kline(self) -> None:
         if not self._code:
             return
-        ui_signals.sig_show_kline_with_list.emit(self._code, [self._detail_payload()], 0)
+        code = self._code
+        detail_payload = self._detail_payload()
+        QTimer.singleShot(0, lambda: ui_signals.sig_show_kline_with_list.emit(code, [detail_payload], 0))
 
     def _toggle_watchlist(self) -> None:
         if not self._code:

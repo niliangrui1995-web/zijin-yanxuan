@@ -38,6 +38,7 @@ class ClassicWorkspace(QWidget):
         self.data_provider = data_provider
         self.engine = engine
         self.host = host
+        self._stock_detail_dialogs = {}
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -265,6 +266,22 @@ class ClassicWorkspace(QWidget):
 
         from ui.components.stock_detail_dialog import StockDetailDialog
 
+        detail_dialogs = getattr(self, "_stock_detail_dialogs", None)
+        if detail_dialogs is None:
+            detail_dialogs = {}
+            setattr(self, "_stock_detail_dialogs", detail_dialogs)
+
+        existing_dialog = detail_dialogs.get(code_text)
+        if existing_dialog is not None:
+            try:
+                if existing_dialog.isVisible():
+                    existing_dialog.raise_()
+                    existing_dialog.activateWindow()
+                    return True
+            except RuntimeError:
+                pass
+            detail_dialogs.pop(code_text, None)
+
         dialog = StockDetailDialog(
             code_text,
             name,
@@ -274,7 +291,14 @@ class ClassicWorkspace(QWidget):
             context=detail_context,
             parent=self.window(),
         )
-        dialog.exec()
+        detail_dialogs[code_text] = dialog
+        dialog.destroyed.connect(lambda _obj=None, key=code_text: detail_dialogs.pop(key, None))
+        dialog.show()
+        try:
+            dialog.raise_()
+            dialog.activateWindow()
+        except RuntimeError:
+            pass
         return True
 
     def _tab_index_for_key(self, key: str) -> int:

@@ -2,7 +2,7 @@
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QSignalSpy
-from PyQt6.QtWidgets import QFrame, QLabel, QToolButton
+from PyQt6.QtWidgets import QDialog, QFrame, QLabel, QToolButton
 
 from app.services.ui_runtime_service import ui_signals
 from ui.components import stock_detail_dialog as stock_detail_module
@@ -45,6 +45,11 @@ def test_stock_detail_dialog_actions_emit_kline_and_toggle_watchlist(monkeypatch
     state = {"fav": False}
 
     monkeypatch.setattr(stock_detail_module.watchlist_vm, "is_in_watchlist", lambda _code: state["fav"])
+    monkeypatch.setattr(
+        stock_detail_module.QTimer,
+        "singleShot",
+        staticmethod(lambda _delay, callback: callback()),
+    )
 
     def _toggle_stock(code, name, payload):
         toggled["code"] = code
@@ -63,6 +68,7 @@ def test_stock_detail_dialog_actions_emit_kline_and_toggle_watchlist(monkeypatch
     )
 
     dialog._open_kline()
+    assert dialog.result() != QDialog.DialogCode.Accepted
     assert len(spy) == 1
     assert spy[0][0] == "300750"
     assert spy[0][1][0]["市价"] == "183.50"
@@ -88,5 +94,21 @@ def test_stock_detail_dialog_uses_themed_frameless_shell():
         assert dialog.findChild(QFrame, "dialogContainer") is not None
         assert dialog.findChild(QLabel, "dialogWindowTitle").text() == "股票全景 - 华正新材"
         assert dialog.findChild(QToolButton, "dialogCloseButton") is not None
+    finally:
+        dialog.close()
+
+
+def test_stock_detail_dialog_cells_expose_full_text_tooltips():
+    long_summary = "J.P.Morgan Securities PLC | 自有资金 | 新进 | 2026Q1 | 占比0.69% | 变化+104.54"
+    dialog = StockDetailDialog(
+        "603256",
+        "宏和科技",
+        [StockSignal(code="603256", source_tab="fund_holdings", signal_type="fund_holding", summary=long_summary)],
+    )
+    try:
+        item = dialog.table.item(0, 2)
+        assert item.text() == long_summary
+        assert item.toolTip() == long_summary
+        assert item.data(Qt.ItemDataRole.ToolTipRole) == long_summary
     finally:
         dialog.close()
