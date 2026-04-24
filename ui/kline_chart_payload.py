@@ -740,9 +740,8 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             }};
         }}
 
-        const data = splitData(rawData);
-
         function buildOption() {{
+            const data = splitData(rawData);
             return {{
                 animation: false,
                 backgroundColor: '{theme_colors['bg_canvas']}',
@@ -1240,4 +1239,3 @@ def build_kline_echarts_payload(df: pd.DataFrame, *, code: str, name: str, vcp_d
         inject_vcp_overlays(result, dates, vcp_data)
 
     return result
-

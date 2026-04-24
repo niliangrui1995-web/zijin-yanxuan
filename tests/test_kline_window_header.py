@@ -42,6 +42,11 @@ def test_kline_html_exposes_incremental_replace_bridge():
 
     assert "let rawData =" in html
     assert "window.replaceKlineData" in html
+    build_option_body = html[
+        html.index("function buildOption()"):html.index("chart.setOption(buildOption());")
+    ]
+    assert "const data = splitData(rawData);" in build_option_body
+    assert html.count("const data = splitData(rawData);") == 1
 
 
 class _LunchQuoteProvider:
