@@ -16,6 +16,8 @@ from ui.workspaces.stock_signal import StockSignal
 
 
 class StockCandidateTab(BaseStockTab):
+    HEADER_STATE_KEY = "header_state_stock_candidates_v2"
+    REQUIRED_SOURCE_TABS = frozenset({"ai_industry_chain", "na_daily"})
     COLUMNS = [
         "代码",
         "名称",
@@ -69,14 +71,18 @@ class StockCandidateTab(BaseStockTab):
         self.table.setItemDelegate(StockItemDelegate(self.table))
 
         header = self.table.horizontalHeader()
-        header.setStretchLastSection(True)
+        header.setStretchLastSection(False)
         default_widths = [52, 72, 76, 70, 72, 78, 70, 58, 58, 150, 430, 92]
         for i, width in enumerate(default_widths):
             if i < len(self.model.headers):
                 header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
                 self.table.setColumnWidth(i, width)
+        try:
+            header.setSectionResizeMode(self.model.headers.index("核心信号"), QHeaderView.ResizeMode.Stretch)
+        except ValueError:
+            pass
 
-        restored_sort = self.bind_header_persistence(self.table, "header_state_stock_candidates_v1")
+        restored_sort = self.bind_header_persistence(self.table, self.HEADER_STATE_KEY)
         if not restored_sort:
             try:
                 score_col = self.model.headers.index("共振分")
@@ -156,6 +162,11 @@ class StockCandidateTab(BaseStockTab):
             clean_signals = [signal for signal in signals or [] if isinstance(signal, StockSignal)]
             if not clean_signals:
                 continue
+            if not any(
+                str(signal.source_tab or "").strip() in StockCandidateTab.REQUIRED_SOURCE_TABS
+                for signal in clean_signals
+            ):
+                continue
 
             sources = []
             for signal in clean_signals:
@@ -163,7 +174,7 @@ class StockCandidateTab(BaseStockTab):
                 if label and label not in sources:
                     sources.append(label)
 
-            if len(sources) < 2 and len(clean_signals) < 2:
+            if len(sources) < 2:
                 continue
 
             type_counts = defaultdict(int)

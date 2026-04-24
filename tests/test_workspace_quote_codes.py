@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import QWidget
 
 import ui.workspaces.classic_workspace as classic_workspace_module
 from ui.workspaces.classic_workspace import ClassicWorkspace
+from ui.workspaces.stock_context_service import StockContextService
 from ui.workspaces.stock_signal import StockSignal
 
 
@@ -202,7 +203,8 @@ def test_workspace_collects_stock_context_signals_by_code():
     assert [signal.summary for signal in signals if signal.signal_type == "catalyst"] == ["北美订单催化"]
 
 
-def test_workspace_collects_scan_and_fund_holding_context_signals():
+def test_workspace_collects_scan_and_fund_holding_context_signals(monkeypatch):
+    monkeypatch.setattr(StockContextService, "_query_fund_holding_store_rows", lambda self: [])
     workspace = _make_workspace(
         tabs={
             "scan": SimpleNamespace(
@@ -224,6 +226,29 @@ def test_workspace_collects_scan_and_fund_holding_context_signals():
                         "名称": "源杰科技",
                         "主体": "QFII",
                         "资金属性": "外资",
+                        "主体代码": "QFII",
+                        "季度": "2025Q3",
+                        "变化类型": "新进",
+                        "本期占比": "1.25%",
+                        "持股变化": "+120.00万",
+                    },
+                    {
+                        "代码": "688498",
+                        "名称": "源杰科技",
+                        "主体": "QFII",
+                        "资金属性": "外资",
+                        "主体代码": "QFII",
+                        "季度": "2025Q4",
+                        "变化类型": "减持",
+                        "本期占比": "1.10%",
+                        "持股变化": "-20.00万",
+                    },
+                    {
+                        "代码": "688498",
+                        "名称": "源杰科技",
+                        "主体": "QFII",
+                        "资金属性": "外资",
+                        "主体代码": "QFII",
                         "季度": "2025Q4",
                         "变化类型": "新进",
                         "本期占比": "1.25%",
@@ -243,6 +268,38 @@ def test_workspace_collects_scan_and_fund_holding_context_signals():
     }
     assert any("评分91" in signal.summary for signal in signals)
     assert any("QFII" in signal.summary and "新进" in signal.summary for signal in signals)
+    assert not any("2025Q3" in signal.summary for signal in signals)
+    assert not any("减持" in signal.summary for signal in signals)
+
+
+def test_workspace_collects_fund_holding_context_from_store_without_open_tab(monkeypatch):
+    monkeypatch.setattr(
+        StockContextService,
+        "_query_fund_holding_store_rows",
+        lambda self: [
+            {
+                "代码": "300750",
+                "名称": "宁德时代",
+                "主体": "睿远基金",
+                "主体代码": "ruiyuan",
+                "季度": "2025Q4",
+                "变化类型": "增持",
+                "本期占比": "2.30%",
+                "持股变化": "+80.00",
+                "_is_latest_subject_quarter": True,
+            }
+        ],
+    )
+    workspace = _make_workspace(tabs={})
+    workspace.tab_specs = lambda: [{"key": "fund_holdings", "group": "情报源"}]
+
+    context = ClassicWorkspace.collect_stock_context(workspace)
+
+    signals = context["300750"]
+    assert {(signal.source_tab, signal.signal_type) for signal in signals} == {
+        ("fund_holdings", "fund_holding"),
+    }
+    assert signals[0].summary == "睿远基金 | 增持 | 2025Q4 | 占比2.30% | 变化+80.00"
 
 
 def test_workspace_accepts_direct_stock_signal_capability():

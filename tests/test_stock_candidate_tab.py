@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 from types import SimpleNamespace
 
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QHeaderView
+
 from app.services.ui_runtime_service import domain_events as event_bus
 from ui.tabs.stock_candidate_tab import StockCandidateTab
 from ui.workspaces.stock_signal import StockSignal
@@ -66,12 +69,23 @@ def test_stock_candidate_rows_compact_vcp_scan_core_signal():
     class DummyTab:
         @staticmethod
         def _workspace():
-            return SimpleNamespace(tab_specs=lambda: [{"key": "scan", "title": "VCP扫描"}])
+            return SimpleNamespace(
+                tab_specs=lambda: [
+                    {"key": "ai_industry_chain", "title": "AI产业链"},
+                    {"key": "scan", "title": "VCP扫描"},
+                ]
+            )
 
     rows = StockCandidateTab._build_candidate_rows(
         DummyTab(),
         {
             "688498": [
+                StockSignal(
+                    code="688498",
+                    source_tab="ai_industry_chain",
+                    signal_type="subsector",
+                    summary="CPO",
+                ),
                 StockSignal(
                     code="688498",
                     source_tab="scan",
@@ -97,7 +111,42 @@ def test_stock_candidate_rows_compact_vcp_scan_core_signal():
     )
 
     assert len(rows) == 1
-    assert rows[0]["核心信号"] == "触发日期 20260423 | RPS 96"
+    assert "触发日期 20260423 | RPS 96" in rows[0]["核心信号"]
+    assert "评分91" not in rows[0]["核心信号"]
+
+
+def test_stock_candidate_requires_ai_chain_or_na_daily_anchor_source():
+    class DummyTab:
+        @staticmethod
+        def _workspace():
+            return SimpleNamespace(
+                tab_specs=lambda: [
+                    {"key": "na_daily", "title": "北美战报"},
+                    {"key": "ai_industry_chain", "title": "AI产业链"},
+                    {"key": "scan", "title": "VCP扫描"},
+                    {"key": "fund_holdings", "title": "基金持仓"},
+                ]
+            )
+
+    rows = StockCandidateTab._build_candidate_rows(
+        DummyTab(),
+        {
+            "688498": [
+                StockSignal(code="688498", source_tab="scan", signal_type="vcp_scan", summary="VCP"),
+                StockSignal(code="688498", source_tab="fund_holdings", signal_type="fund_holding", summary="新进"),
+            ],
+            "300750": [
+                StockSignal(code="300750", source_tab="ai_industry_chain", signal_type="subsector", summary="CPO"),
+                StockSignal(code="300750", source_tab="scan", signal_type="vcp_scan", summary="VCP"),
+            ],
+            "002156": [
+                StockSignal(code="002156", source_tab="na_daily", signal_type="catalyst", summary="P7核心"),
+                StockSignal(code="002156", source_tab="na_daily", signal_type="subsector", summary="先进封装"),
+            ],
+        },
+    )
+
+    assert [row["代码"] for row in rows] == ["300750"]
 
 
 def test_stock_candidate_listens_to_global_quote_updates(monkeypatch):
@@ -138,5 +187,47 @@ def test_stock_candidate_listens_to_global_quote_updates(monkeypatch):
         assert round(float(row["涨幅%"]), 2) == 4.86
         assert row["市值"] == "11744亿"
         assert tab.get_realtime_quote_codes() == {"300750"}
+    finally:
+        tab.close()
+
+
+def test_stock_candidate_table_uses_fresh_context_column_layout(monkeypatch):
+    monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+    captured = {}
+
+    def fake_bind_header_persistence(self, table, settings_key="header_state"):
+        captured["settings_key"] = settings_key
+        return False
+
+    monkeypatch.setattr(StockCandidateTab, "bind_header_persistence", fake_bind_header_persistence)
+    tab = StockCandidateTab(data_provider=SimpleNamespace())
+    try:
+        headers = tab.model.headers
+        source_col = headers.index(StockCandidateTab.COLUMNS[-3])
+        core_col = headers.index(StockCandidateTab.COLUMNS[-2])
+        time_col = headers.index(StockCandidateTab.COLUMNS[-1])
+
+        assert captured["settings_key"] == StockCandidateTab.HEADER_STATE_KEY
+        assert StockCandidateTab.HEADER_STATE_KEY.endswith("_v2")
+        assert tab.table.horizontalHeader().sectionResizeMode(core_col) == QHeaderView.ResizeMode.Stretch
+
+        row = {
+            StockCandidateTab.COLUMNS[0]: "300750",
+            StockCandidateTab.COLUMNS[1]: "宁德时代",
+            StockCandidateTab.COLUMNS[2]: "--",
+            StockCandidateTab.COLUMNS[3]: "--",
+            StockCandidateTab.COLUMNS[4]: "--",
+            StockCandidateTab.COLUMNS[5]: 22,
+            StockCandidateTab.COLUMNS[6]: 2,
+            StockCandidateTab.COLUMNS[7]: 2,
+            StockCandidateTab.COLUMNS[-3]: "VCP扫描｜基金持仓",
+            StockCandidateTab.COLUMNS[-2]: "触发日期 20260423 | RPS 96",
+            StockCandidateTab.COLUMNS[-1]: "20260423",
+        }
+        tab.model.update_data([row])
+
+        assert tab.model.data(tab.model.index(0, source_col), Qt.ItemDataRole.DisplayRole) == "VCP扫描｜基金持仓"
+        assert tab.model.data(tab.model.index(0, core_col), Qt.ItemDataRole.DisplayRole) == "触发日期 20260423 | RPS 96"
+        assert tab.model.data(tab.model.index(0, time_col), Qt.ItemDataRole.DisplayRole) == "20260423"
     finally:
         tab.close()

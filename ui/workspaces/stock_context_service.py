@@ -30,6 +30,7 @@ KEY_BREAK_DISTANCE = "\u8ddd\u7a81\u7834"
 KEY_BREAK_STATUS = "\u7a81\u7834\u72b6\u6001"
 KEY_HOT_SECTOR = "\u70ed\u95e8\u677f\u5757"
 KEY_SUBJECT = "\u4e3b\u4f53"
+KEY_SUBJECT_CODE = "\u4e3b\u4f53\u4ee3\u7801"
 KEY_CAPITAL_ATTRIBUTE = "\u8d44\u91d1\u5c5e\u6027"
 KEY_QUARTER = "\u5b63\u5ea6"
 KEY_CHANGE_TYPE = "\u53d8\u5316\u7c7b\u578b"
@@ -54,6 +55,7 @@ SIGNAL_EARNINGS = "earnings"
 SIGNAL_LHB = "lhb"
 SIGNAL_VCP_SCAN = "vcp_scan"
 SIGNAL_FUND_HOLDING = "fund_holding"
+FUND_HOLDING_ALLOWED_CHANGE_TYPES = frozenset({"\u65b0\u8fdb", "\u589e\u6301"})
 
 
 class StockContextService:
@@ -427,7 +429,9 @@ class StockContextService:
 
     def _iter_fund_holdings_signals(self) -> list[StockSignal]:
         signals: list[StockSignal] = []
-        for row_idx, row in enumerate(self._get_rows(self._get_tab("fund_holdings"))):
+        rows = self._fund_holding_rows()
+        latest_by_subject = self._latest_fund_holding_quarters(rows)
+        for row_idx, row in enumerate(rows):
             code = str(row.get(KEY_CODE, "")).strip()
             if not code:
                 continue
@@ -436,6 +440,10 @@ class StockContextService:
             capital_attribute = str(row.get(KEY_CAPITAL_ATTRIBUTE, "") or "").strip()
             quarter = str(row.get(KEY_QUARTER, "") or "").strip()
             change_type = str(row.get(KEY_CHANGE_TYPE, "") or "").strip()
+            if change_type not in FUND_HOLDING_ALLOWED_CHANGE_TYPES:
+                continue
+            if not self._is_latest_fund_holding_row(row, latest_by_subject):
+                continue
             current_ratio = str(row.get(KEY_CURRENT_RATIO, "") or "").strip()
             holding_delta = str(row.get(KEY_HOLDING_DELTA, "") or "").strip()
 
@@ -467,6 +475,109 @@ class StockContextService:
                 )
             )
         return signals
+
+    @staticmethod
+    def _format_fund_holding_pct(value) -> str:
+        try:
+            return f"{float(value or 0):.2f}%"
+        except (TypeError, ValueError):
+            return "--"
+
+    @staticmethod
+    def _format_fund_holding_amount(value, *, divisor: float = 10000.0) -> str:
+        try:
+            number = float(value or 0) / divisor
+        except (TypeError, ValueError):
+            return "--"
+        prefix = "+" if number > 0 else ""
+        return f"{prefix}{number:,.2f}"
+
+    def _query_fund_holding_store_rows(self) -> list[dict]:
+        try:
+            from app.services.ui_runtime_service import (
+                QFII_CAPITAL_ATTRIBUTE_UNMARKED,
+                SUBJECT_QFII,
+                fund_holdings_store,
+            )
+        except (ImportError, RuntimeError):
+            return []
+
+        try:
+            latest_quarter_map = dict(fund_holdings_store.get_latest_quarter_map() or {})
+            change_rows = list(fund_holdings_store.query_change_rows() or [])
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            return []
+
+        view_rows: list[dict] = []
+        qfii_subject_code = str((SUBJECT_QFII or {}).get("subject_code") or "")
+        for row in change_rows:
+            stock_code = str(row.get("stock_code") or "").strip()
+            subject_code = str(row.get("subject_code") or "").strip()
+            quarter_key = str(row.get("quarter_key") or "").strip()
+            change_type = str(row.get("change_type") or "").strip()
+            if not stock_code or change_type not in FUND_HOLDING_ALLOWED_CHANGE_TYPES:
+                continue
+            if quarter_key != latest_quarter_map.get(subject_code):
+                continue
+
+            capital_attribute = str(row.get("capital_attribute") or "").strip()
+            if subject_code == qfii_subject_code and not capital_attribute:
+                capital_attribute = QFII_CAPITAL_ATTRIBUTE_UNMARKED
+
+            view_rows.append(
+                {
+                    KEY_CODE: stock_code,
+                    KEY_NAME: str(row.get("stock_name") or "").strip(),
+                    KEY_SUBJECT: str(row.get("subject_name") or "").strip(),
+                    KEY_CAPITAL_ATTRIBUTE: (
+                        capital_attribute
+                        if capital_attribute != QFII_CAPITAL_ATTRIBUTE_UNMARKED
+                        else ""
+                    ),
+                    KEY_SUBJECT_CODE: subject_code,
+                    KEY_QUARTER: quarter_key,
+                    KEY_CHANGE_TYPE: change_type,
+                    KEY_CURRENT_RATIO: self._format_fund_holding_pct(row.get("curr_ratio_pct")),
+                    KEY_HOLDING_DELTA: self._format_fund_holding_amount(row.get("delta_hold_num_shares")),
+                    "_is_latest_subject_quarter": True,
+                }
+            )
+        return view_rows
+
+    def _fund_holding_rows(self) -> list[dict]:
+        if not self._has_fund_holdings_tab():
+            return []
+        rows = self._query_fund_holding_store_rows()
+        if rows:
+            return rows
+        return self._get_rows(self._get_tab("fund_holdings"))
+
+    def _has_fund_holdings_tab(self) -> bool:
+        if self._get_tab("fund_holdings") is not None:
+            return True
+        return any(str(spec.get("key") or "").strip() == "fund_holdings" for spec in self._tab_specs())
+
+    @staticmethod
+    def _latest_fund_holding_quarters(rows: list[dict]) -> dict[str, str]:
+        latest_by_subject: dict[str, str] = {}
+        for row in rows:
+            quarter = str(row.get(KEY_QUARTER, "") or "").strip()
+            if not quarter:
+                continue
+            subject_key = str(row.get(KEY_SUBJECT_CODE, "") or row.get(KEY_SUBJECT, "") or "__all__").strip()
+            if quarter > latest_by_subject.get(subject_key, ""):
+                latest_by_subject[subject_key] = quarter
+        return latest_by_subject
+
+    @staticmethod
+    def _is_latest_fund_holding_row(row: dict, latest_by_subject: dict[str, str]) -> bool:
+        if "_is_latest_subject_quarter" in row:
+            return bool(row.get("_is_latest_subject_quarter"))
+        quarter = str(row.get(KEY_QUARTER, "") or "").strip()
+        if not quarter:
+            return False
+        subject_key = str(row.get(KEY_SUBJECT_CODE, "") or row.get(KEY_SUBJECT, "") or "__all__").strip()
+        return quarter == latest_by_subject.get(subject_key)
 
     def _iter_lhb_signals(self) -> list[StockSignal]:
         signals: list[StockSignal] = []
