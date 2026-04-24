@@ -136,6 +136,7 @@ def test_workspace_collects_structured_watchlist_radar_metrics():
                     {
                         "代码": "300750",
                         "环比%": 32.5,
+                        "报告期": "2026-03-31",
                     }
                 ]
             ),
@@ -162,7 +163,7 @@ def test_workspace_collects_structured_watchlist_radar_metrics():
     assert rps_bundle == {"cached": True}
     assert block_data["300750"]["text"] == "机构专用买入2709万"
     assert block_data["300750"]["amount_wan"] == 2709
-    assert earn_data["300750"]["text"] == "32.5%"
+    assert earn_data["300750"]["text"] == "一季度 32.5%"
     assert earn_data["300750"]["qoq_pct"] == 32.5
     assert lhb_data["300750"]["text"] == "04-20 | 净买1200万 | 机构净买800万 | 外资净卖150万"
     assert lhb_data["300750"]["net_wan"] == 1200
@@ -201,6 +202,34 @@ def test_workspace_collects_stock_context_signals_by_code():
         ("earnings", "earnings"),
     }
     assert [signal.summary for signal in signals if signal.signal_type == "catalyst"] == ["北美订单催化"]
+
+
+def test_workspace_earnings_context_signal_includes_report_label():
+    workspace = _make_workspace(
+        tabs={
+            "earnings": _make_rows_tab(
+                [
+                    {
+                        "代码": "600176",
+                        "名称": "中国巨石",
+                        "环比%": 45.42,
+                        "报告期": "2026-03-31",
+                    },
+                    {
+                        "代码": "603186",
+                        "名称": "华正新材",
+                        "环比%": 81.67,
+                        "报告期": "2025-12-31",
+                    },
+                ]
+            ),
+        },
+    )
+
+    context = ClassicWorkspace.collect_stock_context(workspace)
+
+    assert [signal.summary for signal in context["600176"]] == ["一季度 45.42%"]
+    assert [signal.summary for signal in context["603186"]] == ["年报 81.67%"]
 
 
 def test_workspace_collects_scan_and_fund_holding_context_signals(monkeypatch):

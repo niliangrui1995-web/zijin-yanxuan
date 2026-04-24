@@ -18,6 +18,9 @@ KEY_BUY_BRANCH = "\u4e70\u65b9\u8425\u4e1a\u90e8"
 KEY_SELL_BRANCH = "\u5356\u65b9\u8425\u4e1a\u90e8"
 KEY_AMOUNT_WAN = "\u6210\u4ea4\u91d1\u989d(\u4e07\u5143)"
 KEY_QOQ_PCT = "\u73af\u6bd4%"
+KEY_REPORT_PERIOD = "\u62a5\u544a\u671f"
+KEY_REPORT_NAME = "\u8d22\u62a5\u540d\u79f0"
+KEY_REPORT_TITLE = "\u62a5\u544a\u540d\u79f0"
 KEY_LAST_LISTED_RAW = "_\u6700\u8fd1\u4e0a\u699c_raw"
 KEY_LAST_LISTED = "\u6700\u8fd1\u4e0a\u699c"
 KEY_NET_WAN = "\u4e0a\u699c\u51c0\u4e70\u989d(\u4e07)"
@@ -409,6 +412,8 @@ class StockContextService:
 
             qoq_value = self._safe_float(qoq_raw, default=0.0)
             qoq_display = f"{qoq_value:.2f}".rstrip("0").rstrip(".")
+            report_label = self._earnings_report_label(row)
+            summary = f"{report_label} {qoq_display}%" if report_label else f"{qoq_display}%"
             signals.append(
                 StockSignal(
                     code=code,
@@ -416,7 +421,7 @@ class StockContextService:
                     source_tab="earnings",
                     source_label="earnings",
                     signal_type=SIGNAL_EARNINGS,
-                    summary=f"{qoq_display}%",
+                    summary=summary,
                     numeric_value=qoq_value,
                     row_ref=row_idx,
                     payload={
@@ -426,6 +431,28 @@ class StockContextService:
                 )
             )
         return signals
+
+    @staticmethod
+    def _earnings_report_label(row: dict) -> str:
+        for key in (KEY_REPORT_NAME, KEY_REPORT_TITLE):
+            label = str(row.get(key, "") or "").strip()
+            if label:
+                return label
+
+        period = str(row.get(KEY_REPORT_PERIOD, "") or "").strip()
+        if not period:
+            return ""
+
+        compact = period.replace("/", "-").replace(".", "-")
+        if "Q1" in compact.upper() or compact.endswith("-03-31") or compact.endswith("0331"):
+            return "\u4e00\u5b63\u5ea6"
+        if "Q2" in compact.upper() or compact.endswith("-06-30") or compact.endswith("0630"):
+            return "\u534a\u5e74\u62a5"
+        if "Q3" in compact.upper() or compact.endswith("-09-30") or compact.endswith("0930"):
+            return "\u4e09\u5b63\u5ea6"
+        if "Q4" in compact.upper() or compact.endswith("-12-31") or compact.endswith("1231"):
+            return "\u5e74\u62a5"
+        return period
 
     def _iter_fund_holdings_signals(self) -> list[StockSignal]:
         signals: list[StockSignal] = []

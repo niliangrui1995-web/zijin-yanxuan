@@ -281,3 +281,72 @@ def test_watchlist_clears_stale_special_columns_when_current_round_has_no_signal
         assert captured["payload"]["600519"]["龙虎榜净额(万)"] == ""
     finally:
         tab.deleteLater()
+
+
+def test_watchlist_writes_earnings_report_label_to_column(monkeypatch):
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)
+    monkeypatch.setattr(
+        watchlist_module.WatchlistTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+    monkeypatch.setattr(watchlist_module.QTimer, "singleShot", staticmethod(lambda *_args, **_kwargs: None))
+
+    captured = {}
+
+    def _fake_bulk_patch_entries(payload, remove_keys=None):
+        captured["payload"] = payload
+        return True
+
+    monkeypatch.setattr(watchlist_vm, "bulk_patch_entries", _fake_bulk_patch_entries)
+
+    tab = watchlist_module.WatchlistTab(_DummyProvider())
+    try:
+        tab.model.update_data(
+            [
+                {
+                    "代码": "600519",
+                    "名称": "贵州茅台",
+                    "来源": "手动",
+                    "现价": "--",
+                    "涨幅%": "--",
+                    "市值": "--",
+                    "RPS强度": "",
+                    "细分板块": "",
+                    "催化剂": "",
+                    "业绩异动": "",
+                    "业绩环比%": "",
+                    "大宗交易": "",
+                    "大宗交易金额(万)": "",
+                    "龙虎榜": "",
+                    "龙虎榜日期": "",
+                    "龙虎榜净额(万)": "",
+                    "来源标签": ["手动"],
+                }
+            ]
+        )
+
+        tab._apply_vcp_indicators_ui(
+            {
+                "600519": {
+                    "rps": "",
+                    "subsector": "",
+                    "na_catalyst": "",
+                    "block_trade": "",
+                    "block_trade_amount_wan": "",
+                    "earnings": "一季度 32.5%",
+                    "earnings_qoq_pct": 32.5,
+                    "lhb": "",
+                }
+            }
+        )
+
+        row = tab.model.row_data[0]
+        assert row["业绩异动"] == "一季度 32.5%"
+        assert row["业绩环比%"] == 32.5
+        assert captured["payload"]["600519"]["业绩异动"] == "一季度 32.5%"
+        assert captured["payload"]["600519"]["业绩环比%"] == 32.5
+    finally:
+        tab.deleteLater()
