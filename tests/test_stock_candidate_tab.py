@@ -143,10 +143,44 @@ def test_stock_candidate_requires_ai_chain_or_na_daily_anchor_source():
                 StockSignal(code="002156", source_tab="na_daily", signal_type="catalyst", summary="P7核心"),
                 StockSignal(code="002156", source_tab="na_daily", signal_type="subsector", summary="先进封装"),
             ],
+            "688629": [
+                StockSignal(code="688629", source_tab="na_daily", signal_type="catalyst", summary="北美催化"),
+                StockSignal(code="688629", source_tab="ai_industry_chain", signal_type="subsector", summary="高速连接器"),
+            ],
         },
     )
 
     assert [row["代码"] for row in rows] == ["300750"]
+
+
+def test_stock_candidate_counts_na_daily_and_ai_chain_as_one_source_group():
+    class DummyTab:
+        @staticmethod
+        def _workspace():
+            return SimpleNamespace(
+                tab_specs=lambda: [
+                    {"key": "na_daily", "title": "北美战报"},
+                    {"key": "ai_industry_chain", "title": "AI产业链"},
+                    {"key": "lhb", "title": "龙虎榜"},
+                ]
+            )
+
+    rows = StockCandidateTab._build_candidate_rows(
+        DummyTab(),
+        {
+            "688629": [
+                StockSignal(code="688629", source_tab="na_daily", signal_type="catalyst", summary="北美催化"),
+                StockSignal(code="688629", source_tab="ai_industry_chain", signal_type="subsector", summary="高速连接器"),
+                StockSignal(code="688629", source_tab="lhb", signal_type="lhb", summary="机构净买"),
+            ],
+        },
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["来源"] == "北美战报｜AI产业链｜龙虎榜"
+    assert rows[0]["来源数"] == 2
+    assert rows[0]["信号数"] == 2
+    assert rows[0]["共振分"] == 24
 
 
 def test_stock_candidate_listens_to_global_quote_updates(monkeypatch):

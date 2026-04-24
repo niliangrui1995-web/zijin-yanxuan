@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from collections import defaultdict
-
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
@@ -18,6 +16,7 @@ from ui.workspaces.stock_signal import StockSignal
 class StockCandidateTab(BaseStockTab):
     HEADER_STATE_KEY = "header_state_stock_candidates_v2"
     REQUIRED_SOURCE_TABS = frozenset({"ai_industry_chain", "na_daily"})
+    ANCHOR_SOURCE_GROUP = "ai_na_anchor"
     COLUMNS = [
         "代码",
         "名称",
@@ -148,6 +147,39 @@ class StockCandidateTab(BaseStockTab):
             return " | ".join(parts) or "VCP扫描命中"
         return str(signal.summary or "").strip()
 
+    @staticmethod
+    def _source_group_key(signal: StockSignal) -> str:
+        source_tab = str(signal.source_tab or "").strip()
+        if source_tab in StockCandidateTab.REQUIRED_SOURCE_TABS:
+            return StockCandidateTab.ANCHOR_SOURCE_GROUP
+        return source_tab
+
+    @staticmethod
+    def _effective_signal_count(signals: list[StockSignal]) -> int:
+        count = 0
+        anchor_seen = False
+        for signal in signals:
+            source_tab = str(signal.source_tab or "").strip()
+            if source_tab in StockCandidateTab.REQUIRED_SOURCE_TABS:
+                if anchor_seen:
+                    continue
+                anchor_seen = True
+            count += 1
+        return count
+
+    @staticmethod
+    def _effective_type_count(signals: list[StockSignal]) -> int:
+        type_keys = []
+        for signal in signals:
+            source_tab = str(signal.source_tab or "").strip()
+            if source_tab in StockCandidateTab.REQUIRED_SOURCE_TABS:
+                type_key = StockCandidateTab.ANCHOR_SOURCE_GROUP
+            else:
+                type_key = str(signal.signal_type or "").strip()
+            if type_key and type_key not in type_keys:
+                type_keys.append(type_key)
+        return len(type_keys)
+
     def _build_candidate_rows(self, context: dict[str, list[StockSignal]]) -> list[dict]:
         rows = []
         workspace = self._workspace()
@@ -174,12 +206,14 @@ class StockCandidateTab(BaseStockTab):
                 if label and label not in sources:
                     sources.append(label)
 
-            if len(sources) < 2:
-                continue
-
-            type_counts = defaultdict(int)
+            source_groups = []
             for signal in clean_signals:
-                type_counts[str(signal.signal_type or "")] += 1
+                group_key = StockCandidateTab._source_group_key(signal)
+                if group_key and group_key not in source_groups:
+                    source_groups.append(group_key)
+
+            if len(source_groups) < 2:
+                continue
 
             name = next(
                 (
@@ -198,7 +232,10 @@ class StockCandidateTab(BaseStockTab):
                 if len(summaries) >= 3:
                     break
             latest_time = max((StockCandidateTab._signal_time(signal) for signal in clean_signals), default="")
-            score = len(sources) * 10 + len(clean_signals) + len(type_counts)
+            effective_source_count = len(source_groups)
+            effective_signal_count = StockCandidateTab._effective_signal_count(clean_signals)
+            effective_type_count = StockCandidateTab._effective_type_count(clean_signals)
+            score = effective_source_count * 10 + effective_signal_count + effective_type_count
 
             rows.append(
                 {
@@ -217,8 +254,8 @@ class StockCandidateTab(BaseStockTab):
                         ("市值", "总市值"),
                     ),
                     "共振分": score,
-                    "来源数": len(sources),
-                    "信号数": len(clean_signals),
+                    "来源数": effective_source_count,
+                    "信号数": effective_signal_count,
                     "来源": source_text,
                     "核心信号": "；".join(summaries),
                     "最近时间": latest_time,
