@@ -28,6 +28,8 @@ class DomainEventBus(QObject):
     sig_ai_industry_chain_updated = pyqtSignal()
     sig_block_trade_updated = pyqtSignal()
     sig_lhb_pool_updated = pyqtSignal()
+    sig_scan_updated = pyqtSignal()
+    sig_fund_holdings_updated = pyqtSignal()
 
     sig_watchlist_changed = pyqtSignal(str, str)
 

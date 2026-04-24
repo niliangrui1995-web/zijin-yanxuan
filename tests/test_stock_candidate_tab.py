@@ -225,6 +225,33 @@ def test_stock_candidate_listens_to_global_quote_updates(monkeypatch):
         tab.close()
 
 
+def test_stock_candidate_auto_refreshes_when_source_tabs_update(monkeypatch):
+    monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+    tab = StockCandidateTab(data_provider=SimpleNamespace())
+    try:
+        assert not tab._auto_refresh_timer.isActive()
+
+        event_bus.sig_ai_industry_chain_updated.emit()
+
+        assert tab._auto_refresh_timer.isActive()
+        assert tab._status_primary == "等待综合候选自动刷新"
+        assert tab._status_freshness == "数据源已更新"
+    finally:
+        tab.close()
+
+
+def test_stock_candidate_auto_refresh_accepts_watchlist_signal_args(monkeypatch):
+    monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+    tab = StockCandidateTab(data_provider=SimpleNamespace())
+    try:
+        event_bus.sig_watchlist_changed.emit("add", "300750")
+
+        assert tab._auto_refresh_timer.isActive()
+        assert tab._status_primary == "等待综合候选自动刷新"
+    finally:
+        tab.close()
+
+
 def test_stock_candidate_table_uses_fresh_context_column_layout(monkeypatch):
     monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
     captured = {}

@@ -28,6 +28,8 @@ class GlobalEventBus:
         self.sig_ai_industry_chain_updated = domain_events.sig_ai_industry_chain_updated
         self.sig_block_trade_updated = domain_events.sig_block_trade_updated
         self.sig_lhb_pool_updated = domain_events.sig_lhb_pool_updated
+        self.sig_scan_updated = domain_events.sig_scan_updated
+        self.sig_fund_holdings_updated = domain_events.sig_fund_holdings_updated
         self.sig_watchlist_changed = domain_events.sig_watchlist_changed
 
         self.sig_task_progress = ui_signals.sig_task_progress

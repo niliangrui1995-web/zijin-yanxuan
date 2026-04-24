@@ -651,6 +651,7 @@ class ScanTab(BaseStockTab):
             self._pending_scan_results = self._refresh_scan_result_names(incoming_results)
         self._current_results = self._pending_scan_results
         self._render_scan_table(self._pending_scan_results)
+        event_bus.sig_scan_updated.emit()
 
 
     # ==========================
@@ -844,4 +845,3 @@ class ScanTab(BaseStockTab):
         )
 
     # _launch_tdx 已迁移至 BaseStockTab 基类
-

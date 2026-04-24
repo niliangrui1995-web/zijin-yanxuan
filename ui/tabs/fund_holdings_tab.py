@@ -24,6 +24,7 @@ from app.services.ui_runtime_service import (
     QFII_CAPITAL_ATTRIBUTE_UNMARKED,
     SUBJECT_QFII,
     SUBJECT_RUIYUAN,
+    MarketCalendar,
     app_config,
     background_job_runner as task_manager,
     domain_events as event_bus,
@@ -138,6 +139,9 @@ class FundHoldingsTab(BaseStockTab):
     _CHANGE_FILTER_ALL = "__ALL__"
     _DISPLAY_PLACEHOLDER = "--"
     _CHANGE_TYPE_OPTIONS = ("新进", "增持", "减持", "退出", "持平")
+    _DAILY_AUTO_SYNC_HOUR = 20
+    _DAILY_AUTO_SYNC_MINUTE = 30
+    _DAILY_AUTO_SYNC_DATE_KEY = "daily_auto_sync_2030_last_date"
     _CAPITAL_ATTRIBUTE_OPTIONS = (
         QFII_CAPITAL_ATTRIBUTE_SELF_OWNED,
         QFII_CAPITAL_ATTRIBUTE_CLIENT,
@@ -223,12 +227,15 @@ class FundHoldingsTab(BaseStockTab):
         self._sector_manager_initialized = False
         self._concept_sector_cache: dict[str, str] = {}
         self._settings = self._create_settings()
+        self._pending_daily_auto_sync_date = ""
         self._restoring_view_state = False
         self._view_state_restored = False
         self._view_state_save_timer = QTimer(self)
         self._view_state_save_timer.setSingleShot(True)
         self._view_state_save_timer.setInterval(300)
         self._view_state_save_timer.timeout.connect(self._save_view_state)
+        self._daily_auto_sync_timer = QTimer(self)
+        self._daily_auto_sync_timer.timeout.connect(self._check_daily_auto_sync)
 
         self._init_ui()
         if self._autoload:
@@ -239,6 +246,7 @@ class FundHoldingsTab(BaseStockTab):
 
         event_bus.sig_cache_reload_completed.connect(self._on_cache_reload_completed)
         event_bus.sig_app_closing.connect(self._save_view_state)
+        self._start_daily_auto_sync_timer()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -253,6 +261,57 @@ class FundHoldingsTab(BaseStockTab):
 
     def _view_state_key(self, name: str) -> str:
         return f"{self._VIEW_STATE_PREFIX}/{name}"
+
+    @staticmethod
+    def _normalize_auto_sync_date(value) -> str:
+        text = str(value or "").strip().replace("-", "").replace("/", "")
+        return text[:8] if len(text) >= 8 else text
+
+    @classmethod
+    def _should_trigger_daily_auto_sync(
+        cls,
+        now,
+        *,
+        last_auto_sync_date: str,
+        pending_auto_sync_date: str,
+    ) -> bool:
+        today_compact = now.strftime("%Y%m%d")
+        if pending_auto_sync_date == today_compact:
+            return False
+        if cls._normalize_auto_sync_date(last_auto_sync_date) == today_compact:
+            return False
+        if (now.hour, now.minute) < (cls._DAILY_AUTO_SYNC_HOUR, cls._DAILY_AUTO_SYNC_MINUTE):
+            return False
+        return True
+
+    def _start_daily_auto_sync_timer(self) -> None:
+        self._daily_auto_sync_timer.start(5 * 60 * 1000)
+        QTimer.singleShot(10_000, self._check_daily_auto_sync)
+
+    def _stop_daily_auto_sync_timer(self) -> None:
+        timer = getattr(self, "_daily_auto_sync_timer", None)
+        if timer is not None:
+            timer.stop()
+
+    def _check_daily_auto_sync(self) -> bool:
+        if self._sync_active:
+            return False
+
+        now = MarketCalendar.now("CN")
+        today_compact = now.strftime("%Y%m%d")
+        if not self._should_trigger_daily_auto_sync(
+            now,
+            last_auto_sync_date=self._settings.value(self._DAILY_AUTO_SYNC_DATE_KEY, ""),
+            pending_auto_sync_date=self._pending_daily_auto_sync_date,
+        ):
+            return False
+
+        self._pending_daily_auto_sync_date = today_compact
+        event_bus.sig_system_log.emit("info", f"[基金持仓] 触发每日20:30自动刷新: {today_compact}")
+        started = self.run_daily_auto_sync(today_compact)
+        if not started:
+            self._pending_daily_auto_sync_date = ""
+        return started
 
     @staticmethod
     def _build_workspace_task_id(name: str) -> str:
@@ -939,6 +998,7 @@ class FundHoldingsTab(BaseStockTab):
                 )
             )
             event_bus.sig_system_log.emit("info", f"[基金持仓] {message}")
+            event_bus.sig_fund_holdings_updated.emit()
 
         def _on_error(error_message: str):
             self._set_sync_active(False)
@@ -979,6 +1039,15 @@ class FundHoldingsTab(BaseStockTab):
 
     def refresh_data_after_f5(self) -> bool:
         return self.run_auto_sync_after_f5()
+
+    def run_daily_auto_sync(self, auto_sync_date: str | None = None) -> bool:
+        if self._sync_active:
+            return False
+        today_compact = self._normalize_auto_sync_date(auto_sync_date) or MarketCalendar.now("CN").strftime("%Y%m%d")
+        self._settings.setValue(self._DAILY_AUTO_SYNC_DATE_KEY, today_compact)
+        self._settings.sync()
+        self._run_sync_action("20:30自动更新", fund_holdings_sync_service.sync_latest_all)
+        return True
 
     def run_full_sync(self) -> bool:
         if self._sync_active:
@@ -1317,6 +1386,10 @@ class FundHoldingsTab(BaseStockTab):
             )
 
     def closeEvent(self, event):
+        self._stop_daily_auto_sync_timer()
         self._save_view_state()
         super().closeEvent(event)
 
+    def shutdown(self) -> None:
+        self._stop_daily_auto_sync_timer()
+        self._save_view_state()

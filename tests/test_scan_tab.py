@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+from PyQt6.QtTest import QSignalSpy
+
+from core.event_bus import event_bus
 from ui.tabs.scan_tab import ScanTab
 
 
@@ -173,6 +176,7 @@ def test_incremental_scan_repairs_existing_cached_names(monkeypatch):
 
     provider = _DummyProvider()
     tab = ScanTab(data_provider=provider, engine=None)
+    spy = QSignalSpy(event_bus.sig_scan_updated)
     try:
         tab._current_results = [{"代码": "300093", "名称": "300093", "触发日期": "2026-04-16", "评分": 80}]
         tab._scan_mode = "incremental"
@@ -181,6 +185,7 @@ def test_incremental_scan_repairs_existing_cached_names(monkeypatch):
 
         row = next(item for item in tab._current_results if item["代码"] == "300093")
         assert row["名称"] == "*ST金刚"
+        assert len(spy) == 1
     finally:
         tab.deleteLater()
 

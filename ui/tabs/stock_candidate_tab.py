@@ -15,6 +15,7 @@ from ui.workspaces.stock_signal import StockSignal
 
 class StockCandidateTab(BaseStockTab):
     HEADER_STATE_KEY = "header_state_stock_candidates_v2"
+    AUTO_REFRESH_DEBOUNCE_MS = 500
     REQUIRED_SOURCE_TABS = frozenset({"ai_industry_chain", "na_daily"})
     ANCHOR_SOURCE_GROUP = "ai_na_anchor"
     COLUMNS = [
@@ -37,8 +38,32 @@ class StockCandidateTab(BaseStockTab):
         self._status_freshness = "待刷新"
         self._init_ui()
         self.subscribe_global_quotes(self.model)
-        event_bus.sig_cache_reload_completed.connect(self.refresh_candidates)
+        self._auto_refresh_timer = QTimer(self)
+        self._auto_refresh_timer.setSingleShot(True)
+        self._auto_refresh_timer.setInterval(self.AUTO_REFRESH_DEBOUNCE_MS)
+        self._auto_refresh_timer.timeout.connect(self.refresh_candidates)
+        self._connect_auto_refresh_events()
         QTimer.singleShot(2600, self.refresh_candidates)
+
+    def _connect_auto_refresh_events(self) -> None:
+        for signal in (
+            event_bus.sig_cache_reload_completed,
+            event_bus.sig_na_daily_updated,
+            event_bus.sig_ai_industry_chain_updated,
+            event_bus.sig_block_trade_updated,
+            event_bus.sig_earnings_updated,
+            event_bus.sig_lhb_pool_updated,
+            event_bus.sig_scan_updated,
+            event_bus.sig_fund_holdings_updated,
+            event_bus.sig_watchlist_changed,
+        ):
+            signal.connect(self._schedule_context_refresh)
+
+    def _schedule_context_refresh(self, *_args) -> None:
+        self._status_primary = "等待综合候选自动刷新"
+        self._status_freshness = "数据源已更新"
+        self._refresh_status()
+        self._auto_refresh_timer.start(self.AUTO_REFRESH_DEBOUNCE_MS)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)

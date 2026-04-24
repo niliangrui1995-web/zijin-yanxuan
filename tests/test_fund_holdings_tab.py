@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+from datetime import datetime
+
 from PyQt6.QtTest import QSignalSpy
 
 from core.event_bus import event_bus
@@ -12,6 +14,7 @@ class _DummyProvider:
 class _FakeSettings:
     def __init__(self):
         self._values = {}
+        self.synced = False
 
     def value(self, key, default=None, type=None):
         value = self._values.get(key, default)
@@ -35,6 +38,7 @@ class _FakeSettings:
         return key in self._values
 
     def sync(self):
+        self.synced = True
         return None
 
 
@@ -467,6 +471,78 @@ def test_fund_holdings_tab_runs_auto_sync_after_f5(monkeypatch):
         assert calls[0][1] == fund_holdings_module.fund_holdings_sync_service.sync_latest_all
     finally:
         tab.deleteLater()
+
+
+def test_fund_holdings_tab_emits_updated_after_sync_success(monkeypatch):
+    _setup_store(monkeypatch, [])
+
+    def _run_in_background(sync_callable, *args, on_success=None, on_error=None, task_id=None, **kwargs):
+        if callable(on_success):
+            on_success({"message": "同步完成"})
+
+    monkeypatch.setattr(fund_holdings_module.task_manager, "run_in_background", _run_in_background, raising=False)
+    spy = QSignalSpy(event_bus.sig_fund_holdings_updated)
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
+    try:
+        tab._run_sync_action("测试同步", fund_holdings_module.fund_holdings_sync_service.sync_latest_all)
+
+        assert len(spy) == 1
+    finally:
+        tab.deleteLater()
+
+
+def test_fund_holdings_tab_daily_auto_sync_starts_once_after_2030(monkeypatch):
+    settings = _setup_store(monkeypatch, [])
+    monkeypatch.setattr(
+        fund_holdings_module.MarketCalendar,
+        "now",
+        staticmethod(lambda _market="CN": datetime(2026, 4, 24, 20, 30)),
+    )
+    calls = []
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "_run_sync_action",
+        lambda self, label, runner: calls.append((label, runner)),
+        raising=False,
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
+    try:
+        assert tab._check_daily_auto_sync() is True
+        assert calls == [("20:30自动更新", fund_holdings_module.fund_holdings_sync_service.sync_latest_all)]
+        assert settings._values[fund_holdings_module.FundHoldingsTab._DAILY_AUTO_SYNC_DATE_KEY] == "20260424"
+        assert settings.synced is True
+
+        assert tab._check_daily_auto_sync() is False
+        assert len(calls) == 1
+    finally:
+        tab.deleteLater()
+
+
+def test_fund_holdings_tab_daily_auto_sync_skips_before_2030():
+    now = datetime(2026, 4, 24, 20, 29)
+
+    assert fund_holdings_module.FundHoldingsTab._should_trigger_daily_auto_sync(
+        now,
+        last_auto_sync_date="",
+        pending_auto_sync_date="",
+    ) is False
+
+
+def test_fund_holdings_tab_daily_auto_sync_skips_existing_today():
+    now = datetime(2026, 4, 24, 21, 0)
+
+    assert fund_holdings_module.FundHoldingsTab._should_trigger_daily_auto_sync(
+        now,
+        last_auto_sync_date="20260424",
+        pending_auto_sync_date="",
+    ) is False
+    assert fund_holdings_module.FundHoldingsTab._should_trigger_daily_auto_sync(
+        now,
+        last_auto_sync_date="",
+        pending_auto_sync_date="20260424",
+    ) is False
 
 
 def test_fund_holdings_tab_filters_ai_related_concepts_for_display():

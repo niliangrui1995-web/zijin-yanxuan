@@ -35,12 +35,18 @@ def test_legacy_event_bus_forwards_ui_signals():
 def test_split_buses_can_be_observed_through_legacy_compatibility():
     _ensure_app()
     domain_spy = QSignalSpy(event_bus.sig_watchlist_changed)
+    scan_spy = QSignalSpy(event_bus.sig_scan_updated)
+    fund_spy = QSignalSpy(event_bus.sig_fund_holdings_updated)
     ui_spy = QSignalSpy(event_bus.sig_task_progress)
 
     domain_events.sig_watchlist_changed.emit("add", "600519")
+    domain_events.sig_scan_updated.emit()
+    domain_events.sig_fund_holdings_updated.emit()
     ui_signals.sig_task_progress.emit("scan", 25, "running")
 
     assert len(domain_spy) == 1
+    assert len(scan_spy) == 1
+    assert len(fund_spy) == 1
     assert len(ui_spy) == 1
 
 
