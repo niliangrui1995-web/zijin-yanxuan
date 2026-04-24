@@ -119,7 +119,6 @@ class MainWindowQT(QMainWindow):
         qss = generate_global_qss()
         self.setStyleSheet(qss)
         from PyQt6.QtGui import QColor, QPalette
-        from PyQt6.QtWidgets import QApplication
         if QApplication.instance():
             pal = QApplication.style().standardPalette()
             from ui.theme import theme_manager
@@ -224,8 +223,6 @@ class MainWindowQT(QMainWindow):
         self._shortcut_escape.activated.connect(self._handle_escape_shortcut)
 
     def _handle_escape_shortcut(self):
-        from PyQt6.QtWidgets import QApplication
-
         if self._command_palette is not None and self._command_palette.isVisible():
             self._command_palette.reject()
             return
@@ -374,7 +371,6 @@ class MainWindowQT(QMainWindow):
                 QEvent.Type.MouseMove,
             ):
                 try:
-                    from PyQt6.QtWidgets import QApplication
                     QApplication.restoreOverrideCursor()
                 except (ImportError, RuntimeError):
                     pass
@@ -508,7 +504,6 @@ class MainWindowQT(QMainWindow):
                 log.warning(f"[UI] restoreGeometry 失败，使用默认布局: {e}")
 
         # 版本不匹配或无缓存：使用自适应默认布局
-        from PyQt6.QtWidgets import QApplication
         screen = QApplication.primaryScreen()
         if screen:
             avail = screen.availableGeometry()
