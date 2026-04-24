@@ -49,12 +49,13 @@ class RtMonitorTab(BaseStockTab):
         self.engine = engine
         self._settings = app_config.section("rt", legacy_scope="RtMonitorTab")
         self._init_ui()
+        self.subscribe_global_quotes(self.source_model)
 
         # 核心：实时数据流 UI 防抖拦截器 (针对未来的海量 tick 数据)
         self._rt_throttler = SignalThrottler(interval=1000, parent=self)
         self._rt_throttler.throttled_signal.connect(self._do_update_rt_table)
 
-        # 盘中监控由 RtScanWorker 独立推送数据，不订阅中央广播站
+        # 盘中监控由 RtScanWorker 独立推送数据，同时接收中央报价广播补齐同步刷新
         # 盘后 Worker 停止后，model 中的数据原地保留，第二天自动覆盖
 
         # 自动化监控：交易日 9:15-16:00 自动启动

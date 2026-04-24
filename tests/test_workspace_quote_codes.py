@@ -34,6 +34,8 @@ def test_workspace_collects_a_share_quote_codes_from_public_tab_apis():
             "scan": _make_quote_tab({"000001"}),
             "rt_monitor": _make_quote_tab({"600000"}),
             "watchlist": _make_quote_tab({"000001", "300001"}),
+            "asian_market": _make_quote_tab({"600519"}),
+            "stock_candidates": _make_quote_tab({"300750"}),
             "foreign_block": _make_quote_tab({"600000", "688001"}),
             "na_daily": _make_quote_tab({"002415"}),
             "ai_industry_chain": _make_quote_tab({"688498"}),
@@ -45,14 +47,26 @@ def test_workspace_collects_a_share_quote_codes_from_public_tab_apis():
 
     codes = ClassicWorkspace.get_realtime_quote_codes(workspace)
 
-    assert codes == {"000001", "600000", "300001", "688001", "002415", "688498", "601318"}
+    assert codes == {
+        "000001",
+        "600000",
+        "300001",
+        "300750",
+        "688001",
+        "002415",
+        "688498",
+        "601318",
+    }
 
 
-def test_workspace_quote_universe_skips_information_source_group():
+def test_workspace_quote_universe_skips_information_source_group_and_non_a_share_tabs():
     specs = [
         {"key": "watchlist", "group": "主工作台"},
+        {"key": "asian_market", "group": "主工作台"},
+        {"key": "stock_candidates", "group": "主工作台"},
         {"key": "ai_industry_chain", "group": "主工作台"},
         {"key": "lhb", "group": "主工作台"},
+        {"key": "rt_monitor", "group": "主工作台"},
         {"key": "scan", "group": "情报源"},
         {"key": "foreign_block", "group": "情报源"},
         {"key": "earnings", "group": "情报源"},
@@ -61,8 +75,11 @@ def test_workspace_quote_universe_skips_information_source_group():
     workspace = _make_workspace(
         tabs={
             "watchlist": _make_quote_tab({"000001"}),
+            "asian_market": _make_quote_tab({"600519"}),
+            "stock_candidates": _make_quote_tab({"300750"}),
             "ai_industry_chain": _make_quote_tab({"688498"}),
             "lhb": _make_quote_tab({"601318"}),
+            "rt_monitor": _make_quote_tab({"002415"}),
             "scan": _make_quote_tab({"000002"}),
             "foreign_block": _make_quote_tab({"600000"}),
             "earnings": _make_quote_tab({"300001"}),
@@ -73,7 +90,7 @@ def test_workspace_quote_universe_skips_information_source_group():
 
     codes = ClassicWorkspace.get_realtime_quote_codes(workspace)
 
-    assert codes == {"000001", "688498", "601318"}
+    assert codes == {"000001", "300750", "688498", "601318", "002415"}
 
 
 def test_workspace_primes_watchlist_with_public_startup_hook():
@@ -185,6 +202,49 @@ def test_workspace_collects_stock_context_signals_by_code():
     assert [signal.summary for signal in signals if signal.signal_type == "catalyst"] == ["北美订单催化"]
 
 
+def test_workspace_collects_scan_and_fund_holding_context_signals():
+    workspace = _make_workspace(
+        tabs={
+            "scan": SimpleNamespace(
+                get_scan_results=lambda: [
+                    {
+                        "代码": "688498",
+                        "名称": "源杰科技",
+                        "触发日期": "20260423",
+                        "评分": "91",
+                        "RPS强度": "96",
+                        "突破状态": "接近突破",
+                    }
+                ]
+            ),
+            "fund_holdings": _make_rows_tab(
+                [
+                    {
+                        "代码": "688498",
+                        "名称": "源杰科技",
+                        "主体": "QFII",
+                        "资金属性": "外资",
+                        "季度": "2025Q4",
+                        "变化类型": "新进",
+                        "本期占比": "1.25%",
+                        "持股变化": "+120.00万",
+                    }
+                ]
+            ),
+        },
+    )
+
+    context = ClassicWorkspace.collect_stock_context(workspace)
+
+    signals = context["688498"]
+    assert {(signal.source_tab, signal.signal_type) for signal in signals} == {
+        ("scan", "vcp_scan"),
+        ("fund_holdings", "fund_holding"),
+    }
+    assert any("评分91" in signal.summary for signal in signals)
+    assert any("QFII" in signal.summary and "新进" in signal.summary for signal in signals)
+
+
 def test_workspace_accepts_direct_stock_signal_capability():
     workspace = _make_workspace(
         tabs={
@@ -217,12 +277,13 @@ def test_workspace_open_security_detail_builds_stock_dialog(monkeypatch):
     created = {}
 
     class FakeStockDetailDialog:
-        def __init__(self, code, name, signals, *, tab_titles, activate_callback, parent):
+        def __init__(self, code, name, signals, *, tab_titles, activate_callback, context, parent):
             created["code"] = code
             created["name"] = name
             created["signals"] = list(signals)
             created["tab_titles"] = dict(tab_titles)
             created["activate_callback"] = activate_callback
+            created["context"] = dict(context)
             created["parent"] = parent
 
         @staticmethod
@@ -244,12 +305,13 @@ def test_workspace_open_security_detail_builds_stock_dialog(monkeypatch):
         _activate_stock_signal_source=lambda _signal: True,
     )
 
-    assert ClassicWorkspace.open_security_detail(workspace, "300750", {}) is True
+    assert ClassicWorkspace.open_security_detail(workspace, "300750", {"vcp_data": {"市价": "183.50"}}) is True
 
     assert created["code"] == "300750"
     assert created["name"] == "宁德时代"
     assert created["signals"] == [signal]
     assert created["tab_titles"] == {"earnings": "业绩异动"}
+    assert created["context"] == {"市价": "183.50"}
     assert created["exec"] is True
 
 

@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from app.services.ui_runtime_service import ui_signals, watchlist_vm
 from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens
 from ui.workspaces.stock_signal import StockSignal
@@ -38,6 +39,8 @@ SIGNAL_LABELS = {
     "block_trade": "大宗交易",
     "earnings": "业绩异动",
     "lhb": "龙虎榜",
+    "vcp_scan": "VCP扫描",
+    "fund_holding": "基金持仓",
 }
 
 
@@ -94,6 +97,7 @@ class StockDetailDialog(QDialog):
         *,
         tab_titles: dict[str, str] | None = None,
         activate_callback: Callable[[StockSignal], bool] | None = None,
+        context: dict | None = None,
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
@@ -101,6 +105,7 @@ class StockDetailDialog(QDialog):
         self._name = str(name or "").strip()
         self._rows = build_signal_rows(signals, tab_titles=tab_titles)
         self._activate_callback = activate_callback
+        self._context = dict(context or {})
 
         self.setWindowTitle(f"股票全景 - {self._name or self._code}")
         self.resize(820, 460)
@@ -139,6 +144,15 @@ class StockDetailDialog(QDialog):
 
         action_layout = QHBoxLayout()
         action_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.btn_kline = QPushButton("打开K线", self)
+        self.btn_kline.clicked.connect(self._open_kline)
+        action_layout.addWidget(self.btn_kline)
+
+        self.btn_watchlist = QPushButton(self._watchlist_button_text(), self)
+        self.btn_watchlist.clicked.connect(self._toggle_watchlist)
+        action_layout.addWidget(self.btn_watchlist)
+
         action_layout.addStretch(1)
 
         self.btn_activate = QPushButton("定位来源", self)
@@ -161,6 +175,15 @@ class StockDetailDialog(QDialog):
     def _build_meta(self) -> str:
         sources = {str(row.get("source") or "") for row in self._rows if row.get("source")}
         return f"{len(self._rows)} 条信号 | {len(sources)} 个来源"
+
+    def _detail_payload(self) -> dict:
+        payload = dict(self._context)
+        payload.setdefault("代码", self._code)
+        payload.setdefault("名称", self._name)
+        return payload
+
+    def _watchlist_button_text(self) -> str:
+        return "移出关注池" if watchlist_vm.is_in_watchlist(self._code) else "加入关注池"
 
     def _populate_table(self) -> None:
         self.table.setRowCount(max(1, len(self._rows)))
@@ -202,12 +225,27 @@ class StockDetailDialog(QDialog):
 
     def _sync_actions(self) -> None:
         self.btn_activate.setEnabled(self.selected_signal() is not None and self._activate_callback is not None)
+        self.btn_kline.setEnabled(bool(self._code))
+        self.btn_watchlist.setEnabled(bool(self._code))
+        self.btn_watchlist.setText(self._watchlist_button_text())
 
     def _activate_selected_source(self) -> None:
         signal = self.selected_signal()
         if signal is None or self._activate_callback is None:
             return
         self._activate_callback(signal)
+
+    def _open_kline(self) -> None:
+        if not self._code:
+            return
+        ui_signals.sig_show_kline_with_list.emit(self._code, [self._detail_payload()], 0)
+
+    def _toggle_watchlist(self) -> None:
+        if not self._code:
+            return
+        clean_name = self._name.replace("⭐ ", "").replace("★ ", "")
+        watchlist_vm.toggle_stock(self._code, clean_name, self._detail_payload())
+        self._sync_actions()
 
     def _apply_theme(self) -> None:
         theme = theme_manager.current_theme

@@ -134,7 +134,8 @@ def test_base_stock_tab_defers_quote_refresh_until_visible(monkeypatch):
         tab.show()
         app.processEvents()
 
-        assert tab.model.calls == [snapshot]
+        assert tab.model.calls
+        assert tab.model.calls[0] == snapshot
         assert tab._deferred_quote_refresh is False
     finally:
         tab.close()

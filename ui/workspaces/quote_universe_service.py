@@ -4,10 +4,12 @@ from __future__ import annotations
 from ui.workspaces.tab_capabilities import QuoteUniverseCapability
 
 INFO_SOURCE_GROUP = "情报源"
+NON_A_SHARE_REALTIME_TAB_KEYS = frozenset({"asian_market"})
 DEFAULT_REALTIME_TAB_KEYS = (
     "scan",
     "rt_monitor",
     "watchlist",
+    "stock_candidates",
     "foreign_block",
     "na_daily",
     "ai_industry_chain",
@@ -39,7 +41,7 @@ class QuoteUniverseService:
         for spec in specs:
             key = str(spec.get("key", "")).strip()
             group = str(spec.get("group", "")).strip()
-            if key and group != INFO_SOURCE_GROUP:
+            if key and group != INFO_SOURCE_GROUP and key not in NON_A_SHARE_REALTIME_TAB_KEYS:
                 keys.append(key)
         return tuple(keys)
 

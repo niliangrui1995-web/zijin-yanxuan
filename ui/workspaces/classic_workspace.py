@@ -260,6 +260,8 @@ class ClassicWorkspace(QWidget):
             for spec in self.tab_specs()
         }
         signals = self.collect_stock_context().get(code_text, [])
+        detail_context = context.get("vcp_data")
+        detail_context = dict(detail_context) if isinstance(detail_context, dict) else {}
 
         from ui.components.stock_detail_dialog import StockDetailDialog
 
@@ -269,6 +271,7 @@ class ClassicWorkspace(QWidget):
             signals,
             tab_titles=tab_titles,
             activate_callback=self._activate_stock_signal_source,
+            context=detail_context,
             parent=self.window(),
         )
         dialog.exec()

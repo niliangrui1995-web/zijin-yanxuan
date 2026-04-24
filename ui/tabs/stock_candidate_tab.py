@@ -19,6 +19,9 @@ class StockCandidateTab(BaseStockTab):
     COLUMNS = [
         "代码",
         "名称",
+        "市价",
+        "涨幅%",
+        "市值",
         "共振分",
         "来源数",
         "信号数",
@@ -32,6 +35,7 @@ class StockCandidateTab(BaseStockTab):
         self._status_primary = "等待综合候选"
         self._status_freshness = "待刷新"
         self._init_ui()
+        self.subscribe_global_quotes(self.model)
         event_bus.sig_cache_reload_completed.connect(self.refresh_candidates)
         QTimer.singleShot(2600, self.refresh_candidates)
 
@@ -66,7 +70,7 @@ class StockCandidateTab(BaseStockTab):
 
         header = self.table.horizontalHeader()
         header.setStretchLastSection(True)
-        default_widths = [52, 76, 70, 58, 58, 160, 520, 92, 90]
+        default_widths = [52, 72, 76, 70, 72, 78, 70, 58, 58, 150, 430, 92]
         for i, width in enumerate(default_widths):
             if i < len(self.model.headers):
                 header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
@@ -107,6 +111,37 @@ class StockCandidateTab(BaseStockTab):
         payload = dict(signal.payload or {})
         return str(payload.get("名称") or payload.get("name") or "").strip()
 
+    @staticmethod
+    def _is_quote_value(value) -> bool:
+        text = str(value if value is not None else "").strip()
+        return text not in {"", "--", "-", "None", "nan", "NaN"}
+
+    @staticmethod
+    def _first_payload_value(signals: list[StockSignal], keys: tuple[str, ...]) -> str:
+        for signal in signals:
+            payload = dict(signal.payload or {})
+            for key in keys:
+                value = payload.get(key)
+                if StockCandidateTab._is_quote_value(value):
+                    return str(value).strip()
+        return "--"
+
+    @staticmethod
+    def _candidate_summary(signal: StockSignal) -> str:
+        signal_type = str(signal.signal_type or "").strip()
+        source_tab = str(signal.source_tab or "").strip()
+        if signal_type == "vcp_scan" or source_tab == "scan":
+            payload = dict(signal.payload or {})
+            trigger_date = str(payload.get("触发日期") or signal.observed_at or "").strip()
+            rps = str(payload.get("RPS强度") or "").strip()
+            parts = []
+            if trigger_date:
+                parts.append(f"触发日期 {trigger_date}")
+            if rps:
+                parts.append(f"RPS {rps}")
+            return " | ".join(parts) or "VCP扫描命中"
+        return str(signal.summary or "").strip()
+
     def _build_candidate_rows(self, context: dict[str, list[StockSignal]]) -> list[dict]:
         rows = []
         workspace = self._workspace()
@@ -146,7 +181,7 @@ class StockCandidateTab(BaseStockTab):
             source_text = "｜".join(sources)
             summaries = []
             for signal in clean_signals:
-                text = str(signal.summary or "").strip()
+                text = StockCandidateTab._candidate_summary(signal)
                 if text and text not in summaries:
                     summaries.append(text)
                 if len(summaries) >= 3:
@@ -158,6 +193,18 @@ class StockCandidateTab(BaseStockTab):
                 {
                     "代码": code,
                     "名称": name or code,
+                    "市价": StockCandidateTab._first_payload_value(
+                        clean_signals,
+                        ("市价", "现价", "最新价", "最新", "收盘"),
+                    ),
+                    "涨幅%": StockCandidateTab._first_payload_value(
+                        clean_signals,
+                        ("涨幅%", "涨幅", "涨跌%", "涨跌"),
+                    ),
+                    "市值": StockCandidateTab._first_payload_value(
+                        clean_signals,
+                        ("市值", "总市值"),
+                    ),
                     "共振分": score,
                     "来源数": len(sources),
                     "信号数": len(clean_signals),
@@ -177,6 +224,7 @@ class StockCandidateTab(BaseStockTab):
         context = context_reader() if callable(context_reader) else {}
         rows = self._build_candidate_rows(context)
         self.model.update_data(rows)
+        self.refresh_table_from_latest_snapshot(self.model)
         if rows:
             self.table_state.show_table()
             self._status_primary = "综合候选已刷新"
@@ -251,4 +299,4 @@ class StockCandidateTab(BaseStockTab):
         build_stock_context_menu(self, code, name, vcp_data=row)
 
     def get_realtime_quote_codes(self, current_model=None) -> set[str]:
-        return set()
+        return super().get_realtime_quote_codes(current_model=current_model or self.model)
