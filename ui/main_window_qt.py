@@ -4,7 +4,7 @@ import time
 from app.bootstrap import ApplicationBootstrap
 from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
-from PyQt6.QtWidgets import QFrame, QLineEdit, QMainWindow, QToolTip, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QAbstractButton, QApplication, QFrame, QLineEdit, QMainWindow, QToolTip, QVBoxLayout, QWidget
 
 from app.services import (
     APP_VERSION,
@@ -72,6 +72,7 @@ class MainWindowQT(QMainWindow):
         self._first_paint_recorded = False
         self._is_closing = False
         self._native_taskbar_fix_applied = False
+        self._app_cursor_filter_installed = False
         self._splash = splash
         self.setWindowTitle('紫金研选量化终端')
 
@@ -81,6 +82,10 @@ class MainWindowQT(QMainWindow):
         self.setWindowFlags(build_frameless_main_window_flags())
         self.setMinimumSize(1000, 600)
         self._sig_ui_call.connect(self._run_ui_callback)
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
+            self._app_cursor_filter_installed = True
         self._process_watchdog = ProcessWatchdog(
             project_root=self._project_root,
             logger=log,
@@ -348,8 +353,21 @@ class MainWindowQT(QMainWindow):
             getattr(self, '_density_menu', None),
             getattr(self, '_theme_menu', None),
         )
+        event_type = event.type()
+        if isinstance(obj, QAbstractButton) and event_type in (
+            QEvent.Type.Enter,
+            QEvent.Type.HoverEnter,
+            QEvent.Type.HoverMove,
+            QEvent.Type.MouseMove,
+        ):
+            obj.setCursor(
+                Qt.CursorShape.PointingHandCursor
+                if obj.isEnabled()
+                else Qt.CursorShape.ArrowCursor
+            )
+
         if obj in target_objects:
-            if event.type() in (
+            if event_type in (
                 QEvent.Type.Enter,
                 QEvent.Type.HoverEnter,
                 QEvent.Type.HoverMove,
@@ -555,6 +573,12 @@ class MainWindowQT(QMainWindow):
         """应用关闭：广播信号让各组件自行保存，然后清理资源"""
         from ui.main_window_runtime import shutdown_main_window
 
+        if self._app_cursor_filter_installed:
+            app = QApplication.instance()
+            if app is not None:
+                app.removeEventFilter(self)
+            self._app_cursor_filter_installed = False
+
         shutdown_main_window(self, event_bus=event_bus, task_manager=task_manager)
         if hasattr(self, "_process_watchdog"):
             self._process_watchdog.stop()
@@ -667,4 +691,3 @@ class MainWindowQT(QMainWindow):
         from ui.main_window_visuals import apply_theme
 
         apply_theme(self)
-

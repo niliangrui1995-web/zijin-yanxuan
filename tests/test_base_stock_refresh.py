@@ -76,6 +76,58 @@ def test_market_cap_batcher_merges_overlapping_tab_requests(monkeypatch):
     assert set(owner_b.snapshots[0].keys()) == {"600519", "300750"}
 
 
+def test_local_quote_snapshot_async_runs_in_background(monkeypatch):
+    from core.task_manager import task_manager
+    from ui.tabs import base_stock_refresh as refresh_module
+
+    class DummyProvider:
+        def __init__(self):
+            self.offline_calls = []
+
+        def _build_offline_quotes(self, codes):
+            self.offline_calls.append(list(codes))
+            return {"000001": {"close": 10.5, "last_close": 10.0}}
+
+    class DummyOwner:
+        def __init__(self):
+            self.data_provider = DummyProvider()
+            self.snapshots = []
+
+        def _resolve_active_quote_model(self):
+            return SimpleNamespace(row_data=[{}])
+
+        def _apply_quote_snapshot(self, payload):
+            self.snapshots.append(dict(payload or {}))
+
+        @staticmethod
+        def _load_cached_finance_snapshot(_codes):
+            return {}
+
+    tasks = []
+    owner = DummyOwner()
+
+    monkeypatch.setattr(
+        refresh_module.QCoreApplication,
+        "instance",
+        staticmethod(lambda: SimpleNamespace(closingDown=lambda: False)),
+    )
+    monkeypatch.setattr(refresh_module, "collect_table_codes", lambda _owner, _model=None: ["000001"])
+    monkeypatch.setattr(refresh_module, "publish_rt_quotes", lambda payload, source="": dict(payload or {}))
+    monkeypatch.setattr(task_manager, "is_active_task", lambda task_id: False)
+    monkeypatch.setattr(
+        task_manager,
+        "run_in_background",
+        lambda fn, task_id=None, on_success=None, on_error=None: tasks.append(task_id) or on_success(fn()),
+    )
+
+    scheduled = refresh_module.prime_local_quote_snapshot_async(owner)
+
+    assert scheduled is True
+    assert owner.data_provider.offline_calls == [["000001"]]
+    assert owner.snapshots == [{"000001": {"close": 10.5, "last_close": 10.0}}]
+    assert tasks and "_local_quote_snapshot_" in tasks[0]
+
+
 def test_load_cached_finance_snapshot_reuses_shared_file_cache(monkeypatch, tmp_path):
     import core.json_cache as json_cache
     from ui.tabs import base_stock_refresh as refresh_module

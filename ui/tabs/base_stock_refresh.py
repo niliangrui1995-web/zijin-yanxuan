@@ -202,21 +202,8 @@ def _resolve_cached_finance_loader(owner):
     return _load
 
 
-def prime_local_quote_snapshot(owner, current_model=None) -> dict:
-    if current_model is not None:
-        owner._active_model_ref = current_model
-
-    model = current_model or owner._resolve_active_quote_model()
-    if not model or not hasattr(model, "row_data"):
-        return {}
-
-    try:
-        from core.global_store import global_store
-
-        latest_quotes = global_store.get_latest_quotes() or {}
-    except (AttributeError, RuntimeError, TypeError, ValueError):
-        latest_quotes = {}
-
+def _collect_local_quote_targets(owner, model, latest_quotes: dict | None = None) -> list[str]:
+    latest_quotes = latest_quotes or {}
     target_codes: list[str] = []
     for code in collect_table_codes(owner, model):
         if not is_a_share_code(code):
@@ -232,10 +219,10 @@ def prime_local_quote_snapshot(owner, current_model=None) -> dict:
         )
         if not has_price or not has_cap:
             target_codes.append(code)
+    return list(dict.fromkeys(target_codes))
 
-    if not target_codes:
-        return {}
 
+def _build_local_quote_payload(owner, target_codes: list[str]) -> dict:
     offline_quotes = {}
     offline_builder = getattr(getattr(owner, "data_provider", None), "_build_offline_quotes", None)
     if callable(offline_builder):
@@ -250,7 +237,29 @@ def prime_local_quote_snapshot(owner, current_model=None) -> dict:
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
         finance_snapshot = {}
 
-    warm_payload = enrich_quotes_with_finance(offline_quotes, finance_snapshot)
+    return enrich_quotes_with_finance(offline_quotes, finance_snapshot)
+
+
+def prime_local_quote_snapshot(owner, current_model=None) -> dict:
+    if current_model is not None:
+        owner._active_model_ref = current_model
+
+    model = current_model or owner._resolve_active_quote_model()
+    if not model or not hasattr(model, "row_data"):
+        return {}
+
+    try:
+        from core.global_store import global_store
+
+        latest_quotes = global_store.get_latest_quotes() or {}
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        latest_quotes = {}
+
+    target_codes = _collect_local_quote_targets(owner, model, latest_quotes)
+    if not target_codes:
+        return {}
+
+    warm_payload = _build_local_quote_payload(owner, target_codes)
     if not warm_payload:
         return {}
 
@@ -259,6 +268,76 @@ def prime_local_quote_snapshot(owner, current_model=None) -> dict:
         source=f"{owner.__class__.__name__}.local_cache",
     )
     return published
+
+
+def prime_local_quote_snapshot_async(owner, current_model=None) -> bool:
+    if current_model is not None:
+        owner._active_model_ref = current_model
+
+    model = current_model or owner._resolve_active_quote_model()
+    if not model or not hasattr(model, "row_data"):
+        return False
+
+    try:
+        from core.global_store import global_store
+
+        latest_quotes = global_store.get_latest_quotes() or {}
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        latest_quotes = {}
+
+    target_codes = _collect_local_quote_targets(owner, model, latest_quotes)
+    if not target_codes:
+        return False
+
+    app = QCoreApplication.instance()
+    if app is None or app.closingDown():
+        return False
+
+    from app.services.ui_runtime_service import background_job_runner as task_manager
+
+    task_signature = abs(hash(tuple(target_codes)))
+    task_id = f"{owner.__class__.__name__.lower()}_{id(owner)}_local_quote_snapshot_{task_signature}"
+    is_active_task = getattr(task_manager, "is_active_task", None)
+    if callable(is_active_task) and is_active_task(task_id):
+        return True
+
+    owner_ref = weakref.ref(owner)
+    owner_class_name = owner.__class__.__name__
+    target_codes = list(target_codes)
+
+    def _bg_local_quote():
+        owner_obj = owner_ref()
+        if owner_obj is None:
+            return {}
+        app_obj = QCoreApplication.instance()
+        if app_obj is None or app_obj.closingDown():
+            return {}
+        return _build_local_quote_payload(owner_obj, target_codes)
+
+    def _on_success(warm_payload):
+        owner_obj = owner_ref()
+        if owner_obj is None or not warm_payload:
+            return
+        published = publish_rt_quotes(
+            warm_payload,
+            source=f"{owner_class_name}.local_cache_async",
+        )
+        if published:
+            owner_obj._apply_quote_snapshot(published)
+
+    def _on_error(error_message: str):
+        if error_message:
+            logging.getLogger(__name__).debug(
+                f"[{owner_class_name}] local quote snapshot task failed: {error_message}"
+            )
+
+    task_manager.run_in_background(
+        _bg_local_quote,
+        task_id=task_id,
+        on_success=_on_success,
+        on_error=_on_error,
+    )
+    return True
 
 
 def _invoke_after_market_caps_updated(owner) -> None:
@@ -472,7 +551,7 @@ def refresh_table_quotes_and_market_caps(owner, current_model=None, force_quotes
     )
 
 
-def refresh_table_from_latest_snapshot(owner, current_model=None) -> None:
+def refresh_table_from_latest_snapshot(owner, current_model=None, *, async_local: bool = True) -> None:
     if current_model is not None:
         owner._active_model_ref = current_model
 
@@ -484,7 +563,10 @@ def refresh_table_from_latest_snapshot(owner, current_model=None) -> None:
     if not codes:
         return
 
-    prime_local_quote_snapshot(owner, model)
+    if async_local:
+        prime_local_quote_snapshot_async(owner, model)
+    else:
+        prime_local_quote_snapshot(owner, model)
 
     try:
         from core.global_store import global_store

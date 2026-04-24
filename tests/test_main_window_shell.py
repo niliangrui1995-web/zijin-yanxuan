@@ -116,6 +116,9 @@ def test_main_window_shell_builders_wire_titlebar_menu_and_tabs():
         assert "customTitleBar" in window._custom_titlebar.styleSheet()
         assert "titleBarSeparator" in window._custom_titlebar.styleSheet()
         assert "tabsWrapperFrame" in window.tabs_wrapper.styleSheet()
+        assert window._btn_minimize.cursor().shape() == Qt.CursorShape.PointingHandCursor
+        assert window._btn_maximize.cursor().shape() == Qt.CursorShape.PointingHandCursor
+        assert window._btn_close.cursor().shape() == Qt.CursorShape.PointingHandCursor
         assert window._btn_close.text() == "✕"
     finally:
         window.deleteLater()

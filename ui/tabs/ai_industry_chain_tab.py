@@ -326,8 +326,8 @@ class AIIndustryChainTab(BaseStockTab):
             self.table_state.show_empty("暂无AI产业链数据")
             self._set_chain_status("AI产业链为空", freshness=self._workbook_freshness(), next_step="检查Excel内容")
 
-    def refresh_table_from_latest_snapshot(self, current_model=None):
-        super().refresh_table_from_latest_snapshot(current_model=current_model)
+    def refresh_table_from_latest_snapshot(self, current_model=None, *, async_local: bool = True):
+        super().refresh_table_from_latest_snapshot(current_model=current_model, async_local=async_local)
         rows = getattr(self.model, "row_data", None) or []
         self._apply_period_returns(rows)
         if rows:

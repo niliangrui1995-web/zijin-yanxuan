@@ -118,8 +118,8 @@ class BaseStockTab(QWidget):
     def prime_local_quote_snapshot(self, current_model=None):
         return warm_local_quote_snapshot(self, current_model=current_model)
 
-    def refresh_table_from_latest_snapshot(self, current_model=None):
-        refresh_quotes_from_latest_snapshot(self, current_model=current_model)
+    def refresh_table_from_latest_snapshot(self, current_model=None, *, async_local: bool = True):
+        refresh_quotes_from_latest_snapshot(self, current_model=current_model, async_local=async_local)
 
     def get_row_data(self, current_model=None) -> list[dict]:
         model = current_model or self._resolve_active_quote_model()
@@ -233,6 +233,7 @@ class BaseStockTab(QWidget):
             if widget.minimumWidth() < 150:
                 widget.setMinimumWidth(150)
         elif isinstance(widget, (QPushButton, QToolButton)):
+            widget.setCursor(Qt.CursorShape.PointingHandCursor)
             widget.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
 
     @staticmethod

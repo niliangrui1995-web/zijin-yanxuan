@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from PyQt6.QtTest import QSignalSpy
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QHBoxLayout, QLabel, QLineEdit, QToolButton, QWidget
 
 import ui.tabs.base_stock_tab as base_stock_tab_module
@@ -31,6 +32,7 @@ def test_base_stock_toolbar_applies_shell_object_names_and_toolbutton_style():
         assert filter_input.property("inToolbar") is True
         assert action_btn.property("class") == "toolbarGhost"
         assert action_btn.property("inToolbar") is True
+        assert action_btn.cursor().shape() == Qt.CursorShape.PointingHandCursor
         title_wrap = toolbar.findChild(QWidget, "tabToolbarTitleWrap")
         assert title_wrap is not None
         assert title_wrap.minimumHeight() == build_ui_tokens()["control"]["toolbar_button_height"] + 1
@@ -408,7 +410,7 @@ def test_base_stock_refresh_from_latest_snapshot_primes_local_cache_for_new_code
     )
 
     try:
-        tab.refresh_table_from_latest_snapshot()
+        tab.refresh_table_from_latest_snapshot(async_local=False)
 
         assert provider.offline_calls == [["000001"]]
         assert tab.model.row_data[0]["现价"] == "10.50"

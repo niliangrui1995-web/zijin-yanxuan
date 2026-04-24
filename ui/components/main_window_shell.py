@@ -644,6 +644,7 @@ def setup_custom_titlebar(window, parent_layout: QVBoxLayout) -> TitleBarRefs:
         _titlebar_button_style(theme, theme['TEXT_MUTED'], theme['BG_HOVER'], font_size=11)
     )
     btn_minimize.setFixedWidth(tokens["shell"]["window_button_width"])
+    btn_minimize.setCursor(Qt.CursorShape.PointingHandCursor)
     btn_minimize.setToolTip("最小化窗口")
     btn_minimize.setAccessibleName("最小化窗口")
     btn_minimize.clicked.connect(window.showMinimized)
@@ -653,6 +654,7 @@ def setup_custom_titlebar(window, parent_layout: QVBoxLayout) -> TitleBarRefs:
         _titlebar_button_style(theme, theme['TEXT_MUTED'], theme['BG_HOVER'])
     )
     btn_maximize.setFixedWidth(tokens["shell"]["window_button_width"])
+    btn_maximize.setCursor(Qt.CursorShape.PointingHandCursor)
     btn_maximize.setToolTip("最大化或还原窗口")
     btn_maximize.setAccessibleName("最大化或还原窗口")
     btn_maximize.clicked.connect(window._toggle_maximize)
@@ -662,6 +664,7 @@ def setup_custom_titlebar(window, parent_layout: QVBoxLayout) -> TitleBarRefs:
         _titlebar_button_style(theme, theme['TEXT_MUTED'], "#C42B1C")
     )
     btn_close.setFixedWidth(tokens["shell"]["window_button_width"])
+    btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
     btn_close.setToolTip("关闭窗口")
     btn_close.setAccessibleName("关闭窗口")
     btn_close.clicked.connect(window.close)
@@ -895,4 +898,3 @@ def apply_chrome_theme(window) -> None:
         window._titlebar_nav_host.setStyleSheet("QWidget#titleBarNavHost { background: transparent; }")
 
     refresh_system_menu_theme(window)
-
