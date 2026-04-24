@@ -74,6 +74,14 @@ class ClassicWorkspace(QWidget):
                 "widget": NADailyTab(self.data_provider, self),
             },
             {
+                "key": "stock_candidates",
+                "title": "综合候选",
+                "group": "主工作台",
+                "group_order": 32,
+                "attr": "tab_stock_candidates",
+                "widget": StockCandidateTab(self.data_provider, self),
+            },
+            {
                 "key": "ai_industry_chain",
                 "title": "AI产业链",
                 "group": "主工作台",
@@ -88,14 +96,6 @@ class ClassicWorkspace(QWidget):
                 "group_order": 40,
                 "attr": "tab_lhb",
                 "widget": LhbTab(self.data_provider, self, autoload_pool=False),
-            },
-            {
-                "key": "stock_candidates",
-                "title": "综合候选",
-                "group": "主工作台",
-                "group_order": 45,
-                "attr": "tab_stock_candidates",
-                "widget": StockCandidateTab(self.data_provider, self),
             },
             {
                 "key": "rt_monitor",
