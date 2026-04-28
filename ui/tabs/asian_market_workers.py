@@ -33,6 +33,7 @@ GLOBAL_ASIAN_RT_CACHE: dict[str, dict] = {}
 _ASIAN_MARKET_CODES = ("TW", "HK", "T", "KS")
 _PE_REFRESH_INTERVAL_SEC = 12 * 60 * 60
 _YF_FETCH_MAX_WORKERS = 2
+_FETCH_UPDATES_TIMEOUT_SEC = 80
 
 _USE_CF_PROXY = True
 _EMPTY_NUMERIC_MARKERS = {"", "-", "--", "---", "—", "－", "None", "null"}
@@ -73,6 +74,17 @@ def is_asian_quote_refresh_time(codes) -> bool:
         MarketCalendar.is_quote_refresh_time(market)
         for market in infer_asian_markets(codes)
     )
+
+
+def _asian_quote_fetch_priority(code: str) -> int:
+    suffix = str(code or "").strip().upper().split(".")[-1]
+    return {
+        "HK": 0,
+        "KS": 1,
+        "TW": 2,
+        "TWO": 2,
+        "T": 3,
+    }.get(suffix, 4)
 
 
 def _to_float(value) -> float | None:
@@ -134,6 +146,8 @@ def _normalize_trade_date(raw_value) -> str | None:
     for fmt in (
         "%Y-%m-%d",
         "%Y/%m/%d",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y/%m/%d %H:%M:%S",
         "%Y%m%d",
         "%Y-%m-%dT%H:%M:%S%z",
         "%Y-%m-%dT%H:%M:%S.%f%z",
@@ -322,6 +336,56 @@ def _fetch_kr_realtime_quote(code: str, http_session) -> dict | None:
     }
 
 
+def _fetch_hk_realtime_quote(code: str, http_session) -> dict | None:
+    base_code = str(code or "").split(".")[0].strip()
+    if not base_code:
+        return None
+
+    quote_code = base_code.zfill(5) if base_code.isdigit() else base_code
+    url = f"http://qt.gtimg.cn/q=hk{quote_code}"
+    response = http_session.get(
+        url,
+        headers={**_DEFAULT_HTTP_HEADERS, "Referer": "https://stockapp.finance.qq.com/"},
+        timeout=15,
+    )
+    raw_content = getattr(response, "content", None)
+    if raw_content is not None:
+        text = raw_content.decode("gb18030", errors="replace")
+    else:
+        text = str(getattr(response, "text", "") or "")
+
+    match = re.search(r'v_hk\d+="([^"]*)"', text)
+    if not match:
+        return None
+
+    fields = match.group(1).split("~")
+
+    def field(index: int) -> str:
+        return fields[index] if index < len(fields) else ""
+
+    close_price = _to_float(field(3) or field(35))
+    if close_price is None or close_price <= 0:
+        return None
+
+    prev_close = _to_float(field(4))
+    open_price = _to_float(field(5)) or prev_close or close_price
+    high_price = _to_float(field(33)) or max(open_price, close_price)
+    low_price = _to_float(field(34)) or min(open_price, close_price)
+
+    return {
+        "date": _normalize_trade_date(field(30)),
+        "close": close_price,
+        "open": open_price,
+        "high": high_price,
+        "low": low_price,
+        "volume": _to_float(field(6) or field(36)) or 0.0,
+        "previous_close": prev_close,
+        "currency": "HKD",
+        "source": "tencent_hk",
+        "quote_quality": "free_delayed",
+    }
+
+
 def _fetch_jp_realtime_quote(code: str, http_session) -> dict | None:
     base_code = str(code or "").split(".")[0].strip()
     if not base_code:
@@ -330,51 +394,123 @@ def _fetch_jp_realtime_quote(code: str, http_session) -> dict | None:
     url = f"https://finance.yahoo.co.jp/quote/{base_code}.T"
     response = http_session.get(url, headers=_DEFAULT_HTTP_HEADERS, timeout=15)
     html = response.text
+    quote = _parse_jp_realtime_page(html)
+    if quote:
+        return quote
+
+    status_code = int(getattr(response, "status_code", 200) or 200)
+    if status_code >= 400 or "現在表示できません" in html:
+        retry_response = requests.get(
+            url,
+            headers={
+                **_DEFAULT_HTTP_HEADERS,
+                "Accept-Language": "ja,en;q=0.8,zh-CN;q=0.6",
+                "Referer": "https://finance.yahoo.co.jp/",
+            },
+            timeout=15,
+        )
+        if int(getattr(retry_response, "status_code", 200) or 200) < 400:
+            return _parse_jp_realtime_page(retry_response.text)
+
+    return None
+
+
+def _parse_jp_realtime_page(html: str) -> dict | None:
     prefix = "__PRELOADED_STATE__ = "
     start = html.find(prefix)
-    if start < 0:
-        return None
-    end = html.find("</script>", start)
-    if end < 0:
-        return None
+    if start >= 0:
+        end = html.find("</script>", start)
+        if end >= 0:
+            payload = json.loads(html[start + len(prefix):end].strip())
+            board = (payload.get("mainStocksPriceBoard") or {}).get("priceBoard") or {}
+            detail = (payload.get("mainStocksDetail") or {}).get("detail") or {}
+            page_info = payload.get("pageInfo") or {}
 
-    payload = json.loads(html[start + len(prefix):end].strip())
-    board = (payload.get("mainStocksPriceBoard") or {}).get("priceBoard") or {}
-    detail = (payload.get("mainStocksDetail") or {}).get("detail") or {}
-    page_info = payload.get("pageInfo") or {}
+            close_price = _to_float(board.get("price"))
+            if close_price is not None and close_price > 0:
+                quote_date = None
+                current_ms = _to_float(page_info.get("currentDateTime"))
+                if current_ms is not None and current_ms > 0:
+                    quote_date = (
+                        datetime.datetime.fromtimestamp(
+                            current_ms / 1000.0,
+                            tz=datetime.timezone.utc,
+                        )
+                        .astimezone(datetime.timezone(datetime.timedelta(hours=9)))
+                        .date()
+                        .isoformat()
+                    )
 
-    close_price = _to_float(board.get("price"))
+                low_price = _to_float(detail.get("lowPrice"))
+                high_price = _to_float(detail.get("highPrice"))
+
+                return {
+                    "date": quote_date or MarketCalendar.now("T").date().isoformat(),
+                    "close": close_price,
+                    "open": _to_float(detail.get("openPrice")) or close_price,
+                    "high": high_price or close_price,
+                    "low": low_price or close_price,
+                    "volume": _to_float(detail.get("volume")) or 0.0,
+                    "previous_close": _to_float(detail.get("previousPrice")),
+                    "currency": "JPY",
+                    "source": "yj_finance_page",
+                    "quote_quality": "free_delayed",
+                }
+
+    close_price = _extract_jp_page_price(html)
     if close_price is None or close_price <= 0:
         return None
 
-    quote_date = None
-    current_ms = _to_float(page_info.get("currentDateTime"))
-    if current_ms is not None and current_ms > 0:
-        quote_date = (
-            datetime.datetime.fromtimestamp(
-                current_ms / 1000.0,
-                tz=datetime.timezone.utc,
-            )
-            .astimezone(datetime.timezone(datetime.timedelta(hours=9)))
-            .date()
-            .isoformat()
-        )
-
-    low_price = _to_float(detail.get("lowPrice"))
-    high_price = _to_float(detail.get("highPrice"))
+    previous_close, _previous_date = _extract_jp_indicator_value(html, "previousPrice")
+    open_price, open_date = _extract_jp_indicator_value(html, "openPrice")
+    high_price, high_date = _extract_jp_indicator_value(html, "highPrice")
+    low_price, low_date = _extract_jp_indicator_value(html, "lowPrice")
+    volume, volume_date = _extract_jp_indicator_value(html, "volume")
+    quote_date = _latest_normalized_date(open_date, high_date, low_date, volume_date)
 
     return {
         "date": quote_date or MarketCalendar.now("T").date().isoformat(),
         "close": close_price,
-        "open": _to_float(detail.get("openPrice")) or close_price,
+        "open": open_price or close_price,
         "high": high_price or close_price,
         "low": low_price or close_price,
-        "volume": _to_float(detail.get("volume")) or 0.0,
-        "previous_close": _to_float(detail.get("previousPrice")),
+        "volume": volume or 0.0,
+        "previous_close": previous_close,
         "currency": "JPY",
         "source": "yj_finance_page",
         "quote_quality": "free_delayed",
     }
+
+
+def _extract_jp_page_price(page_text: str) -> float | None:
+    match = re.search(
+        r"CommonPriceBoard__price_[^>]*>.*?StyledNumber__value_[^>]*>([^<]+)</span>",
+        page_text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return None
+    return _to_float(match.group(1))
+
+
+def _extract_jp_indicator_value(page_text: str, key: str) -> tuple[float | None, str | None]:
+    for pattern in (
+        rf'\\"{re.escape(key)}\\":\{{.*?\\"value\\":\\"([^\\"]*)\\".*?\\"updateDateMeta\\":\\"([^\\"]*)\\"',
+        rf'"{re.escape(key)}":\{{.*?"value":"([^"]*)".*?"updateDateMeta":"([^"]*)"',
+    ):
+        match = re.search(pattern, page_text, re.IGNORECASE | re.DOTALL)
+        if match:
+            return _to_float(match.group(1)), match.group(2)
+    return None, None
+
+
+def _latest_normalized_date(*raw_dates: str | None) -> str | None:
+    dates = [
+        parsed
+        for parsed in (_normalize_trade_date(raw_date) for raw_date in raw_dates)
+        if parsed
+    ]
+    return max(dates) if dates else None
 
 
 def _fetch_yfinance_realtime_quote(code: str, yf_session) -> dict | None:
@@ -618,6 +754,8 @@ def fetch_asian_realtime_quote(
     try:
         if suffix in {"TW", "TWO"}:
             quote = _fetch_tw_realtime_quote(normalized_code, session)
+        elif suffix == "HK":
+            quote = _fetch_hk_realtime_quote(normalized_code, session)
         elif suffix == "KS":
             quote = _fetch_kr_realtime_quote(normalized_code, session)
         elif suffix == "T":
@@ -784,6 +922,9 @@ class AsianMarketWorker(QThread):
             return pe_value, pe_source, pe_updated_at
 
         market = MarketCalendar.normalize_market(MarketCalendar.infer_market(code))
+        if MarketCalendar.is_quote_refresh_time(market):
+            return pe_value, pe_source, pe_updated_at
+
         yf_status = get_yf_rate_limit_status()
         yahoo_allowed = (
             not MarketCalendar.is_quote_refresh_time(market)
@@ -936,9 +1077,16 @@ class AsianMarketWorker(QThread):
         updates = {}
         yf_session = build_yf_session(is_cf_proxy_enabled())
         info_session = build_yf_session(False) if is_cf_proxy_enabled() else yf_session
-        codes = [str(code).strip() for code in self.codes if str(code).strip()]
-        if not codes:
+        raw_codes = list(dict.fromkeys(str(code).strip() for code in self.codes if str(code).strip()))
+        if not raw_codes:
             return updates
+        codes = [
+            code
+            for _idx, code in sorted(
+                enumerate(raw_codes),
+                key=lambda item: (_asian_quote_fetch_priority(item[1]), item[0]),
+            )
+        ]
 
         max_workers = max(1, min(_YF_FETCH_MAX_WORKERS, len(codes)))
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
@@ -947,7 +1095,7 @@ class AsianMarketWorker(QThread):
             for code in codes
         }
         try:
-            for future in concurrent.futures.as_completed(futures, timeout=45):
+            for future in concurrent.futures.as_completed(futures, timeout=_FETCH_UPDATES_TIMEOUT_SEC):
                 if not self._is_running:
                     break
                 code = futures[future]
@@ -981,7 +1129,10 @@ class AsianMarketWorker(QThread):
                         continue
                     raise
         except concurrent.futures.TimeoutError:
-            log.warning("[AsianTab] 本轮亚洲报价抓取达到 45 秒上限，等待在途请求收尾")
+            log.warning(
+                "[AsianTab] 本轮亚洲报价抓取达到 %s 秒上限，等待在途请求收尾",
+                _FETCH_UPDATES_TIMEOUT_SEC,
+            )
         finally:
             for future in futures:
                 if not future.done():
@@ -1082,4 +1233,3 @@ class AsianCacheFetcherThread(QThread):
         except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
             self.result_success = False
             self.result_message = f"盘后拉取异常: {exc}"
-

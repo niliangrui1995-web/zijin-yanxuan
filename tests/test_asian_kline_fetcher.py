@@ -329,6 +329,134 @@ def test_sync_asian_kline_cache_reuses_previous_snapshot_before_write(monkeypatc
     assert sorted(row["ticker"] for row in written_rows) == ["2330.TW", "3711.TW"]
 
 
+def test_sync_asian_kline_cache_rescues_stale_symbol_before_write(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    monkeypatch.setattr(
+        fetcher,
+        "filter_asian_tickers",
+        lambda market_filter=None: {
+            "TSMC": "2330.TW",
+            "MediaTek": "2454.TW",
+        },
+    )
+    monkeypatch.setattr(
+        fetcher,
+        "fetch_all_asian_klines",
+        lambda **kwargs: [
+            {
+                "name": "TSMC",
+                "ticker": "2330.TW",
+                "market": "台湾",
+                "track": "晶圆代工",
+                "currency": "TWD",
+                "kline_count": 2,
+                "klines": [{"date": "2026-04-24", "close": 880}, {"date": "2026-04-27", "close": 888}],
+            },
+            {
+                "name": "MediaTek",
+                "ticker": "2454.TW",
+                "market": "台湾",
+                "track": "边缘AI芯片",
+                "currency": "TWD",
+                "kline_count": 2,
+                "klines": [{"date": "2026-03-30", "close": 1510}, {"date": "2026-03-31", "close": 1490}],
+            },
+        ],
+    )
+    monkeypatch.setattr(fetcher, "build_yf_session", lambda use_cf_proxy=True: object())
+    monkeypatch.setattr(
+        fetcher,
+        "fetch_single_kline",
+        lambda name, ticker, **kwargs: {
+            "name": name,
+            "ticker": ticker,
+            "market": "台湾",
+            "track": "边缘AI芯片",
+            "currency": "TWD",
+            "kline_count": 2,
+            "klines": [{"date": "2026-04-24", "close": 2435}, {"date": "2026-04-27", "close": 2435}],
+        } if ticker == "2454.TW" else None,
+    )
+    monkeypatch.setattr(fetcher, "_load_cached_row_map", lambda output_dir=None: {})
+
+    saved_payloads = []
+    monkeypatch.setattr(
+        fetcher,
+        "save_kline_data",
+        lambda data, output_dir=None: saved_payloads.append((data, output_dir)) or "ignored.json",
+    )
+
+    success, message, report = fetcher.sync_asian_kline_cache(output_dir="cache-dir")
+
+    assert success is True
+    assert report["stale"] == ["2454.TW"]
+    assert report["single_recovered"] == ["2454.TW"]
+    assert report["missing"] == []
+    assert len(saved_payloads) == 1
+    written = {row["ticker"]: row for row in saved_payloads[0][0]}
+    assert written["2454.TW"]["klines"][-1]["date"] == "2026-04-27"
+
+
+def test_sync_asian_kline_cache_rejects_stale_old_cache_reuse(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    monkeypatch.setattr(
+        fetcher,
+        "filter_asian_tickers",
+        lambda market_filter=None: {
+            "TSMC": "2330.TW",
+            "MediaTek": "2454.TW",
+        },
+    )
+    monkeypatch.setattr(
+        fetcher,
+        "fetch_all_asian_klines",
+        lambda **kwargs: [
+            {
+                "name": "TSMC",
+                "ticker": "2330.TW",
+                "market": "台湾",
+                "track": "晶圆代工",
+                "currency": "TWD",
+                "kline_count": 2,
+                "klines": [{"date": "2026-04-24", "close": 880}, {"date": "2026-04-27", "close": 888}],
+            }
+        ],
+    )
+    monkeypatch.setattr(fetcher, "build_yf_session", lambda use_cf_proxy=True: object())
+    monkeypatch.setattr(fetcher, "fetch_single_kline", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        fetcher,
+        "_load_cached_row_map",
+        lambda output_dir=None: {
+            "2454.TW": {
+                "name": "MediaTek",
+                "ticker": "2454.TW",
+                "market": "台湾",
+                "track": "边缘AI芯片",
+                "currency": "TWD",
+                "kline_count": 2,
+                "klines": [{"date": "2026-03-30", "close": 1510}, {"date": "2026-03-31", "close": 1490}],
+            }
+        },
+    )
+
+    saved_payloads = []
+    monkeypatch.setattr(
+        fetcher,
+        "save_kline_data",
+        lambda data, output_dir=None: saved_payloads.append((data, output_dir)) or "ignored.json",
+    )
+
+    success, message, report = fetcher.sync_asian_kline_cache(output_dir="cache-dir")
+
+    assert success is False
+    assert report["missing"] == ["2454.TW"]
+    assert report["reused"] == []
+    assert report["stale"] == ["2454.TW"]
+    assert "2454.TW" in message
+    assert saved_payloads == []
+
+
 def test_sync_asian_kline_cache_keeps_existing_snapshot_when_full_fetch_is_empty(monkeypatch):
     fetcher = _load_fetcher_module(monkeypatch)
     monkeypatch.setattr(

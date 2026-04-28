@@ -26,6 +26,17 @@ class _FakeSession:
         return self.response
 
 
+def _jp_current_page_html():
+    return r'''
+    <section class="_BasePriceBoard_1 _CommonPriceBoard_1 styles_DetailPage__priceBoard__x">
+      <span class="_StyledNumber_1 _CommonPriceBoard__price_abc">
+        <span class="_StyledNumber__item_1"><span class="_StyledNumber__value_1">5,731</span></span>
+      </span>
+    </section>
+    <script>self.__next_f.push([1,"30:{\"detailData\":{\"indicators\":{\"previousPrice\":{\"value\":\"5,689\",\"updateDateMeta\":\"2026-04-27\"},\"openPrice\":{\"value\":\"5,747\",\"updateDateMeta\":\"2026-04-28T09:00:00+09:00\"},\"highPrice\":{\"value\":\"5,751\",\"updateDateMeta\":\"2026-04-28T09:00:00+09:00\"},\"lowPrice\":{\"value\":\"5,697\",\"updateDateMeta\":\"2026-04-28T09:04:00+09:00\"},\"volume\":{\"value\":\"248,800\",\"updateDateMeta\":\"2026-04-28T10:42:00+09:00\"}}}}"])</script>
+    '''
+
+
 def test_fetch_asian_realtime_quote_skips_yfinance_fallback_during_cooldown(monkeypatch):
     monkeypatch.setattr(workers, "_fetch_tw_realtime_quote", lambda code, session: None)
     monkeypatch.setattr(
@@ -51,6 +62,68 @@ def test_fetch_asian_realtime_quote_skips_yfinance_fallback_during_cooldown(monk
 
     assert quote is None
     assert calls["yf"] == 0
+
+
+def test_fetch_asian_realtime_quote_uses_tencent_for_hk(monkeypatch):
+    fields = [""] * 70
+    fields[0] = "100"
+    fields[1] = "ASMPT"
+    fields[2] = "00522"
+    fields[3] = "169.300"
+    fields[4] = "165.800"
+    fields[5] = "163.600"
+    fields[6] = "435472.0"
+    fields[30] = "2026/04/28 09:42:02"
+    fields[33] = "169.600"
+    fields[34] = "163.600"
+    session = _FakeSession(_FakeResponse(text=f'v_hk00522="{"~".join(fields)}";'))
+
+    monkeypatch.setattr(
+        workers,
+        "_fetch_yfinance_realtime_quote",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("HK should use Tencent first")),
+    )
+
+    quote = workers.fetch_asian_realtime_quote("0522.HK", yf_session=session)
+
+    assert quote is not None
+    assert quote["date"] == "2026-04-28"
+    assert quote["close"] == 169.3
+    assert quote["previous_close"] == 165.8
+    assert quote["source"] == "tencent_hk"
+    assert session.urls == ["http://qt.gtimg.cn/q=hk00522"]
+
+
+def test_fetch_jp_realtime_quote_parses_current_yahoo_japan_page_shape():
+    session = _FakeSession(_FakeResponse(text=_jp_current_page_html()))
+
+    quote = workers._fetch_jp_realtime_quote("5201.T", session)
+
+    assert quote is not None
+    assert quote["date"] == "2026-04-28"
+    assert quote["close"] == 5731.0
+    assert quote["open"] == 5747.0
+    assert quote["high"] == 5751.0
+    assert quote["low"] == 5697.0
+    assert quote["volume"] == 248800.0
+    assert quote["previous_close"] == 5689.0
+    assert quote["source"] == "yj_finance_page"
+
+
+def test_fetch_jp_realtime_quote_retries_with_plain_requests_after_session_error(monkeypatch):
+    session = _FakeSession(_FakeResponse(text="temporarily unavailable", status_code=500))
+    monkeypatch.setattr(
+        workers.requests,
+        "get",
+        lambda *args, **kwargs: _FakeResponse(text=_jp_current_page_html(), status_code=200),
+    )
+
+    quote = workers._fetch_jp_realtime_quote("5201.T", session)
+
+    assert quote is not None
+    assert quote["date"] == "2026-04-28"
+    assert quote["close"] == 5731.0
+    assert quote["source"] == "yj_finance_page"
 
 
 def test_fetch_single_code_returns_none_when_yahoo_rate_limited(monkeypatch):
@@ -220,6 +293,48 @@ def test_fetch_updates_does_not_short_circuit_on_yahoo_cooldown(monkeypatch):
     updates = worker._fetch_updates()
 
     assert updates["2330.TW"]["close"] == 2120.0
+
+
+def test_fetch_updates_prioritizes_direct_exchange_sources(monkeypatch):
+    monkeypatch.setattr(workers, "build_yf_session", lambda *args, **kwargs: object())
+    monkeypatch.setattr(workers, "_YF_FETCH_MAX_WORKERS", 1)
+    calls = []
+    worker = workers.AsianMarketWorker(["5201.T", "0522.HK", "000660.KS", "3711.TW"])
+
+    def _fake_fetch_single_code(code, yf_session, info_session):
+        calls.append(code)
+        return code, {"date": "2026-04-28", "close": 1.0, "previous_close": 1.0}
+
+    monkeypatch.setattr(worker, "_fetch_single_code", _fake_fetch_single_code)
+
+    worker._fetch_updates()
+
+    assert calls[:3] == ["0522.HK", "000660.KS", "3711.TW"]
+
+
+def test_pe_refresh_does_not_block_during_quote_time(monkeypatch):
+    monkeypatch.setattr(
+        workers.MarketCalendar,
+        "is_quote_refresh_time",
+        classmethod(lambda cls, market="CN": True),
+    )
+    monkeypatch.setattr(
+        workers,
+        "_fetch_asian_pe_fallback",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("PE fallback should wait")),
+    )
+
+    worker = workers.AsianMarketWorker(["2330.TW"])
+    pe, source, updated_at = worker._refresh_pe_if_needed(
+        "2330.TW",
+        ticker=None,
+        info_session=object(),
+        pe_value=28.0,
+        pe_source="cached",
+        pe_updated_at=0.0,
+    )
+
+    assert (pe, source, updated_at) == (28.0, "cached", 0.0)
 
 
 def test_fetch_asian_realtime_quote_uses_regular_market_previous_close_for_yfinance_fallback(monkeypatch):

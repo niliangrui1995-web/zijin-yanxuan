@@ -344,6 +344,51 @@ def _date_from_iso(raw_value: str | None) -> date | None:
         return None
 
 
+def _last_kline_date(row: dict | None) -> date | None:
+    klines = (row or {}).get("klines") or []
+    if not klines:
+        return None
+    return _date_from_iso(str((klines[-1] or {}).get("date") or ""))
+
+
+def _market_latest_dates(row_map: dict[str, dict]) -> dict[str, date]:
+    latest_by_market: dict[str, date] = {}
+    for row in row_map.values():
+        market = str((row or {}).get("market") or "").strip()
+        last_date = _last_kline_date(row)
+        if not market or last_date is None:
+            continue
+        if market not in latest_by_market or last_date > latest_by_market[market]:
+            latest_by_market[market] = last_date
+    return latest_by_market
+
+
+def _find_stale_kline_tickers(
+    row_map: dict[str, dict],
+    target_tickers: set[str],
+) -> list[str]:
+    latest_by_market = _market_latest_dates(row_map)
+    stale: list[str] = []
+    for ticker in sorted(target_tickers & set(row_map.keys())):
+        row = row_map.get(ticker) or {}
+        market = str(row.get("market") or "").strip()
+        last_date = _last_kline_date(row)
+        latest_date = latest_by_market.get(market)
+        if last_date is None or (latest_date is not None and last_date < latest_date):
+            stale.append(ticker)
+    return stale
+
+
+def _drop_stale_kline_rows(
+    row_map: dict[str, dict],
+    target_tickers: set[str],
+) -> list[str]:
+    stale = _find_stale_kline_tickers(row_map, target_tickers)
+    for ticker in stale:
+        row_map.pop(ticker, None)
+    return stale
+
+
 def _resolve_period_window(period: str) -> tuple[date, date, int]:
     end_date = datetime.now().date()
     text = str(period or "1y").strip().lower()
@@ -954,6 +999,9 @@ def sync_asian_kline_cache(
         }
 
     row_map = _rows_to_map(data)
+    stale_tickers = _drop_stale_kline_rows(row_map, target_tickers)
+    if stale_tickers:
+        logging.warning(f"⚠️ 全量抓取发现 K 线日期落后 {len(stale_tickers)} 只，按缺失处理: {stale_tickers}")
     missing = sorted(target_tickers - set(row_map.keys()))
     single_recovered: list[str] = []
 
@@ -986,6 +1034,11 @@ def sync_asian_kline_cache(
                     continue
                 raise
         missing = sorted(target_tickers - set(row_map.keys()))
+        rescue_stale = _drop_stale_kline_rows(row_map, target_tickers)
+        if rescue_stale:
+            stale_tickers = sorted(set(stale_tickers) | set(rescue_stale))
+            logging.warning(f"⚠️ 单票补抓后仍有 K 线日期落后，拒绝写入: {rescue_stale}")
+            missing = sorted(target_tickers - set(row_map.keys()))
 
     reused: list[str] = []
     if missing:
@@ -995,6 +1048,11 @@ def sync_asian_kline_cache(
                 if ticker in old_map:
                     row_map[ticker] = old_map[ticker]
                     reused.append(ticker)
+            reused_stale = _drop_stale_kline_rows(row_map, target_tickers)
+            if reused_stale:
+                stale_tickers = sorted(set(stale_tickers) | set(reused_stale))
+                reused = [ticker for ticker in reused if ticker not in set(reused_stale)]
+                logging.warning(f"⚠️ 旧缓存回填包含落后 K 线，已拒绝: {reused_stale}")
             if reused:
                 logging.warning(f"⚠️ 已从旧缓存回填 {len(reused)} 只: {sorted(reused)}")
             missing = sorted(target_tickers - set(row_map.keys()))
@@ -1011,6 +1069,7 @@ def sync_asian_kline_cache(
             "written_count": 0,
             "single_recovered": single_recovered,
             "reused": reused,
+            "stale": stale_tickers,
             "missing": missing,
         }
 
@@ -1029,6 +1088,7 @@ def sync_asian_kline_cache(
         "written_count": len(final_data),
         "single_recovered": single_recovered,
         "reused": reused,
+        "stale": stale_tickers,
         "missing": [],
     }
 
