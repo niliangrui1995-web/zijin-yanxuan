@@ -173,6 +173,28 @@ class StockCandidateTab(BaseStockTab):
         return str(signal.summary or "").strip()
 
     @staticmethod
+    def _signal_sector(signal: StockSignal) -> str:
+        payload = dict(signal.payload or {})
+        for key in ("细分板块", "细分环节", "行业", "板块", "热门板块", "热点板块", "subsector"):
+            value = payload.get(key)
+            if StockCandidateTab._is_quote_value(value):
+                return str(value).strip()
+        if str(signal.signal_type or "").strip() == "subsector" and StockCandidateTab._is_quote_value(signal.summary):
+            return str(signal.summary).strip()
+        return ""
+
+    @staticmethod
+    def _candidate_sector(signals: list[StockSignal]) -> str:
+        for source_tab in ("ai_industry_chain", "na_daily"):
+            for signal in signals:
+                if str(signal.source_tab or "").strip() != source_tab:
+                    continue
+                sector = StockCandidateTab._signal_sector(signal)
+                if sector:
+                    return sector
+        return ""
+
+    @staticmethod
     def _source_group_key(signal: StockSignal) -> str:
         source_tab = str(signal.source_tab or "").strip()
         if source_tab in StockCandidateTab.REQUIRED_SOURCE_TABS:
@@ -236,6 +258,7 @@ class StockCandidateTab(BaseStockTab):
                 "",
             )
             source_text = "｜".join(sources)
+            sector_text = StockCandidateTab._candidate_sector(clean_signals)
             summaries = []
             for signal in clean_signals:
                 text = StockCandidateTab._candidate_summary(signal)
@@ -275,6 +298,7 @@ class StockCandidateTab(BaseStockTab):
                     "来源": source_text,
                     "核心信号": "；".join(summaries),
                     "最近时间": latest_time,
+                    "细分板块": sector_text,
                     "_signals": clean_signals,
                 }
             )

@@ -43,3 +43,20 @@ def test_generic_kline_summary_formats_plain_pct_value():
 
     assert pct_row["label"] == "涨幅"
     assert pct_row["value"] == "6.70%"
+
+
+def test_stock_candidate_kline_summary_shows_sector_from_context():
+    cards = build_kline_summary_cards(
+        {
+            "__source_tab_key": "stock_candidates",
+            "代码": "688629",
+            "名称": "华丰科技",
+            "市值": "283亿",
+            "细分板块": "高速连接器",
+        }
+    )
+
+    sector_row = cards[1]["rows"][1]
+
+    assert sector_row["label"] == "板块"
+    assert sector_row["value"] == "高速连接器"

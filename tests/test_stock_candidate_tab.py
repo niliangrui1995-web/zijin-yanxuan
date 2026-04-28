@@ -183,6 +183,56 @@ def test_stock_candidate_counts_na_daily_and_ai_chain_as_one_source_group():
     assert rows[0]["共振分"] == 36
 
 
+def test_stock_candidate_rows_keep_sector_for_kline_context():
+    class DummyTab:
+        @staticmethod
+        def _workspace():
+            return SimpleNamespace(
+                tab_specs=lambda: [
+                    {"key": "na_daily", "title": "北美战报"},
+                    {"key": "ai_industry_chain", "title": "AI产业链"},
+                    {"key": "lhb", "title": "龙虎榜"},
+                ]
+            )
+
+    rows = StockCandidateTab._build_candidate_rows(
+        DummyTab(),
+        {
+            "688629": [
+                StockSignal(
+                    code="688629",
+                    source_tab="na_daily",
+                    signal_type="subsector",
+                    summary="北美旧分类",
+                    payload={"细分板块": "北美旧分类"},
+                ),
+                StockSignal(
+                    code="688629",
+                    source_tab="ai_industry_chain",
+                    signal_type="subsector",
+                    summary="高速连接器",
+                    payload={"细分板块": "高速连接器"},
+                ),
+                StockSignal(code="688629", source_tab="lhb", signal_type="lhb", summary="机构净买"),
+            ],
+            "002156": [
+                StockSignal(
+                    code="002156",
+                    source_tab="na_daily",
+                    signal_type="catalyst",
+                    summary="北美催化",
+                    payload={"细分板块": "先进封装"},
+                ),
+                StockSignal(code="002156", source_tab="scan", signal_type="vcp_scan", summary="VCP"),
+            ],
+        },
+    )
+
+    sectors = {row["代码"]: row["细分板块"] for row in rows}
+    assert sectors["688629"] == "高速连接器"
+    assert sectors["002156"] == "先进封装"
+
+
 def test_stock_candidate_listens_to_global_quote_updates(monkeypatch):
     monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
     tab = StockCandidateTab(data_provider=SimpleNamespace())
