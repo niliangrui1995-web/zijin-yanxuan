@@ -43,7 +43,17 @@ class StockCandidateTab(BaseStockTab):
         self._auto_refresh_timer.setInterval(self.AUTO_REFRESH_DEBOUNCE_MS)
         self._auto_refresh_timer.timeout.connect(self.refresh_candidates)
         self._connect_auto_refresh_events()
-        QTimer.singleShot(2600, self.refresh_candidates)
+        self._initial_refresh_started = False
+
+    def _ensure_runtime_started(self) -> None:
+        if self._initial_refresh_started:
+            return
+        self._initial_refresh_started = True
+        QTimer.singleShot(350, self.refresh_candidates)
+
+    def showEvent(self, event):  # noqa: N802 - Qt API naming
+        super().showEvent(event)
+        self._ensure_runtime_started()
 
     def _connect_auto_refresh_events(self) -> None:
         for signal in (
@@ -324,7 +334,7 @@ class StockCandidateTab(BaseStockTab):
         self._refresh_status()
 
     def _on_search_text_changed(self, text):
-        self.proxy_model.setFilterText(text)
+        self.set_proxy_filter_text(self.proxy_model, text)
         self._refresh_status()
 
     def _refresh_status(self):

@@ -33,7 +33,13 @@ class EarningsTab(BaseStockTab):
         self.scheduler = EarningsScheduler(self)
         self.scheduler.sig_new_surprises_found.connect(self._on_new_data_found)
 
-        # 延后到事件循环空闲时再启动巡逻，避免构造阶段阻塞 UI。
+        # 延后到页面首次显示时再启动巡逻，避免构造阶段阻塞 UI。
+        self._patrol_started = False
+
+    def _ensure_runtime_started(self) -> None:
+        if self._patrol_started:
+            return
+        self._patrol_started = True
         QTimer.singleShot(0, self.scheduler.start_patrol)
 
     def _init_ui(self):
@@ -220,7 +226,7 @@ class EarningsTab(BaseStockTab):
         self._refresh_window_status()
 
     def _on_search_text_changed(self, text):
-        self.proxy_model.setFilterText(text)
+        self.set_proxy_filter_text(self.proxy_model, text)
         self._refresh_window_status()
 
     @staticmethod
@@ -475,6 +481,7 @@ class EarningsTab(BaseStockTab):
     def showEvent(self, event):
         """隐藏页首次打开时，父类会补现价/市值快照，这里紧跟着补算 PE。"""
         super().showEvent(event)
+        self._ensure_runtime_started()
         if self.row_data:
             QTimer.singleShot(0, self._recalc_pe_ttm)
 
@@ -526,4 +533,3 @@ class EarningsTab(BaseStockTab):
 
         if updated > 0:
             log.debug(f"[业绩监控] PE(TTM) 已刷新 {updated} 行")
-

@@ -41,10 +41,20 @@ class AIIndustryChainTab(BaseStockTab):
         self._status_segments: list[str] = []
         self._status_freshness = ""
         self._status_next_step = ""
+        self._runtime_started = False
 
         self._init_ui()
         self.subscribe_global_quotes()
-        QTimer.singleShot(1800, self._load_chain_data)
+
+    def _ensure_runtime_started(self):
+        if self._runtime_started:
+            return
+        self._runtime_started = True
+        QTimer.singleShot(350, self._load_chain_data)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._ensure_runtime_started()
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -99,7 +109,7 @@ class AIIndustryChainTab(BaseStockTab):
         self._set_chain_status("等待AI产业链", freshness="待加载", next_step="点击刷新读取Excel")
 
     def _on_search_text_changed(self, text):
-        self.proxy_model.setFilterText(text)
+        self.set_proxy_filter_text(self.proxy_model, text)
         self._refresh_chain_status()
 
     def _reset_view(self):

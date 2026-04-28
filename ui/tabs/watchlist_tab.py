@@ -791,7 +791,7 @@ class WatchlistTab(BaseStockTab):
     # ================================================================
     def _filter_table(self, text):
         """搜索过滤：支持代码、名称、拼音首字母"""
-        self.proxy_model.setFilterText(text)
+        self.set_proxy_filter_text(self.proxy_model, text)
         self._update_status_summary()
 
     def _on_rt_quotes_direct(self, quotes: dict):
@@ -800,5 +800,4 @@ class WatchlistTab(BaseStockTab):
             return
         if self._touch_watchlist_update():
             self._update_status_summary()
-
 

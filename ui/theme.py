@@ -13,6 +13,9 @@ from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from app.services.ui_runtime_service import app_config
 
+DEFAULT_THEME_NAME = "紫曜"
+DEFAULT_THEME_MIGRATION_KEY = "default_theme_v2_applied"
+
 # ============================================================
 # 墨渊主题（暗色，即当前默认主题）
 # ============================================================
@@ -518,9 +521,17 @@ class ThemeManager(QObject):
             return
         self._initialized = True
         self._settings = app_config.section("ui/theme", legacy_scope="ThemeManager")
-        # 从持久化配置恢复上次选择的主题，默认"墨渊"
-        saved = self._settings.value("current_theme", "墨渊")
-        self._current_name = saved if saved in self.THEMES else "墨渊"
+        # 从持久化配置恢复上次选择的主题；v2 默认切到“紫曜”。
+        saved = self._settings.value("current_theme", None)
+        if not self._settings.contains(DEFAULT_THEME_MIGRATION_KEY):
+            if not saved or saved == "墨渊":
+                saved = DEFAULT_THEME_NAME
+                self._settings.setValue("current_theme", saved)
+            self._settings.setValue(DEFAULT_THEME_MIGRATION_KEY, True)
+            self._settings.sync()
+        elif not saved:
+            saved = DEFAULT_THEME_NAME
+        self._current_name = saved if saved in self.THEMES else DEFAULT_THEME_NAME
 
         # 日夜自动切换：白天月白、晚上墨渊，像手机的自动暗色模式
         self._auto_switch = self._settings.value("auto_switch_theme", False, type=bool)
@@ -626,4 +637,3 @@ theme_manager.sig_theme_changed.connect(lambda _: _refresh_compat_vars())
 # ============================================================
 # 字体（不随主题变化）
 # ============================================================
-

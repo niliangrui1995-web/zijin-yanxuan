@@ -31,11 +31,11 @@ class NADailyTab(BaseStockTab):
         self._status_freshness = ""
         self._status_next_step = ""
         self._current_report_files: list[str] = []
+        self._runtime_started = False
 
         self._init_ui()
 
-        # 开机延迟拉取/展现
-        QTimer.singleShot(3500, self._load_na_daily_report)
+        # 首次显示后再拉取/巡逻，避免冷启动阶段抢占首屏。
 
         # 订阅中央广播站报价及开启大一统市值更新
         self.subscribe_global_quotes()
@@ -43,9 +43,19 @@ class NADailyTab(BaseStockTab):
         # 统一巡逻定时器：每30秒检查一次（合并了增量检查 + 定时全量刷新）
         self._patrol_timer = QTimer(self)
         self._patrol_timer.timeout.connect(self._patrol_tick)
-        self._patrol_timer.start(30 * 1000)
         self._na_daily_fired_today = set()
         self._initial_quotes_done = False
+
+    def _ensure_runtime_started(self):
+        if self._runtime_started:
+            return
+        self._runtime_started = True
+        QTimer.singleShot(350, self._load_na_daily_report)
+        self._patrol_timer.start(30 * 1000)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._ensure_runtime_started()
 
     def _patrol_tick(self):
         """统一巡逻：盘中增量检查 + 定时全量刷新 + 首次市值拉取"""
@@ -131,7 +141,7 @@ class NADailyTab(BaseStockTab):
         self._set_report_status("等待北美战报", freshness="待加载", next_step="点击刷新载入最新战报")
 
     def _on_search_text_changed(self, text):
-        self.proxy_model.setFilterText(text)
+        self.set_proxy_filter_text(self.proxy_model, text)
         self._refresh_report_status()
 
     def _latest_report_freshness(self) -> str:
@@ -541,4 +551,3 @@ class NADailyTab(BaseStockTab):
                             strategy = cells[4].replace('**', '').strip() if len(cells) > 4 else ""
                             result[code] = {"priority": priority, "reason": reason, "strategy": strategy}
         return result
-

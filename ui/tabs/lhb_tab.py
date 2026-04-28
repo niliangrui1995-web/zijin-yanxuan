@@ -738,7 +738,7 @@ class LhbTab(BaseStockTab):
     # ================================================================
     def _filter_table(self):
         search_text = self.search_box.text().strip().lower()
-        self.proxy_model.setFilterText(search_text)
+        self.set_proxy_filter_text(self.proxy_model, search_text)
         self._refresh_pool_status()
 
     # ================================================================
@@ -788,4 +788,3 @@ class LhbTab(BaseStockTab):
 
         from ui.components.stock_context_menu import build_stock_context_menu
         build_stock_context_menu(self, code, name, vcp_data=row_data)
-

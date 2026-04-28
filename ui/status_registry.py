@@ -101,6 +101,50 @@ def format_workspace_status(
     return format_status_summary(primary, *segments)
 
 
+_STRUCTURED_STATUS_PREFIXES = (
+    "结果",
+    "时效",
+    "筛选",
+    "下一步",
+    "来源",
+    "数据",
+    "说明",
+    "命中",
+    "日期",
+    "席位",
+    "上次成功",
+)
+
+
+def split_status_segment(segment: str) -> tuple[str, str]:
+    text = str(segment or "").strip()
+    if not text:
+        return "", ""
+
+    for prefix in _STRUCTURED_STATUS_PREFIXES:
+        marker = f"{prefix} "
+        if text.startswith(marker):
+            return prefix, text[len(marker):].strip()
+
+    return "", text
+
+
+def parse_status_summary(text: str) -> dict[str, object]:
+    parts = [part.strip() for part in str(text or "").split("|") if part.strip()]
+    if not parts:
+        return {"primary": "", "segments": []}
+
+    return {
+        "primary": parts[0],
+        "segments": [
+            {"label": label, "value": value, "raw": segment}
+            for segment in parts[1:]
+            for label, value in [split_status_segment(segment)]
+            if value
+        ],
+    }
+
+
 def join_semantic_badges(*badge_groups) -> str:
     badges: list[str] = []
     for group in badge_groups:
@@ -205,4 +249,3 @@ def format_runtime_status_text(
         parts.append(f"下一步 {next_text}")
 
     return format_status_summary(*parts)
-

@@ -375,7 +375,7 @@ class RtMonitorTab(BaseStockTab):
             self.table_state.show_empty("暂无监控记录")
 
     def _on_search_text_changed(self, text):
-        self.proxy_model.setFilterText(text)
+        self.set_proxy_filter_text(self.proxy_model, text)
         self._refresh_rt_header_summary()
 
     def _show_rt_settings(self):
@@ -668,4 +668,3 @@ class RtMonitorTab(BaseStockTab):
         )
 
     # _launch_tdx 已迁移至 BaseStockTab 基类
-

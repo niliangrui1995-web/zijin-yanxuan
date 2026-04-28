@@ -33,6 +33,10 @@ class SmoothTabWidget(QTabWidget):
         self._last_transition_at = 0.0
         self._last_snapshot_ms = 0.0
         self._slow_snapshot_threshold_ms = 12.0
+        self._adaptive_transition_enabled = True
+        self._slow_snapshot_skip_ms = 450
+        self._transition_suspended_until = 0.0
+        self._consecutive_slow_snapshots = 0
         self._pending_transition: tuple[QWidget, QPixmap, int] | None = None
         self._transition_overlay: QLabel | None = None
         self._transition_group: QParallelAnimationGroup | None = None
@@ -52,6 +56,12 @@ class SmoothTabWidget(QTabWidget):
 
     def setSlowSnapshotThreshold(self, threshold_ms: int) -> None:  # noqa: N802 - Qt API naming
         self._slow_snapshot_threshold_ms = max(0.0, float(threshold_ms or 0))
+
+    def setAdaptiveTransitionEnabled(self, enabled: bool) -> None:  # noqa: N802 - Qt API naming
+        self._adaptive_transition_enabled = bool(enabled)
+
+    def setSlowSnapshotSkipInterval(self, interval_ms: int) -> None:  # noqa: N802 - Qt API naming
+        self._slow_snapshot_skip_ms = max(0, int(interval_ms or 0))
 
     def addTab(self, widget, *args):  # noqa: N802 - Qt API naming
         index = super().addTab(widget, *args)
@@ -88,6 +98,8 @@ class SmoothTabWidget(QTabWidget):
         now = time.perf_counter()
         if (now - self._last_transition_at) * 1000.0 < self._min_transition_gap_ms:
             return
+        if self._adaptive_transition_enabled and now < self._transition_suspended_until:
+            return
 
         old_index = self.currentIndex()
         if target_index == old_index or target_index < 0 or target_index >= self.count():
@@ -117,6 +129,14 @@ class SmoothTabWidget(QTabWidget):
                 old_widget.height(),
                 pixel_count,
             )
+            if self._adaptive_transition_enabled:
+                self._consecutive_slow_snapshots += 1
+                skip_ms = self._slow_snapshot_skip_ms * min(3, self._consecutive_slow_snapshots)
+                self._transition_suspended_until = time.perf_counter() + (skip_ms / 1000.0)
+                self._last_transition_at = now
+                return
+        else:
+            self._consecutive_slow_snapshots = 0
         if pixmap.isNull():
             return
 

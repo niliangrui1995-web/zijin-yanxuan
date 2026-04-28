@@ -497,7 +497,7 @@ class ScanTab(BaseStockTab):
             ui_signals.sig_show_kline.emit(current_code)
 
     def _on_search_text_changed(self, text):
-        self.proxy_model.setFilterText(text)
+        self.set_proxy_filter_text(self.proxy_model, text)
 
     def _on_scan_action_clicked(self):
         if self.worker and self.worker.isRunning():

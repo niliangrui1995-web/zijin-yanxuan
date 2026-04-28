@@ -129,6 +129,7 @@ class AsianMarketTab(BaseStockTab):
         self._status_next_step = ""
         self._last_health_log_at = 0.0
         self._last_health_signature = None
+        self._runtime_started = False
         self.cache_thread = None
         self._init_ui()
 
@@ -146,8 +147,7 @@ class AsianMarketTab(BaseStockTab):
         else:
             self._asian_runtime_state = "paused_for_cache_sync"
             self._worker_pause_for_cache_sync()
-        # 等界面加载完稍微延后一点启动后台
-        QTimer.singleShot(1000, self.worker.start)
+        # 后台轮询延后到页面首次显示，避免冷启动阶段抢占首屏。
 
         # 3. 监听全局数据更新事件 (如被 deferred_load 静默更新完毕)
         event_bus.sig_asian_klines_ready.connect(self._on_asian_klines_ready)
@@ -155,6 +155,13 @@ class AsianMarketTab(BaseStockTab):
         # 4. 自动缓存校验器：每分钟检查本地缓存是否需要更新
         self.auto_cache_timer = QTimer(self)
         self.auto_cache_timer.timeout.connect(self._on_minute_tick)
+
+    def _ensure_runtime_started(self):
+        if self._runtime_started:
+            return
+        self._runtime_started = True
+        if hasattr(self, "worker") and self.worker is not None and not self.worker.isRunning():
+            QTimer.singleShot(1000, self.worker.start)
         self.auto_cache_timer.start(60000)
         QTimer.singleShot(2000, self._on_minute_tick)
 
@@ -365,6 +372,7 @@ class AsianMarketTab(BaseStockTab):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._ensure_runtime_started()
         self._schedule_fit_columns()
 
     def resizeEvent(self, event):
@@ -627,7 +635,7 @@ class AsianMarketTab(BaseStockTab):
             self._set_asian_status(mode_text, "下次刷新生效", self._format_last_success_segment())
 
     def _on_search_text_changed(self, text):
-        self.proxy_model.setFilterText(text)
+        self.set_proxy_filter_text(self.proxy_model, text)
         self._refresh_asian_status()
 
     def _on_manual_refresh(self):

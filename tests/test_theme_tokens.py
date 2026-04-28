@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFontMetrics
 from PyQt6.QtWidgets import QApplication
 
 from ui.components import VCPTableView
 from ui.models.table_models import StockTableModel
 from ui.styles.global_qss import generate_global_qss
-from ui.theme import THEME_MOYUAN, THEME_YUEBAI
+from ui.theme import DEFAULT_THEME_NAME, THEME_MOYUAN, THEME_YUEBAI, THEME_ZIYAO
 from ui.theme_tokens import build_ui_tokens, get_state_tone
 
 
@@ -26,6 +27,11 @@ def _contrast_ratio(foreground: str, background: str) -> float:
     light = max(_relative_luminance(foreground), _relative_luminance(background))
     dark = min(_relative_luminance(foreground), _relative_luminance(background))
     return (light + 0.05) / (dark + 0.05)
+
+
+def test_default_theme_name_is_ziyao():
+    assert DEFAULT_THEME_NAME == "紫曜"
+    assert THEME_ZIYAO["name"] == DEFAULT_THEME_NAME
 
 
 def test_build_ui_tokens_compact_density_tightens_metrics():
@@ -88,6 +94,8 @@ def test_global_qss_uses_density_tokens_for_table_and_controls():
     assert f"padding: {compact_tokens['table']['cell_padding_y']}px {compact_tokens['table']['cell_padding_x']}px;" in compact_qss
     assert "QWidget#tabToolbar" in compact_qss
     assert "QLabel#tabStatusLabel" in compact_qss
+    assert "QLabel#tabStatusPrimaryChip" in compact_qss
+    assert "QLabel#tabStatusChip" in compact_qss
     assert 'QPushButton[inToolbar="true"]' in compact_qss
     assert 'QLineEdit[inToolbar="true"]' in compact_qss
     assert "QPushButton:focus {" in compact_qss
@@ -175,12 +183,13 @@ def test_vcp_table_view_header_alignment_is_centered():
 def test_vcp_table_view_tooltip_only_shows_when_text_is_elided():
     table = VCPTableView()
     try:
+        hot_sector_text = "光通信(15d=100) | CPO概念(15d=96) | 铜连接(20d=93)"
         model = StockTableModel(["代码", "名称", "热点板块"])
         model.update_data([
             {
                 "代码": "000001",
                 "名称": "平安银行",
-                "热点板块": "光通信(15d=100) | CPO概念(15d=96) | 铜连接(20d=93)",
+                "热点板块": hot_sector_text,
             }
         ])
         table.setModel(model)
@@ -190,7 +199,8 @@ def test_vcp_table_view_tooltip_only_shows_when_text_is_elided():
         table.setColumnWidth(target_col, 120)
         assert table._should_show_tooltip_for_index(idx) is True
 
-        table.setColumnWidth(target_col, 520)
+        full_text_width = QFontMetrics(table._display_font_for_index(idx)).horizontalAdvance(hot_sector_text)
+        table.setColumnWidth(target_col, full_text_width + 32)
         assert table._should_show_tooltip_for_index(idx) is False
     finally:
         table.deleteLater()

@@ -485,6 +485,30 @@ QLabel#tabStatusLabel {{
     font-weight: {font['weight_semibold']};
     font-family: {font['mono_family']};
 }}
+QWidget#tabStatusChipBar {{
+    background: transparent;
+}}
+QLabel#tabStatusPrimaryChip {{
+    background-color: {surface['toolbar_chip']};
+    color: {text['primary']};
+    border: 1px solid {border['default']};
+    border-radius: {radius['pill']}px;
+    padding: 0 {control['toolbar_chip_padding_x']}px;
+    min-height: {control['toolbar_chip_height']}px;
+    font-size: {font['size_sm']}px;
+    font-weight: {font['weight_semibold']};
+}}
+QLabel#tabStatusChip {{
+    background-color: {surface['toolbar_chip']};
+    color: {text['secondary']};
+    border: 1px solid {border['subtle']};
+    border-radius: {radius['pill']}px;
+    padding: 0 {max(6, control['toolbar_chip_padding_x'] - 2)}px;
+    min-height: {control['toolbar_chip_height']}px;
+    font-size: {font['size_xs']}px;
+    font-weight: {font['weight_semibold']};
+    font-family: {font['mono_family']};
+}}
 QLabel[toolbarRole="meta"] {{
     color: {text['muted']};
     font-size: {font['size_sm']}px;

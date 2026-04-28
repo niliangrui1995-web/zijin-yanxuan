@@ -11,7 +11,7 @@
 
 import logging
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
 from app.services.ui_runtime_service import app_config
 from app.services.ui_runtime_service import domain_events as event_bus
 from app.services.ui_runtime_service import ExternalTerminalNavigator
-from ui.status_registry import format_status_summary, format_workspace_status
+from ui.status_registry import format_status_summary, format_workspace_status, parse_status_summary
 from ui.tabs.base_stock_refresh import (
     async_update_market_caps as run_async_market_caps,
 )
@@ -64,6 +64,79 @@ from ui.tabs.tab_quote_bridge import (
 )
 from ui.tabs.table_view_state_binding import bind_table_view_state
 from ui.theme_tokens import build_ui_tokens
+
+
+def _compact_status_text(text: str, limit: int) -> str:
+    value = str(text or "").strip()
+    if len(value) <= limit:
+        return value
+    return value[: max(1, limit - 1)] + "…"
+
+
+class ToolbarStatusChipBar(QWidget):
+    """Compact semantic status chips for dense table toolbars."""
+
+    MAX_SEGMENTS = 5
+
+    def __init__(self, source_label: QLabel, parent=None):
+        super().__init__(parent)
+        self._source_label = source_label
+        self.setObjectName("tabStatusChipBar")
+        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        self._layout = layout
+
+        self._primary = QLabel("")
+        self._primary.setObjectName("tabStatusPrimaryChip")
+        self._primary.setWordWrap(False)
+        self._primary.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        layout.addWidget(self._primary, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        self._chips: list[QLabel] = []
+        for _ in range(self.MAX_SEGMENTS):
+            chip = QLabel("")
+            chip.setObjectName("tabStatusChip")
+            chip.setWordWrap(False)
+            chip.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+            layout.addWidget(chip, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            self._chips.append(chip)
+
+        self.set_status_text(source_label.text())
+
+    def set_status_text(self, text: str) -> None:
+        summary = parse_status_summary(text)
+        primary = str(summary.get("primary") or "").strip()
+        segments = list(summary.get("segments") or [])
+        full_text = str(text or "").strip()
+
+        self._primary.setText(_compact_status_text(primary, 14))
+        self._primary.setToolTip(full_text or primary)
+        self._primary.setVisible(bool(primary))
+
+        visible_segments = segments[: self.MAX_SEGMENTS]
+        overflow_count = max(0, len(segments) - self.MAX_SEGMENTS)
+        for idx, chip in enumerate(self._chips):
+            if idx >= len(visible_segments):
+                chip.setVisible(False)
+                continue
+
+            segment = visible_segments[idx]
+            label = str(segment.get("label") or "").strip()
+            value = str(segment.get("value") or "").strip()
+            raw = str(segment.get("raw") or "").strip()
+            if overflow_count and idx == self.MAX_SEGMENTS - 1:
+                chip_text = f"+{overflow_count + 1}"
+            elif label:
+                chip_text = f"{label} {_compact_status_text(value, 12)}"
+            else:
+                chip_text = _compact_status_text(value, 14)
+
+            chip.setText(chip_text)
+            chip.setToolTip(raw or full_text)
+            chip.setVisible(True)
 
 
 class BaseStockTab(QWidget):
@@ -332,6 +405,50 @@ class BaseStockTab(QWidget):
 
         return group_host
 
+    def set_proxy_filter_text(self, proxy_model, text: str, *, debounce_ms: int = 90):
+        if proxy_model is None:
+            return
+
+        if debounce_ms <= 0 or not self.isVisible():
+            proxy_model.setFilterText(text)
+            return
+
+        timers = getattr(self, "_proxy_filter_timers", None)
+        if timers is None:
+            timers = {}
+            self._proxy_filter_timers = timers
+
+        pending = getattr(self, "_proxy_filter_pending", None)
+        if pending is None:
+            pending = {}
+            self._proxy_filter_pending = pending
+
+        key = id(proxy_model)
+        pending[key] = text
+        timer = timers.get(key)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+
+            def _flush_filter(proxy=proxy_model, proxy_key=key):
+                value = getattr(self, "_proxy_filter_pending", {}).pop(proxy_key, "")
+                proxy.setFilterText(value)
+
+            timer.timeout.connect(_flush_filter)
+            timers[key] = timer
+        timer.start(max(0, int(debounce_ms)))
+
+    @staticmethod
+    def _bind_toolbar_status_label(source_label: QLabel, chip_bar: ToolbarStatusChipBar) -> None:
+        original_set_text = source_label.setText
+
+        def _set_text(text):
+            original_set_text(text)
+            chip_bar.set_status_text(source_label.text())
+
+        source_label.setText = _set_text
+        chip_bar.set_status_text(source_label.text())
+
     @staticmethod
     def _status_metric(label: str, value, suffix: str = "") -> str:
         if value is None:
@@ -408,7 +525,11 @@ class BaseStockTab(QWidget):
             subtitle_label.setProperty("toolbarRole", "status")
             subtitle_label.setWordWrap(False)
             subtitle_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
-            left_layout.addWidget(subtitle_label, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            subtitle_label.setParent(left_wrap)
+            subtitle_label.setVisible(False)
+            status_chips = ToolbarStatusChipBar(subtitle_label, left_wrap)
+            self._bind_toolbar_status_label(subtitle_label, status_chips)
+            left_layout.addWidget(status_chips, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         tb_layout.addWidget(left_wrap, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
@@ -500,4 +621,3 @@ class BaseStockTab(QWidget):
     def async_update_market_caps(self):
         """异步补齐缺失股本，并通过共享批次去重后回灌动态市值。"""
         run_async_market_caps(self)
-

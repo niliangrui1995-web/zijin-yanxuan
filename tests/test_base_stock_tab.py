@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from PyQt6.QtTest import QSignalSpy
+from PyQt6.QtTest import QSignalSpy, QTest
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QHBoxLayout, QLabel, QLineEdit, QToolButton, QWidget
 
@@ -36,10 +36,88 @@ def test_base_stock_toolbar_applies_shell_object_names_and_toolbutton_style():
         title_wrap = toolbar.findChild(QWidget, "tabToolbarTitleWrap")
         assert title_wrap is not None
         assert title_wrap.minimumHeight() == build_ui_tokens()["control"]["toolbar_button_height"] + 1
+        assert toolbar.findChild(QWidget, "tabStatusChipBar") is not None
         assert toolbar.findChild(QWidget, "tabToolbarFilters") is not None
         assert toolbar.findChild(QWidget, "tabToolbarActions") is not None
     finally:
         toolbar.deleteLater()
+        tab.deleteLater()
+
+
+def test_base_stock_toolbar_status_uses_semantic_chips():
+    tab = BaseStockTab()
+    subtitle = QLabel(
+        BaseStockTab.format_workspace_status(
+            "已就绪",
+            result="30/30只",
+            freshness="09:31",
+            current_filter="全部",
+            next_step="右键查看详情",
+        )
+    )
+
+    toolbar = tab.build_tab_toolbar("示例", subtitle, [], [])
+    try:
+        chip_bar = toolbar.findChild(QWidget, "tabStatusChipBar")
+        assert chip_bar is not None
+        assert subtitle.isHidden()
+
+        primary = chip_bar.findChild(QLabel, "tabStatusPrimaryChip")
+        chips = [
+            chip
+            for chip in chip_bar.findChildren(QLabel, "tabStatusChip")
+            if not chip.isHidden()
+        ]
+
+        assert primary.text() == "已就绪"
+        assert [chip.text() for chip in chips[:4]] == [
+            "结果 30/30只",
+            "时效 09:31",
+            "筛选 全部",
+            "下一步 右键查看详情",
+        ]
+        assert "右键查看详情" in chips[3].toolTip()
+
+        subtitle.setText(BaseStockTab.format_workspace_status("等待刷新", result="0只", freshness="待加载"))
+
+        chips = [
+            chip
+            for chip in chip_bar.findChildren(QLabel, "tabStatusChip")
+            if not chip.isHidden()
+        ]
+        assert primary.text() == "等待刷新"
+        assert [chip.text() for chip in chips[:2]] == ["结果 0只", "时效 待加载"]
+    finally:
+        toolbar.deleteLater()
+        tab.deleteLater()
+
+
+def test_base_stock_proxy_filter_debounces_visible_tabs():
+    app = QApplication.instance() or QApplication([])
+
+    class DummyProxy:
+        def __init__(self):
+            self.values = []
+
+        def setFilterText(self, text):
+            self.values.append(text)
+
+    tab = BaseStockTab()
+    proxy = DummyProxy()
+    try:
+        tab.set_proxy_filter_text(proxy, "cold")
+        assert proxy.values == ["cold"]
+
+        tab.show()
+        app.processEvents()
+        tab.set_proxy_filter_text(proxy, "a", debounce_ms=40)
+        tab.set_proxy_filter_text(proxy, "ab", debounce_ms=40)
+
+        assert proxy.values == ["cold"]
+        QTest.qWait(70)
+        assert proxy.values == ["cold", "ab"]
+    finally:
+        tab.close()
         tab.deleteLater()
 
 

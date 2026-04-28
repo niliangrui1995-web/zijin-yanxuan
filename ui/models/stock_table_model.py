@@ -88,16 +88,38 @@ class StockTableModel(QAbstractTableModel):
     def _row_identity(row) -> str:
         if not isinstance(row, dict):
             return ""
-        return str(row.get("浠ｇ爜") or row.get("代码") or "").strip()
+        for key in ("代码", "浠ｇ爜", "code", "symbol", "股票代码", "证券代码"):
+            value = str(row.get(key, "") or "").strip()
+            if value:
+                return value
+        return ""
+
+    @classmethod
+    def _row_id_sequence(cls, rows: list) -> list[str]:
+        return [cls._row_identity(row) for row in rows]
 
     def _can_update_incrementally(self, rows: list) -> bool:
         if len(rows) != len(self._data) or not rows:
             return False
         if rows is self._data or any(old is new for old, new in zip(self._data, rows)):
             return False
-        old_ids = [self._row_identity(row) for row in self._data]
-        new_ids = [self._row_identity(row) for row in rows]
+        old_ids = self._row_id_sequence(self._data)
+        new_ids = self._row_id_sequence(rows)
         return bool(all(old_ids)) and old_ids == new_ids
+
+    def _can_reorder_incrementally(self, rows: list) -> bool:
+        if len(rows) != len(self._data) or not rows or rows is self._data:
+            return False
+
+        old_ids = self._row_id_sequence(self._data)
+        new_ids = self._row_id_sequence(rows)
+        if old_ids == new_ids:
+            return False
+        if not old_ids or not all(old_ids) or not all(new_ids):
+            return False
+        if len(set(old_ids)) != len(old_ids) or len(set(new_ids)) != len(new_ids):
+            return False
+        return set(old_ids) == set(new_ids)
 
     def _emit_incremental_rows(self, rows: list) -> None:
         _sync_serial_values(rows)
@@ -128,10 +150,36 @@ class StockTableModel(QAbstractTableModel):
             ],
         )
 
+    def _emit_reordered_rows(self, rows: list) -> None:
+        _sync_serial_values(rows)
+        self.layoutAboutToBeChanged.emit()
+        self._data = rows
+        self._flash_records.clear()
+        self.layoutChanged.emit()
+        if self.rowCount() and self.columnCount():
+            self.dataChanged.emit(
+                self.index(0, 0),
+                self.index(self.rowCount() - 1, self.columnCount() - 1),
+                [
+                    Qt.ItemDataRole.DisplayRole,
+                    Qt.ItemDataRole.ToolTipRole,
+                    Qt.ItemDataRole.ForegroundRole,
+                    Qt.ItemDataRole.BackgroundRole,
+                    Qt.ItemDataRole.FontRole,
+                    Qt.ItemDataRole.TextAlignmentRole,
+                    Qt.ItemDataRole.UserRole,
+                    Qt.ItemDataRole.UserRole + 2,
+                ],
+            )
+
     def update_data(self, new_data):
         rows = list(new_data or [])
         if self._can_update_incrementally(rows):
             self._emit_incremental_rows(rows)
+            self._hydrate_latest_quotes_from_store()
+            return
+        if self._can_reorder_incrementally(rows):
+            self._emit_reordered_rows(rows)
             self._hydrate_latest_quotes_from_store()
             return
 
