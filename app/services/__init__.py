@@ -5,11 +5,14 @@ from app.services.asian_market_service import (
     fetch_single_kline,
     filter_asian_tickers,
     find_asian_track,
+    get_yf_rate_limit_status,
+    is_yf_rate_limit_error,
+    mark_yf_rate_limited,
     sync_asian_kline_cache,
 )
 from app.services.kline_open_service import build_kline_open_request
 from app.services.runtime_constants import APP_VERSION, CACHE_DIR, FINANCE_CACHE_FILE, RPS_CACHE_FILE
-from app.services.runtime_services import create_data_provider, create_startup_orchestrator
+from app.services.runtime_services import create_data_provider, create_startup_orchestrator, load_local_tdx_capital_snapshot
 from app.services.scan_runtime_service import (
     VCPParams,
     batch_check_market_cap,
@@ -41,6 +44,10 @@ __all__ = [
     "filter_asian_tickers",
     "find_asian_track",
     "get_sector_manager",
+    "get_yf_rate_limit_status",
+    "is_yf_rate_limit_error",
+    "load_local_tdx_capital_snapshot",
+    "mark_yf_rate_limited",
     "precompute_ready_pool",
     "quick_check_breakout",
     "sync_asian_kline_cache",

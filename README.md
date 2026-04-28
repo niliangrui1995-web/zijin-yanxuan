@@ -15,24 +15,32 @@ Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatil
 
 ## 当前功能面
 
-当前 `ClassicWorkspace` 装配了 9 个主 Tab：
+当前 `ClassicWorkspace` 装配了 12 个主 Tab：
 
 | 页面 | 模块 | 说明 |
 | --- | --- | --- |
 | 关注池 | `ui/tabs/watchlist_tab.py` | 自选股票池，联动实时现价、涨幅、市值、催化与专题信息 |
-| 龙虎榜 | `ui/tabs/lhb_tab.py` | 20 日滚动龙虎榜关注池，带上榜次数、最近上榜、净买额等字段 |
-| 北美战报 | `ui/tabs/na_daily_tab.py` | 从战报产出文件中回填标的，并挂接实时行情 |
 | 亚洲寡头 | `ui/tabs/asian_market_tab.py` | 多市场亚洲龙头/寡头跟踪，带本地缓存与盘中刷新 |
+| 北美战报 | `ui/tabs/na_daily_tab.py` | 从战报产出文件中回填标的，并挂接实时行情 |
+| 综合候选 | `ui/tabs/stock_candidate_tab.py` | 汇总扫描、战报、AI 产业链、业绩、基金持仓等多源候选 |
+| AI产业链 | `ui/tabs/ai_industry_chain_tab.py` | AI 产业链标的、细分环节与上下文信号跟踪 |
+| 龙虎榜 | `ui/tabs/lhb_tab.py` | 20 日滚动龙虎榜关注池，带上榜次数、最近上榜、净买额等字段 |
 | 盘中监控 | `ui/tabs/rt_monitor_tab.py` | 盘中轮询待突破池，展示实时突破状态 |
+| VCP 扫描 | `ui/tabs/scan_tab.py` | 全市场 VCP 静态扫描结果页 |
 | 大宗交易 | `ui/tabs/foreign_block_trade_tab.py` | 外资席位相关大宗交易监控与过滤 |
 | 业绩异动 | `ui/tabs/earnings_tab.py` | 业绩预告、快报、财报高增跟踪 |
-| VCP 扫描 | `ui/tabs/scan_tab.py` | 全市场 VCP 静态扫描结果页 |
+| 基金持仓 | `ui/tabs/fund_holdings_tab.py` | 基金/QFII 持仓同步、对比与最新变动跟踪 |
 | 系统日志 | `ui/tabs/log_tab.py` | 统一查看运行日志与后台任务状态 |
 
 除此之外，还有两个贯穿全局的能力：
 
 - K 线详情窗口：`ui/kline_window_qt.py`
 - 中央行情广播与表格快照合并：`ui/workers/central_quotes_worker.py` + `core/global_store.py`
+
+## 技术文档
+
+- 技术架构文档：`docs/technical-architecture.md`
+- 模块归属与边界登记：`docs/module-owners.md`
 
 ## 当前交互基线
 
@@ -56,7 +64,7 @@ Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatil
 - 财务/股本补充：东方财富接口
 - 海外/亚洲辅助数据：AkShare、yfinance、`curl_cffi`
 - 任务调度：`infra/tasks/task_scheduler.py` + `core/background_job_runner.py`
-- 全局通信：`core/event_bus.py`
+- 全局通信：`domains/runtime/domain_events.py` + `infra/events/ui_signal_hub.py`
 - 日志：`core/logger.py`
 - 配置持久化：`infra/settings` + `core/app_config.py`
 - 本地缓存：`data/Cache/*.json`、`data/vcp_hunter.db`
@@ -156,6 +164,7 @@ CentralQuotesService
 │  ├─ global_store.py
 │  ├─ logger.py
 │  ├─ market_calendar.py
+│  ├─ startup_orchestrator.py
 │  ├─ quote_snapshot.py
 │  ├─ runtime_env.py
 │  └─ task_manager.py
@@ -177,7 +186,7 @@ CentralQuotesService
 ├─ ui/                           # PyQt6 界面层
 │  ├─ main_window_qt.py
 │  ├─ kline_window_qt.py
-│  ├─ startup_orchestrator.py
+│  ├─ main_window_runtime.py
 │  ├─ workspaces/
 │  ├─ components/
 │  ├─ models/
@@ -415,4 +424,5 @@ Private / Internal Use Only.
 
 ## Architecture Governance
 
+- Technical architecture: `docs/technical-architecture.md`
 - Module owner registry: `docs/module-owners.md`

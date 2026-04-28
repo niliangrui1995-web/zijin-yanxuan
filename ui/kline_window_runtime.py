@@ -9,7 +9,7 @@ import pandas as pd
 from app.services.ui_runtime_service import MarketCalendar
 from app.services.ui_runtime_service import background_job_runner as task_manager
 from app.services.ui_runtime_service import task_registry
-from vcp.fetchers.yf_session import (
+from app.services import (
     get_yf_rate_limit_status,
     is_yf_rate_limit_error,
     mark_yf_rate_limited,
@@ -336,4 +336,3 @@ def refresh_last_bar(window, quote):
         f"实时更新 {now_str} · {rt_close:.2f} · {sign}{pct:.2f}% · 成交量 {rt_vol / 10000:.0f}万",
         tone="realtime",
     )
-

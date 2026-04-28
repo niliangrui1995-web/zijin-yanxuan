@@ -180,12 +180,20 @@ class BaseStockTab(QWidget):
     def _collect_missing_finance_codes(self, current_model=None) -> list[str]:
         return collect_refresh_missing_finance_codes(self, current_model)
 
-    def refresh_table_quotes_and_market_caps(self, current_model=None, force_quotes=False, quote_task_id=None):
+    def refresh_table_quotes_and_market_caps(
+        self,
+        current_model=None,
+        force_quotes=False,
+        quote_task_id=None,
+        *,
+        async_local: bool = False,
+    ):
         refresh_quotes_and_market_caps(
             self,
             current_model=current_model,
             force_quotes=force_quotes,
             quote_task_id=quote_task_id,
+            async_local=async_local,
         )
 
     def prime_local_quote_snapshot(self, current_model=None):

@@ -15,7 +15,7 @@ from importlib import import_module
 
 from PyQt6.QtCore import QCoreApplication, QTimer
 
-from app.services import FINANCE_CACHE_FILE, batch_get_finance_info
+from app.services import FINANCE_CACHE_FILE, batch_get_finance_info, load_local_tdx_capital_snapshot
 from app.services.ui_runtime_service import (
     SHARED_MARKET_CAPS,
     build_finance_quote_payload,
@@ -26,7 +26,6 @@ from app.services.ui_runtime_service import (
     task_id_of,
     task_registry,
 )
-from vcp.data_provider_local import load_local_tdx_capital_snapshot
 
 _FINANCE_CACHE_LOCK = threading.RLock()
 _FINANCE_CACHE_PATH: str | None = None
@@ -296,9 +295,11 @@ def prime_local_quote_snapshot_async(owner, current_model=None) -> bool:
     from app.services.ui_runtime_service import background_job_runner as task_manager
 
     task_signature = abs(hash(tuple(target_codes)))
-    task_id = f"{owner.__class__.__name__.lower()}_{id(owner)}_local_quote_snapshot_{task_signature}"
+    task_key = task_registry.quote_refresh(
+        f"{owner.__class__.__name__.lower()}_{id(owner)}_local_quote_snapshot_{task_signature}"
+    )
     is_active_task = getattr(task_manager, "is_active_task", None)
-    if callable(is_active_task) and is_active_task(task_id):
+    if callable(is_active_task) and is_active_task(task_key):
         return True
 
     owner_ref = weakref.ref(owner)
@@ -333,7 +334,7 @@ def prime_local_quote_snapshot_async(owner, current_model=None) -> bool:
 
     task_manager.run_in_background(
         _bg_local_quote,
-        task_id=task_id,
+        task_id=task_key,
         on_success=_on_success,
         on_error=_on_error,
     )
@@ -479,7 +480,14 @@ class MarketCapRefreshBatcher:
         )
 
 
-def refresh_table_quotes_and_market_caps(owner, current_model=None, force_quotes: bool = False, quote_task_id=None) -> None:
+def refresh_table_quotes_and_market_caps(
+    owner,
+    current_model=None,
+    force_quotes: bool = False,
+    quote_task_id=None,
+    *,
+    async_local: bool = False,
+) -> None:
     if current_model is not None:
         owner._active_model_ref = current_model
 
@@ -491,7 +499,10 @@ def refresh_table_quotes_and_market_caps(owner, current_model=None, force_quotes
     if not codes:
         return
 
-    prime_local_quote_snapshot(owner, model)
+    if async_local:
+        prime_local_quote_snapshot_async(owner, model)
+    else:
+        prime_local_quote_snapshot(owner, model)
 
     try:
         from core.global_store import global_store

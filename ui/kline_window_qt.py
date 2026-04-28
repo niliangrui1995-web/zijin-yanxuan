@@ -18,7 +18,7 @@ from app.services.ui_runtime_service import domain_events as event_bus
 from core.logger import get_logger
 from app.services.ui_runtime_service import MarketCalendar
 from app.services.ui_runtime_service import watchlist_vm
-from vcp.fetchers.yf_session import is_yf_rate_limit_error, mark_yf_rate_limited
+from app.services import is_yf_rate_limit_error, mark_yf_rate_limited
 
 log = get_logger(__name__)
 import pandas as pd

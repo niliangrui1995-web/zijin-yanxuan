@@ -1,26 +1,128 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from PyQt6.QtWidgets import QVBoxLayout, QWidget
+from importlib import import_module
+
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtWidgets import QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
 from core.logger import get_logger
 from ui.components.smooth_tab_widget import SmoothTabWidget
-from ui.tabs.ai_industry_chain_tab import AIIndustryChainTab
-from ui.tabs.asian_market_tab import AsianMarketTab
-from ui.tabs.earnings_tab import EarningsTab
-from ui.tabs.foreign_block_trade_tab import ForeignBlockTradeTab
-from ui.tabs.fund_holdings_tab import FundHoldingsTab
-from ui.tabs.lhb_tab import LhbTab
-from ui.tabs.log_tab import LogTab
-from ui.tabs.na_daily_tab import NADailyTab
-from ui.tabs.rt_monitor_tab import RtMonitorTab
-from ui.tabs.scan_tab import ScanTab
-from ui.tabs.stock_candidate_tab import StockCandidateTab
-from ui.tabs.watchlist_tab import WatchlistTab
+from ui.theme_tokens import build_ui_tokens
 from ui.workspaces.stock_signal import StockSignal
 from ui.workspaces.workspace_facade import WorkspaceFacade
 
 log = get_logger(__name__)
+
+
+WatchlistTab = None
+AsianMarketTab = None
+NADailyTab = None
+StockCandidateTab = None
+AIIndustryChainTab = None
+LhbTab = None
+RtMonitorTab = None
+ScanTab = None
+ForeignBlockTradeTab = None
+EarningsTab = None
+FundHoldingsTab = None
+LogTab = None
+
+
+def _resolve_tab_class(class_name: str, module_name: str):
+    tab_class = globals().get(class_name)
+    if tab_class is None:
+        module = import_module(module_name)
+        tab_class = getattr(module, class_name)
+        globals()[class_name] = tab_class
+    return tab_class
+
+
+class LazyTabPlaceholder(QWidget):
+    """Lightweight first-entry shell for tabs whose real widget is mounted on demand."""
+
+    def __init__(self, title: str, load_callback, parent=None):
+        super().__init__(parent)
+        self._title_text = str(title or "").strip()
+        self._load_callback = load_callback
+        self.setObjectName("lazyWorkspaceTabPlaceholder")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(10)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.lbl_title = QLabel(self._title_text or "页面待加载", self)
+        self.lbl_title.setObjectName("lazyWorkspaceTabTitle")
+        self.lbl_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.lbl_title, 0, Qt.AlignmentFlag.AlignCenter)
+
+        self.lbl_detail = QLabel("首次进入时加载，主工作台已先响应。", self)
+        self.lbl_detail.setObjectName("lazyWorkspaceTabDetail")
+        self.lbl_detail.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_detail.setWordWrap(True)
+        layout.addWidget(self.lbl_detail, 0, Qt.AlignmentFlag.AlignCenter)
+
+        self.btn_load = QPushButton("立即加载", self)
+        self.btn_load.setObjectName("lazyWorkspaceTabLoad")
+        self.btn_load.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_load.clicked.connect(self._handle_load)
+        layout.addWidget(self.btn_load, 0, Qt.AlignmentFlag.AlignCenter)
+
+        self.apply_theme()
+
+    def set_loading(self) -> None:
+        self.lbl_detail.setText("正在挂载页面，请稍候...")
+        self.btn_load.setEnabled(False)
+        self.btn_load.setText("加载中")
+
+    def set_error(self, message: str) -> None:
+        self.lbl_detail.setText(str(message or "").strip() or "页面加载失败，请重试。")
+        self.btn_load.setEnabled(True)
+        self.btn_load.setText("重试")
+
+    def _handle_load(self) -> None:
+        if callable(self._load_callback):
+            self._load_callback()
+
+    def apply_theme(self) -> None:
+        tokens = build_ui_tokens()
+        theme = tokens["theme"]
+        self.setStyleSheet(
+            f"""
+            QWidget#lazyWorkspaceTabPlaceholder {{
+                background: {theme['BG_GLASS']};
+            }}
+            QLabel#lazyWorkspaceTabTitle {{
+                color: {theme['TEXT_PRIMARY']};
+                font-size: {tokens['font']['size_xl']}px;
+                font-weight: {tokens['font']['weight_bold']};
+            }}
+            QLabel#lazyWorkspaceTabDetail {{
+                color: {theme['TEXT_SECONDARY']};
+                font-size: {tokens['font']['size_sm']}px;
+            }}
+            QPushButton#lazyWorkspaceTabLoad {{
+                background: {theme['BRAND_PRIMARY']};
+                color: {theme['TEXT_ON_ACCENT']};
+                border: 1px solid {theme['BRAND_DEEP']};
+                border-radius: {tokens['radius']['pill']}px;
+                padding: 0 {tokens['space']['xl']}px;
+                min-height: {tokens['control']['toolbar_button_height']}px;
+                font-size: {tokens['font']['size_sm']}px;
+                font-weight: {tokens['font']['weight_bold']};
+            }}
+            QPushButton#lazyWorkspaceTabLoad:disabled {{
+                background: {theme['BG_BUTTON']};
+                color: {theme['TEXT_MUTED']};
+                border-color: {theme['BORDER_DEFAULT']};
+            }}
+            QPushButton#lazyWorkspaceTabLoad:hover:!disabled {{
+                background: {theme['BRAND_DEEP']};
+            }}
+            """
+        )
 
 
 def _resolve_workspace_facade(workspace) -> WorkspaceFacade:
@@ -47,6 +149,7 @@ class ClassicWorkspace(QWidget):
 
         self.tabs = SmoothTabWidget(self)
         self.tabs.setDocumentMode(True)
+        self.tabs.setTransitionEnabled(False)
         layout.addWidget(self.tabs, 1)
 
         self._tab_specs = [
@@ -56,7 +159,9 @@ class ClassicWorkspace(QWidget):
                 "group": "主工作台",
                 "group_order": 10,
                 "attr": "tab_watchlist",
-                "widget": WatchlistTab(self.data_provider, self),
+                "factory": self._tab_factory("WatchlistTab", "ui.tabs.watchlist_tab", self.data_provider, self),
+                "widget": None,
+                "loaded": False,
             },
             {
                 "key": "asian_market",
@@ -64,7 +169,9 @@ class ClassicWorkspace(QWidget):
                 "group": "主工作台",
                 "group_order": 20,
                 "attr": "tab_asian_market",
-                "widget": AsianMarketTab(self.data_provider, self),
+                "factory": self._tab_factory("AsianMarketTab", "ui.tabs.asian_market_tab", self.data_provider, self),
+                "widget": None,
+                "loaded": False,
             },
             {
                 "key": "na_daily",
@@ -72,7 +179,9 @@ class ClassicWorkspace(QWidget):
                 "group": "主工作台",
                 "group_order": 30,
                 "attr": "tab_na_daily",
-                "widget": NADailyTab(self.data_provider, self),
+                "factory": self._tab_factory("NADailyTab", "ui.tabs.na_daily_tab", self.data_provider, self),
+                "widget": None,
+                "loaded": False,
             },
             {
                 "key": "stock_candidates",
@@ -80,7 +189,9 @@ class ClassicWorkspace(QWidget):
                 "group": "主工作台",
                 "group_order": 32,
                 "attr": "tab_stock_candidates",
-                "widget": StockCandidateTab(self.data_provider, self),
+                "factory": self._tab_factory("StockCandidateTab", "ui.tabs.stock_candidate_tab", self.data_provider, self),
+                "widget": None,
+                "loaded": False,
             },
             {
                 "key": "ai_industry_chain",
@@ -88,7 +199,9 @@ class ClassicWorkspace(QWidget):
                 "group": "主工作台",
                 "group_order": 35,
                 "attr": "tab_ai_industry_chain",
-                "widget": AIIndustryChainTab(self.data_provider, self),
+                "factory": self._tab_factory("AIIndustryChainTab", "ui.tabs.ai_industry_chain_tab", self.data_provider, self),
+                "widget": None,
+                "loaded": False,
             },
             {
                 "key": "lhb",
@@ -96,7 +209,9 @@ class ClassicWorkspace(QWidget):
                 "group": "主工作台",
                 "group_order": 40,
                 "attr": "tab_lhb",
-                "widget": LhbTab(self.data_provider, self, autoload_pool=False),
+                "factory": self._tab_factory("LhbTab", "ui.tabs.lhb_tab", self.data_provider, self, autoload_pool=False),
+                "widget": None,
+                "loaded": False,
             },
             {
                 "key": "rt_monitor",
@@ -104,7 +219,9 @@ class ClassicWorkspace(QWidget):
                 "group": "主工作台",
                 "group_order": 50,
                 "attr": "tab_rt",
-                "widget": RtMonitorTab(self.data_provider, self.engine, self),
+                "factory": self._tab_factory("RtMonitorTab", "ui.tabs.rt_monitor_tab", self.data_provider, self.engine, self),
+                "widget": None,
+                "loaded": False,
             },
             {
                 "key": "scan",
@@ -112,7 +229,9 @@ class ClassicWorkspace(QWidget):
                 "group": "情报源",
                 "group_order": 10,
                 "attr": "tab_scan",
-                "widget": ScanTab(self.data_provider, self.engine, self),
+                "factory": self._tab_factory("ScanTab", "ui.tabs.scan_tab", self.data_provider, self.engine, self),
+                "widget": None,
+                "loaded": False,
             },
             {
                 "key": "foreign_block",
@@ -120,7 +239,9 @@ class ClassicWorkspace(QWidget):
                 "group": "情报源",
                 "group_order": 20,
                 "attr": "tab_foreign_block",
-                "widget": ForeignBlockTradeTab(self.data_provider, self),
+                "factory": self._tab_factory("ForeignBlockTradeTab", "ui.tabs.foreign_block_trade_tab", self.data_provider, self),
+                "widget": None,
+                "loaded": False,
             },
             {
                 "key": "earnings",
@@ -128,7 +249,9 @@ class ClassicWorkspace(QWidget):
                 "group": "情报源",
                 "group_order": 30,
                 "attr": "tab_earnings",
-                "widget": EarningsTab(self.data_provider, self),
+                "factory": self._tab_factory("EarningsTab", "ui.tabs.earnings_tab", self.data_provider, self),
+                "widget": None,
+                "loaded": False,
             },
             {
                 "key": "fund_holdings",
@@ -136,7 +259,9 @@ class ClassicWorkspace(QWidget):
                 "group": "情报源",
                 "group_order": 40,
                 "attr": "tab_fund_holdings",
-                "widget": FundHoldingsTab(self.data_provider, self, autoload=False),
+                "factory": self._tab_factory("FundHoldingsTab", "ui.tabs.fund_holdings_tab", self.data_provider, self, autoload=False),
+                "widget": None,
+                "loaded": False,
             },
             {
                 "key": "system_log",
@@ -144,17 +269,138 @@ class ClassicWorkspace(QWidget):
                 "group": "系统",
                 "group_order": 10,
                 "attr": "tab_log",
-                "widget": LogTab(self),
+                "factory": self._tab_factory("LogTab", "ui.tabs.log_tab", self),
+                "widget": None,
+                "loaded": False,
             },
         ]
 
-        for spec in self._tab_specs:
-            setattr(self, spec["attr"], spec["widget"])
-            self.tabs.addTab(spec["widget"], spec["title"])
-        self.tabs.prewarm_pages()
-
-        self._tabs_by_key = {str(spec["key"]): spec["widget"] for spec in self._tab_specs}
+        self._tabs_by_key = {}
+        self._lazy_loading_keys: set[str] = set()
+        self._mount_initial_tabs()
         self._workspace_facade = WorkspaceFacade(self)
+        self.tabs.currentChanged.connect(self._on_current_tab_changed)
+
+    def _tab_factory(self, class_name: str, module_name: str, *args, **kwargs):
+        def _create():
+            tab_class = _resolve_tab_class(class_name, module_name)
+            return tab_class(*args, **kwargs)
+
+        return _create
+
+    def _mount_initial_tabs(self) -> None:
+        for spec in self._tab_specs:
+            key = str(spec.get("key") or "").strip()
+            widget = self._create_real_tab(spec) if key == "watchlist" else self._create_placeholder_tab(spec)
+            spec["widget"] = widget
+            spec["loaded"] = key == "watchlist"
+            if spec["loaded"]:
+                self._tabs_by_key[key] = widget
+                setattr(self, spec["attr"], widget)
+            else:
+                setattr(self, spec["attr"], None)
+            self.tabs.addTab(widget, spec["title"])
+
+    def _create_real_tab(self, spec: dict):
+        factory = spec.get("factory")
+        if not callable(factory):
+            raise TypeError(f"missing tab factory: {spec.get('key')}")
+        return factory()
+
+    def _create_placeholder_tab(self, spec: dict) -> LazyTabPlaceholder:
+        key = str(spec.get("key") or "").strip()
+        title = str(spec.get("title") or key or "").strip()
+        return LazyTabPlaceholder(
+            title,
+            lambda key=key: self.ensure_tab_loaded(key, reason="placeholder_action"),
+            parent=self,
+        )
+
+    def _spec_for_key_or_index(self, key_or_index):
+        if isinstance(key_or_index, int):
+            if 0 <= key_or_index < len(self._tab_specs):
+                return self._tab_specs[key_or_index]
+            return None
+
+        key = str(key_or_index or "").strip()
+        if not key:
+            return None
+        for spec in self._tab_specs:
+            if str(spec.get("key") or "").strip() == key:
+                return spec
+        return None
+
+    def get_loaded_tab(self, key: str):
+        return self._tabs_by_key.get(str(key or "").strip())
+
+    def ensure_tab_loaded(self, key_or_index, reason: str = "user"):
+        spec = self._spec_for_key_or_index(key_or_index)
+        if spec is None:
+            return None
+
+        key = str(spec.get("key") or "").strip()
+        if spec.get("loaded"):
+            return spec.get("widget")
+
+        placeholder = spec.get("widget")
+        if isinstance(placeholder, LazyTabPlaceholder):
+            placeholder.set_loading()
+
+        try:
+            widget = self._create_real_tab(spec)
+        except Exception as exc:
+            self._lazy_loading_keys.discard(key)
+            if isinstance(placeholder, LazyTabPlaceholder):
+                placeholder.set_error(str(exc))
+            log.error(f"[Workspace] lazy tab load failed key={key} reason={reason}: {exc}", exc_info=True)
+            return None
+
+        index = self._tab_index_for_key(key)
+        if index < 0:
+            self._lazy_loading_keys.discard(key)
+            return widget
+
+        current_index = self.tabs.currentIndex()
+        previous_blocked = self.tabs.blockSignals(True)
+        old_widget = spec.get("widget")
+        try:
+            self.tabs.removeTab(index)
+            self.tabs.insertTab(index, widget, spec.get("title", ""))
+            if 0 <= current_index < self.tabs.count():
+                self.tabs.setCurrentIndex(current_index)
+        finally:
+            self.tabs.blockSignals(previous_blocked)
+
+        if old_widget is not None and old_widget is not widget:
+            old_widget.deleteLater()
+
+        spec["widget"] = widget
+        spec["loaded"] = True
+        self._tabs_by_key[key] = widget
+        setattr(self, spec["attr"], widget)
+        self._lazy_loading_keys.discard(key)
+        QTimer.singleShot(0, widget.ensurePolished)
+        self._notify_tab_loaded(key, widget)
+        return widget
+
+    def _on_current_tab_changed(self, index: int) -> None:
+        spec = self._spec_for_key_or_index(index)
+        if spec is None or spec.get("loaded"):
+            return
+        key = str(spec.get("key") or "").strip()
+        if not key or key in self._lazy_loading_keys:
+            return
+        self._lazy_loading_keys.add(key)
+        placeholder = spec.get("widget")
+        if isinstance(placeholder, LazyTabPlaceholder):
+            placeholder.set_loading()
+        QTimer.singleShot(0, lambda key=key: self.ensure_tab_loaded(key, reason="tab_switch"))
+
+    def _notify_tab_loaded(self, _key: str, _widget) -> None:
+        host = self.host or self.window()
+        install_hooks = getattr(host, "install_workspace_table_copy_hooks", None)
+        if callable(install_hooks):
+            QTimer.singleShot(0, install_hooks)
 
     def tab_specs(self) -> list[dict]:
         return list(self._tab_specs)
@@ -173,10 +419,10 @@ class ClassicWorkspace(QWidget):
         return self.tabs.currentIndex()
 
     def get_tab(self, key: str):
-        return self._tabs_by_key.get(str(key or "").strip())
+        return self.ensure_tab_loaded(key)
 
     def iter_tabs(self) -> list:
-        return [spec["widget"] for spec in self._tab_specs if spec.get("widget") is not None]
+        return list(self._tabs_by_key.values())
 
     def get_realtime_quote_codes(self) -> set[str]:
         return _resolve_workspace_facade(self).get_realtime_quote_codes()

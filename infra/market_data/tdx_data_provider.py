@@ -79,6 +79,8 @@ class TdxDataProvider(TdxDataProviderHistoryMixin, TdxDataProviderRealtimeMixin)
         )
         self.tdx_vipdoc = _load_tdx_local_config()
         self._local_gbbq = {}
+        self._local_gbbq_loaded = False
+        self._local_gbbq_lock = threading.RLock()
         self.server_pool = []
 
         self._adjustment_service = AdjustmentService(self)
@@ -87,7 +89,7 @@ class TdxDataProvider(TdxDataProviderHistoryMixin, TdxDataProviderRealtimeMixin)
 
         if self.tdx_vipdoc:
             _log.info(f"[启动] 已启用通达信本地K线数据: {self.tdx_vipdoc}")
-            self._load_local_gbbq()
+            _log.info("[启动] gbbq 复权缓存改为按需加载")
 
         if offline:
             _log.warning("[启动] 离线模式启动：跳过联网检测，使用本地数据")
@@ -125,7 +127,17 @@ class TdxDataProvider(TdxDataProviderHistoryMixin, TdxDataProviderRealtimeMixin)
         downcast_memory(self, logger=_log)
 
     def _load_local_gbbq(self, force=False):
-        self._local_gbbq = self._get_adjustment_service().load_local_gbbq(force=force)
+        with self._local_gbbq_lock:
+            if self._local_gbbq_loaded and not force:
+                return self._local_gbbq
+            self._local_gbbq = self._get_adjustment_service().load_local_gbbq(force=force)
+            self._local_gbbq_loaded = True
+            return self._local_gbbq
+
+    def _ensure_local_gbbq_loaded(self):
+        if not self.tdx_vipdoc:
+            return self._local_gbbq
+        return self._load_local_gbbq(force=False)
 
     def _get_market_code(self, stock_code):
         return self._get_adjustment_service().get_market_code(stock_code)
@@ -138,12 +150,13 @@ class TdxDataProvider(TdxDataProviderHistoryMixin, TdxDataProviderRealtimeMixin)
         return MarketCalendar.now("CN").hour >= 15
 
     def _fetch_from_local_tdx(self, code):
+        local_gbbq = self._ensure_local_gbbq_loaded() if self.tdx_vipdoc else self._local_gbbq
         df, self._offline_warn_printed = fetch_from_local_tdx(
             code,
             tdx_vipdoc=self.tdx_vipdoc,
             offline=self._offline,
             server_pool=self.server_pool,
-            local_gbbq=self._local_gbbq,
+            local_gbbq=local_gbbq,
             offline_warn_printed=getattr(self, "_offline_warn_printed", False),
         )
         return df
@@ -249,6 +262,7 @@ class TdxDataProvider(TdxDataProviderHistoryMixin, TdxDataProviderRealtimeMixin)
         return self.thread_local.api
 
     def _apply_forward_adjustment(self, api, market, code, df):
+        self._ensure_local_gbbq_loaded()
         return self._get_adjustment_service().apply_forward_adjustment(api, market, code, df)
 
     def _fetch_standard_data(self, api, code, count=MAX_HISTORY_BARS):

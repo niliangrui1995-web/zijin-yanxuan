@@ -9,6 +9,20 @@ def build_yf_session(use_cf_proxy: bool = True):
     return yf_session_module.build_yf_session(use_cf_proxy)
 
 
+def get_yf_rate_limit_status():
+    return yf_session_module.get_yf_rate_limit_status()
+
+
+def is_yf_rate_limit_error(exc):
+    return yf_session_module.is_yf_rate_limit_error(exc)
+
+
+def mark_yf_rate_limited(exc=None, cooldown_sec=None):
+    if cooldown_sec is None:
+        return yf_session_module.mark_yf_rate_limited(exc)
+    return yf_session_module.mark_yf_rate_limited(exc, cooldown_sec=cooldown_sec)
+
+
 def fetch_single_kline(
     name: str,
     ticker: str,
@@ -55,5 +69,8 @@ __all__ = [
     "fetch_single_kline",
     "filter_asian_tickers",
     "find_asian_track",
+    "get_yf_rate_limit_status",
+    "is_yf_rate_limit_error",
+    "mark_yf_rate_limited",
     "sync_asian_kline_cache",
 ]

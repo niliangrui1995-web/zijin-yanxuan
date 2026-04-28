@@ -48,9 +48,13 @@ class QuoteUniverseService:
     def collect_realtime_quote_codes(self) -> set[str]:
         workspace = self._workspace
         codes: set[str] = set()
+        get_loaded_tab = getattr(workspace, "get_loaded_tab", None)
         get_tab = getattr(workspace, "get_tab", None)
         for key in self._realtime_tab_keys():
-            tab = get_tab(key) if callable(get_tab) else None
+            if callable(get_loaded_tab):
+                tab = get_loaded_tab(key)
+            else:
+                tab = get_tab(key) if callable(get_tab) else None
             if isinstance(tab, QuoteUniverseCapability):
                 codes.update(tab.get_realtime_quote_codes())
 

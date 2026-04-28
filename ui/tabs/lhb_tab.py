@@ -43,7 +43,8 @@ class LhbTab(BaseStockTab):
 
         self._autoload_pool = bool(autoload_pool)
         self._pool_bootstrap_started = False
-        self.pool_manager = LhbPoolManager()
+        self._pool_load_in_progress = False
+        self.pool_manager = None
         self._backfill_in_progress = False
         # 记录今天是否已经自动抓取过，避免重复拉取
         self._today_auto_fetched = False
@@ -103,13 +104,18 @@ class LhbTab(BaseStockTab):
         except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
             return None
 
+    def _get_pool_manager(self) -> LhbPoolManager:
+        if self.pool_manager is None:
+            self.pool_manager = LhbPoolManager()
+        return self.pool_manager
+
     @staticmethod
     def _ensure_log_line(message: str) -> str:
         text = str(message or "")
         return text if text.endswith("\n") else text + "\n"
 
     def _latest_cached_trade_date(self) -> str:
-        cached_dates = self.pool_manager.get_cached_dates() or []
+        cached_dates = self._get_pool_manager().get_cached_dates() or []
         return max(cached_dates) if cached_dates else ""
 
     @classmethod
@@ -227,7 +233,7 @@ class LhbTab(BaseStockTab):
     # ================================================================
     # 池加载与展示
     # ================================================================
-    def _load_and_display_pool(self):
+    def _load_and_display_pool_sync(self):
         """启动时执行：用缓存计算池 → 展示 → 检查缺失天数 → 后台回填"""
         trade_dates = self._get_lhb_trade_dates()
         if not trade_dates:
@@ -241,24 +247,109 @@ class LhbTab(BaseStockTab):
         self._calendar_retry_count = 0
 
         # 裁剪掉超出窗口的历史数据
-        self.pool_manager.prune(trade_dates)
+        pool_manager = self._get_pool_manager()
+        pool_manager.prune(trade_dates)
 
         # 先用现有缓存展示
-        pool = self.pool_manager.compute_pool(data_provider=self.data_provider, engine=self._get_engine())
+        pool = pool_manager.compute_pool(data_provider=self.data_provider, engine=self._get_engine())
         if pool:
             self._display_pool(pool)
 
         validation_ref_date = max(trade_dates)
-        pending_validation = self.pool_manager.get_dates_pending_validation(trade_dates, validation_ref_date)
+        pending_validation = pool_manager.get_dates_pending_validation(trade_dates, validation_ref_date)
 
         # 检查缺失天数和脏缓存，有问题就后台回填/纠偏
-        missing = self.pool_manager.get_missing_dates(trade_dates)
+        missing = pool_manager.get_missing_dates(trade_dates)
         if missing or pending_validation:
             self._start_backfill(missing, pending_validation, validation_ref_date)
         elif not pool:
             self._set_pool_status("暂无龙虎榜数据", freshness="待回补", next_step="点击历史回补开始抓取")
             if hasattr(self, "table_state"):
                 self.table_state.show_empty("暂无龙虎榜数据")
+
+    def _load_and_display_pool(self):
+        """Schedule the cached pool computation off the UI thread."""
+        if self._pool_load_in_progress:
+            return
+        self._pool_load_in_progress = True
+        if hasattr(self, "table_state"):
+            self.table_state.show_loading("正在加载龙虎榜池", "首次进入先响应，缓存池在后台计算。")
+        self._set_pool_status("正在加载龙虎榜池", freshness="后台计算", next_step="结果完成后自动落表")
+
+        def _bg_load_pool():
+            trade_dates = self._get_lhb_trade_dates()
+            if not trade_dates:
+                return {"status": "calendar_missing"}
+
+            pool_manager = LhbPoolManager()
+            pool_manager.prune(trade_dates)
+            pool = pool_manager.compute_pool(data_provider=self.data_provider, engine=self._get_engine())
+            validation_ref_date = max(trade_dates)
+            pending_validation = pool_manager.get_dates_pending_validation(trade_dates, validation_ref_date)
+            missing = pool_manager.get_missing_dates(trade_dates)
+            return {
+                "status": "ok",
+                "pool_manager": pool_manager,
+                "pool": pool,
+                "missing": missing,
+                "pending_validation": pending_validation,
+                "validation_ref_date": validation_ref_date,
+            }
+
+        def _on_pool_loaded(payload):
+            self._pool_load_in_progress = False
+            status = str((payload or {}).get("status", "") or "")
+            if status != "ok":
+                self._calendar_retry_count += 1
+                if self._calendar_retry_count <= 3:
+                    self._set_pool_status("交易日历未就绪", f"第{self._calendar_retry_count}次重试")
+                    QTimer.singleShot(5000, self._load_and_display_pool)
+                else:
+                    self._set_pool_status("交易日历加载失败", freshness="待回补", next_step="点击历史回补重新抓取")
+                return
+
+            self._calendar_retry_count = 0
+            pool_manager = payload.get("pool_manager")
+            if pool_manager is not None:
+                self.pool_manager = pool_manager
+
+            pool = list(payload.get("pool") or [])
+            if pool:
+                self._display_pool(pool)
+
+            missing = list(payload.get("missing") or [])
+            pending_validation = list(payload.get("pending_validation") or [])
+            validation_ref_date = str(payload.get("validation_ref_date") or "")
+            if missing or pending_validation:
+                self._start_backfill(missing, pending_validation, validation_ref_date)
+            elif not pool:
+                self._set_pool_status("暂无龙虎榜数据", freshness="待回补", next_step="点击历史回补开始抓取")
+                if hasattr(self, "table_state"):
+                    self.table_state.show_empty("暂无龙虎榜数据")
+
+        def _on_pool_error(error_message: str):
+            self._pool_load_in_progress = False
+            self._pool_bootstrap_started = False
+            self._set_pool_status(
+                "龙虎榜池加载失败",
+                error_message,
+                freshness="待重试",
+                next_step="重新进入或点击历史回补",
+            )
+            if hasattr(self, "table_state"):
+                self.table_state.show_error(
+                    "龙虎榜池加载失败",
+                    str(error_message or ""),
+                    action_text="重试",
+                    action_callback=self._ensure_pool_bootstrap_started,
+                )
+
+        task_manager.run_in_background(
+            _bg_load_pool,
+            on_success=_on_pool_loaded,
+            on_error=_on_pool_error,
+            task_id=task_registry.workspace("lhb_pool_bootstrap").task_id,
+        )
 
     @staticmethod
     def _get_lhb_reference_trade_date():
@@ -359,7 +450,7 @@ class LhbTab(BaseStockTab):
             return rows
 
         try:
-            pool = self.pool_manager.compute_pool(data_provider=None, engine=self._get_engine())
+            pool = self._get_pool_manager().compute_pool(data_provider=None, engine=self._get_engine())
         except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
             log.debug(f"[龙虎榜池] 关注池读取本地池缓存失败: {exc}")
             return []
@@ -371,7 +462,7 @@ class LhbTab(BaseStockTab):
 
         self.model.update_data(row_data)
 
-        cached_days = len(self.pool_manager.get_cached_dates())
+        cached_days = len(self._get_pool_manager().get_cached_dates())
         self._set_pool_status(
             self._status_metric("入池 ", len(pool), "只"),
             self._status_metric("覆盖 ", cached_days, "个交易日"),
@@ -388,7 +479,8 @@ class LhbTab(BaseStockTab):
         event_bus.sig_lhb_pool_updated.emit()
 
         self.refresh_table_quotes_and_market_caps(
-            quote_task_id=task_registry.quote_refresh("lhb").task_id
+            quote_task_id=task_registry.quote_refresh("lhb").task_id,
+            async_local=True,
         )
 
     # ================================================================
@@ -491,7 +583,7 @@ class LhbTab(BaseStockTab):
 
             for date_str in validation_sorted:
                 step += 1
-                cached_count = self.pool_manager.get_cached_record_count(date_str)
+                cached_count = self._get_pool_manager().get_cached_record_count(date_str)
                 try:
                     probe_payload = probe_lhb_detail_count_for_date(date_str, return_meta=True)
                     if self._should_refresh_after_probe(cached_count, probe_payload):
@@ -560,21 +652,21 @@ class LhbTab(BaseStockTab):
             for date_str, payload in fetched_results.items():
                 records = payload.get("records", []) if isinstance(payload, dict) else []
                 meta = payload.get("meta") if isinstance(payload, dict) else None
-                self.pool_manager.add_day(date_str, records, meta=meta)
+                self._get_pool_manager().add_day(date_str, records, meta=meta)
 
             for date_str, payload in validated_results.items():
                 if not isinstance(payload, dict):
                     continue
-                self.pool_manager.mark_day_probe(
+                self._get_pool_manager().mark_day_probe(
                     date_str,
                     source_count=payload.get("count", 0),
                     validation_ref_date=validation_ref_date,
                     status=payload.get("status", "ok"),
                 )
 
-            self.pool_manager.save()
+            self._get_pool_manager().save()
 
-            pool = self.pool_manager.compute_pool(data_provider=self.data_provider, engine=self._get_engine())
+            pool = self._get_pool_manager().compute_pool(data_provider=self.data_provider, engine=self._get_engine())
             self._display_pool(pool)
             event_bus.sig_system_log.emit(
                 "info",
@@ -620,7 +712,7 @@ class LhbTab(BaseStockTab):
             event_bus.sig_system_log.emit(strategy_level, self._ensure_log_line(strategy_message))
 
         # 清空全部缓存，强制全量重拉
-        self.pool_manager.clear_all()
+        self._get_pool_manager().clear_all()
         self._start_backfill(trade_dates)
 
     def refresh_history(self) -> bool:
@@ -661,7 +753,7 @@ class LhbTab(BaseStockTab):
             return
 
         # 条件③：今天已抓取则跳过
-        if self._today_auto_fetched and today_str == self.pool_manager.last_auto_fetch_date:
+        if self._today_auto_fetched and today_str == self._get_pool_manager().last_auto_fetch_date:
             return
 
         # 条件②：今天是交易日
@@ -669,7 +761,7 @@ class LhbTab(BaseStockTab):
             return
 
         # 已经缓存了今天的数据也跳过
-        if today_str in self.pool_manager.get_cached_dates():
+        if today_str in self._get_pool_manager().get_cached_dates():
             self._today_auto_fetched = True
             return
 
@@ -696,17 +788,17 @@ class LhbTab(BaseStockTab):
             status = payload.get("status", "ok") if isinstance(payload, dict) else "ok"
 
             # 写入池引擎
-            self.pool_manager.add_day(date_str, records if records else [])
-            self.pool_manager.last_auto_fetch_date = date_str
+            self._get_pool_manager().add_day(date_str, records if records else [])
+            self._get_pool_manager().last_auto_fetch_date = date_str
             self._today_auto_fetched = True
 
             # 裁剪并重算
             trade_dates = self._get_lhb_trade_dates()
             if trade_dates:
-                self.pool_manager.prune(trade_dates)
-            self.pool_manager.save()
+                self._get_pool_manager().prune(trade_dates)
+            self._get_pool_manager().save()
 
-            pool = self.pool_manager.compute_pool(data_provider=self.data_provider, engine=self._get_engine())
+            pool = self._get_pool_manager().compute_pool(data_provider=self.data_provider, engine=self._get_engine())
             self._display_pool(pool)
             if status == "empty":
                 summary = f"[龙虎榜池] {date_str} 自动抓取完成 | 无可用数据 | 池中{len(pool)}只"

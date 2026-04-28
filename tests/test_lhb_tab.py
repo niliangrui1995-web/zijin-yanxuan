@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from core.market_calendar import MarketCalendar
 from ui.tabs.lhb_tab import LhbTab
+import ui.tabs.lhb_tab as lhb_tab_module
 import ui.workers.lhb_worker as lhb_worker_module
 
 
@@ -130,6 +131,27 @@ def test_lhb_can_defer_pool_bootstrap_until_first_show(monkeypatch):
         assert calls == ["scheduler"]
         tab._ensure_pool_bootstrap_started()
         assert calls == ["scheduler", "load"]
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_pool_bootstrap_schedules_background_task(monkeypatch):
+    tasks = []
+    monkeypatch.setattr(LhbTab, "_start_auto_scheduler", lambda self: None, raising=False)
+    monkeypatch.setattr(LhbTab, "_get_lhb_trade_dates", lambda self, n=20: ["20260420"], raising=False)
+    monkeypatch.setattr(
+        lhb_tab_module.task_manager,
+        "run_in_background",
+        lambda fn, on_success=None, on_error=None, task_id=None: tasks.append((fn, on_success, on_error, task_id)),
+    )
+
+    tab = LhbTab(object(), autoload_pool=False)
+    try:
+        tab._ensure_pool_bootstrap_started()
+
+        assert len(tasks) == 1
+        assert "lhb_pool_bootstrap" in str(tasks[0][3])
+        assert tab._pool_load_in_progress is True
     finally:
         tab.deleteLater()
 

@@ -95,6 +95,27 @@ def test_workspace_quote_universe_skips_information_source_group_and_non_a_share
     assert codes == {"000001", "300750", "688498", "601318", "002415"}
 
 
+def test_workspace_quote_universe_does_not_instantiate_lazy_tabs():
+    loaded_tabs = {
+        "watchlist": _make_quote_tab({"000001"}),
+    }
+    get_tab_calls = []
+    workspace = SimpleNamespace(
+        tab_specs=lambda: [
+            {"key": "watchlist", "group": "涓诲伐浣滃彴"},
+            {"key": "lhb", "group": "涓诲伐浣滃彴"},
+            {"key": "rt_monitor", "group": "涓诲伐浣滃彴"},
+        ],
+        get_loaded_tab=lambda key: loaded_tabs.get(key),
+        get_tab=lambda key: get_tab_calls.append(key) or _make_quote_tab({key}),
+    )
+
+    codes = ClassicWorkspace.get_realtime_quote_codes(workspace)
+
+    assert codes == {"000001"}
+    assert get_tab_calls == []
+
+
 def test_workspace_primes_watchlist_with_public_startup_hook():
     called = []
     workspace = _make_workspace(
@@ -661,7 +682,13 @@ def test_workspace_defers_heavy_tab_autoload(monkeypatch):
 
     workspace = classic_workspace_module.ClassicWorkspace(data_provider=object(), engine=object())
     try:
+        assert set(ctor_kwargs) == {"watchlist"}
+        assert workspace.get_loaded_tab("lhb") is None
+        assert workspace.get_loaded_tab("fund_holdings") is None
+
+        workspace.ensure_tab_loaded("lhb")
         assert ctor_kwargs["lhb"]["autoload_pool"] is False
+        workspace.ensure_tab_loaded("fund_holdings")
         assert ctor_kwargs["fund_holdings"]["autoload"] is False
         groups = {spec["key"]: spec["group"] for spec in workspace.tab_specs()}
         tab_keys = [spec["key"] for spec in workspace.tab_specs()]
@@ -674,6 +701,7 @@ def test_workspace_defers_heavy_tab_autoload(monkeypatch):
         assert "autoload_pool" not in ctor_kwargs["watchlist"]
         assert "autoload" not in ctor_kwargs["watchlist"]
         assert isinstance(workspace.tabs, SmoothTabWidget)
+        assert workspace.tabs._transition_enabled is False
     finally:
         workspace.deleteLater()
 

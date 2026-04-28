@@ -1290,7 +1290,7 @@ class FundHoldingsTab(BaseStockTab):
 
     def _apply_latest_quotes_from_store(self):
         # 基金持仓只消费最新的全局/F5快照；若当前表格新增了代码，会先尝试用本地缓存预热。
-        self.refresh_table_from_latest_snapshot()
+        self.refresh_table_from_latest_snapshot(async_local=False)
 
     def _on_cache_reload_completed(self):
         self._apply_latest_quotes_from_store()

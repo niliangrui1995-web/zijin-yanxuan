@@ -16,14 +16,16 @@ import requests
 import yfinance as yf
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from app.services import CACHE_DIR, build_yf_session, sync_asian_kline_cache
-from core.logger import get_logger
-from app.services.ui_runtime_service import MarketCalendar
-from vcp.fetchers.yf_session import (
+from app.services import (
+    CACHE_DIR,
+    build_yf_session,
     get_yf_rate_limit_status,
     is_yf_rate_limit_error,
     mark_yf_rate_limited,
+    sync_asian_kline_cache,
 )
+from core.logger import get_logger
+from app.services.ui_runtime_service import MarketCalendar
 
 log = get_logger(__name__)
 

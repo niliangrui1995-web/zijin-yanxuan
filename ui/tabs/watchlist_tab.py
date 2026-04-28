@@ -252,10 +252,24 @@ class WatchlistTab(BaseStockTab):
             final_list.append(row_data)
 
         self.model.update_data(final_list)
-        self.refresh_table_quotes_and_market_caps(
+        self._refresh_quotes_async_local(
             quote_task_id=task_registry.quote_refresh("watchlist").task_id
         )
         self._update_status_summary()
+
+    def _refresh_quotes_async_local(self, *, quote_task_id):
+        QTimer.singleShot(0, lambda task_id=quote_task_id: self._run_async_local_quote_refresh(task_id))
+
+    def _run_async_local_quote_refresh(self, quote_task_id):
+        try:
+            self.refresh_table_quotes_and_market_caps(
+                quote_task_id=quote_task_id,
+                async_local=True,
+            )
+        except TypeError as exc:
+            if "async_local" not in str(exc):
+                raise
+            self.refresh_table_quotes_and_market_caps(quote_task_id=quote_task_id)
 
     def _update_status_summary(self):
         rows = list(getattr(self.model, "row_data", []) or [])
@@ -750,7 +764,7 @@ class WatchlistTab(BaseStockTab):
         """工作区联动：启动后主动补一次关注池行情与附加指标。"""
         if not self.model or not getattr(self.model, "row_data", None):
             return
-        self.refresh_table_quotes_and_market_caps(
+        self._refresh_quotes_async_local(
             quote_task_id=task_registry.quote_refresh("smart_startup_watchlist").task_id
         )
         self._request_vcp_calc(delay_ms=0)
@@ -800,4 +814,3 @@ class WatchlistTab(BaseStockTab):
             return
         if self._touch_watchlist_update():
             self._update_status_summary()
-

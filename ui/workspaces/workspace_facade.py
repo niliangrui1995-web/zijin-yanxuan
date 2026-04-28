@@ -33,6 +33,12 @@ class WorkspaceFacade:
             return None
         return get_tab(key)
 
+    def _get_loaded_tab(self, key: str):
+        get_loaded_tab = getattr(self._workspace, "get_loaded_tab", None)
+        if callable(get_loaded_tab):
+            return get_loaded_tab(key)
+        return self._get_tab(key)
+
     @staticmethod
     def _call_bool(tab, method_name: str, *args, **kwargs) -> bool:
         callback = getattr(tab, method_name, None)
@@ -47,13 +53,13 @@ class WorkspaceFacade:
         return self._workspace_navigation_service.tab_indices_by_group()
 
     def get_scan_results(self) -> list[dict]:
-        tab = self._get_tab("scan")
+        tab = self._get_loaded_tab("scan")
         if not isinstance(tab, ScanResultsCapability):
             return []
         return list(tab.get_scan_results() or [])
 
     def get_rt_table(self):
-        tab = self._get_tab("rt_monitor")
+        tab = self._get_loaded_tab("rt_monitor")
         if isinstance(tab, TableCollectionCapability):
             tables = list(tab.iter_tables() or [])
             return tables[0] if tables else None
@@ -85,7 +91,7 @@ class WorkspaceFacade:
             key = str(spec.get("key", "")).strip()
             if not key:
                 continue
-            tab = self._get_tab(key)
+            tab = self._get_loaded_tab(key)
             if not isinstance(tab, PostF5DataRefreshCapability):
                 continue
             try:
@@ -99,7 +105,7 @@ class WorkspaceFacade:
         return self._workspace_navigation_service.select_scan_row(index)
 
     def is_rt_monitor_running(self) -> bool:
-        tab = self._get_tab("rt_monitor")
+        tab = self._get_loaded_tab("rt_monitor")
         if not isinstance(tab, RtMonitorControlCapability):
             return False
         return bool(tab.is_rt_running())
@@ -139,7 +145,7 @@ class WorkspaceFacade:
 
     def run_post_online_refresh(self, task_manager) -> None:
         for key in ("na_daily", "foreign_block"):
-            self._call_bool(self._get_tab(key), "run_post_online_refresh")
+            self._call_bool(self._get_loaded_tab(key), "run_post_online_refresh")
 
         self.schedule_watchlist_special_quotes(task_manager)
 

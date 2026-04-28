@@ -41,6 +41,12 @@ class WorkspaceNavigationService:
             )
         return result
 
+    def _key_for_index(self, tab_index: int) -> str:
+        specs = self._tab_specs()
+        if 0 <= int(tab_index) < len(specs):
+            return str(specs[int(tab_index)].get("key") or "").strip()
+        return ""
+
     def select_scan_row(self, index: int) -> bool:
         get_tab = getattr(self._workspace, "get_tab", None)
         tab = get_tab("scan") if callable(get_tab) else None
@@ -73,6 +79,11 @@ class WorkspaceNavigationService:
 
         for tab_index in candidate_indices:
             tab = tab_widget.widget(tab_index)
+            if tab_index == preferred_tab_index:
+                key = self._key_for_index(tab_index)
+                get_tab = getattr(self._workspace, "get_tab", None)
+                if key and callable(get_tab):
+                    tab = get_tab(key) or tab
             if tab is None:
                 continue
             if isinstance(tab, CodeRowSelectionCapability) and tab.select_code_row(code_text):

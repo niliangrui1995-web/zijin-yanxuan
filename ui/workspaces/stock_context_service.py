@@ -123,6 +123,9 @@ class StockContextService:
         return "", 0.0
 
     def _get_tab(self, key: str):
+        get_loaded_tab = getattr(self._workspace, "get_loaded_tab", None)
+        if callable(get_loaded_tab):
+            return get_loaded_tab(key)
         get_tab = getattr(self._workspace, "get_tab", None)
         if not callable(get_tab):
             return None
@@ -136,7 +139,7 @@ class StockContextService:
         seen_ids: set[int] = set()
         for spec in self._tab_specs():
             key = str(spec.get("key", "")).strip()
-            tab = spec.get("widget") or self._get_tab(key)
+            tab = self._get_tab(key)
             if not key or tab is None or id(tab) in seen_ids:
                 continue
             seen_ids.add(id(tab))

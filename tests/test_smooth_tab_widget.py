@@ -42,6 +42,33 @@ def test_smooth_tab_widget_skips_expensive_snapshots_when_visible():
         tabs.deleteLater()
 
 
+def test_smooth_tab_widget_disabled_transition_does_not_grab(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    tabs = SmoothTabWidget()
+    grabbed = []
+
+    class GrabWidget(QWidget):
+        def grab(self):
+            grabbed.append("grab")
+            return super().grab()
+
+    try:
+        tabs.addTab(GrabWidget(), "A")
+        tabs.addTab(QWidget(), "B")
+        tabs.resize(240, 160)
+        tabs.setTransitionEnabled(False)
+        tabs.show()
+        app.processEvents()
+
+        tabs.setCurrentIndex(1)
+
+        assert tabs.currentIndex() == 1
+        assert grabbed == []
+    finally:
+        tabs.close()
+        tabs.deleteLater()
+
+
 def test_smooth_tab_widget_suspends_animation_after_slow_snapshot():
     app = QApplication.instance() or QApplication([])
     tabs = SmoothTabWidget()
