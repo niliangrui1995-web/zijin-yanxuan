@@ -331,11 +331,8 @@ def test_build_kline_echarts_payload_matches_compact_vcp_dates():
 
     assert payload["vcpMarkers"][0]["coord"] == [2, 11.8]
     assert payload["vcpArea"][0][0]["yAxis"] == 9.9
-    assert payload["vcpArea"][0][1]["xAxis"] == "2026-04-08"
-    assert payload["vcpArea"][0][1]["yAxis"] == 11.2
-    assert payload["vcpArea"][1][0]["xAxis"] == "2026-04-08"
-    assert payload["vcpArea"][1][1]["xAxis"] == "2026-04-09"
-    assert payload["vcpArea"][1][1]["yAxis"] == 11.2
+    assert payload["vcpArea"][0][1]["xAxis"] == "2026-04-09"
+    assert payload["vcpArea"][0][1]["yAxis"] == 11.8
 
 
 def test_build_kline_echarts_payload_marks_final_vcp_window_to_trigger_date():
@@ -368,10 +365,24 @@ def test_build_kline_echarts_payload_marks_final_vcp_window_to_trigger_date():
 
     assert payload["vcpMarkers"][0]["coord"] == [3, 14.0]
     assert payload["vcpArea"][0][0]["xAxis"] == "2026-04-07"
-    assert payload["vcpArea"][0][1]["xAxis"] == "2026-04-09"
-    assert payload["vcpArea"][1][0]["xAxis"] == "2026-04-09"
-    assert payload["vcpArea"][1][1]["xAxis"] == "2026-04-10"
-    assert payload["vcpArea"][1][1]["yAxis"] == 10.6
+    assert payload["vcpArea"][0][0]["yAxis"] == 9.8
+    assert payload["vcpArea"][0][1]["xAxis"] == "2026-04-10"
+    assert payload["vcpArea"][0][1]["yAxis"] == 14.0
+    horizontal_lines = [
+        line
+        for line in payload["vcpLines"]
+        if line[0]["yAxis"] == line[1]["yAxis"]
+    ]
+    assert horizontal_lines == [
+        [
+            {"xAxis": "2026-04-07", "yAxis": 14.0},
+            {"xAxis": "2026-04-10", "yAxis": 14.0},
+        ],
+        [
+            {"xAxis": "2026-04-07", "yAxis": 9.8},
+            {"xAxis": "2026-04-10", "yAxis": 9.8},
+        ],
+    ]
 
 
 def test_build_kline_echarts_payload_skips_vcp_overlay_for_generic_event_date():

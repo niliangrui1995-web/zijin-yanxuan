@@ -1194,60 +1194,50 @@ def inject_vcp_overlays(data: dict, dates: list, vcp_data: dict | None) -> None:
 
         if valid_indices:
             peak_indices = sorted(set(valid_indices))
-            segments = [
-                (left_idx, right_idx, right_idx)
-                for left_idx, right_idx in zip(peak_indices, peak_indices[1:])
-                if right_idx > left_idx
-            ]
-            if trigger_idx > peak_indices[-1]:
-                # The trigger candle may be a breakout. Draw the final window to it,
-                # but derive the box height from the pre-trigger range.
-                segments.append((peak_indices[-1], trigger_idx, max(peak_indices[-1], trigger_idx - 1)))
-            if not segments:
-                segments = [(min(peak_indices), max(peak_indices), max(peak_indices))]
-
-            vcp_area = []
-            vcp_lines = []
-            for x_start, x_end, price_end in segments:
-                if x_start < 0 or x_end >= len(data["klines"]):
-                    continue
-                price_end = min(max(price_end, x_start), len(data["klines"]) - 1)
-                box_slice = data["klines"][x_start:price_end + 1]
-                derived_lows = [float(item[2]) for item in box_slice if item and len(item) > 3 and item[2] is not None]
-                derived_highs = [float(item[3]) for item in box_slice if item and len(item) > 3 and item[3] is not None]
-                box_low = min(derived_lows) if derived_lows else raw_box_low
-                box_high = max(derived_highs) if derived_highs else raw_box_high
-                if box_high <= 0 or box_low <= 0:
-                    continue
-
-                vcp_area.append([
-                    {"xAxis": dates[x_start], "yAxis": box_low},
-                    {"xAxis": dates[x_end], "yAxis": box_high},
-                ])
-
-                vcp_lines.append([
-                    {"xAxis": dates[x_start], "yAxis": box_low},
-                    {"xAxis": dates[x_start], "yAxis": box_high},
-                ])
-                vcp_lines.append([
-                    {"xAxis": dates[x_end], "yAxis": box_low},
-                    {"xAxis": dates[x_end], "yAxis": box_high},
-                ])
-                vcp_lines.append([
-                    {"xAxis": dates[x_start], "yAxis": box_high},
-                    {"xAxis": dates[x_end], "yAxis": box_high},
-                ])
-                vcp_lines.append([
-                    {"xAxis": dates[x_start], "yAxis": box_low},
-                    {"xAxis": dates[x_end], "yAxis": box_low},
-                ])
-
-            if not vcp_area:
+            x_start = min(peak_indices)
+            x_end = max(peak_indices)
+            if trigger_idx > x_end:
+                x_end = trigger_idx
+            if x_start < 0 or x_end >= len(data["klines"]):
                 if markers:
                     data["vcpMarkers"] = markers
                 return
 
-            data["vcpArea"] = vcp_area
+            box_slice = data["klines"][x_start:x_end + 1]
+            derived_lows = [float(item[2]) for item in box_slice if item and len(item) > 3 and item[2] is not None]
+            derived_highs = [float(item[3]) for item in box_slice if item and len(item) > 3 and item[3] is not None]
+            box_low = min(derived_lows) if derived_lows else raw_box_low
+            box_high = max(derived_highs) if derived_highs else raw_box_high
+            if box_high <= 0 or box_low <= 0:
+                if markers:
+                    data["vcpMarkers"] = markers
+                return
+
+            data["vcpArea"] = [[
+                {"xAxis": dates[x_start], "yAxis": box_low},
+                {"xAxis": dates[x_end], "yAxis": box_high},
+            ]]
+
+            vcp_lines = []
+            vertical_indices = peak_indices[:]
+            if x_end not in vertical_indices:
+                vertical_indices.append(x_end)
+            for xi in sorted(set(vertical_indices)):
+                if xi < x_start or xi > x_end:
+                    continue
+                vcp_lines.append([
+                    {"xAxis": dates[xi], "yAxis": box_low},
+                    {"xAxis": dates[xi], "yAxis": box_high},
+                ])
+
+            vcp_lines.append([
+                {"xAxis": dates[x_start], "yAxis": box_high},
+                {"xAxis": dates[x_end], "yAxis": box_high},
+            ])
+            vcp_lines.append([
+                {"xAxis": dates[x_start], "yAxis": box_low},
+                {"xAxis": dates[x_end], "yAxis": box_low},
+            ])
             data["vcpLines"] = vcp_lines
 
     if markers:
