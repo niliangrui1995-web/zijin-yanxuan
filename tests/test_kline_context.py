@@ -66,6 +66,38 @@ def test_resolve_kline_vcp_context_merges_scan_results_for_scan_source():
     assert resolved["_vcp_overlay_allowed"] is True
 
 
+def test_resolve_kline_vcp_context_adds_scan_overlay_for_watchlist_without_overwriting():
+    resolved = resolve_kline_vcp_context(
+        code="002975",
+        name="博杰股份",
+        item_data={
+            "代码": "002975",
+            "名称": "博杰股份",
+            "__source_tab_key": "watchlist",
+            "来源标签": ["业绩", "AI产业链"],
+            "RPS强度": "97/90",
+        },
+        watchlist_entry={},
+        scan_results=[
+            {
+                "代码": "002975",
+                "名称": "博杰股份",
+                "RPS强度": "93/95",
+                "触发日期": "20260416",
+                "区间最高价": 91.0,
+                "区间最低点": 65.6,
+                "_peak_dates": ["20251127", "20260123", "20260226"],
+            }
+        ],
+    )
+
+    assert resolved["RPS强度"] == "97/90"
+    assert resolved["来源标签"] == ["业绩", "AI产业链"]
+    assert resolved["区间最高价"] == 91.0
+    assert resolved["区间最低点"] == 65.6
+    assert resolved["_vcp_overlay_allowed"] is True
+
+
 def test_kline_market_badge_formats_common_markets():
     assert format_kline_market_badge("300308") == "A股"
     assert format_kline_market_badge("2330.TW") == "台股"
@@ -145,6 +177,34 @@ def test_build_kline_echarts_payload_includes_vcp_overlay():
     assert payload["vcpMarkers"]
     assert payload["vcpLines"]
     assert payload["vcpArea"]
+
+
+def test_build_kline_echarts_payload_matches_compact_vcp_dates():
+    df = pd.DataFrame(
+        {
+            "open": [10.0, 10.5, 11.0],
+            "high": [10.8, 11.2, 11.8],
+            "low": [9.9, 10.2, 10.7],
+            "close": [10.6, 11.0, 11.6],
+            "volume": [10000, 12000, 15000],
+        },
+        index=pd.to_datetime(["2026-04-07", "2026-04-08", "2026-04-09"]),
+    )
+
+    payload = build_kline_echarts_payload(
+        df,
+        code="300308",
+        name="中际旭创",
+        vcp_data={
+            "触发日期": "20260409",
+            "区间最高价": 11.8,
+            "区间最低点": 9.9,
+            "_peak_dates": ["20260407", "20260408"],
+        },
+    )
+
+    assert payload["vcpMarkers"][0]["coord"] == [2, 11.8]
+    assert payload["vcpArea"][0][1]["xAxis"] == "2026-04-09"
 
 
 def test_build_kline_echarts_payload_skips_vcp_overlay_for_generic_event_date():

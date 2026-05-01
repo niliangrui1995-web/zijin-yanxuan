@@ -74,6 +74,43 @@ def test_build_kline_open_request_merges_scan_context_for_scan_source():
     assert request["vcp_data"]["_vcp_overlay_allowed"] is True
 
 
+def test_build_kline_open_request_adds_scan_context_for_watchlist_without_overwriting():
+    workspace = SimpleNamespace(
+        get_scan_results=lambda: [
+            {
+                "代码": "002975",
+                "名称": "博杰股份",
+                "RPS强度": "93/95",
+                "区间最高价": 91.0,
+                "区间最低点": 65.6,
+            }
+        ]
+    )
+
+    request = build_kline_open_request(
+        code="002975",
+        code_name_map={"002975": "博杰股份"},
+        code_list=[
+            {
+                "代码": "002975",
+                "名称": "博杰股份",
+                "来源标签": ["业绩", "AI产业链"],
+                "RPS强度": "97/90",
+            }
+        ],
+        current_idx=0,
+        workspace=workspace,
+        source_tab_index=1,
+        source_tab_key="watchlist",
+    )
+
+    assert request["vcp_data"]["RPS强度"] == "97/90"
+    assert request["vcp_data"]["来源标签"] == ["业绩", "AI产业链"]
+    assert request["vcp_data"]["区间最高价"] == 91.0
+    assert request["vcp_data"]["区间最低点"] == 65.6
+    assert request["vcp_data"]["_vcp_overlay_allowed"] is True
+
+
 def test_build_kline_open_request_uses_embedded_scan_signal_from_candidate_row():
     request = build_kline_open_request(
         code="300750",

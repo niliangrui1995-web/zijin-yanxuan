@@ -66,7 +66,12 @@ def _is_vcp_scan_source(payload: dict) -> bool:
     source_key = str(payload.get("__source_tab_key") or "").strip()
     source_tab = str(payload.get("source_tab") or "").strip()
     signal_type = str(payload.get("signal_type") or "").strip()
-    return bool(payload.get("_vcp_overlay_allowed")) or source_key == "scan" or source_tab == "scan" or signal_type == "vcp_scan"
+    return (
+        bool(payload.get("_vcp_overlay_allowed"))
+        or source_key in {"scan", "watchlist"}
+        or source_tab == "scan"
+        or signal_type == "vcp_scan"
+    )
 
 
 def _has_vcp_overlay_fields(payload: dict) -> bool:
@@ -105,9 +110,10 @@ def resolve_kline_vcp_context(
     if embedded_scan:
         merge_kline_context(resolved, embedded_scan, overwrite=True)
     elif _is_vcp_scan_source(resolved):
+        merge_as_overlay = str(resolved.get("__source_tab_key") or "").strip() == "watchlist"
         for scan_res in scan_results or []:
             if isinstance(scan_res, dict) and str(scan_res.get("代码", "")).strip() == str(code).strip():
-                merge_kline_context(resolved, scan_res, overwrite=True)
+                merge_kline_context(resolved, scan_res, overwrite=not merge_as_overlay)
                 resolved["_vcp_overlay_allowed"] = True
                 break
 
@@ -1127,15 +1133,22 @@ def inject_vcp_overlays(data: dict, dates: list, vcp_data: dict | None) -> None:
             return default
 
     trigger_date = str(_pick("触发日期", "日期", "时间", "trigger_date", default=""))[:10]
-    trigger_idx = -1
     theme = theme_manager.current_theme
     date_to_idx = {d: i for i, d in enumerate(dates)}
 
-    if trigger_date:
-        for d, idx in date_to_idx.items():
-            if trigger_date in d:
-                trigger_idx = idx
-                break
+    def _find_date_idx(value) -> int:
+        date_text = str(value or "").strip()[:10]
+        if not date_text:
+            return -1
+        if date_text in date_to_idx:
+            return date_to_idx[date_text]
+        date_no_dash = date_text.replace("-", "")
+        for date_key, idx in date_to_idx.items():
+            if date_key.replace("-", "") == date_no_dash or date_text in date_key:
+                return idx
+        return -1
+
+    trigger_idx = _find_date_idx(trigger_date)
 
     markers = []
     if trigger_idx != -1:
@@ -1181,15 +1194,9 @@ def inject_vcp_overlays(data: dict, dates: list, vcp_data: dict | None) -> None:
     if box_high > 0 and box_low > 0 and peak_dates:
         valid_indices = []
         for d in peak_dates:
-            d_short = str(d)[:10]
-            if d_short in date_to_idx:
-                valid_indices.append(date_to_idx[d_short])
-            else:
-                d_no_dash = d_short.replace("-", "")
-                for date_key, idx in date_to_idx.items():
-                    if date_key.replace("-", "") == d_no_dash:
-                        valid_indices.append(idx)
-                        break
+            idx = _find_date_idx(d)
+            if idx != -1:
+                valid_indices.append(idx)
 
         if valid_indices:
             x_start = min(valid_indices)
