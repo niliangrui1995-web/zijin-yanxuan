@@ -74,6 +74,7 @@ def test_filter_asian_tickers_includes_ai_pcb_equipment_japan_names(monkeypatch)
     assert tickers["MJC"] == "6871.T"
     assert tickers["Fujikura"] == "5803.T"
     assert tickers["SKC"] == "011790.KS"
+    assert tickers["Murata"] == "6981.T"
 
 
 def test_find_track_works_with_local_tsmc_tw_override(monkeypatch):
@@ -112,6 +113,7 @@ def test_find_track_uses_local_track_override_for_refined_japan_sectors(monkeypa
     assert fetcher._find_track("5802.T") == "光芯片与硅光"
     assert fetcher._find_track("5803.T") == "光通信无源器件与精密零部件"
     assert fetcher._find_track("011790.KS") == "IC载板与封装材料"
+    assert fetcher._find_track("6981.T") == "数据中心电力与配电"
 
 
 def test_find_track_uses_local_track_override_for_ai_pcb_equipment(monkeypatch):
@@ -121,6 +123,44 @@ def test_find_track_uses_local_track_override_for_ai_pcb_equipment(monkeypatch):
 
     for ticker in ["7735.T", "6594.T", "6113.T", "6278.T", "6925.T"]:
         assert fetcher._find_track(ticker) == "AI PCB设备与关键耗材"
+
+
+def test_finalize_klines_drops_nan_close(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+
+    rows = fetcher._finalize_klines(
+        [
+            {
+                "date": "2026-04-30",
+                "open": 100.0,
+                "high": 110.0,
+                "low": 90.0,
+                "close": float("nan"),
+                "volume": 1000,
+            },
+            {
+                "date": "2026-05-01",
+                "open": 101.0,
+                "high": 111.0,
+                "low": 91.0,
+                "close": 105.0,
+                "volume": 1200,
+            },
+        ],
+        start_date=fetcher.date(2026, 4, 1),
+        end_date=fetcher.date(2026, 5, 2),
+    )
+
+    assert rows == [
+        {
+            "date": "2026-05-01",
+            "open": 101.0,
+            "high": 111.0,
+            "low": 91.0,
+            "close": 105.0,
+            "volume": 1200,
+        }
+    ]
 
 
 def test_asian_market_meta_labels_ai_pcb_equipment_names_and_roles():
@@ -140,6 +180,7 @@ def test_asian_market_meta_labels_ai_pcb_equipment_names_and_roles():
     assert names["6871.T"] == "日本微电子"
     assert names["5803.T"] == "藤仓"
     assert names["011790.KS"] == "SKC"
+    assert names["6981.T"] == "村田制作所"
     assert roles["7735.T"] == "LDI/直接成像设备"
     assert roles["6594.T"] == "PCB电测/光学检测+精密马达"
     assert roles["6113.T"] == "机械钻孔+激光钻孔"
@@ -152,6 +193,7 @@ def test_asian_market_meta_labels_ai_pcb_equipment_names_and_roles():
     assert roles["5802.T"] == "光器件/光芯片上游核心"
     assert roles["5803.T"] == "光纤/光连接精密组件"
     assert roles["011790.KS"] == "玻璃基板/封装材料载体"
+    assert roles["6981.T"] == "AI服务器MLCC/被动元件龙头"
 
 
 def test_fetch_single_kline_routes_to_market_specific_history_source(monkeypatch):
@@ -221,6 +263,36 @@ def test_fetch_single_kline_routes_to_market_specific_history_source(monkeypatch
         assert payload["klines"][0]["date"] == "2026-04-17"
 
     assert route_hits == ["TW", "TWO", "KS", "T", "HK"]
+
+
+def test_jp_history_falls_back_to_yfinance_when_yahoo_japan_empty(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    monkeypatch.setattr(fetcher, "_fetch_jp_history_yahoo_japan", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        fetcher,
+        "_fetch_yfinance_history_rows",
+        lambda *args, **kwargs: [
+            {
+                "date": "2026-04-30",
+                "open": 4900.0,
+                "high": 5100.0,
+                "low": 4800.0,
+                "close": 5000.0,
+                "volume": 123456,
+            }
+        ],
+    )
+
+    rows, source = fetcher._fetch_market_history_rows(
+        "6981.T",
+        object(),
+        start_date=fetcher.date(2026, 4, 1),
+        end_date=fetcher.date(2026, 5, 2),
+        target_rows=260,
+    )
+
+    assert source == "yfinance_history"
+    assert rows[0]["close"] == 5000.0
 
 
 def test_sync_asian_kline_cache_refuses_partial_overwrite(monkeypatch):

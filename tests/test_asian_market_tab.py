@@ -441,8 +441,67 @@ def test_asian_market_load_local_cache_normalizes_stale_yfinance_pct(monkeypatch
     tab = asian_module.AsianMarketTab()
     try:
         row = next(item for item in tab.row_data if item["代码"] == "3110.T")
-        assert round(row["涨幅%"], 4) == round((26540.0 / 26720.0 - 1.0) * 100.0, 4)
+        assert row["涨幅%"] == pytest.approx(round((26540.0 / 26720.0 - 1.0) * 100.0, 2))
         assert asian_module.GLOBAL_ASIAN_RT_CACHE["3110.T"]["previous_close"] == 26720.0
+    finally:
+        tab.deleteLater()
+
+
+def test_asian_market_load_local_cache_keeps_history_when_rt_cache_is_zero(monkeypatch, tmp_path):
+    history_payload = {
+        "stocks": [
+            {
+                "name": "Murata",
+                "ticker": "6981.T",
+                "market": "日本",
+                "track": "数据中心电力与配电",
+                "currency": "JPY",
+                "klines": [
+                    {"date": "2026-04-30", "open": 4848.0, "high": 5265.0, "low": 4750.0, "close": 5156.0, "volume": 30704800.0},
+                    {"date": "2026-05-01", "open": 5000.0, "high": 5253.0, "low": 4905.0, "close": 5138.0, "volume": 18404600.0},
+                ],
+            }
+        ]
+    }
+    rt_payload = {
+        "6981.T": {
+            "date": None,
+            "close": 0.0,
+            "open": 0.0,
+            "high": 0.0,
+            "low": 0.0,
+            "volume": 0.0,
+            "previous_close": 0.0,
+            "pct": 0.0,
+            "currency": "",
+            "source": "",
+            "quote_quality": "",
+        }
+    }
+    cache_file = tmp_path / "asian_klines_latest.json"
+    rt_cache_file = tmp_path / "asian_rt_latest.json"
+    cache_file.write_text(json.dumps(history_payload, ensure_ascii=False), encoding="utf-8")
+    rt_cache_file.write_text(json.dumps(rt_payload, ensure_ascii=False), encoding="utf-8")
+
+    monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
+    monkeypatch.setattr(asian_module, "JSON_CACHE", str(cache_file))
+    monkeypatch.setattr(asian_module, "RT_JSON_CACHE", str(rt_cache_file))
+    monkeypatch.setattr(asian_module, "GLOBAL_ASIAN_RT_CACHE", {})
+    monkeypatch.setattr(asian_module, "filter_asian_tickers", lambda: {"Murata": "6981.T"})
+    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+
+    tab = asian_module.AsianMarketTab()
+    try:
+        row = next(item for item in tab.row_data if item["代码"] == "6981.T")
+        assert row["现价"] == "5138.00"
+        assert row["涨幅%"] == pytest.approx(round((5138.0 / 5156.0 - 1.0) * 100.0, 2))
+        assert asian_module.GLOBAL_ASIAN_RT_CACHE["6981.T"]["close"] == 5138.0
     finally:
         tab.deleteLater()
 

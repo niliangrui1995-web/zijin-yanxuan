@@ -44,6 +44,7 @@ def get_role_mapping():
         '5706.T': '极低轮廓铜箔寡头',
         '5801.T': 'HVLP4铜箔双寡头',
         '5201.T': '氟化液冷+CPO材料',
+        '6981.T': 'AI服务器MLCC/被动元件龙头',
         '7735.T': 'LDI/直接成像设备',
         '6594.T': 'PCB电测/光学检测+精密马达',
         '6113.T': '机械钻孔+激光钻孔',
@@ -99,6 +100,7 @@ def get_ch_names_mapping() -> dict:
         '3017.TW': '双鸿',
         '3324.TWO': '奇鋐',
         '5201.T': '旭硝子',
+        '6981.T': '村田制作所',
         '7735.T': 'SCREEN',
         '6594.T': '尼得科',
         '6113.T': '天田',
@@ -182,4 +184,3 @@ def format_market_display(market_value: str, code: str = "") -> str:
         return market_map[suffix]
 
     return raw_market or "未知"
-

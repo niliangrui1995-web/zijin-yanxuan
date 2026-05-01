@@ -71,9 +71,13 @@ log = get_logger(__name__)
 
 def _safe_float(value) -> float:
     try:
-        return float(value)
+        return float(str(value).replace("%", ""))
     except (TypeError, ValueError):
         return 0.0
+
+
+def _round_pct(value) -> float:
+    return round(_safe_float(value), 2)
 
 
 def _resolve_cached_rt_previous_close(info: dict, data_points: list[dict]) -> float | None:
@@ -107,7 +111,7 @@ def _normalize_cached_rt_entry(info: dict, data_points: list[dict]) -> dict:
 
     normalized["previous_close"] = prev_close
     if close_value > 0:
-        normalized["pct"] = ((close_value / prev_close) - 1.0) * 100.0
+        normalized["pct"] = _round_pct(((close_value / prev_close) - 1.0) * 100.0)
     return normalized
 
 
@@ -686,13 +690,13 @@ class AsianMarketTab(BaseStockTab):
                     "low": v.get("low", 0.0),
                     "volume": v.get("volume", 0.0),
                     "previous_close": v.get("previous_close", 0.0),
-                    "pct": v.get("pct", 0.0),
+                    "pct": _round_pct(v.get("pct", 0.0)),
                     "pe": v.get("pe"),
                     "pe_source": v.get("pe_source", ""),
                     "pe_updated_at": v.get("pe_updated_at", 0.0),
-                    "pct_5": v.get("pct_5", 0.0),
-                    "pct_10": v.get("pct_10", 0.0),
-                    "pct_20": v.get("pct_20", 0.0),
+                    "pct_5": _round_pct(v.get("pct_5", 0.0)),
+                    "pct_10": _round_pct(v.get("pct_10", 0.0)),
+                    "pct_20": _round_pct(v.get("pct_20", 0.0)),
                     "currency": v.get("currency", ""),
                     "source": v.get("source", ""),
                     "quote_quality": v.get("quote_quality", ""),
@@ -737,10 +741,10 @@ class AsianMarketTab(BaseStockTab):
                             close_val = float(data_points[-1].get("close", 0))
                             prev_close = float(data_points[-2].get("close", 0))
                             if prev_close > 0:
-                                pct_val = ((close_val / prev_close) - 1.0) * 100.0
+                                pct_val = _round_pct(((close_val / prev_close) - 1.0) * 100.0)
 
                         def _safe_pct(cur, ref_val):
-                            return ((cur / ref_val) - 1.0) * 100.0 if ref_val > 0 and cur > 0 else 0.0
+                            return _round_pct(((cur / ref_val) - 1.0) * 100.0) if ref_val > 0 and cur > 0 else 0.0
 
                         pct_5 = _safe_pct(close_val, float(data_points[-6].get("close", 0))) if len(data_points) >= 6 else 0.0
                         pct_10 = _safe_pct(close_val, float(data_points[-11].get("close", 0))) if len(data_points) >= 11 else 0.0
@@ -751,27 +755,29 @@ class AsianMarketTab(BaseStockTab):
                         market_display = format_market_display(market_code, code)
                         real_status = get_market_status(code.split(".")[-1] if "." in code else "")
 
-                        if code not in GLOBAL_ASIAN_RT_CACHE:
-                            GLOBAL_ASIAN_RT_CACHE[code] = {
-                                "date": data_points[-1].get("date") if data_points else None,
-                                "close": close_val,
-                                "open": float(data_points[-1].get("open", 0)) if data_points else 0.0,
-                                "high": float(data_points[-1].get("high", 0)) if data_points else 0.0,
-                                "low": float(data_points[-1].get("low", 0)) if data_points else 0.0,
-                                "volume": float(data_points[-1].get("volume", 0)) if data_points else 0.0,
-                                "previous_close": float(data_points[-2].get("close", 0)) if len(data_points) >= 2 else 0.0,
-                                "pct": pct_val,
-                                "pe": None,
-                                "pe_source": "",
-                                "pe_updated_at": 0.0,
-                                "pct_5": pct_5,
-                                "pct_10": pct_10,
-                                "pct_20": pct_20,
-                                "currency": item.get("currency", ""),
-                                "source": "history_cache",
-                                "quote_quality": "",
-                                "df_today": None,
-                            }
+                        history_quote = {
+                            "date": data_points[-1].get("date") if data_points else None,
+                            "close": close_val,
+                            "open": float(data_points[-1].get("open", 0)) if data_points else 0.0,
+                            "high": float(data_points[-1].get("high", 0)) if data_points else 0.0,
+                            "low": float(data_points[-1].get("low", 0)) if data_points else 0.0,
+                            "volume": float(data_points[-1].get("volume", 0)) if data_points else 0.0,
+                            "previous_close": float(data_points[-2].get("close", 0)) if len(data_points) >= 2 else 0.0,
+                            "pct": pct_val,
+                            "pe": None,
+                            "pe_source": "",
+                            "pe_updated_at": 0.0,
+                            "pct_5": pct_5,
+                            "pct_10": pct_10,
+                            "pct_20": pct_20,
+                            "currency": item.get("currency", ""),
+                            "source": "history_cache",
+                            "quote_quality": "",
+                            "df_today": None,
+                        }
+                        existing_rt = GLOBAL_ASIAN_RT_CACHE.get(code)
+                        if not existing_rt or (_safe_float(existing_rt.get("close")) <= 0 and close_val > 0):
+                            GLOBAL_ASIAN_RT_CACHE[code] = history_quote
 
                         close_number = float(close_val) if close_val else 0.0
                         fmt_close = f"{close_number:.3f}" if 0 < close_number < 10 else (f"{close_number:.2f}" if close_number > 0 else "--")
@@ -880,12 +886,14 @@ class AsianMarketTab(BaseStockTab):
                             history_points_by_code.get(code, []),
                         )
                         close_number = float(info.get("close", 0.0))
+                        if close_number <= 0 and history_points_by_code.get(code):
+                            continue
                         row_dict["现价"] = f"{close_number:.3f}" if 0 < close_number < 10 else (f"{close_number:.2f}" if close_number > 0 else "--")
-                        row_dict["涨幅%"] = info.get("pct", 0.0)
+                        row_dict["涨幅%"] = _round_pct(info.get("pct", 0.0))
                         row_dict["PE"] = info.get("pe") if info.get("pe") is not None else "--"
-                        row_dict["5日涨跌%"] = info.get("pct_5", 0.0)
-                        row_dict["10日涨跌%"] = info.get("pct_10", 0.0)
-                        row_dict["20日涨跌%"] = info.get("pct_20", 0.0)
+                        row_dict["5日涨跌%"] = _round_pct(info.get("pct_5", 0.0))
+                        row_dict["10日涨跌%"] = _round_pct(info.get("pct_10", 0.0))
+                        row_dict["20日涨跌%"] = _round_pct(info.get("pct_20", 0.0))
                         if info.get("currency"):
                             row_dict["货币"] = info["currency"]
 
@@ -930,11 +938,11 @@ class AsianMarketTab(BaseStockTab):
 
             close_number = float(info["close"]) if info.get("close") else 0.0
             row_dict["现价"] = f"{close_number:.3f}" if 0 < close_number < 10 else (f"{close_number:.2f}" if close_number > 0 else "--")
-            row_dict["涨幅%"] = info.get("pct", 0.0)
+            row_dict["涨幅%"] = _round_pct(info.get("pct", 0.0))
             row_dict["PE"] = info.get("pe") if info.get("pe") is not None else "--"
-            row_dict["5日涨跌%"] = info.get("pct_5", 0.0)
-            row_dict["10日涨跌%"] = info.get("pct_10", 0.0)
-            row_dict["20日涨跌%"] = info.get("pct_20", 0.0)
+            row_dict["5日涨跌%"] = _round_pct(info.get("pct_5", 0.0))
+            row_dict["10日涨跌%"] = _round_pct(info.get("pct_10", 0.0))
+            row_dict["20日涨跌%"] = _round_pct(info.get("pct_20", 0.0))
             row_dict["货币"] = info.get("currency", row_dict.get("货币", "---"))
 
             self.model.dataChanged.emit(

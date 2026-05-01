@@ -16,6 +16,7 @@ import argparse
 import importlib
 import json
 import logging
+import math
 import os
 import re
 import sys
@@ -79,6 +80,7 @@ ASIAN_LOCAL_TICKER_OVERRIDES = {
     "MJC": "6871.T",
     "Fujikura": "5803.T",
     "SKC": "011790.KS",
+    "Murata": "6981.T",
 }
 
 # Why: 亚洲页允许补充少量本地维护的赛道归属，避免上游产业字典尚未同步时出现“未知赛道”。
@@ -97,6 +99,7 @@ ASIAN_LOCAL_TRACK_OVERRIDES = {
     "5802.T": "光芯片与硅光",
     "5803.T": "光通信无源器件与精密零部件",
     "011790.KS": "IC载板与封装材料",
+    "6981.T": "数据中心电力与配电",
 }
 
 _ALNUM_RE = re.compile(r"[a-z0-9]+")
@@ -288,7 +291,8 @@ def _to_float(value) -> float | None:
     if value is None:
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        number = float(value)
+        return number if math.isfinite(number) else None
 
     text = str(value).strip()
     if text in _EMPTY_NUMERIC_MARKERS:
@@ -299,7 +303,8 @@ def _to_float(value) -> float | None:
         return None
 
     try:
-        return float(match.group(0).replace(",", ""))
+        number = float(match.group(0).replace(",", ""))
+        return number if math.isfinite(number) else None
     except (TypeError, ValueError):
         return None
 
@@ -671,6 +676,48 @@ def _fetch_jp_history_yahoo_japan(
     return rows
 
 
+def _fetch_yfinance_history_rows(
+    ticker: str,
+    http_session,
+    *,
+    start_date: date,
+    end_date: date,
+) -> list[dict]:
+    try:
+        import yfinance as yf
+    except (ImportError, ModuleNotFoundError):
+        return []
+
+    end_exclusive = end_date + timedelta(days=1)
+    frame = yf.Ticker(ticker, session=http_session).history(
+        start=start_date.isoformat(),
+        end=end_exclusive.isoformat(),
+        auto_adjust=False,
+    )
+    if frame is None or frame.empty:
+        return []
+
+    rows: list[dict] = []
+    for index, item in frame.iterrows():
+        row_date = getattr(index, "date", lambda: None)()
+        if row_date is None:
+            row_date = _date_from_iso(str(index)[:10])
+        if row_date is None:
+            continue
+
+        rows.append(
+            {
+                "date": row_date.isoformat(),
+                "open": _to_float(item.get("Open")),
+                "high": _to_float(item.get("High")),
+                "low": _to_float(item.get("Low")),
+                "close": _to_float(item.get("Close")),
+                "volume": _to_float(item.get("Volume")),
+            }
+        )
+    return rows
+
+
 def _fetch_hk_history_tencent(
     ticker: str,
     http_session,
@@ -742,9 +789,12 @@ def _fetch_market_history_rows(
             "naver_history",
         )
     if suffix == ".T":
+        rows = _fetch_jp_history_yahoo_japan(ticker, http_session, start_date=start_date, end_date=end_date)
+        if rows:
+            return rows, "yj_history"
         return (
-            _fetch_jp_history_yahoo_japan(ticker, http_session, start_date=start_date, end_date=end_date),
-            "yj_history",
+            _fetch_yfinance_history_rows(ticker, http_session, start_date=start_date, end_date=end_date),
+            "yfinance_history",
         )
     if suffix == ".HK":
         return (
