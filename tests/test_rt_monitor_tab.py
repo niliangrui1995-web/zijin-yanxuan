@@ -1,5 +1,8 @@
+import datetime
+
 from PyQt6.QtWidgets import QHeaderView
 
+from app.services.ui_runtime_service import MarketCalendar
 from ui.models.table_models import StockItemDelegate
 from ui.tabs.rt_monitor_tab import RtMonitorTab
 
@@ -94,5 +97,69 @@ def test_rt_monitor_header_summary_includes_filter_count_and_recent_time(monkeyp
         assert "数据 实时" in summary
         assert "说明 第2轮 完成(0.8s)" in summary
         assert "下一步 30s后第3轮" in summary
+    finally:
+        tab.deleteLater()
+
+
+def test_rt_monitor_auto_start_respects_same_day_manual_stop(monkeypatch):
+    monkeypatch.setattr(
+        RtMonitorTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        MarketCalendar,
+        "get_latest_trade_date",
+        classmethod(lambda cls, market="CN", ref_date=None: datetime.date(2026, 4, 14)),
+    )
+    started = []
+
+    tab = RtMonitorTab(DummyDataProvider(), DummyEngine())
+    try:
+        monkeypatch.setattr(tab, "_start_rt_worker", lambda: started.append(True))
+        tab._manual_stop_requested = True
+        tab._manual_stop_trade_date = "2026-04-14"
+
+        tab.toggle_rt_monitor(auto=True)
+
+        assert started == []
+        assert tab._manual_stop_requested is True
+        assert "今日已手动停止" in tab.lbl_rt_info.text()
+    finally:
+        tab.deleteLater()
+
+
+def test_rt_monitor_manual_stop_expires_on_next_trade_day(monkeypatch):
+    monkeypatch.setattr(
+        RtMonitorTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        MarketCalendar,
+        "get_latest_trade_date",
+        classmethod(lambda cls, market="CN", ref_date=None: datetime.date(2026, 4, 15)),
+    )
+    monkeypatch.setattr(
+        MarketCalendar,
+        "is_market_active",
+        classmethod(lambda cls, market="CN": True),
+    )
+    auto_calls = []
+
+    tab = RtMonitorTab(DummyDataProvider(), DummyEngine())
+    try:
+        monkeypatch.setattr(tab, "_is_rt_running", lambda: False)
+        monkeypatch.setattr(tab, "_toggle_rt_monitor", lambda auto=False: auto_calls.append(auto))
+        tab._manual_stop_requested = True
+        tab._manual_stop_trade_date = "2026-04-14"
+
+        tab._check_auto_start_stop()
+
+        assert tab._manual_stop_requested is False
+        assert tab._manual_stop_trade_date == ""
+        assert auto_calls == [True]
     finally:
         tab.deleteLater()

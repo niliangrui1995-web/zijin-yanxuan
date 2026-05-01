@@ -11,6 +11,8 @@ from core.event_bus import event_bus
 from core.startup_orchestrator import (
     ASIAN_DATA_SYNC_TASK_ID,
     ASIAN_DATA_SYNC_TIMEOUT_SEC,
+    AUTO_RT_MONITOR_NETWORK_TASK_ID,
+    AUTO_RT_MONITOR_RETRY_INTERVAL_MS,
     DEFERRED_LOAD_TASK_ID,
     SMART_STARTUP_TASK_ID,
     StartupOrchestrator,
@@ -66,7 +68,10 @@ class _InlineJobRunner:
         self.abandoned = []
 
     def run(self, task_id, fn, *args, **kwargs):
-        fn()
+        result = fn()
+        on_success = kwargs.get("on_success")
+        if callable(on_success):
+            on_success(result)
         return task_id
 
     def abandon(self, task_id):
@@ -267,6 +272,83 @@ def test_startup_orchestrator_skips_auto_rt_monitor_when_toggle_disabled(monkeyp
     orchestrator.auto_start_rt_if_ready()
 
 
+def test_startup_orchestrator_schedules_auto_rt_retry_timer():
+    orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
+
+    orchestrator.schedule_startup()
+    try:
+        assert orchestrator._auto_rt_timer.isActive() is True
+        assert orchestrator._auto_rt_timer.interval() == AUTO_RT_MONITOR_RETRY_INTERVAL_MS
+    finally:
+        orchestrator.shutdown()
+
+
+def test_startup_orchestrator_auto_starts_rt_when_ready(monkeypatch):
+    class _Workspace:
+        def __init__(self):
+            self.started = 0
+
+        def auto_start_rt_monitor(self):
+            self.started += 1
+            return True
+
+    mw = _DummyMainWindow()
+    mw.data_provider.cache_data = {f"{idx:06d}": object() for idx in range(120)}
+    mw.data_provider.is_online = lambda: True
+    mw._workspace = _Workspace()
+    orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
+    monkeypatch.setattr(
+        "core.market_calendar.MarketCalendar.is_market_active",
+        classmethod(lambda cls, market="CN": True),
+    )
+
+    orchestrator.auto_start_rt_if_ready()
+
+    assert mw._workspace.started == 1
+
+
+def test_startup_orchestrator_retries_network_before_auto_start(monkeypatch):
+    class _Provider(_DummyDataProvider):
+        def __init__(self):
+            super().__init__()
+            self.cache_data = {f"{idx:06d}": object() for idx in range(120)}
+            self.online = False
+            self.probes = 0
+
+        def is_online(self):
+            return self.online
+
+        def test_network(self, timeout=3):
+            self.probes += 1
+            return True
+
+        def set_online_mode(self, online):
+            self.online = bool(online)
+
+    class _Workspace:
+        def __init__(self):
+            self.started = 0
+
+        def auto_start_rt_monitor(self):
+            self.started += 1
+            return True
+
+    mw = _DummyMainWindow()
+    mw.data_provider = _Provider()
+    mw._workspace = _Workspace()
+    orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
+    monkeypatch.setattr(
+        "core.market_calendar.MarketCalendar.is_market_active",
+        classmethod(lambda cls, market="CN": True),
+    )
+
+    orchestrator.auto_start_rt_if_ready()
+
+    assert mw.data_provider.probes == 1
+    assert mw.data_provider.online is True
+    assert mw._workspace.started == 1
+
+
 def test_startup_orchestrator_shutdown_abandons_background_tasks():
     runner = _InlineJobRunner()
     orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=runner)
@@ -277,4 +359,5 @@ def test_startup_orchestrator_shutdown_abandons_background_tasks():
         DEFERRED_LOAD_TASK_ID,
         ASIAN_DATA_SYNC_TASK_ID,
         SMART_STARTUP_TASK_ID,
+        AUTO_RT_MONITOR_NETWORK_TASK_ID,
     ]

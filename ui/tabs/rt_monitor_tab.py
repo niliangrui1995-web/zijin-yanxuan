@@ -59,8 +59,9 @@ class RtMonitorTab(BaseStockTab):
         # 盘中监控由 RtScanWorker 独立推送数据，同时接收中央报价广播补齐同步刷新
         # 盘后 Worker 停止后，model 中的数据原地保留，第二天自动覆盖
 
-        # 自动化监控：交易日 9:15-16:00 自动启动
+        # 自动化监控：按 A 股交易活跃状态自动启停，午休/盘后保持静默
         self._manual_stop_requested = False
+        self._manual_stop_trade_date = ""
         self._rt_stop_requested = False
         self._auto_timer = QTimer(self)
         self._auto_timer.timeout.connect(self._check_auto_start_stop)
@@ -84,6 +85,30 @@ class RtMonitorTab(BaseStockTab):
     @staticmethod
     def _now_hhmm() -> str:
         return datetime.now().strftime("%H:%M")
+
+    @staticmethod
+    def _manual_stop_reference_date() -> str:
+        try:
+            from app.services.ui_runtime_service import MarketCalendar
+
+            trade_date = MarketCalendar.get_latest_trade_date("CN")
+            if trade_date is not None:
+                return trade_date.isoformat()
+            return MarketCalendar.today("CN").isoformat()
+        except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
+            return datetime.now().date().isoformat()
+
+    def _clear_expired_manual_stop(self) -> bool:
+        if not self._manual_stop_requested:
+            self._manual_stop_trade_date = ""
+            return False
+        current_trade_date = self._manual_stop_reference_date()
+        if self._manual_stop_trade_date and self._manual_stop_trade_date == current_trade_date:
+            return False
+        self._manual_stop_requested = False
+        self._manual_stop_trade_date = ""
+        log.info("[盘中监控] 手动停止标记已跨交易日失效，恢复自动启动")
+        return True
 
     def _touch_last_update(self, time_text: str | None = None) -> bool:
         stamp = str(time_text or "").strip() or self._now_hhmm()
@@ -247,6 +272,7 @@ class RtMonitorTab(BaseStockTab):
 
     def _check_auto_start_stop(self):
         from app.services.ui_runtime_service import MarketCalendar
+        self._clear_expired_manual_stop()
         is_active = MarketCalendar.is_market_active()
         is_running = self._is_rt_running()
 
@@ -419,6 +445,7 @@ class RtMonitorTab(BaseStockTab):
     def _toggle_rt_monitor(self, auto=False):
         if self._is_rt_running():
             self._manual_stop_requested = not auto
+            self._manual_stop_trade_date = self._manual_stop_reference_date() if self._manual_stop_requested else ""
             self._rt_stop_requested = True
             self.rt_worker.stop()
             if auto:
@@ -428,8 +455,13 @@ class RtMonitorTab(BaseStockTab):
             self._set_rt_button_stopping()
             return
         else:
+            if auto and self._manual_stop_requested and not self._clear_expired_manual_stop():
+                self._set_status("idle", "今日已手动停止", "下一交易日会自动启动", touch=False)
+                self._set_rt_button_state(False)
+                return
             if not auto:
                 self._manual_stop_requested = False
+                self._manual_stop_trade_date = ""
             self._rt_stop_requested = False
             # 兜底：如果内存缓存为空，先尝试从磁盘加载昨日F5的缓存
             if not self.data_provider.cache_data:
