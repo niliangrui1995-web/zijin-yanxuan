@@ -104,7 +104,7 @@ def resolve_kline_vcp_context(
     embedded_scan = _extract_scan_signal_payload(item_data or {}, code)
     if embedded_scan:
         merge_kline_context(resolved, embedded_scan, overwrite=False)
-    elif _is_vcp_scan_source(resolved):
+    elif _is_vcp_scan_source(resolved) and not _has_vcp_overlay_fields(resolved):
         for scan_res in scan_results or []:
             if isinstance(scan_res, dict) and str(scan_res.get("代码", "")).strip() == str(code).strip():
                 merge_kline_context(resolved, scan_res, overwrite=True)

@@ -2,6 +2,15 @@
 from types import SimpleNamespace
 
 from app.services.kline_open_service import build_kline_open_request
+from ui.workspaces.stock_signal import StockSignal
+
+KEY_CODE = "\u4ee3\u7801"
+KEY_NAME = "\u540d\u79f0"
+KEY_SOURCE_LABEL = "\u6765\u6e90\u6807\u7b7e"
+KEY_RPS_STRENGTH = "RPS\u5f3a\u5ea6"
+KEY_TRIGGER_DATE = "\u89e6\u53d1\u65e5\u671f"
+KEY_RANGE_HIGH = "\u533a\u95f4\u6700\u9ad8\u4ef7"
+KEY_RANGE_LOW = "\u533a\u95f4\u6700\u4f4e\u70b9"
 
 
 def test_build_kline_open_request_does_not_merge_scan_context_into_non_scan_row():
@@ -109,6 +118,55 @@ def test_build_kline_open_request_does_not_add_scan_context_for_plain_watchlist(
     assert "区间最高价" not in request["vcp_data"]
     assert "区间最低点" not in request["vcp_data"]
     assert "_vcp_overlay_allowed" not in request["vcp_data"]
+
+
+def test_build_kline_open_request_uses_workspace_stock_context_scan_signal_for_watchlist():
+    scan_signal = StockSignal(
+        code="002975",
+        name="BoJie",
+        source_tab="scan",
+        signal_type="vcp_scan",
+        summary="VCP",
+        observed_at="20260416",
+        payload={
+            KEY_CODE: "002975",
+            KEY_NAME: "BoJie",
+            KEY_RPS_STRENGTH: "93/95",
+            KEY_TRIGGER_DATE: "20260416",
+            KEY_RANGE_HIGH: 91.0,
+            KEY_RANGE_LOW: 65.6,
+            "_peak_dates": ["20251127", "20260123", "20260226", "20260410"],
+        },
+    )
+    workspace = SimpleNamespace(
+        get_scan_results=lambda: [],
+        collect_stock_context=lambda: {"002975": [scan_signal]},
+    )
+
+    request = build_kline_open_request(
+        code="002975",
+        code_name_map={"002975": "BoJie"},
+        code_list=[
+            {
+                KEY_CODE: "002975",
+                KEY_NAME: "BoJie",
+                KEY_SOURCE_LABEL: ["earnings", "AI-chain"],
+                KEY_RPS_STRENGTH: "97/90",
+            }
+        ],
+        current_idx=0,
+        workspace=workspace,
+        source_tab_index=1,
+        source_tab_key="watchlist",
+    )
+
+    assert request["vcp_data"][KEY_RPS_STRENGTH] == "97/90"
+    assert request["vcp_data"][KEY_SOURCE_LABEL] == ["earnings", "AI-chain"]
+    assert request["vcp_data"][KEY_TRIGGER_DATE] == "20260416"
+    assert request["vcp_data"][KEY_RANGE_HIGH] == 91.0
+    assert request["vcp_data"][KEY_RANGE_LOW] == 65.6
+    assert request["vcp_data"]["_peak_dates"] == ["20251127", "20260123", "20260226", "20260410"]
+    assert request["vcp_data"]["_vcp_overlay_allowed"] is True
 
 
 def test_build_kline_open_request_uses_embedded_scan_signal_from_candidate_row():

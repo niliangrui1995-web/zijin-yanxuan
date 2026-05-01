@@ -179,6 +179,51 @@ def test_resolve_kline_vcp_context_uses_embedded_stock_detail_scan_signal():
     assert resolved["_vcp_overlay_allowed"] is True
 
 
+def test_resolve_kline_vcp_context_keeps_premerged_scan_signal_payload():
+    key_code = "\u4ee3\u7801"
+    key_name = "\u540d\u79f0"
+    key_rps = "RPS\u5f3a\u5ea6"
+    key_trigger = "\u89e6\u53d1\u65e5\u671f"
+    key_high = "\u533a\u95f4\u6700\u9ad8\u4ef7"
+    key_low = "\u533a\u95f4\u6700\u4f4e\u70b9"
+
+    resolved = resolve_kline_vcp_context(
+        code="002975",
+        name="BoJie",
+        item_data={
+            key_code: "002975",
+            key_name: "BoJie",
+            "__source_tab_key": "watchlist",
+            "source_tab": "scan",
+            "signal_type": "vcp_scan",
+            "_vcp_overlay_allowed": True,
+            key_rps: "97/90",
+            key_trigger: "20260416",
+            key_high: 91.0,
+            key_low: 65.6,
+            "_peak_dates": ["20251127", "20260123", "20260226", "20260410"],
+        },
+        watchlist_entry={},
+        scan_results=[
+            {
+                key_code: "002975",
+                key_name: "BoJie",
+                key_rps: "93/95",
+                key_trigger: "20260410",
+                key_high: 999.0,
+                key_low: 111.0,
+                "_peak_dates": ["20260410"],
+            }
+        ],
+    )
+
+    assert resolved[key_rps] == "97/90"
+    assert resolved[key_trigger] == "20260416"
+    assert resolved[key_high] == 91.0
+    assert resolved[key_low] == 65.6
+    assert resolved["_peak_dates"] == ["20251127", "20260123", "20260226", "20260410"]
+
+
 def test_kline_market_badge_formats_common_markets():
     assert format_kline_market_badge("300308") == "A股"
     assert format_kline_market_badge("2330.TW") == "台股"

@@ -88,6 +88,29 @@ def _find_scan_result(scan_results: list[dict], code: str) -> dict | None:
     return None
 
 
+def _extract_workspace_scan_signal_payload(workspace, code: str) -> dict:
+    code_text = str(code or "").strip()
+    if not code_text:
+        return {}
+
+    collect_stock_context = getattr(workspace, "collect_stock_context", None)
+    if not callable(collect_stock_context):
+        return {}
+
+    try:
+        stock_context = collect_stock_context() or {}
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        return {}
+
+    if not isinstance(stock_context, dict):
+        return {}
+
+    signals = stock_context.get(code_text) or []
+    if not isinstance(signals, (list, tuple)):
+        signals = [signals]
+    return _extract_scan_signal_payload({"_signals": list(signals)}, code_text)
+
+
 def build_kline_open_request(
     *,
     code: str,
@@ -124,8 +147,13 @@ def build_kline_open_request(
         scan_results = list(get_scan_results() or [])
 
     embedded_scan = _extract_scan_signal_payload(vcp_data, code_text)
+    context_scan = {}
+    if not embedded_scan:
+        context_scan = _extract_workspace_scan_signal_payload(workspace, code_text)
     if embedded_scan:
         _merge_missing(vcp_data, embedded_scan)
+    elif context_scan:
+        _merge_missing(vcp_data, context_scan)
     elif _source_allows_workspace_scan_merge(vcp_data, source_tab_key):
         scan_result = _find_scan_result(scan_results, code_text)
         if isinstance(scan_result, dict):
