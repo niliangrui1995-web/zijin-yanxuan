@@ -55,6 +55,13 @@ class StockCandidateTab(BaseStockTab):
         super().showEvent(event)
         self._ensure_runtime_started()
 
+    def prime_background_load(self) -> None:
+        workspace = self._workspace()
+        prime_snapshots = getattr(workspace, "prime_stock_context_snapshots", None)
+        if callable(prime_snapshots):
+            prime_snapshots()
+        self._ensure_runtime_started()
+
     def _connect_auto_refresh_events(self) -> None:
         for signal in (
             event_bus.sig_cache_reload_completed,
@@ -65,6 +72,7 @@ class StockCandidateTab(BaseStockTab):
             event_bus.sig_lhb_pool_updated,
             event_bus.sig_scan_updated,
             event_bus.sig_fund_holdings_updated,
+            event_bus.sig_stock_context_snapshot_updated,
             event_bus.sig_watchlist_changed,
         ):
             signal.connect(self._schedule_context_refresh)

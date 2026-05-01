@@ -135,6 +135,9 @@ def _resolve_workspace_facade(workspace) -> WorkspaceFacade:
 
 class ClassicWorkspace(QWidget):
     mode = "classic"
+    BACKGROUND_PREWARM_DELAY_MS = 350
+    BACKGROUND_PREWARM_INTERVAL_MS = 260
+    RESTORE_LAST_TAB_DELAY_MS = 750
 
     def __init__(self, data_provider, engine, host=None, parent=None):
         super().__init__(parent)
@@ -277,9 +280,16 @@ class ClassicWorkspace(QWidget):
 
         self._tabs_by_key = {}
         self._lazy_loading_keys: set[str] = set()
+        self._background_prewarm_queue: list[str] = []
+        self._background_prewarm_started = False
+        self._pending_restore_index: int | None = None
+        self._workspace_event_bus = None
+        self._workspace_events_connected = False
         self._mount_initial_tabs()
         self._workspace_facade = WorkspaceFacade(self)
         self.tabs.currentChanged.connect(self._on_current_tab_changed)
+        self._connect_workspace_events()
+        QTimer.singleShot(self.BACKGROUND_PREWARM_DELAY_MS, self._start_background_tab_prewarm)
 
     def _tab_factory(self, class_name: str, module_name: str, *args, **kwargs):
         def _create():
@@ -396,6 +406,79 @@ class ClassicWorkspace(QWidget):
             placeholder.set_loading()
         QTimer.singleShot(0, lambda key=key: self.ensure_tab_loaded(key, reason="tab_switch"))
 
+    def _connect_workspace_events(self) -> None:
+        try:
+            from app.services.ui_runtime_service import domain_events as event_bus
+
+            event_bus.sig_fund_holdings_updated.connect(self._on_fund_holdings_source_updated)
+            self._workspace_event_bus = event_bus
+            self._workspace_events_connected = True
+        except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.debug(f"[Workspace] skip workspace event wiring: {exc}")
+
+    def _disconnect_workspace_events(self) -> None:
+        event_bus = getattr(self, "_workspace_event_bus", None)
+        if event_bus is None or not getattr(self, "_workspace_events_connected", False):
+            return
+        try:
+            event_bus.sig_fund_holdings_updated.disconnect(self._on_fund_holdings_source_updated)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+        self._workspace_events_connected = False
+
+    def _on_fund_holdings_source_updated(self, *_args) -> None:
+        self.prime_stock_context_snapshots(force=True)
+
+    def _start_background_tab_prewarm(self) -> None:
+        if self._background_prewarm_started:
+            return
+        self._background_prewarm_started = True
+        self.prime_stock_context_snapshots()
+
+        unloaded_keys = [
+            str(spec.get("key") or "").strip()
+            for spec in self._tab_specs
+            if not spec.get("loaded") and str(spec.get("key") or "").strip()
+        ]
+        pending_spec = self._spec_for_key_or_index(self._pending_restore_index)
+        pending_key = str((pending_spec or {}).get("key") or "").strip()
+        if pending_key in unloaded_keys:
+            unloaded_keys.remove(pending_key)
+            unloaded_keys.insert(0, pending_key)
+        self._background_prewarm_queue = unloaded_keys
+        self._prewarm_next_tab()
+
+    def _prewarm_next_tab(self) -> None:
+        while self._background_prewarm_queue:
+            key = self._background_prewarm_queue.pop(0)
+            spec = self._spec_for_key_or_index(key)
+            if spec is None or spec.get("loaded"):
+                continue
+
+            widget = self.ensure_tab_loaded(key, reason="background_prewarm")
+            if widget is not None:
+                self._prime_tab_runtime(widget)
+            break
+
+        if self._background_prewarm_queue:
+            QTimer.singleShot(self.BACKGROUND_PREWARM_INTERVAL_MS, self._prewarm_next_tab)
+
+    def _prime_tab_runtime(self, widget) -> None:
+        for method_name in (
+            "prime_background_load",
+            "_ensure_runtime_started",
+            "_ensure_initial_load_started",
+            "_ensure_pool_bootstrap_started",
+        ):
+            method = getattr(widget, method_name, None)
+            if not callable(method):
+                continue
+            try:
+                method()
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                log.warning(f"[Workspace] prime tab runtime failed {widget.__class__.__name__}.{method_name}: {exc}")
+            return
+
     def _notify_tab_loaded(self, _key: str, _widget) -> None:
         host = self.host or self.window()
         install_hooks = getattr(host, "install_workspace_table_copy_hooks", None)
@@ -414,6 +497,13 @@ class ClassicWorkspace(QWidget):
     def restore_last_tab(self, index: int):
         if 0 <= index < self.tabs.count():
             self.tabs.setCurrentIndex(index)
+
+    def schedule_restore_last_tab(self, index: int, *, delay_ms: int | None = None) -> None:
+        if not isinstance(index, int) or index < 0:
+            return
+        self._pending_restore_index = index
+        delay = self.RESTORE_LAST_TAB_DELAY_MS if delay_ms is None else max(0, int(delay_ms))
+        QTimer.singleShot(delay, lambda index=index: self.restore_last_tab(index))
 
     def current_tab_index(self) -> int:
         return self.tabs.currentIndex()
@@ -499,6 +589,9 @@ class ClassicWorkspace(QWidget):
     def collect_stock_context(self) -> dict[str, list[StockSignal]]:
         return _resolve_workspace_facade(self).collect_stock_context()
 
+    def prime_stock_context_snapshots(self, *, force: bool = False) -> bool:
+        return _resolve_workspace_facade(self).prime_stock_context_snapshots(force=force)
+
     def open_security_detail(self, code: str, context=None):
         code_text = str(code or "").strip()
         if not code_text:
@@ -580,6 +673,9 @@ class ClassicWorkspace(QWidget):
         return self.select_code_row(code_text, preferred_tab_index=source_index if source_index >= 0 else None)
 
     def shutdown(self):
+        disconnect_events = getattr(self, "_disconnect_workspace_events", None)
+        if callable(disconnect_events):
+            disconnect_events()
         for tab in self.iter_tabs():
             shutdown = getattr(tab, "shutdown", None)
             if not callable(shutdown):

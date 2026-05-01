@@ -222,6 +222,12 @@ def test_fund_holdings_tab_reload_warms_local_snapshot_for_new_codes(monkeypatch
         ),
         raising=False,
     )
+    monkeypatch.setattr(
+        fund_holdings_module.task_manager,
+        "run_in_background",
+        lambda fn, *args, on_success=None, on_error=None, task_id=None, **kwargs: on_success(fn()) if callable(on_success) else None,
+        raising=False,
+    )
 
     from core.global_store import global_store
 
@@ -429,6 +435,45 @@ def test_fund_holdings_tab_defers_initial_load_when_autoload_disabled(monkeypatc
         assert scheduled == []
         tab._ensure_initial_load_started()
         assert len(scheduled) == 1
+    finally:
+        tab.deleteLater()
+
+
+def test_fund_holdings_tab_prime_background_load_starts_deferred_load(monkeypatch):
+    _setup_store(monkeypatch, [])
+    scheduled = []
+    monkeypatch.setattr(
+        fund_holdings_module.task_manager,
+        "run_in_background",
+        lambda fn, *args, on_success=None, on_error=None, task_id=None, **kwargs: scheduled.append(task_id or "scheduled"),
+        raising=False,
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
+    try:
+        tab.prime_background_load()
+        tab.prime_background_load()
+
+        assert len(scheduled) == 1
+    finally:
+        tab.deleteLater()
+
+
+def test_fund_holdings_tab_applies_latest_quotes_with_async_local(monkeypatch):
+    _setup_store(monkeypatch, [])
+    calls = []
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "refresh_table_from_latest_snapshot",
+        lambda self, *args, **kwargs: calls.append(kwargs.get("async_local")),
+        raising=False,
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
+    try:
+        tab._apply_latest_quotes_from_store()
+
+        assert calls == [True]
     finally:
         tab.deleteLater()
 

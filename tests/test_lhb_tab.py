@@ -135,6 +135,21 @@ def test_lhb_can_defer_pool_bootstrap_until_first_show(monkeypatch):
         tab.deleteLater()
 
 
+def test_lhb_prime_background_load_starts_deferred_pool_once(monkeypatch):
+    calls = []
+    monkeypatch.setattr(LhbTab, "_start_auto_scheduler", lambda self: calls.append("scheduler"), raising=False)
+    monkeypatch.setattr(LhbTab, "_load_and_display_pool", lambda self: calls.append("load"), raising=False)
+
+    tab = LhbTab(object(), autoload_pool=False)
+    try:
+        tab.prime_background_load()
+        tab.prime_background_load()
+
+        assert calls == ["scheduler", "load"]
+    finally:
+        tab.deleteLater()
+
+
 def test_lhb_pool_bootstrap_schedules_background_task(monkeypatch):
     tasks = []
     monkeypatch.setattr(LhbTab, "_start_auto_scheduler", lambda self: None, raising=False)

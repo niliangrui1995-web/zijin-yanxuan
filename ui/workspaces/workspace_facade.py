@@ -165,3 +165,6 @@ class WorkspaceFacade:
 
     def collect_stock_context(self) -> dict[str, list[StockSignal]]:
         return self._stock_context_service.collect_signals_by_code()
+
+    def prime_stock_context_snapshots(self, *, force: bool = False) -> bool:
+        return bool(self._stock_context_service.refresh_async_snapshots(force=force))

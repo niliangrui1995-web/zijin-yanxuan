@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import threading
 from collections import defaultdict
 from collections.abc import Iterable
 
@@ -66,6 +67,10 @@ class StockContextService:
 
     def __init__(self, workspace):
         self._workspace = workspace
+        self._fund_rows_lock = threading.RLock()
+        self._fund_rows_snapshot: list[dict] = []
+        self._fund_rows_loaded = False
+        self._fund_rows_loading = False
 
     @staticmethod
     def _safe_float(value, default: float = 0.0) -> float:
@@ -522,20 +527,14 @@ class StockContextService:
         prefix = "+" if number > 0 else ""
         return f"{prefix}{number:,.2f}"
 
-    def _query_fund_holding_store_rows(self) -> list[dict]:
+    @classmethod
+    def _format_fund_holding_store_rows(cls, latest_quarter_map: dict, change_rows: list[dict]) -> list[dict]:
         try:
             from app.services.ui_runtime_service import (
                 QFII_CAPITAL_ATTRIBUTE_UNMARKED,
                 SUBJECT_QFII,
-                fund_holdings_store,
             )
         except (ImportError, RuntimeError):
-            return []
-
-        try:
-            latest_quarter_map = dict(fund_holdings_store.get_latest_quarter_map() or {})
-            change_rows = list(fund_holdings_store.query_change_rows() or [])
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
             return []
 
         view_rows: list[dict] = []
@@ -567,17 +566,78 @@ class StockContextService:
                     KEY_SUBJECT_CODE: subject_code,
                     KEY_QUARTER: quarter_key,
                     KEY_CHANGE_TYPE: change_type,
-                    KEY_CURRENT_RATIO: self._format_fund_holding_pct(row.get("curr_ratio_pct")),
-                    KEY_HOLDING_DELTA: self._format_fund_holding_amount(row.get("delta_hold_num_shares")),
+                    KEY_CURRENT_RATIO: cls._format_fund_holding_pct(row.get("curr_ratio_pct")),
+                    KEY_HOLDING_DELTA: cls._format_fund_holding_amount(row.get("delta_hold_num_shares")),
                     "_is_latest_subject_quarter": True,
                 }
             )
         return view_rows
 
+    def _load_fund_holding_rows_snapshot(self) -> list[dict]:
+        try:
+            from app.services.ui_runtime_service import fund_holdings_store
+        except (ImportError, RuntimeError):
+            return []
+
+        try:
+            latest_quarter_map = dict(fund_holdings_store.get_latest_quarter_map() or {})
+            change_rows = list(fund_holdings_store.query_change_rows() or [])
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            return []
+        return self._format_fund_holding_store_rows(latest_quarter_map, change_rows)
+
+    def refresh_async_snapshots(self, *, force: bool = False) -> bool:
+        with self._fund_rows_lock:
+            if self._fund_rows_loading:
+                return True
+            if self._fund_rows_loaded and not force:
+                return False
+            self._fund_rows_loading = True
+
+        try:
+            from app.services.ui_runtime_service import (
+                background_job_runner,
+                domain_events,
+                task_registry,
+            )
+        except (ImportError, RuntimeError):
+            with self._fund_rows_lock:
+                self._fund_rows_loading = False
+            return False
+
+        def _on_success(rows):
+            with self._fund_rows_lock:
+                self._fund_rows_snapshot = [dict(row) for row in (rows or [])]
+                self._fund_rows_loaded = True
+                self._fund_rows_loading = False
+            domain_events.sig_stock_context_snapshot_updated.emit()
+
+        def _on_error(_message: str):
+            with self._fund_rows_lock:
+                self._fund_rows_loading = False
+
+        background_job_runner.run_in_background(
+            self._load_fund_holding_rows_snapshot,
+            on_success=_on_success,
+            on_error=_on_error,
+            task_id=task_registry.workspace("stock_context_fund_rows_snapshot"),
+        )
+        return True
+
+    def _cached_fund_holding_rows(self) -> list[dict]:
+        with self._fund_rows_lock:
+            if self._fund_rows_loaded:
+                return [dict(row) for row in self._fund_rows_snapshot]
+        self.refresh_async_snapshots()
+        return []
+
+    def _query_fund_holding_store_rows(self) -> list[dict]:
+        return self._load_fund_holding_rows_snapshot()
+
     def _fund_holding_rows(self) -> list[dict]:
         if not self._has_fund_holdings_tab():
             return []
-        rows = self._query_fund_holding_store_rows()
+        rows = self._cached_fund_holding_rows()
         if rows:
             return rows
         return self._get_rows(self._get_tab("fund_holdings"))

@@ -51,6 +51,8 @@ class WatchlistTab(BaseStockTab):
         event_bus.sig_ai_industry_chain_updated.connect(self._on_ai_industry_chain_updated)
         event_bus.sig_block_trade_updated.connect(self._on_block_trade_updated)
         event_bus.sig_lhb_pool_updated.connect(self._on_cache_or_earnings_updated)
+        event_bus.sig_fund_holdings_updated.connect(self._on_cache_or_earnings_updated)
+        event_bus.sig_stock_context_snapshot_updated.connect(self._on_cache_or_earnings_updated)
         event_bus.sig_vcp_watchlist_ready.connect(self._on_vcp_watchlist_ready)
 
         # 先立即回填一次，避免启动期 UI 忙时定时器延后导致“关注池长期空白”。

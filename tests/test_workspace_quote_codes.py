@@ -323,10 +323,10 @@ def test_workspace_collects_scan_and_fund_holding_context_signals(monkeypatch):
     assert not any("减持" in signal.summary for signal in signals)
 
 
-def test_workspace_collects_fund_holding_context_from_store_without_open_tab(monkeypatch):
+def test_workspace_collects_fund_holding_context_from_snapshot_without_open_tab(monkeypatch):
     monkeypatch.setattr(
         StockContextService,
-        "_query_fund_holding_store_rows",
+        "_cached_fund_holding_rows",
         lambda self: [
             {
                 "代码": "300750",
@@ -351,6 +351,27 @@ def test_workspace_collects_fund_holding_context_from_store_without_open_tab(mon
         ("fund_holdings", "fund_holding"),
     }
     assert signals[0].summary == "睿远基金 | 增持 | 2025Q4 | 占比2.30% | 变化+80.00"
+
+
+def test_workspace_fund_holding_context_schedules_snapshot_without_blocking(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        StockContextService,
+        "refresh_async_snapshots",
+        lambda self, *, force=False: calls.append(force) or True,
+    )
+    monkeypatch.setattr(
+        StockContextService,
+        "_query_fund_holding_store_rows",
+        lambda self: (_ for _ in ()).throw(AssertionError("store query should not run on UI collect")),
+    )
+    workspace = _make_workspace(tabs={})
+    workspace.tab_specs = lambda: [{"key": "fund_holdings", "group": "情报源"}]
+
+    context = ClassicWorkspace.collect_stock_context(workspace)
+
+    assert context == {}
+    assert calls == [False]
 
 
 def test_workspace_accepts_direct_stock_signal_capability():
@@ -703,6 +724,72 @@ def test_workspace_defers_heavy_tab_autoload(monkeypatch):
         assert isinstance(workspace.tabs, SmoothTabWidget)
         assert workspace.tabs._transition_enabled is False
     finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_workspace_background_prewarm_loads_lazy_tabs_without_manual_click(monkeypatch):
+    ctor_kwargs = {}
+    constructed = []
+    primed = []
+
+    def _make_tab(name):
+        class _Tab(QWidget):
+            def __init__(self, *args, **kwargs):
+                super().__init__()
+                ctor_kwargs[name] = dict(kwargs)
+                constructed.append(name)
+
+            def prime_background_load(self):
+                primed.append(name)
+
+        return _Tab
+
+    monkeypatch.setattr(classic_workspace_module, "WatchlistTab", _make_tab("watchlist"))
+    monkeypatch.setattr(classic_workspace_module, "AsianMarketTab", _make_tab("asian_market"))
+    monkeypatch.setattr(classic_workspace_module, "NADailyTab", _make_tab("na_daily"))
+    monkeypatch.setattr(classic_workspace_module, "AIIndustryChainTab", _make_tab("ai_industry_chain"))
+    monkeypatch.setattr(classic_workspace_module, "RtMonitorTab", _make_tab("rt_monitor"))
+    monkeypatch.setattr(classic_workspace_module, "ScanTab", _make_tab("scan"))
+    monkeypatch.setattr(classic_workspace_module, "StockCandidateTab", _make_tab("stock_candidates"))
+    monkeypatch.setattr(classic_workspace_module, "LhbTab", _make_tab("lhb"))
+    monkeypatch.setattr(classic_workspace_module, "ForeignBlockTradeTab", _make_tab("foreign_block"))
+    monkeypatch.setattr(classic_workspace_module, "EarningsTab", _make_tab("earnings"))
+    monkeypatch.setattr(classic_workspace_module, "FundHoldingsTab", _make_tab("fund_holdings"))
+    monkeypatch.setattr(classic_workspace_module, "LogTab", _make_tab("system_log"))
+
+    workspace = classic_workspace_module.ClassicWorkspace(data_provider=object(), engine=object())
+    try:
+        assert constructed == ["watchlist"]
+
+        workspace.schedule_restore_last_tab(10, delay_ms=999_999)
+        snapshot_primes = []
+        workspace.prime_stock_context_snapshots = lambda **kwargs: snapshot_primes.append(kwargs) or True
+        monkeypatch.setattr(classic_workspace_module.QTimer, "singleShot", lambda _delay, callback: callback())
+
+        workspace._start_background_tab_prewarm()
+
+        assert constructed[1] == "fund_holdings"
+        assert set(ctor_kwargs) == {
+            "watchlist",
+            "asian_market",
+            "na_daily",
+            "stock_candidates",
+            "ai_industry_chain",
+            "lhb",
+            "rt_monitor",
+            "scan",
+            "foreign_block",
+            "earnings",
+            "fund_holdings",
+            "system_log",
+        }
+        assert ctor_kwargs["lhb"]["autoload_pool"] is False
+        assert ctor_kwargs["fund_holdings"]["autoload"] is False
+        assert snapshot_primes == [{}]
+        assert "fund_holdings" in primed
+    finally:
+        workspace.shutdown()
         workspace.deleteLater()
 
 

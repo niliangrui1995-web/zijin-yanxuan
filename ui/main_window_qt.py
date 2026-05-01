@@ -289,7 +289,11 @@ class MainWindowQT(QMainWindow):
         self._workspace = workspace
         self.tabs = workspace.tabs
         self._tabs_wrapper_layout.addWidget(workspace, 1)
-        workspace.restore_last_tab(app_config.last_active_tab)
+        schedule_restore = getattr(workspace, "schedule_restore_last_tab", None)
+        if callable(schedule_restore):
+            schedule_restore(app_config.last_active_tab)
+        else:
+            workspace.restore_last_tab(app_config.last_active_tab)
         self.install_workspace_table_copy_hooks()
 
         try:

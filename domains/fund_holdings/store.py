@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime
 
 from core.data_store import data_store
@@ -151,6 +152,9 @@ ON fh_change_cache(subject_code, change_type);
 class FundHoldingsStore:
     def __init__(self, store=None):
         self._store = store or data_store
+        self._change_rows_cache_lock = threading.RLock()
+        self._change_rows_cache_signature = None
+        self._change_rows_cache: list[dict] | None = None
         self.ensure_schema()
         self.ensure_subjects()
         self.refresh_compare_cache()
@@ -672,10 +676,48 @@ class FundHoldingsStore:
         ]
         return build_qfii_holder_change_rows(raw_rows, SUBJECT_QFII)
 
+    def _query_change_rows_signature(self):
+        try:
+            row = self._store.fetch_one(
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM fh_change_cache) AS change_count,
+                    (SELECT COALESCE(MAX(updated_at), '') FROM fh_change_cache) AS change_updated_at,
+                    (SELECT COUNT(*) FROM fh_raw_qfii) AS qfii_count,
+                    (SELECT COALESCE(MAX(updated_at), '') FROM fh_raw_qfii) AS qfii_updated_at,
+                    (SELECT COALESCE(MAX(id), 0) FROM fh_sync_run) AS latest_sync_run_id
+                """
+            )
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            return None
+        if not row:
+            return None
+        return (
+            int(row.get("change_count") or 0),
+            str(row.get("change_updated_at") or ""),
+            int(row.get("qfii_count") or 0),
+            str(row.get("qfii_updated_at") or ""),
+            int(row.get("latest_sync_run_id") or 0),
+        )
+
+    def invalidate_change_rows_cache(self) -> None:
+        with self._change_rows_cache_lock:
+            self._change_rows_cache_signature = None
+            self._change_rows_cache = None
+
     def query_change_rows(self) -> list[dict]:
+        signature = self._query_change_rows_signature()
+        with self._change_rows_cache_lock:
+            if (
+                signature is not None
+                and signature == self._change_rows_cache_signature
+                and self._change_rows_cache is not None
+            ):
+                return [dict(row) for row in self._change_rows_cache]
+
         rows = self._query_cached_change_rows()
         rows.extend(self._query_qfii_holder_change_rows())
-        return sorted(
+        sorted_rows = sorted(
             rows,
             key=lambda row: (
                 -int(row.get("sort_quarter", 0) or 0),
@@ -685,6 +727,10 @@ class FundHoldingsStore:
                 str(row.get("capital_attribute") or ""),
             ),
         )
+        with self._change_rows_cache_lock:
+            self._change_rows_cache_signature = signature
+            self._change_rows_cache = [dict(row) for row in sorted_rows]
+        return [dict(row) for row in sorted_rows]
 
 
 fund_holdings_store = FundHoldingsStore()

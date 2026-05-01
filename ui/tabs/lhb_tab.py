@@ -76,6 +76,9 @@ class LhbTab(BaseStockTab):
         super().showEvent(event)
         self._ensure_pool_bootstrap_started()
 
+    def prime_background_load(self):
+        self._ensure_pool_bootstrap_started()
+
     def _ensure_pool_bootstrap_started(self):
         if self._pool_bootstrap_started:
             return

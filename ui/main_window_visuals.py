@@ -13,9 +13,11 @@ from ui.theme_tokens import build_ui_tokens
 def apply_table_density(main_window, mode: str, persist: bool = True):
     from app.services.ui_runtime_service import app_config
     from ui.components import VCPTableView
+    from ui.models.table_model_helpers import invalidate_table_token_cache
 
     if mode not in ("紧凑", "舒适"):
         mode = "舒适"
+    invalidate_table_token_cache(mode)
 
     if persist:
         app_config.table_density = mode
@@ -109,6 +111,9 @@ def show_trade_calendar(main_window):
 
 
 def apply_theme(main_window):
+    from ui.models.table_model_helpers import invalidate_table_token_cache
+
+    invalidate_table_token_cache()
     t = theme_manager.current_theme
     qss = generate_global_qss()
     main_window.setStyleSheet(qss)
@@ -155,4 +160,3 @@ def apply_theme(main_window):
         main_window,
         duration=2000,
     )
-

@@ -2,7 +2,7 @@
 from types import SimpleNamespace
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QHeaderView
+from PyQt6.QtWidgets import QHeaderView, QWidget
 
 from app.services.ui_runtime_service import domain_events as event_bus
 from ui.tabs.stock_candidate_tab import StockCandidateTab
@@ -290,6 +290,19 @@ def test_stock_candidate_auto_refreshes_when_source_tabs_update(monkeypatch):
         tab.close()
 
 
+def test_stock_candidate_auto_refreshes_when_stock_context_snapshot_updates(monkeypatch):
+    monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+    tab = StockCandidateTab(data_provider=SimpleNamespace())
+    try:
+        event_bus.sig_stock_context_snapshot_updated.emit()
+
+        assert tab._auto_refresh_timer.isActive()
+        assert tab._status_primary == "等待综合候选自动刷新"
+        assert tab._status_freshness == "数据源已更新"
+    finally:
+        tab.close()
+
+
 def test_stock_candidate_auto_refresh_accepts_watchlist_signal_args(monkeypatch):
     monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
     tab = StockCandidateTab(data_provider=SimpleNamespace())
@@ -300,6 +313,33 @@ def test_stock_candidate_auto_refresh_accepts_watchlist_signal_args(monkeypatch)
         assert tab._status_primary == "等待综合候选自动刷新"
     finally:
         tab.close()
+
+
+def test_stock_candidate_prime_background_load_primes_snapshot_and_refresh(monkeypatch):
+    scheduled = []
+    monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda delay, callback: scheduled.append(delay))
+    primes = []
+
+    class _Workspace(QWidget):
+        def collect_stock_context(self):
+            return {}
+
+        def prime_stock_context_snapshots(self):
+            primes.append("prime")
+            return True
+
+    workspace = _Workspace()
+    tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
+    try:
+        tab.prime_background_load()
+        tab.prime_background_load()
+
+        assert primes == ["prime", "prime"]
+        assert scheduled.count(350) == 1
+        assert tab._initial_refresh_started is True
+    finally:
+        tab.close()
+        workspace.deleteLater()
 
 
 def test_stock_candidate_table_uses_fresh_context_column_layout(monkeypatch):

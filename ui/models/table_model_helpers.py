@@ -15,14 +15,38 @@ from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens
 
 SERIAL_HEADER = "序号"
+_TABLE_DENSITY_CACHE_LOADED = False
+_TABLE_DENSITY_CACHE: str | None = None
+
+
+def invalidate_table_token_cache(density: str | None = None) -> None:
+    global _TABLE_DENSITY_CACHE_LOADED, _TABLE_DENSITY_CACHE
+
+    if density is None:
+        _TABLE_DENSITY_CACHE_LOADED = False
+        _TABLE_DENSITY_CACHE = None
+    else:
+        _TABLE_DENSITY_CACHE = str(density or "").strip() or None
+        _TABLE_DENSITY_CACHE_LOADED = True
+    _theme_token_cached.cache_clear()
+    _theme_table_tokens_cached.cache_clear()
+
 
 def _current_table_density():
+    global _TABLE_DENSITY_CACHE_LOADED, _TABLE_DENSITY_CACHE
+
+    if _TABLE_DENSITY_CACHE_LOADED:
+        return _TABLE_DENSITY_CACHE
+
     try:
         from app.services.ui_runtime_service import app_config
 
-        return getattr(app_config, "table_density", None)
+        density = getattr(app_config, "table_density", None)
     except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
-        return None
+        density = None
+    _TABLE_DENSITY_CACHE = str(density or "").strip() or None
+    _TABLE_DENSITY_CACHE_LOADED = True
+    return _TABLE_DENSITY_CACHE
 
 
 # 运行时动态获取当前主题颜色（不再用 from import 快照，否则切换主题后颜色不更新）
@@ -353,4 +377,3 @@ def _emit_model_row_ranges(model, changed_rows, start_col: int, end_col: int, ro
         start_row = prev_row = row
 
     model.dataChanged.emit(model.index(start_row, start_col), model.index(prev_row, end_col), roles)
-

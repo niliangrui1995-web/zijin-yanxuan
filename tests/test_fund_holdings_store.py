@@ -15,6 +15,57 @@ def _make_store():
     return store, db_path
 
 
+def test_fund_holdings_store_query_change_rows_uses_signature_cache(monkeypatch):
+    store, db_path = _make_store()
+    repo = FundHoldingsStore(store=store)
+    calls = {"cache": 0, "qfii": 0}
+    try:
+        monkeypatch.setattr(repo, "_query_change_rows_signature", lambda: ("sig",))
+
+        def _cached_rows():
+            calls["cache"] += 1
+            return [
+                {
+                    "stock_code": "000001",
+                    "subject_name": "睿远基金",
+                    "quarter_key": "2025Q4",
+                    "change_type": "增持",
+                    "sort_quarter": 202504,
+                    "sort_value": 1,
+                }
+            ]
+
+        def _qfii_rows():
+            calls["qfii"] += 1
+            return [
+                {
+                    "stock_code": "300750",
+                    "subject_name": "QFII",
+                    "quarter_key": "2025Q4",
+                    "change_type": "新进",
+                    "sort_quarter": 202504,
+                    "sort_value": 2,
+                }
+            ]
+
+        monkeypatch.setattr(repo, "_query_cached_change_rows", _cached_rows)
+        monkeypatch.setattr(repo, "_query_qfii_holder_change_rows", _qfii_rows)
+
+        first = repo.query_change_rows()
+        first[0]["stock_code"] = "changed"
+        second = repo.query_change_rows()
+
+        assert calls == {"cache": 1, "qfii": 1}
+        assert [row["stock_code"] for row in second] == ["300750", "000001"]
+
+        repo.invalidate_change_rows_cache()
+        repo.query_change_rows()
+        assert calls == {"cache": 2, "qfii": 2}
+    finally:
+        store.close()
+        os.remove(db_path)
+
+
 def test_fund_holdings_store_rebuilds_change_cache_for_qfii():
     store, db_path = _make_store()
     repo = FundHoldingsStore(store=store)
