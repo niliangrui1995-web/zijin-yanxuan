@@ -25,6 +25,66 @@ def merge_kline_context(base: dict, extra: dict, *, overwrite: bool = False) -> 
     return base
 
 
+def _signal_value(signal, key: str, default=""):
+    if isinstance(signal, dict):
+        return signal.get(key, default)
+    return getattr(signal, key, default)
+
+
+def _extract_scan_signal_payload(item_data: dict | None, code: str) -> dict:
+    if not isinstance(item_data, dict):
+        return {}
+
+    for signal in item_data.get("_signals") or []:
+        signal_code = str(_signal_value(signal, "code") or _signal_value(signal, "代码") or "").strip()
+        if signal_code and signal_code != str(code).strip():
+            continue
+
+        source_tab = str(_signal_value(signal, "source_tab") or "").strip()
+        signal_type = str(_signal_value(signal, "signal_type") or "").strip()
+        if source_tab != "scan" and signal_type != "vcp_scan":
+            continue
+
+        raw_payload = _signal_value(signal, "payload", {}) or {}
+        payload = dict(raw_payload) if isinstance(raw_payload, dict) else {}
+        payload.setdefault("代码", code)
+        signal_name = str(_signal_value(signal, "name") or "").strip()
+        if signal_name:
+            payload.setdefault("名称", signal_name)
+        observed_at = str(_signal_value(signal, "observed_at") or "").strip()
+        if observed_at:
+            payload.setdefault("触发日期", observed_at)
+        payload["source_tab"] = source_tab or "scan"
+        payload["signal_type"] = signal_type or "vcp_scan"
+        payload["_vcp_overlay_allowed"] = True
+        return payload
+
+    return {}
+
+
+def _is_vcp_scan_source(payload: dict) -> bool:
+    source_key = str(payload.get("__source_tab_key") or "").strip()
+    source_tab = str(payload.get("source_tab") or "").strip()
+    signal_type = str(payload.get("signal_type") or "").strip()
+    return bool(payload.get("_vcp_overlay_allowed")) or source_key == "scan" or source_tab == "scan" or signal_type == "vcp_scan"
+
+
+def _has_vcp_overlay_fields(payload: dict) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    if any(payload.get(key) not in (None, "", [], {}) for key in ("VCP达标", "VCP收缩详情", "_model_name", "_peak_dates")):
+        return True
+    if payload.get("_high1_date") or payload.get("_high2_date") or payload.get("_high3_date"):
+        return True
+    return (
+        payload.get("区间最高价") not in (None, "")
+        and payload.get("区间最低点") not in (None, "")
+    ) or (
+        payload.get("box_high") not in (None, "")
+        and payload.get("box_low") not in (None, "")
+    )
+
+
 def resolve_kline_vcp_context(
     code: str,
     name: str,
@@ -41,10 +101,15 @@ def resolve_kline_vcp_context(
     merge_kline_context(resolved, item_data or {}, overwrite=True)
     merge_kline_context(resolved, watchlist_entry or {}, overwrite=False)
 
-    for scan_res in scan_results or []:
-        if isinstance(scan_res, dict) and str(scan_res.get("代码", "")).strip() == str(code).strip():
-            merge_kline_context(resolved, scan_res, overwrite=True)
-            break
+    embedded_scan = _extract_scan_signal_payload(item_data or {}, code)
+    if embedded_scan:
+        merge_kline_context(resolved, embedded_scan, overwrite=True)
+    elif _is_vcp_scan_source(resolved):
+        for scan_res in scan_results or []:
+            if isinstance(scan_res, dict) and str(scan_res.get("代码", "")).strip() == str(code).strip():
+                merge_kline_context(resolved, scan_res, overwrite=True)
+                resolved["_vcp_overlay_allowed"] = True
+                break
 
     resolved["代码"] = str(resolved.get("代码") or code)
     resolved["名称"] = str(resolved.get("名称") or name or code)
@@ -1045,6 +1110,8 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
 
 def inject_vcp_overlays(data: dict, dates: list, vcp_data: dict | None) -> None:
     payload = vcp_data or {}
+    if not (_is_vcp_scan_source(payload) or _has_vcp_overlay_fields(payload)):
+        return
 
     def _pick(*keys, default=""):
         for key in keys:

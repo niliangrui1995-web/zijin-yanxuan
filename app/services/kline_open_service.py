@@ -4,6 +4,59 @@ from __future__ import annotations
 KEY_CODE = "\u4ee3\u7801"
 KEY_NAME = "\u540d\u79f0"
 SCAN_CODE_KEY = KEY_CODE
+SCAN_SOURCE_KEY = "scan"
+
+
+def _get_signal_value(signal, key: str, default=""):
+    if isinstance(signal, dict):
+        return signal.get(key, default)
+    return getattr(signal, key, default)
+
+
+def _extract_scan_signal_payload(item_data: dict | None, code: str) -> dict:
+    if not isinstance(item_data, dict):
+        return {}
+
+    for signal in item_data.get("_signals") or []:
+        signal_code = str(_get_signal_value(signal, "code") or _get_signal_value(signal, "代码") or "").strip()
+        if signal_code and signal_code != code:
+            continue
+
+        source_tab = str(_get_signal_value(signal, "source_tab") or "").strip()
+        signal_type = str(_get_signal_value(signal, "signal_type") or "").strip()
+        if source_tab != SCAN_SOURCE_KEY and signal_type != "vcp_scan":
+            continue
+
+        payload = _get_signal_value(signal, "payload", {}) or {}
+        scan_payload = dict(payload) if isinstance(payload, dict) else {}
+        scan_payload.setdefault(KEY_CODE, code)
+        signal_name = str(_get_signal_value(signal, "name") or "").strip()
+        if signal_name:
+            scan_payload.setdefault(KEY_NAME, signal_name)
+        observed_at = str(_get_signal_value(signal, "observed_at") or "").strip()
+        if observed_at:
+            scan_payload.setdefault("触发日期", observed_at)
+        scan_payload["source_tab"] = source_tab or SCAN_SOURCE_KEY
+        scan_payload["signal_type"] = signal_type or "vcp_scan"
+        scan_payload["_vcp_overlay_allowed"] = True
+        return scan_payload
+
+    return {}
+
+
+def _source_allows_workspace_scan_merge(vcp_data: dict, source_tab_key: str) -> bool:
+    source_key = str(vcp_data.get("__source_tab_key") or source_tab_key or "").strip()
+    source_tab = str(vcp_data.get("source_tab") or "").strip()
+    signal_type = str(vcp_data.get("signal_type") or "").strip()
+    return source_key == SCAN_SOURCE_KEY or source_tab == SCAN_SOURCE_KEY or signal_type == "vcp_scan"
+
+
+def _merge_missing(base: dict, extra: dict) -> None:
+    for key, value in (extra or {}).items():
+        if value in (None, "", [], {}):
+            continue
+        if key not in base or not base.get(key):
+            base[key] = value
 
 
 def _normalize_code_list(
@@ -70,11 +123,14 @@ def build_kline_open_request(
     if callable(get_scan_results):
         scan_results = list(get_scan_results() or [])
 
-    scan_result = _find_scan_result(scan_results, code_text)
-    if isinstance(scan_result, dict):
-        for key, value in scan_result.items():
-            if key not in vcp_data or not vcp_data.get(key):
-                vcp_data[key] = value
+    embedded_scan = _extract_scan_signal_payload(vcp_data, code_text)
+    if embedded_scan:
+        _merge_missing(vcp_data, embedded_scan)
+    elif _source_allows_workspace_scan_merge(vcp_data, source_tab_key):
+        scan_result = _find_scan_result(scan_results, code_text)
+        if isinstance(scan_result, dict):
+            _merge_missing(vcp_data, scan_result)
+            vcp_data["_vcp_overlay_allowed"] = True
 
     return {
         "code": code_text,

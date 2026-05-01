@@ -12,7 +12,7 @@ from ui.kline_chart_payload import (
 from ui.theme import THEME_YUEBAI
 
 
-def test_resolve_kline_vcp_context_merges_watchlist_and_scan_results():
+def test_resolve_kline_vcp_context_keeps_non_scan_source_isolated():
     item_data = {"代码": "300308", "名称": "中际旭创"}
     watchlist_entry = {
         "区间最高价": 155.8,
@@ -41,8 +41,29 @@ def test_resolve_kline_vcp_context_merges_watchlist_and_scan_results():
     assert resolved["名称"] == "中际旭创"
     assert resolved["区间最高价"] == 155.8
     assert resolved["区间最低点"] == 132.4
+    assert resolved["触发日期"] == "2026-04-01"
+    assert resolved["_peak_dates"] == ["2026-03-18", "2026-03-27"]
+
+
+def test_resolve_kline_vcp_context_merges_scan_results_for_scan_source():
+    resolved = resolve_kline_vcp_context(
+        code="300308",
+        name="中际旭创",
+        item_data={"代码": "300308", "名称": "中际旭创", "__source_tab_key": "scan"},
+        watchlist_entry={},
+        scan_results=[
+            {
+                "代码": "300308",
+                "名称": "中际旭创",
+                "触发日期": "2026-04-09",
+                "_peak_dates": ["2026-03-20", "2026-04-02"],
+            }
+        ],
+    )
+
     assert resolved["触发日期"] == "2026-04-09"
     assert resolved["_peak_dates"] == ["2026-03-20", "2026-04-02"]
+    assert resolved["_vcp_overlay_allowed"] is True
 
 
 def test_kline_market_badge_formats_common_markets():
@@ -124,6 +145,34 @@ def test_build_kline_echarts_payload_includes_vcp_overlay():
     assert payload["vcpMarkers"]
     assert payload["vcpLines"]
     assert payload["vcpArea"]
+
+
+def test_build_kline_echarts_payload_skips_vcp_overlay_for_generic_event_date():
+    df = pd.DataFrame(
+        {
+            "open": [10.0, 10.5, 11.0],
+            "high": [10.8, 11.2, 11.8],
+            "low": [9.9, 10.2, 10.7],
+            "close": [10.6, 11.0, 11.6],
+            "volume": [10000, 12000, 15000],
+        },
+        index=pd.to_datetime(["2026-04-07", "2026-04-08", "2026-04-09"]),
+    )
+
+    payload = build_kline_echarts_payload(
+        df,
+        code="002975",
+        name="博杰股份",
+        vcp_data={
+            "日期": "2026-04-09",
+            "来源标签": ["业绩", "AI产业链"],
+            "业绩异动": "一季度 63.04%",
+        },
+    )
+
+    assert payload["vcpMarkers"] is None
+    assert payload["vcpLines"] is None
+    assert payload["vcpArea"] is None
 
 
 def test_build_kline_html_hides_echarts_tooltip_panel():
