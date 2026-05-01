@@ -66,12 +66,7 @@ def _is_vcp_scan_source(payload: dict) -> bool:
     source_key = str(payload.get("__source_tab_key") or "").strip()
     source_tab = str(payload.get("source_tab") or "").strip()
     signal_type = str(payload.get("signal_type") or "").strip()
-    return (
-        bool(payload.get("_vcp_overlay_allowed"))
-        or source_key in {"scan", "watchlist"}
-        or source_tab == "scan"
-        or signal_type == "vcp_scan"
-    )
+    return bool(payload.get("_vcp_overlay_allowed")) or source_key == "scan" or source_tab == "scan" or signal_type == "vcp_scan"
 
 
 def _has_vcp_overlay_fields(payload: dict) -> bool:
@@ -108,12 +103,11 @@ def resolve_kline_vcp_context(
 
     embedded_scan = _extract_scan_signal_payload(item_data or {}, code)
     if embedded_scan:
-        merge_kline_context(resolved, embedded_scan, overwrite=True)
+        merge_kline_context(resolved, embedded_scan, overwrite=False)
     elif _is_vcp_scan_source(resolved):
-        merge_as_overlay = str(resolved.get("__source_tab_key") or "").strip() == "watchlist"
         for scan_res in scan_results or []:
             if isinstance(scan_res, dict) and str(scan_res.get("代码", "")).strip() == str(code).strip():
-                merge_kline_context(resolved, scan_res, overwrite=not merge_as_overlay)
+                merge_kline_context(resolved, scan_res, overwrite=True)
                 resolved["_vcp_overlay_allowed"] = True
                 break
 
@@ -1180,8 +1174,8 @@ def inject_vcp_overlays(data: dict, dates: list, vcp_data: dict | None) -> None:
             },
         }]
 
-    box_high = _to_float(_pick("区间最高价", "box_high", default=0))
-    box_low = _to_float(_pick("区间最低点", "box_low", default=0))
+    raw_box_high = _to_float(_pick("区间最高价", "box_high", default=0))
+    raw_box_low = _to_float(_pick("区间最低点", "box_low", default=0))
 
     peak_dates = _pick("_peak_dates", "peak_dates", default=[]) or []
     if isinstance(peak_dates, str):
@@ -1191,7 +1185,7 @@ def inject_vcp_overlays(data: dict, dates: list, vcp_data: dict | None) -> None:
             if payload.get(key):
                 peak_dates.append(payload[key])
 
-    if box_high > 0 and box_low > 0 and peak_dates:
+    if peak_dates:
         valid_indices = []
         for d in peak_dates:
             idx = _find_date_idx(d)
@@ -1200,8 +1194,17 @@ def inject_vcp_overlays(data: dict, dates: list, vcp_data: dict | None) -> None:
 
         if valid_indices:
             x_start = min(valid_indices)
-            x_end = trigger_idx if trigger_idx != -1 else len(dates) - 1
+            x_end = max(valid_indices)
             x_end = max(x_start, x_end)
+            box_slice = data["klines"][x_start:x_end + 1]
+            derived_lows = [float(item[2]) for item in box_slice if item and len(item) > 3 and item[2] is not None]
+            derived_highs = [float(item[3]) for item in box_slice if item and len(item) > 3 and item[3] is not None]
+            box_low = min(derived_lows) if derived_lows else raw_box_low
+            box_high = max(derived_highs) if derived_highs else raw_box_high
+            if box_high <= 0 or box_low <= 0:
+                if markers:
+                    data["vcpMarkers"] = markers
+                return
 
             data["vcpArea"] = [[
                 {"xAxis": dates[x_start], "yAxis": box_low},

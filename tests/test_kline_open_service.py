@@ -74,7 +74,7 @@ def test_build_kline_open_request_merges_scan_context_for_scan_source():
     assert request["vcp_data"]["_vcp_overlay_allowed"] is True
 
 
-def test_build_kline_open_request_adds_scan_context_for_watchlist_without_overwriting():
+def test_build_kline_open_request_does_not_add_scan_context_for_plain_watchlist():
     workspace = SimpleNamespace(
         get_scan_results=lambda: [
             {
@@ -106,9 +106,9 @@ def test_build_kline_open_request_adds_scan_context_for_watchlist_without_overwr
 
     assert request["vcp_data"]["RPS强度"] == "97/90"
     assert request["vcp_data"]["来源标签"] == ["业绩", "AI产业链"]
-    assert request["vcp_data"]["区间最高价"] == 91.0
-    assert request["vcp_data"]["区间最低点"] == 65.6
-    assert request["vcp_data"]["_vcp_overlay_allowed"] is True
+    assert "区间最高价" not in request["vcp_data"]
+    assert "区间最低点" not in request["vcp_data"]
+    assert "_vcp_overlay_allowed" not in request["vcp_data"]
 
 
 def test_build_kline_open_request_uses_embedded_scan_signal_from_candidate_row():

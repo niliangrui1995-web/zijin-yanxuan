@@ -10,6 +10,7 @@ from ui.kline_chart_payload import (
     resolve_kline_vcp_context,
 )
 from ui.theme import THEME_YUEBAI
+from ui.workspaces.stock_signal import StockSignal
 
 
 def test_resolve_kline_vcp_context_keeps_non_scan_source_isolated():
@@ -66,7 +67,46 @@ def test_resolve_kline_vcp_context_merges_scan_results_for_scan_source():
     assert resolved["_vcp_overlay_allowed"] is True
 
 
-def test_resolve_kline_vcp_context_adds_scan_overlay_for_watchlist_without_overwriting():
+def test_resolve_kline_vcp_context_uses_watchlist_vcp_fields_without_scan_cache():
+    resolved = resolve_kline_vcp_context(
+        code="002975",
+        name="博杰股份",
+        item_data={
+            "代码": "002975",
+            "名称": "博杰股份",
+            "__source_tab_key": "watchlist",
+            "来源标签": ["业绩", "AI产业链"],
+            "RPS强度": "97/90",
+        },
+        watchlist_entry={
+            "代码": "002975",
+            "名称": "博杰股份",
+            "区间最高价": 88.0,
+            "区间最低点": 70.0,
+            "_peak_dates": ["20260407", "20260410"],
+        },
+        scan_results=[
+            {
+                "代码": "002975",
+                "名称": "博杰股份",
+                "RPS强度": "93/95",
+                "触发日期": "20260416",
+                "区间最高价": 91.0,
+                "区间最低点": 65.6,
+                "_peak_dates": ["20251127", "20260123", "20260226"],
+            }
+        ],
+    )
+
+    assert resolved["RPS强度"] == "97/90"
+    assert resolved["来源标签"] == ["业绩", "AI产业链"]
+    assert resolved["区间最高价"] == 88.0
+    assert resolved["区间最低点"] == 70.0
+    assert resolved["_peak_dates"] == ["20260407", "20260410"]
+    assert "_vcp_overlay_allowed" not in resolved
+
+
+def test_resolve_kline_vcp_context_does_not_pull_scan_cache_for_plain_watchlist():
     resolved = resolve_kline_vcp_context(
         code="002975",
         name="博杰股份",
@@ -92,7 +132,48 @@ def test_resolve_kline_vcp_context_adds_scan_overlay_for_watchlist_without_overw
     )
 
     assert resolved["RPS强度"] == "97/90"
-    assert resolved["来源标签"] == ["业绩", "AI产业链"]
+    assert "区间最高价" not in resolved
+    assert "区间最低点" not in resolved
+    assert "_peak_dates" not in resolved
+
+
+def test_resolve_kline_vcp_context_uses_embedded_stock_detail_scan_signal():
+    scan_signal = StockSignal(
+        code="002975",
+        name="博杰股份",
+        source_tab="scan",
+        signal_type="vcp_scan",
+        summary="VCP扫描",
+        observed_at="20260416",
+        payload={
+            "代码": "002975",
+            "名称": "博杰股份",
+            "RPS强度": "93/95",
+            "区间最高价": 91.0,
+            "区间最低点": 65.6,
+            "_peak_dates": ["20251127", "20260123", "20260226"],
+        },
+    )
+
+    resolved = resolve_kline_vcp_context(
+        code="002975",
+        name="博杰股份",
+        item_data={
+            "代码": "002975",
+            "名称": "博杰股份",
+            "__source_tab_key": "watchlist",
+            "来源标签": ["业绩", "AI产业链"],
+            "RPS强度": "97/90",
+            "_signals": [scan_signal],
+        },
+        watchlist_entry={},
+        scan_results=[],
+    )
+
+    assert resolved["RPS强度"] == "97/90"
+    assert resolved["source_tab"] == "scan"
+    assert resolved["signal_type"] == "vcp_scan"
+    assert resolved["触发日期"] == "20260416"
     assert resolved["区间最高价"] == 91.0
     assert resolved["区间最低点"] == 65.6
     assert resolved["_vcp_overlay_allowed"] is True
@@ -197,14 +278,16 @@ def test_build_kline_echarts_payload_matches_compact_vcp_dates():
         name="中际旭创",
         vcp_data={
             "触发日期": "20260409",
-            "区间最高价": 11.8,
-            "区间最低点": 9.9,
+            "区间最高价": 99.0,
+            "区间最低点": 1.0,
             "_peak_dates": ["20260407", "20260408"],
         },
     )
 
     assert payload["vcpMarkers"][0]["coord"] == [2, 11.8]
-    assert payload["vcpArea"][0][1]["xAxis"] == "2026-04-09"
+    assert payload["vcpArea"][0][0]["yAxis"] == 9.9
+    assert payload["vcpArea"][0][1]["xAxis"] == "2026-04-08"
+    assert payload["vcpArea"][0][1]["yAxis"] == 11.2
 
 
 def test_build_kline_echarts_payload_skips_vcp_overlay_for_generic_event_date():

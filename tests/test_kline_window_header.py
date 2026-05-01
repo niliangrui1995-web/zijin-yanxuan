@@ -188,15 +188,23 @@ def test_kline_window_defers_initial_load_until_next_event_turn(monkeypatch):
         window.deleteLater()
 
 
-def test_kline_manager_reuses_prewarmed_browser(monkeypatch):
+def test_kline_manager_consumes_prewarm_but_uses_fresh_browser(monkeypatch):
     captured = {}
 
     class _WarmBrowser:
         def __init__(self):
             self.parent = "old"
+            self.hidden = False
+            self.deleted = False
+
+        def hide(self):
+            self.hidden = True
 
         def setParent(self, parent):
             self.parent = parent
+
+        def deleteLater(self):
+            self.deleted = True
 
     class _Chart:
         def __init__(self, **kwargs):
@@ -219,7 +227,8 @@ def test_kline_manager_reuses_prewarmed_browser(monkeypatch):
     manager._charts = []
     manager._prewarm_started = True
     manager._prewarm_cancelled = False
-    manager._prewarm_view = _WarmBrowser()
+    warm_browser = _WarmBrowser()
+    manager._prewarm_view = warm_browser
     monkeypatch.setattr(kline_module, "KLineChartWindow", _Chart)
 
     try:
@@ -234,9 +243,12 @@ def test_kline_manager_reuses_prewarmed_browser(monkeypatch):
         )
 
         assert chart is manager._charts[-1]
-        assert isinstance(captured["browser"], _WarmBrowser)
-        assert captured["browser"].parent is None
+        assert captured["browser"] is None
+        assert warm_browser.hidden is True
+        assert warm_browser.parent is None
+        assert warm_browser.deleted is True
         assert manager._prewarm_view is None
+        assert manager._prewarm_started is False
     finally:
         manager._charts = []
         manager._prewarm_view = None

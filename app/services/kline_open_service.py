@@ -5,7 +5,6 @@ KEY_CODE = "\u4ee3\u7801"
 KEY_NAME = "\u540d\u79f0"
 SCAN_CODE_KEY = KEY_CODE
 SCAN_SOURCE_KEY = "scan"
-WATCHLIST_SOURCE_KEY = "watchlist"
 
 
 def _get_signal_value(signal, key: str, default=""):
@@ -49,11 +48,7 @@ def _source_allows_workspace_scan_merge(vcp_data: dict, source_tab_key: str) -> 
     source_key = str(vcp_data.get("__source_tab_key") or source_tab_key or "").strip()
     source_tab = str(vcp_data.get("source_tab") or "").strip()
     signal_type = str(vcp_data.get("signal_type") or "").strip()
-    return (
-        source_key in {SCAN_SOURCE_KEY, WATCHLIST_SOURCE_KEY}
-        or source_tab == SCAN_SOURCE_KEY
-        or signal_type == "vcp_scan"
-    )
+    return source_key == SCAN_SOURCE_KEY or source_tab == SCAN_SOURCE_KEY or signal_type == "vcp_scan"
 
 
 def _merge_missing(base: dict, extra: dict) -> None:

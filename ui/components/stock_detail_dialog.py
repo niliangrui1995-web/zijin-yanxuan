@@ -222,10 +222,18 @@ class StockDetailDialog(QDialog):
         sources = {str(row.get("source") or "") for row in self._rows if row.get("source")}
         return f"{len(self._rows)} 条信号 | {len(sources)} 个来源"
 
-    def _detail_payload(self) -> dict:
+    def _detail_payload(self, *, include_signals: bool = False) -> dict:
         payload = dict(self._context)
         payload.setdefault("代码", self._code)
         payload.setdefault("名称", self._name)
+        if include_signals:
+            signals = [
+                row.get("signal")
+                for row in self._rows
+                if isinstance(row.get("signal"), StockSignal)
+            ]
+            if signals and "_signals" not in payload:
+                payload["_signals"] = signals
         return payload
 
     def _watchlist_button_text(self) -> str:
@@ -290,7 +298,7 @@ class StockDetailDialog(QDialog):
         if not self._code:
             return
         code = self._code
-        detail_payload = self._detail_payload()
+        detail_payload = self._detail_payload(include_signals=True)
         QTimer.singleShot(0, lambda: ui_signals.sig_show_kline_with_list.emit(code, [detail_payload], 0))
 
     def _toggle_watchlist(self) -> None:

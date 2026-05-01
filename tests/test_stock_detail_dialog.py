@@ -60,10 +60,18 @@ def test_stock_detail_dialog_actions_emit_kline_and_toggle_watchlist(monkeypatch
     monkeypatch.setattr(stock_detail_module.watchlist_vm, "toggle_stock", _toggle_stock)
     spy = QSignalSpy(ui_signals.sig_show_kline_with_list)
 
+    scan_signal = StockSignal(
+        code="300750",
+        source_tab="scan",
+        signal_type="vcp_scan",
+        summary="VCP扫描命中",
+        observed_at="20260416",
+        payload={"区间最高价": 251.2, "区间最低点": 218.5},
+    )
     dialog = StockDetailDialog(
         "300750",
         "宁德时代",
-        [StockSignal(code="300750", source_tab="scan", signal_type="vcp_scan", summary="VCP扫描命中")],
+        [scan_signal],
         context={"市价": "183.50", "涨幅%": 5.2},
     )
 
@@ -72,12 +80,14 @@ def test_stock_detail_dialog_actions_emit_kline_and_toggle_watchlist(monkeypatch
     assert len(spy) == 1
     assert spy[0][0] == "300750"
     assert spy[0][1][0]["市价"] == "183.50"
+    assert spy[0][1][0]["_signals"] == [scan_signal]
 
     dialog._toggle_watchlist()
     assert toggled["code"] == "300750"
     assert toggled["name"] == "宁德时代"
     assert toggled["payload"]["代码"] == "300750"
     assert toggled["payload"]["涨幅%"] == 5.2
+    assert "_signals" not in toggled["payload"]
     assert dialog.btn_watchlist.text() == "移出关注池"
 
 

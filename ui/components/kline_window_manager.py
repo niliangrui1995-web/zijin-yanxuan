@@ -92,10 +92,19 @@ class KLineWindowManager:
         if view is None:
             return None
         try:
+            # QWebEngineView is a native child window on Windows. Reparenting the
+            # hidden warm-up view into the real chart can paint the first frame at
+            # stale geometry, so use warm-up only to start WebEngine and create a
+            # fresh view for the visible window.
+            view.hide()
             view.setParent(None)
-            return view
+            view.deleteLater()
         except RuntimeError:
-            return None
+            pass
+        except (AttributeError, TypeError):
+            pass
+        self._prewarm_started = False
+        return None
 
     def open_chart(
         self,
