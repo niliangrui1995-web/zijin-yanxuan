@@ -294,6 +294,7 @@ class MainWindowQT(QMainWindow):
             schedule_restore(app_config.last_active_tab)
         else:
             workspace.restore_last_tab(app_config.last_active_tab)
+        kline_manager.prewarm(delay_ms=2500)
         self.install_workspace_table_copy_hooks()
 
         try:

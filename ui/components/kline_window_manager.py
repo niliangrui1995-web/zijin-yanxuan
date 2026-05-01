@@ -30,7 +30,72 @@ class KLineWindowManager:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._charts = []
+            cls._instance._prewarm_view = None
+            cls._instance._prewarm_started = False
+            cls._instance._prewarm_cancelled = False
         return cls._instance
+
+    def prewarm(self, *, delay_ms: int = 2500) -> bool:
+        """Warm up QWebEngine during idle time so the first K-line opens faster."""
+        if self._prewarm_started or self._prewarm_view is not None:
+            return False
+        self._prewarm_started = True
+        self._prewarm_cancelled = False
+        try:
+            from PyQt6.QtCore import QTimer
+
+            QTimer.singleShot(max(0, int(delay_ms)), self._run_prewarm)
+            return True
+        except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as exc:
+            self._prewarm_started = False
+            log.debug(f"[K线管理] WebEngine 预热调度失败: {exc}")
+            return False
+
+    def _run_prewarm(self) -> None:
+        started_at = time.perf_counter()
+        try:
+            from PyQt6.QtCore import QUrl
+            from PyQt6.QtWebEngineWidgets import QWebEngineView
+            from PyQt6.QtWidgets import QApplication
+
+            if self._prewarm_cancelled:
+                self._prewarm_started = False
+                return
+            app = QApplication.instance()
+            if app is None or app.closingDown():
+                self._prewarm_started = False
+                return
+            if self._prewarm_view is not None:
+                return
+
+            view = QWebEngineView()
+            view.setObjectName("klinePrewarmWebEngine")
+            view.resize(16, 16)
+            view.hide()
+            view.setHtml(
+                "<!doctype html><html><body style='margin:0;background:#0f172a'></body></html>",
+                QUrl("about:blank"),
+            )
+            self._prewarm_view = view
+            record_metric(
+                "kline_webengine_prewarm_ms",
+                (time.perf_counter() - started_at) * 1000.0,
+                unit="ms",
+            )
+        except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            self._prewarm_started = False
+            log.debug(f"[K线管理] WebEngine 预热失败: {exc}")
+
+    def take_prewarmed_browser(self):
+        view = self._prewarm_view
+        self._prewarm_view = None
+        if view is None:
+            return None
+        try:
+            view.setParent(None)
+            return view
+        except RuntimeError:
+            return None
 
     def open_chart(
         self,
@@ -92,6 +157,10 @@ class KLineWindowManager:
         if vcp_data is None:
             vcp_data = {'code': code, 'name': name}
 
+        browser = self.take_prewarmed_browser()
+        if browser is None and self._prewarm_started:
+            self._prewarm_cancelled = True
+
         chart = KLineChartWindow(
             main_window=main_window,
             code=code,
@@ -100,6 +169,7 @@ class KLineWindowManager:
             vcp_data=vcp_data,
             code_list=code_list or [],
             current_idx=current_idx,
+            browser=browser,
         )
         chart.show()
         try:

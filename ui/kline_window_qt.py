@@ -72,7 +72,18 @@ def fetch_single_kline(*args, **kwargs):
 class KLineChartWindow(QWidget):
     """ECharts 驱动的 K 线图窗口"""
 
-    def __init__(self, main_window, code, name, data_provider, vcp_data=None, code_list=None, current_idx=0):
+    def __init__(
+        self,
+        main_window,
+        code,
+        name,
+        data_provider,
+        vcp_data=None,
+        code_list=None,
+        current_idx=0,
+        *,
+        browser=None,
+    ):
         super().__init__()
         self.main_window = main_window
         self.code = code
@@ -248,7 +259,13 @@ class KLineChartWindow(QWidget):
         container_layout.addWidget(self.summary_widget)
 
         # === ECharts WebEngine 主图区域 ===
-        self.browser = QWebEngineView()
+        self.browser = browser or QWebEngineView()
+        self.browser.setParent(self.container)
+        self._pending_chart_status = None
+        try:
+            self.browser.loadFinished.connect(self._on_chart_load_finished)
+        except (AttributeError, RuntimeError, TypeError):
+            pass
         container_layout.addWidget(self.browser)
 
         main_layout.addWidget(self.container)
@@ -265,7 +282,8 @@ class KLineChartWindow(QWidget):
         self._check_fav_status()
         self._refresh_header_context()
         QTimer.singleShot(0, self._refresh_header_context)
-        self._load_and_draw()
+        self._show_chart_placeholder()
+        QTimer.singleShot(0, self._load_and_draw)
 
         # 监听全局主题切换 → 重新渲染 K 线图
         theme_manager.sig_theme_changed.connect(self._on_theme_changed)
@@ -363,6 +381,58 @@ class KLineChartWindow(QWidget):
     def _load_and_draw(self):
         load_and_draw(self)
 
+    def _show_chart_placeholder(self):
+        self._set_status_message("正在准备图表...", tone="loading")
+        if not hasattr(self.browser, "setHtml"):
+            return
+        colors = build_kline_theme_colors()
+        placeholder = f"""<!doctype html>
+<html>
+<head>
+    <meta charset=\"utf-8\">
+    <style>
+        html, body {{
+            margin: 0;
+            width: 100%;
+            height: 100%;
+            background: {colors['bg_canvas']};
+            color: {colors['text_secondary']};
+            font-family: \"Microsoft YaHei UI\", sans-serif;
+        }}
+        .box {{
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+        }}
+    </style>
+</head>
+<body><div class=\"box\">正在绘制K线...</div></body>
+</html>"""
+        try:
+            self.browser.setHtml(placeholder, QUrl("about:blank"))
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+
+    def _set_pending_chart_status(self, text: str, tone: str) -> None:
+        self._pending_chart_status = (str(text or "").strip(), str(tone or "info").strip() or "info")
+
+    def _finish_pending_chart_status(self) -> None:
+        pending = getattr(self, "_pending_chart_status", None)
+        if not pending:
+            return
+        self._pending_chart_status = None
+        text, tone = pending
+        self._set_status_message(text, tone=tone)
+
+    def _on_chart_load_finished(self, ok: bool) -> None:
+        if ok:
+            self._finish_pending_chart_status()
+        elif getattr(self, "_pending_chart_status", None):
+            self._pending_chart_status = None
+            self._set_status_message("图表渲染失败，请重试", tone="error")
+
     def _load_asian_chart(self):
         """加载亚洲市场（yfinance 缓存）的 K 线数据"""
         from ui.tabs.asian_market_tab import GLOBAL_ASIAN_RT_CACHE, JSON_CACHE
@@ -449,9 +519,11 @@ class KLineChartWindow(QWidget):
         df = calculate_scan_indicators(df)
 
         if loading:
-            self._set_status_message(f"已载入本地缓存 · {len(df)} 条日线", tone="info")
+            self._set_status_message(f"正在绘制本地缓存 · {len(df)} 条日线", tone="loading")
+            self._set_pending_chart_status(f"已载入本地缓存 · {len(df)} 条日线", "info")
         else:
-            self._set_status_message(f"图表已更新 · {len(df)} 条日线", tone="success")
+            self._set_status_message(f"正在绘制图表 · {len(df)} 条日线", tone="loading")
+            self._set_pending_chart_status(f"图表已更新 · {len(df)} 条日线", "success")
 
         # 截取最后 250 根 K 线
         self.df = df.iloc[-250:].copy()
@@ -488,7 +560,7 @@ class KLineChartWindow(QWidget):
             self._replace_chart_data_or_reload(
                 html_content,
                 base_url,
-                title=f"{self.name} ({self.code}) 鏃ョ嚎",
+                title=f"{self.name} ({self.code}) 日线",
                 echarts_data=echarts_data,
             )
             if not loading:
@@ -517,6 +589,7 @@ class KLineChartWindow(QWidget):
 
         def _fallback_if_needed(applied):
             if applied:
+                self._finish_pending_chart_status()
                 return
             try:
                 self.browser.setHtml(html_content, base_url)

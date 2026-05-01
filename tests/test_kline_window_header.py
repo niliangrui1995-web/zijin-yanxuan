@@ -7,6 +7,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QWidget
 
 from core.task_manager import task_manager
+from ui.components.kline_window_manager import KLineWindowManager
 from ui.kline_chart_payload import build_kline_html, build_kline_theme_colors
 from ui import kline_window_qt as kline_module
 from ui.tabs import asian_market_tab as asian_module
@@ -156,6 +157,91 @@ def test_kline_header_exposes_session_and_feed_badges(monkeypatch):
         assert "background-color" in window.feed_badge_lbl.styleSheet()
     finally:
         window.deleteLater()
+
+
+def test_kline_window_defers_initial_load_until_next_event_turn(monkeypatch):
+    scheduled = []
+    load_calls = []
+    monkeypatch.setattr(kline_module, "QWebEngineView", QWidget)
+    monkeypatch.setattr(kline_module.QTimer, "singleShot", lambda delay, callback: scheduled.append((delay, callback)))
+    monkeypatch.setattr(kline_module.KLineChartWindow, "_load_and_draw", lambda self: load_calls.append(self.code))
+    monkeypatch.setattr(
+        kline_module.KLineChartWindow,
+        "_check_fav_status",
+        lambda self: setattr(self, "is_fav", False),
+    )
+
+    window = kline_module.KLineChartWindow(
+        None,
+        "000001",
+        "平安银行",
+        _DummyProvider(),
+        vcp_data={},
+        code_list=[{"代码": "000001", "名称": "平安银行"}],
+        current_idx=0,
+    )
+    try:
+        assert load_calls == []
+        assert any(delay == 0 and callback == window._load_and_draw for delay, callback in scheduled)
+        assert window.info_lbl.text() == "正在准备图表..."
+    finally:
+        window.deleteLater()
+
+
+def test_kline_manager_reuses_prewarmed_browser(monkeypatch):
+    captured = {}
+
+    class _WarmBrowser:
+        def __init__(self):
+            self.parent = "old"
+
+        def setParent(self, parent):
+            self.parent = parent
+
+    class _Chart:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self._visible = True
+
+        def show(self):
+            self._visible = True
+
+        def raise_(self):
+            return None
+
+        def activateWindow(self):
+            return None
+
+        def isVisible(self):
+            return self._visible
+
+    manager = KLineWindowManager()
+    manager._charts = []
+    manager._prewarm_started = True
+    manager._prewarm_cancelled = False
+    manager._prewarm_view = _WarmBrowser()
+    monkeypatch.setattr(kline_module, "KLineChartWindow", _Chart)
+
+    try:
+        chart = manager.open_chart(
+            main_window=None,
+            code="000001",
+            name="平安银行",
+            data_provider=_DummyProvider(),
+            vcp_data={},
+            code_list=[],
+            current_idx=0,
+        )
+
+        assert chart is manager._charts[-1]
+        assert isinstance(captured["browser"], _WarmBrowser)
+        assert captured["browser"].parent is None
+        assert manager._prewarm_view is None
+    finally:
+        manager._charts = []
+        manager._prewarm_view = None
+        manager._prewarm_started = False
+        manager._prewarm_cancelled = False
 
 
 def test_kline_load_and_draw_appends_today_bar_during_lunch_break(monkeypatch):
