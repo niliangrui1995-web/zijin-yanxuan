@@ -333,6 +333,45 @@ def test_build_kline_echarts_payload_matches_compact_vcp_dates():
     assert payload["vcpArea"][0][0]["yAxis"] == 9.9
     assert payload["vcpArea"][0][1]["xAxis"] == "2026-04-08"
     assert payload["vcpArea"][0][1]["yAxis"] == 11.2
+    assert payload["vcpArea"][1][0]["xAxis"] == "2026-04-08"
+    assert payload["vcpArea"][1][1]["xAxis"] == "2026-04-09"
+    assert payload["vcpArea"][1][1]["yAxis"] == 11.2
+
+
+def test_build_kline_echarts_payload_marks_final_vcp_window_to_trigger_date():
+    key_trigger = "\u89e6\u53d1\u65e5\u671f"
+    key_high = "\u533a\u95f4\u6700\u9ad8\u4ef7"
+    key_low = "\u533a\u95f4\u6700\u4f4e\u70b9"
+    df = pd.DataFrame(
+        {
+            "open": [10.0, 10.5, 10.2, 12.8],
+            "high": [11.0, 10.8, 10.6, 14.0],
+            "low": [9.8, 10.0, 9.9, 12.5],
+            "close": [10.6, 10.1, 10.4, 13.8],
+            "volume": [10000, 9000, 8000, 30000],
+        },
+        index=pd.to_datetime(["2026-04-07", "2026-04-08", "2026-04-09", "2026-04-10"]),
+    )
+
+    payload = build_kline_echarts_payload(
+        df,
+        code="002975",
+        name="BoJie",
+        vcp_data={
+            key_trigger: "20260410",
+            key_high: 99.0,
+            key_low: 1.0,
+            "_peak_dates": ["20260407", "20260409"],
+            "_vcp_overlay_allowed": True,
+        },
+    )
+
+    assert payload["vcpMarkers"][0]["coord"] == [3, 14.0]
+    assert payload["vcpArea"][0][0]["xAxis"] == "2026-04-07"
+    assert payload["vcpArea"][0][1]["xAxis"] == "2026-04-09"
+    assert payload["vcpArea"][1][0]["xAxis"] == "2026-04-09"
+    assert payload["vcpArea"][1][1]["xAxis"] == "2026-04-10"
+    assert payload["vcpArea"][1][1]["yAxis"] == 10.6
 
 
 def test_build_kline_echarts_payload_skips_vcp_overlay_for_generic_event_date():
