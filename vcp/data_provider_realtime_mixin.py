@@ -13,8 +13,10 @@ from vcp.data_provider_quotes import (
     register_eastmoney_success,
     request_eastmoney_quote_batch,
     request_sina_quote_batch,
+    request_tencent_quote_batch,
     to_eastmoney_secid,
     to_sina_symbol,
+    to_tencent_symbol,
 )
 from vcp.data_provider_realtime import fetch_eastmoney_quotes_with_split_retry, summarize_probe_error
 from vcp.data_provider_realtime import fetch_realtime_quotes_batch as fetch_realtime_quotes_batch_runtime
@@ -108,15 +110,46 @@ class TdxDataProviderRealtimeMixin:
             except (ConnectionError, OSError, TimeoutError, urllib.error.URLError, ValueError) as page_exc:
                 probe["page_probe"] = f"fail:{summarize_probe_error(page_exc)}"
 
-            quotes = self._request_eastmoney_quote_batch(["000001"], inferred_trade_date)
-            ok = bool(quotes and quotes.get("000001"))
-            probe["quote_probe"] = "ok" if ok else "empty"
+            ok = False
+            quote_failures = []
+            probe["eastmoney_quote_probe"] = "skip"
+            probe["sina_quote_probe"] = "skip"
+            probe["tencent_quote_probe"] = "skip"
+            for source_name, requester in (
+                ("eastmoney", self._request_eastmoney_quote_batch),
+                ("sina", self._request_sina_quote_batch),
+                ("tencent", self._request_tencent_quote_batch),
+            ):
+                try:
+                    quotes = requester(["000001"], inferred_trade_date)
+                    source_ok = bool(quotes and quotes.get("000001"))
+                    probe[f"{source_name}_quote_probe"] = "ok" if source_ok else "empty"
+                    if source_ok:
+                        ok = True
+                        break
+                except (
+                    ConnectionError,
+                    KeyError,
+                    OSError,
+                    RuntimeError,
+                    TimeoutError,
+                    TypeError,
+                    ValueError,
+                ) as quote_exc:
+                    detail = summarize_probe_error(quote_exc)
+                    probe[f"{source_name}_quote_probe"] = f"fail:{detail}"
+                    quote_failures.append(f"{source_name}:{detail}")
+
+            probe["quote_probe"] = "ok" if ok else (quote_failures[0] if quote_failures else "empty")
             probe["ok"] = ok
             self._rt_last_network_probe = probe
             log_fn = _log.info if ok else _log.warning
             log_fn(
                 f"[网络] 东方财富探针{'通过' if ok else '失败'} "
-                f"| page={probe['page_probe']} | push2={probe['quote_probe']} "
+                f"| page={probe['page_probe']} | quote={probe['quote_probe']} "
+                f"| eastmoney={probe['eastmoney_quote_probe']} "
+                f"| sina={probe['sina_quote_probe']} "
+                f"| tencent={probe['tencent_quote_probe']} "
                 f"| batch={probe['batch_size']} | dedup={probe['dedup_window_sec']:.1f}s"
             )
             return ok
@@ -183,6 +216,11 @@ class TdxDataProviderRealtimeMixin:
 
     @staticmethod
 
+    def _to_tencent_symbol(code: str) -> str:
+        return to_tencent_symbol(code)
+
+    @staticmethod
+
     def _coerce_quote_number(value) -> float:
         return coerce_quote_number(value)
 
@@ -191,6 +229,9 @@ class TdxDataProviderRealtimeMixin:
 
     def _request_sina_quote_batch(self, codes, inferred_trade_date: str):
         return request_sina_quote_batch(self, codes, inferred_trade_date)
+
+    def _request_tencent_quote_batch(self, codes, inferred_trade_date: str):
+        return request_tencent_quote_batch(self, codes, inferred_trade_date)
 
     def _fetch_eastmoney_quotes_with_split_retry(
         self,

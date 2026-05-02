@@ -179,6 +179,7 @@ def fetch_realtime_quotes_batch(
         quotes = {}
         failures = []
         used_sina_fallback = False
+        used_tencent_fallback = False
 
         if eastmoney_available:
             quotes, failures = provider._fetch_eastmoney_quotes_with_split_retry(
@@ -204,12 +205,31 @@ def fetch_realtime_quotes_batch(
                     else:
                         failures.append(str(sina_exc))
 
+            missing_batch = [code for code in batch if code not in quotes]
+            if missing_batch:
+                try:
+                    tencent_quotes = provider._request_tencent_quote_batch(missing_batch, inferred_trade_date)
+                    if tencent_quotes:
+                        quotes.update(tencent_quotes)
+                        used_tencent_fallback = True
+                except (OSError, RuntimeError, TimeoutError, ValueError) as tencent_exc:
+                    if not failures:
+                        failures = [str(tencent_exc)]
+                    else:
+                        failures.append(str(tencent_exc))
+
         new_fetch.update(quotes)
         batch_fully_covered = all(code in quotes for code in batch)
         if used_sina_fallback:
             fallback_msg = provider._rt_eastmoney_last_error or "东方财富链路异常"
             provider._log_quote_fallback(
                 f"[实时行情] 已切换新浪批量报价，覆盖 {len(quotes)}/{len(batch)} 只: {fallback_msg}",
+                warning=False,
+            )
+        if used_tencent_fallback:
+            fallback_msg = provider._rt_eastmoney_last_error or "eastmoney realtime quote unavailable"
+            provider._log_quote_fallback(
+                f"[realtime quotes] switched to Tencent fallback, covered {len(quotes)}/{len(batch)} codes: {fallback_msg}",
                 warning=False,
             )
 

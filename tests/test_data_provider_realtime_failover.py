@@ -50,6 +50,52 @@ class _FakeHttpResponse:
         return None
 
 
+class _FakeTextResponse:
+    def __init__(self, text, encoding="gbk"):
+        self._payload = text.encode(encoding)
+
+    def read(self, _size=-1):
+        return self._payload
+
+    def close(self):
+        return None
+
+
+def _tencent_line(
+    symbol="sh600519",
+    *,
+    code="600519",
+    name="MOUTAI",
+    close="1384.79",
+    last_close="1401.17",
+    open_price="1400.00",
+    volume="52753",
+    amount="7316111748",
+    change="-16.38",
+    pct="-1.17",
+    high="1401.17",
+    low="1380.00",
+    quote_time="20260430161422",
+):
+    fields = [""] * 37
+    fields[0] = "1"
+    fields[1] = name
+    fields[2] = code
+    fields[3] = close
+    fields[4] = last_close
+    fields[5] = open_price
+    fields[6] = volume
+    fields[29] = quote_time
+    fields[30] = change
+    fields[31] = pct
+    fields[32] = high
+    fields[33] = low
+    fields[34] = f"{close}/{volume}/{amount}"
+    fields[35] = volume
+    fields[36] = str(float(amount) / 10000.0)
+    return f'v_{symbol}="' + "~".join(fields) + '";'
+
+
 def test_set_online_mode_keeps_empty_server_pool_for_eastmoney_mode():
     provider = _make_provider()
     provider._offline = True
@@ -138,6 +184,38 @@ def test_fetch_realtime_quotes_batch_uses_eastmoney_live_quotes_without_tdx_pool
             "source": "eastmoney",
             "name": "",
         },
+    }
+
+
+def test_request_tencent_quote_batch_parses_realtime_payload(monkeypatch):
+    provider = _make_provider()
+    seen_urls = []
+
+    def _fake_urlopen(request, timeout=8):
+        del timeout
+        seen_urls.append(request.full_url)
+        return _FakeTextResponse(_tencent_line())
+
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
+
+    result = provider._request_tencent_quote_batch(["600519"], "2026-04-15")
+
+    assert seen_urls == ["https://qt.gtimg.cn/q=sh600519"]
+    assert result == {
+        "600519": {
+            "open": 1400.0,
+            "high": 1401.17,
+            "low": 1380.0,
+            "close": 1384.79,
+            "volume": 52753.0,
+            "amount": 7316111748.0,
+            "last_close": 1401.17,
+            "change": -16.38,
+            "pct": -1.17,
+            "date": "2026-04-30",
+            "source": "tencent",
+            "name": "MOUTAI",
+        }
     }
 
 
@@ -291,6 +369,48 @@ def test_test_network_records_probe_detail(monkeypatch):
     assert provider.get_last_network_probe()["ok"] is True
     assert provider.get_last_network_probe()["page_probe"] == "ok"
     assert provider.get_last_network_probe()["quote_probe"] == "ok"
+
+
+def test_test_network_accepts_tencent_when_primary_quote_sources_fail(monkeypatch):
+    provider = _make_provider()
+
+    def _fake_urlopen(request, timeout=8):
+        del timeout
+        url = request.full_url
+        if "gridlist.html" in url:
+            return _FakeTextResponse("ok", encoding="utf-8")
+        if "eastmoney.com/api/qt/ulist/get" in url:
+            raise OSError("eastmoney unavailable")
+        if "hq.sinajs.cn" in url:
+            raise OSError("sina unavailable")
+        if "qt.gtimg.cn" in url:
+            return _FakeTextResponse(
+                _tencent_line(
+                    "sz000001",
+                    code="000001",
+                    name="PINGAN",
+                    close="11.49",
+                    last_close="11.52",
+                    open_price="11.50",
+                    volume="1139242",
+                    amount="1312827776",
+                    change="-0.03",
+                    pct="-0.26",
+                    high="11.60",
+                    low="11.46",
+                )
+            )
+        raise AssertionError(url)
+
+    monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
+
+    assert provider.test_network(timeout=3) is True
+    probe = provider.get_last_network_probe()
+    assert probe["ok"] is True
+    assert probe["eastmoney_quote_probe"].startswith("fail:")
+    assert probe["sina_quote_probe"].startswith("fail:")
+    assert probe["tencent_quote_probe"] == "ok"
 
 
 def test_fetch_realtime_quotes_batch_uses_recent_cache_within_dedup_window(monkeypatch):
@@ -484,6 +604,11 @@ def test_fetch_realtime_quotes_batch_falls_back_to_sina_after_eastmoney_disconne
             for code in codes
         },
     )
+    monkeypatch.setattr(
+        provider,
+        "_request_tencent_quote_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("should not use Tencent when Sina covers")),
+    )
 
     result = provider.fetch_realtime_quotes_batch(["000001", "600519"])
 
@@ -493,6 +618,115 @@ def test_fetch_realtime_quotes_batch_falls_back_to_sina_after_eastmoney_disconne
     assert provider._rt_runtime_consecutive_failures == 0
     assert provider._rt_runtime_last_error == ""
     assert provider._rt_runtime_last_success_at > 0.0
+
+
+def test_fetch_realtime_quotes_batch_falls_back_to_tencent_after_sina_failure(monkeypatch):
+    provider = _make_provider()
+    provider._rt_quote_batch_size = 20
+    provider._rt_quote_batch_pause_sec = 0.0
+    provider._build_offline_quotes = lambda codes: {code: {"close": 0} for code in codes}
+
+    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", lambda: True)
+    monkeypatch.setattr(MarketCalendar, "get_latest_trade_date", lambda market="CN": dt.date(2026, 4, 15))
+    monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
+    monkeypatch.setattr(
+        provider,
+        "_fetch_eastmoney_quotes_with_split_retry",
+        lambda batch, inferred_trade_date, min_batch_size: ({}, ["eastmoney unavailable"]),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_request_sina_quote_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("sina unavailable")),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_request_tencent_quote_batch",
+        lambda codes, inferred_trade_date: {
+            code: {
+                "open": 10.0,
+                "high": 10.1,
+                "low": 9.9,
+                "close": 10.0,
+                "volume": 1.0,
+                "amount": 2.0,
+                "last_close": 9.8,
+                "change": 0.2,
+                "pct": 2.04,
+                "date": inferred_trade_date,
+                "source": "tencent",
+            }
+            for code in codes
+        },
+    )
+
+    result = provider.fetch_realtime_quotes_batch(["000001"])
+
+    assert result["000001"]["source"] == "tencent"
+    assert result["000001"]["close"] == 10.0
+
+
+def test_fetch_realtime_quotes_batch_uses_tencent_for_sina_missing_codes(monkeypatch):
+    provider = _make_provider()
+    provider._rt_quote_batch_size = 20
+    provider._rt_quote_batch_pause_sec = 0.0
+    provider._build_offline_quotes = lambda codes: {code: {"close": 0} for code in codes}
+    tencent_seen = []
+
+    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", lambda: True)
+    monkeypatch.setattr(MarketCalendar, "get_latest_trade_date", lambda market="CN": dt.date(2026, 4, 15))
+    monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
+    monkeypatch.setattr(
+        provider,
+        "_fetch_eastmoney_quotes_with_split_retry",
+        lambda batch, inferred_trade_date, min_batch_size: ({}, ["eastmoney unavailable"]),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_request_sina_quote_batch",
+        lambda codes, inferred_trade_date: {
+            "000001": {
+                "open": 11.16,
+                "high": 11.21,
+                "low": 11.15,
+                "close": 11.19,
+                "volume": 143215,
+                "amount": 160274827.37,
+                "last_close": 11.17,
+                "change": 0.02,
+                "pct": 0.18,
+                "date": inferred_trade_date,
+                "source": "sina",
+            }
+        },
+    )
+
+    def _fake_tencent(codes, inferred_trade_date):
+        tencent_seen.append(tuple(codes))
+        return {
+            code: {
+                "open": 1400.0,
+                "high": 1401.17,
+                "low": 1380.0,
+                "close": 1384.79,
+                "volume": 52753,
+                "amount": 7316111748.0,
+                "last_close": 1401.17,
+                "change": -16.38,
+                "pct": -1.17,
+                "date": inferred_trade_date,
+                "source": "tencent",
+            }
+            for code in codes
+        }
+
+    monkeypatch.setattr(provider, "_request_tencent_quote_batch", _fake_tencent)
+
+    result = provider.fetch_realtime_quotes_batch(["000001", "600519"])
+
+    assert result["000001"]["source"] == "sina"
+    assert result["600519"]["source"] == "tencent"
+    assert tencent_seen == [("600519",)]
 
 
 def test_register_realtime_success_clears_runtime_cooldown():

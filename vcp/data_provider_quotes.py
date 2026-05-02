@@ -76,6 +76,17 @@ def to_sina_symbol(code: str) -> str:
     return f"{prefix}{code}"
 
 
+def to_tencent_symbol(code: str) -> str:
+    code = str(code).strip()
+    if code.startswith(("5", "6", "9")):
+        prefix = "sh"
+    elif code.startswith(("4", "8")):
+        prefix = "bj"
+    else:
+        prefix = "sz"
+    return f"{prefix}{code}"
+
+
 def coerce_quote_number(value) -> float:
     if value in (None, "", "-", "--"):
         return 0.0
@@ -249,4 +260,90 @@ def request_sina_quote_batch(provider, codes, inferred_trade_date: str):
 
     if not quotes:
         raise RuntimeError("新浪实时报价返回空结果")
+    return quotes
+
+
+def request_tencent_quote_batch(provider, codes, inferred_trade_date: str):
+    normalized_codes = [
+        str(code).strip()
+        for code in dict.fromkeys(codes or [])
+        if str(code or "").strip()
+    ]
+    if not normalized_codes:
+        return {}
+
+    symbols = ",".join(to_tencent_symbol(code) for code in normalized_codes)
+    timeout_sec = float(getattr(provider, "_rt_api_call_timeout_sec", 8.0) or 8.0)
+    req = urllib.request.Request(
+        f"https://qt.gtimg.cn/q={symbols}",
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://gu.qq.com/",
+            "Connection": "close",
+        },
+    )
+    resp = urllib.request.urlopen(req, timeout=timeout_sec)
+    try:
+        text = resp.read().decode("gbk", errors="ignore")
+    finally:
+        with suppress(AttributeError, OSError, RuntimeError, TypeError):
+            resp.close()
+
+    quotes = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or not line.startswith("v_") or '="' not in line:
+            continue
+
+        left, right = line.split('="', 1)
+        symbol = left.split("v_", 1)[-1].strip()
+        payload = right.rsplit('";', 1)[0]
+        fields = payload.split("~")
+        if len(fields) < 34:
+            continue
+
+        code_val = str(fields[2] or symbol[-6:]).strip()
+        if not code_val:
+            continue
+
+        name_val = str(fields[1] or "").strip()
+        close_price = coerce_quote_number(fields[3])
+        last_close = coerce_quote_number(fields[4])
+        open_price = coerce_quote_number(fields[5]) or close_price
+        high_price = coerce_quote_number(fields[32]) or max(open_price, close_price)
+        low_price = coerce_quote_number(fields[33]) or min(open_price, close_price)
+        change_amount = coerce_quote_number(fields[30])
+        pct_change = coerce_quote_number(fields[31])
+
+        raw_datetime = str(fields[29] or "").strip() if len(fields) > 29 else ""
+        quote_date = inferred_trade_date
+        if len(raw_datetime) >= 8 and raw_datetime[:8].isdigit():
+            quote_date = f"{raw_datetime[:4]}-{raw_datetime[4:6]}-{raw_datetime[6:8]}"
+
+        volume = coerce_quote_number(fields[35]) if len(fields) > 35 else coerce_quote_number(fields[6])
+        amount = 0.0
+        if len(fields) > 34:
+            amount_parts = str(fields[34] or "").split("/")
+            if len(amount_parts) >= 3:
+                amount = coerce_quote_number(amount_parts[2])
+        if amount <= 0 and len(fields) > 36:
+            amount = coerce_quote_number(fields[36]) * 10000.0
+
+        quotes[code_val] = {
+            "open": open_price,
+            "high": high_price,
+            "low": low_price,
+            "close": close_price or last_close,
+            "volume": volume,
+            "amount": amount,
+            "last_close": last_close,
+            "change": change_amount,
+            "pct": pct_change,
+            "date": quote_date,
+            "source": "tencent",
+            "name": name_val,
+        }
+
+    if not quotes:
+        raise RuntimeError("tencent realtime quote returned empty result")
     return quotes

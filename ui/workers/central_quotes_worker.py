@@ -339,7 +339,7 @@ class CentralQuotesService(QObject):
             cooldown_until = float(provider_stats.get("cooldown_until") or 0)
             has_valid = any(float(quote.get("close", 0) or 0) > 0 for quote in quotes.values())
             has_live_source = any(
-                str(quote.get("source") or "").lower() in {"eastmoney", "sina"}
+                str(quote.get("source") or "").lower() in {"eastmoney", "sina", "tencent"}
                 for quote in quotes.values()
             )
             provider_failed = (not has_live_source) and (
@@ -404,4 +404,3 @@ class CentralQuotesService(QObject):
         self._closed = True
         self._timer.stop()
         self._fetch_generation += 1
-
