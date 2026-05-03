@@ -153,8 +153,17 @@ def test_kline_header_exposes_session_and_feed_badges(monkeypatch):
         assert window.market_badge_lbl.text()
         assert window.session_badge_lbl.text()
         assert window.feed_badge_lbl.text()
+        badge_widgets = (window.market_badge_lbl, window.session_badge_lbl, window.feed_badge_lbl)
+        assert len({badge.minimumHeight() for badge in badge_widgets}) == 1
+        assert len({badge.maximumHeight() for badge in badge_widgets}) == 1
+        assert all("border-radius" in badge.styleSheet() for badge in badge_widgets)
+        assert all("max-height" in badge.styleSheet() for badge in badge_widgets)
         assert "background-color" in window.session_badge_lbl.styleSheet()
         assert "background-color" in window.feed_badge_lbl.styleSheet()
+        window._set_status_message("chart updated 500 bars", tone="success")
+        assert window.info_lbl.minimumHeight() >= window.market_badge_lbl.minimumHeight()
+        assert "padding: 0 10px;" in window.info_lbl.styleSheet()
+        assert "max-height" in window.info_lbl.styleSheet()
     finally:
         window.deleteLater()
 

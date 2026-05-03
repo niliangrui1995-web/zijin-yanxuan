@@ -244,6 +244,131 @@ class MarketPulseStrip(QWidget):
         painter.fillRect(rect, gradient)
 
 
+class StatusFlowStrip(QWidget):
+    """A quiet bottom-edge strip for short status feedback."""
+
+    _MODE_ALIASES = {
+        "busy": "working",
+        "working": "working",
+        "cache": "cache",
+        "online": "success",
+        "ready": "success",
+        "success": "success",
+        "offline": "error",
+        "error": "error",
+    }
+
+    def __init__(self, host: QWidget, parent=None):
+        super().__init__(host if parent is None else parent)
+        self._host = host
+        self._mode = "neutral"
+        self._phase = 0.0
+        self._ticks_left = 0
+        self._neutral = QColor("#1F2937")
+        self._cyan = QColor("#22D3EE")
+        self._brand = QColor("#B91C1C")
+        self._error = QColor("#EF4444")
+        self.setObjectName("statusFlowStrip")
+        self.setFixedHeight(2)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
+        self._timer = QTimer(self)
+        self._timer.setInterval(42)
+        self._timer.timeout.connect(self._tick)
+        host.installEventFilter(self)
+        self.apply_theme()
+        self._sync_geometry()
+
+    def apply_theme(self) -> None:
+        from ui.theme import theme_manager
+
+        theme = theme_manager.current_theme
+        self._neutral = QColor(theme.get("STATUSBAR_BORDER", theme.get("BORDER_SUBTLE", "#1F2937")))
+        self._cyan = QColor(theme.get("COLOR_REALTIME", theme.get("NETWORK_ONLINE", "#22D3EE")))
+        self._brand = QColor(theme.get("BRAND_PRIMARY", "#B91C1C"))
+        self._error = QColor(theme.get("COLOR_ERROR", theme.get("NETWORK_OFFLINE", "#EF4444")))
+        self.update()
+
+    def set_mode(self, mode: str, *, animate: bool = True) -> None:
+        next_mode = self._MODE_ALIASES.get(str(mode or "").strip(), "neutral")
+        self._mode = next_mode
+        self._phase = 0.0
+        if animate and next_mode != "neutral":
+            self._ticks_left = 44 if next_mode == "error" else 34
+            if not self._timer.isActive():
+                self._timer.start()
+        else:
+            self._ticks_left = 0
+            self._timer.stop()
+        self.update()
+
+    def _tick(self) -> None:
+        self._phase = min(1.0, self._phase + 0.035)
+        self._ticks_left -= 1
+        if self._ticks_left <= 0:
+            self._mode = "neutral"
+            self._phase = 0.0
+            self._timer.stop()
+        self.update()
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self._host and event.type() in {
+            QEvent.Type.Resize,
+            QEvent.Type.Show,
+            QEvent.Type.LayoutRequest,
+        }:
+            self._sync_geometry()
+        return super().eventFilter(watched, event)
+
+    def hideEvent(self, event) -> None:
+        self._timer.stop()
+        super().hideEvent(event)
+
+    def _sync_geometry(self) -> None:
+        if self._host is None:
+            return
+        self.setGeometry(0, max(0, self._host.height() - self.height()), self._host.width(), self.height())
+        self.raise_()
+
+    def _active_color(self) -> QColor:
+        if self._mode in {"cache", "success"}:
+            return QColor(self._cyan)
+        if self._mode == "error":
+            return QColor(self._error)
+        return QColor(self._brand)
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        rect = QRectF(self.rect())
+        if rect.width() <= 0:
+            return
+
+        base = QColor(self._neutral)
+        base.setAlpha(58)
+        painter.fillRect(rect, base)
+
+        if self._mode == "neutral" or self._ticks_left <= 0:
+            return
+
+        color = self._active_color()
+        span = max(110.0, rect.width() * (0.18 if self._mode == "error" else 0.24))
+        center = (rect.width() + span * 1.5) * self._phase - span * 0.75
+        gradient = QLinearGradient(center - span, 0, center + span, 0)
+        edge = QColor(color)
+        edge.setAlpha(0)
+        glow = QColor(color)
+        glow.setAlpha(130 if self._mode != "error" else 165)
+        core = QColor(color)
+        core.setAlpha(215 if self._mode != "working" else 180)
+        gradient.setColorAt(0.0, edge)
+        gradient.setColorAt(0.42, glow)
+        gradient.setColorAt(0.5, core)
+        gradient.setColorAt(0.58, glow)
+        gradient.setColorAt(1.0, edge)
+        painter.fillRect(rect, gradient)
+
+
 def _nav_group_button_qss(theme: dict) -> str:
     tokens = build_ui_tokens(theme)
     surface = tokens["surface"]
@@ -312,6 +437,7 @@ class MainWindowStatusBar(QFrame):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setFixedHeight(34)
         self._status_tone = "offline"
+        self.status_flow = StatusFlowStrip(self)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(14, 0, 14, 0)
@@ -361,9 +487,17 @@ class MainWindowStatusBar(QFrame):
         }
         return mapping.get(tone, mapping["offline"])
 
-    def set_status_tone(self, tone: str) -> None:
+    def set_status_tone(self, tone: str, *, animate: bool = True) -> None:
         self._status_tone = tone if tone in {"online", "busy", "offline"} else "offline"
         self.status_dot.set_color(self._resolve_status_dot_color(self._status_tone))
+        self.status_flow.set_mode(self._status_tone, animate=animate)
+
+    def show_sync_feedback(self, state: str) -> None:
+        mode = str(state or "").strip()
+        if mode in {"idle", "neutral"}:
+            self.status_flow.set_mode("neutral", animate=False)
+            return
+        self.status_flow.set_mode(mode, animate=True)
 
     def refresh_clock(self):
         import datetime
@@ -409,7 +543,8 @@ class MainWindowStatusBar(QFrame):
         self.lbl_version.setStyleSheet(
             f"color: {theme['TEXT_DISABLED']}; font-size: {tokens['font']['size_xs']}px;"
         )
-        self.set_status_tone(self._status_tone)
+        self.status_flow.apply_theme()
+        self.set_status_tone(self._status_tone, animate=False)
 
 
 class ShellNavigationWidget(QWidget):

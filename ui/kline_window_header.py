@@ -41,11 +41,15 @@ def _elide_summary_value(label, key_text: str, value_text: str) -> str:
 def set_header_badge(window, label, text: str, tone_name: str) -> None:
     tokens = build_ui_tokens(theme_manager.current_theme)
     tone = get_state_tone(tone_name, theme_manager.current_theme)
+    badge_height = max(24, tokens["control"]["toolbar_chip_height"])
+    badge_radius = badge_height // 2
     label.setText(text)
+    label.setFixedHeight(badge_height)
+    label.setMinimumWidth(max(42, label.fontMetrics().horizontalAdvance(str(text or "")) + 24))
     label.setStyleSheet(
         f"background-color: {tone['bg']}; color: {tone['fg']}; border: 1px solid {tone['border']};"
-        f" border-radius: {tokens['radius']['pill']}px; padding: 1px 9px;"
-        f" min-height: {tokens['shell']['status_pill_min_height']}px;"
+        f" border-radius: {badge_radius}px; padding: 0 10px;"
+        f" min-height: {badge_height}px; max-height: {badge_height}px;"
         f" font-size: {tokens['font']['size_xs']}px; font-weight: {tokens['font']['weight_semibold']};"
     )
 
@@ -78,7 +82,7 @@ def refresh_header_context(window) -> None:
     if hasattr(window, "identity_lbl"):
         window.identity_lbl.setText(f"{window.name}  {window.code}")
     if hasattr(window, "market_badge_lbl"):
-        window.market_badge_lbl.setText(market_badge)
+        set_header_badge(window, window.market_badge_lbl, market_badge, "neutral")
     if hasattr(window, "nav_index_lbl"):
         total = len(window.code_list)
         window.nav_index_lbl.setText(
@@ -168,8 +172,6 @@ def apply_qt_theme(window) -> None:
     btn_disabled_border = palette["btn_disabled_border"]
     chart_bg = palette["chart_bg"]
     nav_bg = palette["nav_bg"]
-    badge_bg = palette["badge_bg"]
-    badge_fg = palette["badge_fg"]
     summary_border = palette["summary_border"]
     radius = tokens["radius"]
     font = tokens["font"]
@@ -229,10 +231,11 @@ def apply_qt_theme(window) -> None:
     window.identity_lbl.setStyleSheet(
         f"color: {widget_text}; font-weight: {font['weight_bold']}; font-size: {font['size_lg']}px;"
     )
-    window.market_badge_lbl.setStyleSheet(
-        f"background-color: {badge_bg}; color: {badge_fg}; border: 1px solid {badge_bg};"
-        f"border-radius: {radius['pill']}px; padding: 1px 9px;"
-        f" font-size: {font['size_xs']}px; font-weight: {font['weight_semibold']};"
+    set_header_badge(
+        window,
+        window.market_badge_lbl,
+        window.market_badge_lbl.text() or format_kline_market_badge(window.code),
+        "neutral",
     )
 
     window.btn_prev.setFixedHeight(action_height)
@@ -359,9 +362,13 @@ def apply_info_styles(
         bg_color = theme.get("INFO_BADGE_BG", theme["BRAND_SUBTLE"])
     else:
         bg_color = state_tone["bg"]
+    info_height = max(24, tokens["control"]["toolbar_chip_height"])
+    window.info_lbl.setMinimumHeight(info_height)
+    window.info_lbl.setMaximumHeight(info_height)
     window.info_lbl.setStyleSheet(
         f"background-color: {bg_color}; color: {fg_color}; border: 1px solid {border_color};"
-        f"border-radius: {tokens['radius']['pill']}px; padding: 5px 10px;"
+        f"border-radius: {tokens['radius']['pill']}px; padding: 0 10px;"
+        f" min-height: {info_height}px; max-height: {info_height}px;"
         f" font-size: {tokens['font']['size_sm']}px; font-weight: {tokens['font']['weight_semibold']};"
     )
 

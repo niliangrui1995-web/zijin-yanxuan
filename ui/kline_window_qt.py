@@ -174,7 +174,7 @@ class KLineChartWindow(QWidget):
         left_group.addLayout(identity_layout)
 
         self.info_lbl = QLabel("正在准备图表...")
-        self.info_lbl.setMinimumHeight(22)
+        self.info_lbl.setMinimumHeight(24)
         self.info_lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
         left_group.addWidget(self.info_lbl)
         header_layout.addLayout(left_group, 1)

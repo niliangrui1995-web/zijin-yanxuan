@@ -131,14 +131,14 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
     }
 
     table = {
-        "row_height_base": 34,
+        "row_height_base": 32,
         "row_height_delta": 4,
-        "cell_padding_y": 4 if compact else 8,
-        "cell_padding_x": 10 if compact else 14,
-        "header_padding_y": 3 if compact else 6,
+        "cell_padding_y": 4 if compact else 6,
+        "cell_padding_x": 10 if compact else 12,
+        "header_padding_y": 3 if compact else 5,
         "header_padding_x": 9 if compact else 12,
         "header_font_size": 11 if compact else 12,
-        "header_min_height": 28 if compact else 32,
+        "header_min_height": 28 if compact else 30,
         "focus_radius": radius["xs"],
         "selected_bg": theme["SELECTION_BG"],
         "selected_hover_bg": theme["SELECTION_HOVER_BG"],

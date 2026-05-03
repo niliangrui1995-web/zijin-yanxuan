@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import QFrame, QMainWindow, QSizePolicy, QTabWidget, QVBoxL
 from ui.components.main_window_shell import (
     MainWindowStatusBar,
     ShellNavigationWidget,
+    StatusFlowStrip,
     apply_chrome_theme,
     inject_standalone_tabbar,
     setup_custom_titlebar,
@@ -87,6 +88,24 @@ def test_main_window_status_bar_applies_theme():
         assert ":" in bar.lbl_clock.text()
         assert "statusBarWidget" in bar.styleSheet()
         assert "color:" in bar.lbl_status.styleSheet()
+        assert isinstance(bar.status_flow, StatusFlowStrip)
+        assert bar.status_flow.objectName() == "statusFlowStrip"
+        assert bar.status_flow.height() == 2
+        assert bar.status_flow._timer.isActive() is False
+        bar.show_sync_feedback("working")
+        assert bar.status_flow._mode == "working"
+        assert bar.status_flow._timer.isActive() is True
+        bar.show_sync_feedback("cache")
+        assert bar.status_flow._mode == "cache"
+        bar.show_sync_feedback("idle")
+        assert bar.status_flow._mode == "neutral"
+        assert bar.status_flow._timer.isActive() is False
+        bar.set_status_tone("busy")
+        assert bar.status_flow._mode == "working"
+        assert bar.status_flow._timer.isActive() is True
+        bar.set_status_tone("online", animate=False)
+        assert bar.status_flow._mode == "success"
+        assert bar.status_flow._timer.isActive() is False
     finally:
         bar.deleteLater()
 

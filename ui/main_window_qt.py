@@ -341,6 +341,9 @@ class MainWindowQT(QMainWindow):
                 detail=detail,
                 freshness=self._last_sync_freshness,
             )
+        status_bar = getattr(self, "_status_bar_widget", None)
+        if status_bar is not None and hasattr(status_bar, "show_sync_feedback"):
+            status_bar.show_sync_feedback(self._titlebar_sync_state)
 
     def _apply_table_density(self, mode: str, persist: bool = True):
         from ui.main_window_visuals import apply_table_density

@@ -40,6 +40,9 @@ def test_build_ui_tokens_compact_density_tightens_metrics():
 
     assert compact["density"] == "紧凑"
     assert compact["control"]["button_height"] < comfort["control"]["button_height"]
+    assert comfort["table"]["row_height_base"] == 32
+    assert comfort["table"]["cell_padding_y"] == 6
+    assert comfort["table"]["header_min_height"] == 30
     assert compact["table"]["cell_padding_y"] < comfort["table"]["cell_padding_y"]
     assert compact["table"]["row_height_delta"] == comfort["table"]["row_height_delta"]
 
