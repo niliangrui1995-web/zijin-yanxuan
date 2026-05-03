@@ -406,7 +406,7 @@ class BaseStockTab(QWidget):
 
     def _build_toolbar_overflow_button(self, widgets: list[QWidget]) -> QToolButton | None:
         overflow_widgets = [widget for widget in widgets if widget is not None]
-        if not overflow_widgets:
+        if len(overflow_widgets) <= 1:
             return None
 
         menu = QMenu(self)
@@ -466,6 +466,9 @@ class BaseStockTab(QWidget):
         overflow_button = self._build_toolbar_overflow_button(overflow)
         if overflow_button is not None:
             visible.append(overflow_button)
+        elif len(overflow) == 1:
+            overflow[0].setVisible(True)
+            visible.append(overflow[0])
         return visible
 
     def apply_table_column_preset(

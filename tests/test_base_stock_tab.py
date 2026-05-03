@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from PyQt6.QtTest import QSignalSpy, QTest
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication, QHBoxLayout, QLabel, QLineEdit, QToolButton, QWidget
+from PyQt6.QtWidgets import QApplication, QHBoxLayout, QLabel, QLineEdit, QPushButton, QToolButton, QWidget
 
 import ui.tabs.base_stock_tab as base_stock_tab_module
 from core.event_bus import event_bus
@@ -39,6 +39,32 @@ def test_base_stock_toolbar_applies_shell_object_names_and_toolbutton_style():
         assert toolbar.findChild(QWidget, "tabStatusChipBar") is not None
         assert toolbar.findChild(QWidget, "tabToolbarFilters") is not None
         assert toolbar.findChild(QWidget, "tabToolbarActions") is not None
+    finally:
+        toolbar.deleteLater()
+        tab.deleteLater()
+
+
+def test_base_stock_toolbar_shows_single_overflow_action_directly():
+    tab = BaseStockTab()
+    subtitle = QLabel("ready")
+    add_input = QLineEdit()
+    primary = QPushButton("Add")
+    primary.setObjectName("primaryButton")
+    reset = QPushButton("Reset sort")
+    reset.setProperty("toolbarOverflow", True)
+
+    toolbar = tab.build_tab_toolbar("Example", subtitle, [], [add_input, primary, reset])
+    try:
+        action_wrap = toolbar.findChild(QWidget, "tabToolbarActions")
+        overflow_buttons = [
+            button
+            for button in action_wrap.findChildren(QToolButton)
+            if button.menu() is not None
+        ]
+
+        assert overflow_buttons == []
+        assert reset.isHidden() is False
+        assert reset.parent() is action_wrap
     finally:
         toolbar.deleteLater()
         tab.deleteLater()
