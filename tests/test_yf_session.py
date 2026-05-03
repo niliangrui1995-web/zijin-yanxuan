@@ -56,6 +56,22 @@ def test_build_yf_session_without_cf_proxy_keeps_original_url(monkeypatch):
     assert captured["url"] == "https://query1.finance.yahoo.com/v8/finance/chart/8035.T"
 
 
+def test_build_yf_session_default_keeps_original_yahoo_domain(monkeypatch):
+    captured = {}
+
+    def fake_request(self, method, url, *args, **kwargs):
+        captured["url"] = url
+        return {"ok": True}
+
+    monkeypatch.setattr(curl_requests.Session, "request", fake_request)
+
+    session = build_yf_session()
+    result = session.request("GET", "https://query2.finance.yahoo.com/v10/finance/quoteSummary/AAPL")
+
+    assert result == {"ok": True}
+    assert captured["url"] == "https://query2.finance.yahoo.com/v10/finance/quoteSummary/AAPL"
+
+
 def test_resolve_curl_cffi_verify_path_copies_non_ascii_bundle(tmp_path, monkeypatch):
     source_dir = tmp_path / "中文目录"
     source_dir.mkdir()

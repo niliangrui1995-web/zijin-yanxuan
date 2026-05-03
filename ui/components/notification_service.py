@@ -6,8 +6,8 @@ ui/components/notification_service.py
 
 import os
 
-from core.logger import get_logger
 from app.services.ui_runtime_service import ProcessSubprocessError, run_process, windows_no_window_creationflags
+from core.logger import get_logger
 
 log = get_logger(__name__)
 
@@ -70,17 +70,18 @@ def _send_windows_toast(title: str, message: str):
     """Windows 10/11 原生 toast 通知。"""
     if os.name != "nt":
         return
-    ps_script = f"""
+    ps_script = """
+    param([string]$Title, [string]$Message)
     [Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime] | Out-Null
     $template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
     $texts = $template.GetElementsByTagName('text')
-    $texts[0].AppendChild($template.CreateTextNode('{title}')) | Out-Null
-    $texts[1].AppendChild($template.CreateTextNode('{message}')) | Out-Null
+    $texts[0].AppendChild($template.CreateTextNode($Title)) | Out-Null
+    $texts[1].AppendChild($template.CreateTextNode($Message)) | Out-Null
     $toast = [Windows.UI.Notifications.ToastNotification]::new($template)
     [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('VCPHunter').Show($toast)
     """
     run_process(
-        ["powershell", "-Command", ps_script],
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script, str(title), str(message)],
         capture_output=True,
         timeout=5,
         creationflags=windows_no_window_creationflags(),
@@ -93,4 +94,3 @@ def _play_alert_sound():
     if os.name == "nt":
         import winsound
         winsound.MessageBeep(winsound.MB_ICONASTERISK)
-

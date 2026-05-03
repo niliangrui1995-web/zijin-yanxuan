@@ -45,6 +45,15 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
+
+def _is_tls_verification_error(exc: BaseException) -> bool:
+    error_text = str(exc or "")
+    return (
+        exc.__class__.__name__ == "SSLError"
+        or "SSLCertVerificationError" in error_text
+        or "CERTIFICATE_VERIFY_FAILED" in error_text
+    )
+
 # ===================================================================
 # 亚洲市场后缀映射（与 p6_mapper.py 保持一致）
 # ===================================================================
@@ -483,13 +492,18 @@ def _fetch_tw_history_twse(
             "https://www.twse.com.tw/exchangeReport/STOCK_DAY"
             f"?response=json&date={month_start.strftime('%Y%m01')}&stockNo={base_code}"
         )
-        response = http_session.get(
-            url,
-            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.twse.com.tw/"},
-            timeout=20,
-            verify=False,
-        )
-        payload = response.json()
+        try:
+            response = http_session.get(
+                url,
+                headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.twse.com.tw/"},
+                timeout=20,
+            )
+            payload = response.json()
+        except Exception as exc:
+            if _is_tls_verification_error(exc):
+                logging.warning("TWSE TLS verification failed for %s: %s", ticker, exc)
+                return []
+            raise
         if str(payload.get("stat") or "").upper() != "OK":
             continue
 
@@ -774,9 +788,12 @@ def _fetch_market_history_rows(
 ) -> tuple[list[dict], str]:
     suffix = _get_market_suffix(ticker)
     if suffix == ".TW":
+        rows = _fetch_tw_history_twse(ticker, http_session, start_date=start_date, end_date=end_date)
+        if rows:
+            return rows, "twse_stock_day"
         return (
-            _fetch_tw_history_twse(ticker, http_session, start_date=start_date, end_date=end_date),
-            "twse_stock_day",
+            _fetch_yfinance_history_rows(ticker, http_session, start_date=start_date, end_date=end_date),
+            "yfinance_history",
         )
     if suffix == ".TWO":
         return (
@@ -814,7 +831,7 @@ def fetch_single_kline(
     name: str,
     ticker: str,
     period: str = "1y",
-    use_cf_proxy: bool = True,
+    use_cf_proxy: bool = False,
     session=None,
 ) -> dict | None:
     """拉取单只标的的 K 线数据。
@@ -900,7 +917,7 @@ def fetch_all_asian_klines(
     single_ticker: str | None = None,
     max_workers: int = 6,
     period: str = "1y",
-    use_cf_proxy: bool = True,
+    use_cf_proxy: bool = False,
 ) -> list[dict]:
     """并发拉取亚洲寡头 K 线数据。
 
@@ -985,7 +1002,7 @@ def sync_asian_kline_cache(
     single_ticker: str | None = None,
     max_workers: int = 6,
     period: str = "1y",
-    use_cf_proxy: bool = True,
+    use_cf_proxy: bool = False,
     output_dir: str | None = None,
 ) -> tuple[bool, str, dict]:
     """严格同步亚洲 K 线缓存。

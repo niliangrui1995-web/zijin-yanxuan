@@ -14,6 +14,7 @@ function Get-AppDisplayName {
 }
 
 $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
+$RepoRoot = $RepoRoot.TrimEnd([char[]]@([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar))
 $EntryScript = Join-Path $RepoRoot "vcp_hunter_qt.pyw"
 $IconPath = Join-Path $RepoRoot "bull_icon.ico"
 $AssetsPath = Join-Path $RepoRoot "assets"
@@ -26,7 +27,9 @@ if (-not $OutputName) {
 
 function Get-FullPathSafe {
     param([Parameter(Mandatory = $true)][string]$Path)
-    return [System.IO.Path]::GetFullPath($Path)
+    return [System.IO.Path]::GetFullPath($Path).TrimEnd(
+        [char[]]@([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+    )
 }
 
 function Assert-PathExists {
@@ -48,7 +51,11 @@ function Remove-RepoPathIfPresent {
     }
 
     $resolvedPath = Get-FullPathSafe -Path $Path
-    if (-not $resolvedPath.StartsWith($RepoRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    $repoRootPrefix = "$RepoRoot$([System.IO.Path]::DirectorySeparatorChar)"
+    if ($resolvedPath.Equals($RepoRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove repo root: $resolvedPath"
+    }
+    if (-not $resolvedPath.StartsWith($repoRootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "Refusing to remove path outside repo root: $resolvedPath"
     }
 

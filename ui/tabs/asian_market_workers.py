@@ -24,8 +24,8 @@ from app.services import (
     mark_yf_rate_limited,
     sync_asian_kline_cache,
 )
-from core.logger import get_logger
 from app.services.ui_runtime_service import MarketCalendar
+from core.logger import get_logger
 
 log = get_logger(__name__)
 
@@ -37,7 +37,7 @@ _PE_REFRESH_INTERVAL_SEC = 12 * 60 * 60
 _YF_FETCH_MAX_WORKERS = 2
 _FETCH_UPDATES_TIMEOUT_SEC = 80
 
-_USE_CF_PROXY = True
+_USE_CF_PROXY = False
 _EMPTY_NUMERIC_MARKERS = {"", "-", "--", "---", "—", "－", "None", "null"}
 _NUMERIC_TOKEN_RE = re.compile(r"-?\d+(?:\.\d+)?")
 _DEFAULT_HTTP_HEADERS = {
@@ -344,7 +344,7 @@ def _fetch_hk_realtime_quote(code: str, http_session) -> dict | None:
         return None
 
     quote_code = base_code.zfill(5) if base_code.isdigit() else base_code
-    url = f"http://qt.gtimg.cn/q=hk{quote_code}"
+    url = f"https://qt.gtimg.cn/q=hk{quote_code}"
     response = http_session.get(
         url,
         headers={**_DEFAULT_HTTP_HEADERS, "Referer": "https://stockapp.finance.qq.com/"},

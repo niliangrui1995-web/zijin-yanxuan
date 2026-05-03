@@ -129,7 +129,7 @@ def get_yf_rate_limit_status() -> dict[str, float | str | bool]:
     }
 
 
-def build_yf_session(use_cf_proxy: bool = True):
+def build_yf_session(use_cf_proxy: bool = False):
     """构建 yfinance 可接受的 curl_cffi Session。"""
     session_cls = CfTunnelSession if use_cf_proxy else curl_requests.Session
     session = session_cls(impersonate="chrome")

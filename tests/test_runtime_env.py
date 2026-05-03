@@ -42,11 +42,12 @@ def test_collect_runtime_env_issues_accepts_project_pythonw(tmp_path):
     assert not any("project .venv" in issue for issue in issues)
 
 
-def test_collect_runtime_env_issues_detects_requests_and_curl_conflict(tmp_path):
+def test_collect_runtime_env_issues_detects_requests_and_runtime_dependency_conflicts(tmp_path):
     versions = {
         "requests": "2.32.5",
         "yfinance": "1.2.0",
         "curl_cffi": "0.14.0",
+        "lxml": "6.0.4",
     }
 
     issues = collect_runtime_env_issues(
@@ -57,7 +58,28 @@ def test_collect_runtime_env_issues_detects_requests_and_curl_conflict(tmp_path)
     )
 
     assert any("requests version too old" in issue for issue in issues)
-    assert any("curl_cffi incompatible" in issue for issue in issues)
+    assert any("yfinance version incompatible" in issue for issue in issues)
+    assert any("curl_cffi version incompatible" in issue for issue in issues)
+    assert any("lxml version too old" in issue for issue in issues)
+
+
+def test_collect_runtime_env_issues_accepts_security_dependency_floors(tmp_path):
+    versions = {
+        "requests": "2.33.0",
+        "yfinance": "1.3.0",
+        "curl_cffi": "0.15.0",
+        "lxml": "6.1.0",
+    }
+
+    issues = collect_runtime_env_issues(
+        str(tmp_path),
+        executable=str(tmp_path / "python.exe"),
+        import_module=lambda _: object(),
+        package_version=lambda name: versions.get(name, ""),
+    )
+
+    assert not any("version incompatible" in issue for issue in issues)
+    assert not any("version too old" in issue for issue in issues)
 
 
 def test_resolve_project_python_prefers_pythonw_for_pythonw_callers(tmp_path):

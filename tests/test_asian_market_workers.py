@@ -37,6 +37,18 @@ def _jp_current_page_html():
     '''
 
 
+def test_cf_proxy_default_disabled_and_toggleable():
+    original = workers.is_cf_proxy_enabled()
+    try:
+        assert workers._USE_CF_PROXY is False
+        workers.set_cf_proxy_enabled(True)
+        assert workers.is_cf_proxy_enabled() is True
+        workers.set_cf_proxy_enabled(False)
+        assert workers.is_cf_proxy_enabled() is False
+    finally:
+        workers.set_cf_proxy_enabled(original)
+
+
 def test_fetch_asian_realtime_quote_skips_yfinance_fallback_during_cooldown(monkeypatch):
     monkeypatch.setattr(workers, "_fetch_tw_realtime_quote", lambda code, session: None)
     monkeypatch.setattr(
@@ -91,7 +103,7 @@ def test_fetch_asian_realtime_quote_uses_tencent_for_hk(monkeypatch):
     assert quote["close"] == 169.3
     assert quote["previous_close"] == 165.8
     assert quote["source"] == "tencent_hk"
-    assert session.urls == ["http://qt.gtimg.cn/q=hk00522"]
+    assert session.urls == ["https://qt.gtimg.cn/q=hk00522"]
 
 
 def test_fetch_jp_realtime_quote_parses_current_yahoo_japan_page_shape():

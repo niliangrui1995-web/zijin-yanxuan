@@ -226,14 +226,18 @@ def collect_runtime_env_issues(
 
     yfinance_version = package_version("yfinance")
     curl_cffi_version = package_version("curl_cffi") or package_version("curl-cffi")
-    if yfinance_version.startswith("1.2."):
-        if not curl_cffi_version:
-            issues.append("yfinance 1.2.x requires curl_cffi")
-        elif _version_lt(curl_cffi_version, "0.7.0") or _version_ge(curl_cffi_version, "0.14.0"):
-            issues.append(
-                f"curl_cffi incompatible with yfinance 1.2.x: {curl_cffi_version} "
-                "(need >=0.7,<0.14)"
-            )
+    if yfinance_version and (
+        _version_lt(yfinance_version, "1.3.0") or _version_ge(yfinance_version, "1.4.0")
+    ):
+        issues.append(f"yfinance version incompatible: {yfinance_version} (need >=1.3.0,<1.4)")
+    if not curl_cffi_version:
+        issues.append("missing runtime dependency: curl_cffi")
+    elif _version_lt(curl_cffi_version, "0.15.0") or _version_ge(curl_cffi_version, "0.16.0"):
+        issues.append(f"curl_cffi version incompatible: {curl_cffi_version} (need >=0.15.0,<0.16)")
+
+    lxml_version = package_version("lxml")
+    if lxml_version and _version_lt(lxml_version, "6.1.0"):
+        issues.append(f"lxml version too old: {lxml_version} (need >=6.1.0)")
 
     return issues
 

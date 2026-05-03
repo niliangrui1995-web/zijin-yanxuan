@@ -5,7 +5,7 @@ from vcp.fetchers import asian_kline_fetcher as asian_fetcher_module
 from vcp.fetchers import yf_session as yf_session_module
 
 
-def build_yf_session(use_cf_proxy: bool = True):
+def build_yf_session(use_cf_proxy: bool = False):
     return yf_session_module.build_yf_session(use_cf_proxy)
 
 
@@ -51,7 +51,7 @@ def sync_asian_kline_cache(
     single_ticker: str | None = None,
     max_workers: int = 6,
     period: str = "1y",
-    use_cf_proxy: bool = True,
+    use_cf_proxy: bool = False,
     output_dir: str | None = None,
 ):
     return asian_fetcher_module.sync_asian_kline_cache(

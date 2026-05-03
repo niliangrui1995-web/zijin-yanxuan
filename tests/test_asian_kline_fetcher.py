@@ -265,6 +265,86 @@ def test_fetch_single_kline_routes_to_market_specific_history_source(monkeypatch
     assert route_hits == ["TW", "TWO", "KS", "T", "HK"]
 
 
+def test_twse_history_uses_default_tls_verification(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+
+    class _Response:
+        def json(self):
+            return {
+                "stat": "OK",
+                "data": [["115/04/20", "1,000", "", "100.00", "110.00", "90.00", "105.00"]],
+            }
+
+    class _Session:
+        def __init__(self):
+            self.kwargs = None
+
+        def get(self, url, **kwargs):
+            self.kwargs = dict(kwargs)
+            return _Response()
+
+    session = _Session()
+    rows = fetcher._fetch_tw_history_twse(
+        "2330.TW",
+        session,
+        start_date=fetcher.date(2026, 4, 1),
+        end_date=fetcher.date(2026, 4, 30),
+    )
+
+    assert rows[0]["date"] == "2026-04-20"
+    assert "verify" not in session.kwargs
+
+
+def test_twse_history_tls_failure_fails_closed(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+
+    class SSLError(Exception):
+        pass
+
+    class _Session:
+        def get(self, url, **kwargs):
+            raise SSLError("CERTIFICATE_VERIFY_FAILED: test")
+
+    rows = fetcher._fetch_tw_history_twse(
+        "2330.TW",
+        _Session(),
+        start_date=fetcher.date(2026, 4, 1),
+        end_date=fetcher.date(2026, 4, 30),
+    )
+
+    assert rows == []
+
+
+def test_tw_history_falls_back_to_yfinance_when_twse_empty(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    monkeypatch.setattr(fetcher, "_fetch_tw_history_twse", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        fetcher,
+        "_fetch_yfinance_history_rows",
+        lambda *args, **kwargs: [
+            {
+                "date": "2026-04-30",
+                "open": 800.0,
+                "high": 820.0,
+                "low": 790.0,
+                "close": 810.0,
+                "volume": 123456,
+            }
+        ],
+    )
+
+    rows, source = fetcher._fetch_market_history_rows(
+        "2330.TW",
+        object(),
+        start_date=fetcher.date(2026, 4, 1),
+        end_date=fetcher.date(2026, 5, 2),
+        target_rows=260,
+    )
+
+    assert source == "yfinance_history"
+    assert rows[0]["close"] == 810.0
+
+
 def test_jp_history_falls_back_to_yfinance_when_yahoo_japan_empty(monkeypatch):
     fetcher = _load_fetcher_module(monkeypatch)
     monkeypatch.setattr(fetcher, "_fetch_jp_history_yahoo_japan", lambda *args, **kwargs: [])
