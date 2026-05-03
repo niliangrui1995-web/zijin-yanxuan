@@ -79,25 +79,35 @@ class CommandPaletteDialog(QDialog):
     def _apply_theme(self) -> None:
         tokens = build_ui_tokens()
         theme = tokens["theme"]
+        surface = tokens["surface"]
+        border = tokens["border"]
+        text = tokens["text"]
         self.setStyleSheet(
             f"""
             QDialog#commandPaletteDialog {{
-                background: {theme['BG_ELEVATED']};
-                border: 1px solid {theme['BORDER_STRONG']};
+                background: {surface['overlay']};
+                border: 1px solid {border['strong']};
                 border-radius: {tokens['radius']['xl']}px;
             }}
             QLineEdit {{
-                min-height: {tokens['control']['input_height']}px;
+                background: {surface['input']};
+                color: {text['primary']};
+                border: 1px solid {border['default']};
+                border-radius: {tokens['radius']['lg']}px;
+                min-height: {tokens['control']['toolbar_button_height']}px;
                 padding: 0 {tokens['space']['lg']}px;
             }}
+            QLineEdit:focus {{
+                border: 1px solid {border['focus']};
+            }}
             QLabel#commandPaletteHint {{
-                color: {theme['TEXT_MUTED']};
+                color: {text['muted']};
                 font-size: {tokens['font']['size_sm']}px;
             }}
             QListWidget#commandPaletteList {{
-                background: {theme['BG_BASE']};
-                color: {theme['TEXT_PRIMARY']};
-                border: 1px solid {theme['BORDER_DEFAULT']};
+                background: {surface['input']};
+                color: {text['primary']};
+                border: 1px solid {border['default']};
                 border-radius: {tokens['radius']['lg']}px;
                 padding: {tokens['space']['xs']}px;
                 outline: none;
@@ -106,13 +116,14 @@ class CommandPaletteDialog(QDialog):
                 border-radius: {tokens['radius']['md']}px;
                 padding: {tokens['space']['sm']}px {tokens['space']['md']}px;
                 margin: 2px 0;
+                min-height: {max(32, tokens['control']['button_height'])}px;
             }}
             QListWidget#commandPaletteList::item:selected {{
                 background: {theme['SELECTION_BG']};
-                color: {theme['TEXT_PRIMARY']};
+                color: {text['primary']};
             }}
             QListWidget#commandPaletteList::item:hover {{
-                background: {theme['BG_HOVER']};
+                background: {surface['hover']};
             }}
             """
         )

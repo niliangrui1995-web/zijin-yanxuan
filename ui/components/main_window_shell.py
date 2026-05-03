@@ -98,20 +98,22 @@ def _system_button_style(theme: dict, text_color: str, hover_bg: str) -> str:
 
 def _standalone_tabbar_qss(theme: dict) -> str:
     tokens = build_ui_tokens(theme)
-    tab_gap = 0
+    tab_gap = max(3, tokens["shell"]["toolbar_group_gap"])
     tab_padding_x = max(12, tokens["control"]["tab_padding_x"] + 2)
-    tab_radius = max(8, tokens["radius"]["lg"] - 2)
+    tab_radius = max(8, tokens["radius"]["md"])
+    surface = tokens["surface"]
+    border = tokens["border"]
     return f"""
         QTabBar {{
             background: transparent;
             border: none;
         }}
         QTabBar::tab {{
-            background: {theme['BG_BUTTON']};
+            background: {surface['toolbar_chip']};
             color: {theme['TAB_TEXT']};
             padding: {tokens['control']['tab_padding_y']}px {tab_padding_x}px;
             margin: 0 {tab_gap}px 0 0;
-            border: 1px solid {theme['BORDER_DEFAULT']};
+            border: 1px solid {border['subtle']};
             border-top: 2px solid transparent;
             font-size: {tokens['font']['size_sm']}px;
             font-weight: {tokens['font']['weight_semibold']};
@@ -129,18 +131,20 @@ def _standalone_tabbar_qss(theme: dict) -> str:
         QTabBar::tab:hover:!selected {{
             color: {theme['TAB_TEXT_HOVER']};
             background: {theme['TAB_HOVER_BG']};
-            border-color: {theme['BORDER_STRONG']};
+            border-color: {border['strong']};
         }}
     """
 
 
 def _nav_group_button_qss(theme: dict) -> str:
     tokens = build_ui_tokens(theme)
+    surface = tokens["surface"]
+    border = tokens["border"]
     return f"""
         QPushButton {{
-            background: transparent;
+            background: {surface['toolbar_chip']};
             color: {theme['TEXT_SECONDARY']};
-            border: 1px solid {theme['BORDER_DEFAULT']};
+            border: 1px solid {border['subtle']};
             border-radius: {tokens['radius']['pill']}px;
             padding: 0 {tokens['space']['lg']}px;
             min-height: {tokens['control']['segment_height']}px;
@@ -149,13 +153,13 @@ def _nav_group_button_qss(theme: dict) -> str:
         }}
         QPushButton:hover {{
             color: {theme['TEXT_PRIMARY']};
-            border-color: {theme['BORDER_STRONG']};
+            border-color: {border['strong']};
             background: {theme['BG_HOVER']};
         }}
         QPushButton:checked {{
-            color: {theme['TEXT_ON_ACCENT']};
-            border-color: {theme['BRAND_DEEP']};
-            background: {theme['BRAND_PRIMARY']};
+            color: {theme.get('TAB_ACTIVE_TEXT', theme['TEXT_PRIMARY'])};
+            border-color: {theme.get('TAB_ACTIVE_BORDER', theme['BORDER_BRAND'])};
+            background: {theme.get('TAB_ACTIVE_BG', theme['BRAND_SUBTLE'])};
         }}
     """
 

@@ -182,7 +182,7 @@ def apply_qt_theme(window) -> None:
             QFrame#klineContainer {{
                 background-color: {widget_bg};
                 border: 1px solid {toolbar_border};
-                border-radius: {radius['md']}px;
+                border-radius: {radius['lg']}px;
             }}
         """
     )
@@ -191,9 +191,9 @@ def apply_qt_theme(window) -> None:
         f"""
             QWidget {{
                 background-color: {toolbar_bg};
-                border-top-left-radius: {radius['md']}px;
-                border-top-right-radius: {radius['md']}px;
-                border-bottom: none;
+                border-top-left-radius: {radius['lg']}px;
+                border-top-right-radius: {radius['lg']}px;
+                border-bottom: 1px solid {toolbar_border};
             }}
         """
     )
@@ -308,7 +308,7 @@ def apply_qt_theme(window) -> None:
         )
         card["title"].setStyleSheet(
             f"color: {theme['TEXT_MUTED']}; font-size: {font['size_xs']}px;"
-            f" font-weight: {font['weight_medium']}; letter-spacing: 0.2px;"
+            f" font-weight: {font['weight_medium']}; letter-spacing: 0px;"
         )
         for label in card["labels"]:
             label.setStyleSheet(
@@ -371,4 +371,3 @@ def get_cn_target_trade_date():
         )
 
     return latest
-

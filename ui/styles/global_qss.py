@@ -86,16 +86,16 @@ QTabBar {{
     background: transparent;
 }}
 QTabBar::tab {{
-    background: {surface['soft']};
+    background: {surface['toolbar_chip']};
     color: {t['TEXT_MUTED']};
     padding: {control['tab_padding_y']}px {control['tab_padding_x']}px;
-    margin-right: 4px;
+    margin-right: {space['xs']}px;
     font-size: {font['size_md']}px;
     font-weight: {font['weight_medium']};
-    border: 1px solid {border['default']};
+    border: 1px solid {border['subtle']};
     border-top: 2px solid transparent;
-    border-top-left-radius: {radius['lg']}px;
-    border-top-right-radius: {radius['lg']}px;
+    border-top-left-radius: {radius['md']}px;
+    border-top-right-radius: {radius['md']}px;
     min-width: 50px;
 }}
 QTabBar::tab:hover {{
@@ -129,14 +129,16 @@ QTableView {{
 QTableView::item {{
     padding: {table['cell_padding_y']}px {table['cell_padding_x']}px;
     border-bottom: 1px solid {t['BORDER_SUBTLE']};
+    border-right: 1px solid {t['BORDER_SUBTLE']};
 }}
 QTableView::item:hover {{
-    background-color: {surface['hover']};
+    background-color: {t['BG_TABLE_HOVER']};
 }}
 QTableView::item:selected {{
     background-color: {table['selected_bg']};
     color: {t['TEXT_BRIGHT']};
     border-bottom: 1px solid {border['accent']};
+    border-right: 1px solid {border['accent']};
 }}
 QTableView::item:selected:hover {{
     background-color: {table['selected_hover_bg']};
@@ -159,7 +161,7 @@ QHeaderView::section {{
     font-family: "Microsoft YaHei", "微软雅黑";
     font-size: {table['header_font_size']}px;
     font-weight: {font['weight_semibold']};
-    letter-spacing: 0.2px;
+    letter-spacing: 0px;
     padding: {table['header_padding_y']}px {table['header_padding_x']}px;
     min-height: {table['header_min_height']}px;
     border: none;
@@ -419,7 +421,7 @@ QWidget#tabToolbar {{
 }}
 QFrame#tabToolbarTitleWrap {{
     background-color: {surface['toolbar_card']};
-    border: 1px solid {border['default']};
+    border: 1px solid {border['strong']};
     border-radius: {radius['xl']}px;
     min-height: {control['toolbar_button_height'] + 1}px;
 }}
@@ -453,8 +455,8 @@ QCheckBox[inToolbar="true"] {{
     color: {text['secondary']};
     spacing: 6px;
     padding: 0 12px 0 10px;
-    background-color: {surface['toolbar_card']};
-    border: 1px solid {border['default']};
+    background-color: {surface['toolbar_chip']};
+    border: 1px solid {border['subtle']};
     border-radius: {radius['pill']}px;
 }}
 QCheckBox[inToolbar="true"]:hover {{
@@ -477,7 +479,7 @@ QCheckBox[inToolbar="true"]::indicator {{
 QLabel#tabStatusLabel {{
     background-color: {surface['toolbar_chip']};
     color: {text['secondary']};
-    border: 1px solid {border['default']};
+    border: 1px solid {border['subtle']};
     border-radius: {radius['pill']}px;
     padding: 0 {control['toolbar_chip_padding_x']}px;
     min-height: {control['toolbar_chip_height']}px;
@@ -489,9 +491,9 @@ QWidget#tabStatusChipBar {{
     background: transparent;
 }}
 QLabel#tabStatusPrimaryChip {{
-    background-color: {surface['toolbar_chip']};
-    color: {text['primary']};
-    border: 1px solid {border['default']};
+    background-color: {t['INFO_BADGE_BG']};
+    color: {t['INFO_BADGE_FG']};
+    border: 1px solid {t['INFO_BADGE_BORDER']};
     border-radius: {radius['pill']}px;
     padding: 0 {control['toolbar_chip_padding_x']}px;
     min-height: {control['toolbar_chip_height']}px;
@@ -531,6 +533,31 @@ QLabel#successStatus {{
 }}
 QLabel#warningStatus {{
     color: {t['COLOR_WARNING']}; font-weight: {font['weight_bold']}; font-size: {font['size_xs']}px;
+}}
+
+QFrame#taskStatusPanel {{
+    background-color: {surface['elevated']};
+    border: 1px solid {border['default']};
+    border-radius: {radius['lg']}px;
+}}
+QLabel#taskStatusPanelTitle {{
+    color: {text['primary']};
+    font-size: {font['size_md']}px;
+    font-weight: {font['weight_semibold']};
+}}
+QLabel#taskStatusPanelSummary {{
+    color: {text['secondary']};
+    font-size: {font['size_sm']}px;
+}}
+QPlainTextEdit#taskStatusPanelDetails {{
+    background-color: {surface['input']};
+    color: {text['secondary']};
+    border: 1px solid {border['subtle']};
+    border-radius: {radius['md']}px;
+    padding: {space['sm']}px {space['md']}px;
+    font-family: {font['mono_family']};
+    font-size: {font['size_xs']}px;
+    selection-background-color: {input_selection_bg};
 }}
 
 QLineEdit {{

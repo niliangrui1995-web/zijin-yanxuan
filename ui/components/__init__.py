@@ -428,12 +428,12 @@ class TableStateOverlay(QWidget):
         self._card = QFrame(self)
         self._card.setObjectName("tableStateCard")
         self._card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self._card.setMinimumWidth(320)
-        self._card.setMaximumWidth(420)
+        self._card.setMinimumWidth(360)
+        self._card.setMaximumWidth(500)
 
         card_layout = QVBoxLayout(self._card)
-        card_layout.setContentsMargins(18, 16, 18, 16)
-        card_layout.setSpacing(8)
+        card_layout.setContentsMargins(22, 18, 22, 18)
+        card_layout.setSpacing(10)
         card_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
         self._dot = PulsingDot(parent=self)
@@ -448,16 +448,16 @@ class TableStateOverlay(QWidget):
         self._subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._subtitle.setWordWrap(True)
         self._subtitle.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self._subtitle.setMinimumWidth(220)
-        self._subtitle.setMaximumWidth(360)
+        self._subtitle.setMinimumWidth(260)
+        self._subtitle.setMaximumWidth(420)
 
         self._meta = QLabel("")
         self._meta.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._meta.setWordWrap(True)
         self._meta.setVisible(False)
         self._meta.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self._meta.setMinimumWidth(220)
-        self._meta.setMaximumWidth(360)
+        self._meta.setMinimumWidth(260)
+        self._meta.setMaximumWidth(420)
 
         self._action = QPushButton("")
         self._action.setVisible(False)
@@ -485,8 +485,8 @@ class TableStateOverlay(QWidget):
         tokens = build_ui_tokens()
         t = tokens["theme"]
         tone = get_state_tone(self._mode)
-        card_border = tone["border"] if self._mode != "empty" else t["BORDER_DEFAULT"]
-        card_bg = tone["bg"] if self._mode != "empty" else t["BG_ELEVATED"]
+        card_border = tone["border"] if self._mode != "empty" else tokens["border"]["default"]
+        card_bg = tone["bg"] if self._mode != "empty" else tokens["surface"]["elevated"]
         self._card.setStyleSheet(
             f"""
             QFrame#tableStateCard {{

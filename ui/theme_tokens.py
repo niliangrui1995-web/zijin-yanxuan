@@ -104,41 +104,41 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "sm": 6,
         "md": 8,
         "lg": 12,
-        "xl": 14,
-        "pill": 12,
+        "xl": 16,
+        "pill": 14,
     }
 
     space = {
         "2xs": 4,
         "xs": 6,
         "sm": 8,
-        "md": 10,
-        "lg": 12,
-        "xl": 14,
-        "2xl": 16,
+        "md": 10 if compact else 12,
+        "lg": 12 if compact else 14,
+        "xl": 14 if compact else 16,
+        "2xl": 16 if compact else 20,
     }
 
     control = {
-        "button_height": 30 if compact else 32,
-        "input_height": 30 if compact else 32,
-        "toolbar_button_height": 32 if compact else 36,
-        "button_padding_x": 12 if compact else 14,
-        "toolbar_chip_height": 20 if compact else 22,
-        "toolbar_chip_padding_x": 8 if compact else 10,
-        "tab_padding_y": 3 if compact else 4,
-        "tab_padding_x": 9 if compact else 12,
-        "segment_height": 26 if compact else 28,
+        "button_height": 30 if compact else 34,
+        "input_height": 30 if compact else 34,
+        "toolbar_button_height": 32 if compact else 38,
+        "button_padding_x": 12 if compact else 16,
+        "toolbar_chip_height": 20 if compact else 24,
+        "toolbar_chip_padding_x": 8 if compact else 12,
+        "tab_padding_y": 3 if compact else 5,
+        "tab_padding_x": 9 if compact else 13,
+        "segment_height": 26 if compact else 30,
     }
 
     table = {
-        "row_height_base": 30,
-        "row_height_delta": 6,
-        "cell_padding_y": 4 if compact else 7,
-        "cell_padding_x": 10 if compact else 12,
-        "header_padding_y": 3 if compact else 4,
-        "header_padding_x": 9 if compact else 10,
+        "row_height_base": 34,
+        "row_height_delta": 4,
+        "cell_padding_y": 4 if compact else 8,
+        "cell_padding_x": 10 if compact else 14,
+        "header_padding_y": 3 if compact else 6,
+        "header_padding_x": 9 if compact else 12,
         "header_font_size": 11 if compact else 12,
-        "header_min_height": 26 if compact else 28,
+        "header_min_height": 28 if compact else 32,
         "focus_radius": radius["xs"],
         "selected_bg": theme["SELECTION_BG"],
         "selected_hover_bg": theme["SELECTION_HOVER_BG"],
@@ -153,19 +153,19 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
     }
 
     shell = {
-        "titlebar_height": 38 if compact else 40,
-        "window_button_width": 44 if compact else 46,
-        "system_button_width": 44 if compact else 46,
-        "status_height": 32 if compact else 34,
-        "status_pill_min_height": 24 if compact else 26,
+        "titlebar_height": 38 if compact else 42,
+        "window_button_width": 44 if compact else 48,
+        "system_button_width": 44 if compact else 48,
+        "status_height": 32 if compact else 36,
+        "status_pill_min_height": 24 if compact else 28,
         "status_pill_padding_x": 10 if compact else 12,
-        "toolbar_min_height": 46 if compact else 50,
-        "toolbar_padding_x": 8 if compact else 10,
-        "toolbar_padding_y": 6 if compact else 7,
-        "toolbar_section_gap": 6 if compact else 8,
-        "toolbar_group_gap": 3 if compact else 4,
+        "toolbar_min_height": 46 if compact else 56,
+        "toolbar_padding_x": 8 if compact else 12,
+        "toolbar_padding_y": 6 if compact else 8,
+        "toolbar_section_gap": 6 if compact else 10,
+        "toolbar_group_gap": 3 if compact else 6,
         "toolbar_card_radius": radius["lg"],
-        "tabbar_height": 26 if compact else 28,
+        "tabbar_height": 26 if compact else 30,
     }
 
     surface = {
@@ -254,4 +254,3 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
 def get_state_tone(tone: str, theme: dict | None = None, density: str | None = None) -> dict:
     tokens = build_ui_tokens(theme, density)
     return tokens["state"].get(tone, tokens["state"]["neutral"])
-

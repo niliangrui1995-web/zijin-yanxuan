@@ -62,7 +62,7 @@ class SplashScreen(QWidget):
         self.lbl_brand.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_brand.setStyleSheet(
             "font-size: 28px; font-weight: 900; color: #93C5FD; "
-            "letter-spacing: 6px; background: transparent;"
+            "letter-spacing: 0px; background: transparent;"
         )
         layout.addWidget(self.lbl_brand)
 
@@ -70,7 +70,7 @@ class SplashScreen(QWidget):
         self.lbl_sub = QLabel("量化终端")
         self.lbl_sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_sub.setStyleSheet(
-            "font-size: 13px; color: #6B7280; letter-spacing: 2px; "
+            "font-size: 13px; color: #6B7280; letter-spacing: 0px; "
             "margin-top: 4px; background: transparent;"
         )
         layout.addWidget(self.lbl_sub)

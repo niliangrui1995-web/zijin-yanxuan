@@ -13,6 +13,10 @@ import threading
 import weakref
 from importlib import import_module
 
+try:
+    from PyQt6 import sip
+except ImportError:  # pragma: no cover - PyQt runtime always provides sip.
+    sip = None
 from PyQt6.QtCore import QCoreApplication, QTimer
 
 from app.services import FINANCE_CACHE_FILE, batch_get_finance_info, load_local_tdx_capital_snapshot
@@ -31,6 +35,16 @@ _FINANCE_CACHE_LOCK = threading.RLock()
 _FINANCE_CACHE_PATH: str | None = None
 _FINANCE_CACHE_SIGNATURE: tuple[int, int] | None = None
 _FINANCE_CACHE_PAYLOAD: dict | None = None
+
+
+def _is_qt_object_deleted(obj) -> bool:
+    """Return True when a weakly-held Qt wrapper has already been destroyed."""
+    if obj is None or sip is None:
+        return obj is None
+    try:
+        return bool(sip.isdeleted(obj))
+    except (AttributeError, RuntimeError, TypeError):
+        return False
 
 
 def _current_finance_cache_file() -> str:
@@ -187,11 +201,16 @@ def _load_shared_finance_cache_payload(path: str) -> dict:
 
 
 def _resolve_cached_finance_loader(owner):
+    if _is_qt_object_deleted(owner):
+        return lambda _codes: {}
+
     loader = getattr(owner, "_load_cached_finance_snapshot", None)
     if callable(loader):
         return loader
 
     def _load(codes):
+        if _is_qt_object_deleted(owner):
+            return {}
         data_provider = getattr(owner, "data_provider", None)
         return load_cached_finance_snapshot(
             codes,
@@ -222,8 +241,14 @@ def _collect_local_quote_targets(owner, model, latest_quotes: dict | None = None
 
 
 def _build_local_quote_payload(owner, target_codes: list[str]) -> dict:
+    if _is_qt_object_deleted(owner):
+        return {}
+
     offline_quotes = {}
-    offline_builder = getattr(getattr(owner, "data_provider", None), "_build_offline_quotes", None)
+    try:
+        offline_builder = getattr(getattr(owner, "data_provider", None), "_build_offline_quotes", None)
+    except RuntimeError:
+        return {}
     if callable(offline_builder):
         try:
             offline_quotes = offline_builder(target_codes) or {}
@@ -308,23 +333,29 @@ def prime_local_quote_snapshot_async(owner, current_model=None) -> bool:
 
     def _bg_local_quote():
         owner_obj = owner_ref()
-        if owner_obj is None:
+        if _is_qt_object_deleted(owner_obj):
             return {}
         app_obj = QCoreApplication.instance()
         if app_obj is None or app_obj.closingDown():
             return {}
-        return _build_local_quote_payload(owner_obj, target_codes)
+        try:
+            return _build_local_quote_payload(owner_obj, target_codes)
+        except RuntimeError:
+            return {}
 
     def _on_success(warm_payload):
         owner_obj = owner_ref()
-        if owner_obj is None or not warm_payload:
+        if _is_qt_object_deleted(owner_obj) or not warm_payload:
             return
         published = publish_rt_quotes(
             warm_payload,
             source=f"{owner_class_name}.local_cache_async",
         )
         if published:
-            owner_obj._apply_quote_snapshot(published)
+            try:
+                owner_obj._apply_quote_snapshot(published)
+            except RuntimeError:
+                pass
 
     def _on_error(error_message: str):
         if error_message:
