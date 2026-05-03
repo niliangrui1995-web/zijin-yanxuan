@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QFrame, QMainWindow, QTabWidget, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QFrame, QMainWindow, QSizePolicy, QTabWidget, QVBoxLayout, QWidget
 
 from ui.components.main_window_shell import (
     MainWindowStatusBar,
@@ -107,6 +107,17 @@ def test_main_window_shell_builders_wire_titlebar_menu_and_tabs():
         assert window._standalone_tabbar.expanding() is False
         assert window._standalone_tabbar.usesScrollButtons() is True
         assert window._standalone_tabbar.elideMode() == Qt.TextElideMode.ElideNone
+        assert window._standalone_tabbar.minimumWidth() >= 420
+        assert window._standalone_tabbar.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
+        nav_idx = window._titlebar_layout.indexOf(window._titlebar_nav_host)
+        assert window._titlebar_layout.stretch(nav_idx) >= 20
+        assert window._titlebar_sync_widget.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Maximum
+        assert window._titlebar_sync_widget.lbl_meta.isHidden() is False
+        assert window._titlebar_sync_widget.lbl_meta.minimumWidth() >= 220
+        assert window._titlebar_sync_widget.lbl_meta.maximumWidth() >= 420
+        window._titlebar_sync_widget.set_state("cache", "cache loaded", "snapshot 20260430")
+        assert window._titlebar_sync_widget.lbl_meta.text() == "cache loaded｜snapshot 20260430"
+        assert window._titlebar_sync_widget.lbl_state.toolTip() == window._titlebar_sync_widget.lbl_meta.text()
         assert window._market_pulse_strip.height() == 3
         assert window._theme_menu.title().startswith("界面主题：")
         assert window.last_density is not None

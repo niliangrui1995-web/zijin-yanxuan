@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMenu,
     QPushButton,
+    QSizePolicy,
     QTabBar,
     QToolButton,
     QVBoxLayout,
@@ -416,6 +417,7 @@ class ShellNavigationWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._tabs = None
         self._workspace = None
         self._syncing = False
@@ -430,7 +432,7 @@ class ShellNavigationWidget(QWidget):
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(6)
 
         self._group_button_group = QButtonGroup(self)
         self._group_button_group.setExclusive(True)
@@ -438,10 +440,12 @@ class ShellNavigationWidget(QWidget):
         self.group_wrap = QWidget(self)
         self.group_layout = QHBoxLayout(self.group_wrap)
         self.group_layout.setContentsMargins(0, 0, 0, 0)
-        self.group_layout.setSpacing(6)
+        self.group_layout.setSpacing(4)
         layout.addWidget(self.group_wrap, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         self.tabbar = QTabBar(self)
+        self.tabbar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.tabbar.setMinimumWidth(420)
         self.tabbar.setExpanding(False)
         self.tabbar.setDrawBase(False)
         self.tabbar.setUsesScrollButtons(True)
@@ -541,6 +545,7 @@ class ShellNavigationWidget(QWidget):
                 for global_index in indices:
                     self.tabbar.addTab(self._tabs.tabText(global_index))
                 self._tabbar_rebuild_count += 1
+                self._update_tabbar_minimum_width()
 
             visible_target = indices.index(target_index)
             if self.tabbar.currentIndex() != visible_target:
@@ -578,6 +583,17 @@ class ShellNavigationWidget(QWidget):
             if self.tabbar.tabText(visible_index) != self._tabs.tabText(global_index):
                 return False
         return True
+
+    def _update_tabbar_minimum_width(self) -> None:
+        tokens = build_ui_tokens()
+        padding_x = max(12, tokens["control"]["tab_padding_x"] + (0 if self._compact_nav else 2))
+        gap = 2 if self._compact_nav else max(3, tokens["shell"]["toolbar_group_gap"])
+        metrics = self.tabbar.fontMetrics()
+        total = 0
+        for index in range(self.tabbar.count()):
+            label_width = metrics.horizontalAdvance(self.tabbar.tabText(index))
+            total += label_width + padding_x * 2 + gap + 10
+        self.tabbar.setMinimumWidth(max(420, min(total, 760)))
 
     def _find_group_for_index(self, tab_index: int) -> str:
         for group, indices in self._group_to_indices.items():
@@ -624,6 +640,7 @@ class ShellNavigationWidget(QWidget):
         for button in self._group_buttons.values():
             button.setMaximumWidth(86 if compact else 104)
         self.apply_theme()
+        self._update_tabbar_minimum_width()
 
     def apply_theme(self) -> None:
         from ui.theme import theme_manager
@@ -647,6 +664,7 @@ class TitleBarSyncWidget(QFrame):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         self._state = "idle"
         self._detail = ""
         self._freshness = ""
@@ -670,7 +688,9 @@ class TitleBarSyncWidget(QFrame):
 
         self.lbl_meta = QLabel("等待首次同步", self)
         self.lbl_meta.setObjectName("titleBarSyncMeta")
-        self.lbl_meta.setMaximumWidth(168)
+        self.lbl_meta.setMinimumWidth(220)
+        self.lbl_meta.setMaximumWidth(420)
+        self.lbl_meta.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self.lbl_meta.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
         layout.addWidget(self.lbl_meta, 0, Qt.AlignmentFlag.AlignVCenter)
 
@@ -697,6 +717,7 @@ class TitleBarSyncWidget(QFrame):
         meta_text = "｜".join(segments) if segments else "等待首次同步"
         self.lbl_meta.setText(meta_text)
         self.lbl_meta.setToolTip(meta_text)
+        self.lbl_state.setToolTip(meta_text)
         self.apply_theme()
 
     def apply_theme(self) -> None:
@@ -838,22 +859,26 @@ def inject_standalone_tabbar(window) -> QTabBar:
     if nav_widget is None or sync_widget is None:
         nav_host = QWidget()
         nav_host.setObjectName("titleBarNavHost")
+        nav_host.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         nav_layout = QHBoxLayout(nav_host)
         nav_layout.setContentsMargins(0, 0, 0, 0)
-        nav_layout.setSpacing(10)
+        nav_layout.setSpacing(6)
 
         nav_widget = ShellNavigationWidget(nav_host)
         sync_widget = TitleBarSyncWidget(nav_host)
         sync_widget.btn_sync.clicked.connect(window._action_refresh_f5)
 
-        nav_layout.addWidget(nav_widget, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        nav_layout.addWidget(nav_widget, 10, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         nav_layout.addWidget(sync_widget, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         old = window._titlebar_tab_placeholder
         idx = window._titlebar_layout.indexOf(old)
         window._titlebar_layout.removeWidget(old)
         old.deleteLater()
-        window._titlebar_layout.insertWidget(idx, nav_host, 1)
+        window._titlebar_layout.insertWidget(idx, nav_host, 24)
+        window._titlebar_layout.setStretch(idx, 24)
+        if idx + 1 < window._titlebar_layout.count():
+            window._titlebar_layout.setStretch(idx + 1, 0)
 
         window._titlebar_nav_host = nav_host
         window._shell_navigation_widget = nav_widget
