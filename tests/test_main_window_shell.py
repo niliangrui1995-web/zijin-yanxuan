@@ -104,14 +104,17 @@ def test_main_window_shell_builders_wire_titlebar_menu_and_tabs():
         assert window.btn_sys_menu.toolTip() == "系统菜单"
         assert window.btn_sys_menu.text() == "⚙️"
         assert window._standalone_tabbar.toolTip() == ""
+        assert window._standalone_tabbar.expanding() is False
         assert window._standalone_tabbar.usesScrollButtons() is True
-        assert window._standalone_tabbar.elideMode() == Qt.TextElideMode.ElideRight
+        assert window._standalone_tabbar.elideMode() == Qt.TextElideMode.ElideNone
         assert window._market_pulse_strip.height() == 3
         assert window._theme_menu.title().startswith("界面主题：")
         assert window.last_density is not None
         assert window.last_density[1] is False
         tabbar_style = window._standalone_tabbar.styleSheet()
-        assert "max-width:" in tabbar_style
+        assert "max-width: 104px;" not in tabbar_style
+        assert "max-width: 132px;" not in tabbar_style
+        assert "min-width: 44px;" in tabbar_style
         assert "QTabBar::tab:selected" in tabbar_style
         assert "border-top: 2px solid transparent;" in tabbar_style
 

@@ -99,9 +99,8 @@ def _system_button_style(theme: dict, text_color: str, hover_bg: str) -> str:
 def _standalone_tabbar_qss(theme: dict, *, compact: bool = False) -> str:
     tokens = build_ui_tokens(theme)
     tab_gap = 2 if compact else max(3, tokens["shell"]["toolbar_group_gap"])
-    tab_padding_x = max(8, tokens["control"]["tab_padding_x"] if compact else tokens["control"]["tab_padding_x"] + 2)
+    tab_padding_x = max(12, tokens["control"]["tab_padding_x"] + (0 if compact else 2))
     tab_radius = max(8, tokens["radius"]["md"])
-    tab_max_width = 104 if compact else 132
     surface = tokens["surface"]
     border = tokens["border"]
     return f"""
@@ -119,10 +118,23 @@ def _standalone_tabbar_qss(theme: dict, *, compact: bool = False) -> str:
             font-size: {tokens['font']['size_sm']}px;
             font-weight: {tokens['font']['weight_semibold']};
             min-height: {tokens['shell']['tabbar_height']}px;
-            min-width: 0px;
-            max-width: {tab_max_width}px;
+            min-width: 44px;
             border-radius: {tab_radius}px;
             font-family: {tokens['font']['family']};
+        }}
+        QTabBar QToolButton {{
+            background: {surface['toolbar_chip']};
+            color: {theme['TEXT_SECONDARY']};
+            border: 1px solid {border['subtle']};
+            border-radius: {tokens['radius']['sm']}px;
+            min-width: 18px;
+            max-width: 18px;
+            margin: 1px 1px;
+        }}
+        QTabBar QToolButton:hover {{
+            color: {theme['TEXT_PRIMARY']};
+            border-color: {border['strong']};
+            background: {theme['BG_HOVER']};
         }}
         QTabBar::tab:selected {{
             color: {theme.get('TAB_ACTIVE_TEXT', theme['TEXT_PRIMARY'])};
@@ -430,10 +442,10 @@ class ShellNavigationWidget(QWidget):
         layout.addWidget(self.group_wrap, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         self.tabbar = QTabBar(self)
-        self.tabbar.setExpanding(True)
+        self.tabbar.setExpanding(False)
         self.tabbar.setDrawBase(False)
         self.tabbar.setUsesScrollButtons(True)
-        self.tabbar.setElideMode(Qt.TextElideMode.ElideRight)
+        self.tabbar.setElideMode(Qt.TextElideMode.ElideNone)
         self.tabbar.setAccessibleName("二级页面导航")
         self.tabbar.currentChanged.connect(self._on_tabbar_changed)
         layout.addWidget(self.tabbar, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -608,7 +620,7 @@ class ShellNavigationWidget(QWidget):
         if compact == self._compact_nav:
             return
         self._compact_nav = compact
-        self.tabbar.setExpanding(not compact)
+        self.tabbar.setExpanding(False)
         for button in self._group_buttons.values():
             button.setMaximumWidth(86 if compact else 104)
         self.apply_theme()
