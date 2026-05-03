@@ -32,6 +32,9 @@ def generate_global_qss(theme: dict = None, density: str | None = None) -> str:
     primary_gradient_end = t.get("PRIMARY_GRADIENT_END", t.get("BRAND_PRESSED", t["BRAND_DEEP"]))
     primary_hover_start = t.get("PRIMARY_HOVER_GRADIENT_START", t["BRAND_HOVER"])
     primary_hover_end = t.get("PRIMARY_HOVER_GRADIENT_END", t["BRAND_PRIMARY"])
+    primary_button_text = t.get("PRIMARY_BUTTON_TEXT", t["TEXT_ON_ACCENT"])
+    primary_button_border = t.get("PRIMARY_BUTTON_BORDER", "transparent")
+    primary_button_pressed_bg = t.get("PRIMARY_BUTTON_PRESSED_BG", t.get("BRAND_PRESSED", t["BRAND_DEEP"]))
     segment_active_bg = t.get("SEGMENT_ACTIVE_BG", t["BRAND_PRIMARY"])
     segment_active_border = t.get("SEGMENT_ACTIVE_BORDER", t["BRAND_HOVER"])
     segment_active_text = t.get("SEGMENT_ACTIVE_TEXT", t["TEXT_ON_ACCENT"])
@@ -41,6 +44,8 @@ def generate_global_qss(theme: dict = None, density: str | None = None) -> str:
     error_hover = t.get("COLOR_ERROR_HOVER", t["BRAND_HOVER"])
     text_on_danger = t.get("TEXT_ON_DANGER", t["TEXT_ON_ACCENT"])
     input_selection_bg = t.get("INPUT_SELECTION_BG", t["SELECTION_BG"])
+    info_badge_text = t.get("INFO_BADGE_FG", t["TEXT_PRIMARY"])
+    scrollbar_pressed = t.get("SCROLLBAR_HANDLE_PRESSED", t["BRAND_PRIMARY"])
 
     return f"""
 /* ═══════════════════════════════════════════
@@ -240,13 +245,14 @@ QPushButton[class="danger"]:hover {{
 QPushButton#primaryButton {{
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
         stop:0 {primary_gradient_start}, stop:1 {primary_gradient_end});
-    color: {t['TEXT_ON_ACCENT']}; border: none; font-weight: {font['weight_semibold']}; min-height: {control['button_height']}px;
+    color: {primary_button_text}; border: 1px solid {primary_button_border}; font-weight: {font['weight_semibold']}; min-height: {control['button_height']}px;
 }}
 QPushButton#primaryButton:hover {{
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
         stop:0 {primary_hover_start}, stop:1 {primary_hover_end});
+    border: 1px solid {primary_button_border};
 }}
-QPushButton#primaryButton:pressed {{ background: {t.get('BRAND_PRESSED', t['BRAND_DEEP'])}; }}
+QPushButton#primaryButton:pressed {{ background: {primary_button_pressed_bg}; }}
 QPushButton#primaryButton:disabled {{ background: {t['BORDER_STRONG']}; color: {t['TEXT_MUTED']}; }}
 
 QPushButton[class="ctaSecondary"] {{
@@ -631,7 +637,7 @@ QLabel#dialogWindowTitle {{
 }}
 QLabel#confirmDialogIcon {{
     background-color: {t['COLOR_INFO']};
-    color: {t['TEXT_ON_ACCENT']};
+    color: {info_badge_text};
     border-radius: 19px;
     font-size: {font['size_xl'] + 2}px;
     font-weight: {font['weight_bold']};
@@ -704,7 +710,7 @@ QScrollBar::handle:vertical {{
     border-radius: 5px;
 }}
 QScrollBar::handle:vertical:hover {{ background: {t['TEXT_MUTED']}; }}
-QScrollBar::handle:vertical:pressed {{ background: {t['BRAND_PRIMARY']}; }}
+QScrollBar::handle:vertical:pressed {{ background: {scrollbar_pressed}; }}
 QScrollBar::sub-line:vertical, QScrollBar::add-line:vertical {{ height: 0px; background: none; }}
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
 
@@ -720,7 +726,7 @@ QScrollBar::handle:horizontal {{
     border-radius: 5px;
 }}
 QScrollBar::handle:horizontal:hover {{ background: {t['TEXT_MUTED']}; }}
-QScrollBar::handle:horizontal:pressed {{ background: {t['BRAND_PRIMARY']}; }}
+QScrollBar::handle:horizontal:pressed {{ background: {scrollbar_pressed}; }}
 QScrollBar::sub-line:horizontal, QScrollBar::add-line:horizontal {{ width: 0px; background: none; }}
 QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background: transparent; }}
 """

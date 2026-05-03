@@ -189,8 +189,10 @@ class TradeCalendarWidget(QCalendarWidget):
         fill_color = None
         border_color = None
         if is_selected:
-            fill_color = QColor(_c("BRAND_PRIMARY"))
-            fill_color.setAlpha(220 if is_dark else 205)
+            fill_color = QColor(_c("COLOR_INFO"))
+            fill_color.setAlpha(42 if is_dark else 28)
+            border_color = QColor(_c("COLOR_INFO"))
+            border_color.setAlpha(184 if is_dark else 150)
         elif is_today and is_current_month:
             fill_color = QColor(_c("COLOR_INFO"))
             fill_color.setAlpha(16 if is_dark else 10)
@@ -208,7 +210,7 @@ class TradeCalendarWidget(QCalendarWidget):
             painter.drawRoundedRect(chip_rect.adjusted(0.6, 0.6, -0.6, -0.6), 10, 10)
 
         if is_selected:
-            text_color = QColor(_c("TEXT_ON_ACCENT"))
+            text_color = QColor(_c("TEXT_BRIGHT"))
         elif is_current_month and not is_trade_day:
             text_color = QColor(_c("COLOR_ERROR"))
             text_color.setAlpha(208 if is_dark else 180)
@@ -258,4 +260,3 @@ class TradeDateEdit(QDateEdit):
             self.setDate(date)
         if fixed_width:
             self.setFixedWidth(fixed_width)
-

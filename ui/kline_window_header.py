@@ -5,6 +5,7 @@ import html
 from datetime import timedelta
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 
 from core.logger import get_logger
 from app.services.ui_runtime_service import MarketCalendar
@@ -317,6 +318,11 @@ def apply_qt_theme(window) -> None:
 
     apply_info_styles(window, widget_text=widget_text, info_color=info_color, is_dark=is_dark)
     window.browser.setStyleSheet(f"background-color: {chart_bg};")
+    try:
+        window.browser.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        window.browser.page().setBackgroundColor(QColor(chart_bg))
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        pass
 
 
 def apply_info_styles(

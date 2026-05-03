@@ -294,7 +294,7 @@ class StockItemDelegate(QStyledItemDelegate):
                     selected_rail_width,
                     max(0, option.rect.height() - 2),
                 )
-                painter.fillRect(rail_rect, QColor(_c("BRAND_PRIMARY")))
+                painter.fillRect(rail_rect, _qcolor_from_token(table_tokens["selected_rail_color"]))
             draw_current_cell_indicator()
             rect = option.rect
             painter.setFont(opt.font)
@@ -338,7 +338,7 @@ class StockItemDelegate(QStyledItemDelegate):
                     selected_rail_width,
                     max(0, option.rect.height() - 2),
                 )
-                painter.fillRect(rail_rect, QColor(_c("BRAND_PRIMARY")))
+                painter.fillRect(rail_rect, _qcolor_from_token(table_tokens["selected_rail_color"]))
             draw_current_cell_indicator()
             left_padding = 8 + selected_rail_width + (4 if show_selected_rail else 0)
             text_rect = option.rect.adjusted(left_padding, 0, -8, 0)
@@ -367,5 +367,4 @@ class StockItemDelegate(QStyledItemDelegate):
             painter.drawText(text_rect, alignment, elided_text)
 
         painter.restore()
-
 

@@ -79,6 +79,38 @@ def test_theme_tokens_expose_terminal_layers_and_toolbar_metrics():
     assert dark_tokens["surface"]["toolbar_chip"] == THEME_MOYUAN["BG_BUTTON"]
 
 
+def test_ziyao_selection_and_primary_actions_do_not_use_gold_background_tokens():
+    tokens = build_ui_tokens(THEME_ZIYAO, density="鑸掑睍")
+    gold_fragments = ("215, 172, 69", "#D7AC45", "#E9C867", "#B78926")
+    background_tokens = [
+        THEME_ZIYAO["SELECTION_BG"],
+        THEME_ZIYAO["SELECTION_HOVER_BG"],
+        THEME_ZIYAO["INPUT_SELECTION_BG"],
+        THEME_ZIYAO["TAB_ACTIVE_BG"],
+        THEME_ZIYAO["TAB_ACTIVE_BORDER"],
+        THEME_ZIYAO["TAB_ACTIVE_TOP"],
+        THEME_ZIYAO["SEGMENT_ACTIVE_BG"],
+        THEME_ZIYAO["SEGMENT_ACTIVE_BORDER"],
+        THEME_ZIYAO["SCROLLBAR_HANDLE_PRESSED"],
+        THEME_ZIYAO["PRIMARY_GRADIENT_START"],
+        THEME_ZIYAO["PRIMARY_GRADIENT_END"],
+        THEME_ZIYAO["PRIMARY_HOVER_GRADIENT_START"],
+        THEME_ZIYAO["PRIMARY_HOVER_GRADIENT_END"],
+        THEME_ZIYAO["PRIMARY_BUTTON_PRESSED_BG"],
+        tokens["table"]["selected_bg"],
+        tokens["table"]["selected_hover_bg"],
+        tokens["table"]["selected_rail_color"],
+        tokens["table"]["current_cell_bg"],
+        tokens["table"]["current_cell_bg_selected"],
+        tokens["table"]["current_cell_border"],
+    ]
+
+    for token in background_tokens:
+        assert all(fragment not in token for fragment in gold_fragments)
+
+    assert tokens["table"]["selected_rail_color"] == THEME_ZIYAO["COLOR_INFO"]
+
+
 def test_light_theme_muted_text_contrast_meets_toolbar_threshold():
     assert _contrast_ratio(THEME_YUEBAI["TEXT_MUTED"], THEME_YUEBAI["BG_CARD"]) >= 4.5
     assert _contrast_ratio(THEME_YUEBAI["TEXT_MUTED"], THEME_YUEBAI["BG_BUTTON"]) >= 4.5
@@ -104,6 +136,27 @@ def test_global_qss_uses_density_tokens_for_table_and_controls():
     assert f"background-color: {compact_tokens['surface']['toolbar_card']};" in compact_qss
     assert f"background-color: {compact_tokens['surface']['toolbar_chip']};" in compact_qss
     assert compact_tokens["control"]["button_height"] < comfort_tokens["control"]["button_height"]
+
+
+def test_ziyao_global_qss_uses_neutral_primary_button_and_scrollbar_pressed():
+    qss = generate_global_qss(THEME_ZIYAO, density="鑸掑睍")
+    selected_start = qss.index("QTableView::item:selected {")
+    selected_end = qss.index("QTableView::item:selected:hover")
+    selected_block = qss[selected_start:selected_end]
+    primary_start = qss.index("QPushButton#primaryButton {")
+    primary_end = qss.index("QPushButton#primaryButton:hover")
+    primary_block = qss[primary_start:primary_end]
+    scrollbar_start = qss.index("QScrollBar::handle:vertical:pressed")
+    scrollbar_end = qss.index("QScrollBar::sub-line:vertical")
+    scrollbar_block = qss[scrollbar_start:scrollbar_end]
+
+    assert THEME_ZIYAO["SELECTION_BG"] in selected_block
+    assert "215, 172, 69" not in selected_block
+    assert THEME_ZIYAO["PRIMARY_BUTTON_TEXT"] in primary_block
+    assert THEME_ZIYAO["PRIMARY_BUTTON_BORDER"] in primary_block
+    assert THEME_ZIYAO["BRAND_PRIMARY"] not in primary_block
+    assert THEME_ZIYAO["SCROLLBAR_HANDLE_PRESSED"] in scrollbar_block
+    assert THEME_ZIYAO["BRAND_PRIMARY"] not in scrollbar_block
 
 
 def test_global_qss_selected_tab_does_not_use_brand_top_rule():

@@ -125,8 +125,19 @@ def _capture_main_and_tabs(
     height: int,
 ) -> list[Path]:
     saved: list[Path] = []
-    window.resize(max(960, width), max(600, height))
+    target_width = max(960, width)
+    target_height = max(600, height)
+    try:
+        window.setMinimumSize(min(window.minimumWidth(), target_width), min(window.minimumHeight(), target_height))
+    except (AttributeError, RuntimeError, TypeError):
+        pass
+    if hasattr(window, "showNormal"):
+        window.showNormal()
+    window.resize(target_width, target_height)
     window.show()
+    if hasattr(window, "showNormal"):
+        window.showNormal()
+    window.resize(target_width, target_height)
     window.raise_()
     window.activateWindow()
     _settle(app, wait_ms)
@@ -211,7 +222,11 @@ def _capture_kline(app, window, output: Path, wait_ms: int) -> Path | None:
             current_idx=0,
         )
         dialog.show()
-        _settle(app, max(wait_ms * 2, 800))
+        deadline = time.perf_counter() + 5.0
+        while time.perf_counter() < deadline:
+            _settle(app, max(wait_ms, 120))
+            if getattr(dialog, "df", None) is not None and getattr(dialog, "_pending_chart_status", None) is None:
+                break
         path = output / "94_kline_window.png"
         saved = _save_widget(dialog, path)
         dialog.close()
@@ -225,6 +240,15 @@ def main() -> int:
     args = _parse_args()
     _configure_environment(args)
 
+    if args.kline:
+        from PyQt6.QtCore import QCoreApplication, Qt
+
+        QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
+        try:
+            import PyQt6.QtWebEngineWidgets  # noqa: F401
+        except Exception as exc:  # noqa: BLE001 - keep the rest of the audit usable.
+            print(f"[capture] webengine preflight failed: {exc}", file=sys.stderr)
+
     from PyQt6.QtWidgets import QApplication
 
     _disable_noisy_startup_paths()
@@ -235,6 +259,7 @@ def main() -> int:
     args.output.mkdir(parents=True, exist_ok=True)
 
     window = MainWindowQT()
+    window._save_ui_state = lambda: None
     saved = _capture_main_and_tabs(
         app,
         window,

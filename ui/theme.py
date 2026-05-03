@@ -330,9 +330,9 @@ THEME_ZIYAO = {
     "BORDER_DEFAULT": "rgba(96, 115, 148, 0.34)",
     "BORDER_SUBTLE": "rgba(96, 115, 148, 0.20)",
     "BORDER_STRONG": "#42516E",
-    "BORDER_BRAND": "rgba(215, 172, 69, 0.34)",
+    "BORDER_BRAND": "rgba(85, 183, 255, 0.34)",
     "BORDER_MENU": "#33405A",
-    "FOCUS_RING": "rgba(215, 172, 69, 0.38)",
+    "FOCUS_RING": "rgba(85, 183, 255, 0.38)",
 
     # 评分着色梯度
     "SCORE_EXCELLENT": "#FF5A5F",
@@ -348,43 +348,51 @@ THEME_ZIYAO = {
 
     # 滚动条颜色
     "SCROLLBAR_HANDLE": "rgba(130, 144, 170, 0.26)",
-    "SCROLLBAR_HANDLE_HOVER": "rgba(215, 172, 69, 0.40)",
+    "SCROLLBAR_HANDLE_HOVER": "rgba(85, 183, 255, 0.42)",
+    "SCROLLBAR_HANDLE_PRESSED": "rgba(85, 183, 255, 0.62)",
 
     # 选中态颜色
-    "SELECTION_BG": "rgba(215, 172, 69, 0.14)",
-    "SELECTION_HOVER_BG": "rgba(215, 172, 69, 0.22)",
-    "INPUT_SELECTION_BG": "rgba(215, 172, 69, 0.30)",
+    "SELECTION_BG": "rgba(85, 183, 255, 0.13)",
+    "SELECTION_HOVER_BG": "rgba(85, 183, 255, 0.20)",
+    "INPUT_SELECTION_BG": "rgba(85, 183, 255, 0.30)",
+    "TABLE_SELECTED_RAIL": "#55B7FF",
+    "TABLE_CURRENT_CELL_BG": "rgba(85, 183, 255, 0.08)",
+    "TABLE_CURRENT_CELL_BG_SELECTED": "rgba(85, 183, 255, 0.12)",
+    "TABLE_CURRENT_CELL_BORDER": "rgba(85, 183, 255, 0.72)",
 
     # 标题栏 / 状态栏
     "TITLEBAR_BORDER": "rgba(96, 115, 148, 0.34)",
     "STATUSBAR_BORDER": "rgba(96, 115, 148, 0.34)",
 
     # 菜单 / 分隔 / 当前标签
-    "MENU_SELECTED_BG": "rgba(215, 172, 69, 0.12)",
+    "MENU_SELECTED_BG": "rgba(85, 183, 255, 0.12)",
     "SPLITTER_BG": "rgba(96, 115, 148, 0.14)",
-    "SPLITTER_HOVER": "rgba(215, 172, 69, 0.22)",
+    "SPLITTER_HOVER": "rgba(85, 183, 255, 0.22)",
     "TAB_TEXT": "#93A0B8",
     "TAB_TEXT_HOVER": "#F2F6FF",
     "TAB_HOVER_BG": "#1C2940",
-    "TAB_ACTIVE_BG": "rgba(215, 172, 69, 0.14)",
-    "TAB_ACTIVE_BORDER": "rgba(215, 172, 69, 0.36)",
-    "TAB_ACTIVE_TEXT": "#F0C765",
-    "TAB_ACTIVE_TOP": "#D7AC45",
+    "TAB_ACTIVE_BG": "rgba(85, 183, 255, 0.13)",
+    "TAB_ACTIVE_BORDER": "rgba(85, 183, 255, 0.36)",
+    "TAB_ACTIVE_TEXT": "#DCEEFF",
+    "TAB_ACTIVE_TOP": "#55B7FF",
 
     # 下拉箭头颜色
     "ARROW_COLOR": "#8290AA",
 
     # 主题能力 token
-    "PRIMARY_GRADIENT_START": "#E9C867",
-    "PRIMARY_GRADIENT_END": "#B78926",
-    "PRIMARY_HOVER_GRADIENT_START": "#F3D883",
-    "PRIMARY_HOVER_GRADIENT_END": "#D7AC45",
-    "SEGMENT_ACTIVE_BG": "rgba(215, 172, 69, 0.14)",
-    "SEGMENT_ACTIVE_BORDER": "#D7AC45",
-    "SEGMENT_ACTIVE_TEXT": "#F6D579",
-    "PROGRESS_GRADIENT_START": "#D7AC45",
-    "PROGRESS_GRADIENT_MID": "#E9C867",
-    "PROGRESS_GRADIENT_END": "#9A741E",
+    "PRIMARY_GRADIENT_START": "#21314A",
+    "PRIMARY_GRADIENT_END": "#18253A",
+    "PRIMARY_HOVER_GRADIENT_START": "#263A55",
+    "PRIMARY_HOVER_GRADIENT_END": "#1F3048",
+    "PRIMARY_BUTTON_TEXT": "#F2F6FF",
+    "PRIMARY_BUTTON_BORDER": "rgba(85, 183, 255, 0.42)",
+    "PRIMARY_BUTTON_PRESSED_BG": "#142033",
+    "SEGMENT_ACTIVE_BG": "rgba(85, 183, 255, 0.13)",
+    "SEGMENT_ACTIVE_BORDER": "#55B7FF",
+    "SEGMENT_ACTIVE_TEXT": "#DCEEFF",
+    "PROGRESS_GRADIENT_START": "#55B7FF",
+    "PROGRESS_GRADIENT_MID": "#2DD4BF",
+    "PROGRESS_GRADIENT_END": "#327CC9",
     "NETWORK_ONLINE": "#55B7FF",
     "NETWORK_OFFLINE": "#EF4444",
     "NETWORK_BUSY": "#F59E0B",
@@ -465,6 +473,9 @@ def _with_alias_tokens(theme: dict) -> dict:
     enriched.setdefault("PRIMARY_GRADIENT_END", enriched.get("BRAND_DEEP", enriched.get("BRAND_PRIMARY", "")))
     enriched.setdefault("PRIMARY_HOVER_GRADIENT_START", enriched.get("BRAND_HOVER", enriched.get("BRAND_PRIMARY", "")))
     enriched.setdefault("PRIMARY_HOVER_GRADIENT_END", enriched.get("BRAND_PRIMARY", ""))
+    enriched.setdefault("PRIMARY_BUTTON_TEXT", enriched.get("TEXT_ON_ACCENT", "#FFFFFF"))
+    enriched.setdefault("PRIMARY_BUTTON_BORDER", "transparent")
+    enriched.setdefault("PRIMARY_BUTTON_PRESSED_BG", enriched.get("BRAND_PRESSED", enriched.get("BRAND_DEEP", enriched.get("BRAND_PRIMARY", ""))))
     enriched.setdefault("SEGMENT_ACTIVE_BG", enriched.get("BRAND_PRIMARY", ""))
     enriched.setdefault("SEGMENT_ACTIVE_BORDER", enriched.get("BRAND_HOVER", enriched.get("BRAND_PRIMARY", "")))
     enriched.setdefault("SEGMENT_ACTIVE_TEXT", enriched.get("TEXT_ON_ACCENT", "#FFFFFF"))
@@ -477,6 +488,11 @@ def _with_alias_tokens(theme: dict) -> dict:
     enriched.setdefault("NETWORK_OFFLINE", enriched.get("COLOR_ERROR", ""))
     enriched.setdefault("NETWORK_BUSY", enriched.get("COLOR_WARNING", ""))
     enriched.setdefault("INPUT_SELECTION_BG", enriched.get("SELECTION_BG", ""))
+    enriched.setdefault("SCROLLBAR_HANDLE_PRESSED", enriched.get("BRAND_PRIMARY", ""))
+    enriched.setdefault("TABLE_SELECTED_RAIL", enriched.get("BRAND_PRIMARY", ""))
+    enriched.setdefault("TABLE_CURRENT_CELL_BG", enriched.get("SELECTION_BG", ""))
+    enriched.setdefault("TABLE_CURRENT_CELL_BG_SELECTED", enriched.get("SELECTION_HOVER_BG", enriched.get("SELECTION_BG", "")))
+    enriched.setdefault("TABLE_CURRENT_CELL_BORDER", enriched.get("BRAND_DEEP", enriched.get("BRAND_PRIMARY", "")))
     enriched.setdefault("INFO_BADGE_BG", enriched.get("BRAND_SUBTLE", ""))
     enriched.setdefault("INFO_BADGE_BORDER", enriched.get("BORDER_SUBTLE", ""))
     enriched.setdefault("INFO_BADGE_FG", enriched.get("TEXT_PRIMARY", ""))

@@ -89,6 +89,12 @@ class LazyTabPlaceholder(QWidget):
     def apply_theme(self) -> None:
         tokens = build_ui_tokens()
         theme = tokens["theme"]
+        primary_gradient_start = theme.get("PRIMARY_GRADIENT_START", theme["BRAND_PRIMARY"])
+        primary_gradient_end = theme.get("PRIMARY_GRADIENT_END", theme.get("BRAND_PRESSED", theme["BRAND_DEEP"]))
+        primary_hover_start = theme.get("PRIMARY_HOVER_GRADIENT_START", theme["BRAND_HOVER"])
+        primary_hover_end = theme.get("PRIMARY_HOVER_GRADIENT_END", theme["BRAND_PRIMARY"])
+        primary_button_text = theme.get("PRIMARY_BUTTON_TEXT", theme["TEXT_ON_ACCENT"])
+        primary_button_border = theme.get("PRIMARY_BUTTON_BORDER", theme["BRAND_DEEP"])
         self.setStyleSheet(
             f"""
             QWidget#lazyWorkspaceTabPlaceholder {{
@@ -104,9 +110,10 @@ class LazyTabPlaceholder(QWidget):
                 font-size: {tokens['font']['size_sm']}px;
             }}
             QPushButton#lazyWorkspaceTabLoad {{
-                background: {theme['BRAND_PRIMARY']};
-                color: {theme['TEXT_ON_ACCENT']};
-                border: 1px solid {theme['BRAND_DEEP']};
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 {primary_gradient_start}, stop:1 {primary_gradient_end});
+                color: {primary_button_text};
+                border: 1px solid {primary_button_border};
                 border-radius: {tokens['radius']['pill']}px;
                 padding: 0 {tokens['space']['xl']}px;
                 min-height: {tokens['control']['toolbar_button_height']}px;
@@ -119,7 +126,8 @@ class LazyTabPlaceholder(QWidget):
                 border-color: {theme['BORDER_DEFAULT']};
             }}
             QPushButton#lazyWorkspaceTabLoad:hover:!disabled {{
-                background: {theme['BRAND_DEEP']};
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 {primary_hover_start}, stop:1 {primary_hover_end});
             }}
             """
         )
