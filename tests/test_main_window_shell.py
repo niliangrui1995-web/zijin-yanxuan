@@ -24,6 +24,7 @@ from ui.window_flags import (
     apply_windows_frameless_taskbar_fix,
     build_frameless_main_window_flags,
 )
+from vcp.constants import APP_VERSION
 
 
 class DummyShellWindow(QMainWindow):
@@ -41,6 +42,7 @@ class DummyShellWindow(QMainWindow):
         self._custom_titlebar = refs.titlebar
         self._titlebar_layout = refs.layout
         self._titlebar_tab_placeholder = refs.placeholder
+        self._market_pulse_strip = refs.pulse_strip
         self._btn_minimize = refs.btn_minimize
         self._btn_maximize = refs.btn_maximize
         self._btn_close = refs.btn_close
@@ -89,6 +91,10 @@ def test_main_window_status_bar_applies_theme():
         bar.deleteLater()
 
 
+def test_app_version_is_v8_for_shell_surfaces():
+    assert APP_VERSION == "8.0.0"
+
+
 def test_main_window_shell_builders_wire_titlebar_menu_and_tabs():
     window = DummyShellWindow()
     try:
@@ -98,11 +104,14 @@ def test_main_window_shell_builders_wire_titlebar_menu_and_tabs():
         assert window.btn_sys_menu.toolTip() == "系统菜单"
         assert window.btn_sys_menu.text() == "⚙️"
         assert window._standalone_tabbar.toolTip() == ""
+        assert window._standalone_tabbar.usesScrollButtons() is True
+        assert window._standalone_tabbar.elideMode() == Qt.TextElideMode.ElideRight
+        assert window._market_pulse_strip.height() == 3
         assert window._theme_menu.title().startswith("界面主题：")
         assert window.last_density is not None
         assert window.last_density[1] is False
         tabbar_style = window._standalone_tabbar.styleSheet()
-        assert "margin: 0 0px 0 0;" in tabbar_style
+        assert "max-width:" in tabbar_style
         assert "QTabBar::tab:selected" in tabbar_style
         assert "border-top: 2px solid transparent;" in tabbar_style
 

@@ -127,9 +127,9 @@ class KLineChartWindow(QWidget):
         # 自定义拖拽标题栏
         from ui.components.shared_title_bar import DraggableTitleBar
         self.title_bar = DraggableTitleBar(self)
-        self.title_bar.setFixedHeight(36)
+        self.title_bar.setFixedHeight(34)
         tb_layout = QHBoxLayout(self.title_bar)
-        tb_layout.setContentsMargins(14, 0, 8, 0)
+        tb_layout.setContentsMargins(12, 0, 8, 0)
 
         self.title_lbl = QLabel("K线图")
         tb_layout.addWidget(self.title_lbl)
@@ -147,14 +147,14 @@ class KLineChartWindow(QWidget):
 
         # === 顶部主信息区 ===
         self.header_widget = QWidget()
-        self.header_widget.setFixedHeight(72)
+        self.header_widget.setFixedHeight(64)
         header_layout = QHBoxLayout(self.header_widget)
-        header_layout.setContentsMargins(14, 10, 14, 10)
-        header_layout.setSpacing(12)
+        header_layout.setContentsMargins(12, 6, 12, 6)
+        header_layout.setSpacing(10)
 
         left_group = QVBoxLayout()
         left_group.setContentsMargins(0, 0, 0, 0)
-        left_group.setSpacing(4)
+        left_group.setSpacing(3)
 
         identity_layout = QHBoxLayout()
         identity_layout.setContentsMargins(0, 0, 0, 0)
@@ -174,14 +174,14 @@ class KLineChartWindow(QWidget):
         left_group.addLayout(identity_layout)
 
         self.info_lbl = QLabel("正在准备图表...")
-        self.info_lbl.setMinimumHeight(24)
+        self.info_lbl.setMinimumHeight(22)
         self.info_lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
         left_group.addWidget(self.info_lbl)
         header_layout.addLayout(left_group, 1)
 
         right_group = QHBoxLayout()
         right_group.setContentsMargins(0, 0, 0, 0)
-        right_group.setSpacing(8)
+        right_group.setSpacing(6)
 
         self.btn_prev = QPushButton("上一只")
         self.btn_prev.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -220,10 +220,10 @@ class KLineChartWindow(QWidget):
 
         # === VCP 摘要带 ===
         self.summary_widget = QWidget()
-        self.summary_widget.setFixedHeight(86)
+        self.summary_widget.setFixedHeight(78)
         summary_layout = QHBoxLayout(self.summary_widget)
-        summary_layout.setContentsMargins(12, 6, 12, 8)
-        summary_layout.setSpacing(8)
+        summary_layout.setContentsMargins(12, 5, 12, 7)
+        summary_layout.setSpacing(7)
 
         self.summary_cards = []
         self._summary_key_color = ""
@@ -233,8 +233,8 @@ class KLineChartWindow(QWidget):
             card = QFrame()
             card.setObjectName("klineSummaryCard")
             card_layout = QVBoxLayout(card)
-            card_layout.setContentsMargins(10, 8, 10, 8)
-            card_layout.setSpacing(4)
+            card_layout.setContentsMargins(10, 6, 10, 6)
+            card_layout.setSpacing(3)
 
             title_lbl = QLabel("--")
             title_lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
@@ -243,7 +243,7 @@ class KLineChartWindow(QWidget):
             value_labels = []
             for _row_idx in range(2):
                 label = QLabel("--")
-                label.setMinimumHeight(20)
+                label.setMinimumHeight(18)
                 label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
                 label.setTextFormat(Qt.TextFormat.RichText)
                 value_labels.append(label)

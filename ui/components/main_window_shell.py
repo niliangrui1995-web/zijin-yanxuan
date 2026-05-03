@@ -6,8 +6,8 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QAction, QActionGroup
+from PyQt6.QtCore import QEvent, QRectF, Qt, QTimer
+from PyQt6.QtGui import QAction, QActionGroup, QColor, QLinearGradient, QPainter
 from PyQt6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -96,11 +96,12 @@ def _system_button_style(theme: dict, text_color: str, hover_bg: str) -> str:
     """
 
 
-def _standalone_tabbar_qss(theme: dict) -> str:
+def _standalone_tabbar_qss(theme: dict, *, compact: bool = False) -> str:
     tokens = build_ui_tokens(theme)
-    tab_gap = max(3, tokens["shell"]["toolbar_group_gap"])
-    tab_padding_x = max(12, tokens["control"]["tab_padding_x"] + 2)
+    tab_gap = 2 if compact else max(3, tokens["shell"]["toolbar_group_gap"])
+    tab_padding_x = max(8, tokens["control"]["tab_padding_x"] if compact else tokens["control"]["tab_padding_x"] + 2)
     tab_radius = max(8, tokens["radius"]["md"])
+    tab_max_width = 104 if compact else 132
     surface = tokens["surface"]
     border = tokens["border"]
     return f"""
@@ -119,6 +120,7 @@ def _standalone_tabbar_qss(theme: dict) -> str:
             font-weight: {tokens['font']['weight_semibold']};
             min-height: {tokens['shell']['tabbar_height']}px;
             min-width: 0px;
+            max-width: {tab_max_width}px;
             border-radius: {tab_radius}px;
             font-family: {tokens['font']['family']};
         }}
@@ -134,6 +136,99 @@ def _standalone_tabbar_qss(theme: dict) -> str:
             border-color: {border['strong']};
         }}
     """
+
+
+class MarketPulseStrip(QWidget):
+    """A thin titlebar pulse strip that stays outside the content layout."""
+
+    def __init__(self, host: QWidget, parent=None):
+        super().__init__(host if parent is None else parent)
+        self._host = host
+        self._phase = 0.0
+        self._brand = QColor("#B91C1C")
+        self._deep = QColor("#7F1D1D")
+        self.setObjectName("marketPulseStrip")
+        self.setFixedHeight(3)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
+        self._timer = QTimer(self)
+        self._timer.setInterval(45)
+        self._timer.timeout.connect(self._tick)
+        host.installEventFilter(self)
+        self.apply_theme()
+        try:
+            from ui.theme import theme_manager
+            theme_manager.sig_theme_changed.connect(self._on_theme_changed)
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+        self._sync_geometry()
+        self._timer.start()
+
+    def _tick(self) -> None:
+        self._phase = (self._phase + 0.018) % 1.0
+        self.update()
+
+    def apply_theme(self) -> None:
+        from ui.theme import theme_manager
+
+        theme = theme_manager.current_theme
+        self._brand = QColor(theme.get("BRAND_HOVER", theme.get("BRAND_PRIMARY", "#B91C1C")))
+        self._deep = QColor(theme.get("BRAND_DEEP", theme.get("BRAND_PRIMARY", "#7F1D1D")))
+        self.update()
+
+    def _on_theme_changed(self, _theme_name: str) -> None:
+        self.apply_theme()
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self._host and event.type() in {
+            QEvent.Type.Resize,
+            QEvent.Type.Show,
+            QEvent.Type.LayoutRequest,
+        }:
+            self._sync_geometry()
+        return super().eventFilter(watched, event)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if not self._timer.isActive():
+            self._timer.start()
+
+    def hideEvent(self, event) -> None:
+        self._timer.stop()
+        super().hideEvent(event)
+
+    def _sync_geometry(self) -> None:
+        if self._host is None:
+            return
+        self.setGeometry(0, max(0, self._host.height() - self.height()), self._host.width(), self.height())
+        self.raise_()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        rect = QRectF(self.rect())
+        if rect.width() <= 0:
+            return
+
+        base = QColor(self._deep)
+        base.setAlpha(70)
+        painter.fillRect(rect, base)
+
+        span = max(180.0, rect.width() * 0.34)
+        center = (rect.width() + span * 2.0) * self._phase - span
+        gradient = QLinearGradient(center - span, 0, center + span, 0)
+        edge = QColor(self._brand)
+        edge.setAlpha(0)
+        glow = QColor(self._brand)
+        glow.setAlpha(180)
+        core = QColor(255, 241, 242)
+        core.setAlpha(220)
+        gradient.setColorAt(0.0, edge)
+        gradient.setColorAt(0.45, glow)
+        gradient.setColorAt(0.5, core)
+        gradient.setColorAt(0.55, glow)
+        gradient.setColorAt(1.0, edge)
+        painter.fillRect(rect, gradient)
 
 
 def _nav_group_button_qss(theme: dict) -> str:
@@ -319,6 +414,7 @@ class ShellNavigationWidget(QWidget):
         self._tabbar_rebuild_count = 0
         self._slow_switch_threshold_ms = 12.0
         self._group_buttons: dict[str, QPushButton] = {}
+        self._compact_nav = False
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -336,8 +432,8 @@ class ShellNavigationWidget(QWidget):
         self.tabbar = QTabBar(self)
         self.tabbar.setExpanding(True)
         self.tabbar.setDrawBase(False)
-        self.tabbar.setUsesScrollButtons(False)
-        self.tabbar.setElideMode(Qt.TextElideMode.ElideNone)
+        self.tabbar.setUsesScrollButtons(True)
+        self.tabbar.setElideMode(Qt.TextElideMode.ElideRight)
         self.tabbar.setAccessibleName("二级页面导航")
         self.tabbar.currentChanged.connect(self._on_tabbar_changed)
         layout.addWidget(self.tabbar, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -391,6 +487,7 @@ class ShellNavigationWidget(QWidget):
             button = QPushButton(group, self.group_wrap)
             button.setCheckable(True)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setMaximumWidth(104)
             button.setAccessibleName(f"{group}一级导航")
             button.clicked.connect(lambda checked=False, g=group: self._switch_group(g))
             button.setStyleSheet(_nav_group_button_qss(build_ui_tokens()["theme"]))
@@ -502,13 +599,27 @@ class ShellNavigationWidget(QWidget):
             return
         self.sync_from_current_tab(tab_index)
 
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._apply_responsive_mode()
+
+    def _apply_responsive_mode(self) -> None:
+        compact = self.width() < 760
+        if compact == self._compact_nav:
+            return
+        self._compact_nav = compact
+        self.tabbar.setExpanding(not compact)
+        for button in self._group_buttons.values():
+            button.setMaximumWidth(86 if compact else 104)
+        self.apply_theme()
+
     def apply_theme(self) -> None:
         from ui.theme import theme_manager
 
         theme = theme_manager.current_theme
         for button in self._group_buttons.values():
             button.setStyleSheet(_nav_group_button_qss(theme))
-        self.tabbar.setStyleSheet(_standalone_tabbar_qss(theme))
+        self.tabbar.setStyleSheet(_standalone_tabbar_qss(theme, compact=self._compact_nav))
 
 
 class TitleBarSyncWidget(QFrame):
@@ -547,6 +658,8 @@ class TitleBarSyncWidget(QFrame):
 
         self.lbl_meta = QLabel("等待首次同步", self)
         self.lbl_meta.setObjectName("titleBarSyncMeta")
+        self.lbl_meta.setMaximumWidth(168)
+        self.lbl_meta.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
         layout.addWidget(self.lbl_meta, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self.apply_theme()
@@ -569,7 +682,9 @@ class TitleBarSyncWidget(QFrame):
             segments.append(self._detail)
         if self._freshness:
             segments.append(self._freshness)
-        self.lbl_meta.setText("｜".join(segments) if segments else "等待首次同步")
+        meta_text = "｜".join(segments) if segments else "等待首次同步"
+        self.lbl_meta.setText(meta_text)
+        self.lbl_meta.setToolTip(meta_text)
         self.apply_theme()
 
     def apply_theme(self) -> None:
@@ -609,6 +724,7 @@ class TitleBarRefs:
     titlebar: DraggableTitleBar
     layout: QHBoxLayout
     placeholder: QWidget
+    pulse_strip: MarketPulseStrip
     btn_minimize: QPushButton
     btn_maximize: QPushButton
     btn_close: QPushButton
@@ -631,6 +747,7 @@ def setup_custom_titlebar(window, parent_layout: QVBoxLayout) -> TitleBarRefs:
     titlebar.setObjectName("customTitleBar")
     titlebar.setFixedHeight(tokens["shell"]["titlebar_height"])
     titlebar.setStyleSheet(_titlebar_shell_style(theme))
+    pulse_strip = MarketPulseStrip(titlebar)
 
     titlebar_layout = QHBoxLayout(titlebar)
     titlebar_layout.setContentsMargins(16, 0, 0, 0)
@@ -691,6 +808,7 @@ def setup_custom_titlebar(window, parent_layout: QVBoxLayout) -> TitleBarRefs:
         titlebar=titlebar,
         layout=titlebar_layout,
         placeholder=placeholder,
+        pulse_strip=pulse_strip,
         btn_minimize=btn_minimize,
         btn_maximize=btn_maximize,
         btn_close=btn_close,
@@ -891,6 +1009,9 @@ def apply_chrome_theme(window) -> None:
 
     if hasattr(window, "_titlebar_sync_widget") and window._titlebar_sync_widget:
         window._titlebar_sync_widget.apply_theme()
+
+    if hasattr(window, "_market_pulse_strip") and window._market_pulse_strip:
+        window._market_pulse_strip.apply_theme()
 
     if hasattr(window, "_custom_titlebar") and window._custom_titlebar:
         window._custom_titlebar.setFixedHeight(build_ui_tokens(theme)["shell"]["titlebar_height"])

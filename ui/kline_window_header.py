@@ -103,6 +103,12 @@ def refresh_header_context(window) -> None:
                 key_text = str(row_data.get("label", "--"))
                 raw_value = str(row_data.get("raw_value", "--"))
                 base_value = str(row_data.get("value", raw_value or "--"))
+                is_empty_row = key_text == "--" and (not base_value or base_value == "--")
+                label.setVisible(not is_empty_row)
+                if is_empty_row:
+                    label.setText("")
+                    label.setToolTip("")
+                    continue
                 display_value = _elide_summary_value(label, key_text, base_value)
                 value_color = (
                     window._summary_highlight_color
@@ -257,17 +263,18 @@ def apply_qt_theme(window) -> None:
     window.btn_next.setStyleSheet(nav_style)
 
     vcp_star = theme.get("KLINE_VCP_STAR", "#FFD60A")
-    fav_hover = "rgba(255, 214, 10, 0.1)" if is_dark else "rgba(217, 119, 6, 0.1)"
-    fav_active_bg = "#FACC15" if not is_dark else "#FFD60A"
-    fav_active_text = "#2B1900" if not is_dark else "#201300"
-    fav_active_hover = "#FDE047" if not is_dark else "#FFE083"
+    fav_accent = theme.get("BRAND_HOVER", theme.get("BRAND_PRIMARY", vcp_star))
+    fav_hover = "rgba(185, 28, 28, 0.12)" if is_dark else "rgba(185, 28, 28, 0.08)"
+    fav_active_bg = theme.get("BRAND_PRIMARY", "#B91C1C")
+    fav_active_text = theme.get("TEXT_ON_ACCENT", "#FFFFFF")
+    fav_active_hover = theme.get("BRAND_HOVER", fav_active_bg)
     window.btn_fav.setProperty("watching", bool(getattr(window, "is_fav", False)))
     window.btn_fav.setStyleSheet(
         f"""
             QPushButton[watching="false"] {{
                 background-color: {neutral_tone['bg']};
-                color: {vcp_star};
-                border: 1px solid {vcp_star};
+                color: {fav_accent};
+                border: 1px solid {fav_accent};
                 border-radius: {radius['md']}px;
                 padding: 0 12px;
                 font-weight: {font['weight_semibold']};

@@ -332,6 +332,7 @@ class RtMonitorTab(BaseStockTab):
         btn_rt_settings.setText("参数")
         btn_rt_settings.setAccessibleName("盘中监控参数设置")
         btn_rt_settings.setProperty("class", "toolbarGhost")
+        btn_rt_settings.setProperty("toolbarOverflow", True)
         btn_rt_settings.setMinimumWidth(56)
         btn_rt_settings.setAutoRaise(False)
         btn_rt_settings.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -374,8 +375,11 @@ class RtMonitorTab(BaseStockTab):
             }
             for col_idx, header_name in enumerate(self.source_model.headers):
                 header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
-                if header_name in width_map:
-                    self.table_rt.setColumnWidth(col_idx, width_map[header_name])
+            self.apply_table_column_preset(
+                self.table_rt,
+                [width_map.get(header_name, 86) for header_name in self.source_model.headers],
+                stretch_last=True,
+            )
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
             log.warning(f"[盘中监控] 列宽初始化异常: {e}")
         self.table_rt.setSortingEnabled(True)

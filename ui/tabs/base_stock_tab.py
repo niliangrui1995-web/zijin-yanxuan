@@ -12,11 +12,14 @@
 import logging
 
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QToolButton,
@@ -387,6 +390,106 @@ class BaseStockTab(QWidget):
         for button in candidates:
             button.setMinimumWidth(target_width)
 
+    @staticmethod
+    def _toolbar_action_label(widget: QWidget) -> str:
+        text = ""
+        if hasattr(widget, "text"):
+            try:
+                text = str(widget.text() or "").strip()
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                text = ""
+        if not text:
+            text = str(widget.toolTip() or "").strip()
+        if not text:
+            text = str(widget.accessibleName() or "").strip()
+        return text or "操作"
+
+    def _build_toolbar_overflow_button(self, widgets: list[QWidget]) -> QToolButton | None:
+        overflow_widgets = [widget for widget in widgets if widget is not None]
+        if not overflow_widgets:
+            return None
+
+        menu = QMenu(self)
+        action_pairs = []
+        for widget in overflow_widgets:
+            label = self._toolbar_action_label(widget)
+            action = QAction(label, menu)
+            action.setEnabled(widget.isEnabled())
+            action.triggered.connect(lambda _checked=False, target=widget: target.click())
+            menu.addAction(action)
+            action_pairs.append((action, widget))
+            widget.setVisible(False)
+
+        def _refresh_menu_actions() -> None:
+            for action, widget in action_pairs:
+                action.setText(self._toolbar_action_label(widget))
+                action.setEnabled(widget.isEnabled())
+
+        menu.aboutToShow.connect(_refresh_menu_actions)
+
+        button = QToolButton()
+        button.setText("更多")
+        button.setToolTip("更多操作")
+        button.setAccessibleName("更多操作")
+        button.setProperty("class", "toolbarGhost")
+        button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        button.setMenu(menu)
+        button.setMinimumWidth(56)
+        return button
+
+    def _split_toolbar_actions(self, action_widgets: list[QWidget] | None) -> list[QWidget]:
+        widgets = [widget for widget in (action_widgets or []) if widget is not None]
+        if len(widgets) <= 2:
+            return widgets
+
+        visible: list[QWidget] = []
+        overflow: list[QWidget] = []
+        visible_buttons = 0
+        for widget in widgets:
+            explicit_overflow = bool(widget.property("toolbarOverflow"))
+            is_input = isinstance(widget, QLineEdit)
+            is_primary = str(widget.objectName() or "") == "primaryButton"
+            if explicit_overflow:
+                overflow.append(widget)
+                continue
+            if is_input or is_primary:
+                visible.append(widget)
+                if not is_input:
+                    visible_buttons += 1
+                continue
+            if visible_buttons < 2:
+                visible.append(widget)
+                visible_buttons += 1
+            else:
+                overflow.append(widget)
+
+        overflow_button = self._build_toolbar_overflow_button(overflow)
+        if overflow_button is not None:
+            visible.append(overflow_button)
+        return visible
+
+    def apply_table_column_preset(
+        self,
+        table,
+        widths: list[int] | tuple[int, ...],
+        *,
+        stretch_last: bool = True,
+        min_width: int = 56,
+    ) -> None:
+        header = table.horizontalHeader()
+        try:
+            column_count = int(table.model().columnCount())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            column_count = len(widths or [])
+
+        header.setMinimumSectionSize(max(36, int(min_width)))
+        header.setStretchLastSection(bool(stretch_last))
+        for col_idx, width in enumerate(widths or []):
+            if col_idx >= column_count:
+                break
+            header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
+            table.setColumnWidth(col_idx, max(min_width, int(width)))
+
     def _build_toolbar_flow_group(
         self,
         object_name: str,
@@ -555,6 +658,7 @@ class BaseStockTab(QWidget):
         else:
             tb_layout.addStretch(1)
 
+        action_widgets = self._split_toolbar_actions(action_widgets)
         if action_widgets:
             self._equalize_toolbar_action_widths(action_widgets)
         action_wrap = self._build_toolbar_flow_group(

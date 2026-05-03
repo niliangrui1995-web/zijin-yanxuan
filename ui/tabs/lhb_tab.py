@@ -191,6 +191,7 @@ class LhbTab(BaseStockTab):
         filter_widgets = [self.search_box]
 
         self.btn_refresh = QPushButton("历史回补")
+        self.btn_refresh.setObjectName("primaryButton")
         self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_refresh.clicked.connect(self._manual_refresh)
 
@@ -214,12 +215,11 @@ class LhbTab(BaseStockTab):
         self.table_state = TableStateWrapper(self.table, empty_title="暂无龙虎榜数据", loading_title="加载中...")
 
         # 列宽配置
-        header = self.table.horizontalHeader()
-        header.setStretchLastSection(True)
-        default_widths = [52, 60, 70, 60, 65, 80, 80, 60, 90, 100, 90, 220, 70, 200]
-        for i, w in enumerate(default_widths):
-            if i < len(self.model.headers):
-                self.table.setColumnWidth(i, w)
+        self.apply_table_column_preset(
+            self.table,
+            [64, 76, 72, 72, 88, 84, 82, 92, 118, 118, 106, 92, 220],
+            stretch_last=True,
+        )
 
         # 持久化表头（v9: 外资净买入列摘要+tooltip重构版）
         restored_sort = self.bind_header_persistence(self.table, "lhb_header_state_v9")

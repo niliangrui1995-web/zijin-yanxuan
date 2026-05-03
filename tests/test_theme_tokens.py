@@ -108,7 +108,9 @@ def test_ziyao_selection_and_primary_actions_do_not_use_gold_background_tokens()
     for token in background_tokens:
         assert all(fragment not in token for fragment in gold_fragments)
 
-    assert tokens["table"]["selected_rail_color"] == THEME_ZIYAO["COLOR_INFO"]
+    assert tokens["table"]["selected_rail_color"] == THEME_ZIYAO["BRAND_HOVER"]
+    assert THEME_ZIYAO["BRAND_PRIMARY"] == "#B91C1C"
+    assert THEME_ZIYAO["COLOR_RISE"] != THEME_ZIYAO["BRAND_PRIMARY"]
 
 
 def test_light_theme_muted_text_contrast_meets_toolbar_threshold():
@@ -138,7 +140,7 @@ def test_global_qss_uses_density_tokens_for_table_and_controls():
     assert compact_tokens["control"]["button_height"] < comfort_tokens["control"]["button_height"]
 
 
-def test_ziyao_global_qss_uses_neutral_primary_button_and_scrollbar_pressed():
+def test_ziyao_global_qss_uses_red_primary_button_and_scrollbar_pressed():
     qss = generate_global_qss(THEME_ZIYAO, density="鑸掑睍")
     selected_start = qss.index("QTableView::item:selected {")
     selected_end = qss.index("QTableView::item:selected:hover")
@@ -154,9 +156,10 @@ def test_ziyao_global_qss_uses_neutral_primary_button_and_scrollbar_pressed():
     assert "215, 172, 69" not in selected_block
     assert THEME_ZIYAO["PRIMARY_BUTTON_TEXT"] in primary_block
     assert THEME_ZIYAO["PRIMARY_BUTTON_BORDER"] in primary_block
-    assert THEME_ZIYAO["BRAND_PRIMARY"] not in primary_block
+    assert THEME_ZIYAO["PRIMARY_GRADIENT_START"] in primary_block
+    assert THEME_ZIYAO["BRAND_PRIMARY"] in primary_block
     assert THEME_ZIYAO["SCROLLBAR_HANDLE_PRESSED"] in scrollbar_block
-    assert THEME_ZIYAO["BRAND_PRIMARY"] not in scrollbar_block
+    assert "215, 172, 69" not in scrollbar_block
 
 
 def test_global_qss_selected_tab_does_not_use_brand_top_rule():

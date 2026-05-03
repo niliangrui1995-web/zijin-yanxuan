@@ -398,6 +398,7 @@ class ScanTab(BaseStockTab):
         self.btn_scan_settings.setText("参数")
         self.btn_scan_settings.setAccessibleName("VCP 扫描参数设置")
         self.btn_scan_settings.setProperty("class", "toolbarGhost")
+        self.btn_scan_settings.setProperty("toolbarOverflow", True)
         self.btn_scan_settings.setMinimumWidth(56)
         self.btn_scan_settings.setAutoRaise(False)
         self.btn_scan_settings.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -446,10 +447,11 @@ class ScanTab(BaseStockTab):
         header.setSectionsClickable(True)
         self.table_scan.setSortingEnabled(True)
 
-        scan_weights = [0.55, 0.8, 0.9, 0.8, 0.8, 0.7, 1.2, 1.0, 1.0, 0.9, 1.0, 0.7, 2.5]
-        for col_idx, w in enumerate(scan_weights):
-            header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
-            self.table_scan.setColumnWidth(col_idx, int(w * 80))
+        self.apply_table_column_preset(
+            self.table_scan,
+            [64, 78, 72, 72, 88, 92, 76, 88, 90, 96, 100, 172],
+            stretch_last=False,
+        )
         header.setSectionResizeMode(self.source_model.columnCount() - 1, QHeaderView.ResizeMode.Stretch)
 
         # 绑定防抖自动保存与恢复配置；没有历史排序时才走默认触发日期降序

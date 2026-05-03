@@ -62,6 +62,17 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--wait-ms", type=int, default=320, help="Event-loop settle time after UI actions.")
     parser.add_argument("--width", type=int, default=1440, help="Main window screenshot width.")
     parser.add_argument("--height", type=int, default=900, help="Main window screenshot height.")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail when screenshots do not meet audit dimensions, tab coverage, or dark-theme checks.",
+    )
+    parser.add_argument(
+        "--strict-tabs-min",
+        type=int,
+        default=12,
+        help="Minimum numbered tab screenshots required in strict mode.",
+    )
     return parser.parse_args()
 
 
@@ -112,6 +123,88 @@ def _save_widget(widget, path: Path) -> bool:
     pixmap = widget.grab()
     path.parent.mkdir(parents=True, exist_ok=True)
     return bool(pixmap.save(str(path)))
+
+
+def _sample_image_ratio(image, predicate, *, step: int = 12) -> float:
+    width = image.width()
+    height = image.height()
+    if width <= 0 or height <= 0:
+        return 0.0
+    total = 0
+    matched = 0
+    for y in range(0, height, max(1, step)):
+        for x in range(0, width, max(1, step)):
+            color = image.pixelColor(x, y)
+            if color.alpha() <= 0:
+                continue
+            total += 1
+            if predicate(color):
+                matched += 1
+    return matched / total if total else 0.0
+
+
+def _has_large_white_panel(image) -> bool:
+    return _sample_image_ratio(
+        image,
+        lambda color: color.red() >= 245 and color.green() >= 245 and color.blue() >= 245,
+        step=16,
+    ) > 0.16
+
+
+def _has_titlebar_pulse_pixels(image) -> bool:
+    width = image.width()
+    scan_height = min(56, image.height())
+    if width <= 0 or scan_height <= 0:
+        return False
+    hits = 0
+    for y in range(0, scan_height, 2):
+        for x in range(0, width, 8):
+            color = image.pixelColor(x, y)
+            if color.red() >= 120 and color.green() <= 95 and color.blue() <= 105:
+                hits += 1
+                if hits >= 16:
+                    return True
+    return False
+
+
+def _validate_saved_screenshots(
+    saved: list[Path],
+    *,
+    width: int,
+    height: int,
+    tabs: bool,
+    strict_tabs_min: int,
+) -> list[str]:
+    from PyQt6.QtGui import QImage
+
+    errors: list[str] = []
+    by_name = {path.name: path for path in saved}
+    main_path = by_name.get("00_main_window.png")
+    if main_path is None:
+        errors.append("missing 00_main_window.png")
+    else:
+        image = QImage(str(main_path))
+        if image.isNull():
+            errors.append("main screenshot could not be read")
+        else:
+            if image.width() != width or image.height() != height:
+                errors.append(f"main screenshot is {image.width()}x{image.height()}, expected {width}x{height}")
+            if not _has_titlebar_pulse_pixels(image):
+                errors.append("main screenshot does not show the red titlebar pulse strip")
+
+    if tabs:
+        tab_count = sum(1 for path in saved if path.name[:2].isdigit() and path.name[:2] not in {"00", "90", "91", "92", "93", "94"})
+        if tab_count < strict_tabs_min:
+            errors.append(f"captured {tab_count} tab screenshots, expected at least {strict_tabs_min}")
+
+    for path in saved:
+        image = QImage(str(path))
+        if image.isNull():
+            errors.append(f"{path.name} could not be read")
+            continue
+        if _has_large_white_panel(image):
+            errors.append(f"{path.name} appears to contain a large white panel")
+    return errors
 
 
 def _capture_main_and_tabs(
@@ -281,6 +374,16 @@ def main() -> int:
         if path:
             saved.append(path)
 
+    validation_errors: list[str] = []
+    if args.strict:
+        validation_errors = _validate_saved_screenshots(
+            saved,
+            width=max(960, args.width),
+            height=max(600, args.height),
+            tabs=args.tabs,
+            strict_tabs_min=args.strict_tabs_min,
+        )
+
     workspace = getattr(window, "_workspace", None)
     if workspace is not None:
         try:
@@ -293,6 +396,10 @@ def main() -> int:
 
     for path in saved:
         print(path)
+    if validation_errors:
+        for error in validation_errors:
+            print(f"[capture] strict validation failed: {error}", file=sys.stderr)
+        return 2
     return 0
 
 

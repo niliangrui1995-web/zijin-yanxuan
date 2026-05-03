@@ -90,9 +90,11 @@ class WatchlistTab(BaseStockTab):
         self.add_stock_input.returnPressed.connect(self._add_custom_stock)
 
         btn_add_stock = QPushButton("添加自选股")
+        btn_add_stock.setObjectName("primaryButton")
         btn_add_stock.clicked.connect(self._add_custom_stock)
 
         btn_reset = QPushButton("解除列表排序")
+        btn_reset.setProperty("toolbarOverflow", True)
         btn_reset.clicked.connect(self._reset_view)
 
         action_widgets = [self.add_stock_input, btn_add_stock, btn_reset]
@@ -127,12 +129,12 @@ class WatchlistTab(BaseStockTab):
         self.model.sig_rows_reordered.connect(self._on_rows_reordered)
 
         # 自适应列宽
-        sp_weights = [0.55, 0.78, 1.15, 0.72, 0.72, 0.92, 0.9, 1.2, 1.45, 1.45, 1.2, 1.75]
         header = self.table_sp.horizontalHeader()
-        header.setStretchLastSection(True)
-        for col_idx, w in enumerate(sp_weights):
-            header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
-            self.table_sp.setColumnWidth(col_idx, int(w * 80))
+        self.apply_table_column_preset(
+            self.table_sp,
+            [64, 76, 92, 70, 70, 88, 84, 112, 126, 126, 118, 168],
+            stretch_last=True,
+        )
         # 绑定防抖自动保存与恢复配置（列结构变更后沿用新 key，避免旧状态错位）
         restored_sort = self.bind_header_persistence(self.table_sp, "header_state_watchlist_v8")
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)

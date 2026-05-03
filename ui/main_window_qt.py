@@ -396,6 +396,7 @@ class MainWindowQT(QMainWindow):
         self._custom_titlebar = refs.titlebar
         self._titlebar_layout = refs.layout
         self._titlebar_tab_placeholder = refs.placeholder
+        self._market_pulse_strip = refs.pulse_strip
         self._btn_minimize = refs.btn_minimize
         self._btn_maximize = refs.btn_maximize
         self._btn_close = refs.btn_close
