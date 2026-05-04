@@ -1,9 +1,26 @@
 # -*- coding: utf-8 -*-
-from PyQt6.QtCore import QDate, QRectF, Qt
+import datetime as _dt
+
+from PyQt6.QtCore import QDate, QRectF, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QPen, QTextCharFormat
-from PyQt6.QtWidgets import QCalendarWidget, QDateEdit, QTableView
+from PyQt6.QtWidgets import (
+    QButtonGroup,
+    QCalendarWidget,
+    QDateEdit,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QScrollArea,
+    QTableView,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from app.services.ui_runtime_service import MarketCalendar
+from domains.global_earnings_calendar import EarningsCalendarEvent, events_by_date
 from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens
 
@@ -13,13 +30,40 @@ def _c(token: str) -> str:
 
 
 class TradeCalendarWidget(QCalendarWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, earnings_events: dict[str, list[EarningsCalendarEvent]] | None = None):
         super().__init__(parent)
+        self._earnings_events_by_date: dict[str, list[EarningsCalendarEvent]] = {}
         self.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
         self.setGridVisible(False)
         self._configure_weekday_header()
+        self.set_earnings_events(earnings_events or {})
         self._apply_theme_stylesheet()
         theme_manager.sig_theme_changed.connect(self._apply_theme_stylesheet)
+
+    def set_earnings_events(self, events: dict[str, list[EarningsCalendarEvent]] | list[EarningsCalendarEvent] | None) -> None:
+        if isinstance(events, list):
+            self._earnings_events_by_date = events_by_date(events)
+        else:
+            self._earnings_events_by_date = {
+                str(day): list(items or [])
+                for day, items in dict(events or {}).items()
+            }
+        self.updateCells()
+
+    def earnings_events_for_date(self, date_value) -> list[EarningsCalendarEvent]:
+        if isinstance(date_value, QDate):
+            key = date_value.toString("yyyy-MM-dd")
+        else:
+            key = str(date_value or "").strip()[:10]
+        return list(self._earnings_events_by_date.get(key, []))
+
+    @staticmethod
+    def earnings_marker_policy(events: list[EarningsCalendarEvent]) -> dict[str, list[str] | str]:
+        dot_tones = [
+            "super_giant" if event.priority == "super_giant" else "normal"
+            for event in list(events or [])[:3]
+        ]
+        return {"dot_tones": dot_tones, "count_text": ""}
 
     def _configure_weekday_header(self):
         self.setFirstDayOfWeek(Qt.DayOfWeek.Monday)
@@ -239,7 +283,547 @@ class TradeCalendarWidget(QCalendarWidget):
             )
             painter.drawEllipse(dot_rect)
 
+        day_events = self.earnings_events_for_date(date)
+        if day_events and is_current_month:
+            marker = self.earnings_marker_policy(day_events)
+            dot_tones = list(marker.get("dot_tones", []))
+            if dot_tones:
+                dot_y = rect.center().y() + 13.0
+                first_x = rect.center().x() - ((len(dot_tones) - 1) * 4.2)
+                painter.setPen(Qt.PenStyle.NoPen)
+                for idx, tone in enumerate(dot_tones):
+                    dot_color = QColor("#F6C453" if tone == "super_giant" else "#22D3EE")
+                    dot_color.setAlpha(230 if tone == "super_giant" else 205)
+                    painter.setBrush(dot_color)
+                    painter.drawEllipse(QRectF(first_x + idx * 8.4 - 2.2, dot_y, 4.4, 4.4))
+
         painter.restore()
+
+
+class EarningsCalendarRefreshWorker(QThread):
+    sig_result = pyqtSignal(object)
+    sig_error = pyqtSignal(str)
+
+    def __init__(self, service, parent=None):
+        super().__init__(parent)
+        self._service = service
+
+    def run(self) -> None:
+        try:
+            self.sig_result.emit(self._service.refresh_events())
+        except Exception as exc:  # noqa: BLE001 - keep UI worker from killing the dialog thread
+            self.sig_error.emit(str(exc))
+
+
+class OligarchEarningsCalendarPanel(QFrame):
+    eventsChanged = pyqtSignal(object)
+
+    FILTER_MODES = (
+        ("7d", "\u672a\u67657\u5929"),
+        ("30d", "\u672a\u676530\u5929"),
+        ("super_giant", "\u8d85\u7ea7\u5de8\u5934"),
+        ("all", "\u5168\u90e8\u8d5b\u9053"),
+    )
+
+    def __init__(self, parent=None, *, events: list[EarningsCalendarEvent] | None = None, service=None):
+        super().__init__(parent)
+        self._events = list(events or [])
+        self._service = service
+        self._filter_mode = "30d"
+        self._selected_date = ""
+        self._refresh_worker = None
+        self.setObjectName("oligarchEarningsPanel")
+        self._init_ui()
+        self._apply_theme()
+        theme_manager.sig_theme_changed.connect(self._apply_theme)
+        self._rebuild_cards()
+
+    def _init_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 12)
+        layout.setSpacing(10)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
+        self.title_label = QLabel("\u5be1\u5934\u8d22\u62a5\u65e5\u5386", self)
+        self.title_label.setObjectName("earningsPanelTitle")
+        header.addWidget(self.title_label, 1)
+
+        self.btn_refresh = QToolButton(self)
+        self.btn_refresh.setObjectName("earningsRefreshButton")
+        self.btn_refresh.setText("\u21bb")
+        self.btn_refresh.setToolTip("\u5237\u65b0\u5be1\u5934\u8d22\u62a5\u65e5\u5386")
+        self.btn_refresh.clicked.connect(self.refresh_from_service)
+        header.addWidget(self.btn_refresh, 0)
+        layout.addLayout(header)
+
+        self.search_box = QLineEdit(self)
+        self.search_box.setObjectName("earningsSearchBox")
+        self.search_box.setPlaceholderText("\u641c\u7d22\u516c\u53f8\u6216Ticker...")
+        self.search_box.textChanged.connect(self._rebuild_cards)
+        layout.addWidget(self.search_box)
+
+        segment_row = QHBoxLayout()
+        segment_row.setContentsMargins(0, 0, 0, 0)
+        segment_row.setSpacing(4)
+        self._mode_group = QButtonGroup(self)
+        self._mode_group.setExclusive(True)
+        self._mode_buttons: dict[str, QPushButton] = {}
+        for mode, label in self.FILTER_MODES:
+            button = QPushButton(label, self)
+            button.setCheckable(True)
+            button.setObjectName("earningsSegmentButton")
+            button.clicked.connect(lambda checked=False, mode=mode: self.set_filter_mode(mode))
+            self._mode_group.addButton(button)
+            self._mode_buttons[mode] = button
+            segment_row.addWidget(button)
+        self._mode_buttons[self._filter_mode].setChecked(True)
+        layout.addLayout(segment_row)
+
+        self.summary_label = QLabel("", self)
+        self.summary_label.setObjectName("earningsSummaryLabel")
+        self.summary_label.setWordWrap(True)
+        layout.addWidget(self.summary_label)
+
+        self.scroll = QScrollArea(self)
+        self.scroll.setObjectName("earningsEventScroll")
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.cards_host = QWidget(self.scroll)
+        self.cards_host.setObjectName("earningsCardsHost")
+        self.cards_layout = QVBoxLayout(self.cards_host)
+        self.cards_layout.setContentsMargins(0, 0, 0, 0)
+        self.cards_layout.setSpacing(8)
+        self.scroll.setWidget(self.cards_host)
+        layout.addWidget(self.scroll, 1)
+
+        self.status_label = QLabel("", self)
+        self.status_label.setObjectName("earningsPanelStatus")
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
+
+    def _apply_theme(self) -> None:
+        tokens = build_ui_tokens(theme_manager.current_theme)
+        t = tokens["theme"]
+        self.setStyleSheet(
+            f"""
+            QFrame#oligarchEarningsPanel {{
+                background: {tokens['surface']['panel']};
+                border: 1px solid {tokens['border']['subtle']};
+                border-radius: {tokens['radius']['md']}px;
+            }}
+            QLabel#earningsPanelTitle {{
+                color: {tokens['text']['primary']};
+                font-size: {tokens['font']['size_lg']}px;
+                font-weight: {tokens['font']['weight_bold']};
+            }}
+            QToolButton#earningsRefreshButton {{
+                min-width: 30px;
+                max-width: 30px;
+                min-height: 30px;
+                max-height: 30px;
+                border-radius: {tokens['radius']['sm']}px;
+                border: 1px solid {tokens['border']['default']};
+                background: {tokens['surface']['soft']};
+                color: {tokens['text']['secondary']};
+                font-size: {tokens['font']['size_lg']}px;
+            }}
+            QToolButton#earningsRefreshButton:hover {{
+                border-color: {tokens['border']['accent']};
+                background: {tokens['surface']['hover']};
+                color: {tokens['text']['primary']};
+            }}
+            QLineEdit#earningsSearchBox {{
+                min-height: {tokens['control']['input_height']}px;
+                border-radius: {tokens['radius']['sm']}px;
+                border: 1px solid {tokens['border']['default']};
+                background: {tokens['surface']['input']};
+                color: {tokens['text']['primary']};
+                padding: 0 10px;
+            }}
+            QPushButton#earningsSegmentButton {{
+                min-height: {tokens['control']['segment_height']}px;
+                border-radius: {tokens['radius']['sm']}px;
+                border: 1px solid {tokens['border']['subtle']};
+                background: {tokens['surface']['soft']};
+                color: {tokens['text']['secondary']};
+                padding: 0 8px;
+                font-size: {tokens['font']['size_xs']}px;
+            }}
+            QPushButton#earningsSegmentButton:checked {{
+                border-color: {t['COLOR_INFO']};
+                color: {tokens['text']['primary']};
+                background: {t['BG_HOVER']};
+            }}
+            QScrollArea#earningsEventScroll {{
+                background: transparent;
+                border: none;
+            }}
+            QWidget#earningsCardsHost {{
+                background: transparent;
+            }}
+            QLabel#earningsPanelStatus {{
+                color: {tokens['text']['muted']};
+                font-size: {tokens['font']['size_xs']}px;
+            }}
+            QLabel#earningsSummaryLabel {{
+                min-height: 24px;
+                border-radius: {tokens['radius']['sm']}px;
+                border: 1px solid {tokens['border']['subtle']};
+                background: {tokens['surface']['input']};
+                color: {tokens['text']['secondary']};
+                padding: 0 9px;
+                font-size: {tokens['font']['size_xs']}px;
+            }}
+            QWidget#earningsDateGroup {{
+                background: transparent;
+            }}
+            QLabel#earningsDateGroupTitle {{
+                color: {tokens['text']['primary']};
+                font-size: {tokens['font']['size_sm']}px;
+                font-weight: {tokens['font']['weight_bold']};
+            }}
+            QLabel#earningsDateGroupCount {{
+                min-width: 32px;
+                border-radius: {tokens['radius']['xs']}px;
+                background: {tokens['surface']['soft']};
+                color: {tokens['text']['muted']};
+                padding: 2px 7px;
+                font-size: {tokens['font']['size_xs']}px;
+                font-weight: {tokens['font']['weight_semibold']};
+            }}
+            QFrame#earningsEventCard {{
+                background: {tokens['surface']['input']};
+                border: 1px solid {tokens['border']['subtle']};
+                border-radius: {tokens['radius']['sm']}px;
+            }}
+            QLabel#earningsEventTicker {{
+                color: {tokens['text']['primary']};
+                font-size: {tokens['font']['size_md']}px;
+                font-weight: {tokens['font']['weight_bold']};
+            }}
+            QLabel#earningsEventCompany {{
+                color: {tokens['text']['secondary']};
+                font-size: {tokens['font']['size_sm']}px;
+                font-weight: {tokens['font']['weight_semibold']};
+            }}
+            QLabel#earningsEventMeta {{
+                color: {tokens['text']['muted']};
+                font-size: {tokens['font']['size_xs']}px;
+            }}
+            QLabel#earningsEventTimeExact {{
+                color: {tokens['text']['primary']};
+                font-size: {tokens['font']['size_xs']}px;
+                font-weight: {tokens['font']['weight_semibold']};
+            }}
+            QLabel#earningsEventTimePending {{
+                color: {tokens['text']['secondary']};
+                font-size: {tokens['font']['size_xs']}px;
+            }}
+            QLabel#earningsEventSource {{
+                color: {tokens['text']['muted']};
+                font-size: {tokens['font']['size_xs']}px;
+            }}
+            QLabel#earningsEventBadgeConfirmed {{
+                color: {tokens['text']['primary']};
+                background: {tokens['state']['success']['bg']};
+                border: 1px solid {tokens['state']['success']['border']};
+                border-radius: {tokens['radius']['xs']}px;
+                padding: 2px 7px;
+                font-size: {tokens['font']['size_xs']}px;
+                font-weight: {tokens['font']['weight_semibold']};
+            }}
+            QLabel#earningsEventBadgeBroad {{
+                color: {tokens['text']['primary']};
+                background: {tokens['state']['warning']['bg']};
+                border: 1px solid {tokens['state']['warning']['border']};
+                border-radius: {tokens['radius']['xs']}px;
+                padding: 2px 7px;
+                font-size: {tokens['font']['size_xs']}px;
+                font-weight: {tokens['font']['weight_semibold']};
+            }}
+            QLabel#earningsEventBadgePending {{
+                color: {tokens['text']['secondary']};
+                background: {tokens['surface']['soft']};
+                border: 1px solid {tokens['border']['subtle']};
+                border-radius: {tokens['radius']['xs']}px;
+                padding: 2px 7px;
+                font-size: {tokens['font']['size_xs']}px;
+                font-weight: {tokens['font']['weight_semibold']};
+            }}
+            QLabel#earningsEmptyState {{
+                color: {tokens['text']['muted']};
+                font-size: {tokens['font']['size_sm']}px;
+                padding: 18px 4px;
+            }}
+            """
+        )
+
+    def set_events(self, events: list[EarningsCalendarEvent]) -> None:
+        self._events = list(events or [])
+        self._rebuild_cards()
+        self.eventsChanged.emit(list(self._events))
+
+    def set_selected_date(self, date_text: str) -> None:
+        self._selected_date = str(date_text or "").strip()[:10]
+        self._rebuild_cards()
+
+    def set_filter_mode(self, mode: str) -> None:
+        if mode not in dict(self.FILTER_MODES):
+            mode = "30d"
+        self._filter_mode = mode
+        self._selected_date = ""
+        button = self._mode_buttons.get(mode)
+        if button is not None:
+            button.setChecked(True)
+        self._rebuild_cards()
+
+    def filtered_events(self) -> list[EarningsCalendarEvent]:
+        events = list(self._events)
+        today = _dt.date.today()
+        if self._selected_date:
+            events = [event for event in events if str(event.report_date or "").strip()[:10] == self._selected_date]
+        elif self._filter_mode in {"7d", "30d"}:
+            days = 7 if self._filter_mode == "7d" else 30
+            end = today + _dt.timedelta(days=days)
+            filtered = []
+            for event in events:
+                try:
+                    event_day = _dt.date.fromisoformat(event.report_date[:10])
+                except ValueError:
+                    continue
+                if today <= event_day <= end:
+                    filtered.append(event)
+            events = filtered
+        elif self._filter_mode == "super_giant":
+            events = [event for event in events if event.priority == "super_giant"]
+
+        query = self.search_box.text().strip().lower() if hasattr(self, "search_box") else ""
+        if query:
+            events = [
+                event
+                for event in events
+                if query in event.ticker.lower()
+                or query in event.company.lower()
+                or query in event.sector.lower()
+            ]
+        return sorted(events, key=lambda event: (event.report_date, 0 if event.priority == "super_giant" else 1, event.ticker))
+
+    def grouped_events(self) -> list[tuple[str, list[EarningsCalendarEvent]]]:
+        groups: list[tuple[str, list[EarningsCalendarEvent]]] = []
+        group_lookup: dict[str, list[EarningsCalendarEvent]] = {}
+        for event in self.filtered_events():
+            day = str(event.report_date or "").strip()[:10]
+            if not day:
+                continue
+            if day not in group_lookup:
+                group_lookup[day] = []
+                groups.append((day, group_lookup[day]))
+            group_lookup[day].append(event)
+        return groups
+
+    def _clear_cards(self) -> None:
+        while self.cards_layout.count():
+            item = self.cards_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    @staticmethod
+    def _format_event_line(event: EarningsCalendarEvent) -> str:
+        parts = [event.sector]
+        if event.market:
+            parts.append(event.market)
+        if event.fiscal_period:
+            parts.append(event.fiscal_period)
+        return " | ".join(part for part in parts if part)
+
+    @staticmethod
+    def _format_time_line(event: EarningsCalendarEvent) -> str:
+        if event.beijing_time:
+            return f"\u5317\u4eac {event.beijing_time}"
+        time_label = str(event.time_label or "").strip()
+        if time_label and time_label not in {"\u5f85\u786e\u8ba4", "\u672a\u77e5", "-"}:
+            return f"{time_label}\uff5c\u5177\u4f53\u65f6\u523b\u5f85\u786e\u8ba4"
+        return "\u4ec5\u65e5\u671f\uff5c\u65f6\u95f4\u5f85\u786e\u8ba4"
+
+    def _event_status_text(self, event: EarningsCalendarEvent) -> str:
+        if event.status == "confirmed":
+            return "\u786e\u8ba4"
+        if event.beijing_time:
+            return "\u7cbe\u786e"
+        if event.source == "\u793a\u4f8b":
+            return "\u793a\u4f8b"
+        time_label = str(event.time_label or "").strip()
+        if time_label and time_label not in {"\u5f85\u786e\u8ba4", "\u672a\u77e5", "-"}:
+            return time_label
+        return "\u5f85\u786e\u8ba4"
+
+    def _event_badge_object_name(self, event: EarningsCalendarEvent) -> str:
+        if event.status == "confirmed" or event.beijing_time:
+            return "earningsEventBadgeConfirmed"
+        time_label = str(event.time_label or "").strip()
+        if time_label and time_label not in {"\u5f85\u786e\u8ba4", "\u672a\u77e5", "-"}:
+            return "earningsEventBadgeBroad"
+        return "earningsEventBadgePending"
+
+    @staticmethod
+    def _format_group_title(day: str) -> str:
+        try:
+            date_value = _dt.date.fromisoformat(day[:10])
+        except ValueError:
+            return day
+        weekdays = (
+            "\u5468\u4e00",
+            "\u5468\u4e8c",
+            "\u5468\u4e09",
+            "\u5468\u56db",
+            "\u5468\u4e94",
+            "\u5468\u516d",
+            "\u5468\u65e5",
+        )
+        return f"{date_value:%m-%d} {weekdays[date_value.weekday()]}"
+
+    @staticmethod
+    def _time_precision_counts(events: list[EarningsCalendarEvent]) -> tuple[int, int, int]:
+        exact = sum(1 for event in events if event.beijing_time)
+        broad = sum(
+            1
+            for event in events
+            if not event.beijing_time
+            and str(event.time_label or "").strip()
+            and str(event.time_label or "").strip() not in {"\u5f85\u786e\u8ba4", "\u672a\u77e5", "-"}
+        )
+        date_only = max(0, len(events) - exact - broad)
+        return exact, broad, date_only
+
+    def _create_group_header(self, day: str, events: list[EarningsCalendarEvent]) -> QWidget:
+        group = QWidget(self.cards_host)
+        group.setObjectName("earningsDateGroup")
+        layout = QVBoxLayout(group)
+        layout.setContentsMargins(0, 0, 0, 2)
+        layout.setSpacing(6)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
+        title = QLabel(self._format_group_title(day), group)
+        title.setObjectName("earningsDateGroupTitle")
+        header.addWidget(title, 0)
+        count = QLabel(f"{len(events)} \u5bb6", group)
+        count.setObjectName("earningsDateGroupCount")
+        header.addWidget(count, 0)
+        header.addStretch(1)
+        layout.addLayout(header)
+        return group
+
+    def _create_event_card(self, event: EarningsCalendarEvent) -> QFrame:
+        card = QFrame(self.cards_host)
+        card.setObjectName("earningsEventCard")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(10, 7, 10, 7)
+        layout.setSpacing(3)
+
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        top.setSpacing(6)
+        ticker_label = QLabel(event.ticker, card)
+        ticker_label.setObjectName("earningsEventTicker")
+        top.addWidget(ticker_label, 0)
+        company_label = QLabel(event.company, card)
+        company_label.setObjectName("earningsEventCompany")
+        company_label.setWordWrap(False)
+        top.addWidget(company_label, 1)
+        badge = QLabel(self._event_status_text(event), card)
+        badge.setObjectName(self._event_badge_object_name(event))
+        top.addWidget(badge, 0)
+        layout.addLayout(top)
+
+        meta_label = QLabel(self._format_event_line(event), card)
+        meta_label.setObjectName("earningsEventMeta")
+        meta_label.setWordWrap(True)
+        layout.addWidget(meta_label)
+
+        time_label = QLabel(self._format_time_line(event), card)
+        time_label.setObjectName("earningsEventTimeExact" if event.beijing_time else "earningsEventTimePending")
+        time_label.setWordWrap(True)
+        layout.addWidget(time_label)
+
+        source_text = event.source or "\u672a\u77e5\u6765\u6e90"
+        source_label = QLabel(f"\u6765\u6e90 {source_text}", card)
+        source_label.setObjectName("earningsEventSource")
+        source_label.setWordWrap(True)
+        layout.addWidget(source_label)
+        return card
+
+    def _rebuild_cards(self, *_args) -> None:
+        if not hasattr(self, "cards_layout"):
+            return
+        self._clear_cards()
+        groups = self.grouped_events()
+        events = [event for _, group_events in groups for event in group_events]
+        if groups:
+            for day, group_events in groups:
+                group = self._create_group_header(day, group_events)
+                group_layout = group.layout()
+                if isinstance(group_layout, QVBoxLayout):
+                    for event in group_events:
+                        group_layout.addWidget(self._create_event_card(event))
+                self.cards_layout.addWidget(group)
+        else:
+            empty_label = QLabel("\u6ca1\u6709\u5339\u914d\u7684\u8d22\u62a5\u4e8b\u4ef6", self.cards_host)
+            empty_label.setObjectName("earningsEmptyState")
+            empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.cards_layout.addWidget(empty_label)
+        self.cards_layout.addStretch(1)
+
+        exact_count, broad_count, date_only_count = self._time_precision_counts(events)
+        self.summary_label.setText(
+            f"\u663e\u793a {len(events)} \u5bb6\uff5c\u5317\u4eac\u65f6\u95f4 {exact_count}\uff5c"
+            f"\u76d8\u524d/\u76d8\u540e {broad_count}\uff5c\u4ec5\u65e5\u671f {date_only_count}"
+        )
+
+        source_parts = []
+        if self._events:
+            sources = sorted({event.source or "\u672a\u77e5" for event in self._events})
+            source_parts.append("\u6765\u6e90: " + " + ".join(sources))
+            universe_count = len(getattr(getattr(self, "_service", None), "universe", {}) or {})
+            if universe_count:
+                covered = len({event.ticker for event in self._events})
+                source_parts.append(f"\u8986\u76d6 {covered}/{universe_count}")
+        else:
+            source_parts.append("\u6682\u65e0\u771f\u5b9e\u8d22\u62a5\u65e5\u5386\u6570\u636e")
+        source_parts.append(f"\u663e\u793a {len(events)}/{len(self._events)}")
+        if events:
+            source_parts.append(f"\u7cbe\u786e\u65f6\u95f4 {exact_count}/{len(events)}")
+        self.status_label.setText("\uff5c".join(source_parts))
+
+    def refresh_from_service(self) -> None:
+        if self._service is None:
+            self._rebuild_cards()
+            return
+        if self._refresh_worker is not None and self._refresh_worker.isRunning():
+            return
+        self.btn_refresh.setEnabled(False)
+        self.status_label.setText("\u6b63\u5728\u62c9\u53d6\u5be1\u5934\u5b57\u5178\u5168\u5e02\u573a\u8d22\u62a5\u65e5\u5386...")
+        worker = EarningsCalendarRefreshWorker(self._service, self)
+        self._refresh_worker = worker
+        worker.sig_result.connect(self._on_refresh_result)
+        worker.sig_error.connect(self._on_refresh_error)
+        worker.finished.connect(self._on_refresh_finished)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_refresh_result(self, events) -> None:
+        self.set_events(list(events or []))
+
+    def _on_refresh_error(self, message: str) -> None:
+        self.status_label.setText(f"\u5237\u65b0\u5931\u8d25: {message}")
+
+    def _on_refresh_finished(self) -> None:
+        self.btn_refresh.setEnabled(True)
+        self._refresh_worker = None
 
 
 class TradeDateEdit(QDateEdit):

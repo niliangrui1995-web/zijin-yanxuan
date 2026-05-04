@@ -4,7 +4,16 @@ import time
 from app.bootstrap import ApplicationBootstrap
 from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
-from PyQt6.QtWidgets import QAbstractButton, QApplication, QFrame, QLineEdit, QMainWindow, QToolTip, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QAbstractButton,
+    QApplication,
+    QFrame,
+    QLineEdit,
+    QMainWindow,
+    QToolTip,
+    QVBoxLayout,
+    QWidget,
+)
 
 from app.services import (
     APP_VERSION,
@@ -276,32 +285,101 @@ class MainWindowQT(QMainWindow):
             parent=parent if parent is not None else self.tabs_wrapper,
         )
 
+    def _rebind_workspace_chrome(self) -> None:
+        tabs = getattr(self, "tabs", None)
+        if tabs is not None:
+            try:
+                tabs.tabBar().setVisible(False)
+            except (AttributeError, RuntimeError, TypeError) as exc:
+                log.debug(f"[UI] 隐藏工作区原生标签栏失败: {exc}")
+
+        nav_widget = getattr(self, "_shell_navigation_widget", None)
+        bind_workspace = getattr(nav_widget, "bind_workspace", None)
+        if callable(bind_workspace):
+            bind_workspace(getattr(self, "_workspace", None), tabs)
+            return
+
+        try:
+            self._standalone_tabbar = inject_standalone_tabbar(self)
+        except (AttributeError, RuntimeError, TypeError) as exc:
+            log.warning(f"[UI] 重新绑定标题栏导航失败: {exc}")
+
+    def _refresh_central_quote_code_supplier(self) -> None:
+        service = getattr(self, "central_quotes_svc", None)
+        if service is None:
+            return
+        code_supplier = getattr(getattr(self, "_workspace", None), "get_realtime_quote_codes", None)
+        setter = getattr(service, "set_code_supplier", None)
+        if callable(setter):
+            setter(code_supplier)
+            return
+        if hasattr(service, "code_supplier"):
+            service.code_supplier = code_supplier
+            return
+        if hasattr(service, "_code_supplier"):
+            service._code_supplier = code_supplier
+            return
+        log.warning("[UI] 中央报价服务不支持刷新 code_supplier")
+
     def replace_workspace(self, workspace):
         existing_workspace = getattr(self, "_workspace", None)
+        existing_tabs = getattr(existing_workspace, "tabs", None)
+        previous_tabs = getattr(self, "tabs", None)
+        if existing_workspace is not None:
+            try:
+                existing_tabs.currentChanged.disconnect(self._remember_last_active_tab)
+            except (AttributeError, TypeError, RuntimeError):
+                pass
+
+        self._tabs_wrapper_layout.addWidget(workspace, 1)
+        self._workspace = workspace
+        self.tabs = workspace.tabs
+        try:
+            schedule_restore = getattr(workspace, "schedule_restore_last_tab", None)
+            if callable(schedule_restore):
+                schedule_restore(app_config.last_active_tab)
+            else:
+                workspace.restore_last_tab(app_config.last_active_tab)
+            kline_manager.prewarm(delay_ms=2500)
+            self.install_workspace_table_copy_hooks()
+            self.tabs.currentChanged.connect(self._remember_last_active_tab)
+            self._rebind_workspace_chrome()
+            self._refresh_central_quote_code_supplier()
+        except Exception:
+            try:
+                self.tabs.currentChanged.disconnect(self._remember_last_active_tab)
+            except (AttributeError, TypeError, RuntimeError):
+                pass
+            try:
+                workspace.shutdown()
+            except (AttributeError, OSError, RuntimeError, TypeError) as exc:
+                log.warning(f"[UI] 清理失败的新工作区时 shutdown 失败: {exc}")
+            self._tabs_wrapper_layout.removeWidget(workspace)
+            delete_later = getattr(workspace, "deleteLater", None)
+            if callable(delete_later):
+                delete_later()
+            self._workspace = existing_workspace
+            self.tabs = previous_tabs
+            try:
+                self._rebind_workspace_chrome()
+            except (AttributeError, RuntimeError, TypeError) as exc:
+                log.warning(f"[UI] 恢复旧工作区标题栏导航失败: {exc}")
+            if existing_tabs is not None:
+                try:
+                    existing_tabs.currentChanged.connect(self._remember_last_active_tab)
+                except (AttributeError, TypeError, RuntimeError):
+                    pass
+            raise
+
         if existing_workspace is not None:
             try:
                 existing_workspace.shutdown()
             except (AttributeError, OSError, RuntimeError, TypeError) as exc:
                 log.error(f"[UI] 停止旧工作区失败: {exc}")
             self._tabs_wrapper_layout.removeWidget(existing_workspace)
-            existing_workspace.deleteLater()
-
-        self._workspace = workspace
-        self.tabs = workspace.tabs
-        self._tabs_wrapper_layout.addWidget(workspace, 1)
-        schedule_restore = getattr(workspace, "schedule_restore_last_tab", None)
-        if callable(schedule_restore):
-            schedule_restore(app_config.last_active_tab)
-        else:
-            workspace.restore_last_tab(app_config.last_active_tab)
-        kline_manager.prewarm(delay_ms=2500)
-        self.install_workspace_table_copy_hooks()
-
-        try:
-            self.tabs.currentChanged.disconnect(self._remember_last_active_tab)
-        except (TypeError, RuntimeError):
-            pass
-        self.tabs.currentChanged.connect(self._remember_last_active_tab)
+            delete_later = getattr(existing_workspace, "deleteLater", None)
+            if callable(delete_later):
+                delete_later()
         return workspace
 
     def create_central_quotes_service(self, *, code_supplier=None):

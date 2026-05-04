@@ -2,7 +2,8 @@
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QTableView
 
-from ui.components.trade_calendar import TradeCalendarWidget
+from domains.global_earnings_calendar.service import EarningsCalendarEvent
+from ui.components.trade_calendar import OligarchEarningsCalendarPanel, TradeCalendarWidget
 
 
 def test_trade_calendar_uses_compact_weekday_labels():
@@ -27,3 +28,204 @@ def test_trade_calendar_uses_compact_weekday_labels():
         assert all(len(label) == 1 for label in labels)
     finally:
         widget.deleteLater()
+
+
+def test_trade_calendar_accepts_earnings_events_by_date():
+    widget = TradeCalendarWidget()
+    try:
+        widget.set_earnings_events({
+            "2026-05-07": [
+                EarningsCalendarEvent(
+                    "NVIDIA",
+                    "NVDA",
+                    "AI加速芯片与定制ASIC",
+                    "2026-05-07",
+                    priority="super_giant",
+                )
+            ]
+        })
+
+        events = widget.earnings_events_for_date("2026-05-07")
+
+        assert len(events) == 1
+        assert events[0].ticker == "NVDA"
+    finally:
+        widget.deleteLater()
+
+
+def test_trade_calendar_earnings_marker_policy_uses_dots_without_count_text():
+    events = [
+        EarningsCalendarEvent(
+            "NVIDIA",
+            "NVDA",
+            "AI加速芯片与定制ASIC",
+            "2026-05-07",
+            priority="super_giant",
+        ),
+        EarningsCalendarEvent(
+            "AMD",
+            "AMD",
+            "AI加速芯片与定制ASIC",
+            "2026-05-07",
+        ),
+        EarningsCalendarEvent(
+            "Lumentum",
+            "LITE",
+            "光芯片与光引擎",
+            "2026-05-07",
+        ),
+        EarningsCalendarEvent(
+            "Arista",
+            "ANET",
+            "数据中心网络",
+            "2026-05-07",
+        ),
+    ]
+
+    marker = TradeCalendarWidget.earnings_marker_policy(events)
+
+    assert marker["count_text"] == ""
+    assert marker["dot_tones"] == ["super_giant", "normal", "normal"]
+
+
+def test_oligarch_earnings_panel_filters_events_by_search_and_segment():
+    events = [
+        EarningsCalendarEvent(
+            "NVIDIA",
+            "NVDA",
+            "AI加速芯片与定制ASIC",
+            "2026-05-07",
+            priority="super_giant",
+        ),
+        EarningsCalendarEvent(
+            "Applied Materials",
+            "AMAT",
+            "前道晶圆设备与量测",
+            "2026-05-13",
+            priority="normal",
+        ),
+    ]
+    panel = OligarchEarningsCalendarPanel(events=events)
+    try:
+        panel.search_box.setText("NVDA")
+        assert [event.ticker for event in panel.filtered_events()] == ["NVDA"]
+
+        panel.search_box.clear()
+        panel.set_filter_mode("super_giant")
+        assert [event.ticker for event in panel.filtered_events()] == ["NVDA"]
+    finally:
+        panel.deleteLater()
+
+
+def test_oligarch_earnings_panel_filters_to_selected_calendar_date():
+    events = [
+        EarningsCalendarEvent(
+            "Lumentum",
+            "LITE",
+            "光芯片与光引擎",
+            "2026-05-05",
+        ),
+        EarningsCalendarEvent(
+            "AMD",
+            "AMD",
+            "AI加速芯片与定制ASIC",
+            "2026-05-05",
+        ),
+        EarningsCalendarEvent(
+            "NVIDIA",
+            "NVDA",
+            "AI加速芯片与定制ASIC",
+            "2026-05-07",
+            priority="super_giant",
+        ),
+    ]
+    panel = OligarchEarningsCalendarPanel(events=events)
+    try:
+        panel.set_selected_date("2026-05-05")
+
+        assert [event.ticker for event in panel.filtered_events()] == ["AMD", "LITE"]
+
+        panel.set_filter_mode("all")
+        assert [event.ticker for event in panel.filtered_events()] == ["AMD", "LITE", "NVDA"]
+    finally:
+        panel.deleteLater()
+
+
+def test_oligarch_earnings_panel_groups_filtered_events_by_report_date():
+    events = [
+        EarningsCalendarEvent(
+            company="Lumentum",
+            ticker="LITE",
+            sector="Optical components",
+            report_date="2026-05-05",
+            time_label="盘后",
+            beijing_time="05-06 05:00",
+            status="confirmed",
+            source="Lumentum IR",
+        ),
+        EarningsCalendarEvent(
+            company="AMD",
+            ticker="AMD",
+            sector="Accelerators",
+            report_date="2026-05-05",
+            time_label="盘后",
+            source="Nasdaq",
+        ),
+        EarningsCalendarEvent(
+            company="NVIDIA",
+            ticker="NVDA",
+            sector="Accelerators",
+            report_date="2026-05-07",
+            priority="super_giant",
+            source="Nasdaq",
+        ),
+    ]
+    panel = OligarchEarningsCalendarPanel(events=events)
+    try:
+        panel.set_filter_mode("all")
+
+        groups = panel.grouped_events()
+
+        assert [(day, [event.ticker for event in items]) for day, items in groups] == [
+            ("2026-05-05", ["AMD", "LITE"]),
+            ("2026-05-07", ["NVDA"]),
+        ]
+    finally:
+        panel.deleteLater()
+
+
+def test_oligarch_earnings_panel_describes_time_precision():
+    panel = OligarchEarningsCalendarPanel(events=[])
+    try:
+        exact = EarningsCalendarEvent(
+            company="Lumentum",
+            ticker="LITE",
+            sector="Optical components",
+            report_date="2026-05-05",
+            time_label="盘后",
+            beijing_time="05-06 05:00",
+            status="confirmed",
+            source="Lumentum IR",
+        )
+        broad = EarningsCalendarEvent(
+            company="AMD",
+            ticker="AMD",
+            sector="Accelerators",
+            report_date="2026-05-05",
+            time_label="盘后",
+            source="Nasdaq",
+        )
+        date_only = EarningsCalendarEvent(
+            company="Hanmi Semi",
+            ticker="042700.KS",
+            sector="Packaging equipment",
+            report_date="2026-05-06",
+            time_label="待确认",
+            source="Yahoo Finance",
+        )
+
+        assert panel._format_time_line(exact) == "北京 05-06 05:00"
+        assert "具体时刻待确认" in panel._format_time_line(broad)
+        assert "仅日期" in panel._format_time_line(date_only)
+    finally:
+        panel.deleteLater()

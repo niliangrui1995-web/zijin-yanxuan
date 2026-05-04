@@ -1,0 +1,14 @@
+{
+  "events": [
+    {
+      "ticker": "LITE",
+      "report_date": "2026-05-05",
+      "fiscal_period": "FY2026 Q3",
+      "time_label": "盘后",
+      "beijing_time": "05-06 05:00",
+      "status": "confirmed",
+      "source": "Lumentum IR",
+      "conference_url": "https://investor.lumentum.com/financial-news-releases/news-details/2026/Lumentum-to-Announce-Fiscal-Third-Quarter-2026-Financial-Results-on-May-5-2026/default.aspx"
+    }
+  ]
+}

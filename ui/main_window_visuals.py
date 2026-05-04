@@ -1,10 +1,11 @@
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QApplication, QDialog, QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QToolButton, QToolTip, QVBoxLayout
 
+from domains.global_earnings_calendar import GlobalEarningsCalendarService, events_by_date
 from ui.components.main_window_shell import apply_chrome_theme
 from ui.components.shared_title_bar import DraggableTitleBar
-from ui.components.trade_calendar import TradeCalendarWidget
+from ui.components.trade_calendar import OligarchEarningsCalendarPanel, TradeCalendarWidget
 from ui.styles.global_qss import generate_global_qss
 from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens
@@ -47,12 +48,14 @@ def show_trade_calendar(main_window):
     tokens = build_ui_tokens(theme_manager.current_theme)
     is_dark = tokens["is_dark"]
     shell = tokens["shell"]
+    service = GlobalEarningsCalendarService()
+    earnings_events = service.load_events()
 
     dlg = QDialog(main_window)
     dlg.setObjectName("tradeCalendarDialog")
     dlg.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
     dlg.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-    dlg.resize(424, 392)
+    dlg.resize(900, 560)
 
     main_layout = QVBoxLayout(dlg)
     main_layout.setContentsMargins(14, 14, 14, 14)
@@ -76,14 +79,14 @@ def show_trade_calendar(main_window):
     tb_layout.setContentsMargins(18, 0, 10, 0)
     tb_layout.setSpacing(0)
 
-    title_lbl = QLabel("A股交易休市日历")
+    title_lbl = QLabel("A\u80a1\u4ea4\u6613\u65e5\u5386 \u00b7 \u5be1\u5934\u8d22\u62a5")
     title_lbl.setObjectName("dialogWindowTitle")
     tb_layout.addWidget(title_lbl)
     tb_layout.addStretch()
 
     btn_close = QToolButton(title_bar)
     btn_close.setObjectName("dialogCloseButton")
-    btn_close.setText("✕")
+    btn_close.setText("\u2715")
     btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
     btn_close.setFixedSize(34, 34)
     btn_close.clicked.connect(dlg.reject)
@@ -92,13 +95,19 @@ def show_trade_calendar(main_window):
 
     body = QFrame(container)
     body.setObjectName("tradeCalendarBody")
-    body_layout = QVBoxLayout(body)
+    body_layout = QHBoxLayout(body)
     body_layout.setContentsMargins(18, 18, 18, 18)
-    body_layout.setSpacing(8)
+    body_layout.setSpacing(12)
 
-    calendar = TradeCalendarWidget(body)
+    calendar = TradeCalendarWidget(body, earnings_events=events_by_date(earnings_events))
     calendar.setObjectName("tradeCalendarWidget")
-    body_layout.addWidget(calendar)
+    body_layout.addWidget(calendar, 2)
+
+    earnings_panel = OligarchEarningsCalendarPanel(body, events=earnings_events, service=service)
+    body_layout.addWidget(earnings_panel, 1)
+    earnings_panel.eventsChanged.connect(calendar.set_earnings_events)
+    calendar.clicked.connect(lambda date: earnings_panel.set_selected_date(date.toString("yyyy-MM-dd")))
+    QTimer.singleShot(0, earnings_panel.refresh_from_service)
 
     content_layout = QVBoxLayout()
     content_layout.setContentsMargins(18, 10, 18, 4)

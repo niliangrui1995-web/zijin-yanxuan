@@ -32,6 +32,7 @@ class DummyShellWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.last_density = None
+        self.trade_calendar_open_count = 0
 
         central = QWidget(self)
         root_layout = QVBoxLayout(central)
@@ -69,7 +70,7 @@ class DummyShellWindow(QMainWindow):
         pass
 
     def _show_trade_calendar(self):
-        pass
+        self.trade_calendar_open_count += 1
 
     def _toggle_network(self):
         pass
@@ -79,7 +80,6 @@ class DummyShellWindow(QMainWindow):
 
     def _apply_table_density(self, density, persist=True):
         self.last_density = (density, persist)
-
 
 def test_main_window_status_bar_applies_theme():
     bar = MainWindowStatusBar("vtest")
@@ -131,6 +131,12 @@ def test_main_window_shell_builders_wire_titlebar_menu_and_tabs():
         nav_idx = window._titlebar_layout.indexOf(window._titlebar_nav_host)
         assert window._titlebar_layout.stretch(nav_idx) >= 20
         assert window._titlebar_sync_widget.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Maximum
+        assert window._titlebar_sync_widget.btn_trade_calendar.text() == "交易日历"
+        assert window._titlebar_sync_widget.btn_trade_calendar.accessibleName() == "交易日历"
+        window._titlebar_sync_widget.btn_trade_calendar.click()
+        assert window.trade_calendar_open_count == 1
+        menu_action_texts = [action.text() for action in window._sys_menu.actions()]
+        assert "交易日历" not in menu_action_texts
         assert window._titlebar_sync_widget.lbl_meta.isHidden() is False
         assert window._titlebar_sync_widget.lbl_meta.minimumWidth() >= 220
         assert window._titlebar_sync_widget.lbl_meta.maximumWidth() >= 420
@@ -139,6 +145,10 @@ def test_main_window_shell_builders_wire_titlebar_menu_and_tabs():
         assert window._titlebar_sync_widget.lbl_state.toolTip() == window._titlebar_sync_widget.lbl_meta.text()
         assert window._market_pulse_strip.height() == 3
         assert window._theme_menu.title().startswith("界面主题：")
+        assert not hasattr(window, "_workspace_mode_menu")
+        assert not hasattr(window, "_act_workspace_classic")
+        assert not hasattr(window, "_act_workspace_research")
+        assert "工作区模式" not in [action.text() for action in window._sys_menu.actions()]
         assert window.last_density is not None
         assert window.last_density[1] is False
         tabbar_style = window._standalone_tabbar.styleSheet()

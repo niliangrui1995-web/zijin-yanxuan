@@ -153,3 +153,8 @@ class TestAppConfigSingleton:
                 "target_key": "_test_/legacy_telemetry/legacy_key",
             },
         ) in telemetry
+
+    def test_workspace_mode_configuration_has_been_removed(self):
+        assert not hasattr(app_config, "workspace_mode")
+        assert not hasattr(app_config, "classic_last_active_tab")
+        assert not hasattr(app_config, "research_last_section")

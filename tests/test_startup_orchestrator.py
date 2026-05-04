@@ -14,6 +14,8 @@ from core.startup_orchestrator import (
     AUTO_RT_MONITOR_NETWORK_TASK_ID,
     AUTO_RT_MONITOR_RETRY_INTERVAL_MS,
     DEFERRED_LOAD_TASK_ID,
+    GLOBAL_EARNINGS_CALENDAR_SYNC_DELAY_MS,
+    GLOBAL_EARNINGS_CALENDAR_SYNC_TASK_ID,
     SMART_STARTUP_TASK_ID,
     StartupOrchestrator,
 )
@@ -279,8 +281,50 @@ def test_startup_orchestrator_schedules_auto_rt_retry_timer():
     try:
         assert orchestrator._auto_rt_timer.isActive() is True
         assert orchestrator._auto_rt_timer.interval() == AUTO_RT_MONITOR_RETRY_INTERVAL_MS
+        assert orchestrator._global_earnings_calendar_timer.isActive() is True
+        assert orchestrator._global_earnings_calendar_timer.interval() == GLOBAL_EARNINGS_CALENDAR_SYNC_DELAY_MS
     finally:
         orchestrator.shutdown()
+
+
+def test_startup_orchestrator_silent_global_earnings_sync_refreshes_once(monkeypatch):
+    calls = []
+
+    class _FakeService:
+        def refresh_events(self):
+            calls.append("refresh")
+            return [object(), object()]
+
+    monkeypatch.setattr(
+        "domains.global_earnings_calendar.service.GlobalEarningsCalendarService",
+        _FakeService,
+    )
+
+    orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
+
+    orchestrator.refresh_global_earnings_calendar()
+    orchestrator.refresh_global_earnings_calendar()
+
+    assert calls == ["refresh"]
+
+
+def test_startup_orchestrator_skips_global_earnings_sync_when_toggle_disabled(monkeypatch):
+    calls = []
+
+    def fake_is_enabled(key, overrides=None):
+        return False if key == "silent_global_earnings_calendar_sync" else True
+
+    monkeypatch.setattr("core.startup_orchestrator.service_toggle_registry.is_enabled", fake_is_enabled)
+    monkeypatch.setattr(
+        "domains.global_earnings_calendar.service.GlobalEarningsCalendarService",
+        lambda: calls.append("constructed"),
+    )
+
+    orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
+
+    orchestrator.refresh_global_earnings_calendar()
+
+    assert calls == []
 
 
 def test_startup_orchestrator_auto_starts_rt_when_ready(monkeypatch):
@@ -358,6 +402,7 @@ def test_startup_orchestrator_shutdown_abandons_background_tasks():
     assert runner.abandoned == [
         DEFERRED_LOAD_TASK_ID,
         ASIAN_DATA_SYNC_TASK_ID,
+        GLOBAL_EARNINGS_CALENDAR_SYNC_TASK_ID,
         SMART_STARTUP_TASK_ID,
         AUTO_RT_MONITOR_NETWORK_TASK_ID,
     ]

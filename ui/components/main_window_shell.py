@@ -817,6 +817,12 @@ class TitleBarSyncWidget(QFrame):
         self.btn_sync.setToolTip("执行盘后全局同步（F5）")
         layout.addWidget(self.btn_sync, 0, Qt.AlignmentFlag.AlignVCenter)
 
+        self.btn_trade_calendar = QPushButton("交易日历", self)
+        self.btn_trade_calendar.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_trade_calendar.setAccessibleName("交易日历")
+        self.btn_trade_calendar.setToolTip("查看 A股交易日历与寡头财报日历")
+        layout.addWidget(self.btn_trade_calendar, 0, Qt.AlignmentFlag.AlignVCenter)
+
         self.lbl_state = QLabel("同步就绪", self)
         self.lbl_state.setObjectName("titleBarSyncState")
         layout.addWidget(self.lbl_state, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -885,6 +891,7 @@ class TitleBarSyncWidget(QFrame):
             """
         )
         self.btn_sync.setStyleSheet(_titlebar_sync_button_qss(theme))
+        self.btn_trade_calendar.setStyleSheet(_titlebar_sync_button_qss(theme))
 
 
 @dataclass
@@ -1002,6 +1009,7 @@ def inject_standalone_tabbar(window) -> QTabBar:
         nav_widget = ShellNavigationWidget(nav_host)
         sync_widget = TitleBarSyncWidget(nav_host)
         sync_widget.btn_sync.clicked.connect(window._action_refresh_f5)
+        sync_widget.btn_trade_calendar.clicked.connect(window._show_trade_calendar)
 
         nav_layout.addWidget(nav_widget, 10, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         nav_layout.addWidget(sync_widget, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -1054,11 +1062,6 @@ def setup_system_menu(window) -> SystemMenuRefs:
 
     sys_menu.setObjectName("sysMenu")
 
-    window.act_trade_calendar = sys_menu.addAction("交易日历")
-    window.act_trade_calendar.triggered.connect(window._show_trade_calendar)
-
-    sys_menu.addSeparator()
-
     window.act_network = sys_menu.addAction("网络状态：离线")
     window.act_network.triggered.connect(window._toggle_network)
 
@@ -1085,8 +1088,6 @@ def setup_system_menu(window) -> SystemMenuRefs:
 
     window._density_menu = density_menu
     window._apply_table_density(app_config.table_density, persist=False)
-
-    sys_menu.addSeparator()
 
     theme_menu = sys_menu.addMenu(f"界面主题：{theme_manager.current_theme_name}")
     theme_group = QActionGroup(window)

@@ -92,6 +92,11 @@ service_toggle_registry.register(
     description="Background Asian-market cache sync scheduled during startup.",
 )
 service_toggle_registry.register(
+    "silent_global_earnings_calendar_sync",
+    enabled_by_default=True,
+    description="Background global oligarch earnings calendar sync scheduled during startup.",
+)
+service_toggle_registry.register(
     "workspace_auto_rt_monitor",
     enabled_by_default=True,
     description="Auto-start intraday monitor when market session and data conditions are met.",

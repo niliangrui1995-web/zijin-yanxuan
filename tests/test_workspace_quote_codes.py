@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 from types import SimpleNamespace
 
+from PyQt6.QtCore import QEventLoop, QTimer
 from PyQt6.QtWidgets import QApplication, QWidget
 
 import ui.workspaces.classic_workspace as classic_workspace_module
+import ui.workspaces.stock_context_service as stock_context_module
 from ui.components.smooth_tab_widget import SmoothTabWidget
 from ui.workspaces.classic_workspace import ClassicWorkspace
 from ui.workspaces.stock_context_service import StockContextService
@@ -321,6 +323,83 @@ def test_workspace_collects_scan_and_fund_holding_context_signals(monkeypatch):
     assert any("QFII" in signal.summary and "新进" in signal.summary for signal in signals)
     assert not any("2025Q3" in signal.summary for signal in signals)
     assert not any("减持" in signal.summary for signal in signals)
+
+
+def test_workspace_collects_scan_context_from_cache_without_loading_lazy_tab(monkeypatch):
+    import core.data_store as data_store_module
+
+    class _FakeDataStore:
+        def load_json(self, key, default=None):
+            assert key == "scan_cache"
+            return {
+                "results": [
+                    {
+                        stock_context_module.KEY_CODE: "688498",
+                        stock_context_module.KEY_NAME: "sample",
+                        stock_context_module.KEY_TRIGGER_DATE: "20260430",
+                        stock_context_module.KEY_SCORE: "91",
+                        stock_context_module.KEY_RPS_STRENGTH: "96",
+                    }
+                ]
+            }
+
+    get_tab_calls = []
+    monkeypatch.setattr(data_store_module, "DataStore", lambda: _FakeDataStore())
+    workspace = SimpleNamespace(
+        engine=None,
+        tab_specs=lambda: [{"key": "scan", "group": "info"}],
+        get_loaded_tab=lambda key: None,
+        get_tab=lambda key: get_tab_calls.append(key) or None,
+        iter_tabs=lambda: [],
+    )
+
+    context = ClassicWorkspace.collect_stock_context(workspace)
+
+    assert get_tab_calls == []
+    signals = context["688498"]
+    assert [(signal.source_tab, signal.signal_type) for signal in signals] == [("scan", "vcp_scan")]
+    assert signals[0].name == "sample"
+    assert signals[0].numeric_value == 91.0
+    assert signals[0].observed_at == "20260430"
+
+
+def test_workspace_collects_lhb_context_from_pool_cache_without_loading_lazy_tab(monkeypatch):
+    import core.lhb_pool_manager as lhb_pool_module
+
+    captured = {}
+
+    class _FakePoolManager:
+        def compute_pool(self, *, data_provider=None, engine=None):
+            captured["data_provider"] = data_provider
+            captured["engine"] = engine
+            return [
+                {
+                    stock_context_module.KEY_CODE: "300750",
+                    stock_context_module.KEY_NAME: "sample",
+                    stock_context_module.KEY_LAST_LISTED: "20260430",
+                    stock_context_module.KEY_NET_WAN: 1200,
+                    stock_context_module.KEY_INST_WAN: 800,
+                    stock_context_module.KEY_FOREIGN_WAN: 50,
+                }
+            ]
+
+    monkeypatch.setattr(lhb_pool_module, "LhbPoolManager", _FakePoolManager)
+    workspace = SimpleNamespace(
+        data_provider="provider",
+        engine="engine",
+        tab_specs=lambda: [{"key": "lhb", "group": "info"}],
+        get_loaded_tab=lambda key: None,
+        get_tab=lambda key: (_ for _ in ()).throw(AssertionError("lazy tab should not load")),
+        iter_tabs=lambda: [],
+    )
+
+    context = ClassicWorkspace.collect_stock_context(workspace)
+
+    assert captured == {"data_provider": "provider", "engine": "engine"}
+    signals = context["300750"]
+    assert [(signal.source_tab, signal.signal_type) for signal in signals] == [("lhb", "lhb")]
+    assert signals[0].numeric_value == 1200
+    assert signals[0].observed_at == "20260430"
 
 
 def test_workspace_collects_fund_holding_context_from_snapshot_without_open_tab(monkeypatch):
@@ -788,6 +867,48 @@ def test_workspace_background_prewarm_loads_lazy_tabs_without_manual_click(monke
         assert ctor_kwargs["fund_holdings"]["autoload"] is False
         assert snapshot_primes == [{}]
         assert "fund_holdings" in primed
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_classic_workspace_pending_restore_timer_is_cancelled_on_shutdown(monkeypatch, qt_application):
+    class _Tab(QWidget):
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+
+    monkeypatch.setattr(classic_workspace_module, "WatchlistTab", _Tab)
+
+    calls = []
+    monkeypatch.setattr(
+        classic_workspace_module.ClassicWorkspace,
+        "restore_last_tab",
+        lambda self, index: calls.append(index),
+    )
+
+    workspace = classic_workspace_module.ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+    )
+    try:
+        workspace.schedule_restore_last_tab(1, delay_ms=10)
+        timer = workspace._restore_last_tab_timer
+
+        assert timer is not None
+        assert timer.isActive()
+
+        workspace.shutdown()
+
+        assert workspace._restore_last_tab_timer is None
+        assert timer.isActive() is False
+
+        loop = QEventLoop()
+        QTimer.singleShot(30, loop.quit)
+        loop.exec()
+        qt_application.processEvents()
+
+        assert calls == []
     finally:
         workspace.shutdown()
         workspace.deleteLater()

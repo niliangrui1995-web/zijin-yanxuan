@@ -147,7 +147,7 @@ class ClassicWorkspace(QWidget):
     BACKGROUND_PREWARM_INTERVAL_MS = 260
     RESTORE_LAST_TAB_DELAY_MS = 750
 
-    def __init__(self, data_provider, engine, host=None, parent=None):
+    def __init__(self, data_provider, engine, host=None, parent=None, *, background_prewarm: bool = True):
         super().__init__(parent)
         self.data_provider = data_provider
         self.engine = engine
@@ -291,13 +291,15 @@ class ClassicWorkspace(QWidget):
         self._background_prewarm_queue: list[str] = []
         self._background_prewarm_started = False
         self._pending_restore_index: int | None = None
+        self._restore_last_tab_timer: QTimer | None = None
         self._workspace_event_bus = None
         self._workspace_events_connected = False
         self._mount_initial_tabs()
         self._workspace_facade = WorkspaceFacade(self)
         self.tabs.currentChanged.connect(self._on_current_tab_changed)
         self._connect_workspace_events()
-        QTimer.singleShot(self.BACKGROUND_PREWARM_DELAY_MS, self._start_background_tab_prewarm)
+        if background_prewarm:
+            QTimer.singleShot(self.BACKGROUND_PREWARM_DELAY_MS, self._start_background_tab_prewarm)
 
     def _tab_factory(self, class_name: str, module_name: str, *args, **kwargs):
         def _create():
@@ -510,8 +512,28 @@ class ClassicWorkspace(QWidget):
         if not isinstance(index, int) or index < 0:
             return
         self._pending_restore_index = index
-        delay = self.RESTORE_LAST_TAB_DELAY_MS if delay_ms is None else max(0, int(delay_ms))
-        QTimer.singleShot(delay, lambda index=index: self.restore_last_tab(index))
+        try:
+            delay = self.RESTORE_LAST_TAB_DELAY_MS if delay_ms is None else max(0, int(delay_ms))
+        except (TypeError, ValueError):
+            return
+
+        previous_timer = self._restore_last_tab_timer
+        if previous_timer is not None:
+            previous_timer.stop()
+            previous_timer.deleteLater()
+
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        self._restore_last_tab_timer = timer
+
+        def _restore() -> None:
+            if self._restore_last_tab_timer is timer:
+                self._restore_last_tab_timer = None
+            self.restore_last_tab(index)
+            timer.deleteLater()
+
+        timer.timeout.connect(_restore)
+        timer.start(delay)
 
     def current_tab_index(self) -> int:
         return self.tabs.currentIndex()
@@ -681,6 +703,12 @@ class ClassicWorkspace(QWidget):
         return self.select_code_row(code_text, preferred_tab_index=source_index if source_index >= 0 else None)
 
     def shutdown(self):
+        restore_timer = getattr(self, "_restore_last_tab_timer", None)
+        if restore_timer is not None:
+            restore_timer.stop()
+            restore_timer.deleteLater()
+            self._restore_last_tab_timer = None
+
         disconnect_events = getattr(self, "_disconnect_workspace_events", None)
         if callable(disconnect_events):
             disconnect_events()

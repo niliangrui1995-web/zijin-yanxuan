@@ -66,6 +66,7 @@ _migrate_*.py
 # Tool caches
 .pytest_cache/
 .ruff_cache/
+.superpowers/
 
 # Runtime state (auto-generated)
 data/earnings_state.json

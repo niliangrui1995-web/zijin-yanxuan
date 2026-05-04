@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import json
+import sqlite3
 import threading
 from collections import defaultdict
 from collections.abc import Iterable
+from pathlib import Path
 
 from ui.workspaces.stock_signal import StockSignal, coerce_stock_signal
 from ui.workspaces.tab_capabilities import ForeignKeywordCapability, StockSignalSourceCapability
@@ -40,6 +43,13 @@ KEY_QUARTER = "\u5b63\u5ea6"
 KEY_CHANGE_TYPE = "\u53d8\u5316\u7c7b\u578b"
 KEY_CURRENT_RATIO = "\u672c\u671f\u5360\u6bd4"
 KEY_HOLDING_DELTA = "\u6301\u80a1\u53d8\u5316"
+
+RAW_STOCK_CODE = "\u80a1\u7968\u4ee3\u7801"
+RAW_STOCK_NAME = "\u80a1\u7968\u540d\u79f0"
+RAW_STOCK_SHORT_NAME = "\u80a1\u7968\u7b80\u79f0"
+RAW_QOQ_PCT = "\u73af\u6bd4\u589e\u901f_\u767e\u5206\u6bd4"
+RAW_DISCLOSURE_DATE = "\u516c\u544a\u65e5\u671f"
+RAW_DATA_TYPE = "\u6570\u636e\u7c7b\u578b"
 
 TEXT_BUY = "\u4e70\u5165"
 TEXT_SELL = "\u5356\u51fa"
@@ -140,6 +150,14 @@ class StockContextService:
         tab_specs = getattr(self._workspace, "tab_specs", None)
         return list(tab_specs() or []) if callable(tab_specs) else []
 
+    def _has_tab_key(self, key: str, loaded_tab=None) -> bool:
+        if loaded_tab is not None:
+            return True
+        key_text = str(key or "").strip()
+        if not key_text:
+            return False
+        return any(str(spec.get("key") or "").strip() == key_text for spec in self._tab_specs())
+
     def _iter_tabs_with_keys(self) -> Iterable[tuple[str, object]]:
         seen_ids: set[int] = set()
         for spec in self._tab_specs():
@@ -168,6 +186,113 @@ class StockContextService:
         if not callable(get_row_data):
             return []
         return list(get_row_data() or [])
+
+    @staticmethod
+    def _project_root() -> Path:
+        return Path(__file__).resolve().parents[2]
+
+    @staticmethod
+    def _coerce_cache_rows(value) -> list[dict]:
+        if not isinstance(value, (list, tuple)):
+            return []
+        rows: list[dict] = []
+        for row in value:
+            if isinstance(row, dict):
+                rows.append(dict(row))
+        return rows
+
+    def _load_scan_cache_rows(self) -> list[dict]:
+        payload = None
+        try:
+            from core.data_store import DataStore
+
+            payload = DataStore().load_json("scan_cache", default={})
+        except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError, sqlite3.Error):
+            payload = None
+
+        if not payload:
+            old_path = self._project_root() / "data" / "scan_cache.json"
+            try:
+                with old_path.open("r", encoding="utf-8") as handle:
+                    payload = json.load(handle)
+            except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                payload = None
+
+        if isinstance(payload, dict):
+            return self._coerce_cache_rows(payload.get("results", []))
+        return self._coerce_cache_rows(payload)
+
+    def _load_foreign_block_cache_rows(self) -> list[dict]:
+        cache_path = self._project_root() / "data" / "Cache" / "foreign_block_trade_latest.json"
+        try:
+            from core.json_cache import load_json_file
+
+            payload = load_json_file(str(cache_path))
+        except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
+            return []
+        if not isinstance(payload, dict):
+            return []
+        return self._coerce_cache_rows(payload.get("rows", []))
+
+    def _load_earnings_cache_rows(self) -> list[dict]:
+        try:
+            from core.data_store import data_store
+
+            payload = data_store.load_earnings_state() or {}
+        except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError, sqlite3.Error):
+            return []
+        if not isinstance(payload, dict):
+            return []
+
+        rows: list[dict] = []
+        for raw_row in self._coerce_cache_rows(payload.get("records", [])):
+            if raw_row.get(KEY_CODE):
+                rows.append(raw_row)
+                continue
+
+            code = str(raw_row.get(RAW_STOCK_CODE) or raw_row.get(KEY_CODE) or "").strip()
+            if code.isdigit() and len(code) <= 6:
+                code = code.zfill(6)
+            if not code:
+                continue
+
+            rows.append(
+                {
+                    **raw_row,
+                    KEY_CODE: code,
+                    KEY_NAME: str(
+                        raw_row.get(RAW_STOCK_NAME)
+                        or raw_row.get(RAW_STOCK_SHORT_NAME)
+                        or raw_row.get(KEY_NAME)
+                        or ""
+                    ).strip(),
+                    KEY_QOQ_PCT: raw_row.get(RAW_QOQ_PCT, raw_row.get(KEY_QOQ_PCT, "")),
+                    KEY_REPORT_PERIOD: str(raw_row.get(KEY_REPORT_PERIOD, "") or "").strip(),
+                    KEY_REPORT_TITLE: str(raw_row.get(RAW_DATA_TYPE, raw_row.get(KEY_REPORT_TITLE, "")) or "").strip(),
+                    KEY_TRIGGER_DATE: str(raw_row.get(RAW_DISCLOSURE_DATE, "") or "").strip(),
+                }
+            )
+        return rows
+
+    def _load_lhb_pool_rows(self) -> list[dict]:
+        try:
+            from core.lhb_pool_manager import LhbPoolManager
+
+            pool = LhbPoolManager().compute_pool(
+                data_provider=getattr(self._workspace, "data_provider", None),
+                engine=getattr(self._workspace, "engine", None),
+            )
+        except (AttributeError, ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError):
+            return []
+
+        rows: list[dict] = []
+        for row in self._coerce_cache_rows(pool):
+            raw_date = str(row.get(KEY_LAST_LISTED, "") or "").strip()
+            if len(raw_date) == 8:
+                row[KEY_LAST_LISTED_RAW] = raw_date
+                row[KEY_LAST_LISTED] = f"{raw_date[4:6]}-{raw_date[6:8]}"
+            rows.append(row)
+        return rows
 
     def refresh_watchlist_names(self, code2name: dict[str, str]) -> bool:
         watchlist_tab = self._get_tab("watchlist")
@@ -281,13 +406,14 @@ class StockContextService:
 
     def _iter_scan_signals(self) -> list[StockSignal]:
         scan_tab = self._get_tab("scan")
-        if scan_tab is None:
+        if not self._has_tab_key("scan", scan_tab):
             return []
-
         scan_reader = getattr(scan_tab, "get_scan_results", None)
         rows = list(scan_reader() or []) if callable(scan_reader) else []
         if not rows:
             rows = self._get_rows(scan_tab)
+        if not rows:
+            rows = self._load_scan_cache_rows()
 
         signals: list[StockSignal] = []
         for row_idx, row in enumerate(rows):
@@ -334,9 +460,8 @@ class StockContextService:
 
     def _iter_block_trade_signals(self) -> list[StockSignal]:
         foreign_block_tab = self._get_tab("foreign_block")
-        if foreign_block_tab is None:
+        if not self._has_tab_key("foreign_block", foreign_block_tab):
             return []
-
         foreign_keywords = (
             foreign_block_tab.get_foreign_keywords()
             if isinstance(foreign_block_tab, ForeignKeywordCapability)
@@ -344,7 +469,10 @@ class StockContextService:
         )
 
         block_aggregates: dict[str, dict] = {}
-        for row_idx, row in enumerate(self._get_rows(foreign_block_tab)):
+        rows = self._get_rows(foreign_block_tab)
+        if not rows:
+            rows = self._load_foreign_block_cache_rows()
+        for row_idx, row in enumerate(rows):
             code = str(row.get(KEY_CODE, "")).strip()
             if not code:
                 continue
@@ -408,7 +536,13 @@ class StockContextService:
 
     def _iter_earnings_signals(self) -> list[StockSignal]:
         signals: list[StockSignal] = []
-        for row_idx, row in enumerate(self._get_rows(self._get_tab("earnings"))):
+        earnings_tab = self._get_tab("earnings")
+        if not self._has_tab_key("earnings", earnings_tab):
+            return []
+        rows = self._get_rows(earnings_tab)
+        if not rows:
+            rows = self._load_earnings_cache_rows()
+        for row_idx, row in enumerate(rows):
             code = str(row.get(KEY_CODE, "")).strip()
             if not code:
                 continue
@@ -672,7 +806,13 @@ class StockContextService:
     def _iter_lhb_signals(self) -> list[StockSignal]:
         signals: list[StockSignal] = []
         seen_codes: set[str] = set()
-        for row_idx, row in enumerate(self._get_rows(self._get_tab("lhb"))):
+        lhb_tab = self._get_tab("lhb")
+        if not self._has_tab_key("lhb", lhb_tab):
+            return []
+        rows = self._get_rows(lhb_tab)
+        if not rows:
+            rows = self._load_lhb_pool_rows()
+        for row_idx, row in enumerate(rows):
             code = str(row.get(KEY_CODE, "")).strip()
             if not code or code in seen_codes:
                 continue
