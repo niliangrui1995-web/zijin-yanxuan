@@ -29,7 +29,7 @@ DEFAULT_CONFIRMED_EVENTS_PATH = Path(__file__).with_name("confirmed_events.json"
 _ALNUM_RE = re.compile(r"[a-z0-9]+")
 _BEIJING_DATE_RE = re.compile(r"(?:(?P<year>\d{4})[-/])?(?P<month>\d{1,2})[-/](?P<day>\d{1,2})")
 _BEIJING_TIME_RE = re.compile(r"(?P<hour>\d{1,2}):(?P<minute>\d{2})")
-_PRIORITY_RANK = {"super_giant": 0, "normal": 1}
+_PRIORITY_RANK = {"super_giant": 0, "strategic_giant": 1, "normal": 2}
 _MARKET_SUFFIXES = (
     (".TWO", "TW"),
     (".TW", "TW"),
@@ -265,6 +265,7 @@ def build_oligarch_universe(industry_module=None) -> dict[str, OligarchCompany]:
     oligarch_dict = getattr(module, "OLIGARCH_DICT", {}) or {}
     tickers = getattr(module, "VANGUARD_TICKERS", {}) or {}
     super_giants = set(getattr(module, "SUPER_GIANTS", set()) or set())
+    strategic_giants = set(getattr(module, "STRATEGIC_GIANTS", set()) or set())
 
     sector_by_company: dict[str, str] = {}
     for sector, companies in dict(oligarch_dict).items():
@@ -279,7 +280,12 @@ def build_oligarch_universe(industry_module=None) -> dict[str, OligarchCompany]:
         if not ticker_text:
             continue
         company_text = str(company or "").strip()
-        priority = "super_giant" if company_text in super_giants else "normal"
+        if company_text in super_giants:
+            priority = "super_giant"
+        elif company_text in strategic_giants:
+            priority = "strategic_giant"
+        else:
+            priority = "normal"
         universe[ticker_text] = OligarchCompany(
             company=company_text,
             ticker=ticker_text,

@@ -88,6 +88,7 @@ def test_trade_calendar_earnings_marker_policy_uses_dots_without_count_text():
             "AMD",
             "AI加速芯片与定制ASIC",
             "2026-05-07",
+            priority="strategic_giant",
         ),
         EarningsCalendarEvent(
             "Lumentum",
@@ -106,7 +107,7 @@ def test_trade_calendar_earnings_marker_policy_uses_dots_without_count_text():
     marker = TradeCalendarWidget.earnings_marker_policy(events)
 
     assert marker["count_text"] == ""
-    assert marker["dot_tones"] == ["super_giant", "normal", "normal"]
+    assert marker["dot_tones"] == ["super_giant", "strategic_giant", "normal"]
 
 
 def test_oligarch_earnings_panel_filters_events_by_search_and_segment():
@@ -123,7 +124,7 @@ def test_oligarch_earnings_panel_filters_events_by_search_and_segment():
             "AMAT",
             "前道晶圆设备与量测",
             "2026-05-13",
-            priority="normal",
+            priority="strategic_giant",
         ),
     ]
     panel = OligarchEarningsCalendarPanel(events=events)
@@ -134,8 +135,24 @@ def test_oligarch_earnings_panel_filters_events_by_search_and_segment():
         panel.search_box.clear()
         panel.set_filter_mode("super_giant")
         assert [event.ticker for event in panel.filtered_events()] == ["NVDA"]
+
+        panel.set_filter_mode("strategic_giant")
+        assert [event.ticker for event in panel.filtered_events()] == ["AMAT"]
     finally:
         panel.deleteLater()
+
+
+def test_oligarch_earnings_panel_formats_strategic_priority_label():
+    event = EarningsCalendarEvent(
+        "Applied Materials",
+        "AMAT",
+        "前道晶圆设备与量测",
+        "2026-05-13",
+        priority="strategic_giant",
+        market="US",
+    )
+
+    assert OligarchEarningsCalendarPanel._format_event_line(event).startswith("战略核心 |")
 
 
 def test_oligarch_earnings_panel_filters_to_selected_calendar_date():

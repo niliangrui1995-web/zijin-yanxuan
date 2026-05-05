@@ -32,6 +32,7 @@ def test_build_oligarch_universe_maps_sector_and_priority():
             "TSMC": "TSM",
         },
         SUPER_GIANTS={"NVIDIA", "TSMC"},
+        STRATEGIC_GIANTS={"Broadcom"},
     )
 
     universe = build_oligarch_universe(module)
@@ -40,6 +41,7 @@ def test_build_oligarch_universe_maps_sector_and_priority():
     assert universe["NVDA"].sector == "AI加速芯片与定制ASIC"
     assert universe["NVDA"].priority == "super_giant"
     assert universe["AVGO"].sector == "AI加速芯片与定制ASIC"
+    assert universe["AVGO"].priority == "strategic_giant"
     assert universe["TSM"].sector == "先进制程代工"
 
 
@@ -207,13 +209,14 @@ def test_yfinance_provider_factory_uses_project_session(monkeypatch):
 def test_events_by_date_groups_events_with_super_giants_first():
     events = [
         EarningsCalendarEvent("Applied Materials", "AMAT", "前道晶圆设备与量测", "2026-05-13", priority="normal"),
+        EarningsCalendarEvent("AMD", "AMD", "AI加速芯片与定制ASIC", "2026-05-13", priority="strategic_giant"),
         EarningsCalendarEvent("NVIDIA", "NVDA", "AI加速芯片与定制ASIC", "2026-05-13", priority="super_giant"),
     ]
 
     grouped = events_by_date(events)
 
     assert list(grouped) == ["2026-05-13"]
-    assert [event.ticker for event in grouped["2026-05-13"]] == ["NVDA", "AMAT"]
+    assert [event.ticker for event in grouped["2026-05-13"]] == ["NVDA", "AMD", "AMAT"]
 
 
 def test_events_by_date_uses_beijing_calendar_date_for_us_after_hours():

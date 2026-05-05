@@ -24,9 +24,29 @@ from domains.global_earnings_calendar import EarningsCalendarEvent, event_calend
 from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens
 
+_PRIORITY_TONE_COLORS = {
+    "super_giant": "#F6C453",
+    "strategic_giant": "#A78BFA",
+    "normal": "#22D3EE",
+}
+_PRIORITY_TONE_ALPHA = {
+    "super_giant": 230,
+    "strategic_giant": 220,
+    "normal": 205,
+}
+_PRIORITY_LABELS = {
+    "super_giant": "\u8d85\u7ea7\u5de8\u5934",
+    "strategic_giant": "\u6218\u7565\u6838\u5fc3",
+}
+
 
 def _c(token: str) -> str:
     return theme_manager.get(token)
+
+
+def _priority_tone(priority: str) -> str:
+    priority_text = str(priority or "").strip()
+    return priority_text if priority_text in _PRIORITY_TONE_COLORS else "normal"
 
 
 class TradeCalendarWidget(QCalendarWidget):
@@ -59,10 +79,7 @@ class TradeCalendarWidget(QCalendarWidget):
 
     @staticmethod
     def earnings_marker_policy(events: list[EarningsCalendarEvent]) -> dict[str, list[str] | str]:
-        dot_tones = [
-            "super_giant" if event.priority == "super_giant" else "normal"
-            for event in list(events or [])[:3]
-        ]
+        dot_tones = [_priority_tone(event.priority) for event in list(events or [])[:3]]
         return {"dot_tones": dot_tones, "count_text": ""}
 
     def _configure_weekday_header(self):
@@ -292,8 +309,8 @@ class TradeCalendarWidget(QCalendarWidget):
                 first_x = rect.center().x() - ((len(dot_tones) - 1) * 4.2)
                 painter.setPen(Qt.PenStyle.NoPen)
                 for idx, tone in enumerate(dot_tones):
-                    dot_color = QColor("#F6C453" if tone == "super_giant" else "#22D3EE")
-                    dot_color.setAlpha(230 if tone == "super_giant" else 205)
+                    dot_color = QColor(_PRIORITY_TONE_COLORS.get(tone, _PRIORITY_TONE_COLORS["normal"]))
+                    dot_color.setAlpha(_PRIORITY_TONE_ALPHA.get(tone, _PRIORITY_TONE_ALPHA["normal"]))
                     painter.setBrush(dot_color)
                     painter.drawEllipse(QRectF(first_x + idx * 8.4 - 2.2, dot_y, 4.4, 4.4))
 
@@ -322,6 +339,7 @@ class OligarchEarningsCalendarPanel(QFrame):
         ("7d", "\u672a\u67657\u5929"),
         ("30d", "\u672a\u676530\u5929"),
         ("super_giant", "\u8d85\u7ea7\u5de8\u5934"),
+        ("strategic_giant", "\u6218\u7565\u6838\u5fc3"),
         ("all", "\u5168\u90e8\u8d5b\u9053"),
     )
 
@@ -598,6 +616,8 @@ class OligarchEarningsCalendarPanel(QFrame):
             events = filtered
         elif self._filter_mode == "super_giant":
             events = [event for event in events if event.priority == "super_giant"]
+        elif self._filter_mode == "strategic_giant":
+            events = [event for event in events if event.priority == "strategic_giant"]
 
         query = self.search_box.text().strip().lower() if hasattr(self, "search_box") else ""
         if query:
@@ -632,7 +652,11 @@ class OligarchEarningsCalendarPanel(QFrame):
 
     @staticmethod
     def _format_event_line(event: EarningsCalendarEvent) -> str:
-        parts = [event.sector]
+        parts = []
+        priority_label = _PRIORITY_LABELS.get(str(event.priority or "").strip())
+        if priority_label:
+            parts.append(priority_label)
+        parts.append(event.sector)
         if event.market:
             parts.append(event.market)
         if event.fiscal_period:
