@@ -92,9 +92,9 @@ service_toggle_registry.register(
     description="Background Asian-market cache sync scheduled during startup.",
 )
 service_toggle_registry.register(
-    "silent_global_earnings_calendar_sync",
+    "daily_global_earnings_calendar_sync",
     enabled_by_default=True,
-    description="Background global oligarch earnings calendar sync scheduled during startup.",
+    description="Daily fixed-time background global oligarch earnings calendar sync while the app is running.",
 )
 service_toggle_registry.register(
     "workspace_auto_rt_monitor",

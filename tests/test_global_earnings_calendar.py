@@ -13,6 +13,7 @@ from domains.global_earnings_calendar.service import (
     build_demo_events,
     build_oligarch_universe,
     events_by_date,
+    sorted_events,
 )
 
 
@@ -189,6 +190,104 @@ def test_events_by_date_groups_events_with_super_giants_first():
 
     assert list(grouped) == ["2026-05-13"]
     assert [event.ticker for event in grouped["2026-05-13"]] == ["NVDA", "AMAT"]
+
+
+def test_events_by_date_uses_beijing_calendar_date_for_us_after_hours():
+    events = [
+        EarningsCalendarEvent(
+            "AMD",
+            "AMD",
+            "AI加速芯片与定制ASIC",
+            "2026-05-05",
+            time_label="盘后",
+            market="US",
+        ),
+        EarningsCalendarEvent(
+            "Lumentum",
+            "LITE",
+            "光芯片与硅光",
+            "2026-05-05",
+            time_label="盘后",
+            beijing_time="05-06 05:00",
+            market="US",
+        ),
+        EarningsCalendarEvent(
+            "Eaton",
+            "ETN",
+            "数据中心电力与配电",
+            "2026-05-05",
+            time_label="盘前",
+            beijing_time="05-05 23:00",
+            market="US",
+        ),
+    ]
+
+    grouped = events_by_date(events)
+
+    assert [event.ticker for event in grouped["2026-05-05"]] == ["ETN"]
+    assert [event.ticker for event in grouped["2026-05-06"]] == ["LITE", "AMD"]
+
+
+def test_sorted_events_orders_same_beijing_calendar_date_by_beijing_time():
+    events = [
+        EarningsCalendarEvent(
+            "ADTRAN",
+            "ADTN",
+            "光纤光缆与宽带接入",
+            "2026-05-04",
+            beijing_time="05-05 20:30",
+            market="US",
+        ),
+        EarningsCalendarEvent(
+            "Eaton",
+            "ETN",
+            "数据中心电力与配电",
+            "2026-05-05",
+            beijing_time="05-05 23:00",
+            market="US",
+        ),
+        EarningsCalendarEvent(
+            "Fabrinet",
+            "FN",
+            "光模块与光引擎",
+            "2026-05-04",
+            beijing_time="05-05 05:00",
+            market="US",
+        ),
+        EarningsCalendarEvent(
+            "GlobalFoundries",
+            "GFS",
+            "先进制程代工",
+            "2026-05-05",
+            beijing_time="05-05 20:30",
+            market="US",
+        ),
+    ]
+
+    assert [event.ticker for event in sorted_events(events)] == ["FN", "ADTN", "GFS", "ETN"]
+    assert [event.ticker for event in events_by_date(events)["2026-05-05"]] == ["FN", "ADTN", "GFS", "ETN"]
+
+
+def test_service_filter_window_uses_beijing_calendar_date_for_confirmed_events():
+    events = [
+        EarningsCalendarEvent(
+            "Fabrinet",
+            "FN",
+            "光模块与光引擎",
+            "2026-05-04",
+            time_label="盘后",
+            beijing_time="05-05 05:00",
+            market="US",
+        )
+    ]
+
+    filtered = GlobalEarningsCalendarService._filter_window(
+        events,
+        today=dt.date(2026, 5, 5),
+        lookahead_days=0,
+    )
+
+    assert [event.ticker for event in filtered] == ["FN"]
 
 
 def test_service_returns_empty_when_all_real_sources_are_empty(monkeypatch, tmp_path):

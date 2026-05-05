@@ -53,6 +53,27 @@ def test_trade_calendar_accepts_earnings_events_by_date():
         widget.deleteLater()
 
 
+def test_trade_calendar_marks_earnings_on_beijing_calendar_date():
+    widget = TradeCalendarWidget()
+    try:
+        widget.set_earnings_events([
+            EarningsCalendarEvent(
+                "Lumentum",
+                "LITE",
+                "光芯片与硅光",
+                "2026-05-05",
+                time_label="盘后",
+                beijing_time="05-06 05:00",
+                market="US",
+            )
+        ])
+
+        assert widget.earnings_events_for_date("2026-05-05") == []
+        assert [event.ticker for event in widget.earnings_events_for_date("2026-05-06")] == ["LITE"]
+    finally:
+        widget.deleteLater()
+
+
 def test_trade_calendar_earnings_marker_policy_uses_dots_without_count_text():
     events = [
         EarningsCalendarEvent(
@@ -124,12 +145,17 @@ def test_oligarch_earnings_panel_filters_to_selected_calendar_date():
             "LITE",
             "光芯片与光引擎",
             "2026-05-05",
+            time_label="盘后",
+            beijing_time="05-06 05:00",
+            market="US",
         ),
         EarningsCalendarEvent(
             "AMD",
             "AMD",
             "AI加速芯片与定制ASIC",
             "2026-05-05",
+            time_label="盘后",
+            market="US",
         ),
         EarningsCalendarEvent(
             "NVIDIA",
@@ -141,17 +167,44 @@ def test_oligarch_earnings_panel_filters_to_selected_calendar_date():
     ]
     panel = OligarchEarningsCalendarPanel(events=events)
     try:
-        panel.set_selected_date("2026-05-05")
+        panel.set_selected_date("2026-05-06")
 
-        assert [event.ticker for event in panel.filtered_events()] == ["AMD", "LITE"]
+        assert [event.ticker for event in panel.filtered_events()] == ["LITE", "AMD"]
 
         panel.set_filter_mode("all")
-        assert [event.ticker for event in panel.filtered_events()] == ["AMD", "LITE", "NVDA"]
+        assert [event.ticker for event in panel.filtered_events()] == ["LITE", "AMD", "NVDA"]
     finally:
         panel.deleteLater()
 
 
-def test_oligarch_earnings_panel_groups_filtered_events_by_report_date():
+def test_oligarch_earnings_panel_reloads_cached_events_from_service():
+    class _FakeService:
+        def __init__(self):
+            self.calls = []
+
+        def load_events(self, **kwargs):
+            self.calls.append(kwargs)
+            return [
+                EarningsCalendarEvent(
+                    "Lumentum",
+                    "LITE",
+                    "光芯片与光引擎",
+                    "2026-05-05",
+                )
+            ]
+
+    service = _FakeService()
+    panel = OligarchEarningsCalendarPanel(events=[], service=service)
+    try:
+        panel.reload_from_service_cache()
+
+        assert service.calls == [{"allow_network": False}]
+        assert [event.ticker for event in panel.filtered_events()] == ["LITE"]
+    finally:
+        panel.deleteLater()
+
+
+def test_oligarch_earnings_panel_groups_filtered_events_by_beijing_calendar_date():
     events = [
         EarningsCalendarEvent(
             company="Lumentum",
@@ -169,6 +222,7 @@ def test_oligarch_earnings_panel_groups_filtered_events_by_report_date():
             sector="Accelerators",
             report_date="2026-05-05",
             time_label="盘后",
+            market="US",
             source="Nasdaq",
         ),
         EarningsCalendarEvent(
@@ -187,8 +241,56 @@ def test_oligarch_earnings_panel_groups_filtered_events_by_report_date():
         groups = panel.grouped_events()
 
         assert [(day, [event.ticker for event in items]) for day, items in groups] == [
-            ("2026-05-05", ["AMD", "LITE"]),
+            ("2026-05-06", ["LITE", "AMD"]),
             ("2026-05-07", ["NVDA"]),
+        ]
+    finally:
+        panel.deleteLater()
+
+
+def test_oligarch_earnings_panel_orders_same_day_events_by_beijing_time():
+    events = [
+        EarningsCalendarEvent(
+            "ADTRAN",
+            "ADTN",
+            "光纤光缆与宽带接入",
+            "2026-05-04",
+            beijing_time="05-05 20:30",
+            market="US",
+        ),
+        EarningsCalendarEvent(
+            "Eaton",
+            "ETN",
+            "数据中心电力与配电",
+            "2026-05-05",
+            beijing_time="05-05 23:00",
+            market="US",
+        ),
+        EarningsCalendarEvent(
+            "Fabrinet",
+            "FN",
+            "光模块与光引擎",
+            "2026-05-04",
+            beijing_time="05-05 05:00",
+            market="US",
+        ),
+        EarningsCalendarEvent(
+            "GlobalFoundries",
+            "GFS",
+            "先进制程代工",
+            "2026-05-05",
+            beijing_time="05-05 20:30",
+            market="US",
+        ),
+    ]
+    panel = OligarchEarningsCalendarPanel(events=events)
+    try:
+        panel.set_filter_mode("all")
+
+        groups = panel.grouped_events()
+
+        assert [(day, [event.ticker for event in items]) for day, items in groups] == [
+            ("2026-05-05", ["FN", "ADTN", "GFS", "ETN"]),
         ]
     finally:
         panel.deleteLater()

@@ -9,7 +9,9 @@ from domains.global_earnings_calendar.service import (
     YFinanceEarningsCalendarProvider,
     build_demo_events,
     build_oligarch_universe,
+    event_calendar_date,
     events_by_date,
+    sorted_events,
 )
 
 __all__ = [
@@ -22,5 +24,7 @@ __all__ = [
     "YFinanceEarningsCalendarProvider",
     "build_demo_events",
     "build_oligarch_universe",
+    "event_calendar_date",
     "events_by_date",
+    "sorted_events",
 ]

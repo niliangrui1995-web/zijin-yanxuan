@@ -3,6 +3,7 @@ from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QApplication, QDialog, QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QToolButton, QToolTip, QVBoxLayout
 
 from domains.global_earnings_calendar import GlobalEarningsCalendarService, events_by_date
+from domains.runtime import domain_events
 from ui.components.main_window_shell import apply_chrome_theme
 from ui.components.shared_title_bar import DraggableTitleBar
 from ui.components.trade_calendar import OligarchEarningsCalendarPanel, TradeCalendarWidget
@@ -107,6 +108,10 @@ def show_trade_calendar(main_window):
     body_layout.addWidget(earnings_panel, 1)
     earnings_panel.eventsChanged.connect(calendar.set_earnings_events)
     calendar.clicked.connect(lambda date: earnings_panel.set_selected_date(date.toString("yyyy-MM-dd")))
+    domain_events.sig_earnings_updated.connect(earnings_panel.reload_from_service_cache)
+    dlg.finished.connect(
+        lambda _result: domain_events.sig_earnings_updated.disconnect(earnings_panel.reload_from_service_cache)
+    )
     QTimer.singleShot(0, earnings_panel.refresh_from_service)
 
     content_layout = QVBoxLayout()

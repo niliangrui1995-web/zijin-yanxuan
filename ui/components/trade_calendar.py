@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
 )
 
 from app.services.ui_runtime_service import MarketCalendar
-from domains.global_earnings_calendar import EarningsCalendarEvent, events_by_date
+from domains.global_earnings_calendar import EarningsCalendarEvent, event_calendar_date, events_by_date, sorted_events
 from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens
 
@@ -583,14 +583,14 @@ class OligarchEarningsCalendarPanel(QFrame):
         events = list(self._events)
         today = _dt.date.today()
         if self._selected_date:
-            events = [event for event in events if str(event.report_date or "").strip()[:10] == self._selected_date]
+            events = [event for event in events if event_calendar_date(event) == self._selected_date]
         elif self._filter_mode in {"7d", "30d"}:
             days = 7 if self._filter_mode == "7d" else 30
             end = today + _dt.timedelta(days=days)
             filtered = []
             for event in events:
                 try:
-                    event_day = _dt.date.fromisoformat(event.report_date[:10])
+                    event_day = _dt.date.fromisoformat(event_calendar_date(event)[:10])
                 except ValueError:
                     continue
                 if today <= event_day <= end:
@@ -608,13 +608,13 @@ class OligarchEarningsCalendarPanel(QFrame):
                 or query in event.company.lower()
                 or query in event.sector.lower()
             ]
-        return sorted(events, key=lambda event: (event.report_date, 0 if event.priority == "super_giant" else 1, event.ticker))
+        return sorted_events(events)
 
     def grouped_events(self) -> list[tuple[str, list[EarningsCalendarEvent]]]:
         groups: list[tuple[str, list[EarningsCalendarEvent]]] = []
         group_lookup: dict[str, list[EarningsCalendarEvent]] = {}
         for event in self.filtered_events():
-            day = str(event.report_date or "").strip()[:10]
+            day = event_calendar_date(event)
             if not day:
                 continue
             if day not in group_lookup:
@@ -824,6 +824,17 @@ class OligarchEarningsCalendarPanel(QFrame):
     def _on_refresh_finished(self) -> None:
         self.btn_refresh.setEnabled(True)
         self._refresh_worker = None
+
+    def reload_from_service_cache(self) -> None:
+        if self._service is None:
+            return
+        if self._refresh_worker is not None and self._refresh_worker.isRunning():
+            return
+        try:
+            events = self._service.load_events(allow_network=False)
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return
+        self.set_events(list(events or []))
 
 
 class TradeDateEdit(QDateEdit):

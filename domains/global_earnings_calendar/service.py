@@ -27,6 +27,9 @@ DEFAULT_HORIZON = "3month"
 DEFAULT_LOOKAHEAD_DAYS = 45
 DEFAULT_CONFIRMED_EVENTS_PATH = Path(__file__).with_name("confirmed_events.json")
 _ALNUM_RE = re.compile(r"[a-z0-9]+")
+_BEIJING_DATE_RE = re.compile(r"(?:(?P<year>\d{4})[-/])?(?P<month>\d{1,2})[-/](?P<day>\d{1,2})")
+_BEIJING_TIME_RE = re.compile(r"(?P<hour>\d{1,2}):(?P<minute>\d{2})")
+_PRIORITY_RANK = {"super_giant": 0, "normal": 1}
 _MARKET_SUFFIXES = (
     (".TWO", "TW"),
     (".TW", "TW"),
@@ -65,6 +68,10 @@ class EarningsCalendarEvent:
     priority: str = "normal"
     conference_url: str = ""
     market: str = ""
+    original_call_time_text: str = ""
+    original_timezone: str = ""
+    call_time_source_url: str = ""
+    call_time_source_type: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -90,6 +97,10 @@ class EarningsCalendarEvent:
             priority=str(payload.get("priority", "") or "").strip() or "normal",
             conference_url=str(payload.get("conference_url", "") or "").strip(),
             market=str(payload.get("market", "") or "").strip(),
+            original_call_time_text=str(payload.get("original_call_time_text", "") or "").strip(),
+            original_timezone=str(payload.get("original_timezone", "") or "").strip(),
+            call_time_source_url=str(payload.get("call_time_source_url", "") or "").strip(),
+            call_time_source_type=str(payload.get("call_time_source_type", "") or "").strip(),
         )
 
 
@@ -139,6 +150,94 @@ def _date_from_any(value) -> dt.date | None:
         return dt.date.fromisoformat(text)
     except ValueError:
         return None
+
+
+def _date_from_beijing_time(value: str, report_date: str) -> dt.date | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    match = _BEIJING_DATE_RE.search(text)
+    if match is None:
+        return None
+    month = int(match.group("month"))
+    day = int(match.group("day"))
+    year_text = match.group("year")
+    if year_text:
+        try:
+            return dt.date(int(year_text), month, day)
+        except ValueError:
+            return None
+
+    base = _date_from_any(report_date)
+    if base is None:
+        return None
+    candidates = []
+    for year in (base.year - 1, base.year, base.year + 1):
+        try:
+            candidates.append(dt.date(year, month, day))
+        except ValueError:
+            continue
+    if not candidates:
+        return None
+    return min(candidates, key=lambda candidate: abs((candidate - base).days))
+
+
+def _datetime_from_beijing_time(value: str, report_date: str) -> dt.datetime | None:
+    day = _date_from_beijing_time(value, report_date)
+    if day is None:
+        return None
+    match = _BEIJING_TIME_RE.search(str(value or ""))
+    if match is None:
+        return None
+    hour = int(match.group("hour"))
+    minute = int(match.group("minute"))
+    try:
+        return dt.datetime.combine(day, dt.time(hour=hour, minute=minute))
+    except ValueError:
+        return None
+
+
+def _is_us_after_hours_event(event: EarningsCalendarEvent) -> bool:
+    market = str(event.market or "").strip().upper()
+    if market not in {"US", "NASDAQ", "NYSE", "AMEX"}:
+        return False
+    time_label = str(event.time_label or "").strip()
+    time_label_lower = time_label.lower()
+    return time_label == "盘后" or "after" in time_label_lower
+
+
+def event_calendar_date(event: EarningsCalendarEvent) -> str:
+    beijing_day = _date_from_beijing_time(event.beijing_time, event.report_date)
+    if beijing_day is not None:
+        return beijing_day.isoformat()
+    report_day = _date_from_any(event.report_date)
+    if report_day is not None and _is_us_after_hours_event(event):
+        return (report_day + dt.timedelta(days=1)).isoformat()
+    return str(event.report_date or "").strip()[:10]
+
+
+def _time_label_rank(event: EarningsCalendarEvent) -> int:
+    time_label = str(event.time_label or "").strip()
+    time_label_lower = time_label.lower()
+    if time_label == "盘前" or "pre" in time_label_lower:
+        return 0
+    if time_label == "盘中" or "during" in time_label_lower:
+        return 1
+    if time_label == "盘后" or "after" in time_label_lower:
+        return 2
+    return 3
+
+
+def event_sort_key(event: EarningsCalendarEvent) -> tuple:
+    calendar_day = event_calendar_date(event)
+    exact_time = _datetime_from_beijing_time(event.beijing_time, event.report_date)
+    priority = _PRIORITY_RANK.get(event.priority, 9)
+    if exact_time is not None:
+        return (calendar_day, 0, exact_time.hour * 60 + exact_time.minute, priority, event.ticker)
+    time_label = str(event.time_label or "").strip()
+    if time_label and time_label not in {"待确认", "未知", "-"}:
+        return (calendar_day, 1, _time_label_rank(event), priority, event.ticker)
+    return (calendar_day, 2, 0, priority, event.ticker)
 
 
 def _ensure_industry_module_path() -> None:
@@ -297,6 +396,10 @@ class ConfirmedEarningsEventsProvider:
                     priority=event.priority or company.priority,
                     conference_url=event.conference_url,
                     market=event.market or company.market,
+                    original_call_time_text=event.original_call_time_text,
+                    original_timezone=event.original_timezone,
+                    call_time_source_url=event.call_time_source_url,
+                    call_time_source_type=event.call_time_source_type,
                 )
             )
         return sorted_events(events)
@@ -523,21 +626,15 @@ def _ensure_ascii_ca_bundle() -> None:
 
 
 def sorted_events(events: list[EarningsCalendarEvent]) -> list[EarningsCalendarEvent]:
-    priority_rank = {"super_giant": 0, "normal": 1}
-    return sorted(
-        list(events or []),
-        key=lambda event: (
-            event.report_date,
-            priority_rank.get(event.priority, 9),
-            event.ticker,
-        ),
-    )
+    return sorted(list(events or []), key=event_sort_key)
 
 
 def events_by_date(events: list[EarningsCalendarEvent]) -> dict[str, list[EarningsCalendarEvent]]:
     grouped: dict[str, list[EarningsCalendarEvent]] = {}
     for event in sorted_events(events):
-        grouped.setdefault(event.report_date, []).append(event)
+        day = event_calendar_date(event)
+        if day:
+            grouped.setdefault(day, []).append(event)
     return grouped
 
 
@@ -673,7 +770,7 @@ class GlobalEarningsCalendarService:
         filtered = []
         for event in events:
             try:
-                day = dt.date.fromisoformat(event.report_date[:10])
+                day = dt.date.fromisoformat(event_calendar_date(event)[:10])
             except ValueError:
                 continue
             if today <= day <= end:

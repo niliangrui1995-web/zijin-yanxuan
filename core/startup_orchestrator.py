@@ -32,10 +32,11 @@ ASIAN_DATA_SYNC_TASK_ID = STARTUP_ASIAN_DATA_SYNC.task_id
 SMART_STARTUP_TASK_ID = STARTUP_SMART.task_id
 GLOBAL_EARNINGS_CALENDAR_SYNC_TASK_ID = task_registry.startup(
     "global_earnings_calendar_sync",
-    description="Global oligarch earnings calendar silent startup sync",
+    description="Global oligarch earnings calendar silent sync",
 ).task_id
 AUTO_RT_MONITOR_RETRY_INTERVAL_MS = 30_000
-GLOBAL_EARNINGS_CALENDAR_SYNC_DELAY_MS = 6500
+GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_HOUR = 2
+GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_MINUTE = 0
 AUTO_RT_MONITOR_NETWORK_TASK_ID = task_registry.network(
     "auto_rt_network_probe",
     description="Connectivity probe for intraday monitor auto-start retry",
@@ -65,6 +66,19 @@ def _format_subprocess_failure(exc: Exception) -> tuple[str, str]:
     return message, message
 
 
+def ms_until_next_global_earnings_calendar_daily_refresh(now: datetime.datetime | None = None) -> int:
+    now = now or datetime.datetime.now()
+    target = now.replace(
+        hour=GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_HOUR,
+        minute=GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_MINUTE,
+        second=0,
+        microsecond=0,
+    )
+    if target <= now:
+        target = target + datetime.timedelta(days=1)
+    return max(1000, int((target - now).total_seconds() * 1000))
+
+
 class StartupOrchestrator:
     """主窗口启动流程协调器。"""
 
@@ -78,14 +92,14 @@ class StartupOrchestrator:
         self._smart_timer = QTimer(main_window)
         self._smart_timer.setSingleShot(True)
         self._smart_timer.timeout.connect(self.smart_startup)
-        self._global_earnings_calendar_timer = QTimer(main_window)
-        self._global_earnings_calendar_timer.setSingleShot(True)
-        self._global_earnings_calendar_timer.timeout.connect(self.refresh_global_earnings_calendar)
+        self._global_earnings_calendar_daily_timer = QTimer(main_window)
+        self._global_earnings_calendar_daily_timer.setSingleShot(True)
+        self._global_earnings_calendar_daily_timer.timeout.connect(self._run_daily_global_earnings_calendar_refresh)
         self._auto_rt_timer = QTimer(main_window)
         self._auto_rt_timer.setSingleShot(False)
         self._auto_rt_timer.timeout.connect(self.auto_start_rt_if_ready)
         self._auto_rt_network_probe_active = False
-        self._global_earnings_calendar_sync_started = False
+        self._global_earnings_calendar_sync_running = False
         self._last_auto_rt_skip_reason = ""
 
     def schedule_startup(self):
@@ -93,17 +107,29 @@ class StartupOrchestrator:
             return
         self._deferred_timer.start(2500)
         self._smart_timer.start(4500)
-        if service_toggle_registry.is_enabled("silent_global_earnings_calendar_sync"):
-            self._global_earnings_calendar_timer.start(GLOBAL_EARNINGS_CALENDAR_SYNC_DELAY_MS)
+        if service_toggle_registry.is_enabled("daily_global_earnings_calendar_sync"):
+            self._schedule_next_global_earnings_calendar_daily_refresh()
         else:
-            log.info("[启动] silent_global_earnings_calendar_sync toggle disabled, skip earnings calendar sync")
+            log.info("[startup] daily_global_earnings_calendar_sync toggle disabled, skip earnings calendar daily sync")
         self._auto_rt_timer.start(AUTO_RT_MONITOR_RETRY_INTERVAL_MS)
+
+    def _schedule_next_global_earnings_calendar_daily_refresh(self):
+        if self._closed:
+            return
+        self._global_earnings_calendar_daily_timer.start(
+            ms_until_next_global_earnings_calendar_daily_refresh()
+        )
+
+    def _run_daily_global_earnings_calendar_refresh(self):
+        self.refresh_global_earnings_calendar()
+        if not self._closed and service_toggle_registry.is_enabled("daily_global_earnings_calendar_sync"):
+            self._schedule_next_global_earnings_calendar_daily_refresh()
 
     def shutdown(self):
         self._closed = True
         self._deferred_timer.stop()
         self._smart_timer.stop()
-        self._global_earnings_calendar_timer.stop()
+        self._global_earnings_calendar_daily_timer.stop()
         self._auto_rt_timer.stop()
         for task_id in (
             DEFERRED_LOAD_TASK_ID,
@@ -277,18 +303,20 @@ class StartupOrchestrator:
             log.info("[鍚姩] silent_asian_sync toggle disabled, skip background sync")
 
     def refresh_global_earnings_calendar(self):
-        """Silently refresh the global oligarch earnings calendar once after startup."""
-        if self._global_earnings_calendar_sync_started or not self._alive():
+        """Silently refresh the global oligarch earnings calendar cache."""
+        if self._global_earnings_calendar_sync_running or not self._alive():
             return
-        if not service_toggle_registry.is_enabled("silent_global_earnings_calendar_sync"):
-            log.info("[启动] silent_global_earnings_calendar_sync toggle disabled, skip earnings calendar sync")
+        sync_enabled = service_toggle_registry.is_enabled("daily_global_earnings_calendar_sync")
+        if not sync_enabled:
+            log.info("[startup] daily_global_earnings_calendar_sync toggle disabled, skip earnings calendar sync")
             return
 
-        self._global_earnings_calendar_sync_started = True
+        self._global_earnings_calendar_sync_running = True
 
         def _refresh_bg():
             started_at = time.perf_counter()
             if not self._alive():
+                self._global_earnings_calendar_sync_running = False
                 return
             log_process_snapshot("startup.global_earnings_calendar.begin", logger=log)
             try:
@@ -314,6 +342,7 @@ class StartupOrchestrator:
                     elapsed_ms=round(elapsed_ms, 3),
                     events=event_count,
                 )
+                self._safe_call_in_ui(lambda: event_bus.sig_earnings_updated.emit())
             except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 log_process_snapshot(
                     "startup.global_earnings_calendar.end",
@@ -323,7 +352,14 @@ class StartupOrchestrator:
                 )
                 log.warning(f"[启动] 寡头财报日历静默刷新失败，已沿用本地缓存: {exc}")
 
-        self._job_runner.run(GLOBAL_EARNINGS_CALENDAR_SYNC_TASK_ID, _refresh_bg)
+            finally:
+                self._global_earnings_calendar_sync_running = False
+
+        try:
+            self._job_runner.run(GLOBAL_EARNINGS_CALENDAR_SYNC_TASK_ID, _refresh_bg)
+        except Exception:
+            self._global_earnings_calendar_sync_running = False
+            raise
 
     def smart_startup(self):
         """异步检测网络；可联机时切到在线模式并驱动后续刷新。"""
