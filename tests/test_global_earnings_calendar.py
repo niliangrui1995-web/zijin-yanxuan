@@ -2,6 +2,8 @@
 import datetime as dt
 from types import SimpleNamespace
 
+import yfinance as yf
+
 from domains.global_earnings_calendar.service import (
     AlphaVantageEarningsCalendarProvider,
     ConfirmedEarningsEventsProvider,
@@ -15,6 +17,7 @@ from domains.global_earnings_calendar.service import (
     events_by_date,
     sorted_events,
 )
+from vcp.fetchers import yf_session
 
 
 def test_build_oligarch_universe_maps_sector_and_priority():
@@ -178,6 +181,27 @@ def test_yfinance_provider_parses_non_us_calendar_dates():
     assert events[0].market == "TW"
     assert events[0].report_date == "2026-07-16"
     assert events[0].source == "Yahoo Finance"
+
+
+def test_yfinance_provider_factory_uses_project_session(monkeypatch):
+    session = object()
+    captured = {}
+
+    def fake_build_session():
+        return session
+
+    def fake_ticker(ticker, session=None):
+        captured["ticker"] = ticker
+        captured["session"] = session
+        return object()
+
+    monkeypatch.setattr(yf_session, "build_yf_session", fake_build_session)
+    monkeypatch.setattr(yf, "Ticker", fake_ticker)
+
+    ticker_factory = YFinanceEarningsCalendarProvider._load_yfinance_ticker_factory()
+    ticker_factory("8035.T")
+
+    assert captured == {"ticker": "8035.T", "session": session}
 
 
 def test_events_by_date_groups_events_with_super_giants_first():

@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
-import json
 import importlib
 import io
+import json
 import os
 import re
 import shutil
@@ -558,10 +558,20 @@ class YFinanceEarningsCalendarProvider:
 
     @staticmethod
     def _load_yfinance_ticker_factory():
-        _ensure_ascii_ca_bundle()
         import yfinance as yf
 
-        return yf.Ticker
+        try:
+            from vcp.fetchers.yf_session import build_yf_session
+
+            session = build_yf_session()
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.debug(f"[global earnings calendar] unable to build project yfinance session: {exc}")
+            _ensure_ascii_ca_bundle()
+            session = None
+
+        if session is None:
+            return yf.Ticker
+        return lambda ticker: yf.Ticker(ticker, session=session)
 
     @staticmethod
     def _fetch_one(ticker_factory, company: OligarchCompany, today: dt.date, lookahead_days: int) -> list[EarningsCalendarEvent]:
