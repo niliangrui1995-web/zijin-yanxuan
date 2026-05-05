@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import datetime as dt
+import json
 from types import SimpleNamespace
 
 import yfinance as yf
@@ -315,6 +316,111 @@ def test_service_filter_window_uses_beijing_calendar_date_for_confirmed_events()
     )
 
     assert [event.ticker for event in filtered] == ["FN"]
+
+
+def test_cached_events_are_rehydrated_from_current_universe():
+    class MemoryStore:
+        def load_json(self, key, default=None):
+            return {
+                "events": [
+                    EarningsCalendarEvent(
+                        "Wus",
+                        "2313.TW",
+                        "old sector",
+                        "2026-05-07",
+                        source="Yahoo Finance",
+                        market="TW",
+                    ).to_dict()
+                ]
+            }
+
+    service = GlobalEarningsCalendarService(
+        data_store=MemoryStore(),
+        universe={
+            "2313.TW": OligarchCompany("Compeq", "2313.TW", "高频PCB与覆铜板材料", "normal", "TW"),
+        },
+    )
+
+    events = service._load_cached_events()
+
+    assert len(events) == 1
+    assert events[0].company == "Compeq"
+    assert events[0].sector == "高频PCB与覆铜板材料"
+
+
+def test_upsert_confirmed_event_writes_json_and_cache_without_touching_trade_dates(tmp_path):
+    class MemoryStore:
+        def __init__(self):
+            self.data = {
+                "global_earnings_calendar": {
+                    "source": "provider",
+                    "events": [
+                        EarningsCalendarEvent(
+                            "CoreWeave",
+                            "CRWV",
+                            "云巨头/算力租赁/数据基础设施",
+                            "2026-05-07",
+                            time_label="盘后",
+                            status="estimated",
+                            source="Nasdaq",
+                            market="US",
+                        ).to_dict()
+                    ],
+                },
+                "trade_dates": {"month": "2026-05", "dates": ["2026-05-04"]},
+            }
+            self.saved_keys = []
+
+        def load_json(self, key, default=None):
+            return json.loads(json.dumps(self.data.get(key, default), ensure_ascii=False))
+
+        def save_json(self, key, data):
+            self.saved_keys.append(key)
+            self.data[key] = json.loads(json.dumps(data, ensure_ascii=False))
+
+    confirmed_path = tmp_path / "confirmed_events.json"
+    confirmed_path.write_text('{"events":[]}', encoding="utf-8")
+    store = MemoryStore()
+    service = GlobalEarningsCalendarService(
+        data_store=store,
+        universe={
+            "CRWV": OligarchCompany("CoreWeave", "CRWV", "云巨头/算力租赁/数据基础设施", "normal", "US"),
+        },
+        confirmed_provider=ConfirmedEarningsEventsProvider(confirmed_path),
+    )
+
+    service.upsert_confirmed_event(
+        EarningsCalendarEvent(
+            "CoreWeave",
+            "CRWV",
+            "云巨头/算力租赁/数据基础设施",
+            "2026-05-07",
+            fiscal_period="Mar/2026",
+            time_label="盘后",
+            beijing_time="05-08 05:00",
+            status="confirmed",
+            source="confirmed",
+            conference_url="https://investors.coreweave.com/events-and-presentations/event-details/2026/CoreWeave-First-Quarter-2026-Earnings-Conference-Call/default.aspx",
+            market="US",
+            original_call_time_text="May 7, 2026 5:00 PM ET",
+            original_timezone="America/New_York",
+            call_time_source_url="https://investors.coreweave.com/events-and-presentations/event-details/2026/CoreWeave-First-Quarter-2026-Earnings-Conference-Call/default.aspx",
+            call_time_source_type="official_ir_event",
+        )
+    )
+
+    confirmed_payload = json.loads(confirmed_path.read_text(encoding="utf-8"))
+    confirmed_event = confirmed_payload["events"][0]
+    assert confirmed_event["ticker"] == "CRWV"
+    assert confirmed_event["beijing_time"] == "05-08 05:00"
+    assert confirmed_event["call_time_source_type"] == "official_ir_event"
+    assert store.saved_keys == ["global_earnings_calendar"]
+    assert store.data["trade_dates"] == {"month": "2026-05", "dates": ["2026-05-04"]}
+
+    events = service.load_events(today=dt.date(2026, 5, 8), lookahead_days=0, allow_network=False)
+    assert [(event.ticker, event.beijing_time, event.status) for event in events] == [
+        ("CRWV", "05-08 05:00", "confirmed")
+    ]
 
 
 def test_service_returns_empty_when_all_real_sources_are_empty(monkeypatch, tmp_path):

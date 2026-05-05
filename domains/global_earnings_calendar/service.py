@@ -104,6 +104,20 @@ class EarningsCalendarEvent:
         )
 
 
+class ConfirmedEventWriteError(RuntimeError):
+    pass
+
+
+def _events_match_identity(existing: EarningsCalendarEvent, candidate: EarningsCalendarEvent) -> bool:
+    if existing.ticker.strip().upper() != candidate.ticker.strip().upper():
+        return False
+    if existing.report_date[:10] != candidate.report_date[:10]:
+        return False
+    existing_period = str(existing.fiscal_period or "").strip()
+    candidate_period = str(candidate.fiscal_period or "").strip()
+    return not existing_period or not candidate_period or existing_period == candidate_period
+
+
 def _normalize_text(value: str) -> str:
     return "".join(_ALNUM_RE.findall(str(value or "").lower()))
 
@@ -390,18 +404,18 @@ class ConfirmedEarningsEventsProvider:
                 continue
             events.append(
                 EarningsCalendarEvent(
-                    company=company.company if not event.company or event.company == ticker else event.company,
+                    company=company.company,
                     ticker=ticker,
-                    sector=event.sector or company.sector,
+                    sector=company.sector or event.sector,
                     report_date=event.report_date,
                     fiscal_period=event.fiscal_period,
                     time_label=event.time_label,
                     beijing_time=event.beijing_time,
                     status=event.status or "confirmed",
                     source=event.source or "confirmed",
-                    priority=event.priority or company.priority,
+                    priority=company.priority or event.priority,
                     conference_url=event.conference_url,
-                    market=event.market or company.market,
+                    market=company.market or event.market,
                     original_call_time_text=event.original_call_time_text,
                     original_timezone=event.original_timezone,
                     call_time_source_url=event.call_time_source_url,
@@ -409,6 +423,41 @@ class ConfirmedEarningsEventsProvider:
                 )
             )
         return sorted_events(events)
+
+    def upsert(self, event: EarningsCalendarEvent) -> None:
+        rows: list[dict] = []
+        if self.path.is_file():
+            try:
+                payload = json.loads(self.path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+                raise ConfirmedEventWriteError(f"confirmed_json_read_failed: {exc}") from exc
+            raw_rows = payload.get("events") if isinstance(payload, Mapping) else payload
+            if not isinstance(raw_rows, list):
+                raise ConfirmedEventWriteError("confirmed_json_events_not_list")
+            rows = [dict(row) for row in raw_rows if isinstance(row, Mapping)]
+
+        event_payload = event.to_dict()
+        updated = False
+        for idx, row in enumerate(rows):
+            existing = EarningsCalendarEvent.from_dict(row)
+            if existing is not None and _events_match_identity(existing, event):
+                rows[idx] = event_payload
+                updated = True
+                break
+        if not updated:
+            rows.append(event_payload)
+
+        payload = {"events": rows}
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = self.path.with_name(f"{self.path.name}.tmp")
+        try:
+            temp_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            temp_path.replace(self.path)
+        except OSError as exc:
+            raise ConfirmedEventWriteError(f"confirmed_json_write_failed: {exc}") from exc
 
 
 class NasdaqEarningsCalendarProvider:
@@ -756,7 +805,35 @@ class GlobalEarningsCalendarService:
         payload = self.data_store.load_json(CACHE_KEY, default={}) or {}
         rows = payload.get("events") if isinstance(payload, Mapping) else None
         events = [event for event in (EarningsCalendarEvent.from_dict(row) for row in rows or []) if event is not None]
-        return sorted_events(events)
+        return sorted_events(
+            event
+            for event in (self._hydrate_event_from_universe(event) for event in events)
+            if event is not None
+        )
+
+    def _hydrate_event_from_universe(self, event: EarningsCalendarEvent) -> EarningsCalendarEvent | None:
+        ticker = event.ticker.strip().upper()
+        company = self.universe.get(ticker)
+        if company is None:
+            return None
+        return EarningsCalendarEvent(
+            company=company.company,
+            ticker=ticker,
+            sector=company.sector or event.sector,
+            report_date=event.report_date,
+            fiscal_period=event.fiscal_period,
+            time_label=event.time_label,
+            beijing_time=event.beijing_time,
+            status=event.status or "estimated",
+            source=event.source,
+            priority=company.priority or event.priority,
+            conference_url=event.conference_url,
+            market=company.market or event.market,
+            original_call_time_text=event.original_call_time_text,
+            original_timezone=event.original_timezone,
+            call_time_source_url=event.call_time_source_url,
+            call_time_source_type=event.call_time_source_type,
+        )
 
     def _load_confirmed_events(self) -> list[EarningsCalendarEvent]:
         try:
@@ -774,6 +851,60 @@ class GlobalEarningsCalendarService:
                 "events": [event.to_dict() for event in sorted_events(events)],
             },
         )
+
+    def upsert_confirmed_event(self, event: EarningsCalendarEvent) -> EarningsCalendarEvent:
+        confirmed = self._hydrate_event_from_universe(event)
+        if confirmed is None:
+            raise ConfirmedEventWriteError(f"unknown_ticker: {event.ticker}")
+        confirmed = EarningsCalendarEvent(
+            company=confirmed.company,
+            ticker=confirmed.ticker,
+            sector=confirmed.sector,
+            report_date=confirmed.report_date,
+            fiscal_period=confirmed.fiscal_period,
+            time_label=confirmed.time_label,
+            beijing_time=confirmed.beijing_time,
+            status="confirmed",
+            source="confirmed",
+            priority=confirmed.priority,
+            conference_url=confirmed.conference_url,
+            market=confirmed.market,
+            original_call_time_text=confirmed.original_call_time_text,
+            original_timezone=confirmed.original_timezone,
+            call_time_source_url=confirmed.call_time_source_url,
+            call_time_source_type=confirmed.call_time_source_type,
+        )
+        self.confirmed_provider.upsert(confirmed)
+        self._sync_cached_confirmed_event(confirmed)
+        return confirmed
+
+    def _sync_cached_confirmed_event(self, event: EarningsCalendarEvent) -> None:
+        payload = self.data_store.load_json(CACHE_KEY, default={}) or {}
+        rows = payload.get("events") if isinstance(payload, Mapping) else []
+        cached_events: list[EarningsCalendarEvent] = []
+        for row in rows or []:
+            cached_event = EarningsCalendarEvent.from_dict(row)
+            if cached_event is None:
+                continue
+            hydrated = self._hydrate_event_from_universe(cached_event)
+            if hydrated is not None:
+                cached_events.append(hydrated)
+
+        updated = False
+        merged_events: list[EarningsCalendarEvent] = []
+        for cached_event in cached_events:
+            if _events_match_identity(cached_event, event):
+                merged_events.append(event)
+                updated = True
+            else:
+                merged_events.append(cached_event)
+        if not updated:
+            merged_events.append(event)
+
+        source = "confirmed_writeback"
+        if isinstance(payload, Mapping):
+            source = str(payload.get("source") or source)
+        self._save_events(merge_events(merged_events), source)
 
     @staticmethod
     def _filter_window(

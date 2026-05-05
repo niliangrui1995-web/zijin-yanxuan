@@ -251,6 +251,24 @@
       "original_timezone": "Asia/Tokyo",
       "call_time_source_url": "https://www.ajinomoto.com/ir/event/calendar.html",
       "call_time_source_type": "official_ir_calendar"
+    },
+    {
+      "company": "CoreWeave",
+      "ticker": "CRWV",
+      "sector": "云巨头/算力租赁/数据基础设施",
+      "report_date": "2026-05-07",
+      "fiscal_period": "Mar/2026",
+      "time_label": "盘后",
+      "beijing_time": "05-08 05:00",
+      "status": "confirmed",
+      "source": "confirmed",
+      "priority": "normal",
+      "conference_url": "https://investors.coreweave.com/events-and-presentations/event-details/2026/CoreWeave-First-Quarter-2026-Earnings-Conference-Call/default.aspx",
+      "market": "US",
+      "original_call_time_text": "May 7, 2026 5:00 PM ET",
+      "original_timezone": "America/New_York",
+      "call_time_source_url": "https://investors.coreweave.com/events-and-presentations/event-details/2026/CoreWeave-First-Quarter-2026-Earnings-Conference-Call/default.aspx",
+      "call_time_source_type": "official_ir_event"
     }
   ]
 }

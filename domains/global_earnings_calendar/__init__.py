@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from domains.global_earnings_calendar.service import (
     AlphaVantageEarningsCalendarProvider,
+    ConfirmedEventWriteError,
     ConfirmedEarningsEventsProvider,
     EarningsCalendarEvent,
     GlobalEarningsCalendarService,
@@ -16,6 +17,7 @@ from domains.global_earnings_calendar.service import (
 
 __all__ = [
     "AlphaVantageEarningsCalendarProvider",
+    "ConfirmedEventWriteError",
     "ConfirmedEarningsEventsProvider",
     "EarningsCalendarEvent",
     "GlobalEarningsCalendarService",
