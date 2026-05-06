@@ -30,6 +30,84 @@ def normalize_holiday_days(days: Any) -> set[str]:
     return normalized
 
 
+def _nth_weekday(year: int, month: int, weekday: int, nth: int) -> datetime.date:
+    day = datetime.date(year, month, 1)
+    offset = (weekday - day.weekday()) % 7
+    return day + datetime.timedelta(days=offset + (nth - 1) * 7)
+
+
+def _japan_vernal_equinox_day(year: int) -> int:
+    if 1980 <= year <= 2099:
+        return int(20.8431 + 0.242194 * (year - 1980) - ((year - 1980) // 4))
+    return 20
+
+
+def _japan_autumnal_equinox_day(year: int) -> int:
+    if 1980 <= year <= 2099:
+        return int(23.2488 + 0.242194 * (year - 1980) - ((year - 1980) // 4))
+    return 23
+
+
+def _japan_exchange_holiday_supplements(year: int) -> set[str]:
+    """Return deterministic JPX holiday supplements for cache/source drift repair."""
+    y = int(year)
+    base = {
+        datetime.date(y, 1, 1),
+        datetime.date(y, 2, 11),
+        datetime.date(y, 2, 23),
+        datetime.date(y, 3, _japan_vernal_equinox_day(y)),
+        datetime.date(y, 4, 29),
+        datetime.date(y, 5, 3),
+        datetime.date(y, 5, 4),
+        datetime.date(y, 5, 5),
+        datetime.date(y, 8, 11),
+        datetime.date(y, 9, _japan_autumnal_equinox_day(y)),
+        datetime.date(y, 11, 3),
+        datetime.date(y, 11, 23),
+        _nth_weekday(y, 1, 0, 2),
+        _nth_weekday(y, 7, 0, 3),
+        _nth_weekday(y, 9, 0, 3),
+        _nth_weekday(y, 10, 0, 2),
+    }
+
+    holidays = set(base)
+    for day in sorted(base):
+        if day.weekday() != 6:
+            continue
+        substitute = day + datetime.timedelta(days=1)
+        while substitute in holidays:
+            substitute += datetime.timedelta(days=1)
+        holidays.add(substitute)
+
+    cursor = datetime.date(y, 1, 2)
+    end = datetime.date(y, 12, 30)
+    while cursor <= end:
+        if (
+            cursor.weekday() < 5
+            and cursor not in holidays
+            and cursor - datetime.timedelta(days=1) in holidays
+            and cursor + datetime.timedelta(days=1) in holidays
+        ):
+            holidays.add(cursor)
+        cursor += datetime.timedelta(days=1)
+
+    holidays.update(
+        {
+            datetime.date(y, 1, 2),
+            datetime.date(y, 1, 3),
+            datetime.date(y, 12, 31),
+        }
+    )
+    return {day.isoformat() for day in holidays}
+
+
+def apply_market_holiday_supplements(market: str, year: int, days: Any) -> set[str]:
+    normalized = normalize_holiday_days(days)
+    if str(market or "").strip().upper() in {"T", "JP", "JPN", "TYO"}:
+        normalized.update(_japan_exchange_holiday_supplements(int(year)))
+    return normalized
+
+
 def parse_sqlite_ts(raw: str | None) -> datetime.datetime | None:
     if not raw:
         return None
@@ -96,13 +174,14 @@ def load_holidays_from_store(
             except json.JSONDecodeError:
                 payload = []
 
-        loaded.append((year, normalize_holiday_days(payload), parse_sqlite_ts(updated_at)))
+        loaded.append((year, apply_market_holiday_supplements(market, year, payload), parse_sqlite_ts(updated_at)))
     return loaded
 
 
 def save_holidays_to_store(project_root: str, market: str, year: int, days: set[str]) -> None:
     ensure_holiday_table(project_root)
-    payload = json.dumps(sorted(days), ensure_ascii=False)
+    normalized_days = apply_market_holiday_supplements(market, year, days)
+    payload = json.dumps(sorted(normalized_days), ensure_ascii=False)
     try:
         with sqlite3.connect(holiday_db_path(project_root), timeout=10) as conn:
             conn.execute(
@@ -216,7 +295,8 @@ def fetch_public_holidays(
 ) -> set[str]:
     year = int(year)
     if market == "TW":
-        return fetch_twse_holidays(year, twse_include_keywords, twse_exclude_keywords)
+        holidays = fetch_twse_holidays(year, twse_include_keywords, twse_exclude_keywords)
+        return apply_market_holiday_supplements(market, year, holidays)
 
     country_code = nager_country.get(market)
     if not country_code:
@@ -259,4 +339,4 @@ def fetch_public_holidays(
         date_text = str(item.get("date", "")).strip()[:10]
         if is_iso_date(date_text):
             holidays.add(date_text)
-    return holidays
+    return apply_market_holiday_supplements(market, year, holidays)

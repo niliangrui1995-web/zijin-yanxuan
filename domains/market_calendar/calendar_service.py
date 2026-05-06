@@ -10,15 +10,16 @@ import sqlite3
 import threading
 from typing import Any
 
+from core.background_job_runner import background_job_runner as task_manager
 from core.exceptions import (
     BusinessRuleError,
     CacheIOError,
     DataFormatError,
     NetworkServiceError,
 )
-from core.background_job_runner import background_job_runner as task_manager
 from core.logger import get_logger
 from core.market_calendar_holidays import (
+    apply_market_holiday_supplements,
     ensure_holiday_table,
     fetch_public_holidays,
     is_iso_date,
@@ -347,7 +348,13 @@ class MarketCalendar:
                 if year < now.year:
                     continue
                 updated_at = cls._asian_holiday_updated_at.get((market, year))
-                if updated_at is None or (now - updated_at).days >= 7:
+                if updated_at is None:
+                    retry_years.append(year)
+                    continue
+                if not days and (now - updated_at).days >= 7:
+                    retry_years.append(year)
+                    continue
+                if days and (now - updated_at).days >= 14:
                     retry_years.append(year)
             if retry_years:
                 cls._schedule_asian_holiday_refresh(market, retry_years)
@@ -568,6 +575,7 @@ class MarketCalendar:
                 year_holidays = cls._asian_holidays.get(market, {}).get(target_day.year)
             if year_holidays is None:
                 return True
+            year_holidays = apply_market_holiday_supplements(market, target_day.year, year_holidays)
             return target_day.isoformat() not in year_holidays
 
         return True

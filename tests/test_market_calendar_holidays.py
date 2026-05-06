@@ -1,6 +1,7 @@
 import datetime as dt
 
 from core.market_calendar_holidays import (
+    apply_market_holiday_supplements,
     fetch_public_holidays,
     load_holidays_from_store,
     normalize_holiday_days,
@@ -27,6 +28,27 @@ def test_holiday_store_round_trip(tmp_path):
     assert year == 2026
     assert days == {"2026-01-01", "2026-02-18"}
     assert isinstance(updated_at, dt.datetime)
+
+
+def test_japan_holiday_supplement_repairs_2026_substitute_holiday():
+    stale_source_days = {"2026-05-04", "2026-05-05"}
+
+    result = apply_market_holiday_supplements("T", 2026, stale_source_days)
+
+    assert "2026-05-06" in result
+    assert "2026-09-22" in result
+
+
+def test_japan_holiday_store_load_repairs_stale_cache(tmp_path):
+    project_root = str(tmp_path)
+    save_holidays_to_store(project_root, "T", 2026, {"2026-05-04", "2026-05-05"})
+
+    rows = load_holidays_from_store(project_root, "T")
+
+    assert len(rows) == 1
+    year, days, _ = rows[0]
+    assert year == 2026
+    assert "2026-05-06" in days
 
 
 def test_fetch_public_holidays_for_tw_delegates_to_twse(monkeypatch):
