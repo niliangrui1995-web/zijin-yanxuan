@@ -1,9 +1,18 @@
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QPalette
-from PyQt6.QtWidgets import QApplication, QDialog, QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QToolButton, QToolTip, QVBoxLayout
+from PyQt6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QFrame,
+    QGraphicsDropShadowEffect,
+    QHBoxLayout,
+    QLabel,
+    QToolButton,
+    QToolTip,
+    QVBoxLayout,
+)
 
-from domains.global_earnings_calendar import GlobalEarningsCalendarService, events_by_date
-from domains.runtime import domain_events
+from app.services.ui_runtime_service import GlobalEarningsCalendarService, domain_events, events_by_date
 from ui.components.main_window_shell import apply_chrome_theme
 from ui.components.shared_title_bar import DraggableTitleBar
 from ui.components.trade_calendar import OligarchEarningsCalendarPanel, TradeCalendarWidget

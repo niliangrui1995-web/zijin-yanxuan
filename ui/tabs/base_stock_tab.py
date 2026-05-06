@@ -26,9 +26,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from app.services.ui_runtime_service import app_config
+from app.services.ui_runtime_service import ExternalTerminalNavigator, app_config
 from app.services.ui_runtime_service import domain_events as event_bus
-from app.services.ui_runtime_service import ExternalTerminalNavigator
 from ui.status_registry import format_status_summary, format_workspace_status, parse_status_summary
 from ui.tabs.base_stock_refresh import (
     async_update_market_caps as run_async_market_caps,
@@ -154,6 +153,7 @@ class BaseStockTab(QWidget):
         self._missing_quote_publisher_warned = False
         self._header_state_savers = []
         self._quote_terminal_launcher = ExternalTerminalNavigator(self)
+        self._runtime_cleanup_done = False
         event_bus.sig_app_closing.connect(self._flush_header_persistence)
 
     def _resolve_active_quote_model(self):
@@ -697,6 +697,48 @@ class BaseStockTab(QWidget):
                 saver()
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 logging.getLogger(__name__).debug(f"表格状态关闭落盘失败: {exc}")
+
+    def _cleanup_runtime_state(self):
+        if getattr(self, "_runtime_cleanup_done", False):
+            return
+        self._runtime_cleanup_done = True
+
+        self._flush_header_persistence()
+
+        for timer in getattr(self, "_header_save_timers", []) or []:
+            try:
+                timer.stop()
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                pass
+
+        proxy_filter_timers = getattr(self, "_proxy_filter_timers", {}) or {}
+        if hasattr(proxy_filter_timers, "values"):
+            proxy_filter_timers = list(proxy_filter_timers.values())
+        for timer in proxy_filter_timers:
+            try:
+                timer.stop()
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                pass
+
+        try:
+            event_bus.sig_app_closing.disconnect(self._flush_header_persistence)
+        except (TypeError, RuntimeError):
+            pass
+
+        if getattr(self, "_quote_signal_connected", False):
+            try:
+                event_bus.sig_rt_quotes.disconnect(self._on_rt_quotes_direct)
+            except (TypeError, RuntimeError):
+                pass
+            self._quote_signal_connected = False
+
+    def closeEvent(self, event):
+        self._cleanup_runtime_state()
+        super().closeEvent(event)
+
+    def deleteLater(self):
+        self._cleanup_runtime_state()
+        super().deleteLater()
 
     def _settings_section(self):
         return app_config.section(

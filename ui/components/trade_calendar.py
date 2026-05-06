@@ -19,8 +19,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from app.services.ui_runtime_service import MarketCalendar
-from domains.global_earnings_calendar import EarningsCalendarEvent, event_calendar_date, events_by_date, sorted_events
+from app.services.ui_runtime_service import (
+    EarningsCalendarEvent,
+    MarketCalendar,
+    event_calendar_date,
+    events_by_date,
+    sorted_events,
+)
 from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens
 

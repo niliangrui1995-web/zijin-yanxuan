@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-from PyQt6.QtTest import QSignalSpy, QTest
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication, QHBoxLayout, QLabel, QLineEdit, QPushButton, QToolButton, QWidget
+from PyQt6.QtGui import QStandardItemModel
+from PyQt6.QtTest import QSignalSpy, QTest
+from PyQt6.QtWidgets import QApplication, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTableView, QToolButton, QWidget
 
 import ui.tabs.base_stock_tab as base_stock_tab_module
 from core.event_bus import event_bus
@@ -204,6 +205,43 @@ def test_base_stock_header_persistence_delegates_to_view_state_binding(monkeypat
             "savers": tab._header_state_savers,
             "settings_key": "header_state_watchlist_v8",
         }
+    finally:
+        tab.deleteLater()
+
+
+def test_base_stock_close_stops_pending_header_save_timers(monkeypatch):
+    class FakeSettings:
+        def __init__(self):
+            self.values = {}
+
+        def contains(self, key):
+            return key in self.values
+
+        def value(self, key, default=None):
+            return self.values.get(key, default)
+
+        def setValue(self, key, value):
+            self.values[key] = value
+
+        def sync(self):
+            return None
+
+    tab = BaseStockTab()
+    table = QTableView(tab)
+    table.setModel(QStandardItemModel(1, 2, table))
+    monkeypatch.setattr(tab, "_settings_section", lambda: FakeSettings())
+
+    try:
+        assert tab.bind_header_persistence(table, "header_state_test") is False
+        timers = getattr(tab, "_header_save_timers", [])
+
+        assert timers
+        timers[0].start()
+        assert any(timer.isActive() for timer in timers)
+
+        tab.close()
+
+        assert all(not timer.isActive() for timer in timers)
     finally:
         tab.deleteLater()
 

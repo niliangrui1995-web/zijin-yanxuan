@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+import datetime as dt
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QTableView
 
@@ -195,6 +197,8 @@ def test_oligarch_earnings_panel_filters_to_selected_calendar_date():
 
 
 def test_oligarch_earnings_panel_reloads_cached_events_from_service():
+    future_report_date = (dt.date.today() + dt.timedelta(days=1)).isoformat()
+
     class _FakeService:
         def __init__(self):
             self.calls = []
@@ -206,7 +210,7 @@ def test_oligarch_earnings_panel_reloads_cached_events_from_service():
                     "Lumentum",
                     "LITE",
                     "光芯片与光引擎",
-                    "2026-05-05",
+                    future_report_date,
                 )
             ]
 
