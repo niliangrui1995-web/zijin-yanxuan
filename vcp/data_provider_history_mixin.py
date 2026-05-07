@@ -274,7 +274,8 @@ class TdxDataProviderHistoryMixin:
             except (OSError, RuntimeError, TypeError, ValueError) as e:
                 return code, None, f"本地读取异常: {e}"
 
-        time.sleep(random.uniform(0.05, 0.15))
+        # Non-cryptographic request jitter.
+        time.sleep(random.uniform(0.05, 0.15))  # nosec B311
         api = self._get_thread_api()
         try:
             if existing_df is not None and not force_refresh:

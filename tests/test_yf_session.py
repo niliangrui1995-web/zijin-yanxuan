@@ -24,6 +24,17 @@ def test_rewrite_yfinance_url_only_updates_target_domains():
     assert rewrite_yfinance_url("https://fc.yahoo.com") == "https://fc.yahoo.com"
 
 
+def test_rewrite_yfinance_url_uses_exact_hostname_match():
+    assert (
+        rewrite_yfinance_url("https://query1.finance.yahoo.com.evil.test/v8/finance/chart/AAPL")
+        == "https://query1.finance.yahoo.com.evil.test/v8/finance/chart/AAPL"
+    )
+    assert (
+        rewrite_yfinance_url("https://example.test/?next=query2.finance.yahoo.com")
+        == "https://example.test/?next=query2.finance.yahoo.com"
+    )
+
+
 def test_build_yf_session_with_cf_proxy_rewrites_only_local_session(monkeypatch):
     captured = {}
 

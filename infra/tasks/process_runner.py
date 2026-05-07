@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-import subprocess
+import subprocess  # nosec B404
 import sys
 from collections.abc import Sequence
 
@@ -20,6 +20,20 @@ ProcessSubprocessError = subprocess.SubprocessError
 ProcessTimeoutError = subprocess.TimeoutExpired
 
 
+def _validate_process_kwargs(kwargs: dict) -> None:
+    if kwargs.get("shell"):
+        raise ValueError("shell=True is not allowed")
+
+
+def _normalize_command(command: Sequence[str | os.PathLike[str]]) -> list[str]:
+    if isinstance(command, (str, bytes, os.PathLike)):
+        raise TypeError("command must be a sequence of arguments, not a string")
+    normalized = [os.fspath(part) for part in command]
+    if not normalized or not str(normalized[0]).strip():
+        raise ValueError("command must not be empty")
+    return [str(part) for part in normalized]
+
+
 def windows_no_window_creationflags() -> int:
     return CREATE_NO_WINDOW if os.name == "nt" else 0
 
@@ -35,12 +49,16 @@ def build_domestic_process_env(*, extra: dict[str, str] | None = None) -> dict[s
     return env
 
 
-def run_process(command: Sequence[str], **kwargs):
-    return subprocess.run(command, **kwargs)
+def run_process(command: Sequence[str | os.PathLike[str]], **kwargs):
+    _validate_process_kwargs(kwargs)
+    # Arguments are validated and shell=True is blocked above.
+    return subprocess.run(_normalize_command(command), **kwargs)  # nosec
 
 
-def spawn_process(command: Sequence[str], **kwargs):
-    return subprocess.Popen(command, **kwargs)
+def spawn_process(command: Sequence[str | os.PathLike[str]], **kwargs):
+    _validate_process_kwargs(kwargs)
+    # Arguments are validated and shell=True is blocked above.
+    return subprocess.Popen(_normalize_command(command), **kwargs)  # nosec
 
 
 def build_python_module_command(

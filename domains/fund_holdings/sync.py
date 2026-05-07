@@ -11,6 +11,7 @@ import urllib.request
 from contextlib import suppress
 from datetime import date
 
+from core.task_errors import UserFacingTaskError
 from domains.fund_holdings.compare import (
     SUBJECT_QFII,
     SUBJECT_RUIYUAN,
@@ -24,7 +25,7 @@ from domains.fund_holdings.compare import (
     quarter_sort_value,
 )
 from domains.fund_holdings.store import fund_holdings_store
-from core.task_errors import UserFacingTaskError
+from infra.http_safety import urlopen_https
 
 _USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 _QFII_API_URL = "https://datacenter-web.eastmoney.com/api/data/v1/get"
@@ -59,7 +60,7 @@ def _fetch_text(url: str, *, params: dict | None = None, referer: str = "") -> s
         },
     )
     try:
-        response = urllib.request.urlopen(request, timeout=15)
+        response = urlopen_https(request, timeout=15)
         try:
             return response.read().decode("utf-8", errors="ignore")
         finally:

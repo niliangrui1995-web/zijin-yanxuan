@@ -13,6 +13,7 @@ from datetime import datetime
 from core.exceptions import CacheIOError, DataFormatError
 from core.json_cache import load_json_file, remove_cache_file, save_json_file
 from core.logger import get_logger
+from infra.http_safety import urlopen_https
 from vcp.constants import (
     FINANCE_CACHE_FILE,
     INSTITUTION_KEYWORDS,
@@ -70,7 +71,7 @@ def _fetch_eastmoney_finance_info(codes):
             },
         )
 
-        resp = urllib.request.urlopen(req, timeout=8)
+        resp = urlopen_https(req, timeout=8)
         try:
             payload = json.loads(resp.read().decode("utf-8"))
         finally:
@@ -240,7 +241,7 @@ def check_institutional_shareholders(code):
                 "Referer": "https://emweb.securities.eastmoney.com/",
             },
         )
-        resp = urllib.request.urlopen(req, timeout=8)
+        resp = urlopen_https(req, timeout=8)
         try:
             data = json.loads(resp.read().decode("utf-8"))
         finally:

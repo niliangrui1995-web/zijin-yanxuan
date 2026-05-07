@@ -12,6 +12,7 @@ import shutil
 import tempfile
 import threading
 import time
+from urllib.parse import urlsplit, urlunsplit
 
 import certifi
 from curl_cffi import requests as curl_requests
@@ -36,10 +37,14 @@ def rewrite_yfinance_url(url: str) -> str:
     """仅改写 yfinance 访问的核心 Yahoo API 域名。"""
     if not isinstance(url, str):
         return url
-    for domain in YF_HIJACK_DOMAINS:
-        if domain in url:
-            return url.replace(domain, YF_HIJACK_TO)
-    return url
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return url
+    if parts.hostname not in YF_HIJACK_DOMAINS:
+        return url
+    port = f":{parts.port}" if parts.port else ""
+    return urlunsplit((parts.scheme, f"{YF_HIJACK_TO}{port}", parts.path, parts.query, parts.fragment))
 
 
 class CfTunnelSession(curl_requests.Session):

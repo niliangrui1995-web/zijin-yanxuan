@@ -7,6 +7,7 @@ import urllib.request
 from contextlib import suppress
 
 from core.logger import get_logger
+from infra.http_safety import urlopen_https
 
 log = get_logger(__name__)
 
@@ -135,7 +136,7 @@ def request_eastmoney_quote_batch(provider, codes, inferred_trade_date: str):
         )
 
         try:
-            resp = urllib.request.urlopen(req, timeout=timeout_sec)
+            resp = urlopen_https(req, timeout=timeout_sec)
             try:
                 payload = json.loads(resp.read().decode("utf-8"))
             finally:
@@ -212,7 +213,7 @@ def request_sina_quote_batch(provider, codes, inferred_trade_date: str):
             "Connection": "close",
         },
     )
-    resp = urllib.request.urlopen(req, timeout=timeout_sec)
+    resp = urlopen_https(req, timeout=timeout_sec)
     try:
         text = resp.read().decode("gbk", errors="ignore")
     finally:
@@ -282,7 +283,7 @@ def request_tencent_quote_batch(provider, codes, inferred_trade_date: str):
             "Connection": "close",
         },
     )
-    resp = urllib.request.urlopen(req, timeout=timeout_sec)
+    resp = urlopen_https(req, timeout=timeout_sec)
     try:
         text = resp.read().decode("gbk", errors="ignore")
     finally:

@@ -113,19 +113,21 @@ def test_trade_calendar_earnings_marker_policy_uses_dots_without_count_text():
 
 
 def test_oligarch_earnings_panel_filters_events_by_search_and_segment():
+    near_report_date = (dt.date.today() + dt.timedelta(days=1)).isoformat()
+    later_report_date = (dt.date.today() + dt.timedelta(days=7)).isoformat()
     events = [
         EarningsCalendarEvent(
             "NVIDIA",
             "NVDA",
             "AI加速芯片与定制ASIC",
-            "2026-05-07",
+            near_report_date,
             priority="super_giant",
         ),
         EarningsCalendarEvent(
             "Applied Materials",
             "AMAT",
             "前道晶圆设备与量测",
-            "2026-05-13",
+            later_report_date,
             priority="strategic_giant",
         ),
     ]

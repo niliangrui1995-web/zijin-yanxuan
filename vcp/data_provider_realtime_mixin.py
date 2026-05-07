@@ -4,6 +4,7 @@ import urllib.request
 
 from core.logger import get_logger
 from core.market_calendar import MarketCalendar
+from infra.http_safety import urlopen_https
 from vcp.data_provider_local import build_offline_quotes
 from vcp.data_provider_quotes import (
     coerce_quote_number,
@@ -98,7 +99,7 @@ class TdxDataProviderRealtimeMixin:
                         "Connection": "close",
                     },
                 )
-                resp = urllib.request.urlopen(req, timeout=timeout_sec)
+                resp = urlopen_https(req, timeout=timeout_sec)
                 try:
                     payload = resp.read(256)
                 finally:
