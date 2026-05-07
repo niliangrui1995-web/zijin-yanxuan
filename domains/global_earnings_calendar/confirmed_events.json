@@ -287,6 +287,24 @@
       "original_timezone": "Asia/Shanghai",
       "call_time_source_url": "https://www.alchip.com/en/Investors/financials/seminar",
       "call_time_source_type": "official_ir_calendar"
+    },
+    {
+      "company": "PVA TePla",
+      "ticker": "TPE.DE",
+      "sector": "关键晶圆材料与特种工艺",
+      "report_date": "2026-05-07",
+      "fiscal_period": "",
+      "time_label": "",
+      "beijing_time": "2026-05-07 15:00",
+      "status": "confirmed",
+      "source": "confirmed",
+      "priority": "normal",
+      "conference_url": "https://www.appairtime.com/event/5ec0928a-24c7-42e1-a7b1-79c60ce05ac8",
+      "market": "DE",
+      "original_call_time_text": "May 7, 2026 09:00-10:00 CEST, Earnings Call - Q1 2026 (official PVA TePla IR linked Airtime webcast)",
+      "original_timezone": "Europe/Berlin",
+      "call_time_source_url": "https://www.appairtime.com/event/5ec0928a-24c7-42e1-a7b1-79c60ce05ac8",
+      "call_time_source_type": "official_ir_linked_webcast"
     }
   ]
 }

@@ -349,6 +349,36 @@ def test_oligarch_earnings_panel_describes_time_precision():
 
         assert panel._format_time_line(exact) == "北京 05-06 05:00"
         assert "具体时刻待确认" in panel._format_time_line(broad)
-        assert "仅日期" in panel._format_time_line(date_only)
+        assert "\u5b98\u65b9\u672a\u786e\u8ba4" in panel._format_time_line(date_only)
+    finally:
+        panel.deleteLater()
+
+
+def test_oligarch_earnings_panel_labels_yfinance_estimates_as_unofficial():
+    panel = OligarchEarningsCalendarPanel(events=[])
+    try:
+        estimate = EarningsCalendarEvent(
+            company="Hanmi Semi",
+            ticker="042700.KS",
+            sector="Packaging equipment",
+            report_date="2026-05-06",
+            status="estimated_unverified",
+            source="Yahoo Finance",
+            market="KR",
+        )
+        conflict = EarningsCalendarEvent(
+            company="Hanmi Semi",
+            ticker="042700.KS",
+            sector="Packaging equipment",
+            report_date="2026-05-06",
+            status="estimated_conflict",
+            source="Yahoo Finance",
+            market="KR",
+        )
+
+        assert panel._event_status_text(estimate) == "\u4f30\u7b97"
+        assert "\u5b98\u65b9\u672a\u786e\u8ba4" in panel._format_time_line(estimate)
+        assert panel._event_status_text(conflict) == "\u65e5\u671f\u51b2\u7a81"
+        assert "\u4ee5\u5b98\u65b9\u62ab\u9732\u4e3a\u51c6" in panel._format_time_line(conflict)
     finally:
         panel.deleteLater()

@@ -25,6 +25,8 @@ from domains.global_earnings_calendar import (
     GlobalEarningsCalendarService,
     event_calendar_date,
     events_by_date,
+    is_yfinance_date_conflict_event,
+    is_yfinance_estimate_event,
     sorted_events,
 )
 from domains.market_calendar import MarketCalendar
@@ -95,6 +97,8 @@ __all__ = [
     "fund_holdings_sync_service",
     "get_missing_a_share_finance_codes",
     "is_a_share_code",
+    "is_yfinance_date_conflict_event",
+    "is_yfinance_estimate_event",
     "merge_quote_snapshot_inplace",
     "publish_rt_quotes",
     "resolve_quote_metrics",

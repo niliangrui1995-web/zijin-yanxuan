@@ -24,6 +24,8 @@ from app.services.ui_runtime_service import (
     MarketCalendar,
     event_calendar_date,
     events_by_date,
+    is_yfinance_date_conflict_event,
+    is_yfinance_estimate_event,
     sorted_events,
 )
 from ui.theme import theme_manager
@@ -672,6 +674,10 @@ class OligarchEarningsCalendarPanel(QFrame):
     def _format_time_line(event: EarningsCalendarEvent) -> str:
         if event.beijing_time:
             return f"\u5317\u4eac {event.beijing_time}"
+        if is_yfinance_date_conflict_event(event):
+            return "Yahoo Finance \u4f30\u7b97\u65e5\u671f\u51b2\u7a81\uff5c\u8bf7\u4ee5\u5b98\u65b9\u62ab\u9732\u4e3a\u51c6"
+        if is_yfinance_estimate_event(event):
+            return "Yahoo Finance \u4f30\u7b97\u65e5\u671f\uff5c\u5b98\u65b9\u672a\u786e\u8ba4"
         time_label = str(event.time_label or "").strip()
         if time_label and time_label not in {"\u5f85\u786e\u8ba4", "\u672a\u77e5", "-"}:
             return f"{time_label}\uff5c\u5177\u4f53\u65f6\u523b\u5f85\u786e\u8ba4"
@@ -680,6 +686,10 @@ class OligarchEarningsCalendarPanel(QFrame):
     def _event_status_text(self, event: EarningsCalendarEvent) -> str:
         if event.status == "confirmed":
             return "\u786e\u8ba4"
+        if is_yfinance_date_conflict_event(event):
+            return "\u65e5\u671f\u51b2\u7a81"
+        if is_yfinance_estimate_event(event):
+            return "\u4f30\u7b97"
         if event.beijing_time:
             return "\u7cbe\u786e"
         if event.source == "\u793a\u4f8b":
@@ -690,6 +700,8 @@ class OligarchEarningsCalendarPanel(QFrame):
         return "\u5f85\u786e\u8ba4"
 
     def _event_badge_object_name(self, event: EarningsCalendarEvent) -> str:
+        if is_yfinance_estimate_event(event):
+            return "earningsEventBadgePending"
         if event.status == "confirmed" or event.beijing_time:
             return "earningsEventBadgeConfirmed"
         time_label = str(event.time_label or "").strip()
@@ -780,6 +792,10 @@ class OligarchEarningsCalendarPanel(QFrame):
         layout.addWidget(time_label)
 
         source_text = event.source or "\u672a\u77e5\u6765\u6e90"
+        if is_yfinance_date_conflict_event(event):
+            source_text = f"{source_text}\uff08\u4f30\u7b97\u51b2\u7a81\uff0c\u975e\u5b98\u65b9\uff09"
+        elif is_yfinance_estimate_event(event):
+            source_text = f"{source_text}\uff08\u4f30\u7b97\uff0c\u975e\u5b98\u65b9\uff09"
         source_label = QLabel(f"\u6765\u6e90 {source_text}", card)
         source_label.setObjectName("earningsEventSource")
         source_label.setWordWrap(True)
@@ -817,6 +833,9 @@ class OligarchEarningsCalendarPanel(QFrame):
         if self._events:
             sources = sorted({event.source or "\u672a\u77e5" for event in self._events})
             source_parts.append("\u6765\u6e90: " + " + ".join(sources))
+            yfinance_estimates = sum(1 for event in self._events if is_yfinance_estimate_event(event))
+            if yfinance_estimates:
+                source_parts.append(f"Yahoo\u4f30\u7b97\u672a\u786e\u8ba4 {yfinance_estimates}")
             universe_count = len(getattr(getattr(self, "_service", None), "universe", {}) or {})
             if universe_count:
                 covered = len({event.ticker for event in self._events})

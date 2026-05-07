@@ -12,9 +12,10 @@ import shutil
 import sys
 import tempfile
 from concurrent import futures
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Mapping
+from urllib.parse import urljoin
 
 import requests
 
@@ -26,10 +27,99 @@ CACHE_KEY = "global_earnings_calendar"
 DEFAULT_HORIZON = "3month"
 DEFAULT_LOOKAHEAD_DAYS = 45
 DEFAULT_CONFIRMED_EVENTS_PATH = Path(__file__).with_name("confirmed_events.json")
+DEFAULT_COMPANY_IR_SOURCES_PATH = Path(__file__).with_name("company_ir_sources.json")
 _ALNUM_RE = re.compile(r"[a-z0-9]+")
 _BEIJING_DATE_RE = re.compile(r"(?:(?P<year>\d{4})[-/])?(?P<month>\d{1,2})[-/](?P<day>\d{1,2})")
 _BEIJING_TIME_RE = re.compile(r"(?P<hour>\d{1,2}):(?P<minute>\d{2})")
+_COMPACT_DATE_RE = re.compile(r"(?P<year>\d{4})[./-](?P<month>\d{1,2})[./-](?P<day>\d{1,2})")
+_ENGLISH_DATE_RE = re.compile(
+    r"\b(?P<month>Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Sept|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
+    r"\s+(?P<day>\d{1,2})(?:,)?\s+(?P<year>\d{4})\b",
+    re.IGNORECASE,
+)
 _PRIORITY_RANK = {"super_giant": 0, "strategic_giant": 1, "normal": 2}
+YFINANCE_SOURCE = "Yahoo Finance"
+YFINANCE_UNVERIFIED_STATUS = "estimated_unverified"
+YFINANCE_CONFLICT_STATUS = "estimated_conflict"
+CONFIRMED_STATUS = "confirmed"
+COMPANY_IR_SOURCE = "Company IR"
+JPX_SOURCE = "JPX"
+TDNET_SOURCE = "TDnet"
+DART_SOURCE = "DART"
+KIND_SOURCE = "KIND"
+MOPS_SOURCE = "MOPS"
+SEC_6K_SOURCE = "SEC EDGAR 6-K"
+_SOURCE_RANK = {
+    "Lumentum IR": 0,
+    "confirmed": 0,
+    COMPANY_IR_SOURCE: 0,
+    JPX_SOURCE: 0,
+    TDNET_SOURCE: 0,
+    DART_SOURCE: 0,
+    KIND_SOURCE: 0,
+    MOPS_SOURCE: 0,
+    SEC_6K_SOURCE: 0,
+    "Nasdaq": 1,
+    "Alpha Vantage": 2,
+    YFINANCE_SOURCE: 3,
+}
+_JP_EARNINGS_KEYWORDS = (
+    "\u6c7a\u7b97\u77ed\u4fe1",
+    "\u56db\u534a\u671f\u6c7a\u7b97\u77ed\u4fe1",
+    "\u6c7a\u7b97\u8aac\u660e\u8cc7\u6599",
+    "\u6c7a\u7b97\u767a\u8868",
+)
+_KR_EARNINGS_KEYWORDS = (
+    "\uc601\uc5c5(\uc7a0\uc815)\uc2e4\uc801",
+    "\uc7a0\uc815\uc2e4\uc801",
+    "\ubd84\uae30\ubcf4\uace0\uc11c",
+    "\ubc18\uae30\ubcf4\uace0\uc11c",
+    "\uc0ac\uc5c5\ubcf4\uace0\uc11c",
+    "\uacb0\uc0b0\uc2e4\uc801",
+    "\ub9e4\ucd9c\uc561\ub610\ub294\uc190\uc775\uad6c\uc870",
+)
+_MOPS_EARNINGS_KEYWORDS = (
+    "earnings conference",
+    "financial statements",
+    "financial report",
+    "quarterly results",
+    "annual results",
+    "results",
+)
+_SEC_6K_KEYWORDS = (
+    "earnings",
+    "financial result",
+    "quarterly result",
+    "annual result",
+    "financial statement",
+)
+_ENGLISH_MONTHS = {
+    "jan": 1,
+    "january": 1,
+    "feb": 2,
+    "february": 2,
+    "mar": 3,
+    "march": 3,
+    "apr": 4,
+    "april": 4,
+    "may": 5,
+    "jun": 6,
+    "june": 6,
+    "jul": 7,
+    "july": 7,
+    "aug": 8,
+    "august": 8,
+    "sep": 9,
+    "sept": 9,
+    "september": 9,
+    "oct": 10,
+    "october": 10,
+    "nov": 11,
+    "november": 11,
+    "dec": 12,
+    "december": 12,
+}
 _MARKET_SUFFIXES = (
     (".TWO", "TW"),
     (".TW", "TW"),
@@ -43,6 +133,16 @@ _MARKET_SUFFIXES = (
     (".MI", "IT"),
     (".ST", "SE"),
 )
+
+
+def _normalize_status_value(status: str, source: str) -> str:
+    status_text = str(status or "").strip() or "estimated"
+    source_text = str(source or "").strip()
+    if source_text == YFINANCE_SOURCE and status_text != CONFIRMED_STATUS:
+        if status_text == YFINANCE_CONFLICT_STATUS:
+            return YFINANCE_CONFLICT_STATUS
+        return YFINANCE_UNVERIFIED_STATUS
+    return status_text
 
 
 @dataclass(frozen=True)
@@ -84,6 +184,8 @@ class EarningsCalendarEvent:
         report_date = str(payload.get("report_date", "") or "").strip()
         if not ticker or not report_date:
             return None
+        source = str(payload.get("source", "") or "").strip()
+        status = _normalize_status_value(str(payload.get("status", "") or "").strip(), source)
         return cls(
             company=str(payload.get("company", "") or "").strip() or ticker,
             ticker=ticker,
@@ -92,8 +194,8 @@ class EarningsCalendarEvent:
             fiscal_period=str(payload.get("fiscal_period", "") or "").strip(),
             time_label=str(payload.get("time_label", "") or "").strip(),
             beijing_time=str(payload.get("beijing_time", "") or "").strip(),
-            status=str(payload.get("status", "") or "").strip() or "estimated",
-            source=str(payload.get("source", "") or "").strip(),
+            status=status,
+            source=source,
             priority=str(payload.get("priority", "") or "").strip() or "normal",
             conference_url=str(payload.get("conference_url", "") or "").strip(),
             market=str(payload.get("market", "") or "").strip(),
@@ -106,6 +208,27 @@ class EarningsCalendarEvent:
 
 class ConfirmedEventWriteError(RuntimeError):
     pass
+
+
+def normalize_event_status(event: EarningsCalendarEvent) -> EarningsCalendarEvent:
+    normalized = _normalize_status_value(event.status, event.source)
+    if normalized == event.status:
+        return event
+    return replace(event, status=normalized)
+
+
+def is_yfinance_estimate_event(event: EarningsCalendarEvent) -> bool:
+    return (
+        str(event.source or "").strip() == YFINANCE_SOURCE
+        and str(event.status or "").strip() != CONFIRMED_STATUS
+    )
+
+
+def is_yfinance_date_conflict_event(event: EarningsCalendarEvent) -> bool:
+    return (
+        str(event.source or "").strip() == YFINANCE_SOURCE
+        and str(event.status or "").strip() == YFINANCE_CONFLICT_STATUS
+    )
 
 
 def _events_match_identity(existing: EarningsCalendarEvent, candidate: EarningsCalendarEvent) -> bool:
@@ -142,6 +265,44 @@ def market_from_ticker(ticker: str) -> str:
     return "US"
 
 
+def _local_code_from_ticker(ticker: str) -> str:
+    return str(ticker or "").strip().upper().split(".")[0]
+
+
+def _date_from_compact_text(value: str) -> dt.date | None:
+    text = str(value or "").strip()
+    match = _COMPACT_DATE_RE.search(text)
+    if match is not None:
+        try:
+            return dt.date(
+                int(match.group("year")),
+                int(match.group("month")),
+                int(match.group("day")),
+            )
+        except ValueError:
+            return None
+    digits = re.sub(r"\D", "", text)
+    if len(digits) >= 8:
+        try:
+            return dt.date(int(digits[:4]), int(digits[4:6]), int(digits[6:8]))
+        except ValueError:
+            return None
+    return None
+
+
+def _date_from_english_text(value: str) -> dt.date | None:
+    match = _ENGLISH_DATE_RE.search(str(value or ""))
+    if match is None:
+        return None
+    month = _ENGLISH_MONTHS.get(match.group("month").lower())
+    if month is None:
+        return None
+    try:
+        return dt.date(int(match.group("year")), month, int(match.group("day")))
+    except ValueError:
+        return None
+
+
 def _date_from_any(value) -> dt.date | None:
     if value is None:
         return None
@@ -164,6 +325,48 @@ def _date_from_any(value) -> dt.date | None:
         return dt.date.fromisoformat(text)
     except ValueError:
         return None
+
+
+def _text_has_any(value: str, keywords: tuple[str, ...]) -> bool:
+    text = str(value or "").casefold()
+    return any(keyword.casefold() in text for keyword in keywords)
+
+
+def _beijing_time_from_local(day: dt.date, time_text: str, *, utc_offset_hours: int) -> str:
+    match = _BEIJING_TIME_RE.search(str(time_text or ""))
+    if match is None:
+        return ""
+    try:
+        local_time = dt.time(hour=int(match.group("hour")), minute=int(match.group("minute")))
+    except ValueError:
+        return ""
+    beijing_dt = dt.datetime.combine(day, local_time) - dt.timedelta(hours=utc_offset_hours - 8)
+    return beijing_dt.strftime("%Y-%m-%d %H:%M")
+
+
+def _response_text(response, *, encoding: str | None = None) -> str:
+    if encoding and hasattr(response, "encoding"):
+        try:
+            response.encoding = encoding
+        except (AttributeError, TypeError, ValueError):
+            pass
+    text = getattr(response, "text", None)
+    if isinstance(text, str):
+        return text
+    content = getattr(response, "content", b"")
+    if isinstance(content, bytes):
+        return content.decode(encoding or "utf-8", errors="replace")
+    return str(text or "")
+
+
+def _raise_for_status(response) -> None:
+    raise_for_status = getattr(response, "raise_for_status", None)
+    if callable(raise_for_status):
+        raise_for_status()
+        return
+    status_code = int(getattr(response, "status_code", 200) or 200)
+    if status_code >= 400:
+        raise requests.HTTPError(f"http {status_code}")
 
 
 def _date_from_beijing_time(value: str, report_date: str) -> dt.date | None:
@@ -567,6 +770,888 @@ class NasdaqEarningsCalendarProvider:
         return events
 
 
+class JpxFinancialAnnouncementProvider:
+    def __init__(
+        self,
+        *,
+        session=None,
+        page_url: str = "https://www.jpx.co.jp/listing/event-schedules/financial-announcement/index.html",
+        timeout: tuple[int, int] = (5, 20),
+    ):
+        self.session = session or requests
+        self.page_url = page_url
+        self.timeout = timeout
+
+    def fetch(
+        self,
+        universe: Mapping[str, OligarchCompany],
+        *,
+        today: dt.date | None = None,
+        lookahead_days: int = DEFAULT_LOOKAHEAD_DAYS,
+        **_kwargs,
+    ) -> list[EarningsCalendarEvent]:
+        today = today or dt.date.today()
+        jp_symbols = {ticker for ticker, company in universe.items() if company.market == "JP"}
+        if not jp_symbols:
+            return []
+
+        response = self.session.get(
+            self.page_url,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=self.timeout,
+        )
+        _raise_for_status(response)
+        workbook_links = self._parse_workbook_links(_response_text(response, encoding="utf-8"), self.page_url)
+        events: list[EarningsCalendarEvent] = []
+        for workbook_url in workbook_links:
+            workbook_response = self.session.get(
+                workbook_url,
+                headers={"User-Agent": "Mozilla/5.0", "Referer": self.page_url},
+                timeout=self.timeout,
+            )
+            _raise_for_status(workbook_response)
+            events.extend(
+                self.parse_workbook(
+                    getattr(workbook_response, "content", b""),
+                    universe,
+                    allowed_symbols=jp_symbols,
+                    source_url=workbook_url,
+                )
+            )
+        return merge_events(self._filter_window(events, today=today, lookahead_days=lookahead_days))
+
+    @staticmethod
+    def _parse_workbook_links(html_text: str, page_url: str) -> list[str]:
+        from lxml import html
+
+        tree = html.fromstring(html_text or "")
+        links: list[str] = []
+        for href in tree.xpath('//a[contains(translate(@href, "XLSX", "xlsx"), ".xlsx")]/@href'):
+            full_url = urljoin(page_url, str(href))
+            if full_url not in links:
+                links.append(full_url)
+        return links
+
+    @staticmethod
+    def _header_index(headers: list[str], *needles: str) -> int | None:
+        for idx, header in enumerate(headers):
+            normalized = str(header or "")
+            if any(needle in normalized for needle in needles):
+                return idx
+        return None
+
+    @classmethod
+    def parse_workbook(
+        cls,
+        workbook_bytes: bytes,
+        universe: Mapping[str, OligarchCompany],
+        *,
+        allowed_symbols: set[str] | None = None,
+        source_url: str = "",
+    ) -> list[EarningsCalendarEvent]:
+        if not workbook_bytes:
+            return []
+        import openpyxl
+
+        workbook = openpyxl.load_workbook(io.BytesIO(workbook_bytes), read_only=True, data_only=True)
+        events: list[EarningsCalendarEvent] = []
+        for worksheet in workbook.worksheets:
+            header_indexes: tuple[int, int, int | None, int | None] | None = None
+            for row in worksheet.iter_rows(values_only=True):
+                values = list(row or [])
+                if header_indexes is None:
+                    headers = [str(value or "") for value in values]
+                    date_idx = cls._header_index(headers, "Scheduled Dates", "\u6c7a\u7b97\u767a\u8868\u4e88\u5b9a\u65e5")
+                    code_idx = cls._header_index(headers, "Code", "\u30b3\u30fc\u30c9")
+                    fiscal_idx = cls._header_index(headers, "Fiscal Year/Quarter", "\u7a2e\u5225")
+                    fiscal_end_idx = cls._header_index(headers, "Fiscal Year-end", "\u6c7a\u7b97\u671f\u672b")
+                    if date_idx is not None and code_idx is not None:
+                        header_indexes = (date_idx, code_idx, fiscal_idx, fiscal_end_idx)
+                    continue
+
+                date_idx, code_idx, fiscal_idx, fiscal_end_idx = header_indexes
+                if max(date_idx, code_idx) >= len(values):
+                    continue
+                report_day = _date_from_any(values[date_idx])
+                code_digits = re.sub(r"\D", "", str(values[code_idx] or ""))
+                if not code_digits:
+                    continue
+                ticker = f"{code_digits[:4]}.T"
+                if allowed_symbols is not None and ticker not in allowed_symbols:
+                    continue
+                company = universe.get(ticker)
+                if company is None or report_day is None:
+                    continue
+                fiscal_parts = []
+                if fiscal_idx is not None and fiscal_idx < len(values) and values[fiscal_idx]:
+                    fiscal_parts.append(str(values[fiscal_idx]).strip())
+                if fiscal_end_idx is not None and fiscal_end_idx < len(values):
+                    fiscal_end = _date_from_any(values[fiscal_end_idx])
+                    if fiscal_end is not None:
+                        fiscal_parts.append(fiscal_end.isoformat())
+                events.append(
+                    EarningsCalendarEvent(
+                        company=company.company,
+                        ticker=ticker,
+                        sector=company.sector,
+                        report_date=report_day.isoformat(),
+                        fiscal_period=" / ".join(fiscal_parts),
+                        time_label="\u5f85\u786e\u8ba4",
+                        status=CONFIRMED_STATUS,
+                        source=JPX_SOURCE,
+                        priority=company.priority,
+                        market=company.market,
+                        call_time_source_url=source_url,
+                        call_time_source_type="jpx_financial_announcement_schedule",
+                    )
+                )
+        return sorted_events(events)
+
+    @staticmethod
+    def _filter_window(
+        events: list[EarningsCalendarEvent],
+        *,
+        today: dt.date,
+        lookahead_days: int,
+    ) -> list[EarningsCalendarEvent]:
+        end = today + dt.timedelta(days=max(0, int(lookahead_days)))
+        return sorted_events(
+            event
+            for event in events
+            if (day := _date_from_any(event.report_date)) is not None and today <= day <= end
+        )
+
+
+class TdnetEarningsDisclosureProvider:
+    def __init__(
+        self,
+        *,
+        session=None,
+        base_url_template: str = "https://www.release.tdnet.info/inbs/I_list_001_{date}.html",
+        timeout: tuple[int, int] = (5, 20),
+        max_forward_days: int = 0,
+    ):
+        self.session = session or requests
+        self.base_url_template = base_url_template
+        self.timeout = timeout
+        self.max_forward_days = max(0, int(max_forward_days or 0))
+
+    def fetch(
+        self,
+        universe: Mapping[str, OligarchCompany],
+        *,
+        today: dt.date | None = None,
+        lookahead_days: int = DEFAULT_LOOKAHEAD_DAYS,
+        **_kwargs,
+    ) -> list[EarningsCalendarEvent]:
+        today = today or dt.date.today()
+        jp_codes = {_local_code_from_ticker(ticker): ticker for ticker, company in universe.items() if company.market == "JP"}
+        if not jp_codes:
+            return []
+        forward_days = min(max(0, int(lookahead_days)), self.max_forward_days)
+        events: list[EarningsCalendarEvent] = []
+        for offset in range(forward_days + 1):
+            day = today + dt.timedelta(days=offset)
+            url = self.base_url_template.format(date=day.strftime("%Y%m%d"))
+            response = self.session.get(
+                url,
+                headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.release.tdnet.info/inbs/"},
+                timeout=self.timeout,
+            )
+            if int(getattr(response, "status_code", 200) or 200) == 404:
+                continue
+            _raise_for_status(response)
+            events.extend(self.parse_html(_response_text(response, encoding="utf-8"), day, universe, jp_codes, source_url=url))
+        return sorted_events(events)
+
+    @staticmethod
+    def parse_html(
+        html_text: str,
+        day: dt.date,
+        universe: Mapping[str, OligarchCompany],
+        jp_codes: Mapping[str, str],
+        *,
+        source_url: str = "",
+    ) -> list[EarningsCalendarEvent]:
+        from lxml import html
+
+        tree = html.fromstring(html_text or "")
+        events: list[EarningsCalendarEvent] = []
+        for row in tree.xpath("//tr"):
+            cells = [" ".join(cell.text_content().split()) for cell in row.xpath("./td")]
+            if len(cells) < 4:
+                continue
+            code_digits = re.sub(r"\D", "", cells[1])
+            if len(code_digits) < 4:
+                continue
+            ticker = jp_codes.get(code_digits[:4])
+            if not ticker:
+                continue
+            title = cells[3]
+            if not _text_has_any(title, _JP_EARNINGS_KEYWORDS):
+                continue
+            company = universe.get(ticker)
+            if company is None:
+                continue
+            href = ""
+            link_nodes = row.xpath(".//a/@href")
+            if link_nodes:
+                href = urljoin(source_url, str(link_nodes[0]))
+            events.append(
+                EarningsCalendarEvent(
+                    company=company.company,
+                    ticker=ticker,
+                    sector=company.sector,
+                    report_date=day.isoformat(),
+                    fiscal_period="",
+                    time_label="\u5f85\u786e\u8ba4",
+                    beijing_time=_beijing_time_from_local(day, cells[0], utc_offset_hours=9),
+                    status=CONFIRMED_STATUS,
+                    source=TDNET_SOURCE,
+                    priority=company.priority,
+                    conference_url=href,
+                    market=company.market,
+                    original_call_time_text=f"{cells[0]} JST {title}".strip(),
+                    original_timezone="Asia/Tokyo",
+                    call_time_source_url=href or source_url,
+                    call_time_source_type="tdnet_disclosure",
+                )
+            )
+        return sorted_events(events)
+
+
+class DartEarningsDisclosureProvider:
+    def __init__(
+        self,
+        api_key: str | None = None,
+        *,
+        session=None,
+        base_url: str = "https://opendart.fss.or.kr/api/list.json",
+        timeout: tuple[int, int] = (5, 20),
+        page_count: int = 100,
+        max_pages: int = 10,
+    ):
+        self.api_key = (api_key if api_key is not None else os.environ.get("OPENDART_API_KEY") or os.environ.get("DART_API_KEY") or "").strip()
+        self.session = session or requests
+        self.base_url = base_url
+        self.timeout = timeout
+        self.page_count = max(1, int(page_count or 100))
+        self.max_pages = max(1, int(max_pages or 1))
+
+    def fetch(
+        self,
+        universe: Mapping[str, OligarchCompany],
+        *,
+        today: dt.date | None = None,
+        lookahead_days: int = DEFAULT_LOOKAHEAD_DAYS,
+        **_kwargs,
+    ) -> list[EarningsCalendarEvent]:
+        if not self.api_key:
+            return []
+        today = today or dt.date.today()
+        kr_codes = {_local_code_from_ticker(ticker): ticker for ticker, company in universe.items() if company.market == "KR"}
+        if not kr_codes:
+            return []
+        end = today + dt.timedelta(days=max(0, int(lookahead_days)))
+        events: list[EarningsCalendarEvent] = []
+        for page_no in range(1, self.max_pages + 1):
+            response = self.session.get(
+                self.base_url,
+                params={
+                    "crtfc_key": self.api_key,
+                    "bgn_de": today.strftime("%Y%m%d"),
+                    "end_de": end.strftime("%Y%m%d"),
+                    "page_no": page_no,
+                    "page_count": self.page_count,
+                    "sort": "date",
+                    "sort_mth": "desc",
+                },
+                timeout=self.timeout,
+            )
+            _raise_for_status(response)
+            payload = response.json()
+            events.extend(self.parse_payload(payload, universe, kr_codes))
+            try:
+                total_page = int(payload.get("total_page") or 1)
+            except (TypeError, ValueError, AttributeError):
+                total_page = 1
+            if page_no >= total_page:
+                break
+        return sorted_events(events)
+
+    @staticmethod
+    def parse_payload(
+        payload,
+        universe: Mapping[str, OligarchCompany],
+        kr_codes: Mapping[str, str],
+    ) -> list[EarningsCalendarEvent]:
+        if not isinstance(payload, Mapping):
+            return []
+        rows = payload.get("list") or []
+        events: list[EarningsCalendarEvent] = []
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            stock_code = re.sub(r"\D", "", str(row.get("stock_code", "") or ""))
+            ticker = kr_codes.get(stock_code)
+            if not ticker:
+                continue
+            title = str(row.get("report_nm", "") or "").strip()
+            if not _text_has_any(title, _KR_EARNINGS_KEYWORDS):
+                continue
+            report_day = _date_from_compact_text(str(row.get("rcept_dt", "") or ""))
+            company = universe.get(ticker)
+            if company is None or report_day is None:
+                continue
+            receipt_no = str(row.get("rcept_no", "") or "").strip()
+            source_url = f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={receipt_no}" if receipt_no else "https://dart.fss.or.kr/"
+            events.append(
+                EarningsCalendarEvent(
+                    company=company.company,
+                    ticker=ticker,
+                    sector=company.sector,
+                    report_date=report_day.isoformat(),
+                    fiscal_period="",
+                    time_label="\u5f85\u786e\u8ba4",
+                    status=CONFIRMED_STATUS,
+                    source=DART_SOURCE,
+                    priority=company.priority,
+                    conference_url=source_url,
+                    market=company.market,
+                    original_call_time_text=title,
+                    original_timezone="Asia/Seoul",
+                    call_time_source_url=source_url,
+                    call_time_source_type="dart_disclosure",
+                )
+            )
+        return sorted_events(events)
+
+
+class KindEarningsDisclosureProvider:
+    def __init__(
+        self,
+        *,
+        session=None,
+        base_url: str = "https://kind.krx.co.kr/disclosure/todaydisclosure.do",
+        timeout: tuple[int, int] = (5, 20),
+        max_forward_days: int = 0,
+    ):
+        self.session = session or requests
+        self.base_url = base_url
+        self.timeout = timeout
+        self.max_forward_days = max(0, int(max_forward_days or 0))
+
+    def fetch(
+        self,
+        universe: Mapping[str, OligarchCompany],
+        *,
+        today: dt.date | None = None,
+        lookahead_days: int = DEFAULT_LOOKAHEAD_DAYS,
+        **_kwargs,
+    ) -> list[EarningsCalendarEvent]:
+        today = today or dt.date.today()
+        kr_codes = {_local_code_from_ticker(ticker): ticker for ticker, company in universe.items() if company.market == "KR"}
+        if not kr_codes:
+            return []
+        forward_days = min(max(0, int(lookahead_days)), self.max_forward_days)
+        events: list[EarningsCalendarEvent] = []
+        for offset in range(forward_days + 1):
+            day = today + dt.timedelta(days=offset)
+            response = self.session.post(
+                self.base_url,
+                data={
+                    "method": "searchTodayDisclosureSub",
+                    "currentPageSize": "100",
+                    "pageIndex": "1",
+                    "orderMode": "0",
+                    "orderStat": "D",
+                    "forward": "todaydisclosure_sub",
+                    "chose": "S",
+                    "shose": "S",
+                    "todayFlag": "N",
+                    "selDate": day.strftime("%Y-%m-%d"),
+                },
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Referer": "https://kind.krx.co.kr/disclosure/todaydisclosure.do?method=searchTodayDisclosureMain",
+                },
+                timeout=self.timeout,
+            )
+            _raise_for_status(response)
+            events.extend(self.parse_html(_response_text(response, encoding="utf-8"), day, universe, kr_codes))
+        return sorted_events(events)
+
+    @staticmethod
+    def _kind_code_matches(kind_code: str, stock_code: str) -> bool:
+        raw = re.sub(r"\D", "", str(kind_code or ""))
+        code = re.sub(r"\D", "", str(stock_code or ""))
+        if not raw or not code:
+            return False
+        return raw.zfill(6) == code or f"{raw}0".zfill(6) == code
+
+    @classmethod
+    def parse_html(
+        cls,
+        html_text: str,
+        day: dt.date,
+        universe: Mapping[str, OligarchCompany],
+        kr_codes: Mapping[str, str],
+    ) -> list[EarningsCalendarEvent]:
+        from lxml import html
+
+        tree = html.fromstring(html_text or "")
+        events: list[EarningsCalendarEvent] = []
+        for row in tree.xpath("//tr"):
+            cells = [" ".join(cell.text_content().split()) for cell in row.xpath("./td")]
+            if len(cells) < 3:
+                continue
+            row_html = html.tostring(row, encoding="unicode")
+            code_match = re.search(r"companysummary_open\('([^']+)'", row_html)
+            if code_match is None:
+                continue
+            matched_ticker = None
+            for stock_code, ticker in kr_codes.items():
+                if cls._kind_code_matches(code_match.group(1), stock_code):
+                    matched_ticker = ticker
+                    break
+            if matched_ticker is None:
+                continue
+            title = cells[2]
+            if not _text_has_any(title, _KR_EARNINGS_KEYWORDS):
+                continue
+            company = universe.get(matched_ticker)
+            if company is None:
+                continue
+            receipt_match = re.search(r"openDisclsViewer\('([^']+)'", row_html)
+            receipt_no = receipt_match.group(1) if receipt_match else ""
+            source_url = (
+                f"https://kind.krx.co.kr/common/disclsviewer.do?method=search&acptno={receipt_no}"
+                if receipt_no
+                else "https://kind.krx.co.kr/"
+            )
+            events.append(
+                EarningsCalendarEvent(
+                    company=company.company,
+                    ticker=matched_ticker,
+                    sector=company.sector,
+                    report_date=day.isoformat(),
+                    fiscal_period="",
+                    time_label="\u5f85\u786e\u8ba4",
+                    beijing_time=_beijing_time_from_local(day, cells[0], utc_offset_hours=9),
+                    status=CONFIRMED_STATUS,
+                    source=KIND_SOURCE,
+                    priority=company.priority,
+                    conference_url=source_url,
+                    market=company.market,
+                    original_call_time_text=f"{cells[0]} KST {title}".strip(),
+                    original_timezone="Asia/Seoul",
+                    call_time_source_url=source_url,
+                    call_time_source_type="kind_disclosure",
+                )
+            )
+        return sorted_events(events)
+
+
+class MopsEarningsDisclosureProvider:
+    def __init__(
+        self,
+        *,
+        session=None,
+        base_url: str = "https://emops.twse.com.tw/server-java/t05st01_e",
+        timeout: tuple[int, int] = (5, 20),
+    ):
+        self.session = session or self._default_session()
+        self.base_url = base_url
+        self.timeout = timeout
+
+    @staticmethod
+    def _default_session():
+        _ensure_ascii_ca_bundle()
+        try:
+            import curl_cffi.requests as curl_requests
+
+            return curl_requests
+        except ImportError:
+            return requests
+
+    def _get(self, url: str, **kwargs):
+        try:
+            return self.session.get(url, impersonate="chrome", **kwargs)
+        except TypeError:
+            return self.session.get(url, **kwargs)
+
+    def fetch(
+        self,
+        universe: Mapping[str, OligarchCompany],
+        *,
+        today: dt.date | None = None,
+        lookahead_days: int = DEFAULT_LOOKAHEAD_DAYS,
+        **_kwargs,
+    ) -> list[EarningsCalendarEvent]:
+        today = today or dt.date.today()
+        tw_companies = [company for company in universe.values() if company.market == "TW"]
+        if not tw_companies:
+            return []
+        events: list[EarningsCalendarEvent] = []
+        for company in tw_companies:
+            typek = "otc" if company.ticker.endswith(".TWO") else "sii"
+            response = self._get(
+                self.base_url,
+                params={
+                    "TYPEK": typek,
+                    "co_id": _local_code_from_ticker(company.ticker),
+                    "year": str(today.year),
+                    "month": "all",
+                    "step": "0",
+                    "query": "co",
+                    "colorchg": "1",
+                },
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=self.timeout,
+            )
+            _raise_for_status(response)
+            events.extend(
+                self.parse_html(
+                    _response_text(response, encoding="big5"),
+                    company,
+                    today=today,
+                    lookahead_days=lookahead_days,
+                    source_base_url=self.base_url,
+                )
+            )
+        return sorted_events(events)
+
+    @staticmethod
+    def _detail_url(row_html: str, source_base_url: str) -> str:
+        match = re.search(r'gotoURL\("([^"]+)"\)', row_html)
+        if match is None:
+            return source_base_url
+        return urljoin(source_base_url, match.group(1))
+
+    @classmethod
+    def parse_html(
+        cls,
+        html_text: str,
+        company: OligarchCompany,
+        *,
+        today: dt.date,
+        lookahead_days: int,
+        source_base_url: str,
+    ) -> list[EarningsCalendarEvent]:
+        from lxml import html
+
+        end = today + dt.timedelta(days=max(0, int(lookahead_days)))
+        tree = html.fromstring(html_text or "")
+        events: list[EarningsCalendarEvent] = []
+        for row in tree.xpath("//tr"):
+            cells = [" ".join(cell.text_content().split()) for cell in row.xpath("./td|./th")]
+            if len(cells) < 3:
+                continue
+            announcement_day = _date_from_compact_text(cells[0])
+            if announcement_day is None:
+                continue
+            subject = cells[2]
+            if not _text_has_any(subject, _MOPS_EARNINGS_KEYWORDS):
+                continue
+            report_day = _date_from_english_text(subject) or announcement_day
+            if not (today <= report_day <= end):
+                continue
+            row_html = html.tostring(row, encoding="unicode")
+            detail_url = cls._detail_url(row_html, source_base_url)
+            is_conference = "conference" in subject.casefold()
+            events.append(
+                EarningsCalendarEvent(
+                    company=company.company,
+                    ticker=company.ticker,
+                    sector=company.sector,
+                    report_date=report_day.isoformat(),
+                    fiscal_period="",
+                    time_label="\u5f85\u786e\u8ba4",
+                    beijing_time=(
+                        _beijing_time_from_local(announcement_day, cells[1], utc_offset_hours=8)
+                        if report_day == announcement_day and len(cells) > 1
+                        else ""
+                    ),
+                    status=CONFIRMED_STATUS,
+                    source=MOPS_SOURCE,
+                    priority=company.priority,
+                    conference_url=detail_url if is_conference else "",
+                    market=company.market,
+                    original_call_time_text=f"{cells[0]} {cells[1] if len(cells) > 1 else ''} {subject}".strip(),
+                    original_timezone="Asia/Shanghai",
+                    call_time_source_url=detail_url,
+                    call_time_source_type="mops_material_information",
+                )
+            )
+        return sorted_events(events)
+
+
+class SecSixKEarningsProvider:
+    DEFAULT_LOCAL_ADR_TICKERS = {
+        "2330.TW": "TSM",
+        "3711.TW": "ASX",
+    }
+
+    def __init__(
+        self,
+        *,
+        session=None,
+        local_adr_tickers: Mapping[str, str] | None = None,
+        ticker_ciks: Mapping[str, str] | None = None,
+        company_tickers_url: str = "https://www.sec.gov/files/company_tickers.json",
+        submissions_url_template: str = "https://data.sec.gov/submissions/CIK{cik}.json",
+        timeout: tuple[int, int] = (5, 20),
+    ):
+        self.session = session or requests
+        self.local_adr_tickers = dict(local_adr_tickers or self.DEFAULT_LOCAL_ADR_TICKERS)
+        self.ticker_ciks = {str(k).upper(): str(v).zfill(10) for k, v in dict(ticker_ciks or {}).items()}
+        self.company_tickers_url = company_tickers_url
+        self.submissions_url_template = submissions_url_template
+        self.timeout = timeout
+
+    @staticmethod
+    def _headers() -> dict[str, str]:
+        return {
+            "User-Agent": os.environ.get("SEC_USER_AGENT", "vcp-hunter-local/1.0 contact@example.com"),
+            "Accept-Encoding": "gzip, deflate",
+            "Host": "data.sec.gov",
+        }
+
+    def fetch(
+        self,
+        universe: Mapping[str, OligarchCompany],
+        *,
+        today: dt.date | None = None,
+        lookahead_days: int = DEFAULT_LOOKAHEAD_DAYS,
+        **_kwargs,
+    ) -> list[EarningsCalendarEvent]:
+        today = today or dt.date.today()
+        tw_universe = {ticker: company for ticker, company in universe.items() if company.market == "TW"}
+        target_tickers = [ticker for ticker in tw_universe if ticker in self.local_adr_tickers or ticker in self.ticker_ciks]
+        if not target_tickers:
+            return []
+        cik_map = self._resolve_cik_map(target_tickers)
+        if not cik_map:
+            return []
+        events: list[EarningsCalendarEvent] = []
+        for ticker in target_tickers:
+            cik = cik_map.get(ticker)
+            company = tw_universe.get(ticker)
+            if not cik or company is None:
+                continue
+            response = self.session.get(
+                self.submissions_url_template.format(cik=str(cik).zfill(10)),
+                headers=self._headers(),
+                timeout=self.timeout,
+            )
+            _raise_for_status(response)
+            events.extend(
+                self.parse_submissions(
+                    response.json(),
+                    company,
+                    cik=str(cik).zfill(10),
+                    today=today,
+                    lookahead_days=lookahead_days,
+                )
+            )
+        return sorted_events(events)
+
+    def _resolve_cik_map(self, target_tickers: list[str]) -> dict[str, str]:
+        resolved = {ticker: self.ticker_ciks[ticker] for ticker in target_tickers if ticker in self.ticker_ciks}
+        missing = [ticker for ticker in target_tickers if ticker not in resolved and ticker in self.local_adr_tickers]
+        if not missing:
+            return resolved
+        response = self.session.get(
+            self.company_tickers_url,
+            headers={**self._headers(), "Host": "www.sec.gov"},
+            timeout=self.timeout,
+        )
+        _raise_for_status(response)
+        payload = response.json()
+        adr_to_cik: dict[str, str] = {}
+        rows = payload.values() if isinstance(payload, Mapping) else payload or []
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            ticker = str(row.get("ticker", "") or "").strip().upper()
+            cik = str(row.get("cik_str", "") or "").strip()
+            if ticker and cik:
+                adr_to_cik[ticker] = cik.zfill(10)
+        for local_ticker in missing:
+            adr_ticker = str(self.local_adr_tickers.get(local_ticker, "") or "").upper()
+            if adr_ticker in adr_to_cik:
+                resolved[local_ticker] = adr_to_cik[adr_ticker]
+        return resolved
+
+    @staticmethod
+    def parse_submissions(
+        payload,
+        company: OligarchCompany,
+        *,
+        cik: str,
+        today: dt.date,
+        lookahead_days: int,
+    ) -> list[EarningsCalendarEvent]:
+        if not isinstance(payload, Mapping):
+            return []
+        recent = payload.get("filings", {}).get("recent", {}) if isinstance(payload.get("filings"), Mapping) else {}
+        if not isinstance(recent, Mapping):
+            return []
+        end = today + dt.timedelta(days=max(0, int(lookahead_days)))
+        forms = recent.get("form") or []
+        filing_dates = recent.get("filingDate") or []
+        accession_numbers = recent.get("accessionNumber") or []
+        primary_docs = recent.get("primaryDocument") or []
+        descriptions = recent.get("primaryDocDescription") or []
+        events: list[EarningsCalendarEvent] = []
+        for idx, form in enumerate(forms):
+            if str(form or "").strip().upper() != "6-K":
+                continue
+            filing_day = _date_from_any(filing_dates[idx] if idx < len(filing_dates) else "")
+            if filing_day is None or not (today <= filing_day <= end):
+                continue
+            primary_doc = str(primary_docs[idx] if idx < len(primary_docs) else "" or "").strip()
+            description = str(descriptions[idx] if idx < len(descriptions) else "" or "").strip()
+            descriptor = f"{primary_doc} {description}"
+            if not _text_has_any(descriptor, _SEC_6K_KEYWORDS):
+                continue
+            accession = str(accession_numbers[idx] if idx < len(accession_numbers) else "" or "").strip()
+            source_url = "https://www.sec.gov/edgar/search/"
+            if accession and primary_doc:
+                source_url = (
+                    f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
+                    f"{accession.replace('-', '')}/{primary_doc}"
+                )
+            events.append(
+                EarningsCalendarEvent(
+                    company=company.company,
+                    ticker=company.ticker,
+                    sector=company.sector,
+                    report_date=filing_day.isoformat(),
+                    fiscal_period="",
+                    time_label="\u5f85\u786e\u8ba4",
+                    status=CONFIRMED_STATUS,
+                    source=SEC_6K_SOURCE,
+                    priority=company.priority,
+                    conference_url=source_url,
+                    market=company.market,
+                    original_call_time_text=description or primary_doc,
+                    original_timezone="America/New_York",
+                    call_time_source_url=source_url,
+                    call_time_source_type="sec_6k",
+                )
+            )
+        return sorted_events(events)
+
+
+class CompanyIrEarningsCalendarProvider:
+    def __init__(
+        self,
+        *,
+        session=None,
+        rules: Mapping[str, list[Mapping]] | None = None,
+        rules_path: str | Path | None = None,
+        timeout: tuple[int, int] = (5, 20),
+    ):
+        self.session = session or requests
+        self.rules = {str(k).upper(): list(v or []) for k, v in dict(rules or {}).items()}
+        self.rules_path = Path(rules_path) if rules_path is not None else DEFAULT_COMPANY_IR_SOURCES_PATH
+        self.timeout = timeout
+
+    def _load_rules(self) -> dict[str, list[Mapping]]:
+        if self.rules:
+            return dict(self.rules)
+        if not self.rules_path.is_file():
+            return {}
+        try:
+            payload = json.loads(self.rules_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            log.warning(f"[global earnings calendar] company IR rules unavailable: {exc}")
+            return {}
+        rows = payload.get("sources") if isinstance(payload, Mapping) else payload
+        if not isinstance(rows, Mapping):
+            return {}
+        return {str(k).upper(): list(v or []) for k, v in rows.items() if isinstance(v, list)}
+
+    def fetch(
+        self,
+        universe: Mapping[str, OligarchCompany],
+        *,
+        today: dt.date | None = None,
+        lookahead_days: int = DEFAULT_LOOKAHEAD_DAYS,
+        **_kwargs,
+    ) -> list[EarningsCalendarEvent]:
+        today = today or dt.date.today()
+        rules = self._load_rules()
+        if not rules:
+            return []
+        events: list[EarningsCalendarEvent] = []
+        for ticker, ticker_rules in rules.items():
+            company = universe.get(ticker)
+            if company is None:
+                continue
+            for rule in ticker_rules:
+                if not isinstance(rule, Mapping):
+                    continue
+                url = str(rule.get("url", "") or "").strip()
+                if not url:
+                    continue
+                response = self.session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=self.timeout)
+                _raise_for_status(response)
+                events.extend(
+                    self.parse_page(
+                        _response_text(response, encoding=str(rule.get("encoding") or "utf-8")),
+                        company,
+                        rule,
+                        today=today,
+                        lookahead_days=lookahead_days,
+                    )
+                )
+        return sorted_events(events)
+
+    @staticmethod
+    def parse_page(
+        html_text: str,
+        company: OligarchCompany,
+        rule: Mapping,
+        *,
+        today: dt.date,
+        lookahead_days: int,
+    ) -> list[EarningsCalendarEvent]:
+        from lxml import html
+
+        url = str(rule.get("url", "") or "").strip()
+        source_type = str(rule.get("source_type", "") or "").strip() or "official_ir_calendar"
+        include_keywords = tuple(str(item) for item in (rule.get("include_keywords") or []))
+        text = " ".join(html.fromstring(html_text or "").text_content().split())
+        if include_keywords and not _text_has_any(text, include_keywords):
+            return []
+        report_day = _date_from_english_text(text) or _date_from_compact_text(text)
+        if report_day is None:
+            return []
+        end = today + dt.timedelta(days=max(0, int(lookahead_days)))
+        if not (today <= report_day <= end):
+            return []
+        return [
+            EarningsCalendarEvent(
+                company=company.company,
+                ticker=company.ticker,
+                sector=company.sector,
+                report_date=report_day.isoformat(),
+                fiscal_period=str(rule.get("fiscal_period", "") or "").strip(),
+                time_label="\u5f85\u786e\u8ba4",
+                status=CONFIRMED_STATUS,
+                source=COMPANY_IR_SOURCE,
+                priority=company.priority,
+                conference_url=url,
+                market=company.market,
+                original_call_time_text=str(rule.get("label", "") or "").strip(),
+                call_time_source_url=url,
+                call_time_source_type=source_type,
+            )
+        ]
+
+
 class YFinanceEarningsCalendarProvider:
     def __init__(
         self,
@@ -656,8 +1741,8 @@ class YFinanceEarningsCalendarProvider:
                     sector=company.sector,
                     report_date=day.strftime("%Y-%m-%d"),
                     time_label="\u5f85\u786e\u8ba4",
-                    status="estimated",
-                    source="Yahoo Finance",
+                    status=YFINANCE_UNVERIFIED_STATUS,
+                    source=YFINANCE_SOURCE,
                     priority=company.priority,
                     market=company.market,
                 )
@@ -703,14 +1788,40 @@ def events_by_date(events: list[EarningsCalendarEvent]) -> dict[str, list[Earnin
     return grouped
 
 
+def _mark_yfinance_date_conflicts(events: list[EarningsCalendarEvent]) -> list[EarningsCalendarEvent]:
+    normalized = [normalize_event_status(event) for event in events or []]
+    by_ticker: dict[str, list[EarningsCalendarEvent]] = {}
+    for event in normalized:
+        by_ticker.setdefault(str(event.ticker or "").strip().upper(), []).append(event)
+
+    reconciled: list[EarningsCalendarEvent] = []
+    for event in normalized:
+        if not is_yfinance_estimate_event(event):
+            reconciled.append(event)
+            continue
+        event_day = _date_from_any(event.report_date)
+        if event_day is None:
+            reconciled.append(event)
+            continue
+        has_conflict = False
+        for other in by_ticker.get(str(event.ticker or "").strip().upper(), []):
+            if other is event or is_yfinance_estimate_event(other):
+                continue
+            other_day = _date_from_any(other.report_date)
+            if other_day is None:
+                continue
+            if abs((event_day - other_day).days) > 1:
+                has_conflict = True
+                break
+        if has_conflict:
+            reconciled.append(replace(event, status=YFINANCE_CONFLICT_STATUS))
+        else:
+            reconciled.append(event)
+    return reconciled
+
+
 def merge_events(events: list[EarningsCalendarEvent]) -> list[EarningsCalendarEvent]:
-    source_rank = {
-        "Lumentum IR": 0,
-        "confirmed": 0,
-        "Nasdaq": 1,
-        "Alpha Vantage": 2,
-        "Yahoo Finance": 3,
-    }
+    events = _mark_yfinance_date_conflicts(list(events or []))
     selected: list[EarningsCalendarEvent] = []
     for event in sorted_events(events):
         event_day = _date_from_any(event.report_date)
@@ -725,8 +1836,8 @@ def merge_events(events: list[EarningsCalendarEvent]) -> list[EarningsCalendarEv
                 and abs((event_day - existing_day).days) <= 1
             )
             if existing.report_date == event.report_date or same_window:
-                existing_rank = source_rank.get(existing.source, 9)
-                event_rank = source_rank.get(event.source, 9)
+                existing_rank = _SOURCE_RANK.get(existing.source, 9)
+                event_rank = _SOURCE_RANK.get(event.source, 9)
                 if event_rank < existing_rank:
                     replace_index = idx
                 else:
@@ -780,6 +1891,14 @@ class GlobalEarningsCalendarService:
         confirmed_provider: ConfirmedEarningsEventsProvider | None = None,
         nasdaq_provider: NasdaqEarningsCalendarProvider | None = None,
         yfinance_provider: YFinanceEarningsCalendarProvider | None = None,
+        jpx_provider: JpxFinancialAnnouncementProvider | None = None,
+        tdnet_provider: TdnetEarningsDisclosureProvider | None = None,
+        dart_provider: DartEarningsDisclosureProvider | None = None,
+        kind_provider: KindEarningsDisclosureProvider | None = None,
+        mops_provider: MopsEarningsDisclosureProvider | None = None,
+        sec_provider: SecSixKEarningsProvider | None = None,
+        company_ir_provider: CompanyIrEarningsCalendarProvider | None = None,
+        official_providers: list[tuple[str, object]] | None = None,
     ):
         self._data_store = data_store
         self.universe = dict(universe or build_oligarch_universe())
@@ -792,6 +1911,25 @@ class GlobalEarningsCalendarService:
         self.nasdaq_provider = nasdaq_provider or NasdaqEarningsCalendarProvider()
         self.provider = provider or AlphaVantageEarningsCalendarProvider(resolved_api_key)
         self.yfinance_provider = yfinance_provider or YFinanceEarningsCalendarProvider()
+        if official_providers is None:
+            self.company_ir_provider = company_ir_provider or CompanyIrEarningsCalendarProvider()
+            self.jpx_provider = jpx_provider or JpxFinancialAnnouncementProvider()
+            self.tdnet_provider = tdnet_provider or TdnetEarningsDisclosureProvider()
+            self.dart_provider = dart_provider or DartEarningsDisclosureProvider()
+            self.kind_provider = kind_provider or KindEarningsDisclosureProvider()
+            self.mops_provider = mops_provider or MopsEarningsDisclosureProvider()
+            self.sec_provider = sec_provider or SecSixKEarningsProvider()
+            self.official_providers = [
+                (COMPANY_IR_SOURCE, self.company_ir_provider),
+                (JPX_SOURCE, self.jpx_provider),
+                (TDNET_SOURCE, self.tdnet_provider),
+                (DART_SOURCE, self.dart_provider),
+                (KIND_SOURCE, self.kind_provider),
+                (MOPS_SOURCE, self.mops_provider),
+                (SEC_6K_SOURCE, self.sec_provider),
+            ]
+        else:
+            self.official_providers = list(official_providers or [])
 
     @property
     def data_store(self):
@@ -816,6 +1954,7 @@ class GlobalEarningsCalendarService:
         company = self.universe.get(ticker)
         if company is None:
             return None
+        status = _normalize_status_value(event.status, event.source)
         return EarningsCalendarEvent(
             company=company.company,
             ticker=ticker,
@@ -824,7 +1963,7 @@ class GlobalEarningsCalendarService:
             fiscal_period=event.fiscal_period,
             time_label=event.time_label,
             beijing_time=event.beijing_time,
-            status=event.status or "estimated",
+            status=status,
             source=event.source,
             priority=company.priority or event.priority,
             conference_url=event.conference_url,
@@ -851,6 +1990,34 @@ class GlobalEarningsCalendarService:
                 "events": [event.to_dict() for event in sorted_events(events)],
             },
         )
+
+    def sync_unverified_yfinance_cache(self) -> int:
+        payload = self.data_store.load_json(CACHE_KEY, default={}) or {}
+        rows = payload.get("events") if isinstance(payload, Mapping) else []
+        if not isinstance(rows, list):
+            return 0
+
+        changed = 0
+        synced_rows = []
+        for row in rows:
+            if not isinstance(row, Mapping):
+                synced_rows.append(row)
+                continue
+            row_dict = dict(row)
+            source = str(row_dict.get("source", "") or "").strip()
+            current_status = str(row_dict.get("status", "") or "").strip()
+            normalized_status = _normalize_status_value(current_status, source)
+            if source == YFINANCE_SOURCE and normalized_status != current_status:
+                row_dict["status"] = normalized_status
+                changed += 1
+            synced_rows.append(row_dict)
+
+        if changed:
+            synced_payload = dict(payload) if isinstance(payload, Mapping) else {}
+            synced_payload["events"] = synced_rows
+            synced_payload["yfinance_estimate_synced_at"] = dt.datetime.now().isoformat(timespec="seconds")
+            self.data_store.save_json(CACHE_KEY, synced_payload)
+        return changed
 
     def upsert_confirmed_event(self, event: EarningsCalendarEvent) -> EarningsCalendarEvent:
         confirmed = self._hydrate_event_from_universe(event)
@@ -957,9 +2124,12 @@ class GlobalEarningsCalendarService:
         fetched.extend(self._load_confirmed_events())
 
         provider_calls = (
-            ("Nasdaq", self.nasdaq_provider),
-            ("Alpha Vantage", self.provider),
-            ("Yahoo Finance", self.yfinance_provider),
+            tuple(self.official_providers)
+            + (
+                ("Nasdaq", self.nasdaq_provider),
+                ("Alpha Vantage", self.provider),
+                ("Yahoo Finance", self.yfinance_provider),
+            )
         )
         for provider_name, provider in provider_calls:
             try:
