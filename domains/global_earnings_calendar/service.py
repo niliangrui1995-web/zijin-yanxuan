@@ -1624,14 +1624,24 @@ class CompanyIrEarningsCalendarProvider:
         source_type = str(rule.get("source_type", "") or "").strip() or "official_ir_calendar"
         include_keywords = tuple(str(item) for item in (rule.get("include_keywords") or []))
         text = " ".join(html.fromstring(html_text or "").text_content().split())
+        explicit_report_day = _date_from_any(rule.get("report_date"))
+        if explicit_report_day is None:
+            explicit_report_day = _date_from_english_text(str(rule.get("report_date", "") or ""))
+        if explicit_report_day is None:
+            explicit_report_day = _date_from_compact_text(str(rule.get("report_date", "") or ""))
+        if not include_keywords and explicit_report_day is None:
+            return []
         if include_keywords and not _text_has_any(text, include_keywords):
             return []
-        report_day = _date_from_english_text(text) or _date_from_compact_text(text)
+        report_day = explicit_report_day or _date_from_english_text(text) or _date_from_compact_text(text)
         if report_day is None:
             return []
         end = today + dt.timedelta(days=max(0, int(lookahead_days)))
         if not (today <= report_day <= end):
             return []
+        original_call_time_text = str(
+            rule.get("original_call_time_text", "") or rule.get("label", "") or ""
+        ).strip()
         return [
             EarningsCalendarEvent(
                 company=company.company,
@@ -1639,13 +1649,15 @@ class CompanyIrEarningsCalendarProvider:
                 sector=company.sector,
                 report_date=report_day.isoformat(),
                 fiscal_period=str(rule.get("fiscal_period", "") or "").strip(),
-                time_label="\u5f85\u786e\u8ba4",
+                time_label=str(rule.get("time_label", "") or "").strip() or "\u5f85\u786e\u8ba4",
+                beijing_time=str(rule.get("beijing_time", "") or "").strip(),
                 status=CONFIRMED_STATUS,
                 source=COMPANY_IR_SOURCE,
                 priority=company.priority,
-                conference_url=url,
+                conference_url=str(rule.get("conference_url", "") or "").strip() or url,
                 market=company.market,
-                original_call_time_text=str(rule.get("label", "") or "").strip(),
+                original_call_time_text=original_call_time_text,
+                original_timezone=str(rule.get("original_timezone", "") or "").strip(),
                 call_time_source_url=url,
                 call_time_source_type=source_type,
             )
@@ -2080,7 +2092,7 @@ class GlobalEarningsCalendarService:
         today: dt.date,
         lookahead_days: int,
     ) -> list[EarningsCalendarEvent]:
-        end = today + dt.timedelta(days=lookahead_days)
+        end = today + dt.timedelta(days=max(0, int(lookahead_days)))
         filtered = []
         for event in events:
             try:
@@ -2120,8 +2132,19 @@ class GlobalEarningsCalendarService:
         lookahead_days: int = DEFAULT_LOOKAHEAD_DAYS,
     ) -> list[EarningsCalendarEvent]:
         today = today or dt.date.today()
-        fetched: list[EarningsCalendarEvent] = []
-        fetched.extend(self._load_confirmed_events())
+        lookahead_days = max(0, int(lookahead_days))
+        confirmed_events = self._filter_window(
+            self._load_confirmed_events(),
+            today=today,
+            lookahead_days=lookahead_days,
+        )
+        cached_events = self._filter_window(
+            self._load_cached_events(),
+            today=today,
+            lookahead_days=lookahead_days,
+        )
+        network_events: list[EarningsCalendarEvent] = []
+        refreshed_sources: set[str] = set()
 
         provider_calls = (
             tuple(self.official_providers)
@@ -2133,17 +2156,26 @@ class GlobalEarningsCalendarService:
         )
         for provider_name, provider in provider_calls:
             try:
-                fetched.extend(provider.fetch(self.universe, today=today, lookahead_days=lookahead_days))
+                provider_events = list(provider.fetch(self.universe, today=today, lookahead_days=lookahead_days) or [])
             except (ImportError, requests.RequestException, OSError, RuntimeError, TypeError, ValueError) as exc:
                 log.warning(f"[global earnings calendar] {provider_name} refresh failed: {exc}")
+                continue
+            network_events.extend(provider_events)
+            refreshed_sources.update(
+                str(event.source or provider_name or "").strip()
+                for event in provider_events
+                if event is not None
+            )
 
-        filtered = merge_events(self._filter_window(fetched, today=today, lookahead_days=lookahead_days))
-        if filtered:
+        network_events = self._filter_window(network_events, today=today, lookahead_days=lookahead_days)
+        if network_events:
+            cached_fallback_events = [
+                event
+                for event in cached_events
+                if str(event.source or "").strip() not in refreshed_sources
+            ]
+            filtered = merge_events(confirmed_events + cached_fallback_events + network_events)
             self._save_events(filtered, "provider")
             return filtered
 
-        local = merge_events(
-            self._filter_window(self._load_confirmed_events(), today=today, lookahead_days=lookahead_days)
-            + self._filter_window(self._load_cached_events(), today=today, lookahead_days=lookahead_days)
-        )
-        return local
+        return merge_events(confirmed_events + cached_events)

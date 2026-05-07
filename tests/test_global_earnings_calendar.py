@@ -344,6 +344,51 @@ def test_company_ir_provider_parses_configured_official_page():
     assert events[0].call_time_source_type == "official_ir_results_page"
 
 
+def test_company_ir_provider_requires_keywords_or_explicit_report_date():
+    html = "<html><body>Copyright 2026. Updated May 1, 2026.</body></html>"
+    company = OligarchCompany("TSMC", "2330.TW", "先进制程代工", "super_giant", "TW")
+
+    events = CompanyIrEarningsCalendarProvider.parse_page(
+        html,
+        company,
+        {
+            "url": "https://investor.tsmc.com/english/events",
+            "source_type": "official_ir_calendar",
+        },
+        today=dt.date(2026, 4, 1),
+        lookahead_days=60,
+    )
+
+    assert events == []
+
+
+def test_company_ir_provider_preserves_explicit_time_metadata():
+    html = "<html><body>Investor calendar</body></html>"
+    company = OligarchCompany("TSMC", "2330.TW", "先进制程代工", "super_giant", "TW")
+
+    events = CompanyIrEarningsCalendarProvider.parse_page(
+        html,
+        company,
+        {
+            "url": "https://investor.tsmc.com/english/events",
+            "report_date": "2026-04-16",
+            "beijing_time": "2026-04-16 14:00",
+            "time_label": "盘中",
+            "original_call_time_text": "April 16, 2026 14:00 CST",
+            "original_timezone": "Asia/Taipei",
+            "source_type": "official_ir_calendar",
+        },
+        today=dt.date(2026, 4, 1),
+        lookahead_days=60,
+    )
+
+    assert len(events) == 1
+    assert events[0].report_date == "2026-04-16"
+    assert events[0].beijing_time == "2026-04-16 14:00"
+    assert events[0].time_label == "盘中"
+    assert events[0].original_timezone == "Asia/Taipei"
+
+
 def test_confirmed_provider_loads_lite_official_event(tmp_path):
     path = tmp_path / "confirmed.json"
     path.write_text(
@@ -821,6 +866,159 @@ def test_service_merges_confirmed_and_network_events_without_demo(tmp_path):
 
     assert [event.ticker for event in events] == ["LITE", "2330.TW"]
     assert "示例" not in {event.source for event in events}
+
+
+def test_refresh_events_preserves_cached_provider_events_when_network_fails(tmp_path):
+    class MemoryStore:
+        def __init__(self):
+            self.saved = None
+            self.data = {
+                "global_earnings_calendar": {
+                    "source": "provider",
+                    "events": [
+                        EarningsCalendarEvent(
+                            "Applied Materials",
+                            "AMAT",
+                            "前道晶圆设备与量测",
+                            "2026-05-14",
+                            source="Nasdaq",
+                            market="US",
+                        ).to_dict()
+                    ],
+                }
+            }
+
+        def load_json(self, key, default=None):
+            return json.loads(json.dumps(self.data.get(key, default), ensure_ascii=False))
+
+        def save_json(self, key, data):
+            self.saved = (key, data)
+
+    class FailingProvider:
+        def fetch(self, *_args, **_kwargs):
+            raise RuntimeError("network down")
+
+    confirmed_path = tmp_path / "confirmed.json"
+    confirmed_path.write_text(
+        '{"events":[{"ticker":"CRWV","report_date":"2026-05-07","beijing_time":"2026-05-08 05:00","source":"confirmed","status":"confirmed"}]}',
+        encoding="utf-8",
+    )
+    store = MemoryStore()
+    universe = {
+        "CRWV": OligarchCompany("CoreWeave", "CRWV", "云巨头/算力租赁/数据基础设施", "normal", "US"),
+        "AMAT": OligarchCompany("Applied Materials", "AMAT", "前道晶圆设备与量测", "strategic_giant", "US"),
+    }
+    service = GlobalEarningsCalendarService(
+        data_store=store,
+        universe=universe,
+        confirmed_provider=ConfirmedEarningsEventsProvider(confirmed_path),
+        nasdaq_provider=FailingProvider(),
+        provider=FailingProvider(),
+        yfinance_provider=FailingProvider(),
+        official_providers=[("Company IR", FailingProvider())],
+    )
+
+    events = service.refresh_events(today=dt.date(2026, 5, 8), lookahead_days=10)
+
+    assert [(event.ticker, event.source) for event in events] == [
+        ("CRWV", "confirmed"),
+        ("AMAT", "Nasdaq"),
+    ]
+    assert store.saved is None
+
+
+def test_refresh_events_merges_cached_sources_that_were_not_refreshed():
+    class MemoryStore:
+        def __init__(self):
+            self.data = {
+                "global_earnings_calendar": {
+                    "source": "provider",
+                    "events": [
+                        EarningsCalendarEvent(
+                            "Old Nasdaq",
+                            "OLD",
+                            "legacy",
+                            "2026-05-11",
+                            source="Nasdaq",
+                            market="US",
+                        ).to_dict(),
+                        EarningsCalendarEvent(
+                            "KYEC",
+                            "2449.TW",
+                            "封测",
+                            "2026-05-08",
+                            source="Yahoo Finance",
+                            status="estimated_unverified",
+                            market="TW",
+                        ).to_dict(),
+                    ],
+                }
+            }
+            self.saved = None
+
+        def load_json(self, key, default=None):
+            return json.loads(json.dumps(self.data.get(key, default), ensure_ascii=False))
+
+        def save_json(self, key, data):
+            self.saved = key
+            self.data[key] = json.loads(json.dumps(data, ensure_ascii=False))
+
+    class NasdaqProvider:
+        def fetch(self, universe, **_kwargs):
+            company = universe["AMAT"]
+            return [
+                EarningsCalendarEvent(
+                    company.company,
+                    company.ticker,
+                    company.sector,
+                    "2026-05-14",
+                    source="Nasdaq",
+                    market=company.market,
+                )
+            ]
+
+    class EmptyProvider:
+        def fetch(self, *_args, **_kwargs):
+            return []
+
+    store = MemoryStore()
+    service = GlobalEarningsCalendarService(
+        data_store=store,
+        universe={
+            "AMAT": OligarchCompany("Applied Materials", "AMAT", "前道晶圆设备与量测", "strategic_giant", "US"),
+            "2449.TW": OligarchCompany("KYEC", "2449.TW", "封测", "normal", "TW"),
+            "OLD": OligarchCompany("Old Nasdaq", "OLD", "legacy", "normal", "US"),
+        },
+        confirmed_provider=ConfirmedEarningsEventsProvider("missing.json"),
+        nasdaq_provider=NasdaqProvider(),
+        provider=EmptyProvider(),
+        yfinance_provider=EmptyProvider(),
+        official_providers=[],
+    )
+
+    events = service.refresh_events(today=dt.date(2026, 5, 8), lookahead_days=10)
+
+    assert store.saved == "global_earnings_calendar"
+    assert [(event.ticker, event.source) for event in events] == [
+        ("2449.TW", "Yahoo Finance"),
+        ("AMAT", "Nasdaq"),
+    ]
+    assert "OLD" not in {event.ticker for event in events}
+
+
+def test_filter_window_clamps_negative_lookahead_to_today():
+    events = [
+        EarningsCalendarEvent("Today", "TODAY", "sector", "2026-05-08"),
+        EarningsCalendarEvent("Tomorrow", "NEXT", "sector", "2026-05-09"),
+    ]
+
+    filtered = GlobalEarningsCalendarService._filter_window(
+        events,
+        today=dt.date(2026, 5, 8),
+        lookahead_days=-3,
+    )
+
+    assert [event.ticker for event in filtered] == ["TODAY"]
 
 
 def test_build_demo_events_are_relative_to_current_month():

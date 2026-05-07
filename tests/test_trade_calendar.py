@@ -384,3 +384,19 @@ def test_oligarch_earnings_panel_labels_yfinance_estimates_as_unofficial():
         assert "\u4ee5\u5b98\u65b9\u62ab\u9732\u4e3a\u51c6" in panel._format_time_line(conflict)
     finally:
         panel.deleteLater()
+
+
+def test_oligarch_earnings_panel_includes_confirmed_source_basis():
+    event = EarningsCalendarEvent(
+        company="CoreWeave",
+        ticker="CRWV",
+        sector="Cloud",
+        report_date="2026-05-07",
+        status="confirmed",
+        source="confirmed",
+        call_time_source_type="official_ir_event",
+    )
+
+    source_text = OligarchEarningsCalendarPanel._format_source_text(event)
+
+    assert source_text == "confirmed｜官方IR事件"

@@ -45,6 +45,19 @@ _PRIORITY_LABELS = {
     "super_giant": "\u8d85\u7ea7\u5de8\u5934",
     "strategic_giant": "\u6218\u7565\u6838\u5fc3",
 }
+_SOURCE_TYPE_LABELS = {
+    "official_ir_calendar": "\u5b98\u65b9IR\u65e5\u5386",
+    "official_ir_event": "\u5b98\u65b9IR\u4e8b\u4ef6",
+    "official_ir_press_release": "\u5b98\u65b9IR\u65b0\u95fb\u7a3f",
+    "official_ir_results_page": "\u5b98\u65b9IR\u4e1a\u7ee9\u9875",
+    "official_ir_linked_webcast": "\u5b98\u65b9IR\u94fe\u63a5\u4f1a\u8bae",
+    "jpx_financial_announcement_schedule": "JPX\u51b3\u7b97\u65e5\u7a0b",
+    "tdnet_disclosure": "TDnet\u62ab\u9732",
+    "dart_disclosure": "DART\u62ab\u9732",
+    "kind_disclosure": "KIND\u62ab\u9732",
+    "mops_material_information": "MOPS\u91cd\u5927\u8baf\u606f",
+    "sec_6k": "SEC 6-K",
+}
 
 
 def _c(token: str) -> str:
@@ -710,6 +723,20 @@ class OligarchEarningsCalendarPanel(QFrame):
         return "earningsEventBadgePending"
 
     @staticmethod
+    def _format_source_text(event: EarningsCalendarEvent) -> str:
+        source_text = event.source or "\u672a\u77e5\u6765\u6e90"
+        source_type = str(event.call_time_source_type or "").strip()
+        if source_type:
+            source_type_label = _SOURCE_TYPE_LABELS.get(source_type, source_type)
+            if source_type_label not in source_text:
+                source_text = f"{source_text}\uff5c{source_type_label}"
+        if is_yfinance_date_conflict_event(event):
+            return f"{source_text}\uff08\u4f30\u7b97\u51b2\u7a81\uff0c\u975e\u5b98\u65b9\uff09"
+        if is_yfinance_estimate_event(event):
+            return f"{source_text}\uff08\u4f30\u7b97\uff0c\u975e\u5b98\u65b9\uff09"
+        return source_text
+
+    @staticmethod
     def _format_group_title(day: str) -> str:
         try:
             date_value = _dt.date.fromisoformat(day[:10])
@@ -791,11 +818,7 @@ class OligarchEarningsCalendarPanel(QFrame):
         time_label.setWordWrap(True)
         layout.addWidget(time_label)
 
-        source_text = event.source or "\u672a\u77e5\u6765\u6e90"
-        if is_yfinance_date_conflict_event(event):
-            source_text = f"{source_text}\uff08\u4f30\u7b97\u51b2\u7a81\uff0c\u975e\u5b98\u65b9\uff09"
-        elif is_yfinance_estimate_event(event):
-            source_text = f"{source_text}\uff08\u4f30\u7b97\uff0c\u975e\u5b98\u65b9\uff09"
+        source_text = self._format_source_text(event)
         source_label = QLabel(f"\u6765\u6e90 {source_text}", card)
         source_label.setObjectName("earningsEventSource")
         source_label.setWordWrap(True)
