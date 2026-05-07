@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote_plus, urlparse
 
-from PyQt6.QtCore import QUrl
+from PyQt6.QtCore import QUrl, QUrlQuery
 
 from ui.components import stock_context_menu
-from ui.components.stock_context_menu import build_codex_project_thread_url
+from ui.components.stock_context_menu import build_codex_project_thread_url, build_codex_stock_prompt
 
 
 def test_codex_project_thread_url_targets_industry_research_project():
@@ -26,6 +26,46 @@ def test_codex_project_thread_url_is_valid_qurl():
     assert "path=" in qurl.query()
 
 
+def test_codex_project_thread_url_can_prefill_stock_prompt():
+    prompt = build_codex_stock_prompt("300308", "中际旭创")
+    parsed = urlparse(build_codex_project_thread_url(prompt=prompt))
+    query = parse_qs(parsed.query)
+
+    assert query["path"] == [r"D:\vcp_hunter\产业链投研"]
+    assert query["prompt"] == ["请围绕以下股票开展产业链投研：\n股票代码：300308\n股票名称：中际旭创"]
+
+
+def test_codex_project_thread_url_prompt_survives_qurl_roundtrip():
+    prompt = build_codex_stock_prompt("300308", "中际旭创")
+    query = QUrlQuery(QUrl(build_codex_project_thread_url(prompt=prompt)))
+
+    assert unquote_plus(query.queryItemValue("path")) == r"D:\vcp_hunter\产业链投研"
+    assert unquote_plus(query.queryItemValue("prompt")) == prompt
+
+
+def test_codex_project_thread_url_prompt_escapes_special_characters():
+    prompt = build_codex_stock_prompt("BRK+B", "A&B/测试")
+    parsed = urlparse(build_codex_project_thread_url(prompt=prompt))
+    query = parse_qs(parsed.query)
+
+    assert query["prompt"] == ["请围绕以下股票开展产业链投研：\n股票代码：BRK+B\n股票名称：A&B/测试"]
+
+
+def test_codex_stock_prompt_cleans_watchlist_prefix():
+    assert build_codex_stock_prompt(" 300308 ", "⭐ 中际旭创 ") == (
+        "请围绕以下股票开展产业链投研：\n股票代码：300308\n股票名称：中际旭创"
+    )
+    assert build_codex_stock_prompt("300308", "★中际旭创") == (
+        "请围绕以下股票开展产业链投研：\n股票代码：300308\n股票名称：中际旭创"
+    )
+
+
+def test_codex_stock_prompt_treats_none_as_missing_value():
+    assert build_codex_stock_prompt(None, "中际旭创") == "请围绕以下股票开展产业链投研：\n股票名称：中际旭创"
+    assert build_codex_stock_prompt("300308", None) == "请围绕以下股票开展产业链投研：\n股票代码：300308"
+    assert build_codex_stock_prompt(None, None) == "请围绕当前股票开展产业链投研。"
+
+
 def test_open_codex_project_thread_uses_qdesktopservices(monkeypatch, tmp_path):
     opened_urls = []
 
@@ -43,10 +83,11 @@ def test_open_codex_project_thread_uses_qdesktopservices(monkeypatch, tmp_path):
         lambda _url: (_ for _ in ()).throw(AssertionError("fallback should not run")),
     )
 
-    assert stock_context_menu.open_codex_project_thread(project_path=tmp_path)
+    assert stock_context_menu.open_codex_project_thread(project_path=tmp_path, prompt="股票代码：300308\n股票名称：中际旭创")
     assert opened_urls[0].scheme() == "codex"
     assert opened_urls[0].host() == "threads"
     assert opened_urls[0].path() == "/new"
+    assert "prompt=" in opened_urls[0].query()
 
 
 def test_open_codex_project_thread_falls_back_to_webbrowser(monkeypatch, tmp_path):
@@ -61,8 +102,10 @@ def test_open_codex_project_thread_falls_back_to_webbrowser(monkeypatch, tmp_pat
     monkeypatch.setattr(stock_context_menu, "_is_codex_scheme_registered", lambda: True)
     monkeypatch.setattr(stock_context_menu.webbrowser, "open_new_tab", lambda url: fallback_urls.append(url) or True)
 
-    assert stock_context_menu.open_codex_project_thread(project_path=tmp_path)
-    assert fallback_urls == [build_codex_project_thread_url(tmp_path)]
+    prompt = build_codex_stock_prompt("300308", "中际旭创")
+
+    assert stock_context_menu.open_codex_project_thread(project_path=tmp_path, prompt=prompt)
+    assert fallback_urls == [build_codex_project_thread_url(tmp_path, prompt=prompt)]
 
 
 def test_open_codex_project_thread_warns_when_project_path_is_missing(monkeypatch, tmp_path):
