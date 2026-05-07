@@ -9,12 +9,77 @@ ui/components/stock_context_menu.py
 现在用工厂模式，各 Tab 只需 3 行代码调用。
 """
 
-from PyQt6.QtGui import QCursor
-from PyQt6.QtWidgets import QApplication, QMenu
+import os
+import webbrowser
+from pathlib import Path
+from urllib.parse import urlencode
+
+from PyQt6.QtCore import QUrl
+from PyQt6.QtGui import QCursor, QDesktopServices
+from PyQt6.QtWidgets import QApplication, QMenu, QMessageBox
 
 from app.services.ui_runtime_service import ui_signals as event_bus
 from app.services.ui_runtime_service import watchlist_vm
 from ui.styles.context_menu_qss import generate_context_menu_qss
+
+CODEX_INDUSTRY_RESEARCH_PROJECT = Path(r"D:\vcp_hunter\产业链投研")
+CODEX_NEW_THREAD_ROUTE = "codex://threads/new"
+
+
+def build_codex_project_thread_url(project_path: str | Path = CODEX_INDUSTRY_RESEARCH_PROJECT) -> str:
+    return f"{CODEX_NEW_THREAD_ROUTE}?{urlencode({'path': str(project_path)})}"
+
+
+def _warn_codex_open_failed(parent, message: str) -> None:
+    QMessageBox.warning(parent, "无法打开 Codex", message)
+
+
+def _is_codex_scheme_registered() -> bool:
+    if os.name != "nt":
+        return True
+
+    try:
+        import winreg
+    except ImportError:
+        return True
+
+    for root, path in (
+        (winreg.HKEY_CURRENT_USER, r"Software\Classes\codex"),
+        (winreg.HKEY_CLASSES_ROOT, "codex"),
+    ):
+        try:
+            with winreg.OpenKey(root, path) as key:
+                winreg.QueryValueEx(key, "URL Protocol")
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def open_codex_project_thread(parent=None, project_path: str | Path = CODEX_INDUSTRY_RESEARCH_PROJECT) -> bool:
+    project_path = Path(project_path)
+    if not project_path.exists():
+        _warn_codex_open_failed(parent, f"产业链投研项目路径不存在：{project_path}")
+        return False
+    if not _is_codex_scheme_registered():
+        _warn_codex_open_failed(parent, "当前系统没有注册 codex:// 深链接，请先安装或修复 Codex 桌面端。")
+        return False
+
+    url = build_codex_project_thread_url(project_path)
+    if QDesktopServices.openUrl(QUrl(url)):
+        return True
+
+    try:
+        opened = webbrowser.open_new_tab(url)
+    except Exception as exc:
+        _warn_codex_open_failed(parent, f"Codex 打开失败：{exc}")
+        return False
+
+    if not opened:
+        _warn_codex_open_failed(parent, "系统没有接受 codex:// 深链接。")
+        return False
+
+    return True
 
 
 def _resolve_workspace(parent):
@@ -85,7 +150,7 @@ def build_stock_context_menu(
     # --- 跳转操作 ---
     act_tdx = menu.addAction("跳转通达信")
     act_em = menu.addAction("跳转东方财富")
-    act_gemini = menu.addAction("打开 Gemini")
+    act_codex = menu.addAction("打开 Codex")
 
     # --- 导出 ---
     act_export = None
@@ -139,11 +204,8 @@ def build_stock_context_menu(
         if hasattr(parent, "launch_eastmoney"):
             parent.launch_eastmoney(code)
 
-    elif action == act_gemini:
-        url = "https://gemini.google.com/u/6/app?utm_source=app_launcher&utm_medium=owned&utm_campaign=base_all&pageId=none"
-        import webbrowser
-        webbrowser.open_new_tab(url)
+    elif action == act_codex:
+        open_codex_project_thread(parent)
 
     elif action == act_export and show_export and export_callback:
         export_callback()
-
