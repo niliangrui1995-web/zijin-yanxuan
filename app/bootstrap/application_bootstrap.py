@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import time
 
-from core.app_config import app_config
 from core.logger import get_logger
 from core.observability import emit_structured_log, record_metric
 from infra.features import service_toggle_registry

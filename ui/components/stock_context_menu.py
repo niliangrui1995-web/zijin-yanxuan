@@ -45,7 +45,7 @@ def _clean_stock_code(code: str) -> str:
     match = _STOCK_CODE_RE.search(text)
     if match:
         return match.group(1)
-    return "".join(ch for ch in text if ch.isalnum() or ch in ".-_")[:CODEX_STOCK_FIELD_MAX_LENGTH]
+    return "".join(ch for ch in text if ch.isalnum() or ch in ".-_+")[:CODEX_STOCK_FIELD_MAX_LENGTH]
 
 
 def _clean_stock_name(name: str, *, max_length: int | None = None) -> str:

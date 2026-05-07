@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 
 from PyQt6.QtCore import QEvent, QRectF, Qt, QTimer
-from PyQt6.QtGui import QAction, QActionGroup, QColor, QLinearGradient, QPainter
+from PyQt6.QtGui import QActionGroup, QColor, QLinearGradient, QPainter
 from PyQt6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -27,7 +27,6 @@ from core.logger import get_logger
 from ui.components import PulsingDot
 from ui.components.shared_title_bar import DraggableTitleBar
 from ui.theme_tokens import build_ui_tokens, get_state_tone
-
 
 log = get_logger(__name__)
 

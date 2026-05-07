@@ -12,9 +12,12 @@ from app.services.asian_market_service import (
 )
 from app.services.kline_open_service import build_kline_open_request
 from app.services.runtime_constants import APP_VERSION, CACHE_DIR, FINANCE_CACHE_FILE, RPS_CACHE_FILE
-from app.services.runtime_services import create_data_provider, create_startup_orchestrator, load_local_tdx_capital_snapshot
+from app.services.runtime_services import (
+    create_data_provider,
+    create_startup_orchestrator,
+    load_local_tdx_capital_snapshot,
+)
 from app.services.scan_runtime_service import (
-    VCPParams,
     batch_check_market_cap,
     batch_get_finance_info,
     build_rps_matrix,
@@ -24,6 +27,7 @@ from app.services.scan_runtime_service import (
     quick_check_breakout,
 )
 from app.services.sector_runtime_service import get_sector_manager
+from vcp.models import VCPParams
 
 __all__ = [
     "APP_VERSION",

@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from domains.scan import BreakoutMonitorService, IndicatorService
 from app.services.scan_engine_facade import VCPEngine
-from vcp.models import VCPParams
+from domains.scan import BreakoutMonitorService, IndicatorService
 
 
 def create_scan_engine():
