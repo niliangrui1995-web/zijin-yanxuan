@@ -610,8 +610,14 @@ class ClassicWorkspace(QWidget):
     def auto_start_rt_monitor(self) -> bool:
         return _resolve_workspace_facade(self).auto_start_rt_monitor()
 
-    def collect_watchlist_radar_data(self) -> tuple[dict, dict, dict, dict, dict, dict | None]:
-        return _resolve_workspace_facade(self).collect_watchlist_radar_data()
+    def collect_watchlist_radar_data(
+        self,
+        *,
+        include_cache_fallback: bool = False,
+    ) -> tuple[dict, dict, dict, dict, dict, dict | None]:
+        return _resolve_workspace_facade(self).collect_watchlist_radar_data(
+            include_cache_fallback=include_cache_fallback
+        )
 
     def collect_stock_signals(self) -> list[StockSignal]:
         return _resolve_workspace_facade(self).collect_stock_signals()

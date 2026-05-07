@@ -404,7 +404,7 @@ class StockContextService:
             )
         return signals
 
-    def _iter_scan_signals(self) -> list[StockSignal]:
+    def _iter_scan_signals(self, *, include_cache_fallback: bool = True) -> list[StockSignal]:
         scan_tab = self._get_tab("scan")
         if not self._has_tab_key("scan", scan_tab):
             return []
@@ -412,7 +412,7 @@ class StockContextService:
         rows = list(scan_reader() or []) if callable(scan_reader) else []
         if not rows:
             rows = self._get_rows(scan_tab)
-        if not rows:
+        if not rows and include_cache_fallback:
             rows = self._load_scan_cache_rows()
 
         signals: list[StockSignal] = []
@@ -458,7 +458,7 @@ class StockContextService:
             )
         return signals
 
-    def _iter_block_trade_signals(self) -> list[StockSignal]:
+    def _iter_block_trade_signals(self, *, include_cache_fallback: bool = True) -> list[StockSignal]:
         foreign_block_tab = self._get_tab("foreign_block")
         if not self._has_tab_key("foreign_block", foreign_block_tab):
             return []
@@ -470,7 +470,7 @@ class StockContextService:
 
         block_aggregates: dict[str, dict] = {}
         rows = self._get_rows(foreign_block_tab)
-        if not rows:
+        if not rows and include_cache_fallback:
             rows = self._load_foreign_block_cache_rows()
         for row_idx, row in enumerate(rows):
             code = str(row.get(KEY_CODE, "")).strip()
@@ -534,13 +534,13 @@ class StockContextService:
             )
         return signals
 
-    def _iter_earnings_signals(self) -> list[StockSignal]:
+    def _iter_earnings_signals(self, *, include_cache_fallback: bool = True) -> list[StockSignal]:
         signals: list[StockSignal] = []
         earnings_tab = self._get_tab("earnings")
         if not self._has_tab_key("earnings", earnings_tab):
             return []
         rows = self._get_rows(earnings_tab)
-        if not rows:
+        if not rows and include_cache_fallback:
             rows = self._load_earnings_cache_rows()
         for row_idx, row in enumerate(rows):
             code = str(row.get(KEY_CODE, "")).strip()
@@ -803,14 +803,14 @@ class StockContextService:
         subject_key = str(row.get(KEY_SUBJECT_CODE, "") or row.get(KEY_SUBJECT, "") or "__all__").strip()
         return quarter == latest_by_subject.get(subject_key)
 
-    def _iter_lhb_signals(self) -> list[StockSignal]:
+    def _iter_lhb_signals(self, *, include_cache_fallback: bool = True) -> list[StockSignal]:
         signals: list[StockSignal] = []
         seen_codes: set[str] = set()
         lhb_tab = self._get_tab("lhb")
         if not self._has_tab_key("lhb", lhb_tab):
             return []
         rows = self._get_rows(lhb_tab)
-        if not rows:
+        if not rows and include_cache_fallback:
             rows = self._load_lhb_pool_rows()
         for row_idx, row in enumerate(rows):
             code = str(row.get(KEY_CODE, "")).strip()
@@ -866,24 +866,24 @@ class StockContextService:
             )
         return signals
 
-    def iter_stock_signals(self) -> list[StockSignal]:
+    def iter_stock_signals(self, *, include_cache_fallback: bool = True) -> list[StockSignal]:
         direct_keys = self._direct_signal_tab_keys()
         signals = self._iter_direct_stock_signals()
 
         if "scan" not in direct_keys:
-            signals.extend(self._iter_scan_signals())
+            signals.extend(self._iter_scan_signals(include_cache_fallback=include_cache_fallback))
         if "na_daily" not in direct_keys:
             signals.extend(self._iter_na_daily_signals())
         if "ai_industry_chain" not in direct_keys:
             signals.extend(self._iter_ai_chain_signals())
         if "foreign_block" not in direct_keys:
-            signals.extend(self._iter_block_trade_signals())
+            signals.extend(self._iter_block_trade_signals(include_cache_fallback=include_cache_fallback))
         if "earnings" not in direct_keys:
-            signals.extend(self._iter_earnings_signals())
+            signals.extend(self._iter_earnings_signals(include_cache_fallback=include_cache_fallback))
         if "fund_holdings" not in direct_keys:
             signals.extend(self._iter_fund_holdings_signals())
         if "lhb" not in direct_keys:
-            signals.extend(self._iter_lhb_signals())
+            signals.extend(self._iter_lhb_signals(include_cache_fallback=include_cache_fallback))
 
         return [signal for signal in signals if signal.normalized_code()]
 
@@ -893,12 +893,16 @@ class StockContextService:
             signals_by_code[signal.normalized_code()].append(signal)
         return dict(signals_by_code)
 
-    def collect_watchlist_radar_data(self) -> tuple[dict, dict, dict, dict, dict, dict | None]:
+    def collect_watchlist_radar_data(
+        self,
+        *,
+        include_cache_fallback: bool = False,
+    ) -> tuple[dict, dict, dict, dict, dict, dict | None]:
         workspace = self._workspace
         engine = getattr(workspace, "engine", None)
         rps_bundle = engine.get_precomputed_rps() if hasattr(engine, "get_precomputed_rps") else None
 
-        signals = self.iter_stock_signals()
+        signals = self.iter_stock_signals(include_cache_fallback=include_cache_fallback)
         na_data, na_subsector_data, block_data, earn_data, lhb_data = {}, {}, {}, {}, {}
 
         for signal in signals:

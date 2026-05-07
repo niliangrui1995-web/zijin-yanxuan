@@ -363,6 +363,33 @@ def test_workspace_collects_scan_context_from_cache_without_loading_lazy_tab(mon
     assert signals[0].observed_at == "20260430"
 
 
+def test_watchlist_radar_skips_scan_cache_fallback_on_ui_thread(monkeypatch):
+    import core.data_store as data_store_module
+
+    def fail_datastore():
+        raise AssertionError("watchlist radar should not block on scan cache")
+
+    monkeypatch.setattr(data_store_module, "DataStore", fail_datastore)
+    workspace = SimpleNamespace(
+        engine=None,
+        tab_specs=lambda: [{"key": "scan", "group": "info"}],
+        get_loaded_tab=lambda key: None,
+        get_tab=lambda key: (_ for _ in ()).throw(AssertionError("lazy tab should not load")),
+        iter_tabs=lambda: [],
+    )
+
+    na_data, na_subsector_data, block_data, earn_data, lhb_data, rps_bundle = (
+        ClassicWorkspace.collect_watchlist_radar_data(workspace)
+    )
+
+    assert na_data == {}
+    assert na_subsector_data == {}
+    assert block_data == {}
+    assert earn_data == {}
+    assert lhb_data == {}
+    assert rps_bundle is None
+
+
 def test_workspace_collects_lhb_context_from_pool_cache_without_loading_lazy_tab(monkeypatch):
     import core.lhb_pool_manager as lhb_pool_module
 

@@ -122,7 +122,11 @@ class SplashScreen(QWidget):
         self.progress.setValue(value)
         if status:
             self.lbl_status.setText(status)
-        QApplication.processEvents()
+        # Keep the splash visually current without re-entering the whole app
+        # event loop during MainWindow construction.
+        self.progress.repaint()
+        self.lbl_status.repaint()
+        self.repaint()
 
     def paintEvent(self, event):
         """绘制圆角深色背景"""
