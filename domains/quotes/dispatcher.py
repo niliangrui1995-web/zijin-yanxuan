@@ -4,8 +4,8 @@ from collections.abc import Mapping
 
 from core.global_store import global_store
 from core.logger import get_logger
-from domains.runtime import domain_events as event_bus
 from domains.quotes.snapshot import coerce_number
+from domains.runtime import domain_events as event_bus
 
 log = get_logger(__name__)
 

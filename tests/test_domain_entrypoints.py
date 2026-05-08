@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from core.market_calendar import MarketCalendar as LegacyMarketCalendar
+from core.quote_dispatcher import publish_rt_quotes as legacy_publish_rt_quotes
 from domains.earnings import EarningsEngine, EarningsScheduler
 from domains.market_calendar import MarketCalendar
 from domains.quotes import publish_rt_quotes
@@ -7,8 +9,6 @@ from domains.scan import IndicatorService, RpsService
 from domains.watchlist import watchlist_vm as domain_watchlist_vm
 from earnings.engine import EarningsEngine as LegacyEarningsEngine
 from earnings.scheduler import EarningsScheduler as LegacyEarningsScheduler
-from core.market_calendar import MarketCalendar as LegacyMarketCalendar
-from core.quote_dispatcher import publish_rt_quotes as legacy_publish_rt_quotes
 from ui.viewmodels.watchlist_vm import watchlist_vm as legacy_watchlist_vm
 from vcp.indicator_service import IndicatorService as LegacyIndicatorService
 from vcp.rps_service import RpsService as LegacyRpsService

@@ -16,7 +16,6 @@ import sys
 import time
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -93,9 +92,9 @@ class _NoopStartupOrchestrator:
 
 
 def _disable_noisy_startup_paths() -> None:
-    from app.services.ui_runtime_service import MarketCalendar
     import ui.main_window_qt as main_window_qt
     import ui.workspaces.classic_workspace as classic_workspace
+    from app.services.ui_runtime_service import MarketCalendar
     from domains.earnings.scheduler import EarningsScheduler
     from ui.tabs.asian_market_tab import AsianMarketTab
 

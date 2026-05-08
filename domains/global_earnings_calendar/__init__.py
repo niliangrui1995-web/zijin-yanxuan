@@ -2,8 +2,8 @@
 from domains.global_earnings_calendar.service import (
     AlphaVantageEarningsCalendarProvider,
     CompanyIrEarningsCalendarProvider,
-    ConfirmedEventWriteError,
     ConfirmedEarningsEventsProvider,
+    ConfirmedEventWriteError,
     DartEarningsDisclosureProvider,
     EarningsCalendarEvent,
     GlobalEarningsCalendarService,

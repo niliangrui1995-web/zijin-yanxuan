@@ -3,14 +3,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 
-from PyQt6.QtCore import QTimer, Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QDialog,
     QFrame,
     QGraphicsDropShadowEffect,
-    QHeaderView,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QPushButton,
     QTableWidget,

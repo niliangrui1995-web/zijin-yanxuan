@@ -17,13 +17,17 @@ from app.services.ui_runtime_service import (
     MarketCalendar,
     ProcessExecutionError,
     ProcessTimeoutError,
-    background_job_runner as task_manager,
     build_domestic_process_env,
-    domain_events as event_bus,
     run_process,
     task_registry,
     ui_signals,
     windows_no_window_creationflags,
+)
+from app.services.ui_runtime_service import (
+    background_job_runner as task_manager,
+)
+from app.services.ui_runtime_service import (
+    domain_events as event_bus,
 )
 from core.exceptions import CacheIOError, DataFormatError
 from core.json_cache import load_json_file, save_json_file

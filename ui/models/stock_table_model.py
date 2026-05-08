@@ -5,8 +5,8 @@ import time
 from PyQt6.QtCore import QAbstractTableModel, QMimeData, QModelIndex, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont
 
-from core.buy_point import BUY_POINT_STYLE_TEXT, calculate_buy_point_from_history
 from app.services.ui_runtime_service import resolve_quote_metrics
+from core.buy_point import BUY_POINT_STYLE_TEXT, calculate_buy_point_from_history
 from ui.models.table_model_helpers import (
     SERIAL_HEADER,
     _alignment_for_cell,

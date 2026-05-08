@@ -6,8 +6,7 @@ import os
 
 import pandas as pd
 
-from app.services.ui_runtime_service import MarketCalendar
-from app.services.ui_runtime_service import task_registry
+from app.services.ui_runtime_service import MarketCalendar, task_registry
 from ui.kline_chart_payload import merge_kline_context
 
 

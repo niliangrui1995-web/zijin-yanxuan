@@ -21,13 +21,11 @@ from PyQt6.QtWidgets import (
 )
 
 from app.services import create_scan_engine
+from app.services.ui_runtime_service import MarketCalendar, task_registry, ui_signals
 from app.services.ui_runtime_service import background_job_runner as task_manager
 from app.services.ui_runtime_service import domain_events as event_bus
 from core.lhb_pool_manager import POOL_WINDOW, LhbPoolManager
 from core.logger import get_logger
-from app.services.ui_runtime_service import MarketCalendar
-from app.services.ui_runtime_service import ui_signals
-from app.services.ui_runtime_service import task_registry
 from ui.components import TableStateWrapper, VCPTableView
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_tab import BaseStockTab
@@ -395,6 +393,7 @@ class LhbTab(BaseStockTab):
         4. 今天探针异常 -> 沿用保守参考交易日，避免误清缓存。
         """
         from datetime import timedelta
+
         from ui.workers.lhb_worker import probe_lhb_detail_count_for_date
 
         now_cn = MarketCalendar._get_market_now("CN")

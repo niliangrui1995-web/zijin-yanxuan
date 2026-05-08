@@ -7,9 +7,9 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QWidget
 
 from core.task_manager import task_manager
+from ui import kline_window_qt as kline_module
 from ui.components.kline_window_manager import KLineWindowManager
 from ui.kline_chart_payload import build_kline_html, build_kline_theme_colors
-from ui import kline_window_qt as kline_module
 from ui.tabs import asian_market_tab as asian_module
 from ui.tabs import asian_market_workers as asian_workers_module
 from vcp.fetchers import asian_kline_fetcher as asian_fetcher_module

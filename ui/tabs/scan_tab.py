@@ -16,12 +16,9 @@ from PyQt6.QtWidgets import (
 )
 
 from app.services import VCPParams
-from app.services.ui_runtime_service import app_config
+from app.services.ui_runtime_service import MarketCalendar, app_config, ui_signals, watchlist_vm
 from app.services.ui_runtime_service import domain_events as event_bus
 from core.logger import get_logger
-from app.services.ui_runtime_service import MarketCalendar
-from app.services.ui_runtime_service import ui_signals
-from app.services.ui_runtime_service import watchlist_vm
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.scan_dialogs import VCPScanRangeDialog, VCPScanSettingsDialog
 from ui.components.thread_shutdown import request_thread_shutdown

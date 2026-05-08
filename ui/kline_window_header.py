@@ -7,9 +7,8 @@ from datetime import timedelta
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 
+from app.services.ui_runtime_service import MarketCalendar, watchlist_vm
 from core.logger import get_logger
-from app.services.ui_runtime_service import MarketCalendar
-from app.services.ui_runtime_service import watchlist_vm
 from ui.kline_chart_payload import (
     build_kline_summary_cards,
     build_kline_window_palette,

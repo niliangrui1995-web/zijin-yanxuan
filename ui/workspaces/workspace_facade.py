@@ -3,14 +3,14 @@ from __future__ import annotations
 
 from core.logger import get_logger
 from ui.workspaces.quote_universe_service import INFO_SOURCE_GROUP, QuoteUniverseService
+from ui.workspaces.stock_context_service import StockContextService
+from ui.workspaces.stock_signal import StockSignal
 from ui.workspaces.tab_capabilities import (
     PostF5DataRefreshCapability,
     RtMonitorControlCapability,
     ScanResultsCapability,
     TableCollectionCapability,
 )
-from ui.workspaces.stock_context_service import StockContextService
-from ui.workspaces.stock_signal import StockSignal
 from ui.workspaces.workspace_navigation_service import WorkspaceNavigationService
 from ui.workspaces.workspace_table_service import WorkspaceTableService
 

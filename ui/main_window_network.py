@@ -1,5 +1,5 @@
-from core.logger import get_logger
 from app.services.ui_runtime_service import NETWORK_FORCE_RECONNECT, NETWORK_GO_ONLINE
+from core.logger import get_logger
 
 log = get_logger(__name__)
 

@@ -5,13 +5,12 @@ from __future__ import annotations
 
 import time
 
-from PyQt6.QtCore import QEasingCurve, QParallelAnimationGroup, QPropertyAnimation, QRect, QTimer, Qt
+from PyQt6.QtCore import QEasingCurve, QParallelAnimationGroup, QPropertyAnimation, QRect, Qt, QTimer
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import QGraphicsOpacityEffect, QLabel, QTabWidget, QWidget
 
 from core.logger import get_logger
 from ui.theme_tokens import build_ui_tokens
-
 
 log = get_logger(__name__)
 

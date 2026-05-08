@@ -2,10 +2,10 @@
 import datetime as dt
 from types import SimpleNamespace
 
-from core.market_calendar import MarketCalendar
-from ui.tabs.lhb_tab import LhbTab
 import ui.tabs.lhb_tab as lhb_tab_module
 import ui.workers.lhb_worker as lhb_worker_module
+from core.market_calendar import MarketCalendar
+from ui.tabs.lhb_tab import LhbTab
 
 
 def test_lhb_reference_trade_date_uses_previous_day_before_20(monkeypatch):

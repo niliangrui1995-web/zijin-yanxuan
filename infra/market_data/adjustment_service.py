@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from vcp.data_provider_local import (
     apply_forward_adjustment as apply_forward_adjustment_impl,
+)
+from vcp.data_provider_local import (
     get_market_code,
     load_local_gbbq,
 )

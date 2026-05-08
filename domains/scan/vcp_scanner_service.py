@@ -7,6 +7,7 @@ import pandas as pd
 import polars as pl
 
 from core.logger import get_logger
+from domains.scan.indicator_service import IndicatorService
 from vcp.constants import (
     EXCLUDE_DAYS_FOR_PEAKS,
     FLEXIBLE_MAX_INTERVAL,
@@ -25,7 +26,6 @@ from vcp.constants import (
     PCT_BASELINE,
     PEAKS_FROM_GROUPS,
 )
-from domains.scan.indicator_service import IndicatorService
 from vcp.models import VCPParams
 
 _log = get_logger(__name__)

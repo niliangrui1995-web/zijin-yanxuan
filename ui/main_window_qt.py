@@ -1,7 +1,6 @@
 import os
 import time
 
-from app.bootstrap import ApplicationBootstrap
 from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
@@ -15,6 +14,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from app.bootstrap import ApplicationBootstrap
 from app.services import (
     APP_VERSION,
     RPS_CACHE_FILE,
@@ -23,17 +23,18 @@ from app.services import (
     create_scan_engine,
     create_startup_orchestrator,
 )
-from app.use_cases import WindowCommandService
-from app.services.ui_runtime_service import app_config
+from app.services.ui_runtime_service import app_config, ui_signal_hub
 from app.services.ui_runtime_service import background_job_runner as task_manager
-from core.cache_manager import CacheManager
 from app.services.ui_runtime_service import domain_events as event_bus
+from app.use_cases import WindowCommandService
+from core.cache_manager import CacheManager
 from core.logger import get_logger
 from core.observability import emit_structured_log, record_metric
 from core.process_watchdog import ProcessWatchdog, log_process_snapshot
-from app.services.ui_runtime_service import ui_signal_hub
 from ui.components.command_palette import CommandPaletteDialog
 from ui.components.kline_window_manager import kline_manager
+from ui.components.message_box import show_themed_question
+from ui.main_window_tables import install_table_copy_hooks
 from ui.shell import (
     DraggableTitleBar,
     MainWindowStatusBar,
@@ -41,10 +42,8 @@ from ui.shell import (
     setup_custom_titlebar,
     setup_system_menu,
 )
-from ui.components.message_box import show_themed_question
-from ui.main_window_tables import install_table_copy_hooks
-from ui.workers.central_quotes_worker import CentralQuotesService
 from ui.window_flags import apply_windows_frameless_taskbar_fix, build_frameless_main_window_flags
+from ui.workers.central_quotes_worker import CentralQuotesService
 from ui.workspaces import ClassicWorkspace
 
 # 核心引擎与数据层

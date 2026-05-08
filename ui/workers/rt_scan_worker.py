@@ -14,10 +14,10 @@ from app.services import (
     precompute_ready_pool,
     quick_check_breakout,
 )
+from app.services.ui_runtime_service import MarketCalendar
 from core.exceptions import CacheIOError
 from core.json_cache import remove_cache_file, save_json_file
 from core.logger import get_logger
-from app.services.ui_runtime_service import MarketCalendar
 from core.sector_rps_helper import enrich_hot_sector_rows, load_sector_rps_snapshot
 
 log = get_logger(__name__)

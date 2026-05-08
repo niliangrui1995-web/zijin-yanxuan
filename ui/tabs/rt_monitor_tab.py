@@ -15,13 +15,11 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from app.services.ui_runtime_service import app_config
+from app.services.ui_runtime_service import app_config, task_registry, ui_signals
 from app.services.ui_runtime_service import background_job_runner as task_manager
 from app.services.ui_runtime_service import domain_events as event_bus
 from core.logger import get_logger
 from core.throttler import SignalThrottler
-from app.services.ui_runtime_service import ui_signals
-from app.services.ui_runtime_service import task_registry
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.thread_shutdown import request_thread_shutdown
 from ui.components.toast_widget import show_toast

@@ -288,8 +288,9 @@ def _load_lhb_detail_frame(date_str: str) -> tuple[pd.DataFrame, str, str]:
         return df_detail, "ok", f"[龙虎榜抓取] {date_str} 基础榜单 {len(df_detail)} 条"
     except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
         message = f"[龙虎榜抓取] {date_str} 基础榜单异常: {e}"
-        log.error(message)
+        log.warning(message)
         return pd.DataFrame(), "error", message
+
 
 def fetch_lhb_data_for_date(
     date_str: str,
@@ -514,4 +515,3 @@ def fetch_lhb_pool_for_date(
         emit_success_log=emit_success_log,
         return_meta=return_meta,
     )
-

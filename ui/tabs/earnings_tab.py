@@ -5,10 +5,9 @@ import pandas as pd
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot
 from PyQt6.QtWidgets import QDialog, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
+from app.services.ui_runtime_service import EarningsScheduler, ui_signals
 from app.services.ui_runtime_service import domain_events as event_bus
 from core.logger import get_logger
-from app.services.ui_runtime_service import ui_signals
-from app.services.ui_runtime_service import EarningsScheduler
 from ui.components import MultiSelectFilterButton, TableStateWrapper, VCPTableView, format_multi_select_summary
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_tab import BaseStockTab

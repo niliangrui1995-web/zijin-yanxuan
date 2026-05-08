@@ -6,8 +6,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Callable, Iterable
 
-from PyQt6.QtCore import QObject, QElapsedTimer, QTimer, pyqtSignal
-
+from PyQt6.QtCore import QElapsedTimer, QObject, QTimer, pyqtSignal
 
 FrameTask = tuple[str, Callable[[], None]]
 

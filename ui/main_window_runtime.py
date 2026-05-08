@@ -5,9 +5,9 @@ import gc
 
 from PyQt6.QtCore import QTimer
 
+from app.services.ui_runtime_service import WINDOW_F5_PRECOMPUTE
 from core.global_store import global_store
 from core.logger import get_logger
-from app.services.ui_runtime_service import WINDOW_F5_PRECOMPUTE
 
 log = get_logger(__name__)
 
