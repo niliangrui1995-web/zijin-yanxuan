@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import QApplication, QStyle, QStyledItemDelegate, QStyleOpt
 
 from ui.components import SearchFilter
 from ui.models.table_model_helpers import (
+    FLASH_DURATION_SECONDS,
     SERIAL_HEADER,
     _c,
     _qcolor_from_token,
@@ -218,7 +219,7 @@ class StockItemDelegate(QStyledItemDelegate):
     """
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.flash_duration = 0.6  # 600ms
+        self.flash_duration = FLASH_DURATION_SECONDS
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index):
         painter.save()
@@ -272,9 +273,14 @@ class StockItemDelegate(QStyledItemDelegate):
             elapsed = time.time() - update_time
             if elapsed < self.flash_duration:
                 alpha = int(255 * (1.0 - (elapsed / self.flash_duration)))
-                color_hex = _c("COLOR_RISE_STRONG") if diff > 0 else _c("COLOR_FALL_STRONG")
+                if diff > 0:
+                    color_hex = _c("COLOR_RISE_STRONG")
+                elif diff < 0:
+                    color_hex = _c("COLOR_FALL_STRONG")
+                else:
+                    color_hex = _c("COLOR_INFO")
                 bg_color = QColor(color_hex)
-                bg_color.setAlpha(min(80, max(0, int(alpha * 0.3))))
+                bg_color.setAlpha(min(72, max(0, int(alpha * 0.24))))
                 painter.fillRect(option.rect, bg_color)
 
         # 2. 判断是否是自定义绘制的胶囊文本 (Pill)
@@ -367,4 +373,3 @@ class StockItemDelegate(QStyledItemDelegate):
             painter.drawText(text_rect, alignment, elided_text)
 
         painter.restore()
-

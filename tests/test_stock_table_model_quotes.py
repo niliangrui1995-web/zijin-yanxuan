@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import pytest
+from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QSignalSpy
 
 from core.global_store import global_store
@@ -32,6 +33,27 @@ def test_stock_table_model_update_quotes_batches_changed_rows():
     assert model.row_data[1]["现价"] == "21.00"
     assert model.row_data[0]["市值"] == "105亿"
     assert model.row_data[1]["市值"] == "420亿"
+
+    price_col = model.headers.index("现价")
+    cap_col = model.headers.index("市值")
+    assert model.data(model.index(0, price_col), Qt.ItemDataRole.UserRole + 1)["diff"] > 0
+    assert model.data(model.index(0, cap_col), Qt.ItemDataRole.UserRole + 1)["diff"] == 0
+
+
+def test_stock_table_model_incremental_update_marks_status_and_time_flash():
+    model = StockTableModel(["代码", "名称", "状态", "最近时间"])
+    model.update_data([
+        {"代码": "000001", "名称": "A", "状态": "观察", "最近时间": "09:30"},
+    ])
+
+    model.update_data([
+        {"代码": "000001", "名称": "A", "状态": "触发", "最近时间": "09:35"},
+    ])
+
+    status_col = model.headers.index("状态")
+    time_col = model.headers.index("最近时间")
+    assert model.data(model.index(0, status_col), Qt.ItemDataRole.UserRole + 1)["diff"] == 0
+    assert model.data(model.index(0, time_col), Qt.ItemDataRole.UserRole + 1)["diff"] == 0
 
 
 def test_stock_table_model_update_data_hydrates_latest_global_quotes(monkeypatch):

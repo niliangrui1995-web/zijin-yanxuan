@@ -1,8 +1,9 @@
 # ui/components.py - 通用 UI 组件
 # 从 main_window_qt.py 拆分出来的独立工具类
+import time
 from functools import lru_cache
 
-from PyQt6.QtCore import QEasingCurve, QEvent, QPropertyAnimation, QSize, Qt, QTimer, pyqtProperty, pyqtSignal
+from PyQt6.QtCore import QEasingCurve, QEvent, QItemSelectionModel, QPropertyAnimation, QSize, Qt, QTimer, pyqtProperty, pyqtSignal
 from PyQt6.QtGui import QAction, QBrush, QColor, QFont, QFontMetrics, QPainter, QPalette
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -32,6 +33,13 @@ class VCPTableView(QTableView):
     def __init__(self, parent=None, default_row_height: int = None):
         super().__init__(parent)
         self._base_row_height = None
+        self._refresh_state_snapshot = None
+        self._restoring_refresh_state = False
+        self._bound_refresh_model = None
+        self._flash_repaint_until = 0.0
+        self._flash_repaint_timer = QTimer(self)
+        self._flash_repaint_timer.setInterval(60)
+        self._flash_repaint_timer.timeout.connect(self._tick_flash_repaint)
         self._init_common_styles(default_row_height)
         from ui.theme import theme_manager
         theme_manager.sig_theme_changed.connect(self._on_theme_changed)
@@ -135,6 +143,248 @@ class VCPTableView(QTableView):
         self._apply_runtime_style()
         self.style().unpolish(self)
         self.style().polish(self)
+        self.viewport().update()
+
+    def setModel(self, model):
+        self._disconnect_refresh_model()
+        super().setModel(model)
+        self._connect_refresh_model(model)
+
+    def _connect_refresh_model(self, model) -> None:
+        if model is None:
+            return
+        self._bound_refresh_model = model
+        for signal_name, slot in (
+            ("modelAboutToBeReset", self._capture_refresh_state),
+            ("layoutAboutToBeChanged", self._capture_refresh_state),
+            ("modelReset", self._schedule_refresh_state_restore),
+            ("layoutChanged", self._schedule_refresh_state_restore),
+            ("dataChanged", self._on_model_data_changed),
+        ):
+            signal = getattr(model, signal_name, None)
+            if signal is None:
+                continue
+            try:
+                signal.connect(slot)
+            except (TypeError, RuntimeError):
+                pass
+
+    def _disconnect_refresh_model(self) -> None:
+        model = self._bound_refresh_model
+        if model is None:
+            return
+        for signal_name, slot in (
+            ("modelAboutToBeReset", self._capture_refresh_state),
+            ("layoutAboutToBeChanged", self._capture_refresh_state),
+            ("modelReset", self._schedule_refresh_state_restore),
+            ("layoutChanged", self._schedule_refresh_state_restore),
+            ("dataChanged", self._on_model_data_changed),
+        ):
+            signal = getattr(model, signal_name, None)
+            if signal is None:
+                continue
+            try:
+                signal.disconnect(slot)
+            except (TypeError, RuntimeError):
+                pass
+        self._bound_refresh_model = None
+
+    def _model_header_text(self, model, column: int) -> str:
+        try:
+            return str(model.headerData(column, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) or "").strip()
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return ""
+
+    def _code_column(self, model) -> int:
+        if model is None:
+            return -1
+        try:
+            column_count = int(model.columnCount())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return -1
+        for column in range(column_count):
+            if self._model_header_text(model, column) == "代码":
+                return column
+        return -1
+
+    def _row_identity(self, row: int) -> str:
+        model = self.model()
+        code_column = self._code_column(model)
+        if model is None or code_column < 0 or row < 0:
+            return ""
+        try:
+            index = model.index(row, code_column)
+            return str(model.data(index, Qt.ItemDataRole.DisplayRole) or "").strip()
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return ""
+
+    def _find_row_by_identity(self, identity: str) -> int:
+        identity_text = str(identity or "").strip()
+        if not identity_text:
+            return -1
+        model = self.model()
+        if model is None:
+            return -1
+        try:
+            row_count = int(model.rowCount())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return -1
+        for row in range(row_count):
+            if self._row_identity(row) == identity_text:
+                return row
+        return -1
+
+    def _capture_refresh_state(self, *_args) -> None:
+        if self._restoring_refresh_state:
+            return
+        model = self.model()
+        if model is None:
+            self._refresh_state_snapshot = None
+            return
+
+        current = self.currentIndex()
+        selected_rows = []
+        selected_codes = []
+        selection_model = self.selectionModel()
+        if selection_model is not None:
+            try:
+                selected_rows = [index.row() for index in selection_model.selectedRows()]
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                selected_rows = []
+            selected_codes = [
+                self._row_identity(row)
+                for row in selected_rows
+                if self._row_identity(row)
+            ]
+
+        header = self.horizontalHeader()
+        proxy_sort_column = -1
+        proxy_sort_order = Qt.SortOrder.AscendingOrder
+        if hasattr(model, "sortColumn"):
+            try:
+                proxy_sort_column = int(model.sortColumn())
+                proxy_sort_order = model.sortOrder()
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                proxy_sort_column = -1
+
+        self._refresh_state_snapshot = {
+            "v_scroll": self.verticalScrollBar().value(),
+            "h_scroll": self.horizontalScrollBar().value(),
+            "current_row": current.row() if current.isValid() else -1,
+            "current_col": current.column() if current.isValid() else 0,
+            "current_code": self._row_identity(current.row()) if current.isValid() else "",
+            "selected_rows": selected_rows,
+            "selected_codes": selected_codes,
+            "header_state": header.saveState(),
+            "sort_column": header.sortIndicatorSection(),
+            "sort_order": header.sortIndicatorOrder(),
+            "proxy_sort_column": proxy_sort_column,
+            "proxy_sort_order": proxy_sort_order,
+        }
+
+    def _schedule_refresh_state_restore(self, *_args) -> None:
+        if self._restoring_refresh_state:
+            return
+        snapshot = self._refresh_state_snapshot
+        if not snapshot:
+            return
+        QTimer.singleShot(0, lambda snapshot=dict(snapshot): self._restore_refresh_state(snapshot))
+
+    def _bounded_row(self, row: int) -> int:
+        model = self.model()
+        if model is None:
+            return -1
+        try:
+            row_count = int(model.rowCount())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return -1
+        if row_count <= 0:
+            return -1
+        return max(0, min(row_count - 1, int(row)))
+
+    def _restore_refresh_state(self, snapshot: dict) -> None:
+        if self.model() is None:
+            return
+
+        self._restoring_refresh_state = True
+        try:
+            v_scroll = int(snapshot.get("v_scroll", 0) or 0)
+            h_scroll = int(snapshot.get("h_scroll", 0) or 0)
+            header = self.horizontalHeader()
+            header_state = snapshot.get("header_state")
+            if header_state is not None:
+                try:
+                    header.restoreState(header_state)
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    pass
+
+            sort_column = int(snapshot.get("proxy_sort_column", snapshot.get("sort_column", -1)) or -1)
+            sort_order = snapshot.get("proxy_sort_order", snapshot.get("sort_order", Qt.SortOrder.AscendingOrder))
+            if sort_column >= 0:
+                try:
+                    self.sortByColumn(sort_column, sort_order)
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    pass
+
+            selection_model = self.selectionModel()
+            if selection_model is not None:
+                try:
+                    selection_model.clearSelection()
+                except (AttributeError, RuntimeError):
+                    pass
+
+            restored_rows = []
+            for code in snapshot.get("selected_codes", []) or []:
+                row = self._find_row_by_identity(code)
+                if row >= 0 and row not in restored_rows:
+                    restored_rows.append(row)
+            if not restored_rows:
+                restored_rows = [
+                    self._bounded_row(row)
+                    for row in (snapshot.get("selected_rows", []) or [])
+                    if self._bounded_row(row) >= 0
+                ]
+
+            current_row = self._find_row_by_identity(snapshot.get("current_code", ""))
+            if current_row < 0:
+                current_row = self._bounded_row(int(snapshot.get("current_row", -1) or -1))
+            current_col = max(0, int(snapshot.get("current_col", 0) or 0))
+
+            if selection_model is not None:
+                for row in restored_rows:
+                    index = self.model().index(row, 0)
+                    selection_model.select(
+                        index,
+                        QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+                    )
+
+            if current_row >= 0:
+                current_index = self.model().index(current_row, min(current_col, max(0, self.model().columnCount() - 1)))
+                self.setCurrentIndex(current_index)
+
+            self._restore_scrollbars(v_scroll, h_scroll)
+            QTimer.singleShot(0, lambda v_scroll=v_scroll, h_scroll=h_scroll: self._restore_scrollbars(v_scroll, h_scroll))
+        finally:
+            self._restoring_refresh_state = False
+            self._refresh_state_snapshot = None
+
+    def _restore_scrollbars(self, v_scroll: int, h_scroll: int) -> None:
+        if self.model() is None:
+            return
+        self.verticalScrollBar().setValue(v_scroll)
+        self.horizontalScrollBar().setValue(h_scroll)
+
+    def _on_model_data_changed(self, *_args) -> None:
+        self._flash_repaint_until = max(self._flash_repaint_until, time.time() + 0.8)
+        if not self._flash_repaint_timer.isActive():
+            self._flash_repaint_timer.start()
+
+    def _tick_flash_repaint(self) -> None:
+        if time.time() >= self._flash_repaint_until:
+            self._flash_repaint_timer.stop()
+            self._flash_repaint_until = 0.0
+            self.viewport().update()
+            return
         self.viewport().update()
 
     def showEvent(self, event):

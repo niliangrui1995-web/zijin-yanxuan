@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+import time
 import textwrap
 from functools import lru_cache
 
@@ -15,6 +16,7 @@ from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens
 
 SERIAL_HEADER = "序号"
+FLASH_DURATION_SECONDS = 0.75
 _TABLE_DENSITY_CACHE_LOADED = False
 _TABLE_DENSITY_CACHE: str | None = None
 
@@ -157,6 +159,58 @@ def _parse_numeric_value(raw_val):
     if "亿" in text:
         return value * 100000000
     return value
+
+
+_FLASH_EXACT_HEADERS = {
+    "现价",
+    "市价",
+    "最新价",
+    "最新",
+    "收盘",
+    "涨幅%",
+    "涨幅",
+    "涨跌%",
+    "涨跌",
+    "市值",
+    "总市值",
+    "买点",
+    "状态",
+    "市场",
+    "突破状态",
+    "时间",
+    "最近时间",
+    "日报时间",
+    "更新时间",
+}
+
+
+def _should_flash_header(header: str) -> bool:
+    header_text = str(header or "").strip()
+    if not header_text or header_text == SERIAL_HEADER:
+        return False
+    if header_text in _FLASH_EXACT_HEADERS:
+        return True
+    return any(keyword in header_text for keyword in ("时间", "状态"))
+
+
+def _build_flash_record(header: str, old_value, new_value, *, now: float | None = None):
+    if not _should_flash_header(header):
+        return None
+
+    old_text = "" if old_value is None else str(old_value).strip()
+    new_text = "" if new_value is None else str(new_value).strip()
+    if old_text == new_text:
+        return None
+
+    old_num = _parse_numeric_value(old_value)
+    new_num = _parse_numeric_value(new_value)
+    diff = 0.0
+    if old_num is not None and new_num is not None:
+        numeric_diff = new_num - old_num
+        if abs(numeric_diff) > 0.0001:
+            diff = numeric_diff
+
+    return {"time": time.time() if now is None else now, "diff": diff}
 
 
 def _is_status_header(header: str) -> bool:

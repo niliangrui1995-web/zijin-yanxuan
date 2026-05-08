@@ -738,6 +738,23 @@ def test_workspace_schedules_refreshes_all_tabs_after_f5():
     assert getattr(workspace, "_f5_refresh_scheduler", None) is None
 
 
+def test_workspace_f5_snapshot_refresh_prioritizes_current_tab():
+    calls = []
+    current_tab = SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("lhb"))
+    tabs = {
+        "watchlist": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("watchlist")),
+        "lhb": current_tab,
+        "na_daily": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("na_daily")),
+    }
+    workspace = _make_workspace(tabs=tabs)
+    workspace.iter_refreshable_tabs = lambda: ClassicWorkspace.iter_refreshable_tabs(workspace)
+    workspace.tabs = SimpleNamespace(currentWidget=lambda: current_tab)
+
+    ClassicWorkspace.refresh_all_tabs_after_f5(workspace)
+
+    assert calls == ["lhb", "watchlist", "na_daily"]
+
+
 def test_workspace_runs_fund_holdings_auto_sync_through_public_facade():
     calls = []
     workspace = _make_workspace(

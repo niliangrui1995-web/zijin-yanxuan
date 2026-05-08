@@ -8,7 +8,9 @@ from PyQt6.QtGui import QColor, QFont
 from app.services.ui_runtime_service import resolve_quote_metrics
 from core.buy_point import BUY_POINT_STYLE_TEXT, calculate_buy_point_from_history
 from ui.models.table_model_helpers import (
+    FLASH_DURATION_SECONDS,
     SERIAL_HEADER,
+    _build_flash_record,
     _alignment_for_cell,
     _build_cell_tooltip,
     _c,
@@ -121,33 +123,52 @@ class StockTableModel(QAbstractTableModel):
             return False
         return set(old_ids) == set(new_ids)
 
+    def _record_cell_flash(self, row: int, col: int, old_value, new_value) -> None:
+        if row < 0 or col < 0 or col >= len(self._headers):
+            return
+        flash_record = _build_flash_record(self._headers[col], old_value, new_value)
+        if not flash_record:
+            return
+        self._flash_records.setdefault(row, {})[col] = flash_record
+
+    def _record_row_flashes(self, row: int, old_row: dict, new_row: dict) -> None:
+        if not isinstance(old_row, dict) or not isinstance(new_row, dict):
+            return
+        for col, header in enumerate(self._headers):
+            if old_row.get(header) != new_row.get(header):
+                self._record_cell_flash(row, col, old_row.get(header), new_row.get(header))
+
+    def _flash_roles(self) -> list[Qt.ItemDataRole]:
+        return [
+            Qt.ItemDataRole.DisplayRole,
+            Qt.ItemDataRole.ToolTipRole,
+            Qt.ItemDataRole.ForegroundRole,
+            Qt.ItemDataRole.BackgroundRole,
+            Qt.ItemDataRole.FontRole,
+            Qt.ItemDataRole.TextAlignmentRole,
+            Qt.ItemDataRole.UserRole,
+            Qt.ItemDataRole.UserRole + 1,
+            Qt.ItemDataRole.UserRole + 2,
+        ]
+
     def _emit_incremental_rows(self, rows: list) -> None:
         _sync_serial_values(rows)
         changed_rows = []
         for row_idx, new_row in enumerate(rows):
             if self._data[row_idx] != new_row:
+                self._record_row_flashes(row_idx, self._data[row_idx], new_row)
                 self._data[row_idx] = new_row
                 changed_rows.append(row_idx)
 
         if not changed_rows:
             return
 
-        self._flash_records.clear()
         _emit_model_row_ranges(
             self,
             changed_rows,
             0,
             max(0, self.columnCount() - 1),
-            [
-                Qt.ItemDataRole.DisplayRole,
-                Qt.ItemDataRole.ToolTipRole,
-                Qt.ItemDataRole.ForegroundRole,
-                Qt.ItemDataRole.BackgroundRole,
-                Qt.ItemDataRole.FontRole,
-                Qt.ItemDataRole.TextAlignmentRole,
-                Qt.ItemDataRole.UserRole,
-                Qt.ItemDataRole.UserRole + 2,
-            ],
+            self._flash_roles(),
         )
 
     def _emit_reordered_rows(self, rows: list) -> None:
@@ -160,16 +181,7 @@ class StockTableModel(QAbstractTableModel):
             self.dataChanged.emit(
                 self.index(0, 0),
                 self.index(self.rowCount() - 1, self.columnCount() - 1),
-                [
-                    Qt.ItemDataRole.DisplayRole,
-                    Qt.ItemDataRole.ToolTipRole,
-                    Qt.ItemDataRole.ForegroundRole,
-                    Qt.ItemDataRole.BackgroundRole,
-                    Qt.ItemDataRole.FontRole,
-                    Qt.ItemDataRole.TextAlignmentRole,
-                    Qt.ItemDataRole.UserRole,
-                    Qt.ItemDataRole.UserRole + 2,
-                ],
+                self._flash_roles(),
             )
 
     def update_data(self, new_data):
@@ -206,7 +218,6 @@ class StockTableModel(QAbstractTableModel):
             return
 
         self.update_quotes(snapshot)
-        self._flash_records.clear()
 
     def supportedDropActions(self):
         return Qt.DropAction.MoveAction
@@ -264,27 +275,16 @@ class StockTableModel(QAbstractTableModel):
             old_val = self._data[row].get(col_name)
             self._data[row][col_name] = new_val
 
-            if col_name in ["现价", "市价", "最新价", "最新", "涨幅%", "涨幅"]:
-                try:
-                    diff = float(str(new_val).strip('%').strip('+')) - float(str(old_val).strip('%').strip('+'))
-                    if abs(diff) > 0.0001:
-                        if row not in self._flash_records:
-                            self._flash_records[row] = {}
-                        try:
-                            col_idx = self._headers.index(col_name)
-                            self._flash_records[row][col_idx] = {"time": time.time(), "diff": diff}
-                        except ValueError:
-                            pass
-                except (ValueError, TypeError):
-                    pass
+            try:
+                col_idx = self._headers.index(col_name)
+            except ValueError:
+                col_idx = -1
+            if col_idx >= 0:
+                self._record_cell_flash(row, col_idx, old_val, new_val)
 
-            if emit_signal:
-                try:
-                    col_idx = self._headers.index(col_name)
-                    idx = self.index(row, col_idx)
-                    self.dataChanged.emit(idx, idx, [Qt.ItemDataRole.DisplayRole])
-                except ValueError:
-                    pass
+            if emit_signal and col_idx >= 0:
+                idx = self.index(row, col_idx)
+                self.dataChanged.emit(idx, idx, self._flash_roles())
 
     def update_quotes(self, quotes: dict):
         if not quotes or not self._data:
@@ -372,7 +372,14 @@ class StockTableModel(QAbstractTableModel):
                 changed_rows,
                 start_col,
                 end_col,
-                [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ForegroundRole, Qt.ItemDataRole.BackgroundRole],
+                [
+                    Qt.ItemDataRole.DisplayRole,
+                    Qt.ItemDataRole.ForegroundRole,
+                    Qt.ItemDataRole.BackgroundRole,
+                    Qt.ItemDataRole.UserRole,
+                    Qt.ItemDataRole.UserRole + 1,
+                    Qt.ItemDataRole.UserRole + 2,
+                ],
             )
 
     def data(self, index, role):
@@ -614,7 +621,12 @@ class StockTableModel(QAbstractTableModel):
             return str(raw_val)
 
         elif role == Qt.ItemDataRole.UserRole + 1:
-            return self._flash_records.get(row, {}).get(col, None)
+            flash_record = self._flash_records.get(row, {}).get(col, None)
+            if not flash_record:
+                return None
+            if time.time() - float(flash_record.get("time", 0) or 0) > FLASH_DURATION_SECONDS:
+                return None
+            return flash_record
 
         elif role == Qt.ItemDataRole.UserRole + 2:
             if not self._uses_plain_style(key) and _is_status_header(key):

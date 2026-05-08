@@ -39,8 +39,33 @@ class WorkspaceTableService:
             if isinstance(tab, SnapshotRefreshCapability)
         ]
 
+    def _current_tab_widget(self):
+        tabs = getattr(self._workspace, "tabs", None)
+        current_widget = getattr(tabs, "currentWidget", None)
+        if callable(current_widget):
+            try:
+                return current_widget()
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                return None
+        return None
+
+    def _ordered_refreshable_tabs(self) -> list:
+        current_widget = self._current_tab_widget()
+        tabs = self.iter_refreshable_tabs()
+        return [
+            tab
+            for _, tab in sorted(
+                enumerate(tabs),
+                key=lambda item: (
+                    0 if item[1] is current_widget else 1,
+                    0 if getattr(item[1], "isVisible", lambda: False)() else 1,
+                    item[0],
+                ),
+            )
+        ]
+
     def refresh_all_tabs_after_f5(self) -> None:
-        for tab in self.iter_refreshable_tabs():
+        for tab in self._ordered_refreshable_tabs():
             try:
                 tab.refresh_table_from_latest_snapshot()
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
@@ -53,7 +78,7 @@ class WorkspaceTableService:
         interval_ms: int = 0,
         frame_budget_ms: int = 6,
     ) -> bool:
-        tabs = self.iter_refreshable_tabs()
+        tabs = self._ordered_refreshable_tabs()
         if not tabs:
             if callable(on_finished):
                 from PyQt6.QtCore import QTimer
