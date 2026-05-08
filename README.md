@@ -32,38 +32,49 @@ Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatil
 | 基金持仓 | `ui/tabs/fund_holdings_tab.py` | 基金/QFII 持仓同步、对比与最新变动跟踪 |
 | 系统日志 | `ui/tabs/log_tab.py` | 统一查看运行日志与后台任务状态 |
 
-除此之外，还有两个贯穿全局的能力：
+除此之外，还有几条贯穿全局的能力：
 
 - K 线详情窗口：`ui/kline_window_qt.py`
 - 中央行情广播与表格快照合并：`ui/workers/central_quotes_worker.py` + `core/global_store.py`
+- 标题栏全局导航、同步与交易日历入口：`ui/components/main_window_shell.py` + `ui/main_window_visuals.py`
+- A 股交易日历与全球寡头财报面板：`ui/components/trade_calendar.py` + `domains/global_earnings_calendar/service.py`
+- 统一股票右键菜单与 Codex 投研跳转：`ui/components/stock_context_menu.py` + `ui/workspaces/stock_context_service.py`
 
 ## 技术文档
 
 - 技术架构文档：`docs/technical-architecture.md`
 - 模块归属与边界登记：`docs/module-owners.md`
+- 产品演示与截图脚本说明：`docs/promo-video-demo.md`
 
 ## 当前交互基线
 
 当前仓库的主工作区已经完成一轮统一化交互收口，主要约束如下：
 
+- 主窗口标题栏集成 Tab 分组导航、全局 F5 同步、交易日历入口和同步状态摘要
+- 除关注池外，各 Tab 默认以轻量占位页挂载，进入时按需加载，并在后台分批预热
 - 主要数据页统一采用页面级状态反馈，明确区分 `加载中 / 最新数据 / 缓存数据 / 刷新失败 / 离线`
 - 各 Tab 页头统一回答“当前看的是什么数据、筛选是否生效、数据何时更新”
 - 通用工具栏已经按窄宽度场景重排，优先保证筛选控件、状态摘要和动作按钮不互相挤压
+- 表格刷新会尽量保持当前行、选中代码、滚动位置和列状态，行情变动以轻量闪烁提示
 - 亚洲页在远端抓取失败时会明确标记“沿用缓存”，而不是把底层抓取异常直接外泄给用户
+- 股票右键菜单统一提供 K 线、股票全景、关注池、通达信/东方财富和 Codex 产业链投研入口
 - K 线窗口和主窗口关键按钮补齐了 tooltip 与可访问性命名，便于悬停识别和后续维护
 
 ## 技术栈
 
 - 语言：Python 3.10+
-- UI：PyQt6、PyQt6-WebEngine、QSS
+- UI：PyQt6、PyQt6-WebEngine、QSS、qdarkstyle
 - 表格模型：`QTableView` + `QAbstractTableModel`
-- 数据处理：pandas、numpy、polars、pyarrow
+- 数据处理：pandas、numpy、polars、pyarrow、openpyxl、lxml
 - 拼音辅助：`pypinyin`
+- 桌面/系统联动：`pywin32`、`pyautogui`、`codex://` 深链接
 - A 股本地数据：通达信 `vipdoc` 日线文件
 - A 股实时行情：东方财富 HTTP，异常时回退新浪批量报价
 - 财务/股本补充：东方财富接口
-- 海外/亚洲辅助数据：AkShare、yfinance、`curl_cffi`
+- 海外/亚洲辅助数据：AkShare、yfinance、requests、`curl_cffi`
 - 任务调度：`infra/tasks/task_scheduler.py` + `core/background_job_runner.py`
+- 服务开关：`infra/features/service_toggle_registry.py`
+- HTTP 与子进程边界：`infra/http_safety.py` + `infra/tasks/process_runner.py`
 - 全局通信：`domains/runtime/domain_events.py` + `infra/events/ui_signal_hub.py`
 - 日志：`core/logger.py`
 - 配置持久化：`infra/settings` + `core/app_config.py`
@@ -76,20 +87,24 @@ Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatil
 ```text
 vcp_hunter_qt.pyw
   -> MainWindowQT
+  -> ApplicationBootstrap
   -> TdxDataProvider(offline=True)
   -> VCPEngine
   -> ClassicWorkspace
   -> StartupOrchestrator
+  -> CentralQuotesService
 ```
 
 关键点：
 
 - 入口文件是 `vcp_hunter_qt.pyw`，负责单实例限制、崩溃日志和 `QApplication` 初始化。
+- `ApplicationBootstrap` 负责装配数据 provider、扫描引擎、工作区和中央行情服务。
 - 程序默认先以“离线优先”启动，优先保证冷启动可用。
 - `StartupOrchestrator` 在启动后异步完成：
   - 本地缓存恢复
   - RPS 预计算缓存恢复
   - 亚洲市场 JSON 缓存静默同步
+  - 全球寡头财报日历静默同步
   - 网络探测与在线模式切换
 
 ### 2. 工作区与页面装配
@@ -97,6 +112,8 @@ vcp_hunter_qt.pyw
 - 主窗口外壳：`ui/main_window_qt.py`
 - 工作区装配：`ui/workspaces/classic_workspace.py`
 - 当前仅装配 `ClassicWorkspace`
+- 首屏只加载关注池，其余页面先用 `LazyTabPlaceholder` 占位，再按需加载和后台预热
+- 跨 Tab 表格聚合、实时订阅代码收集、个股信号汇总和导航定位统一通过 `WorkspaceFacade` 及能力协议完成
 - 各 Tab 大多继承 `ui/tabs/base_stock_tab.py`，共享：
   - 右键菜单
   - K 线跳转
@@ -109,7 +126,8 @@ vcp_hunter_qt.pyw
 当前仓库已经把盘中表格的 `现价 / 涨幅 / 市值` 统一到同一条实时链路：
 
 ```text
-CentralQuotesService
+QuoteUniverseService.collect_realtime_quote_codes()
+  -> CentralQuotesService
   -> event_bus.sig_rt_quotes
   -> GlobalStore(quotes snapshot)
   -> BaseStockTab / TableModel.update_quotes()
@@ -130,6 +148,7 @@ CentralQuotesService
 - `GlobalStore` 对 quote 做逐股深合并，而不是简单覆盖
 - 表格统一解析 `close / last_close / _zongguben / market_cap`
 - 市值按最新价动态重算，而不是依赖静态写死值
+- 表格模型优先使用增量 `dataChanged` / `layoutChanged`，减少全表重置造成的闪烁
 
 ### 4. 数据层与策略层
 
@@ -148,6 +167,8 @@ CentralQuotesService
   - 负责实时报价 payload 标准化、快照合并、市值补齐
 - `domains/market_calendar/*`
   - 负责多市场交易日、交易时段、报价刷新时段判断；`core/market_calendar.py` 仅保留兼容导出
+- `domains/global_earnings_calendar/*`
+  - 负责全球寡头财报事件抓取、确认事件合并、冲突标记、缓存和交易日历叠加展示
 
 ## 目录结构
 
@@ -172,12 +193,16 @@ CentralQuotesService
 ├─ domains/                      # 领域服务稳定入口
 │  ├─ earnings/
 │  ├─ fund_holdings/
+│  ├─ global_earnings_calendar/
 │  ├─ market_calendar/
 │  ├─ quotes/
+│  ├─ runtime/
 │  ├─ scan/
 │  └─ watchlist/
 ├─ earnings/                     # 业绩领域兼容壳
 ├─ infra/                        # 基础设施适配层
+│  ├─ events/
+│  ├─ features/
 │  ├─ market_data/
 │  ├─ navigation/
 │  ├─ settings/
@@ -190,8 +215,12 @@ CentralQuotesService
 │  ├─ workspaces/
 │  ├─ components/
 │  ├─ models/
+│  ├─ presenters/
+│  ├─ shell/
+│  ├─ signals/
 │  ├─ styles/
 │  ├─ tabs/
+│  ├─ viewmodels/
 │  └─ workers/
 ├─ vcp/                          # VCP 聚合门面与兼容入口
 │  ├─ constants.py
@@ -205,6 +234,8 @@ CentralQuotesService
 │  ├─ sector.py
 │  └─ utils.py
 ├─ tests/                        # pytest 回归测试
+├─ scripts/                      # Windows 打包、UTF-8 检查、UI 截图审计脚本
+├─ .github/workflows/            # CI 护栏
 ├─ docs/                         # 补充说明文档
 └─ data/                         # 运行时生成的数据、缓存和日志
 ```
@@ -212,9 +243,9 @@ CentralQuotesService
 ## 当前分层结论
 
 - `app/` 只依赖宿主公开接口，不再直接 import `ui.*` 具体实现。
-- `domains/` 提供 `scan / earnings / quotes / watchlist / fund_holdings / market_calendar` 的稳定入口。
-- `infra/` 承载 `market_data / settings / navigation / storage / tasks` 等外部边界适配。
-- `ui/` 主要负责 Qt 装配、页面状态和事件接线。
+- `domains/` 提供 `scan / earnings / quotes / watchlist / fund_holdings / market_calendar / global_earnings_calendar` 的稳定入口。
+- `infra/` 承载 `market_data / settings / navigation / storage / tasks / events / features` 等外部边界适配。
+- `ui/` 主要负责 Qt 装配、页面状态、事件接线、主题外壳和表格交互。
 - `core/` 保留事件总线、兼容门面和跨层共享能力，不再承载新增真实领域实现。
 
 ## 运行要求
@@ -264,15 +295,20 @@ python -m pip install -r requirements.txt
 
 - `PyQt6`
 - `PyQt6-WebEngine`
+- `qdarkstyle`
 - `pytdx`
 - `pandas`
 - `numpy`
 - `polars`
 - `pyarrow`
+- `requests`
+- `openpyxl`
 - `pypinyin`
+- `pyautogui`
 - `akshare`
 - `yfinance`
 - `curl_cffi`
+- `lxml`
 - `pywin32`
 
 ### 4. 配置通达信数据目录
@@ -287,7 +323,16 @@ python -m pip install -r requirements.txt
 
 程序启动后会用这个目录读取本地日线数据与名称映射。
 
-### 5. 启动程序
+### 5. 可选外部数据密钥
+
+全球寡头财报日历可以在无密钥时使用公开源和本地确认事件；如果需要补充 Alpha Vantage 或 DART 数据，可在当前终端会话设置：
+
+```powershell
+$env:ALPHAVANTAGE_API_KEY = "<your-alpha-vantage-key>"
+$env:OPENDART_API_KEY = "<your-opendart-key>"
+```
+
+### 6. 启动程序
 
 生产式启动：
 
@@ -315,6 +360,7 @@ python -m pip install -r requirements.txt
 - 亚洲市场历史与缓存：`vcp/fetchers/asian_kline_fetcher.py`
 - 亚洲市场盘中辅助行情：`ui/tabs/asian_market_workers.py`
 - 北美 / 海外辅助数据：AkShare、yfinance
+- 全球寡头财报日历：Alpha Vantage、Nasdaq、Company IR、Yahoo Finance、DART/KIND/MOPS/TDnet/JPX 等来源按可用性合并
 
 补充说明：
 
@@ -326,6 +372,7 @@ python -m pip install -r requirements.txt
 - 冷启动：默认离线
 - 启动后：`StartupOrchestrator` 异步探测网络
 - 网络可用：自动切换在线模式并触发相关页面刷新
+- 运行期间：按服务开关定时刷新全球寡头财报日历，失败时沿用本地缓存
 
 这种设计的目标是：
 
@@ -342,6 +389,7 @@ python -m pip install -r requirements.txt
   - 盘中监控缓存
   - 亚洲市场缓存
   - 财务/股本缓存
+  - 全球寡头财报日历缓存
 - `data/vcp_hunter.db`
   - 市场节假日缓存等 SQLite 数据
 - `data/logs/`
@@ -375,18 +423,23 @@ pytest -q
 pytest tests/test_quote_snapshot.py -q
 pytest tests/test_global_store_quote_merge.py -q
 pytest tests/test_central_quotes_finance.py -q
+pytest tests/test_workspace_quote_codes.py -q
+pytest tests/test_global_earnings_calendar.py tests/test_trade_calendar.py -q
+pytest tests/test_table_refresh_state.py tests/test_rt_table_model_incremental.py tests/test_stock_table_model_quotes.py -q
 ```
 
 说明：
 
 - `tests/conftest.py` 会统一创建 `QApplication`，避免 PyQt 测试直接崩溃
 - 多数表格与行情链路已经有回归测试覆盖
+- CI 当前覆盖 Ruff、UTF-8、架构边界、启动编排、服务边界和工作区聚合等核心护栏，配置位于 `.github/workflows/ci.yml`
 
 ### 代码检查
 
 ```powershell
 ruff check .
 ruff format .
+python scripts/check_utf8.py core ui vcp tests scripts app infra docs .github
 ```
 
 ### pre-commit
@@ -401,6 +454,21 @@ pre-commit run --all-files
 - `ruff-check`
 - `ruff-format`
 
+### Windows 打包与 UI 截图审计
+
+打包脚本会优先使用 `.venv\Scripts\python.exe`，并把图标和 `assets/` 一起带入 PyInstaller：
+
+```powershell
+.\scripts\build_windows.ps1 -DryRun
+.\scripts\build_windows.ps1
+```
+
+UI 审计截图脚本用于主窗口、Tab、命令面板、对话框和可选 K 线窗口的视觉回归：
+
+```powershell
+python scripts/capture_ui_audit_screenshots.py --offscreen --strict
+```
+
 ## 维护建议
 
 如果你准备继续沿当前架构演进，建议保持下面几条不变：
@@ -409,20 +477,25 @@ pre-commit run --all-files
 - 新的盘中表格字段尽量接入 `domains/quotes/*` 稳定入口
 - 高频 UI 刷新继续走中央广播链，而不是各页单独造轮子
 - 需要跨页共享的运行时状态，优先进入 `GlobalStore`
+- 需要跨 Tab 汇总或导航的能力，优先扩展 `ui/workspaces/tab_capabilities.py` 和 `WorkspaceFacade`
 - 涉及市场时间判断时，统一走 `MarketCalendar`
+- 涉及外部 HTTP 或子进程调用时，沿用 `infra/http_safety.py` 与 `infra/tasks/process_runner.py` 的边界约束
+- 修改中文文档、QSS 或脚本后，至少运行一次 `python scripts/check_utf8.py ...`
 
 ## 已知边界
 
 - 这是本地桌面终端，不是 Web 服务，也没有部署到云端的标准流程
 - 核心能力建立在本地通达信数据目录存在的前提上
 - 海外/亚洲页面的数据质量和稳定性受外部源影响
+- 全球寡头财报日历会优先合并已确认事件和可用公开源；无外部密钥时部分事件只能作为估算或待确认
+- Codex 投研跳转依赖本机已注册 `codex://` 深链接，并默认打开 `D:\vcp_hunter\产业链投研`
 - 某些旧文件注释中可能仍存在历史术语，但 README 已以当前代码为准
 
 ## 许可证
 
 Private / Internal Use Only.
 
-## Architecture Governance
+## 架构治理索引
 
 - Technical architecture: `docs/technical-architecture.md`
 - Module owner registry: `docs/module-owners.md`
