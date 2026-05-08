@@ -243,6 +243,96 @@ def test_fund_holdings_tab_reload_warms_local_snapshot_for_new_codes(monkeypatch
         tab.deleteLater()
 
 
+def test_fund_holdings_tab_ignores_late_local_quote_after_delete(monkeypatch):
+    _setup_store(
+        monkeypatch,
+        [
+            _build_change_row(
+                subject_code="QFII",
+                subject_name="QFII",
+                quarter_key="2025Q4",
+                compare_quarter_key="2025Q3",
+                change_type="增持",
+                stock_code="000001",
+                stock_name="平安银行",
+            )
+        ],
+    )
+
+    class _OfflineQuoteProvider:
+        def _build_offline_quotes(self, codes):
+            assert codes == ["000001"]
+            return {
+                "000001": {
+                    "close": 10.5,
+                    "last_close": 10.0,
+                }
+            }
+
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "_load_cached_finance_snapshot",
+        staticmethod(
+            lambda codes: {
+                "000001": {
+                    "zongguben": 1_000_000_000,
+                    "market_cap": 10_000_000_000,
+                    "price_base": 10.0,
+                }
+            }
+            if codes == ["000001"]
+            else {}
+        ),
+        raising=False,
+    )
+    captured_tasks = []
+
+    def _capture_run_in_background(fn, *args, on_success=None, on_error=None, task_id=None, **kwargs):
+        captured_tasks.append((fn, on_success, on_error))
+        return task_id or "captured"
+
+    monkeypatch.setattr(
+        fund_holdings_module.task_manager,
+        "run_in_background",
+        _capture_run_in_background,
+        raising=False,
+    )
+
+    spy = QSignalSpy(event_bus.sig_rt_quotes)
+    tab = fund_holdings_module.FundHoldingsTab(_OfflineQuoteProvider())
+    assert captured_tasks
+
+    tab.deleteLater()
+    for fn, on_success, _on_error in captured_tasks:
+        if callable(on_success):
+            on_success(fn())
+
+    assert len(spy) == 0
+
+
+def test_fund_holdings_tab_ignores_cache_reload_after_delete(monkeypatch):
+    _setup_store(monkeypatch, [])
+    calls = []
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
+    monkeypatch.setattr(
+        tab,
+        "_apply_latest_quotes_from_store",
+        lambda: calls.append("quotes"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        tab,
+        "_update_status_summary",
+        lambda: calls.append("status"),
+        raising=False,
+    )
+
+    tab.deleteLater()
+    tab._on_cache_reload_completed()
+
+    assert calls == []
+
+
 def test_fund_holdings_tab_hides_market_value_delta_columns(monkeypatch):
     _setup_store(
         monkeypatch,

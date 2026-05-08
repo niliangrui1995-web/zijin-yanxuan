@@ -8,8 +8,8 @@ from PyQt6.QtWidgets import QCheckBox, QHeaderView, QLabel, QLineEdit, QPushButt
 
 from app.services import filter_asian_tickers, find_asian_track
 from app.services.ui_runtime_service import domain_events as event_bus
-from core.logger import get_logger
 from app.services.ui_runtime_service import ui_signals
+from core.logger import get_logger
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.thread_shutdown import request_thread_shutdown
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
@@ -412,7 +412,7 @@ class AsianMarketTab(BaseStockTab):
                     latest_dates[market] = last_date
             return latest_dates
         except (FileNotFoundError, PermissionError, OSError, TypeError, ValueError, KeyError, json.JSONDecodeError) as e:
-            log.warning(f"[浜氭床椤礭 瑙ｆ瀽缂撳瓨鏈€鏂颁氦鏄撴棩澶辫触: {e}")
+            log.warning(f"[亚洲页] 解析缓存最新交易日失败: {e}")
             return {}
 
     def _get_cache_latest_trade_date(self):
@@ -479,7 +479,7 @@ class AsianMarketTab(BaseStockTab):
                     latest_expected[mkt] = trade_date
             return latest_expected
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
-            log.warning(f"[浜氭床椤礭 璁＄畻鏈熸湜鏈€鏂颁氦鏄撴棩澶辫触: {e}")
+            log.warning(f"[亚洲页] 计算期望最新交易日失败: {e}")
             return {}
 
     def _get_expected_latest_trade_date(self):

@@ -131,3 +131,56 @@ def test_na_daily_tab_apply_rows_triggers_cap_and_quote_refresh(monkeypatch, tmp
     finally:
         tab.close()
         tab.deleteLater()
+
+
+def test_na_daily_prime_background_loads_rows_immediately(monkeypatch, tmp_path):
+    provider = DummyProvider()
+    monkeypatch.setattr(global_store, "get_latest_quotes", lambda: {})
+
+    tab = _build_tab(monkeypatch, provider)
+    refresh_calls = []
+    monkeypatch.setattr(
+        tab,
+        "refresh_table_quotes_and_market_caps",
+        lambda **kwargs: refresh_calls.append(kwargs),
+    )
+
+    report_file = Path(tmp_path) / "战报_202604150930.md"
+    report_file.write_text("# test\n", encoding="utf-8")
+    monkeypatch.setattr(
+        tab,
+        "_build_na_daily_rows",
+        lambda: (
+            [
+                {
+                    "代码": "000001",
+                    "名称": "A",
+                    "现价": "--",
+                    "涨幅%": "--",
+                    "市值": "--",
+                    "日报时间": "20260415",
+                    "细分板块": "先进封装",
+                    "股价弹性": "",
+                    "催化剂": "北美催化",
+                    "风控": "",
+                    "评级": "",
+                    "_report_ts": 20260415093000,
+                    "_report_row_rank": 0,
+                }
+            ],
+            [str(report_file)],
+            ("sig",),
+        ),
+    )
+
+    try:
+        tab.prime_background_load()
+
+        assert tab._runtime_started is True
+        assert len(tab.model.row_data) == 1
+        assert tab._na_daily_codes == {"000001"}
+        assert tab._patrol_timer.isActive()
+        assert refresh_calls == [{"quote_task_id": "na_daily_quotes"}]
+    finally:
+        tab.close()
+        tab.deleteLater()

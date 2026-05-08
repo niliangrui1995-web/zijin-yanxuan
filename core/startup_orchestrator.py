@@ -16,11 +16,11 @@ from core.process_watchdog import log_process_snapshot
 from domains.runtime import domain_events as event_bus
 from infra.features import service_toggle_registry
 from infra.tasks import (
-    ProcessExecutionError,
-    ProcessTimeoutError,
     STARTUP_ASIAN_DATA_SYNC,
     STARTUP_DEFERRED_LOAD,
     STARTUP_SMART,
+    ProcessExecutionError,
+    ProcessTimeoutError,
     run_python_module,
     task_registry,
 )
@@ -165,6 +165,13 @@ class StartupOrchestrator:
             log_process_snapshot("startup.deferred_load.begin", logger=log)
 
             cache_date = self.mw.data_provider.load_cache_from_disk()
+            if not self._alive():
+                log_process_snapshot(
+                    "startup.deferred_load.cancelled",
+                    logger=log,
+                    extra={"stage": "history_cache"},
+                )
+                return
             if cache_date and self._alive():
                 count = len(self.mw.data_provider.cache_data)
                 self._safe_call_in_ui(
@@ -190,6 +197,13 @@ class StartupOrchestrator:
                     lambda msg: self.mw.lbl_status.setText(msg),
                 )
             )
+            if not self._alive():
+                log_process_snapshot(
+                    "startup.deferred_load.cancelled",
+                    logger=log,
+                    extra={"stage": "rt_cache"},
+                )
+                return
 
             self.mw.cache_manager.try_load_rps_from_disk(
                 self.mw.engine,
@@ -198,6 +212,13 @@ class StartupOrchestrator:
                     lambda: self.mw.lbl_status.setText(msg)
                 ),
             )
+            if not self._alive():
+                log_process_snapshot(
+                    "startup.deferred_load.cancelled",
+                    logger=log,
+                    extra={"stage": "rps_cache"},
+                )
+                return
 
             self._safe_call_in_ui(lambda: event_bus.sig_cache_bootstrap_ready.emit())
             elapsed_ms = (time.perf_counter() - started_at) * 1000.0
@@ -262,6 +283,8 @@ class StartupOrchestrator:
                         no_window=True,
                     )
                     log.info("[启动] 亚洲市场静默同步完成，触发界面刷新。")
+                    if not self._alive():
+                        return
                     self._safe_call_in_ui(lambda: event_bus.sig_asian_klines_ready.emit())
                     elapsed_ms = (time.perf_counter() - started_at) * 1000.0
                     record_metric("startup_asian_sync_ms", elapsed_ms, unit="ms")
@@ -300,7 +323,7 @@ class StartupOrchestrator:
         if service_toggle_registry.is_enabled("silent_asian_sync"):
             self._job_runner.run(STARTUP_ASIAN_DATA_SYNC, _check_asian_data_bg)
         else:
-            log.info("[鍚姩] silent_asian_sync toggle disabled, skip background sync")
+            log.info("[启动] silent_asian_sync toggle disabled, skip background sync")
 
     def refresh_global_earnings_calendar(self):
         """Silently refresh the global oligarch earnings calendar cache."""
@@ -323,6 +346,8 @@ class StartupOrchestrator:
                 from domains.global_earnings_calendar.service import GlobalEarningsCalendarService
 
                 events = GlobalEarningsCalendarService().refresh_events()
+                if not self._alive():
+                    return
                 elapsed_ms = (time.perf_counter() - started_at) * 1000.0
                 event_count = len(events or [])
                 log.info(f"[启动] 寡头财报日历静默刷新完成: {event_count} 条")
@@ -371,6 +396,8 @@ class StartupOrchestrator:
                     return
                 log_process_snapshot("startup.smart.begin", logger=log)
                 online = self.mw.data_provider.test_network(timeout=3)
+                if not self._alive():
+                    return
                 if online:
                     if not self._alive():
                         return
@@ -460,12 +487,16 @@ class StartupOrchestrator:
 
         def _probe():
             ok = bool(test_network(timeout=3))
+            if not self._alive():
+                return False
             if ok:
                 set_online_mode(True)
             return ok
 
         def _on_probe_result(ok):
             self._auto_rt_network_probe_active = False
+            if not self._alive():
+                return
             if not ok:
                 self._log_auto_rt_skip("auto_rt_offline", "[盘中监控] 自动启动等待网络可用")
                 return

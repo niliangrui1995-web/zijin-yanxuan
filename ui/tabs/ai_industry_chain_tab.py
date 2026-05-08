@@ -52,6 +52,12 @@ class AIIndustryChainTab(BaseStockTab):
         self._runtime_started = True
         QTimer.singleShot(350, self._load_chain_data)
 
+    def prime_background_load(self):
+        if self._runtime_started:
+            return
+        self._runtime_started = True
+        self._load_chain_data()
+
     def showEvent(self, event):
         super().showEvent(event)
         self._ensure_runtime_started()

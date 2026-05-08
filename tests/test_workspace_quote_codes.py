@@ -104,9 +104,9 @@ def test_workspace_quote_universe_does_not_instantiate_lazy_tabs():
     get_tab_calls = []
     workspace = SimpleNamespace(
         tab_specs=lambda: [
-            {"key": "watchlist", "group": "涓诲伐浣滃彴"},
-            {"key": "lhb", "group": "涓诲伐浣滃彴"},
-            {"key": "rt_monitor", "group": "涓诲伐浣滃彴"},
+            {"key": "watchlist", "group": "主工作台"},
+            {"key": "lhb", "group": "主工作台"},
+            {"key": "rt_monitor", "group": "主工作台"},
         ],
         get_loaded_tab=lambda key: loaded_tabs.get(key),
         get_tab=lambda key: get_tab_calls.append(key) or _make_quote_tab({key}),

@@ -342,6 +342,59 @@ def test_stock_candidate_prime_background_load_primes_snapshot_and_refresh(monke
         workspace.deleteLater()
 
 
+def test_stock_candidate_prime_background_load_primes_anchor_sources(monkeypatch):
+    scheduled = []
+    primed = []
+    loads = []
+    snapshots = []
+    monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda delay, callback: scheduled.append(delay))
+
+    class _AnchorTab:
+        def __init__(self, key):
+            self.key = key
+
+        def prime_background_load(self):
+            primed.append(self.key)
+
+    class _Workspace(QWidget):
+        def __init__(self):
+            super().__init__()
+            self._anchors = {
+                "na_daily": _AnchorTab("na_daily"),
+                "ai_industry_chain": _AnchorTab("ai_industry_chain"),
+            }
+
+        def collect_stock_context(self):
+            return {}
+
+        def prime_stock_context_snapshots(self):
+            snapshots.append("prime")
+            return True
+
+        def get_loaded_tab(self, key):
+            return None
+
+        def ensure_tab_loaded(self, key, reason=""):
+            loads.append((key, reason))
+            return self._anchors.get(key)
+
+    workspace = _Workspace()
+    tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
+    try:
+        tab.prime_background_load()
+
+        assert loads == [
+            ("na_daily", "stock_candidates_anchor"),
+            ("ai_industry_chain", "stock_candidates_anchor"),
+        ]
+        assert primed == ["na_daily", "ai_industry_chain"]
+        assert snapshots == ["prime"]
+        assert 350 in scheduled
+    finally:
+        tab.close()
+        workspace.deleteLater()
+
+
 def test_stock_candidate_table_uses_fresh_context_column_layout(monkeypatch):
     monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
     captured = {}

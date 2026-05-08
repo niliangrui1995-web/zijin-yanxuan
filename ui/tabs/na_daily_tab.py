@@ -12,9 +12,8 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from app.services.ui_runtime_service import domain_events as event_bus
+from app.services.ui_runtime_service import task_registry, ui_signals
 from core.logger import get_logger
-from app.services.ui_runtime_service import ui_signals
-from app.services.ui_runtime_service import task_registry
 from ui.components import TableStateWrapper, VCPTableView
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_tab import BaseStockTab
@@ -51,6 +50,13 @@ class NADailyTab(BaseStockTab):
             return
         self._runtime_started = True
         QTimer.singleShot(350, self._load_na_daily_report)
+        self._patrol_timer.start(30 * 1000)
+
+    def prime_background_load(self):
+        if self._runtime_started:
+            return
+        self._runtime_started = True
+        self._load_na_daily_report()
         self._patrol_timer.start(30 * 1000)
 
     def showEvent(self, event):

@@ -47,6 +47,10 @@ def _is_qt_object_deleted(obj) -> bool:
         return False
 
 
+def _is_owner_runtime_active(owner) -> bool:
+    return not _is_qt_object_deleted(owner) and not bool(getattr(owner, "_runtime_cleanup_done", False))
+
+
 def _current_finance_cache_file() -> str:
     try:
         vcp_constants = import_module("vcp.constants")
@@ -201,7 +205,7 @@ def _load_shared_finance_cache_payload(path: str) -> dict:
 
 
 def _resolve_cached_finance_loader(owner):
-    if _is_qt_object_deleted(owner):
+    if not _is_owner_runtime_active(owner):
         return lambda _codes: {}
 
     loader = getattr(owner, "_load_cached_finance_snapshot", None)
@@ -209,7 +213,7 @@ def _resolve_cached_finance_loader(owner):
         return loader
 
     def _load(codes):
-        if _is_qt_object_deleted(owner):
+        if not _is_owner_runtime_active(owner):
             return {}
         data_provider = getattr(owner, "data_provider", None)
         return load_cached_finance_snapshot(
@@ -241,7 +245,7 @@ def _collect_local_quote_targets(owner, model, latest_quotes: dict | None = None
 
 
 def _build_local_quote_payload(owner, target_codes: list[str]) -> dict:
-    if _is_qt_object_deleted(owner):
+    if not _is_owner_runtime_active(owner):
         return {}
 
     offline_quotes = {}
@@ -265,6 +269,9 @@ def _build_local_quote_payload(owner, target_codes: list[str]) -> dict:
 
 
 def prime_local_quote_snapshot(owner, current_model=None) -> dict:
+    if not _is_owner_runtime_active(owner):
+        return {}
+
     if current_model is not None:
         owner._active_model_ref = current_model
 
@@ -295,6 +302,9 @@ def prime_local_quote_snapshot(owner, current_model=None) -> dict:
 
 
 def prime_local_quote_snapshot_async(owner, current_model=None) -> bool:
+    if not _is_owner_runtime_active(owner):
+        return False
+
     if current_model is not None:
         owner._active_model_ref = current_model
 
@@ -333,7 +343,7 @@ def prime_local_quote_snapshot_async(owner, current_model=None) -> bool:
 
     def _bg_local_quote():
         owner_obj = owner_ref()
-        if _is_qt_object_deleted(owner_obj):
+        if not _is_owner_runtime_active(owner_obj):
             return {}
         app_obj = QCoreApplication.instance()
         if app_obj is None or app_obj.closingDown():
@@ -345,7 +355,7 @@ def prime_local_quote_snapshot_async(owner, current_model=None) -> bool:
 
     def _on_success(warm_payload):
         owner_obj = owner_ref()
-        if _is_qt_object_deleted(owner_obj) or not warm_payload:
+        if not _is_owner_runtime_active(owner_obj) or not warm_payload:
             return
         published = publish_rt_quotes(
             warm_payload,
@@ -438,7 +448,7 @@ class MarketCapRefreshBatcher:
         payload = dict(payload or {})
         for owner_ref, requested_codes in waiters.values():
             owner = owner_ref()
-            if owner is None:
+            if not _is_owner_runtime_active(owner):
                 continue
             owner_payload = {
                 code: payload[code]
@@ -688,6 +698,9 @@ def replay_deferred_quotes(owner) -> None:
 
 
 def async_update_market_caps(owner) -> None:
+    if not _is_owner_runtime_active(owner):
+        return
+
     app = QCoreApplication.instance()
     owner_window = owner.window()
     if app is None or app.closingDown():

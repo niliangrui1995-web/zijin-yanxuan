@@ -26,12 +26,16 @@ from app.services.ui_runtime_service import (
     SUBJECT_RUIYUAN,
     MarketCalendar,
     app_config,
-    background_job_runner as task_manager,
-    domain_events as event_bus,
     fund_holdings_store,
     fund_holdings_sync_service,
     task_registry,
     ui_signals,
+)
+from app.services.ui_runtime_service import (
+    background_job_runner as task_manager,
+)
+from app.services.ui_runtime_service import (
+    domain_events as event_bus,
 )
 from ui.components import (
     MultiSelectFilterButton,
@@ -559,9 +563,13 @@ class FundHoldingsTab(BaseStockTab):
             return self._load_view_payload(self.data_provider)
 
         def _on_success(payload):
+            if getattr(self, "_runtime_cleanup_done", False):
+                return
             self._apply_view_payload(payload)
 
         def _on_error(message: str):
+            if getattr(self, "_runtime_cleanup_done", False):
+                return
             self._initial_load_started = False
             detail = str(message or "").strip() or "未知异常"
             self.lbl_status.setText(f"基金持仓加载失败：{detail}")
@@ -985,6 +993,8 @@ class FundHoldingsTab(BaseStockTab):
         )
 
         def _on_success(result):
+            if getattr(self, "_runtime_cleanup_done", False):
+                return
             self._set_sync_active(False)
             self._reload_from_db()
             message = str((result or {}).get("message") or label).strip()
@@ -1004,6 +1014,8 @@ class FundHoldingsTab(BaseStockTab):
             event_bus.sig_fund_holdings_updated.emit()
 
         def _on_error(error_message: str):
+            if getattr(self, "_runtime_cleanup_done", False):
+                return
             self._set_sync_active(False)
             self._reload_from_db()
             message = str(error_message or "更新失败").strip()
@@ -1296,6 +1308,8 @@ class FundHoldingsTab(BaseStockTab):
         self.refresh_table_from_latest_snapshot(async_local=True)
 
     def _on_cache_reload_completed(self):
+        if getattr(self, "_runtime_cleanup_done", False):
+            return
         self._apply_latest_quotes_from_store()
         self._update_status_summary()
 
@@ -1389,10 +1403,19 @@ class FundHoldingsTab(BaseStockTab):
             )
 
     def closeEvent(self, event):
-        self._stop_daily_auto_sync_timer()
-        self._save_view_state()
+        self._cleanup_runtime_state()
         super().closeEvent(event)
 
+    def _cleanup_runtime_state(self):
+        if not getattr(self, "_fund_holdings_cleanup_done", False):
+            self._fund_holdings_cleanup_done = True
+            self._stop_daily_auto_sync_timer()
+            self._save_view_state()
+            with suppress(TypeError, RuntimeError):
+                event_bus.sig_cache_reload_completed.disconnect(self._on_cache_reload_completed)
+            with suppress(TypeError, RuntimeError):
+                event_bus.sig_app_closing.disconnect(self._save_view_state)
+        super()._cleanup_runtime_state()
+
     def shutdown(self) -> None:
-        self._stop_daily_auto_sync_timer()
-        self._save_view_state()
+        self._cleanup_runtime_state()

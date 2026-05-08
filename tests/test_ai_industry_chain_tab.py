@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-from pathlib import Path
 from copy import deepcopy
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -8,8 +8,8 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtTest import QSignalSpy
 
 from app.services.ui_runtime_service import domain_events as event_bus
-from core.global_store import global_store
 from app.services.ui_runtime_service import watchlist_vm
+from core.global_store import global_store
 from ui.tabs.ai_industry_chain_tab import AIIndustryChainTab
 
 
@@ -230,6 +230,31 @@ def test_ai_industry_chain_emits_updated_event_after_successful_load(monkeypatch
         tab._load_chain_data()
 
         assert len(spy) == 1
+    finally:
+        tab.close()
+        tab.deleteLater()
+
+
+def test_ai_industry_chain_prime_background_loads_workbook_immediately(monkeypatch, tmp_path):
+    workbook_path = tmp_path / "AI产业链.xlsx"
+    _write_workbook(workbook_path)
+    monkeypatch.setattr(QTimer, "singleShot", lambda *args, **kwargs: None)
+
+    tab = AIIndustryChainTab(DummyProvider(), workbook_path=workbook_path)
+    refresh_calls = []
+    monkeypatch.setattr(
+        tab,
+        "refresh_table_quotes_and_market_caps",
+        lambda **kwargs: refresh_calls.append(kwargs),
+    )
+
+    try:
+        tab.prime_background_load()
+
+        assert tab._runtime_started is True
+        assert len(tab.model.row_data) == 2
+        assert tab._chain_codes == {"002384", "688498"}
+        assert refresh_calls == [{"quote_task_id": "ai_industry_chain_quotes"}]
     finally:
         tab.close()
         tab.deleteLater()

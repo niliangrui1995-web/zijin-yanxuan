@@ -13,12 +13,11 @@ K 线图窗口 — ECharts 5.5.0 + QWebEngineView 高性能版
 import json
 import os as _os
 
+from app.services import is_yf_rate_limit_error, mark_yf_rate_limited
 from app.services.scan_runtime_service import calculate_scan_indicators
+from app.services.ui_runtime_service import MarketCalendar, watchlist_vm
 from app.services.ui_runtime_service import domain_events as event_bus
 from core.logger import get_logger
-from app.services.ui_runtime_service import MarketCalendar
-from app.services.ui_runtime_service import watchlist_vm
-from app.services import is_yf_rate_limit_error, mark_yf_rate_limited
 
 log = get_logger(__name__)
 import pandas as pd
@@ -594,16 +593,16 @@ class KLineChartWindow(QWidget):
             try:
                 self.browser.setHtml(html_content, base_url)
             except (AttributeError, RuntimeError, TypeError) as exc:
-                self._log.debug(f"[K绾縘 JS澧為噺娓叉煋鍥為€€澶辫触: {exc}")
+                self._log.debug(f"[K线] JS增量渲染回退失败: {exc}")
 
         try:
             self.browser.page().runJavaScript(script, _fallback_if_needed)
         except (AttributeError, RuntimeError, TypeError) as exc:
-            self._log.debug(f"[K绾縘 JS澧為噺娓叉煋涓嶅彲鐢? {exc}")
+            self._log.debug(f"[K线] JS增量渲染不可用: {exc}")
             try:
                 self.browser.setHtml(html_content, base_url)
             except (AttributeError, RuntimeError, TypeError) as fallback_exc:
-                self._log.debug(f"[K绾縘 HTML鍥為€€娓叉煋澶辫触: {fallback_exc}")
+                self._log.debug(f"[K线] HTML回退渲染失败: {fallback_exc}")
 
     def _start_rt_timer(self):
         """启动盘中实时刷新定时器（60秒间隔），只在交易时段运行"""

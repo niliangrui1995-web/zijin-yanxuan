@@ -169,6 +169,40 @@ def test_startup_orchestrator_deferred_load_records_process_snapshots(monkeypatc
     assert "startup.deferred_load.end" in labels
 
 
+def test_startup_orchestrator_deferred_load_stops_after_window_close(monkeypatch):
+    mw = _DummyMainWindow()
+    calls = {"rt_cache": 0, "rps": 0}
+
+    def close_during_history_load():
+        mw._is_closing = True
+        mw.data_provider.cache_data = {"000001": object()}
+        return "20260508"
+
+    class _CountingCacheManager:
+        def load_rt_cache(self, *_args, **_kwargs):
+            calls["rt_cache"] += 1
+
+        def try_load_rps_from_disk(self, *_args, **_kwargs):
+            calls["rps"] += 1
+
+    mw.data_provider.load_cache_from_disk = close_during_history_load
+    mw.cache_manager = _CountingCacheManager()
+    orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
+    labels = []
+
+    monkeypatch.setattr("core.startup_orchestrator.service_toggle_registry.is_enabled", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        "core.startup_orchestrator.log_process_snapshot",
+        lambda label, **_kwargs: labels.append(label),
+    )
+
+    orchestrator.deferred_data_load()
+
+    assert calls == {"rt_cache": 0, "rps": 0}
+    assert "startup.deferred_load.cancelled" in labels
+    assert "startup.deferred_load.end" not in labels
+
+
 def test_startup_orchestrator_asian_sync_logs_succinct_failure_message(monkeypatch):
     orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
     records = {"warning": [], "debug": []}
@@ -252,6 +286,36 @@ def test_startup_orchestrator_smart_startup_records_process_snapshots(monkeypatc
     orchestrator.smart_startup()
 
     assert labels == ["startup.smart.begin", "startup.smart.end"]
+
+
+def test_startup_orchestrator_smart_startup_stops_after_window_close(monkeypatch):
+    mw = _DummyMainWindow()
+
+    class _ClosingProvider(_DummyDataProvider):
+        def __init__(self):
+            super().__init__()
+            self.online_mode_calls = []
+
+        def test_network(self, timeout=3):
+            mw._is_closing = True
+            return True
+
+        def set_online_mode(self, online):
+            self.online_mode_calls.append(bool(online))
+
+    mw.data_provider = _ClosingProvider()
+    orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
+    labels = []
+
+    monkeypatch.setattr(
+        "core.startup_orchestrator.log_process_snapshot",
+        lambda label, **_kwargs: labels.append(label),
+    )
+
+    orchestrator.smart_startup()
+
+    assert mw.data_provider.online_mode_calls == []
+    assert labels == ["startup.smart.begin"]
 
 
 def test_startup_orchestrator_skips_asian_sync_when_toggle_disabled(monkeypatch):
@@ -493,6 +557,51 @@ def test_startup_orchestrator_retries_network_before_auto_start(monkeypatch):
     assert mw.data_provider.probes == 1
     assert mw.data_provider.online is True
     assert mw._workspace.started == 1
+
+
+def test_startup_orchestrator_auto_rt_probe_stops_after_window_close(monkeypatch):
+    class _Provider(_DummyDataProvider):
+        def __init__(self, owner):
+            super().__init__()
+            self.cache_data = {f"{idx:06d}": object() for idx in range(120)}
+            self.owner = owner
+            self.online = False
+            self.probes = 0
+
+        def is_online(self):
+            return self.online
+
+        def test_network(self, timeout=3):
+            self.probes += 1
+            self.owner._is_closing = True
+            return True
+
+        def set_online_mode(self, online):
+            self.online = bool(online)
+
+    class _Workspace:
+        def __init__(self):
+            self.started = 0
+
+        def auto_start_rt_monitor(self):
+            self.started += 1
+            return True
+
+    mw = _DummyMainWindow()
+    mw.data_provider = _Provider(mw)
+    mw._workspace = _Workspace()
+    orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
+    monkeypatch.setattr(
+        "core.market_calendar.MarketCalendar.is_market_active",
+        classmethod(lambda cls, market="CN": True),
+    )
+
+    orchestrator.auto_start_rt_if_ready()
+
+    assert mw.data_provider.probes == 1
+    assert mw.data_provider.online is False
+    assert mw._workspace.started == 0
+    assert orchestrator._auto_rt_network_probe_active is False
 
 
 def test_startup_orchestrator_shutdown_abandons_background_tasks():

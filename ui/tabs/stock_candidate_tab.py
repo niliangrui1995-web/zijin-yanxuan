@@ -57,10 +57,50 @@ class StockCandidateTab(BaseStockTab):
 
     def prime_background_load(self) -> None:
         workspace = self._workspace()
+        self._prime_anchor_source_tabs(workspace)
         prime_snapshots = getattr(workspace, "prime_stock_context_snapshots", None)
         if callable(prime_snapshots):
             prime_snapshots()
         self._ensure_runtime_started()
+
+    def _prime_anchor_source_tabs(self, workspace) -> None:
+        if workspace is None:
+            return
+        for key in ("na_daily", "ai_industry_chain"):
+            tab = self._load_anchor_source_tab(workspace, key)
+            self._prime_anchor_source_tab(key, tab)
+
+    @staticmethod
+    def _load_anchor_source_tab(workspace, key: str):
+        get_loaded_tab = getattr(workspace, "get_loaded_tab", None)
+        tab = get_loaded_tab(key) if callable(get_loaded_tab) else None
+        if tab is not None:
+            return tab
+
+        ensure_tab_loaded = getattr(workspace, "ensure_tab_loaded", None)
+        if callable(ensure_tab_loaded):
+            try:
+                return ensure_tab_loaded(key, reason="stock_candidates_anchor")
+            except TypeError:
+                return ensure_tab_loaded(key)
+
+        get_tab = getattr(workspace, "get_tab", None)
+        return get_tab(key) if callable(get_tab) else None
+
+    @staticmethod
+    def _prime_anchor_source_tab(key: str, tab) -> None:
+        if tab is None:
+            return
+        method_names = {
+            "na_daily": ("prime_background_load", "run_post_online_refresh", "_load_na_daily_report", "_ensure_runtime_started"),
+            "ai_industry_chain": ("prime_background_load", "_load_chain_data", "_ensure_runtime_started"),
+        }.get(key, ("prime_background_load", "_ensure_runtime_started"))
+        for method_name in method_names:
+            method = getattr(tab, method_name, None)
+            if not callable(method):
+                continue
+            method()
+            return
 
     def _connect_auto_refresh_events(self) -> None:
         for signal in (
