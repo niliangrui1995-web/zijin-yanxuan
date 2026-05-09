@@ -78,7 +78,7 @@ class WorkspaceTableService:
     @staticmethod
     def _refresh_latest_snapshot_for_f5(tab) -> None:
         try:
-            tab.refresh_table_from_latest_snapshot(async_local=False)
+            tab.refresh_table_from_latest_snapshot(async_local=True)
         except TypeError:
             tab.refresh_table_from_latest_snapshot()
 

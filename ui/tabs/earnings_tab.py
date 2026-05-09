@@ -315,6 +315,7 @@ class EarningsTab(BaseStockTab):
         if changed:
             self.model.update_data(self.row_data)
             self._apply_latest_quotes_from_store()
+            self._prime_visible_local_quote_snapshot(self.model)
 
         if hasattr(self, "table_state"):
             if self.row_data:
@@ -473,6 +474,11 @@ class EarningsTab(BaseStockTab):
     def refresh_data_after_f5(self) -> bool:
         self._apply_latest_quotes_from_store()
         self._apply_display_trade_window(force_refresh=True)
+        self.refresh_table_from_latest_snapshot(current_model=self.model, async_local=True)
+        scheduler = self._ensure_scheduler()
+        trigger = getattr(scheduler, "trigger_routine_scan", None)
+        if callable(trigger):
+            return bool(trigger(reason="f5"))
         return False
 
     def _apply_latest_quotes_from_store(self):

@@ -95,6 +95,60 @@ def test_resolve_project_python_prefers_pythonw_for_pythonw_callers(tmp_path):
     assert resolved == str(preferred_pythonw)
 
 
+def test_relaunch_pyw_prefers_project_pythonw(tmp_path):
+    preferred_python = tmp_path / ".venv" / "Scripts" / "python.exe"
+    preferred_pythonw = tmp_path / ".venv" / "Scripts" / "pythonw.exe"
+    preferred_python.parent.mkdir(parents=True)
+    preferred_python.write_text("", encoding="utf-8")
+    preferred_pythonw.write_text("", encoding="utf-8")
+
+    exec_calls = []
+
+    def fake_execve(executable, argv, env):
+        exec_calls.append((executable, list(argv), dict(env)))
+
+    relaunched = relaunch_into_project_venv_if_needed(
+        str(tmp_path),
+        executable="C:/Python310/python.exe",
+        argv=["vcp_hunter_qt.pyw"],
+        env={},
+        script_path=str(tmp_path / "vcp_hunter_qt.pyw"),
+        execve=fake_execve,
+    )
+
+    assert relaunched is True
+    assert len(exec_calls) == 1
+    executable, argv, env = exec_calls[0]
+    assert executable == str(preferred_pythonw)
+    assert argv == [str(preferred_pythonw), str(tmp_path / "vcp_hunter_qt.pyw")]
+    assert env["VCP_ALREADY_RELAUNCHED"] == "1"
+
+
+def test_relaunch_pyw_switches_project_python_to_pythonw(tmp_path):
+    preferred_python = tmp_path / ".venv" / "Scripts" / "python.exe"
+    preferred_pythonw = tmp_path / ".venv" / "Scripts" / "pythonw.exe"
+    preferred_python.parent.mkdir(parents=True)
+    preferred_python.write_text("", encoding="utf-8")
+    preferred_pythonw.write_text("", encoding="utf-8")
+
+    exec_calls = []
+
+    def fake_execve(executable, argv, env):
+        exec_calls.append((executable, list(argv), dict(env)))
+
+    relaunched = relaunch_into_project_venv_if_needed(
+        str(tmp_path),
+        executable=str(preferred_python),
+        argv=["vcp_hunter_qt.pyw"],
+        env={},
+        script_path=str(tmp_path / "vcp_hunter_qt.pyw"),
+        execve=fake_execve,
+    )
+
+    assert relaunched is True
+    assert exec_calls[0][0] == str(preferred_pythonw)
+
+
 def test_should_relaunch_into_project_venv_skips_when_already_relaunched(tmp_path):
     preferred_python = tmp_path / ".venv" / "Scripts" / "python.exe"
     preferred_python.parent.mkdir(parents=True)

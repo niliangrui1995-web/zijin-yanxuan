@@ -101,6 +101,55 @@ def test_rt_monitor_header_summary_includes_filter_count_and_recent_time(monkeyp
         tab.deleteLater()
 
 
+def test_rt_monitor_lineage_and_signature_skip_unchanged_render(monkeypatch):
+    monkeypatch.setattr(
+        RtMonitorTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+
+    tab = RtMonitorTab(DummyDataProvider(), DummyEngine())
+    update_calls = []
+    original_update = tab.source_model.update_rows_incremental
+
+    def _spy_update(rows):
+        update_calls.append(len(rows))
+        return original_update(rows)
+
+    tab.source_model.update_rows_incremental = _spy_update
+    try:
+        rows = [
+            {
+                "代码": "600519",
+                "名称": "贵州茅台",
+                "现价": "1500.00",
+                "涨幅%": "+2.30%",
+                "市值": "18800亿",
+                "时间": "10:32",
+                "评分": "A",
+                "RPS强度": "95/93",
+                "突破状态": "临近突破",
+                "区间振幅": "12%",
+                "热点板块": "白酒",
+            }
+        ]
+
+        tab._do_update_rt_table(rows)
+        tab._do_update_rt_table(rows)
+        lineage = tab.get_data_lineage()
+
+        assert update_calls == [1]
+        assert lineage["key"] == "rt_monitor"
+        assert lineage["provider"] == "rt_scan_worker"
+        assert lineage["triggered_network"] is False
+        assert lineage["row_count"] == 1
+        assert lineage["last_table_update"] == "10:32"
+        assert "provider_fault_tolerance" in lineage
+    finally:
+        tab.deleteLater()
+
+
 def test_rt_monitor_auto_start_respects_same_day_manual_stop(monkeypatch):
     monkeypatch.setattr(
         RtMonitorTab,

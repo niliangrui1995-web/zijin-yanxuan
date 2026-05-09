@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from app.services.tab_data_lineage_service import TabDataLineageService
 from app.services.ui_runtime_service import app_config, task_registry, ui_signals
 from app.services.ui_runtime_service import background_job_runner as task_manager
 from app.services.ui_runtime_service import domain_events as event_bus
@@ -47,6 +48,19 @@ class RtMonitorTab(BaseStockTab):
         super().__init__(data_provider=data_provider, parent=parent)
         self.engine = engine
         self._settings = app_config.section("rt", legacy_scope="RtMonitorTab")
+        self._rt_lineage_service = TabDataLineageService(
+            key="rt_monitor",
+            source="rt_scan_worker + local_cache + global_store.quotes",
+            provider="rt_scan_worker",
+            cache_refs=(
+                "data/Cache/vcp_rps_precomputed.json",
+                "global_store.quotes",
+                "local_tdx_cache",
+            ),
+            provider_status_reader=self._read_provider_status,
+        )
+        self._last_rt_result = None
+        self._last_rt_signature = ""
         self._init_ui()
         self.subscribe_global_quotes(self.source_model)
 
@@ -114,6 +128,70 @@ class RtMonitorTab(BaseStockTab):
             return False
         self._rt_last_update = stamp
         return True
+
+    def _read_provider_status(self) -> dict:
+        provider = getattr(self, "data_provider", None)
+        request_stats = {}
+        runtime_stats = {}
+
+        request_getter = getattr(provider, "get_quote_request_stats", None)
+        if callable(request_getter):
+            try:
+                request_stats = request_getter() or {}
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                request_stats = {}
+
+        runtime_getter = getattr(provider, "get_realtime_runtime_stats", None)
+        if callable(runtime_getter):
+            try:
+                runtime_stats = runtime_getter() or {}
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                runtime_stats = {}
+
+        return {
+            "request_stats": request_stats,
+            "runtime_stats": runtime_stats,
+            "eastmoney_cooldown_until": float(getattr(provider, "_rt_eastmoney_cooldown_until", 0.0) or 0.0),
+            "eastmoney_last_error": str(getattr(provider, "_rt_eastmoney_last_error", "") or ""),
+        }
+
+    @staticmethod
+    def _latest_trade_date_text() -> str:
+        try:
+            from app.services.ui_runtime_service import MarketCalendar
+
+            trade_date = MarketCalendar.get_latest_trade_date("CN")
+            if trade_date is not None:
+                return trade_date.isoformat()
+            return MarketCalendar.today("CN").isoformat()
+        except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
+            return ""
+
+    def _describe_rt_rows(self, rows: list[dict]):
+        warnings = []
+        if not rows:
+            warnings.append("rt_monitor_rows_empty")
+        return self._rt_lineage_service.describe(
+            rows,
+            trade_date=self._latest_trade_date_text(),
+            triggered_network=self._is_rt_running(),
+            warnings=warnings,
+            extra={
+                "status_state": self._rt_status_state,
+                "status_detail": self._rt_status_detail,
+                "last_table_update": self._rt_last_update,
+                "pool_size": self._rt_pool_size,
+            },
+        )
+
+    def get_data_lineage(self) -> dict:
+        result = self._last_rt_result
+        if result is None:
+            rows = list(getattr(self.source_model, "row_data", None) or [])
+            result = self._describe_rt_rows(rows)
+            self._last_rt_result = result
+            self._last_rt_signature = result.signature
+        return result.lineage.as_dict()
 
     def _status_label_text(self) -> str:
         return self._STATUS_LABELS.get(str(self._rt_status_state or "").strip(), "处理中")
@@ -396,7 +474,11 @@ class RtMonitorTab(BaseStockTab):
         layout.addWidget(self.table_state)
 
     def _clear_table(self):
-        self.source_model.update_data([])
+        result = self._describe_rt_rows([])
+        self._last_rt_result = result
+        if result.signature != self._last_rt_signature:
+            self.source_model.update_data(result.rows)
+            self._last_rt_signature = result.signature
         self._touch_last_update()
         self._set_status("idle", "已清空记录", "点“开始监控”恢复轮询")
         if hasattr(self, "table_state"):
@@ -591,7 +673,6 @@ class RtMonitorTab(BaseStockTab):
         """实际执行刷新：这部分现在由于 Throttler 保护，每秒最多只执行一次"""
         rt_only = [r for r in results if not r.get('_is_special')]
         try:
-            self.source_model.update_rows_incremental(rt_only)
             latest_time = ""
             for row in rt_only:
                 row_time = str((row or {}).get("时间", "")).strip()
@@ -599,6 +680,11 @@ class RtMonitorTab(BaseStockTab):
                     latest_time = row_time
             if latest_time:
                 self._touch_last_update(latest_time)
+            result = self._describe_rt_rows(rt_only)
+            self._last_rt_result = result
+            if result.signature != self._last_rt_signature:
+                self.source_model.update_rows_incremental(result.rows)
+                self._last_rt_signature = result.signature
             self._refresh_rt_header_summary()
             if hasattr(self, "table_state"):
                 if rt_only:

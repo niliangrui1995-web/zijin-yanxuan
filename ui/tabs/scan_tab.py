@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
 )
 
 from app.services import VCPParams
+from app.services.tab_data_lineage_service import TabDataLineageService
 from app.services.ui_runtime_service import MarketCalendar, app_config, ui_signals, watchlist_vm
 from app.services.ui_runtime_service import domain_events as event_bus
 from core.logger import get_logger
@@ -47,6 +48,20 @@ class ScanTab(BaseStockTab):
         self._scan_mode = "full"
         self._scan_target_date = ""
         self._last_incremental_stats = None
+        self._scan_lineage_service = TabDataLineageService(
+            key="scan",
+            source="DataStore.scan_cache + local_scan_results",
+            provider="scan_runtime_service",
+            cache_refs=(
+                "data/vcp_hunter.db:kv_store.scan_cache",
+                "data/scan_cache.json.migrated",
+                "global_store.quotes",
+                "local_tdx_cache",
+            ),
+            provider_status_reader=self._read_provider_status,
+        )
+        self._last_scan_result = None
+        self._last_scan_signature = ""
 
         self._init_settings_widgets()
         self._init_ui()
@@ -138,6 +153,56 @@ class ScanTab(BaseStockTab):
         ]
         dates = [item for item in dates if item]
         return max(dates) if dates else ""
+
+    def _read_provider_status(self) -> dict:
+        provider = getattr(self, "data_provider", None)
+        request_stats = {}
+        runtime_stats = {}
+
+        request_getter = getattr(provider, "get_quote_request_stats", None)
+        if callable(request_getter):
+            try:
+                request_stats = request_getter() or {}
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                request_stats = {}
+
+        runtime_getter = getattr(provider, "get_realtime_runtime_stats", None)
+        if callable(runtime_getter):
+            try:
+                runtime_stats = runtime_getter() or {}
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                runtime_stats = {}
+
+        return {
+            "request_stats": request_stats,
+            "runtime_stats": runtime_stats,
+            "eastmoney_cooldown_until": float(getattr(provider, "_rt_eastmoney_cooldown_until", 0.0) or 0.0),
+            "eastmoney_last_error": str(getattr(provider, "_rt_eastmoney_last_error", "") or ""),
+        }
+
+    def _describe_scan_rows(self, rows: list[dict]):
+        warnings = []
+        if not rows:
+            warnings.append("scan_rows_empty")
+        return self._scan_lineage_service.describe(
+            rows,
+            trade_date=self._latest_scan_trigger_date(),
+            triggered_network=False,
+            warnings=warnings,
+            extra={
+                "scan_mode": self._scan_mode,
+                "scan_target_date": self._scan_target_date,
+            },
+        )
+
+    def get_data_lineage(self) -> dict:
+        result = self._last_scan_result
+        if result is None:
+            rows = list(getattr(self.source_model, "row_data", None) or [])
+            result = self._describe_scan_rows(rows)
+            self._last_scan_result = result
+            self._last_scan_signature = result.signature
+        return result.lineage.as_dict()
 
     @staticmethod
     def _normalize_scan_date(value) -> str:
@@ -559,9 +624,9 @@ class ScanTab(BaseStockTab):
         return True
 
     def refresh_data_after_f5(self) -> bool:
-        # F5 后只回读本地最新扫描快照，避免情报源页签在全局刷新尾部再排入扫描任务。
         self._load_scan_cache()
-        return False
+        self.refresh_table_from_latest_snapshot(current_model=self.source_model, async_local=True)
+        return self.run_auto_incremental_scan_after_f5()
 
     def open_scan_settings(self) -> bool:
         self._show_scan_settings()
@@ -667,7 +732,11 @@ class ScanTab(BaseStockTab):
     def _render_scan_table(self, results):
         if not results:
             self._current_results = []
-            self.source_model.update_data([])
+            result = self._describe_scan_rows([])
+            self._last_scan_result = result
+            if result.signature != self._last_scan_signature:
+                self.source_model.update_data(result.rows)
+                self._last_scan_signature = result.signature
             if hasattr(self, "table_state"):
                 self.table_state.show_empty("暂无扫描结果")
             self._refresh_scan_status("本次无结果")
@@ -737,8 +806,13 @@ class ScanTab(BaseStockTab):
 
                 formatted_list.append(formatted_row)
 
-            self.source_model.update_data(formatted_list)
+            result = self._describe_scan_rows(formatted_list)
+            self._last_scan_result = result
+            if result.signature != self._last_scan_signature:
+                self.source_model.update_data(result.rows)
+                self._last_scan_signature = result.signature
             self._apply_latest_quotes_from_store()
+            self._prime_visible_local_quote_snapshot(self.source_model)
             if hasattr(self, "table_state"):
                 self.table_state.show_table()
             self._refresh_scan_status()

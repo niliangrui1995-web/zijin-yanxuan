@@ -205,6 +205,14 @@ class BaseStockTab(QWidget):
     def refresh_table_from_latest_snapshot(self, current_model=None, *, async_local: bool = True):
         refresh_quotes_from_latest_snapshot(self, current_model=current_model, async_local=async_local)
 
+    def _prime_visible_local_quote_snapshot(self, current_model=None) -> bool:
+        if getattr(self, "_runtime_cleanup_done", False):
+            return False
+        if not self.isVisible():
+            return False
+        self.refresh_table_from_latest_snapshot(current_model=current_model, async_local=True)
+        return True
+
     def _apply_quote_store_snapshot(self, current_model=None):
         if current_model is not None:
             self._active_model_ref = current_model
@@ -799,6 +807,7 @@ class BaseStockTab(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         replay_deferred_quotes(self)
+        self._prime_visible_local_quote_snapshot()
 
 
 

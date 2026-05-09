@@ -228,6 +228,26 @@ class StartupOrchestrator:
     def deferred_data_load(self):
         """延迟恢复历史缓存、实时缓存和 RPS 缓存。"""
 
+        def _is_display_a_share_code(raw_code) -> bool:
+            code = str(raw_code or "").strip()
+            return len(code) == 6 and code.isdigit() and code.startswith(("60", "68", "00", "30"))
+
+        def _refresh_code_count_label_from_provider():
+            callback = getattr(self.mw, "_refresh_code_count_label_from_provider", None)
+            if callable(callback):
+                return callback()
+
+            provider = getattr(self.mw, "data_provider", None)
+            cache_data = getattr(provider, "cache_data", None) or {}
+            code_name_map = getattr(provider, "code2name", None) or {}
+            count = len(cache_data)
+            if count <= 0:
+                count = sum(1 for raw_code in code_name_map if _is_display_a_share_code(raw_code))
+            label = getattr(self.mw, "lbl_code_count", None)
+            if count > 0 and label is not None:
+                label.setText(f"标的池: {count} 只")
+            return count
+
         def _load_bg():
             started_at = time.perf_counter()
             if not self._alive():
@@ -239,6 +259,7 @@ class StartupOrchestrator:
                 cache_date = self.mw.data_provider.load_cache_from_disk()
             else:
                 log.info("[启动] 已跳过全量历史缓存预载，历史K线将在扫描/盘中监控/K线窗口按需加载")
+                self._safe_call_in_ui(_refresh_code_count_label_from_provider)
             if not self._alive():
                 log_process_snapshot(
                     "startup.deferred_load.cancelled",
@@ -252,6 +273,7 @@ class StartupOrchestrator:
                     lambda: getattr(self.mw, "lbl_code_count", None)
                     and self.mw.lbl_code_count.setText(f"标的池 {count}")
                 )
+                self._safe_call_in_ui(_refresh_code_count_label_from_provider)
                 self._safe_call_in_ui(
                     lambda: self.mw.lbl_status.setText(
                         f"已加载 {count} 只标的缓存(日线: {cache_date})"

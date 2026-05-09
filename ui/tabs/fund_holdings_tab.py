@@ -562,6 +562,7 @@ class FundHoldingsTab(BaseStockTab):
         self._restore_view_state()
         self._apply_filters()
         self._apply_latest_quotes_from_store()
+        self._prime_visible_local_quote_snapshot(self.model)
         self._update_status_summary()
 
         if not view_rows and not self._sync_active:
@@ -1062,9 +1063,8 @@ class FundHoldingsTab(BaseStockTab):
         return True
 
     def refresh_data_after_f5(self) -> bool:
-        if not self._sync_active:
-            self._reload_from_db_async()
-        return False
+        self.refresh_table_from_latest_snapshot(current_model=self.model, async_local=True)
+        return self.run_auto_sync_after_f5()
 
     def run_daily_auto_sync(self, auto_sync_date: str | None = None) -> bool:
         if self._sync_active:
@@ -1092,6 +1092,7 @@ class FundHoldingsTab(BaseStockTab):
         self._restore_view_state()
         self._apply_filters()
         self._apply_latest_quotes_from_store()
+        self._prime_visible_local_quote_snapshot(self.model)
         self._update_status_summary()
 
         if not view_rows and not self._sync_active:
@@ -1315,7 +1316,6 @@ class FundHoldingsTab(BaseStockTab):
         return f"{prefix}{number:,.2f}"
 
     def _apply_latest_quotes_from_store(self):
-        # 基金持仓只消费最新的全局/F5快照，避免打开页签时预热重型本地历史缓存。
         self._apply_quote_store_snapshot()
 
     def _on_cache_reload_completed(self):

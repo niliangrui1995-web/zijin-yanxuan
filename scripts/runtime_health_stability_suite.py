@@ -265,24 +265,45 @@ def _cycle_tabs(
         return {"status": "skipped", "reason": "workspace_unavailable", "visited": 0}
 
     visited = 0
-    for _ in range(max(0, int(cycles))):
+    timings: list[dict] = []
+    for cycle_index in range(max(0, int(cycles))):
         for key in tabs:
             index = _tab_index(workspace, key)
             if index < 0:
+                timings.append(
+                    {
+                        "cycle": cycle_index + 1,
+                        "key": key,
+                        "status": "missing",
+                        "elapsed_ms": 0.0,
+                    }
+                )
                 continue
+            started = time.perf_counter()
             tab_widget.setCurrentIndex(index)
-            _wait_until(app, lambda key=key: _loaded_tab(workspace, key) is not None, timeout_ms=2000)
+            loaded = _wait_until(app, lambda key=key: _loaded_tab(workspace, key) is not None, timeout_ms=2000)
             _settle(app, settle_ms)
+            elapsed_ms = round((time.perf_counter() - started) * 1000.0, 3)
+            timings.append(
+                {
+                    "cycle": cycle_index + 1,
+                    "key": key,
+                    "status": "ok" if loaded else "timeout",
+                    "elapsed_ms": elapsed_ms,
+                }
+            )
             visited += 1
-    return {"status": "ok", "cycles": int(cycles), "visited": visited}
+    return {"status": "ok", "cycles": int(cycles), "visited": visited, "tabs": timings}
 
 
 def _cycle_f5(window: MainWindowQT, app: QApplication, *, cycles: int, settle_ms: int) -> dict:
     workspace = getattr(window, "_workspace", None)
     completed = 0
+    timings: list[dict] = []
     for _ in range(max(0, int(cycles))):
+        started = time.perf_counter()
         finish_f5_reload(window, count=123, elapsed=1.23, event_bus=event_bus)
-        _wait_until(
+        settled = _wait_until(
             app,
             lambda: getattr(getattr(workspace, "_f5_refresh_scheduler", None), "is_running", lambda: False)()
             is False,
@@ -290,7 +311,15 @@ def _cycle_f5(window: MainWindowQT, app: QApplication, *, cycles: int, settle_ms
         )
         _settle(app, settle_ms)
         completed += 1
-    return {"status": "ok", "cycles": completed}
+        timings.append(
+            {
+                "cycle": completed,
+                "status": "ok" if settled else "timeout",
+                "elapsed_ms": round((time.perf_counter() - started) * 1000.0, 3),
+            }
+        )
+    total_elapsed_ms = round(sum(float(item.get("elapsed_ms") or 0.0) for item in timings), 3)
+    return {"status": "ok", "cycles": completed, "total_elapsed_ms": total_elapsed_ms, "cycle_timings": timings}
 
 
 def _cycle_quotes(window: MainWindowQT, app: QApplication, *, cycles: int, settle_ms: int) -> dict:
@@ -400,6 +429,55 @@ def _apply_mode_defaults(args: argparse.Namespace) -> argparse.Namespace:
     return args
 
 
+def _build_startup_lazy_budget(report: dict, samples: list[dict]) -> dict:
+    mode = report.get("mode") or {}
+    tab_cycle = report.get("tab_cycle") or {}
+    f5_cycle = report.get("f5_cycle") or {}
+    tab_timings = list(tab_cycle.get("tabs") or [])
+    first_tabs: dict[str, dict] = {}
+    for item in tab_timings:
+        key = str(item.get("key") or "").strip()
+        if key and key not in first_tabs:
+            first_tabs[key] = dict(item)
+
+    f5_timings = list(f5_cycle.get("cycle_timings") or [])
+    final_sample = samples[-1] if samples else {}
+    final_background = final_sample.get("background_tasks") or {}
+    final_process = final_sample.get("process") or {}
+    final_timers = final_sample.get("timers") or {}
+
+    return {
+        "startup": {
+            "main_window_ready_ms": report.get("startup_ready_ms"),
+            "startup_settle_ms": mode.get("startup_settle_ms"),
+            "startup_enabled": mode.get("startup_enabled"),
+            "background_prewarm": mode.get("background_prewarm"),
+        },
+        "tab_first_open": {
+            "tabs": list(first_tabs.values()),
+            "max_elapsed_ms": max(
+                [float(item.get("elapsed_ms") or 0.0) for item in first_tabs.values()],
+                default=0.0,
+            ),
+        },
+        "f5_quiet": {
+            "cycles": f5_timings,
+            "total_elapsed_ms": f5_cycle.get("total_elapsed_ms"),
+            "max_cycle_elapsed_ms": max(
+                [float(item.get("elapsed_ms") or 0.0) for item in f5_timings],
+                default=0.0,
+            ),
+            "cycle_settle_ms": mode.get("cycle_settle_ms"),
+        },
+        "background_settle": {
+            "final_background_task_count": final_background.get("count"),
+            "final_thread_count": final_process.get("thread_count"),
+            "final_active_timer_count": final_timers.get("active"),
+            "final_sample_label": final_sample.get("label", ""),
+        },
+    }
+
+
 def run_suite(args: argparse.Namespace) -> dict:
     args = _apply_mode_defaults(args)
     app = QApplication.instance() or QApplication(sys.argv)
@@ -421,6 +499,8 @@ def run_suite(args: argparse.Namespace) -> dict:
             "idle_seconds": int(args.idle_seconds),
             "idle_minutes": round(float(args.idle_seconds) / 60.0, 3),
             "sample_every_seconds": int(args.sample_every_seconds),
+            "startup_settle_ms": int(args.startup_settle_ms),
+            "cycle_settle_ms": int(args.cycle_settle_ms),
             "tab_cycles": int(args.tab_cycles),
             "f5_cycles": int(args.f5_cycles),
             "quote_cycles": int(args.quote_cycles),
@@ -439,6 +519,7 @@ def run_suite(args: argparse.Namespace) -> dict:
     )
     try:
         _settle(app, args.startup_settle_ms)
+        report["startup_ready_ms"] = round((time.perf_counter() - started) * 1000.0, 3)
         _sample(
             window,
             label="startup",
@@ -529,6 +610,7 @@ def run_suite(args: argparse.Namespace) -> dict:
     report["runtime_health_samples"] = samples
     report["trend"] = build_runtime_health_trend(samples)
     report["budget_trend"] = _build_budget_trend(samples, report.get("kline_cycle"))
+    report["startup_lazy_budget"] = _build_startup_lazy_budget(report, samples)
     failures = check_runtime_health_budget(report)
     report["budget"] = {
         "status": "fail" if failures else "ok",

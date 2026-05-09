@@ -121,17 +121,27 @@ def project_venv_python_candidates(project_root: str) -> list[str]:
     return candidates
 
 
-def resolve_project_python(project_root: str, executable: str | None = None) -> str:
+def resolve_project_python(
+    project_root: str,
+    executable: str | None = None,
+    *,
+    prefer_windowless: bool = False,
+) -> str:
     candidates = project_venv_python_candidates(project_root)
     if not candidates:
         return ""
 
     current_name = os.path.basename(os.path.abspath(executable or sys.executable)).lower()
     if _is_windows():
-        preferred_names = ("pythonw.exe", "python.exe") if current_name == "pythonw.exe" else (
-            "python.exe",
-            "pythonw.exe",
-        )
+        if prefer_windowless:
+            preferred_names = ("pythonw.exe", "python.exe")
+        elif current_name == "pythonw.exe":
+            preferred_names = ("pythonw.exe", "python.exe")
+        else:
+            preferred_names = (
+                "python.exe",
+                "pythonw.exe",
+            )
         for preferred_name in preferred_names:
             for candidate in candidates:
                 if os.path.basename(candidate).lower() == preferred_name:
@@ -145,6 +155,7 @@ def should_relaunch_into_project_venv(
     *,
     executable: str | None = None,
     env: dict[str, str] | None = None,
+    prefer_windowless: bool = False,
 ) -> bool:
     current_env = env or os.environ
     if current_env.get("VCP_SKIP_VENV_RELAUNCH") == "1":
@@ -158,7 +169,18 @@ def should_relaunch_into_project_venv(
 
     current_executable = os.path.abspath(executable or sys.executable)
     normalized_candidates = {os.path.normcase(path) for path in preferred_candidates}
-    return os.path.normcase(current_executable) not in normalized_candidates
+    if os.path.normcase(current_executable) not in normalized_candidates:
+        return True
+
+    if prefer_windowless and _is_windows():
+        target_python = resolve_project_python(
+            project_root,
+            executable=executable,
+            prefer_windowless=True,
+        )
+        return bool(target_python) and os.path.normcase(current_executable) != os.path.normcase(target_python)
+
+    return False
 
 
 def _append_bootstrap_log(project_root: str, message: str) -> None:
@@ -186,20 +208,26 @@ def relaunch_into_project_venv_if_needed(
     script_path: str | None = None,
     execve=os.execve,
 ) -> bool:
+    argv_list = list(argv or sys.argv or [])
+    raw_script = script_path or (argv_list[0] if argv_list else "")
+    if not raw_script:
+        return False
+
+    prefer_windowless = str(raw_script).lower().endswith(".pyw")
     if not should_relaunch_into_project_venv(
         project_root,
         executable=executable,
         env=env,
+        prefer_windowless=prefer_windowless,
     ):
         return False
 
-    target_python = resolve_project_python(project_root, executable=executable)
+    target_python = resolve_project_python(
+        project_root,
+        executable=executable,
+        prefer_windowless=prefer_windowless,
+    )
     if not target_python:
-        return False
-
-    argv_list = list(argv or sys.argv or [])
-    raw_script = script_path or (argv_list[0] if argv_list else "")
-    if not raw_script:
         return False
 
     current_executable = os.path.abspath(executable or sys.executable)

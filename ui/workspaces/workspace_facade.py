@@ -151,7 +151,7 @@ class WorkspaceFacade:
         self._stock_context_service.prime_watchlist_state()
 
     def run_post_online_refresh(self, task_manager) -> None:
-        for key in ("na_daily", "foreign_block"):
+        for key in ("na_daily",):
             self._call_bool(self._get_loaded_tab(key), "run_post_online_refresh")
 
         self.schedule_watchlist_special_quotes(task_manager)

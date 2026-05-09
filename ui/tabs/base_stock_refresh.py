@@ -364,6 +364,7 @@ def prime_local_quote_snapshot_async(owner, current_model=None) -> bool:
         if published:
             try:
                 owner_obj._apply_quote_snapshot(published)
+                _invoke_after_market_caps_updated(owner_obj)
             except RuntimeError:
                 pass
 

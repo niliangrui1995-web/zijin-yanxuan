@@ -774,7 +774,7 @@ def test_workspace_scheduled_f5_can_skip_cache_reload_driven_tabs():
     assert calls == ["watchlist"]
 
 
-def test_workspace_f5_snapshot_refresh_uses_sync_local_snapshot():
+def test_workspace_f5_snapshot_refresh_uses_async_local_snapshot():
     calls = []
 
     class SyncAwareTab:
@@ -786,7 +786,7 @@ def test_workspace_f5_snapshot_refresh_uses_sync_local_snapshot():
 
     ClassicWorkspace.refresh_all_tabs_after_f5(workspace)
 
-    assert calls == [False]
+    assert calls == [True]
 
 
 def test_workspace_f5_snapshot_refresh_prioritizes_current_tab():
@@ -816,6 +816,20 @@ def test_workspace_runs_fund_holdings_auto_sync_through_public_facade():
 
     assert ClassicWorkspace.run_fund_holdings_auto_sync_after_f5(workspace) is True
     assert calls == ["fund"]
+
+
+def test_workspace_post_online_refresh_skips_heavy_foreign_block_startup():
+    calls = []
+    workspace = _make_workspace(
+        tabs={
+            "na_daily": SimpleNamespace(run_post_online_refresh=lambda: calls.append("na_daily") or True),
+            "foreign_block": SimpleNamespace(run_post_online_refresh=lambda: calls.append("foreign") or True),
+        }
+    )
+
+    ClassicWorkspace.run_post_online_refresh(workspace, task_manager=None)
+
+    assert calls == ["na_daily"]
 
 
 def test_workspace_refreshes_information_sources_after_f5():

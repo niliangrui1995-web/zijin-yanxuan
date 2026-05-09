@@ -20,7 +20,7 @@ class TableCollectionCapability(Protocol):
 
 @runtime_checkable
 class SnapshotRefreshCapability(Protocol):
-    def refresh_table_from_latest_snapshot(self) -> None: ...
+    def refresh_table_from_latest_snapshot(self, current_model=None, *, async_local: bool = True) -> None: ...
 
 
 @runtime_checkable

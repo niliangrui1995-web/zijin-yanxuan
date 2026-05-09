@@ -1,8 +1,10 @@
 import datetime
+from types import SimpleNamespace
 
 import pandas as pd
 
 from ui.models.table_models import StockTableModel
+from ui.tabs import foreign_block_trade_tab as foreign_module
 from ui.tabs.foreign_block_trade_tab import (
     BlockTradeFilterProxyModel,
     ForeignBlockTradeTab,
@@ -38,7 +40,7 @@ def test_block_trade_tab_does_not_join_realtime_quote_universe():
     assert ForeignBlockTradeTab.get_realtime_quote_codes(None) == set()
 
 
-def test_block_trade_latest_quote_store_does_not_prime_local_snapshot(monkeypatch):
+def test_block_trade_latest_quote_store_applies_existing_snapshot_only(monkeypatch):
     from core.global_store import global_store
     from ui.tabs.base_stock_tab import BaseStockTab
 
@@ -60,11 +62,11 @@ def test_block_trade_latest_quote_store_does_not_prime_local_snapshot(monkeypatc
             raise AssertionError("local quote snapshot should not be primed")
 
     class DummyForeignTab:
+        def __init__(self):
+            self.model = model
+
         def _apply_quote_store_snapshot(self):
             applied.append("store")
-
-        def refresh_table_from_latest_snapshot(self):
-            raise AssertionError("local quote snapshot should not be primed")
 
     monkeypatch.setattr(
         global_store,
@@ -82,6 +84,87 @@ def test_block_trade_latest_quote_store_does_not_prime_local_snapshot(monkeypatc
     applied.clear()
     ForeignBlockTradeTab._apply_latest_quotes_from_store(DummyForeignTab())
     assert applied == ["store"]
+
+
+def test_block_trade_local_snapshot_fills_market_fields_without_realtime(monkeypatch, qt_application):
+    from core.global_store import global_store
+    from ui.tabs.base_stock_tab import BaseStockTab
+
+    code_key = "\u4ee3\u7801"
+    name_key = "\u540d\u79f0"
+    price_key = "\u73b0\u4ef7"
+    pct_key = "\u6da8\u5e45%"
+    cap_key = "\u5e02\u503c"
+
+    class OfflineProvider:
+        def __init__(self):
+            self.offline_calls = []
+
+        def _build_offline_quotes(self, codes):
+            self.offline_calls.append(list(codes))
+            return {"600000": {"close": 12.3, "last_close": 12.0}}
+
+        def fetch_realtime_quotes_batch(self, _codes):
+            raise AssertionError("information source tabs should not fetch realtime quotes")
+
+    class DummyForeignTab(BaseStockTab):
+        def __init__(self, provider):
+            super().__init__(data_provider=provider)
+            self.model = StockTableModel([code_key, name_key, price_key, pct_key, cap_key])
+
+    provider = OfflineProvider()
+    tab = DummyForeignTab(provider)
+    tab.model.update_data([
+        {code_key: "600000", name_key: "浦发银行", price_key: "--", pct_key: "--", cap_key: "--"}
+    ])
+    monkeypatch.setattr(
+        tab,
+        "_load_cached_finance_snapshot",
+        lambda codes: {"600000": {"zongguben": 2_000_000_000}} if codes == ["600000"] else {},
+        raising=False,
+    )
+
+    global_store.reset_quotes()
+    try:
+        tab.refresh_table_from_latest_snapshot(async_local=False)
+
+        row = tab.model.row_data[0]
+        assert provider.offline_calls == [["600000"]]
+        assert row[price_key] == "12.30"
+        assert round(float(row[pct_key]), 2) == 2.5
+        assert row[cap_key] == "246亿"
+    finally:
+        global_store.reset_quotes()
+        tab.deleteLater()
+
+
+def test_block_trade_load_cache_primes_local_snapshot(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        foreign_module,
+        "load_json_file",
+        lambda _path: {
+            "latest_trade_date": "20260508",
+            "saved_at": "2026-05-08T20:00:00",
+            "rows": [{"代码": "600000", "名称": "浦发银行"}],
+        },
+    )
+
+    class DummyTab:
+        model = object()
+        table_state = SimpleNamespace(show_table=lambda: calls.append("show_table"))
+        _apply_row_data = lambda self, rows, preserve_selection=False: calls.append(("rows", rows)) or (["20260508"], ["机构"])
+        _status_metric = staticmethod(lambda label, value, suffix="": f"{label}{value}{suffix}")
+        _set_fetch_status = lambda self, *args, **kwargs: calls.append(("status", args, kwargs))
+        _latest_trade_date_text = lambda self: "20260508"
+        _apply_latest_quotes_from_store = lambda self: calls.append("store")
+        _prime_visible_local_quote_snapshot = (
+            lambda self, current_model=None: calls.append(("local", current_model)) or True
+        )
+
+    ForeignBlockTradeTab._load_local_cache(DummyTab())
+
+    assert ("local", DummyTab.model) in calls
 
 
 def test_block_trade_search_only_matches_code_name_and_foreign_branch():
@@ -227,11 +310,16 @@ def test_extract_cache_filter_options_and_save_gate():
     assert not ForeignBlockTradeTab._should_save_cache(["20260420-20260420"], [])
 
 
-def test_foreign_block_trade_refresh_after_f5_reads_local_cache_only():
-    from types import SimpleNamespace
-
+def test_foreign_block_trade_refresh_after_f5_loads_cache_and_starts_online_refresh():
     calls = []
-    tab = SimpleNamespace(_load_local_cache=lambda: calls.append("local_cache"))
+    tab = SimpleNamespace(
+        _load_local_cache=lambda: calls.append("local_cache"),
+        model=object(),
+        refresh_table_from_latest_snapshot=(
+            lambda current_model=None, *, async_local=True: calls.append(("snapshot", current_model, async_local))
+        ),
+        run_post_online_refresh=lambda: calls.append("online") or True,
+    )
 
-    assert ForeignBlockTradeTab.refresh_data_after_f5(tab) is False
-    assert calls == ["local_cache"]
+    assert ForeignBlockTradeTab.refresh_data_after_f5(tab) is True
+    assert calls == ["local_cache", ("snapshot", tab.model, True), "online"]

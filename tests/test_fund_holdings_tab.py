@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from datetime import datetime
+from types import SimpleNamespace
 
 from PyQt6.QtTest import QSignalSpy
 
@@ -76,7 +77,7 @@ def _build_change_row(
     }
 
 
-def _setup_store(monkeypatch, rows, settings=None, concept_map=None):
+def _setup_store(monkeypatch, rows, settings=None, concept_map=None, *, patch_local_snapshot: bool = True):
     settings = settings or _FakeSettings()
     concept_map = concept_map or {}
     monkeypatch.setattr(
@@ -125,6 +126,19 @@ def _setup_store(monkeypatch, rows, settings=None, concept_map=None):
         lambda self, stock_code: concept_map.get(str(stock_code or "").strip(), "--"),
         raising=False,
     )
+    if patch_local_snapshot:
+        monkeypatch.setattr(
+            fund_holdings_module.FundHoldingsTab,
+            "_apply_quote_store_snapshot",
+            lambda self, current_model=None: None,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            fund_holdings_module.FundHoldingsTab,
+            "refresh_table_from_latest_snapshot",
+            lambda self, current_model=None, *, async_local=True: None,
+            raising=False,
+        )
     return settings
 
 
@@ -151,6 +165,7 @@ def test_fund_holdings_tab_reload_uses_f5_quote_cache_only(monkeypatch):
                 stock_name="平安银行",
             )
         ],
+        patch_local_snapshot=False,
     )
     from core.global_store import global_store
 
@@ -180,56 +195,72 @@ def test_fund_holdings_tab_reload_uses_f5_quote_cache_only(monkeypatch):
         tab.deleteLater()
 
 
-def test_fund_holdings_tab_reload_does_not_warm_local_snapshot_for_new_codes(monkeypatch):
-    _setup_store(
-        monkeypatch,
-        [
-            _build_change_row(
-                subject_code="QFII",
-                subject_name="QFII",
-                quarter_key="2025Q4",
-                compare_quarter_key="2025Q3",
-                change_type="增持",
-                stock_code="000001",
-                stock_name="平安银行",
-            )
-        ],
-    )
+def test_fund_holdings_tab_applies_latest_quotes_from_local_snapshot():
+    model = type("Model", (), {"row_data": []})()
+    calls = []
 
-    class _OfflineQuoteProvider:
-        def _build_offline_quotes(self, codes):
-            raise AssertionError("local quote snapshot should not be primed")
+    class DummyTab:
+        def __init__(self):
+            self.model = model
 
-    monkeypatch.setattr(
-        fund_holdings_module.FundHoldingsTab,
-        "_load_cached_finance_snapshot",
-        staticmethod(
-            lambda codes: {
-                "000001": {
-                    "zongguben": 1_000_000_000,
-                    "market_cap": 10_000_000_000,
-                    "price_base": 10.0,
-                }
-            }
-            if codes == ["000001"]
-            else {}
-        ),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        fund_holdings_module.task_manager,
-        "run_in_background",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("local quote task should not be scheduled")),
-        raising=False,
-    )
+        def _apply_quote_store_snapshot(self):
+            calls.append("store")
 
+    fund_holdings_module.FundHoldingsTab._apply_latest_quotes_from_store(DummyTab())
+
+    assert calls == ["store"]
+
+
+def test_fund_holdings_tab_local_snapshot_fills_market_fields_without_realtime(monkeypatch, qt_application):
     from core.global_store import global_store
+    from ui.models.table_models import StockTableModel
+    from ui.tabs.base_stock_tab import BaseStockTab
 
-    tab = fund_holdings_module.FundHoldingsTab(_OfflineQuoteProvider())
+    code_key = "\u4ee3\u7801"
+    name_key = "\u540d\u79f0"
+    price_key = "\u5e02\u4ef7"
+    pct_key = "\u6da8\u5e45%"
+    cap_key = "\u5e02\u503c"
+
+    class OfflineProvider:
+        def __init__(self):
+            self.offline_calls = []
+
+        def _build_offline_quotes(self, codes):
+            self.offline_calls.append(list(codes))
+            return {"000001": {"close": 10.5, "last_close": 10.0}}
+
+        def fetch_realtime_quotes_batch(self, _codes):
+            raise AssertionError("fund holdings should not fetch realtime quotes")
+
+    class DummyFundTab(BaseStockTab):
+        def __init__(self, provider):
+            super().__init__(data_provider=provider)
+            self.model = StockTableModel([code_key, name_key, price_key, pct_key, cap_key])
+
+    provider = OfflineProvider()
+    tab = DummyFundTab(provider)
+    tab.model.update_data([
+        {code_key: "000001", name_key: "平安银行", price_key: "--", pct_key: "--", cap_key: "--"}
+    ])
+    monkeypatch.setattr(
+        tab,
+        "_load_cached_finance_snapshot",
+        lambda codes: {"000001": {"zongguben": 1_000_000_000}} if codes == ["000001"] else {},
+        raising=False,
+    )
+
+    global_store.reset_quotes()
     try:
-        latest = global_store.get_latest_quotes()
-        assert "000001" not in latest
+        tab.refresh_table_from_latest_snapshot(async_local=False)
+
+        row = tab.model.row_data[0]
+        assert provider.offline_calls == [["000001"]]
+        assert row[price_key] == "10.50"
+        assert round(float(row[pct_key]), 2) == 5.0
+        assert row[cap_key] == "105亿"
     finally:
+        global_store.reset_quotes()
         tab.deleteLater()
 
 
@@ -549,13 +580,13 @@ def test_fund_holdings_tab_prime_background_load_starts_deferred_load(monkeypatc
         tab.deleteLater()
 
 
-def test_fund_holdings_tab_applies_latest_quotes_without_local_prime(monkeypatch):
+def test_fund_holdings_tab_applies_latest_quotes_without_realtime(monkeypatch):
     _setup_store(monkeypatch, [])
     calls = []
     monkeypatch.setattr(
         fund_holdings_module.FundHoldingsTab,
         "_apply_quote_store_snapshot",
-        lambda self, *args, **kwargs: calls.append("store"),
+        lambda self, current_model=None: calls.append("store"),
         raising=False,
     )
 
@@ -566,6 +597,43 @@ def test_fund_holdings_tab_applies_latest_quotes_without_local_prime(monkeypatch
         assert calls == ["store"]
     finally:
         tab.deleteLater()
+
+
+def test_fund_holdings_apply_view_payload_primes_local_snapshot():
+    calls = []
+
+    class Model:
+        row_data = []
+
+        def update_data(self, rows):
+            self.row_data = list(rows)
+            calls.append(("update", list(rows)))
+
+    class DummyTab:
+        model = Model()
+        proxy_model = SimpleNamespace(rowCount=lambda: 1)
+        table_state = SimpleNamespace(show_empty=lambda *_args: calls.append("empty"))
+        _refresh_filter_options = lambda self: calls.append("filters")
+        _restore_view_state = lambda self: calls.append("restore")
+        _apply_filters = lambda self: calls.append("apply_filters")
+        _apply_latest_quotes_from_store = lambda self: calls.append("store")
+        _prime_visible_local_quote_snapshot = (
+            lambda self, current_model=None: calls.append(("local", current_model)) or True
+        )
+        _update_status_summary = lambda self: calls.append("status")
+
+    tab = DummyTab()
+    fund_holdings_module.FundHoldingsTab._apply_view_payload(
+        tab,
+        {
+            "latest_quarter_map": {},
+            "latest_sync_map": {},
+            "concept_sector_cache": {},
+            "view_rows": [{"代码": "000001"}],
+        },
+    )
+
+    assert ("local", tab.model) in calls
 
 
 def test_fund_holdings_tab_update_button_runs_sync_all_directly(monkeypatch):
@@ -608,13 +676,13 @@ def test_fund_holdings_tab_runs_auto_sync_after_f5(monkeypatch):
         tab.deleteLater()
 
 
-def test_fund_holdings_refresh_after_f5_reloads_local_db_only(monkeypatch):
+def test_fund_holdings_refresh_after_f5_starts_auto_sync(monkeypatch):
     _setup_store(monkeypatch, [])
     calls = []
     monkeypatch.setattr(
         fund_holdings_module.FundHoldingsTab,
-        "_reload_from_db_async",
-        lambda self: calls.append("reload"),
+        "refresh_table_from_latest_snapshot",
+        lambda self, current_model=None, *, async_local=True: calls.append(("snapshot", current_model, async_local)),
         raising=False,
     )
     monkeypatch.setattr(
@@ -626,8 +694,11 @@ def test_fund_holdings_refresh_after_f5_reloads_local_db_only(monkeypatch):
 
     tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
     try:
-        assert tab.refresh_data_after_f5() is False
-        assert calls == ["reload"]
+        assert tab.refresh_data_after_f5() is True
+        assert calls == [
+            ("snapshot", tab.model, True),
+            ("sync", "F5后自动更新", fund_holdings_module.fund_holdings_sync_service.sync_latest_all),
+        ]
     finally:
         tab.deleteLater()
 

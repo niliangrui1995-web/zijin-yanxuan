@@ -180,6 +180,7 @@ class MainWindowQT(QMainWindow):
         self.lbl_code_count = self._status_bar_widget.lbl_code_count
         self.lbl_clock = self._status_bar_widget.lbl_clock
         self.lbl_version = self._status_bar_widget.lbl_version
+        self._refresh_code_count_label_from_provider()
         main_layout.addWidget(self._status_bar_widget, 0)
 
         # 9. 恢复之前的界面布局、列宽、表格排序
@@ -201,6 +202,26 @@ class MainWindowQT(QMainWindow):
             log.info("[UI] central quotes disabled for controlled window construction")
             return
         self._bootstrap.install_central_quotes()
+
+    def _refresh_code_count_label_from_provider(self) -> int:
+        provider = getattr(self, "data_provider", None)
+        cache_data = getattr(provider, "cache_data", None) or {}
+        code_name_map = getattr(provider, "code2name", None) or {}
+        count = len(cache_data)
+        if count <= 0:
+            count = sum(
+                1
+                for raw_code in code_name_map
+                if self._is_display_a_share_code(raw_code)
+            )
+        if count > 0 and hasattr(self, "lbl_code_count"):
+            self.lbl_code_count.setText(f"标的池: {count} 只")
+        return count
+
+    @staticmethod
+    def _is_display_a_share_code(raw_code) -> bool:
+        code = str(raw_code or "").strip()
+        return len(code) == 6 and code.isdigit() and code.startswith(("60", "68", "00", "30"))
 
     # 联网成功后的各 Tab 刷新逻辑由 _on_smart_startup_online_done 负责
 

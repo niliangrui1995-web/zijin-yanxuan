@@ -57,6 +57,7 @@ def test_main_window_builds_and_closes_with_controlled_background_services(monke
 
         assert window._workspace is not None
         assert window.tabs is not None
+        assert window.lbl_code_count.text() == "标的池: 1 只"
         assert window.startup_orchestrator._deferred_timer.isActive() is False
         assert window.startup_orchestrator._smart_timer.isActive() is False
         assert window.startup_orchestrator._auto_rt_timer.isActive() is False

@@ -157,34 +157,144 @@ def test_earnings_runtime_show_skips_non_interactive_load_reason():
     assert EarningsTab._should_start_runtime_on_show(DummyTab())
 
 
-def test_apply_latest_quotes_does_not_trigger_online_market_cap_backfill():
+def test_apply_latest_quotes_uses_local_snapshot_and_recalculates_pe():
     class DummyTab:
-        pass
+        model = StockTableModel(["代码", "名称", "现价", "涨幅%", "市值", "PE(TTM)"])
 
     tab = DummyTab()
+    tab.model.update_data([
+        {"代码": "000001", "名称": "平安银行", "现价": "--", "涨幅%": "--", "市值": "--", "PE(TTM)": "--", "_raw_profit": 250_000_000}
+    ])
     calls = []
 
-    tab._apply_quote_store_snapshot = lambda: calls.append("snapshot")
+    def _apply_store_snapshot():
+        calls.append("store")
+        tab.model.set_cell_value(0, "市值", "100亿", emit_signal=False)
+
+    tab._apply_quote_store_snapshot = _apply_store_snapshot
     tab.async_update_market_caps = lambda: calls.append("unexpected_market_caps")
-    tab._recalc_pe_ttm = lambda: calls.append("pe")
+    tab._recalc_pe_ttm = lambda: EarningsTab._recalc_pe_ttm(tab)
 
     EarningsTab._apply_latest_quotes_from_store(tab)
 
-    assert calls == ["snapshot", "pe"]
+    assert calls == ["store"]
+    assert tab.model.row_data[0]["PE(TTM)"] == "10.0"
 
 
-def test_earnings_refresh_after_f5_uses_local_snapshot_only():
+def test_earnings_local_snapshot_fills_market_fields_and_pe_without_realtime(monkeypatch, qt_application):
+    from core.global_store import global_store
+    from ui.tabs.base_stock_tab import BaseStockTab
+
+    code_key = "\u4ee3\u7801"
+    name_key = "\u540d\u79f0"
+    price_key = "\u73b0\u4ef7"
+    pct_key = "\u6da8\u5e45%"
+    cap_key = "\u5e02\u503c"
+
+    class OfflineProvider:
+        def __init__(self):
+            self.offline_calls = []
+
+        def _build_offline_quotes(self, codes):
+            self.offline_calls.append(list(codes))
+            return {"000001": {"close": 10.5, "last_close": 10.0}}
+
+        def fetch_realtime_quotes_batch(self, _codes):
+            raise AssertionError("earnings tab should not fetch realtime quotes")
+
+    class DummyEarningsTab(BaseStockTab):
+        def __init__(self, provider):
+            super().__init__(data_provider=provider)
+            self.model = StockTableModel([code_key, name_key, price_key, pct_key, cap_key, "PE(TTM)"])
+
+        def _recalc_pe_ttm(self):
+            return EarningsTab._recalc_pe_ttm(self)
+
+    provider = OfflineProvider()
+    tab = DummyEarningsTab(provider)
+    tab.model.update_data([
+        {
+            code_key: "000001",
+            name_key: "平安银行",
+            price_key: "--",
+            pct_key: "--",
+            cap_key: "--",
+            "PE(TTM)": "--",
+            "_raw_profit": 250_000_000,
+        }
+    ])
+    monkeypatch.setattr(
+        tab,
+        "_load_cached_finance_snapshot",
+        lambda codes: {"000001": {"zongguben": 1_000_000_000}} if codes == ["000001"] else {},
+        raising=False,
+    )
+
+    global_store.reset_quotes()
+    try:
+        tab.refresh_table_from_latest_snapshot(async_local=False)
+        EarningsTab._recalc_pe_ttm(tab)
+
+        row = tab.model.row_data[0]
+        assert provider.offline_calls == [["000001"]]
+        assert row[price_key] == "10.50"
+        assert round(float(row[pct_key]), 2) == 5.0
+        assert row[cap_key] == "105亿"
+        assert row["PE(TTM)"] == "10.5"
+    finally:
+        global_store.reset_quotes()
+        tab.deleteLater()
+
+
+def test_earnings_refresh_after_f5_triggers_routine_scan():
     class DummyTab:
-        pass
+        model = object()
 
     tab = DummyTab()
     calls = []
     tab._apply_latest_quotes_from_store = lambda: calls.append("quotes")
     tab._apply_display_trade_window = lambda force_refresh=False: calls.append(("window", force_refresh))
-    tab._ensure_scheduler = lambda: calls.append("unexpected_scheduler")
+    tab.refresh_table_from_latest_snapshot = (
+        lambda current_model=None, *, async_local=True: calls.append(("snapshot", current_model, async_local))
+    )
 
-    assert EarningsTab.refresh_data_after_f5(tab) is False
-    assert calls == ["quotes", ("window", True)]
+    class Scheduler:
+        def trigger_routine_scan(self, reason="manual"):
+            calls.append(("routine", reason))
+            return True
+
+    tab._ensure_scheduler = lambda: Scheduler()
+
+    assert EarningsTab.refresh_data_after_f5(tab) is True
+    assert calls == ["quotes", ("window", True), ("snapshot", tab.model, True), ("routine", "f5")]
+
+
+def test_earnings_display_window_primes_local_snapshot_after_cache_render():
+    calls = []
+
+    class Model:
+        def update_data(self, rows):
+            calls.append(("update", list(rows)))
+
+    class DummyTab:
+        row_data = [
+            {
+                "代码": "000001",
+                "名称": "平安银行",
+                "揭晓日": "2099-01-01",
+            }
+        ]
+        model = Model()
+        _prune_rows_to_recent_trade_window = staticmethod(EarningsTab._prune_rows_to_recent_trade_window)
+        _apply_latest_quotes_from_store = lambda self: calls.append("store")
+        _prime_visible_local_quote_snapshot = (
+            lambda self, current_model=None: calls.append(("local", current_model)) or True
+        )
+
+    tab = DummyTab()
+
+    assert EarningsTab._apply_display_trade_window(tab, force_refresh=True) is True
+    assert calls == [("update", tab.row_data), "store", ("local", tab.model)]
 
 
 def test_filter_out_st_dataframe_removes_st_rows():

@@ -212,6 +212,60 @@ def check_kline_budget(report: dict, thresholds: dict | None = None) -> list[dic
     return failures
 
 
+def check_kline_lifecycle_budget(report: dict, thresholds: dict | None = None) -> list[dict]:
+    budget = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
+    failures: list[dict] = []
+    if report.get("status") == "skipped":
+        return failures
+
+    summary = report.get("summary") or {}
+    if summary.get("status") != "ok":
+        _fail(
+            failures,
+            "kline_lifecycle.status",
+            "K-line lifecycle smoke did not finish cleanly",
+            actual=summary.get("status"),
+            failed_cycles=summary.get("failed_cycles") or [],
+        )
+
+    final_children = _as_int(summary.get("final_webengine_child_count"))
+    if final_children > budget["kline_max_final_webengine_children"]:
+        _fail(
+            failures,
+            "kline_lifecycle.webengine_children.final",
+            "QtWebEngine child processes remained after lifecycle smoke",
+            actual=final_children,
+            budget=budget["kline_max_final_webengine_children"],
+        )
+
+    for cycle in report.get("cycles") or []:
+        cycle_index = _as_int(cycle.get("cycle_index"))
+        cycle_summary = cycle.get("summary") or {}
+        if cycle_summary.get("status") != "ok":
+            _fail(
+                failures,
+                "kline_lifecycle.cycle.status",
+                "K-line lifecycle cycle failed",
+                cycle=cycle_index,
+                actual=cycle_summary.get("status"),
+            )
+        for sample in cycle.get("samples") or []:
+            label = str(sample.get("label") or "")
+            if label.endswith(":after_close"):
+                children = _snapshot_webengine_children(sample)
+                if children > budget["kline_max_final_webengine_children"]:
+                    _fail(
+                        failures,
+                        "kline_lifecycle.webengine_children.after_close",
+                        "QtWebEngine child process remained after lifecycle close sample",
+                        cycle=cycle_index,
+                        label=label,
+                        actual=children,
+                        budget=budget["kline_max_final_webengine_children"],
+                    )
+    return failures
+
+
 def check_soak_budget(report: dict, thresholds: dict | None = None) -> list[dict]:
     budget = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
     failures: list[dict] = []
@@ -709,6 +763,7 @@ def run_budget_checks(args: argparse.Namespace) -> dict:
         ("gbbq", args.gbbq_report, check_gbbq_budget),
         ("tab_cycle", args.tab_report, check_tab_cycle_budget),
         ("kline", args.kline_report, check_kline_budget),
+        ("kline_lifecycle", args.kline_lifecycle_report, check_kline_lifecycle_budget),
         ("soak", args.soak_report, check_soak_budget),
         ("round4", args.round4_report, check_round4_budget),
         ("round5", args.round5_report, check_round5_budget),
@@ -737,6 +792,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--gbbq-report", type=Path, default=None)
     parser.add_argument("--tab-report", type=Path, default=None)
     parser.add_argument("--kline-report", type=Path, default=None)
+    parser.add_argument("--kline-lifecycle-report", type=Path, default=None)
     parser.add_argument("--soak-report", type=Path, default=None)
     parser.add_argument("--round4-report", type=Path, default=None)
     parser.add_argument("--round5-report", type=Path, default=None)

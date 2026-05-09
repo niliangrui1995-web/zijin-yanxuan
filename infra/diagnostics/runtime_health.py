@@ -55,9 +55,14 @@ KEY_VIEW_LINEAGE = {
     "scan": {
         "view": "scan",
         "source": "DataStore.scan_cache",
+        "provider": "scan_runtime_service",
         "cache_refs": ["data/vcp_hunter.db:kv_store.scan_cache", "data/scan_cache.json.migrated"],
         "triggered_network": False,
         "fallback_or_degraded": False,
+        "updated_at": "",
+        "errors": [],
+        "warnings": [],
+        "provider_fault_tolerance": {},
     },
     "lhb": {
         "view": "lhb",
@@ -90,16 +95,26 @@ KEY_VIEW_LINEAGE = {
     "rt_monitor": {
         "view": "rt_monitor",
         "source": "data_provider.cache_data + global_store.quotes",
+        "provider": "rt_scan_worker",
         "cache_refs": ["data/Cache/vcp_rps_precomputed.json", "global_store.quotes"],
         "triggered_network": True,
         "fallback_or_degraded": None,
+        "updated_at": "",
+        "errors": [],
+        "warnings": [],
+        "provider_fault_tolerance": {},
     },
     "watchlist": {
         "view": "watchlist",
         "source": "watchlist_vm + global_store.quotes",
+        "provider": "watchlist_vm/global_store",
         "cache_refs": ["watchlist store", "global_store.quotes"],
         "triggered_network": True,
         "fallback_or_degraded": None,
+        "updated_at": "",
+        "errors": [],
+        "warnings": [],
+        "provider_fault_tolerance": {},
     },
 }
 

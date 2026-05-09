@@ -1,6 +1,7 @@
 from scripts.perf_budget_check import (
     check_gbbq_budget,
     check_kline_budget,
+    check_kline_lifecycle_budget,
     check_round4_budget,
     check_round5_budget,
     check_runtime_health_budget,
@@ -106,6 +107,61 @@ def test_perf_budget_rejects_kline_child_process_retention():
     assert {failure["check"] for failure in failures} >= {
         "kline.webengine_children.after_close",
         "kline.webengine_children.final",
+    }
+
+
+def test_perf_budget_accepts_kline_lifecycle_smoke_report():
+    report = {
+        "report_type": "kline_webengine_lifecycle_smoke",
+        "status": "ok",
+        "summary": {
+            "status": "ok",
+            "cycles": 2,
+            "final_webengine_child_count": 0,
+        },
+        "cycles": [
+            {
+                "cycle_index": 1,
+                "summary": {"status": "ok"},
+                "samples": [{"label": "cycle_1:after_close", "webengine_child_count": 0}],
+            },
+            {
+                "cycle_index": 2,
+                "summary": {"status": "ok"},
+                "samples": [{"label": "cycle_2:after_close", "webengine_child_count": 0}],
+            },
+        ],
+    }
+
+    assert check_kline_lifecycle_budget(report) == []
+
+
+def test_perf_budget_rejects_kline_lifecycle_child_retention():
+    report = {
+        "report_type": "kline_webengine_lifecycle_smoke",
+        "status": "fail",
+        "summary": {
+            "status": "fail",
+            "cycles": 1,
+            "failed_cycles": [1],
+            "final_webengine_child_count": 1,
+        },
+        "cycles": [
+            {
+                "cycle_index": 1,
+                "summary": {"status": "fail"},
+                "samples": [{"label": "cycle_1:after_close", "webengine_child_count": 1}],
+            },
+        ],
+    }
+
+    failures = check_kline_lifecycle_budget(report)
+
+    assert {failure["check"] for failure in failures} >= {
+        "kline_lifecycle.status",
+        "kline_lifecycle.webengine_children.final",
+        "kline_lifecycle.cycle.status",
+        "kline_lifecycle.webengine_children.after_close",
     }
 
 

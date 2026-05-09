@@ -8,6 +8,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QAbstractItemView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from app.services import RPS_CACHE_FILE
+from app.services.tab_data_lineage_service import TabDataLineageService
 from app.services.ui_runtime_service import MarketCalendar, task_registry, ui_signals, watchlist_vm
 from app.services.ui_runtime_service import background_job_runner as task_manager
 from app.services.ui_runtime_service import domain_events as event_bus
@@ -35,6 +36,20 @@ class WatchlistTab(BaseStockTab):
         self._closing = False
         self._startup_tasks_enabled = bool(startup_tasks_enabled)
         self._delayed_special_timer = None
+        self._watchlist_lineage_service = TabDataLineageService(
+            key="watchlist",
+            source="watchlist_vm + local_quote_snapshot",
+            provider="watchlist_vm/global_store",
+            cache_refs=(
+                "watchlist store",
+                "global_store.quotes",
+                "local_tdx_cache",
+                "data/Cache/finance_cache.json",
+            ),
+            provider_status_reader=self._read_provider_status,
+        )
+        self._last_watchlist_result = None
+        self._last_watchlist_signature = ""
         self._init_ui()
 
         # 订阅全局报价与大一统市值更新机制
@@ -166,6 +181,65 @@ class WatchlistTab(BaseStockTab):
         self._watchlist_last_update = text
         return True
 
+    def _read_provider_status(self) -> dict:
+        provider = getattr(self, "data_provider", None)
+        request_stats = {}
+        runtime_stats = {}
+
+        request_getter = getattr(provider, "get_quote_request_stats", None)
+        if callable(request_getter):
+            try:
+                request_stats = request_getter() or {}
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                request_stats = {}
+
+        runtime_getter = getattr(provider, "get_realtime_runtime_stats", None)
+        if callable(runtime_getter):
+            try:
+                runtime_stats = runtime_getter() or {}
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                runtime_stats = {}
+
+        return {
+            "request_stats": request_stats,
+            "runtime_stats": runtime_stats,
+            "eastmoney_cooldown_until": float(getattr(provider, "_rt_eastmoney_cooldown_until", 0.0) or 0.0),
+            "eastmoney_last_error": str(getattr(provider, "_rt_eastmoney_last_error", "") or ""),
+        }
+
+    def _latest_trade_date_text(self) -> str:
+        try:
+            trade_date = MarketCalendar.get_latest_trade_date("CN")
+            if trade_date is not None:
+                return trade_date.isoformat()
+            return MarketCalendar.today("CN").isoformat()
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return ""
+
+    def _describe_watchlist_rows(self, rows: list[dict]):
+        warnings = []
+        if not rows:
+            warnings.append("watchlist_rows_empty")
+        return self._watchlist_lineage_service.describe(
+            rows,
+            trade_date=self._latest_trade_date_text(),
+            triggered_network=self._can_fetch_live_quotes_now(),
+            warnings=warnings,
+            extra={
+                "startup_tasks_enabled": self._startup_tasks_enabled,
+                "last_table_update": self._watchlist_last_update,
+            },
+        )
+
+    def get_data_lineage(self) -> dict:
+        result = self._last_watchlist_result
+        if result is None:
+            rows = list(getattr(self.model, "row_data", None) or [])
+            result = self._describe_watchlist_rows(rows)
+            self._last_watchlist_result = result
+            self._last_watchlist_signature = result.signature
+        return result.lineage.as_dict()
+
     # ================================================================
     # 数据加载
     # ================================================================
@@ -262,7 +336,11 @@ class WatchlistTab(BaseStockTab):
             }
             final_list.append(row_data)
 
-        self.model.update_data(final_list)
+        result = self._describe_watchlist_rows(final_list)
+        self._last_watchlist_result = result
+        if result.signature != self._last_watchlist_signature:
+            self.model.update_data(result.rows)
+            self._last_watchlist_signature = result.signature
         self._refresh_quotes_from_store_or_live(
             quote_task_id=task_registry.quote_refresh("watchlist").task_id
         )

@@ -70,6 +70,7 @@ class _DummyMainWindow(QObject):
         self.table_rt = object()
         self.lbl_status = _DummyLabel()
         self.lbl_code_count = _DummyLabel()
+        self.titlebar_sync_states = []
         self.tab_watchlist = None
         self._workspace = None
         self.network_updates = []
@@ -77,6 +78,9 @@ class _DummyMainWindow(QObject):
 
     def _call_in_ui(self, callback):
         callback()
+
+    def _set_titlebar_sync_state(self, *args):
+        self.titlebar_sync_states.append(args)
 
     def _update_network_ui(self, online):
         self.network_updates.append(bool(online))
@@ -187,7 +191,7 @@ def test_startup_orchestrator_deferred_load_records_process_snapshots(monkeypatc
     assert "startup.deferred_load.end" in labels
 
 
-def test_startup_orchestrator_deferred_load_skips_history_cache_by_default(monkeypatch):
+def test_startup_orchestrator_deferred_load_loads_history_cache_by_default(monkeypatch):
     mw = _DummyMainWindow()
     calls = []
     mw.data_provider.load_cache_from_disk = lambda: calls.append("load") or "20260508"
@@ -200,7 +204,7 @@ def test_startup_orchestrator_deferred_load_skips_history_cache_by_default(monke
 
     orchestrator.deferred_data_load()
 
-    assert calls == []
+    assert calls == ["load"]
 
 
 def test_startup_orchestrator_deferred_load_stops_after_window_close(monkeypatch):
@@ -238,6 +242,30 @@ def test_startup_orchestrator_deferred_load_stops_after_window_close(monkeypatch
     assert calls == {"rt_cache": 0, "rps": 0}
     assert "startup.deferred_load.cancelled" in labels
     assert "startup.deferred_load.end" not in labels
+
+
+def test_startup_orchestrator_code_count_uses_lightweight_code_map_when_history_skipped(monkeypatch):
+    mw = _DummyMainWindow()
+    mw.data_provider.code2name = {
+        "000001": "平安银行",
+        "600000": "浦发银行",
+        "300750": "宁德时代",
+        "00700": "腾讯控股",
+    }
+    orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
+
+    monkeypatch.setattr(
+        "core.startup_orchestrator.os.path.exists",
+        lambda path: not str(path).endswith("asian_kline_fetcher.py"),
+    )
+    monkeypatch.setattr(
+        "core.startup_orchestrator.service_toggle_registry.is_enabled",
+        lambda key, *_args, **_kwargs: False if key == "startup_history_cache_load" else True,
+    )
+
+    orchestrator.deferred_data_load()
+
+    assert mw.lbl_code_count.value == "标的池: 3 只"
 
 
 def test_startup_orchestrator_asian_sync_logs_succinct_failure_message(monkeypatch):

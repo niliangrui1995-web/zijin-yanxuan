@@ -134,40 +134,13 @@ def evaluate_lifecycle(samples: list[dict[str, Any]], *, opened: bool, blocked: 
     }
 
 
-def run_smoke(args: argparse.Namespace) -> dict:
-    app = QApplication.instance() or QApplication(sys.argv)
-    qt_platform = os.environ.get("QT_QPA_PLATFORM", "")
-    report: dict[str, Any] = {
-        "schema_version": 1,
-        "report_type": "kline_webengine_lifecycle_smoke",
-        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "mode": {
-            "native_qt": bool(args.native_qt),
-            "qt_platform": qt_platform,
-            "allow_offscreen": bool(args.allow_offscreen),
-            "code": str(args.code or ""),
-            "name": str(args.name or ""),
-            "open_timeout_ms": int(args.open_timeout_ms),
-            "close_timeout_ms": int(args.close_timeout_ms),
-        },
+def _run_one_cycle(app: QApplication, window: MainWindowQT, args: argparse.Namespace, cycle_index: int) -> dict:
+    cycle_label = f"cycle_{cycle_index + 1}"
+    cycle: dict[str, Any] = {
+        "cycle_index": cycle_index + 1,
         "samples": [],
         "load_status": {},
     }
-    if qt_platform.lower() == "offscreen" and not args.allow_offscreen:
-        report["status"] = "skipped"
-        report["skip_reason"] = "QtWebEngine lifecycle smoke requires native Qt or --allow-offscreen."
-        report["manual_command"] = (
-            ".\\.venv\\Scripts\\python.exe scripts\\kline_webengine_lifecycle_smoke.py "
-            "--native-qt --output tmp\\kline_webengine_lifecycle_smoke.json"
-        )
-        return report
-
-    window = MainWindowQT(
-        startup_enabled=False,
-        background_prewarm=False,
-        kline_prewarm_enabled=False,
-        central_quotes_enabled=False,
-    )
     opened = False
     blocked = False
     load_events: list[bool] = []
@@ -176,8 +149,7 @@ def run_smoke(args: argparse.Namespace) -> dict:
     load_callback = None
     chart = None
     try:
-        _process_events(app, rounds=10, sleep_ms=30)
-        report["samples"].append(_sample("baseline", window))
+        cycle["samples"].append(_sample(f"{cycle_label}:before_open", window))
 
         from ui.components.kline_window_manager import kline_manager
 
@@ -201,7 +173,7 @@ def run_smoke(args: argparse.Namespace) -> dict:
             )
         except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
             chart = None
-            report["open_error"] = {
+            cycle["open_error"] = {
                 "type": exc.__class__.__name__,
                 "message": str(exc),
             }
@@ -219,14 +191,14 @@ def run_smoke(args: argparse.Namespace) -> dict:
                     load_signal.connect(load_callback)
                 except (AttributeError, RuntimeError, TypeError):
                     pass
-        report["samples"].append(_sample("after_open_request", window))
-        baseline_count = _webengine_count(report["samples"][0])
+        cycle["samples"].append(_sample(f"{cycle_label}:after_open", window))
+        baseline_count = _webengine_count(cycle["samples"][0])
         if chart is not None:
             _wait_for_sample(
                 app,
                 window,
-                label="wait_after_open",
-                samples=report["samples"],
+                label=f"{cycle_label}:wait_after_open",
+                samples=cycle["samples"],
                 timeout_ms=args.open_timeout_ms,
                 predicate=lambda sample: _webengine_count(sample) > baseline_count or bool(load_events),
             )
@@ -234,9 +206,9 @@ def run_smoke(args: argparse.Namespace) -> dict:
         if chart is not None:
             try:
                 status_label = getattr(chart, "info_lbl", None)
-                report["load_status"]["status_text"] = str(status_label.text() or "") if status_label else ""
+                cycle["load_status"]["status_text"] = str(status_label.text() or "") if status_label else ""
             except (AttributeError, RuntimeError, TypeError, ValueError):
-                report["load_status"]["status_text"] = ""
+                cycle["load_status"]["status_text"] = ""
 
         load_events_before_close = list(load_events)
         if load_signal is not None and load_callback is not None:
@@ -246,21 +218,103 @@ def run_smoke(args: argparse.Namespace) -> dict:
                 pass
 
         closed = _close_kline_charts(app)
-        report["closed"] = closed
+        cycle["closed"] = closed
         gc.collect()
         _wait_for_sample(
             app,
             window,
-            label="wait_after_close",
-            samples=report["samples"],
+            label=f"{cycle_label}:wait_after_close",
+            samples=cycle["samples"],
             timeout_ms=args.close_timeout_ms,
             predicate=lambda sample: _webengine_count(sample) <= baseline_count,
         )
-        report["samples"].append(_sample("final", window))
+        cycle["samples"].append(_sample(f"{cycle_label}:after_close", window))
     finally:
         try:
             if chart is not None:
                 chart.close()
+            gc.collect()
+            _process_events(app, rounds=5, sleep_ms=20)
+        except RuntimeError:
+            pass
+
+    cycle["load_status"]["events_before_close"] = list(load_events_before_close)
+    cycle["load_status"]["events"] = list(load_events)
+    cycle["summary"] = evaluate_lifecycle(
+        cycle["samples"],
+        opened=opened,
+        blocked=blocked,
+        load_events=load_events_before_close,
+    )
+    cycle["status"] = cycle["summary"]["status"]
+    return cycle
+
+
+def _summarize_cycles(cycles: list[dict[str, Any]], samples: list[dict[str, Any]]) -> dict[str, Any]:
+    failed_cycles = [
+        int(cycle.get("cycle_index") or 0)
+        for cycle in cycles
+        if ((cycle.get("summary") or {}).get("status") != "ok")
+    ]
+    final_count = _webengine_count(samples[-1]) if samples else 0
+    max_count = max((_webengine_count(sample) for sample in samples), default=0)
+    return {
+        "status": "fail" if failed_cycles else "ok",
+        "cycles": len(cycles),
+        "ok_cycles": len(cycles) - len(failed_cycles),
+        "failed_cycles": failed_cycles,
+        "max_webengine_child_count": max_count,
+        "final_webengine_child_count": final_count,
+        "webengine_child_reclaimed": final_count <= (_webengine_count(samples[0]) if samples else 0),
+    }
+
+
+def run_smoke(args: argparse.Namespace) -> dict:
+    app = QApplication.instance() or QApplication(sys.argv)
+    qt_platform = os.environ.get("QT_QPA_PLATFORM", "")
+    cycles = max(1, int(args.cycles or 1))
+    report: dict[str, Any] = {
+        "schema_version": 1,
+        "report_type": "kline_webengine_lifecycle_smoke",
+        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "mode": {
+            "native_qt": bool(args.native_qt),
+            "qt_platform": qt_platform,
+            "allow_offscreen": bool(args.allow_offscreen),
+            "code": str(args.code or ""),
+            "name": str(args.name or ""),
+            "open_timeout_ms": int(args.open_timeout_ms),
+            "close_timeout_ms": int(args.close_timeout_ms),
+            "cycles": cycles,
+        },
+        "samples": [],
+        "cycles": [],
+        "load_status": {},
+    }
+    if qt_platform.lower() == "offscreen" and not args.allow_offscreen:
+        report["status"] = "skipped"
+        report["skip_reason"] = "QtWebEngine lifecycle smoke requires native Qt or --allow-offscreen."
+        report["manual_command"] = (
+            ".\\.venv\\Scripts\\python.exe scripts\\kline_webengine_lifecycle_smoke.py "
+            f"--native-qt --cycles {cycles} --output tmp\\kline_webengine_lifecycle_smoke.json"
+        )
+        return report
+
+    window = MainWindowQT(
+        startup_enabled=False,
+        background_prewarm=False,
+        kline_prewarm_enabled=False,
+        central_quotes_enabled=False,
+    )
+    try:
+        _process_events(app, rounds=10, sleep_ms=30)
+        for cycle_index in range(cycles):
+            cycle = _run_one_cycle(app, window, args, cycle_index)
+            report["cycles"].append(cycle)
+            report["samples"].extend(cycle.get("samples") or [])
+    finally:
+        try:
+            _close_kline_charts(app)
             window.close()
             window.deleteLater()
             gc.collect()
@@ -268,14 +322,12 @@ def run_smoke(args: argparse.Namespace) -> dict:
         except RuntimeError:
             pass
 
-    report["load_status"]["events_before_close"] = list(load_events_before_close)
-    report["load_status"]["events"] = list(load_events)
-    report["summary"] = evaluate_lifecycle(
-        report["samples"],
-        opened=opened,
-        blocked=blocked,
-        load_events=load_events_before_close,
-    )
+    report["load_status"]["events"] = [
+        event
+        for cycle in report["cycles"]
+        for event in ((cycle.get("load_status") or {}).get("events") or [])
+    ]
+    report["summary"] = _summarize_cycles(report["cycles"], report["samples"])
     report["status"] = report["summary"]["status"]
     return report
 
@@ -288,6 +340,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--name", default="\u5e73\u5b89\u94f6\u884c")
     parser.add_argument("--open-timeout-ms", type=int, default=8000)
     parser.add_argument("--close-timeout-ms", type=int, default=8000)
+    parser.add_argument("--cycles", type=int, default=1)
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--fail-on-error", action="store_true")
     return parser.parse_args(argv)

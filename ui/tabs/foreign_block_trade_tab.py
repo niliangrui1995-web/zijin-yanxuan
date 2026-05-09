@@ -483,6 +483,7 @@ class ForeignBlockTradeTab(BaseStockTab):
                 if hasattr(self, "table_state"):
                     self.table_state.show_table()
                 self._apply_latest_quotes_from_store()
+                self._prime_visible_local_quote_snapshot(self.model)
             else:
                 self._set_fetch_status(
                     "本地缓存为空",
@@ -776,7 +777,8 @@ class ForeignBlockTradeTab(BaseStockTab):
 
     def refresh_data_after_f5(self) -> bool:
         self._load_local_cache()
-        return False
+        self.refresh_table_from_latest_snapshot(current_model=self.model, async_local=True)
+        return self.run_post_online_refresh()
 
     @staticmethod
     def get_foreign_keywords() -> list[str]:
@@ -940,6 +942,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         event_bus.sig_block_trade_updated.emit()
 
         self._apply_latest_quotes_from_store()
+        self._prime_visible_local_quote_snapshot(self.model)
 
     def _on_data_fetch_failed(self, error_message: str):
         self._is_loading = False

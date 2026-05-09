@@ -1,5 +1,10 @@
 from scripts.perf_round5_probe import summarize_background_tasks, summarize_quote_calls
-from scripts.runtime_health_stability_suite import _apply_mode_defaults, _build_budget_trend, _parse_args
+from scripts.runtime_health_stability_suite import (
+    _apply_mode_defaults,
+    _build_budget_trend,
+    _build_startup_lazy_budget,
+    _parse_args,
+)
 from scripts.soak_leak_probe import _trend
 
 
@@ -171,3 +176,44 @@ def test_runtime_health_suite_budget_trend_uses_post_workload_tail():
     assert trend["event_receivers"]["net_delta"] == 0
     assert trend["event_receivers"]["basis"] == "tail_runtime_health_samples"
     assert trend["active_timers"]["net_delta"] == 0
+
+
+def test_runtime_health_suite_startup_lazy_budget_summarizes_key_timings():
+    report = {
+        "startup_ready_ms": 420.0,
+        "mode": {
+            "startup_settle_ms": 300,
+            "startup_enabled": False,
+            "background_prewarm": False,
+            "cycle_settle_ms": 120,
+        },
+        "tab_cycle": {
+            "tabs": [
+                {"key": "scan", "status": "ok", "elapsed_ms": 150.0},
+                {"key": "watchlist", "status": "ok", "elapsed_ms": 80.0},
+                {"key": "scan", "status": "ok", "elapsed_ms": 40.0},
+            ]
+        },
+        "f5_cycle": {
+            "total_elapsed_ms": 220.0,
+            "cycle_timings": [
+                {"cycle": 1, "status": "ok", "elapsed_ms": 220.0},
+            ],
+        },
+    }
+    samples = [
+        {
+            "label": "final",
+            "background_tasks": {"count": 0},
+            "process": {"thread_count": 21},
+            "timers": {"active": 6},
+        }
+    ]
+
+    budget = _build_startup_lazy_budget(report, samples)
+
+    assert budget["startup"]["main_window_ready_ms"] == 420.0
+    assert budget["tab_first_open"]["max_elapsed_ms"] == 150.0
+    assert [item["key"] for item in budget["tab_first_open"]["tabs"]] == ["scan", "watchlist"]
+    assert budget["f5_quiet"]["max_cycle_elapsed_ms"] == 220.0
+    assert budget["background_settle"]["final_background_task_count"] == 0

@@ -210,6 +210,46 @@ def test_watchlist_render_keeps_live_refresh_during_quote_window(monkeypatch):
         tab.deleteLater()
 
 
+def test_watchlist_lineage_and_signature_skip_unchanged_render(monkeypatch):
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
+    monkeypatch.setattr(
+        watchlist_module.WatchlistTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+    monkeypatch.setattr(watchlist_module.MarketCalendar, "is_quote_refresh_time", lambda: False)
+
+    tab = watchlist_module.WatchlistTab(_DummyProvider(), startup_tasks_enabled=False)
+    update_calls = []
+    original_update_data = tab.model.update_data
+    monkeypatch.setattr(tab, "_refresh_quotes_from_store_or_live", lambda **_kwargs: None)
+    monkeypatch.setattr(tab, "_request_vcp_calc", lambda *args, **kwargs: None)
+
+    def _spy_update_data(rows):
+        update_calls.append(len(rows))
+        original_update_data(rows)
+
+    monkeypatch.setattr(tab.model, "update_data", _spy_update_data)
+
+    try:
+        data = {"600519": {"名称": "贵州茅台", "现价": "1500.00"}}
+        tab._render_table(["600519"], data, {})
+        tab._render_table(["600519"], data, {})
+        lineage = tab.get_data_lineage()
+
+        assert update_calls == [1]
+        assert lineage["key"] == "watchlist"
+        assert lineage["provider"] == "watchlist_vm/global_store"
+        assert lineage["triggered_network"] is False
+        assert lineage["row_count"] == 1
+        assert lineage["last_table_update"]
+        assert "provider_fault_tolerance" in lineage
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
 def test_watchlist_shutdown_stops_timers_and_disconnects_runtime_signals(monkeypatch):
     monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
     monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)

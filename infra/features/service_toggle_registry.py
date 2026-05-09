@@ -103,6 +103,6 @@ service_toggle_registry.register(
 )
 service_toggle_registry.register(
     "startup_history_cache_load",
-    enabled_by_default=False,
+    enabled_by_default=True,
     description="Preload the full local market-history cache during startup instead of loading it on demand.",
 )
