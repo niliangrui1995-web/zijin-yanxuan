@@ -71,13 +71,20 @@ class WorkspaceFacade:
     def iter_refreshable_tabs(self) -> list:
         return self._workspace_table_service.iter_refreshable_tabs()
 
-    def refresh_all_tabs_after_f5(self) -> None:
-        self._workspace_table_service.refresh_all_tabs_after_f5()
+    def refresh_all_tabs_after_f5(self, *, skip_cache_reload_tabs: bool = False) -> None:
+        self._workspace_table_service.refresh_all_tabs_after_f5(skip_cache_reload_tabs=skip_cache_reload_tabs)
 
-    def refresh_all_tabs_after_f5_scheduled(self, *, on_finished=None, interval_ms: int = 0) -> bool:
+    def refresh_all_tabs_after_f5_scheduled(
+        self,
+        *,
+        on_finished=None,
+        interval_ms: int = 0,
+        skip_cache_reload_tabs: bool = False,
+    ) -> bool:
         return self._workspace_table_service.refresh_all_tabs_after_f5_scheduled(
             on_finished=on_finished,
             interval_ms=interval_ms,
+            skip_cache_reload_tabs=skip_cache_reload_tabs,
         )
 
     def refresh_information_sources_after_f5(self) -> dict[str, bool]:

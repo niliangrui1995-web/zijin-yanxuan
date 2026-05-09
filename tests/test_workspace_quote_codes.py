@@ -738,6 +738,57 @@ def test_workspace_schedules_refreshes_all_tabs_after_f5():
     assert getattr(workspace, "_f5_refresh_scheduler", None) is None
 
 
+def test_workspace_scheduled_f5_can_skip_cache_reload_driven_tabs():
+    app = QApplication.instance() or QApplication([])
+    calls = []
+
+    class CacheSignalTab:
+        def refresh_table_from_latest_snapshot(self):
+            calls.append("cache_signal")
+
+        def _on_cache_reload_completed(self):
+            pass
+
+    tabs = {
+        "watchlist": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("watchlist")),
+        "scan": CacheSignalTab(),
+        "stock_candidates": SimpleNamespace(
+            refresh_table_from_latest_snapshot=lambda: calls.append("stock_candidates"),
+            _schedule_context_refresh=lambda *_args: None,
+        ),
+    }
+    workspace = _make_workspace(tabs=tabs)
+    workspace.iter_refreshable_tabs = lambda: ClassicWorkspace.iter_refreshable_tabs(workspace)
+
+    assert ClassicWorkspace.refresh_all_tabs_after_f5_scheduled(
+        workspace,
+        interval_ms=0,
+        skip_cache_reload_tabs=True,
+    ) is True
+
+    for _ in range(10):
+        app.processEvents()
+        if getattr(workspace, "_f5_refresh_scheduler", None) is None:
+            break
+
+    assert calls == ["watchlist"]
+
+
+def test_workspace_f5_snapshot_refresh_uses_sync_local_snapshot():
+    calls = []
+
+    class SyncAwareTab:
+        def refresh_table_from_latest_snapshot(self, *, async_local=True):
+            calls.append(async_local)
+
+    workspace = _make_workspace(tabs={"asian_market": SyncAwareTab()})
+    workspace.iter_refreshable_tabs = lambda: ClassicWorkspace.iter_refreshable_tabs(workspace)
+
+    ClassicWorkspace.refresh_all_tabs_after_f5(workspace)
+
+    assert calls == [False]
+
+
 def test_workspace_f5_snapshot_refresh_prioritizes_current_tab():
     calls = []
     current_tab = SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("lhb"))

@@ -1,6 +1,7 @@
 from scripts.perf_budget_check import (
     check_gbbq_budget,
     check_kline_budget,
+    check_round4_budget,
     check_soak_budget,
     check_tab_cycle_budget,
 )
@@ -122,4 +123,76 @@ def test_perf_budget_rejects_soak_open_peak_basis():
         "soak.growth_basis",
         "soak.private.status",
         "soak.private.tail_range",
+    }
+
+
+def test_round4_budget_accepts_expected_report():
+    report = {
+        "startup": {"main_window_ready_ms": 1200.0},
+        "tab_first_open": {
+            "tabs": [
+                {"key": "watchlist", "status": "ok", "elapsed_ms": 20.0},
+                {"key": "fund_holdings", "status": "ok", "elapsed_ms": 850.0},
+            ]
+        },
+        "f5_refresh": {
+            "total_elapsed_ms": 900.0,
+            "active_background_tasks_after": 0,
+            "new_active_background_tasks_after": 0,
+            "tab_timings": [{"label": "watchlist", "elapsed_ms": 12.0}],
+            "quote_requests": {
+                "duplicate_across_batches": 0,
+                "duplicate_in_batch": 0,
+                "duplicates_by_code": {},
+            },
+        },
+        "stability": {
+            "trend": {
+                "active_tasks": {"last": 0},
+                "active_timers": {"net_delta": 0},
+                "threads": {"net_delta": 1},
+            }
+        },
+    }
+
+    assert check_round4_budget(report) == []
+
+
+def test_round4_budget_rejects_duplicates_and_growth():
+    report = {
+        "startup": {"main_window_ready_ms": 7000.0},
+        "tab_first_open": {"tabs": [{"key": "scan", "status": "timeout", "elapsed_ms": 7000.0}]},
+        "f5_refresh": {
+            "total_elapsed_ms": 7000.0,
+            "active_background_tasks_after": 1,
+            "new_active_background_tasks_after": 1,
+            "tab_timings": [{"label": "scan", "elapsed_ms": 3000.0}],
+            "quote_requests": {
+                "duplicate_across_batches": 2,
+                "duplicate_in_batch": 1,
+                "duplicates_by_code": {"000001": 3},
+            },
+        },
+        "stability": {
+            "trend": {
+                "active_tasks": {"last": 2},
+                "active_timers": {"net_delta": 3},
+                "threads": {"net_delta": 20},
+            }
+        },
+    }
+
+    failures = check_round4_budget(report)
+
+    assert {failure["check"] for failure in failures} >= {
+        "round4.startup.main_window_ready",
+        "round4.tabs.status",
+        "round4.tabs.elapsed",
+        "round4.f5.total_elapsed",
+        "round4.f5.tab_elapsed",
+        "round4.f5.quote_duplicates",
+        "round4.f5.new_active_tasks_after",
+        "round4.stability.active_tasks_final",
+        "round4.stability.active_timer_growth",
+        "round4.stability.thread_growth",
     }

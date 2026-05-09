@@ -49,7 +49,17 @@ class WorkspaceTableService:
                 return None
         return None
 
-    def _ordered_refreshable_tabs(self) -> list:
+    @staticmethod
+    def _uses_cache_reload_refresh(tab) -> bool:
+        return any(
+            callable(getattr(tab, method_name, None))
+            for method_name in (
+                "_on_cache_reload_completed",
+                "_schedule_context_refresh",
+            )
+        )
+
+    def _ordered_refreshable_tabs(self, *, skip_cache_reload_tabs: bool = False) -> list:
         current_widget = self._current_tab_widget()
         tabs = self.iter_refreshable_tabs()
         return [
@@ -62,12 +72,20 @@ class WorkspaceTableService:
                     item[0],
                 ),
             )
+            if not skip_cache_reload_tabs or not self._uses_cache_reload_refresh(tab)
         ]
 
-    def refresh_all_tabs_after_f5(self) -> None:
-        for tab in self._ordered_refreshable_tabs():
+    @staticmethod
+    def _refresh_latest_snapshot_for_f5(tab) -> None:
+        try:
+            tab.refresh_table_from_latest_snapshot(async_local=False)
+        except TypeError:
+            tab.refresh_table_from_latest_snapshot()
+
+    def refresh_all_tabs_after_f5(self, *, skip_cache_reload_tabs: bool = False) -> None:
+        for tab in self._ordered_refreshable_tabs(skip_cache_reload_tabs=skip_cache_reload_tabs):
             try:
-                tab.refresh_table_from_latest_snapshot()
+                self._refresh_latest_snapshot_for_f5(tab)
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 log.warning(f"[F5] {tab.__class__.__name__} 表格快照回灌失败: {exc}")
 
@@ -77,8 +95,9 @@ class WorkspaceTableService:
         on_finished=None,
         interval_ms: int = 0,
         frame_budget_ms: int = 6,
+        skip_cache_reload_tabs: bool = False,
     ) -> bool:
-        tabs = self._ordered_refreshable_tabs()
+        tabs = self._ordered_refreshable_tabs(skip_cache_reload_tabs=skip_cache_reload_tabs)
         if not tabs:
             if callable(on_finished):
                 from PyQt6.QtCore import QTimer
@@ -93,7 +112,7 @@ class WorkspaceTableService:
         tasks = [
             (
                 tab.__class__.__name__,
-                lambda tab=tab: tab.refresh_table_from_latest_snapshot(),
+                lambda tab=tab: self._refresh_latest_snapshot_for_f5(tab),
             )
             for tab in tabs
         ]

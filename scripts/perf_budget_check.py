@@ -14,6 +14,15 @@ DEFAULT_THRESHOLDS = {
     "kline_max_rss_delta_mb": 140.0,
     "kline_max_final_webengine_children": 0,
     "soak_max_tail_range_mb": 24.0,
+    "round4_startup_main_window_ready_max_ms": 6500.0,
+    "round4_tab_first_open_max_ms": 6500.0,
+    "round4_f5_total_max_ms": 6500.0,
+    "round4_f5_tab_refresh_max_ms": 2500.0,
+    "round4_quote_duplicate_max": 0,
+    "round4_active_task_final_max": 1,
+    "round4_new_active_task_final_max": 0,
+    "round4_active_timer_growth_max": 2,
+    "round4_thread_growth_max": 16,
 }
 
 
@@ -223,6 +232,126 @@ def check_soak_budget(report: dict, thresholds: dict | None = None) -> list[dict
     return failures
 
 
+def check_round4_budget(report: dict, thresholds: dict | None = None) -> list[dict]:
+    budget = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
+    failures: list[dict] = []
+    startup = report.get("startup") or {}
+    tab_first_open = report.get("tab_first_open") or {}
+    f5_refresh = report.get("f5_refresh") or {}
+    stability = report.get("stability") or {}
+
+    if not startup:
+        _fail(failures, "round4.startup.present", "round4 startup report is missing")
+    else:
+        elapsed = _as_float(startup.get("main_window_ready_ms"))
+        if elapsed > budget["round4_startup_main_window_ready_max_ms"]:
+            _fail(
+                failures,
+                "round4.startup.main_window_ready",
+                "startup main-window-ready elapsed time exceeded budget",
+                actual=elapsed,
+                budget=budget["round4_startup_main_window_ready_max_ms"],
+            )
+
+    tabs = tab_first_open.get("tabs") or []
+    if not isinstance(tabs, list) or not tabs:
+        _fail(failures, "round4.tabs.present", "round4 tab first-open samples are missing")
+    for tab in tabs if isinstance(tabs, list) else []:
+        key = str(tab.get("key") or "")
+        if tab.get("status") not in {"ok", None}:
+            _fail(failures, "round4.tabs.status", "tab first-open did not complete cleanly", key=key, actual=tab.get("status"))
+        elapsed = _as_float(tab.get("elapsed_ms"))
+        if elapsed > budget["round4_tab_first_open_max_ms"]:
+            _fail(
+                failures,
+                "round4.tabs.elapsed",
+                "tab first-open elapsed time exceeded budget",
+                key=key,
+                actual=elapsed,
+                budget=budget["round4_tab_first_open_max_ms"],
+            )
+
+    if not f5_refresh:
+        _fail(failures, "round4.f5.present", "round4 F5 refresh report is missing")
+    else:
+        elapsed = _as_float(f5_refresh.get("total_elapsed_ms"))
+        if elapsed > budget["round4_f5_total_max_ms"]:
+            _fail(
+                failures,
+                "round4.f5.total_elapsed",
+                "F5 total elapsed time exceeded budget",
+                actual=elapsed,
+                budget=budget["round4_f5_total_max_ms"],
+            )
+        for item in f5_refresh.get("tab_timings") or []:
+            tab_elapsed = _as_float(item.get("elapsed_ms"))
+            if tab_elapsed > budget["round4_f5_tab_refresh_max_ms"]:
+                _fail(
+                    failures,
+                    "round4.f5.tab_elapsed",
+                    "F5 per-tab refresh elapsed time exceeded budget",
+                    key=item.get("label"),
+                    actual=tab_elapsed,
+                    budget=budget["round4_f5_tab_refresh_max_ms"],
+                )
+        quote_requests = f5_refresh.get("quote_requests") or {}
+        duplicate_total = _as_int(quote_requests.get("duplicate_across_batches")) + _as_int(
+            quote_requests.get("duplicate_in_batch")
+        )
+        if duplicate_total > budget["round4_quote_duplicate_max"]:
+            _fail(
+                failures,
+                "round4.f5.quote_duplicates",
+                "F5 quote requests contained duplicate codes",
+                actual=duplicate_total,
+                budget=budget["round4_quote_duplicate_max"],
+                duplicates=quote_requests.get("duplicates_by_code") or {},
+            )
+        new_active_tasks = _as_int(f5_refresh.get("new_active_background_tasks_after"))
+        if new_active_tasks > budget["round4_new_active_task_final_max"]:
+            _fail(
+                failures,
+                "round4.f5.new_active_tasks_after",
+                "F5 left newly-started background tasks active after probe settling",
+                actual=new_active_tasks,
+                budget=budget["round4_new_active_task_final_max"],
+            )
+
+    if not stability:
+        _fail(failures, "round4.stability.present", "round4 stability report is missing")
+    else:
+        trend = stability.get("trend") or {}
+        active_tasks = trend.get("active_tasks") or {}
+        if _as_float(active_tasks.get("last")) > budget["round4_active_task_final_max"]:
+            _fail(
+                failures,
+                "round4.stability.active_tasks_final",
+                "stability cycle ended with active background tasks",
+                actual=active_tasks.get("last"),
+                budget=budget["round4_active_task_final_max"],
+            )
+        active_timers = trend.get("active_timers") or {}
+        if _as_float(active_timers.get("net_delta")) > budget["round4_active_timer_growth_max"]:
+            _fail(
+                failures,
+                "round4.stability.active_timer_growth",
+                "active timer count grew beyond budget",
+                actual=active_timers.get("net_delta"),
+                budget=budget["round4_active_timer_growth_max"],
+            )
+        threads = trend.get("threads") or {}
+        if _as_float(threads.get("net_delta")) > budget["round4_thread_growth_max"]:
+            _fail(
+                failures,
+                "round4.stability.thread_growth",
+                "thread count grew beyond budget",
+                actual=threads.get("net_delta"),
+                budget=budget["round4_thread_growth_max"],
+            )
+
+    return failures
+
+
 def run_budget_checks(args: argparse.Namespace) -> dict:
     thresholds = {
         "gbbq_single_max_rss_delta_mb": args.gbbq_single_max_rss_delta_mb,
@@ -233,6 +362,15 @@ def run_budget_checks(args: argparse.Namespace) -> dict:
         "kline_max_rss_delta_mb": args.kline_max_rss_delta_mb,
         "kline_max_final_webengine_children": args.kline_max_final_webengine_children,
         "soak_max_tail_range_mb": args.soak_max_tail_range_mb,
+        "round4_startup_main_window_ready_max_ms": args.round4_startup_main_window_ready_max_ms,
+        "round4_tab_first_open_max_ms": args.round4_tab_first_open_max_ms,
+        "round4_f5_total_max_ms": args.round4_f5_total_max_ms,
+        "round4_f5_tab_refresh_max_ms": args.round4_f5_tab_refresh_max_ms,
+        "round4_quote_duplicate_max": args.round4_quote_duplicate_max,
+        "round4_active_task_final_max": args.round4_active_task_final_max,
+        "round4_new_active_task_final_max": args.round4_new_active_task_final_max,
+        "round4_active_timer_growth_max": args.round4_active_timer_growth_max,
+        "round4_thread_growth_max": args.round4_thread_growth_max,
     }
     checks: list[dict] = []
 
@@ -241,6 +379,7 @@ def run_budget_checks(args: argparse.Namespace) -> dict:
         ("tab_cycle", args.tab_report, check_tab_cycle_budget),
         ("kline", args.kline_report, check_kline_budget),
         ("soak", args.soak_report, check_soak_budget),
+        ("round4", args.round4_report, check_round4_budget),
     ):
         if not path:
             continue
@@ -266,6 +405,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--tab-report", type=Path, default=None)
     parser.add_argument("--kline-report", type=Path, default=None)
     parser.add_argument("--soak-report", type=Path, default=None)
+    parser.add_argument("--round4-report", type=Path, default=None)
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--gbbq-single-max-rss-delta-mb", type=float, default=DEFAULT_THRESHOLDS["gbbq_single_max_rss_delta_mb"])
     parser.add_argument("--gbbq-single-max-elapsed-ms", type=float, default=DEFAULT_THRESHOLDS["gbbq_single_max_elapsed_ms"])
@@ -279,6 +419,51 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         default=DEFAULT_THRESHOLDS["kline_max_final_webengine_children"],
     )
     parser.add_argument("--soak-max-tail-range-mb", type=float, default=DEFAULT_THRESHOLDS["soak_max_tail_range_mb"])
+    parser.add_argument(
+        "--round4-startup-main-window-ready-max-ms",
+        type=float,
+        default=DEFAULT_THRESHOLDS["round4_startup_main_window_ready_max_ms"],
+    )
+    parser.add_argument(
+        "--round4-tab-first-open-max-ms",
+        type=float,
+        default=DEFAULT_THRESHOLDS["round4_tab_first_open_max_ms"],
+    )
+    parser.add_argument(
+        "--round4-f5-total-max-ms",
+        type=float,
+        default=DEFAULT_THRESHOLDS["round4_f5_total_max_ms"],
+    )
+    parser.add_argument(
+        "--round4-f5-tab-refresh-max-ms",
+        type=float,
+        default=DEFAULT_THRESHOLDS["round4_f5_tab_refresh_max_ms"],
+    )
+    parser.add_argument(
+        "--round4-quote-duplicate-max",
+        type=int,
+        default=DEFAULT_THRESHOLDS["round4_quote_duplicate_max"],
+    )
+    parser.add_argument(
+        "--round4-active-task-final-max",
+        type=int,
+        default=DEFAULT_THRESHOLDS["round4_active_task_final_max"],
+    )
+    parser.add_argument(
+        "--round4-new-active-task-final-max",
+        type=int,
+        default=DEFAULT_THRESHOLDS["round4_new_active_task_final_max"],
+    )
+    parser.add_argument(
+        "--round4-active-timer-growth-max",
+        type=int,
+        default=DEFAULT_THRESHOLDS["round4_active_timer_growth_max"],
+    )
+    parser.add_argument(
+        "--round4-thread-growth-max",
+        type=int,
+        default=DEFAULT_THRESHOLDS["round4_thread_growth_max"],
+    )
     return parser.parse_args(argv)
 
 

@@ -83,7 +83,15 @@ def finish_f5_reload(main_window, *, count, elapsed, event_bus):
     refresh_all_tabs_after_f5_scheduled = getattr(workspace, "refresh_all_tabs_after_f5_scheduled", None)
     if callable(refresh_all_tabs_after_f5_scheduled):
         try:
-            scheduled_refresh_started = bool(refresh_all_tabs_after_f5_scheduled(interval_ms=0))
+            try:
+                scheduled_refresh_started = bool(
+                    refresh_all_tabs_after_f5_scheduled(
+                        interval_ms=0,
+                        skip_cache_reload_tabs=True,
+                    )
+                )
+            except TypeError:
+                scheduled_refresh_started = bool(refresh_all_tabs_after_f5_scheduled(interval_ms=0))
         except (AttributeError, RuntimeError, TypeError) as exc:
             scheduled_refresh_started = False
             log.error(f"[F5] 工作区快照分帧刷新异常: {exc}")
@@ -91,7 +99,10 @@ def finish_f5_reload(main_window, *, count, elapsed, event_bus):
     refresh_all_tabs_after_f5 = getattr(workspace, "refresh_all_tabs_after_f5", None)
     if not scheduled_refresh_started and callable(refresh_all_tabs_after_f5):
         try:
-            refresh_all_tabs_after_f5()
+            try:
+                refresh_all_tabs_after_f5(skip_cache_reload_tabs=True)
+            except TypeError:
+                refresh_all_tabs_after_f5()
         except (AttributeError, RuntimeError, TypeError) as exc:
             log.error(f"[F5] 刷新各 Tab 表格快照异常: {exc}")
 
