@@ -487,6 +487,52 @@ def test_fetch_realtime_quotes_batch_pauses_between_batches(monkeypatch):
     assert sleep_calls == [0.25, 0.25]
 
 
+def test_fetch_realtime_quotes_batch_records_request_stats(monkeypatch):
+    provider = _make_provider()
+    provider._rt_quote_batch_size = 2
+    provider._rt_quote_batch_pause_sec = 0.0
+
+    def _fake_fetch(batch, inferred_trade_date, min_batch_size):
+        del min_batch_size
+        return (
+            {
+                code: {
+                    "open": 10.0,
+                    "high": 10.1,
+                    "low": 9.9,
+                    "close": 10.0,
+                    "volume": 1.0,
+                    "amount": 2.0,
+                    "last_close": 9.8,
+                    "date": inferred_trade_date,
+                    "source": "eastmoney",
+                }
+                for code in batch
+            },
+            [],
+        )
+
+    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", lambda: True)
+    monkeypatch.setattr(MarketCalendar, "get_latest_trade_date", lambda market="CN": dt.date(2026, 4, 15))
+    monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
+    monkeypatch.setattr(provider, "_fetch_eastmoney_quotes_with_split_retry", _fake_fetch)
+
+    provider.fetch_realtime_quotes_batch(["000001", "000001", "000002", "000003"])
+
+    stats = provider.get_quote_request_stats()
+    assert stats["history_size"] == 1
+    assert stats["recent_requested_count"] == 4
+    assert stats["recent_unique_requested_count"] == 3
+    assert stats["recent_pending_count"] == 3
+    assert stats["recent_batch_count"] == 2
+    assert stats["recent_codes_count"] == 1
+    assert stats["recent_duplicate_requested_codes"] == {"000001": 2}
+    assert stats["recent_triggered_network"] is True
+    assert stats["recent_source_layers"] == ["eastmoney"]
+    assert stats["recent_batches"][0]["codes_count"] == 2
+    assert stats["recent_batches"][0]["duplicate_codes"] == {}
+
+
 def test_split_retry_does_not_expand_disconnect_failures(monkeypatch):
     provider = _make_provider()
     seen_batches = []

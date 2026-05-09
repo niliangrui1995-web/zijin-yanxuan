@@ -51,6 +51,71 @@ def is_disconnect_like_error(exc_or_text) -> bool:
     return any(keyword in normalized for keyword in keywords)
 
 
+def _duplicate_counts(codes: list[str]) -> dict[str, int]:
+    counts = {}
+    for code in codes:
+        counts[code] = counts.get(code, 0) + 1
+    return {code: count for code, count in counts.items() if count > 1}
+
+
+def _batch_signature(codes: list[str]) -> str:
+    return "|".join(sorted(dict.fromkeys(codes or [])))
+
+
+def _record_quote_request(provider, stats: dict) -> None:
+    recorder = getattr(provider, "_record_realtime_quote_request", None)
+    if not callable(recorder):
+        return
+    try:
+        recorder(stats)
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return
+
+
+def _new_quote_request_stats(normalized_codes: list[str], *, raw_codes: list[str], started_at: float) -> dict:
+    return {
+        "started_at": started_at,
+        "requested_count": len(raw_codes),
+        "unique_requested_count": len(dict.fromkeys(normalized_codes)),
+        "duplicate_requested_codes": _duplicate_counts(raw_codes),
+        "pending_count": 0,
+        "cache_hit_count": 0,
+        "batch_count": 0,
+        "recent_codes_count": 0,
+        "triggered_network": False,
+        "source_layers": [],
+        "batches": [],
+        "status": "started",
+    }
+
+
+def _finish_quote_request(provider, stats: dict, *, status: str, result: dict | None = None) -> None:
+    ended_at = time.time()
+    payload = dict(stats or {})
+    payload["status"] = status
+    payload["ended_at"] = ended_at
+    try:
+        payload["elapsed_ms"] = round((ended_at - float(payload.get("started_at") or ended_at)) * 1000.0, 3)
+    except (TypeError, ValueError):
+        payload["elapsed_ms"] = None
+    if result is not None:
+        try:
+            payload["result_count"] = len(result or {})
+        except TypeError:
+            payload["result_count"] = 0
+    _record_quote_request(provider, payload)
+
+
+def _add_quote_source(stats: dict, source: str) -> None:
+    source_text = str(source or "").strip()
+    if not source_text:
+        return
+    layers = list(stats.get("source_layers") or [])
+    if source_text not in layers:
+        layers.append(source_text)
+    stats["source_layers"] = layers
+
+
 def fetch_eastmoney_quotes_with_split_retry(
     provider,
     codes,
@@ -95,9 +160,11 @@ def fetch_realtime_quotes_batch(
     batch_pause_default: float,
 ):
     provider._ensure_eastmoney_quote_state()
+    raw_codes = [str(code).strip() for code in (codes or []) if str(code or "").strip()]
     normalized_codes = normalize_quote_codes(codes)
     if not normalized_codes:
         return {}
+    request_stats = _new_quote_request_stats(normalized_codes, raw_codes=raw_codes, started_at=time.time())
 
     try:
         quote_refreshable = MarketCalendar.is_quote_refresh_time()
@@ -106,7 +173,11 @@ def fetch_realtime_quotes_batch(
         quote_refreshable = True
 
     if not quote_refreshable:
-        return provider._build_offline_quotes(normalized_codes)
+        result = provider._build_offline_quotes(normalized_codes)
+        request_stats["recent_codes_count"] = len(normalized_codes)
+        _add_quote_source(request_stats, "offline_market_closed")
+        _finish_quote_request(provider, request_stats, status="market_closed_offline", result=result)
+        return result
 
     try:
         latest_trade_date = MarketCalendar.get_latest_trade_date("CN")
@@ -129,18 +200,28 @@ def fetch_realtime_quotes_batch(
             now=now,
             dedup_window=dedup_window,
         )
+    request_stats["cache_hit_count"] = len(result)
+    request_stats["pending_count"] = len(dedup_codes)
 
     if not dedup_codes:
+        _add_quote_source(request_stats, "runtime_cache")
+        _finish_quote_request(provider, request_stats, status="runtime_cache_hit", result=result)
         return result
 
     if now < float(provider._rt_runtime_cooldown_until or 0):
         fallback_res = provider._build_offline_quotes(dedup_codes)
         result.update(fallback_res)
+        request_stats["recent_codes_count"] = len(dedup_codes)
+        _add_quote_source(request_stats, "offline_runtime_cooldown")
+        _finish_quote_request(provider, request_stats, status="runtime_cooldown_offline", result=result)
         return result
 
     if provider._offline:
         fallback_res = provider._build_offline_quotes(dedup_codes)
         result.update(fallback_res)
+        request_stats["recent_codes_count"] = len(dedup_codes)
+        _add_quote_source(request_stats, "offline_mode")
+        _finish_quote_request(provider, request_stats, status="offline_mode", result=result)
         return result
 
     batch_size = int(getattr(provider, "_rt_quote_batch_size", batch_size_default) or batch_size_default)
@@ -158,6 +239,7 @@ def fetch_realtime_quotes_batch(
     cache_hits = len(result)
     fatal_failure_reason = None
     eastmoney_available = time.time() >= float(provider._rt_eastmoney_cooldown_until or 0.0)
+    request_stats["triggered_network"] = True
 
     pressure_log_due = should_log_pressure(
         total_codes=len(normalized_codes),
@@ -180,6 +262,20 @@ def fetch_realtime_quotes_batch(
         failures = []
         used_sina_fallback = False
         used_tencent_fallback = False
+        batch_record = {
+            "index": int(start // batch_size) + 1,
+            "codes_count": len(batch),
+            "unique_codes_count": len(dict.fromkeys(batch)),
+            "duplicate_codes": _duplicate_counts(batch),
+            "signature": _batch_signature(batch),
+            "eastmoney_available_at_start": bool(eastmoney_available),
+            "used_sina_fallback": False,
+            "used_tencent_fallback": False,
+            "failure_count": 0,
+            "returned_count": 0,
+            "status": "started",
+        }
+        request_stats["batches"].append(batch_record)
 
         if eastmoney_available:
             quotes, failures = provider._fetch_eastmoney_quotes_with_split_retry(
@@ -220,6 +316,24 @@ def fetch_realtime_quotes_batch(
 
         new_fetch.update(quotes)
         batch_fully_covered = all(code in quotes for code in batch)
+        batch_record["used_sina_fallback"] = bool(used_sina_fallback)
+        batch_record["used_tencent_fallback"] = bool(used_tencent_fallback)
+        batch_record["failure_count"] = len(failures)
+        batch_record["returned_count"] = len(quotes)
+        if batch_fully_covered:
+            batch_record["status"] = "ok"
+        elif quotes:
+            batch_record["status"] = "partial"
+        else:
+            batch_record["status"] = "failed"
+        if quotes:
+            sources = {
+                str(quote.get("source") or "").strip()
+                for quote in quotes.values()
+                if isinstance(quote, dict) and str(quote.get("source") or "").strip()
+            }
+            for source in sorted(sources):
+                _add_quote_source(request_stats, source)
         if used_sina_fallback:
             fallback_msg = provider._rt_eastmoney_last_error or "东方财富链路异常"
             provider._log_quote_fallback(
@@ -248,6 +362,13 @@ def fetch_realtime_quotes_batch(
                     break
         if batch_pause_sec > 0 and (start + batch_size) < len(dedup_codes):
             time.sleep(batch_pause_sec)
+
+    request_stats["batch_count"] = len(request_stats.get("batches") or [])
+    request_stats["recent_codes_count"] = (
+        int((request_stats.get("batches") or [{}])[-1].get("codes_count") or 0)
+        if request_stats.get("batches")
+        else 0
+    )
 
     if new_fetch:
         fetch_time = time.time()
@@ -278,9 +399,17 @@ def fetch_realtime_quotes_batch(
         if stale_quotes:
             result.update(stale_quotes)
             missing_codes = [code for code in missing_codes if code not in stale_quotes]
+            _add_quote_source(request_stats, "stale_runtime_cache")
 
     if missing_codes:
         fallback_res = provider._build_offline_quotes(missing_codes)
         result.update(fallback_res)
+        _add_quote_source(request_stats, "offline_missing_fallback")
 
+    final_status = "network_ok"
+    if batch_failures and new_fetch:
+        final_status = "network_partial_with_fallback"
+    elif batch_failures:
+        final_status = "network_failed_offline_fallback" if missing_codes else "network_failed"
+    _finish_quote_request(provider, request_stats, status=final_status, result=result)
     return result

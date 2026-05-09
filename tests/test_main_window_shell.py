@@ -78,6 +78,9 @@ class DummyShellWindow(QMainWindow):
     def _force_reconnect(self):
         pass
 
+    def _open_runtime_health(self):
+        pass
+
     def _apply_table_density(self, density, persist=True):
         self.last_density = (density, persist)
 
@@ -137,6 +140,7 @@ def test_main_window_shell_builders_wire_titlebar_menu_and_tabs():
         assert window.trade_calendar_open_count == 1
         menu_action_texts = [action.text() for action in window._sys_menu.actions()]
         assert "交易日历" not in menu_action_texts
+        assert "运行时健康" in menu_action_texts
         assert window._titlebar_sync_widget.lbl_meta.isHidden() is False
         assert window._titlebar_sync_widget.lbl_meta.minimumWidth() >= 220
         assert window._titlebar_sync_widget.lbl_meta.maximumWidth() >= 420

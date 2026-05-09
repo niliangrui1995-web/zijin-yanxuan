@@ -33,6 +33,13 @@ DEFAULT_THRESHOLDS = {
     "round5_active_timer_growth_max": 2,
     "round5_event_receiver_growth_max": 0,
     "round5_thread_growth_max": 16,
+    "runtime_health_active_task_final_max": 1,
+    "runtime_health_active_timer_growth_max": 4,
+    "runtime_health_total_timer_growth_max": 6,
+    "runtime_health_event_receiver_growth_max": 0,
+    "runtime_health_thread_growth_max": 16,
+    "runtime_health_webengine_final_max": 0,
+    "runtime_health_rss_tail_range_mb": 96.0,
 }
 
 
@@ -486,6 +493,179 @@ def check_round5_budget(report: dict, thresholds: dict | None = None) -> list[di
     return failures
 
 
+def _runtime_health_samples(report: dict) -> list[dict]:
+    if report.get("report_type") == "runtime_health":
+        return [report]
+    samples = report.get("runtime_health_samples") or report.get("samples") or []
+    return samples if isinstance(samples, list) else []
+
+
+def _runtime_health_values(samples: list[dict], getter) -> list[float]:
+    values = []
+    for sample in samples or []:
+        try:
+            value = getter(sample)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            value = None
+        if value is not None:
+            values.append(float(value))
+    return values
+
+
+def _runtime_health_trend_one(values: list[float]) -> dict:
+    if not values:
+        return {"count": 0, "first": None, "last": None, "net_delta": 0.0, "range": 0.0, "max": None}
+    return {
+        "count": len(values),
+        "first": values[0],
+        "last": values[-1],
+        "net_delta": round(values[-1] - values[0], 3),
+        "range": round(max(values) - min(values), 3),
+        "max": max(values),
+    }
+
+
+def _runtime_health_trend(samples: list[dict]) -> dict:
+    return {
+        "background_tasks": _runtime_health_trend_one(
+            _runtime_health_values(samples, lambda item: (item.get("background_tasks") or {}).get("count"))
+        ),
+        "active_timers": _runtime_health_trend_one(
+            _runtime_health_values(samples, lambda item: (item.get("timers") or {}).get("active"))
+        ),
+        "total_timers": _runtime_health_trend_one(
+            _runtime_health_values(samples, lambda item: (item.get("timers") or {}).get("total"))
+        ),
+        "event_receivers": _runtime_health_trend_one(
+            _runtime_health_values(samples, lambda item: (item.get("event_bus") or {}).get("total_receivers"))
+        ),
+        "threads": _runtime_health_trend_one(
+            _runtime_health_values(samples, lambda item: (item.get("process") or {}).get("thread_count"))
+        ),
+        "webengine_children": _runtime_health_trend_one(
+            _runtime_health_values(samples, lambda item: (item.get("webengine") or {}).get("count"))
+        ),
+    }
+
+
+def _tail_range(values: list[float], tail_count: int = 3) -> float:
+    tail = values[-max(1, int(tail_count)):]
+    return round(max(tail) - min(tail), 3) if tail else 0.0
+
+
+def check_runtime_health_budget(report: dict, thresholds: dict | None = None) -> list[dict]:
+    budget = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
+    failures: list[dict] = []
+    samples = _runtime_health_samples(report)
+    if not samples:
+        _fail(failures, "runtime_health.present", "runtime health samples are missing")
+        return failures
+
+    last = samples[-1] if isinstance(samples[-1], dict) else {}
+    for key in (
+        "background_tasks",
+        "timers",
+        "event_bus",
+        "process",
+        "webengine",
+        "quotes",
+        "f5_cache",
+        "data_lineage",
+    ):
+        if key not in last:
+            _fail(failures, f"runtime_health.{key}.present", f"runtime health report missing {key}")
+
+    quotes = last.get("quotes") or {}
+    if "request_stats" not in quotes:
+        _fail(failures, "runtime_health.quotes.request_stats", "quote request stats are missing")
+    if "provider_degraded" not in quotes:
+        _fail(failures, "runtime_health.quotes.provider_degraded", "provider degraded state is missing")
+    if "last_network_error" not in quotes:
+        _fail(failures, "runtime_health.quotes.last_network_error", "last network error field is missing")
+
+    f5_cache = last.get("f5_cache") or {}
+    for key in ("cache_version", "trade_date", "updated_at"):
+        if key not in f5_cache:
+            _fail(failures, f"runtime_health.f5_cache.{key}", f"F5 cache {key} field is missing")
+
+    if not isinstance(last.get("data_lineage"), list):
+        _fail(failures, "runtime_health.data_lineage.type", "data lineage must be a list")
+
+    trend = report.get("trend") or _runtime_health_trend(samples)
+    active_tasks = trend.get("background_tasks") or {}
+    if _as_float(active_tasks.get("last")) > budget["runtime_health_active_task_final_max"]:
+        _fail(
+            failures,
+            "runtime_health.background_tasks.final",
+            "runtime health ended with too many active background tasks",
+            actual=active_tasks.get("last"),
+            budget=budget["runtime_health_active_task_final_max"],
+        )
+
+    active_timers = trend.get("active_timers") or {}
+    if _as_float(active_timers.get("net_delta")) > budget["runtime_health_active_timer_growth_max"]:
+        _fail(
+            failures,
+            "runtime_health.timers.active_growth",
+            "active timer count grew beyond runtime health budget",
+            actual=active_timers.get("net_delta"),
+            budget=budget["runtime_health_active_timer_growth_max"],
+        )
+
+    total_timers = trend.get("total_timers") or {}
+    if _as_float(total_timers.get("net_delta")) > budget["runtime_health_total_timer_growth_max"]:
+        _fail(
+            failures,
+            "runtime_health.timers.total_growth",
+            "total timer count grew beyond runtime health budget",
+            actual=total_timers.get("net_delta"),
+            budget=budget["runtime_health_total_timer_growth_max"],
+        )
+
+    event_receivers = trend.get("event_receivers") or {}
+    if _as_float(event_receivers.get("net_delta")) > budget["runtime_health_event_receiver_growth_max"]:
+        _fail(
+            failures,
+            "runtime_health.events.receiver_growth",
+            "event receiver count grew beyond runtime health budget",
+            actual=event_receivers.get("net_delta"),
+            budget=budget["runtime_health_event_receiver_growth_max"],
+        )
+
+    threads = trend.get("threads") or {}
+    if _as_float(threads.get("net_delta")) > budget["runtime_health_thread_growth_max"]:
+        _fail(
+            failures,
+            "runtime_health.threads.growth",
+            "thread count grew beyond runtime health budget",
+            actual=threads.get("net_delta"),
+            budget=budget["runtime_health_thread_growth_max"],
+        )
+
+    webengine_children = trend.get("webengine_children") or {}
+    if _as_float(webengine_children.get("last")) > budget["runtime_health_webengine_final_max"]:
+        _fail(
+            failures,
+            "runtime_health.webengine.final",
+            "QtWebEngine child processes remained at final runtime health sample",
+            actual=webengine_children.get("last"),
+            budget=budget["runtime_health_webengine_final_max"],
+        )
+
+    rss_values = _runtime_health_values(samples, lambda item: (item.get("process") or {}).get("rss_mb"))
+    rss_tail_range = _tail_range(rss_values)
+    if rss_tail_range > budget["runtime_health_rss_tail_range_mb"]:
+        _fail(
+            failures,
+            "runtime_health.memory.rss_tail_range",
+            "runtime health RSS tail range exceeded budget",
+            actual=rss_tail_range,
+            budget=budget["runtime_health_rss_tail_range_mb"],
+        )
+
+    return failures
+
+
 def run_budget_checks(args: argparse.Namespace) -> dict:
     thresholds = {
         "gbbq_single_max_rss_delta_mb": args.gbbq_single_max_rss_delta_mb,
@@ -515,6 +695,13 @@ def run_budget_checks(args: argparse.Namespace) -> dict:
         "round5_active_timer_growth_max": args.round5_active_timer_growth_max,
         "round5_event_receiver_growth_max": args.round5_event_receiver_growth_max,
         "round5_thread_growth_max": args.round5_thread_growth_max,
+        "runtime_health_active_task_final_max": args.runtime_health_active_task_final_max,
+        "runtime_health_active_timer_growth_max": args.runtime_health_active_timer_growth_max,
+        "runtime_health_total_timer_growth_max": args.runtime_health_total_timer_growth_max,
+        "runtime_health_event_receiver_growth_max": args.runtime_health_event_receiver_growth_max,
+        "runtime_health_thread_growth_max": args.runtime_health_thread_growth_max,
+        "runtime_health_webengine_final_max": args.runtime_health_webengine_final_max,
+        "runtime_health_rss_tail_range_mb": args.runtime_health_rss_tail_range_mb,
     }
     checks: list[dict] = []
 
@@ -525,6 +712,7 @@ def run_budget_checks(args: argparse.Namespace) -> dict:
         ("soak", args.soak_report, check_soak_budget),
         ("round4", args.round4_report, check_round4_budget),
         ("round5", args.round5_report, check_round5_budget),
+        ("runtime_health", args.runtime_health_report, check_runtime_health_budget),
     ):
         if not path:
             continue
@@ -552,6 +740,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--soak-report", type=Path, default=None)
     parser.add_argument("--round4-report", type=Path, default=None)
     parser.add_argument("--round5-report", type=Path, default=None)
+    parser.add_argument("--runtime-health-report", type=Path, default=None)
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--gbbq-single-max-rss-delta-mb", type=float, default=DEFAULT_THRESHOLDS["gbbq_single_max_rss_delta_mb"])
     parser.add_argument("--gbbq-single-max-elapsed-ms", type=float, default=DEFAULT_THRESHOLDS["gbbq_single_max_elapsed_ms"])
@@ -659,6 +848,41 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--round5-thread-growth-max",
         type=int,
         default=DEFAULT_THRESHOLDS["round5_thread_growth_max"],
+    )
+    parser.add_argument(
+        "--runtime-health-active-task-final-max",
+        type=int,
+        default=DEFAULT_THRESHOLDS["runtime_health_active_task_final_max"],
+    )
+    parser.add_argument(
+        "--runtime-health-active-timer-growth-max",
+        type=int,
+        default=DEFAULT_THRESHOLDS["runtime_health_active_timer_growth_max"],
+    )
+    parser.add_argument(
+        "--runtime-health-total-timer-growth-max",
+        type=int,
+        default=DEFAULT_THRESHOLDS["runtime_health_total_timer_growth_max"],
+    )
+    parser.add_argument(
+        "--runtime-health-event-receiver-growth-max",
+        type=int,
+        default=DEFAULT_THRESHOLDS["runtime_health_event_receiver_growth_max"],
+    )
+    parser.add_argument(
+        "--runtime-health-thread-growth-max",
+        type=int,
+        default=DEFAULT_THRESHOLDS["runtime_health_thread_growth_max"],
+    )
+    parser.add_argument(
+        "--runtime-health-webengine-final-max",
+        type=int,
+        default=DEFAULT_THRESHOLDS["runtime_health_webengine_final_max"],
+    )
+    parser.add_argument(
+        "--runtime-health-rss-tail-range-mb",
+        type=float,
+        default=DEFAULT_THRESHOLDS["runtime_health_rss_tail_range_mb"],
     )
     return parser.parse_args(argv)
 

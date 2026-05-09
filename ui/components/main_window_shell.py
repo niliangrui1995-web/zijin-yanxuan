@@ -1069,6 +1069,9 @@ def setup_system_menu(window) -> SystemMenuRefs:
     act_speed = sys_menu.addAction("重置行情连接")
     act_speed.triggered.connect(window._force_reconnect)
 
+    act_runtime_health = sys_menu.addAction("运行时健康")
+    act_runtime_health.triggered.connect(window._open_runtime_health)
+
     sys_menu.addSeparator()
 
     density_menu = sys_menu.addMenu("表格密度")

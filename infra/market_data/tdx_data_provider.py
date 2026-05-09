@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import os
 import threading
+import time
+from collections import Counter
 
 from core.logger import get_logger
 from domains.market_calendar import MarketCalendar
@@ -24,6 +26,16 @@ RT_QUOTE_DEDUP_WINDOW_SEC = 8.5
 RT_QUOTE_BATCH_SIZE = 20
 RT_QUOTE_MIN_BATCH_SIZE = 5
 RT_QUOTE_BATCH_PAUSE_SEC = 0.12
+
+
+def _iso_from_timestamp(value) -> str:
+    try:
+        timestamp = float(value or 0)
+    except (TypeError, ValueError):
+        return ""
+    if timestamp <= 0:
+        return ""
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(timestamp))
 
 
 class TdxDataProvider(TdxDataProviderHistoryMixin, TdxDataProviderRealtimeMixin):
@@ -69,6 +81,9 @@ class TdxDataProvider(TdxDataProviderHistoryMixin, TdxDataProviderRealtimeMixin)
         self._rt_eastmoney_cooldown_until = 0.0
         self._rt_eastmoney_last_error = ""
         self._rt_last_fallback_log_at = 0.0
+        self._rt_quote_request_history = []
+        self._rt_quote_request_history_max = 64
+        self._rt_quote_request_lock = threading.RLock()
 
         self.code2name = {}
         self._offline = offline
@@ -283,6 +298,63 @@ class TdxDataProvider(TdxDataProviderHistoryMixin, TdxDataProviderRealtimeMixin)
 
     def get_realtime_runtime_stats(self) -> dict:
         return self._get_realtime_quote_provider().get_runtime_stats()
+
+    def _record_realtime_quote_request(self, item: dict) -> None:
+        if not hasattr(self, "_rt_quote_request_lock"):
+            self._rt_quote_request_lock = threading.RLock()
+        if not hasattr(self, "_rt_quote_request_history"):
+            self._rt_quote_request_history = []
+
+        payload = dict(item or {})
+        payload.setdefault("ended_at", time.time())
+        max_entries = max(1, int(getattr(self, "_rt_quote_request_history_max", 64) or 64))
+        with self._rt_quote_request_lock:
+            history = list(self._rt_quote_request_history or [])
+            history.append(payload)
+            if len(history) > max_entries:
+                history = history[-max_entries:]
+            self._rt_quote_request_history = history
+
+    def get_quote_request_stats(self) -> dict:
+        if not hasattr(self, "_rt_quote_request_lock"):
+            self._rt_quote_request_lock = threading.RLock()
+        with self._rt_quote_request_lock:
+            history = list(getattr(self, "_rt_quote_request_history", []) or [])
+
+        recent = history[-1] if history else {}
+        network_batches = [
+            batch
+            for request in history
+            for batch in (request.get("batches") or [])
+            if isinstance(batch, dict)
+        ]
+        signatures = [str(batch.get("signature") or "") for batch in network_batches if batch.get("signature")]
+        signature_counts = Counter(signatures)
+        repeated_signatures = {
+            signature: count
+            for signature, count in signature_counts.items()
+            if count > 1
+        }
+        return {
+            "history_size": len(history),
+            "recent_started_at": _iso_from_timestamp(recent.get("started_at")),
+            "recent_ended_at": _iso_from_timestamp(recent.get("ended_at")),
+            "recent_elapsed_ms": recent.get("elapsed_ms"),
+            "recent_requested_count": recent.get("requested_count", 0),
+            "recent_unique_requested_count": recent.get("unique_requested_count", 0),
+            "recent_pending_count": recent.get("pending_count", 0),
+            "recent_cache_hit_count": recent.get("cache_hit_count", 0),
+            "recent_batch_count": recent.get("batch_count", 0),
+            "recent_codes_count": recent.get("recent_codes_count", 0),
+            "recent_duplicate_requested_codes": recent.get("duplicate_requested_codes", {}),
+            "recent_triggered_network": bool(recent.get("triggered_network", False)),
+            "recent_source_layers": list(recent.get("source_layers") or []),
+            "recent_status": recent.get("status", ""),
+            "network_batch_history_size": len(network_batches),
+            "repeated_batch_signature_count": len(repeated_signatures),
+            "repeated_batch_signatures": repeated_signatures,
+            "recent_batches": list(recent.get("batches") or [])[-8:],
+        }
 
     def protect_against_thread_anomaly(self, pytdx_thread_count: int, threshold: int | None = None) -> bool:
         return self._get_realtime_quote_provider().protect_against_thread_anomaly(

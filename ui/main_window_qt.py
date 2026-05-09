@@ -124,6 +124,7 @@ class MainWindowQT(QMainWindow):
         self._titlebar_sync_state = "idle"
         self._last_sync_freshness = ""
         self._command_palette = None
+        self._runtime_health_dialog = None
         self._settings = app_config.section("window", legacy_scope="MainWindowQT")
         self._workspace = None
         self.tabs = None
@@ -488,6 +489,20 @@ class MainWindowQT(QMainWindow):
         from ui.main_window_visuals import show_trade_calendar
 
         show_trade_calendar(self)
+
+    def _open_runtime_health(self):
+        from ui.components.runtime_health_dialog import RuntimeHealthDialog
+
+        dialog = getattr(self, "_runtime_health_dialog", None)
+        if dialog is None:
+            dialog = RuntimeHealthDialog(self, parent=self)
+            self._runtime_health_dialog = dialog
+            dialog.destroyed.connect(lambda _obj=None: setattr(self, "_runtime_health_dialog", None))
+        else:
+            dialog.refresh()
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     # =====================================================================
     # 自定义标题栏：品牌 + Tab 导航 + 窗口控制，合并成一行

@@ -3,6 +3,7 @@ from scripts.perf_budget_check import (
     check_kline_budget,
     check_round4_budget,
     check_round5_budget,
+    check_runtime_health_budget,
     check_soak_budget,
     check_tab_cycle_budget,
 )
@@ -272,4 +273,81 @@ def test_round5_budget_rejects_post_f5_network_tail():
         "round5.runtime.active_timer_growth",
         "round5.runtime.thread_growth",
         "round5.events.receiver_growth",
+    }
+
+
+def _runtime_health_sample(**overrides):
+    sample = {
+        "background_tasks": {"count": 0},
+        "timers": {"active": 4, "total": 8},
+        "event_bus": {"total_receivers": 12},
+        "process": {"rss_mb": 500.0, "thread_count": 24},
+        "webengine": {"count": 0},
+        "quotes": {
+            "request_stats": {"recent_batch_count": 1, "recent_codes_count": 20},
+            "provider_degraded": False,
+            "last_network_error": "",
+        },
+        "f5_cache": {
+            "cache_version": 1,
+            "trade_date": "2026-05-08",
+            "updated_at": "2026-05-08T15:00:00",
+        },
+        "data_lineage": [
+            {
+                "key": "stock_candidates",
+                "source": "workspace_stock_context",
+                "triggered_network": False,
+            }
+        ],
+    }
+    sample.update(overrides)
+    return sample
+
+
+def test_runtime_health_budget_accepts_structured_suite_report():
+    report = {
+        "runtime_health_samples": [
+            _runtime_health_sample(),
+            _runtime_health_sample(
+                timers={"active": 5, "total": 9},
+                process={"rss_mb": 504.0, "thread_count": 25},
+            ),
+        ]
+    }
+
+    assert check_runtime_health_budget(report) == []
+
+
+def test_runtime_health_budget_rejects_growth_and_missing_sections():
+    report = {
+        "runtime_health_samples": [
+            _runtime_health_sample(),
+            {
+                "background_tasks": {"count": 3},
+                "timers": {"active": 12, "total": 20},
+                "event_bus": {"total_receivers": 14},
+                "process": {"rss_mb": 700.0, "thread_count": 60},
+                "webengine": {"count": 2},
+                "quotes": {},
+                "f5_cache": {},
+                "data_lineage": {},
+            },
+        ]
+    }
+
+    failures = check_runtime_health_budget(report)
+
+    assert {failure["check"] for failure in failures} >= {
+        "runtime_health.quotes.request_stats",
+        "runtime_health.quotes.provider_degraded",
+        "runtime_health.quotes.last_network_error",
+        "runtime_health.data_lineage.type",
+        "runtime_health.background_tasks.final",
+        "runtime_health.timers.active_growth",
+        "runtime_health.timers.total_growth",
+        "runtime_health.events.receiver_growth",
+        "runtime_health.threads.growth",
+        "runtime_health.webengine.final",
+        "runtime_health.memory.rss_tail_range",
     }

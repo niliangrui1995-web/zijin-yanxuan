@@ -559,7 +559,9 @@ class ScanTab(BaseStockTab):
         return True
 
     def refresh_data_after_f5(self) -> bool:
-        return self.run_auto_incremental_scan_after_f5()
+        # F5 后只回读本地最新扫描快照，避免情报源页签在全局刷新尾部再排入扫描任务。
+        self._load_scan_cache()
+        return False
 
     def open_scan_settings(self) -> bool:
         self._show_scan_settings()

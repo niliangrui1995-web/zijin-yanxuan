@@ -118,6 +118,23 @@ def test_scan_tab_auto_f5_incremental_scan_starts_when_idle(monkeypatch):
         tab.deleteLater()
 
 
+def test_scan_tab_refresh_data_after_f5_reads_local_cache_only(monkeypatch):
+    monkeypatch.setattr("ui.tabs.scan_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+
+    tab = ScanTab(data_provider=None, engine=None)
+    calls = []
+    try:
+        tab._load_scan_cache = lambda: calls.append("load_cache")
+        tab.run_auto_incremental_scan_after_f5 = lambda: (_ for _ in ()).throw(
+            AssertionError("F5 cache-only refresh should not start incremental scan")
+        )
+
+        assert tab.refresh_data_after_f5() is False
+        assert calls == ["load_cache"]
+    finally:
+        tab.deleteLater()
+
+
 def test_scan_tab_auto_f5_incremental_scan_skips_same_trade_date(monkeypatch):
     monkeypatch.setattr("ui.tabs.scan_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
 
