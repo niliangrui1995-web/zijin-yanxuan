@@ -30,6 +30,7 @@ from app.services.ui_runtime_service import (
     task_id_of,
     task_registry,
 )
+from core.ui_stall_probe import ui_stall_span
 
 _FINANCE_CACHE_LOCK = threading.RLock()
 _FINANCE_CACHE_PATH: str | None = None
@@ -605,6 +606,15 @@ def refresh_table_quotes_and_market_caps(
 
 
 def refresh_table_from_latest_snapshot(owner, current_model=None, *, async_local: bool = True) -> None:
+    with ui_stall_span(
+        "BaseStockRefresh.refresh_table_from_latest_snapshot",
+        tab=owner.__class__.__name__,
+        signal="cache_snapshot",
+    ):
+        _refresh_table_from_latest_snapshot_impl(owner, current_model=current_model, async_local=async_local)
+
+
+def _refresh_table_from_latest_snapshot_impl(owner, current_model=None, *, async_local: bool = True) -> None:
     if current_model is not None:
         owner._active_model_ref = current_model
 
@@ -678,24 +688,34 @@ def subscribe_global_quotes(owner, current_model=None) -> None:
 
 
 def on_rt_quotes_direct(owner, quotes: dict) -> None:
-    if not owner.isVisible():
-        owner._deferred_quote_refresh = True
-        return
+    with ui_stall_span(
+        "BaseStockRefresh.on_rt_quotes_direct",
+        tab=owner.__class__.__name__,
+        signal="sig_rt_quotes",
+    ):
+        if not owner.isVisible():
+            owner._deferred_quote_refresh = True
+            return
 
-    owner._apply_quote_snapshot(quotes)
+        owner._apply_quote_snapshot(quotes)
 
 
 def replay_deferred_quotes(owner) -> None:
-    if not owner._deferred_quote_refresh:
-        return
+    with ui_stall_span(
+        "BaseStockRefresh.replay_deferred_quotes",
+        tab=owner.__class__.__name__,
+        signal="showEvent",
+    ):
+        if not owner._deferred_quote_refresh:
+            return
 
-    owner._deferred_quote_refresh = False
-    try:
-        from core.global_store import global_store
+        owner._deferred_quote_refresh = False
+        try:
+            from core.global_store import global_store
 
-        owner._apply_quote_snapshot(global_store.get_latest_quotes())
-    except (AttributeError, RuntimeError, TypeError, ValueError):
-        pass
+            owner._apply_quote_snapshot(global_store.get_latest_quotes())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
 
 
 def async_update_market_caps(owner) -> None:

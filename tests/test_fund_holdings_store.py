@@ -135,6 +135,16 @@ def test_fund_holdings_store_rebuilds_change_cache_for_qfii():
         assert target["delta_hold_num_shares"] == 500
         assert target["delta_ratio_pct"] == 0.04999999999999999
 
+        filtered_rows = repo.query_change_rows(quarter_keys={"2025Q4"})
+        filtered_target = next(
+            row
+            for row in filtered_rows
+            if row["subject_code"] == SUBJECT_QFII["subject_code"] and row["quarter_key"] == "2025Q4"
+        )
+        assert {row["quarter_key"] for row in filtered_rows} == {"2025Q4"}
+        assert filtered_target["change_type"] == target["change_type"]
+        assert filtered_target["delta_hold_num_shares"] == 500
+
         sync_map = repo.get_latest_sync_map()
         assert sync_map[SUBJECT_QFII["subject_code"]]["resolved_quarter_key"] == "2025Q4"
     finally:

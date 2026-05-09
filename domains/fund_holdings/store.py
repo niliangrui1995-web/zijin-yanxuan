@@ -17,6 +17,7 @@ from domains.fund_holdings.compare import (
     get_compare_quarter_key,
     is_mainland_security_code,
     normalize_quarter_key,
+    previous_natural_quarter,
 )
 
 _SCHEMA_SQL = """
@@ -632,11 +633,37 @@ class FundHoldingsStore:
         )
         return {str(row["subject_code"]): row for row in rows}
 
-    def _query_cached_change_rows(self) -> list[dict]:
+    @staticmethod
+    def _normalize_quarter_filter(quarter_keys) -> set[str] | None:
+        if quarter_keys is None:
+            return None
+        normalized: set[str] = set()
+        for quarter_key in quarter_keys or []:
+            try:
+                normalized.add(normalize_quarter_key(quarter_key))
+            except (TypeError, ValueError):
+                continue
+        return normalized
+
+    @staticmethod
+    def _quarter_filter_clause(column_name: str, quarter_keys: set[str]) -> tuple[str, tuple[str, ...]]:
+        if not quarter_keys:
+            return "", ()
+        placeholders = ", ".join("?" for _ in quarter_keys)
+        return f" AND {column_name} IN ({placeholders})", tuple(sorted(quarter_keys))
+
+    def _query_cached_change_rows(self, quarter_keys=None) -> list[dict]:
+        normalized_quarters = self._normalize_quarter_filter(quarter_keys)
+        if normalized_quarters is not None and not normalized_quarters:
+            return []
+        quarter_clause = ""
+        quarter_params: tuple[str, ...] = ()
+        if normalized_quarters is not None:
+            quarter_clause, quarter_params = self._quarter_filter_clause("quarter_key", normalized_quarters)
         return [
             dict(row)
             for row in self._store.fetch_all(
-                """
+                f"""
                 SELECT
                     subject_code, subject_name, subject_type, quarter_key, compare_quarter_key, end_date,
                     stock_code, stock_name, change_type, ratio_label, holders_count,
@@ -649,32 +676,52 @@ class FundHoldingsStore:
                     latest_source_update, sort_quarter, sort_value
                 FROM fh_change_cache
                 WHERE subject_code != ?
+                {quarter_clause}
                 ORDER BY sort_quarter DESC, sort_value DESC, stock_code ASC
-                """
-                ,
-                (SUBJECT_QFII["subject_code"],),
+                """,
+                (SUBJECT_QFII["subject_code"], *quarter_params),
             )
             if is_mainland_security_code(row["stock_code"])
         ]
 
-    def _query_qfii_holder_change_rows(self) -> list[dict]:
+    def _query_qfii_holder_change_rows(self, quarter_keys=None) -> list[dict]:
+        target_quarters = self._normalize_quarter_filter(quarter_keys)
+        query_quarters = None
+        if target_quarters is not None:
+            if not target_quarters:
+                return []
+            query_quarters = set(target_quarters)
+            for quarter_key in target_quarters:
+                query_quarters.add(previous_natural_quarter(quarter_key))
+        quarter_clause = ""
+        quarter_params: tuple[str, ...] = ()
+        if query_quarters is not None:
+            quarter_clause, quarter_params = self._quarter_filter_clause("quarter_key", query_quarters)
         raw_rows = [
             dict(row)
             for row in self._store.fetch_all(
-                """
+                f"""
                 SELECT
                     subject_code, quarter_key, end_date, stock_code, stock_name, holder_name, holder_rank,
                     hold_num_shares, hold_market_value_cny, hold_ratio_pct, free_hold_ratio_pct,
                     update_date, raw_json
                 FROM fh_raw_qfii
                 WHERE subject_code = ?
+                {quarter_clause}
                 ORDER BY quarter_key DESC, stock_code ASC, holder_rank ASC, holder_name ASC
                 """,
-                (SUBJECT_QFII["subject_code"],),
+                (SUBJECT_QFII["subject_code"], *quarter_params),
             )
             if is_mainland_security_code(row["stock_code"])
         ]
-        return build_qfii_holder_change_rows(raw_rows, SUBJECT_QFII)
+        rows = build_qfii_holder_change_rows(raw_rows, SUBJECT_QFII)
+        if target_quarters is None:
+            return rows
+        return [
+            row
+            for row in rows
+            if str(row.get("quarter_key") or "").strip() in target_quarters
+        ]
 
     def _query_change_rows_signature(self):
         try:
@@ -705,7 +752,26 @@ class FundHoldingsStore:
             self._change_rows_cache_signature = None
             self._change_rows_cache = None
 
-    def query_change_rows(self) -> list[dict]:
+    @staticmethod
+    def _sort_change_rows(rows: list[dict]) -> list[dict]:
+        return sorted(
+            rows,
+            key=lambda row: (
+                -int(row.get("sort_quarter", 0) or 0),
+                -float(row.get("sort_value", 0) or 0),
+                str(row.get("stock_code") or ""),
+                str(row.get("subject_name") or ""),
+                str(row.get("capital_attribute") or ""),
+            ),
+        )
+
+    def query_change_rows(self, quarter_keys=None) -> list[dict]:
+        normalized_quarters = self._normalize_quarter_filter(quarter_keys)
+        if normalized_quarters is not None:
+            rows = self._query_cached_change_rows(normalized_quarters)
+            rows.extend(self._query_qfii_holder_change_rows(normalized_quarters))
+            return [dict(row) for row in self._sort_change_rows(rows)]
+
         signature = self._query_change_rows_signature()
         with self._change_rows_cache_lock:
             if (
@@ -717,16 +783,7 @@ class FundHoldingsStore:
 
         rows = self._query_cached_change_rows()
         rows.extend(self._query_qfii_holder_change_rows())
-        sorted_rows = sorted(
-            rows,
-            key=lambda row: (
-                -int(row.get("sort_quarter", 0) or 0),
-                -float(row.get("sort_value", 0) or 0),
-                str(row.get("stock_code") or ""),
-                str(row.get("subject_name") or ""),
-                str(row.get("capital_attribute") or ""),
-            ),
-        )
+        sorted_rows = self._sort_change_rows(rows)
         with self._change_rows_cache_lock:
             self._change_rows_cache_signature = signature
             self._change_rows_cache = [dict(row) for row in sorted_rows]

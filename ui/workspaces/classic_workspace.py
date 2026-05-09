@@ -7,6 +7,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
 from core.logger import get_logger
+from core.ui_stall_probe import ui_stall_span
 from ui.components.smooth_tab_widget import SmoothTabWidget
 from ui.theme_tokens import build_ui_tokens
 from ui.workspaces.stock_signal import StockSignal
@@ -375,6 +376,10 @@ class ClassicWorkspace(QWidget):
             return None
 
         key = str(spec.get("key") or "").strip()
+        with ui_stall_span("ClassicWorkspace.ensure_tab_loaded", tab=key, signal=reason):
+            return self._ensure_tab_loaded_impl(spec, key, reason)
+
+    def _ensure_tab_loaded_impl(self, spec: dict, key: str, reason: str = "user"):
         if spec.get("loaded"):
             return spec.get("widget")
 
@@ -429,16 +434,17 @@ class ClassicWorkspace(QWidget):
 
     def _on_current_tab_changed(self, index: int) -> None:
         spec = self._spec_for_key_or_index(index)
-        if spec is None or spec.get("loaded"):
-            return
-        key = str(spec.get("key") or "").strip()
-        if not key or key in self._lazy_loading_keys:
-            return
-        self._lazy_loading_keys.add(key)
-        placeholder = spec.get("widget")
-        if isinstance(placeholder, LazyTabPlaceholder):
-            placeholder.set_loading()
-        QTimer.singleShot(0, lambda key=key: self.ensure_tab_loaded(key, reason="tab_switch"))
+        key = str((spec or {}).get("key") or "").strip()
+        with ui_stall_span("ClassicWorkspace._on_current_tab_changed", tab=key, signal="currentChanged"):
+            if spec is None or spec.get("loaded"):
+                return
+            if not key or key in self._lazy_loading_keys:
+                return
+            self._lazy_loading_keys.add(key)
+            placeholder = spec.get("widget")
+            if isinstance(placeholder, LazyTabPlaceholder):
+                placeholder.set_loading()
+            QTimer.singleShot(0, lambda key=key: self.ensure_tab_loaded(key, reason="tab_switch"))
 
     def _connect_workspace_events(self) -> None:
         try:
@@ -483,19 +489,20 @@ class ClassicWorkspace(QWidget):
         self._prewarm_next_tab()
 
     def _prewarm_next_tab(self) -> None:
-        while self._background_prewarm_queue:
-            key = self._background_prewarm_queue.pop(0)
-            spec = self._spec_for_key_or_index(key)
-            if spec is None or spec.get("loaded"):
-                continue
+        with ui_stall_span("ClassicWorkspace._prewarm_next_tab", signal="background_prewarm"):
+            while self._background_prewarm_queue:
+                key = self._background_prewarm_queue.pop(0)
+                spec = self._spec_for_key_or_index(key)
+                if spec is None or spec.get("loaded"):
+                    continue
 
-            widget = self.ensure_tab_loaded(key, reason="background_prewarm")
-            if widget is not None:
-                self._prime_tab_runtime(widget)
-            break
+                widget = self.ensure_tab_loaded(key, reason="background_prewarm")
+                if widget is not None:
+                    self._prime_tab_runtime(widget)
+                break
 
-        if self._background_prewarm_queue:
-            QTimer.singleShot(self.BACKGROUND_PREWARM_INTERVAL_MS, self._prewarm_next_tab)
+            if self._background_prewarm_queue:
+                QTimer.singleShot(self.BACKGROUND_PREWARM_INTERVAL_MS, self._prewarm_next_tab)
 
     def _prime_tab_runtime(self, widget) -> None:
         for method_name in (

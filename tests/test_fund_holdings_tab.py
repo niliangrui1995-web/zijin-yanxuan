@@ -126,10 +126,24 @@ def _setup_store(monkeypatch, rows, settings=None, concept_map=None, *, patch_lo
         "get_latest_sync_map",
         lambda: {},
     )
+    def _query_change_rows(*, quarter_keys=None):
+        if quarter_keys is None:
+            return rows
+        selected = {
+            str(quarter_key or "").strip()
+            for quarter_key in (quarter_keys or [])
+            if str(quarter_key or "").strip()
+        }
+        return [
+            row
+            for row in rows
+            if str(row.get("quarter_key") or "").strip() in selected
+        ]
+
     monkeypatch.setattr(
         fund_holdings_module.fund_holdings_store,
         "query_change_rows",
-        lambda: rows,
+        _query_change_rows,
     )
     monkeypatch.setattr(
         fund_holdings_module.fund_holdings_store,
@@ -513,6 +527,72 @@ def test_fund_holdings_tab_shows_concept_sector_column(monkeypatch):
         tab.deleteLater()
 
 
+def test_fund_holdings_tab_loads_latest_quarter_before_all_quarters_on_demand(monkeypatch):
+    rows = [
+        _build_change_row(
+            subject_code="QFII",
+            subject_name="QFII",
+            quarter_key="2025Q3",
+            compare_quarter_key="2025Q2",
+            change_type="增持",
+            stock_code="000001",
+            stock_name="平安银行",
+        ),
+        _build_change_row(
+            subject_code="QFII",
+            subject_name="QFII",
+            quarter_key="2025Q4",
+            compare_quarter_key="2025Q3",
+            change_type="增持",
+            stock_code="000002",
+            stock_name="万科A",
+        ),
+    ]
+    _setup_store(monkeypatch, rows)
+
+    query_calls = []
+
+    def _query_change_rows(*, quarter_keys=None):
+        query_calls.append(None if quarter_keys is None else set(quarter_keys))
+        if quarter_keys is None:
+            return sorted(rows, key=lambda row: str(row.get("quarter_key") or ""), reverse=True)
+        return sorted(
+            [
+                row
+                for row in rows
+                if str(row.get("quarter_key") or "").strip() in set(quarter_keys)
+            ],
+            key=lambda row: str(row.get("quarter_key") or ""),
+            reverse=True,
+        )
+
+    monkeypatch.setattr(fund_holdings_module.fund_holdings_store, "query_change_rows", _query_change_rows)
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "refresh_table_quotes_and_market_caps",
+        lambda self, current_model=None, force_quotes=False, quote_task_id=None: None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        fund_holdings_module.task_manager,
+        "run_in_background",
+        lambda fn, *args, on_success=None, on_error=None, task_id=None, **kwargs: on_success(fn()),
+        raising=False,
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
+    try:
+        assert query_calls[0] == {"2025Q4"}
+        assert _visible_codes(tab) == ["000002"]
+
+        tab._set_quarter_filter_state(all_quarters=True, apply=True)
+
+        assert query_calls[-1] is None
+        assert _visible_codes(tab) == ["000002", "000001"]
+    finally:
+        tab.deleteLater()
+
+
 def test_fund_holdings_tab_centers_header_alignment(monkeypatch):
     _setup_store(monkeypatch, [])
     tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
@@ -649,14 +729,25 @@ def test_fund_holdings_apply_view_payload_primes_local_snapshot():
         model = Model()
         proxy_model = SimpleNamespace(rowCount=lambda: 1)
         table_state = SimpleNamespace(show_empty=lambda *_args: calls.append("empty"))
-        _refresh_filter_options = lambda self: calls.append("filters")
-        _restore_view_state = lambda self: calls.append("restore")
-        _apply_filters = lambda self: calls.append("apply_filters")
-        _apply_latest_quotes_from_store = lambda self: calls.append("store")
-        _prime_visible_local_quote_snapshot = (
-            lambda self, current_model=None: calls.append(("local", current_model)) or True
-        )
-        _update_status_summary = lambda self: calls.append("status")
+
+        def _refresh_filter_options(self):
+            calls.append("filters")
+
+        def _restore_view_state(self):
+            calls.append("restore")
+
+        def _apply_filters(self):
+            calls.append("apply_filters")
+
+        def _apply_latest_quotes_from_store(self):
+            calls.append("store")
+
+        def _prime_visible_local_quote_snapshot(self, current_model=None):
+            calls.append(("local", current_model))
+            return True
+
+        def _update_status_summary(self):
+            calls.append("status")
 
     tab = DummyTab()
     fund_holdings_module.FundHoldingsTab._apply_view_payload(

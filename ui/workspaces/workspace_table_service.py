@@ -4,6 +4,7 @@ from __future__ import annotations
 from PyQt6.QtCore import QObject
 
 from core.logger import get_logger
+from core.ui_stall_probe import ui_stall_span
 from ui.components.frame_task_scheduler import FrameTaskScheduler
 from ui.workspaces.tab_capabilities import SnapshotRefreshCapability, TableCollectionCapability
 
@@ -77,10 +78,15 @@ class WorkspaceTableService:
 
     @staticmethod
     def _refresh_latest_snapshot_for_f5(tab) -> None:
-        try:
-            tab.refresh_table_from_latest_snapshot(async_local=True)
-        except TypeError:
-            tab.refresh_table_from_latest_snapshot()
+        with ui_stall_span(
+            "WorkspaceTableService._refresh_latest_snapshot_for_f5",
+            tab=tab.__class__.__name__,
+            signal="F5",
+        ):
+            try:
+                tab.refresh_table_from_latest_snapshot(async_local=True)
+            except TypeError:
+                tab.refresh_table_from_latest_snapshot()
 
     def refresh_all_tabs_after_f5(self, *, skip_cache_reload_tabs: bool = False) -> None:
         for tab in self._ordered_refreshable_tabs(skip_cache_reload_tabs=skip_cache_reload_tabs):

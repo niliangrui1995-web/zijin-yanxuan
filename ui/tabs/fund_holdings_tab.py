@@ -37,6 +37,7 @@ from app.services.ui_runtime_service import (
 from app.services.ui_runtime_service import (
     domain_events as event_bus,
 )
+from core.ui_stall_probe import ui_stall_span
 from ui.components import (
     MultiSelectFilterButton,
     SearchFilter,
@@ -173,6 +174,9 @@ class FundHoldingsTab(BaseStockTab):
     _QUARTER_FILTER_LATEST = "__LATEST__"
     _QUARTER_FILTER_ALL = "__ALL__"
     _CHANGE_FILTER_ALL = "__ALL__"
+    _QUERY_SCOPE_LATEST = "latest"
+    _QUERY_SCOPE_ALL = "all"
+    _QUERY_SCOPE_SELECTED = "selected"
     _DISPLAY_PLACEHOLDER = "--"
     _CHANGE_TYPE_OPTIONS = ("新进", "增持", "减持", "退出", "持平")
     _DAILY_AUTO_SYNC_HOUR = 20
@@ -256,6 +260,8 @@ class FundHoldingsTab(BaseStockTab):
         self._latest_sync_map: dict[str, dict] = {}
         self._sync_task_id = ""
         self._sync_active = False
+        self._loaded_quarter_scope = ""
+        self._loaded_quarter_keys: set[str] = set()
         self._filter_menu_updating = False
         self._quarter_actions: dict[str, QAction] = {}
         self._change_actions: dict[str, QAction] = {}
@@ -278,7 +284,7 @@ class FundHoldingsTab(BaseStockTab):
 
         self._init_ui()
         if self._autoload:
-            self._reload_from_db()
+            self._reload_from_db(quarter_scope=self._QUERY_SCOPE_LATEST)
             self._initial_load_started = True
         else:
             self._set_initial_loading_state("基金持仓待加载", "首次进入时自动读取本地数据库")
@@ -528,10 +534,59 @@ class FundHoldingsTab(BaseStockTab):
         return concept_text
 
     @classmethod
-    def _load_view_payload(cls, data_provider) -> dict:
+    def _resolve_query_quarters(
+        cls,
+        latest_quarter_map: dict[str, str],
+        *,
+        quarter_scope: str,
+        quarter_keys=None,
+    ) -> set[str] | None:
+        scope = str(quarter_scope or cls._QUERY_SCOPE_LATEST).strip().lower()
+        if scope == cls._QUERY_SCOPE_ALL:
+            return None
+        if scope == cls._QUERY_SCOPE_SELECTED:
+            return {
+                str(quarter_key or "").strip()
+                for quarter_key in (quarter_keys or [])
+                if str(quarter_key or "").strip()
+            }
+        return {
+            str(quarter_key or "").strip()
+            for quarter_key in (latest_quarter_map or {}).values()
+            if str(quarter_key or "").strip()
+        }
+
+    @classmethod
+    def _query_change_rows_for_scope(cls, quarter_keys: set[str] | None) -> list[dict]:
+        try:
+            return fund_holdings_store.query_change_rows(quarter_keys=quarter_keys)
+        except TypeError:
+            rows = fund_holdings_store.query_change_rows()
+            if quarter_keys is None:
+                return rows
+            return [
+                row
+                for row in rows or []
+                if str(row.get("quarter_key") or "").strip() in quarter_keys
+            ]
+
+    @classmethod
+    def _load_view_payload(
+        cls,
+        data_provider,
+        *,
+        quarter_scope: str = _QUERY_SCOPE_LATEST,
+        quarter_keys=None,
+    ) -> dict:
         latest_quarter_map = fund_holdings_store.get_latest_quarter_map()
         latest_sync_map = fund_holdings_store.get_latest_sync_map()
-        change_rows = fund_holdings_store.query_change_rows()
+        normalized_scope = str(quarter_scope or cls._QUERY_SCOPE_LATEST).strip().lower()
+        query_quarters = cls._resolve_query_quarters(
+            latest_quarter_map,
+            quarter_scope=normalized_scope,
+            quarter_keys=quarter_keys,
+        )
+        change_rows = cls._query_change_rows_for_scope(query_quarters)
         concept_sector_cache: dict[str, str] = {}
         sector_manager = cls._build_sector_manager(cls._resolve_tdx_root(data_provider))
         view_rows = []
@@ -582,27 +637,55 @@ class FundHoldingsTab(BaseStockTab):
             "latest_sync_map": latest_sync_map,
             "concept_sector_cache": concept_sector_cache,
             "view_rows": view_rows,
+            "loaded_quarter_scope": normalized_scope,
+            "loaded_quarter_keys": sorted(query_quarters or []),
         }
 
     def _apply_view_payload(self, payload: dict):
-        self._latest_quarter_map = dict(payload.get("latest_quarter_map") or {})
-        self._latest_sync_map = dict(payload.get("latest_sync_map") or {})
-        self._concept_sector_cache = dict(payload.get("concept_sector_cache") or {})
-        view_rows = list(payload.get("view_rows") or [])
-        self.model.update_data(view_rows, hydrate_latest_quotes=False)
-        self._refresh_filter_options()
-        self._restore_view_state()
-        self._apply_filters()
-        self._apply_latest_quotes_from_store()
-        self._prime_visible_local_quote_snapshot(self.model)
-        self._update_status_summary()
+        with ui_stall_span(
+            "FundHoldingsTab._apply_view_payload",
+            tab="fund_holdings",
+            signal=str(payload.get("loaded_quarter_scope") or ""),
+        ):
+            self._latest_quarter_map = dict(payload.get("latest_quarter_map") or {})
+            self._latest_sync_map = dict(payload.get("latest_sync_map") or {})
+            self._concept_sector_cache = dict(payload.get("concept_sector_cache") or {})
+            self._loaded_quarter_scope = str(payload.get("loaded_quarter_scope") or "").strip()
+            self._loaded_quarter_keys = {
+                str(quarter_key or "").strip()
+                for quarter_key in (payload.get("loaded_quarter_keys") or [])
+                if str(quarter_key or "").strip()
+            }
+            view_rows = list(payload.get("view_rows") or [])
+            self.model.update_data(view_rows, hydrate_latest_quotes=False)
+            self._refresh_filter_options()
+            self._restore_view_state()
+            ensure_scope_loaded = getattr(self, "_ensure_current_quarter_scope_loaded", None)
+            if callable(ensure_scope_loaded) and ensure_scope_loaded(async_load=False):
+                return
+            self._apply_filters()
+            self._apply_latest_quotes_from_store()
+            self._prime_visible_local_quote_snapshot(self.model)
+            self._update_status_summary()
 
         if not view_rows and not self._sync_active:
             self.table_state.show_empty("暂无基金持仓数据", "请使用右上角“刷新”同步 QFII 或睿远持仓")
 
-    def _reload_from_db_async(self):
+    def _reload_from_db_async(
+        self,
+        *,
+        quarter_scope: str | None = None,
+        quarter_keys=None,
+    ):
+        scope = str(quarter_scope or self._QUERY_SCOPE_LATEST).strip().lower()
+        keys = set(quarter_keys or [])
+
         def _load_bg():
-            return self._load_view_payload(self.data_provider)
+            return self._load_view_payload(
+                self.data_provider,
+                quarter_scope=scope,
+                quarter_keys=keys,
+            )
 
         def _on_success(payload):
             if getattr(self, "_runtime_cleanup_done", False):
@@ -626,7 +709,7 @@ class FundHoldingsTab(BaseStockTab):
             _load_bg,
             on_success=_on_success,
             on_error=_on_error,
-            task_id=self._initial_load_task_id,
+            task_id=self._build_workspace_task_id(f"load_{scope}_{id(self)}"),
         )
 
     def _build_change_menu(self):
@@ -696,6 +779,39 @@ class FundHoldingsTab(BaseStockTab):
             return True, set()
         return False, selected
 
+    def _current_quarter_query_scope(self) -> tuple[str, set[str]]:
+        latest_only, selected_quarters = self._quarter_filter_state()
+        if latest_only:
+            return self._QUERY_SCOPE_LATEST, set()
+        if selected_quarters:
+            return self._QUERY_SCOPE_SELECTED, set(selected_quarters)
+        return self._QUERY_SCOPE_ALL, set()
+
+    def _quarter_scope_loaded(self, scope: str, quarter_keys: set[str]) -> bool:
+        loaded_scope = str(getattr(self, "_loaded_quarter_scope", "") or "").strip().lower()
+        loaded_keys = set(getattr(self, "_loaded_quarter_keys", set()) or set())
+        if loaded_scope == self._QUERY_SCOPE_ALL:
+            return True
+        if scope == self._QUERY_SCOPE_LATEST:
+            return loaded_scope == self._QUERY_SCOPE_LATEST
+        if scope == self._QUERY_SCOPE_SELECTED:
+            return bool(quarter_keys) and quarter_keys.issubset(loaded_keys)
+        return False
+
+    def _ensure_current_quarter_scope_loaded(self, *, async_load: bool) -> bool:
+        scope, quarter_keys = self._current_quarter_query_scope()
+        if self._quarter_scope_loaded(scope, quarter_keys):
+            return False
+        if async_load:
+            self._set_initial_loading_state(
+                "Loading fund holding quarters...",
+                "Reading the selected local quarter scope",
+            )
+            self._reload_from_db_async(quarter_scope=scope, quarter_keys=quarter_keys)
+        else:
+            self._reload_from_db(quarter_scope=scope, quarter_keys=quarter_keys)
+        return True
+
     def _set_change_filter_values(self, values: set[str] | list[str], *, apply: bool = True):
         selected = {
             str(value or "").strip()
@@ -746,6 +862,8 @@ class FundHoldingsTab(BaseStockTab):
 
         self._refresh_quarter_button_text()
         if apply:
+            if self._ensure_current_quarter_scope_loaded(async_load=False):
+                return
             self._apply_filters()
 
     def _on_change_selection_toggled(self, _checked: bool):
@@ -1113,22 +1231,39 @@ class FundHoldingsTab(BaseStockTab):
         self._run_sync_action("全部更新", fund_holdings_sync_service.sync_latest_all)
         return True
 
-    def _reload_from_db(self):
-        self._latest_quarter_map = fund_holdings_store.get_latest_quarter_map()
-        self._latest_sync_map = fund_holdings_store.get_latest_sync_map()
-        self._concept_sector_cache.clear()
-        change_rows = fund_holdings_store.query_change_rows()
-        view_rows = self._build_view_rows(change_rows)
-        self.model.update_data(view_rows, hydrate_latest_quotes=False)
-        self._refresh_filter_options()
-        self._restore_view_state()
-        self._apply_filters()
-        self._apply_latest_quotes_from_store()
-        self._prime_visible_local_quote_snapshot(self.model)
-        self._update_status_summary()
-
-        if not view_rows and not self._sync_active:
-            self.table_state.show_empty("暂无基金持仓数据", "请使用右上角“刷新”同步 QFII 或睿远持仓")
+    def _reload_from_db(
+        self,
+        *,
+        quarter_scope: str | None = None,
+        quarter_keys=None,
+    ):
+        if quarter_scope is None:
+            quarter_scope, quarter_keys = self._current_quarter_query_scope()
+        with ui_stall_span(
+            "FundHoldingsTab._reload_from_db",
+            tab="fund_holdings",
+            signal=str(quarter_scope or ""),
+        ):
+            self._latest_quarter_map = fund_holdings_store.get_latest_quarter_map()
+            self._latest_sync_map = fund_holdings_store.get_latest_sync_map()
+            self._concept_sector_cache.clear()
+            scope = str(quarter_scope or self._QUERY_SCOPE_LATEST).strip().lower()
+            query_quarters = self._resolve_query_quarters(
+                self._latest_quarter_map,
+                quarter_scope=scope,
+                quarter_keys=quarter_keys,
+            )
+            change_rows = self._query_change_rows_for_scope(query_quarters)
+            view_rows = self._build_view_rows(change_rows)
+            payload = {
+                "latest_quarter_map": self._latest_quarter_map,
+                "latest_sync_map": self._latest_sync_map,
+                "concept_sector_cache": self._concept_sector_cache,
+                "view_rows": view_rows,
+                "loaded_quarter_scope": scope,
+                "loaded_quarter_keys": sorted(query_quarters or []),
+            }
+            self._apply_view_payload(payload)
 
     def _refresh_filter_options(self):
         quarters = fund_holdings_store.list_quarters()

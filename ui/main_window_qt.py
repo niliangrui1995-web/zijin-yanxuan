@@ -31,6 +31,7 @@ from core.cache_manager import CacheManager
 from core.logger import get_logger
 from core.observability import emit_structured_log, record_metric
 from core.process_watchdog import ProcessWatchdog, log_process_snapshot
+from core.ui_stall_probe import install_ui_stall_probe, ui_stall_span
 from ui.components.command_palette import CommandPaletteDialog
 from ui.components.kline_window_manager import kline_manager
 from ui.components.message_box import show_themed_question
@@ -128,6 +129,11 @@ class MainWindowQT(QMainWindow):
         self._settings = app_config.section("window", legacy_scope="MainWindowQT")
         self._workspace = None
         self.tabs = None
+        self._ui_stall_probe = install_ui_stall_probe(
+            app,
+            parent=self,
+            context_provider=self._ui_stall_context,
+        )
         self._bootstrap = ApplicationBootstrap(self)
         self._command_service = WindowCommandService(self)
 
@@ -318,14 +324,44 @@ class MainWindowQT(QMainWindow):
         theme_manager.switch_theme(theme_name)
 
     def create_workspace(self, parent=None):
-        return ClassicWorkspace(
-            self.data_provider,
-            self.engine,
-            host=self,
-            parent=parent if parent is not None else self.tabs_wrapper,
-            background_prewarm=self._workspace_background_prewarm,
-            watchlist_startup_tasks=self._startup_enabled,
-        )
+        with ui_stall_span("MainWindowQT.create_workspace", tab=self._current_workspace_tab_key()):
+            return ClassicWorkspace(
+                self.data_provider,
+                self.engine,
+                host=self,
+                parent=parent if parent is not None else self.tabs_wrapper,
+                background_prewarm=self._workspace_background_prewarm,
+                watchlist_startup_tasks=self._startup_enabled,
+            )
+
+    def _current_workspace_tab_key(self) -> str:
+        workspace = getattr(self, "_workspace", None)
+        tabs = getattr(self, "tabs", None)
+        if workspace is None or tabs is None:
+            return ""
+        try:
+            index = int(tabs.currentIndex())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return ""
+        specs = list(getattr(workspace, "tab_specs", lambda: [])() or [])
+        if 0 <= index < len(specs):
+            return str(specs[index].get("key") or "").strip()
+        return ""
+
+    def _ui_stall_context(self) -> dict:
+        tab_key = self._current_workspace_tab_key()
+        context = {"window": self.__class__.__name__}
+        if tab_key:
+            context["tab"] = tab_key
+        tabs = getattr(self, "tabs", None)
+        current_widget = None
+        try:
+            current_widget = tabs.currentWidget() if tabs is not None else None
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            current_widget = None
+        if current_widget is not None:
+            context["widget"] = current_widget.__class__.__name__
+        return context
 
     def _rebind_workspace_chrome(self) -> None:
         tabs = getattr(self, "tabs", None)
@@ -364,6 +400,10 @@ class MainWindowQT(QMainWindow):
         log.warning("[UI] 中央报价服务不支持刷新 code_supplier")
 
     def replace_workspace(self, workspace):
+        with ui_stall_span("MainWindowQT.replace_workspace", tab=self._current_workspace_tab_key()):
+            return self._replace_workspace_impl(workspace)
+
+    def _replace_workspace_impl(self, workspace):
         existing_workspace = getattr(self, "_workspace", None)
         existing_tabs = getattr(existing_workspace, "tabs", None)
         previous_tabs = getattr(self, "tabs", None)
