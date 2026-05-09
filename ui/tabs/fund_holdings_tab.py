@@ -59,44 +59,76 @@ class FundHoldingsFilterProxyModel(RtSortFilterProxyModel):
         self._change_types: set[str] = set()
         self._latest_only = True
 
+    @staticmethod
+    def _normalized_values(values) -> set[str]:
+        return {
+            str(value or "").strip()
+            for value in (values or [])
+            if str(value or "").strip()
+        }
+
+    def set_filter_state(
+        self,
+        *,
+        subject_names=None,
+        capital_attributes=None,
+        quarter_keys=None,
+        change_types=None,
+        latest_only=None,
+        filter_text=None,
+    ) -> None:
+        changed = False
+
+        if subject_names is not None:
+            normalized = self._normalized_values(subject_names)
+            changed = changed or normalized != self._subject_names
+            self._subject_names = normalized
+
+        if capital_attributes is not None:
+            normalized = self._normalized_values(capital_attributes)
+            changed = changed or normalized != self._capital_attributes
+            self._capital_attributes = normalized
+
+        if quarter_keys is not None:
+            normalized = self._normalized_values(quarter_keys)
+            changed = changed or normalized != self._quarter_keys
+            self._quarter_keys = normalized
+
+        if change_types is not None:
+            normalized = self._normalized_values(change_types)
+            changed = changed or normalized != self._change_types
+            self._change_types = normalized
+
+        if latest_only is not None:
+            normalized_latest_only = bool(latest_only)
+            changed = changed or normalized_latest_only != self._latest_only
+            self._latest_only = normalized_latest_only
+
+        if filter_text is not None:
+            normalized_text = str(filter_text or "").strip().lower()
+            changed = changed or normalized_text != self._filter_text
+            self._filter_text = normalized_text
+
+        if changed:
+            self.invalidateFilter()
+
     def set_subject_name(self, subject_name: str):
         self.set_subject_names([subject_name] if subject_name else [])
 
     def set_subject_names(self, subject_names):
-        self._subject_names = {
-            str(subject_name or "").strip()
-            for subject_name in (subject_names or [])
-            if str(subject_name or "").strip()
-        }
-        self.invalidateFilter()
+        self.set_filter_state(subject_names=subject_names)
 
     def set_capital_attributes(self, capital_attributes):
-        self._capital_attributes = {
-            str(capital_attribute or "").strip()
-            for capital_attribute in (capital_attributes or [])
-            if str(capital_attribute or "").strip()
-        }
-        self.invalidateFilter()
+        self.set_filter_state(capital_attributes=capital_attributes)
 
     def set_quarter_keys(self, quarter_keys):
-        self._quarter_keys = {
-            str(quarter_key or "").strip()
-            for quarter_key in (quarter_keys or [])
-            if str(quarter_key or "").strip()
-        }
-        self.invalidateFilter()
+        self.set_filter_state(quarter_keys=quarter_keys)
 
     def set_change_types(self, change_types):
-        self._change_types = {
-            str(change_type or "").strip()
-            for change_type in (change_types or [])
-            if str(change_type or "").strip()
-        }
-        self.invalidateFilter()
+        self.set_filter_state(change_types=change_types)
 
     def set_latest_only(self, latest_only: bool):
-        self._latest_only = bool(latest_only)
-        self.invalidateFilter()
+        self.set_filter_state(latest_only=latest_only)
 
     def filterAcceptsRow(self, source_row, source_parent):
         model = self.sourceModel()
@@ -557,7 +589,7 @@ class FundHoldingsTab(BaseStockTab):
         self._latest_sync_map = dict(payload.get("latest_sync_map") or {})
         self._concept_sector_cache = dict(payload.get("concept_sector_cache") or {})
         view_rows = list(payload.get("view_rows") or [])
-        self.model.update_data(view_rows)
+        self.model.update_data(view_rows, hydrate_latest_quotes=False)
         self._refresh_filter_options()
         self._restore_view_state()
         self._apply_filters()
@@ -1087,7 +1119,7 @@ class FundHoldingsTab(BaseStockTab):
         self._concept_sector_cache.clear()
         change_rows = fund_holdings_store.query_change_rows()
         view_rows = self._build_view_rows(change_rows)
-        self.model.update_data(view_rows)
+        self.model.update_data(view_rows, hydrate_latest_quotes=False)
         self._refresh_filter_options()
         self._restore_view_state()
         self._apply_filters()
@@ -1166,12 +1198,14 @@ class FundHoldingsTab(BaseStockTab):
         latest_only, selected_quarters = self._quarter_filter_state()
         change_types = self._selected_change_types()
 
-        self.proxy_model.set_subject_names(subject_names)
-        self.proxy_model.set_capital_attributes(capital_attributes)
-        self.proxy_model.set_change_types(change_types)
-        self.proxy_model.setFilterText(self.search_box.text().strip())
-        self.proxy_model.set_latest_only(latest_only)
-        self.proxy_model.set_quarter_keys(selected_quarters)
+        self.proxy_model.set_filter_state(
+            subject_names=subject_names,
+            capital_attributes=capital_attributes,
+            change_types=change_types,
+            filter_text=self.search_box.text().strip(),
+            latest_only=latest_only,
+            quarter_keys=selected_quarters,
+        )
         self._schedule_view_state_save()
 
         if self.model.row_data:

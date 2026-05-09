@@ -313,7 +313,7 @@ class EarningsTab(BaseStockTab):
         self.row_data = pruned_rows
 
         if changed:
-            self.model.update_data(self.row_data)
+            self.model.update_data(self.row_data, hydrate_latest_quotes=False)
             self._apply_latest_quotes_from_store()
             self._prime_visible_local_quote_snapshot(self.model)
 
@@ -357,19 +357,28 @@ class EarningsTab(BaseStockTab):
         else:
             self._set_window_status("本次扫描命中", self._status_metric("新增 ", len(df), "只"))
 
-        for _, row in df.iterrows():
+        # 缓存回放可能有上千行；先建立索引，让去重覆盖保持 O(n)，避免逐行扫描 row_data。
+        existing_rows_by_key = {
+            (str(r.get("代码", "")).strip(), str(r.get("报告期", "")).strip()): r
+            for r in self.row_data
+            if isinstance(r, dict)
+        }
+
+        def fmt_money(v):
+            if v != v or v is None:
+                return "--"
+            if abs(v) >= 1e8:
+                return f"{v/1e8:.2f}亿"
+            if abs(v) >= 1e4:
+                return f"{v/1e4:.0f}万"
+            return f"{v:.0f}"
+
+        for row in df.to_dict("records"):
             code = str(row.get('股票代码', '')).zfill(6)
             name = str(row.get('股票名称', ''))
             pct = float(row.get('环比增速_百分比', 0.0))
             cur_profit = float(row.get('单季净利润_新增', 0.0))
             last_profit = float(row.get('单季净利润_上期', 0.0))
-
-            # 格式化一下大额单位
-            def fmt_money(v):
-                if v != v or v is None: return "--"
-                if abs(v) >= 1e8: return f"{v/1e8:.2f}亿"
-                if abs(v) >= 1e4: return f"{v/1e4:.0f}万"
-                return f"{v:.0f}"
 
             row_obj = {
                 "代码": code,
@@ -391,32 +400,30 @@ class EarningsTab(BaseStockTab):
             }
 
             # 校验与层级更替（预告 -> 财报）去重
-            exists = False
-            for r in self.row_data:
-                # 只要 代码 和 报告期 相同，就证明这是同一份财报的不同进度版，必须走去重覆盖！
-                if r.get("代码") == code and r.get("报告期") == row_obj["报告期"]:
-                    exists = True
-                    old_date = r.get("揭晓日", "")
-                    new_date = row_obj["揭晓日"]
+            # 只要 代码 和 报告期 相同，就证明这是同一份财报的不同进度版，必须走去重覆盖！
+            existing_key = (code, str(row_obj["报告期"]).strip())
+            existing_row = existing_rows_by_key.get(existing_key)
+            if existing_row is not None:
+                old_date = existing_row.get("揭晓日", "")
+                new_date = row_obj["揭晓日"]
 
-                    # 只有更晚发布的权威版（包括同日不同类型），才允许覆盖界面上的旧版（如财报覆盖旧预告）
-                    if new_date >= old_date:
-                        row_obj["现价"] = r.get("现价", "--")
-                        row_obj["涨幅%"] = r.get("涨幅%", "--")
-                        row_obj["市值"] = r.get("市值", "--")
-                        row_obj["PE(TTM)"] = r.get("PE(TTM)", "--")
-                        if "_raw_profit" not in row_obj and "_raw_profit" in r:
-                            row_obj["_raw_profit"] = r["_raw_profit"]
+                # 只有更晚发布的权威版（包括同日不同类型），才允许覆盖界面上的旧版（如财报覆盖旧预告）
+                if new_date >= old_date:
+                    row_obj["现价"] = existing_row.get("现价", "--")
+                    row_obj["涨幅%"] = existing_row.get("涨幅%", "--")
+                    row_obj["市值"] = existing_row.get("市值", "--")
+                    row_obj["PE(TTM)"] = existing_row.get("PE(TTM)", "--")
+                    if "_raw_profit" not in row_obj and "_raw_profit" in existing_row:
+                        row_obj["_raw_profit"] = existing_row["_raw_profit"]
 
-                        # 确保如果有老的字段，也被合并到新数据上（防止旧属性丢失）
-                        r.update(row_obj)
-                        log.debug(f"[业绩监控] {code} {row_obj['报告期']} 已覆盖为 {row_obj['类型']}")
-                    else:
-                        log.debug(f"[业绩监控] {code} {row_obj['类型']} 已存在更新版，跳过")
-                    break
-
-            if not exists:
+                    # 确保如果有老的字段，也被合并到新数据上（防止旧属性丢失）
+                    existing_row.update(row_obj)
+                    log.debug(f"[业绩监控] {code} {row_obj['报告期']} 已覆盖为 {row_obj['类型']}")
+                else:
+                    log.debug(f"[业绩监控] {code} {row_obj['类型']} 已存在更新版，跳过")
+            else:
                 self.row_data.append(row_obj)
+                existing_rows_by_key[existing_key] = row_obj
 
         # 只展示近 N 个交易日窗口，避免自然日累计导致表格越来越重。
         self._apply_display_trade_window(force_refresh=True)

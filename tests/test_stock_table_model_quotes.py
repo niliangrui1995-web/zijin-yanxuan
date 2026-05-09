@@ -42,6 +42,23 @@ def test_stock_table_model_update_quotes_batches_changed_rows():
     assert model.data(model.index(0, cap_col), Qt.ItemDataRole.UserRole + 1)["diff"] == 0
 
 
+def test_stock_table_model_sort_value_cache_invalidates_on_cell_update():
+    model = StockTableModel(["代码", "名称", "市值"])
+    model.update_data([
+        {"代码": "000001", "名称": "A", "市值": "105亿"},
+    ])
+
+    cap_col = model.headers.index("市值")
+    index = model.index(0, cap_col)
+
+    assert model.data(index, Qt.ItemDataRole.UserRole) == 10_500_000_000
+    assert (0, cap_col) in model._sort_value_cache
+
+    model.set_cell_value(0, "市值", "210亿", emit_signal=False)
+
+    assert model.data(index, Qt.ItemDataRole.UserRole) == 21_000_000_000
+
+
 def test_stock_table_model_incremental_update_marks_status_and_time_flash():
     model = StockTableModel(["代码", "名称", "状态", "最近时间"])
     model.update_data([
@@ -87,6 +104,24 @@ def test_stock_table_model_update_data_hydrates_latest_global_quotes(monkeypatch
     assert model.row_data[0]["现价"] == "10.50"
     assert model.row_data[0]["涨幅%"] == pytest.approx(5.0)
     assert model.row_data[0]["市值"] == "105亿"
+
+
+def test_stock_table_model_update_data_can_skip_latest_global_quotes(monkeypatch):
+    monkeypatch.setattr(
+        global_store,
+        "get_latest_quotes",
+        lambda: {"000001": {"close": 10.5, "last_close": 10.0}},
+    )
+
+    model = StockTableModel(["代码", "名称", "现价", "涨幅%", "市值"])
+    model.update_data(
+        [{"代码": "000001", "名称": "A", "现价": "--", "涨幅%": "--", "市值": "--", "_zongguben": 1_000_000_000}],
+        hydrate_latest_quotes=False,
+    )
+
+    assert model.row_data[0]["现价"] == "--"
+    assert model.row_data[0]["涨幅%"] == "--"
+    assert model.row_data[0]["市值"] == "--"
 
 
 def test_stock_table_model_supports_shijia_header(monkeypatch):

@@ -43,6 +43,16 @@ class _FakeSettings:
         return None
 
 
+class _CountingFundHoldingsFilterProxy(fund_holdings_module.FundHoldingsFilterProxyModel):
+    def __init__(self):
+        super().__init__()
+        self.invalidate_count = 0
+
+    def invalidateFilter(self):  # noqa: N802 - Qt API naming
+        self.invalidate_count += 1
+        return super().invalidateFilter()
+
+
 def _build_change_row(
     *,
     subject_code: str,
@@ -75,6 +85,32 @@ def _build_change_row(
         "stock_code": stock_code,
         "stock_name": stock_name,
     }
+
+
+def test_fund_holdings_filter_state_batches_invalidations():
+    proxy = _CountingFundHoldingsFilterProxy()
+
+    proxy.set_filter_state(
+        subject_names={"A", ""},
+        capital_attributes={"owned"},
+        quarter_keys={"2025Q4"},
+        change_types={"new"},
+        latest_only=False,
+        filter_text="  Ping An  ",
+    )
+    assert proxy.invalidate_count == 1
+    assert proxy._subject_names == {"A"}
+    assert proxy._filter_text == "ping an"
+
+    proxy.set_filter_state(
+        subject_names={"A"},
+        capital_attributes={"owned"},
+        quarter_keys={"2025Q4"},
+        change_types={"new"},
+        latest_only=False,
+        filter_text="ping an",
+    )
+    assert proxy.invalidate_count == 1
 
 
 def _setup_store(monkeypatch, rows, settings=None, concept_map=None, *, patch_local_snapshot: bool = True):
@@ -605,7 +641,7 @@ def test_fund_holdings_apply_view_payload_primes_local_snapshot():
     class Model:
         row_data = []
 
-        def update_data(self, rows):
+        def update_data(self, rows, **_kwargs):
             self.row_data = list(rows)
             calls.append(("update", list(rows)))
 

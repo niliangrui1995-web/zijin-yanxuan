@@ -273,7 +273,7 @@ def test_earnings_display_window_primes_local_snapshot_after_cache_render():
     calls = []
 
     class Model:
-        def update_data(self, rows):
+        def update_data(self, rows, **_kwargs):
             calls.append(("update", list(rows)))
 
     class DummyTab:

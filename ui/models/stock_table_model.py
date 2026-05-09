@@ -38,6 +38,7 @@ class StockTableModel(QAbstractTableModel):
         self._headers = _with_serial_header(headers)
         self._data = data or []
         self._flash_records = {}
+        self._sort_value_cache = {}
         self._plain_style_headers = set()
         self._plain_background_headers = set()
 
@@ -127,10 +128,24 @@ class StockTableModel(QAbstractTableModel):
     def _record_cell_flash(self, row: int, col: int, old_value, new_value) -> None:
         if row < 0 or col < 0 or col >= len(self._headers):
             return
+        self._sort_value_cache.pop((row, col), None)
         flash_record = _build_flash_record(self._headers[col], old_value, new_value)
         if not flash_record:
             return
         self._flash_records.setdefault(row, {})[col] = flash_record
+
+    def _clear_sort_value_cache(self) -> None:
+        self._sort_value_cache.clear()
+
+    def _clear_sort_value_cache_for_rows(self, rows) -> None:
+        if not self._sort_value_cache:
+            return
+        row_set = set(rows or [])
+        if not row_set:
+            return
+        for cache_key in list(self._sort_value_cache):
+            if cache_key[0] in row_set:
+                self._sort_value_cache.pop(cache_key, None)
 
     def _record_row_flashes(self, row: int, old_row: dict, new_row: dict) -> None:
         if not isinstance(old_row, dict) or not isinstance(new_row, dict):
@@ -164,6 +179,7 @@ class StockTableModel(QAbstractTableModel):
         if not changed_rows:
             return
 
+        self._clear_sort_value_cache_for_rows(changed_rows)
         _emit_model_row_ranges(
             self,
             changed_rows,
@@ -177,6 +193,7 @@ class StockTableModel(QAbstractTableModel):
         self.layoutAboutToBeChanged.emit()
         self._data = rows
         self._flash_records.clear()
+        self._clear_sort_value_cache()
         self.layoutChanged.emit()
         if self.rowCount() and self.columnCount():
             self.dataChanged.emit(
@@ -185,24 +202,28 @@ class StockTableModel(QAbstractTableModel):
                 self._flash_roles(),
             )
 
-    def update_data(self, new_data):
+    def update_data(self, new_data, *, hydrate_latest_quotes: bool = True):
         _prune_flash_records(self._flash_records)
         rows = list(new_data or [])
         if self._can_update_incrementally(rows):
             self._emit_incremental_rows(rows)
-            self._hydrate_latest_quotes_from_store()
+            if hydrate_latest_quotes:
+                self._hydrate_latest_quotes_from_store()
             return
         if self._can_reorder_incrementally(rows):
             self._emit_reordered_rows(rows)
-            self._hydrate_latest_quotes_from_store()
+            if hydrate_latest_quotes:
+                self._hydrate_latest_quotes_from_store()
             return
 
         self.beginResetModel()
         self._data = rows
         _sync_serial_values(self._data)
         self._flash_records.clear()
+        self._clear_sort_value_cache()
         self.endResetModel()
-        self._hydrate_latest_quotes_from_store()
+        if hydrate_latest_quotes:
+            self._hydrate_latest_quotes_from_store()
 
     def _hydrate_latest_quotes_from_store(self):
         if not self._data or "代码" not in self._headers:
@@ -268,6 +289,7 @@ class StockTableModel(QAbstractTableModel):
                 insert_row -= 1
 
         new_data[insert_row:insert_row] = items_to_move
+        self._clear_sort_value_cache()
         codes = [d.get("代码") for d in new_data if d.get("代码")]
         self.sig_rows_reordered.emit(codes)
         return False
@@ -282,6 +304,7 @@ class StockTableModel(QAbstractTableModel):
             except ValueError:
                 col_idx = -1
             if col_idx >= 0:
+                self._sort_value_cache.pop((row, col_idx), None)
                 self._record_cell_flash(row, col_idx, old_val, new_val)
 
             if emit_signal and col_idx >= 0:
@@ -592,45 +615,53 @@ class StockTableModel(QAbstractTableModel):
             return None
 
         elif role == Qt.ItemDataRole.UserRole:
+            cache_key = (row, col)
+            if cache_key in self._sort_value_cache:
+                return self._sort_value_cache[cache_key]
+
+            def _remember(value):
+                self._sort_value_cache[cache_key] = value
+                return value
+
             if key == SERIAL_HEADER:
-                return row + 1
+                return _remember(row + 1)
             if key == "外资净买入":
                 try:
-                    return float(item_dict.get("外资净买(万)", 0) or 0)
+                    return _remember(float(item_dict.get("外资净买(万)", 0) or 0))
                 except (ValueError, TypeError):
-                    return 0.0
+                    return _remember(0.0)
             if key == "最近上榜":
                 raw_date = str(item_dict.get("_最近上榜_raw", "") or raw_val).strip()
                 if re.fullmatch(r'\d{8}', raw_date):
-                    return int(raw_date)
+                    return _remember(int(raw_date))
             s_val = str(raw_val).replace(',', '')
 
             if key == "日报时间":
                 report_ts = int(item_dict.get("_report_ts", 0) or 0)
                 row_rank = int(item_dict.get("_report_row_rank", 0) or 0)
                 if report_ts:
-                    return report_ts * 1000000 + max(0, 999999 - row_rank)
+                    return _remember(report_ts * 1000000 + max(0, 999999 - row_rank))
 
             if re.fullmatch(r'\d{4}-\d{2}-\d{2}', s_val):
-                return int(s_val.replace('-', ''))
+                return _remember(int(s_val.replace('-', '')))
             if re.fullmatch(r'\d{8}', s_val):
-                return int(s_val)
+                return _remember(int(s_val))
 
             if '万' in s_val:
                 m = re.search(r'([-+]?\d*\.?\d+)', s_val)
                 if m:
-                    return float(m.group(1)) * 10000
-                return 0.0
+                    return _remember(float(m.group(1)) * 10000)
+                return _remember(0.0)
             if '亿' in s_val:
                 m = re.search(r'([-+]?\d*\.?\d+)', s_val)
                 if m:
-                    return float(m.group(1)) * 100000000
-                return 0.0
+                    return _remember(float(m.group(1)) * 100000000)
+                return _remember(0.0)
 
             m = re.search(r'([-+]?\d*\.?\d+)', s_val)
             if m:
-                return float(m.group(1))
-            return str(raw_val)
+                return _remember(float(m.group(1)))
+            return _remember(str(raw_val))
 
         elif role == Qt.ItemDataRole.UserRole + 1:
             flash_record = self._flash_records.get(row, {}).get(col, None)
