@@ -10,13 +10,14 @@ K 线窗口管理器 — 单例模式 (#1)
 现在统一收口到这里，任何人想开 K 线图只需调用 open_chart()。
 """
 
+import os
 import threading
 import time
 import weakref
 
+from app.services.kline_webengine_preflight import check_qt_webengine_available
 from core.logger import get_logger
 from core.observability import emit_structured_log, record_metric
-from app.services.kline_webengine_preflight import check_qt_webengine_available
 
 log = get_logger(__name__)
 
@@ -24,6 +25,12 @@ log = get_logger(__name__)
 MAX_CHART_WINDOWS = 5
 PREWARM_VIEW_TTL_MS = 120_000
 WEBENGINE_PREFLIGHT_TIMEOUT_S = 8
+HIDDEN_PREWARM_ENV = "VCP_KLINE_HIDDEN_PREWARM"
+
+
+def _hidden_prewarm_enabled() -> bool:
+    value = str(os.environ.get(HIDDEN_PREWARM_ENV, "") or "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
 
 
 class KLineWindowManager:
@@ -39,17 +46,25 @@ class KLineWindowManager:
             cls._instance._prewarm_started = False
             cls._instance._prewarm_cancelled = False
             cls._instance._prewarm_expire_timer = None
+            cls._instance._prewarm_hidden_view_enabled = False
             cls._instance._webengine_available = None
             cls._instance._webengine_failure = ""
             cls._instance._webengine_preflight_started = False
         return cls._instance
 
-    def prewarm(self, *, delay_ms: int = 2500, ttl_ms: int = PREWARM_VIEW_TTL_MS) -> bool:
-        """Warm up QWebEngine during idle time so the first K-line opens faster."""
+    def prewarm(
+        self,
+        *,
+        delay_ms: int = 2500,
+        ttl_ms: int = PREWARM_VIEW_TTL_MS,
+        hidden_view: bool | None = None,
+    ) -> bool:
+        """Run WebEngine preflight during idle time; hidden-view warm-up is opt-in."""
         if self._prewarm_started or self._prewarm_view is not None:
             return False
         self._prewarm_started = True
         self._prewarm_cancelled = False
+        self._prewarm_hidden_view_enabled = _hidden_prewarm_enabled() if hidden_view is None else bool(hidden_view)
         self._prewarm_ttl_ms = max(0, int(ttl_ms or 0))
         try:
             from PyQt6.QtCore import QTimer
@@ -192,6 +207,10 @@ class KLineWindowManager:
         if webengine_available is not True:
             self._prewarm_started = False
             log.debug("[KLine] skip WebEngine prewarm before successful preflight")
+            return
+        if not getattr(self, "_prewarm_hidden_view_enabled", False):
+            self._prewarm_started = False
+            record_metric("kline_webengine_prewarm_preflight_only", 1, unit="count")
             return
         try:
             from PyQt6.QtCore import QUrl

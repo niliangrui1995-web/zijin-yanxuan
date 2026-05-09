@@ -26,10 +26,99 @@ from PyQt6.QtWidgets import QApplication
 from ui.main_window_qt import MainWindowQT
 
 
+def _mb(value: int | float | None) -> float:
+    return round(float(value or 0) / 1024.0 / 1024.0, 1)
+
+
 def _rss_mb() -> float | None:
     if psutil is None:
         return None
-    return round(psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024, 1)
+    return _mb(psutil.Process(os.getpid()).memory_info().rss)
+
+
+def _process_info(process) -> dict | None:
+    if psutil is None:
+        return None
+    try:
+        memory = process.memory_info()
+        item = {
+            "pid": process.pid,
+            "name": process.name(),
+            "rss_mb": _mb(getattr(memory, "rss", 0)),
+            "vms_mb": _mb(getattr(memory, "vms", 0)),
+            "thread_count": process.num_threads(),
+        }
+        private_value = getattr(memory, "private", None)
+        if private_value is not None:
+            item["private_mb"] = _mb(private_value)
+        working_set = getattr(memory, "wset", None)
+        if working_set is not None:
+            item["working_set_mb"] = _mb(working_set)
+        return item
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError, psutil.Error):
+        return None
+
+
+def _qt_object_counts() -> dict:
+    counts: dict = {}
+    try:
+        app = QApplication.instance()
+        if app is not None:
+            counts["qt_top_level_widgets"] = len(app.topLevelWidgets())
+            counts["qt_all_widgets"] = len(app.allWidgets())
+    except (AttributeError, RuntimeError, TypeError):
+        pass
+    try:
+        from ui.components.kline_window_manager import kline_manager
+
+        charts = list(getattr(kline_manager, "_charts", []) or [])
+        counts["kline_tracked_windows"] = len(charts)
+        counts["kline_active_windows"] = kline_manager.active_count
+        counts["kline_prewarm_view"] = 1 if getattr(kline_manager, "_prewarm_view", None) is not None else 0
+    except (AttributeError, ImportError, RuntimeError, TypeError, ValueError):
+        pass
+    return counts
+
+
+def collect_process_snapshot(label: str = "") -> dict:
+    if psutil is None:
+        return {
+            "label": label,
+            "main": {"pid": os.getpid(), "rss_mb": None, "vms_mb": None, "thread_count": None},
+            "children": [],
+            "webengine_children": [],
+            "child_count": 0,
+            "webengine_child_count": 0,
+            "webengine_rss_mb": None,
+            "webengine_private_mb": None,
+            "object_counts": _qt_object_counts(),
+        }
+    process = psutil.Process(os.getpid())
+    children = [item for item in (_process_info(child) for child in process.children(recursive=True)) if item]
+    webengine_children = [
+        item
+        for item in children
+        if "qtwebengine" in str(item.get("name", "")).lower()
+        or "chrome" in str(item.get("name", "")).lower()
+        or "chromium" in str(item.get("name", "")).lower()
+    ]
+    return {
+        "label": label,
+        "main": _process_info(process),
+        "children": children,
+        "webengine_children": webengine_children,
+        "child_count": len(children),
+        "webengine_child_count": len(webengine_children),
+        "webengine_rss_mb": round(sum(float(item.get("rss_mb") or 0.0) for item in webengine_children), 1),
+        "webengine_private_mb": round(sum(float(item.get("private_mb") or 0.0) for item in webengine_children), 1),
+        "object_counts": _qt_object_counts(),
+    }
+
+
+def _snapshot_value(snapshot: dict, key: str) -> float | None:
+    value = ((snapshot or {}).get("main") or {}).get(key)
+    return None if value is None else float(value)
+
 
 
 def _process_events(app: QApplication, rounds: int = 8, sleep_ms: int = 0) -> None:
@@ -47,17 +136,33 @@ def _settle(app: QApplication, settle_ms: int) -> None:
 
 
 def _measure(label: str, fn):
-    before = _rss_mb()
+    before_snapshot = collect_process_snapshot(f"{label}:before")
+    before = _snapshot_value(before_snapshot, "rss_mb")
     started = time.perf_counter()
     result = fn()
     elapsed_ms = (time.perf_counter() - started) * 1000.0
-    after = _rss_mb()
+    after_snapshot = collect_process_snapshot(f"{label}:after")
+    after = _snapshot_value(after_snapshot, "rss_mb")
+    private_before = _snapshot_value(before_snapshot, "private_mb")
+    private_after = _snapshot_value(after_snapshot, "private_mb")
+    vms_before = _snapshot_value(before_snapshot, "vms_mb")
+    vms_after = _snapshot_value(after_snapshot, "vms_mb")
     return {
         "label": label,
         "elapsed_ms": round(elapsed_ms, 1),
         "rss_before_mb": before,
         "rss_after_mb": after,
         "rss_delta_mb": None if before is None or after is None else round(after - before, 1),
+        "private_before_mb": private_before,
+        "private_after_mb": private_after,
+        "private_delta_mb": (
+            None if private_before is None or private_after is None else round(private_after - private_before, 1)
+        ),
+        "vms_before_mb": vms_before,
+        "vms_after_mb": vms_after,
+        "vms_delta_mb": None if vms_before is None or vms_after is None else round(vms_after - vms_before, 1),
+        "snapshot_before": before_snapshot,
+        "snapshot_after": after_snapshot,
         "result": result,
     }
 
@@ -240,6 +345,37 @@ def _cycle_kline_windows(
     return {"cycles": int(cycles), "opened": opened, "blocked": blocked, "closed": closed, "code": code_text}
 
 
+def _profile_gbbq(provider, *, mode: str, code: str) -> dict:
+    code_text = str(code or "").strip() or "000001"
+    mode_text = str(mode or "none").strip().lower()
+    samples: dict = {}
+    if provider is None:
+        return {"mode": mode_text, "code": code_text, "error": "provider_unavailable", "samples": samples}
+
+    if mode_text in {"single", "both"}:
+        samples["single_code"] = _measure(
+            f"gbbq_single:{code_text}",
+            lambda: {
+                "code": code_text,
+                "codes": len(provider._load_local_gbbq_for_code(code_text)),
+                "full_loaded": bool(getattr(provider, "_local_gbbq_loaded", False)),
+                "code_cache_size": len(getattr(provider, "_local_gbbq_code_cache", {}) or {}),
+            },
+        )
+
+    if mode_text in {"full", "both"}:
+        samples["full"] = _measure(
+            "gbbq_full",
+            lambda: {
+                "codes": len(provider._load_local_gbbq(force=False)),
+                "full_loaded": bool(getattr(provider, "_local_gbbq_loaded", False)),
+                "code_cache_size": len(getattr(provider, "_local_gbbq_code_cache", {}) or {}),
+            },
+        )
+
+    return {"mode": mode_text, "code": code_text, "samples": samples}
+
+
 def run_probe(args: argparse.Namespace) -> dict:
     if int(args.kline_cycles) > 0 and QApplication.instance() is None:
         from PyQt6.QtCore import Qt
@@ -261,8 +397,10 @@ def run_probe(args: argparse.Namespace) -> dict:
             "tab_cycles": int(args.tab_cycles),
             "kline_cycles": int(args.kline_cycles),
             "cycle_settle_ms": int(args.cycle_settle_ms),
+            "profile_gbbq": str(args.profile_gbbq),
         },
         "samples": {},
+        "snapshots": [collect_process_snapshot("probe_start")],
         "loaded_tabs": [],
     }
 
@@ -289,12 +427,22 @@ def run_probe(args: argparse.Namespace) -> dict:
 
     metrics["samples"]["build_window"] = _measure("build_window", _build_window)
     window = window_holder["window"]
+    metrics["snapshots"].append(collect_process_snapshot("after_build_window"))
 
     if args.settle_ms > 0:
         metrics["samples"]["settle_after_build"] = _measure(
             "settle_after_build",
             lambda: _process_events(app, rounds=max(1, args.settle_ms // 50), sleep_ms=50),
         )
+        metrics["snapshots"].append(collect_process_snapshot("after_settle_build"))
+
+    if args.profile_gbbq != "none":
+        metrics["gbbq_profile"] = _profile_gbbq(
+            getattr(window, "data_provider", None),
+            mode=args.profile_gbbq,
+            code=args.gbbq_code,
+        )
+        metrics["snapshots"].append(collect_process_snapshot("after_profile_gbbq"))
 
     if args.load_tabs or args.tab_cycles > 0:
         metrics["loaded_tabs"] = _load_workspace_tabs(window, app)
@@ -369,6 +517,7 @@ def run_probe(args: argparse.Namespace) -> dict:
     _process_events(app, rounds=5)
     gc.collect()
     metrics["rss_final_mb"] = _rss_mb()
+    metrics["snapshots"].append(collect_process_snapshot("probe_end"))
     return metrics
 
 
@@ -389,12 +538,24 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--webengine-smoke", action="store_true", help="Run an isolated QtWebEngine smoke probe and include its result.")
     parser.add_argument("--skip-webengine-smoke", action="store_true", help="Run K-line cycles without the isolated QtWebEngine preflight.")
     parser.add_argument("--cycle-settle-ms", type=int, default=150, help="Wait/process events inside repeated tab or K-line cycles.")
+    parser.add_argument(
+        "--profile-gbbq",
+        choices=("none", "single", "full", "both"),
+        default="none",
+        help="Measure single-code and/or full gbbq loading in the current provider.",
+    )
+    parser.add_argument("--gbbq-code", default="000001", help="Stock code used by --profile-gbbq single/both.")
+    parser.add_argument("--output", default="", help="Write the structured JSON report to this path.")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv or sys.argv[1:])
     metrics = run_probe(args)
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(metrics, ensure_ascii=False, indent=2))
     return 0
 

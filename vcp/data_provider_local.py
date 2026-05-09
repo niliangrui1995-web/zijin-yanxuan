@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import struct
 import threading
 from datetime import datetime
@@ -39,6 +41,52 @@ def deserialize_gbbq_cache(payload: dict) -> dict:
             continue
         restored[str(code)] = pd.DataFrame(rows)
     return restored
+
+
+def _find_json_array_end(payload: str, start: int) -> int:
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(payload)):
+        char = payload[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "[":
+            depth += 1
+        elif char == "]":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    raise ValueError("gbbq code cache array is incomplete")
+
+
+def _load_gbbq_cache_rows_for_code(gbbq_cache_file: str, code: str, expected_mtime: float | None) -> list[dict]:
+    with open(gbbq_cache_file, "r", encoding="utf-8") as handle:
+        payload = handle.read()
+
+    if expected_mtime is not None:
+        match = re.search(r'"mtime"\s*:\s*([0-9]+(?:\.[0-9]+)?)', payload)
+        if match and float(match.group(1)) != float(expected_mtime):
+            raise ValueError("gbbq cache mtime mismatch")
+
+    needle = f'"{code}":'
+    position = payload.find(needle)
+    if position < 0:
+        return []
+    array_start = payload.find("[", position + len(needle))
+    if array_start < 0:
+        raise ValueError("gbbq code cache array is missing")
+    array_end = _find_json_array_end(payload, array_start)
+    rows = json.loads(payload[array_start:array_end])
+    return rows if isinstance(rows, list) else []
 
 
 def _dbf_signature(path: str) -> tuple[int, int] | None:
@@ -230,6 +278,70 @@ def load_local_gbbq(
     except (AttributeError, ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
         _log.error(f"[数据中台] gbbq 加载失败(不影响联网复权): {exc}")
         return current
+
+
+def load_local_gbbq_for_code(
+    tdx_vipdoc: str | None,
+    gbbq_cache_file: str,
+    legacy_gbbq_cache_file: str,
+    local_gbbq: dict | None,
+    code: str,
+    *,
+    force: bool = False,
+) -> dict:
+    """Load one stock's gbbq rows from the JSON cache without materializing all codes."""
+
+    current = dict(local_gbbq or {})
+    code_text = str(code or "").strip()
+    if not code_text:
+        return current
+    if code_text in current and not force:
+        return current
+    if force:
+        return load_local_gbbq(
+            tdx_vipdoc,
+            gbbq_cache_file,
+            legacy_gbbq_cache_file,
+            current,
+            force=True,
+        )
+    if not tdx_vipdoc:
+        return current
+
+    tdx_root = os.path.dirname(tdx_vipdoc)
+    gbbq_path = os.path.join(tdx_root, "T0002", "hq_cache", "gbbq")
+    if not os.path.exists(gbbq_path):
+        return current
+    if not os.path.exists(gbbq_cache_file):
+        return load_local_gbbq(
+            tdx_vipdoc,
+            gbbq_cache_file,
+            legacy_gbbq_cache_file,
+            current,
+            force=True,
+        )
+
+    try:
+        rows = _load_gbbq_cache_rows_for_code(
+            gbbq_cache_file,
+            code_text,
+            os.path.getmtime(gbbq_path),
+        )
+        remove_cache_file(legacy_gbbq_cache_file)
+    except (CacheIOError, json.JSONDecodeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        _log.debug(f"[缓存] gbbq 单代码缓存读取失败，将回退全量加载: {code_text} {exc}")
+        return load_local_gbbq(
+            tdx_vipdoc,
+            gbbq_cache_file,
+            legacy_gbbq_cache_file,
+            current,
+            force=True,
+        )
+
+    if rows:
+        current[code_text] = pd.DataFrame(rows)
+        _log.debug(f"[缓存] 已按需加载 gbbq 单代码缓存: {code_text} {len(rows)} 条记录")
+    return current
 
 
 def get_market_code(stock_code) -> int:

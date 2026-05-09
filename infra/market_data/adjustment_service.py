@@ -6,6 +6,7 @@ from vcp.data_provider_local import (
 from vcp.data_provider_local import (
     get_market_code,
     load_local_gbbq,
+    load_local_gbbq_for_code,
 )
 
 
@@ -26,15 +27,25 @@ class AdjustmentService:
         )
         return provider._local_gbbq
 
+    def load_local_gbbq_for_code(self, code: str):
+        provider = self.provider
+        return load_local_gbbq_for_code(
+            provider.tdx_vipdoc,
+            provider.gbbq_cache_file,
+            provider.legacy_gbbq_cache_file,
+            getattr(provider, "_local_gbbq_code_cache", {}),
+            code,
+        )
+
     @staticmethod
     def get_market_code(stock_code):
         return get_market_code(stock_code)
 
-    def apply_forward_adjustment(self, api, market, code, df):
+    def apply_forward_adjustment(self, api, market, code, df, *, local_gbbq: dict | None = None):
         return apply_forward_adjustment_impl(
             api,
             market,
             code,
             df,
-            getattr(self.provider, "_local_gbbq", {}),
+            getattr(self.provider, "_local_gbbq", {}) if local_gbbq is None else local_gbbq,
         )

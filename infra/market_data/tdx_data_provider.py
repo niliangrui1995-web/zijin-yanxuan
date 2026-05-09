@@ -79,6 +79,8 @@ class TdxDataProvider(TdxDataProviderHistoryMixin, TdxDataProviderRealtimeMixin)
         )
         self.tdx_vipdoc = _load_tdx_local_config()
         self._local_gbbq = {}
+        self._local_gbbq_code_cache = {}
+        self._local_gbbq_code_cache_max = 128
         self._local_gbbq_loaded = False
         self._local_gbbq_lock = threading.RLock()
         self.server_pool = []
@@ -131,6 +133,7 @@ class TdxDataProvider(TdxDataProviderHistoryMixin, TdxDataProviderRealtimeMixin)
             if self._local_gbbq_loaded and not force:
                 return self._local_gbbq
             self._local_gbbq = self._get_adjustment_service().load_local_gbbq(force=force)
+            self._local_gbbq_code_cache = {}
             self._local_gbbq_loaded = True
             return self._local_gbbq
 
@@ -138,6 +141,39 @@ class TdxDataProvider(TdxDataProviderHistoryMixin, TdxDataProviderRealtimeMixin)
         if not self.tdx_vipdoc:
             return self._local_gbbq
         return self._load_local_gbbq(force=False)
+
+    def _load_local_gbbq_for_code(self, code):
+        code_text = str(code or "").strip()
+        if not code_text:
+            return {}
+        with self._local_gbbq_lock:
+            if self._local_gbbq_loaded:
+                return self._local_gbbq
+            cache = dict(getattr(self, "_local_gbbq_code_cache", {}) or {})
+            if code_text in cache:
+                value = cache.pop(code_text)
+                cache[code_text] = value
+                self._local_gbbq_code_cache = cache
+                return {code_text: value}
+
+            loaded = self._get_adjustment_service().load_local_gbbq_for_code(code_text)
+            for loaded_code, frame in (loaded or {}).items():
+                if loaded_code in cache:
+                    cache.pop(loaded_code)
+                cache[loaded_code] = frame
+
+            max_entries = max(1, int(getattr(self, "_local_gbbq_code_cache_max", 128) or 128))
+            while len(cache) > max_entries:
+                cache.pop(next(iter(cache)))
+            self._local_gbbq_code_cache = cache
+            return {code_text: cache[code_text]} if code_text in cache else {}
+
+    def _get_local_gbbq_for_code(self, code):
+        if not self.tdx_vipdoc:
+            return self._local_gbbq
+        if self._local_gbbq_loaded:
+            return self._local_gbbq
+        return self._load_local_gbbq_for_code(code)
 
     def _get_market_code(self, stock_code):
         return self._get_adjustment_service().get_market_code(stock_code)
@@ -150,7 +186,7 @@ class TdxDataProvider(TdxDataProviderHistoryMixin, TdxDataProviderRealtimeMixin)
         return MarketCalendar.now("CN").hour >= 15
 
     def _fetch_from_local_tdx(self, code):
-        local_gbbq = self._ensure_local_gbbq_loaded() if self.tdx_vipdoc else self._local_gbbq
+        local_gbbq = self._get_local_gbbq_for_code(code)
         df, self._offline_warn_printed = fetch_from_local_tdx(
             code,
             tdx_vipdoc=self.tdx_vipdoc,
@@ -262,8 +298,8 @@ class TdxDataProvider(TdxDataProviderHistoryMixin, TdxDataProviderRealtimeMixin)
         return self.thread_local.api
 
     def _apply_forward_adjustment(self, api, market, code, df):
-        self._ensure_local_gbbq_loaded()
-        return self._get_adjustment_service().apply_forward_adjustment(api, market, code, df)
+        local_gbbq = self._get_local_gbbq_for_code(code)
+        return self._get_adjustment_service().apply_forward_adjustment(api, market, code, df, local_gbbq=local_gbbq)
 
     def _fetch_standard_data(self, api, code, count=MAX_HISTORY_BARS):
         return self._get_local_history_provider().fetch_standard_data(api, code, count=count)

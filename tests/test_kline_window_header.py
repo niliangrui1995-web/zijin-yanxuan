@@ -4,7 +4,7 @@ import json
 
 import pandas as pd
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtWidgets import QApplication, QWidget
 
 from core.task_manager import task_manager
 from ui import kline_window_qt as kline_module
@@ -22,6 +22,18 @@ class _DummyProvider:
 
 class _LiveProvider:
     _offline = False
+
+
+def _dispose_kline_window(window):
+    if window._rt_timer is not None:
+        window._rt_timer.stop()
+    window.close()
+    app = QApplication.instance()
+    if app is not None:
+        app.processEvents()
+    window.deleteLater()
+    if app is not None:
+        app.processEvents()
 
 
 def test_kline_html_exposes_incremental_replace_bridge():
@@ -407,6 +419,35 @@ def test_kline_manager_starts_async_preflight_before_prewarm(monkeypatch):
         manager._webengine_preflight_started = False
 
 
+def test_kline_manager_default_prewarm_is_preflight_only():
+    manager = KLineWindowManager()
+    manager._charts = []
+    manager._prewarm_view = None
+    manager._prewarm_started = True
+    manager._prewarm_cancelled = False
+    manager._prewarm_expire_timer = None
+    manager._prewarm_hidden_view_enabled = False
+    manager._webengine_available = True
+    manager._webengine_failure = ""
+    manager._webengine_preflight_started = False
+
+    try:
+        manager._run_prewarm()
+
+        assert manager._prewarm_view is None
+        assert manager._prewarm_started is False
+    finally:
+        manager._charts = []
+        manager._prewarm_view = None
+        manager._prewarm_started = False
+        manager._prewarm_cancelled = False
+        manager._prewarm_expire_timer = None
+        manager._prewarm_hidden_view_enabled = False
+        manager._webengine_available = None
+        manager._webengine_failure = ""
+        manager._webengine_preflight_started = False
+
+
 def test_kline_manager_blocks_open_when_webengine_preflight_fails(monkeypatch):
     notified = []
 
@@ -594,9 +635,7 @@ def test_kline_load_and_draw_appends_today_bar_during_lunch_break(monkeypatch):
         assert list(captured["df"].index.strftime("%Y-%m-%d")) == ["2026-04-13", "2026-04-14"]
         assert float(captured["df"].iloc[-1]["close"]) == 10.6
     finally:
-        if window._rt_timer is not None:
-            window._rt_timer.stop()
-        window.deleteLater()
+        _dispose_kline_window(window)
 
 
 def test_kline_load_asian_chart_falls_back_to_single_ticket_fetch(monkeypatch, tmp_path):
@@ -669,9 +708,7 @@ def test_kline_load_asian_chart_falls_back_to_single_ticket_fetch(monkeypatch, t
         assert window.vcp_data["赛道"] == "先进制程代工"
         assert window.vcp_data["货币"] == "TWD"
     finally:
-        if window._rt_timer is not None:
-            window._rt_timer.stop()
-        window.deleteLater()
+        _dispose_kline_window(window)
 
 
 def test_kline_load_asian_chart_fetches_realtime_quote_when_history_is_stale(monkeypatch, tmp_path):
@@ -755,6 +792,4 @@ def test_kline_load_asian_chart_fetches_realtime_quote_when_history_is_stale(mon
         ]
         assert float(captured["df"].iloc[-1]["close"]) == 2025.0
     finally:
-        if window._rt_timer is not None:
-            window._rt_timer.stop()
-        window.deleteLater()
+        _dispose_kline_window(window)
