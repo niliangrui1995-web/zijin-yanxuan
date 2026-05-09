@@ -3,7 +3,17 @@
 import time
 from functools import lru_cache
 
-from PyQt6.QtCore import QEasingCurve, QEvent, QItemSelectionModel, QPropertyAnimation, QSize, Qt, QTimer, pyqtProperty, pyqtSignal
+from PyQt6.QtCore import (
+    QEasingCurve,
+    QEvent,
+    QItemSelectionModel,
+    QPropertyAnimation,
+    QSize,
+    Qt,
+    QTimer,
+    pyqtProperty,
+    pyqtSignal,
+)
 from PyQt6.QtGui import QAction, QBrush, QColor, QFont, QFontMetrics, QPainter, QPalette
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -34,15 +44,24 @@ class VCPTableView(QTableView):
         super().__init__(parent)
         self._base_row_height = None
         self._refresh_state_snapshot = None
+        self._pending_refresh_state_restore = None
+        self._pending_scrollbar_restore = None
         self._restoring_refresh_state = False
         self._bound_refresh_model = None
         self._flash_repaint_until = 0.0
         self._flash_repaint_timer = QTimer(self)
         self._flash_repaint_timer.setInterval(60)
         self._flash_repaint_timer.timeout.connect(self._tick_flash_repaint)
+        self._refresh_state_restore_timer = QTimer(self)
+        self._refresh_state_restore_timer.setSingleShot(True)
+        self._refresh_state_restore_timer.timeout.connect(self._restore_pending_refresh_state)
+        self._scrollbar_restore_timer = QTimer(self)
+        self._scrollbar_restore_timer.setSingleShot(True)
+        self._scrollbar_restore_timer.timeout.connect(self._restore_pending_scrollbars)
         self._init_common_styles(default_row_height)
         from ui.theme import theme_manager
-        theme_manager.sig_theme_changed.connect(self._on_theme_changed)
+        self._theme_manager = theme_manager
+        self._theme_manager.sig_theme_changed.connect(self._on_theme_changed)
 
     def _init_common_styles(self, default_row_height: int):
         header = self.horizontalHeader()
@@ -289,7 +308,14 @@ class VCPTableView(QTableView):
         snapshot = self._refresh_state_snapshot
         if not snapshot:
             return
-        QTimer.singleShot(0, lambda snapshot=dict(snapshot): self._restore_refresh_state(snapshot))
+        self._pending_refresh_state_restore = dict(snapshot)
+        self._refresh_state_restore_timer.start(0)
+
+    def _restore_pending_refresh_state(self) -> None:
+        snapshot = self._pending_refresh_state_restore
+        self._pending_refresh_state_restore = None
+        if snapshot:
+            self._restore_refresh_state(snapshot)
 
     def _bounded_row(self, row: int) -> int:
         model = self.model()
@@ -364,16 +390,48 @@ class VCPTableView(QTableView):
                 self.setCurrentIndex(current_index)
 
             self._restore_scrollbars(v_scroll, h_scroll)
-            QTimer.singleShot(0, lambda v_scroll=v_scroll, h_scroll=h_scroll: self._restore_scrollbars(v_scroll, h_scroll))
+            self._pending_scrollbar_restore = (v_scroll, h_scroll)
+            self._scrollbar_restore_timer.start(0)
         finally:
             self._restoring_refresh_state = False
             self._refresh_state_snapshot = None
+
+    def _restore_pending_scrollbars(self) -> None:
+        pending = self._pending_scrollbar_restore
+        self._pending_scrollbar_restore = None
+        if not pending:
+            return
+        v_scroll, h_scroll = pending
+        self._restore_scrollbars(v_scroll, h_scroll)
 
     def _restore_scrollbars(self, v_scroll: int, h_scroll: int) -> None:
         if self.model() is None:
             return
         self.verticalScrollBar().setValue(v_scroll)
         self.horizontalScrollBar().setValue(h_scroll)
+
+    def _stop_deferred_restores(self) -> None:
+        for timer in (
+            getattr(self, "_refresh_state_restore_timer", None),
+            getattr(self, "_scrollbar_restore_timer", None),
+            getattr(self, "_flash_repaint_timer", None),
+        ):
+            if timer is not None:
+                timer.stop()
+        self._pending_refresh_state_restore = None
+        self._pending_scrollbar_restore = None
+        try:
+            self._theme_manager.sig_theme_changed.disconnect(self._on_theme_changed)
+        except (AttributeError, TypeError, RuntimeError):
+            pass
+
+    def closeEvent(self, event):
+        self._stop_deferred_restores()
+        super().closeEvent(event)
+
+    def deleteLater(self):
+        self._stop_deferred_restores()
+        super().deleteLater()
 
     def _on_model_data_changed(self, *_args) -> None:
         self._flash_repaint_until = max(self._flash_repaint_until, time.time() + 0.8)
@@ -461,14 +519,29 @@ class PulsingDot(QWidget):
         self._radius = 3.5
         self._opacity = 1.0
 
-        self.anim = QPropertyAnimation(self, b"opacity")
+        self.anim = QPropertyAnimation(self, b"opacity", self)
         self.anim.setDuration(1500)
         self.anim.setStartValue(0.2)
         self.anim.setEndValue(1.0)
         self.anim.setEasingCurve(QEasingCurve.Type.InOutSine)
         self.anim.setLoopCount(-1)
 
-        QTimer.singleShot(100, self.anim.start)
+        self._start_timer = QTimer(self)
+        self._start_timer.setSingleShot(True)
+        self._start_timer.timeout.connect(self.anim.start)
+        self._start_timer.start(100)
+
+    def _stop_animation(self) -> None:
+        self._start_timer.stop()
+        self.anim.stop()
+
+    def closeEvent(self, event):
+        self._stop_animation()
+        super().closeEvent(event)
+
+    def deleteLater(self):
+        self._stop_animation()
+        super().deleteLater()
 
     @pyqtProperty(float)
     def opacity(self):

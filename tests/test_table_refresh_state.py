@@ -2,7 +2,7 @@
 
 from PyQt6.QtCore import Qt
 
-from ui.components import TableStateWrapper, VCPTableView
+from ui.components import PulsingDot, TableStateWrapper, VCPTableView
 from ui.models.table_models import RtSortFilterProxyModel, StockTableModel
 
 
@@ -61,6 +61,47 @@ def test_vcp_table_view_elides_long_cell_text():
         assert table.textElideMode() == Qt.TextElideMode.ElideRight
     finally:
         table.deleteLater()
+
+
+def test_vcp_table_view_delete_later_stops_deferred_restores():
+    table = VCPTableView()
+    try:
+        table._refresh_state_snapshot = {"v_scroll": 0, "h_scroll": 0}
+        table._schedule_refresh_state_restore()
+        table._pending_scrollbar_restore = (1, 2)
+        table._scrollbar_restore_timer.start(0)
+        table._flash_repaint_timer.start()
+
+        assert table._refresh_state_restore_timer.isActive() is True
+        assert table._scrollbar_restore_timer.isActive() is True
+        assert table._flash_repaint_timer.isActive() is True
+
+        table.deleteLater()
+
+        assert table._refresh_state_restore_timer.isActive() is False
+        assert table._scrollbar_restore_timer.isActive() is False
+        assert table._flash_repaint_timer.isActive() is False
+        assert table._pending_refresh_state_restore is None
+        assert table._pending_scrollbar_restore is None
+        table = None
+    finally:
+        if table is not None:
+            table.deleteLater()
+
+
+def test_pulsing_dot_delete_later_stops_deferred_animation_start():
+    dot = PulsingDot()
+    try:
+        assert dot._start_timer.isActive() is True
+
+        dot.deleteLater()
+
+        assert dot._start_timer.isActive() is False
+        assert dot.anim.state() == dot.anim.State.Stopped
+        dot = None
+    finally:
+        if dot is not None:
+            dot.deleteLater()
 
 
 def test_table_state_overlay_uses_compact_responsive_card(qt_application):

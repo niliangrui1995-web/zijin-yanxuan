@@ -313,6 +313,26 @@ def test_fund_holdings_tab_ignores_cache_reload_after_delete(monkeypatch):
     assert calls == []
 
 
+def test_fund_holdings_tab_delete_later_stops_delayed_timers(monkeypatch):
+    _setup_store(monkeypatch, [])
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
+    try:
+        tab._schedule_view_state_save()
+        assert tab._daily_auto_sync_timer.isActive() is True
+        assert tab._daily_auto_sync_initial_check_timer.isActive() is True
+        assert tab._view_state_save_timer.isActive() is True
+
+        tab.deleteLater()
+
+        assert tab._daily_auto_sync_timer.isActive() is False
+        assert tab._daily_auto_sync_initial_check_timer.isActive() is False
+        assert tab._view_state_save_timer.isActive() is False
+        tab = None
+    finally:
+        if tab is not None:
+            tab.deleteLater()
+
+
 def test_fund_holdings_tab_hides_market_value_delta_columns(monkeypatch):
     _setup_store(
         monkeypatch,

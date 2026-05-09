@@ -139,7 +139,7 @@ def test_kline_header_action_controls_share_same_height(monkeypatch):
         assert window.btn_next.accessibleDescription() == "切换到当前列表中的下一只股票"
         assert window.btn_fav.accessibleDescription() == "将当前股票加入或移出关注池"
     finally:
-        window.deleteLater()
+        _dispose_kline_window(window)
 
 
 def test_kline_header_exposes_session_and_feed_badges(monkeypatch):
@@ -178,7 +178,7 @@ def test_kline_header_exposes_session_and_feed_badges(monkeypatch):
         assert "padding: 0 10px;" in window.info_lbl.styleSheet()
         assert "max-height" in window.info_lbl.styleSheet()
     finally:
-        window.deleteLater()
+        _dispose_kline_window(window)
 
 
 def test_kline_window_defers_initial_load_until_next_event_turn(monkeypatch):
@@ -207,7 +207,7 @@ def test_kline_window_defers_initial_load_until_next_event_turn(monkeypatch):
         assert any(delay == 0 and callback == window._load_and_draw for delay, callback in scheduled)
         assert window.info_lbl.text() == "正在准备图表..."
     finally:
-        window.deleteLater()
+        _dispose_kline_window(window)
 
 
 def test_kline_manager_consumes_prewarm_but_uses_fresh_browser(monkeypatch):

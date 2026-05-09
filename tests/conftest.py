@@ -47,3 +47,15 @@ def reset_global_runtime_state():
 
     if global_store is not None:
         global_store.reset_runtime_state()
+    try:
+        from PyQt6.QtCore import QCoreApplication, QEvent
+        from PyQt6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if app is not None:
+            for _ in range(3):
+                app.processEvents()
+                QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+                app.processEvents()
+    except (AttributeError, ImportError, RuntimeError, TypeError, ValueError):
+        pass

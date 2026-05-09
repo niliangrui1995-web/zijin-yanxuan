@@ -240,6 +240,9 @@ class FundHoldingsTab(BaseStockTab):
         self._view_state_save_timer.timeout.connect(self._save_view_state)
         self._daily_auto_sync_timer = QTimer(self)
         self._daily_auto_sync_timer.timeout.connect(self._check_daily_auto_sync)
+        self._daily_auto_sync_initial_check_timer = QTimer(self)
+        self._daily_auto_sync_initial_check_timer.setSingleShot(True)
+        self._daily_auto_sync_initial_check_timer.timeout.connect(self._check_daily_auto_sync)
 
         self._init_ui()
         if self._autoload:
@@ -293,12 +296,18 @@ class FundHoldingsTab(BaseStockTab):
 
     def _start_daily_auto_sync_timer(self) -> None:
         self._daily_auto_sync_timer.start(5 * 60 * 1000)
-        QTimer.singleShot(10_000, self._check_daily_auto_sync)
+        self._daily_auto_sync_initial_check_timer.start(10_000)
 
     def _stop_daily_auto_sync_timer(self) -> None:
         timer = getattr(self, "_daily_auto_sync_timer", None)
         if timer is not None:
             timer.stop()
+        initial_timer = getattr(self, "_daily_auto_sync_initial_check_timer", None)
+        if initial_timer is not None:
+            initial_timer.stop()
+        view_state_timer = getattr(self, "_view_state_save_timer", None)
+        if view_state_timer is not None:
+            view_state_timer.stop()
 
     def _check_daily_auto_sync(self) -> bool:
         if self._sync_active:

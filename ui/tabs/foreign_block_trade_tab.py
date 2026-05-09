@@ -503,7 +503,26 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._auto_timer = QTimer(self)
         self._auto_timer.timeout.connect(self._check_auto_refresh)
         self._auto_timer.start(5 * 60 * 1000)
-        QTimer.singleShot(10_000, self._check_auto_refresh)
+        self._auto_initial_check_timer = QTimer(self)
+        self._auto_initial_check_timer.setSingleShot(True)
+        self._auto_initial_check_timer.timeout.connect(self._check_auto_refresh)
+        self._auto_initial_check_timer.start(10_000)
+
+    def _cleanup_runtime_state(self):
+        auto_timer = getattr(self, "_auto_timer", None)
+        if auto_timer is not None:
+            auto_timer.stop()
+        initial_timer = getattr(self, "_auto_initial_check_timer", None)
+        if initial_timer is not None:
+            initial_timer.stop()
+        try:
+            event_bus.sig_cache_reload_completed.disconnect(self._on_cache_reload_completed)
+        except (TypeError, RuntimeError):
+            pass
+        super()._cleanup_runtime_state()
+
+    def shutdown(self) -> None:
+        self._cleanup_runtime_state()
 
     def _check_auto_refresh(self):
         if self._is_loading or task_manager.is_active_task(_FOREIGN_BLOCK_TRADE_TASK):

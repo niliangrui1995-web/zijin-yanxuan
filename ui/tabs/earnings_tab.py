@@ -24,6 +24,12 @@ class EarningsTab(BaseStockTab):
         self.row_data = []
         self._manual_fetch_range: tuple[str, str] | None = None
         self._init_ui()
+        self._runtime_start_timer = QTimer(self)
+        self._runtime_start_timer.setSingleShot(True)
+        self._runtime_start_timer.timeout.connect(self._start_scheduler_patrol)
+        self._recalc_pe_timer = QTimer(self)
+        self._recalc_pe_timer.setSingleShot(True)
+        self._recalc_pe_timer.timeout.connect(self._recalc_pe_ttm)
 
         # 业绩页只消费 F5/本地快照，不加入盘中实时行情轮询。
         event_bus.sig_cache_reload_completed.connect(self._on_cache_reload_completed)
@@ -44,8 +50,12 @@ class EarningsTab(BaseStockTab):
         if self._patrol_started:
             return
         self._patrol_started = True
-        scheduler = self._ensure_scheduler()
-        QTimer.singleShot(0, scheduler.start_patrol)
+        self._ensure_scheduler()
+        self._runtime_start_timer.start(0)
+
+    def _start_scheduler_patrol(self) -> None:
+        if self.scheduler is not None:
+            self.scheduler.start_patrol()
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -498,9 +508,23 @@ class EarningsTab(BaseStockTab):
             return False
         return is_current
 
-    def shutdown(self) -> None:
+    def _cleanup_runtime_state(self):
+        runtime_timer = getattr(self, "_runtime_start_timer", None)
+        if runtime_timer is not None:
+            runtime_timer.stop()
+        recalc_timer = getattr(self, "_recalc_pe_timer", None)
+        if recalc_timer is not None:
+            recalc_timer.stop()
         if self.scheduler is not None:
             self.scheduler.stop_patrol()
+        try:
+            event_bus.sig_cache_reload_completed.disconnect(self._on_cache_reload_completed)
+        except (TypeError, RuntimeError):
+            pass
+        super()._cleanup_runtime_state()
+
+    def shutdown(self) -> None:
+        self._cleanup_runtime_state()
 
     def closeEvent(self, event):
         self.shutdown()
@@ -512,7 +536,7 @@ class EarningsTab(BaseStockTab):
         if self._should_start_runtime_on_show():
             self._ensure_runtime_started()
         if self.row_data:
-            QTimer.singleShot(0, self._recalc_pe_ttm)
+            self._recalc_pe_timer.start(0)
 
     def _on_rt_quotes_direct(self, quotes: dict):
         """重写基类的直达信号接收，在刷新行情后补充计算 PE(TTM)"""

@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 import pandas as pd
 
+import ui.tabs.earnings_tab as earnings_module
 from core.market_calendar import MarketCalendar
 from ui.models.table_models import RtSortFilterProxyModel, StockTableModel
-import ui.tabs.earnings_tab as earnings_module
 from ui.tabs.earnings_tab import EARNINGS_DISPLAY_TRADE_DAYS, EarningsTab
 
 
@@ -76,6 +76,50 @@ def test_earnings_tab_defers_scheduler_creation_until_runtime(monkeypatch):
         assert created == [tab]
     finally:
         tab.deleteLater()
+
+
+def test_earnings_delete_later_stops_runtime_timers_and_scheduler(monkeypatch):
+    created = []
+
+    class DummySignal:
+        def connect(self, callback):
+            self.callback = callback
+
+    class DummyScheduler:
+        def __init__(self):
+            self.sig_new_surprises_found = DummySignal()
+            self.stop_calls = 0
+
+        def start_patrol(self):
+            pass
+
+        def stop_patrol(self):
+            self.stop_calls += 1
+
+    monkeypatch.setattr(
+        earnings_module,
+        "EarningsScheduler",
+        lambda parent=None: created.append(parent) or DummyScheduler(),
+    )
+
+    tab = EarningsTab()
+    try:
+        tab._ensure_runtime_started()
+        tab._recalc_pe_timer.start(0)
+        scheduler = tab.scheduler
+
+        assert tab._runtime_start_timer.isActive() is True
+        assert tab._recalc_pe_timer.isActive() is True
+
+        tab.deleteLater()
+
+        assert tab._runtime_start_timer.isActive() is False
+        assert tab._recalc_pe_timer.isActive() is False
+        assert scheduler.stop_calls == 1
+        tab = None
+    finally:
+        if tab is not None:
+            tab.deleteLater()
 
 
 def test_earnings_runtime_start_is_gated_to_current_workspace_tab():

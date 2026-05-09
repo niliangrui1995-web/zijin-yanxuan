@@ -151,6 +151,25 @@ def test_lhb_deferred_status_does_not_read_pool_cache(monkeypatch):
         tab.deleteLater()
 
 
+def test_lhb_delete_later_stops_auto_timer(monkeypatch):
+    monkeypatch.setattr(LhbTab, "_load_and_display_pool", lambda self: None, raising=False)
+
+    tab = LhbTab(object(), autoload_pool=False)
+    auto_timer = tab._auto_timer
+    initial_timer = tab._auto_initial_check_timer
+    retry_timer = tab._pool_retry_timer
+    tab._schedule_pool_retry()
+    assert auto_timer.isActive()
+    assert initial_timer.isActive()
+    assert retry_timer.isActive()
+
+    tab.deleteLater()
+
+    assert not auto_timer.isActive()
+    assert not initial_timer.isActive()
+    assert not retry_timer.isActive()
+
+
 def test_lhb_show_bootstrap_skips_non_interactive_load_reason():
     class DummyTab:
         _workspace_load_reason = "perf_memory_probe"

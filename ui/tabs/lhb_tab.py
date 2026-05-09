@@ -52,6 +52,12 @@ class LhbTab(BaseStockTab):
         self._status_segments = ()
         self._status_freshness = ""
         self._status_next_step = ""
+        self._auto_initial_check_timer = QTimer(self)
+        self._auto_initial_check_timer.setSingleShot(True)
+        self._auto_initial_check_timer.timeout.connect(self._check_auto_fetch)
+        self._pool_retry_timer = QTimer(self)
+        self._pool_retry_timer.setSingleShot(True)
+        self._pool_retry_timer.timeout.connect(self._load_and_display_pool)
 
         self._init_ui()
         self._start_auto_scheduler()
@@ -267,7 +273,7 @@ class LhbTab(BaseStockTab):
             self._calendar_retry_count += 1
             if self._calendar_retry_count <= 3:
                 self._set_pool_status("交易日历未就绪", f"第{self._calendar_retry_count}次重试")
-                QTimer.singleShot(5000, self._load_and_display_pool)
+                self._schedule_pool_retry()
             else:
                 self._set_pool_status("交易日历加载失败", freshness="待回补", next_step="点击历史回补重新抓取")
             return
@@ -330,7 +336,7 @@ class LhbTab(BaseStockTab):
                 self._calendar_retry_count += 1
                 if self._calendar_retry_count <= 3:
                     self._set_pool_status("交易日历未就绪", f"第{self._calendar_retry_count}次重试")
-                    QTimer.singleShot(5000, self._load_and_display_pool)
+                    self._schedule_pool_retry()
                 else:
                     self._set_pool_status("交易日历加载失败", freshness="待回补", next_step="点击历史回补重新抓取")
                 return
@@ -762,7 +768,10 @@ class LhbTab(BaseStockTab):
         # 每 5 分钟检查一次
         self._auto_timer.start(5 * 60 * 1000)
         # 启动后也立即检查一次
-        QTimer.singleShot(10_000, self._check_auto_fetch)
+        self._auto_initial_check_timer.start(10_000)
+
+    def _schedule_pool_retry(self) -> None:
+        self._pool_retry_timer.start(5_000)
 
     def _check_auto_fetch(self):
         """检查是否满足自动抓取条件：
@@ -800,6 +809,28 @@ class LhbTab(BaseStockTab):
         auto_timer = getattr(self, "_auto_timer", None)
         if auto_timer is not None:
             auto_timer.stop()
+        initial_timer = getattr(self, "_auto_initial_check_timer", None)
+        if initial_timer is not None:
+            initial_timer.stop()
+        retry_timer = getattr(self, "_pool_retry_timer", None)
+        if retry_timer is not None:
+            retry_timer.stop()
+        try:
+            event_bus.sig_cache_bootstrap_ready.disconnect(self._on_cache_bootstrap_ready)
+        except (TypeError, RuntimeError):
+            pass
+        try:
+            event_bus.sig_cache_reload_completed.disconnect(self._on_cache_reload_completed)
+        except (TypeError, RuntimeError):
+            pass
+
+    def closeEvent(self, event):
+        self.shutdown()
+        super().closeEvent(event)
+
+    def deleteLater(self):
+        self.shutdown()
+        super().deleteLater()
 
     def _fetch_single_day(self, date_str: str):
         """抓取单天数据并刷新池"""

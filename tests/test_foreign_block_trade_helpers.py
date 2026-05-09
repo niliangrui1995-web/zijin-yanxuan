@@ -151,6 +151,24 @@ def test_block_trade_exact_filters_support_multi_select():
     assert proxy.rowCount() == 2
 
 
+def test_block_trade_delete_later_stops_auto_timers(monkeypatch):
+    monkeypatch.setattr(ForeignBlockTradeTab, "_load_local_cache", lambda self: None, raising=False)
+
+    tab = ForeignBlockTradeTab(object())
+    try:
+        assert tab._auto_timer.isActive() is True
+        assert tab._auto_initial_check_timer.isActive() is True
+
+        tab.deleteLater()
+
+        assert tab._auto_timer.isActive() is False
+        assert tab._auto_initial_check_timer.isActive() is False
+        tab = None
+    finally:
+        if tab is not None:
+            tab.deleteLater()
+
+
 def test_should_trigger_auto_refresh_only_after_20_on_trade_day():
     now = datetime.datetime(2026, 4, 20, 20, 5, 0)
     before_20 = datetime.datetime(2026, 4, 20, 19, 59, 0)
