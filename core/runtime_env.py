@@ -21,6 +21,33 @@ _WINDOWS_RUNTIME_MODULES = (
     ("win32gui", "pywin32"),
 )
 WINDOWS_APP_USER_MODEL_ID = "com.zijinresearch.vcphunter.quantterminal"
+QTWEBENGINE_RUNTIME_FLAGS = (
+    "--disable-gpu",
+    "--disable-gpu-compositing",
+    "--disable-extensions",
+    "--disable-background-networking",
+)
+
+
+def _merge_chromium_flags(current: str, required: tuple[str, ...] = QTWEBENGINE_RUNTIME_FLAGS) -> str:
+    flags = [flag for flag in str(current or "").split() if flag]
+    seen = set(flags)
+    for flag in required:
+        if flag not in seen:
+            flags.append(flag)
+            seen.add(flag)
+    return " ".join(flags)
+
+
+def configure_qt_webengine_runtime(env: dict[str, str] | None = None) -> dict[str, str]:
+    """Apply low-overhead QtWebEngine defaults before the first WebEngine import."""
+
+    target = os.environ if env is None else env
+    target.setdefault("QT_OPENGL", "software")
+    target["QTWEBENGINE_CHROMIUM_FLAGS"] = _merge_chromium_flags(
+        target.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+    )
+    return target
 
 
 def _parse_version_tuple(version_text: str) -> tuple[int, ...]:

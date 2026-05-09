@@ -4,6 +4,7 @@ import sys
 import traceback
 
 from core.runtime_env import (
+    configure_qt_webengine_runtime,
     log_runtime_env_report,
     relaunch_into_project_venv_if_needed,
     set_windows_app_user_model_id,
@@ -23,6 +24,7 @@ faulthandler.enable(file=CRASH_LOG_FILE, all_threads=True)
 
 def main():
     os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
+    configure_qt_webengine_runtime()
     set_windows_app_user_model_id()
 
     from PyQt6.QtWidgets import QApplication, QMessageBox

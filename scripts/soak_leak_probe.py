@@ -14,6 +14,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from core.runtime_env import configure_qt_webengine_runtime
+
+configure_qt_webengine_runtime()
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 

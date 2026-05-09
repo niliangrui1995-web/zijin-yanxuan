@@ -5,6 +5,8 @@ import subprocess
 import sys
 import time
 
+from core.runtime_env import configure_qt_webengine_runtime
+
 
 def _webengine_smoke_code() -> str:
     return r"""
@@ -27,10 +29,11 @@ for _ in range(20):
 
 def _smoke_env() -> dict[str, str]:
     env = dict(os.environ)
-    env.setdefault("QT_OPENGL", "software")
-    flags = env.get("QTWEBENGINE_CHROMIUM_FLAGS", "").strip()
-    required = "--disable-gpu --disable-gpu-compositing --no-sandbox"
-    env["QTWEBENGINE_CHROMIUM_FLAGS"] = f"{flags} {required}".strip()
+    configure_qt_webengine_runtime(env)
+    flags = env.get("QTWEBENGINE_CHROMIUM_FLAGS", "").split()
+    if "--no-sandbox" not in flags:
+        flags.append("--no-sandbox")
+    env["QTWEBENGINE_CHROMIUM_FLAGS"] = " ".join(flags)
     return env
 
 

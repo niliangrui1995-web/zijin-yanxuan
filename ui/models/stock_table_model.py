@@ -10,9 +10,9 @@ from core.buy_point import BUY_POINT_STYLE_TEXT, calculate_buy_point_from_histor
 from ui.models.table_model_helpers import (
     FLASH_DURATION_SECONDS,
     SERIAL_HEADER,
-    _build_flash_record,
     _alignment_for_cell,
     _build_cell_tooltip,
+    _build_flash_record,
     _c,
     _emit_model_row_ranges,
     _is_date_like_header,

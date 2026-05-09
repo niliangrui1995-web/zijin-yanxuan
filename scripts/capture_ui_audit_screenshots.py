@@ -20,6 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from core.runtime_env import configure_qt_webengine_runtime
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Capture UI audit screenshots.")
@@ -76,7 +78,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _configure_environment(args: argparse.Namespace) -> None:
-    os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu")
+    configure_qt_webengine_runtime()
     os.environ.setdefault("QT_AUTO_SCREEN_SCALE_FACTOR", "0")
     os.environ.setdefault("QT_SCALE_FACTOR", "1")
     if args.offscreen:

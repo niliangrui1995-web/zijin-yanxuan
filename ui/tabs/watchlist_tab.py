@@ -8,9 +8,9 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QAbstractItemView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from app.services import RPS_CACHE_FILE
+from app.services.ui_runtime_service import MarketCalendar, task_registry, ui_signals, watchlist_vm
 from app.services.ui_runtime_service import background_job_runner as task_manager
 from app.services.ui_runtime_service import domain_events as event_bus
-from app.services.ui_runtime_service import MarketCalendar, task_registry, ui_signals, watchlist_vm
 from core.exceptions import CacheIOError, DataFormatError
 from core.json_cache import load_json_file
 from core.logger import get_logger

@@ -16,6 +16,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from core.runtime_env import configure_qt_webengine_runtime
+
+configure_qt_webengine_runtime()
+
 try:
     import psutil
 except Exception:  # pragma: no cover - optional runtime dependency
@@ -203,10 +207,11 @@ def _webengine_smoke_env(*, native_qt: bool) -> dict[str, str]:
         env.pop("QT_QPA_PLATFORM", None)
     else:
         env.setdefault("QT_QPA_PLATFORM", "offscreen")
-    env.setdefault("QT_OPENGL", "software")
-    chromium_flags = env.get("QTWEBENGINE_CHROMIUM_FLAGS", "").strip()
-    required_flags = "--disable-gpu --disable-gpu-compositing --no-sandbox"
-    env["QTWEBENGINE_CHROMIUM_FLAGS"] = f"{chromium_flags} {required_flags}".strip()
+    configure_qt_webengine_runtime(env)
+    flags = env.get("QTWEBENGINE_CHROMIUM_FLAGS", "").split()
+    if "--no-sandbox" not in flags:
+        flags.append("--no-sandbox")
+    env["QTWEBENGINE_CHROMIUM_FLAGS"] = " ".join(flags)
     return env
 
 
@@ -309,6 +314,76 @@ def _close_kline_charts(app: QApplication) -> int:
     return closed
 
 
+def _webengine_lifecycle_info(chart) -> dict:
+    info = {
+        "chart_alive": chart is not None,
+        "has_browser": False,
+        "has_page": False,
+    }
+    if chart is None:
+        return info
+
+    for attr_name in (
+        "_last_chart_payload_bytes",
+        "_last_chart_html_bytes",
+        "_last_chart_points",
+    ):
+        value = getattr(chart, attr_name, None)
+        if value is not None:
+            info[attr_name.removeprefix("_last_chart_")] = value
+
+    try:
+        from ui.kline_window_qt import _ECHARTS_JS_PATH
+
+        info["echarts_js_bytes"] = Path(_ECHARTS_JS_PATH).stat().st_size
+    except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
+        pass
+
+    browser = getattr(chart, "browser", None)
+    info["has_browser"] = browser is not None
+    if browser is None:
+        return info
+
+    try:
+        info["browser_object_name"] = str(browser.objectName() or "")
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        pass
+
+    try:
+        page = browser.page()
+    except (AttributeError, RuntimeError, TypeError):
+        page = None
+    info["has_page"] = page is not None
+    if page is None:
+        return info
+
+    try:
+        info["page_url"] = page.url().toString()
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        pass
+
+    try:
+        profile = page.profile()
+    except (AttributeError, RuntimeError, TypeError):
+        profile = None
+    info["has_profile"] = profile is not None
+    if profile is None:
+        return info
+
+    for key, getter_name in (
+        ("profile_off_the_record", "isOffTheRecord"),
+        ("profile_storage_name", "storageName"),
+        ("profile_cache_path", "cachePath"),
+        ("profile_persistent_storage_path", "persistentStoragePath"),
+    ):
+        try:
+            getter = getattr(profile, getter_name)
+            info[key] = getter()
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+    return info
+
+
 def _cycle_kline_windows(
     window: MainWindowQT,
     app: QApplication,
@@ -323,9 +398,11 @@ def _cycle_kline_windows(
     opened = 0
     blocked = 0
     closed = 0
+    cycle_samples: list[dict] = []
     code_text = str(code or "").strip() or "000001"
     name_text = str(name or "").strip() or code_text
-    for _ in range(max(0, int(cycles))):
+    for cycle_index in range(max(0, int(cycles))):
+        cycle_samples.append(collect_process_snapshot(f"kline_cycle_{cycle_index + 1}:before_open"))
         chart = kline_manager.open_chart(
             window,
             code_text,
@@ -340,9 +417,21 @@ def _cycle_kline_windows(
         else:
             opened += 1
         _settle(app, settle_ms)
+        after_open = collect_process_snapshot(f"kline_cycle_{cycle_index + 1}:after_open")
+        after_open["webengine_lifecycle"] = _webengine_lifecycle_info(chart)
+        cycle_samples.append(after_open)
         closed += _close_kline_charts(app)
         gc.collect()
-    return {"cycles": int(cycles), "opened": opened, "blocked": blocked, "closed": closed, "code": code_text}
+        _settle(app, settle_ms)
+        cycle_samples.append(collect_process_snapshot(f"kline_cycle_{cycle_index + 1}:after_close"))
+    return {
+        "cycles": int(cycles),
+        "opened": opened,
+        "blocked": blocked,
+        "closed": closed,
+        "code": code_text,
+        "cycle_samples": cycle_samples,
+    }
 
 
 def _profile_gbbq(provider, *, mode: str, code: str) -> dict:

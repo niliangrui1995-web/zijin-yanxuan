@@ -537,6 +537,10 @@ class KLineChartWindow(QWidget):
             name=self.name,
             vcp_data=self.vcp_data,
         )
+        self._last_chart_payload_bytes = len(
+            json.dumps(echarts_data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        )
+        self._last_chart_points = len(echarts_data.get("dates") or [])
 
         # 判断是首次加载还是切换股票
         if not loading and not hasattr(self, '_first_render_done'):
@@ -550,6 +554,7 @@ class KLineChartWindow(QWidget):
             echarts_js_path=_ECHARTS_JS_PATH,
             theme_colors=build_kline_theme_colors()
         )
+        self._last_chart_html_bytes = len(html_content.encode("utf-8"))
 
         # 用 baseUrl 确保本地 file:// 引用正常
         base_url = QUrl.fromLocalFile(

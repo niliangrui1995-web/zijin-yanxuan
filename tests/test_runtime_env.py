@@ -3,6 +3,7 @@ from unittest.mock import patch
 from core.runtime_env import (
     WINDOWS_APP_USER_MODEL_ID,
     collect_runtime_env_issues,
+    configure_qt_webengine_runtime,
     relaunch_into_project_venv_if_needed,
     resolve_project_python,
     set_windows_app_user_model_id,
@@ -163,3 +164,19 @@ def test_set_windows_app_user_model_id_handles_windows_api_failure():
         applied = set_windows_app_user_model_id(shell32=FakeShell32())
 
     assert applied is False
+
+
+def test_configure_qt_webengine_runtime_merges_flags_without_duplicates():
+    env = {
+        "QTWEBENGINE_CHROMIUM_FLAGS": "--disable-gpu --user-flag",
+    }
+
+    result = configure_qt_webengine_runtime(env)
+
+    flags = result["QTWEBENGINE_CHROMIUM_FLAGS"].split()
+    assert result["QT_OPENGL"] == "software"
+    assert flags.count("--disable-gpu") == 1
+    assert "--disable-gpu-compositing" in flags
+    assert "--disable-extensions" in flags
+    assert "--disable-background-networking" in flags
+    assert "--user-flag" in flags

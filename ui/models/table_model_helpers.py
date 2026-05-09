@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 import re
-import time
 import textwrap
+import time
 from functools import lru_cache
 
 from PyQt6.QtCore import Qt
