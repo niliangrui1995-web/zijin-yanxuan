@@ -24,7 +24,7 @@ class DataProviderPort(Protocol):
     def load_cache_from_disk(self) -> str:
         ...
 
-    def ensure_code_name_map(self, refresh_missing: bool = True) -> dict[str, str]:
+    def ensure_code_name_map(self, codes=None, *, refresh_missing: bool = True) -> dict[str, str]:
         ...
 
 

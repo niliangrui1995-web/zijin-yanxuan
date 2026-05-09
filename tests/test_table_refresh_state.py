@@ -2,7 +2,7 @@
 
 from PyQt6.QtCore import Qt
 
-from ui.components import VCPTableView
+from ui.components import TableStateWrapper, VCPTableView
 from ui.models.table_models import RtSortFilterProxyModel, StockTableModel
 
 
@@ -53,3 +53,28 @@ def test_vcp_table_view_restores_current_row_selection_after_model_reset(qt_appl
         assert selected_rows == [71]
     finally:
         table.deleteLater()
+
+
+def test_vcp_table_view_elides_long_cell_text():
+    table = VCPTableView()
+    try:
+        assert table.textElideMode() == Qt.TextElideMode.ElideRight
+    finally:
+        table.deleteLater()
+
+
+def test_table_state_overlay_uses_compact_responsive_card(qt_application):
+    table = VCPTableView()
+    wrapper = TableStateWrapper(table)
+    try:
+        wrapper.resize(280, 180)
+        wrapper.show_empty("Empty", "A long empty-state subtitle should stay inside the panel.")
+        wrapper._overlay.resize(280, 180)
+        _process_events(qt_application)
+
+        card = wrapper._overlay._card
+        assert card.minimumWidth() <= card.maximumWidth()
+        assert card.maximumWidth() <= 280
+        assert "border-radius: 8px;" in card.styleSheet()
+    finally:
+        wrapper.deleteLater()

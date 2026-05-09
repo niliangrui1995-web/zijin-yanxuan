@@ -180,7 +180,7 @@ def test_fund_holdings_tab_reload_uses_f5_quote_cache_only(monkeypatch):
         tab.deleteLater()
 
 
-def test_fund_holdings_tab_reload_warms_local_snapshot_for_new_codes(monkeypatch):
+def test_fund_holdings_tab_reload_does_not_warm_local_snapshot_for_new_codes(monkeypatch):
     _setup_store(
         monkeypatch,
         [
@@ -198,13 +198,7 @@ def test_fund_holdings_tab_reload_warms_local_snapshot_for_new_codes(monkeypatch
 
     class _OfflineQuoteProvider:
         def _build_offline_quotes(self, codes):
-            assert codes == ["000001"]
-            return {
-                "000001": {
-                    "close": 10.5,
-                    "last_close": 10.0,
-                }
-            }
+            raise AssertionError("local quote snapshot should not be primed")
 
     monkeypatch.setattr(
         fund_holdings_module.FundHoldingsTab,
@@ -225,7 +219,7 @@ def test_fund_holdings_tab_reload_warms_local_snapshot_for_new_codes(monkeypatch
     monkeypatch.setattr(
         fund_holdings_module.task_manager,
         "run_in_background",
-        lambda fn, *args, on_success=None, on_error=None, task_id=None, **kwargs: on_success(fn()) if callable(on_success) else None,
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("local quote task should not be scheduled")),
         raising=False,
     )
 
@@ -234,16 +228,12 @@ def test_fund_holdings_tab_reload_warms_local_snapshot_for_new_codes(monkeypatch
     tab = fund_holdings_module.FundHoldingsTab(_OfflineQuoteProvider())
     try:
         latest = global_store.get_latest_quotes()
-        assert latest["000001"]["close"] == 10.5
-        assert latest["000001"]["zongguben"] == 1_000_000_000
-        assert tab.model.get_row_data(0)["市价"] == "10.50"
-        assert round(float(tab.model.get_row_data(0)["涨幅%"]), 2) == 5.0
-        assert tab.model.get_row_data(0)["市值"] == "105亿"
+        assert "000001" not in latest
     finally:
         tab.deleteLater()
 
 
-def test_fund_holdings_tab_ignores_late_local_quote_after_delete(monkeypatch):
+def test_fund_holdings_tab_does_not_schedule_late_local_quote_after_delete(monkeypatch):
     _setup_store(
         monkeypatch,
         [
@@ -261,13 +251,7 @@ def test_fund_holdings_tab_ignores_late_local_quote_after_delete(monkeypatch):
 
     class _OfflineQuoteProvider:
         def _build_offline_quotes(self, codes):
-            assert codes == ["000001"]
-            return {
-                "000001": {
-                    "close": 10.5,
-                    "last_close": 10.0,
-                }
-            }
+            raise AssertionError("local quote snapshot should not be primed")
 
     monkeypatch.setattr(
         fund_holdings_module.FundHoldingsTab,
@@ -300,13 +284,9 @@ def test_fund_holdings_tab_ignores_late_local_quote_after_delete(monkeypatch):
 
     spy = QSignalSpy(event_bus.sig_rt_quotes)
     tab = fund_holdings_module.FundHoldingsTab(_OfflineQuoteProvider())
-    assert captured_tasks
+    assert captured_tasks == []
 
     tab.deleteLater()
-    for fn, on_success, _on_error in captured_tasks:
-        if callable(on_success):
-            on_success(fn())
-
     assert len(spy) == 0
 
 
@@ -549,13 +529,13 @@ def test_fund_holdings_tab_prime_background_load_starts_deferred_load(monkeypatc
         tab.deleteLater()
 
 
-def test_fund_holdings_tab_applies_latest_quotes_with_async_local(monkeypatch):
+def test_fund_holdings_tab_applies_latest_quotes_without_local_prime(monkeypatch):
     _setup_store(monkeypatch, [])
     calls = []
     monkeypatch.setattr(
         fund_holdings_module.FundHoldingsTab,
-        "refresh_table_from_latest_snapshot",
-        lambda self, *args, **kwargs: calls.append(kwargs.get("async_local")),
+        "_apply_quote_store_snapshot",
+        lambda self, *args, **kwargs: calls.append("store"),
         raising=False,
     )
 
@@ -563,7 +543,7 @@ def test_fund_holdings_tab_applies_latest_quotes_with_async_local(monkeypatch):
     try:
         tab._apply_latest_quotes_from_store()
 
-        assert calls == [True]
+        assert calls == ["store"]
     finally:
         tab.deleteLater()
 

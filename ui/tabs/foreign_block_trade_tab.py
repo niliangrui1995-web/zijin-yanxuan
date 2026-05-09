@@ -767,7 +767,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         return set()
 
     def _apply_latest_quotes_from_store(self):
-        self.refresh_table_from_latest_snapshot()
+        self._apply_quote_store_snapshot()
 
     def _on_cache_reload_completed(self):
         self._apply_latest_quotes_from_store()
@@ -998,4 +998,3 @@ class ForeignBlockTradeTab(BaseStockTab):
 
         from ui.components.stock_context_menu import build_stock_context_menu
         build_stock_context_menu(self, code, name, vcp_data=row_data)
-

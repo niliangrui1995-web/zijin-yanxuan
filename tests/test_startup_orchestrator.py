@@ -42,12 +42,22 @@ class _DummyCacheManager:
 class _DummyDataProvider:
     def __init__(self):
         self.cache_data = {}
+        self.code2name = {}
+        self.online_mode_calls = []
+        self.ensure_calls = []
 
     def load_cache_from_disk(self):
         return ""
 
     def test_network(self, timeout=3):
         return False
+
+    def set_online_mode(self, online):
+        self.online_mode_calls.append(bool(online))
+
+    def ensure_code_name_map(self, codes=None, *, refresh_missing=False):
+        self.ensure_calls.append((tuple(codes or ()), bool(refresh_missing)))
+        return dict(self.code2name)
 
 
 class _DummyMainWindow(QObject):
@@ -62,9 +72,17 @@ class _DummyMainWindow(QObject):
         self.lbl_code_count = _DummyLabel()
         self.tab_watchlist = None
         self._workspace = None
+        self.network_updates = []
+        self.online_done_count = 0
 
     def _call_in_ui(self, callback):
         callback()
+
+    def _update_network_ui(self, online):
+        self.network_updates.append(bool(online))
+
+    def _on_smart_startup_online_done(self):
+        self.online_done_count += 1
 
 
 class _InlineJobRunner:
@@ -169,6 +187,22 @@ def test_startup_orchestrator_deferred_load_records_process_snapshots(monkeypatc
     assert "startup.deferred_load.end" in labels
 
 
+def test_startup_orchestrator_deferred_load_skips_history_cache_by_default(monkeypatch):
+    mw = _DummyMainWindow()
+    calls = []
+    mw.data_provider.load_cache_from_disk = lambda: calls.append("load") or "20260508"
+    orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
+
+    def fake_exists(path):
+        return not str(path).endswith("asian_kline_fetcher.py")
+
+    monkeypatch.setattr("core.startup_orchestrator.os.path.exists", fake_exists)
+
+    orchestrator.deferred_data_load()
+
+    assert calls == []
+
+
 def test_startup_orchestrator_deferred_load_stops_after_window_close(monkeypatch):
     mw = _DummyMainWindow()
     calls = {"rt_cache": 0, "rps": 0}
@@ -190,7 +224,10 @@ def test_startup_orchestrator_deferred_load_stops_after_window_close(monkeypatch
     orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
     labels = []
 
-    monkeypatch.setattr("core.startup_orchestrator.service_toggle_registry.is_enabled", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        "core.startup_orchestrator.service_toggle_registry.is_enabled",
+        lambda key, *_args, **_kwargs: key == "startup_history_cache_load",
+    )
     monkeypatch.setattr(
         "core.startup_orchestrator.log_process_snapshot",
         lambda label, **_kwargs: labels.append(label),
@@ -316,6 +353,97 @@ def test_startup_orchestrator_smart_startup_stops_after_window_close(monkeypatch
 
     assert mw.data_provider.online_mode_calls == []
     assert labels == ["startup.smart.begin"]
+
+
+def test_startup_orchestrator_smart_startup_limits_name_refresh_to_watchlist(monkeypatch):
+    class _Provider(_DummyDataProvider):
+        def test_network(self, timeout=3):
+            return True
+
+        def ensure_code_name_map(self, codes=None, *, refresh_missing=False):
+            self.ensure_calls.append((tuple(codes or ()), bool(refresh_missing)))
+            return {
+                "000001": "Ping An",
+                "600519": "Moutai",
+            }
+
+    class _WatchlistTab:
+        def get_realtime_quote_codes(self):
+            return {"000001", "600519", "00700", "not-a-code"}
+
+    class _Workspace:
+        def __init__(self):
+            self.tab_watchlist = _WatchlistTab()
+            self.refreshed_maps = []
+
+        def get_loaded_tab(self, key):
+            return self.tab_watchlist if key == "watchlist" else None
+
+        def refresh_watchlist_names(self, code2name):
+            self.refreshed_maps.append(dict(code2name))
+            return True
+
+    mw = _DummyMainWindow()
+    mw.data_provider = _Provider()
+    mw._workspace = _Workspace()
+    orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
+    monkeypatch.setattr(
+        "core.startup_orchestrator.log_process_snapshot",
+        lambda *_args, **_kwargs: None,
+    )
+
+    orchestrator.smart_startup()
+
+    assert len(mw.data_provider.ensure_calls) == 1
+    codes, refresh_missing = mw.data_provider.ensure_calls[0]
+    assert set(codes) == {"000001", "600519"}
+    assert refresh_missing is True
+    assert mw._workspace.refreshed_maps[-1]["000001"] == "Ping An"
+    assert mw.network_updates == [True]
+    assert mw.online_done_count == 1
+
+
+def test_startup_orchestrator_smart_startup_skips_full_name_refresh_without_watchlist_codes(monkeypatch):
+    class _Provider(_DummyDataProvider):
+        def __init__(self):
+            super().__init__()
+            self.code2name = {"000001": "Ping An"}
+
+        def test_network(self, timeout=3):
+            return True
+
+        def ensure_code_name_map(self, codes=None, *, refresh_missing=False):
+            raise AssertionError("smart startup should not refresh all code names without watchlist codes")
+
+    class _WatchlistTab:
+        def get_realtime_quote_codes(self):
+            return set()
+
+    class _Workspace:
+        def __init__(self):
+            self.tab_watchlist = _WatchlistTab()
+            self.refreshed_maps = []
+
+        def get_loaded_tab(self, key):
+            return self.tab_watchlist if key == "watchlist" else None
+
+        def refresh_watchlist_names(self, code2name):
+            self.refreshed_maps.append(dict(code2name))
+            return True
+
+    mw = _DummyMainWindow()
+    mw.data_provider = _Provider()
+    mw._workspace = _Workspace()
+    orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
+    monkeypatch.setattr(
+        "core.startup_orchestrator.log_process_snapshot",
+        lambda *_args, **_kwargs: None,
+    )
+
+    orchestrator.smart_startup()
+
+    assert mw.data_provider.code2name == {"000001": "Ping An"}
+    assert mw._workspace.refreshed_maps == [{"000001": "Ping An"}]
 
 
 def test_startup_orchestrator_skips_asian_sync_when_toggle_disabled(monkeypatch):

@@ -51,9 +51,32 @@ class StockCandidateTab(BaseStockTab):
         self._initial_refresh_started = True
         QTimer.singleShot(350, self.refresh_candidates)
 
+    def _is_current_workspace_tab(self) -> bool:
+        parent = self.parent()
+        tabs = getattr(parent, "tabs", None)
+        current_widget = getattr(tabs, "currentWidget", None)
+        if not callable(current_widget):
+            return True
+        try:
+            return current_widget() is self
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return True
+
+    def _should_start_runtime_on_show(self) -> bool:
+        is_current = self._is_current_workspace_tab()
+        if getattr(self, "_workspace_noninteractive_loaded", False) and not is_current:
+            return False
+        if is_current:
+            setattr(self, "_workspace_noninteractive_loaded", False)
+        reason = str(getattr(self, "_workspace_load_reason", "") or "").strip()
+        if reason and reason not in {"placeholder_action", "tab_switch", "user"}:
+            return False
+        return is_current
+
     def showEvent(self, event):  # noqa: N802 - Qt API naming
         super().showEvent(event)
-        self._ensure_runtime_started()
+        if self._should_start_runtime_on_show():
+            self._ensure_runtime_started()
 
     def prime_background_load(self) -> None:
         workspace = self._workspace()
@@ -61,7 +84,6 @@ class StockCandidateTab(BaseStockTab):
         prime_snapshots = getattr(workspace, "prime_stock_context_snapshots", None)
         if callable(prime_snapshots):
             prime_snapshots()
-        self._ensure_runtime_started()
 
     def _prime_anchor_source_tabs(self, workspace) -> None:
         if workspace is None:
@@ -118,6 +140,8 @@ class StockCandidateTab(BaseStockTab):
             signal.connect(self._schedule_context_refresh)
 
     def _schedule_context_refresh(self, *_args) -> None:
+        if getattr(self, "_workspace_noninteractive_loaded", False):
+            return
         self._status_primary = "等待综合候选自动刷新"
         self._status_freshness = "数据源已更新"
         self._refresh_status()

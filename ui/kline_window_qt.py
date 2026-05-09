@@ -710,10 +710,37 @@ class KLineChartWindow(QWidget):
 
         self.df = None
 
-        # 释放 WebEngine（先导航到空白页释放 Chromium 渲染进程）
+        # 释放 WebEngine（先清空页面并断开信号，减少关闭后继续持有窗口）
+        browser = getattr(self, "browser", None)
+        self.browser = None
         try:
-            self.browser.setUrl(QUrl("about:blank"))
-            self.browser.deleteLater()
+            if browser is not None:
+                try:
+                    browser.loadFinished.disconnect(self._on_chart_load_finished)
+                except (AttributeError, RuntimeError, TypeError):
+                    pass
+                try:
+                    browser.stop()
+                except (AttributeError, RuntimeError, TypeError):
+                    pass
+                try:
+                    browser.setHtml("", QUrl("about:blank"))
+                except (AttributeError, RuntimeError, TypeError):
+                    try:
+                        browser.setUrl(QUrl("about:blank"))
+                    except (AttributeError, RuntimeError, TypeError):
+                        pass
+                try:
+                    page = browser.page()
+                    if page is not None:
+                        page.deleteLater()
+                except (AttributeError, RuntimeError, TypeError):
+                    pass
+                try:
+                    browser.setParent(None)
+                except (AttributeError, RuntimeError, TypeError):
+                    pass
+                browser.deleteLater()
         except (AttributeError, RuntimeError, TypeError) as _e:
             log.debug(f"[K线] WebEngine 释放异常: {_e}")
 

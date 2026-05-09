@@ -242,19 +242,28 @@ def test_ai_industry_chain_prime_background_loads_workbook_immediately(monkeypat
 
     tab = AIIndustryChainTab(DummyProvider(), workbook_path=workbook_path)
     refresh_calls = []
+    snapshot_calls = []
     monkeypatch.setattr(
         tab,
         "refresh_table_quotes_and_market_caps",
         lambda **kwargs: refresh_calls.append(kwargs),
     )
+    monkeypatch.setattr(
+        tab,
+        "_apply_quote_store_snapshot",
+        lambda *args, **kwargs: snapshot_calls.append((args, kwargs)),
+    )
 
     try:
         tab.prime_background_load()
 
-        assert tab._runtime_started is True
+        assert tab._runtime_started is False
+        assert tab._background_prime_done is True
         assert len(tab.model.row_data) == 2
         assert tab._chain_codes == {"002384", "688498"}
-        assert refresh_calls == [{"quote_task_id": "ai_industry_chain_quotes"}]
+        assert tab.model.row_data[0]["5日涨幅"] == "--"
+        assert refresh_calls == []
+        assert len(snapshot_calls) == 1
     finally:
         tab.close()
         tab.deleteLater()

@@ -3,6 +3,7 @@ import pandas as pd
 
 from core.market_calendar import MarketCalendar
 from ui.models.table_models import RtSortFilterProxyModel, StockTableModel
+import ui.tabs.earnings_tab as earnings_module
 from ui.tabs.earnings_tab import EARNINGS_DISPLAY_TRADE_DAYS, EarningsTab
 
 
@@ -44,6 +45,74 @@ def test_earnings_tab_does_not_join_realtime_quote_universe():
     assert EarningsTab.get_realtime_quote_codes(None) == set()
 
 
+def test_earnings_tab_defers_scheduler_creation_until_runtime(monkeypatch):
+    created = []
+
+    class DummySignal:
+        def connect(self, callback):
+            self.callback = callback
+
+    class DummyScheduler:
+        sig_new_surprises_found = DummySignal()
+
+        def start_patrol(self):
+            pass
+
+        def stop_patrol(self):
+            pass
+
+    monkeypatch.setattr(
+        earnings_module,
+        "EarningsScheduler",
+        lambda parent=None: created.append(parent) or DummyScheduler(),
+    )
+
+    tab = EarningsTab()
+    try:
+        assert created == []
+        assert tab.scheduler is None
+
+        assert tab._ensure_scheduler() is tab.scheduler
+        assert created == [tab]
+    finally:
+        tab.deleteLater()
+
+
+def test_earnings_runtime_start_is_gated_to_current_workspace_tab():
+    class DummyTabs:
+        current = None
+
+        def currentWidget(self):
+            return self.current
+
+    class DummyParent:
+        tabs = DummyTabs()
+
+    class DummyTab:
+        def parent(self):
+            return DummyParent()
+
+    tab = DummyTab()
+    DummyParent.tabs.current = object()
+    assert not EarningsTab._is_current_workspace_tab(tab)
+
+    DummyParent.tabs.current = tab
+    assert EarningsTab._is_current_workspace_tab(tab)
+
+
+def test_earnings_runtime_show_skips_non_interactive_load_reason():
+    class DummyTab:
+        _workspace_load_reason = "perf_memory_probe"
+
+        def _is_current_workspace_tab(self):
+            return True
+
+    assert not EarningsTab._should_start_runtime_on_show(DummyTab())
+
+    DummyTab._workspace_load_reason = "tab_switch"
+    assert EarningsTab._should_start_runtime_on_show(DummyTab())
+
+
 def test_apply_latest_quotes_does_not_trigger_online_market_cap_backfill():
     class DummyTab:
         pass
@@ -51,7 +120,7 @@ def test_apply_latest_quotes_does_not_trigger_online_market_cap_backfill():
     tab = DummyTab()
     calls = []
 
-    tab.refresh_table_from_latest_snapshot = lambda: calls.append("snapshot")
+    tab._apply_quote_store_snapshot = lambda: calls.append("snapshot")
     tab.async_update_market_caps = lambda: calls.append("unexpected_market_caps")
     tab._recalc_pe_ttm = lambda: calls.append("pe")
 

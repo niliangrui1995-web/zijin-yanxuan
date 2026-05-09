@@ -73,12 +73,24 @@ class MainWindowQT(QMainWindow):
     # nativeEvent 已移除：PyQt6 的 sip.voidptr 与 ctypes 内存布局不兼容，
     # 会导致 Windows 段错误。边缘缩放改用纯 Python 鼠标事件实现。
 
-    def __init__(self, splash=None):
+    def __init__(
+        self,
+        splash=None,
+        *,
+        startup_enabled: bool = True,
+        background_prewarm: bool = True,
+        kline_prewarm_enabled: bool = True,
+        central_quotes_enabled: bool = True,
+    ):
         super().__init__()
         self._project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self._launch_started_at = time.perf_counter()
         self._first_paint_recorded = False
         self._is_closing = False
+        self._startup_enabled = bool(startup_enabled)
+        self._workspace_background_prewarm = bool(background_prewarm)
+        self._kline_prewarm_enabled = bool(kline_prewarm_enabled)
+        self._central_quotes_enabled = bool(central_quotes_enabled)
         self._native_taskbar_fix_applied = False
         self._app_cursor_filter_installed = False
         self._splash = splash
@@ -173,13 +185,20 @@ class MainWindowQT(QMainWindow):
         self._restore_ui_state()
 
         self._splash_update(90, "正在加载数据...")
-        self.startup_orchestrator.schedule_startup()
+        if self._startup_enabled:
+            self.startup_orchestrator.schedule_startup()
+        else:
+            log.info("[startup] startup timers disabled for controlled window construction")
 
         self._init_central_broadcaster()
         self._update_last_f5_time()
         log_process_snapshot("main_window.init.ready", logger=log)
 
     def _init_central_broadcaster(self):
+        if not self._central_quotes_enabled:
+            self.central_quotes_svc = None
+            log.info("[UI] central quotes disabled for controlled window construction")
+            return
         self._bootstrap.install_central_quotes()
 
     # 联网成功后的各 Tab 刷新逻辑由 _on_smart_startup_online_done 负责
@@ -282,6 +301,8 @@ class MainWindowQT(QMainWindow):
             self.engine,
             host=self,
             parent=parent if parent is not None else self.tabs_wrapper,
+            background_prewarm=self._workspace_background_prewarm,
+            watchlist_startup_tasks=self._startup_enabled,
         )
 
     def _rebind_workspace_chrome(self) -> None:
@@ -339,7 +360,8 @@ class MainWindowQT(QMainWindow):
                 schedule_restore(app_config.last_active_tab)
             else:
                 workspace.restore_last_tab(app_config.last_active_tab)
-            kline_manager.prewarm(delay_ms=2500)
+            if self._kline_prewarm_enabled:
+                kline_manager.prewarm(delay_ms=2500)
             self.install_workspace_table_copy_hooks()
             self.tabs.currentChanged.connect(self._remember_last_active_tab)
             self._rebind_workspace_chrome()

@@ -66,6 +66,15 @@ def _format_subprocess_failure(exc: Exception) -> tuple[str, str]:
     return message, message
 
 
+def _normalize_a_share_codes(codes) -> list[str]:
+    normalized: list[str] = []
+    for raw_code in codes or []:
+        code = str(raw_code or "").strip()
+        if len(code) == 6 and code.isdigit():
+            normalized.append(code)
+    return list(dict.fromkeys(normalized))
+
+
 def ms_until_next_global_earnings_calendar_daily_refresh(now: datetime.datetime | None = None) -> int:
     now = now or datetime.datetime.now()
     target = now.replace(
@@ -155,6 +164,67 @@ class StartupOrchestrator:
         except RuntimeError:
             pass
 
+    def _loaded_watchlist_codes(self) -> list[str]:
+        workspace = getattr(self.mw, "_workspace", None)
+        if workspace is None:
+            return []
+
+        watchlist_tab = None
+        get_loaded_tab = getattr(workspace, "get_loaded_tab", None)
+        if callable(get_loaded_tab):
+            watchlist_tab = get_loaded_tab("watchlist")
+        if watchlist_tab is None:
+            watchlist_tab = getattr(workspace, "tab_watchlist", None)
+        if watchlist_tab is None:
+            watchlist_tab = getattr(self.mw, "tab_watchlist", None)
+        if watchlist_tab is None:
+            return []
+
+        get_quote_codes = getattr(watchlist_tab, "get_realtime_quote_codes", None)
+        if callable(get_quote_codes):
+            try:
+                return _normalize_a_share_codes(get_quote_codes())
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                return []
+
+        model = getattr(watchlist_tab, "model", None)
+        rows = getattr(model, "row_data", None) or []
+        return _normalize_a_share_codes(
+            row.get("代码") or row.get("code", "")
+            for row in rows
+            if isinstance(row, dict)
+        )
+
+    def _refresh_startup_code_names(self) -> dict:
+        provider = getattr(self.mw, "data_provider", None)
+        if provider is None:
+            return {}
+
+        current_map = {
+            str(raw_code or "").strip(): str(raw_name or "").strip()
+            for raw_code, raw_name in dict(getattr(provider, "code2name", {}) or {}).items()
+            if str(raw_code or "").strip()
+        }
+        watchlist_codes = self._loaded_watchlist_codes()
+        ensure_code_name_map = getattr(provider, "ensure_code_name_map", None)
+        if callable(ensure_code_name_map) and watchlist_codes:
+            refreshed_map = ensure_code_name_map(watchlist_codes, refresh_missing=True) or {}
+            current_map.update(
+                {
+                    str(raw_code or "").strip(): str(raw_name or "").strip()
+                    for raw_code, raw_name in dict(refreshed_map).items()
+                    if str(raw_code or "").strip()
+                }
+            )
+
+        provider.code2name = current_map
+        record_metric(
+            "smart_startup_watchlist_name_codes",
+            len(watchlist_codes),
+            unit="count",
+        )
+        return current_map
+
     def deferred_data_load(self):
         """延迟恢复历史缓存、实时缓存和 RPS 缓存。"""
 
@@ -164,7 +234,11 @@ class StartupOrchestrator:
                 return
             log_process_snapshot("startup.deferred_load.begin", logger=log)
 
-            cache_date = self.mw.data_provider.load_cache_from_disk()
+            cache_date = ""
+            if service_toggle_registry.is_enabled("startup_history_cache_load"):
+                cache_date = self.mw.data_provider.load_cache_from_disk()
+            else:
+                log.info("[启动] 已跳过全量历史缓存预载，历史K线将在扫描/盘中监控/K线窗口按需加载")
             if not self._alive():
                 log_process_snapshot(
                     "startup.deferred_load.cancelled",
@@ -407,16 +481,12 @@ class StartupOrchestrator:
                     try:
                         if not self._alive():
                             return
-                        self.mw.data_provider.code2name = (
-                            self.mw.data_provider.ensure_code_name_map(
-                                refresh_missing=True
-                            )
-                        )
+                        code2name = self._refresh_startup_code_names()
                         workspace = getattr(self.mw, "_workspace", None)
                         if workspace is not None:
                             self._safe_call_in_ui(
                                 lambda: workspace.refresh_watchlist_names(
-                                    self.mw.data_provider.code2name
+                                    code2name
                                 )
                             )
                     except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:

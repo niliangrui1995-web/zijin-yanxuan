@@ -316,13 +316,13 @@ class LogTab(QWidget):
                     _safe_fallback_write(f"[LogStream] flush失败: {exc}\n")
 
         stdout_original = _resolve_original_stream(
-            getattr(sys, "__stdout__", None),
             getattr(sys, "stdout", None),
+            getattr(sys, "__stdout__", None),
             getattr(sys, "__stderr__", None),
         )
         stderr_original = _resolve_original_stream(
-            getattr(sys, "__stderr__", None),
             getattr(sys, "stderr", None),
+            getattr(sys, "__stderr__", None),
             stdout_original,
         )
 
@@ -335,6 +335,16 @@ class LogTab(QWidget):
         self._log_flush_timer.timeout.connect(self._flush_log_buffer)
         self._log_flush_timer.start(200)
 
+    @staticmethod
+    def _restore_log_redirect() -> None:
+        for stream_name in ("stdout", "stderr"):
+            current = getattr(sys, stream_name, None)
+            if not getattr(current, "_is_ui_log_redirect", False):
+                continue
+            original = getattr(current, "original", None)
+            if original is not None:
+                setattr(sys, stream_name, original)
+
     def shutdown(self) -> None:
         log_flush_timer = getattr(self, "_log_flush_timer", None)
         if log_flush_timer is not None:
@@ -342,6 +352,11 @@ class LogTab(QWidget):
         task_status_panel = getattr(self, "task_status_panel", None)
         if task_status_panel is not None:
             task_status_panel.shutdown()
+        try:
+            event_bus.sig_system_log.disconnect(self._on_log_msg)
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+        self._restore_log_redirect()
 
     def _on_log_msg(self, level, text):
         self._log_buffer.append((level, text))
@@ -375,4 +390,3 @@ class LogTab(QWidget):
         if filtered_entries:
             self._append_log_entries(filtered_entries, clear_existing=False)
         self._refresh_status_summary()
-

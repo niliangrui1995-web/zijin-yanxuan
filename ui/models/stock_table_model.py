@@ -20,6 +20,7 @@ from ui.models.table_model_helpers import (
     _is_pct_like_header,
     _is_status_header,
     _numeric_heat_color,
+    _prune_flash_records,
     _status_badge_color,
     _summarize_long_text,
     _sync_serial_values,
@@ -185,6 +186,7 @@ class StockTableModel(QAbstractTableModel):
             )
 
     def update_data(self, new_data):
+        _prune_flash_records(self._flash_records)
         rows = list(new_data or [])
         if self._can_update_incrementally(rows):
             self._emit_incremental_rows(rows)
@@ -289,6 +291,7 @@ class StockTableModel(QAbstractTableModel):
     def update_quotes(self, quotes: dict):
         if not quotes or not self._data:
             return
+        _prune_flash_records(self._flash_records)
 
         changed_rows = []
         quote_cols = []
@@ -297,6 +300,8 @@ class StockTableModel(QAbstractTableModel):
                 quote_cols.append(self._headers.index(header))
         start_col = min(quote_cols) if quote_cols else None
         end_col = max(quote_cols) if quote_cols else None
+        buy_point_col = self._headers.index("买点") if "买点" in self._headers else -1
+        buy_point_clock = None
 
         for row, item_dict in enumerate(self._data):
             code = item_dict.get("代码")
@@ -334,23 +339,30 @@ class StockTableModel(QAbstractTableModel):
             if row_changed:
                 changed_rows.append(row)
 
-            if "买点" in self._headers and rt_close > 0:
+            if buy_point_col >= 0 and rt_close > 0:
                 history = item_dict.get("_history_20", [])
                 history_date = item_dict.get("_history_date", "")
                 pos_str = ""
 
                 if history:
-                    import datetime
+                    if buy_point_clock is None:
+                        import datetime
 
-                    today_str = datetime.datetime.now().strftime("%Y-%m-%d")
-                    now_time = datetime.datetime.now().strftime("%H:%M")
+                        from app.services.ui_runtime_service import MarketCalendar
+
+                        now = datetime.datetime.now()
+                        today_str = now.strftime("%Y-%m-%d")
+                        now_time = now.strftime("%H:%M")
+                        buy_point_clock = (
+                            today_str,
+                            now_time >= "09:15" and MarketCalendar.is_trade_day(today_str),
+                        )
+                    today_str, is_trade_refresh_time = buy_point_clock
 
                     if history_date == today_str:
                         temp_hist = history[:-1] + [rt_close]
                     else:
-                        from app.services.ui_runtime_service import MarketCalendar
-
-                        if now_time >= "09:15" and MarketCalendar.is_trade_day(today_str):
+                        if is_trade_refresh_time:
                             temp_hist = history[1:] + [rt_close]
                         else:
                             temp_hist = history[:-1] + [rt_close]

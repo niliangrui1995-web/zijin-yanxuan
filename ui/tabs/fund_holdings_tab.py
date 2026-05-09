@@ -1304,8 +1304,8 @@ class FundHoldingsTab(BaseStockTab):
         return f"{prefix}{number:,.2f}"
 
     def _apply_latest_quotes_from_store(self):
-        # 基金持仓只消费最新的全局/F5快照；若当前表格新增了代码，会先尝试用本地缓存预热。
-        self.refresh_table_from_latest_snapshot(async_local=True)
+        # 基金持仓只消费最新的全局/F5快照，避免打开页签时预热重型本地历史缓存。
+        self._apply_quote_store_snapshot()
 
     def _on_cache_reload_completed(self):
         if getattr(self, "_runtime_cleanup_done", False):

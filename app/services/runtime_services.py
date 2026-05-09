@@ -7,7 +7,11 @@ from infra.market_data.tdx_data_provider import TdxDataProvider
 
 def create_data_provider(*, offline: bool = True) -> TdxDataProvider:
     provider = TdxDataProvider(offline=offline)
-    provider.code2name = provider.ensure_code_name_map()
+    cached_code_names = {}
+    load_cached_code_name_map = getattr(provider, "load_cached_code_name_map", None)
+    if callable(load_cached_code_name_map):
+        cached_code_names = load_cached_code_name_map()
+    provider.code2name = cached_code_names or provider.ensure_code_name_map()
     return provider
 
 

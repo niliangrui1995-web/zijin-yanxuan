@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+import time
+
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QSignalSpy
@@ -54,6 +56,20 @@ def test_stock_table_model_incremental_update_marks_status_and_time_flash():
     time_col = model.headers.index("最近时间")
     assert model.data(model.index(0, status_col), Qt.ItemDataRole.UserRole + 1)["diff"] == 0
     assert model.data(model.index(0, time_col), Qt.ItemDataRole.UserRole + 1)["diff"] == 0
+
+
+def test_stock_table_model_prunes_expired_flash_records_on_update():
+    model = StockTableModel(["代码", "名称", "现价", "涨幅%", "市值"])
+    model.update_data([
+        {"代码": "000001", "名称": "A", "现价": "10.00", "涨幅%": 0.0, "市值": "--", "_zongguben": 1_000_000_000},
+    ])
+    model._flash_records = {
+        99: {1: {"time": time.time() - 10, "diff": 1.0}},
+    }
+
+    model.update_quotes({"000001": {"close": 10.5, "last_close": 10.0}})
+
+    assert 99 not in model._flash_records
 
 
 def test_stock_table_model_update_data_hydrates_latest_global_quotes(monkeypatch):

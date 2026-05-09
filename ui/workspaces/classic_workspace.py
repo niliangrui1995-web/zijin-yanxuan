@@ -147,12 +147,22 @@ class ClassicWorkspace(QWidget):
     BACKGROUND_PREWARM_INTERVAL_MS = 260
     RESTORE_LAST_TAB_DELAY_MS = 750
 
-    def __init__(self, data_provider, engine, host=None, parent=None, *, background_prewarm: bool = True):
+    def __init__(
+        self,
+        data_provider,
+        engine,
+        host=None,
+        parent=None,
+        *,
+        background_prewarm: bool = True,
+        watchlist_startup_tasks: bool = True,
+    ):
         super().__init__(parent)
         self.data_provider = data_provider
         self.engine = engine
         self.host = host
         self._stock_detail_dialogs = {}
+        watchlist_kwargs = {} if watchlist_startup_tasks else {"startup_tasks_enabled": False}
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -170,7 +180,13 @@ class ClassicWorkspace(QWidget):
                 "group": "主工作台",
                 "group_order": 10,
                 "attr": "tab_watchlist",
-                "factory": self._tab_factory("WatchlistTab", "ui.tabs.watchlist_tab", self.data_provider, self),
+                "factory": self._tab_factory(
+                    "WatchlistTab",
+                    "ui.tabs.watchlist_tab",
+                    self.data_provider,
+                    self,
+                    **watchlist_kwargs,
+                ),
                 "widget": None,
                 "loaded": False,
             },
@@ -380,6 +396,13 @@ class ClassicWorkspace(QWidget):
             self._lazy_loading_keys.discard(key)
             return widget
 
+        load_reason = str(reason or "")
+        setattr(widget, "_workspace_load_reason", load_reason)
+        setattr(
+            widget,
+            "_workspace_noninteractive_loaded",
+            load_reason not in {"placeholder_action", "tab_switch", "user"},
+        )
         current_index = self.tabs.currentIndex()
         previous_blocked = self.tabs.blockSignals(True)
         old_widget = spec.get("widget")
@@ -400,6 +423,7 @@ class ClassicWorkspace(QWidget):
         setattr(self, spec["attr"], widget)
         self._lazy_loading_keys.discard(key)
         QTimer.singleShot(0, widget.ensurePolished)
+        QTimer.singleShot(250, lambda widget=widget: setattr(widget, "_workspace_load_reason", ""))
         self._notify_tab_loaded(key, widget)
         return widget
 

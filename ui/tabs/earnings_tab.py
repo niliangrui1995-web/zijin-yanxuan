@@ -28,18 +28,24 @@ class EarningsTab(BaseStockTab):
         # 业绩页只消费 F5/本地快照，不加入盘中实时行情轮询。
         event_bus.sig_cache_reload_completed.connect(self._on_cache_reload_completed)
 
-        # 挂载后台总调度器
-        self.scheduler = EarningsScheduler(self)
-        self.scheduler.sig_new_surprises_found.connect(self._on_new_data_found)
+        # 调度器按需创建，避免隐藏页签挂载时加载业绩缓存。
+        self.scheduler = None
 
         # 延后到页面首次显示时再启动巡逻，避免构造阶段阻塞 UI。
         self._patrol_started = False
+
+    def _ensure_scheduler(self):
+        if self.scheduler is None:
+            self.scheduler = EarningsScheduler(self)
+            self.scheduler.sig_new_surprises_found.connect(self._on_new_data_found)
+        return self.scheduler
 
     def _ensure_runtime_started(self) -> None:
         if self._patrol_started:
             return
         self._patrol_started = True
-        QTimer.singleShot(0, self.scheduler.start_patrol)
+        scheduler = self._ensure_scheduler()
+        QTimer.singleShot(0, scheduler.start_patrol)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -197,7 +203,7 @@ class EarningsTab(BaseStockTab):
         if hasattr(self, "table_state"):
             self.table_state.show_loading("正在拉取业绩数据...", "请稍候")
         log.info(f"[业绩监控] 手动扫描: {start_str} ~ {end_str}")
-        self.scheduler.force_manual_scan(date_list)
+        self._ensure_scheduler().force_manual_scan(date_list)
 
     def _refresh_type_filter_button_text(self):
         text, tooltip = format_multi_select_summary(
@@ -455,7 +461,7 @@ class EarningsTab(BaseStockTab):
         return set()
 
     def refresh_data_after_f5(self) -> bool:
-        runner = getattr(self.scheduler, "trigger_routine_scan", None)
+        runner = getattr(self._ensure_scheduler(), "trigger_routine_scan", None)
         if not callable(runner):
             return False
         started = bool(runner(reason="F5后自动更新"))
@@ -464,14 +470,37 @@ class EarningsTab(BaseStockTab):
         return started
 
     def _apply_latest_quotes_from_store(self):
-        self.refresh_table_from_latest_snapshot()
+        self._apply_quote_store_snapshot()
         self._recalc_pe_ttm()
 
     def _on_cache_reload_completed(self):
         self._apply_latest_quotes_from_store()
 
+    def _is_current_workspace_tab(self) -> bool:
+        parent = self.parent()
+        tabs = getattr(parent, "tabs", None)
+        current_widget = getattr(tabs, "currentWidget", None)
+        if not callable(current_widget):
+            return True
+        try:
+            return current_widget() is self
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return True
+
+    def _should_start_runtime_on_show(self) -> bool:
+        is_current = self._is_current_workspace_tab()
+        if getattr(self, "_workspace_noninteractive_loaded", False) and not is_current:
+            return False
+        if is_current:
+            setattr(self, "_workspace_noninteractive_loaded", False)
+        reason = str(getattr(self, "_workspace_load_reason", "") or "").strip()
+        if reason and reason not in {"placeholder_action", "tab_switch", "user"}:
+            return False
+        return is_current
+
     def shutdown(self) -> None:
-        self.scheduler.stop_patrol()
+        if self.scheduler is not None:
+            self.scheduler.stop_patrol()
 
     def closeEvent(self, event):
         self.shutdown()
@@ -480,7 +509,8 @@ class EarningsTab(BaseStockTab):
     def showEvent(self, event):
         """隐藏页首次打开时，父类会补现价/市值快照，这里紧跟着补算 PE。"""
         super().showEvent(event)
-        self._ensure_runtime_started()
+        if self._should_start_runtime_on_show():
+            self._ensure_runtime_started()
         if self.row_data:
             QTimer.singleShot(0, self._recalc_pe_ttm)
 

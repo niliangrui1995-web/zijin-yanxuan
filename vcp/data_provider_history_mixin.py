@@ -21,12 +21,24 @@ class TdxDataProviderHistoryMixin:
     _TNF_NAME_OFFSET = 81
     _TNF_NAME_FIELD_LEN = 45
     _TNF_NAME_FILES = ("shs.tnf", "szs.tnf")
+    _MANUAL_NAME_ALIASES = {
+        "603196": "\u749e\u6e90\u6750\u6599",
+    }
 
     @staticmethod
     def _is_placeholder_name(code, name) -> bool:
         code_text = str(code or "").strip()
         name_text = str(name or "").strip()
         return not name_text or name_text == code_text
+
+    @staticmethod
+    def _normalize_code_name_targets(codes) -> list[str]:
+        normalized: list[str] = []
+        for raw_code in codes or []:
+            code = str(raw_code or "").strip()
+            if len(code) == 6 and code.isdigit():
+                normalized.append(code)
+        return list(dict.fromkeys(normalized))
 
     @classmethod
     def _decode_tnf_name(cls, raw_name: bytes) -> str:
@@ -95,6 +107,72 @@ class TdxDataProviderHistoryMixin:
             _log.info(f"[离线模式] 已从本地证券主表解析 {len(merged_map)} 只标的名称")
         return dict(merged_map)
 
+    @classmethod
+    def _parse_tnf_name_file_for_codes(cls, tnf_path: str, target_codes: set[str]) -> dict[str, str]:
+        remaining = set(target_codes or set())
+        if not remaining or not tnf_path or not os.path.exists(tnf_path):
+            return {}
+
+        code_names: dict[str, str] = {}
+        stride = cls._TNF_RECORD_SIZE
+        code_start = cls._TNF_CODE_OFFSET
+        code_end = code_start + 6
+        name_start = cls._TNF_NAME_OFFSET
+        name_end = name_start + cls._TNF_NAME_FIELD_LEN
+
+        try:
+            with open(tnf_path, "rb") as handle:
+                while remaining:
+                    record = handle.read(stride)
+                    if len(record) < stride:
+                        break
+                    code_bytes = record[code_start:code_end]
+                    if len(code_bytes) != 6 or not code_bytes.isdigit():
+                        continue
+                    code = code_bytes.decode("ascii", errors="ignore").strip()
+                    if code not in remaining:
+                        continue
+                    name = cls._decode_tnf_name(record[name_start:name_end])
+                    if not cls._is_placeholder_name(code, name):
+                        code_names[code] = name
+                    remaining.discard(code)
+        except OSError as exc:
+            _log.debug(f"[名称映射] 读取本地证券主表失败: {tnf_path} {exc}")
+
+        return code_names
+
+    def _load_local_tdx_name_map_for_codes(self, codes) -> dict[str, str]:
+        target_codes = set(self._normalize_code_name_targets(codes))
+        if not target_codes:
+            return {}
+
+        cached_map = getattr(self, "_local_tdx_name_map_cache", None)
+        if isinstance(cached_map, dict) and cached_map:
+            return {
+                code: str(cached_map.get(code, "") or "").strip()
+                for code in target_codes
+                if not self._is_placeholder_name(code, cached_map.get(code, ""))
+            }
+
+        vipdoc = getattr(self, "tdx_vipdoc", "") or ""
+        if not vipdoc:
+            return {}
+
+        tdx_root = os.path.dirname(vipdoc)
+        hq_cache_dir = os.path.join(tdx_root, "T0002", "hq_cache")
+        merged_map: dict[str, str] = {}
+        for filename in self._TNF_NAME_FILES:
+            missing = target_codes.difference(merged_map.keys())
+            if not missing:
+                break
+            merged_map.update(
+                self._parse_tnf_name_file_for_codes(
+                    os.path.join(hq_cache_dir, filename),
+                    missing,
+                )
+            )
+        return merged_map
+
     def _merge_local_tdx_name_map(self, base_map: dict | None, *, persist: bool = False) -> dict[str, str]:
         from core.data_store import DataStore
 
@@ -123,6 +201,65 @@ class TdxDataProviderHistoryMixin:
                 _log.debug(f"[名称映射] 持久化本地名称缓存失败: {exc}")
 
         return merged_map
+
+    def _get_code_name_map_for_targets(self, target_codes: list[str]) -> dict[str, str]:
+        from core.data_store import DataStore
+
+        if not target_codes:
+            return {}
+
+        try:
+            cached = DataStore().load_json("vcp_code_names") or {}
+        except (OSError, RuntimeError, TypeError, ValueError):
+            cached = {}
+        cached_map = {
+            str(raw_code or "").strip(): str(raw_name or "").strip()
+            for raw_code, raw_name in dict(cached or {}).items()
+            if str(raw_code or "").strip()
+        }
+        base_map: dict[str, str] = {}
+        for code in target_codes:
+            name = str(cached_map.get(code, "") or "").strip()
+            if self._is_placeholder_name(code, name):
+                name = code
+            base_map[code] = name
+
+        unresolved_codes = [
+            code for code, name in base_map.items()
+            if self._is_placeholder_name(code, name)
+        ]
+        local_name_map = self._load_local_tdx_name_map_for_codes(unresolved_codes)
+        for code, name in local_name_map.items():
+            if not self._is_placeholder_name(code, name):
+                base_map[code] = name
+
+        for code, name in self._MANUAL_NAME_ALIASES.items():
+            if code in base_map:
+                base_map[code] = name
+
+        return base_map
+
+    def load_cached_code_name_map(self) -> dict[str, str]:
+        from core.data_store import DataStore
+
+        try:
+            cached = DataStore().load_json("vcp_code_names") or {}
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            _log.debug(f"[名称映射] 读取缓存名称失败: {exc}")
+            cached = {}
+
+        cached_map = {
+            str(raw_code or "").strip(): str(raw_name or "").strip()
+            for raw_code, raw_name in dict(cached or {}).items()
+            if str(raw_code or "").strip()
+        }
+        if not cached_map:
+            return {}
+
+        cached_map.update(self._MANUAL_NAME_ALIASES)
+        self.code2name = cached_map
+        _log.info(f"[名称映射] 已从缓存载入 {len(cached_map)} 条标的名称")
+        return dict(cached_map)
 
     def get_all_codes(self):
         from core.data_store import DataStore
@@ -198,7 +335,11 @@ class TdxDataProviderHistoryMixin:
     def ensure_code_name_map(self, codes=None, *, refresh_missing=False):
         from core.data_store import DataStore
 
-        base_map = dict(self._get_codes_from_vipdoc() or {})
+        target_codes = self._normalize_code_name_targets(codes)
+        if target_codes:
+            base_map = self._get_code_name_map_for_targets(target_codes)
+        else:
+            base_map = dict(self._get_codes_from_vipdoc() or {})
         current_map = getattr(self, "code2name", {}) or {}
         for raw_code, raw_name in dict(current_map).items():
             code = str(raw_code or "").strip()
@@ -208,13 +349,7 @@ class TdxDataProviderHistoryMixin:
             if not self._is_placeholder_name(code, name):
                 base_map[code] = name
 
-        target_codes = []
-        if codes:
-            for raw_code in codes:
-                code = str(raw_code or "").strip()
-                if len(code) == 6 and code.isdigit():
-                    target_codes.append(code)
-        else:
+        if not target_codes:
             target_codes = list(base_map.keys())
 
         missing_codes = [

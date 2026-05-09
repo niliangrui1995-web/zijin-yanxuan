@@ -142,8 +142,10 @@ def shutdown_main_window(main_window, *, event_bus, task_manager):
     if hasattr(main_window, "startup_orchestrator"):
         _run("停止启动编排器", main_window.startup_orchestrator.shutdown)
 
-    if hasattr(main_window, "central_quotes_svc"):
-        _run("停止中央报价服务", main_window.central_quotes_svc.shutdown)
+    central_quotes_svc = getattr(main_window, "central_quotes_svc", None)
+    central_quotes_shutdown = getattr(central_quotes_svc, "shutdown", None)
+    if callable(central_quotes_shutdown):
+        _run("停止中央报价服务", central_quotes_shutdown)
 
     if main_window._workspace is not None:
         _run("停止工作区", main_window._workspace.shutdown)

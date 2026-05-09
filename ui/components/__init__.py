@@ -58,6 +58,7 @@ class VCPTableView(QTableView):
         self.setSortingEnabled(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setCornerButtonEnabled(False)
+        self.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self._sorted_column = -1
@@ -678,7 +679,7 @@ class TableStateOverlay(QWidget):
         self._card = QFrame(self)
         self._card.setObjectName("tableStateCard")
         self._card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self._card.setMinimumWidth(360)
+        self._card.setMinimumWidth(320)
         self._card.setMaximumWidth(500)
 
         card_layout = QVBoxLayout(self._card)
@@ -725,11 +726,26 @@ class TableStateOverlay(QWidget):
 
         from ui.theme import theme_manager
         theme_manager.sig_theme_changed.connect(lambda _name: self._apply_style())
+        self._sync_card_width()
         self._apply_style()
 
     def _handle_action(self):
         if callable(self._action_callback):
             self._action_callback()
+
+    def _sync_card_width(self):
+        tokens = build_ui_tokens()
+        available = max(240, self.width() - (tokens["space"]["2xl"] * 2))
+        self._card.setMinimumWidth(min(320, available))
+        self._card.setMaximumWidth(min(500, available))
+        text_width = max(220, min(420, available - (tokens["space"]["lg"] * 2)))
+        for label in (self._subtitle, self._meta):
+            label.setMinimumWidth(min(260, text_width))
+            label.setMaximumWidth(text_width)
+
+    def resizeEvent(self, event):  # noqa: N802 - Qt API naming
+        super().resizeEvent(event)
+        self._sync_card_width()
 
     def _apply_style(self):
         tokens = build_ui_tokens()
@@ -742,7 +758,7 @@ class TableStateOverlay(QWidget):
             QFrame#tableStateCard {{
                 background-color: {card_bg};
                 border: 1px solid {card_border};
-                border-radius: {tokens['radius']['xl']}px;
+                border-radius: {tokens['radius']['md']}px;
             }}
             """
         )

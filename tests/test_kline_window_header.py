@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import QWidget
 
 from core.task_manager import task_manager
 from ui import kline_window_qt as kline_module
+from ui.components import kline_window_manager as manager_module
 from ui.components.kline_window_manager import KLineWindowManager
 from ui.kline_chart_payload import build_kline_html, build_kline_theme_colors
 from ui.tabs import asian_market_tab as asian_module
@@ -236,6 +237,8 @@ def test_kline_manager_consumes_prewarm_but_uses_fresh_browser(monkeypatch):
     manager._charts = []
     manager._prewarm_started = True
     manager._prewarm_cancelled = False
+    manager._webengine_available = True
+    manager._webengine_failure = ""
     warm_browser = _WarmBrowser()
     manager._prewarm_view = warm_browser
     monkeypatch.setattr(kline_module, "KLineChartWindow", _Chart)
@@ -263,6 +266,268 @@ def test_kline_manager_consumes_prewarm_but_uses_fresh_browser(monkeypatch):
         manager._prewarm_view = None
         manager._prewarm_started = False
         manager._prewarm_cancelled = False
+        manager._prewarm_expire_timer = None
+        manager._webengine_available = None
+        manager._webengine_failure = ""
+        manager._webengine_preflight_started = False
+
+
+def test_kline_manager_expires_unused_prewarm_browser():
+    class _WarmBrowser:
+        def __init__(self):
+            self.parent = "old"
+            self.hidden = False
+            self.deleted = False
+
+        def hide(self):
+            self.hidden = True
+
+        def setParent(self, parent):
+            self.parent = parent
+
+        def deleteLater(self):
+            self.deleted = True
+
+    manager = KLineWindowManager()
+    manager._charts = []
+    manager._prewarm_started = True
+    manager._prewarm_cancelled = False
+    manager._prewarm_expire_timer = None
+    warm_browser = _WarmBrowser()
+    manager._prewarm_view = warm_browser
+
+    try:
+        manager._expire_prewarm()
+
+        assert warm_browser.hidden is True
+        assert warm_browser.parent is None
+        assert warm_browser.deleted is True
+        assert manager._prewarm_view is None
+        assert manager._prewarm_started is False
+        assert manager._prewarm_cancelled is False
+    finally:
+        manager._charts = []
+        manager._prewarm_view = None
+        manager._prewarm_started = False
+        manager._prewarm_cancelled = False
+        manager._prewarm_expire_timer = None
+
+
+def test_kline_manager_removes_destroyed_chart_reference(monkeypatch):
+    captured = {}
+
+    class _Signal:
+        def __init__(self):
+            self.callback = None
+
+        def connect(self, callback):
+            self.callback = callback
+
+    class _Chart:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.destroyed = _Signal()
+            self._visible = True
+
+        def show(self):
+            self._visible = True
+
+        def raise_(self):
+            return None
+
+        def activateWindow(self):
+            return None
+
+        def isVisible(self):
+            return self._visible
+
+    manager = KLineWindowManager()
+    manager._charts = []
+    manager._prewarm_view = None
+    manager._prewarm_started = False
+    manager._webengine_available = True
+    manager._webengine_failure = ""
+    monkeypatch.setattr(kline_module, "KLineChartWindow", _Chart)
+
+    try:
+        chart = manager.open_chart(
+            main_window=None,
+            code="000001",
+            name="平安银行",
+            data_provider=_DummyProvider(),
+            vcp_data={},
+            code_list=[],
+            current_idx=0,
+        )
+
+        assert chart in manager._charts
+        assert captured["browser"] is None
+
+        chart._visible = False
+        chart.destroyed.callback()
+
+        assert manager._charts == []
+    finally:
+        manager._charts = []
+        manager._prewarm_view = None
+        manager._prewarm_started = False
+        manager._prewarm_cancelled = False
+        manager._prewarm_expire_timer = None
+        manager._webengine_available = None
+        manager._webengine_failure = ""
+        manager._webengine_preflight_started = False
+
+
+def test_kline_manager_starts_async_preflight_before_prewarm(monkeypatch):
+    started = []
+    manager = KLineWindowManager()
+    manager._charts = []
+    manager._prewarm_view = None
+    manager._prewarm_started = True
+    manager._prewarm_cancelled = False
+    manager._webengine_available = None
+    manager._webengine_failure = ""
+    manager._webengine_preflight_started = False
+    monkeypatch.setattr(manager, "_start_webengine_preflight_async", lambda: started.append(True) or True)
+
+    try:
+        manager._run_prewarm()
+
+        assert manager._prewarm_view is None
+        assert manager._prewarm_started is False
+        assert started == [True]
+    finally:
+        manager._charts = []
+        manager._prewarm_view = None
+        manager._prewarm_started = False
+        manager._prewarm_cancelled = False
+        manager._prewarm_expire_timer = None
+        manager._webengine_available = None
+        manager._webengine_failure = ""
+        manager._webengine_preflight_started = False
+
+
+def test_kline_manager_blocks_open_when_webengine_preflight_fails(monkeypatch):
+    notified = []
+
+    manager = KLineWindowManager()
+    manager._charts = []
+    manager._prewarm_view = None
+    manager._prewarm_started = False
+    manager._webengine_available = False
+    manager._webengine_failure = "returncode=3221226505 0xc0000409"
+    monkeypatch.setattr(
+        manager,
+        "_notify_webengine_unavailable",
+        lambda main_window, code, name: notified.append((code, name)),
+    )
+
+    try:
+        chart = manager.open_chart(
+            main_window=None,
+            code="000001",
+            name="骞冲畨閾惰",
+            data_provider=_DummyProvider(),
+            vcp_data={},
+            code_list=[],
+            current_idx=0,
+        )
+
+        assert chart is None
+        assert manager._charts == []
+        assert notified == [("000001", "骞冲畨閾惰")]
+    finally:
+        manager._charts = []
+        manager._prewarm_view = None
+        manager._prewarm_started = False
+        manager._prewarm_cancelled = False
+        manager._prewarm_expire_timer = None
+        manager._webengine_available = None
+        manager._webengine_failure = ""
+        manager._webengine_preflight_started = False
+
+
+def test_kline_manager_does_not_block_when_webengine_preflight_is_running(monkeypatch):
+    notified = []
+    ensure_calls = []
+
+    class _Chart:
+        def __init__(self, **kwargs):
+            self._visible = True
+
+        def show(self):
+            self._visible = True
+
+        def raise_(self):
+            return None
+
+        def activateWindow(self):
+            return None
+
+        def isVisible(self):
+            return self._visible
+
+    manager = KLineWindowManager()
+    manager._charts = []
+    manager._prewarm_view = None
+    manager._prewarm_started = False
+    manager._webengine_available = None
+    manager._webengine_failure = ""
+    manager._webengine_preflight_started = True
+    monkeypatch.setattr(manager, "_ensure_webengine_available", lambda: ensure_calls.append(True) or False)
+    monkeypatch.setattr(
+        manager,
+        "_notify_webengine_unavailable",
+        lambda main_window, code, name: notified.append((code, name, manager._webengine_failure)),
+    )
+    monkeypatch.setattr(kline_module, "KLineChartWindow", _Chart)
+
+    try:
+        chart = manager.open_chart(
+            main_window=None,
+            code="000001",
+            name="骞冲畨閾惰",
+            data_provider=_DummyProvider(),
+            vcp_data={},
+            code_list=[],
+            current_idx=0,
+        )
+
+        assert chart is manager._charts[-1]
+        assert ensure_calls == []
+        assert notified == []
+    finally:
+        manager._charts = []
+        manager._prewarm_view = None
+        manager._prewarm_started = False
+        manager._prewarm_cancelled = False
+        manager._prewarm_expire_timer = None
+        manager._webengine_available = None
+        manager._webengine_failure = ""
+        manager._webengine_preflight_started = False
+
+
+def test_kline_manager_webengine_preflight_caches_failure(monkeypatch):
+    calls = []
+
+    def _check(*args, **kwargs):
+        calls.append((args, kwargs))
+        return {"ok": False, "reason": "returncode=3221226505 0xc0000409"}
+
+    manager = KLineWindowManager()
+    manager._webengine_available = None
+    manager._webengine_failure = ""
+    monkeypatch.setattr(manager_module, "check_qt_webengine_available", _check)
+
+    try:
+        assert manager._ensure_webengine_available() is False
+        assert manager._ensure_webengine_available() is False
+        assert len(calls) == 1
+        assert "0xc0000409" in manager._webengine_failure
+    finally:
+        manager._webengine_available = None
+        manager._webengine_failure = ""
+        manager._webengine_preflight_started = False
 
 
 def test_kline_load_and_draw_appends_today_bar_during_lunch_break(monkeypatch):

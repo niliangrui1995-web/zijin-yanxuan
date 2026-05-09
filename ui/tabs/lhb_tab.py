@@ -72,10 +72,34 @@ class LhbTab(BaseStockTab):
 
     def showEvent(self, event):
         super().showEvent(event)
-        self._ensure_pool_bootstrap_started()
+        if self._should_start_pool_on_show():
+            self._ensure_pool_bootstrap_started()
 
     def prime_background_load(self):
-        self._ensure_pool_bootstrap_started()
+        if not self._pool_bootstrap_started:
+            self._set_pool_status("等待进入龙虎榜", freshness="未加载", next_step="首次进入时自动读取缓存")
+
+    def _is_current_workspace_tab(self) -> bool:
+        parent = self.parent()
+        tabs = getattr(parent, "tabs", None)
+        current_widget = getattr(tabs, "currentWidget", None)
+        if not callable(current_widget):
+            return True
+        try:
+            return current_widget() is self
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return True
+
+    def _should_start_pool_on_show(self) -> bool:
+        is_current = self._is_current_workspace_tab()
+        if getattr(self, "_workspace_noninteractive_loaded", False) and not is_current:
+            return False
+        if is_current:
+            setattr(self, "_workspace_noninteractive_loaded", False)
+        reason = str(getattr(self, "_workspace_load_reason", "") or "").strip()
+        if reason and reason not in {"placeholder_action", "tab_switch", "user"}:
+            return False
+        return is_current
 
     def _ensure_pool_bootstrap_started(self):
         if self._pool_bootstrap_started:
@@ -156,7 +180,9 @@ class LhbTab(BaseStockTab):
         total = len(getattr(self.model, "row_data", []) or [])
         visible = self.proxy_model.rowCount() if hasattr(self, "proxy_model") else total
         search_text = self.search_box.text().strip() if hasattr(self, "search_box") else ""
-        latest_date = self._latest_cached_trade_date()
+        latest_date = ""
+        if self._pool_bootstrap_started or self.pool_manager is not None:
+            latest_date = self._latest_cached_trade_date()
         freshness = self._status_freshness or (f"快照 {latest_date}" if latest_date else "待回补")
         next_step = self._status_next_step or ""
         self.lbl_status.setText(

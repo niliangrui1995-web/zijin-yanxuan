@@ -1,3 +1,5 @@
+import sys
+
 from PyQt6.QtWidgets import QApplication
 
 from infra.events import ui_signal_hub
@@ -73,3 +75,18 @@ def test_log_tab_renders_task_status_updates():
     finally:
         tab.shutdown()
         tab.deleteLater()
+
+
+def test_log_tab_shutdown_restores_redirected_streams():
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+    tab = LogTab()
+    try:
+        assert getattr(sys.stdout, "_is_ui_log_redirect", False) is True
+        assert getattr(sys.stderr, "_is_ui_log_redirect", False) is True
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+    assert sys.stdout is original_stdout
+    assert sys.stderr is original_stderr

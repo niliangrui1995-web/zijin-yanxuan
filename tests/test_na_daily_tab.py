@@ -139,10 +139,16 @@ def test_na_daily_prime_background_loads_rows_immediately(monkeypatch, tmp_path)
 
     tab = _build_tab(monkeypatch, provider)
     refresh_calls = []
+    snapshot_calls = []
     monkeypatch.setattr(
         tab,
         "refresh_table_quotes_and_market_caps",
         lambda **kwargs: refresh_calls.append(kwargs),
+    )
+    monkeypatch.setattr(
+        tab,
+        "_apply_quote_store_snapshot",
+        lambda *args, **kwargs: snapshot_calls.append((args, kwargs)),
     )
 
     report_file = Path(tmp_path) / "战报_202604150930.md"
@@ -176,11 +182,13 @@ def test_na_daily_prime_background_loads_rows_immediately(monkeypatch, tmp_path)
     try:
         tab.prime_background_load()
 
-        assert tab._runtime_started is True
+        assert tab._runtime_started is False
+        assert tab._background_prime_done is True
         assert len(tab.model.row_data) == 1
         assert tab._na_daily_codes == {"000001"}
-        assert tab._patrol_timer.isActive()
-        assert refresh_calls == [{"quote_task_id": "na_daily_quotes"}]
+        assert not tab._patrol_timer.isActive()
+        assert refresh_calls == []
+        assert len(snapshot_calls) == 1
     finally:
         tab.close()
         tab.deleteLater()

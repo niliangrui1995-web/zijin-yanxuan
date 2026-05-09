@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import QAbstractItemView, QLabel, QLineEdit, QPushButton, Q
 from app.services import RPS_CACHE_FILE
 from app.services.ui_runtime_service import background_job_runner as task_manager
 from app.services.ui_runtime_service import domain_events as event_bus
-from app.services.ui_runtime_service import task_registry, ui_signals, watchlist_vm
+from app.services.ui_runtime_service import MarketCalendar, task_registry, ui_signals, watchlist_vm
 from core.exceptions import CacheIOError, DataFormatError
 from core.json_cache import load_json_file
 from core.logger import get_logger
@@ -29,9 +29,12 @@ class WatchlistTab(BaseStockTab):
     通过 EventBus 与外部通信，不直接依赖 MainWindowQT。
     """
 
-    def __init__(self, data_provider, parent=None):
+    def __init__(self, data_provider, parent=None, *, startup_tasks_enabled: bool = True):
         super().__init__(data_provider=data_provider, parent=parent)
         self._watchlist_last_update = ""
+        self._closing = False
+        self._startup_tasks_enabled = bool(startup_tasks_enabled)
+        self._delayed_special_timer = None
         self._init_ui()
 
         # 订阅全局报价与大一统市值更新机制
@@ -54,9 +57,13 @@ class WatchlistTab(BaseStockTab):
         event_bus.sig_vcp_watchlist_ready.connect(self._on_vcp_watchlist_ready)
 
         # 先立即回填一次，避免启动期 UI 忙时定时器延后导致“关注池长期空白”。
-        self._load_special_data()
-        # 再做一次延迟回填，兜住启动后缓存/名称映射后到位的场景。
-        QTimer.singleShot(3500, self._load_special_data)
+        if self._startup_tasks_enabled:
+            self._load_special_data()
+            # 再做一次延迟回填，兜住启动后缓存/名称映射后到位的场景。
+            self._delayed_special_timer = QTimer(self)
+            self._delayed_special_timer.setSingleShot(True)
+            self._delayed_special_timer.timeout.connect(self._load_special_data)
+            self._delayed_special_timer.start(3500)
 
     # ================================================================
     # UI 构建
@@ -164,6 +171,8 @@ class WatchlistTab(BaseStockTab):
     # ================================================================
     def _load_special_data(self):
         """加载关注池数据：统一走 ViewModel/SQLite。"""
+        if self._closing:
+            return
         data_dict = watchlist_vm.get_watchlist_data()
 
         all_codes = list(data_dict.keys())
@@ -254,10 +263,25 @@ class WatchlistTab(BaseStockTab):
             final_list.append(row_data)
 
         self.model.update_data(final_list)
-        self._refresh_quotes_async_local(
+        self._refresh_quotes_from_store_or_live(
             quote_task_id=task_registry.quote_refresh("watchlist").task_id
         )
         self._update_status_summary()
+
+    def _can_fetch_live_quotes_now(self) -> bool:
+        provider = getattr(self, "data_provider", None)
+        is_online = getattr(provider, "is_online", None)
+        if not callable(is_online) or not is_online():
+            return False
+        try:
+            return bool(MarketCalendar.is_quote_refresh_time())
+        except (RuntimeError, TypeError, ValueError):
+            return False
+
+    def _refresh_quotes_from_store_or_live(self, *, quote_task_id):
+        self._apply_quote_store_snapshot()
+        if self._can_fetch_live_quotes_now():
+            self._refresh_quotes_async_local(quote_task_id=quote_task_id)
 
     def _refresh_quotes_async_local(self, *, quote_task_id):
         QTimer.singleShot(0, lambda task_id=quote_task_id: self._run_async_local_quote_refresh(task_id))
@@ -677,8 +701,41 @@ class WatchlistTab(BaseStockTab):
 
     def _on_app_closing(self):
         """应用关闭前保存缓存"""
+        self.shutdown()
         if self.model.row_data:
             self._save_special_cache_from_table()
+
+    def shutdown(self):
+        self._closing = True
+        for timer_name in ("_delayed_special_timer", "_vcp_calc_timer", "_debounce_timer"):
+            timer = getattr(self, timer_name, None)
+            if timer is None:
+                continue
+            try:
+                timer.stop()
+            except RuntimeError:
+                pass
+        self._disconnect_runtime_signals()
+
+    def _disconnect_runtime_signals(self):
+        for signal, slot in (
+            (event_bus.sig_watchlist_changed, self._on_watchlist_changed),
+            (event_bus.sig_app_closing, self._on_app_closing),
+            (event_bus.sig_cache_bootstrap_ready, self._on_cache_or_earnings_updated),
+            (event_bus.sig_cache_reload_completed, self._on_cache_or_earnings_updated),
+            (event_bus.sig_earnings_updated, self._on_cache_or_earnings_updated),
+            (event_bus.sig_na_daily_updated, self._on_na_daily_updated),
+            (event_bus.sig_ai_industry_chain_updated, self._on_ai_industry_chain_updated),
+            (event_bus.sig_block_trade_updated, self._on_block_trade_updated),
+            (event_bus.sig_lhb_pool_updated, self._on_cache_or_earnings_updated),
+            (event_bus.sig_fund_holdings_updated, self._on_cache_or_earnings_updated),
+            (event_bus.sig_stock_context_snapshot_updated, self._on_cache_or_earnings_updated),
+            (event_bus.sig_vcp_watchlist_ready, self._on_vcp_watchlist_ready),
+        ):
+            try:
+                signal.disconnect(slot)
+            except (TypeError, RuntimeError):
+                pass
 
     def _save_special_cache_from_table(self):
         """应用关闭前将表格最新数据更新回 ViewModel，同时保存最终的视觉排序效果"""
@@ -750,12 +807,16 @@ class WatchlistTab(BaseStockTab):
         self._request_vcp_calc()
 
     def _on_vcp_watchlist_ready(self, payload: object):
+        if self._closing:
+            return
         if payload:
             log.debug(f"[关注池] 写入 {len(payload)} 条附加指标")
             self._apply_vcp_indicators_ui(payload)
 
     def _request_vcp_calc(self, delay_ms: int = 500):
         """请求计算 VCP 附加指标，带有防抖功能，防止启动时多次触发"""
+        if self._closing:
+            return
         if not hasattr(self, '_vcp_calc_timer'):
             self._vcp_calc_timer = QTimer(self)
             self._vcp_calc_timer.setSingleShot(True)
@@ -764,9 +825,11 @@ class WatchlistTab(BaseStockTab):
 
     def prime_startup_state(self):
         """工作区联动：启动后主动补一次关注池行情与附加指标。"""
+        if self._closing:
+            return
         if not self.model or not getattr(self.model, "row_data", None):
             return
-        self._refresh_quotes_async_local(
+        self._refresh_quotes_from_store_or_live(
             quote_task_id=task_registry.quote_refresh("smart_startup_watchlist").task_id
         )
         self._request_vcp_calc(delay_ms=0)
@@ -791,6 +854,8 @@ class WatchlistTab(BaseStockTab):
 
     def _do_vcp_calc(self):
         """实际计算"""
+        if self._closing:
+            return
         if self.model and self.model.row_data:
             codes_with_rows = [(idx, str(r.get("代码")))
                                for idx, r in enumerate(self.model.row_data) if r.get("代码")]

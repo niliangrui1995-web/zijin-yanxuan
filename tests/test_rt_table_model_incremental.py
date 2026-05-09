@@ -1,3 +1,5 @@
+import time
+
 from PyQt6.QtCore import Qt
 
 from ui.models.table_models import RtTableModel
@@ -42,6 +44,18 @@ def test_rt_table_model_incremental_update_emits_data_changed_without_reset():
     status_col = model.headers.index("突破状态")
     assert model.data(model.index(0, price_col), Qt.ItemDataRole.UserRole + 1)["diff"] > 0
     assert model.data(model.index(0, status_col), Qt.ItemDataRole.UserRole + 1)["diff"] == 0
+
+
+def test_rt_table_model_prunes_expired_flash_records_on_update():
+    model = RtTableModel()
+    model.update_data([_row("000001", "10.00", "+1.00%")])
+    model._flash_records = {
+        99: {1: {"time": time.time() - 10, "diff": 1.0}},
+    }
+
+    model.update_quotes({"000001": {"close": 10.5, "last_close": 10.0}})
+
+    assert 99 not in model._flash_records
 
 
 def test_rt_table_model_incremental_update_uses_layout_change_when_order_changes():

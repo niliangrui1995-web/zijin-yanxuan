@@ -570,7 +570,7 @@ class ScanTab(BaseStockTab):
         return set()
 
     def _apply_latest_quotes_from_store(self):
-        self.refresh_table_from_latest_snapshot(current_model=self.source_model)
+        self._apply_quote_store_snapshot(current_model=self.source_model)
 
     def _on_cache_reload_completed(self):
         self._apply_latest_quotes_from_store()

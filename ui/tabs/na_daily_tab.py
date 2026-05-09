@@ -31,6 +31,8 @@ class NADailyTab(BaseStockTab):
         self._status_next_step = ""
         self._current_report_files: list[str] = []
         self._runtime_started = False
+        self._background_prime_loading = False
+        self._background_prime_done = False
 
         self._init_ui()
 
@@ -53,14 +55,19 @@ class NADailyTab(BaseStockTab):
         self._patrol_timer.start(30 * 1000)
 
     def prime_background_load(self):
-        if self._runtime_started:
+        if self._runtime_started or self._background_prime_done:
             return
-        self._runtime_started = True
-        self._load_na_daily_report()
-        self._patrol_timer.start(30 * 1000)
+        self._background_prime_loading = True
+        try:
+            self._load_na_daily_report()
+        finally:
+            self._background_prime_loading = False
+            self._background_prime_done = True
 
     def showEvent(self, event):
         super().showEvent(event)
+        if getattr(self, "_workspace_noninteractive_loaded", False):
+            self._workspace_noninteractive_loaded = False
         self._ensure_runtime_started()
 
     def _patrol_tick(self):
@@ -378,6 +385,10 @@ class NADailyTab(BaseStockTab):
                 self.table_state.show_empty("暂无战报数据")
 
         if self._na_daily_codes:
+            if self._background_prime_loading:
+                self._apply_quote_store_snapshot()
+                event_bus.sig_na_daily_updated.emit()
+                return
             self.refresh_table_quotes_and_market_caps(
                 quote_task_id=task_registry.quote_refresh("na_daily").task_id
             )

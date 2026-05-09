@@ -205,6 +205,33 @@ class BaseStockTab(QWidget):
     def refresh_table_from_latest_snapshot(self, current_model=None, *, async_local: bool = True):
         refresh_quotes_from_latest_snapshot(self, current_model=current_model, async_local=async_local)
 
+    def _apply_quote_store_snapshot(self, current_model=None):
+        if current_model is not None:
+            self._active_model_ref = current_model
+
+        model = current_model or self._resolve_active_quote_model()
+        if not model or not hasattr(model, "row_data"):
+            return
+
+        codes = self._collect_table_codes(model)
+        if not codes:
+            return
+
+        try:
+            from core.global_store import global_store
+
+            snapshot = global_store.get_latest_quotes() or {}
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            snapshot = {}
+
+        quote_subset = {
+            code: dict(snapshot[code])
+            for code in codes
+            if code in snapshot
+        }
+        if quote_subset:
+            self._apply_quote_snapshot(quote_subset)
+
     def get_row_data(self, current_model=None) -> list[dict]:
         model = current_model or self._resolve_active_quote_model()
         row_data = getattr(model, "row_data", None) or []

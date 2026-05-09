@@ -135,6 +135,35 @@ def test_lhb_can_defer_pool_bootstrap_until_first_show(monkeypatch):
         tab.deleteLater()
 
 
+def test_lhb_deferred_status_does_not_read_pool_cache(monkeypatch):
+    monkeypatch.setattr(LhbTab, "_start_auto_scheduler", lambda self: None, raising=False)
+    monkeypatch.setattr(
+        lhb_tab_module,
+        "LhbPoolManager",
+        lambda: (_ for _ in ()).throw(AssertionError("pool manager should stay lazy")),
+    )
+
+    tab = LhbTab(object(), autoload_pool=False)
+    try:
+        assert tab.pool_manager is None
+        assert tab._pool_bootstrap_started is False
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_show_bootstrap_skips_non_interactive_load_reason():
+    class DummyTab:
+        _workspace_load_reason = "perf_memory_probe"
+
+        def _is_current_workspace_tab(self):
+            return True
+
+    assert not LhbTab._should_start_pool_on_show(DummyTab())
+
+    DummyTab._workspace_load_reason = "tab_switch"
+    assert LhbTab._should_start_pool_on_show(DummyTab())
+
+
 def test_lhb_prime_background_load_starts_deferred_pool_once(monkeypatch):
     calls = []
     monkeypatch.setattr(LhbTab, "_start_auto_scheduler", lambda self: calls.append("scheduler"), raising=False)
@@ -145,7 +174,8 @@ def test_lhb_prime_background_load_starts_deferred_pool_once(monkeypatch):
         tab.prime_background_load()
         tab.prime_background_load()
 
-        assert calls == ["scheduler", "load"]
+        assert calls == ["scheduler"]
+        assert tab._pool_bootstrap_started is False
     finally:
         tab.deleteLater()
 

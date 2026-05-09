@@ -38,6 +38,52 @@ def test_block_trade_tab_does_not_join_realtime_quote_universe():
     assert ForeignBlockTradeTab.get_realtime_quote_codes(None) == set()
 
 
+def test_block_trade_latest_quote_store_does_not_prime_local_snapshot(monkeypatch):
+    from core.global_store import global_store
+    from ui.tabs.base_stock_tab import BaseStockTab
+
+    model = type("Model", (), {"row_data": [{"code": "600000"}]})()
+    applied = []
+
+    class DummyTab:
+        def _resolve_active_quote_model(self):
+            return model
+
+        def _collect_table_codes(self, current_model=None):
+            assert current_model is model
+            return ["600000", "000001"]
+
+        def _apply_quote_snapshot(self, quotes):
+            applied.append(quotes)
+
+        def refresh_table_from_latest_snapshot(self):
+            raise AssertionError("local quote snapshot should not be primed")
+
+    class DummyForeignTab:
+        def _apply_quote_store_snapshot(self):
+            applied.append("store")
+
+        def refresh_table_from_latest_snapshot(self):
+            raise AssertionError("local quote snapshot should not be primed")
+
+    monkeypatch.setattr(
+        global_store,
+        "get_latest_quotes",
+        lambda: {
+            "600000": {"close": 12.3},
+            "300001": {"close": 20.5},
+        },
+    )
+
+    BaseStockTab._apply_quote_store_snapshot(DummyTab())
+
+    assert applied == [{"600000": {"close": 12.3}}]
+
+    applied.clear()
+    ForeignBlockTradeTab._apply_latest_quotes_from_store(DummyForeignTab())
+    assert applied == ["store"]
+
+
 def test_block_trade_search_only_matches_code_name_and_foreign_branch():
     model = StockTableModel(["代码", "名称", "交易详情", "买方营业部", "卖方营业部"])
     model.update_data([

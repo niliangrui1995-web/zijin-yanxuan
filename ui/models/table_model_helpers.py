@@ -213,6 +213,31 @@ def _build_flash_record(header: str, old_value, new_value, *, now: float | None 
     return {"time": time.time() if now is None else now, "diff": diff}
 
 
+def _prune_flash_records(flash_records: dict, *, now: float | None = None) -> None:
+    """Drop expired flash metadata so long-running quote refreshes do not retain stale cells."""
+    if not flash_records:
+        return
+
+    current = time.time() if now is None else float(now)
+    expired_rows = []
+    for row, cells in list(flash_records.items()):
+        if not isinstance(cells, dict):
+            expired_rows.append(row)
+            continue
+        expired_cols = [
+            col
+            for col, record in list(cells.items())
+            if current - float((record or {}).get("time", 0) or 0) > FLASH_DURATION_SECONDS
+        ]
+        for col in expired_cols:
+            cells.pop(col, None)
+        if not cells:
+            expired_rows.append(row)
+
+    for row in expired_rows:
+        flash_records.pop(row, None)
+
+
 def _is_status_header(header: str) -> bool:
     return header in {
         SERIAL_HEADER,

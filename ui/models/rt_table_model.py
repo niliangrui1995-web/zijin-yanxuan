@@ -17,6 +17,7 @@ from ui.models.table_model_helpers import (
     _is_numeric_header,
     _is_status_header,
     _numeric_heat_color,
+    _prune_flash_records,
     _status_badge_color,
     _summarize_long_text,
     _sync_serial_values,
@@ -125,6 +126,7 @@ class RtTableModel(QAbstractTableModel):
         self.endResetModel()
 
     def update_data(self, new_data):
+        _prune_flash_records(self._flash_records)
         normalized_rows = [dict(item) for item in (new_data or [])]
         _sync_serial_values(normalized_rows)
 
@@ -177,6 +179,7 @@ class RtTableModel(QAbstractTableModel):
             )
 
     def update_rows_incremental(self, new_data):
+        _prune_flash_records(self._flash_records)
         normalized_rows = [dict(item) for item in (new_data or [])]
         _sync_serial_values(normalized_rows)
 
@@ -206,6 +209,7 @@ class RtTableModel(QAbstractTableModel):
     def update_quotes(self, quotes: dict):
         if not quotes or not self._data:
             return
+        _prune_flash_records(self._flash_records)
         try:
             col_price_idx = self._headers.index("现价")
             col_pct_idx = self._headers.index("涨幅%")

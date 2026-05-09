@@ -13,6 +13,9 @@ class _DummyProvider:
     def __init__(self):
         self.code2name = {"600519": "贵州茅台"}
 
+    def is_online(self):
+        return False
+
 
 def test_watchlist_vm_add_stock_emits_add_signal(monkeypatch):
     original_cache = deepcopy(watchlist_vm._cache)
@@ -126,6 +129,112 @@ def test_watchlist_toolbar_uses_add_stock_button_and_accepts_a_share_code(monkey
             )
         ]
         assert tab.add_stock_input.text() == ""
+    finally:
+        tab.deleteLater()
+
+
+def test_watchlist_can_disable_startup_tasks_for_controlled_window_smoke(monkeypatch):
+    load_calls = []
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: load_calls.append("load"))
+    monkeypatch.setattr(
+        watchlist_module.WatchlistTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+
+    tab = watchlist_module.WatchlistTab(_DummyProvider(), startup_tasks_enabled=False)
+    try:
+        assert load_calls == []
+        assert tab._delayed_special_timer is None
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_watchlist_render_uses_store_only_when_live_quotes_unavailable(monkeypatch):
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
+    monkeypatch.setattr(
+        watchlist_module.WatchlistTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+
+    tab = watchlist_module.WatchlistTab(_DummyProvider(), startup_tasks_enabled=False)
+    refresh_calls = []
+    snapshot_calls = []
+    monkeypatch.setattr(tab, "_refresh_quotes_async_local", lambda **kwargs: refresh_calls.append(kwargs))
+    monkeypatch.setattr(tab, "_apply_quote_store_snapshot", lambda *args, **kwargs: snapshot_calls.append((args, kwargs)))
+    monkeypatch.setattr(tab, "_request_vcp_calc", lambda *args, **kwargs: None)
+
+    try:
+        tab._render_table(["600519"], {"600519": {"名称": "贵州茅台"}}, {})
+
+        assert len(tab.model.row_data) == 1
+        assert refresh_calls == []
+        assert len(snapshot_calls) == 1
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_watchlist_render_keeps_live_refresh_during_quote_window(monkeypatch):
+    provider = _DummyProvider()
+    provider.is_online = lambda: True
+    monkeypatch.setattr(watchlist_module.MarketCalendar, "is_quote_refresh_time", lambda: True)
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
+    monkeypatch.setattr(
+        watchlist_module.WatchlistTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+
+    tab = watchlist_module.WatchlistTab(provider, startup_tasks_enabled=False)
+    refresh_calls = []
+    snapshot_calls = []
+    monkeypatch.setattr(tab, "_refresh_quotes_async_local", lambda **kwargs: refresh_calls.append(kwargs))
+    monkeypatch.setattr(tab, "_apply_quote_store_snapshot", lambda *args, **kwargs: snapshot_calls.append((args, kwargs)))
+    monkeypatch.setattr(tab, "_request_vcp_calc", lambda *args, **kwargs: None)
+
+    try:
+        tab._render_table(["600519"], {"600519": {"名称": "贵州茅台"}}, {})
+
+        assert len(snapshot_calls) == 1
+        assert len(refresh_calls) == 1
+        assert refresh_calls[0]["quote_task_id"]
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_watchlist_shutdown_stops_timers_and_disconnects_runtime_signals(monkeypatch):
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)
+    monkeypatch.setattr(
+        watchlist_module.WatchlistTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+
+    tab = watchlist_module.WatchlistTab(_DummyProvider())
+    try:
+        tab._request_vcp_calc(delay_ms=1000)
+        assert tab._delayed_special_timer.isActive() is True
+        assert tab._vcp_calc_timer.isActive() is True
+
+        calc_calls = []
+        tab._request_vcp_calc = lambda *args, **kwargs: calc_calls.append("calc")
+        tab.shutdown()
+        event_bus.sig_cache_bootstrap_ready.emit()
+
+        assert tab._closing is True
+        assert tab._delayed_special_timer.isActive() is False
+        assert tab._vcp_calc_timer.isActive() is False
+        assert calc_calls == []
     finally:
         tab.deleteLater()
 

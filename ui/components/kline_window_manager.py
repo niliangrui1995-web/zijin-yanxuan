@@ -10,15 +10,20 @@ K 线窗口管理器 — 单例模式 (#1)
 现在统一收口到这里，任何人想开 K 线图只需调用 open_chart()。
 """
 
+import threading
 import time
+import weakref
 
 from core.logger import get_logger
 from core.observability import emit_structured_log, record_metric
+from app.services.kline_webengine_preflight import check_qt_webengine_available
 
 log = get_logger(__name__)
 
 # 可配置的最大窗口数量
 MAX_CHART_WINDOWS = 5
+PREWARM_VIEW_TTL_MS = 120_000
+WEBENGINE_PREFLIGHT_TIMEOUT_S = 8
 
 
 class KLineWindowManager:
@@ -33,14 +38,19 @@ class KLineWindowManager:
             cls._instance._prewarm_view = None
             cls._instance._prewarm_started = False
             cls._instance._prewarm_cancelled = False
+            cls._instance._prewarm_expire_timer = None
+            cls._instance._webengine_available = None
+            cls._instance._webengine_failure = ""
+            cls._instance._webengine_preflight_started = False
         return cls._instance
 
-    def prewarm(self, *, delay_ms: int = 2500) -> bool:
+    def prewarm(self, *, delay_ms: int = 2500, ttl_ms: int = PREWARM_VIEW_TTL_MS) -> bool:
         """Warm up QWebEngine during idle time so the first K-line opens faster."""
         if self._prewarm_started or self._prewarm_view is not None:
             return False
         self._prewarm_started = True
         self._prewarm_cancelled = False
+        self._prewarm_ttl_ms = max(0, int(ttl_ms or 0))
         try:
             from PyQt6.QtCore import QTimer
 
@@ -51,8 +61,138 @@ class KLineWindowManager:
             log.debug(f"[K线管理] WebEngine 预热调度失败: {exc}")
             return False
 
+    def _ensure_webengine_available(self) -> bool:
+        cached = getattr(self, "_webengine_available", None)
+        if cached is not None:
+            return bool(cached)
+
+        result = check_qt_webengine_available(timeout_s=WEBENGINE_PREFLIGHT_TIMEOUT_S)
+        ok = bool(result.get("ok"))
+        self._webengine_available = ok
+        self._webengine_failure = "" if ok else str(result.get("reason", "") or "unknown")
+        elapsed_ms = result.get("elapsed_ms")
+        if elapsed_ms is not None:
+            record_metric(
+                "kline_webengine_preflight_ms",
+                elapsed_ms,
+                unit="ms",
+                tags={"ok": str(ok).lower()},
+            )
+        return ok
+
+    def _start_webengine_preflight_async(self) -> bool:
+        if getattr(self, "_webengine_available", None) is not None:
+            return False
+        if getattr(self, "_webengine_preflight_started", False):
+            return False
+        self._webengine_preflight_started = True
+
+        def _run() -> None:
+            try:
+                self._ensure_webengine_available()
+            finally:
+                self._webengine_preflight_started = False
+
+        thread = threading.Thread(target=_run, name="KLineWebEnginePreflight", daemon=True)
+        thread.start()
+        return True
+
+    def _notify_webengine_unavailable(self, main_window, code: str, name: str) -> None:
+        reason = str(getattr(self, "_webengine_failure", "") or "unknown")
+        message = "K线图组件自检失败，已阻止打开以避免程序崩溃"
+        try:
+            from ui.components.toast_widget import show_toast
+
+            show_toast(f"{message}：{reason}", "warning", main_window, duration=3500)
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.debug(f"[K绾跨鐞哴 WebEngine 涓嶅彲鐢ㄦ彁绀哄け璐? {exc}")
+        try:
+            status_bar = main_window.statusBar() if main_window is not None else None
+            if status_bar is not None:
+                status_bar.showMessage(f"{message}：{reason}", 5000)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+        record_metric(
+            "kline_webengine_unavailable",
+            1,
+            unit="count",
+            tags={"code": str(code or "").strip()},
+        )
+        emit_structured_log(
+            "kline.webengine_unavailable",
+            code=str(code or "").strip(),
+            name=str(name or "").strip(),
+            reason=reason,
+        )
+
+    def _cancel_prewarm_expire_timer(self) -> None:
+        timer = getattr(self, "_prewarm_expire_timer", None)
+        self._prewarm_expire_timer = None
+        if timer is None:
+            return
+        try:
+            timer.stop()
+            timer.deleteLater()
+        except RuntimeError:
+            pass
+        except (AttributeError, TypeError):
+            pass
+
+    def _schedule_prewarm_expiry(self) -> None:
+        ttl_ms = max(0, int(getattr(self, "_prewarm_ttl_ms", PREWARM_VIEW_TTL_MS) or 0))
+        if ttl_ms <= 0:
+            self._expire_prewarm()
+            return
+        try:
+            from PyQt6.QtCore import QTimer
+
+            self._cancel_prewarm_expire_timer()
+            timer = QTimer()
+            timer.setSingleShot(True)
+            timer.timeout.connect(self._expire_prewarm)
+            self._prewarm_expire_timer = timer
+            timer.start(ttl_ms)
+        except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as exc:
+            log.debug(f"[K线管理] WebEngine 预热过期计时器创建失败: {exc}")
+
+    def _dispose_prewarm_view(self, *, reason: str) -> None:
+        view = self._prewarm_view
+        self._prewarm_view = None
+        self._prewarm_started = False
+        self._prewarm_cancelled = False
+        self._cancel_prewarm_expire_timer()
+        if view is None:
+            return
+        try:
+            view.hide()
+            view.setParent(None)
+            view.deleteLater()
+        except RuntimeError:
+            pass
+        except (AttributeError, TypeError):
+            pass
+        record_metric(
+            "kline_webengine_prewarm_released",
+            1,
+            unit="count",
+            tags={"reason": reason},
+        )
+
+    def _expire_prewarm(self) -> None:
+        self._dispose_prewarm_view(reason="ttl")
+
     def _run_prewarm(self) -> None:
         started_at = time.perf_counter()
+        webengine_available = getattr(self, "_webengine_available", None)
+        if webengine_available is None:
+            self._prewarm_started = False
+            self._start_webengine_preflight_async()
+            log.debug("[KLine] start WebEngine preflight before prewarm")
+            return
+        if webengine_available is not True:
+            self._prewarm_started = False
+            log.debug("[KLine] skip WebEngine prewarm before successful preflight")
+            return
         try:
             from PyQt6.QtCore import QUrl
             from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -77,6 +217,7 @@ class KLineWindowManager:
                 QUrl("about:blank"),
             )
             self._prewarm_view = view
+            self._schedule_prewarm_expiry()
             record_metric(
                 "kline_webengine_prewarm_ms",
                 (time.perf_counter() - started_at) * 1000.0,
@@ -88,23 +229,23 @@ class KLineWindowManager:
 
     def take_prewarmed_browser(self):
         view = self._prewarm_view
-        self._prewarm_view = None
         if view is None:
             return None
-        try:
-            # QWebEngineView is a native child window on Windows. Reparenting the
-            # hidden warm-up view into the real chart can paint the first frame at
-            # stale geometry, so use warm-up only to start WebEngine and create a
-            # fresh view for the visible window.
-            view.hide()
-            view.setParent(None)
-            view.deleteLater()
-        except RuntimeError:
-            pass
-        except (AttributeError, TypeError):
-            pass
-        self._prewarm_started = False
+        # QWebEngineView is a native child window on Windows. Reparenting the
+        # hidden warm-up view into the real chart can paint the first frame at
+        # stale geometry, so use warm-up only to start WebEngine and create a
+        # fresh view for the visible window.
+        self._dispose_prewarm_view(reason="consumed")
         return None
+
+    def _remove_chart_ref(self, chart) -> None:
+        alive = []
+        for item in self._charts:
+            if chart is not None and item is chart:
+                continue
+            if _is_alive(item):
+                alive.append(item)
+        self._charts = alive
 
     def open_chart(
         self,
@@ -128,6 +269,14 @@ class KLineWindowManager:
             current_idx: 当前索引
         """
         started_at = time.perf_counter()
+        preflight_running = (
+            getattr(self, "_webengine_available", None) is None
+            and getattr(self, "_webengine_preflight_started", False)
+        )
+        if not preflight_running and not self._ensure_webengine_available():
+            self._notify_webengine_unavailable(main_window, code, name)
+            return None
+
         from ui.kline_window_qt import KLineChartWindow
 
         # 清理已关闭/已销毁的窗口
@@ -180,6 +329,11 @@ class KLineWindowManager:
             current_idx=current_idx,
             browser=browser,
         )
+        try:
+            chart_ref = weakref.ref(chart)
+            chart.destroyed.connect(lambda _obj=None, ref=chart_ref: self._remove_chart_ref(ref()))
+        except (AttributeError, RuntimeError, TypeError):
+            pass
         chart.show()
         try:
             chart.raise_()

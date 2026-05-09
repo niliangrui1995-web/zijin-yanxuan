@@ -42,6 +42,8 @@ class AIIndustryChainTab(BaseStockTab):
         self._status_freshness = ""
         self._status_next_step = ""
         self._runtime_started = False
+        self._background_prime_loading = False
+        self._background_prime_done = False
 
         self._init_ui()
         self.subscribe_global_quotes()
@@ -53,13 +55,19 @@ class AIIndustryChainTab(BaseStockTab):
         QTimer.singleShot(350, self._load_chain_data)
 
     def prime_background_load(self):
-        if self._runtime_started:
+        if self._runtime_started or self._background_prime_done:
             return
-        self._runtime_started = True
-        self._load_chain_data()
+        self._background_prime_loading = True
+        try:
+            self._load_chain_data()
+        finally:
+            self._background_prime_loading = False
+            self._background_prime_done = True
 
     def showEvent(self, event):
         super().showEvent(event)
+        if getattr(self, "_workspace_noninteractive_loaded", False):
+            self._workspace_noninteractive_loaded = False
         self._ensure_runtime_started()
 
     def _init_ui(self):
@@ -307,7 +315,8 @@ class AIIndustryChainTab(BaseStockTab):
 
         try:
             rows = self._read_workbook_rows()
-            self._apply_period_returns(rows)
+            if not self._background_prime_loading:
+                self._apply_period_returns(rows)
         except (FileNotFoundError, RuntimeError, OSError, ValueError) as exc:
             message = str(exc)
             self.model.update_data([])
@@ -334,9 +343,12 @@ class AIIndustryChainTab(BaseStockTab):
                 freshness=self._workbook_freshness(),
                 next_step="",
             )
-            self.refresh_table_quotes_and_market_caps(
-                quote_task_id=task_registry.quote_refresh("ai_industry_chain").task_id
-            )
+            if self._background_prime_loading:
+                self._apply_quote_store_snapshot()
+            else:
+                self.refresh_table_quotes_and_market_caps(
+                    quote_task_id=task_registry.quote_refresh("ai_industry_chain").task_id
+                )
             event_bus.sig_ai_industry_chain_updated.emit()
         else:
             self.table_state.show_empty("暂无AI产业链数据")

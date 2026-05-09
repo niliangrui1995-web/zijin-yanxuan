@@ -275,6 +275,19 @@ def test_stock_candidate_listens_to_global_quote_updates(monkeypatch):
         tab.close()
 
 
+def test_stock_candidate_show_runtime_skips_non_interactive_load_reason():
+    class DummyTab:
+        _workspace_load_reason = "perf_memory_probe"
+
+        def _is_current_workspace_tab(self):
+            return True
+
+    assert not StockCandidateTab._should_start_runtime_on_show(DummyTab())
+
+    DummyTab._workspace_load_reason = "tab_switch"
+    assert StockCandidateTab._should_start_runtime_on_show(DummyTab())
+
+
 def test_stock_candidate_auto_refreshes_when_source_tabs_update(monkeypatch):
     monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
     tab = StockCandidateTab(data_provider=SimpleNamespace())
@@ -286,6 +299,19 @@ def test_stock_candidate_auto_refreshes_when_source_tabs_update(monkeypatch):
         assert tab._auto_refresh_timer.isActive()
         assert tab._status_primary == "等待综合候选自动刷新"
         assert tab._status_freshness == "数据源已更新"
+    finally:
+        tab.close()
+
+
+def test_stock_candidate_noninteractive_load_ignores_source_update(monkeypatch):
+    monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+    tab = StockCandidateTab(data_provider=SimpleNamespace())
+    try:
+        tab._workspace_noninteractive_loaded = True
+        tab._is_current_workspace_tab = lambda: False
+        event_bus.sig_ai_industry_chain_updated.emit()
+
+        assert not tab._auto_refresh_timer.isActive()
     finally:
         tab.close()
 
@@ -335,8 +361,8 @@ def test_stock_candidate_prime_background_load_primes_snapshot_and_refresh(monke
         tab.prime_background_load()
 
         assert primes == ["prime", "prime"]
-        assert scheduled.count(350) == 1
-        assert tab._initial_refresh_started is True
+        assert 350 not in scheduled
+        assert tab._initial_refresh_started is False
     finally:
         tab.close()
         workspace.deleteLater()
@@ -389,7 +415,7 @@ def test_stock_candidate_prime_background_load_primes_anchor_sources(monkeypatch
         ]
         assert primed == ["na_daily", "ai_industry_chain"]
         assert snapshots == ["prime"]
-        assert 350 in scheduled
+        assert 350 not in scheduled
     finally:
         tab.close()
         workspace.deleteLater()
