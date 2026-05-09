@@ -225,3 +225,13 @@ def test_extract_cache_filter_options_and_save_gate():
     assert branches == ["瑞银证券上海浦东新区营业部", "高盛上海营业部"]
     assert ForeignBlockTradeTab._should_save_cache([], [])
     assert not ForeignBlockTradeTab._should_save_cache(["20260420-20260420"], [])
+
+
+def test_foreign_block_trade_refresh_after_f5_reads_local_cache_only():
+    from types import SimpleNamespace
+
+    calls = []
+    tab = SimpleNamespace(_load_local_cache=lambda: calls.append("local_cache"))
+
+    assert ForeignBlockTradeTab.refresh_data_after_f5(tab) is False
+    assert calls == ["local_cache"]

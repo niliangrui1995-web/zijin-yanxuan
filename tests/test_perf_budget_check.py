@@ -2,6 +2,7 @@ from scripts.perf_budget_check import (
     check_gbbq_budget,
     check_kline_budget,
     check_round4_budget,
+    check_round5_budget,
     check_soak_budget,
     check_tab_cycle_budget,
 )
@@ -195,4 +196,80 @@ def test_round4_budget_rejects_duplicates_and_growth():
         "round4.stability.active_tasks_final",
         "round4.stability.active_timer_growth",
         "round4.stability.thread_growth",
+    }
+
+
+def test_round5_budget_accepts_expected_post_f5_report():
+    report = {
+        "post_f5": {
+            "quote_requests": {
+                "batch_count": 1,
+                "repeated_batch_signature_count": 0,
+                "duplicate_quote_code_count": 0,
+                "cache_only_quote_request_count": 0,
+            },
+            "cache_only_guard": {
+                "cache_only_quote_request_count": 0,
+                "information_source_background_task_count": 0,
+            },
+            "background_tasks": {
+                "new_active_task_final": 0,
+                "active_earnings_worker_count_final": 0,
+            },
+            "runtime_trend": {
+                "active_timers": {"net_delta": 0},
+                "threads": {"net_delta": 1},
+            },
+            "event_receiver_trend": {
+                "sig_cache_reload_completed": {"net_delta": 0},
+            },
+        }
+    }
+
+    assert check_round5_budget(report) == []
+
+
+def test_round5_budget_rejects_post_f5_network_tail():
+    report = {
+        "post_f5": {
+            "quote_requests": {
+                "batch_count": 3,
+                "repeated_batch_signature_count": 1,
+                "duplicate_quote_code_count": 2,
+                "duplicates_by_code": {"000001": 3},
+                "repeated_batch_signatures": {"000001|600519": 2},
+            },
+            "cache_only_guard": {
+                "cache_only_quote_request_count": 1,
+                "information_source_background_task_count": 2,
+            },
+            "background_tasks": {
+                "new_active_task_final": 1,
+                "new_active_task_ids_final": ["foreign_block_trade"],
+                "active_earnings_worker_count_final": 1,
+                "active_earnings_workers_final": ["routine"],
+            },
+            "runtime_trend": {
+                "active_timers": {"net_delta": 3},
+                "threads": {"net_delta": 20},
+            },
+            "event_receiver_trend": {
+                "sig_cache_reload_completed": {"net_delta": 1},
+            },
+        }
+    }
+
+    failures = check_round5_budget(report)
+
+    assert {failure["check"] for failure in failures} >= {
+        "round5.quote.batch_count",
+        "round5.quote.repeated_batch_signatures",
+        "round5.quote.duplicate_codes",
+        "round5.cache_only.quote_requests",
+        "round5.cache_only.background_tasks",
+        "round5.background.new_active_tasks_final",
+        "round5.background.active_earnings_workers_final",
+        "round5.runtime.active_timer_growth",
+        "round5.runtime.thread_growth",
+        "round5.events.receiver_growth",
     }

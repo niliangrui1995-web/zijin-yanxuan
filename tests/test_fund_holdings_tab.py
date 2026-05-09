@@ -608,6 +608,30 @@ def test_fund_holdings_tab_runs_auto_sync_after_f5(monkeypatch):
         tab.deleteLater()
 
 
+def test_fund_holdings_refresh_after_f5_reloads_local_db_only(monkeypatch):
+    _setup_store(monkeypatch, [])
+    calls = []
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "_reload_from_db_async",
+        lambda self: calls.append("reload"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "_run_sync_action",
+        lambda self, label, runner: calls.append(("sync", label, runner)),
+        raising=False,
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
+    try:
+        assert tab.refresh_data_after_f5() is False
+        assert calls == ["reload"]
+    finally:
+        tab.deleteLater()
+
+
 def test_fund_holdings_tab_emits_updated_after_sync_success(monkeypatch):
     _setup_store(monkeypatch, [])
 

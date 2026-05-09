@@ -23,6 +23,16 @@ DEFAULT_THRESHOLDS = {
     "round4_new_active_task_final_max": 0,
     "round4_active_timer_growth_max": 2,
     "round4_thread_growth_max": 16,
+    "round5_post_f5_quote_batch_total_max": 1,
+    "round5_duplicate_batch_signature_max": 0,
+    "round5_duplicate_quote_code_max": 0,
+    "round5_cache_only_quote_request_max": 0,
+    "round5_information_source_task_max": 0,
+    "round5_new_active_task_final_max": 0,
+    "round5_active_earnings_worker_final_max": 0,
+    "round5_active_timer_growth_max": 2,
+    "round5_event_receiver_growth_max": 0,
+    "round5_thread_growth_max": 16,
 }
 
 
@@ -352,6 +362,130 @@ def check_round4_budget(report: dict, thresholds: dict | None = None) -> list[di
     return failures
 
 
+def check_round5_budget(report: dict, thresholds: dict | None = None) -> list[dict]:
+    budget = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
+    failures: list[dict] = []
+    post_f5 = report.get("post_f5") or {}
+    if not post_f5:
+        _fail(failures, "round5.post_f5.present", "round5 post-F5 report is missing")
+        return failures
+
+    quote_requests = post_f5.get("quote_requests") or {}
+    batch_count = _as_int(quote_requests.get("batch_count"))
+    if batch_count > budget["round5_post_f5_quote_batch_total_max"]:
+        _fail(
+            failures,
+            "round5.quote.batch_count",
+            "post-F5 quote request batch count exceeded budget",
+            actual=batch_count,
+            budget=budget["round5_post_f5_quote_batch_total_max"],
+        )
+
+    repeated_signatures = _as_int(quote_requests.get("repeated_batch_signature_count"))
+    if repeated_signatures > budget["round5_duplicate_batch_signature_max"]:
+        _fail(
+            failures,
+            "round5.quote.repeated_batch_signatures",
+            "post-F5 repeated quote batch signatures exceeded budget",
+            actual=repeated_signatures,
+            budget=budget["round5_duplicate_batch_signature_max"],
+            repeated=quote_requests.get("repeated_batch_signatures") or {},
+        )
+
+    duplicate_codes = _as_int(quote_requests.get("duplicate_quote_code_count"))
+    if duplicate_codes > budget["round5_duplicate_quote_code_max"]:
+        _fail(
+            failures,
+            "round5.quote.duplicate_codes",
+            "post-F5 duplicate quote codes exceeded budget",
+            actual=duplicate_codes,
+            budget=budget["round5_duplicate_quote_code_max"],
+            duplicates=quote_requests.get("duplicates_by_code") or {},
+        )
+
+    guard = post_f5.get("cache_only_guard") or {}
+    cache_only_quote_count = _as_int(guard.get("cache_only_quote_request_count"))
+    if cache_only_quote_count > budget["round5_cache_only_quote_request_max"]:
+        _fail(
+            failures,
+            "round5.cache_only.quote_requests",
+            "cache-only or information-source tabs triggered quote requests",
+            actual=cache_only_quote_count,
+            budget=budget["round5_cache_only_quote_request_max"],
+        )
+
+    info_task_count = _as_int(guard.get("information_source_background_task_count"))
+    if info_task_count > budget["round5_information_source_task_max"]:
+        _fail(
+            failures,
+            "round5.cache_only.background_tasks",
+            "information-source tabs scheduled post-F5 background network tasks",
+            actual=info_task_count,
+            budget=budget["round5_information_source_task_max"],
+        )
+
+    background_tasks = post_f5.get("background_tasks") or {}
+    new_active_tasks = _as_int(background_tasks.get("new_active_task_final"))
+    if new_active_tasks > budget["round5_new_active_task_final_max"]:
+        _fail(
+            failures,
+            "round5.background.new_active_tasks_final",
+            "post-F5 background tasks did not return to baseline by final sample",
+            actual=new_active_tasks,
+            budget=budget["round5_new_active_task_final_max"],
+            active=background_tasks.get("new_active_task_ids_final") or [],
+        )
+
+    active_earnings = _as_int(background_tasks.get("active_earnings_worker_count_final"))
+    if active_earnings > budget["round5_active_earnings_worker_final_max"]:
+        _fail(
+            failures,
+            "round5.background.active_earnings_workers_final",
+            "post-F5 earnings workers remained active by final sample",
+            actual=active_earnings,
+            budget=budget["round5_active_earnings_worker_final_max"],
+            active=background_tasks.get("active_earnings_workers_final") or [],
+        )
+
+    trend = post_f5.get("runtime_trend") or {}
+    active_timers = trend.get("active_timers") or {}
+    if _as_float(active_timers.get("net_delta")) > budget["round5_active_timer_growth_max"]:
+        _fail(
+            failures,
+            "round5.runtime.active_timer_growth",
+            "post-F5 active timer count grew beyond budget",
+            actual=active_timers.get("net_delta"),
+            budget=budget["round5_active_timer_growth_max"],
+        )
+
+    threads = trend.get("threads") or {}
+    if _as_float(threads.get("net_delta")) > budget["round5_thread_growth_max"]:
+        _fail(
+            failures,
+            "round5.runtime.thread_growth",
+            "post-F5 thread count grew beyond budget",
+            actual=threads.get("net_delta"),
+            budget=budget["round5_thread_growth_max"],
+        )
+
+    receiver_trend = post_f5.get("event_receiver_trend") or {}
+    growing_receivers = {
+        name: item
+        for name, item in receiver_trend.items()
+        if _as_float((item or {}).get("net_delta")) > budget["round5_event_receiver_growth_max"]
+    }
+    if growing_receivers:
+        _fail(
+            failures,
+            "round5.events.receiver_growth",
+            "event receiver counts grew beyond budget",
+            actual=growing_receivers,
+            budget=budget["round5_event_receiver_growth_max"],
+        )
+
+    return failures
+
+
 def run_budget_checks(args: argparse.Namespace) -> dict:
     thresholds = {
         "gbbq_single_max_rss_delta_mb": args.gbbq_single_max_rss_delta_mb,
@@ -371,6 +505,16 @@ def run_budget_checks(args: argparse.Namespace) -> dict:
         "round4_new_active_task_final_max": args.round4_new_active_task_final_max,
         "round4_active_timer_growth_max": args.round4_active_timer_growth_max,
         "round4_thread_growth_max": args.round4_thread_growth_max,
+        "round5_post_f5_quote_batch_total_max": args.round5_post_f5_quote_batch_total_max,
+        "round5_duplicate_batch_signature_max": args.round5_duplicate_batch_signature_max,
+        "round5_duplicate_quote_code_max": args.round5_duplicate_quote_code_max,
+        "round5_cache_only_quote_request_max": args.round5_cache_only_quote_request_max,
+        "round5_information_source_task_max": args.round5_information_source_task_max,
+        "round5_new_active_task_final_max": args.round5_new_active_task_final_max,
+        "round5_active_earnings_worker_final_max": args.round5_active_earnings_worker_final_max,
+        "round5_active_timer_growth_max": args.round5_active_timer_growth_max,
+        "round5_event_receiver_growth_max": args.round5_event_receiver_growth_max,
+        "round5_thread_growth_max": args.round5_thread_growth_max,
     }
     checks: list[dict] = []
 
@@ -380,6 +524,7 @@ def run_budget_checks(args: argparse.Namespace) -> dict:
         ("kline", args.kline_report, check_kline_budget),
         ("soak", args.soak_report, check_soak_budget),
         ("round4", args.round4_report, check_round4_budget),
+        ("round5", args.round5_report, check_round5_budget),
     ):
         if not path:
             continue
@@ -406,6 +551,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--kline-report", type=Path, default=None)
     parser.add_argument("--soak-report", type=Path, default=None)
     parser.add_argument("--round4-report", type=Path, default=None)
+    parser.add_argument("--round5-report", type=Path, default=None)
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--gbbq-single-max-rss-delta-mb", type=float, default=DEFAULT_THRESHOLDS["gbbq_single_max_rss_delta_mb"])
     parser.add_argument("--gbbq-single-max-elapsed-ms", type=float, default=DEFAULT_THRESHOLDS["gbbq_single_max_elapsed_ms"])
@@ -463,6 +609,56 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--round4-thread-growth-max",
         type=int,
         default=DEFAULT_THRESHOLDS["round4_thread_growth_max"],
+    )
+    parser.add_argument(
+        "--round5-post-f5-quote-batch-total-max",
+        type=int,
+        default=DEFAULT_THRESHOLDS["round5_post_f5_quote_batch_total_max"],
+    )
+    parser.add_argument(
+        "--round5-duplicate-batch-signature-max",
+        type=int,
+        default=DEFAULT_THRESHOLDS["round5_duplicate_batch_signature_max"],
+    )
+    parser.add_argument(
+        "--round5-duplicate-quote-code-max",
+        type=int,
+        default=DEFAULT_THRESHOLDS["round5_duplicate_quote_code_max"],
+    )
+    parser.add_argument(
+        "--round5-cache-only-quote-request-max",
+        type=int,
+        default=DEFAULT_THRESHOLDS["round5_cache_only_quote_request_max"],
+    )
+    parser.add_argument(
+        "--round5-information-source-task-max",
+        type=int,
+        default=DEFAULT_THRESHOLDS["round5_information_source_task_max"],
+    )
+    parser.add_argument(
+        "--round5-new-active-task-final-max",
+        type=int,
+        default=DEFAULT_THRESHOLDS["round5_new_active_task_final_max"],
+    )
+    parser.add_argument(
+        "--round5-active-earnings-worker-final-max",
+        type=int,
+        default=DEFAULT_THRESHOLDS["round5_active_earnings_worker_final_max"],
+    )
+    parser.add_argument(
+        "--round5-active-timer-growth-max",
+        type=int,
+        default=DEFAULT_THRESHOLDS["round5_active_timer_growth_max"],
+    )
+    parser.add_argument(
+        "--round5-event-receiver-growth-max",
+        type=int,
+        default=DEFAULT_THRESHOLDS["round5_event_receiver_growth_max"],
+    )
+    parser.add_argument(
+        "--round5-thread-growth-max",
+        type=int,
+        default=DEFAULT_THRESHOLDS["round5_thread_growth_max"],
     )
     return parser.parse_args(argv)
 

@@ -24,6 +24,7 @@ _A_SHARE_CODE_RE = re.compile(r"^\d{6}$")
 _A_SHARE_POLL_INTERVAL_MS = 30000
 _A_SHARE_FAILURE_COOLDOWN_SEC = 300
 _A_SHARE_HEARTBEAT_INTERVAL_SEC = 60
+_POST_CACHE_RELOAD_DEDUP_WINDOW_SEC = 32.0
 
 
 class CentralQuotesService(QObject):
@@ -62,6 +63,8 @@ class CentralQuotesService(QObject):
         self._heartbeat_every_ticks = max(1, _A_SHARE_HEARTBEAT_INTERVAL_SEC * 1000 // _A_SHARE_POLL_INTERVAL_MS)
         self._last_heartbeat_signature = None
         self._last_heartbeat_logged_at = 0.0
+        self._post_cache_reload_quiet_until = 0.0
+        self._post_cache_reload_signature: tuple[str, ...] = ()
 
     @pyqtSlot()
     def refresh_after_cache_reload(self):
@@ -69,7 +72,7 @@ class CentralQuotesService(QObject):
         self._off_market_snapshot_emitted = False
         if self._closed:
             return
-        self._trigger_fetch()
+        self._trigger_fetch_for_reason("cache_reload")
 
     def publish_external_quotes(
         self,
@@ -268,6 +271,9 @@ class CentralQuotesService(QObject):
 
     @pyqtSlot()
     def _trigger_fetch(self):
+        self._trigger_fetch_for_reason("timer")
+
+    def _trigger_fetch_for_reason(self, reason: str = "timer"):
         if self._closed:
             return
 
@@ -279,6 +285,21 @@ class CentralQuotesService(QObject):
         codes = self._get_all_active_codes()
         self._run_maintenance(active_codes_count=len(codes) if codes else 0)
         if not codes:
+            return
+
+        code_signature = tuple(sorted(codes))
+        now = time.time()
+        if reason == "cache_reload":
+            self._post_cache_reload_signature = code_signature
+            self._post_cache_reload_quiet_until = now + _POST_CACHE_RELOAD_DEDUP_WINDOW_SEC
+        elif (
+            self._post_cache_reload_signature
+            and code_signature == self._post_cache_reload_signature
+            and now < self._post_cache_reload_quiet_until
+        ):
+            log.debug(
+                f"[报价站] F5后窗口内跳过重复行情轮询: reason={reason} codes={len(codes)}"
+            )
             return
 
         if not quote_refreshable:

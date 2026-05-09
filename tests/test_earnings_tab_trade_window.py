@@ -173,6 +173,20 @@ def test_apply_latest_quotes_does_not_trigger_online_market_cap_backfill():
     assert calls == ["snapshot", "pe"]
 
 
+def test_earnings_refresh_after_f5_uses_local_snapshot_only():
+    class DummyTab:
+        pass
+
+    tab = DummyTab()
+    calls = []
+    tab._apply_latest_quotes_from_store = lambda: calls.append("quotes")
+    tab._apply_display_trade_window = lambda force_refresh=False: calls.append(("window", force_refresh))
+    tab._ensure_scheduler = lambda: calls.append("unexpected_scheduler")
+
+    assert EarningsTab.refresh_data_after_f5(tab) is False
+    assert calls == ["quotes", ("window", True)]
+
+
 def test_filter_out_st_dataframe_removes_st_rows():
     df = pd.DataFrame(
         [

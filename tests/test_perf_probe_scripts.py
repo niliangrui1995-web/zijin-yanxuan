@@ -1,3 +1,4 @@
+from scripts.perf_round5_probe import summarize_background_tasks, summarize_quote_calls
 from scripts.soak_leak_probe import _trend
 
 
@@ -61,3 +62,54 @@ def test_soak_trend_uses_close_samples_for_open_close_cycles():
 
     assert result["growth_basis"] == "stable_close_samples"
     assert result["private"]["status"] == "ok"
+
+
+def test_round5_quote_summary_counts_repeated_post_f5_batches():
+    calls = [
+        {
+            "phase": "during_f5",
+            "codes": ["000001"],
+            "signature": "000001",
+            "duplicate_in_batch": 0,
+        },
+        {
+            "phase": "post_f5",
+            "codes": ["000001", "600519"],
+            "signature": "000001|600519",
+            "duplicate_in_batch": 0,
+            "is_cache_only_source": False,
+        },
+        {
+            "phase": "post_f5",
+            "codes": ["600519", "000001", "000001"],
+            "signature": "000001|600519",
+            "duplicate_in_batch": 1,
+            "is_cache_only_source": True,
+        },
+    ]
+
+    summary = summarize_quote_calls(calls)
+
+    assert summary["batch_count"] == 2
+    assert summary["repeated_batch_signature_count"] == 1
+    assert summary["duplicate_quote_code_count"] == 4
+    assert summary["cache_only_quote_request_count"] == 1
+
+
+def test_round5_background_summary_flags_info_source_tail():
+    tasks = [
+        {"phase": "post_f5", "source": "foreign_block", "task_id": "foreign_block_trade"},
+        {"phase": "post_f5", "source": "watchlist", "task_id": "watchlist_vcp_refresh"},
+    ]
+    final_sample = {
+        "active_background_task_ids": ["baseline", "foreign_block_trade"],
+        "active_earnings_workers": ["routine"],
+        "active_earnings_worker_count": 1,
+    }
+
+    summary = summarize_background_tasks(tasks, final_sample, {"baseline"})
+
+    assert summary["scheduled_task_count"] == 2
+    assert summary["information_source_task_count"] == 1
+    assert summary["new_active_task_ids_final"] == ["foreign_block_trade"]
+    assert summary["active_earnings_worker_count_final"] == 1

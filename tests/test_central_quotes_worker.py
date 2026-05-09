@@ -61,6 +61,63 @@ def test_central_quotes_service_refresh_after_cache_reload_re_emits_off_market_s
         main_window.deleteLater()
 
 
+def test_central_quotes_service_skips_timer_duplicate_after_cache_reload(monkeypatch):
+    _ = QApplication.instance() or QApplication([])
+    main_window = QWidget()
+
+    from ui.workers import central_quotes_worker as worker_module
+
+    class DummyProvider:
+        def __init__(self):
+            self.calls = []
+            self._rt_api_call_timeout_sec = 1.0
+            self._rt_quote_batch_size = 20
+
+        def fetch_realtime_quotes_batch(self, codes):
+            self.calls.append(tuple(sorted(codes)))
+            return {
+                code: {"close": 12.3, "last_close": 12.0, "source": "eastmoney"}
+                for code in codes
+            }
+
+        def is_online(self):
+            return True
+
+        def get_realtime_runtime_stats(self):
+            return {}
+
+        def compact_runtime_caches(self):
+            return {}
+
+        def protect_against_thread_anomaly(self, _count):
+            return False
+
+    provider = DummyProvider()
+    service = CentralQuotesService(main_window, provider, code_supplier=lambda: {"000001", "600519"})
+
+    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", staticmethod(lambda *args, **kwargs: True))
+    monkeypatch.setattr(
+        worker_module.task_manager,
+        "run_in_background",
+        lambda fn, on_success=None, on_error=None, task_id=None: on_success(fn()),
+    )
+
+    try:
+        service.refresh_after_cache_reload()
+        service._trigger_fetch()
+        service._post_cache_reload_quiet_until = 0.0
+        service._trigger_fetch()
+
+        assert provider.calls == [
+            ("000001", "600519"),
+            ("000001", "600519"),
+        ]
+    finally:
+        service.shutdown()
+        service.deleteLater()
+        main_window.deleteLater()
+
+
 def test_central_quotes_service_normalizes_codes_from_supplier():
     _ = QApplication.instance() or QApplication([])
     main_window = QWidget()

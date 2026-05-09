@@ -471,13 +471,9 @@ class EarningsTab(BaseStockTab):
         return set()
 
     def refresh_data_after_f5(self) -> bool:
-        runner = getattr(self._ensure_scheduler(), "trigger_routine_scan", None)
-        if not callable(runner):
-            return False
-        started = bool(runner(reason="F5后自动更新"))
-        if started:
-            self._set_window_status("F5后业绩巡检中", "即时检查")
-        return started
+        self._apply_latest_quotes_from_store()
+        self._apply_display_trade_window(force_refresh=True)
+        return False
 
     def _apply_latest_quotes_from_store(self):
         self._apply_quote_store_snapshot()

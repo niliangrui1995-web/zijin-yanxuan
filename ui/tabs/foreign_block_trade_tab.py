@@ -775,7 +775,8 @@ class ForeignBlockTradeTab(BaseStockTab):
         return True
 
     def refresh_data_after_f5(self) -> bool:
-        return self.run_post_online_refresh()
+        self._load_local_cache()
+        return False
 
     @staticmethod
     def get_foreign_keywords() -> list[str]:

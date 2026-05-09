@@ -1062,7 +1062,9 @@ class FundHoldingsTab(BaseStockTab):
         return True
 
     def refresh_data_after_f5(self) -> bool:
-        return self.run_auto_sync_after_f5()
+        if not self._sync_active:
+            self._reload_from_db_async()
+        return False
 
     def run_daily_auto_sync(self, auto_sync_date: str | None = None) -> bool:
         if self._sync_active:
