@@ -97,14 +97,14 @@ def test_build_runtime_health_trend_tracks_growth():
             "timers": {"active": 3, "total": 5},
             "event_bus": {"total_receivers": 10},
             "process": {"thread_count": 20},
-            "webengine": {"count": 0},
+            "webengine": {"count": 0, "rss_mb": 0.0, "private_mb": 0.0},
         },
         {
             "background_tasks": {"count": 1},
             "timers": {"active": 4, "total": 7},
             "event_bus": {"total_receivers": 10},
             "process": {"thread_count": 22},
-            "webengine": {"count": 1},
+            "webengine": {"count": 1, "rss_mb": 42.5, "private_mb": 33.25},
         },
     ]
 
@@ -116,3 +116,5 @@ def test_build_runtime_health_trend_tracks_growth():
     assert trend["event_receivers"]["net_delta"] == 0
     assert trend["threads"]["net_delta"] == 2
     assert trend["webengine_children"]["last"] == 1
+    assert trend["webengine_rss_mb"]["last"] == 42.5
+    assert trend["webengine_private_mb"]["net_delta"] == 33.25

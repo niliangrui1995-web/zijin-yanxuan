@@ -44,9 +44,13 @@ KEY_VIEW_LINEAGE = {
     "stock_candidates": {
         "view": "stock_candidates",
         "source": "workspace_stock_context",
+        "provider": "workspace_stock_context",
         "cache_refs": ["global_store.quotes", "workspace.collect_stock_context"],
         "triggered_network": False,
         "fallback_or_degraded": False,
+        "updated_at": "",
+        "errors": [],
+        "warnings": [],
     },
     "scan": {
         "view": "scan",
@@ -321,6 +325,36 @@ def _quote_snapshot(main_window) -> dict[str, Any]:
     now = time.time()
     cooldown_until = float(provider_runtime.get("cooldown_until") or 0)
     eastmoney_cooldown_until = float(getattr(provider, "_rt_eastmoney_cooldown_until", 0.0) or 0.0)
+    source_layers = [
+        str(layer).strip()
+        for layer in request_stats.get("recent_source_layers", []) or []
+        if str(layer).strip()
+    ]
+    recent_status = str(request_stats.get("recent_status") or "").strip()
+    last_network_error = str(
+        provider_runtime.get("last_error")
+        or getattr(provider, "_rt_eastmoney_last_error", "")
+        or ""
+    )
+    fallback_tokens = ("fallback", "offline", "stale", "cooldown", "degraded")
+    provider_degraded = bool(cooldown_until > now or eastmoney_cooldown_until > now)
+    fallback_or_degraded = bool(
+        provider_degraded
+        or any(any(token in layer.lower() for token in fallback_tokens) for layer in source_layers)
+        or any(token in recent_status.lower() for token in fallback_tokens)
+    )
+    fault_tolerance = {
+        "provider_degraded": provider_degraded,
+        "fallback_or_degraded": fallback_or_degraded,
+        "last_network_error": last_network_error,
+        "cooldown_seconds_left": max(0, int(cooldown_until - now)),
+        "eastmoney_cooldown_seconds_left": max(0, int(eastmoney_cooldown_until - now)),
+        "recent_triggered_network": bool(request_stats.get("recent_triggered_network", False)),
+        "recent_cache_hit_count": int(request_stats.get("recent_cache_hit_count") or 0),
+        "recent_pending_count": int(request_stats.get("recent_pending_count") or 0),
+        "recent_status": recent_status,
+        "recent_source_layers": source_layers,
+    }
     return {
         "request_stats": request_stats,
         "central_quotes": {
@@ -334,14 +368,17 @@ def _quote_snapshot(main_window) -> dict[str, Any]:
             "post_cache_reload_codes": len(getattr(central, "_post_cache_reload_signature", ()) or ()),
         },
         "provider_runtime": provider_runtime,
-        "provider_degraded": bool(cooldown_until > now or eastmoney_cooldown_until > now),
-        "last_network_error": str(
-            provider_runtime.get("last_error")
-            or getattr(provider, "_rt_eastmoney_last_error", "")
-            or ""
-        ),
-        "cooldown_seconds_left": max(0, int(cooldown_until - now)),
-        "eastmoney_cooldown_seconds_left": max(0, int(eastmoney_cooldown_until - now)),
+        "provider_degraded": provider_degraded,
+        "fallback_or_degraded": fallback_or_degraded,
+        "last_network_error": last_network_error,
+        "cooldown_seconds_left": fault_tolerance["cooldown_seconds_left"],
+        "eastmoney_cooldown_seconds_left": fault_tolerance["eastmoney_cooldown_seconds_left"],
+        "recent_triggered_network": fault_tolerance["recent_triggered_network"],
+        "recent_cache_hit_count": fault_tolerance["recent_cache_hit_count"],
+        "recent_pending_count": fault_tolerance["recent_pending_count"],
+        "recent_status": recent_status,
+        "recent_source_layers": source_layers,
+        "fault_tolerance": fault_tolerance,
     }
 
 
@@ -515,6 +552,8 @@ def build_runtime_health_trend(samples: list[dict[str, Any]]) -> dict[str, Any]:
         "event_receivers": _trend_one(_values(lambda item: (item.get("event_bus") or {}).get("total_receivers"))),
         "threads": _trend_one(_values(lambda item: (item.get("process") or {}).get("thread_count"))),
         "webengine_children": _trend_one(_values(lambda item: (item.get("webengine") or {}).get("count"))),
+        "webengine_rss_mb": _trend_one(_values(lambda item: (item.get("webengine") or {}).get("rss_mb"))),
+        "webengine_private_mb": _trend_one(_values(lambda item: (item.get("webengine") or {}).get("private_mb"))),
     }
 
 

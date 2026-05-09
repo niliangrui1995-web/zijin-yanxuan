@@ -461,3 +461,121 @@ def test_stock_candidate_table_uses_fresh_context_column_layout(monkeypatch):
         assert tab.model.data(tab.model.index(0, time_col), Qt.ItemDataRole.DisplayRole) == "20260423"
     finally:
         tab.close()
+
+
+def test_stock_candidate_refresh_exposes_service_lineage(monkeypatch):
+    monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+
+    class _Provider:
+        _rt_eastmoney_cooldown_until = 0.0
+        _rt_eastmoney_last_error = ""
+
+        @staticmethod
+        def get_quote_request_stats():
+            return {
+                "recent_triggered_network": False,
+                "recent_cache_hit_count": 1,
+                "recent_status": "runtime_cache_hit",
+                "recent_source_layers": ["runtime_cache"],
+            }
+
+        @staticmethod
+        def get_realtime_runtime_stats():
+            return {"cooldown_until": 0.0, "last_error": ""}
+
+    class _Workspace(QWidget):
+        def collect_stock_context(self):
+            return {
+                "300750": [
+                    StockSignal(
+                        code="300750",
+                        source_tab="na_daily",
+                        signal_type="catalyst",
+                        summary="anchor",
+                        observed_at="2026-05-08",
+                    ),
+                    StockSignal(
+                        code="300750",
+                        source_tab="scan",
+                        signal_type="vcp_scan",
+                        summary="scan",
+                        observed_at="2026-05-09",
+                    ),
+                ]
+            }
+
+        @staticmethod
+        def tab_specs():
+            return [
+                {"key": "na_daily", "title": "na"},
+                {"key": "scan", "title": "scan"},
+            ]
+
+    workspace = _Workspace()
+    tab = StockCandidateTab(data_provider=_Provider(), parent=workspace)
+    tab.refresh_table_from_latest_snapshot = lambda *_args, **_kwargs: None
+    try:
+        tab.refresh_candidates()
+        lineage = tab.get_data_lineage()
+
+        assert lineage["key"] == "stock_candidates"
+        assert lineage["source"] == "workspace_stock_context"
+        assert lineage["triggered_network"] is False
+        assert lineage["trade_date"] == "2026-05-09"
+        assert lineage["row_count"] == 1
+        assert lineage["signal_count"] == 2
+        assert lineage["source_tabs"] == ["na_daily", "scan"]
+        assert lineage["provider_fault_tolerance"]["recent_cache_hit_count"] == 1
+    finally:
+        tab.close()
+        workspace.deleteLater()
+
+
+def test_stock_candidate_refresh_skips_model_update_when_rows_unchanged(monkeypatch):
+    monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+
+    class _Workspace(QWidget):
+        def collect_stock_context(self):
+            return {
+                "300750": [
+                    StockSignal(
+                        code="300750",
+                        source_tab="na_daily",
+                        signal_type="catalyst",
+                        summary="anchor",
+                    ),
+                    StockSignal(
+                        code="300750",
+                        source_tab="scan",
+                        signal_type="vcp_scan",
+                        summary="scan",
+                    ),
+                ]
+            }
+
+        @staticmethod
+        def tab_specs():
+            return [
+                {"key": "na_daily", "title": "na"},
+                {"key": "scan", "title": "scan"},
+            ]
+
+    workspace = _Workspace()
+    tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
+    tab.refresh_table_from_latest_snapshot = lambda *_args, **_kwargs: None
+    update_calls = []
+    original_update_data = tab.model.update_data
+
+    def _spy_update_data(rows):
+        update_calls.append(len(rows))
+        original_update_data(rows)
+
+    tab.model.update_data = _spy_update_data
+    try:
+        tab.refresh_candidates()
+        tab.refresh_candidates()
+
+        assert update_calls == [1]
+    finally:
+        tab.close()
+        workspace.deleteLater()

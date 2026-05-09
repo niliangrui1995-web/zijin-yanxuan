@@ -591,7 +591,7 @@ def check_runtime_health_budget(report: dict, thresholds: dict | None = None) ->
     if not isinstance(last.get("data_lineage"), list):
         _fail(failures, "runtime_health.data_lineage.type", "data lineage must be a list")
 
-    trend = report.get("trend") or _runtime_health_trend(samples)
+    trend = report.get("budget_trend") or report.get("trend") or _runtime_health_trend(samples)
     active_tasks = trend.get("background_tasks") or {}
     if _as_float(active_tasks.get("last")) > budget["runtime_health_active_task_final_max"]:
         _fail(

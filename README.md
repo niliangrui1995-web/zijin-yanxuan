@@ -442,6 +442,28 @@ ruff format .
 python scripts/check_utf8.py core ui vcp tests scripts app infra docs .github
 ```
 
+### 运行时健康与 WebEngine 探针
+
+提交前可以用短模式验证主窗口运行时健康、`stock_candidates` DataLineage、后台任务、Timer、事件订阅和 WebEngine 子进程预算：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\runtime_health_stability_suite.py --mode short --tabs stock_candidates --sample-output-dir tmp\runtime_health_samples_short --output tmp\runtime_health_stability_short.json
+.\.venv\Scripts\python.exe scripts\perf_budget_check.py --runtime-health-report tmp\runtime_health_stability_short.json
+```
+
+夜间或人工长稳验证使用 30/60 分钟 soak；长模式会周期性导出 runtime health sample，并在聚合报告中输出 `trend` 和 `budget_trend`：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\runtime_health_stability_suite.py --mode soak30 --native-qt --sample-every-seconds 60 --sample-output-dir tmp\runtime_health_samples_soak30 --output tmp\runtime_health_soak30.json
+.\.venv\Scripts\python.exe scripts\runtime_health_stability_suite.py --mode soak60 --native-qt --sample-every-seconds 60 --sample-output-dir tmp\runtime_health_samples_soak60 --output tmp\runtime_health_soak60.json
+```
+
+K 线 WebEngine 生命周期 smoke 需要原生 Qt / 可视桌面环境；默认 offscreen 会输出跳过原因和手动命令，避免把不稳定 WebEngine 自动化塞进 CI：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\kline_webengine_lifecycle_smoke.py --native-qt --output tmp\kline_webengine_lifecycle_smoke.json
+```
+
 ### pre-commit
 
 ```powershell

@@ -4,6 +4,7 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
+from app.services.stock_candidates_service import StockCandidatesDataService
 from app.services.ui_runtime_service import domain_events as event_bus
 from app.services.ui_runtime_service import ui_signals
 from ui.components import TableStateWrapper, VCPTableView
@@ -36,6 +37,13 @@ class StockCandidateTab(BaseStockTab):
         super().__init__(data_provider=data_provider, parent=parent)
         self._status_primary = "等待综合候选"
         self._status_freshness = "待刷新"
+        self._candidate_service = StockCandidatesDataService(
+            context_reader=self._read_stock_context,
+            row_builder=self._build_candidate_rows,
+            provider_status_reader=self._read_provider_status,
+        )
+        self._last_candidate_result = None
+        self._last_candidate_signature = ""
         self._init_ui()
         self.subscribe_global_quotes(self.model)
         self._auto_refresh_timer = QTimer(self)
@@ -210,6 +218,45 @@ class StockCandidateTab(BaseStockTab):
                 return cursor
             cursor = cursor.parent() if hasattr(cursor, "parent") else None
         return None
+
+    def _read_stock_context(self):
+        workspace = self._workspace()
+        context_reader = getattr(workspace, "collect_stock_context", None)
+        return context_reader() if callable(context_reader) else {}
+
+    def _read_provider_status(self) -> dict:
+        provider = getattr(self, "data_provider", None)
+        request_stats = {}
+        runtime_stats = {}
+
+        request_getter = getattr(provider, "get_quote_request_stats", None)
+        if callable(request_getter):
+            try:
+                request_stats = request_getter() or {}
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                request_stats = {}
+
+        runtime_getter = getattr(provider, "get_realtime_runtime_stats", None)
+        if callable(runtime_getter):
+            try:
+                runtime_stats = runtime_getter() or {}
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                runtime_stats = {}
+
+        return {
+            "request_stats": request_stats,
+            "runtime_stats": runtime_stats,
+            "eastmoney_cooldown_until": float(getattr(provider, "_rt_eastmoney_cooldown_until", 0.0) or 0.0),
+            "eastmoney_last_error": str(getattr(provider, "_rt_eastmoney_last_error", "") or ""),
+        }
+
+    def get_data_lineage(self) -> dict:
+        result = self._last_candidate_result
+        if result is None:
+            return self._candidate_service.empty_lineage(
+                row_count=len(getattr(self.model, "row_data", None) or [])
+            ).as_dict()
+        return result.lineage.as_dict()
 
     @staticmethod
     def _signal_time(signal: StockSignal) -> str:
@@ -389,11 +436,12 @@ class StockCandidateTab(BaseStockTab):
         return rows
 
     def refresh_candidates(self):
-        workspace = self._workspace()
-        context_reader = getattr(workspace, "collect_stock_context", None)
-        context = context_reader() if callable(context_reader) else {}
-        rows = self._build_candidate_rows(context)
-        self.model.update_data(rows)
+        result = self._candidate_service.load()
+        self._last_candidate_result = result
+        rows = result.rows
+        if result.signature != self._last_candidate_signature:
+            self.model.update_data(rows)
+            self._last_candidate_signature = result.signature
         self.refresh_table_from_latest_snapshot(self.model)
         if rows:
             self.table_state.show_table()

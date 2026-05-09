@@ -1,4 +1,5 @@
 from scripts.perf_round5_probe import summarize_background_tasks, summarize_quote_calls
+from scripts.runtime_health_stability_suite import _apply_mode_defaults, _build_budget_trend, _parse_args
 from scripts.soak_leak_probe import _trend
 
 
@@ -113,3 +114,60 @@ def test_round5_background_summary_flags_info_source_tail():
     assert summary["information_source_task_count"] == 1
     assert summary["new_active_task_ids_final"] == ["foreign_block_trade"]
     assert summary["active_earnings_worker_count_final"] == 1
+
+
+def test_runtime_health_suite_supports_explicit_soak_minutes():
+    args = _apply_mode_defaults(
+        _parse_args(
+            [
+                "--mode",
+                "soak60",
+                "--idle-minutes",
+                "0.5",
+                "--sample-output-dir",
+                "tmp/runtime_health_samples",
+            ]
+        )
+    )
+
+    assert args.idle_seconds == 30
+    assert args.kline_cycles == 1
+    assert str(args.sample_output_dir).endswith("runtime_health_samples")
+
+
+def test_runtime_health_suite_soak60_defaults_to_one_hour():
+    args = _apply_mode_defaults(_parse_args(["--mode", "soak60"]))
+
+    assert args.idle_seconds == 3600
+    assert args.tab_cycles == 2
+    assert args.f5_cycles == 2
+    assert args.quote_cycles == 2
+    assert args.kline_cycles == 1
+
+
+def _runtime_health_sample(label: str, *, receivers: int, timers: int = 5, threads: int = 20) -> dict:
+    return {
+        "label": label,
+        "background_tasks": {"count": 0},
+        "timers": {"active": timers, "total": timers + 4},
+        "event_bus": {"total_receivers": receivers},
+        "process": {"thread_count": threads, "rss_mb": 200.0},
+        "webengine": {"count": 0, "rss_mb": 0.0, "private_mb": 0.0},
+    }
+
+
+def test_runtime_health_suite_budget_trend_uses_post_workload_tail():
+    trend = _build_budget_trend(
+        [
+            _runtime_health_sample("startup", receivers=10, timers=4),
+            _runtime_health_sample("idle:1s", receivers=10, timers=4),
+            _runtime_health_sample("after_tab_cycle", receivers=22, timers=6),
+            _runtime_health_sample("after_f5_cycle", receivers=22, timers=6),
+            _runtime_health_sample("final", receivers=22, timers=6),
+        ],
+        None,
+    )
+
+    assert trend["event_receivers"]["net_delta"] == 0
+    assert trend["event_receivers"]["basis"] == "tail_runtime_health_samples"
+    assert trend["active_timers"]["net_delta"] == 0

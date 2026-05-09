@@ -19,6 +19,7 @@ from core.runtime_env import configure_qt_webengine_runtime
 
 configure_qt_webengine_runtime()
 
+from PyQt6.QtCore import QCoreApplication, Qt
 from PyQt6.QtWidgets import QApplication
 
 from app.services.ui_runtime_service import background_job_runner as task_manager
@@ -32,6 +33,8 @@ from scripts.perf_budget_check import check_runtime_health_budget
 from ui.main_window_qt import MainWindowQT
 from ui.main_window_runtime import finish_f5_reload
 
+QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
+
 DEFAULT_TABS = (
     "watchlist",
     "stock_candidates",
@@ -42,6 +45,13 @@ DEFAULT_TABS = (
     "earnings",
     "fund_holdings",
 )
+
+SOAK_MODE_MINUTES = {
+    "short": 0,
+    "long": 30,
+    "soak30": 30,
+    "soak60": 60,
+}
 
 
 def _process_events(app: QApplication, rounds: int = 1, sleep_ms: int = 0) -> None:
@@ -94,18 +104,151 @@ def _sample(
     samples: list[dict],
     exported_paths: list[str],
     export_each_sample: bool,
+    sample_output_dir: Path | None = None,
 ) -> dict:
     report = collect_runtime_health(window)
     report["label"] = label
     samples.append(report)
     if export_each_sample:
-        path = export_runtime_health_report(
-            window,
-            project_root=PROJECT_ROOT,
-            report=report,
-        )
+        if sample_output_dir is not None:
+            sample_output_dir.mkdir(parents=True, exist_ok=True)
+            safe_label = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in label)
+            path = sample_output_dir / f"runtime_health_sample_{len(samples):04d}_{safe_label}.json"
+            path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        else:
+            path = export_runtime_health_report(
+                window,
+                project_root=PROJECT_ROOT,
+                report=report,
+            )
         exported_paths.append(str(path))
     return report
+
+
+def _runtime_health_sample_summary(label: str, window: MainWindowQT) -> dict:
+    report = collect_runtime_health(window)
+    process = report.get("process") or {}
+    webengine = report.get("webengine") or {}
+    background_tasks = report.get("background_tasks") or {}
+    timers = report.get("timers") or {}
+    event_bus = report.get("event_bus") or {}
+    return {
+        "label": label,
+        "rss_mb": process.get("rss_mb"),
+        "thread_count": process.get("thread_count"),
+        "webengine_child_count": webengine.get("count"),
+        "webengine_rss_mb": webengine.get("rss_mb"),
+        "webengine_private_mb": webengine.get("private_mb"),
+        "background_task_count": background_tasks.get("count"),
+        "active_timer_count": timers.get("active"),
+        "total_timer_count": timers.get("total"),
+        "event_receiver_count": event_bus.get("total_receivers"),
+    }
+
+
+def _trend_one(values: list[float]) -> dict:
+    if not values:
+        return {"count": 0, "first": None, "last": None, "net_delta": 0.0, "range": 0.0, "max": None}
+    return {
+        "count": len(values),
+        "first": values[0],
+        "last": values[-1],
+        "net_delta": round(values[-1] - values[0], 3),
+        "range": round(max(values) - min(values), 3),
+        "max": max(values),
+    }
+
+
+def _as_float(value) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _runtime_summary_from_health(sample: dict, label: str) -> dict:
+    process = sample.get("process") or {}
+    timers = sample.get("timers") or {}
+    event_bus = sample.get("event_bus") or {}
+    webengine = sample.get("webengine") or {}
+    background_tasks = sample.get("background_tasks") or {}
+    return {
+        "label": label,
+        "rss_mb": process.get("rss_mb"),
+        "thread_count": process.get("thread_count"),
+        "webengine_child_count": webengine.get("count"),
+        "webengine_rss_mb": webengine.get("rss_mb"),
+        "webengine_private_mb": webengine.get("private_mb"),
+        "background_task_count": background_tasks.get("count"),
+        "active_timer_count": timers.get("active"),
+        "total_timer_count": timers.get("total"),
+        "event_receiver_count": event_bus.get("total_receivers"),
+    }
+
+
+def _build_budget_trend(samples: list[dict], kline_cycle: dict | None) -> dict:
+    trend = build_runtime_health_trend(samples)
+    cycle_samples = list((kline_cycle or {}).get("cycle_samples") or [])
+    close_samples = [
+        sample
+        for sample in cycle_samples
+        if str(sample.get("label") or "").endswith(":after_close")
+    ]
+    if close_samples and samples:
+        return _overlay_budget_trend(
+            trend,
+            close_samples + [_runtime_summary_from_health(samples[-1], "final_runtime_health")],
+            basis="post_kline_close_samples",
+        )
+
+    tail_samples = _post_workload_tail_summaries(samples)
+    if len(tail_samples) < 2:
+        return trend
+    return _overlay_budget_trend(trend, tail_samples, basis="tail_runtime_health_samples")
+
+
+def _post_workload_tail_summaries(samples: list[dict]) -> list[dict]:
+    stable_labels = {"after_tab_cycle", "after_f5_cycle", "after_quote_cycle", "final"}
+    selected = [
+        _runtime_summary_from_health(sample, str(sample.get("label") or "runtime_health"))
+        for sample in samples
+        if str(sample.get("label") or "") in stable_labels
+    ]
+    if len(selected) >= 2:
+        return selected[-3:]
+    return [
+        _runtime_summary_from_health(sample, str(sample.get("label") or "runtime_health"))
+        for sample in samples[-3:]
+    ]
+
+
+def _overlay_budget_trend(trend: dict, summary_samples: list[dict], *, basis: str) -> dict:
+    def _values(key: str) -> list[float]:
+        values: list[float] = []
+        for sample in summary_samples:
+            value = _as_float(sample.get(key))
+            if value is not None:
+                values.append(value)
+        return values
+
+    trend = dict(trend)
+    for output_key, sample_key in (
+        ("background_tasks", "background_task_count"),
+        ("threads", "thread_count"),
+        ("active_timers", "active_timer_count"),
+        ("total_timers", "total_timer_count"),
+        ("event_receivers", "event_receiver_count"),
+        ("webengine_children", "webengine_child_count"),
+        ("webengine_rss_mb", "webengine_rss_mb"),
+        ("webengine_private_mb", "webengine_private_mb"),
+    ):
+        trend[output_key] = {
+            **_trend_one(_values(sample_key)),
+            "basis": basis,
+        }
+    return trend
 
 
 def _cycle_tabs(
@@ -204,9 +347,11 @@ def _cycle_kline(
     opened = 0
     closed = 0
     blocked = 0
+    cycle_samples: list[dict] = []
     code_text = str(code or "").strip() or "000001"
     name_text = str(name or "").strip() or code_text
-    for _ in range(max(0, int(cycles))):
+    for cycle_index in range(max(0, int(cycles))):
+        cycle_samples.append(_runtime_health_sample_summary(f"kline_cycle_{cycle_index + 1}:before_open", window))
         chart = kline_manager.open_chart(
             window,
             code_text,
@@ -221,16 +366,29 @@ def _cycle_kline(
         else:
             opened += 1
         _settle(app, settle_ms)
+        cycle_samples.append(_runtime_health_sample_summary(f"kline_cycle_{cycle_index + 1}:after_open", window))
         closed += _close_kline_charts(app)
         gc.collect()
         _settle(app, settle_ms)
-    return {"status": "ok", "cycles": int(cycles), "opened": opened, "closed": closed, "blocked": blocked}
+        cycle_samples.append(_runtime_health_sample_summary(f"kline_cycle_{cycle_index + 1}:after_close", window))
+    final_count = (cycle_samples[-1] if cycle_samples else {}).get("webengine_child_count")
+    return {
+        "status": "ok",
+        "cycles": int(cycles),
+        "opened": opened,
+        "closed": closed,
+        "blocked": blocked,
+        "cycle_samples": cycle_samples,
+        "final_webengine_child_count": final_count,
+    }
 
 
 def _apply_mode_defaults(args: argparse.Namespace) -> argparse.Namespace:
-    long_mode = args.mode == "long"
+    long_mode = args.mode in {"long", "soak30", "soak60"}
+    if args.idle_minutes is not None:
+        args.idle_seconds = int(max(0.0, float(args.idle_minutes)) * 60)
     if args.idle_seconds is None:
-        args.idle_seconds = 1800 if long_mode else 5
+        args.idle_seconds = SOAK_MODE_MINUTES.get(args.mode, 0) * 60 if long_mode else 5
     if args.tab_cycles is None:
         args.tab_cycles = 2 if long_mode else 1
     if args.f5_cycles is None:
@@ -261,11 +419,14 @@ def run_suite(args: argparse.Namespace) -> dict:
             "background_prewarm": bool(args.background_prewarm),
             "central_quotes_enabled": bool(args.central_quotes_enabled),
             "idle_seconds": int(args.idle_seconds),
+            "idle_minutes": round(float(args.idle_seconds) / 60.0, 3),
+            "sample_every_seconds": int(args.sample_every_seconds),
             "tab_cycles": int(args.tab_cycles),
             "f5_cycles": int(args.f5_cycles),
             "quote_cycles": int(args.quote_cycles),
             "kline_cycles": int(args.kline_cycles),
             "tabs": list(tabs),
+            "sample_output_dir": str(args.sample_output_dir or ""),
         },
         "individual_report_paths": exported_paths,
     }
@@ -284,6 +445,7 @@ def run_suite(args: argparse.Namespace) -> dict:
             samples=samples,
             exported_paths=exported_paths,
             export_each_sample=not args.no_export_samples,
+            sample_output_dir=args.sample_output_dir,
         )
 
         for second in range(max(0, int(args.idle_seconds))):
@@ -295,6 +457,7 @@ def run_suite(args: argparse.Namespace) -> dict:
                     samples=samples,
                     exported_paths=exported_paths,
                     export_each_sample=not args.no_export_samples,
+                    sample_output_dir=args.sample_output_dir,
                 )
 
         report["tab_cycle"] = _cycle_tabs(
@@ -310,6 +473,7 @@ def run_suite(args: argparse.Namespace) -> dict:
             samples=samples,
             exported_paths=exported_paths,
             export_each_sample=not args.no_export_samples,
+            sample_output_dir=args.sample_output_dir,
         )
 
         report["f5_cycle"] = _cycle_f5(window, app, cycles=args.f5_cycles, settle_ms=args.cycle_settle_ms)
@@ -319,6 +483,7 @@ def run_suite(args: argparse.Namespace) -> dict:
             samples=samples,
             exported_paths=exported_paths,
             export_each_sample=not args.no_export_samples,
+            sample_output_dir=args.sample_output_dir,
         )
 
         report["quote_cycle"] = _cycle_quotes(window, app, cycles=args.quote_cycles, settle_ms=args.cycle_settle_ms)
@@ -328,6 +493,7 @@ def run_suite(args: argparse.Namespace) -> dict:
             samples=samples,
             exported_paths=exported_paths,
             export_each_sample=not args.no_export_samples,
+            sample_output_dir=args.sample_output_dir,
         )
 
         report["kline_cycle"] = _cycle_kline(
@@ -347,6 +513,7 @@ def run_suite(args: argparse.Namespace) -> dict:
             samples=samples,
             exported_paths=exported_paths,
             export_each_sample=not args.no_export_samples,
+            sample_output_dir=args.sample_output_dir,
         )
     finally:
         try:
@@ -361,6 +528,7 @@ def run_suite(args: argparse.Namespace) -> dict:
     report["elapsed_ms"] = round((time.perf_counter() - started) * 1000.0, 3)
     report["runtime_health_samples"] = samples
     report["trend"] = build_runtime_health_trend(samples)
+    report["budget_trend"] = _build_budget_trend(samples, report.get("kline_cycle"))
     failures = check_runtime_health_budget(report)
     report["budget"] = {
         "status": "fail" if failures else "ok",
@@ -372,7 +540,7 @@ def run_suite(args: argparse.Namespace) -> dict:
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Runtime health and long-running stability suite.")
-    parser.add_argument("--mode", choices=("short", "long"), default="short")
+    parser.add_argument("--mode", choices=("short", "long", "soak30", "soak60"), default="short")
     parser.add_argument("--native-qt", action="store_true")
     parser.add_argument("--startup-enabled", action="store_true")
     parser.add_argument("--background-prewarm", action="store_true")
@@ -382,6 +550,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--cycle-settle-ms", type=int, default=120)
     parser.add_argument("--sample-every-seconds", type=int, default=5)
     parser.add_argument("--idle-seconds", type=int, default=None)
+    parser.add_argument("--idle-minutes", type=float, default=None)
     parser.add_argument("--tab-cycles", type=int, default=None)
     parser.add_argument("--f5-cycles", type=int, default=None)
     parser.add_argument("--quote-cycles", type=int, default=None)
@@ -391,6 +560,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--allow-offscreen-kline", action="store_true")
     parser.add_argument("--tabs", nargs="*", default=list(DEFAULT_TABS))
     parser.add_argument("--no-export-samples", action="store_true")
+    parser.add_argument("--sample-output-dir", type=Path, default=None)
     parser.add_argument("--fail-on-budget", action="store_true")
     parser.add_argument("--output", type=Path, default=None)
     return parser.parse_args(argv)
