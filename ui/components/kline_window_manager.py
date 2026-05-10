@@ -120,7 +120,7 @@ class KLineWindowManager:
 
             show_toast(f"{message}：{reason}", "warning", main_window, duration=3500)
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-            log.debug(f"[K绾跨鐞哴 WebEngine 涓嶅彲鐢ㄦ彁绀哄け璐? {exc}")
+            log.debug(f"[K线管理] WebEngine 不可用提示失败: {exc}")
         try:
             status_bar = main_window.statusBar() if main_window is not None else None
             if status_bar is not None:

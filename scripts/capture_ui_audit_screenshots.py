@@ -330,6 +330,18 @@ def _capture_kline(app, window, output: Path, wait_ms: int) -> Path | None:
         return None
 
 
+def _create_audit_main_window():
+    from ui.main_window_qt import MainWindowQT
+
+    return MainWindowQT(
+        startup_enabled=False,
+        background_prewarm=False,
+        kline_prewarm_enabled=False,
+        central_quotes_enabled=False,
+        restore_last_tab_enabled=False,
+    )
+
+
 def main() -> int:
     args = _parse_args()
     _configure_environment(args)
@@ -347,12 +359,11 @@ def main() -> int:
 
     _disable_noisy_startup_paths()
     from app.services.ui_runtime_service import background_job_runner
-    from ui.main_window_qt import MainWindowQT
 
     app = QApplication.instance() or QApplication(sys.argv)
     args.output.mkdir(parents=True, exist_ok=True)
 
-    window = MainWindowQT()
+    window = _create_audit_main_window()
     window._save_ui_state = lambda: None
     saved = _capture_main_and_tabs(
         app,

@@ -88,9 +88,10 @@ class UiStallProbe(QObject):
         return _merge_context(provider_context, self._last_span_context, span_context)
 
     def record_span(self, elapsed_ms: float, context: dict | None) -> None:
-        self._last_span_context = _merge_context(context)
         if elapsed_ms < self.thresholds.warn_ms:
+            self._last_span_context = {}
             return
+        self._last_span_context = _merge_context(context)
         self._record_stall(
             "ui.stall.method",
             elapsed_ms,

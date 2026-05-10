@@ -99,6 +99,8 @@ class WorkspaceFacade:
             if not key:
                 continue
             tab = self._get_loaded_tab(key)
+            if self._is_noninteractive_loaded_tab(tab):
+                continue
             if not isinstance(tab, PostF5DataRefreshCapability):
                 continue
             try:
@@ -107,6 +109,15 @@ class WorkspaceFacade:
                 results[key] = False
                 log.warning(f"[F5] {key} 情报源数据刷新失败: {exc}")
         return results
+
+    @staticmethod
+    def _is_noninteractive_loaded_tab(tab) -> bool:
+        if tab is None:
+            return False
+        if bool(getattr(tab, "_workspace_noninteractive_loaded", False)):
+            return True
+        reason = str(getattr(tab, "_workspace_load_reason", "") or "").strip()
+        return bool(reason and reason not in {"placeholder_action", "tab_switch", "user"})
 
     def select_scan_row(self, index: int) -> bool:
         return self._workspace_navigation_service.select_scan_row(index)

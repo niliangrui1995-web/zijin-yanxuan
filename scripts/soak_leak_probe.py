@@ -180,6 +180,7 @@ def run_soak(args: argparse.Namespace) -> dict:
         background_prewarm=args.background_prewarm,
         kline_prewarm_enabled=args.kline_prewarm_enabled,
         central_quotes_enabled=args.central_quotes_enabled,
+        restore_last_tab_enabled=False,
     )
     _settle(app, args.settle_ms)
     _sample(samples, "after_window")

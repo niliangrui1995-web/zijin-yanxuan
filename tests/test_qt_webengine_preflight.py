@@ -1,5 +1,6 @@
-from infra.diagnostics import qt_webengine_preflight as preflight
 import types
+
+from infra.diagnostics import qt_webengine_preflight as preflight
 
 
 def test_qt_webengine_preflight_can_be_disabled(monkeypatch):

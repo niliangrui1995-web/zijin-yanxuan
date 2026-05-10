@@ -156,6 +156,35 @@ class BaseStockTab(QWidget):
         self._runtime_cleanup_done = False
         event_bus.sig_app_closing.connect(self._flush_header_persistence)
 
+    def _is_current_workspace_tab(self) -> bool:
+        parent = self.parent()
+        tabs = getattr(parent, "tabs", None)
+        current_widget = getattr(tabs, "currentWidget", None)
+        if not callable(current_widget):
+            return True
+        try:
+            return current_widget() is self
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return True
+
+    def _should_start_interactive_runtime_on_show(self) -> bool:
+        is_current = self._is_current_workspace_tab()
+        reason = str(getattr(self, "_workspace_load_reason", "") or "").strip()
+        interactive_reasons = {"placeholder_action", "tab_switch", "user"}
+        noninteractive_loaded = bool(getattr(self, "_workspace_noninteractive_loaded", False))
+
+        if noninteractive_loaded:
+            if not is_current:
+                return False
+            if reason and reason not in interactive_reasons:
+                return False
+            setattr(self, "_workspace_noninteractive_loaded", False)
+            return True
+
+        if reason and reason not in interactive_reasons:
+            return False
+        return is_current
+
     def _resolve_active_quote_model(self):
         return resolve_active_quote_model(self)
 
@@ -207,6 +236,11 @@ class BaseStockTab(QWidget):
 
     def _prime_visible_local_quote_snapshot(self, current_model=None) -> bool:
         if getattr(self, "_runtime_cleanup_done", False):
+            return False
+        if getattr(self, "_workspace_noninteractive_loaded", False):
+            return False
+        reason = str(getattr(self, "_workspace_load_reason", "") or "").strip()
+        if reason and reason not in {"placeholder_action", "tab_switch", "user"}:
             return False
         if not self.isVisible():
             return False

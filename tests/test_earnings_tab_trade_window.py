@@ -147,14 +147,18 @@ def test_earnings_runtime_start_is_gated_to_current_workspace_tab():
 def test_earnings_runtime_show_skips_non_interactive_load_reason():
     class DummyTab:
         _workspace_load_reason = "perf_memory_probe"
+        _workspace_noninteractive_loaded = True
 
         def _is_current_workspace_tab(self):
             return True
 
-    assert not EarningsTab._should_start_runtime_on_show(DummyTab())
+    dummy = DummyTab()
+    assert not EarningsTab._should_start_runtime_on_show(dummy)
+    assert dummy._workspace_noninteractive_loaded is True
 
-    DummyTab._workspace_load_reason = "tab_switch"
-    assert EarningsTab._should_start_runtime_on_show(DummyTab())
+    dummy._workspace_load_reason = "tab_switch"
+    assert EarningsTab._should_start_runtime_on_show(dummy)
+    assert dummy._workspace_noninteractive_loaded is False
 
 
 def test_apply_latest_quotes_uses_local_snapshot_and_recalculates_pe():
@@ -162,9 +166,19 @@ def test_apply_latest_quotes_uses_local_snapshot_and_recalculates_pe():
         model = StockTableModel(["代码", "名称", "现价", "涨幅%", "市值", "PE(TTM)"])
 
     tab = DummyTab()
-    tab.model.update_data([
-        {"代码": "000001", "名称": "平安银行", "现价": "--", "涨幅%": "--", "市值": "--", "PE(TTM)": "--", "_raw_profit": 250_000_000}
-    ])
+    tab.model.update_data(
+        [
+            {
+                "代码": "000001",
+                "名称": "平安银行",
+                "现价": "--",
+                "涨幅%": "--",
+                "市值": "--",
+                "PE(TTM)": "--",
+                "_raw_profit": 250_000_000,
+            }
+        ]
+    )
     calls = []
 
     def _apply_store_snapshot():
@@ -212,17 +226,19 @@ def test_earnings_local_snapshot_fills_market_fields_and_pe_without_realtime(mon
 
     provider = OfflineProvider()
     tab = DummyEarningsTab(provider)
-    tab.model.update_data([
-        {
-            code_key: "000001",
-            name_key: "平安银行",
-            price_key: "--",
-            pct_key: "--",
-            cap_key: "--",
-            "PE(TTM)": "--",
-            "_raw_profit": 250_000_000,
-        }
-    ])
+    tab.model.update_data(
+        [
+            {
+                code_key: "000001",
+                name_key: "平安银行",
+                price_key: "--",
+                pct_key: "--",
+                cap_key: "--",
+                "PE(TTM)": "--",
+                "_raw_profit": 250_000_000,
+            }
+        ]
+    )
     monkeypatch.setattr(
         tab,
         "_load_cached_finance_snapshot",
@@ -254,8 +270,8 @@ def test_earnings_refresh_after_f5_triggers_routine_scan():
     calls = []
     tab._apply_latest_quotes_from_store = lambda: calls.append("quotes")
     tab._apply_display_trade_window = lambda force_refresh=False: calls.append(("window", force_refresh))
-    tab.refresh_table_from_latest_snapshot = (
-        lambda current_model=None, *, async_local=True: calls.append(("snapshot", current_model, async_local))
+    tab.refresh_table_from_latest_snapshot = lambda current_model=None, *, async_local=True: calls.append(
+        ("snapshot", current_model, async_local)
     )
 
     class Scheduler:
@@ -286,10 +302,12 @@ def test_earnings_display_window_primes_local_snapshot_after_cache_render():
         ]
         model = Model()
         _prune_rows_to_recent_trade_window = staticmethod(EarningsTab._prune_rows_to_recent_trade_window)
-        _apply_latest_quotes_from_store = lambda self: calls.append("store")
-        _prime_visible_local_quote_snapshot = (
-            lambda self, current_model=None: calls.append(("local", current_model)) or True
-        )
+
+        def _apply_latest_quotes_from_store(self):
+            return calls.append("store")
+
+        def _prime_visible_local_quote_snapshot(self, current_model=None):
+            return calls.append(("local", current_model)) or True
 
     tab = DummyTab()
 
@@ -333,11 +351,13 @@ def test_prune_rows_to_recent_trade_window_drops_st_rows(monkeypatch):
 
 def test_rt_sort_filter_proxy_supports_multi_select_column_filters():
     model = StockTableModel(["代码", "名称", "类型"])
-    model.update_data([
-        {"代码": "000001", "名称": "平安银行", "类型": "预告"},
-        {"代码": "000002", "名称": "万科A", "类型": "快报"},
-        {"代码": "000004", "名称": "国华网安", "类型": "财报"},
-    ])
+    model.update_data(
+        [
+            {"代码": "000001", "名称": "平安银行", "类型": "预告"},
+            {"代码": "000002", "名称": "万科A", "类型": "快报"},
+            {"代码": "000004", "名称": "国华网安", "类型": "财报"},
+        ]
+    )
 
     proxy = RtSortFilterProxyModel()
     proxy.setSourceModel(model)

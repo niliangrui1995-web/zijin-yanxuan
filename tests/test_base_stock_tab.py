@@ -286,6 +286,42 @@ def test_base_stock_tab_defers_quote_refresh_until_visible(monkeypatch):
         tab.deleteLater()
 
 
+def test_base_stock_quote_snapshot_skips_irrelevant_payload():
+    from ui.tabs.tab_quote_bridge import apply_quote_snapshot
+
+    code_key = "\u4ee3\u7801"
+
+    class DummyModel:
+        def __init__(self):
+            self.row_data = [{code_key: "000001"}, {code_key: "AAPL"}]
+            self.calls = []
+
+        def update_quotes(self, quotes):
+            self.calls.append(dict(quotes))
+
+    class DummyTab(BaseStockTab):
+        def __init__(self):
+            super().__init__()
+            self.model = DummyModel()
+
+    tab = DummyTab()
+    try:
+        apply_quote_snapshot(tab, {"600000": {"close": 12.3}})
+        assert tab.model.calls == []
+
+        apply_quote_snapshot(
+            tab,
+            {
+                "000001": {"close": 10.5},
+                "AAPL": {"close": 188.0},
+                "600000": {"close": 12.3},
+            },
+        )
+        assert tab.model.calls == [{"000001": {"close": 10.5}, "AAPL": {"close": 188.0}}]
+    finally:
+        tab.deleteLater()
+
+
 def test_base_stock_refresh_table_market_data_only_fetches_blank_quotes(monkeypatch):
     app = QApplication.instance() or QApplication([])
 
@@ -542,6 +578,7 @@ def test_base_stock_refresh_from_latest_snapshot_primes_local_cache_for_new_code
 
     provider = DummyProvider()
     tab = DummyTab(provider)
+    monkeypatch.setattr(tab, "isVisible", lambda: True)
 
     global_store.reset_quotes()
     monkeypatch.setattr(
@@ -560,6 +597,33 @@ def test_base_stock_refresh_from_latest_snapshot_primes_local_cache_for_new_code
         assert tab.model.row_data[0]["市值"] == "105亿"
     finally:
         global_store.reset_quotes()
+        tab.deleteLater()
+
+
+def test_prime_visible_local_quote_snapshot_skips_noninteractive_probe(monkeypatch):
+    class DummyTab(BaseStockTab):
+        def __init__(self):
+            super().__init__()
+            self.calls = []
+
+        def refresh_table_from_latest_snapshot(self, current_model=None, *, async_local=True):
+            self.calls.append((current_model, async_local))
+
+    tab = DummyTab()
+    monkeypatch.setattr(tab, "isVisible", lambda: True)
+
+    try:
+        tab._workspace_load_reason = "screenshot"
+        tab._workspace_noninteractive_loaded = True
+
+        assert tab._prime_visible_local_quote_snapshot(object()) is False
+        assert tab.calls == []
+
+        tab._workspace_load_reason = "tab_switch"
+        tab._workspace_noninteractive_loaded = False
+        assert tab._prime_visible_local_quote_snapshot("model") is True
+        assert tab.calls == [("model", True)]
+    finally:
         tab.deleteLater()
 
 
@@ -604,6 +668,7 @@ def test_base_stock_refresh_table_market_data_primes_local_f5_snapshot_for_new_r
 
     provider = DummyProvider()
     tab = DummyTab(provider)
+    monkeypatch.setattr(tab, "isVisible", lambda: True)
 
     global_store.reset_quotes()
     monkeypatch.setattr(tab, "async_update_market_caps", lambda: None)

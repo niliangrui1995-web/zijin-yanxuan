@@ -71,15 +71,7 @@ class StockCandidateTab(BaseStockTab):
             return True
 
     def _should_start_runtime_on_show(self) -> bool:
-        is_current = self._is_current_workspace_tab()
-        if getattr(self, "_workspace_noninteractive_loaded", False) and not is_current:
-            return False
-        if is_current:
-            setattr(self, "_workspace_noninteractive_loaded", False)
-        reason = str(getattr(self, "_workspace_load_reason", "") or "").strip()
-        if reason and reason not in {"placeholder_action", "tab_switch", "user"}:
-            return False
-        return is_current
+        return BaseStockTab._should_start_interactive_runtime_on_show(self)
 
     def showEvent(self, event):  # noqa: N802 - Qt API naming
         super().showEvent(event)

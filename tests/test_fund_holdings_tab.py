@@ -371,6 +371,23 @@ def test_fund_holdings_tab_does_not_schedule_late_local_quote_after_delete(monke
     assert len(spy) == 0
 
 
+def test_fund_holdings_show_runtime_skips_non_interactive_load_reason():
+    class DummyTab:
+        _workspace_load_reason = "screenshot"
+        _workspace_noninteractive_loaded = True
+
+        def _is_current_workspace_tab(self):
+            return True
+
+    dummy = DummyTab()
+    assert not fund_holdings_module.FundHoldingsTab._should_start_runtime_on_show(dummy)
+    assert dummy._workspace_noninteractive_loaded is True
+
+    dummy._workspace_load_reason = "tab_switch"
+    assert fund_holdings_module.FundHoldingsTab._should_start_runtime_on_show(dummy)
+    assert dummy._workspace_noninteractive_loaded is False
+
+
 def test_fund_holdings_tab_ignores_cache_reload_after_delete(monkeypatch):
     _setup_store(monkeypatch, [])
     calls = []

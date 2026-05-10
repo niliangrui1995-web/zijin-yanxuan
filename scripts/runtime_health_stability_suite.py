@@ -97,6 +97,18 @@ def _loaded_tab(workspace, key: str):
     return getter(key) if callable(getter) else None
 
 
+def _ensure_probe_tab_loaded(workspace, key: str, index: int):
+    if _loaded_tab(workspace, key) is not None:
+        return _loaded_tab(workspace, key)
+    ensure_tab_loaded = getattr(workspace, "ensure_tab_loaded", None)
+    if not callable(ensure_tab_loaded):
+        return None
+    try:
+        return ensure_tab_loaded(key, reason="perf_memory_probe")
+    except TypeError:
+        return ensure_tab_loaded(index)
+
+
 def _sample(
     window: MainWindowQT,
     *,
@@ -280,6 +292,7 @@ def _cycle_tabs(
                 )
                 continue
             started = time.perf_counter()
+            _ensure_probe_tab_loaded(workspace, key, index)
             tab_widget.setCurrentIndex(index)
             loaded = _wait_until(app, lambda key=key: _loaded_tab(workspace, key) is not None, timeout_ms=2000)
             _settle(app, settle_ms)
@@ -516,6 +529,7 @@ def run_suite(args: argparse.Namespace) -> dict:
         background_prewarm=bool(args.background_prewarm),
         kline_prewarm_enabled=bool(args.kline_prewarm_enabled),
         central_quotes_enabled=bool(args.central_quotes_enabled),
+        restore_last_tab_enabled=False,
     )
     try:
         _settle(app, args.startup_settle_ms)

@@ -44,6 +44,23 @@ def _write_workbook(path: Path):
     wb.save(path)
 
 
+def test_ai_industry_chain_show_runtime_skips_non_interactive_load_reason():
+    class DummyTab:
+        _workspace_load_reason = "screenshot"
+        _workspace_noninteractive_loaded = True
+
+        def _is_current_workspace_tab(self):
+            return True
+
+    dummy = DummyTab()
+    assert not AIIndustryChainTab._should_start_runtime_on_show(dummy)
+    assert dummy._workspace_noninteractive_loaded is True
+
+    dummy._workspace_load_reason = "tab_switch"
+    assert AIIndustryChainTab._should_start_runtime_on_show(dummy)
+    assert dummy._workspace_noninteractive_loaded is False
+
+
 def test_ai_industry_chain_loads_workbook_and_period_returns(monkeypatch, tmp_path):
     workbook_path = tmp_path / "AI产业链.xlsx"
     _write_workbook(workbook_path)

@@ -295,10 +295,25 @@ class FundHoldingsTab(BaseStockTab):
 
     def showEvent(self, event):
         super().showEvent(event)
-        self._ensure_initial_load_started()
+        if self._should_start_runtime_on_show():
+            self._ensure_initial_load_started()
 
     def prime_background_load(self):
         self._ensure_initial_load_started()
+
+    def _is_current_workspace_tab(self) -> bool:
+        parent = self.parent()
+        tabs = getattr(parent, "tabs", None)
+        current_widget = getattr(tabs, "currentWidget", None)
+        if not callable(current_widget):
+            return True
+        try:
+            return current_widget() is self
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return True
+
+    def _should_start_runtime_on_show(self) -> bool:
+        return BaseStockTab._should_start_interactive_runtime_on_show(self)
 
     @staticmethod
     def _create_settings():

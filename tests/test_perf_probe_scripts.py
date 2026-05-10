@@ -3,6 +3,7 @@ from scripts.runtime_health_stability_suite import (
     _apply_mode_defaults,
     _build_budget_trend,
     _build_startup_lazy_budget,
+    _cycle_tabs,
     _parse_args,
 )
 from scripts.soak_leak_probe import _trend
@@ -217,3 +218,48 @@ def test_runtime_health_suite_startup_lazy_budget_summarizes_key_timings():
     assert [item["key"] for item in budget["tab_first_open"]["tabs"]] == ["scan", "watchlist"]
     assert budget["f5_quiet"]["max_cycle_elapsed_ms"] == 220.0
     assert budget["background_settle"]["final_background_task_count"] == 0
+
+
+def test_runtime_health_tab_cycle_marks_lazy_loads_as_perf_probe():
+    calls = []
+    loaded = {}
+
+    class _App:
+        def processEvents(self):
+            return None
+
+    class _Tabs:
+        def setCurrentIndex(self, index):
+            calls.append(("setCurrentIndex", index))
+
+    class _Workspace:
+        tabs = _Tabs()
+
+        def tab_specs(self):
+            return [{"key": "foreign_block"}]
+
+        def get_loaded_tab(self, key):
+            return loaded.get(key)
+
+        def ensure_tab_loaded(self, key, reason="user"):
+            tab = type("Tab", (), {})()
+            tab._workspace_load_reason = reason
+            tab._workspace_noninteractive_loaded = reason not in {"placeholder_action", "tab_switch", "user"}
+            loaded[key] = tab
+            calls.append(("ensure_tab_loaded", key, reason))
+            return tab
+
+    result = _cycle_tabs(
+        type("Window", (), {"_workspace": _Workspace()})(),
+        _App(),
+        ("foreign_block",),
+        cycles=1,
+        settle_ms=0,
+    )
+
+    assert result["status"] == "ok"
+    assert calls[:2] == [
+        ("ensure_tab_loaded", "foreign_block", "perf_memory_probe"),
+        ("setCurrentIndex", 0),
+    ]
+    assert loaded["foreign_block"]._workspace_noninteractive_loaded is True

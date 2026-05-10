@@ -305,6 +305,7 @@ def run_smoke(args: argparse.Namespace) -> dict:
         background_prewarm=False,
         kline_prewarm_enabled=False,
         central_quotes_enabled=False,
+        restore_last_tab_enabled=False,
     )
     try:
         _process_events(app, rounds=10, sleep_ms=30)

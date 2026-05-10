@@ -467,7 +467,7 @@ def test_kline_manager_blocks_open_when_webengine_preflight_fails(monkeypatch):
         chart = manager.open_chart(
             main_window=None,
             code="000001",
-            name="骞冲畨閾惰",
+            name="平安银行",
             data_provider=_DummyProvider(),
             vcp_data={},
             code_list=[],
@@ -476,7 +476,7 @@ def test_kline_manager_blocks_open_when_webengine_preflight_fails(monkeypatch):
 
         assert chart is None
         assert manager._charts == []
-        assert notified == [("000001", "骞冲畨閾惰")]
+        assert notified == [("000001", "平安银行")]
     finally:
         manager._charts = []
         manager._prewarm_view = None
@@ -527,7 +527,7 @@ def test_kline_manager_does_not_block_when_webengine_preflight_is_running(monkey
         chart = manager.open_chart(
             main_window=None,
             code="000001",
-            name="骞冲畨閾惰",
+            name="平安银行",
             data_provider=_DummyProvider(),
             vcp_data={},
             code_list=[],

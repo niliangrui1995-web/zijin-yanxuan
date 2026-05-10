@@ -506,6 +506,7 @@ def run_probe(args: argparse.Namespace) -> dict:
             background_prewarm=args.background_prewarm,
             kline_prewarm_enabled=args.kline_prewarm_enabled,
             central_quotes_enabled=args.central_quotes_enabled,
+            restore_last_tab_enabled=False,
         )
         window_holder["window"] = window
         _process_events(app, rounds=8)

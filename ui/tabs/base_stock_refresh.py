@@ -52,6 +52,18 @@ def _is_owner_runtime_active(owner) -> bool:
     return not _is_qt_object_deleted(owner) and not bool(getattr(owner, "_runtime_cleanup_done", False))
 
 
+def _should_prime_local_snapshot(owner, *, async_local: bool) -> bool:
+    if not async_local:
+        return True
+    is_visible = getattr(owner, "isVisible", None)
+    if callable(is_visible):
+        try:
+            return bool(is_visible())
+        except (RuntimeError, TypeError):
+            return False
+    return True
+
+
 def _current_finance_cache_file() -> str:
     try:
         vcp_constants = import_module("vcp.constants")
@@ -542,10 +554,11 @@ def refresh_table_quotes_and_market_caps(
     if not codes:
         return
 
-    if async_local:
-        prime_local_quote_snapshot_async(owner, model)
-    else:
-        prime_local_quote_snapshot(owner, model)
+    if _should_prime_local_snapshot(owner, async_local=async_local):
+        if async_local:
+            prime_local_quote_snapshot_async(owner, model)
+        else:
+            prime_local_quote_snapshot(owner, model)
 
     try:
         from core.global_store import global_store
@@ -626,10 +639,11 @@ def _refresh_table_from_latest_snapshot_impl(owner, current_model=None, *, async
     if not codes:
         return
 
-    if async_local:
-        prime_local_quote_snapshot_async(owner, model)
-    else:
-        prime_local_quote_snapshot(owner, model)
+    if _should_prime_local_snapshot(owner, async_local=async_local):
+        if async_local:
+            prime_local_quote_snapshot_async(owner, model)
+        else:
+            prime_local_quote_snapshot(owner, model)
 
     try:
         from core.global_store import global_store

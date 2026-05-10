@@ -374,9 +374,13 @@ class AsianMarketTab(BaseStockTab):
 
         self._set_asian_status(text)
 
+    def _should_start_runtime_on_show(self) -> bool:
+        return BaseStockTab._should_start_interactive_runtime_on_show(self)
+
     def showEvent(self, event):
         super().showEvent(event)
-        self._ensure_runtime_started()
+        if self._should_start_runtime_on_show():
+            self._ensure_runtime_started()
         self._schedule_fit_columns()
 
     def resizeEvent(self, event):

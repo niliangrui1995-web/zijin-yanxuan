@@ -339,6 +339,7 @@ def _build_window(args: argparse.Namespace, app: QApplication) -> tuple[MainWind
         background_prewarm=bool(args.background_prewarm),
         kline_prewarm_enabled=bool(args.kline_prewarm_enabled),
         central_quotes_enabled=bool(args.central_quotes_enabled),
+        restore_last_tab_enabled=False,
     )
     stages.append({"stage": "construct_window", "elapsed_ms": _now_ms(started)})
     if args.show_window:

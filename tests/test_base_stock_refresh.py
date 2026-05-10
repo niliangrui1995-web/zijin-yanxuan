@@ -164,6 +164,80 @@ def test_refresh_table_quotes_and_market_caps_can_prime_local_snapshot_async(mon
     assert ("market_caps", None) in calls
 
 
+def test_refresh_table_from_latest_snapshot_skips_async_local_prime_when_hidden(monkeypatch):
+    from ui.tabs import base_stock_refresh as refresh_module
+
+    calls = []
+
+    class DummyModel:
+        row_data = [{"代码": "000001"}]
+
+    class DummyOwner:
+        def isVisible(self):
+            return False
+
+        def _resolve_active_quote_model(self):
+            return DummyModel()
+
+        def _apply_quote_snapshot(self, payload):
+            calls.append(("snapshot", dict(payload or {})))
+
+    monkeypatch.setattr(refresh_module, "collect_table_codes", lambda _owner, _model=None: ["000001"])
+    monkeypatch.setattr(refresh_module, "prime_local_quote_snapshot", lambda *_args, **_kwargs: calls.append(("sync", None)))
+    monkeypatch.setattr(
+        refresh_module,
+        "prime_local_quote_snapshot_async",
+        lambda *_args, **_kwargs: calls.append(("async", None)) or True,
+    )
+    monkeypatch.setattr(
+        "core.global_store.global_store.get_latest_quotes",
+        lambda: {"000001": {"close": 10.0}},
+    )
+
+    refresh_module.refresh_table_from_latest_snapshot(DummyOwner(), async_local=True)
+
+    assert ("async", None) not in calls
+    assert ("sync", None) not in calls
+    assert ("snapshot", {"000001": {"close": 10.0}}) in calls
+
+
+def test_refresh_table_from_latest_snapshot_keeps_sync_local_prime_when_hidden(monkeypatch):
+    from ui.tabs import base_stock_refresh as refresh_module
+
+    calls = []
+
+    class DummyModel:
+        row_data = [{"浠ｇ爜": "000001"}]
+
+    class DummyOwner:
+        def isVisible(self):
+            return False
+
+        def _resolve_active_quote_model(self):
+            return DummyModel()
+
+        def _apply_quote_snapshot(self, payload):
+            calls.append(("snapshot", dict(payload or {})))
+
+    monkeypatch.setattr(refresh_module, "collect_table_codes", lambda _owner, _model=None: ["000001"])
+    monkeypatch.setattr(refresh_module, "prime_local_quote_snapshot", lambda *_args, **_kwargs: calls.append(("sync", None)))
+    monkeypatch.setattr(
+        refresh_module,
+        "prime_local_quote_snapshot_async",
+        lambda *_args, **_kwargs: calls.append(("async", None)) or True,
+    )
+    monkeypatch.setattr(
+        "core.global_store.global_store.get_latest_quotes",
+        lambda: {"000001": {"close": 10.0}},
+    )
+
+    refresh_module.refresh_table_from_latest_snapshot(DummyOwner(), async_local=False)
+
+    assert ("sync", None) in calls
+    assert ("async", None) not in calls
+    assert ("snapshot", {"000001": {"close": 10.0}}) in calls
+
+
 def test_load_cached_finance_snapshot_reuses_shared_file_cache(monkeypatch, tmp_path):
     import core.json_cache as json_cache
     from ui.tabs import base_stock_refresh as refresh_module

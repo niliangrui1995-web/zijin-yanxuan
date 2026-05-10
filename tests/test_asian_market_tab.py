@@ -82,6 +82,23 @@ def test_infer_asian_markets_normalizes_from_code_suffixes():
     ]
 
 
+def test_asian_market_show_runtime_skips_non_interactive_load_reason():
+    class DummyTab:
+        _workspace_load_reason = "screenshot"
+        _workspace_noninteractive_loaded = True
+
+        def _is_current_workspace_tab(self):
+            return True
+
+    dummy = DummyTab()
+    assert not asian_module.AsianMarketTab._should_start_runtime_on_show(dummy)
+    assert dummy._workspace_noninteractive_loaded is True
+
+    dummy._workspace_load_reason = "tab_switch"
+    assert asian_module.AsianMarketTab._should_start_runtime_on_show(dummy)
+    assert dummy._workspace_noninteractive_loaded is False
+
+
 def test_asian_quote_refresh_uses_tracked_market_union(monkeypatch):
     monkeypatch.setattr(
         MarketCalendar,

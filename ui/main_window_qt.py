@@ -82,6 +82,7 @@ class MainWindowQT(QMainWindow):
         background_prewarm: bool = True,
         kline_prewarm_enabled: bool = True,
         central_quotes_enabled: bool = True,
+        restore_last_tab_enabled: bool = True,
     ):
         super().__init__()
         self._project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -92,6 +93,7 @@ class MainWindowQT(QMainWindow):
         self._workspace_background_prewarm = bool(background_prewarm)
         self._kline_prewarm_enabled = bool(kline_prewarm_enabled)
         self._central_quotes_enabled = bool(central_quotes_enabled)
+        self._restore_last_tab_enabled = bool(restore_last_tab_enabled)
         self._native_taskbar_fix_applied = False
         self._app_cursor_filter_installed = False
         self._splash = splash
@@ -417,11 +419,14 @@ class MainWindowQT(QMainWindow):
         self._workspace = workspace
         self.tabs = workspace.tabs
         try:
-            schedule_restore = getattr(workspace, "schedule_restore_last_tab", None)
-            if callable(schedule_restore):
-                schedule_restore(app_config.last_active_tab)
-            else:
-                workspace.restore_last_tab(app_config.last_active_tab)
+            if self._restore_last_tab_enabled:
+                schedule_restore = getattr(workspace, "schedule_restore_last_tab", None)
+                if callable(schedule_restore):
+                    schedule_restore(app_config.last_active_tab)
+                else:
+                    workspace.restore_last_tab(app_config.last_active_tab)
+            elif self.tabs is not None and self.tabs.currentIndex() != 0:
+                self.tabs.setCurrentIndex(0)
             if self._kline_prewarm_enabled:
                 kline_manager.prewarm(delay_ms=2500)
             self.install_workspace_table_copy_hooks()

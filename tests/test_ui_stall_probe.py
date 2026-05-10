@@ -39,3 +39,20 @@ def test_ui_stall_probe_merges_current_tab_context(monkeypatch, qt_application):
     assert probe.current_context()["tab"] == "watchlist"
     assert probe.current_context()["widget"] == "WatchlistTab"
     probe.deleteLater()
+
+
+def test_ui_stall_probe_does_not_keep_fast_span_context(monkeypatch, qt_application):
+    recorded = []
+    probe = UiStallProbe(
+        thresholds=StallThresholds(warn_ms=50, critical_ms=100),
+        auto_start=False,
+    )
+    monkeypatch.setattr(probe, "_record_stall", lambda event, elapsed_ms, **kwargs: recorded.append((event, kwargs)))
+
+    probe.record_span(75, {"method": "Slow.method", "tab": "watchlist"})
+    assert probe.current_context()["method"] == "Slow.method"
+
+    probe.record_span(1, {"method": "Fast.method", "tab": "watchlist"})
+    assert "method" not in probe.current_context()
+    assert recorded
+    probe.deleteLater()

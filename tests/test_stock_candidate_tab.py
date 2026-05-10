@@ -278,14 +278,18 @@ def test_stock_candidate_listens_to_global_quote_updates(monkeypatch):
 def test_stock_candidate_show_runtime_skips_non_interactive_load_reason():
     class DummyTab:
         _workspace_load_reason = "perf_memory_probe"
+        _workspace_noninteractive_loaded = True
 
         def _is_current_workspace_tab(self):
             return True
 
-    assert not StockCandidateTab._should_start_runtime_on_show(DummyTab())
+    dummy = DummyTab()
+    assert not StockCandidateTab._should_start_runtime_on_show(dummy)
+    assert dummy._workspace_noninteractive_loaded is True
 
-    DummyTab._workspace_load_reason = "tab_switch"
-    assert StockCandidateTab._should_start_runtime_on_show(DummyTab())
+    dummy._workspace_load_reason = "tab_switch"
+    assert StockCandidateTab._should_start_runtime_on_show(dummy)
+    assert dummy._workspace_noninteractive_loaded is False
 
 
 def test_stock_candidate_auto_refreshes_when_source_tabs_update(monkeypatch):

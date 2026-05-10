@@ -173,14 +173,18 @@ def test_lhb_delete_later_stops_auto_timer(monkeypatch):
 def test_lhb_show_bootstrap_skips_non_interactive_load_reason():
     class DummyTab:
         _workspace_load_reason = "perf_memory_probe"
+        _workspace_noninteractive_loaded = True
 
         def _is_current_workspace_tab(self):
             return True
 
-    assert not LhbTab._should_start_pool_on_show(DummyTab())
+    dummy = DummyTab()
+    assert not LhbTab._should_start_pool_on_show(dummy)
+    assert dummy._workspace_noninteractive_loaded is True
 
-    DummyTab._workspace_load_reason = "tab_switch"
-    assert LhbTab._should_start_pool_on_show(DummyTab())
+    dummy._workspace_load_reason = "tab_switch"
+    assert LhbTab._should_start_pool_on_show(dummy)
+    assert dummy._workspace_noninteractive_loaded is False
 
 
 def test_lhb_prime_background_load_starts_deferred_pool_once(monkeypatch):

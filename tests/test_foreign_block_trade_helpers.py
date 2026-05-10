@@ -32,7 +32,9 @@ def test_should_include_row_only_matches_foreign_branches():
 def test_determine_direction_keeps_only_foreign_actions():
     assert ForeignBlockTradeTab._determine_direction(None, "高盛上海营业部", "普通营业部")[0] == "外资买入"
     assert ForeignBlockTradeTab._determine_direction(None, "普通营业部", "瑞银证券上海浦东新区营业部")[0] == "外资卖出"
-    assert ForeignBlockTradeTab._determine_direction(None, "高盛上海营业部", "瑞银证券上海浦东新区营业部")[0] == "外资对倒"
+    assert (
+        ForeignBlockTradeTab._determine_direction(None, "高盛上海营业部", "瑞银证券上海浦东新区营业部")[0] == "外资对倒"
+    )
     assert ForeignBlockTradeTab._determine_direction(None, "机构专用", "普通营业部")[0] == "--"
 
 
@@ -114,9 +116,7 @@ def test_block_trade_local_snapshot_fills_market_fields_without_realtime(monkeyp
 
     provider = OfflineProvider()
     tab = DummyForeignTab(provider)
-    tab.model.update_data([
-        {code_key: "600000", name_key: "浦发银行", price_key: "--", pct_key: "--", cap_key: "--"}
-    ])
+    tab.model.update_data([{code_key: "600000", name_key: "浦发银行", price_key: "--", pct_key: "--", cap_key: "--"}])
     monkeypatch.setattr(
         tab,
         "_load_cached_finance_snapshot",
@@ -153,14 +153,23 @@ def test_block_trade_load_cache_primes_local_snapshot(monkeypatch):
     class DummyTab:
         model = object()
         table_state = SimpleNamespace(show_table=lambda: calls.append("show_table"))
-        _apply_row_data = lambda self, rows, preserve_selection=False: calls.append(("rows", rows)) or (["20260508"], ["机构"])
+
+        def _apply_row_data(self, rows, preserve_selection=False):
+            return calls.append(("rows", rows)) or (["20260508"], ["机构"])
+
         _status_metric = staticmethod(lambda label, value, suffix="": f"{label}{value}{suffix}")
-        _set_fetch_status = lambda self, *args, **kwargs: calls.append(("status", args, kwargs))
-        _latest_trade_date_text = lambda self: "20260508"
-        _apply_latest_quotes_from_store = lambda self: calls.append("store")
-        _prime_visible_local_quote_snapshot = (
-            lambda self, current_model=None: calls.append(("local", current_model)) or True
-        )
+
+        def _set_fetch_status(self, *args, **kwargs):
+            return calls.append(("status", args, kwargs))
+
+        def _latest_trade_date_text(self):
+            return "20260508"
+
+        def _apply_latest_quotes_from_store(self):
+            return calls.append("store")
+
+        def _prime_visible_local_quote_snapshot(self, current_model=None):
+            return calls.append(("local", current_model)) or True
 
     ForeignBlockTradeTab._load_local_cache(DummyTab())
 
@@ -169,15 +178,17 @@ def test_block_trade_load_cache_primes_local_snapshot(monkeypatch):
 
 def test_block_trade_search_only_matches_code_name_and_foreign_branch():
     model = StockTableModel(["代码", "名称", "交易详情", "买方营业部", "卖方营业部"])
-    model.update_data([
-        {
-            "代码": "600000",
-            "名称": "浦发银行",
-            "交易详情": "外资买入",
-            "买方营业部": "高盛上海营业部",
-            "卖方营业部": "普通营业部",
-        }
-    ])
+    model.update_data(
+        [
+            {
+                "代码": "600000",
+                "名称": "浦发银行",
+                "交易详情": "外资买入",
+                "买方营业部": "高盛上海营业部",
+                "卖方营业部": "普通营业部",
+            }
+        ]
+    )
 
     proxy = BlockTradeFilterProxyModel()
     proxy.setSourceModel(model)
@@ -194,32 +205,34 @@ def test_block_trade_search_only_matches_code_name_and_foreign_branch():
 
 def test_block_trade_exact_filters_support_multi_select():
     model = StockTableModel(["代码", "名称", "交易日期", "交易详情", "买方营业部", "卖方营业部"])
-    model.update_data([
-        {
-            "代码": "600000",
-            "名称": "浦发银行",
-            "交易日期": "2026-04-10",
-            "交易详情": "外资买入",
-            "买方营业部": "高盛上海营业部",
-            "卖方营业部": "普通营业部",
-        },
-        {
-            "代码": "000001",
-            "名称": "平安银行",
-            "交易日期": "2026-04-11",
-            "交易详情": "外资卖出",
-            "买方营业部": "普通营业部",
-            "卖方营业部": "瑞银证券上海浦东新区营业部",
-        },
-        {
-            "代码": "000002",
-            "名称": "万科A",
-            "交易日期": "2026-04-12",
-            "交易详情": "外资对倒",
-            "买方营业部": "高盛上海营业部",
-            "卖方营业部": "瑞银证券上海浦东新区营业部",
-        },
-    ])
+    model.update_data(
+        [
+            {
+                "代码": "600000",
+                "名称": "浦发银行",
+                "交易日期": "2026-04-10",
+                "交易详情": "外资买入",
+                "买方营业部": "高盛上海营业部",
+                "卖方营业部": "普通营业部",
+            },
+            {
+                "代码": "000001",
+                "名称": "平安银行",
+                "交易日期": "2026-04-11",
+                "交易详情": "外资卖出",
+                "买方营业部": "普通营业部",
+                "卖方营业部": "瑞银证券上海浦东新区营业部",
+            },
+            {
+                "代码": "000002",
+                "名称": "万科A",
+                "交易日期": "2026-04-12",
+                "交易详情": "外资对倒",
+                "买方营业部": "高盛上海营业部",
+                "卖方营业部": "瑞银证券上海浦东新区营业部",
+            },
+        ]
+    )
 
     proxy = BlockTradeFilterProxyModel()
     proxy.setSourceModel(model)

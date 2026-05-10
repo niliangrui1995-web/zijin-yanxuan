@@ -51,6 +51,7 @@ def test_main_window_builds_and_closes_with_controlled_background_services(monke
         background_prewarm=False,
         kline_prewarm_enabled=False,
         central_quotes_enabled=False,
+        restore_last_tab_enabled=False,
     )
     try:
         _process_events()
@@ -62,6 +63,7 @@ def test_main_window_builds_and_closes_with_controlled_background_services(monke
         assert window.startup_orchestrator._smart_timer.isActive() is False
         assert window.startup_orchestrator._auto_rt_timer.isActive() is False
         assert window.central_quotes_svc is None
+        assert window._workspace._restore_last_tab_timer is None
         assert window._process_watchdog.running is True
 
         window.close()

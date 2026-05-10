@@ -64,11 +64,13 @@ class AIIndustryChainTab(BaseStockTab):
             self._background_prime_loading = False
             self._background_prime_done = True
 
+    def _should_start_runtime_on_show(self) -> bool:
+        return BaseStockTab._should_start_interactive_runtime_on_show(self)
+
     def showEvent(self, event):
         super().showEvent(event)
-        if getattr(self, "_workspace_noninteractive_loaded", False):
-            self._workspace_noninteractive_loaded = False
-        self._ensure_runtime_started()
+        if self._should_start_runtime_on_show():
+            self._ensure_runtime_started()
 
     def _init_ui(self):
         layout = QVBoxLayout(self)

@@ -422,7 +422,7 @@ def test_workspace_collects_lhb_context_from_pool_cache_without_loading_lazy_tab
 
     context = ClassicWorkspace.collect_stock_context(workspace)
 
-    assert captured == {"data_provider": "provider", "engine": "engine"}
+    assert captured == {"data_provider": None, "engine": "engine"}
     signals = context["300750"]
     assert [(signal.source_tab, signal.signal_type) for signal in signals] == [("lhb", "lhb")]
     assert signals[0].numeric_value == 1200
@@ -863,6 +863,39 @@ def test_workspace_refreshes_information_sources_after_f5():
         "earnings": True,
         "fund_holdings": True,
     }
+
+
+def test_workspace_refreshes_information_sources_after_f5_skips_noninteractive_tabs():
+    calls = []
+    specs = [
+        {"key": "scan", "group": "情报源"},
+        {"key": "foreign_block", "group": "情报源"},
+        {"key": "earnings", "group": "情报源"},
+        {"key": "fund_holdings", "group": "情报源"},
+    ]
+    workspace = _make_workspace(
+        tabs={
+            "scan": SimpleNamespace(refresh_data_after_f5=lambda: (calls.append("scan") or True)),
+            "foreign_block": SimpleNamespace(
+                _workspace_noninteractive_loaded=True,
+                refresh_data_after_f5=lambda: (calls.append("foreign") or True),
+            ),
+            "earnings": SimpleNamespace(
+                _workspace_load_reason="perf_memory_probe",
+                refresh_data_after_f5=lambda: (calls.append("earnings") or True),
+            ),
+            "fund_holdings": SimpleNamespace(
+                _workspace_noninteractive_loaded=True,
+                refresh_data_after_f5=lambda: (calls.append("fund") or True),
+            ),
+        }
+    )
+    workspace.tab_specs = lambda: list(specs)
+
+    results = ClassicWorkspace.refresh_information_sources_after_f5(workspace)
+
+    assert calls == ["scan"]
+    assert results == {"scan": True}
 
 
 def test_workspace_defers_heavy_tab_autoload(monkeypatch):

@@ -279,7 +279,7 @@ class StockContextService:
             from core.lhb_pool_manager import LhbPoolManager
 
             pool = LhbPoolManager().compute_pool(
-                data_provider=getattr(self._workspace, "data_provider", None),
+                data_provider=None,
                 engine=getattr(self._workspace, "engine", None),
             )
         except (AttributeError, ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError):
