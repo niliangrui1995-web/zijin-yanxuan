@@ -627,6 +627,56 @@ def test_prime_visible_local_quote_snapshot_skips_noninteractive_probe(monkeypat
         tab.deleteLater()
 
 
+def test_show_event_reenables_snapshot_prime_after_background_prewarm(monkeypatch, qt_application):
+    from PyQt6.QtGui import QShowEvent
+
+    class DummyTab(BaseStockTab):
+        def __init__(self):
+            super().__init__()
+            self.calls = []
+
+        def refresh_table_from_latest_snapshot(self, current_model=None, *, async_local=True):
+            self.calls.append((current_model, async_local))
+
+    tab = DummyTab()
+    monkeypatch.setattr(tab, "isVisible", lambda: True)
+    tab._workspace_load_reason = ""
+    tab._workspace_noninteractive_loaded = True
+
+    try:
+        tab.showEvent(QShowEvent())
+
+        assert tab._workspace_noninteractive_loaded is False
+        assert tab.calls == [(None, True)]
+    finally:
+        tab.deleteLater()
+
+
+def test_show_event_keeps_noninteractive_probe_snapshot_gate(monkeypatch, qt_application):
+    from PyQt6.QtGui import QShowEvent
+
+    class DummyTab(BaseStockTab):
+        def __init__(self):
+            super().__init__()
+            self.calls = []
+
+        def refresh_table_from_latest_snapshot(self, current_model=None, *, async_local=True):
+            self.calls.append((current_model, async_local))
+
+    tab = DummyTab()
+    monkeypatch.setattr(tab, "isVisible", lambda: True)
+    tab._workspace_load_reason = "screenshot"
+    tab._workspace_noninteractive_loaded = True
+
+    try:
+        tab.showEvent(QShowEvent())
+
+        assert tab._workspace_noninteractive_loaded is True
+        assert tab.calls == []
+    finally:
+        tab.deleteLater()
+
+
 def test_base_stock_refresh_table_market_data_primes_local_f5_snapshot_for_new_rows(monkeypatch):
     class DummyModel:
         def __init__(self):

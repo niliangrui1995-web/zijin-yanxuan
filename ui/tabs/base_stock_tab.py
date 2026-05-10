@@ -840,6 +840,7 @@ class BaseStockTab(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._should_start_interactive_runtime_on_show()
         replay_deferred_quotes(self)
         self._prime_visible_local_quote_snapshot()
 
