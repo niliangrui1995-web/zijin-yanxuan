@@ -56,6 +56,35 @@ def test_log_tab_level_filter_supports_multi_select():
         tab.deleteLater()
 
 
+def test_log_tab_hides_ui_stall_diagnostics_by_default():
+    tab = LogTab()
+    try:
+        tab._log_history = [
+            ("info", "[基金持仓] 刷新完成"),
+            ("warn", "[事件] ui.stall.event_loop | method=FundHoldingsTab._reload_from_db"),
+            ("warning", "[事件] ui.stall.method | method=MainWindowQT.create_workspace"),
+            ("debug", "[指标] ui_event_loop_stall_ms | 120ms"),
+            ("error", "业务错误"),
+        ]
+
+        assert tab._filtered_entries() == [
+            ("info", "[基金持仓] 刷新完成"),
+            ("error", "业务错误"),
+        ]
+
+        tab._refresh_status_summary()
+        assert "隐藏诊断 3条" in tab.lbl_status.text()
+
+        tab.search_box.setText("ui.stall")
+        assert tab._filtered_entries() == [
+            ("warn", "[事件] ui.stall.event_loop | method=FundHoldingsTab._reload_from_db"),
+            ("warning", "[事件] ui.stall.method | method=MainWindowQT.create_workspace"),
+        ]
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
 def test_log_tab_renders_task_status_updates():
     app = QApplication.instance()
     tab = LogTab()

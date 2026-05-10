@@ -24,6 +24,12 @@ from ui.theme_tokens import build_ui_tokens
 class LogTab(QWidget):
     """独立的系统运行日志组件，负责承接 stdout/stderr 与系统日志事件。"""
 
+    _DIAGNOSTIC_LOG_MARKERS = (
+        "ui.stall.",
+        "ui_event_loop_stall_ms",
+        "ui_method_stall_ms",
+    )
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._log_history = []
@@ -163,6 +169,9 @@ class LogTab(QWidget):
         search_text = self.search_box.text().strip() if hasattr(self, "search_box") else ""
         primary = f"日志 {visible_count}条" if visible_count == total else f"可见 {visible_count}/{total}条"
         segments = [f"级别 {filter_text}"]
+        hidden_diagnostics = self._hidden_diagnostic_count()
+        if hidden_diagnostics:
+            segments.append(f"隐藏诊断 {hidden_diagnostics}条")
         if search_text:
             segments.append(f"搜索 {search_text[:18]}")
         self.lbl_status.setText(" | ".join([primary, *segments]))
@@ -176,6 +185,27 @@ class LogTab(QWidget):
         if normalized == "warn":
             return "warning"
         return normalized
+
+    @classmethod
+    def _is_diagnostic_log(cls, text) -> bool:
+        payload = str(text or "").lower()
+        return any(marker in payload for marker in cls._DIAGNOSTIC_LOG_MARKERS)
+
+    def _hidden_diagnostic_count(self) -> int:
+        search_text = self.search_box.text().strip().lower() if hasattr(self, "search_box") else ""
+        if search_text:
+            return 0
+
+        selected_levels = self.level_filter.selected_values() if hasattr(self, "level_filter") else set()
+        count = 0
+        for level, text in getattr(self, "_log_history", []) or []:
+            normalized = self._normalize_level(level)
+            if normalized == "error" or not self._is_diagnostic_log(text):
+                continue
+            if selected_levels and normalized not in selected_levels:
+                continue
+            count += 1
+        return count
 
     def _refresh_level_filter_button_text(self):
         text, tooltip = format_multi_select_summary(
@@ -198,7 +228,10 @@ class LogTab(QWidget):
         normalized = self._normalize_level(level)
         if selected_levels and normalized not in selected_levels:
             return False
-        if search_text and search_text not in str(text).lower():
+        payload = str(text).lower()
+        if search_text and search_text not in payload:
+            return False
+        if not search_text and normalized != "error" and self._is_diagnostic_log(payload):
             return False
         return True
 
