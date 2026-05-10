@@ -305,6 +305,24 @@
       "original_timezone": "Europe/Berlin",
       "call_time_source_url": "https://www.appairtime.com/event/5ec0928a-24c7-42e1-a7b1-79c60ce05ac8",
       "call_time_source_type": "official_ir_linked_webcast"
+    },
+    {
+      "company": "Arteris",
+      "ticker": "AIP",
+      "sector": "EDA与底层IP",
+      "report_date": "2026-05-12",
+      "fiscal_period": "Mar/2026",
+      "time_label": "盘后 / 4:30 PM EDT conference call",
+      "beijing_time": "2026-05-13 04:30",
+      "status": "confirmed",
+      "source": "confirmed",
+      "priority": "normal",
+      "conference_url": "https://ir.arteris.com/events-and-presentations",
+      "market": "US",
+      "original_call_time_text": "Tuesday May 12, 2026 at 4:30 PM EDT; Arteris, Inc. First Quarter 2026 Earnings Conference Call; Click here for webcast",
+      "original_timezone": "America/New_York",
+      "call_time_source_url": "https://ir.arteris.com/events-and-presentations",
+      "call_time_source_type": "official_ir_event"
     }
   ]
 }
