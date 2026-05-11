@@ -17,6 +17,7 @@ from ui.models.table_model_helpers import (
     _is_numeric_header,
     _is_status_header,
     _numeric_heat_color,
+    _parse_numeric_value,
     _prune_flash_records,
     _status_badge_color,
     _summarize_long_text,
@@ -391,6 +392,9 @@ class RtTableModel(QAbstractTableModel):
                 return row + 1
 
             s_val = str(raw_val).replace(',', '')
+            parsed_value = _parse_numeric_value(raw_val)
+            if parsed_value is not None and (_is_numeric_header(key) or "万" in s_val or "亿" in s_val):
+                return parsed_value
             if key in ["市值", "评分"] or "万" in s_val or "亿" in s_val:
                 if '万' in s_val:
                     m = re.search(r'([-+]?\d*\.?\d+)', s_val)

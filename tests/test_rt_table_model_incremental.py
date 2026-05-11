@@ -2,7 +2,7 @@ import time
 
 from PyQt6.QtCore import Qt
 
-from ui.models.table_models import RtTableModel
+from ui.models.table_models import RtSortFilterProxyModel, RtTableModel
 
 
 def _row(code, price, pct, status="跟踪"):
@@ -80,3 +80,24 @@ def test_rt_table_model_incremental_update_uses_layout_change_when_order_changes
     assert reused is True
     assert resets == []
     assert layouts == [True]
+
+
+def test_rt_table_model_pct_sort_uses_numeric_values():
+    model = RtTableModel()
+    model.update_data([
+        _row("000001", "10.00", "+2.00%"),
+        _row("000002", "20.00", "+10.00%"),
+        _row("000003", "30.00", "-1.00%"),
+    ])
+    proxy = RtSortFilterProxyModel()
+    proxy.setSourceModel(model)
+    code_col = model.headers.index("代码")
+    pct_col = model.headers.index("涨幅%")
+
+    proxy.sort(pct_col, Qt.SortOrder.DescendingOrder)
+
+    assert [proxy.data(proxy.index(row, code_col), Qt.ItemDataRole.DisplayRole) for row in range(proxy.rowCount())] == [
+        "000002",
+        "000001",
+        "000003",
+    ]

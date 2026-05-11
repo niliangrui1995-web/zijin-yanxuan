@@ -41,6 +41,7 @@ class StockTableModel(QAbstractTableModel):
         self._sort_value_cache = {}
         self._plain_style_headers = set()
         self._plain_background_headers = set()
+        self.dataChanged.connect(self._invalidate_sort_cache_for_changed_indexes)
 
         self.base_font = QFont()
         self.base_font.setFamilies(["Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "SimSun"])
@@ -145,6 +146,19 @@ class StockTableModel(QAbstractTableModel):
             return
         for cache_key in list(self._sort_value_cache):
             if cache_key[0] in row_set:
+                self._sort_value_cache.pop(cache_key, None)
+
+    def _invalidate_sort_cache_for_changed_indexes(self, top_left, bottom_right, *_args) -> None:
+        if not self._sort_value_cache:
+            return
+        if not top_left.isValid() or not bottom_right.isValid():
+            return
+
+        row_start, row_end = sorted((top_left.row(), bottom_right.row()))
+        col_start, col_end = sorted((top_left.column(), bottom_right.column()))
+        for cache_key in list(self._sort_value_cache):
+            row, col = cache_key
+            if row_start <= row <= row_end and col_start <= col <= col_end:
                 self._sort_value_cache.pop(cache_key, None)
 
     def _record_row_flashes(self, row: int, old_row: dict, new_row: dict) -> None:

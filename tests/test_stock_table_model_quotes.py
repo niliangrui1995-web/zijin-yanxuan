@@ -6,7 +6,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QSignalSpy
 
 from core.global_store import global_store
-from ui.models.table_models import StockTableModel
+from ui.models.table_models import RtSortFilterProxyModel, StockTableModel
 
 
 def test_stock_table_model_update_quotes_batches_changed_rows():
@@ -57,6 +57,27 @@ def test_stock_table_model_sort_value_cache_invalidates_on_cell_update():
     model.set_cell_value(0, "市值", "210亿", emit_signal=False)
 
     assert model.data(index, Qt.ItemDataRole.UserRole) == 21_000_000_000
+
+
+def test_stock_table_model_sort_cache_invalidates_on_external_data_changed():
+    model = StockTableModel(["代码", "名称", "涨幅%"])
+    model.update_data([
+        {"代码": "A", "名称": "A", "涨幅%": 1.0},
+        {"代码": "B", "名称": "B", "涨幅%": 2.0},
+    ])
+    proxy = RtSortFilterProxyModel()
+    proxy.setSourceModel(model)
+    code_col = model.headers.index("代码")
+    pct_col = model.headers.index("涨幅%")
+
+    proxy.sort(pct_col, Qt.SortOrder.DescendingOrder)
+    assert [proxy.data(proxy.index(row, code_col), Qt.ItemDataRole.DisplayRole) for row in range(proxy.rowCount())] == ["B", "A"]
+
+    model.row_data[0]["涨幅%"] = 5.0
+    model.dataChanged.emit(model.index(0, 0), model.index(0, len(model.headers) - 1))
+    proxy.sort(pct_col, Qt.SortOrder.DescendingOrder)
+
+    assert [proxy.data(proxy.index(row, code_col), Qt.ItemDataRole.DisplayRole) for row in range(proxy.rowCount())] == ["A", "B"]
 
 
 def test_stock_table_model_incremental_update_marks_status_and_time_flash():

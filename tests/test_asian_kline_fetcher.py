@@ -180,20 +180,47 @@ def test_asian_market_meta_labels_ai_pcb_equipment_names_and_roles():
     assert names["6871.T"] == "日本微电子"
     assert names["5803.T"] == "藤仓"
     assert names["011790.KS"] == "SKC"
+    assert names["0522.HK"] == "ASMPT"
     assert names["6981.T"] == "村田制作所"
-    assert roles["7735.T"] == "LDI/直接成像设备"
-    assert roles["6594.T"] == "PCB电测/光学检测+精密马达"
-    assert roles["6113.T"] == "机械钻孔+激光钻孔"
-    assert roles["6278.T"] == "PCB微钻/钻针耗材"
-    assert roles["6925.T"] == "曝光/直接成像设备"
-    assert roles["4063.T"] == "硅片+半导体材料龙头"
-    assert roles["3436.T"] == "半导体硅片龙头"
-    assert roles["7729.T"] == "探针台/精密计量设备"
-    assert roles["6871.T"] == "存储探针卡/晶圆测试耗材"
-    assert roles["5802.T"] == "光器件/光芯片上游核心"
-    assert roles["5803.T"] == "光纤/光连接精密组件"
-    assert roles["011790.KS"] == "玻璃基板/封装材料载体"
-    assert roles["6981.T"] == "AI服务器MLCC/被动元件龙头"
+    assert names["3324.TWO"] == "双鸿"
+    assert names["3017.TW"] == "奇鋐"
+    assert names["2316.TW"] == "楠梓电"
+    assert roles["7735.T"] == "头部｜PCB直接成像"
+    assert roles["6594.T"] == "头部｜PCB电测检测"
+    assert roles["6113.T"] == "头部｜PCB激光钻孔"
+    assert roles["6278.T"] == "龙头｜PCB精密微钻"
+    assert roles["6925.T"] == "头部｜PCB曝光光源"
+    assert roles["4063.T"] == "龙头｜硅片半导体材料"
+    assert roles["3436.T"] == "头部｜半导体硅片"
+    assert roles["7729.T"] == "头部｜探针台/计量"
+    assert roles["6871.T"] == "头部｜存储探针卡"
+    assert roles["5802.T"] == "头部｜光器件上游"
+    assert roles["5803.T"] == "头部｜光纤连接组件"
+    assert roles["011790.KS"] == "头部｜玻璃基板先行"
+    assert roles["0522.HK"] == "头部｜先进封装设备"
+    assert roles["6981.T"] == "龙头｜MLCC被动元件"
+    assert roles["3324.TWO"] == "头部｜服务器散热模组"
+    assert roles["3017.TW"] == "龙头｜服务器液冷模组"
+    assert roles["2316.TW"] == "二线｜AI高速PCB弹性"
+
+
+def test_asian_market_meta_roles_cover_asian_universe_with_rank_labels(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    from ui.tabs.asian_market_meta import get_ch_names_mapping, get_role_mapping
+
+    names = get_ch_names_mapping()
+    roles = get_role_mapping()
+    tickers = fetcher.filter_asian_tickers()
+
+    missing_names = sorted(code for code in tickers.values() if not names.get(code))
+    missing_roles = sorted(code for code in tickers.values() if not roles.get(code))
+    unlabeled_roles = sorted(
+        code for code in tickers.values() if roles.get(code) and not roles[code].startswith(("龙头｜", "头部｜", "二线｜"))
+    )
+
+    assert missing_names == []
+    assert missing_roles == []
+    assert unlabeled_roles == []
 
 
 def test_fetch_single_kline_routes_to_market_specific_history_source(monkeypatch):
