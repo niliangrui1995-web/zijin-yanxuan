@@ -397,6 +397,45 @@ def _quote_snapshot(main_window) -> dict[str, Any]:
     }
 
 
+def _market_data_snapshot(main_window) -> dict[str, Any]:
+    provider = getattr(main_window, "data_provider", None)
+    if provider is None:
+        return {
+            "ok": False,
+            "active_layer": "unavailable",
+            "data_status": "provider_missing",
+            "fallback_or_degraded": True,
+        }
+
+    getter = getattr(provider, "get_market_data_source_status", None)
+    if callable(getter):
+        try:
+            payload = getter() or {}
+            if isinstance(payload, dict):
+                return payload
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            return {
+                "ok": False,
+                "active_layer": "status_error",
+                "data_status": "status_error",
+                "error": str(exc),
+                "fallback_or_degraded": True,
+            }
+
+    cache_data = getattr(provider, "cache_data", {}) or {}
+    try:
+        symbol_count = len(cache_data)
+    except TypeError:
+        symbol_count = 0
+    return {
+        "ok": bool(symbol_count),
+        "active_layer": "memory_cache" if symbol_count else "unknown",
+        "data_status": "ok" if symbol_count else "unknown",
+        "memory_symbol_count": symbol_count,
+        "fallback_or_degraded": not bool(symbol_count),
+    }
+
+
 def _f5_scheduler_snapshot(main_window) -> dict[str, Any]:
     workspace = getattr(main_window, "_workspace", None)
     scheduler = getattr(workspace, "_f5_refresh_scheduler", None)
@@ -529,6 +568,7 @@ def collect_runtime_health(main_window=None) -> dict[str, Any]:
         "event_bus": _event_bus_snapshot(),
         "webengine": _webengine_snapshot(),
         "quotes": _quote_snapshot(root) if root is not None else {},
+        "market_data": _market_data_snapshot(root) if root is not None else {},
         "f5_refresh": _f5_scheduler_snapshot(root) if root is not None else {},
         "f5_cache": _f5_cache_snapshot(),
         "data_lineage": _workspace_lineage(root) if root is not None else [],

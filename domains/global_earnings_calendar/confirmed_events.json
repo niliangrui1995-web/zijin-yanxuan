@@ -323,6 +323,24 @@
       "original_timezone": "America/New_York",
       "call_time_source_url": "https://ir.arteris.com/events-and-presentations",
       "call_time_source_type": "official_ir_event"
+    },
+    {
+      "company": "Siemens EDA",
+      "ticker": "SIE.DE",
+      "sector": "EDA与底层IP",
+      "report_date": "2026-05-13",
+      "fiscal_period": "Q2 FY2026",
+      "time_label": "07:00 CEST release; 09:30 CEST analyst conference webcast",
+      "beijing_time": "2026-05-13 15:30",
+      "status": "confirmed",
+      "source": "confirmed",
+      "priority": "normal",
+      "conference_url": "https://press.siemens.com/global/de/event/geschaeftszahlen-fuer-das-2-quartal-2026",
+      "market": "DE",
+      "original_call_time_text": "May 13, 2026: Q2 FY2026 results at 07:00 CEST; journalist call at 08:00 CEST; analyst conference at 09:30 CEST, live webcast",
+      "original_timezone": "Europe/Berlin",
+      "call_time_source_url": "https://press.siemens.com/global/de/event/geschaeftszahlen-fuer-das-2-quartal-2026",
+      "call_time_source_type": "official_ir_webcast"
     }
   ]
 }

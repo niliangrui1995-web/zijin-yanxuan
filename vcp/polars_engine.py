@@ -452,14 +452,31 @@ def save_cache_parquet(cache_data: dict, date_str: str) -> bool:
     del frames
     _gc.collect()
 
+    row_count = int(pl_df.height)
+    symbol_count = int(pl_df['_code'].n_unique()) if '_code' in pl_df.columns else len(cache_data)
     with _PARQUET_CACHE_LOCK:
         _atomic_parquet_write(pl_df, parquet_path, compression='zstd')
         meta = pl.DataFrame({
             'date': [date_str],
-            'n_stocks': [len(cache_data)],
+            'n_stocks': [symbol_count],
             'version': [3],
         })
         _atomic_parquet_write(meta, meta_path, compression='zstd')
+
+    try:
+        from infra.market_data.market_data_warehouse import get_default_market_data_warehouse
+
+        status = get_default_market_data_warehouse().register_existing_parquet(
+            trade_date=date_str,
+            source="vipdoc",
+            source_version="vcp.polars_engine.save_cache_parquet:v3",
+            row_count=row_count,
+            symbol_count=symbol_count,
+        )
+        if not status.ok:
+            _log.warning(f"[warehouse] manifest update skipped: {status.data_status} {status.error}")
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        _log.warning(f"[warehouse] manifest update failed: {exc}")
     del pl_df
     _gc.collect()
 
@@ -635,4 +652,3 @@ def build_sector_rps_pl(
     elapsed = time.time() - t0
     _log.info(f"[加速引擎] 板块 RPS 计算完成(纯Polars): {len(result)} 个板块 (耗时 {elapsed:.2f}s)")
     return dict(result)
-

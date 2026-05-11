@@ -71,17 +71,13 @@ class RPSPrecomputer:
             today_str = datetime.date.today().strftime('%Y%m%d')
             skip_stage1 = False
             try:
-                from vcp.polars_engine import load_cache_parquet
-                cached = load_cache_parquet()
-                if cached:
-                    cached_data, cached_date = cached
-                    if cached_date == today_str and len(cached_data) > 2000:
-                        with data_provider.cache_lock:
-                            data_provider.cache_data = cached_data
-                        codes_dict = data_provider._get_codes_from_vipdoc()
-                        data_provider.code2name = codes_dict
-                        _log_and_status(f"[F5] 阶段1/3: ⚡ 断点续算 — 检测到今日缓存 ({len(cached_data)} 只)，跳过重读")
-                        skip_stage1 = True
+                cached_date = data_provider.load_cache_from_disk()
+                cached_data = getattr(data_provider, "cache_data", {}) or {}
+                if cached_date == today_str and len(cached_data) > 2000:
+                    codes_dict = data_provider._get_codes_from_vipdoc()
+                    data_provider.code2name = codes_dict
+                    _log_and_status(f"[F5] stage1/3: resume from local warehouse cache ({len(cached_data)} symbols)")
+                    skip_stage1 = True
             except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as e:
                 log.info(f"[F5] 断点续算检测失败(不影响全量重读): {e}")
 
@@ -112,8 +108,10 @@ class RPSPrecomputer:
 
                     try:
                         from vcp.polars_engine import save_cache_parquet
-                        save_cache_parquet(data_provider.cache_data, today_str)
-                        log.info("[F5] 阶段1 断点存档完成 — 下次 F5 可跳过重读")
+                        if save_cache_parquet(data_provider.cache_data, today_str):
+                            log.info("[F5] stage1 checkpoint saved; next F5 can resume")
+                        else:
+                            log.warning("[F5] stage1 checkpoint save returned false")
                     except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
                         log.warning(f"[F5] 断点存档失败(不影响后续): {e}")
 

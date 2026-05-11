@@ -530,11 +530,11 @@ class TdxDataProviderHistoryMixin:
         parquet_saved = False
         try:
             from vcp.polars_engine import save_cache_parquet
-            save_cache_parquet(self.cache_data, today)
-            parquet_saved = True
-            remove_cache_file(self.legacy_cache_file)
-            remove_cache_file(self.legacy_cache_file + '.corrupted')
-            remove_cache_file(self.legacy_fallback_cache_file)
+            parquet_saved = bool(save_cache_parquet(self.cache_data, today))
+            if parquet_saved:
+                remove_cache_file(self.legacy_cache_file)
+                remove_cache_file(self.legacy_cache_file + '.corrupted')
+                remove_cache_file(self.legacy_fallback_cache_file)
         except ImportError:
             _log.error("[数据中台] polars 未安装，无法写入 Parquet 缓存")
         except (OSError, RuntimeError, TypeError, ValueError) as e:
@@ -553,7 +553,44 @@ class TdxDataProviderHistoryMixin:
                 if isinstance(normalized_df, pd.DataFrame) and normalized_df is not df:
                     self.cache_data[code] = normalized_df
                     df = normalized_df
+                try:
+                    self._last_market_data_source_status = {
+                        "ok": True,
+                        "active_layer": "memory_cache",
+                        "data_status": "ok",
+                        "symbol_count": len(self.cache_data),
+                        "row_count": len(df) if hasattr(df, "__len__") else 0,
+                        "fallback_reason": "",
+                    }
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    pass
                 return df
+
+        warehouse = None
+        warehouse_getter = getattr(self, "_get_market_data_warehouse", None)
+        if callable(warehouse_getter):
+            warehouse = warehouse_getter()
+        else:
+            warehouse = getattr(self, "market_data_warehouse", None)
+        if warehouse is not None:
+            result = warehouse.read_symbol(code)
+            if result.status.ok and result.data is not None:
+                warehouse_df = ensure_pandas_dataframe(result.data)
+                if isinstance(warehouse_df, pd.DataFrame) and len(warehouse_df) > 0:
+                    with self.cache_lock:
+                        cached_df = self.cache_data.get(code)
+                        if cached_df is None:
+                            self.cache_data[code] = warehouse_df
+                            cached_df = warehouse_df
+                    try:
+                        self._last_market_data_source_status = result.status.to_dict()
+                    except (AttributeError, RuntimeError, TypeError, ValueError):
+                        pass
+                    return cached_df
+            try:
+                self._last_market_data_source_status = result.status.to_dict()
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                pass
 
         # K 线窗口等历史图表不能依赖“缓存先被别处预热”这一前置条件；
         # 当内存缓存为空时，直接回退读取本地通达信日线并写回缓存。
@@ -564,9 +601,40 @@ class TdxDataProviderHistoryMixin:
                     cached_df = self.cache_data.get(code)
                     if cached_df is None:
                         self.cache_data[code] = local_df
+                        try:
+                            self._last_market_data_source_status = {
+                                "ok": True,
+                                "active_layer": "vipdoc_fallback",
+                                "data_status": "ok",
+                                "symbol_count": len(self.cache_data),
+                                "row_count": len(local_df),
+                                "fallback_reason": "warehouse_unavailable_or_symbol_missing",
+                            }
+                        except (AttributeError, RuntimeError, TypeError, ValueError):
+                            pass
                         return local_df
+                    try:
+                        self._last_market_data_source_status = {
+                            "ok": True,
+                            "active_layer": "memory_cache_after_vipdoc",
+                            "data_status": "ok",
+                            "symbol_count": len(self.cache_data),
+                            "row_count": len(cached_df) if hasattr(cached_df, "__len__") else 0,
+                            "fallback_reason": "",
+                        }
+                    except (AttributeError, RuntimeError, TypeError, ValueError):
+                        pass
                     return cached_df
 
+        try:
+            self._last_market_data_source_status = {
+                "ok": False,
+                "active_layer": "unavailable",
+                "data_status": "history_unavailable",
+                "fallback_reason": "warehouse_and_vipdoc_unavailable",
+            }
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
         return None
 
     def get_data_fresh_for_chart(self, code, force_sync=False):

@@ -99,6 +99,8 @@ class TdxDataProvider(TdxDataProviderHistoryMixin, TdxDataProviderRealtimeMixin)
         self._local_gbbq_loaded = False
         self._local_gbbq_lock = threading.RLock()
         self.server_pool = []
+        self.market_data_warehouse = self._get_market_data_warehouse()
+        self._last_market_data_source_status = {}
 
         self._adjustment_service = AdjustmentService(self)
         self._local_history_provider = LocalHistoryProvider(self, logger=_log)
@@ -133,6 +135,77 @@ class TdxDataProvider(TdxDataProviderHistoryMixin, TdxDataProviderRealtimeMixin)
             service = RealtimeQuoteProvider(self, logger=_log)
             self._realtime_quote_provider = service
         return service
+
+    def _get_market_data_warehouse(self):
+        warehouse = getattr(self, "market_data_warehouse", None)
+        if warehouse is not None:
+            return warehouse
+        try:
+            from infra.market_data.market_data_warehouse import get_default_market_data_warehouse
+
+            warehouse = get_default_market_data_warehouse()
+            self.market_data_warehouse = warehouse
+            return warehouse
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            _log.debug(f"[data-warehouse] unavailable: {exc}")
+            return None
+
+    def get_market_data_source_status(self) -> dict:
+        cache_data = getattr(self, "cache_data", {}) or {}
+        try:
+            memory_row_count = sum(len(df) for df in cache_data.values() if df is not None)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            memory_row_count = 0
+
+        last_status = dict(getattr(self, "_last_market_data_source_status", {}) or {})
+        warehouse = self._get_market_data_warehouse()
+        warehouse_status = {}
+        if warehouse is not None:
+            try:
+                warehouse_status = warehouse.current_status(validate_parquet=False).to_dict()
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                warehouse_status = {
+                    "ok": False,
+                    "data_status": "warehouse_status_error",
+                    "error": str(exc),
+                    "fallback_reason": "warehouse_status_error",
+                }
+
+        if cache_data:
+            active_layer = last_status.get("active_layer") if last_status.get("ok") else "memory_cache"
+            active_layer = active_layer or "memory_cache"
+            data_status = "ok"
+            ok = True
+        elif warehouse_status.get("ok"):
+            active_layer = "parquet_sqlite_warehouse"
+            data_status = str(warehouse_status.get("data_status") or "ok")
+            ok = True
+        elif getattr(self, "tdx_vipdoc", None):
+            active_layer = "vipdoc_fallback_ready"
+            data_status = str(warehouse_status.get("data_status") or "warehouse_unavailable")
+            ok = False
+        else:
+            active_layer = "unavailable"
+            data_status = str(warehouse_status.get("data_status") or "unavailable")
+            ok = False
+
+        return {
+            "ok": ok,
+            "active_layer": active_layer,
+            "data_status": data_status,
+            "memory_symbol_count": len(cache_data),
+            "memory_row_count": memory_row_count,
+            "warehouse": warehouse_status,
+            "last_read": last_status,
+            "vipdoc_available": bool(getattr(self, "tdx_vipdoc", None)),
+            "vipdoc_path": str(getattr(self, "tdx_vipdoc", "") or ""),
+            "fallback_or_degraded": not ok or bool(last_status.get("fallback_reason")),
+            "fallback_reason": str(
+                last_status.get("fallback_reason")
+                or warehouse_status.get("fallback_reason")
+                or ""
+            ),
+        }
 
     def _prune_rt_quote_cache(self, now: float | None = None) -> int:
         return prune_rt_quote_cache(self, now=now)

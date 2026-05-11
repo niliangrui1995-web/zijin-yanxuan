@@ -43,6 +43,20 @@ def _fake_main_window():
             "cooldown_until": 0.0,
             "last_error": "",
         },
+        get_market_data_source_status=lambda: {
+            "ok": True,
+            "active_layer": "parquet_sqlite_warehouse",
+            "data_status": "ok",
+            "memory_symbol_count": 2,
+            "memory_row_count": 4,
+            "warehouse": {
+                "trade_date": "2026-05-08",
+                "symbol_count": 2,
+                "row_count": 4,
+            },
+            "fallback_or_degraded": False,
+            "fallback_reason": "",
+        },
         _rt_eastmoney_cooldown_until=0.0,
         _rt_eastmoney_last_error="",
     )
@@ -71,6 +85,8 @@ def test_collect_runtime_health_includes_core_sections(qt_application):
     assert "count" in report["webengine"]
     assert report["quotes"]["request_stats"]["recent_batch_count"] == 1
     assert report["quotes"]["provider_degraded"] is False
+    assert report["market_data"]["active_layer"] == "parquet_sqlite_warehouse"
+    assert report["market_data"]["warehouse"]["row_count"] == 4
     assert "cache_version" in report["f5_cache"]
     assert report["data_lineage"][0]["key"] == "stock_candidates"
     assert report["data_lineage"][0]["source"] == "unit-test-cache"

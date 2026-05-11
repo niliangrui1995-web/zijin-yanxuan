@@ -16,7 +16,7 @@
 | K 线窗口 | `ui/kline_*.py`、`ui/components/kline_window_manager.py` | K 线窗口生命周期、图表 payload、前后切换、摘要卡片 | `KLineWindowManager`、`build_kline_open_request` |
 | 行情快照 | `domains/quotes/`、`core/global_store.py` | quote payload 标准化、深合并、市值补齐、全局快照存储和广播 | `publish_rt_quotes`、`GlobalStore` |
 | 实时行情抓取 | `ui/workers/central_quotes_worker.py`、`infra/market_data/realtime_quote_provider.py` | 中央轮询、单飞行任务、失败冷却、provider 运行态保护 | `CentralQuotesService`、`RealtimeQuoteProvider` |
-| 本地行情数据 | `infra/market_data/`、`vcp/data_provider.py` | 通达信历史数据、复权、名称映射、运行时缓存 | `TdxDataProvider` |
+| 本地行情数据 | `infra/market_data/`、`vcp/data_provider.py`、`vcp/polars_engine.py` | Parquet/SQLite-first 仓库、SQLite manifest、通达信历史数据生产/fallback、复权、名称映射、运行时缓存 | `TdxDataProvider`、`MarketDataWarehouse`、`WarehouseManifest` |
 | VCP/RPS 扫描 | `domains/scan/`、`app/services/scan_engine_facade.py` | 指标计算、RPS、VCP 条件、待突破池、盘中快速判断 | `VCPEngine`、`IndicatorService`、`BreakoutMonitorService` |
 | 业绩异动 | `domains/earnings/`、`ui/tabs/earnings_tab.py` | 业绩数据扫描、去重、调度和页面展示 | `EarningsScheduler`、`EarningsTab` |
 | 基金持仓 | `domains/fund_holdings/`、`ui/tabs/fund_holdings_tab.py` | 基金/QFII 持仓同步、存储、对比、信号输出 | `fund_holdings_store`、`fund_holdings_sync_service` |
@@ -35,6 +35,8 @@
 - UI 新交互优先落在 `ui/tabs/`、`ui/components/` 或 `ui/workspaces/`，跨层依赖通过 `app.services` 暴露。
 - 新领域规则优先落在 `domains/`，不要塞进主窗口或 Tab 私有方法。
 - 新外部数据源、文件读写、进程调用优先落在 `infra/`。
+- 大规模历史行情明细优先落在 `data/Cache/parquet/` 的 Parquet 文件；索引、manifest、健康状态和数据质量标记落在 `data/vcp_hunter.db` 的 SQLite 表，不要把明细行情塞进 SQLite。
+- 本地行情读写规则优先维护 `infra/market_data/market_data_warehouse.py` 和 `infra/market_data/warehouse_manifest.py`；`vcp/polars_engine.py` 只保留兼容加速入口和 Parquet 物理写入兼容。
 - 新的实时行情字段优先扩展 `domains/quotes/`，由表格模型统一消费。
 - 新后台任务必须在 `infra/tasks/typed_task_registry.py` 注册，UI 层不要硬编码 task id。
 - 新可选运行能力应注册到 `infra/features/service_toggle_registry.py`，不要把布尔开关散落在 UI 或启动编排器中。

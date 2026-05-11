@@ -12,10 +12,10 @@
 
 - 入口：`vcp_hunter_qt.pyw`
 - UI 框架：PyQt6、PyQt6-WebEngine、QSS、qdarkstyle
-- 本地历史数据：通达信 `vipdoc`
+- 本地历史数据：Parquet/SQLite-first 本地仓库，通达信 `vipdoc` 保留为生产源和 fallback
 - 盘中行情：东方财富 HTTP，异常时回退新浪批量报价
 - 海外/亚洲辅助数据：AkShare、yfinance、`curl_cffi`
-- 本地持久化：`data/Cache/`、`data/vcp_hunter.db`、QSettings
+- 本地持久化：`data/Cache/`、`data/vcp_hunter.db`、QSettings；大规模日线明细放 Parquet，索引/状态/健康信息放 SQLite
 
 架构判断必须围绕这个形态展开。当前项目不适合按 Web 后端、微服务或云原生服务拆分来评估。
 
@@ -142,8 +142,18 @@ QuoteUniverseService.collect_realtime_quote_codes()
 - `LocalHistoryProvider` 读取本地通达信日线。
 - `AdjustmentService` 处理复权和股本变更相关逻辑。
 - `RealtimeQuoteProvider` 管理实时请求、冷却、重连、防线程异常和运行态统计。
+- `MarketDataWarehouse` 负责 Parquet/SQLite-first 的全市场和单票读取、写入登记、schema 与 manifest 校验。
+- `WarehouseManifest` 在 `data/vcp_hunter.db` 中维护 `market_data_manifest`，只记录 dataset、trade_date、schema_version、source、parquet_path、symbol_count、row_count、updated_at、data_status、error 等状态字段，不保存大规模行情明细。
 - `provider_ports.py` 给测试和服务层提供更窄的数据端口视图。
 - `vcp/data_provider.py` 是兼容入口，真实 provider 子服务已经迁入 `infra/market_data`。
+
+本地历史数据读取顺序为：
+
+1. `load_cache_from_disk()` 优先通过 `MarketDataWarehouse.read_full_market()` 读取带 SQLite manifest 的 `data/Cache/parquet/market_data.parquet`。
+2. 如果 manifest 缺失但旧 Parquet 可读，会兼容加载旧 `vcp.polars_engine.load_cache_parquet()`，并补登记 manifest，完成平滑迁移。
+3. `TdxDataProvider.get_data(code)` 优先读内存 `cache_data`，其次读仓库单票 Parquet，最后回退 `vipdoc`。
+4. `sync_market_data()` 和 F5 重新读取 vipdoc 后仍写入 Parquet；`save_cache_parquet()` 成功后同步更新 SQLite manifest。
+5. 缺 manifest、缺 Parquet、schema 不兼容、manifest 与 Parquet 行数/股票数不匹配时，仓库返回明确状态并走 fallback，不让 UI 崩溃。
 
 ### 7.2 VCP 与 RPS
 
@@ -209,6 +219,7 @@ MainWindowQT._action_refresh_f5()
 关键约束：
 
 - F5 后先刷新核心行情快照，再分帧回灌当前/可见表格，避免一次性阻塞 UI。
+- 阶段 1 优先尝试从 Parquet/SQLite 本地仓库断点续算；全量重读时仍从 `vipdoc` 生产日线数据，然后写回 Parquet 并更新 SQLite manifest。
 - 支持 `_on_cache_reload_completed` 或 `_schedule_context_refresh` 的 Tab 可以在缓存完成信号后自己回读本地最新快照。
 - 情报源页面的数据刷新由 `WorkspaceFacade.refresh_information_sources_after_f5()` 汇总触发。
 - 后台任务 ID 使用 `WINDOW_F5_PRECOMPUTE`，不要在 UI 层硬编码字符串。
@@ -259,7 +270,7 @@ MainWindowQT._action_refresh_f5()
 
 当前仓库已经把临时性能探针逐步产品化：
 
-- `infra/diagnostics/runtime_health.py` 采集后台任务、Timer、事件订阅、线程、WebEngine 子进程、行情请求、F5 缓存和关键数据血缘。
+- `infra/diagnostics/runtime_health.py` 采集后台任务、Timer、事件订阅、线程、WebEngine 子进程、行情请求、F5 缓存、本地市场数据源状态和关键数据血缘。
 - `app/services/runtime_health_service.py` 给 UI 暴露采集和导出入口。
 - `ui/components/runtime_health_dialog.py` 在系统菜单中提供运行时健康面板。
 - `scripts/runtime_health_stability_suite.py` 可以执行短模式或 30/60 分钟 soak。
@@ -267,12 +278,15 @@ MainWindowQT._action_refresh_f5()
 
 `TabDataLineageService` 是后续稳定性治理的重要接口。新数据页应尽量提供 `get_data_lineage()`，说明数据来源、缓存、是否联网、是否降级、更新时间、行数和签名。
 
+runtime health 的 `market_data` 段会展示当前 active layer，例如 `memory_cache`、`parquet_sqlite_warehouse`、`legacy_parquet_bootstrap`、`vipdoc_fallback_ready` 或 `vipdoc_fallback`，并包含 trade_date、row_count、symbol_count、是否降级以及降级原因。
+
 ## 12. 本地数据和运行时产物
 
 运行时会生成或维护：
 
 - `data/Cache/`：RPS、盘中监控、亚洲市场、财务/股本、全球财报日历等缓存
-- `data/vcp_hunter.db`：SQLite 数据，例如交易日、基金持仓、扫描缓存等持久化数据
+- `data/Cache/parquet/market_data.parquet`：全市场历史日线明细；`meta.parquet` 保留兼容元数据
+- `data/vcp_hunter.db`：SQLite 数据，例如交易日、基金持仓、扫描缓存，以及 `market_data_manifest` 仓库 manifest
 - `data/logs/`：应用日志
 - `data/crash_report.log`：`faulthandler` 崩溃日志
 - `tmp/runtime_health_*`：运行时健康报告和稳定性采样
@@ -300,6 +314,7 @@ MainWindowQT._action_refresh_f5()
 - K 线上下文：`tests/test_kline_open_service.py`、`tests/test_kline_summary_cards.py`
 - 工作区聚合：`tests/test_workspace_quote_codes.py`、`tests/test_stock_candidate_tab.py`
 - 运行时健康：`tests/test_runtime_health.py`、`tests/test_perf_probe_scripts.py`、`tests/test_perf_budget_check.py`
+- 本地行情仓库：`tests/test_market_data_warehouse_manifest.py`、`tests/test_market_data_warehouse.py`
 
 PyQt 相关测试优先使用 offscreen smoke test。WebEngine 生命周期检查需要原生 Qt/可视桌面时，应使用专门脚本，不要把不稳定窗口自动化混入普通单元测试。
 

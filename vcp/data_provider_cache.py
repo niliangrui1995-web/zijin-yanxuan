@@ -78,8 +78,55 @@ def downcast_memory(provider, *, logger):
         logger.info(f"[缓存优化] 已压缩 {count} 只标的数据类型，节省内存")
 
 
+def _get_market_data_warehouse(provider):
+    warehouse = getattr(provider, "market_data_warehouse", None)
+    if warehouse is not None:
+        return warehouse
+    try:
+        from infra.market_data.market_data_warehouse import get_default_market_data_warehouse
+
+        warehouse = get_default_market_data_warehouse()
+        setattr(provider, "market_data_warehouse", warehouse)
+        return warehouse
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+        return None
+
+
+def _set_market_data_source_status(provider, status, *, active_layer: str | None = None) -> None:
+    if hasattr(status, "to_dict"):
+        payload = status.to_dict()
+    else:
+        payload = dict(status or {})
+    if active_layer:
+        payload["active_layer"] = active_layer
+    try:
+        provider._last_market_data_source_status = payload
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        pass
+
+
 def load_cache_from_disk(provider, *, logger) -> str:
     """Load disk cache into memory and return the cache date string."""
+    warehouse = _get_market_data_warehouse(provider)
+    if warehouse is not None:
+        result = warehouse.read_full_market()
+        _set_market_data_source_status(provider, result.status)
+        if result.status.ok and result.data:
+            with provider.cache_lock:
+                provider.cache_data = result.data
+            remove_cache_file(provider.legacy_cache_file)
+            remove_cache_file(provider.legacy_cache_file + ".corrupted")
+            remove_cache_file(provider.legacy_fallback_cache_file)
+            logger.info(
+                f"\n[data-warehouse] Parquet/SQLite loaded: {len(provider.cache_data)} symbols "
+                f"(trade_date: {result.status.trade_date})"
+            )
+            return result.status.trade_date
+        logger.info(
+            f"[data-warehouse] unavailable, trying legacy parquet fallback: "
+            f"{result.status.data_status} {result.status.error}"
+        )
+
     try:
         from vcp.polars_engine import load_cache_parquet
 
@@ -89,6 +136,25 @@ def load_cache_from_disk(provider, *, logger) -> str:
             if loaded_data and isinstance(loaded_data, dict):
                 with provider.cache_lock:
                     provider.cache_data = loaded_data
+                if warehouse is not None:
+                    status = warehouse.register_existing_parquet(
+                        trade_date=last_date,
+                        source="legacy_parquet",
+                        source_version="vcp.polars_engine.load_cache_parquet:v3",
+                    )
+                    active_layer = "legacy_parquet_bootstrap" if status.ok else "legacy_parquet_without_manifest"
+                    _set_market_data_source_status(provider, status, active_layer=active_layer)
+                else:
+                    _set_market_data_source_status(
+                        provider,
+                        {
+                            "ok": True,
+                            "trade_date": last_date,
+                            "symbol_count": len(provider.cache_data),
+                            "data_status": "ok",
+                        },
+                        active_layer="legacy_parquet_without_manifest",
+                    )
                 remove_cache_file(provider.legacy_cache_file)
                 remove_cache_file(provider.legacy_cache_file + ".corrupted")
                 remove_cache_file(provider.legacy_fallback_cache_file)
