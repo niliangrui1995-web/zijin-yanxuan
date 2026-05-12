@@ -3,6 +3,7 @@ param(
     [string]$OutputName = "",
     [switch]$OneFile,
     [switch]$SkipInstallPyInstaller,
+    [string]$PyInstallerRequirement = "pyinstaller==6.20.0",
     [switch]$DryRun
 )
 
@@ -116,7 +117,7 @@ if ($DryRun) {
 }
 
 if (-not $SkipInstallPyInstaller) {
-    & $PythonExe -m pip install --disable-pip-version-check --upgrade pyinstaller
+    & $PythonExe -m pip install --disable-pip-version-check --upgrade $PyInstallerRequirement
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to install or upgrade PyInstaller."
     }

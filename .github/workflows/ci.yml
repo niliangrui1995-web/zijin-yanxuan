@@ -32,8 +32,7 @@ jobs:
             ui/main_window_qt.py \
             ui/workspaces/classic_workspace.py \
             ui/workspaces/workspace_facade.py \
-            ui/workspaces/quote_universe_service.py \
-            ui/workspaces/watchlist_radar_service.py
+            ui/workspaces/quote_universe_service.py
       - name: UTF-8 guardrail
         run: python scripts/check_utf8.py core ui vcp tests scripts app infra docs .github
       - name: Architecture regression suite

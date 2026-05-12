@@ -4,8 +4,8 @@
 from infra.market_data.adjustment_service import AdjustmentService
 from infra.market_data.local_history_provider import LocalHistoryProvider
 from infra.market_data.market_data_warehouse import (
-    MARKET_DATASET,
     MARKET_DATA_SCHEMA_VERSION,
+    MARKET_DATASET,
     MarketDataWarehouse,
     WarehouseReadResult,
     WarehouseStatus,

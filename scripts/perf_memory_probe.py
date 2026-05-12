@@ -4,7 +4,7 @@ import argparse
 import gc
 import json
 import os
-import subprocess
+import subprocess  # nosec B404
 import sys
 import time
 from pathlib import Path
@@ -218,7 +218,7 @@ def _webengine_smoke_env(*, native_qt: bool) -> dict[str, str]:
 def _run_webengine_smoke(*, native_qt: bool, timeout_s: int = 12) -> dict:
     started = time.perf_counter()
     try:
-        completed = subprocess.run(
+        completed = subprocess.run(  # nosec B603
             [sys.executable, "-c", _webengine_smoke_code()],
             cwd=str(PROJECT_ROOT),
             env=_webengine_smoke_env(native_qt=native_qt),

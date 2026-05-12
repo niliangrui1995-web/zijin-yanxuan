@@ -649,6 +649,8 @@ class FundHoldingsStore:
     def _quarter_filter_clause(column_name: str, quarter_keys: set[str]) -> tuple[str, tuple[str, ...]]:
         if not quarter_keys:
             return "", ()
+        if column_name != "quarter_key":
+            raise ValueError(f"unsupported quarter filter column: {column_name}")
         placeholders = ", ".join("?" for _ in quarter_keys)
         return f" AND {column_name} IN ({placeholders})", tuple(sorted(quarter_keys))
 
@@ -660,10 +662,7 @@ class FundHoldingsStore:
         quarter_params: tuple[str, ...] = ()
         if normalized_quarters is not None:
             quarter_clause, quarter_params = self._quarter_filter_clause("quarter_key", normalized_quarters)
-        return [
-            dict(row)
-            for row in self._store.fetch_all(
-                f"""
+        query = """
                 SELECT
                     subject_code, subject_name, subject_type, quarter_key, compare_quarter_key, end_date,
                     stock_code, stock_name, change_type, ratio_label, holders_count,
@@ -676,9 +675,16 @@ class FundHoldingsStore:
                     latest_source_update, sort_quarter, sort_value
                 FROM fh_change_cache
                 WHERE subject_code != ?
-                {quarter_clause}
+                """
+        if quarter_clause:
+            query += quarter_clause
+        query += """
                 ORDER BY sort_quarter DESC, sort_value DESC, stock_code ASC
-                """,
+                """
+        return [
+            dict(row)
+            for row in self._store.fetch_all(
+                query,
                 (SUBJECT_QFII["subject_code"], *quarter_params),
             )
             if is_mainland_security_code(row["stock_code"])
@@ -697,19 +703,23 @@ class FundHoldingsStore:
         quarter_params: tuple[str, ...] = ()
         if query_quarters is not None:
             quarter_clause, quarter_params = self._quarter_filter_clause("quarter_key", query_quarters)
-        raw_rows = [
-            dict(row)
-            for row in self._store.fetch_all(
-                f"""
+        query = """
                 SELECT
                     subject_code, quarter_key, end_date, stock_code, stock_name, holder_name, holder_rank,
                     hold_num_shares, hold_market_value_cny, hold_ratio_pct, free_hold_ratio_pct,
                     update_date, raw_json
                 FROM fh_raw_qfii
                 WHERE subject_code = ?
-                {quarter_clause}
+                """
+        if quarter_clause:
+            query += quarter_clause
+        query += """
                 ORDER BY quarter_key DESC, stock_code ASC, holder_rank ASC, holder_name ASC
-                """,
+                """
+        raw_rows = [
+            dict(row)
+            for row in self._store.fetch_all(
+                query,
                 (SUBJECT_QFII["subject_code"], *quarter_params),
             )
             if is_mainland_security_code(row["stock_code"])

@@ -14,6 +14,7 @@
 
 import argparse
 import importlib
+import importlib.util
 import json
 import logging
 import math
@@ -34,10 +35,33 @@ from vcp.fetchers.yf_session import (
 # Why: 行业字典暂未收入本项目工程，通过项目根目录向上推导兄弟目录，避免硬编码特定机器的绝对路径
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _PIPELINE_DIR = os.path.join(os.path.dirname(_PROJECT_ROOT), "每日战报", "每日战报")
-if os.path.isdir(_PIPELINE_DIR) and _PIPELINE_DIR not in sys.path:
-    sys.path.insert(0, _PIPELINE_DIR)
+_PIPELINE_INDUSTRY_DICT = os.path.join(_PIPELINE_DIR, "industry_dict.py")
 
-from industry_dict import OLIGARCH_DICT, VANGUARD_TICKERS  # noqa: E402
+
+def _load_industry_module():
+    module = sys.modules.get("industry_dict")
+    if module is not None:
+        return module
+    try:
+        return importlib.import_module("industry_dict")
+    except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
+        pass
+    if not os.path.isfile(_PIPELINE_INDUSTRY_DICT):
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location("_zijin_external_industry_dict", _PIPELINE_INDUSTRY_DICT)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
+        return None
+
+
+_industry_module = _load_industry_module()
+OLIGARCH_DICT = getattr(_industry_module, "OLIGARCH_DICT", {}) if _industry_module is not None else {}
+VANGUARD_TICKERS = getattr(_industry_module, "VANGUARD_TICKERS", {}) if _industry_module is not None else {}
 
 logging.basicConfig(
     level=logging.INFO,
@@ -132,9 +156,8 @@ def _ensure_industry_mappings_loaded() -> None:
     if OLIGARCH_DICT and VANGUARD_TICKERS:
         return
 
-    try:
-        industry_module = importlib.import_module("industry_dict")
-    except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
+    industry_module = _load_industry_module()
+    if industry_module is None:
         return
 
     real_oligarch = getattr(industry_module, "OLIGARCH_DICT", None)

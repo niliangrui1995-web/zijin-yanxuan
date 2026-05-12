@@ -148,6 +148,25 @@ def _event_receiver_trend(samples: list[dict]) -> dict:
     return trend
 
 
+def disable_rt_monitor_auto_start(workspace) -> dict:
+    tab = _loaded_tab(workspace, "rt_monitor")
+    if tab is None:
+        return {"disabled": False, "reason": "rt_monitor_not_loaded"}
+    timer = getattr(tab, "_auto_timer", None)
+    if timer is None or not hasattr(timer, "stop"):
+        return {"disabled": False, "reason": "auto_timer_unavailable"}
+    try:
+        timer.stop()
+    except (RuntimeError, TypeError, ValueError) as exc:
+        return {"disabled": False, "reason": f"timer_stop_failed:{exc.__class__.__name__}"}
+    try:
+        tab._manual_stop_requested = True
+        tab._manual_stop_trade_date = tab._manual_stop_reference_date()
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        pass
+    return {"disabled": True, "reason": "probe_isolation"}
+
+
 def _loaded_info_source_keys(workspace) -> set[str]:
     tab_specs = getattr(workspace, "tab_specs", None)
     specs = list(tab_specs() or []) if callable(tab_specs) else []
@@ -155,9 +174,30 @@ def _loaded_info_source_keys(workspace) -> set[str]:
     for spec in specs:
         key = str(spec.get("key") or "").strip()
         group = str(spec.get("group") or "").strip()
+        if not spec.get("loaded"):
+            continue
         if key and group == INFO_SOURCE_GROUP:
             keys.add(key)
     return keys
+
+
+def _effective_probe_tabs(tabs: tuple[str, ...], *, isolate_info_source_refresh: bool) -> tuple[str, ...]:
+    if not isolate_info_source_refresh:
+        return tabs
+    return tuple(tab for tab in tabs if tab not in INFO_SOURCE_TAB_KEYS)
+
+
+def disable_information_source_refresh_after_f5(workspace) -> dict:
+    if workspace is None:
+        return {"disabled": False, "reason": "workspace_unavailable"}
+    original = getattr(workspace, "refresh_information_sources_after_f5", None)
+    if not callable(original):
+        return {"disabled": False, "reason": "refresh_method_unavailable"}
+    try:
+        workspace.refresh_information_sources_after_f5 = lambda: {}
+    except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        return {"disabled": False, "reason": f"patch_failed:{exc.__class__.__name__}"}
+    return {"disabled": True, "reason": "probe_isolation"}
 
 
 def _active_earnings_workers(window) -> list[str]:
@@ -496,7 +536,11 @@ def _force_quote_runtime(args: argparse.Namespace, window) -> None:
 
 
 def run_post_f5_network_probe(args: argparse.Namespace, app: QApplication) -> dict:
-    tabs = tuple(dict.fromkeys(args.tabs or DEFAULT_TABS))
+    requested_tabs = tuple(dict.fromkeys(args.tabs or DEFAULT_TABS))
+    tabs = _effective_probe_tabs(
+        requested_tabs,
+        isolate_info_source_refresh=bool(args.isolate_info_source_refresh),
+    )
     recorder = PostF5NetworkRecorder(stub_quote_provider=args.stub_quote_provider)
     recorder.connect_event_counters()
     recorder.wrap_background_runner()
@@ -515,8 +559,11 @@ def run_post_f5_network_probe(args: argparse.Namespace, app: QApplication) -> di
             "stub_quote_provider": bool(args.stub_quote_provider),
             "force_online": bool(args.force_online),
             "force_quote_refresh_time": bool(args.force_quote_refresh_time),
+            "isolate_rt_monitor_autostart": bool(args.isolate_rt_monitor_autostart),
+            "isolate_info_source_refresh": bool(args.isolate_info_source_refresh),
             "synthetic_quote_codes": list(args.synthetic_quote_codes or []),
             "post_windows_s": list(args.post_windows),
+            "requested_tabs": list(requested_tabs),
             "tabs": list(tabs),
         },
     }
@@ -538,6 +585,10 @@ def run_post_f5_network_probe(args: argparse.Namespace, app: QApplication) -> di
                 timeout_ms=args.tab_timeout_ms,
                 settle_ms=args.tab_settle_ms,
             )
+        if args.isolate_rt_monitor_autostart:
+            report["rt_monitor_auto_start_isolation"] = disable_rt_monitor_auto_start(workspace)
+        if args.isolate_info_source_refresh:
+            report["information_source_refresh_isolation"] = disable_information_source_refresh_after_f5(workspace)
         _force_quote_runtime(args, window)
         recorder.wrap_provider(getattr(window, "data_provider", None))
         recorder.wrap_tab_methods(workspace, tabs)
@@ -609,6 +660,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--stub-quote-provider", action="store_true")
     parser.add_argument("--force-online", action="store_true")
     parser.add_argument("--force-quote-refresh-time", action="store_true")
+    parser.add_argument("--isolate-rt-monitor-autostart", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--isolate-info-source-refresh", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--output", type=Path, default=None)
     return parser.parse_args(argv)
 

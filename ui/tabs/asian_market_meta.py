@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
-import os
+from pathlib import Path
 
 from core.logger import get_logger
 
 log = get_logger(__name__)
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_PIPELINE_INDUSTRY_DICT = _PROJECT_ROOT.parent / "每日战报" / "每日战报" / "industry_dict.py"
 
 
 def get_role_mapping():
@@ -65,11 +67,11 @@ def get_role_mapping():
         '0522.HK': '头部｜先进封装设备',
     }
 
-    dict_path = r"D:\vcp_hunter\每日战报\每日战报\industry_dict.py"
-    if not os.path.exists(dict_path):
+    dict_path = _PIPELINE_INDUSTRY_DICT
+    if not dict_path.exists():
         return roles_mapping
     try:
-        with open(dict_path, 'r', encoding='utf-8') as f:
+        with dict_path.open('r', encoding='utf-8') as f:
             for line in f:
                 if "#" in line and any(
                     marker in line for marker in (".T\"", ".TW\"", ".TWO\"", ".KS\"", ".HK\"")

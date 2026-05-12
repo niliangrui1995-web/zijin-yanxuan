@@ -12,7 +12,11 @@ build/
 
 # Virtual Environment
 venv/
+.venv/
 .env
+
+# This repo uses requirements.txt for runtime setup.
+uv.lock
 
 # Data Cache (large binary files, not versioned)
 data/Cache/*.pkl
@@ -39,6 +43,7 @@ data/special_latest_data.json
 
 # Export (user-generated reports)
 data/Export/
+!data/Export/
 !data/Export/.gitkeep
 
 # IDE

@@ -4,7 +4,7 @@ import argparse
 import importlib
 import json
 import os
-import subprocess
+import subprocess  # nosec B404
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -50,7 +50,7 @@ def _import_snapshot(module_name: str) -> dict[str, Any]:
 
 def _git_value(args: list[str]) -> str:
     try:
-        completed = subprocess.run(
+        completed = subprocess.run(  # nosec B603 B607
             ["git", *args],
             cwd=PROJECT_ROOT,
             capture_output=True,

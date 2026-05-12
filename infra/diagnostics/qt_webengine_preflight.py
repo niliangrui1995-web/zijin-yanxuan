@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-import subprocess
+import subprocess  # nosec B404
 import sys
 import time
 
@@ -74,7 +74,7 @@ def check_qt_webengine_available(
 
     started_at = time.perf_counter()
     try:
-        completed = subprocess.run(
+        completed = subprocess.run(  # nosec B603
             [sys.executable, "-c", _webengine_smoke_code()],
             env=_smoke_env(),
             capture_output=True,

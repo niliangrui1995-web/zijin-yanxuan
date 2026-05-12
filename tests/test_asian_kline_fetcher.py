@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import importlib
+import os
 import sys
 import types
 
@@ -26,6 +27,30 @@ def _load_fetcher_module(monkeypatch):
 
     sys.modules.pop("vcp.fetchers.asian_kline_fetcher", None)
     return importlib.import_module("vcp.fetchers.asian_kline_fetcher")
+
+
+def test_fetcher_imports_without_external_industry_dict(monkeypatch):
+    fake_session = types.ModuleType("vcp.fetchers.yf_session")
+    fake_session.build_yf_session = lambda use_cf_proxy=True: object()
+    fake_session.get_yf_rate_limit_status = lambda: {
+        "active": False,
+        "remaining_sec": 0.0,
+        "reason": "",
+        "until_ts": 0.0,
+    }
+    fake_session.is_yf_rate_limit_error = lambda exc: False
+    fake_session.mark_yf_rate_limited = lambda exc=None, cooldown_sec=None: 0.0
+
+    monkeypatch.delitem(sys.modules, "industry_dict", raising=False)
+    monkeypatch.setitem(sys.modules, "vcp.fetchers.yf_session", fake_session)
+    monkeypatch.setattr(os.path, "isfile", lambda _path: False)
+
+    sys.modules.pop("vcp.fetchers.asian_kline_fetcher", None)
+    fetcher = importlib.import_module("vcp.fetchers.asian_kline_fetcher")
+
+    assert fetcher.OLIGARCH_DICT == {}
+    assert fetcher.VANGUARD_TICKERS == {}
+    assert fetcher.filter_asian_tickers()["TSMC"] == "2330.TW"
 
 
 def test_filter_asian_tickers_prefers_tw_listing_for_tsmc(monkeypatch):

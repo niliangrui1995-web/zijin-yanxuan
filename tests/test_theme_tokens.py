@@ -83,7 +83,7 @@ def test_theme_tokens_expose_terminal_layers_and_toolbar_metrics():
 
 
 def test_ziyao_selection_and_primary_actions_do_not_use_gold_background_tokens():
-    tokens = build_ui_tokens(THEME_ZIYAO, density="鑸掑睍")
+    tokens = build_ui_tokens(THEME_ZIYAO, density="舒展")
     gold_fragments = ("215, 172, 69", "#D7AC45", "#E9C867", "#B78926")
     background_tokens = [
         THEME_ZIYAO["SELECTION_BG"],
@@ -144,7 +144,7 @@ def test_global_qss_uses_density_tokens_for_table_and_controls():
 
 
 def test_ziyao_global_qss_uses_red_primary_button_and_scrollbar_pressed():
-    qss = generate_global_qss(THEME_ZIYAO, density="鑸掑睍")
+    qss = generate_global_qss(THEME_ZIYAO, density="舒展")
     selected_start = qss.index("QTableView::item:selected {")
     selected_end = qss.index("QTableView::item:selected:hover")
     selected_block = qss[selected_start:selected_end]

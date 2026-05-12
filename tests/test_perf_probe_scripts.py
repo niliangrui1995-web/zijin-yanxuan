@@ -1,4 +1,11 @@
-from scripts.perf_round5_probe import summarize_background_tasks, summarize_quote_calls
+from scripts.perf_round5_probe import (
+    _effective_probe_tabs,
+    _loaded_info_source_keys,
+    disable_information_source_refresh_after_f5,
+    disable_rt_monitor_auto_start,
+    summarize_background_tasks,
+    summarize_quote_calls,
+)
 from scripts.runtime_health_stability_suite import (
     _apply_mode_defaults,
     _build_budget_trend,
@@ -120,6 +127,74 @@ def test_round5_background_summary_flags_info_source_tail():
     assert summary["information_source_task_count"] == 1
     assert summary["new_active_task_ids_final"] == ["foreign_block_trade"]
     assert summary["active_earnings_worker_count_final"] == 1
+
+
+def test_round5_probe_can_isolate_rt_monitor_auto_start():
+    class _Timer:
+        def __init__(self):
+            self.stopped = False
+
+        def stop(self):
+            self.stopped = True
+
+    class _RtTab:
+        def __init__(self):
+            self._auto_timer = _Timer()
+            self._manual_stop_requested = False
+            self._manual_stop_trade_date = ""
+
+        @staticmethod
+        def _manual_stop_reference_date():
+            return "2026-05-12"
+
+    tab = _RtTab()
+
+    class _Workspace:
+        def get_loaded_tab(self, key):
+            return tab if key == "rt_monitor" else None
+
+    result = disable_rt_monitor_auto_start(_Workspace())
+
+    assert result == {"disabled": True, "reason": "probe_isolation"}
+    assert tab._auto_timer.stopped is True
+    assert tab._manual_stop_requested is True
+    assert tab._manual_stop_trade_date == "2026-05-12"
+
+
+def test_round5_probe_filters_info_source_tabs_when_isolated():
+    tabs = ("stock_candidates", "scan", "fund_holdings", "watchlist", "earnings")
+
+    assert _effective_probe_tabs(tabs, isolate_info_source_refresh=True) == (
+        "stock_candidates",
+        "watchlist",
+    )
+    assert _effective_probe_tabs(tabs, isolate_info_source_refresh=False) == tabs
+
+
+def test_round5_probe_can_disable_information_source_refresh_after_f5():
+    class _Workspace:
+        def refresh_information_sources_after_f5(self):
+            return {"fund_holdings": True}
+
+    workspace = _Workspace()
+
+    result = disable_information_source_refresh_after_f5(workspace)
+
+    assert result == {"disabled": True, "reason": "probe_isolation"}
+    assert workspace.refresh_information_sources_after_f5() == {}
+
+
+def test_round5_report_lists_only_loaded_info_source_tabs():
+    class _Workspace:
+        @staticmethod
+        def tab_specs():
+            return [
+                {"key": "scan", "group": "情报源", "loaded": False},
+                {"key": "earnings", "group": "情报源", "loaded": True},
+                {"key": "watchlist", "group": "core", "loaded": True},
+            ]
+
+    assert _loaded_info_source_keys(_Workspace()) == {"earnings"}
 
 
 def test_runtime_health_suite_supports_explicit_soak_minutes():
