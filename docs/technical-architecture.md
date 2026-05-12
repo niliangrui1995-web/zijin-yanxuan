@@ -69,6 +69,7 @@ vcp_hunter_qt.pyw
 | `kline_webengine_preflight.py` | 封装 K 线 WebEngine 可用性预检 |
 | `asian_market_service.py` | 封装亚洲市场缓存、yfinance 会话和限流状态 |
 | `runtime_health_service.py` | 对 UI 暴露运行时健康采集和导出 |
+| `ui_diagnostics_service.py` | 对 UI 暴露卡顿探针安装和 `ui_stall_span`，隔离底层 `infra.diagnostics` 实现 |
 | `tab_data_lineage_service.py` | 为关键 Tab 返回统一数据血缘：来源、缓存、是否联网、是否降级、更新时间和签名 |
 | `ui_runtime_service.py` | 当前 UI 运行时总出口，集中导出配置、事件、任务、行情、基金、业绩、财报日历等跨层能力 |
 
@@ -271,6 +272,7 @@ MainWindowQT._action_refresh_f5()
 当前仓库已经把临时性能探针逐步产品化：
 
 - `infra/diagnostics/runtime_health.py` 采集后台任务、Timer、事件订阅、线程、WebEngine 子进程、行情请求、F5 缓存、本地市场数据源状态和关键数据血缘。
+- `infra/diagnostics/ui_stall_probe.py` 记录 UI 事件循环和关键 UI 方法的卡顿跨度；UI 代码通过 `app/services/ui_diagnostics_service.py` 引入，避免直接跨到 `infra`。
 - `app/services/runtime_health_service.py` 给 UI 暴露采集和导出入口。
 - `ui/components/runtime_health_dialog.py` 在系统菜单中提供运行时健康面板。
 - `scripts/runtime_health_stability_suite.py` 可以执行短模式或 30/60 分钟 soak。
@@ -318,7 +320,7 @@ runtime health 的 `market_data` 段会展示当前 active layer，例如 `memor
 
 PyQt 相关测试优先使用 offscreen smoke test。WebEngine 生命周期检查需要原生 Qt/可视桌面时，应使用专门脚本，不要把不稳定窗口自动化混入普通单元测试。
 
-已知 CI 漂移：`.github/workflows/ci.yml` 的 Ruff guardrail 当前仍引用 `ui/workspaces/watchlist_radar_service.py`，而该文件已不存在。这个问题属于 CI 维护债，不改变当前源码架构判断，但应单独修复。
+CI 当前不再引用已删除的 `ui/workspaces/watchlist_radar_service.py`。后续审计时仍应把 `.github/workflows/ci.yml` 纳入边界核对，避免 Ruff、UTF-8、架构回归和运行时健康门禁与真实源码漂移。
 
 ## 14. 新增能力的维护规则
 
@@ -348,7 +350,7 @@ PyQt 相关测试优先使用 offscreen smoke test。WebEngine 生命周期检�
 
 - `app/services/ui_runtime_service.py` 太宽，应逐步拆成更窄的 UI-facing service 模块。
 - `domains/global_earnings_calendar/service.py`、`ui/tabs/fund_holdings_tab.py`、`ui/kline_chart_payload.py`、`vcp/fetchers/asian_kline_fetcher.py`、`ui/tabs/asian_market_workers.py` 等大文件应按数据获取、转换、缓存、展示拆分。
-- `core/ui_stall_probe.py` 属于 UI/诊断能力，后续更适合迁入 `infra/diagnostics` 或专门的 UI diagnostics 边界。
+- UI 卡顿探针真实实现位于 `infra/diagnostics/ui_stall_probe.py`，UI 侧通过 `app/services/ui_diagnostics_service.py` 访问；`core/ui_stall_probe.py` 仅保留历史导入兼容门面，新代码不应继续从 `core` 引入该诊断能力。
 - `vcp/` 和 `core/` 仍有兼容入口。新增真实实现不应继续落入这些目录。
 - 数据后端应继续向 Parquet/SQLite-first 读模型演进，`vipdoc` 保留为本地生产者和兜底源。
 

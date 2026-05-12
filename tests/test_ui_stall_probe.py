@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
-from core import ui_stall_probe as probe_module
-from core.ui_stall_probe import StallThresholds, UiStallProbe, ui_stall_span
+from infra.diagnostics import ui_stall_probe as probe_module
+from infra.diagnostics.ui_stall_probe import StallThresholds, UiStallProbe, ui_stall_span
 
 
 def test_ui_stall_span_records_method_context(monkeypatch, qt_application):

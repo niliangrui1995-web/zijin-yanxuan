@@ -134,7 +134,7 @@ def _find_literal_task_id_usage(root: Path, *, allowed_paths: set[str] | None = 
 def test_ui_layer_does_not_import_legacy_event_or_task_manager_modules():
     violations = _find_violations(
         REPO_ROOT / "ui",
-        {"core.event_bus", "core.task_manager"},
+        {"core.event_bus", "core.task_manager", "core.ui_stall_probe"},
     )
     assert not violations, "UI layer imported forbidden legacy modules:\n" + "\n".join(violations)
 

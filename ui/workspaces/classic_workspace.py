@@ -6,8 +6,8 @@ from importlib import import_module
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
+from app.services.ui_diagnostics_service import ui_stall_span
 from core.logger import get_logger
-from core.ui_stall_probe import ui_stall_span
 from ui.components.smooth_tab_widget import SmoothTabWidget
 from ui.theme_tokens import build_ui_tokens
 from ui.workspaces.stock_signal import StockSignal

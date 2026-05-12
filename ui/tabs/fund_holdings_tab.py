@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 )
 
 from app.services import get_sector_manager
+from app.services.ui_diagnostics_service import ui_stall_span
 from app.services.ui_runtime_service import (
     QFII_CAPITAL_ATTRIBUTE_CLIENT,
     QFII_CAPITAL_ATTRIBUTE_SELF_OWNED,
@@ -37,7 +38,6 @@ from app.services.ui_runtime_service import (
 from app.services.ui_runtime_service import (
     domain_events as event_bus,
 )
-from core.ui_stall_probe import ui_stall_span
 from ui.components import (
     MultiSelectFilterButton,
     SearchFilter,

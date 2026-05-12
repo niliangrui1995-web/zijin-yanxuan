@@ -23,6 +23,7 @@ from app.services import (
     create_scan_engine,
     create_startup_orchestrator,
 )
+from app.services.ui_diagnostics_service import install_ui_stall_probe, ui_stall_span
 from app.services.ui_runtime_service import app_config, ui_signal_hub
 from app.services.ui_runtime_service import background_job_runner as task_manager
 from app.services.ui_runtime_service import domain_events as event_bus
@@ -31,7 +32,6 @@ from core.cache_manager import CacheManager
 from core.logger import get_logger
 from core.observability import emit_structured_log, record_metric
 from core.process_watchdog import ProcessWatchdog, log_process_snapshot
-from core.ui_stall_probe import install_ui_stall_probe, ui_stall_span
 from ui.components.command_palette import CommandPaletteDialog
 from ui.components.kline_window_manager import kline_manager
 from ui.components.message_box import show_themed_question

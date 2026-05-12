@@ -20,6 +20,7 @@ except ImportError:  # pragma: no cover - PyQt runtime always provides sip.
 from PyQt6.QtCore import QCoreApplication, QTimer
 
 from app.services import FINANCE_CACHE_FILE, batch_get_finance_info, load_local_tdx_capital_snapshot
+from app.services.ui_diagnostics_service import ui_stall_span
 from app.services.ui_runtime_service import (
     SHARED_MARKET_CAPS,
     build_finance_quote_payload,
@@ -30,7 +31,6 @@ from app.services.ui_runtime_service import (
     task_id_of,
     task_registry,
 )
-from core.ui_stall_probe import ui_stall_span
 
 _FINANCE_CACHE_LOCK = threading.RLock()
 _FINANCE_CACHE_PATH: str | None = None

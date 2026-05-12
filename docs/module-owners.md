@@ -8,7 +8,7 @@
 | --- | --- | --- | --- |
 | 应用启动 | `vcp_hunter_qt.pyw`、`ui/main_window_qt.py`、`app/bootstrap/` | 进程启动、主窗口外壳、工作区装配、全局快捷键、状态栏、启动页 | `MainWindowQT`、`ApplicationBootstrap` |
 | 运行时服务导出 | `app/services/` | 给 UI 提供稳定应用层 API，隔离 `domains`、`infra`、`vcp` 的真实实现 | `app.services.*`、`app.services.ui_runtime_service` |
-| 应用诊断服务 | `app/services/runtime_health_service.py`、`app/services/tab_data_lineage_service.py` | 给 UI 和稳定性脚本提供运行时健康、数据血缘、降级状态和导出入口 | `collect_runtime_health`、`export_runtime_health_report`、`TabDataLineageService` |
+| 应用诊断服务 | `app/services/runtime_health_service.py`、`app/services/tab_data_lineage_service.py`、`app/services/ui_diagnostics_service.py` | 给 UI 和稳定性脚本提供运行时健康、数据血缘、降级状态、UI 卡顿探针和导出入口 | `collect_runtime_health`、`export_runtime_health_report`、`TabDataLineageService`、`ui_stall_span` |
 | 工作区编排 | `ui/workspaces/` | Tab 注册、跨 Tab 导航、表格聚合、实时订阅代码集合、个股信号聚合 | `ClassicWorkspace`、`WorkspaceFacade` |
 | UI 组件 | `ui/components/`、`ui/shell/`、`ui/styles/` | 可复用控件、主窗口壳、主题、QSS、通知、命令面板 | 组件公开方法和信号 |
 | Tab 页面 | `ui/tabs/` | 各业务页面的展示、筛选、用户操作和页面级刷新 | `BaseStockTab`、各 Tab 的公开 capability 方法 |
@@ -24,7 +24,7 @@
 | 市场日历 | `domains/market_calendar/` | 交易日、交易时段、报价刷新窗口、多市场时间判断 | `MarketCalendar` |
 | 后台任务 | `infra/tasks/`、`core/background_job_runner.py` | Typed task registry、后台执行、子进程封装、任务取消与错误表示 | `task_registry`、`background_job_runner` |
 | 服务开关 | `infra/features/` | 可选运行能力的稳定开关、环境变量覆盖和启动编排门控 | `service_toggle_registry` |
-| 运行诊断 | `infra/diagnostics/`、`ui/components/runtime_health_dialog.py`、`scripts/runtime_health_stability_suite.py` | Runtime health 采集、WebEngine/进程/Timer/事件订阅观测、长稳采样和预算报告 | `collect_runtime_health`、`RuntimeHealthDialog`、`perf_budget_check.py` |
+| 运行诊断 | `infra/diagnostics/`、`ui/components/runtime_health_dialog.py`、`scripts/runtime_health_stability_suite.py` | Runtime health 采集、WebEngine/进程/Timer/事件订阅观测、UI 卡顿探针、长稳采样和预算报告 | `collect_runtime_health`、`UiStallProbe`、`RuntimeHealthDialog`、`perf_budget_check.py` |
 | 配置持久化 | `infra/settings/`、`core/app_config.py` | QSettings、表格状态、窗口状态、配置 schema | `app_config`、`TableViewStateStore` |
 | 事件通道 | `domains/runtime/domain_events.py`、`infra/events/ui_signal_hub.py` | 领域事件、应用事件、UI 导航事件分流 | `domain_events`、`ui_signal_hub` |
 | 兼容门面 | `core/`、`vcp/`、`earnings/` | 历史 import 兼容；新增真实实现不应优先落在这里 | 兼容导出 |
@@ -33,6 +33,7 @@
 ## 变更落点规则
 
 - UI 新交互优先落在 `ui/tabs/`、`ui/components/` 或 `ui/workspaces/`，跨层依赖通过 `app.services` 暴露。
+- UI 需要诊断能力时通过 `app/services/ui_diagnostics_service.py` 访问；真实采集实现落在 `infra/diagnostics/`，不要让 UI 直接 import `infra`。
 - 新领域规则优先落在 `domains/`，不要塞进主窗口或 Tab 私有方法。
 - 新外部数据源、文件读写、进程调用优先落在 `infra/`。
 - 大规模历史行情明细优先落在 `data/Cache/parquet/` 的 Parquet 文件；索引、manifest、健康状态和数据质量标记落在 `data/vcp_hunter.db` 的 SQLite 表，不要把明细行情塞进 SQLite。

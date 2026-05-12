@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QObject
 
+from app.services.ui_diagnostics_service import ui_stall_span
 from core.logger import get_logger
-from core.ui_stall_probe import ui_stall_span
 from ui.components.frame_task_scheduler import FrameTaskScheduler
 from ui.workspaces.tab_capabilities import SnapshotRefreshCapability, TableCollectionCapability
 
