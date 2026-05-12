@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-from app.services.ui_runtime_service import app_config
+from app.services.ui_config_service import app_config
 from ui.models import table_model_helpers
 
 

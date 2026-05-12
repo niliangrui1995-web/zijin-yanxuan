@@ -7,7 +7,7 @@
 | 模块 | 主要路径 | 责任边界 | 稳定入口 |
 | --- | --- | --- | --- |
 | 应用启动 | `vcp_hunter_qt.pyw`、`ui/main_window_qt.py`、`app/bootstrap/` | 进程启动、主窗口外壳、工作区装配、全局快捷键、状态栏、启动页 | `MainWindowQT`、`ApplicationBootstrap` |
-| 运行时服务导出 | `app/services/` | 给 UI 提供稳定应用层 API，隔离 `domains`、`infra`、`vcp` 的真实实现 | `app.services.*`、`app.services.ui_runtime_service` |
+| 运行时服务导出 | `app/services/` | 给 UI 提供稳定应用层 API，隔离 `domains`、`infra`、`vcp` 的真实实现；新 UI 调用优先使用按能力拆分的 `ui_*_service.py` | `app.services.ui_*`、`app.services.*`、兼容门面 `app.services.ui_runtime_service` |
 | 应用诊断服务 | `app/services/runtime_health_service.py`、`app/services/tab_data_lineage_service.py`、`app/services/ui_diagnostics_service.py` | 给 UI 和稳定性脚本提供运行时健康、数据血缘、降级状态、UI 卡顿探针和导出入口 | `collect_runtime_health`、`export_runtime_health_report`、`TabDataLineageService`、`ui_stall_span` |
 | 工作区编排 | `ui/workspaces/` | Tab 注册、跨 Tab 导航、表格聚合、实时订阅代码集合、个股信号聚合 | `ClassicWorkspace`、`WorkspaceFacade` |
 | UI 组件 | `ui/components/`、`ui/shell/`、`ui/styles/` | 可复用控件、主窗口壳、主题、QSS、通知、命令面板 | 组件公开方法和信号 |
@@ -32,7 +32,7 @@
 
 ## 变更落点规则
 
-- UI 新交互优先落在 `ui/tabs/`、`ui/components/` 或 `ui/workspaces/`，跨层依赖通过 `app.services` 暴露。
+- UI 新交互优先落在 `ui/tabs/`、`ui/components/` 或 `ui/workspaces/`，跨层依赖通过按能力拆分的 `app.services.ui_*` 或其他明确 `app.services.*` 入口暴露，不再新增 `ui_runtime_service.py` 依赖。
 - UI 需要诊断能力时通过 `app/services/ui_diagnostics_service.py` 访问；真实采集实现落在 `infra/diagnostics/`，不要让 UI 直接 import `infra`。
 - 新领域规则优先落在 `domains/`，不要塞进主窗口或 Tab 私有方法。
 - 新外部数据源、文件读写、进程调用优先落在 `infra/`。

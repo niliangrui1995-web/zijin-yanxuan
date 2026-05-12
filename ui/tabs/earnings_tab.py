@@ -5,8 +5,9 @@ import pandas as pd
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot
 from PyQt6.QtWidgets import QDialog, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
-from app.services.ui_runtime_service import EarningsScheduler, ui_signals
-from app.services.ui_runtime_service import domain_events as event_bus
+from app.services.ui_earnings_service import EarningsScheduler
+from app.services.ui_event_service import domain_events as event_bus
+from app.services.ui_event_service import ui_signals
 from core.logger import get_logger
 from ui.components import MultiSelectFilterButton, TableStateWrapper, VCPTableView, format_multi_select_summary
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
@@ -270,7 +271,7 @@ class EarningsTab(BaseStockTab):
         if trade_days <= 0:
             return None
         try:
-            from app.services.ui_runtime_service import MarketCalendar
+            from app.services.ui_market_calendar_service import MarketCalendar
 
             recent_trade_dates = MarketCalendar.get_recent_trade_dates(trade_days)
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as _e:

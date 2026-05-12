@@ -153,7 +153,7 @@ def get_ch_names_mapping() -> dict:
 
 
 def get_market_status(market: str) -> str:
-    from app.services.ui_runtime_service import MarketCalendar
+    from app.services.ui_market_calendar_service import MarketCalendar
     from ui.status_registry import resolve_market_status_badge
 
     canonical = MarketCalendar.normalize_market(market)

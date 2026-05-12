@@ -1,26 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Stable app-layer runtime entrypoints for UI modules.
+"""Compatibility barrel for legacy UI runtime imports.
 
-UI code should depend on this module instead of importing domains/infra/core
-runtime helpers directly. The goal is to keep the UI side on app-owned
-contracts while the underlying implementations continue to migrate.
+New UI code should import one of the narrower app.services.ui_* modules instead
+of this broad migration barrel. This file remains so older call sites can move
+in small, behavior-preserving slices.
 """
 
 from __future__ import annotations
 
-from core.app_config import app_config
-from core.background_job_runner import background_job_runner
-from domains.earnings import EarningsScheduler
-from domains.fund_holdings import (
-    QFII_CAPITAL_ATTRIBUTE_CLIENT,
-    QFII_CAPITAL_ATTRIBUTE_SELF_OWNED,
-    QFII_CAPITAL_ATTRIBUTE_UNMARKED,
-    SUBJECT_QFII,
-    SUBJECT_RUIYUAN,
-    fund_holdings_store,
-    fund_holdings_sync_service,
-)
-from domains.global_earnings_calendar import (
+from app.services.ui_config_service import TableViewStateStore, app_config
+from app.services.ui_earnings_calendar_service import (
     EarningsCalendarEvent,
     GlobalEarningsCalendarService,
     event_calendar_date,
@@ -29,8 +18,20 @@ from domains.global_earnings_calendar import (
     is_yfinance_estimate_event,
     sorted_events,
 )
-from domains.market_calendar import MarketCalendar
-from domains.quotes import (
+from app.services.ui_earnings_service import EarningsScheduler
+from app.services.ui_event_service import domain_events, ui_signal_hub, ui_signals
+from app.services.ui_fund_holdings_service import (
+    QFII_CAPITAL_ATTRIBUTE_CLIENT,
+    QFII_CAPITAL_ATTRIBUTE_SELF_OWNED,
+    QFII_CAPITAL_ATTRIBUTE_UNMARKED,
+    SUBJECT_QFII,
+    SUBJECT_RUIYUAN,
+    fund_holdings_store,
+    fund_holdings_sync_service,
+)
+from app.services.ui_market_calendar_service import MarketCalendar
+from app.services.ui_navigation_service import ExternalTerminalNavigator
+from app.services.ui_quote_service import (
     build_finance_quote_payload,
     coerce_number,
     enrich_quotes_with_finance,
@@ -40,12 +41,7 @@ from domains.quotes import (
     publish_rt_quotes,
     resolve_quote_metrics,
 )
-from domains.runtime import domain_events
-from domains.watchlist import WatchlistViewModel, watchlist_vm
-from infra.events import ui_signal_hub
-from infra.navigation import ExternalTerminalNavigator
-from infra.settings import TableViewStateStore
-from infra.tasks import (
+from app.services.ui_task_service import (
     CENTRAL_QUOTES_POLL,
     NETWORK_FORCE_RECONNECT,
     NETWORK_GO_ONLINE,
@@ -54,14 +50,14 @@ from infra.tasks import (
     ProcessExecutionError,
     ProcessSubprocessError,
     ProcessTimeoutError,
+    background_job_runner,
     build_domestic_process_env,
     run_process,
     task_id_of,
     task_registry,
     windows_no_window_creationflags,
 )
-
-ui_signals = ui_signal_hub
+from app.services.ui_watchlist_service import WatchlistViewModel, watchlist_vm
 
 __all__ = [
     "CENTRAL_QUOTES_POLL",

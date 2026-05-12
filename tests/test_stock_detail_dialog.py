@@ -4,7 +4,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QSignalSpy
 from PyQt6.QtWidgets import QDialog, QFrame, QLabel, QToolButton
 
-from app.services.ui_runtime_service import ui_signals
+from app.services.ui_event_service import ui_signals
 from ui.components import stock_detail_dialog as stock_detail_module
 from ui.components.stock_detail_dialog import StockDetailDialog, build_signal_rows
 from ui.workspaces.stock_signal import StockSignal

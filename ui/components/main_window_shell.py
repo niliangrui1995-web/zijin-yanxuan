@@ -1032,7 +1032,7 @@ def inject_standalone_tabbar(window) -> QTabBar:
 
 
 def setup_system_menu(window) -> SystemMenuRefs:
-    from app.services.ui_runtime_service import app_config
+    from app.services.ui_config_service import app_config
     from ui.theme import theme_manager
 
     btn_sys_menu = QToolButton()

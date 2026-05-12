@@ -448,7 +448,7 @@ class ClassicWorkspace(QWidget):
 
     def _connect_workspace_events(self) -> None:
         try:
-            from app.services.ui_runtime_service import domain_events as event_bus
+            from app.services.ui_event_service import domain_events as event_bus
 
             event_bus.sig_fund_holdings_updated.connect(self._on_fund_holdings_source_updated)
             self._workspace_event_bus = event_bus

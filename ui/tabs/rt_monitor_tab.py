@@ -16,9 +16,11 @@ from PyQt6.QtWidgets import (
 )
 
 from app.services.tab_data_lineage_service import TabDataLineageService
-from app.services.ui_runtime_service import app_config, task_registry, ui_signals
-from app.services.ui_runtime_service import background_job_runner as task_manager
-from app.services.ui_runtime_service import domain_events as event_bus
+from app.services.ui_config_service import app_config
+from app.services.ui_event_service import domain_events as event_bus
+from app.services.ui_event_service import ui_signals
+from app.services.ui_task_service import background_job_runner as task_manager
+from app.services.ui_task_service import task_registry
 from core.logger import get_logger
 from core.throttler import SignalThrottler
 from ui.components import TableStateWrapper, VCPTableView
@@ -101,7 +103,7 @@ class RtMonitorTab(BaseStockTab):
     @staticmethod
     def _manual_stop_reference_date() -> str:
         try:
-            from app.services.ui_runtime_service import MarketCalendar
+            from app.services.ui_market_calendar_service import MarketCalendar
 
             trade_date = MarketCalendar.get_latest_trade_date("CN")
             if trade_date is not None:
@@ -158,7 +160,7 @@ class RtMonitorTab(BaseStockTab):
     @staticmethod
     def _latest_trade_date_text() -> str:
         try:
-            from app.services.ui_runtime_service import MarketCalendar
+            from app.services.ui_market_calendar_service import MarketCalendar
 
             trade_date = MarketCalendar.get_latest_trade_date("CN")
             if trade_date is not None:
@@ -347,7 +349,7 @@ class RtMonitorTab(BaseStockTab):
             self.lbl_rt_info.setText(info_text)
 
     def _check_auto_start_stop(self):
-        from app.services.ui_runtime_service import MarketCalendar
+        from app.services.ui_market_calendar_service import MarketCalendar
         self._clear_expired_manual_stop()
         is_active = MarketCalendar.is_market_active()
         is_running = self._is_rt_running()
@@ -639,7 +641,7 @@ class RtMonitorTab(BaseStockTab):
             self.rt_worker = None
 
         try:
-            from app.services.ui_runtime_service import MarketCalendar
+            from app.services.ui_market_calendar_service import MarketCalendar
             active = MarketCalendar.is_market_active()
         except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
             active = False

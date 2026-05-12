@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from app.services.ui_runtime_service import domain_events as event_bus
+from app.services.ui_event_service import domain_events as event_bus
 from ui.components import MultiSelectFilterButton, format_multi_select_summary
 from ui.components.task_status_panel import TaskStatusPanel
 from ui.theme_tokens import build_ui_tokens

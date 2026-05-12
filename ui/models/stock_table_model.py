@@ -5,7 +5,7 @@ import time
 from PyQt6.QtCore import QAbstractTableModel, QMimeData, QModelIndex, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont
 
-from app.services.ui_runtime_service import resolve_quote_metrics
+from app.services.ui_quote_service import resolve_quote_metrics
 from core.buy_point import BUY_POINT_STYLE_TEXT, calculate_buy_point_from_history
 from ui.models.table_model_helpers import (
     FLASH_DURATION_SECONDS,
@@ -388,7 +388,7 @@ class StockTableModel(QAbstractTableModel):
                     if buy_point_clock is None:
                         import datetime
 
-                        from app.services.ui_runtime_service import MarketCalendar
+                        from app.services.ui_market_calendar_service import MarketCalendar
 
                         now = datetime.datetime.now()
                         today_str = now.strftime("%Y-%m-%d")
@@ -502,7 +502,7 @@ class StockTableModel(QAbstractTableModel):
             if key == SERIAL_HEADER:
                 return QColor(_c("TEXT_SECONDARY"))
             if key == "名称":
-                from app.services.ui_runtime_service import watchlist_vm
+                from app.services.ui_watchlist_service import watchlist_vm
 
                 code = str(item_dict.get("代码", ""))
                 if watchlist_vm.is_in_watchlist(code):

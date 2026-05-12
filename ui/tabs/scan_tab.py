@@ -17,8 +17,11 @@ from PyQt6.QtWidgets import (
 
 from app.services import VCPParams
 from app.services.tab_data_lineage_service import TabDataLineageService
-from app.services.ui_runtime_service import MarketCalendar, app_config, ui_signals, watchlist_vm
-from app.services.ui_runtime_service import domain_events as event_bus
+from app.services.ui_config_service import app_config
+from app.services.ui_event_service import domain_events as event_bus
+from app.services.ui_event_service import ui_signals
+from app.services.ui_market_calendar_service import MarketCalendar
+from app.services.ui_watchlist_service import watchlist_vm
 from core.logger import get_logger
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.scan_dialogs import VCPScanRangeDialog, VCPScanSettingsDialog

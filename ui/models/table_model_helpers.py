@@ -11,7 +11,7 @@ from functools import lru_cache
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 
-from app.services.ui_runtime_service import resolve_quote_metrics
+from app.services.ui_quote_service import resolve_quote_metrics
 from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens
 
@@ -41,7 +41,7 @@ def _current_table_density():
         return _TABLE_DENSITY_CACHE
 
     try:
-        from app.services.ui_runtime_service import app_config
+        from app.services.ui_config_service import app_config
 
         density = getattr(app_config, "table_density", None)
     except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):

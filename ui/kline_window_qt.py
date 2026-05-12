@@ -15,8 +15,9 @@ import os as _os
 
 from app.services import is_yf_rate_limit_error, mark_yf_rate_limited
 from app.services.scan_runtime_service import calculate_scan_indicators
-from app.services.ui_runtime_service import MarketCalendar, watchlist_vm
-from app.services.ui_runtime_service import domain_events as event_bus
+from app.services.ui_event_service import domain_events as event_bus
+from app.services.ui_market_calendar_service import MarketCalendar
+from app.services.ui_watchlist_service import watchlist_vm
 from core.logger import get_logger
 
 log = get_logger(__name__)
@@ -448,7 +449,7 @@ class KLineChartWindow(QWidget):
             )
 
         if df is None:
-            from app.services.ui_runtime_service import background_job_runner as task_manager
+            from app.services.ui_task_service import background_job_runner as task_manager
             schedule_asian_history_backfill(
                 self,
                 task_manager=task_manager,

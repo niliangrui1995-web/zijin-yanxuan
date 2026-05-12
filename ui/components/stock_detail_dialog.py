@@ -20,7 +20,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from app.services.ui_runtime_service import ui_signals, watchlist_vm
+from app.services.ui_event_service import ui_signals
+from app.services.ui_watchlist_service import watchlist_vm
 from ui.components.shared_title_bar import DraggableTitleBar
 from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens

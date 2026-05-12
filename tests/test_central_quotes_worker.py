@@ -138,6 +138,26 @@ def test_central_quotes_service_normalizes_codes_from_supplier():
         main_window.deleteLater()
 
 
+def test_central_quotes_service_refreshes_code_supplier_via_public_setter():
+    _ = QApplication.instance() or QApplication([])
+    main_window = QWidget()
+
+    class DummyProvider:
+        pass
+
+    service = CentralQuotesService(main_window, DummyProvider(), code_supplier=lambda: {"000001"})
+    try:
+        service._missing_code_supplier_warned = True
+        service.set_code_supplier(lambda: {"600519"})
+
+        assert service._get_all_active_codes() == {"600519"}
+        assert service._missing_code_supplier_warned is False
+    finally:
+        service.shutdown()
+        service.deleteLater()
+        main_window.deleteLater()
+
+
 def test_central_quotes_service_without_code_supplier_skips_polling():
     _ = QApplication.instance() or QApplication([])
     main_window = QWidget()

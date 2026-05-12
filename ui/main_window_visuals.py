@@ -12,7 +12,11 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from app.services.ui_runtime_service import GlobalEarningsCalendarService, domain_events, events_by_date
+from app.services.ui_earnings_calendar_service import (
+    GlobalEarningsCalendarService,
+    events_by_date,
+)
+from app.services.ui_event_service import domain_events
 from ui.components.main_window_shell import apply_chrome_theme
 from ui.components.shared_title_bar import DraggableTitleBar
 from ui.components.trade_calendar import OligarchEarningsCalendarPanel, TradeCalendarWidget
@@ -22,7 +26,7 @@ from ui.theme_tokens import build_ui_tokens
 
 
 def apply_table_density(main_window, mode: str, persist: bool = True):
-    from app.services.ui_runtime_service import app_config
+    from app.services.ui_config_service import app_config
     from ui.components import VCPTableView
     from ui.models.table_model_helpers import invalidate_table_token_cache
 

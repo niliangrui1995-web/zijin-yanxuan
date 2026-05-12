@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QHeaderView, QWidget
 
-from app.services.ui_runtime_service import domain_events as event_bus
+from app.services.ui_event_service import domain_events as event_bus
 from ui.tabs.stock_candidate_tab import StockCandidateTab
 from ui.workspaces.stock_signal import StockSignal
 

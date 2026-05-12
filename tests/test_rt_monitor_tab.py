@@ -2,7 +2,7 @@ import datetime
 
 from PyQt6.QtWidgets import QHeaderView
 
-from app.services.ui_runtime_service import MarketCalendar
+from app.services.ui_market_calendar_service import MarketCalendar
 from ui.models.table_models import StockItemDelegate
 from ui.tabs.rt_monitor_tab import RtMonitorTab
 

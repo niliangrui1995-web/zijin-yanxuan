@@ -31,7 +31,7 @@
 | UI 层 | `ui/` | PyQt 主窗口、工作区、Tab、组件、模型、样式、worker、窗口交互和可视化诊断面板 |
 | 兼容门面 | `vcp/`、`core/`、`earnings/` | 保留历史入口并逐步委托到 `app/`、`domains/`、`infra/` 的真实实现 |
 
-当前架构治理的关键约束是：UI 不直接依赖 `domains/`、`infra/`、`vcp/` 的具体实现；UI 通过 `app.services.*`、`app.services.ui_runtime_service` 和工作区能力协议访问跨层能力。对应约束由 `tests/test_architecture_boundaries.py` 回归保护。
+当前架构治理的关键约束是：UI 不直接依赖 `domains/`、`infra/`、`vcp/` 的具体实现；UI 通过 `app.services.ui_*` 窄服务、其他明确 `app.services.*` 入口和工作区能力协议访问跨层能力。`app.services.ui_runtime_service` 仅保留为非 UI 历史脚本和迁移期兼容门面。对应约束由 `tests/test_architecture_boundaries.py` 回归保护。
 
 ## 3. 启动链路
 
@@ -71,9 +71,13 @@ vcp_hunter_qt.pyw
 | `runtime_health_service.py` | 对 UI 暴露运行时健康采集和导出 |
 | `ui_diagnostics_service.py` | 对 UI 暴露卡顿探针安装和 `ui_stall_span`，隔离底层 `infra.diagnostics` 实现 |
 | `tab_data_lineage_service.py` | 为关键 Tab 返回统一数据血缘：来源、缓存、是否联网、是否降级、更新时间和签名 |
-| `ui_runtime_service.py` | 当前 UI 运行时总出口，集中导出配置、事件、任务、行情、基金、业绩、财报日历等跨层能力 |
+| `ui_config_service.py` / `ui_event_service.py` / `ui_task_service.py` | 给 UI 暴露配置、事件总线、后台任务和进程执行入口 |
+| `ui_quote_service.py` / `ui_market_calendar_service.py` | 给 UI 暴露行情标准化、广播、指标解析和交易日历入口 |
+| `ui_earnings_calendar_service.py` / `ui_earnings_service.py` | 给 UI 暴露全球财报日历和业绩调度入口 |
+| `ui_fund_holdings_service.py` / `ui_watchlist_service.py` / `ui_navigation_service.py` | 给 UI 暴露基金持仓、关注池和外部终端跳转入口 |
+| `ui_runtime_service.py` | 迁移期兼容门面，只转发上述窄服务；新 UI 代码不再从这里导入 |
 
-`ui_runtime_service.py` 仍然是一个很宽的导出桶。它对迁移期有价值，但也是后续架构收口的重点。
+`ui_runtime_service.py` 已从 UI 主调用面退到兼容门面。新 UI 代码应按能力导入更窄的 `ui_*_service.py`，旧脚本或外部探针可以继续通过该门面过渡。
 
 ## 5. 主工作区与 Tab 装配
 
@@ -348,8 +352,8 @@ CI 当前不再引用已删除的 `ui/workspaces/watchlist_radar_service.py`。�
 
 但当前也确实需要第二阶段架构升级，重点不是换技术栈，而是收窄边界和拆分热点：
 
-- `app/services/ui_runtime_service.py` 太宽，应逐步拆成更窄的 UI-facing service 模块。
-- `domains/global_earnings_calendar/service.py`、`ui/tabs/fund_holdings_tab.py`、`ui/kline_chart_payload.py`、`vcp/fetchers/asian_kline_fetcher.py`、`ui/tabs/asian_market_workers.py` 等大文件应按数据获取、转换、缓存、展示拆分。
+- `app/services/ui_runtime_service.py` 已退为兼容门面；后续新增 UI 跨层依赖应继续落到更窄的 `ui_*_service.py`。
+- `domains/global_earnings_calendar/service.py`、`ui/tabs/fund_holdings_tab.py`、`ui/kline_chart_payload.py`、`vcp/fetchers/asian_kline_fetcher.py`、`ui/tabs/asian_market_workers.py` 等大文件应继续按数据获取、转换、缓存、展示拆分；当前第一刀已先抽出财报日历模型、基金持仓过滤代理、K 线摘要转换和亚洲 K 线缓存写入。
 - UI 卡顿探针真实实现位于 `infra/diagnostics/ui_stall_probe.py`，UI 侧通过 `app/services/ui_diagnostics_service.py` 访问；`core/ui_stall_probe.py` 仅保留历史导入兼容门面，新代码不应继续从 `core` 引入该诊断能力。
 - `vcp/` 和 `core/` 仍有兼容入口。新增真实实现不应继续落入这些目录。
 - 数据后端应继续向 Parquet/SQLite-first 读模型演进，`vipdoc` 保留为本地生产者和兜底源。

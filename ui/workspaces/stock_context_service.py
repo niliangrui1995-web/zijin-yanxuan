@@ -664,7 +664,7 @@ class StockContextService:
     @classmethod
     def _format_fund_holding_store_rows(cls, latest_quarter_map: dict, change_rows: list[dict]) -> list[dict]:
         try:
-            from app.services.ui_runtime_service import (
+            from app.services.ui_fund_holdings_service import (
                 QFII_CAPITAL_ATTRIBUTE_UNMARKED,
                 SUBJECT_QFII,
             )
@@ -709,7 +709,7 @@ class StockContextService:
 
     def _load_fund_holding_rows_snapshot(self) -> list[dict]:
         try:
-            from app.services.ui_runtime_service import fund_holdings_store
+            from app.services.ui_fund_holdings_service import fund_holdings_store
         except (ImportError, RuntimeError):
             return []
 
@@ -729,9 +729,9 @@ class StockContextService:
             self._fund_rows_loading = True
 
         try:
-            from app.services.ui_runtime_service import (
+            from app.services.ui_event_service import domain_events
+            from app.services.ui_task_service import (
                 background_job_runner,
-                domain_events,
                 task_registry,
             )
         except (ImportError, RuntimeError):

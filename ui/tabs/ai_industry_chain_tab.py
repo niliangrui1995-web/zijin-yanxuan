@@ -7,8 +7,9 @@ from pathlib import Path
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
-from app.services.ui_runtime_service import domain_events as event_bus
-from app.services.ui_runtime_service import task_registry, ui_signals
+from app.services.ui_event_service import domain_events as event_bus
+from app.services.ui_event_service import ui_signals
+from app.services.ui_task_service import task_registry
 from core.logger import get_logger
 from ui.components import TableStateWrapper, VCPTableView
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel

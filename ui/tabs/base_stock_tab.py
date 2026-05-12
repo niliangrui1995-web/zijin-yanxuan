@@ -26,8 +26,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from app.services.ui_runtime_service import ExternalTerminalNavigator, app_config
-from app.services.ui_runtime_service import domain_events as event_bus
+from app.services.ui_config_service import app_config
+from app.services.ui_event_service import domain_events as event_bus
+from app.services.ui_navigation_service import ExternalTerminalNavigator
 from ui.status_registry import format_status_summary, format_workspace_status, parse_status_summary
 from ui.tabs.base_stock_refresh import (
     async_update_market_caps as run_async_market_caps,

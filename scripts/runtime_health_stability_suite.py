@@ -22,8 +22,8 @@ configure_qt_webengine_runtime()
 from PyQt6.QtCore import QCoreApplication, Qt
 from PyQt6.QtWidgets import QApplication
 
-from app.services.ui_runtime_service import background_job_runner as task_manager
-from app.services.ui_runtime_service import domain_events as event_bus
+from app.services.ui_event_service import domain_events as event_bus
+from app.services.ui_task_service import background_job_runner as task_manager
 from infra.diagnostics.runtime_health import (
     build_runtime_health_trend,
     collect_runtime_health,

@@ -96,7 +96,7 @@ class _NoopStartupOrchestrator:
 def _disable_noisy_startup_paths() -> None:
     import ui.main_window_qt as main_window_qt
     import ui.workspaces.classic_workspace as classic_workspace
-    from app.services.ui_runtime_service import MarketCalendar
+    from app.services.ui_market_calendar_service import MarketCalendar
     from domains.earnings.scheduler import EarningsScheduler
     from ui.tabs.asian_market_tab import AsianMarketTab
 
@@ -363,7 +363,7 @@ def main() -> int:
     from PyQt6.QtWidgets import QApplication
 
     _disable_noisy_startup_paths()
-    from app.services.ui_runtime_service import background_job_runner
+    from app.services.ui_task_service import background_job_runner
 
     app = QApplication.instance() or QApplication(sys.argv)
     args.output.mkdir(parents=True, exist_ok=True)

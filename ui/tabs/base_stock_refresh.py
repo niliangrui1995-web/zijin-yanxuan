@@ -21,13 +21,15 @@ from PyQt6.QtCore import QCoreApplication, QTimer
 
 from app.services import FINANCE_CACHE_FILE, batch_get_finance_info, load_local_tdx_capital_snapshot
 from app.services.ui_diagnostics_service import ui_stall_span
-from app.services.ui_runtime_service import (
-    SHARED_MARKET_CAPS,
+from app.services.ui_quote_service import (
     build_finance_quote_payload,
     coerce_number,
     enrich_quotes_with_finance,
     is_a_share_code,
     publish_rt_quotes,
+)
+from app.services.ui_task_service import (
+    SHARED_MARKET_CAPS,
     task_id_of,
     task_registry,
 )
@@ -340,7 +342,7 @@ def prime_local_quote_snapshot_async(owner, current_model=None) -> bool:
     if app is None or app.closingDown():
         return False
 
-    from app.services.ui_runtime_service import background_job_runner as task_manager
+    from app.services.ui_task_service import background_job_runner as task_manager
 
     task_signature = abs(hash(tuple(target_codes)))
     task_key = task_registry.quote_refresh(
@@ -485,7 +487,7 @@ class MarketCapRefreshBatcher:
             cls._waiters.clear()
             return
 
-        from app.services.ui_runtime_service import background_job_runner as task_manager
+        from app.services.ui_task_service import background_job_runner as task_manager
 
         is_active_task = getattr(task_manager, "is_active_task", None)
         if callable(is_active_task) and is_active_task(cls._task_id):
@@ -584,7 +586,7 @@ def refresh_table_quotes_and_market_caps(
     if not target_codes:
         return
 
-    from app.services.ui_runtime_service import background_job_runner as task_manager
+    from app.services.ui_task_service import background_job_runner as task_manager
 
     task_id = task_id_of(quote_task_id)
     if not task_id:
@@ -689,13 +691,13 @@ def subscribe_global_quotes(owner, current_model=None) -> None:
 
     if owner._quote_signal_connected:
         try:
-            from app.services.ui_runtime_service import domain_events as event_bus
+            from app.services.ui_event_service import domain_events as event_bus
 
             event_bus.sig_rt_quotes.disconnect(owner._on_rt_quotes_direct)
         except (TypeError, RuntimeError):
             pass
 
-    from app.services.ui_runtime_service import domain_events as event_bus
+    from app.services.ui_event_service import domain_events as event_bus
 
     event_bus.sig_rt_quotes.connect(owner._on_rt_quotes_direct)
     owner._quote_signal_connected = True

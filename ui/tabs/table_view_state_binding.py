@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 
-from app.services.ui_runtime_service import TableViewStateStore
+from app.services.ui_config_service import TableViewStateStore
 
 
 def bind_table_view_state(owner, table, settings, header_state_savers: list, settings_key: str = "header_state") -> bool:

@@ -7,8 +7,8 @@ import pytest
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtTest import QSignalSpy
 
-from app.services.ui_runtime_service import domain_events as event_bus
-from app.services.ui_runtime_service import watchlist_vm
+from app.services.ui_event_service import domain_events as event_bus
+from app.services.ui_watchlist_service import watchlist_vm
 from core.global_store import global_store
 from ui.tabs.ai_industry_chain_tab import AIIndustryChainTab
 

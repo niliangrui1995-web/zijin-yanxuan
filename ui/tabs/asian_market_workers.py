@@ -24,7 +24,7 @@ from app.services import (
     mark_yf_rate_limited,
     sync_asian_kline_cache,
 )
-from app.services.ui_runtime_service import MarketCalendar
+from app.services.ui_market_calendar_service import MarketCalendar
 from core.logger import get_logger
 
 log = get_logger(__name__)

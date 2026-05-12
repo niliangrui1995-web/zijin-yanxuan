@@ -5,8 +5,8 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from app.services.stock_candidates_service import StockCandidatesDataService
-from app.services.ui_runtime_service import domain_events as event_bus
-from app.services.ui_runtime_service import ui_signals
+from app.services.ui_event_service import domain_events as event_bus
+from app.services.ui_event_service import ui_signals
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.stock_detail_dialog import signal_source_label
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel

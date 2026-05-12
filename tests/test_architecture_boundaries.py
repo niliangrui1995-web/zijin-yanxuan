@@ -307,6 +307,28 @@ def test_ui_layer_does_not_import_core_runtime_facades_directly():
     )
 
 
+def test_ui_layer_uses_narrow_app_services_instead_of_runtime_barrel():
+    violations = _find_violations(
+        REPO_ROOT / "ui",
+        {"app.services.ui_runtime_service"},
+    )
+    assert not violations, (
+        "UI layer still imports the broad ui_runtime_service barrel instead of narrow ui_* services:\n"
+        + "\n".join(violations)
+    )
+
+
+def test_scripts_use_narrow_app_services_instead_of_runtime_barrel():
+    violations = _find_violations(
+        REPO_ROOT / "scripts",
+        {"app.services.ui_runtime_service"},
+    )
+    assert not violations, (
+        "Scripts still import the broad ui_runtime_service barrel instead of narrow ui_* services:\n"
+        + "\n".join(violations)
+    )
+
+
 def test_domain_and_market_data_layers_use_domains_market_calendar_entrypoint():
     violations = []
     violations.extend(_find_violations(REPO_ROOT / "domains" / "scan", {"core.market_calendar"}))

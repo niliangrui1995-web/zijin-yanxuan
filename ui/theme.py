@@ -11,7 +11,7 @@ from datetime import datetime as _datetime
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
-from app.services.ui_runtime_service import app_config
+from app.services.ui_config_service import app_config
 
 DEFAULT_THEME_NAME = "紫曜"
 DEFAULT_THEME_MIGRATION_KEY = "default_theme_v2_applied"

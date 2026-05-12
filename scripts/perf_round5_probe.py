@@ -25,8 +25,8 @@ configure_qt_webengine_runtime()
 
 from PyQt6.QtWidgets import QApplication
 
-from app.services.ui_runtime_service import background_job_runner as task_manager
-from app.services.ui_runtime_service import domain_events as event_bus
+from app.services.ui_event_service import domain_events as event_bus
+from app.services.ui_task_service import background_job_runner as task_manager
 from scripts.perf_memory_probe import collect_process_snapshot
 from scripts.perf_round4_probe import (
     DEFAULT_TABS,

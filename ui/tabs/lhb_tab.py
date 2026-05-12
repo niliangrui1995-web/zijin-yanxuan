@@ -21,9 +21,11 @@ from PyQt6.QtWidgets import (
 )
 
 from app.services import create_scan_engine
-from app.services.ui_runtime_service import MarketCalendar, task_registry, ui_signals
-from app.services.ui_runtime_service import background_job_runner as task_manager
-from app.services.ui_runtime_service import domain_events as event_bus
+from app.services.ui_event_service import domain_events as event_bus
+from app.services.ui_event_service import ui_signals
+from app.services.ui_market_calendar_service import MarketCalendar
+from app.services.ui_task_service import background_job_runner as task_manager
+from app.services.ui_task_service import task_registry
 from core.lhb_pool_manager import POOL_WINDOW, LhbPoolManager
 from core.logger import get_logger
 from ui.components import TableStateWrapper, VCPTableView

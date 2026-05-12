@@ -6,7 +6,11 @@ ui/components/notification_service.py
 
 import os
 
-from app.services.ui_runtime_service import ProcessSubprocessError, run_process, windows_no_window_creationflags
+from app.services.ui_task_service import (
+    ProcessSubprocessError,
+    run_process,
+    windows_no_window_creationflags,
+)
 from core.logger import get_logger
 
 log = get_logger(__name__)

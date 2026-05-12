@@ -23,10 +23,11 @@ from app.services import (
     create_scan_engine,
     create_startup_orchestrator,
 )
+from app.services.ui_config_service import app_config
 from app.services.ui_diagnostics_service import install_ui_stall_probe, ui_stall_span
-from app.services.ui_runtime_service import app_config, ui_signal_hub
-from app.services.ui_runtime_service import background_job_runner as task_manager
-from app.services.ui_runtime_service import domain_events as event_bus
+from app.services.ui_event_service import domain_events as event_bus
+from app.services.ui_event_service import ui_signal_hub
+from app.services.ui_task_service import background_job_runner as task_manager
 from app.use_cases import WindowCommandService
 from core.cache_manager import CacheManager
 from core.logger import get_logger
@@ -392,12 +393,6 @@ class MainWindowQT(QMainWindow):
         setter = getattr(service, "set_code_supplier", None)
         if callable(setter):
             setter(code_supplier)
-            return
-        if hasattr(service, "code_supplier"):
-            service.code_supplier = code_supplier
-            return
-        if hasattr(service, "_code_supplier"):
-            service._code_supplier = code_supplier
             return
         log.warning("[UI] 中央报价服务不支持刷新 code_supplier")
 

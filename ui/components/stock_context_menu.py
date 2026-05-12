@@ -19,8 +19,8 @@ from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QCursor, QDesktopServices
 from PyQt6.QtWidgets import QApplication, QMenu, QMessageBox
 
-from app.services.ui_runtime_service import ui_signals as event_bus
-from app.services.ui_runtime_service import watchlist_vm
+from app.services.ui_event_service import ui_signals as event_bus
+from app.services.ui_watchlist_service import watchlist_vm
 from ui.styles.context_menu_qss import generate_context_menu_qss
 
 CODEX_INDUSTRY_RESEARCH_PROJECT = Path(r"D:\vcp_hunter\产业链投研")

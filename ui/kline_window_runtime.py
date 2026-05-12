@@ -11,8 +11,9 @@ from app.services import (
     is_yf_rate_limit_error,
     mark_yf_rate_limited,
 )
-from app.services.ui_runtime_service import MarketCalendar, task_registry
-from app.services.ui_runtime_service import background_job_runner as task_manager
+from app.services.ui_market_calendar_service import MarketCalendar
+from app.services.ui_task_service import background_job_runner as task_manager
+from app.services.ui_task_service import task_registry
 
 
 def normalize_daily_df_index(df, *, logger):

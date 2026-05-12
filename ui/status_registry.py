@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.services.ui_runtime_service import MarketCalendar
+from app.services.ui_market_calendar_service import MarketCalendar
 
 _MARKET_STATUS_ICON = {
     "交易中": "🟢",

@@ -11,8 +11,9 @@ import re
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
-from app.services.ui_runtime_service import domain_events as event_bus
-from app.services.ui_runtime_service import task_registry, ui_signals
+from app.services.ui_event_service import domain_events as event_bus
+from app.services.ui_event_service import ui_signals
+from app.services.ui_task_service import task_registry
 from core.logger import get_logger
 from ui.components import TableStateWrapper, VCPTableView
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
@@ -74,7 +75,7 @@ class NADailyTab(BaseStockTab):
 
     def _patrol_tick(self):
         """统一巡逻：盘中增量检查 + 定时全量刷新 + 首次市值拉取"""
-        from app.services.ui_runtime_service import MarketCalendar
+        from app.services.ui_market_calendar_service import MarketCalendar
         is_active = MarketCalendar.is_market_active()
 
         # 1. 盘中：每30秒检查战报文件是否有增量
