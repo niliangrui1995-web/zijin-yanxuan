@@ -29,6 +29,9 @@ from ui.models.table_model_helpers import (
 
 _log = logging.getLogger(__name__)
 
+LEGACY_MOJIBAKE_CODE_KEY = "\u6d60\uff47\u721c"
+ROW_IDENTITY_KEYS = ("代码", LEGACY_MOJIBAKE_CODE_KEY, "code", "symbol", "股票代码", "证券代码")
+
 
 class StockTableModel(QAbstractTableModel):
     sig_rows_reordered = pyqtSignal(list)
@@ -93,7 +96,7 @@ class StockTableModel(QAbstractTableModel):
     def _row_identity(row) -> str:
         if not isinstance(row, dict):
             return ""
-        for key in ("代码", "浠ｇ爜", "code", "symbol", "股票代码", "证券代码"):
+        for key in ROW_IDENTITY_KEYS:
             value = str(row.get(key, "") or "").strip()
             if value:
                 return value

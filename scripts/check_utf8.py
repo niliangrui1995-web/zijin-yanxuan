@@ -4,7 +4,24 @@ import argparse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_TARGET_DIRS = ("core", "ui", "vcp", "tests", "scripts", "app", "infra", "docs", ".github")
+DEFAULT_TARGETS = (
+    "core",
+    "ui",
+    "vcp",
+    "tests",
+    "scripts",
+    "app",
+    "infra",
+    "docs",
+    ".github",
+    "README.md",
+    "requirements.txt",
+    "pyproject.toml",
+    ".pre-commit-config.yaml",
+    ".gitignore",
+    ".gitattributes",
+    ".editorconfig",
+)
 TARGET_SUFFIXES = {
     ".py",
     ".md",
@@ -15,11 +32,20 @@ TARGET_SUFFIXES = {
     ".txt",
     ".qss",
 }
+TARGET_NAMES = {
+    ".editorconfig",
+    ".gitattributes",
+    ".gitignore",
+}
+
+
+def _should_scan_file(path: Path) -> bool:
+    return path.suffix.lower() in TARGET_SUFFIXES or path.name in TARGET_NAMES
 
 
 def _iter_files_under(base: Path):
     if base.is_file():
-        if base.suffix.lower() in TARGET_SUFFIXES:
+        if _should_scan_file(base):
             yield base
         return
 
@@ -27,12 +53,12 @@ def _iter_files_under(base: Path):
         return
 
     for path in base.rglob("*"):
-        if path.is_file() and path.suffix.lower() in TARGET_SUFFIXES:
+        if path.is_file() and _should_scan_file(path):
             yield path
 
 
 def iter_target_files(targets: list[str] | None = None):
-    candidate_targets = targets or list(DEFAULT_TARGET_DIRS)
+    candidate_targets = targets or list(DEFAULT_TARGETS)
     seen: set[Path] = set()
     for raw_target in candidate_targets:
         base = (ROOT / raw_target).resolve() if not Path(raw_target).is_absolute() else Path(raw_target).resolve()

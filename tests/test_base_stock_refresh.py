@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 from core.json_cache import save_json_file
+from ui.models.stock_table_model import LEGACY_MOJIBAKE_CODE_KEY
 from ui.tabs.base_stock_refresh import MarketCapRefreshBatcher
 
 
@@ -207,7 +208,7 @@ def test_refresh_table_from_latest_snapshot_keeps_sync_local_prime_when_hidden(m
     calls = []
 
     class DummyModel:
-        row_data = [{"浠ｇ爜": "000001"}]
+        row_data = [{LEGACY_MOJIBAKE_CODE_KEY: "000001"}]
 
     class DummyOwner:
         def isVisible(self):

@@ -23,7 +23,7 @@ if str(ROOT) not in sys.path:
 from core.runtime_env import configure_qt_webengine_runtime
 
 
-def _parse_args() -> argparse.Namespace:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Capture UI audit screenshots.")
     parser.add_argument(
         "--output",
@@ -71,10 +71,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--strict-tabs-min",
         type=int,
-        default=12,
-        help="Minimum numbered tab screenshots required in strict mode.",
+        default=None,
+        help="Minimum numbered tab screenshots required in strict mode. Defaults to the current workspace tab count.",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def _configure_environment(args: argparse.Namespace) -> None:
@@ -145,11 +145,14 @@ def _sample_image_ratio(image, predicate, *, step: int = 12) -> float:
 
 
 def _has_large_white_panel(image) -> bool:
-    return _sample_image_ratio(
-        image,
-        lambda color: color.red() >= 245 and color.green() >= 245 and color.blue() >= 245,
-        step=16,
-    ) > 0.16
+    return (
+        _sample_image_ratio(
+            image,
+            lambda color: color.red() >= 245 and color.green() >= 245 and color.blue() >= 245,
+            step=16,
+        )
+        > 0.16
+    )
 
 
 def _has_titlebar_pulse_pixels(image) -> bool:
@@ -194,7 +197,9 @@ def _validate_saved_screenshots(
                 errors.append("main screenshot does not show the red titlebar pulse strip")
 
     if tabs:
-        tab_count = sum(1 for path in saved if path.name[:2].isdigit() and path.name[:2] not in {"00", "90", "91", "92", "93", "94"})
+        tab_count = sum(
+            1 for path in saved if path.name[:2].isdigit() and path.name[:2] not in {"00", "90", "91", "92", "93", "94"}
+        )
         if tab_count < strict_tabs_min:
             errors.append(f"captured {tab_count} tab screenshots, expected at least {strict_tabs_min}")
 
@@ -388,12 +393,19 @@ def main() -> int:
 
     validation_errors: list[str] = []
     if args.strict:
+        workspace = getattr(window, "_workspace", None)
+        tab_widget = getattr(workspace, "tabs", None)
+        strict_tabs_min = args.strict_tabs_min
+        if strict_tabs_min is None and tab_widget is not None:
+            strict_tabs_min = int(tab_widget.count())
+        if strict_tabs_min is None:
+            strict_tabs_min = 12
         validation_errors = _validate_saved_screenshots(
             saved,
             width=max(960, args.width),
             height=max(600, args.height),
             tabs=args.tabs,
-            strict_tabs_min=args.strict_tabs_min,
+            strict_tabs_min=strict_tabs_min,
         )
 
     workspace = getattr(window, "_workspace", None)

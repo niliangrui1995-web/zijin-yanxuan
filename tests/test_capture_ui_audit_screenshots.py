@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from PyQt6.QtGui import QColor, QImage
 
-from scripts.capture_ui_audit_screenshots import _create_audit_main_window, _validate_saved_screenshots
+from scripts.capture_ui_audit_screenshots import _create_audit_main_window, _parse_args, _validate_saved_screenshots
 
 
 def _save_image(path, width=1280, height=720, *, color="#0B1020", pulse=True):
@@ -33,6 +33,12 @@ def test_strict_screenshot_validation_accepts_1280_dark_audit(tmp_path):
     )
 
     assert errors == []
+
+
+def test_strict_tabs_min_defaults_to_dynamic_workspace_count():
+    args = _parse_args(["--strict"])
+
+    assert args.strict_tabs_min is None
 
 
 def test_create_audit_main_window_uses_controlled_runtime(monkeypatch):

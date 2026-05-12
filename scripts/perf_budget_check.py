@@ -79,7 +79,7 @@ def _fail(failures: list[dict], check: str, detail: str, **values) -> None:
 def check_gbbq_budget(report: dict, thresholds: dict | None = None) -> list[dict]:
     budget = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
     failures: list[dict] = []
-    samples = ((report.get("gbbq_profile") or {}).get("samples") or {})
+    samples = (report.get("gbbq_profile") or {}).get("samples") or {}
     single = samples.get("single_code")
     full = samples.get("full")
 
@@ -330,7 +330,13 @@ def check_round4_budget(report: dict, thresholds: dict | None = None) -> list[di
     for tab in tabs if isinstance(tabs, list) else []:
         key = str(tab.get("key") or "")
         if tab.get("status") not in {"ok", None}:
-            _fail(failures, "round4.tabs.status", "tab first-open did not complete cleanly", key=key, actual=tab.get("status"))
+            _fail(
+                failures,
+                "round4.tabs.status",
+                "tab first-open did not complete cleanly",
+                key=key,
+                actual=tab.get("status"),
+            )
         elapsed = _as_float(tab.get("elapsed_ms"))
         if elapsed > budget["round4_tab_first_open_max_ms"]:
             _fail(
@@ -426,6 +432,13 @@ def check_round4_budget(report: dict, thresholds: dict | None = None) -> list[di
 def check_round5_budget(report: dict, thresholds: dict | None = None) -> list[dict]:
     budget = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
     failures: list[dict] = []
+    mode = report.get("mode") or {}
+    if isinstance(mode, dict) and mode.get("isolate_info_source_refresh") is True:
+        _fail(
+            failures,
+            "round5.mode.isolated_info_source_refresh",
+            "round5 report was captured with information-source refresh isolation enabled; rerun with --no-isolate-info-source-refresh for a full post-F5 regression gate",
+        )
     post_f5 = report.get("post_f5") or {}
     if not post_f5:
         _fail(failures, "round5.post_f5.present", "round5 post-F5 report is missing")
@@ -603,8 +616,102 @@ def _runtime_health_trend(samples: list[dict]) -> dict:
 
 
 def _tail_range(values: list[float], tail_count: int = 3) -> float:
-    tail = values[-max(1, int(tail_count)):]
+    tail = values[-max(1, int(tail_count)) :]
     return round(max(tail) - min(tail), 3) if tail else 0.0
+
+
+def _requested_runtime_health_tabs(report: dict) -> list[str]:
+    mode = report.get("mode") or {}
+    tabs = mode.get("tabs") if isinstance(mode, dict) else []
+    return [str(tab or "").strip() for tab in (tabs or []) if str(tab or "").strip()]
+
+
+def _lineage_by_key(lineage: list[dict]) -> dict[str, dict]:
+    entries: dict[str, dict] = {}
+    for item in lineage:
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("key") or item.get("view") or "").strip()
+        if key:
+            entries[key] = item
+    return entries
+
+
+def _check_runtime_health_tab_cycle(report: dict, failures: list[dict]) -> None:
+    requested_tabs = _requested_runtime_health_tabs(report)
+    tab_cycle = report.get("tab_cycle")
+    if not requested_tabs and tab_cycle is None:
+        return
+    if not isinstance(tab_cycle, dict):
+        _fail(failures, "runtime_health.tab_cycle.present", "runtime health suite tab cycle report is missing")
+        return
+
+    tab_items = tab_cycle.get("tabs") or []
+    if not isinstance(tab_items, list):
+        _fail(failures, "runtime_health.tab_cycle.type", "runtime health tab cycle entries must be a list")
+        return
+
+    seen_keys = {str(item.get("key") or "").strip() for item in tab_items if isinstance(item, dict)}
+    missing = sorted(set(requested_tabs) - seen_keys)
+    if missing:
+        _fail(
+            failures,
+            "runtime_health.tab_cycle.requested_tabs",
+            "runtime health tab cycle did not visit all requested tabs",
+            missing=missing,
+        )
+
+    bad_statuses = [
+        {
+            "key": str(item.get("key") or ""),
+            "status": str(item.get("status") or ""),
+            "cycle": item.get("cycle"),
+        }
+        for item in tab_items
+        if isinstance(item, dict) and str(item.get("status") or "") != "ok"
+    ]
+    if bad_statuses:
+        _fail(
+            failures,
+            "runtime_health.tab_cycle.status",
+            "runtime health tab cycle had missing or timed-out tabs",
+            tabs=bad_statuses,
+        )
+
+
+def _check_runtime_health_lineage(report: dict, last: dict, failures: list[dict]) -> None:
+    lineage = last.get("data_lineage")
+    if not isinstance(lineage, list):
+        _fail(failures, "runtime_health.data_lineage.type", "data lineage must be a list")
+        return
+
+    requested_tabs = _requested_runtime_health_tabs(report)
+    if not requested_tabs:
+        return
+
+    entries = _lineage_by_key(lineage)
+    missing = sorted(tab for tab in requested_tabs if tab not in entries)
+    if missing:
+        _fail(
+            failures,
+            "runtime_health.data_lineage.requested_tabs",
+            "runtime health data lineage is missing requested tabs",
+            missing=missing,
+        )
+
+    required_fields = ("key", "title", "source", "cache_refs", "triggered_network", "fallback_or_degraded", "loaded")
+    missing_fields = {
+        key: [field for field in required_fields if field not in entries[key]]
+        for key in requested_tabs
+        if key in entries and any(field not in entries[key] for field in required_fields)
+    }
+    if missing_fields:
+        _fail(
+            failures,
+            "runtime_health.data_lineage.fields",
+            "runtime health data lineage entries are missing required fields",
+            missing=missing_fields,
+        )
 
 
 def check_runtime_health_budget(report: dict, thresholds: dict | None = None) -> list[dict]:
@@ -623,6 +730,8 @@ def check_runtime_health_budget(report: dict, thresholds: dict | None = None) ->
         "process",
         "webengine",
         "quotes",
+        "market_data",
+        "f5_refresh",
         "f5_cache",
         "data_lineage",
     ):
@@ -642,8 +751,8 @@ def check_runtime_health_budget(report: dict, thresholds: dict | None = None) ->
         if key not in f5_cache:
             _fail(failures, f"runtime_health.f5_cache.{key}", f"F5 cache {key} field is missing")
 
-    if not isinstance(last.get("data_lineage"), list):
-        _fail(failures, "runtime_health.data_lineage.type", "data lineage must be a list")
+    _check_runtime_health_tab_cycle(report, failures)
+    _check_runtime_health_lineage(report, last, failures)
 
     trend = report.get("budget_trend") or report.get("trend") or _runtime_health_trend(samples)
     active_tasks = trend.get("background_tasks") or {}
@@ -772,12 +881,14 @@ def run_budget_checks(args: argparse.Namespace) -> dict:
         if not path:
             continue
         failures = checker(_read_json(path), thresholds)
-        checks.append({
-            "label": label,
-            "path": str(path),
-            "status": "fail" if failures else "ok",
-            "failures": failures,
-        })
+        checks.append(
+            {
+                "label": label,
+                "path": str(path),
+                "status": "fail" if failures else "ok",
+                "failures": failures,
+            }
+        )
 
     status = "fail" if any(check["failures"] for check in checks) else "ok"
     return {
@@ -798,11 +909,21 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--round5-report", type=Path, default=None)
     parser.add_argument("--runtime-health-report", type=Path, default=None)
     parser.add_argument("--output", type=Path, default=None)
-    parser.add_argument("--gbbq-single-max-rss-delta-mb", type=float, default=DEFAULT_THRESHOLDS["gbbq_single_max_rss_delta_mb"])
-    parser.add_argument("--gbbq-single-max-elapsed-ms", type=float, default=DEFAULT_THRESHOLDS["gbbq_single_max_elapsed_ms"])
-    parser.add_argument("--gbbq-full-max-rss-delta-mb", type=float, default=DEFAULT_THRESHOLDS["gbbq_full_max_rss_delta_mb"])
-    parser.add_argument("--gbbq-full-max-elapsed-ms", type=float, default=DEFAULT_THRESHOLDS["gbbq_full_max_elapsed_ms"])
-    parser.add_argument("--tab-cycle-max-rss-delta-mb", type=float, default=DEFAULT_THRESHOLDS["tab_cycle_max_rss_delta_mb"])
+    parser.add_argument(
+        "--gbbq-single-max-rss-delta-mb", type=float, default=DEFAULT_THRESHOLDS["gbbq_single_max_rss_delta_mb"]
+    )
+    parser.add_argument(
+        "--gbbq-single-max-elapsed-ms", type=float, default=DEFAULT_THRESHOLDS["gbbq_single_max_elapsed_ms"]
+    )
+    parser.add_argument(
+        "--gbbq-full-max-rss-delta-mb", type=float, default=DEFAULT_THRESHOLDS["gbbq_full_max_rss_delta_mb"]
+    )
+    parser.add_argument(
+        "--gbbq-full-max-elapsed-ms", type=float, default=DEFAULT_THRESHOLDS["gbbq_full_max_elapsed_ms"]
+    )
+    parser.add_argument(
+        "--tab-cycle-max-rss-delta-mb", type=float, default=DEFAULT_THRESHOLDS["tab_cycle_max_rss_delta_mb"]
+    )
     parser.add_argument("--kline-max-rss-delta-mb", type=float, default=DEFAULT_THRESHOLDS["kline_max_rss_delta_mb"])
     parser.add_argument(
         "--kline-max-final-webengine-children",

@@ -439,7 +439,7 @@ pytest tests/test_table_refresh_state.py tests/test_rt_table_model_incremental.p
 ```powershell
 ruff check .
 ruff format .
-python scripts/check_utf8.py core ui vcp tests scripts app infra docs .github
+python scripts/check_utf8.py
 ```
 
 ### 运行时健康与 WebEngine 探针
@@ -460,8 +460,8 @@ python scripts/check_utf8.py core ui vcp tests scripts app infra docs .github
 夜间或人工长稳验证使用 30/60 分钟 soak；长模式会周期性导出 runtime health sample，并在聚合报告中输出 `trend` 和 `budget_trend`：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\runtime_health_stability_suite.py --mode soak30 --native-qt --sample-every-seconds 60 --sample-output-dir tmp\runtime_health_samples_soak30 --output tmp\runtime_health_soak30.json
-.\.venv\Scripts\python.exe scripts\runtime_health_stability_suite.py --mode soak60 --native-qt --sample-every-seconds 60 --sample-output-dir tmp\runtime_health_samples_soak60 --output tmp\runtime_health_soak60.json
+.\.venv\Scripts\python.exe scripts\runtime_health_stability_suite.py --mode soak30 --native-qt --fail-on-budget --sample-every-seconds 60 --sample-output-dir tmp\runtime_health_samples_soak30 --output tmp\runtime_health_soak30.json
+.\.venv\Scripts\python.exe scripts\runtime_health_stability_suite.py --mode soak60 --native-qt --fail-on-budget --sample-every-seconds 60 --sample-output-dir tmp\runtime_health_samples_soak60 --output tmp\runtime_health_soak60.json
 ```
 
 K 线 WebEngine 生命周期 smoke 需要原生 Qt / 可视桌面环境；默认 offscreen 会输出跳过原因和手动命令，避免把不稳定 WebEngine 自动化塞进 CI：
@@ -469,6 +469,13 @@ K 线 WebEngine 生命周期 smoke 需要原生 Qt / 可视桌面环境；默认
 ```powershell
 .\.venv\Scripts\python.exe scripts\kline_webengine_lifecycle_smoke.py --native-qt --cycles 5 --output tmp\kline_webengine_lifecycle_smoke.json
 .\.venv\Scripts\python.exe scripts\perf_budget_check.py --kline-lifecycle-report tmp\kline_webengine_lifecycle_smoke.json
+```
+
+Post-F5 网络同步完整回归需要覆盖情报源刷新路径；如果只做核心行情链路隔离诊断，可保留 round5 默认隔离参数，但完整门禁应显式关闭隔离：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\perf_round5_probe.py --no-isolate-info-source-refresh --stub-quote-provider --output tmp\perf_round5_full.json
+.\.venv\Scripts\python.exe scripts\perf_budget_check.py --round5-report tmp\perf_round5_full.json
 ```
 
 ### pre-commit

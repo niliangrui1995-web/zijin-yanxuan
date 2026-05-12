@@ -258,6 +258,7 @@ def test_round4_budget_rejects_duplicates_and_growth():
 
 def test_round5_budget_accepts_expected_post_f5_report():
     report = {
+        "mode": {"isolate_info_source_refresh": False},
         "post_f5": {
             "quote_requests": {
                 "batch_count": 1,
@@ -280,10 +281,27 @@ def test_round5_budget_accepts_expected_post_f5_report():
             "event_receiver_trend": {
                 "sig_cache_reload_completed": {"net_delta": 0},
             },
-        }
+        },
     }
 
     assert check_round5_budget(report) == []
+
+
+def test_round5_budget_rejects_isolated_information_source_report():
+    report = {
+        "mode": {"isolate_info_source_refresh": True},
+        "post_f5": {
+            "quote_requests": {},
+            "cache_only_guard": {},
+            "background_tasks": {},
+            "runtime_trend": {},
+            "event_receiver_trend": {},
+        },
+    }
+
+    failures = check_round5_budget(report)
+
+    assert any(failure["check"] == "round5.mode.isolated_info_source_refresh" for failure in failures)
 
 
 def test_round5_budget_rejects_post_f5_network_tail():
@@ -339,6 +357,8 @@ def _runtime_health_sample(**overrides):
         "event_bus": {"total_receivers": 12},
         "process": {"rss_mb": 500.0, "thread_count": 24},
         "webengine": {"count": 0},
+        "market_data": {"ok": True},
+        "f5_refresh": {"workspace_available": True},
         "quotes": {
             "request_stats": {"recent_batch_count": 1, "recent_codes_count": 20},
             "provider_degraded": False,
@@ -352,8 +372,12 @@ def _runtime_health_sample(**overrides):
         "data_lineage": [
             {
                 "key": "stock_candidates",
+                "title": "综合候选",
                 "source": "workspace_stock_context",
+                "cache_refs": ["global_store.quotes"],
                 "triggered_network": False,
+                "fallback_or_degraded": False,
+                "loaded": True,
             }
         ],
     }
@@ -363,13 +387,19 @@ def _runtime_health_sample(**overrides):
 
 def test_runtime_health_budget_accepts_structured_suite_report():
     report = {
+        "mode": {"tabs": ["stock_candidates"]},
+        "tab_cycle": {
+            "tabs": [
+                {"cycle": 1, "key": "stock_candidates", "status": "ok", "elapsed_ms": 120.0},
+            ]
+        },
         "runtime_health_samples": [
             _runtime_health_sample(),
             _runtime_health_sample(
                 timers={"active": 5, "total": 9},
                 process={"rss_mb": 504.0, "thread_count": 25},
             ),
-        ]
+        ],
     }
 
     assert check_runtime_health_budget(report) == []
@@ -417,6 +447,8 @@ def test_runtime_health_budget_rejects_growth_and_missing_sections():
         "runtime_health.quotes.request_stats",
         "runtime_health.quotes.provider_degraded",
         "runtime_health.quotes.last_network_error",
+        "runtime_health.market_data.present",
+        "runtime_health.f5_refresh.present",
         "runtime_health.data_lineage.type",
         "runtime_health.background_tasks.final",
         "runtime_health.timers.active_growth",
@@ -425,4 +457,35 @@ def test_runtime_health_budget_rejects_growth_and_missing_sections():
         "runtime_health.threads.growth",
         "runtime_health.webengine.final",
         "runtime_health.memory.rss_tail_range",
+    }
+
+
+def test_runtime_health_budget_rejects_tab_cycle_and_lineage_gaps():
+    report = {
+        "mode": {"tabs": ["stock_candidates", "scan"]},
+        "tab_cycle": {
+            "tabs": [
+                {"cycle": 1, "key": "stock_candidates", "status": "ok", "elapsed_ms": 120.0},
+                {"cycle": 1, "key": "scan", "status": "timeout", "elapsed_ms": 2100.0},
+            ]
+        },
+        "runtime_health_samples": [
+            _runtime_health_sample(
+                data_lineage=[
+                    {
+                        "key": "stock_candidates",
+                        "source": "workspace_stock_context",
+                        "triggered_network": False,
+                    }
+                ]
+            )
+        ],
+    }
+
+    failures = check_runtime_health_budget(report)
+
+    assert {failure["check"] for failure in failures} >= {
+        "runtime_health.tab_cycle.status",
+        "runtime_health.data_lineage.requested_tabs",
+        "runtime_health.data_lineage.fields",
     }
