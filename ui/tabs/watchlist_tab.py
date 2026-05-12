@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QAbstractItemView, QLabel, QLineEdit, QPushButton, Q
 
 from app.services import RPS_CACHE_FILE
 from app.services.tab_data_lineage_service import TabDataLineageService
+from app.services.ui_diagnostics_service import ui_stall_span
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
 from app.services.ui_market_calendar_service import MarketCalendar
@@ -690,55 +691,58 @@ class WatchlistTab(BaseStockTab):
         """主线程：将 VCP 指标更新到 Model（按股票代码匹配，不再按行号，防止排序/拖拽后错位）"""
         if not results: return
 
-        # 构建 code -> row_idx 的当前映射（实时安全）
-        code_to_row = {}
-        for idx, row_dict in enumerate(self.model.row_data):
-            c = row_dict.get('代码')
-            if c:
-                code_to_row[c] = idx
+        with ui_stall_span(
+            "WatchlistTab._apply_vcp_indicators_ui",
+            tab="watchlist",
+            signal=str(len(results)),
+        ):
+            # 构建 code -> row_idx 的当前映射（实时安全）
+            current_rows = list(getattr(self.model, "row_data", []) or [])
+            updated_rows = [dict(row_dict) for row_dict in current_rows]
+            code_to_row = {}
+            for idx, row_dict in enumerate(current_rows):
+                c = row_dict.get('代码')
+                if c:
+                    code_to_row[c] = idx
 
-        for code, data in results.items():
-            row_idx = code_to_row.get(code, -1)
-            if row_idx < 0 or row_idx >= len(self.model.row_data): continue
+            for code, data in results.items():
+                row_idx = code_to_row.get(code, -1)
+                if row_idx < 0 or row_idx >= len(updated_rows): continue
 
-            row_dict = self.model.row_data[row_idx]
-            row_dict['RPS强度'] = data.get('rps', '--')
-            if data.get('subsector'):
-                row_dict['细分板块'] = data['subsector']
+                row_dict = updated_rows[row_idx]
+                row_dict['RPS强度'] = data.get('rps', '--')
+                if data.get('subsector'):
+                    row_dict['细分板块'] = data['subsector']
 
-            # 三大阵营的数据注入 (如果原本有数据但不为空，我们不覆盖；如果本次扫到了，坚决覆盖)
-            if data.get('na_catalyst'):
-                row_dict['催化剂'] = data['na_catalyst']
-            row_dict['大宗交易'] = str(data.get('block_trade', '') or '')
-            row_dict['大宗交易金额(万)'] = data.get('block_trade_amount_wan', '')
-            row_dict['业绩异动'] = str(data.get('earnings', '') or '')
-            row_dict['业绩环比%'] = data.get('earnings_qoq_pct', '')
-            new_lhb = data.get('lhb', '')
-            if isinstance(new_lhb, dict):
-                new_date = new_lhb.get("date", "")
-                new_text = new_lhb.get("text", "")
-                new_net = new_lhb.get("net_wan", "")
-                # 【逻辑变更】：根据龙虎榜表信息无条件刷新，不考虑历史日期锁定
-                row_dict["龙虎榜"] = str(new_text or '')
-                row_dict["龙虎榜日期"] = str(new_date or '')
-                row_dict["龙虎榜净额(万)"] = new_net if new_net not in (None, '') else ''
-            else:
-                row_dict["龙虎榜"] = str(new_lhb or '')
-                row_dict["龙虎榜日期"] = ''
-                row_dict["龙虎榜净额(万)"] = ''
+                # 三大阵营的数据注入 (如果原本有数据但不为空，我们不覆盖；如果本次扫到了，坚决覆盖)
+                if data.get('na_catalyst'):
+                    row_dict['催化剂'] = data['na_catalyst']
+                row_dict['大宗交易'] = str(data.get('block_trade', '') or '')
+                row_dict['大宗交易金额(万)'] = data.get('block_trade_amount_wan', '')
+                row_dict['业绩异动'] = str(data.get('earnings', '') or '')
+                row_dict['业绩环比%'] = data.get('earnings_qoq_pct', '')
+                new_lhb = data.get('lhb', '')
+                if isinstance(new_lhb, dict):
+                    new_date = new_lhb.get("date", "")
+                    new_text = new_lhb.get("text", "")
+                    new_net = new_lhb.get("net_wan", "")
+                    # 【逻辑变更】：根据龙虎榜表信息无条件刷新，不考虑历史日期锁定
+                    row_dict["龙虎榜"] = str(new_text or '')
+                    row_dict["龙虎榜日期"] = str(new_date or '')
+                    row_dict["龙虎榜净额(万)"] = new_net if new_net not in (None, '') else ''
+                else:
+                    row_dict["龙虎榜"] = str(new_lhb or '')
+                    row_dict["龙虎榜日期"] = ''
+                    row_dict["龙虎榜净额(万)"] = ''
 
-            source_tags = watchlist_vm.derive_source_tags(
-                row_dict,
-                existing_tags=row_dict.get("来源标签"),
-            )
-            row_dict["来源标签"] = source_tags
-            row_dict["来源"] = watchlist_vm.format_source_tags(source_tags)
+                source_tags = watchlist_vm.derive_source_tags(
+                    row_dict,
+                    existing_tags=row_dict.get("来源标签"),
+                )
+                row_dict["来源标签"] = source_tags
+                row_dict["来源"] = watchlist_vm.format_source_tags(source_tags)
 
-            # trigger row update
-            self.model.dataChanged.emit(
-                self.model.index(row_idx, 0),
-                self.model.index(row_idx, len(self.model._headers)-1)
-            )
+            self.model.update_data(updated_rows, hydrate_latest_quotes=False)
 
         self._persist_watchlist_metrics(results)
         self._touch_watchlist_update()

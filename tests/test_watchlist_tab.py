@@ -432,6 +432,68 @@ def test_watchlist_clears_stale_special_columns_when_current_round_has_no_signal
         tab.deleteLater()
 
 
+def test_watchlist_indicator_apply_batches_model_update(monkeypatch):
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)
+    monkeypatch.setattr(
+        watchlist_module.WatchlistTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+    monkeypatch.setattr(watchlist_module.QTimer, "singleShot", staticmethod(lambda *_args, **_kwargs: None))
+    monkeypatch.setattr(watchlist_vm, "bulk_patch_entries", lambda *_args, **_kwargs: True)
+
+    tab = watchlist_module.WatchlistTab(_DummyProvider())
+    try:
+        tab.model.update_data(
+            [
+                {
+                    "代码": "600519",
+                    "名称": "贵州茅台",
+                    "来源": "手动",
+                    "现价": "--",
+                    "涨幅%": "--",
+                    "市值": "--",
+                    "RPS强度": "",
+                    "细分板块": "",
+                    "催化剂": "",
+                    "业绩异动": "",
+                    "大宗交易": "",
+                    "龙虎榜": "",
+                },
+                {
+                    "代码": "000001",
+                    "名称": "平安银行",
+                    "来源": "手动",
+                    "现价": "--",
+                    "涨幅%": "--",
+                    "市值": "--",
+                    "RPS强度": "",
+                    "细分板块": "",
+                    "催化剂": "",
+                    "业绩异动": "",
+                    "大宗交易": "",
+                    "龙虎榜": "",
+                },
+            ]
+        )
+        spy = QSignalSpy(tab.model.dataChanged)
+
+        tab._apply_vcp_indicators_ui(
+            {
+                "600519": {"rps": "95", "subsector": "白酒"},
+                "000001": {"rps": "80", "subsector": "银行"},
+            }
+        )
+
+        assert len(spy) == 1
+        assert tab.model.row_data[0]["RPS强度"] == "95"
+        assert tab.model.row_data[1]["细分板块"] == "银行"
+    finally:
+        tab.deleteLater()
+
+
 def test_watchlist_writes_earnings_report_label_to_column(monkeypatch):
     monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
     monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)
