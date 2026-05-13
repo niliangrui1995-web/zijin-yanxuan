@@ -190,7 +190,7 @@ def test_scan_tab_lineage_and_local_snapshot_hydration_use_existing_snapshot(mon
         tab.deleteLater()
 
 
-def test_scan_tab_auto_f5_incremental_scan_skips_same_trade_date(monkeypatch):
+def test_scan_tab_auto_f5_incremental_scan_runs_each_f5_even_same_trade_date(monkeypatch):
     monkeypatch.setattr("ui.tabs.scan_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
 
     tab = ScanTab(data_provider=None, engine=None)
@@ -200,9 +200,10 @@ def test_scan_tab_auto_f5_incremental_scan_skips_same_trade_date(monkeypatch):
         tab._resolve_incremental_scan_date = lambda: "2026-04-24"
         tab.start_scan = lambda sd, ed, merge_mode=False: calls.append((sd, ed, merge_mode)) or True
 
-        assert tab.run_auto_incremental_scan_after_f5() is False
-        assert calls == []
-        assert tab._settings.synced is False
+        assert tab.run_auto_incremental_scan_after_f5() is True
+        assert calls == [("2026-04-24", "2026-04-24", True)]
+        assert tab._settings.values[ScanTab.AUTO_F5_INCREMENTAL_SCAN_DATE_KEY] == "20260424"
+        assert tab._settings.synced is True
     finally:
         tab.deleteLater()
 

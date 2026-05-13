@@ -39,6 +39,18 @@ class WorkspaceFacade:
             return get_loaded_tab(key)
         return self._get_tab(key)
 
+    def _get_post_f5_refresh_tab(self, key: str):
+        if key != "scan":
+            return self._get_loaded_tab(key)
+
+        ensure_tab_loaded = getattr(self._workspace, "ensure_tab_loaded", None)
+        if callable(ensure_tab_loaded):
+            try:
+                return ensure_tab_loaded(key, reason="f5_auto_scan")
+            except TypeError:
+                return ensure_tab_loaded(key)
+        return self._get_tab(key)
+
     @staticmethod
     def _call_bool(tab, method_name: str, *args, **kwargs) -> bool:
         callback = getattr(tab, method_name, None)
@@ -98,8 +110,8 @@ class WorkspaceFacade:
             key = str(spec.get("key", "")).strip()
             if not key:
                 continue
-            tab = self._get_loaded_tab(key)
-            if self._is_noninteractive_loaded_tab(tab):
+            tab = self._get_post_f5_refresh_tab(key)
+            if key != "scan" and self._is_noninteractive_loaded_tab(tab):
                 continue
             if not isinstance(tab, PostF5DataRefreshCapability):
                 continue

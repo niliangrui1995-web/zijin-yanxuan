@@ -610,12 +610,6 @@ class ScanTab(BaseStockTab):
 
         target_date = self._resolve_incremental_scan_date()
         target_key = self._normalize_scan_date(target_date)
-        last_key = self._normalize_scan_date(
-            self._settings.value(self.AUTO_F5_INCREMENTAL_SCAN_DATE_KEY, "")
-        )
-        if target_key and target_key == last_key:
-            log.info(f"[扫描] F5后自动补扫跳过：{target_key} 已自动触发")
-            return False
 
         started = self.start_scan(target_date, target_date, merge_mode=True)
         if not started:

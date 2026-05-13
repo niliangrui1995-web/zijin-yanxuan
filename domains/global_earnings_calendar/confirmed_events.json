@@ -359,6 +359,24 @@
       "original_timezone": "America/New_York",
       "call_time_source_url": "https://ir.appliedmaterials.com/news-releases/news-release-details/applied-materials-report-fiscal-second-quarter-2026-results-may",
       "call_time_source_type": "official_ir_press_release"
+    },
+    {
+      "company": "Tower Semiconductor",
+      "ticker": "TSEM",
+      "sector": "先进制程代工",
+      "report_date": "2026-05-13",
+      "fiscal_period": "FY2026 Q1",
+      "time_label": "盘中",
+      "beijing_time": "2026-05-13 22:00",
+      "status": "confirmed",
+      "source": "confirmed",
+      "priority": "normal",
+      "conference_url": "https://towersemi.com/2026/05/13/05132026/",
+      "market": "US",
+      "original_call_time_text": "Wednesday, May 13, 2026, at 10:00 a.m. Eastern Time; first quarter 2026 financial results and second quarter 2026 guidance conference call",
+      "original_timezone": "America/New_York",
+      "call_time_source_url": "https://towersemi.com/2026/05/13/05132026/",
+      "call_time_source_type": "official_ir_press_release"
     }
   ]
 }

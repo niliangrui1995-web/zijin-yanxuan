@@ -8,6 +8,7 @@ import ui.workspaces.classic_workspace as classic_workspace_module
 import ui.workspaces.stock_context_service as stock_context_module
 from ui.components.smooth_tab_widget import SmoothTabWidget
 from ui.workspaces.classic_workspace import ClassicWorkspace
+from ui.workspaces.quote_universe_service import INFO_SOURCE_GROUP
 from ui.workspaces.stock_context_service import StockContextService
 from ui.workspaces.stock_signal import StockSignal
 
@@ -863,6 +864,21 @@ def test_workspace_refreshes_information_sources_after_f5():
         "earnings": True,
         "fund_holdings": True,
     }
+
+
+def test_workspace_refreshes_information_sources_after_f5_autoloads_scan():
+    calls = []
+    scan_tab = SimpleNamespace(refresh_data_after_f5=lambda: calls.append("scan") or True)
+    workspace = SimpleNamespace(
+        tab_specs=lambda: [{"key": "scan", "group": INFO_SOURCE_GROUP}],
+        get_loaded_tab=lambda key: None,
+        ensure_tab_loaded=lambda key, reason="user": calls.append(("ensure", key, reason)) or scan_tab,
+    )
+
+    results = ClassicWorkspace.refresh_information_sources_after_f5(workspace)
+
+    assert calls == [("ensure", "scan", "f5_auto_scan"), "scan"]
+    assert results == {"scan": True}
 
 
 def test_workspace_refreshes_information_sources_after_f5_skips_noninteractive_tabs():
