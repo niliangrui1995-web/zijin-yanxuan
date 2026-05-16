@@ -53,6 +53,7 @@ def build_audit_commands(args: argparse.Namespace) -> list[AuditCommand]:
     commands = [
         AuditCommand("ruff", [python, "-m", "ruff", "check", "."]),
         AuditCommand("utf8", [python, "scripts/check_utf8.py"]),
+        AuditCommand("git-diff-check", ["git", "diff", "--check"]),
         AuditCommand("compileall", [python, "-m", "compileall", "-q", *PYTHON_TARGETS]),
         AuditCommand("pip-check", [python, "-m", "pip", "check"]),
         AuditCommand(

@@ -14,6 +14,7 @@ def test_project_audit_full_gate_includes_required_checks():
     assert labels == [
         "ruff",
         "utf8",
+        "git-diff-check",
         "compileall",
         "pip-check",
         "architecture-boundaries",
@@ -26,7 +27,10 @@ def test_project_audit_quick_gate_skips_full_pytest_and_webengine_preflight():
     args = project_audit._parse_args(["--quick"])
     commands = project_audit.build_audit_commands(args)
 
-    assert "full-pytest" not in [command.label for command in commands]
+    labels = [command.label for command in commands]
+    assert "full-pytest" not in labels
+    git_diff = next(command for command in commands if command.label == "git-diff-check")
+    assert git_diff.command == ["git", "diff", "--check"]
     runtime = next(command for command in commands if command.label == "runtime-self-check")
     assert "--skip-webengine-preflight" in runtime.command
 

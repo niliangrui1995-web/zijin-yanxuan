@@ -14,6 +14,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+_HARD_RUNTIME_ENV_SEVERITIES = {"critical", "error", "fail", "failure", "fatal", "hard"}
+
 
 def _path_snapshot(path: str | Path) -> dict[str, Any]:
     item = Path(path)
@@ -30,6 +32,71 @@ def _path_snapshot(path: str | Path) -> dict[str, Any]:
         except OSError as exc:
             result["stat_error"] = f"{exc.__class__.__name__}:{exc}"
     return result
+
+
+def _issue_value(issue: Any, *names: str, default: Any = None) -> Any:
+    if isinstance(issue, dict):
+        for name in names:
+            if name in issue:
+                return issue[name]
+        return default
+    for name in names:
+        if hasattr(issue, name):
+            return getattr(issue, name)
+    return default
+
+
+def _runtime_env_issue_entry(issue: Any) -> dict[str, Any]:
+    if isinstance(issue, str):
+        return {
+            "code": "",
+            "message": issue,
+            "severity": "warning",
+            "hard_failure": False,
+        }
+
+    code = str(_issue_value(issue, "code", "name", default="") or "")
+    message = str(_issue_value(issue, "message", "detail", "description", default="") or "")
+    severity = str(_issue_value(issue, "severity", "level", default="warning") or "warning").lower()
+    hard_failure = bool(
+        _issue_value(issue, "hard_failure", "is_hard_failure", "fatal", default=False)
+    )
+    if severity in _HARD_RUNTIME_ENV_SEVERITIES:
+        hard_failure = True
+    if not message:
+        message = str(issue)
+
+    return {
+        "code": code,
+        "message": message,
+        "severity": severity,
+        "hard_failure": hard_failure,
+    }
+
+
+def _collect_runtime_env_issue_entries() -> list[dict[str, Any]]:
+    try:
+        issues = _collect_runtime_env_issues(str(PROJECT_ROOT), executable=sys.executable)
+    except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        return [
+            {
+                "code": "runtime_env.collect_failed",
+                "message": f"{exc.__class__.__name__}:{exc}",
+                "severity": "error",
+                "hard_failure": True,
+            }
+        ]
+    return [_runtime_env_issue_entry(issue) for issue in issues]
+
+
+def _collect_runtime_env_issues(project_root: str, *, executable: str) -> list[Any]:
+    from core.runtime_env import collect_runtime_env_issues
+
+    return collect_runtime_env_issues(project_root, executable=executable)
+
+
+def _runtime_env_failure_key(issue: dict[str, Any]) -> str:
+    return str(issue.get("code") or issue.get("message") or "runtime_env_issue")
 
 
 def _import_snapshot(module_name: str) -> dict[str, Any]:
@@ -109,6 +176,12 @@ def build_report(*, skip_webengine_preflight: bool = False, webengine_timeout_s:
     ]
     if not webengine_preflight.get("ok"):
         hard_failures.append("qt_webengine_preflight")
+    runtime_env_issues = _collect_runtime_env_issue_entries()
+    hard_failures.extend(
+        _runtime_env_failure_key(issue)
+        for issue in runtime_env_issues
+        if issue.get("hard_failure")
+    )
 
     status = "fail" if hard_failures else "ok"
     return {
@@ -140,6 +213,7 @@ def build_report(*, skip_webengine_preflight: bool = False, webengine_timeout_s:
             "qt_qpa_platform": os.environ.get("QT_QPA_PLATFORM", ""),
             "qtwebengine_chromium_flags": os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", ""),
         },
+        "runtime_env_issues": runtime_env_issues,
         "failures": hard_failures,
     }
 

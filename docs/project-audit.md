@@ -34,6 +34,7 @@
 
 - Ruff 静态检查
 - UTF-8 / 疑似文本异常检查
+- `git diff --check` 差异空白错误检查
 - `compileall` 编译检查
 - `pip check` 依赖一致性检查
 - 架构边界测试

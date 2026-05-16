@@ -1,4 +1,8 @@
-from scripts.check_utf8 import scan_text_issues
+from scripts.check_utf8 import DEFAULT_TARGETS, scan_text_issues
+
+
+def test_default_targets_include_guardrail_paths():
+    assert {"domains", "earnings", "requirements-dev.txt"}.issubset(set(DEFAULT_TARGETS))
 
 
 def test_scan_text_issues_accepts_normal_utf8_text():
