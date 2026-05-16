@@ -6,7 +6,7 @@ import os
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QCheckBox, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
-from app.services import filter_asian_tickers, find_asian_track
+from app.services.asian_market_service import filter_asian_tickers, find_asian_track
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
 from core.logger import get_logger

@@ -17,7 +17,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from app.services import get_sector_manager
+from app.services.sector_runtime_service import get_sector_manager
+from app.services.tab_data_lineage_service import TabDataLineageService
 from app.services.ui_config_service import app_config
 from app.services.ui_diagnostics_service import ui_stall_span
 from app.services.ui_event_service import domain_events as event_bus
@@ -105,6 +106,19 @@ class FundHoldingsTab(BaseStockTab):
         self._sector_manager = None
         self._sector_manager_initialized = False
         self._concept_sector_cache: dict[str, str] = {}
+        self._fund_holdings_lineage_service = TabDataLineageService(
+            key="fund_holdings",
+            source="fund_holdings_store + local_quote_snapshot",
+            provider="ui_fund_holdings_service",
+            cache_refs=(
+                "data/vcp_hunter.db:fund holdings tables",
+                "global_store.quotes",
+                "local_tdx_cache",
+            ),
+            provider_status_reader=self._read_provider_status,
+        )
+        self._last_fund_holdings_result = None
+        self._last_fund_holdings_signature = ""
         self._settings = self._create_settings()
         self._pending_daily_auto_sync_date = ""
         self._restoring_view_state = False
@@ -517,6 +531,9 @@ class FundHoldingsTab(BaseStockTab):
             self._apply_latest_quotes_from_store()
             self._prime_visible_local_quote_snapshot(self.model)
             self._update_status_summary()
+            lineage_updater = getattr(self, "_refresh_fund_holdings_lineage", None)
+            if callable(lineage_updater):
+                lineage_updater(view_rows)
 
         if not view_rows and not self._sync_active:
             self.table_state.show_empty("暂无基金持仓数据", "请使用右上角“刷新”同步 QFII 或睿远持仓")
@@ -844,6 +861,92 @@ class FundHoldingsTab(BaseStockTab):
         latest_sync = max(sync_times)
         return f"快照 {latest_sync[-8:]}"
 
+    def _read_provider_status(self) -> dict:
+        provider = getattr(self, "data_provider", None)
+        request_stats = {}
+        runtime_stats = {}
+
+        request_getter = getattr(provider, "get_quote_request_stats", None)
+        if callable(request_getter):
+            try:
+                request_stats = request_getter() or {}
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                request_stats = {}
+
+        runtime_getter = getattr(provider, "get_realtime_runtime_stats", None)
+        if callable(runtime_getter):
+            try:
+                runtime_stats = runtime_getter() or {}
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                runtime_stats = {}
+
+        return {
+            "request_stats": request_stats,
+            "runtime_stats": runtime_stats,
+            "eastmoney_cooldown_until": float(getattr(provider, "_rt_eastmoney_cooldown_until", 0.0) or 0.0),
+            "eastmoney_last_error": str(getattr(provider, "_rt_eastmoney_last_error", "") or ""),
+        }
+
+    def _latest_sync_updated_at(self) -> str:
+        sync_times = []
+        for sync_state in self._latest_sync_map.values():
+            if not isinstance(sync_state, dict):
+                continue
+            finished_at = str(sync_state.get("finished_at") or "").strip()
+            if finished_at:
+                sync_times.append(finished_at)
+        return max(sync_times) if sync_times else ""
+
+    def _latest_loaded_quarter(self) -> str:
+        quarters = [str(item or "").strip() for item in self._latest_quarter_map.values()]
+        quarters = [item for item in quarters if item and item != self._DISPLAY_PLACEHOLDER]
+        return max(quarters) if quarters else ""
+
+    def _fund_holdings_lineage_status(self, rows: list[dict]) -> str:
+        if self._sync_active:
+            return "syncing"
+        if rows:
+            return "loaded"
+        if not self._initial_load_started and not self._autoload:
+            return "deferred"
+        return "empty"
+
+    def _describe_fund_holdings_rows(self, rows: list[dict]):
+        warnings = []
+        status = self._fund_holdings_lineage_status(rows)
+        if not rows:
+            warnings.append("fund_holdings_rows_deferred" if status == "deferred" else "fund_holdings_rows_empty")
+        visible = self.proxy_model.rowCount() if hasattr(self, "proxy_model") else len(rows)
+        return self._fund_holdings_lineage_service.describe(
+            rows,
+            updated_at=self._latest_sync_updated_at(),
+            triggered_network=bool(self._sync_active),
+            warnings=warnings,
+            extra={
+                "status": status,
+                "visible_row_count": visible,
+                "loaded_quarter_scope": self._loaded_quarter_scope,
+                "loaded_quarter_keys": sorted(self._loaded_quarter_keys),
+                "latest_quarter": self._latest_loaded_quarter(),
+                "current_filter": self._current_filter_summary(),
+                "sync_active": self._sync_active,
+                "sync_task_id": self._sync_task_id,
+            },
+        )
+
+    def _refresh_fund_holdings_lineage(self, rows: list[dict] | None = None):
+        row_list = list(rows if rows is not None else self.get_row_data(current_model=getattr(self, "model", None)))
+        result = self._describe_fund_holdings_rows(row_list)
+        self._last_fund_holdings_result = result
+        self._last_fund_holdings_signature = result.signature
+        return result
+
+    def get_data_lineage(self) -> dict:
+        result = self._last_fund_holdings_result
+        if result is None:
+            result = self._refresh_fund_holdings_lineage()
+        return result.lineage.as_dict()
+
     def _current_filter_summary(self) -> str:
         parts = []
         subject_text = " / ".join(sorted(self._selected_subject_names()))
@@ -978,6 +1081,7 @@ class FundHoldingsTab(BaseStockTab):
     def _set_sync_active(self, active: bool, title: str = "", subtitle: str = ""):
         self._sync_active = bool(active)
         self.btn_update.setEnabled(not self._sync_active)
+        self._last_fund_holdings_result = None
         if self._sync_active:
             self.table_state.show_loading(title or "同步基金持仓中...", subtitle)
 

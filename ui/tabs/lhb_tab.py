@@ -20,7 +20,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from app.services import create_scan_engine
+from app.services.scan_runtime_service import create_scan_engine
+from app.services.tab_data_lineage_service import TabDataLineageService
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
 from app.services.ui_market_calendar_service import MarketCalendar
@@ -54,6 +55,19 @@ class LhbTab(BaseStockTab):
         self._status_segments = ()
         self._status_freshness = ""
         self._status_next_step = ""
+        self._lhb_lineage_service = TabDataLineageService(
+            key="lhb",
+            source="LhbPoolManager cache + local_quote_snapshot",
+            provider="LhbPoolManager/scan_runtime_service",
+            cache_refs=(
+                "data/Cache/lhb_pool_20d.json",
+                "global_store.quotes",
+                "local_tdx_cache",
+            ),
+            provider_status_reader=self._read_provider_status,
+        )
+        self._last_lhb_result = None
+        self._last_lhb_signature = ""
         self._auto_initial_check_timer = QTimer(self)
         self._auto_initial_check_timer.setSingleShot(True)
         self._auto_initial_check_timer.timeout.connect(self._check_auto_fetch)
@@ -143,6 +157,99 @@ class LhbTab(BaseStockTab):
         cached_dates = self._get_pool_manager().get_cached_dates() or []
         return max(cached_dates) if cached_dates else ""
 
+    def _read_provider_status(self) -> dict:
+        provider = getattr(self, "data_provider", None)
+        request_stats = {}
+        runtime_stats = {}
+
+        request_getter = getattr(provider, "get_quote_request_stats", None)
+        if callable(request_getter):
+            try:
+                request_stats = request_getter() or {}
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                request_stats = {}
+
+        runtime_getter = getattr(provider, "get_realtime_runtime_stats", None)
+        if callable(runtime_getter):
+            try:
+                runtime_stats = runtime_getter() or {}
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                runtime_stats = {}
+
+        return {
+            "request_stats": request_stats,
+            "runtime_stats": runtime_stats,
+            "eastmoney_cooldown_until": float(getattr(provider, "_rt_eastmoney_cooldown_until", 0.0) or 0.0),
+            "eastmoney_last_error": str(getattr(provider, "_rt_eastmoney_last_error", "") or ""),
+        }
+
+    def _latest_loaded_cached_trade_date(self) -> str:
+        manager = getattr(self, "pool_manager", None)
+        getter = getattr(manager, "get_cached_dates", None)
+        if not callable(getter):
+            return ""
+        try:
+            cached_dates = getter() or []
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return ""
+        return max(cached_dates) if cached_dates else ""
+
+    def _cached_pool_day_count(self) -> int:
+        manager = getattr(self, "pool_manager", None)
+        getter = getattr(manager, "get_cached_dates", None)
+        if not callable(getter):
+            return 0
+        try:
+            return len(getter() or [])
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return 0
+
+    def _lhb_lineage_status(self, rows: list[dict]) -> str:
+        if self._backfill_in_progress:
+            return "syncing"
+        if self._pool_load_in_progress:
+            return "loading"
+        if rows:
+            return "loaded"
+        if not self._pool_bootstrap_started:
+            return "deferred"
+        return "empty"
+
+    def _describe_lhb_rows(self, rows: list[dict]):
+        warnings = []
+        status = self._lhb_lineage_status(rows)
+        if not rows:
+            warnings.append("lhb_rows_deferred" if status == "deferred" else "lhb_rows_empty")
+        return self._lhb_lineage_service.describe(
+            rows,
+            trade_date=self._latest_loaded_cached_trade_date(),
+            triggered_network=bool(self._backfill_in_progress),
+            warnings=warnings,
+            extra={
+                "status": status,
+                "pool_bootstrap_started": self._pool_bootstrap_started,
+                "pool_load_in_progress": self._pool_load_in_progress,
+                "backfill_in_progress": self._backfill_in_progress,
+                "cached_trade_days": self._cached_pool_day_count(),
+                "pool_window_days": POOL_WINDOW,
+                "last_table_freshness": self._status_freshness,
+                "status_primary": self._status_primary,
+            },
+        )
+
+    def _refresh_lhb_lineage(self, rows: list[dict] | None = None):
+        row_list = list(rows if rows is not None else self.get_row_data(current_model=getattr(self, "model", None)))
+        result = self._describe_lhb_rows(row_list)
+        self._last_lhb_result = result
+        self._last_lhb_signature = result.signature
+        return result
+
+    def get_data_lineage(self) -> dict:
+        result = self._last_lhb_result
+        if result is None:
+            result = self._refresh_lhb_lineage()
+        return result.lineage.as_dict()
+
     @classmethod
     def _build_backfill_progress_log(cls, index: int, total: int, date_str: str, payload: dict) -> tuple[str, str]:
         count = int(payload.get("count", 0) or 0)
@@ -174,6 +281,8 @@ class LhbTab(BaseStockTab):
         self._status_segments = tuple(str(segment or "").strip() for segment in segments if str(segment or "").strip())
         self._status_freshness = str(freshness or "").strip()
         self._status_next_step = str(next_step or "").strip()
+        if hasattr(self, "_last_lhb_result"):
+            self._last_lhb_result = None
         self._refresh_pool_status()
 
     def _refresh_pool_status(self):
@@ -489,6 +598,7 @@ class LhbTab(BaseStockTab):
         row_data = [self._format_pool_row(rec) for rec in pool]
 
         self.model.update_data(row_data)
+        self._refresh_lhb_lineage(row_data)
 
         cached_days = len(self._get_pool_manager().get_cached_dates())
         self._set_pool_status(

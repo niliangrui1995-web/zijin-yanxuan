@@ -13,7 +13,7 @@ K 线图窗口 — ECharts 5.5.0 + QWebEngineView 高性能版
 import json
 import os as _os
 
-from app.services import is_yf_rate_limit_error, mark_yf_rate_limited
+from app.services.asian_market_service import is_yf_rate_limit_error, mark_yf_rate_limited
 from app.services.scan_runtime_service import calculate_scan_indicators
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_market_calendar_service import MarketCalendar

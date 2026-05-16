@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from app.services.scan_engine_facade import VCPEngine
 from domains.scan import BreakoutMonitorService, IndicatorService
+from vcp.models import VCPParams as VCPParams
 
 
 def create_scan_engine():

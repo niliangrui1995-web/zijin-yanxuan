@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from app.services import VCPParams
+from app.services.scan_runtime_service import VCPParams
 from app.services.tab_data_lineage_service import TabDataLineageService
 from app.services.ui_config_service import app_config
 from app.services.ui_event_service import domain_events as event_bus

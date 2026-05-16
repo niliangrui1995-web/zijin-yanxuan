@@ -37,6 +37,24 @@ TARGET_NAMES = {
     ".gitattributes",
     ".gitignore",
 }
+MOJIBAKE_TOKENS = (
+    "\u934f",
+    "\u9428",
+    "\u7459",
+    "\u95ab",
+    "\u7ef1",
+    "\u942e",
+    "\u951b",
+    "\u9286",
+    "\u5b2b",
+    "\u701b",
+    "\u20ac",
+)
+MOJIBAKE_WINDOW_CHARS = 160
+MOJIBAKE_TOKEN_THRESHOLD = 3
+MOJIBAKE_ALLOWLIST_SNIPPETS = (
+    'LEGACY_MOJIBAKE_CODE_KEY = "\\u6d60\\uff47\\u721c"',
+)
 
 
 def _should_scan_file(path: Path) -> bool:
@@ -68,12 +86,49 @@ def iter_target_files(targets: list[str] | None = None):
                 yield path
 
 
+def _strip_mojibake_allowlist(text: str) -> str:
+    scanned = text
+    for snippet in MOJIBAKE_ALLOWLIST_SNIPPETS:
+        scanned = scanned.replace(snippet, "")
+    return scanned
+
+
+def _has_suspicious_mojibake(text: str) -> bool:
+    scanned = _strip_mojibake_allowlist(text)
+    matches: list[tuple[int, str]] = []
+    for token in MOJIBAKE_TOKENS:
+        start = 0
+        while True:
+            index = scanned.find(token, start)
+            if index < 0:
+                break
+            matches.append((index, token))
+            start = index + len(token)
+
+    if len(matches) < MOJIBAKE_TOKEN_THRESHOLD:
+        return False
+
+    matches.sort()
+    for match_index, (start, _token) in enumerate(matches):
+        window_end = start + MOJIBAKE_WINDOW_CHARS
+        window_tokens = {
+            token
+            for index, token in matches[match_index:]
+            if index <= window_end
+        }
+        if len(window_tokens) >= MOJIBAKE_TOKEN_THRESHOLD:
+            return True
+    return False
+
+
 def scan_text_issues(text: str) -> list[str]:
     issues: list[str] = []
     if "\x00" in text:
         issues.append("包含 NUL 字节")
     if "\ufffd" in text:
         issues.append("包含 Unicode 替换字符(可能已发生乱码)")
+    if _has_suspicious_mojibake(text):
+        issues.append("包含疑似 mojibake 文本(合法 UTF-8 但像是错误解码后的中文)")
     return issues
 
 

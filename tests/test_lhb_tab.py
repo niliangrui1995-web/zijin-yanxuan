@@ -151,6 +151,29 @@ def test_lhb_deferred_status_does_not_read_pool_cache(monkeypatch):
         tab.deleteLater()
 
 
+def test_lhb_data_lineage_reports_deferred_without_pool_cache(monkeypatch):
+    monkeypatch.setattr(LhbTab, "_start_auto_scheduler", lambda self: None, raising=False)
+    monkeypatch.setattr(
+        lhb_tab_module,
+        "LhbPoolManager",
+        lambda: (_ for _ in ()).throw(AssertionError("pool manager should stay lazy")),
+    )
+
+    tab = LhbTab(object(), autoload_pool=False)
+    try:
+        lineage = tab.get_data_lineage()
+
+        assert lineage["key"] == "lhb"
+        assert lineage["source"] == "LhbPoolManager cache + local_quote_snapshot"
+        assert lineage["status"] == "deferred"
+        assert lineage["row_count"] == 0
+        assert lineage["triggered_network"] is False
+        assert "lhb_rows_deferred" in lineage["warnings"]
+        assert "data/Cache/lhb_pool_20d.json" in lineage["cache_refs"]
+    finally:
+        tab.deleteLater()
+
+
 def test_lhb_delete_later_stops_auto_timer(monkeypatch):
     monkeypatch.setattr(LhbTab, "_load_and_display_pool", lambda self: None, raising=False)
 
@@ -199,6 +222,31 @@ def test_lhb_prime_background_load_starts_deferred_pool_once(monkeypatch):
 
         assert calls == ["scheduler"]
         assert tab._pool_bootstrap_started is False
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_data_lineage_updates_after_pool_display(monkeypatch):
+    monkeypatch.setattr(LhbTab, "_start_auto_scheduler", lambda self: None, raising=False)
+    monkeypatch.setattr(
+        LhbTab,
+        "refresh_table_quotes_and_market_caps",
+        lambda self, *args, **kwargs: None,
+        raising=False,
+    )
+
+    tab = LhbTab(object(), autoload_pool=False)
+    tab.pool_manager = SimpleNamespace(get_cached_dates=lambda: ["20260419", "20260420"])
+    try:
+        tab._display_pool([{"code": "300750", "name": "CATL"}])
+        lineage = tab.get_data_lineage()
+
+        assert lineage["key"] == "lhb"
+        assert lineage["status"] == "loaded"
+        assert lineage["row_count"] == 1
+        assert lineage["trade_date"] == "20260420"
+        assert lineage["cached_trade_days"] == 2
+        assert lineage["pool_window_days"] == lhb_tab_module.POOL_WINDOW
     finally:
         tab.deleteLater()
 

@@ -116,9 +116,11 @@ def _find_root_app_services_imports(root: Path, allowed_imports: dict[str, set[s
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and node.module == "app.services":
                 imported_names.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module == "app":
+                imported_names.extend(alias.name for alias in node.names if alias.name == "services")
             elif isinstance(node, ast.Import):
                 imported_names.extend(alias.name for alias in node.names if alias.name == "app.services")
-        unexpected = sorted(name for name in imported_names if name not in allowed_imports.get(rel_path, set()))
+        unexpected = sorted({name for name in imported_names if name not in allowed_imports.get(rel_path, set())})
         if unexpected:
             violations.append(f"{rel_path}: {', '.join(unexpected)}")
     return violations
@@ -204,6 +206,32 @@ def test_python_boundary_scan_includes_root_pyw_entry_and_excludes_noise_dirs():
         for rel_path in paths
         for part in Path(rel_path).parts
     )
+
+
+def test_root_app_services_scan_catches_from_app_import_services(tmp_path, monkeypatch):
+    repo_root = tmp_path / "repo"
+    ui_root = repo_root / "ui"
+    ui_root.mkdir(parents=True)
+    (ui_root / "from_app.py").write_text(
+        "from app import services\nfrom app import services as svc\n",
+        encoding="utf-8",
+    )
+    (ui_root / "import_root.py").write_text(
+        "import app.services as services\n",
+        encoding="utf-8",
+    )
+    (ui_root / "narrow.py").write_text(
+        "from app.services.ui_event_service import domain_events\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setitem(globals(), "REPO_ROOT", repo_root)
+
+    violations = _find_root_app_services_imports(ui_root, {})
+
+    assert violations == [
+        "ui/from_app.py: services",
+        "ui/import_root.py: app.services",
+    ]
 
 
 def test_ui_layer_does_not_import_legacy_event_or_task_manager_modules():
@@ -412,57 +440,13 @@ def test_ui_layer_uses_narrow_app_services_instead_of_runtime_barrel():
 
 
 def test_ui_layer_uses_narrow_app_service_modules_instead_of_root_barrel():
-    historical_root_barrel_imports = {
-        "ui/kline_window_qt.py": {"is_yf_rate_limit_error", "mark_yf_rate_limited"},
-        "ui/kline_window_runtime.py": {
-            "get_yf_rate_limit_status",
-            "is_yf_rate_limit_error",
-            "mark_yf_rate_limited",
-        },
-        "ui/main_window_qt.py": {
-            "APP_VERSION",
-            "RPS_CACHE_FILE",
-            "build_kline_open_request",
-            "create_data_provider",
-            "create_scan_engine",
-            "create_startup_orchestrator",
-        },
-        "ui/splash_screen.py": {"APP_VERSION"},
-        "ui/tabs/asian_market_tab.py": {"filter_asian_tickers", "find_asian_track"},
-        "ui/tabs/asian_market_workers.py": {
-            "CACHE_DIR",
-            "build_yf_session",
-            "get_yf_rate_limit_status",
-            "is_yf_rate_limit_error",
-            "mark_yf_rate_limited",
-            "sync_asian_kline_cache",
-        },
-        "ui/tabs/base_stock_refresh.py": {
-            "FINANCE_CACHE_FILE",
-            "batch_get_finance_info",
-            "load_local_tdx_capital_snapshot",
-        },
-        "ui/tabs/fund_holdings_tab.py": {"get_sector_manager"},
-        "ui/tabs/lhb_tab.py": {"create_scan_engine"},
-        "ui/tabs/scan_tab.py": {"VCPParams"},
-        "ui/tabs/watchlist_tab.py": {"RPS_CACHE_FILE"},
-        "ui/workers/rt_scan_worker.py": {
-            "RPS_CACHE_FILE",
-            "VCPParams",
-            "batch_check_market_cap",
-            "batch_get_finance_info",
-            "build_rps_matrix",
-            "precompute_ready_pool",
-            "quick_check_breakout",
-        },
-        "ui/workers/scan_worker.py": {"batch_check_market_cap", "calculate_scan_indicators"},
-    }
+    allowed_root_barrel_imports: dict[str, set[str]] = {}
     violations = _find_root_app_services_imports(
         REPO_ROOT / "ui",
-        historical_root_barrel_imports,
+        allowed_root_barrel_imports,
     )
     assert not violations, (
-        "UI layer added broad app.services root-barrel imports. "
+        "UI layer imported the broad app.services root barrel. "
         "Import from app.services.<narrow_service> instead:\n"
         + "\n".join(violations)
     )

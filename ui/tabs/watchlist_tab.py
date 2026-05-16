@@ -7,7 +7,7 @@ from datetime import datetime
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QAbstractItemView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
-from app.services import RPS_CACHE_FILE
+from app.services.runtime_constants import RPS_CACHE_FILE
 from app.services.tab_data_lineage_service import TabDataLineageService
 from app.services.ui_diagnostics_service import ui_stall_span
 from app.services.ui_event_service import domain_events as event_bus

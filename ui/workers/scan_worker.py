@@ -5,7 +5,7 @@ import gc
 import pandas as pd
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from app.services import batch_check_market_cap, calculate_scan_indicators
+from app.services.scan_runtime_service import batch_check_market_cap, calculate_scan_indicators
 from core.logger import get_logger
 from core.sector_rps_helper import enrich_hot_sector_rows, load_sector_rps_snapshot
 

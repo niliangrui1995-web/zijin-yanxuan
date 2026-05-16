@@ -113,7 +113,15 @@ def test_fund_holdings_filter_state_batches_invalidations():
     assert proxy.invalidate_count == 1
 
 
-def _setup_store(monkeypatch, rows, settings=None, concept_map=None, *, patch_local_snapshot: bool = True):
+def _setup_store(
+    monkeypatch,
+    rows,
+    settings=None,
+    concept_map=None,
+    sync_map=None,
+    *,
+    patch_local_snapshot: bool = True,
+):
     settings = settings or _FakeSettings()
     concept_map = concept_map or {}
     monkeypatch.setattr(
@@ -124,7 +132,7 @@ def _setup_store(monkeypatch, rows, settings=None, concept_map=None, *, patch_lo
     monkeypatch.setattr(
         fund_holdings_module.fund_holdings_store,
         "get_latest_sync_map",
-        lambda: {},
+        lambda: dict(sync_map or {}),
     )
     def _query_change_rows(*, quarter_keys=None):
         if quarter_keys is None:
@@ -241,6 +249,41 @@ def test_fund_holdings_tab_reload_uses_f5_quote_cache_only(monkeypatch):
     try:
         assert refresh_calls == []
         assert tab.model.get_row_data(0)["市价"] == "10.50"
+    finally:
+        tab.deleteLater()
+
+
+def test_fund_holdings_data_lineage_reports_loaded_rows(monkeypatch):
+    _setup_store(
+        monkeypatch,
+        [
+            _build_change_row(
+                subject_code="QFII",
+                subject_name="QFII",
+                quarter_key="2025Q4",
+                compare_quarter_key="2025Q3",
+                change_type="increase",
+                stock_code="000001",
+                stock_name="Ping An Bank",
+            )
+        ],
+        sync_map={"QFII": {"finished_at": "2026-04-30T20:30:00"}},
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
+    try:
+        lineage = tab.get_data_lineage()
+
+        assert lineage["key"] == "fund_holdings"
+        assert lineage["source"] == "fund_holdings_store + local_quote_snapshot"
+        assert lineage["status"] == "loaded"
+        assert lineage["row_count"] == 1
+        assert lineage["visible_row_count"] == 1
+        assert lineage["updated_at"] == "2026-04-30T20:30:00"
+        assert lineage["loaded_quarter_scope"] == "latest"
+        assert lineage["latest_quarter"] == "2025Q4"
+        assert lineage["triggered_network"] is False
+        assert "data/vcp_hunter.db:fund holdings tables" in lineage["cache_refs"]
     finally:
         tab.deleteLater()
 

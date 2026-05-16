@@ -5,8 +5,8 @@ import math
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from app.services import (
-    RPS_CACHE_FILE,
+from app.services.runtime_constants import RPS_CACHE_FILE
+from app.services.scan_runtime_service import (
     VCPParams,
     batch_check_market_cap,
     batch_get_finance_info,
@@ -508,4 +508,3 @@ class RtScanWorker(QThread):
                 f"zbg_cache={len(self._zbg_cache)}"
             )
         self.rt_result_ready.emit(all_signals)
-

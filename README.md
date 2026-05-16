@@ -404,10 +404,10 @@ $env:OPENDART_API_KEY = "<your-opendart-key>"
 
 ### 安装开发工具
 
-仓库当前没有单独的开发依赖文件，建议手动安装：
+仓库当前提供单独的开发与审计依赖文件：
 
 ```powershell
-python -m pip install pytest ruff pre-commit
+python -m pip install -r requirements-dev.txt
 ```
 
 ### 运行测试
@@ -433,7 +433,7 @@ pytest tests/test_table_refresh_state.py tests/test_rt_table_model_incremental.p
 
 - `tests/conftest.py` 会统一创建 `QApplication`，避免 PyQt 测试直接崩溃
 - 多数表格与行情链路已经有回归测试覆盖
-- CI 当前覆盖 Ruff、UTF-8、架构边界、启动编排、服务边界和工作区聚合等核心护栏，配置位于 `.github/workflows/ci.yml`
+- CI 当前覆盖 Python 3.10 快速审计、Python 3.11 主测试、Windows smoke、Ruff、UTF-8、架构边界、启动编排、服务边界和工作区聚合等核心护栏，配置位于 `.github/workflows/ci.yml`
 
 ### 代码检查
 
@@ -445,10 +445,10 @@ python scripts/check_utf8.py
 
 ### 运行时健康与 WebEngine 探针
 
-提交前可以用短模式验证主窗口运行时健康、`stock_candidates / scan / watchlist / rt_monitor` DataLineage、后台任务、Timer、事件订阅和 WebEngine 子进程预算：
+提交前可以用短模式验证主窗口运行时健康、`stock_candidates / scan / watchlist / rt_monitor / lhb / fund_holdings` DataLineage、后台任务、Timer、事件订阅和 WebEngine 子进程预算：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\runtime_health_stability_suite.py --mode short --tabs stock_candidates scan watchlist rt_monitor --sample-output-dir tmp\runtime_health_samples_short --output tmp\runtime_health_stability_short.json
+.\.venv\Scripts\python.exe scripts\runtime_health_stability_suite.py --mode short --tabs stock_candidates scan watchlist rt_monitor lhb fund_holdings --sample-output-dir tmp\runtime_health_samples_short --output tmp\runtime_health_stability_short.json
 .\.venv\Scripts\python.exe scripts\perf_budget_check.py --runtime-health-report tmp\runtime_health_stability_short.json
 ```
 
@@ -488,6 +488,7 @@ pre-commit run --all-files
 
 仓库当前启用了：
 
+- `check-utf8`
 - `ruff-check`
 - `ruff-format`
 

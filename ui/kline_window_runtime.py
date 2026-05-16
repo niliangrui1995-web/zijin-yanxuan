@@ -6,7 +6,7 @@ from datetime import datetime
 
 import pandas as pd
 
-from app.services import (
+from app.services.asian_market_service import (
     get_yf_rate_limit_status,
     is_yf_rate_limit_error,
     mark_yf_rate_limited,

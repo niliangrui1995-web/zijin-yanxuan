@@ -15,14 +15,10 @@ from PyQt6.QtWidgets import (
 )
 
 from app.bootstrap import ApplicationBootstrap
-from app.services import (
-    APP_VERSION,
-    RPS_CACHE_FILE,
-    build_kline_open_request,
-    create_data_provider,
-    create_scan_engine,
-    create_startup_orchestrator,
-)
+from app.services.kline_open_service import build_kline_open_request
+from app.services.runtime_constants import APP_VERSION, RPS_CACHE_FILE
+from app.services.runtime_services import create_data_provider, create_startup_orchestrator
+from app.services.scan_runtime_service import create_scan_engine
 from app.services.ui_config_service import app_config
 from app.services.ui_diagnostics_service import install_ui_stall_probe, ui_stall_span
 from app.services.ui_event_service import domain_events as event_bus
