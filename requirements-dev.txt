@@ -1,0 +1,5 @@
+# Development and audit dependencies for 紫金研选
+-r requirements.txt
+
+pytest>=8.0.0
+ruff==0.15.9

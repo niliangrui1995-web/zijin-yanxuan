@@ -235,6 +235,14 @@ def test_app_layer_does_not_import_ui_modules_directly():
     assert not violations, "App layer imported UI modules directly:\n" + "\n".join(violations)
 
 
+def test_infra_layer_does_not_import_app_layer_directly():
+    violations = _find_prefix_violations(
+        REPO_ROOT / "infra",
+        {"app"},
+    )
+    assert not violations, "Infra layer imported app layer directly:\n" + "\n".join(violations)
+
+
 def test_window_command_service_avoids_ui_theme_and_private_window_hooks():
     path = REPO_ROOT / "app" / "use_cases" / "window_command_service.py"
     imports = _collect_imports(path)

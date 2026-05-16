@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ui.components.table_view_helpers import bounded_model_row, find_header_column
 from ui.theme_tokens import build_ui_tokens, get_state_tone
 
 
@@ -209,27 +210,9 @@ class VCPTableView(QTableView):
                 pass
         self._bound_refresh_model = None
 
-    def _model_header_text(self, model, column: int) -> str:
-        try:
-            return str(model.headerData(column, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) or "").strip()
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            return ""
-
-    def _code_column(self, model) -> int:
-        if model is None:
-            return -1
-        try:
-            column_count = int(model.columnCount())
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            return -1
-        for column in range(column_count):
-            if self._model_header_text(model, column) == "代码":
-                return column
-        return -1
-
     def _row_identity(self, row: int) -> str:
         model = self.model()
-        code_column = self._code_column(model)
+        code_column = find_header_column(model, "代码")
         if model is None or code_column < 0 or row < 0:
             return ""
         try:
@@ -317,18 +300,6 @@ class VCPTableView(QTableView):
         if snapshot:
             self._restore_refresh_state(snapshot)
 
-    def _bounded_row(self, row: int) -> int:
-        model = self.model()
-        if model is None:
-            return -1
-        try:
-            row_count = int(model.rowCount())
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            return -1
-        if row_count <= 0:
-            return -1
-        return max(0, min(row_count - 1, int(row)))
-
     def _restore_refresh_state(self, snapshot: dict) -> None:
         if self.model() is None:
             return
@@ -367,14 +338,14 @@ class VCPTableView(QTableView):
                     restored_rows.append(row)
             if not restored_rows:
                 restored_rows = [
-                    self._bounded_row(row)
+                    bounded_model_row(self.model(), row)
                     for row in (snapshot.get("selected_rows", []) or [])
-                    if self._bounded_row(row) >= 0
+                    if bounded_model_row(self.model(), row) >= 0
                 ]
 
             current_row = self._find_row_by_identity(snapshot.get("current_code", ""))
             if current_row < 0:
-                current_row = self._bounded_row(int(snapshot.get("current_row", -1) or -1))
+                current_row = bounded_model_row(self.model(), int(snapshot.get("current_row", -1) or -1))
             current_col = max(0, int(snapshot.get("current_col", 0) or 0))
 
             if selection_model is not None:

@@ -44,6 +44,7 @@ Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatil
 
 - 技术架构文档：`docs/technical-architecture.md`
 - 模块归属与边界登记：`docs/module-owners.md`
+- 项目审计入口：`docs/project-audit.md`
 - 产品演示与截图脚本说明：`docs/promo-video-demo.md`
 
 ## 当前交互基线

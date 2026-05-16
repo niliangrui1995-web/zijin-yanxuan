@@ -165,7 +165,7 @@ def _tab_row_count(tab) -> int | None:
 
 def _active_task_snapshot() -> dict[str, Any]:
     try:
-        from app.services.ui_runtime_service import background_job_runner
+        from core.background_job_runner import background_job_runner
 
         manager = background_job_runner._resolve_manager()
         active_workers = getattr(manager, "active_workers", {}) or {}
@@ -233,7 +233,7 @@ def _timer_snapshot(root) -> dict[str, Any]:
 
 def _event_bus_snapshot() -> dict[str, Any]:
     try:
-        from app.services.ui_runtime_service import domain_events
+        from domains.runtime import domain_events
     except (AttributeError, ImportError, RuntimeError, TypeError, ValueError):
         domain_events = None
 
@@ -461,7 +461,7 @@ def _f5_scheduler_snapshot(main_window) -> dict[str, Any]:
 
 def _f5_cache_snapshot() -> dict[str, Any]:
     try:
-        from app.services import APP_VERSION, RPS_CACHE_FILE
+        from vcp.constants import APP_VERSION, RPS_CACHE_FILE
     except (AttributeError, ImportError, RuntimeError, TypeError, ValueError):
         APP_VERSION = ""
         RPS_CACHE_FILE = ""

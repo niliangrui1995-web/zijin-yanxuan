@@ -45,6 +45,21 @@ from ui.models.table_models import StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_refresh import load_cached_finance_snapshot
 from ui.tabs.base_stock_tab import BaseStockTab
 from ui.tabs.fund_holdings_filter_proxy import FundHoldingsFilterProxyModel
+from ui.tabs.fund_holdings_rules import (
+    FUND_CHANGE_TYPE_OPTIONS,
+    FUND_DAILY_AUTO_SYNC_DATE_KEY,
+    FUND_DAILY_AUTO_SYNC_HOUR,
+    FUND_DAILY_AUTO_SYNC_MINUTE,
+    FUND_DISPLAY_PLACEHOLDER,
+    capital_attribute_label,
+    filter_ai_related_concepts,
+    format_amount,
+    format_pct,
+    is_ai_related_concept,
+    normalize_ai_concept_display,
+    normalize_auto_sync_date,
+    should_trigger_daily_auto_sync,
+)
 
 
 class FundHoldingsTab(BaseStockTab):
@@ -56,11 +71,11 @@ class FundHoldingsTab(BaseStockTab):
     _QUERY_SCOPE_LATEST = "latest"
     _QUERY_SCOPE_ALL = "all"
     _QUERY_SCOPE_SELECTED = "selected"
-    _DISPLAY_PLACEHOLDER = "--"
-    _CHANGE_TYPE_OPTIONS = ("新进", "增持", "减持", "退出", "持平")
-    _DAILY_AUTO_SYNC_HOUR = 20
-    _DAILY_AUTO_SYNC_MINUTE = 30
-    _DAILY_AUTO_SYNC_DATE_KEY = "daily_auto_sync_2030_last_date"
+    _DISPLAY_PLACEHOLDER = FUND_DISPLAY_PLACEHOLDER
+    _CHANGE_TYPE_OPTIONS = FUND_CHANGE_TYPE_OPTIONS
+    _DAILY_AUTO_SYNC_HOUR = FUND_DAILY_AUTO_SYNC_HOUR
+    _DAILY_AUTO_SYNC_MINUTE = FUND_DAILY_AUTO_SYNC_MINUTE
+    _DAILY_AUTO_SYNC_DATE_KEY = FUND_DAILY_AUTO_SYNC_DATE_KEY
     _CAPITAL_ATTRIBUTE_OPTIONS = (
         QFII_CAPITAL_ATTRIBUTE_SELF_OWNED,
         QFII_CAPITAL_ATTRIBUTE_CLIENT,
@@ -69,63 +84,6 @@ class FundHoldingsTab(BaseStockTab):
     _CAPITAL_ATTRIBUTE_LABELS = {
         QFII_CAPITAL_ATTRIBUTE_UNMARKED: _DISPLAY_PLACEHOLDER,
     }
-    _AI_CONCEPT_EXCLUDE_NAMES = {
-        "AI营销",
-    }
-    _AI_CONCEPT_INCLUDE_NAMES = {
-        "AIGC概念",
-        "AI医疗",
-        "AI手机PC",
-        "AI智能体",
-        "AI眼镜",
-        "ChatGPT",
-        "DeepSeek",
-        "EDA概念",
-        "东数西算",
-        "云计算",
-        "人工智能",
-        "人形机器",
-        "先进封装",
-        "光刻机",
-        "光通信",
-        "华为海思",
-        "华为算力",
-        "国资云",
-        "多模态AI",
-        "存储芯片",
-        "数据中心",
-        "智谱AI",
-        "智能机器",
-        "机器视觉",
-        "液冷服务",
-        "算力租赁",
-        "英伟达",
-        "边缘计算",
-    }
-    _AI_CONCEPT_DISPLAY_ALIASES = {
-        "\u6db2\u51b7\u670d\u52a1": "\u6db2\u51b7",
-        "CPO\u6982\u5ff5": "CPO",
-    }
-    _AI_CONCEPT_INCLUDE_KEYWORDS = (
-        "AI",
-        "AIGC",
-        "GPT",
-        "DeepSeek",
-        "智谱",
-        "人工智能",
-        "算力",
-        "CPO",
-        "光通信",
-        "铜缆",
-        "液冷",
-        "芯片",
-        "半导",
-        "存储",
-        "封装",
-        "EDA",
-        "PCB",
-        "光刻机",
-    )
     _VIEW_STATE_PREFIX = "fund_holdings_view_state_v2"
 
     def __init__(self, data_provider, parent=None, autoload: bool = True):
@@ -206,8 +164,7 @@ class FundHoldingsTab(BaseStockTab):
 
     @staticmethod
     def _normalize_auto_sync_date(value) -> str:
-        text = str(value or "").strip().replace("-", "").replace("/", "")
-        return text[:8] if len(text) >= 8 else text
+        return normalize_auto_sync_date(value)
 
     @classmethod
     def _should_trigger_daily_auto_sync(
@@ -217,14 +174,13 @@ class FundHoldingsTab(BaseStockTab):
         last_auto_sync_date: str,
         pending_auto_sync_date: str,
     ) -> bool:
-        today_compact = now.strftime("%Y%m%d")
-        if pending_auto_sync_date == today_compact:
-            return False
-        if cls._normalize_auto_sync_date(last_auto_sync_date) == today_compact:
-            return False
-        if (now.hour, now.minute) < (cls._DAILY_AUTO_SYNC_HOUR, cls._DAILY_AUTO_SYNC_MINUTE):
-            return False
-        return True
+        return should_trigger_daily_auto_sync(
+            now,
+            last_auto_sync_date=last_auto_sync_date,
+            pending_auto_sync_date=pending_auto_sync_date,
+            trigger_hour=cls._DAILY_AUTO_SYNC_HOUR,
+            trigger_minute=cls._DAILY_AUTO_SYNC_MINUTE,
+        )
 
     def _start_daily_auto_sync_timer(self) -> None:
         self._daily_auto_sync_timer.start(5 * 60 * 1000)
@@ -871,10 +827,11 @@ class FundHoldingsTab(BaseStockTab):
 
     @classmethod
     def _capital_attribute_label(cls, value: str) -> str:
-        text = str(value or "").strip()
-        if not text:
-            return cls._DISPLAY_PLACEHOLDER
-        return cls._CAPITAL_ATTRIBUTE_LABELS.get(text, text)
+        return capital_attribute_label(
+            value,
+            cls._CAPITAL_ATTRIBUTE_LABELS,
+            placeholder=cls._DISPLAY_PLACEHOLDER,
+        )
 
     def _latest_sync_freshness_text(self) -> str:
         sync_times = []
@@ -1286,29 +1243,15 @@ class FundHoldingsTab(BaseStockTab):
 
     @classmethod
     def _is_ai_related_concept(cls, concept_name: str) -> bool:
-        text = str(concept_name or "").strip()
-        if not text or text in cls._AI_CONCEPT_EXCLUDE_NAMES:
-            return False
-        if text in cls._AI_CONCEPT_INCLUDE_NAMES:
-            return True
-        return any(keyword in text for keyword in cls._AI_CONCEPT_INCLUDE_KEYWORDS)
+        return is_ai_related_concept(concept_name)
 
     @classmethod
     def _normalize_ai_concept_display(cls, concept_name: str) -> str:
-        text = str(concept_name or "").strip()
-        if not text:
-            return ""
-        return cls._AI_CONCEPT_DISPLAY_ALIASES.get(text, text)
+        return normalize_ai_concept_display(concept_name)
 
     @classmethod
     def _filter_ai_related_concepts(cls, concepts) -> list[str]:
-        filtered = []
-        for concept_name in concepts or []:
-            text = str(concept_name or "").strip()
-            if not cls._is_ai_related_concept(text):
-                continue
-            filtered.append(cls._normalize_ai_concept_display(text))
-        return list(dict.fromkeys(filtered))
+        return filter_ai_related_concepts(concepts)
 
     def _build_view_rows(self, change_rows: list[dict]) -> list[dict]:
         rows: list[dict] = []
@@ -1358,25 +1301,22 @@ class FundHoldingsTab(BaseStockTab):
 
     @staticmethod
     def _format_pct(value, *, show: bool, signed: bool = False) -> str:
-        if not show:
-            return FundHoldingsTab._DISPLAY_PLACEHOLDER
-        try:
-            number = float(value or 0)
-        except (TypeError, ValueError):
-            return FundHoldingsTab._DISPLAY_PLACEHOLDER
-        prefix = "+" if signed and number > 0 else ""
-        return f"{prefix}{number:.2f}%"
+        return format_pct(
+            value,
+            show=show,
+            signed=signed,
+            placeholder=FundHoldingsTab._DISPLAY_PLACEHOLDER,
+        )
 
     @staticmethod
     def _format_amount(value, *, divisor: float, show: bool, signed: bool = False) -> str:
-        if not show:
-            return FundHoldingsTab._DISPLAY_PLACEHOLDER
-        try:
-            number = float(value or 0) / divisor
-        except (TypeError, ValueError):
-            return FundHoldingsTab._DISPLAY_PLACEHOLDER
-        prefix = "+" if signed and number > 0 else ""
-        return f"{prefix}{number:,.2f}"
+        return format_amount(
+            value,
+            divisor=divisor,
+            show=show,
+            signed=signed,
+            placeholder=FundHoldingsTab._DISPLAY_PLACEHOLDER,
+        )
 
     def _apply_latest_quotes_from_store(self):
         self._apply_quote_store_snapshot()
