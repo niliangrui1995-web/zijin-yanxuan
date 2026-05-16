@@ -5,10 +5,10 @@ import time as _time
 import pandas as pd
 
 from core.logger import get_logger
+from core.runtime_paths import MIN_MARKET_CAP
 from domains.market_calendar import MarketCalendar
 from domains.scan.indicator_service import IndicatorService
 from domains.scan.vcp_scanner_service import VcpScannerService
-from vcp.constants import MIN_MARKET_CAP
 from vcp.engine_external import batch_check_institution, batch_check_market_cap
 
 _log = get_logger(__name__)

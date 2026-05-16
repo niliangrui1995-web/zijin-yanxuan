@@ -34,6 +34,8 @@
 .\.venv\Scripts\python.exe scripts\project_audit.py --quick --dependency-audit
 ```
 
+该入口会以严格模式调用 `pip-audit`：如果工具缺失、超时、运行失败或发现漏洞，命令都会失败，避免供应链审计被静默跳过。
+
 带性能预算报告：
 
 ```powershell
@@ -53,8 +55,9 @@
 - 完整 pytest
 - 运行环境自检
 - 可选短运行健康稳定性 suite（自带预算失败闸门）
+- 可选依赖/供应链审计（严格 `pip-audit`）
 - 可选性能预算报告校验
 
 ## CI 入口
 
-CI 使用 `requirements-dev.txt` 安装测试工具。Linux job 继续跑现有架构、服务、运行时和性能护栏；Windows smoke job 覆盖架构边界、运行环境自检和审计命令契约，避免桌面端项目只在 Linux 上验证。
+CI 使用 `requirements-dev.txt` 安装测试工具。Linux job 继续跑现有架构、服务、运行时和性能护栏；Windows smoke job 覆盖架构边界、运行环境自检和审计命令契约，避免桌面端项目只在 Linux 上验证。PR 默认不运行桌面短稳和供应链审计；手动触发或定时 workflow 会追加 `--dependency-audit --runtime-health-short`。

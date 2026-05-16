@@ -705,6 +705,9 @@ class AsianMarketTab(BaseStockTab):
                     "source": v.get("source", ""),
                     "quote_quality": v.get("quote_quality", ""),
                 }
+            cache_dir = os.path.dirname(RT_JSON_CACHE)
+            if cache_dir:
+                os.makedirs(cache_dir, exist_ok=True)
             with open(RT_JSON_CACHE, 'w', encoding='utf-8') as f:
                 json.dump(cache_friendly, f, ensure_ascii=False)
         except (PermissionError, OSError, TypeError, ValueError) as e:

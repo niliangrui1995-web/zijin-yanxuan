@@ -13,8 +13,8 @@ from typing import Any
 import pandas as pd
 
 from core.logger import get_logger
+from core.runtime_paths import CACHE_DIR
 from infra.market_data.warehouse_manifest import WarehouseManifest, WarehouseManifestRecord
-from vcp.constants import CACHE_DIR
 
 log = get_logger(__name__)
 

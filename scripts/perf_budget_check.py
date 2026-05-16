@@ -40,6 +40,7 @@ DEFAULT_THRESHOLDS = {
     "runtime_health_thread_growth_max": 16,
     "runtime_health_webengine_final_max": 0,
     "runtime_health_rss_tail_range_mb": 96.0,
+    "runtime_health_tab_first_open_max_ms": 6500.0,
 }
 
 
@@ -59,6 +60,13 @@ def _as_int(value, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _optional_float(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _snapshot_webengine_children(snapshot: dict | None) -> int:
@@ -637,7 +645,7 @@ def _lineage_by_key(lineage: list[dict]) -> dict[str, dict]:
     return entries
 
 
-def _check_runtime_health_tab_cycle(report: dict, failures: list[dict]) -> None:
+def _check_runtime_health_tab_cycle(report: dict, failures: list[dict], budget: dict) -> None:
     requested_tabs = _requested_runtime_health_tabs(report)
     tab_cycle = report.get("tab_cycle")
     if not requested_tabs and tab_cycle is None:
@@ -676,6 +684,37 @@ def _check_runtime_health_tab_cycle(report: dict, failures: list[dict]) -> None:
             "runtime_health.tab_cycle.status",
             "runtime health tab cycle had missing or timed-out tabs",
             tabs=bad_statuses,
+        )
+
+    first_open_by_key: dict[str, dict] = {}
+    for item in tab_items:
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("key") or "").strip()
+        if key and key not in first_open_by_key:
+            first_open_by_key[key] = item
+
+    elapsed_failures = []
+    for key, item in first_open_by_key.items():
+        elapsed = _optional_float(item.get("elapsed_ms"))
+        if elapsed is None:
+            elapsed_failures.append({"key": key, "elapsed_ms": item.get("elapsed_ms"), "reason": "missing"})
+            continue
+        if elapsed > budget["runtime_health_tab_first_open_max_ms"]:
+            elapsed_failures.append(
+                {
+                    "key": key,
+                    "elapsed_ms": elapsed,
+                    "budget": budget["runtime_health_tab_first_open_max_ms"],
+                    "reason": "over_budget",
+                }
+            )
+    if elapsed_failures:
+        _fail(
+            failures,
+            "runtime_health.tab_first_open.elapsed",
+            "runtime health tab first-open elapsed time exceeded budget or was not recorded",
+            tabs=elapsed_failures,
         )
 
 
@@ -751,7 +790,7 @@ def check_runtime_health_budget(report: dict, thresholds: dict | None = None) ->
         if key not in f5_cache:
             _fail(failures, f"runtime_health.f5_cache.{key}", f"F5 cache {key} field is missing")
 
-    _check_runtime_health_tab_cycle(report, failures)
+    _check_runtime_health_tab_cycle(report, failures, budget)
     _check_runtime_health_lineage(report, last, failures)
 
     trend = report.get("budget_trend") or report.get("trend") or _runtime_health_trend(samples)
@@ -865,6 +904,7 @@ def run_budget_checks(args: argparse.Namespace) -> dict:
         "runtime_health_thread_growth_max": args.runtime_health_thread_growth_max,
         "runtime_health_webengine_final_max": args.runtime_health_webengine_final_max,
         "runtime_health_rss_tail_range_mb": args.runtime_health_rss_tail_range_mb,
+        "runtime_health_tab_first_open_max_ms": args.runtime_health_tab_first_open_max_ms,
     }
     checks: list[dict] = []
 
@@ -1060,6 +1100,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--runtime-health-rss-tail-range-mb",
         type=float,
         default=DEFAULT_THRESHOLDS["runtime_health_rss_tail_range_mb"],
+    )
+    parser.add_argument(
+        "--runtime-health-tab-first-open-max-ms",
+        type=float,
+        default=DEFAULT_THRESHOLDS["runtime_health_tab_first_open_max_ms"],
     )
     return parser.parse_args(argv)
 

@@ -107,6 +107,28 @@ def test_pip_audit_runtime_failure_is_recorded_without_nonzero_exit(tmp_path, mo
     assert pip_audit["status"] == "failed"
     assert pip_audit["finding_count"] == 0
     assert dependency_audit.audit_exit_code({"pip_audit": pip_audit}) == 0
+    assert dependency_audit.audit_exit_code({"pip_audit": pip_audit}, strict=True) == 1
+
+
+def test_pip_audit_transient_parse_failure_is_retried(tmp_path, monkeypatch):
+    attempts = []
+    clean_payload = json.dumps({"dependencies": []})
+
+    def fake_run(command, cwd, timeout_seconds):
+        attempts.append(command)
+        if len(attempts) == 1:
+            return _completed(command, returncode=1, stdout="", stderr="ssl eof")
+        return _completed(command, returncode=0, stdout=clean_payload, stderr="No known vulnerabilities found")
+
+    monkeypatch.setattr(dependency_audit, "_run_command", fake_run)
+    monkeypatch.setattr(dependency_audit.importlib.util, "find_spec", lambda name: object())
+
+    pip_audit = dependency_audit.collect_pip_audit("python", tmp_path)
+
+    assert pip_audit["status"] == "ok"
+    assert pip_audit["finding_count"] == 0
+    assert pip_audit["attempts"] == 2
+    assert dependency_audit.audit_exit_code({"pip_audit": pip_audit}, strict=True) == 0
 
 
 def test_dependency_audit_main_writes_json_report(tmp_path, monkeypatch):
@@ -118,4 +140,16 @@ def test_dependency_audit_main_writes_json_report(tmp_path, monkeypatch):
     result = dependency_audit.main(["--output", str(output)])
 
     assert result == 0
+    assert json.loads(output.read_text(encoding="utf-8")) == report
+
+
+def test_dependency_audit_strict_mode_fails_on_skipped_pip_audit(tmp_path, monkeypatch):
+    report = {"schema_version": 1, "pip_audit": {"status": "skipped"}}
+    output = tmp_path / "dependency_audit.json"
+
+    monkeypatch.setattr(dependency_audit, "collect_report", lambda: report)
+
+    result = dependency_audit.main(["--strict", "--output", str(output)])
+
+    assert result == 1
     assert json.loads(output.read_text(encoding="utf-8")) == report

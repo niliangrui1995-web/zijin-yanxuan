@@ -11,7 +11,7 @@ import re
 from core.exceptions import BusinessRuleError, CacheIOError, DataFormatError
 from core.json_cache import load_json_file, remove_cache_file, save_json_file
 from core.logger import get_logger
-from vcp.constants import RPS_CACHE_FILE
+from core.runtime_paths import RPS_CACHE_FILE, ensure_cache_dir
 
 log = get_logger(__name__)
 
@@ -20,9 +20,7 @@ class CacheManager:
     """Manage disk-backed caches without touching UI concerns directly."""
 
     def __init__(self):
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        self.cache_dir = os.path.join(project_root, "data", "Cache")
-        os.makedirs(self.cache_dir, exist_ok=True)
+        self.cache_dir = ensure_cache_dir()
         self.rps_path = RPS_CACHE_FILE
 
     @staticmethod

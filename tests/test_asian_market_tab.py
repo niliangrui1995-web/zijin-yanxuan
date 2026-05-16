@@ -406,6 +406,31 @@ def test_asian_market_placeholder_rows_fill_track_for_missing_cache(monkeypatch,
         tab.deleteLater()
 
 
+def test_asian_market_save_rt_cache_creates_missing_parent_dir(monkeypatch, tmp_path):
+    rt_cache_file = tmp_path / "missing" / "cache" / "asian_rt_latest.json"
+    monkeypatch.setattr(asian_module, "RT_JSON_CACHE", str(rt_cache_file))
+    monkeypatch.setattr(
+        asian_module,
+        "GLOBAL_ASIAN_RT_CACHE",
+        {
+            "2330.TW": {
+                "date": "2026-05-16",
+                "close": 100.0,
+                "previous_close": 95.0,
+                "pct": 5.263,
+                "source": "unit-test",
+            }
+        },
+    )
+
+    asian_module.AsianMarketTab._save_rt_cache(None)
+
+    assert rt_cache_file.exists()
+    payload = json.loads(rt_cache_file.read_text(encoding="utf-8"))
+    assert payload["2330.TW"]["pct"] == 5.26
+    assert payload["2330.TW"]["source"] == "unit-test"
+
+
 def test_asian_market_load_local_cache_normalizes_stale_yfinance_pct(monkeypatch, tmp_path):
     history_payload = {
         "stocks": [

@@ -3,9 +3,9 @@ from __future__ import annotations
 import pandas as pd
 
 from core.logger import get_logger
+from core.runtime_paths import INCREMENTAL_BARS, MAX_HISTORY_BARS
 from domains.market_calendar import MarketCalendar
 from domains.scan.indicator_service import IndicatorService
-from vcp.constants import INCREMENTAL_BARS, MAX_HISTORY_BARS
 
 _log = get_logger(__name__)
 

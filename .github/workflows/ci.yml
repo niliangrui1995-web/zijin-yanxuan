@@ -4,6 +4,8 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "0 20 * * 0"
 
 jobs:
   python310-audit-smoke:
@@ -126,3 +128,21 @@ jobs:
       - name: Windows architecture and runtime smoke
         run: |
           python -m pytest -q tests/test_architecture_boundaries.py tests/test_runtime_env_self_check.py tests/test_project_audit.py
+
+  extended-audit:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+      - name: Dependency audit and short runtime health
+        run: |
+          python scripts/project_audit.py --quick --skip-runtime-self-check --skip-webengine-preflight --dependency-audit --runtime-health-short

@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 
 import ast
+import importlib
 import os
+import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -221,6 +223,17 @@ def _find_literal_task_id_usage(root: Path, *, allowed_paths: set[str] | None = 
     return sorted(set(violations))
 
 
+def _find_vcp_constants_imports_outside_vcp(root: Path):
+    violations: list[str] = []
+    for path in _iter_python_files(root):
+        rel_path = path.relative_to(REPO_ROOT).as_posix()
+        if rel_path.startswith("vcp/") or rel_path == "tests/test_architecture_boundaries.py":
+            continue
+        if "vcp.constants" in _collect_imports(path):
+            violations.append(f"{rel_path}: vcp.constants")
+    return violations
+
+
 def test_python_boundary_scan_includes_root_pyw_entry_and_excludes_noise_dirs():
     paths = {path.relative_to(REPO_ROOT).as_posix() for path in _iter_python_files(REPO_ROOT)}
 
@@ -282,6 +295,48 @@ def test_prefix_scan_catches_constant_dynamic_import_calls(tmp_path, monkeypatch
     assert violations == [
         "ui/dynamic.py: domains.scan, infra.diagnostics.runtime_health, vcp.constants"
     ]
+
+
+def test_vcp_constants_import_is_side_effect_free(monkeypatch):
+    makedirs_calls = []
+    filterwarning_calls = []
+
+    def fake_makedirs(*args, **kwargs):
+        makedirs_calls.append((args, kwargs))
+
+    def fake_filterwarnings(*args, **kwargs):
+        filterwarning_calls.append((args, kwargs))
+
+    monkeypatch.setattr(os, "makedirs", fake_makedirs)
+    import warnings
+
+    monkeypatch.setattr(warnings, "filterwarnings", fake_filterwarnings)
+    sys.modules.pop("vcp.constants", None)
+
+    importlib.import_module("vcp.constants")
+
+    assert makedirs_calls == []
+    assert filterwarning_calls == []
+
+
+def test_runtime_paths_create_directories_only_when_explicitly_ensured(tmp_path, monkeypatch):
+    from core import runtime_paths
+
+    monkeypatch.setattr(runtime_paths, "PROJECT_ROOT", str(tmp_path))
+    cache_dir = Path(runtime_paths.get_data_dir("Cache"))
+
+    assert cache_dir == tmp_path / "data" / "Cache"
+    assert not cache_dir.exists()
+
+    ensured_dir = Path(runtime_paths.ensure_cache_dir())
+
+    assert ensured_dir == cache_dir
+    assert cache_dir.is_dir()
+
+
+def test_non_vcp_layers_do_not_import_vcp_constants_directly():
+    violations = _find_vcp_constants_imports_outside_vcp(REPO_ROOT)
+    assert not violations, "Non-VCP layers imported vcp.constants directly:\n" + "\n".join(violations)
 
 
 def test_ui_layer_does_not_import_legacy_event_or_task_manager_modules():

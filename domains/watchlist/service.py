@@ -5,8 +5,8 @@ import threading
 from copy import deepcopy
 
 from core.logger import get_logger
+from core.runtime_paths import SPECIAL_LATEST_DATA
 from domains.runtime import domain_events as event_bus
-from vcp.constants import SPECIAL_LATEST_DATA
 
 log = get_logger(__name__)
 

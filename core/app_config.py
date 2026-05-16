@@ -1,6 +1,14 @@
 from __future__ import annotations
 
+import os
+
 from infra.settings import SettingsRepository, SettingsSchemaVersion, SettingsSection
+
+
+def _settings_identity() -> tuple[str, str]:
+    organization = os.environ.get("VCP_HUNTER_SETTINGS_ORGANIZATION") or "VCPHunter"
+    application = os.environ.get("VCP_HUNTER_SETTINGS_APPLICATION") or "Main"
+    return organization, application
 
 
 class AppConfig:
@@ -17,7 +25,8 @@ class AppConfig:
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            cls._instance._repository = SettingsRepository("VCPHunter", "Main")
+            organization, application = _settings_identity()
+            cls._instance._repository = SettingsRepository(organization, application)
         return cls._instance
 
     @property

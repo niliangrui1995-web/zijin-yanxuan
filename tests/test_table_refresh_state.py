@@ -2,8 +2,42 @@
 
 from PyQt6.QtCore import Qt
 
-from ui.components import PulsingDot, TableStateWrapper, VCPTableView
+from ui.components import (
+    MultiSelectFilterButton,
+    PulsingDot,
+    TableStateOverlay,
+    TableStateWrapper,
+    VCPTableView,
+    format_multi_select_summary,
+)
+from ui.components.table_controls import (
+    MultiSelectFilterButton as ModuleMultiSelectFilterButton,
+)
+from ui.components.table_controls import (
+    PulsingDot as ModulePulsingDot,
+)
+from ui.components.table_controls import (
+    TableStateOverlay as ModuleTableStateOverlay,
+)
+from ui.components.table_controls import (
+    TableStateWrapper as ModuleTableStateWrapper,
+)
+from ui.components.table_controls import (
+    VCPTableView as ModuleVCPTableView,
+)
+from ui.components.table_controls import (
+    format_multi_select_summary as module_format_multi_select_summary,
+)
 from ui.models.table_models import RtSortFilterProxyModel, StockTableModel
+
+
+def test_table_controls_are_reexported_from_components():
+    assert VCPTableView is ModuleVCPTableView
+    assert PulsingDot is ModulePulsingDot
+    assert MultiSelectFilterButton is ModuleMultiSelectFilterButton
+    assert TableStateOverlay is ModuleTableStateOverlay
+    assert TableStateWrapper is ModuleTableStateWrapper
+    assert format_multi_select_summary is module_format_multi_select_summary
 
 
 def _rows(count: int):

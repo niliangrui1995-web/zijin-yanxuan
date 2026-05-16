@@ -5,10 +5,13 @@ from datetime import datetime
 from types import SimpleNamespace
 
 from infra.diagnostics.runtime_health import (
+    DATA_LINEAGE_COVERED_TABS,
+    DATA_LINEAGE_EXCLUDED_TABS,
     build_runtime_health_trend,
     collect_runtime_health,
     export_runtime_health_report,
 )
+from scripts.runtime_health_stability_suite import DEFAULT_TABS
 
 
 class _FakeModel:
@@ -90,6 +93,28 @@ def test_collect_runtime_health_includes_core_sections(qt_application):
     assert "cache_version" in report["f5_cache"]
     assert report["data_lineage"][0]["key"] == "stock_candidates"
     assert report["data_lineage"][0]["source"] == "unit-test-cache"
+    asian_lineage = next(entry for entry in report["data_lineage"] if entry["key"] == "asian_market")
+    assert "data/Cache/asian_rt_latest.json" in asian_lineage["cache_refs"]
+    assert "data/Cache/asian_realtime_latest.json" not in asian_lineage["cache_refs"]
+    lineage_keys = {entry["key"] for entry in report["data_lineage"]}
+    assert {"asian_market", "na_daily", "ai_industry_chain"} <= lineage_keys
+    assert "system_log" not in lineage_keys
+    assert report["data_lineage_coverage"]["covered"] == list(DATA_LINEAGE_COVERED_TABS)
+    assert report["data_lineage_coverage"]["excluded"] == list(DATA_LINEAGE_EXCLUDED_TABS)
+    assert report["data_lineage_exclusions"][0]["key"] == "system_log"
+    assert report["data_lineage_exclusions"][0]["reason"] == "non_data_tab"
+
+
+def test_runtime_health_short_default_tabs_match_static_lineage_coverage():
+    covered = set(DATA_LINEAGE_COVERED_TABS)
+    excluded = set(DATA_LINEAGE_EXCLUDED_TABS)
+    short_default_tabs = set(DEFAULT_TABS)
+
+    assert {"asian_market", "na_daily", "ai_industry_chain"} <= short_default_tabs
+    assert {"asian_market", "na_daily", "ai_industry_chain"} <= covered
+    assert short_default_tabs - covered - excluded == set()
+    assert "system_log" not in covered
+    assert DATA_LINEAGE_EXCLUDED_TABS["system_log"]["reason"] == "non_data_tab"
 
 
 def test_export_runtime_health_report_writes_dated_json(tmp_path, qt_application):

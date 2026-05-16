@@ -16,7 +16,7 @@ from core.exceptions import CacheIOError, DataFormatError
 from core.json_cache import load_json_file, save_json_file
 from core.logger import get_logger
 from core.market_calendar import MarketCalendar
-from vcp.constants import SECTOR_RPS_CACHE_FILE
+from core.runtime_paths import SECTOR_RPS_CACHE_FILE
 from vcp.sector import SectorManager
 
 log = get_logger(__name__)

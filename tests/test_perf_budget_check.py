@@ -405,6 +405,23 @@ def test_runtime_health_budget_accepts_structured_suite_report():
     assert check_runtime_health_budget(report) == []
 
 
+def test_runtime_health_budget_rejects_slow_tab_first_open():
+    report = {
+        "mode": {"tabs": ["stock_candidates"]},
+        "tab_cycle": {
+            "tabs": [
+                {"cycle": 1, "key": "stock_candidates", "status": "ok", "elapsed_ms": 7000.0},
+                {"cycle": 2, "key": "stock_candidates", "status": "ok", "elapsed_ms": 120.0},
+            ]
+        },
+        "runtime_health_samples": [_runtime_health_sample()],
+    }
+
+    failures = check_runtime_health_budget(report)
+
+    assert any(failure["check"] == "runtime_health.tab_first_open.elapsed" for failure in failures)
+
+
 def test_runtime_health_budget_prefers_post_warmup_budget_trend():
     report = {
         "runtime_health_samples": [

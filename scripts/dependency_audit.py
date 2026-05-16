@@ -15,6 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = Path("tmp/dependency_audit.json")
 DEFAULT_TIMEOUT_SECONDS = 120
 PIP_AUDIT_TIMEOUT_SECONDS = 180
+PIP_AUDIT_RETRY_COUNT = 1
 
 MANIFEST_PATTERNS = (
     "pyproject.toml",
@@ -223,6 +224,17 @@ def _summarize_pip_audit_payload(stdout: str) -> dict[str, Any]:
     }
 
 
+def _pip_audit_result_base(result: dict[str, Any], timeout_seconds: int, attempts: int) -> dict[str, Any]:
+    return {
+        "command": result["command"],
+        "returncode": result["returncode"],
+        "stderr": result["stderr"].strip(),
+        "timeout": result["timeout"],
+        "timeout_seconds": timeout_seconds,
+        "attempts": attempts,
+    }
+
+
 def collect_pip_audit(
     python: str,
     root: Path = REPO_ROOT,
@@ -241,17 +253,25 @@ def collect_pip_audit(
         }
 
     result = _run_command(command, root, timeout_seconds)
-    base = {
-        "command": result["command"],
-        "returncode": result["returncode"],
-        "stderr": result["stderr"].strip(),
-        "timeout": result["timeout"],
-        "timeout_seconds": timeout_seconds,
-    }
+    attempts = 1
     if result["timeout"]:
+        base = _pip_audit_result_base(result, timeout_seconds, attempts)
         return {**base, "status": "failed", "finding_count": 0, "findings": []}
 
     summary = _summarize_pip_audit_payload(result["stdout"])
+    while (
+        attempts <= PIP_AUDIT_RETRY_COUNT
+        and result["returncode"] != 0
+        and summary["parse_status"] != "ok"
+    ):
+        result = _run_command(command, root, timeout_seconds)
+        attempts += 1
+        if result["timeout"]:
+            base = _pip_audit_result_base(result, timeout_seconds, attempts)
+            return {**base, "status": "failed", "finding_count": 0, "findings": []}
+        summary = _summarize_pip_audit_payload(result["stdout"])
+
+    base = _pip_audit_result_base(result, timeout_seconds, attempts)
     if summary["finding_count"] > 0:
         return {**base, "status": "findings", **summary}
     if result["returncode"] == 0 and summary["parse_status"] == "ok":
@@ -276,13 +296,23 @@ def collect_report(root: Path = REPO_ROOT, python: str | None = None) -> dict[st
     }
 
 
-def audit_exit_code(report: dict[str, Any]) -> int:
-    return 1 if report.get("pip_audit", {}).get("status") == "findings" else 0
+def audit_exit_code(report: dict[str, Any], *, strict: bool = False) -> int:
+    status = report.get("pip_audit", {}).get("status")
+    if status == "findings":
+        return 1
+    if strict and status != "ok":
+        return 1
+    return 0
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate a reproducible dependency audit JSON report.")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail when pip-audit is missing, skipped, timed out, or fails to produce a clean report.",
+    )
     return parser.parse_args(argv)
 
 
@@ -297,7 +327,7 @@ def main(argv: list[str] | None = None) -> int:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"[dependency-audit] wrote {output}", flush=True)
-    return audit_exit_code(report)
+    return audit_exit_code(report, strict=args.strict)
 
 
 if __name__ == "__main__":

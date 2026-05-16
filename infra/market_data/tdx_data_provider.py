@@ -7,11 +7,11 @@ import time
 from collections import Counter
 
 from core.logger import get_logger
+from core.runtime_paths import CACHE_DIR, MAX_HISTORY_BARS
 from domains.market_calendar import MarketCalendar
 from infra.market_data.adjustment_service import AdjustmentService
 from infra.market_data.local_history_provider import LocalHistoryProvider
 from infra.market_data.realtime_quote_provider import RealtimeQuoteProvider
-from vcp.constants import CACHE_DIR, MAX_HISTORY_BARS
 from vcp.data_provider_cache import compact_runtime_caches, downcast_memory, prune_rt_quote_cache
 from vcp.data_provider_history_mixin import TdxDataProviderHistoryMixin
 from vcp.data_provider_local import fetch_from_local_tdx

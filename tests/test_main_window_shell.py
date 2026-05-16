@@ -2,6 +2,7 @@
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QFrame, QMainWindow, QSizePolicy, QTabWidget, QVBoxLayout, QWidget
 
+from app.services.runtime_constants import APP_VERSION
 from ui.components.main_window_shell import (
     MainWindowStatusBar,
     ShellNavigationWidget,
@@ -25,7 +26,6 @@ from ui.window_flags import (
     apply_windows_frameless_taskbar_fix,
     build_frameless_main_window_flags,
 )
-from vcp.constants import APP_VERSION
 
 
 class DummyShellWindow(QMainWindow):

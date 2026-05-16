@@ -1,9 +1,17 @@
 # -*- coding: utf-8 -*-
-from ui.components.toast_widget import Toast
-from ui.theme import theme_manager
+import pytest
 
 
-def test_warning_toast_keeps_icon_visible():
+@pytest.fixture
+def toast_dependencies(qt_application):
+    from ui.components.toast_widget import Toast
+    from ui.theme import theme_manager
+
+    return Toast, theme_manager
+
+
+def test_warning_toast_keeps_icon_visible(toast_dependencies):
+    Toast, _theme_manager = toast_dependencies
     toast = Toast(duration=10)
     try:
         toast.show_toast("代码不在当前 A 股股票列表中", "warning")
@@ -15,7 +23,8 @@ def test_warning_toast_keeps_icon_visible():
         toast.close()
 
 
-def test_success_toast_keeps_icon_visible():
+def test_success_toast_keeps_icon_visible(toast_dependencies):
+    Toast, _theme_manager = toast_dependencies
     toast = Toast(duration=10)
     try:
         toast.show_toast("已加入关注池", "success")
@@ -27,7 +36,8 @@ def test_success_toast_keeps_icon_visible():
         toast.close()
 
 
-def test_toast_text_uses_primary_theme_color():
+def test_toast_text_uses_primary_theme_color(toast_dependencies):
+    Toast, theme_manager = toast_dependencies
     toast = Toast(duration=10)
     try:
         toast.show_toast("同步完成", "success")

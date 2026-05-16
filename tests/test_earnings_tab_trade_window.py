@@ -1,13 +1,39 @@
 # -*- coding: utf-8 -*-
-import pandas as pd
+from types import SimpleNamespace
 
-import ui.tabs.earnings_tab as earnings_module
-from core.market_calendar import MarketCalendar
-from ui.models.table_models import RtSortFilterProxyModel, StockTableModel
-from ui.tabs.earnings_tab import EARNINGS_DISPLAY_TRADE_DAYS, EarningsTab
+import pandas as pd
+import pytest
+
+
+def _earnings_module():
+    import ui.tabs.earnings_tab as earnings_module
+
+    return earnings_module
+
+
+def _earnings_tab_class():
+    return _earnings_module().EarningsTab
+
+
+@pytest.fixture
+def earnings_qt(qt_application):
+    earnings_module = _earnings_module()
+    from ui.models.table_models import RtSortFilterProxyModel, StockTableModel
+    from ui.tabs.base_stock_tab import BaseStockTab
+
+    return SimpleNamespace(
+        module=earnings_module,
+        EarningsTab=earnings_module.EarningsTab,
+        RtSortFilterProxyModel=RtSortFilterProxyModel,
+        StockTableModel=StockTableModel,
+        BaseStockTab=BaseStockTab,
+    )
 
 
 def test_recent_trade_window_start_uses_oldest_trade_day(monkeypatch):
+    EarningsTab = _earnings_tab_class()
+    from core.market_calendar import MarketCalendar
+
     monkeypatch.setattr(
         MarketCalendar,
         "get_recent_trade_dates",
@@ -18,6 +44,9 @@ def test_recent_trade_window_start_uses_oldest_trade_day(monkeypatch):
 
 
 def test_prune_rows_to_recent_trade_window_keeps_records_within_trade_span(monkeypatch):
+    EarningsTab = _earnings_tab_class()
+    from core.market_calendar import MarketCalendar
+
     monkeypatch.setattr(
         MarketCalendar,
         "get_recent_trade_dates",
@@ -38,14 +67,15 @@ def test_prune_rows_to_recent_trade_window_keeps_records_within_trade_span(monke
 
 
 def test_earnings_display_trade_days_is_10():
-    assert EARNINGS_DISPLAY_TRADE_DAYS == 10
+    assert _earnings_module().EARNINGS_DISPLAY_TRADE_DAYS == 10
 
 
 def test_earnings_tab_does_not_join_realtime_quote_universe():
+    EarningsTab = _earnings_tab_class()
     assert EarningsTab.get_realtime_quote_codes(None) == set()
 
 
-def test_earnings_tab_defers_scheduler_creation_until_runtime(monkeypatch):
+def test_earnings_tab_defers_scheduler_creation_until_runtime(monkeypatch, earnings_qt):
     created = []
 
     class DummySignal:
@@ -63,12 +93,12 @@ def test_earnings_tab_defers_scheduler_creation_until_runtime(monkeypatch):
             pass
 
     monkeypatch.setattr(
-        earnings_module,
+        earnings_qt.module,
         "EarningsScheduler",
         lambda parent=None: created.append(parent) or DummyScheduler(),
     )
 
-    tab = EarningsTab()
+    tab = earnings_qt.EarningsTab()
     try:
         assert created == []
         assert tab.scheduler is None
@@ -79,7 +109,7 @@ def test_earnings_tab_defers_scheduler_creation_until_runtime(monkeypatch):
         tab.deleteLater()
 
 
-def test_earnings_delete_later_stops_runtime_timers_and_scheduler(monkeypatch):
+def test_earnings_delete_later_stops_runtime_timers_and_scheduler(monkeypatch, earnings_qt):
     created = []
 
     class DummySignal:
@@ -99,12 +129,12 @@ def test_earnings_delete_later_stops_runtime_timers_and_scheduler(monkeypatch):
             self.stop_calls += 1
 
     monkeypatch.setattr(
-        earnings_module,
+        earnings_qt.module,
         "EarningsScheduler",
         lambda parent=None: created.append(parent) or DummyScheduler(),
     )
 
-    tab = EarningsTab()
+    tab = earnings_qt.EarningsTab()
     try:
         tab._ensure_runtime_started()
         tab._recalc_pe_timer.start(0)
@@ -125,6 +155,8 @@ def test_earnings_delete_later_stops_runtime_timers_and_scheduler(monkeypatch):
 
 
 def test_earnings_runtime_start_is_gated_to_current_workspace_tab():
+    EarningsTab = _earnings_tab_class()
+
     class DummyTabs:
         current = None
 
@@ -147,6 +179,8 @@ def test_earnings_runtime_start_is_gated_to_current_workspace_tab():
 
 
 def test_earnings_runtime_show_skips_non_interactive_load_reason():
+    EarningsTab = _earnings_tab_class()
+
     class DummyTab:
         _workspace_load_reason = "perf_memory_probe"
         _workspace_noninteractive_loaded = True
@@ -163,7 +197,10 @@ def test_earnings_runtime_show_skips_non_interactive_load_reason():
     assert dummy._workspace_noninteractive_loaded is False
 
 
-def test_apply_latest_quotes_uses_local_snapshot_and_recalculates_pe():
+def test_apply_latest_quotes_uses_local_snapshot_and_recalculates_pe(earnings_qt):
+    EarningsTab = earnings_qt.EarningsTab
+    StockTableModel = earnings_qt.StockTableModel
+
     class DummyTab:
         model = StockTableModel(["代码", "名称", "现价", "涨幅%", "市值", "PE(TTM)"])
 
@@ -197,9 +234,12 @@ def test_apply_latest_quotes_uses_local_snapshot_and_recalculates_pe():
     assert tab.model.row_data[0]["PE(TTM)"] == "10.0"
 
 
-def test_earnings_local_snapshot_fills_market_fields_and_pe_without_realtime(monkeypatch, qt_application):
+def test_earnings_local_snapshot_fills_market_fields_and_pe_without_realtime(monkeypatch, earnings_qt):
+    EarningsTab = earnings_qt.EarningsTab
+    BaseStockTab = earnings_qt.BaseStockTab
+    StockTableModel = earnings_qt.StockTableModel
+
     from core.global_store import global_store
-    from ui.tabs.base_stock_tab import BaseStockTab
 
     code_key = "\u4ee3\u7801"
     name_key = "\u540d\u79f0"
@@ -265,6 +305,8 @@ def test_earnings_local_snapshot_fills_market_fields_and_pe_without_realtime(mon
 
 
 def test_earnings_refresh_after_f5_triggers_routine_scan():
+    EarningsTab = _earnings_tab_class()
+
     class DummyTab:
         model = object()
 
@@ -288,6 +330,7 @@ def test_earnings_refresh_after_f5_triggers_routine_scan():
 
 
 def test_earnings_display_window_primes_local_snapshot_after_cache_render():
+    EarningsTab = _earnings_tab_class()
     calls = []
 
     class Model:
@@ -318,6 +361,8 @@ def test_earnings_display_window_primes_local_snapshot_after_cache_render():
 
 
 def test_filter_out_st_dataframe_removes_st_rows():
+    EarningsTab = _earnings_tab_class()
+
     df = pd.DataFrame(
         [
             {"股票代码": "000001", "股票名称": "平安银行"},
@@ -332,6 +377,9 @@ def test_filter_out_st_dataframe_removes_st_rows():
 
 
 def test_prune_rows_to_recent_trade_window_drops_st_rows(monkeypatch):
+    EarningsTab = _earnings_tab_class()
+    from core.market_calendar import MarketCalendar
+
     monkeypatch.setattr(
         MarketCalendar,
         "get_recent_trade_dates",
@@ -351,7 +399,10 @@ def test_prune_rows_to_recent_trade_window_drops_st_rows(monkeypatch):
     assert kept_codes == ["000001"]
 
 
-def test_rt_sort_filter_proxy_supports_multi_select_column_filters():
+def test_rt_sort_filter_proxy_supports_multi_select_column_filters(earnings_qt):
+    RtSortFilterProxyModel = earnings_qt.RtSortFilterProxyModel
+    StockTableModel = earnings_qt.StockTableModel
+
     model = StockTableModel(["代码", "名称", "类型"])
     model.update_data(
         [
@@ -375,6 +426,7 @@ def test_rt_sort_filter_proxy_supports_multi_select_column_filters():
 
 
 def test_earnings_fetch_failure_keeps_existing_rows_visible():
+    EarningsTab = _earnings_tab_class()
     calls = []
 
     class TableState:

@@ -1,9 +1,36 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 from PyQt6.QtCore import QSettings
 
 from core.observability import emit_structured_log
 from infra.settings.settings_schema import SettingsMigrator
+
+
+def _configure_test_settings_path_from_env() -> bool:
+    settings_root = os.environ.get("VCP_HUNTER_TEST_QSETTINGS_DIR", "").strip()
+    if not settings_root:
+        return False
+
+    root = Path(settings_root)
+    root.mkdir(parents=True, exist_ok=True)
+    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(root))
+    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.SystemScope, str(root))
+    return True
+
+
+def _settings_store(organization: str, application: str) -> QSettings:
+    if _configure_test_settings_path_from_env():
+        return QSettings(
+            QSettings.Format.IniFormat,
+            QSettings.Scope.UserScope,
+            organization,
+            application,
+        )
+    return QSettings(organization, application)
 
 
 class SettingsSection:
@@ -103,7 +130,7 @@ class SettingsRepository:
         application: str = "Main",
         telemetry_writer=None,
     ) -> None:
-        self._settings = QSettings(organization, application)
+        self._settings = _settings_store(organization, application)
         self._legacy_settings_cache: dict[str, QSettings] = {}
         self._telemetry_writer = telemetry_writer or emit_structured_log
         self._migrator = SettingsMigrator(
@@ -144,7 +171,7 @@ class SettingsRepository:
         if legacy_scope:
             legacy_settings = self._legacy_settings_cache.get(legacy_scope)
             if legacy_settings is None:
-                legacy_settings = QSettings(self._organization, legacy_scope)
+                legacy_settings = _settings_store(self._organization, legacy_scope)
                 self._legacy_settings_cache[legacy_scope] = legacy_settings
         return SettingsSection(
             self._settings,

@@ -10,7 +10,7 @@ import time
 
 from core.json_cache import remove_cache_file, save_json_file
 from core.logger import get_logger
-from vcp.constants import RPS_CACHE_FILE, SECTOR_RPS_CACHE_FILE
+from core.runtime_paths import PROJECT_ROOT, RPS_CACHE_FILE, SECTOR_RPS_CACHE_FILE, ensure_cache_dir
 
 log = get_logger(__name__)
 
@@ -38,9 +38,7 @@ class RPSPrecomputer:
         :param set_status_callback: 回调，用于回传进度日记给界面
         :param done_callback: 回调，完成后把计算耗时和股票总数传回以更新 UI
         """
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        cache_dir = os.path.join(project_root, 'data', 'Cache')
-        os.makedirs(cache_dir, exist_ok=True)
+        ensure_cache_dir()
         total_start = time.time()
 
         def _log_and_status(msg):
@@ -206,7 +204,7 @@ class RPSPrecomputer:
             # 收尾过期清理
             try:
                 from core.cache_policy import cleanup_stale_caches
-                cleanup_stale_caches(project_root)
+                cleanup_stale_caches(PROJECT_ROOT)
             except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as e:
                 log.warning(f"[F5] 缓存清理跳过: {e}")
 

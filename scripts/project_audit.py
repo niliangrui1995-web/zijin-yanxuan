@@ -97,7 +97,7 @@ def build_audit_commands(args: argparse.Namespace) -> list[AuditCommand]:
         commands.append(
             AuditCommand(
                 "dependency-audit",
-                [python, "scripts/dependency_audit.py", "--output", DEPENDENCY_AUDIT_OUTPUT],
+                [python, "scripts/dependency_audit.py", "--strict", "--output", DEPENDENCY_AUDIT_OUTPUT],
             )
         )
 

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Mapping, Sequence
+
+from domains.runtime.fault_tolerance import provider_fault_tolerance
 
 KEY_CODE = "\u4ee3\u7801"
 KEY_NAME = "\u540d\u79f0"
@@ -108,47 +109,6 @@ def _stable_signature(rows: Sequence[Mapping[str, Any]]) -> str:
     payload = [_canonical_row(row) for row in rows if isinstance(row, Mapping)]
     text = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def _provider_fault_tolerance(provider_status: Mapping[str, Any] | None) -> dict[str, Any]:
-    status = dict(provider_status or {})
-    request_stats = dict(status.get("request_stats") or {})
-    runtime_stats = dict(status.get("runtime_stats") or status.get("provider_runtime") or {})
-
-    source_layers = [
-        _text(layer)
-        for layer in request_stats.get("recent_source_layers", []) or []
-        if _text(layer)
-    ]
-    recent_status = _text(request_stats.get("recent_status"))
-    last_error = _text(
-        runtime_stats.get("last_error")
-        or status.get("last_network_error")
-        or status.get("eastmoney_last_error")
-    )
-    now = time.time()
-    cooldown_until = float(runtime_stats.get("cooldown_until") or 0.0)
-    eastmoney_cooldown_until = float(status.get("eastmoney_cooldown_until") or 0.0)
-    fallback_tokens = ("fallback", "offline", "stale", "cooldown", "degraded")
-    fallback_or_degraded = bool(
-        cooldown_until > now
-        or eastmoney_cooldown_until > now
-        or any(any(token in layer.lower() for token in fallback_tokens) for layer in source_layers)
-        or any(token in recent_status.lower() for token in fallback_tokens)
-    )
-
-    return {
-        "provider_degraded": bool(cooldown_until > now or eastmoney_cooldown_until > now),
-        "fallback_or_degraded": fallback_or_degraded,
-        "last_network_error": last_error,
-        "cooldown_seconds_left": max(0, int(cooldown_until - now)),
-        "eastmoney_cooldown_seconds_left": max(0, int(eastmoney_cooldown_until - now)),
-        "recent_triggered_network": bool(request_stats.get("recent_triggered_network", False)),
-        "recent_cache_hit_count": int(request_stats.get("recent_cache_hit_count") or 0),
-        "recent_pending_count": int(request_stats.get("recent_pending_count") or 0),
-        "recent_status": recent_status,
-        "recent_source_layers": source_layers,
-    }
 
 
 @dataclass(frozen=True)
@@ -254,7 +214,7 @@ class StockCandidatesDataService:
         signals = _iter_signals(context)
         source_tabs = sorted({tab for tab in (_signal_source_tab(signal) for signal in signals) if tab})
         trade_dates = sorted({date for date in (_signal_trade_date(signal) for signal in signals) if date})
-        fault_tolerance = _provider_fault_tolerance(provider_status)
+        fault_tolerance = provider_fault_tolerance(provider_status)
         if not rows and context:
             warnings.append("no_rows_after_candidate_filter")
 

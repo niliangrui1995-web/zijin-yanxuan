@@ -43,8 +43,11 @@ def load_json_file(path: str):
 
 def save_json_file(path: str, payload) -> None:
     """原子写入 JSON 缓存。"""
+    parent_dir = os.path.dirname(path)
     temp_path = f"{path}.tmp"
     try:
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
         with open(temp_path, "w", encoding="utf-8") as file_obj:
             json.dump(_normalize_for_json(payload), file_obj, ensure_ascii=False)
             file_obj.flush()

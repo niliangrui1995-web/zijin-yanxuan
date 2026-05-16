@@ -3,8 +3,8 @@ from __future__ import annotations
 import pandas as pd
 
 from core.logger import get_logger
+from core.runtime_paths import DATE_FMT, RPS_BUFFER_DAYS
 from domains.market_calendar import MarketCalendar
-from vcp.constants import DATE_FMT, RPS_BUFFER_DAYS
 
 _log = get_logger(__name__)
 

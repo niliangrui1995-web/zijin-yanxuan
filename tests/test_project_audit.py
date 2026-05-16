@@ -70,6 +70,7 @@ def test_project_audit_adds_dependency_audit_only_when_requested():
     assert dependency.command == [
         "python",
         "scripts/dependency_audit.py",
+        "--strict",
         "--output",
         project_audit.DEPENDENCY_AUDIT_OUTPUT,
     ]
@@ -102,4 +103,5 @@ def test_project_audit_list_includes_dependency_audit_when_requested(capsys):
     output = capsys.readouterr().out
     assert result == 0
     assert "dependency-audit: python scripts/dependency_audit.py" in output
+    assert "--strict" in output
     assert f"--output {project_audit.DEPENDENCY_AUDIT_OUTPUT}" in output

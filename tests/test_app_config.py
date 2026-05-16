@@ -7,11 +7,26 @@ tests/test_app_config.py — AppConfig 单例行为验证
     2. 全局导出的 app_config 与手动 AppConfig() 是同一个实例
     3. get/set 读写正确性
 """
+import os
+from pathlib import Path
+
 from PyQt6.QtCore import QSettings
 
 from core.app_config import AppConfig, app_config
 from infra.settings.settings_repository import SettingsRepository
 from infra.settings.settings_schema import SettingsMigrator, SettingsSchemaVersion
+
+TEST_SETTINGS_ORGANIZATION = os.environ.get("VCP_HUNTER_SETTINGS_ORGANIZATION", "VCPHunterTests")
+TEST_SETTINGS_APPLICATION = os.environ.get("VCP_HUNTER_SETTINGS_APPLICATION", "MainTest")
+
+
+def _test_qsettings(application: str) -> QSettings:
+    return QSettings(
+        QSettings.Format.IniFormat,
+        QSettings.Scope.UserScope,
+        TEST_SETTINGS_ORGANIZATION,
+        application,
+    )
 
 
 class TestAppConfigSingleton:
@@ -29,6 +44,17 @@ class TestAppConfigSingleton:
             "全局 app_config 与 AppConfig() 不是同一个实例，"
             "说明模块导出的单例创建时机有问题"
         )
+
+    def test_app_config_uses_test_settings_store(self):
+        root_settings = app_config._repository.root_settings
+        assert root_settings.organizationName() == TEST_SETTINGS_ORGANIZATION
+        assert root_settings.applicationName() == TEST_SETTINGS_APPLICATION
+
+        settings_root = os.environ.get("VCP_HUNTER_TEST_QSETTINGS_DIR")
+        assert settings_root
+        settings_file = root_settings.fileName().replace("\\", "/")
+        settings_root_path = str(Path(settings_root).resolve()).replace("\\", "/")
+        assert settings_file.startswith(f"{settings_root_path}/")
 
     def test_get_set_roundtrip(self):
         """验证 get/set 读写闭环"""
@@ -61,7 +87,7 @@ class TestAppConfigSingleton:
     def test_section_migrates_legacy_scope(self):
         """读取旧 scope 时应惰性迁移到统一 Main 配置下"""
         legacy_scope = "LegacyConfigSectionTest"
-        legacy = QSettings("VCPHunter", legacy_scope)
+        legacy = _test_qsettings(legacy_scope)
         legacy.setValue("legacy_key", 7)
         legacy.sync()
 
@@ -80,7 +106,7 @@ class TestAppConfigSingleton:
         assert app_config.get(SettingsSchemaVersion.KEY, 0, int) == SettingsSchemaVersion.CURRENT
 
     def test_settings_migrator_upgrades_legacy_version_marker(self):
-        settings = QSettings("VCPHunter", "SchemaMigratorTest")
+        settings = _test_qsettings("SchemaMigratorTest")
         settings.setValue(SettingsSchemaVersion.KEY, 0)
         settings.sync()
 
@@ -94,7 +120,7 @@ class TestAppConfigSingleton:
             settings.sync()
 
     def test_settings_migrator_records_schema_migration_event(self):
-        settings = QSettings("VCPHunter", "SchemaMigratorTelemetryTest")
+        settings = _test_qsettings("SchemaMigratorTelemetryTest")
         telemetry = []
         settings.setValue(SettingsSchemaVersion.KEY, 0)
         settings.sync()
@@ -113,7 +139,7 @@ class TestAppConfigSingleton:
             (
                 "settings.schema_migrated",
                 {
-                    "organization": "VCPHunter",
+                    "organization": TEST_SETTINGS_ORGANIZATION,
                     "application": "SchemaMigratorTelemetryTest",
                     "from_version": 0,
                     "to_version": SettingsSchemaVersion.CURRENT,
@@ -125,12 +151,12 @@ class TestAppConfigSingleton:
     def test_repository_records_legacy_scope_migration_event(self):
         telemetry = []
         repo = SettingsRepository(
-            "VCPHunter",
+            TEST_SETTINGS_ORGANIZATION,
             "SettingsRepositoryTelemetryTest",
             telemetry_writer=lambda event, **fields: telemetry.append((event, fields)),
         )
         legacy_scope = "LegacyConfigSectionTelemetryTest"
-        legacy = QSettings("VCPHunter", legacy_scope)
+        legacy = _test_qsettings(legacy_scope)
         legacy.setValue("legacy_key", 7)
         legacy.sync()
 
@@ -146,7 +172,7 @@ class TestAppConfigSingleton:
         assert (
             "settings.legacy_key_migrated",
             {
-                "organization": "VCPHunter",
+                "organization": TEST_SETTINGS_ORGANIZATION,
                 "application": "SettingsRepositoryTelemetryTest",
                 "legacy_scope": legacy_scope,
                 "legacy_key": "legacy_key",

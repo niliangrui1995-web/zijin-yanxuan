@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import threading
-import time
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -13,6 +12,7 @@ from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication
 
 from core.process_watchdog import collect_process_snapshot
+from domains.runtime.fault_tolerance import provider_fault_tolerance
 
 try:  # pragma: no cover - psutil is optional outside the packaged runtime.
     import psutil
@@ -51,6 +51,53 @@ KEY_VIEW_LINEAGE = {
         "updated_at": "",
         "errors": [],
         "warnings": [],
+    },
+    "asian_market": {
+        "view": "asian_market",
+        "source": "asian_market local cache + realtime quote cache",
+        "provider": "AsianMarketWorker/yfinance/cache",
+        "cache_refs": [
+            "data/Cache/asian_klines_latest.json",
+            "data/Cache/asian_rt_latest.json",
+            "global_store.quotes",
+        ],
+        "triggered_network": True,
+        "fallback_or_degraded": None,
+        "updated_at": "",
+        "errors": [],
+        "warnings": [],
+        "provider_fault_tolerance": {},
+    },
+    "na_daily": {
+        "view": "na_daily",
+        "source": "daily report markdown/json + global_store.quotes",
+        "provider": "NADailyTab local report reader",
+        "cache_refs": [
+            "daily report output:report json/markdown",
+            "global_store.quotes",
+        ],
+        "triggered_network": True,
+        "fallback_or_degraded": None,
+        "updated_at": "",
+        "errors": [],
+        "warnings": [],
+        "provider_fault_tolerance": {},
+    },
+    "ai_industry_chain": {
+        "view": "ai_industry_chain",
+        "source": "AI industry chain workbook + local market data",
+        "provider": "AIIndustryChainTab workbook reader",
+        "cache_refs": [
+            "AI industry chain workbook",
+            "local market data provider",
+            "global_store.quotes",
+        ],
+        "triggered_network": True,
+        "fallback_or_degraded": None,
+        "updated_at": "",
+        "errors": [],
+        "warnings": [],
+        "provider_fault_tolerance": {},
     },
     "scan": {
         "view": "scan",
@@ -115,6 +162,14 @@ KEY_VIEW_LINEAGE = {
         "errors": [],
         "warnings": [],
         "provider_fault_tolerance": {},
+    },
+}
+
+DATA_LINEAGE_COVERED_TABS = tuple(KEY_VIEW_LINEAGE.keys())
+DATA_LINEAGE_EXCLUDED_TABS = {
+    "system_log": {
+        "reason": "non_data_tab",
+        "description": "system_log is an operational log surface, not a data table or upstream data source.",
     },
 }
 
@@ -337,39 +392,20 @@ def _quote_snapshot(main_window) -> dict[str, Any]:
         except (AttributeError, RuntimeError, TypeError, ValueError):
             provider_runtime = {}
 
-    now = time.time()
-    cooldown_until = float(provider_runtime.get("cooldown_until") or 0)
     eastmoney_cooldown_until = float(getattr(provider, "_rt_eastmoney_cooldown_until", 0.0) or 0.0)
-    source_layers = [
-        str(layer).strip()
-        for layer in request_stats.get("recent_source_layers", []) or []
-        if str(layer).strip()
-    ]
-    recent_status = str(request_stats.get("recent_status") or "").strip()
-    last_network_error = str(
-        provider_runtime.get("last_error")
-        or getattr(provider, "_rt_eastmoney_last_error", "")
-        or ""
+    fault_tolerance = provider_fault_tolerance(
+        {
+            "request_stats": request_stats,
+            "provider_runtime": provider_runtime,
+            "eastmoney_cooldown_until": eastmoney_cooldown_until,
+            "eastmoney_last_error": getattr(provider, "_rt_eastmoney_last_error", ""),
+        }
     )
-    fallback_tokens = ("fallback", "offline", "stale", "cooldown", "degraded")
-    provider_degraded = bool(cooldown_until > now or eastmoney_cooldown_until > now)
-    fallback_or_degraded = bool(
-        provider_degraded
-        or any(any(token in layer.lower() for token in fallback_tokens) for layer in source_layers)
-        or any(token in recent_status.lower() for token in fallback_tokens)
-    )
-    fault_tolerance = {
-        "provider_degraded": provider_degraded,
-        "fallback_or_degraded": fallback_or_degraded,
-        "last_network_error": last_network_error,
-        "cooldown_seconds_left": max(0, int(cooldown_until - now)),
-        "eastmoney_cooldown_seconds_left": max(0, int(eastmoney_cooldown_until - now)),
-        "recent_triggered_network": bool(request_stats.get("recent_triggered_network", False)),
-        "recent_cache_hit_count": int(request_stats.get("recent_cache_hit_count") or 0),
-        "recent_pending_count": int(request_stats.get("recent_pending_count") or 0),
-        "recent_status": recent_status,
-        "recent_source_layers": source_layers,
-    }
+    provider_degraded = bool(fault_tolerance.get("provider_degraded"))
+    fallback_or_degraded = bool(fault_tolerance.get("fallback_or_degraded"))
+    last_network_error = str(fault_tolerance.get("last_network_error") or "")
+    recent_status = str(fault_tolerance.get("recent_status") or "")
+    source_layers = list(fault_tolerance.get("recent_source_layers") or [])
     return {
         "request_stats": request_stats,
         "central_quotes": {
@@ -461,7 +497,7 @@ def _f5_scheduler_snapshot(main_window) -> dict[str, Any]:
 
 def _f5_cache_snapshot() -> dict[str, Any]:
     try:
-        from vcp.constants import APP_VERSION, RPS_CACHE_FILE
+        from core.runtime_paths import APP_VERSION, RPS_CACHE_FILE
     except (AttributeError, ImportError, RuntimeError, TypeError, ValueError):
         APP_VERSION = ""
         RPS_CACHE_FILE = ""
@@ -545,6 +581,40 @@ def _workspace_lineage(main_window) -> list[dict[str, Any]]:
     return lineage
 
 
+def _workspace_lineage_exclusions(main_window) -> list[dict[str, Any]]:
+    workspace = getattr(main_window, "_workspace", None)
+    tab_specs = getattr(workspace, "tab_specs", None)
+    specs = list(tab_specs() or []) if callable(tab_specs) else []
+    specs_by_key = {
+        str(item.get("key") or "").strip(): item
+        for item in specs
+        if isinstance(item, dict) and str(item.get("key") or "").strip()
+    }
+    get_loaded_tab = getattr(workspace, "get_loaded_tab", None)
+    exclusions = []
+    for key, defaults in DATA_LINEAGE_EXCLUDED_TABS.items():
+        spec = specs_by_key.get(key, {})
+        tab = get_loaded_tab(key) if callable(get_loaded_tab) else None
+        exclusions.append(
+            {
+                "key": key,
+                "title": str(spec.get("title") or ""),
+                "group": str(spec.get("group") or ""),
+                "loaded": tab is not None,
+                "class_name": tab.__class__.__name__ if tab is not None else "",
+                **dict(defaults),
+            }
+        )
+    return exclusions
+
+
+def _lineage_coverage_snapshot() -> dict[str, Any]:
+    return {
+        "covered": list(DATA_LINEAGE_COVERED_TABS),
+        "excluded": list(DATA_LINEAGE_EXCLUDED_TABS),
+    }
+
+
 def collect_runtime_health(main_window=None) -> dict[str, Any]:
     app = QApplication.instance()
     root = main_window
@@ -572,6 +642,8 @@ def collect_runtime_health(main_window=None) -> dict[str, Any]:
         "f5_refresh": _f5_scheduler_snapshot(root) if root is not None else {},
         "f5_cache": _f5_cache_snapshot(),
         "data_lineage": _workspace_lineage(root) if root is not None else [],
+        "data_lineage_coverage": _lineage_coverage_snapshot(),
+        "data_lineage_exclusions": _workspace_lineage_exclusions(root) if root is not None else [],
     }
 
 

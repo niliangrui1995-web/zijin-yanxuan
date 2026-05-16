@@ -1,98 +1,98 @@
-# constants.py - 全局常量、配色、字体、默认参数
-# 从 vcp_hunter.pyw 提取，零逻辑变更
+# -*- coding: utf-8 -*-
+"""VCP 常量兼容入口。
+
+新代码应优先从 core.runtime_paths 或 app.services.runtime_constants 导入。
+"""
+
 import os
-import warnings
 
-warnings.filterwarnings('ignore')
+from core.runtime_paths import (
+    APP_VERSION,
+    CACHE_DIR,
+    CACHE_VERSION,
+    DATE_FMT,
+    DEFAULT_AMP_THRESHOLD,
+    EXCLUDE_DAYS_FOR_PEAKS,
+    FINANCE_CACHE_FILE,
+    FLEXIBLE_MAX_INTERVAL,
+    FLEXIBLE_MIN_INTERVAL,
+    GROUP_DAYS,
+    INCREMENTAL_BARS,
+    INSTITUTION_KEYWORDS,
+    INSTITUTION_NAME_KEYWORDS,
+    LOOKBACK_DAYS,
+    MARKET_CLOSE_AM,
+    MARKET_CLOSE_PM,
+    MARKET_OPEN_AM,
+    MARKET_OPEN_PM,
+    MARKET_SYNC_WORKERS,
+    MAX_HISTORY_BARS,
+    MAX_PEAKS_COUNT,
+    MAX_R2_BELOW_R1_PCT,
+    MERGE_WITHIN_DAYS,
+    MIN_DAYS_AFTER_LAST_PEAK,
+    MIN_DAYS_AFTER_LAST_PEAK_CONFIRM,
+    MIN_FIRST_TO_THIRD_DAYS,
+    MIN_MARKET_CAP,
+    MIN_PEAKS_COUNT,
+    MIN_R1_R2_DAYS,
+    MIN_SMA50_SLOPE,
+    PCT_BASELINE,
+    PEAKS_FROM_GROUPS,
+    PROJECT_ROOT,
+    RPS_BUFFER_DAYS,
+    RPS_CACHE_FILE,
+    SECTOR_RPS_CACHE_FILE,
+    SHAREHOLDER_CACHE_FILE,
+    SPECIAL_LATEST_DATA,
+    ensure_cache_dir,
+    ensure_data_dir,
+    get_data_dir,
+)
 
-# ==========================================
-# 脚本目录
-# ==========================================
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
-# 项目根目录（vcp/ 的上一层）
-PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
 
-# ==========================================
-# 日期格式常量
-# ==========================================
-DATE_FMT = '%Y%m%d'
-
-# ==========================================
-# A 股交易时间
-# ==========================================
-MARKET_OPEN_AM, MARKET_CLOSE_AM = (9, 25), (11, 30)
-MARKET_OPEN_PM, MARKET_CLOSE_PM = (13, 0), (15, 0)
-
-# ==========================================
-# 版本号（统一管理，闪屏和状态栏引用此常量）
-APP_VERSION = "8.0.0"
-
-# 数据目录
-# ==========================================
-def get_data_dir(sub_folder="Cache"):
-    """数据目录统一放在项目根目录的 data/ 下，所有缓存、导出文件集中管理"""
-    base = os.path.join(PROJECT_ROOT, 'data')
-    target_dir = os.path.join(base, sub_folder)
-    os.makedirs(target_dir, exist_ok=True)
-    return target_dir
-
-CACHE_DIR  = get_data_dir("Cache")
-
-
-RPS_CACHE_FILE = os.path.join(CACHE_DIR, "vcp_rps_precomputed.json")
-SECTOR_RPS_CACHE_FILE = os.path.join(CACHE_DIR, "vcp_sector_rps_precomputed.json")  # F5预算板块RPS
-SHAREHOLDER_CACHE_FILE = os.path.join(CACHE_DIR, "vcp_shareholder_cache.json")       # 十大流通股东缓存
-FINANCE_CACHE_FILE = os.path.join(CACHE_DIR, "vcp_finance_cache.json")               # 财务股本缓存(防服务器断连)
-SPECIAL_LATEST_DATA = os.path.join(PROJECT_ROOT, 'data', 'special_latest_data.json')  # 关注池最新数据
-MIN_MARKET_CAP = 4e9    # 最低总市值门槛：40亿元
-
-# ==========================================
-# 机构投资者类型定义（用于十大流通股东筛选）
-# 股东性质包含以下关键词之一即视为机构
-# ==========================================
-INSTITUTION_KEYWORDS = ('基金', '券商', '保险', '信托', '社保', 'QFII')
-# 股东名称包含以下关键词也视为机构（北向资金等）
-INSTITUTION_NAME_KEYWORDS = ('香港中央结算', '中国证券金融', '中央汇金')
-
-
-# ==========================================
-# 默认策略参数
-# ==========================================
-DEFAULT_AMP_THRESHOLD = 0.45   # 左区区间振幅上限，默认不超过 45%
-
-# ==========================================
-# 全局运行/缓存配置常量
-# ==========================================
-CACHE_VERSION       = 3      # 本地缓存结构版本号
-MAX_HISTORY_BARS    = 500    # 全量历史下载长度
-INCREMENTAL_BARS    = 30     # 增量更新长度
-MARKET_SYNC_WORKERS = 15     # 同步市场数据线程数
-RPS_BUFFER_DAYS     = 500    # 预留自然日数
-
-# ==========================================
-# 三高点区间参数（130日窗口）
-# ==========================================
-LOOKBACK_DAYS           = 130
-GROUP_DAYS              = 15
-PEAKS_FROM_GROUPS       = 5
-PCT_BASELINE            = 0.93
-MERGE_WITHIN_DAYS       = 15
-EXCLUDE_DAYS_FOR_PEAKS  = 3
-
-# ==========================================
-# 弹性区间参数
-# ==========================================
-MIN_PEAKS_COUNT         = 3
-MAX_PEAKS_COUNT         = 4
-FLEXIBLE_MIN_INTERVAL   = 30
-FLEXIBLE_MAX_INTERVAL   = 150
-MIN_DAYS_AFTER_LAST_PEAK = 2
-MIN_DAYS_AFTER_LAST_PEAK_CONFIRM = 3
-MAX_R2_BELOW_R1_PCT     = 0.15
-MIN_FIRST_TO_THIRD_DAYS = 50
-MIN_R1_R2_DAYS         = 50
-
-# ==========================================
-# 均线斜率参数
-# ==========================================
-MIN_SMA50_SLOPE         = -0.0003
+__all__ = [
+    "APP_VERSION",
+    "CACHE_DIR",
+    "CACHE_VERSION",
+    "DATE_FMT",
+    "DEFAULT_AMP_THRESHOLD",
+    "EXCLUDE_DAYS_FOR_PEAKS",
+    "FINANCE_CACHE_FILE",
+    "FLEXIBLE_MAX_INTERVAL",
+    "FLEXIBLE_MIN_INTERVAL",
+    "GROUP_DAYS",
+    "INCREMENTAL_BARS",
+    "INSTITUTION_KEYWORDS",
+    "INSTITUTION_NAME_KEYWORDS",
+    "LOOKBACK_DAYS",
+    "MARKET_CLOSE_AM",
+    "MARKET_CLOSE_PM",
+    "MARKET_OPEN_AM",
+    "MARKET_OPEN_PM",
+    "MARKET_SYNC_WORKERS",
+    "MAX_HISTORY_BARS",
+    "MAX_PEAKS_COUNT",
+    "MAX_R2_BELOW_R1_PCT",
+    "MERGE_WITHIN_DAYS",
+    "MIN_DAYS_AFTER_LAST_PEAK",
+    "MIN_DAYS_AFTER_LAST_PEAK_CONFIRM",
+    "MIN_FIRST_TO_THIRD_DAYS",
+    "MIN_MARKET_CAP",
+    "MIN_PEAKS_COUNT",
+    "MIN_R1_R2_DAYS",
+    "MIN_SMA50_SLOPE",
+    "PCT_BASELINE",
+    "PEAKS_FROM_GROUPS",
+    "PROJECT_ROOT",
+    "RPS_BUFFER_DAYS",
+    "RPS_CACHE_FILE",
+    "SCRIPT_DIR",
+    "SECTOR_RPS_CACHE_FILE",
+    "SHAREHOLDER_CACHE_FILE",
+    "SPECIAL_LATEST_DATA",
+    "ensure_cache_dir",
+    "ensure_data_dir",
+    "get_data_dir",
+]

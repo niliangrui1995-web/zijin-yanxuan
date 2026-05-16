@@ -37,7 +37,10 @@ QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 
 DEFAULT_TABS = (
     "watchlist",
+    "asian_market",
+    "na_daily",
     "stock_candidates",
+    "ai_industry_chain",
     "lhb",
     "rt_monitor",
     "scan",
