@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import pandas as pd
+
 from core.market_calendar import MarketCalendar
-from earnings.scheduler import EarningsScheduler
+from earnings.scheduler import EarningsScheduler, FetchWorker
 
 
 def test_build_startup_scan_dates_returns_recent_window_when_cache_is_empty(monkeypatch):
@@ -64,5 +66,55 @@ def test_trigger_routine_scan_skips_when_worker_active(monkeypatch):
     try:
         assert scheduler.trigger_routine_scan(reason="test") is False
         assert calls == []
+    finally:
+        scheduler.stop_patrol()
+
+
+def test_fetch_worker_failure_uses_failed_signal_not_empty_success(qt_application):
+    class FailingEngine:
+        def fetch_daily_surprises(self, *args, **kwargs):
+            raise RuntimeError("source timeout")
+
+    worker = FetchWorker(FailingEngine(), "routine")
+    finished = []
+    failed = []
+    worker.sig_finished.connect(lambda df, mode: finished.append((df, mode)))
+    worker.sig_failed.connect(lambda mode, error_text: failed.append((mode, error_text)))
+
+    worker.run()
+
+    assert finished == []
+    assert failed == [("routine", "source timeout")]
+
+
+def test_scheduler_forwards_worker_failure_without_new_data_signal(qt_application):
+    scheduler = EarningsScheduler()
+    successes = []
+    failures = []
+    scheduler.sig_new_surprises_found.connect(lambda df, mode: successes.append((df, mode)))
+    scheduler.sig_fetch_failed.connect(lambda mode, error_text: failures.append((mode, error_text)))
+    try:
+        scheduler._on_worker_failed("gap_fill", "provider unavailable")
+
+        assert successes == []
+        assert failures == [("gap_fill", "provider unavailable")]
+    finally:
+        scheduler.stop_patrol()
+
+
+def test_scheduler_empty_result_still_emits_new_surprises_signal(qt_application):
+    scheduler = EarningsScheduler()
+    successes = []
+    failures = []
+    scheduler.sig_new_surprises_found.connect(lambda df, mode: successes.append((df, mode)))
+    scheduler.sig_fetch_failed.connect(lambda mode, error_text: failures.append((mode, error_text)))
+    empty_df = pd.DataFrame()
+    try:
+        scheduler._on_worker_finished(empty_df, "routine")
+
+        assert len(successes) == 1
+        assert successes[0][0].empty
+        assert successes[0][1] == "routine"
+        assert failures == []
     finally:
         scheduler.stop_patrol()

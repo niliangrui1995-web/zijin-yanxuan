@@ -88,23 +88,127 @@ def ms_until_next_global_earnings_calendar_daily_refresh(now: datetime.datetime 
     return max(1000, int((target - now).total_seconds() * 1000))
 
 
+class StartupHostAdapter:
+    """Narrow host boundary used by StartupOrchestrator."""
+
+    def __init__(self, main_window):
+        self._main_window = main_window
+
+    @property
+    def timer_parent(self):
+        return self._main_window
+
+    @property
+    def data_provider(self):
+        return getattr(self._main_window, "data_provider", None)
+
+    @property
+    def workspace(self):
+        return getattr(self._main_window, "_workspace", None)
+
+    @property
+    def fallback_watchlist_tab(self):
+        return getattr(self._main_window, "tab_watchlist", None)
+
+    @property
+    def cache_manager(self):
+        return getattr(self._main_window, "cache_manager", None)
+
+    @property
+    def engine(self):
+        return getattr(self._main_window, "engine", None)
+
+    def is_closing(self) -> bool:
+        return bool(getattr(self._main_window, "_is_closing", False))
+
+    def call_in_ui(self, callback, alive_checker) -> None:
+        call_in_ui = getattr(self._main_window, "_call_in_ui", None)
+        if callable(call_in_ui):
+            call_in_ui(lambda: callback() if alive_checker() else None)
+            return
+        if alive_checker():
+            callback()
+
+    def refresh_code_count_label_from_provider(self):
+        callback = getattr(self._main_window, "_refresh_code_count_label_from_provider", None)
+        if callable(callback):
+            return callback()
+        return None
+
+    def set_code_count_text(self, text: str) -> None:
+        label = getattr(self._main_window, "lbl_code_count", None)
+        if label is not None:
+            label.setText(text)
+
+    def set_status_text(self, text: str) -> None:
+        label = getattr(self._main_window, "lbl_status", None)
+        if label is not None:
+            label.setText(text)
+
+    def set_titlebar_sync_state(self, *args) -> None:
+        callback = getattr(self._main_window, "_set_titlebar_sync_state", None)
+        if callable(callback):
+            callback(*args)
+
+    def get_rt_table(self):
+        workspace = self.workspace
+        getter = getattr(workspace, "get_rt_table", None)
+        return getter() if callable(getter) else None
+
+    def load_rt_cache(self) -> None:
+        cache_manager = self.cache_manager
+        if cache_manager is not None:
+            cache_manager.load_rt_cache(self.get_rt_table(), self.set_status_text)
+
+    def try_load_rps_from_disk(self, set_status_callback) -> None:
+        cache_manager = self.cache_manager
+        if cache_manager is not None:
+            cache_manager.try_load_rps_from_disk(
+                self.engine,
+                data_provider=self.data_provider,
+                set_status_callback=set_status_callback,
+            )
+
+    def update_network_ui(self, online: bool) -> None:
+        callback = getattr(self._main_window, "_update_network_ui", None)
+        if callable(callback):
+            callback(online)
+
+    def on_smart_startup_online_done(self) -> None:
+        callback = getattr(self._main_window, "_on_smart_startup_online_done", None)
+        if callable(callback):
+            callback()
+
+    def refresh_watchlist_names(self, code2name: dict) -> None:
+        workspace = self.workspace
+        callback = getattr(workspace, "refresh_watchlist_names", None)
+        if callable(callback):
+            callback(code2name)
+
+    def auto_start_rt_monitor(self) -> bool:
+        workspace = self.workspace
+        callback = getattr(workspace, "auto_start_rt_monitor", None)
+        return bool(callback()) if callable(callback) else False
+
+
 class StartupOrchestrator:
     """主窗口启动流程协调器。"""
 
-    def __init__(self, main_window, job_runner=None):
-        self.mw = main_window
+    def __init__(self, main_window=None, job_runner=None, host=None):
+        self.host = host or StartupHostAdapter(main_window)
         self._job_runner = job_runner or background_job_runner
         self._closed = False
-        self._deferred_timer = QTimer(main_window)
+        timer_parent = self.host.timer_parent
+        self._deferred_timer = QTimer(timer_parent)
         self._deferred_timer.setSingleShot(True)
         self._deferred_timer.timeout.connect(self.deferred_data_load)
-        self._smart_timer = QTimer(main_window)
+        self._smart_timer = QTimer(timer_parent)
         self._smart_timer.setSingleShot(True)
         self._smart_timer.timeout.connect(self.smart_startup)
-        self._global_earnings_calendar_daily_timer = QTimer(main_window)
+        self._global_earnings_calendar_daily_timer = QTimer(timer_parent)
         self._global_earnings_calendar_daily_timer.setSingleShot(True)
         self._global_earnings_calendar_daily_timer.timeout.connect(self._run_daily_global_earnings_calendar_refresh)
-        self._auto_rt_timer = QTimer(main_window)
+        self._auto_rt_timer = QTimer(timer_parent)
         self._auto_rt_timer.setSingleShot(False)
         self._auto_rt_timer.timeout.connect(self.auto_start_rt_if_ready)
         self._auto_rt_network_probe_active = False
@@ -152,20 +256,20 @@ class StartupOrchestrator:
     def _alive(self):
         return (
             not self._closed
-            and self.mw is not None
-            and not getattr(self.mw, "_is_closing", False)
+            and self.host.timer_parent is not None
+            and not self.host.is_closing()
         )
 
     def _safe_call_in_ui(self, callback):
         if not self._alive():
             return
         try:
-            self.mw._call_in_ui(lambda: callback() if self._alive() else None)
+            self.host.call_in_ui(callback, self._alive)
         except RuntimeError:
             pass
 
     def _loaded_watchlist_codes(self) -> list[str]:
-        workspace = getattr(self.mw, "_workspace", None)
+        workspace = self.host.workspace
         if workspace is None:
             return []
 
@@ -176,7 +280,7 @@ class StartupOrchestrator:
         if watchlist_tab is None:
             watchlist_tab = getattr(workspace, "tab_watchlist", None)
         if watchlist_tab is None:
-            watchlist_tab = getattr(self.mw, "tab_watchlist", None)
+            watchlist_tab = self.host.fallback_watchlist_tab
         if watchlist_tab is None:
             return []
 
@@ -196,7 +300,7 @@ class StartupOrchestrator:
         )
 
     def _refresh_startup_code_names(self) -> dict:
-        provider = getattr(self.mw, "data_provider", None)
+        provider = self.host.data_provider
         if provider is None:
             return {}
 
@@ -233,19 +337,18 @@ class StartupOrchestrator:
             return len(code) == 6 and code.isdigit() and code.startswith(("60", "68", "00", "30"))
 
         def _refresh_code_count_label_from_provider():
-            callback = getattr(self.mw, "_refresh_code_count_label_from_provider", None)
-            if callable(callback):
-                return callback()
+            host_count = self.host.refresh_code_count_label_from_provider()
+            if host_count is not None:
+                return host_count
 
-            provider = getattr(self.mw, "data_provider", None)
+            provider = self.host.data_provider
             cache_data = getattr(provider, "cache_data", None) or {}
             code_name_map = getattr(provider, "code2name", None) or {}
             count = len(cache_data)
             if count <= 0:
                 count = sum(1 for raw_code in code_name_map if _is_display_a_share_code(raw_code))
-            label = getattr(self.mw, "lbl_code_count", None)
-            if count > 0 and label is not None:
-                label.setText(f"标的池: {count} 只")
+            if count > 0:
+                self.host.set_code_count_text(f"标的池: {count} 只")
             return count
 
         def _load_bg():
@@ -256,7 +359,9 @@ class StartupOrchestrator:
 
             cache_date = ""
             if service_toggle_registry.is_enabled("startup_history_cache_load"):
-                cache_date = self.mw.data_provider.load_cache_from_disk()
+                provider = self.host.data_provider
+                if provider is not None:
+                    cache_date = provider.load_cache_from_disk()
             else:
                 log.info("[启动] 已跳过全量历史缓存预载，历史K线将在扫描/盘中监控/K线窗口按需加载")
                 self._safe_call_in_ui(_refresh_code_count_label_from_provider)
@@ -268,31 +373,23 @@ class StartupOrchestrator:
                 )
                 return
             if cache_date and self._alive():
-                count = len(self.mw.data_provider.cache_data)
-                self._safe_call_in_ui(
-                    lambda: getattr(self.mw, "lbl_code_count", None)
-                    and self.mw.lbl_code_count.setText(f"标的池 {count}")
-                )
+                count = len(getattr(self.host.data_provider, "cache_data", None) or {})
+                self._safe_call_in_ui(lambda: self.host.set_code_count_text(f"标的池 {count}"))
                 self._safe_call_in_ui(_refresh_code_count_label_from_provider)
                 self._safe_call_in_ui(
-                    lambda: self.mw.lbl_status.setText(
+                    lambda: self.host.set_status_text(
                         f"已加载 {count} 只标的缓存(日线: {cache_date})"
                     )
                 )
                 self._safe_call_in_ui(
-                    lambda: self.mw._set_titlebar_sync_state(
+                    lambda: self.host.set_titlebar_sync_state(
                         "cache",
                         "本地缓存已加载",
                         f"快照 {cache_date}",
                     )
                 )
 
-            self._safe_call_in_ui(
-                lambda: self.mw.cache_manager.load_rt_cache(
-                    getattr(getattr(self.mw, "_workspace", None), "get_rt_table", lambda: None)(),
-                    lambda msg: self.mw.lbl_status.setText(msg),
-                )
-            )
+            self._safe_call_in_ui(self.host.load_rt_cache)
             if not self._alive():
                 log_process_snapshot(
                     "startup.deferred_load.cancelled",
@@ -301,11 +398,9 @@ class StartupOrchestrator:
                 )
                 return
 
-            self.mw.cache_manager.try_load_rps_from_disk(
-                self.mw.engine,
-                data_provider=self.mw.data_provider,
+            self.host.try_load_rps_from_disk(
                 set_status_callback=lambda msg: self._safe_call_in_ui(
-                    lambda: self.mw.lbl_status.setText(msg)
+                    lambda: self.host.set_status_text(msg)
                 ),
             )
             if not self._alive():
@@ -491,32 +586,27 @@ class StartupOrchestrator:
                 if not self._alive():
                     return
                 log_process_snapshot("startup.smart.begin", logger=log)
-                online = self.mw.data_provider.test_network(timeout=3)
+                provider = self.host.data_provider
+                online = bool(provider and provider.test_network(timeout=3))
                 if not self._alive():
                     return
                 if online:
                     if not self._alive():
                         return
-                    self.mw.data_provider.set_online_mode(True)
+                    if provider is not None:
+                        provider.set_online_mode(True)
                     log.info("[智能启动] 网络可用，已自动切换到联机模式")
 
                     try:
                         if not self._alive():
                             return
                         code2name = self._refresh_startup_code_names()
-                        workspace = getattr(self.mw, "_workspace", None)
-                        if workspace is not None:
-                            self._safe_call_in_ui(
-                                lambda: workspace.refresh_watchlist_names(
-                                    code2name
-                                )
-                            )
+                        self._safe_call_in_ui(lambda: self.host.refresh_watchlist_names(code2name))
                     except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
                         log.error(f"[智能启动] 后台同步代码名称映射失败: {exc}")
 
-                    self._safe_call_in_ui(lambda: self.mw._update_network_ui(True))
-                    if hasattr(self.mw, "_on_smart_startup_online_done"):
-                        self._safe_call_in_ui(self.mw._on_smart_startup_online_done)
+                    self._safe_call_in_ui(lambda: self.host.update_network_ui(True))
+                    self._safe_call_in_ui(self.host.on_smart_startup_online_done)
                     self._safe_call_in_ui(self.auto_start_rt_if_ready)
                 else:
                     log.info("[智能启动] 网络不可用，保持离线模式")
@@ -555,7 +645,7 @@ class StartupOrchestrator:
         log.info(message)
 
     def _provider_is_online(self) -> bool:
-        provider = getattr(self.mw, "data_provider", None)
+        provider = self.host.data_provider
         is_online = getattr(provider, "is_online", None)
         if callable(is_online):
             return bool(is_online())
@@ -565,7 +655,7 @@ class StartupOrchestrator:
         if self._auto_rt_network_probe_active or not self._alive():
             return
 
-        provider = getattr(self.mw, "data_provider", None)
+        provider = self.host.data_provider
         test_network = getattr(provider, "test_network", None)
         set_online_mode = getattr(provider, "set_online_mode", None)
         if not callable(test_network) or not callable(set_online_mode):
@@ -593,9 +683,8 @@ class StartupOrchestrator:
                 self._log_auto_rt_skip("auto_rt_offline", "[盘中监控] 自动启动等待网络可用")
                 return
             self._last_auto_rt_skip_reason = ""
-            self._safe_call_in_ui(lambda: getattr(self.mw, "_update_network_ui", lambda *_: None)(True))
-            if hasattr(self.mw, "_on_smart_startup_online_done"):
-                self._safe_call_in_ui(self.mw._on_smart_startup_online_done)
+            self._safe_call_in_ui(lambda: self.host.update_network_ui(True))
+            self._safe_call_in_ui(self.host.on_smart_startup_online_done)
             self._safe_call_in_ui(self.auto_start_rt_if_ready)
 
         def _on_probe_error(msg):
@@ -629,7 +718,9 @@ class StartupOrchestrator:
             if not MarketCalendar.is_market_active():
                 self._log_auto_rt_skip("auto_rt_inactive", "[盘中监控] 非交易活跃时段，跳过自动监控")
                 return
-            if not self.mw.data_provider.cache_data or len(self.mw.data_provider.cache_data) < 100:
+            provider = self.host.data_provider
+            cache_data = getattr(provider, "cache_data", None) or {}
+            if not cache_data or len(cache_data) < 100:
                 self._log_auto_rt_skip("auto_rt_cache_missing", "[盘中监控] 数据不足，等待缓存就绪后自动重试")
                 return
             if not self._provider_is_online():
@@ -637,8 +728,7 @@ class StartupOrchestrator:
                 self._probe_network_for_auto_rt()
                 return
 
-            workspace = getattr(self.mw, "_workspace", None)
-            if workspace is not None and workspace.auto_start_rt_monitor():
+            if self.host.auto_start_rt_monitor():
                 self._last_auto_rt_skip_reason = ""
                 log.info("[智能启动] 盘中监控已自动启动")
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:

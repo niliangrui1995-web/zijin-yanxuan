@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from infra.market_data import as_market_data_ports
+from infra.market_data import RealtimeQuotePort, as_market_data_ports
+from infra.market_data.tdx_data_provider import TdxDataProvider
 
 
 class _DummyProvider:
@@ -39,3 +40,9 @@ def test_as_market_data_ports_returns_provider_and_engine_pair():
 
     assert ports.provider is provider
     assert ports.engine is engine
+
+
+def test_tdx_provider_exposes_public_realtime_quote_port():
+    provider = TdxDataProvider.__new__(TdxDataProvider)
+
+    assert isinstance(provider, RealtimeQuotePort)

@@ -360,8 +360,11 @@ class TdxDataProvider(TdxDataProviderHistoryMixin, TdxDataProviderRealtimeMixin)
     def _register_realtime_success(self):
         self._get_realtime_quote_provider().register_success()
 
-    def _enter_realtime_cooldown(self, reason: str, cooldown_sec: float | None = None):
+    def enter_realtime_cooldown(self, reason: str, cooldown_sec: float | None = None):
         self._get_realtime_quote_provider().enter_cooldown(reason, cooldown_sec=cooldown_sec)
+
+    def _enter_realtime_cooldown(self, reason: str, cooldown_sec: float | None = None):
+        self.enter_realtime_cooldown(reason, cooldown_sec=cooldown_sec)
 
     def _register_realtime_failure(self, reason: str):
         self._get_realtime_quote_provider().register_failure(reason)

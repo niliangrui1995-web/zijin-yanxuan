@@ -7,12 +7,9 @@ import time
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSlot
 
-from app.services import batch_get_finance_info
+from app.services.central_quote_polling_service import CentralQuotePoller
 from app.services.ui_market_calendar_service import MarketCalendar
-from app.services.ui_quote_service import (
-    enrich_quotes_with_finance,
-    publish_rt_quotes,
-)
+from app.services.ui_quote_service import publish_rt_quotes
 from app.services.ui_task_service import CENTRAL_QUOTES_POLL
 from app.services.ui_task_service import background_job_runner as task_manager
 from core.global_store import global_store
@@ -65,6 +62,10 @@ class CentralQuotesService(QObject):
         self._last_heartbeat_logged_at = 0.0
         self._post_cache_reload_quiet_until = 0.0
         self._post_cache_reload_signature: tuple[str, ...] = ()
+        self._poller = CentralQuotePoller(
+            data_provider,
+            missing_finance_codes=global_store.get_missing_a_share_finance_codes,
+        )
 
     def set_code_supplier(self, code_supplier) -> None:
         self._code_supplier = code_supplier
@@ -109,36 +110,10 @@ class CentralQuotesService(QObject):
         return codes
 
     def _get_missing_finance_codes(self, codes: set[str]) -> list[str]:
-        try:
-            return global_store.get_missing_a_share_finance_codes(codes)
-        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-            log.debug(f"[报价站] 读取股本缺口失败: {exc}")
-            return []
+        return self._poller.missing_finance_codes(codes)
 
     def _fetch_quote_payload(self, codes: set[str]) -> dict:
-        quotes = self.data_provider.fetch_realtime_quotes_batch(list(codes))
-        finance_data = {}
-        provider_stats = {}
-
-        finance_codes = self._get_missing_finance_codes(codes)
-        if finance_codes:
-            try:
-                finance_data = batch_get_finance_info(finance_codes) or {}
-            except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                log.debug(f"[报价站] 批量补股本失败: {exc}")
-
-        stats_getter = getattr(self.data_provider, "get_realtime_runtime_stats", None)
-        if callable(stats_getter):
-            try:
-                provider_stats = stats_getter() or {}
-            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-                log.debug(f"[报价站] 读取运行态统计失败: {exc}")
-
-        return {
-            "quotes": enrich_quotes_with_finance(quotes, finance_data),
-            "finance_data": finance_data,
-            "provider_stats": provider_stats,
-        }
+        return self._poller.fetch_payload(codes)
 
     def _reset_failures(self):
         self._consecutive_failures = 0
@@ -154,14 +129,10 @@ class CentralQuotesService(QObject):
         self._circuit_breaker_cooldown = max(self._circuit_breaker_cooldown, self._COOLDOWN_TICKS)
         log.error("[报价站] 连续失败达到阈值，进入 5 分钟冷却")
 
-        if self.data_provider is not None:
-            try:
-                self.data_provider._enter_realtime_cooldown(
-                    f"报价站连续失败达到阈值：{reason}",
-                    cooldown_sec=300,
-                )
-            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-                log.debug(f"[报价站] 触发 provider 冷却失败: {exc}")
+        self._poller.enter_realtime_cooldown(
+            f"报价站连续失败达到阈值：{reason}",
+            cooldown_sec=300,
+        )
 
     def _collect_thread_health(self) -> tuple[int, int]:
         frames = sys._current_frames()
@@ -186,20 +157,11 @@ class CentralQuotesService(QObject):
         return total_threads, pytdx_threads
 
     def _run_maintenance(self, active_codes_count: int | None = None):
-        stats = {}
-        if self.data_provider is not None:
-            try:
-                stats = self.data_provider.compact_runtime_caches()
-            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-                log.debug(f"[报价站] 运行时缓存清理失败: {exc}")
+        stats = self._poller.compact_runtime_caches()
 
         total_threads, pytdx_threads = self._collect_thread_health()
-        if self.data_provider is not None:
-            try:
-                if self.data_provider.protect_against_thread_anomaly(pytdx_threads):
-                    self._circuit_breaker_cooldown = max(self._circuit_breaker_cooldown, self._COOLDOWN_TICKS)
-            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-                log.debug(f"[报价站] pytdx 线程防护失败: {exc}")
+        if self._poller.protect_against_thread_anomaly(pytdx_threads):
+            self._circuit_breaker_cooldown = max(self._circuit_breaker_cooldown, self._COOLDOWN_TICKS)
 
         if self._tick_count % self._heartbeat_every_ticks != 0:
             return
@@ -310,7 +272,7 @@ class CentralQuotesService(QObject):
             self._emit_off_market_snapshot(codes)
             return
 
-        if not self.data_provider or not self.data_provider.is_online():
+        if not self._poller.is_online():
             return
 
         if self._is_fetching:
@@ -336,7 +298,7 @@ class CentralQuotesService(QObject):
                 log.info("[报价站] 冷却结束，恢复轮询")
             return
 
-        provider_stats = self.data_provider.get_realtime_runtime_stats()
+        provider_stats = self._poller.get_runtime_stats()
         if time.time() < float(provider_stats.get("cooldown_until") or 0):
             self._circuit_breaker_cooldown = max(self._circuit_breaker_cooldown, self._COOLDOWN_TICKS)
             return

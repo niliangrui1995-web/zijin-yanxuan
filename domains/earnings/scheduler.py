@@ -21,6 +21,7 @@ _SCHEDULER_ERRORS = (
 
 class FetchWorker(QThread):
     sig_finished = pyqtSignal(object, str)
+    sig_failed = pyqtSignal(str, str)
 
     def __init__(self, engine, mode, missing_dates=None, target_date=None, parent=None):
         super().__init__(parent)
@@ -60,10 +61,11 @@ class FetchWorker(QThread):
                 self.sig_finished.emit(df_new, self.mode)
         except _SCHEDULER_ERRORS as e:
             logger.error(f"[业绩调度] ❌ 后台抓取异常退出: {e}")
-            self.sig_finished.emit(pd.DataFrame(), self.mode)
+            self.sig_failed.emit(self.mode, str(e))
 
 class EarningsScheduler(QObject):
     sig_new_surprises_found = pyqtSignal(object, str)
+    sig_fetch_failed = pyqtSignal(str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -82,6 +84,7 @@ class EarningsScheduler(QObject):
         self.active_workers.add(worker)
 
         worker.sig_finished.connect(self._on_worker_finished)
+        worker.sig_failed.connect(self._on_worker_failed)
         # 用 deleteLater 确保 worker 断开信号后被 Qt 事件循环安全回收
         worker.finished.connect(lambda w=worker: (self.active_workers.discard(w), w.deleteLater()))
         worker.start()
@@ -89,6 +92,9 @@ class EarningsScheduler(QObject):
     def _on_worker_finished(self, df, mode):
         # 无论是否有新增数据，都必须通知 UI 结束加载状态
         self.sig_new_surprises_found.emit(df, mode)
+
+    def _on_worker_failed(self, mode: str, error_text: str):
+        self.sig_fetch_failed.emit(mode, error_text)
 
     @staticmethod
     def _normalize_trade_dates(trade_dates: list[str] | None) -> list[str]:

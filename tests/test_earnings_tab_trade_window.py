@@ -54,6 +54,7 @@ def test_earnings_tab_defers_scheduler_creation_until_runtime(monkeypatch):
 
     class DummyScheduler:
         sig_new_surprises_found = DummySignal()
+        sig_fetch_failed = DummySignal()
 
         def start_patrol(self):
             pass
@@ -88,6 +89,7 @@ def test_earnings_delete_later_stops_runtime_timers_and_scheduler(monkeypatch):
     class DummyScheduler:
         def __init__(self):
             self.sig_new_surprises_found = DummySignal()
+            self.sig_fetch_failed = DummySignal()
             self.stop_calls = 0
 
         def start_patrol(self):
@@ -370,3 +372,28 @@ def test_rt_sort_filter_proxy_supports_multi_select_column_filters():
         source_index = proxy.mapToSource(proxy.index(row, 0))
         codes.append(model.get_row_data(source_index.row())["代码"])
     assert codes == ["000001", "000004"]
+
+
+def test_earnings_fetch_failure_keeps_existing_rows_visible():
+    calls = []
+
+    class TableState:
+        def show_table(self):
+            calls.append("show_table")
+
+        def show_error(self, title, subtitle=""):
+            calls.append(("show_error", title, subtitle))
+
+    class DummyTab:
+        row_data = [{"代码": "000001"}]
+        table_state = TableState()
+
+        def _set_window_status(self, *segments):
+            calls.append(("status", segments))
+
+    EarningsTab._on_fetch_failed(DummyTab(), "routine", "provider unavailable")
+
+    assert calls == [
+        "show_table",
+        ("status", ("业绩抓取失败", "定时扫描", "provider unavailable")),
+    ]

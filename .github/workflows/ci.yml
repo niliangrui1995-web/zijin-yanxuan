@@ -59,6 +59,10 @@ jobs:
       - name: Service regression suite
         run: |
           pytest \
+            tests/test_central_quote_polling_service.py \
+            tests/test_central_quotes_worker.py \
+            tests/test_earnings_scheduler_startup.py \
+            tests/test_earnings_tab_trade_window.py \
             tests/test_provider_services.py \
             tests/test_engine_services.py \
             tests/test_background_job_runner.py \
@@ -84,7 +88,7 @@ jobs:
             tests/test_qt_webengine_preflight.py \
             -q
       - name: Project audit command contract
-        run: python scripts/project_audit.py --quick --list
+        run: python scripts/project_audit.py --quick --skip-webengine-preflight
 
   windows-smoke:
     runs-on: windows-latest
@@ -100,7 +104,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-dev.txt
       - name: Project audit command contract
-        run: python scripts/project_audit.py --quick --list
+        run: python scripts/project_audit.py --quick --skip-webengine-preflight
       - name: Windows architecture and runtime smoke
         run: |
           python -m pytest -q tests/test_architecture_boundaries.py tests/test_runtime_env_self_check.py tests/test_project_audit.py

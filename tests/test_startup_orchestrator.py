@@ -18,6 +18,7 @@ from core.startup_orchestrator import (
     GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_MINUTE,
     GLOBAL_EARNINGS_CALENDAR_SYNC_TASK_ID,
     SMART_STARTUP_TASK_ID,
+    StartupHostAdapter,
     StartupOrchestrator,
     ms_until_next_global_earnings_calendar_daily_refresh,
 )
@@ -117,6 +118,28 @@ class _QueuedJobRunner:
     def abandon(self, task_id):
         self.abandoned.append(task_id)
         return True
+
+
+def test_startup_host_adapter_exposes_narrow_main_window_boundary():
+    mw = _DummyMainWindow()
+    adapter = StartupHostAdapter(mw)
+
+    assert adapter.timer_parent is mw
+    assert adapter.data_provider is mw.data_provider
+    assert adapter.workspace is None
+    assert adapter.fallback_watchlist_tab is None
+
+    adapter.set_code_count_text("标的池 3")
+    adapter.set_status_text("ready")
+    adapter.set_titlebar_sync_state("cache", "ok", "today")
+    adapter.update_network_ui(True)
+    adapter.on_smart_startup_online_done()
+
+    assert mw.lbl_code_count.value == "标的池 3"
+    assert mw.lbl_status.value == "ready"
+    assert mw.titlebar_sync_states == [("cache", "ok", "today")]
+    assert mw.network_updates == [True]
+    assert mw.online_done_count == 1
 
 
 def test_startup_orchestrator_asian_sync_uses_process_runner(monkeypatch):

@@ -45,6 +45,7 @@ class EarningsTab(BaseStockTab):
         if self.scheduler is None:
             self.scheduler = EarningsScheduler(self)
             self.scheduler.sig_new_surprises_found.connect(self._on_new_data_found)
+            self.scheduler.sig_fetch_failed.connect(self._on_fetch_failed)
         return self.scheduler
 
     def _ensure_runtime_started(self) -> None:
@@ -324,6 +325,26 @@ class EarningsTab(BaseStockTab):
             else:
                 self.table_state.show_empty(f"仅展示近 {EARNINGS_DISPLAY_TRADE_DAYS} 个交易日数据")
         return changed
+
+    @pyqtSlot(str, str)
+    def _on_fetch_failed(self, mode: str, error_text: str):
+        error_text = str(error_text or "未知错误").strip() or "未知错误"
+        short_error = error_text if len(error_text) <= 120 else f"{error_text[:117]}..."
+        mode_text = {
+            "warm_cache": "本地缓存",
+            "gap_fill": "历史回补",
+            "single": "单日扫描",
+            "routine": "定时扫描",
+        }.get(mode, mode or "未知任务")
+        log.warning(f"[业绩监控] 后台抓取失败({mode_text}): {error_text}")
+
+        if hasattr(self, "table_state"):
+            if self.row_data:
+                self.table_state.show_table()
+            else:
+                self.table_state.show_error("业绩抓取失败", short_error)
+
+        self._set_window_status("业绩抓取失败", mode_text, short_error)
 
     @pyqtSlot(object, str)
     def _on_new_data_found(self, df: "pd.DataFrame", mode: str = "routine"):

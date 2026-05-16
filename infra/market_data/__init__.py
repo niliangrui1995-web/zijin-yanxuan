@@ -11,7 +11,13 @@ from infra.market_data.market_data_warehouse import (
     WarehouseStatus,
     get_default_market_data_warehouse,
 )
-from infra.market_data.provider_ports import DataProviderPort, EnginePort, MarketDataPorts, as_market_data_ports
+from infra.market_data.provider_ports import (
+    DataProviderPort,
+    EnginePort,
+    MarketDataPorts,
+    RealtimeQuotePort,
+    as_market_data_ports,
+)
 from infra.market_data.realtime_quote_provider import RealtimeQuoteProvider
 from infra.market_data.tdx_data_provider import TdxDataProvider
 from infra.market_data.warehouse_manifest import WarehouseManifest, WarehouseManifestRecord
@@ -25,6 +31,7 @@ __all__ = [
     "MARKET_DATA_SCHEMA_VERSION",
     "MarketDataWarehouse",
     "MarketDataPorts",
+    "RealtimeQuotePort",
     "RealtimeQuoteProvider",
     "TdxDataProvider",
     "WarehouseManifest",

@@ -29,6 +29,27 @@ class DataProviderPort(Protocol):
 
 
 @runtime_checkable
+class RealtimeQuotePort(Protocol):
+    def is_online(self) -> bool:
+        ...
+
+    def fetch_realtime_quotes_batch(self, codes: list[str]) -> dict[str, dict]:
+        ...
+
+    def get_realtime_runtime_stats(self) -> dict:
+        ...
+
+    def compact_runtime_caches(self, now: float | None = None) -> dict:
+        ...
+
+    def protect_against_thread_anomaly(self, pytdx_thread_count: int, threshold: int | None = None) -> bool:
+        ...
+
+    def enter_realtime_cooldown(self, reason: str, cooldown_sec: float | None = None) -> None:
+        ...
+
+
+@runtime_checkable
 class EnginePort(Protocol):
     def full_scan(self, *args, **kwargs):
         ...

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from core.startup_orchestrator import StartupOrchestrator
+from core.startup_orchestrator import StartupHostAdapter, StartupOrchestrator
 from infra.market_data.tdx_data_provider import TdxDataProvider
 
 
@@ -16,7 +16,7 @@ def create_data_provider(*, offline: bool = True) -> TdxDataProvider:
 
 
 def create_startup_orchestrator(main_window, job_runner=None) -> StartupOrchestrator:
-    return StartupOrchestrator(main_window, job_runner=job_runner)
+    return StartupOrchestrator(job_runner=job_runner, host=StartupHostAdapter(main_window))
 
 
 def load_local_tdx_capital_snapshot(codes, tdx_vipdoc: str | None) -> dict[str, dict]:

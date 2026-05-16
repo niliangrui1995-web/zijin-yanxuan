@@ -1,15 +1,47 @@
 # -*- coding: utf-8 -*-
 
 import ast
+import os
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+PYTHON_FILE_SUFFIXES = {".py", ".pyw"}
+IGNORED_SCAN_DIRS = {
+    ".cache",
+    ".git",
+    ".hg",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    "__pycache__",
+    "artifacts",
+    "build",
+    "data",
+    "dist",
+    "env",
+    "htmlcov",
+    "node_modules",
+    "temp",
+    "tmp",
+    "venv",
+}
 
 
 def _iter_python_files(root: Path):
+    paths: list[Path] = []
+    for current_root, dirs, files in os.walk(root):
+        dirs[:] = [dirname for dirname in dirs if dirname.lower() not in IGNORED_SCAN_DIRS]
+        current_path = Path(current_root)
+        for filename in files:
+            path = current_path / filename
+            if path.suffix.lower() in PYTHON_FILE_SUFFIXES:
+                paths.append(path)
     return sorted(
-        path for path in root.rglob("*.py")
-        if "__pycache__" not in path.parts
+        path for path in paths
+        if not any(part.lower() in IGNORED_SCAN_DIRS for part in path.relative_to(REPO_ROOT).parts)
     )
 
 
@@ -75,6 +107,23 @@ def _find_qsettings_imports(root: Path, *, allowed_paths: set[str] | None = None
     return violations
 
 
+def _find_root_app_services_imports(root: Path, allowed_imports: dict[str, set[str]]):
+    violations: list[str] = []
+    for path in _iter_python_files(root):
+        rel_path = path.relative_to(REPO_ROOT).as_posix()
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        imported_names: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == "app.services":
+                imported_names.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.Import):
+                imported_names.extend(alias.name for alias in node.names if alias.name == "app.services")
+        unexpected = sorted(name for name in imported_names if name not in allowed_imports.get(rel_path, set()))
+        if unexpected:
+            violations.append(f"{rel_path}: {', '.join(unexpected)}")
+    return violations
+
+
 def _find_text_snippets(path: Path, banned_snippets: set[str]) -> list[str]:
     content = path.read_text(encoding="utf-8")
     return sorted(snippet for snippet in banned_snippets if snippet in content)
@@ -88,6 +137,21 @@ def _find_text_snippets_in_files(paths: list[Path], banned_snippets: set[str]) -
             continue
         rel_path = path.relative_to(REPO_ROOT).as_posix()
         violations.append(f"{rel_path}: {', '.join(matched)}")
+    return violations
+
+
+def _find_self_attribute_accesses(path: Path, attribute_name: str) -> list[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    rel_path = path.relative_to(REPO_ROOT).as_posix()
+    violations: list[str] = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr == attribute_name
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "self"
+        ):
+            violations.append(f"{rel_path}:{node.lineno}")
     return violations
 
 
@@ -129,6 +193,17 @@ def _find_literal_task_id_usage(root: Path, *, allowed_paths: set[str] | None = 
                     elif isinstance(first_arg, ast.JoinedStr):
                         violations.append(rel_path)
     return sorted(set(violations))
+
+
+def test_python_boundary_scan_includes_root_pyw_entry_and_excludes_noise_dirs():
+    paths = {path.relative_to(REPO_ROOT).as_posix() for path in _iter_python_files(REPO_ROOT)}
+
+    assert "vcp_hunter_qt.pyw" in paths
+    assert not any(
+        part.lower() in IGNORED_SCAN_DIRS
+        for rel_path in paths
+        for part in Path(rel_path).parts
+    )
 
 
 def test_ui_layer_does_not_import_legacy_event_or_task_manager_modules():
@@ -272,6 +347,16 @@ def test_main_window_runtime_bootstrap_goes_through_app_services():
     assert not matched, "Main window still imports legacy runtime bootstrap modules directly:\n" + "\n".join(matched)
 
 
+def test_startup_orchestrator_uses_host_adapter_instead_of_raw_main_window():
+    path = REPO_ROOT / "core" / "startup_orchestrator.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    class_names = {node.name for node in tree.body if isinstance(node, ast.ClassDef)}
+
+    assert "StartupHostAdapter" in class_names
+    violations = _find_self_attribute_accesses(path, "mw")
+    assert not violations, "StartupOrchestrator still reaches raw main-window state:\n" + "\n".join(violations)
+
+
 def test_selected_ui_modules_do_not_import_vcp_engine_directly():
     module_paths = [
         "ui/kline_window_qt.py",
@@ -322,6 +407,72 @@ def test_ui_layer_uses_narrow_app_services_instead_of_runtime_barrel():
     )
     assert not violations, (
         "UI layer still imports the broad ui_runtime_service barrel instead of narrow ui_* services:\n"
+        + "\n".join(violations)
+    )
+
+
+def test_ui_layer_uses_narrow_app_service_modules_instead_of_root_barrel():
+    historical_root_barrel_imports = {
+        "ui/kline_window_qt.py": {"is_yf_rate_limit_error", "mark_yf_rate_limited"},
+        "ui/kline_window_runtime.py": {
+            "get_yf_rate_limit_status",
+            "is_yf_rate_limit_error",
+            "mark_yf_rate_limited",
+        },
+        "ui/main_window_qt.py": {
+            "APP_VERSION",
+            "RPS_CACHE_FILE",
+            "build_kline_open_request",
+            "create_data_provider",
+            "create_scan_engine",
+            "create_startup_orchestrator",
+        },
+        "ui/splash_screen.py": {"APP_VERSION"},
+        "ui/tabs/asian_market_tab.py": {"filter_asian_tickers", "find_asian_track"},
+        "ui/tabs/asian_market_workers.py": {
+            "CACHE_DIR",
+            "build_yf_session",
+            "get_yf_rate_limit_status",
+            "is_yf_rate_limit_error",
+            "mark_yf_rate_limited",
+            "sync_asian_kline_cache",
+        },
+        "ui/tabs/base_stock_refresh.py": {
+            "FINANCE_CACHE_FILE",
+            "batch_get_finance_info",
+            "load_local_tdx_capital_snapshot",
+        },
+        "ui/tabs/fund_holdings_tab.py": {"get_sector_manager"},
+        "ui/tabs/lhb_tab.py": {"create_scan_engine"},
+        "ui/tabs/scan_tab.py": {"VCPParams"},
+        "ui/tabs/watchlist_tab.py": {"RPS_CACHE_FILE"},
+        "ui/workers/rt_scan_worker.py": {
+            "RPS_CACHE_FILE",
+            "VCPParams",
+            "batch_check_market_cap",
+            "batch_get_finance_info",
+            "build_rps_matrix",
+            "precompute_ready_pool",
+            "quick_check_breakout",
+        },
+        "ui/workers/scan_worker.py": {"batch_check_market_cap", "calculate_scan_indicators"},
+    }
+    violations = _find_root_app_services_imports(
+        REPO_ROOT / "ui",
+        historical_root_barrel_imports,
+    )
+    assert not violations, (
+        "UI layer added broad app.services root-barrel imports. "
+        "Import from app.services.<narrow_service> instead:\n"
+        + "\n".join(violations)
+    )
+
+
+def test_app_and_ui_layers_use_public_realtime_quote_port_for_cooldown():
+    paths = _iter_python_files(REPO_ROOT / "app") + _iter_python_files(REPO_ROOT / "ui")
+    violations = _find_text_snippets_in_files(paths, {"_enter_realtime_cooldown"})
+    assert not violations, (
+        "App/UI layers should use the public RealtimeQuotePort cooldown method:\n"
         + "\n".join(violations)
     )
 
