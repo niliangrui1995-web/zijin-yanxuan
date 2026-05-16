@@ -22,6 +22,18 @@
 .\.venv\Scripts\python.exe scripts\project_audit.py --quick --list
 ```
 
+快速审计并显式追加短运行健康预算闸门：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\project_audit.py --quick --runtime-health-short
+```
+
+快速审计并显式追加依赖/供应链 JSON 报告：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\project_audit.py --quick --dependency-audit
+```
+
 带性能预算报告：
 
 ```powershell
@@ -40,6 +52,7 @@
 - 架构边界测试
 - 完整 pytest
 - 运行环境自检
+- 可选短运行健康稳定性 suite（自带预算失败闸门）
 - 可选性能预算报告校验
 
 ## CI 入口

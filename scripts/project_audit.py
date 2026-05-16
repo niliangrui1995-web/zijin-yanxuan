@@ -33,6 +33,10 @@ PERF_REPORT_OPTIONS = (
     "runtime_health_report",
 )
 
+RUNTIME_HEALTH_SHORT_OUTPUT = "tmp/runtime_health_stability_short.json"
+RUNTIME_HEALTH_SHORT_SAMPLE_OUTPUT_DIR = "tmp/runtime_health_stability_short_samples"
+DEPENDENCY_AUDIT_OUTPUT = "tmp/dependency_audit.json"
+
 
 @dataclass(frozen=True)
 class AuditCommand:
@@ -71,6 +75,32 @@ def build_audit_commands(args: argparse.Namespace) -> list[AuditCommand]:
             runtime_command.append("--skip-webengine-preflight")
         commands.append(AuditCommand("runtime-self-check", runtime_command))
 
+    if args.runtime_health_short:
+        commands.append(
+            AuditCommand(
+                "runtime-health-short",
+                [
+                    python,
+                    "scripts/runtime_health_stability_suite.py",
+                    "--mode",
+                    "short",
+                    "--fail-on-budget",
+                    "--output",
+                    RUNTIME_HEALTH_SHORT_OUTPUT,
+                    "--sample-output-dir",
+                    RUNTIME_HEALTH_SHORT_SAMPLE_OUTPUT_DIR,
+                ],
+            )
+        )
+
+    if args.dependency_audit:
+        commands.append(
+            AuditCommand(
+                "dependency-audit",
+                [python, "scripts/dependency_audit.py", "--output", DEPENDENCY_AUDIT_OUTPUT],
+            )
+        )
+
     if _has_perf_reports(args):
         perf_command = [python, "scripts/perf_budget_check.py"]
         for name in PERF_REPORT_OPTIONS:
@@ -107,6 +137,16 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--skip-full-pytest", action="store_true")
     parser.add_argument("--skip-runtime-self-check", action="store_true")
     parser.add_argument("--skip-webengine-preflight", action="store_true")
+    parser.add_argument(
+        "--runtime-health-short",
+        action="store_true",
+        help="Run the short runtime health stability suite with its budget gate.",
+    )
+    parser.add_argument(
+        "--dependency-audit",
+        action="store_true",
+        help="Run the optional dependency supply-chain audit report.",
+    )
     parser.add_argument("--gbbq-report", type=Path, default=None)
     parser.add_argument("--tab-report", type=Path, default=None)
     parser.add_argument("--kline-report", type=Path, default=None)

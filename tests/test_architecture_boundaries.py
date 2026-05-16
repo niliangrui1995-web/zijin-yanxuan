@@ -53,7 +53,31 @@ def _collect_imports(path: Path) -> set[str]:
             modules.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:
             modules.add(node.module)
+        elif isinstance(node, ast.Call):
+            imported_module = _extract_constant_import_call(node)
+            if imported_module:
+                modules.add(imported_module)
     return modules
+
+
+def _extract_constant_import_call(node: ast.Call) -> str | None:
+    if not node.args:
+        return None
+
+    first_arg = node.args[0]
+    if not isinstance(first_arg, ast.Constant) or not isinstance(first_arg.value, str):
+        return None
+
+    if isinstance(node.func, ast.Name) and node.func.id in {"import_module", "__import__"}:
+        return first_arg.value
+    if (
+        isinstance(node.func, ast.Attribute)
+        and node.func.attr == "import_module"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "importlib"
+    ):
+        return first_arg.value
+    return None
 
 
 def _find_violations(root: Path, banned_modules: set[str], *, allowed_paths: set[str] | None = None):
@@ -231,6 +255,32 @@ def test_root_app_services_scan_catches_from_app_import_services(tmp_path, monke
     assert violations == [
         "ui/from_app.py: services",
         "ui/import_root.py: app.services",
+    ]
+
+
+def test_prefix_scan_catches_constant_dynamic_import_calls(tmp_path, monkeypatch):
+    repo_root = tmp_path / "repo"
+    ui_root = repo_root / "ui"
+    ui_root.mkdir(parents=True)
+    (ui_root / "dynamic.py").write_text(
+        "\n".join(
+            [
+                "from importlib import import_module",
+                "import importlib",
+                'import_module("vcp.constants")',
+                'importlib.import_module("infra.diagnostics.runtime_health")',
+                '__import__("domains.scan")',
+                "import_module(module_name)",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setitem(globals(), "REPO_ROOT", repo_root)
+
+    violations = _find_prefix_violations(ui_root, {"domains", "infra", "vcp"})
+
+    assert violations == [
+        "ui/dynamic.py: domains.scan, infra.diagnostics.runtime_health, vcp.constants"
     ]
 
 

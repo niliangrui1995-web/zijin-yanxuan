@@ -11,7 +11,6 @@ import logging
 import os
 import threading
 import weakref
-from importlib import import_module
 
 try:
     from PyQt6 import sip
@@ -69,11 +68,7 @@ def _should_prime_local_snapshot(owner, *, async_local: bool) -> bool:
 
 
 def _current_finance_cache_file() -> str:
-    try:
-        vcp_constants = import_module("vcp.constants")
-        return str(getattr(vcp_constants, "FINANCE_CACHE_FILE", FINANCE_CACHE_FILE))
-    except (ImportError, RuntimeError, TypeError, ValueError):
-        return str(FINANCE_CACHE_FILE)
+    return str(FINANCE_CACHE_FILE)
 
 
 def collect_table_codes(owner, current_model=None) -> list[str]:

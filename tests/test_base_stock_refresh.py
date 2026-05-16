@@ -242,7 +242,6 @@ def test_refresh_table_from_latest_snapshot_keeps_sync_local_prime_when_hidden(m
 def test_load_cached_finance_snapshot_reuses_shared_file_cache(monkeypatch, tmp_path):
     import core.json_cache as json_cache
     from ui.tabs import base_stock_refresh as refresh_module
-    from vcp import constants as vcp_constants
 
     cache_file = tmp_path / "finance.json"
     save_json_file(
@@ -261,7 +260,7 @@ def test_load_cached_finance_snapshot_reuses_shared_file_cache(monkeypatch, tmp_
         load_calls.append(path)
         return original_load_json_file(path)
 
-    monkeypatch.setattr(vcp_constants, "FINANCE_CACHE_FILE", str(cache_file))
+    monkeypatch.setattr(refresh_module, "FINANCE_CACHE_FILE", str(cache_file))
     monkeypatch.setattr(json_cache, "load_json_file", _counting_load)
 
     refresh_module._FINANCE_CACHE_PATH = None
@@ -301,7 +300,6 @@ def test_load_cached_finance_snapshot_reuses_shared_file_cache(monkeypatch, tmp_
 
 def test_load_cached_finance_snapshot_prefers_local_tdx_capital(monkeypatch, tmp_path):
     from ui.tabs import base_stock_refresh as refresh_module
-    from vcp import constants as vcp_constants
 
     cache_file = tmp_path / "finance.json"
     save_json_file(
@@ -317,7 +315,7 @@ def test_load_cached_finance_snapshot_prefers_local_tdx_capital(monkeypatch, tmp
         },
     )
 
-    monkeypatch.setattr(vcp_constants, "FINANCE_CACHE_FILE", str(cache_file))
+    monkeypatch.setattr(refresh_module, "FINANCE_CACHE_FILE", str(cache_file))
     monkeypatch.setattr(
         refresh_module,
         "load_local_tdx_capital_snapshot",
