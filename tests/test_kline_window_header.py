@@ -3,7 +3,7 @@ import datetime as dt
 import json
 
 import pandas as pd
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from core.task_manager import task_manager
@@ -34,6 +34,122 @@ def _dispose_kline_window(window):
     window.deleteLater()
     if app is not None:
         app.processEvents()
+
+
+class _FakeSignal:
+    def __init__(self):
+        self.callbacks = []
+
+    def connect(self, callback):
+        self.callbacks.append(callback)
+
+    def disconnect(self, callback):
+        if callback in self.callbacks:
+            self.callbacks.remove(callback)
+
+
+class _FakeWebPage:
+    def __init__(self):
+        self.deleted = False
+        self.script_callback = None
+
+    def deleteLater(self):
+        self.deleted = True
+
+    def runJavaScript(self, _script, callback):
+        self.script_callback = callback
+
+
+class _FakeWebEngineView(QWidget):
+    last_instance = None
+
+    def __init__(self):
+        super().__init__()
+        type(self).last_instance = self
+        self.loadFinished = _FakeSignal()
+        self._page = _FakeWebPage()
+        self.html_calls = []
+        self.url_calls = []
+        self.stopped = False
+        self.deleted = False
+
+    def page(self):
+        return self._page
+
+    def stop(self):
+        self.stopped = True
+
+    def setHtml(self, html, base_url=None):
+        url_text = base_url.toString() if hasattr(base_url, "toString") else str(base_url)
+        self.html_calls.append((html, url_text))
+
+    def setUrl(self, url):
+        self.url_calls.append(url.toString() if hasattr(url, "toString") else str(url))
+
+    def deleteLater(self):
+        self.deleted = True
+
+
+def _build_fake_webengine_kline(monkeypatch):
+    monkeypatch.setattr(kline_module, "QWebEngineView", _FakeWebEngineView)
+    monkeypatch.setattr(kline_module.KLineChartWindow, "_load_and_draw", lambda self: None)
+    monkeypatch.setattr(
+        kline_module.KLineChartWindow,
+        "_check_fav_status",
+        lambda self: setattr(self, "is_fav", False),
+    )
+    return kline_module.KLineChartWindow(
+        None,
+        "000001",
+        "平安银行",
+        _DummyProvider(),
+        vcp_data={},
+        code_list=[{"代码": "000001", "名称": "平安银行"}],
+        current_idx=0,
+    )
+
+
+def test_kline_close_releases_webengine_view_without_deleting_owned_page(monkeypatch):
+    window = _build_fake_webengine_kline(monkeypatch)
+    browser = _FakeWebEngineView.last_instance
+    page = browser.page()
+
+    try:
+        window.close()
+        app = QApplication.instance()
+        if app is not None:
+            app.processEvents()
+
+        assert window.browser is None
+        assert browser.stopped is True
+        assert browser.deleted is True
+        assert page.deleted is False
+    finally:
+        _dispose_kline_window(window)
+
+
+def test_kline_js_fallback_ignores_callback_after_close(monkeypatch):
+    window = _build_fake_webengine_kline(monkeypatch)
+    browser = _FakeWebEngineView.last_instance
+    browser.html_calls.clear()
+
+    try:
+        window._replace_chart_data_or_reload(
+            "<html>reload</html>",
+            QUrl("about:blank"),
+            title="平安银行 (000001) 日线",
+            echarts_data={"dates": []},
+        )
+
+        callback = browser.page().script_callback
+        assert callback is not None
+
+        window._closing = True
+        callback(False)
+
+        assert browser.html_calls == []
+    finally:
+        _dispose_kline_window(window)
 
 
 def test_kline_html_exposes_incremental_replace_bridge():

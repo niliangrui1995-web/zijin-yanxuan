@@ -93,6 +93,7 @@ class KLineChartWindow(QWidget):
         self.vcp_data = self._resolve_vcp_context(code, name, vcp_data or {})
         self.code_list = code_list or []
         self.current_idx = current_idx
+        self._closing = False
 
         # 盘中实时刷新定时器
         self._rt_timer = None
@@ -382,8 +383,11 @@ class KLineChartWindow(QWidget):
         load_and_draw(self)
 
     def _show_chart_placeholder(self):
+        if getattr(self, "_closing", False):
+            return
         self._set_status_message("正在准备图表...", tone="loading")
-        if not hasattr(self.browser, "setHtml"):
+        browser = getattr(self, "browser", None)
+        if not hasattr(browser, "setHtml"):
             return
         colors = build_kline_theme_colors()
         placeholder = f"""<!doctype html>
@@ -411,7 +415,7 @@ class KLineChartWindow(QWidget):
 <body><div class=\"box\">正在绘制K线...</div></body>
 </html>"""
         try:
-            self.browser.setHtml(placeholder, QUrl("about:blank"))
+            browser.setHtml(placeholder, QUrl("about:blank"))
         except (AttributeError, RuntimeError, TypeError):
             pass
 
@@ -427,6 +431,8 @@ class KLineChartWindow(QWidget):
         self._set_status_message(text, tone=tone)
 
     def _on_chart_load_finished(self, ok: bool) -> None:
+        if getattr(self, "_closing", False):
+            return
         if ok:
             self._finish_pending_chart_status()
         elif getattr(self, "_pending_chart_status", None):
@@ -581,6 +587,9 @@ class KLineChartWindow(QWidget):
 
     # ======================== 盘中增量更新 ========================
     def _replace_chart_data_or_reload(self, html_content: str, base_url: QUrl, *, title: str, echarts_data: dict):
+        browser = getattr(self, "browser", None)
+        if getattr(self, "_closing", False) or browser is None:
+            return
         payload_json = json.dumps(
             {"title": title, "data": echarts_data},
             ensure_ascii=False,
@@ -593,20 +602,30 @@ class KLineChartWindow(QWidget):
         )
 
         def _fallback_if_needed(applied):
+            if getattr(self, "_closing", False):
+                return
             if applied:
                 self._finish_pending_chart_status()
                 return
+            callback_browser = getattr(self, "browser", None)
+            if callback_browser is None:
+                return
             try:
-                self.browser.setHtml(html_content, base_url)
+                callback_browser.setHtml(html_content, base_url)
             except (AttributeError, RuntimeError, TypeError) as exc:
                 self._log.debug(f"[K线] JS增量渲染回退失败: {exc}")
 
         try:
-            self.browser.page().runJavaScript(script, _fallback_if_needed)
+            browser.page().runJavaScript(script, _fallback_if_needed)
         except (AttributeError, RuntimeError, TypeError) as exc:
             self._log.debug(f"[K线] JS增量渲染不可用: {exc}")
+            if getattr(self, "_closing", False):
+                return
+            fallback_browser = getattr(self, "browser", None)
+            if fallback_browser is None:
+                return
             try:
-                self.browser.setHtml(html_content, base_url)
+                fallback_browser.setHtml(html_content, base_url)
             except (AttributeError, RuntimeError, TypeError) as fallback_exc:
                 self._log.debug(f"[K线] HTML回退渲染失败: {fallback_exc}")
 
@@ -699,6 +718,7 @@ class KLineChartWindow(QWidget):
     # ======================== 资源释放 ========================
     def closeEvent(self, event):
         """窗口关闭时彻底释放 WebEngine 资源，防止内存泄漏"""
+        self._closing = True
         # 断开主题切换信号，防止信号调用已销毁的窗口
         try:
             theme_manager.sig_theme_changed.disconnect(self._on_theme_changed)
@@ -736,12 +756,6 @@ class KLineChartWindow(QWidget):
                         browser.setUrl(QUrl("about:blank"))
                     except (AttributeError, RuntimeError, TypeError):
                         pass
-                try:
-                    page = browser.page()
-                    if page is not None:
-                        page.deleteLater()
-                except (AttributeError, RuntimeError, TypeError):
-                    pass
                 try:
                     browser.setParent(None)
                 except (AttributeError, RuntimeError, TypeError):
