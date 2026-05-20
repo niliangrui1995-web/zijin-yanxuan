@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from types import SimpleNamespace
 
+import pytest
 from PyQt6.QtCore import QEventLoop, QTimer
 from PyQt6.QtWidgets import QApplication, QWidget
 
@@ -11,6 +12,11 @@ from ui.workspaces.classic_workspace import ClassicWorkspace
 from ui.workspaces.quote_universe_service import INFO_SOURCE_GROUP
 from ui.workspaces.stock_context_service import StockContextService
 from ui.workspaces.stock_signal import StockSignal
+
+
+@pytest.fixture(autouse=True)
+def _isolate_na_daily_cache_fallback(monkeypatch):
+    monkeypatch.setattr(StockContextService, "_load_na_daily_cache_rows", lambda self: [])
 
 
 def _make_workspace(*, tabs=None, engine=None):
@@ -192,6 +198,36 @@ def test_workspace_collects_structured_watchlist_radar_metrics():
     assert earn_data["300750"]["qoq_pct"] == 32.5
     assert lhb_data["300750"]["text"] == "04-20 | 净买1200万 | 机构净买800万 | 外资净卖150万"
     assert lhb_data["300750"]["net_wan"] == 1200
+
+
+def test_workspace_collects_na_daily_context_from_cache_without_loading_lazy_tab(monkeypatch):
+    get_tab_calls = []
+    monkeypatch.setattr(
+        StockContextService,
+        "_load_na_daily_cache_rows",
+        lambda self: [
+            {
+                "代码": "002415",
+                "名称": "海康威视",
+                "催化剂": "北美订单催化",
+                "细分板块": "AI安防",
+            }
+        ],
+    )
+    workspace = SimpleNamespace(
+        tab_specs=lambda: [{"key": "na_daily", "group": "info"}],
+        get_loaded_tab=lambda key: None,
+        get_tab=lambda key: get_tab_calls.append(key) or None,
+        iter_tabs=lambda: [],
+    )
+
+    context = ClassicWorkspace.collect_stock_context(workspace)
+
+    assert get_tab_calls == []
+    assert [(signal.source_tab, signal.signal_type, signal.summary) for signal in context["002415"]] == [
+        ("na_daily", "catalyst", "北美订单催化"),
+        ("na_daily", "subsector", "AI安防"),
+    ]
 
 
 def test_workspace_collects_stock_context_signals_by_code():
@@ -1023,6 +1059,48 @@ def test_workspace_background_prewarm_loads_lazy_tabs_without_manual_click(monke
         }
         assert snapshot_primes == [{}]
         assert "fund_holdings" in primed
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_workspace_activates_loaded_lazy_tab_on_selection(monkeypatch):
+    activated = []
+
+    class _WatchlistTab(QWidget):
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+
+    class _LhbTab(QWidget):
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+
+        def on_workspace_tab_activated(self):
+            activated.append("lhb")
+
+    monkeypatch.setattr(classic_workspace_module, "WatchlistTab", _WatchlistTab)
+    monkeypatch.setattr(classic_workspace_module, "LhbTab", _LhbTab)
+
+    workspace = classic_workspace_module.ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+    )
+    try:
+        monkeypatch.setattr(classic_workspace_module.QTimer, "singleShot", lambda _delay, callback: callback())
+        widget = workspace.ensure_tab_loaded("lhb", reason="background_prewarm")
+        lhb_index = next(
+            index
+            for index, spec in enumerate(workspace.tab_specs())
+            if spec.get("key") == "lhb"
+        )
+
+        assert widget is workspace.get_loaded_tab("lhb")
+        assert activated == []
+
+        workspace.tabs.setCurrentIndex(lhb_index)
+
+        assert activated == ["lhb"]
     finally:
         workspace.shutdown()
         workspace.deleteLater()

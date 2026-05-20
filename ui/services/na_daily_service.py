@@ -54,7 +54,7 @@ class NADailyRefreshService(QObject):
         return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
     def _get_na_daily_output_dir(self) -> str:
-        return os.path.join(self._project_root(), "每日战报", "每日热点输出")
+        return os.path.join(os.path.dirname(self._project_root()), "每日战报", "每日热点输出")
 
     @staticmethod
     def _parse_report_identity(fpath: str):
@@ -129,6 +129,20 @@ class NADailyRefreshService(QObject):
 
     def refresh_full(self, *, emit_event: bool = True) -> dict:
         rows, report_files, report_signature = self._build_na_daily_rows()
+        if not report_files:
+            if not self._rows and not self._report_files:
+                self.load_cache()
+            self._last_result = {
+                "job_key": "na_daily_full",
+                "status": "skipped",
+                "message": "no report files",
+                "records": len(self._rows),
+                "report_files": list(self._report_files),
+                "report_signature": tuple(self._report_signature),
+                "cache_file": NA_DAILY_CACHE_FILE,
+            }
+            return self.latest_result()
+
         self._rows = list(rows or [])
         self._report_files = list(report_files or [])
         self._report_signature = tuple(report_signature or ())

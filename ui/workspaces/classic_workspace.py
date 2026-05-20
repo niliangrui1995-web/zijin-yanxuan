@@ -430,13 +430,20 @@ class ClassicWorkspace(QWidget):
         QTimer.singleShot(0, widget.ensurePolished)
         QTimer.singleShot(250, lambda widget=widget: setattr(widget, "_workspace_load_reason", ""))
         self._notify_tab_loaded(key, widget)
+        if self.tabs.currentWidget() is widget:
+            self._notify_tab_activated(key, widget)
         return widget
 
     def _on_current_tab_changed(self, index: int) -> None:
         spec = self._spec_for_key_or_index(index)
         key = str((spec or {}).get("key") or "").strip()
         with ui_stall_span("ClassicWorkspace._on_current_tab_changed", tab=key, signal="currentChanged"):
-            if spec is None or spec.get("loaded"):
+            if spec is None:
+                return
+            if spec.get("loaded"):
+                widget = spec.get("widget")
+                if widget is not None:
+                    self._notify_tab_activated(key, widget)
                 return
             if not key or key in self._lazy_loading_keys:
                 return
@@ -525,6 +532,11 @@ class ClassicWorkspace(QWidget):
         install_hooks = getattr(host, "install_workspace_table_copy_hooks", None)
         if callable(install_hooks):
             QTimer.singleShot(0, install_hooks)
+
+    def _notify_tab_activated(self, _key: str, widget) -> None:
+        callback = getattr(widget, "on_workspace_tab_activated", None)
+        if callable(callback):
+            QTimer.singleShot(0, callback)
 
     def tab_specs(self) -> list[dict]:
         return list(self._tab_specs)

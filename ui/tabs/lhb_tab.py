@@ -102,6 +102,9 @@ class LhbTab(BaseStockTab):
         if not self._pool_bootstrap_started:
             self._set_pool_status("等待进入龙虎榜", freshness="未加载", next_step="首次进入时自动读取缓存")
 
+    def on_workspace_tab_activated(self) -> None:
+        self._ensure_pool_bootstrap_started()
+
     def _is_current_workspace_tab(self) -> bool:
         parent = self.parent()
         tabs = getattr(parent, "tabs", None)

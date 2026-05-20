@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from pathlib import Path
 
+import pytest
 from PyQt6.QtCore import QTimer
 from PyQt6.QtTest import QSignalSpy
 
@@ -8,7 +9,14 @@ from core.event_bus import event_bus
 from core.global_store import global_store
 from core.quote_dispatcher import publish_rt_quotes
 from core.task_manager import task_manager
+from ui.services import na_daily_service as na_daily_service_module
+from ui.services.na_daily_service import NADailyRefreshService
 from ui.tabs.na_daily_tab import NADailyTab
+
+
+@pytest.fixture(autouse=True)
+def _isolate_na_daily_cache(monkeypatch, tmp_path):
+    monkeypatch.setattr(na_daily_service_module, "NA_DAILY_CACHE_FILE", str(tmp_path / "na_daily_latest.json"))
 
 
 class DummyProvider:
@@ -55,6 +63,30 @@ def test_na_daily_show_runtime_skips_non_interactive_load_reason():
     dummy._workspace_load_reason = "tab_switch"
     assert NADailyTab._should_start_runtime_on_show(dummy)
     assert dummy._workspace_noninteractive_loaded is False
+
+
+def test_na_daily_service_uses_sibling_daily_report_output_dir():
+    service = NADailyRefreshService()
+    expected = Path(service._project_root()).parent / "每日战报" / "每日热点输出"
+    assert Path(service._get_na_daily_output_dir()) == expected
+
+
+def test_na_daily_service_no_report_files_preserves_existing_cache(monkeypatch, tmp_path):
+    cache_file = tmp_path / "na_daily_latest.json"
+    monkeypatch.setattr(na_daily_service_module, "NA_DAILY_CACHE_FILE", str(cache_file))
+
+    service = NADailyRefreshService()
+    service._rows = [{"代码": "000001", "日报时间": "20260415"}]
+    service._report_files = ["D:/reports/战报_202604150930.md"]
+    service._report_signature = ("sig",)
+    monkeypatch.setattr(service, "_build_na_daily_rows", lambda: ([], [], ()))
+
+    result = service.refresh_full(emit_event=False)
+
+    assert result["status"] == "skipped"
+    assert result["records"] == 1
+    assert service.rows == [{"代码": "000001", "日报时间": "20260415"}]
+    assert not cache_file.exists()
 
 
 def test_na_daily_tab_refresh_table_market_data_only_fetches_blank_quotes(monkeypatch):

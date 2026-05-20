@@ -134,6 +134,21 @@ def test_lhb_can_defer_pool_bootstrap_until_first_show(monkeypatch):
         tab.deleteLater()
 
 
+def test_lhb_workspace_activation_starts_deferred_pool_once(monkeypatch):
+    calls = []
+    monkeypatch.setattr(LhbTab, "_load_and_display_pool", lambda self: calls.append("load"), raising=False)
+
+    tab = LhbTab(object(), autoload_pool=False)
+    try:
+        tab.on_workspace_tab_activated()
+        tab.on_workspace_tab_activated()
+
+        assert calls == ["load"]
+        assert tab._pool_bootstrap_started is True
+    finally:
+        tab.deleteLater()
+
+
 def test_lhb_deferred_status_does_not_read_pool_cache(monkeypatch):
     monkeypatch.setattr(
         lhb_tab_module,
