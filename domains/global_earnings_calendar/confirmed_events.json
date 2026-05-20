@@ -377,6 +377,24 @@
       "original_timezone": "America/New_York",
       "call_time_source_url": "https://towersemi.com/2026/05/13/05132026/",
       "call_time_source_type": "official_ir_press_release"
+    },
+    {
+      "company": "NVIDIA",
+      "ticker": "NVDA",
+      "sector": "AI加速芯片与定制ASIC",
+      "report_date": "2026-05-20",
+      "fiscal_period": "Apr/2026",
+      "time_label": "盘后",
+      "beijing_time": "2026-05-21 05:00",
+      "status": "confirmed",
+      "source": "confirmed",
+      "priority": "super_giant",
+      "conference_url": "https://investor.nvidia.com/",
+      "market": "US",
+      "original_call_time_text": "Wednesday, May 20, 2026, at 2 p.m. PT (5 p.m. ET)",
+      "original_timezone": "America/Los_Angeles",
+      "call_time_source_url": "https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-Sets-Conference-Call-for-First-Quarter-Financial-Results/default.aspx",
+      "call_time_source_type": "official_ir_press_release"
     }
   ]
 }
