@@ -2,6 +2,8 @@
 import datetime as dt
 from types import SimpleNamespace
 
+from PyQt6.QtTest import QSignalSpy
+
 import ui.tabs.lhb_tab as lhb_tab_module
 import ui.workers.lhb_worker as lhb_worker_module
 from core.market_calendar import MarketCalendar
@@ -257,8 +259,58 @@ def test_lhb_data_lineage_updates_after_pool_display(monkeypatch):
         tab.deleteLater()
 
 
+def test_lhb_display_pool_emits_update_without_self_reload(monkeypatch):
+    monkeypatch.setattr(
+        LhbTab,
+        "refresh_table_quotes_and_market_caps",
+        lambda self, *args, **kwargs: None,
+        raising=False,
+    )
+
+    tab = LhbTab(object(), autoload_pool=False)
+    tab.pool_manager = SimpleNamespace(get_cached_dates=lambda: ["20260420"])
+    reload_calls = []
+    monkeypatch.setattr(tab, "_load_and_display_pool", lambda emit_event=True: reload_calls.append(emit_event))
+    spy = QSignalSpy(lhb_tab_module.event_bus.sig_lhb_pool_updated)
+    try:
+        tab._pool_bootstrap_started = True
+        tab._display_pool([{"code": "300750", "name": "CATL"}])
+
+        assert len(spy) == 1
+        assert reload_calls == []
+        assert tab.table_state._stack.currentWidget() is tab.table_state.table
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_pool_bootstrap_skips_duplicate_active_task(monkeypatch):
+    task_ids = []
+    monkeypatch.setattr(
+        lhb_tab_module.task_manager,
+        "is_active_task",
+        lambda task_id: task_ids.append(task_id) or True,
+    )
+    monkeypatch.setattr(
+        lhb_tab_module.task_manager,
+        "run_in_background",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("duplicate task should not be submitted")),
+    )
+
+    tab = LhbTab(object(), autoload_pool=False)
+    try:
+        tab.table_state.show_table()
+        tab._load_and_display_pool()
+
+        assert task_ids
+        assert tab._pool_load_in_progress is False
+        assert tab.table_state._stack.currentWidget() is tab.table_state.table
+    finally:
+        tab.deleteLater()
+
+
 def test_lhb_pool_bootstrap_schedules_background_task(monkeypatch):
     tasks = []
+    monkeypatch.setattr(lhb_tab_module.task_manager, "is_active_task", lambda task_id: False)
     monkeypatch.setattr(LhbTab, "_get_lhb_trade_dates", lambda self, n=20: ["20260420"], raising=False)
     monkeypatch.setattr(
         lhb_tab_module.task_manager,

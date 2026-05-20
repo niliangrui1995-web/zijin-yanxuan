@@ -422,6 +422,10 @@ class LhbTab(BaseStockTab):
         """Schedule the cached pool computation off the UI thread."""
         if self._pool_load_in_progress:
             return
+        task_id = task_registry.workspace("lhb_pool_bootstrap").task_id
+        is_active_task = getattr(task_manager, "is_active_task", None)
+        if callable(is_active_task) and is_active_task(task_id):
+            return
         self._pool_load_in_progress = True
         if hasattr(self, "table_state"):
             self.table_state.show_loading("正在加载龙虎榜池", "首次进入先响应，缓存池在后台计算。")
@@ -499,7 +503,7 @@ class LhbTab(BaseStockTab):
             _bg_load_pool,
             on_success=_on_pool_loaded,
             on_error=_on_pool_error,
-            task_id=task_registry.workspace("lhb_pool_bootstrap").task_id,
+            task_id=task_id,
         )
 
     @staticmethod
@@ -630,7 +634,12 @@ class LhbTab(BaseStockTab):
 
         # 触发全局通知，让关注池 Tab 能扫描到龙虎榜数据
         if emit_event:
-            event_bus.sig_lhb_pool_updated.emit()
+            previous_handling = self._handling_lhb_pool_update
+            self._handling_lhb_pool_update = True
+            try:
+                event_bus.sig_lhb_pool_updated.emit()
+            finally:
+                self._handling_lhb_pool_update = previous_handling
 
         self.refresh_table_quotes_and_market_caps(
             quote_task_id=task_registry.quote_refresh("lhb").task_id,

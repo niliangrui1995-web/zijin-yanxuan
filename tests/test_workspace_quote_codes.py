@@ -990,8 +990,9 @@ def test_workspace_defers_heavy_tab_autoload(monkeypatch):
         assert groups["ai_industry_chain"] == "主工作台"
         assert groups["stock_candidates"] == "主工作台"
         assert groups["scan"] == "情报源"
+        assert tab_keys.index("watchlist") < tab_keys.index("lhb") < tab_keys.index("asian_market")
         assert tab_keys.index("na_daily") < tab_keys.index("stock_candidates") < tab_keys.index("ai_industry_chain")
-        assert tab_keys.index("ai_industry_chain") < tab_keys.index("lhb") < tab_keys.index("rt_monitor")
+        assert tab_keys.index("ai_industry_chain") < tab_keys.index("rt_monitor")
         assert "autoload_pool" not in ctor_kwargs["watchlist"]
         assert "autoload" not in ctor_kwargs["watchlist"]
         assert isinstance(workspace.tabs, SmoothTabWidget)
