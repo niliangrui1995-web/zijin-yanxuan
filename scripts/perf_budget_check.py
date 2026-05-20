@@ -628,6 +628,56 @@ def _tail_range(values: list[float], tail_count: int = 3) -> float:
     return round(max(tail) - min(tail), 3) if tail else 0.0
 
 
+def _runtime_health_sample_rss_mb(sample: dict) -> float | None:
+    if not isinstance(sample, dict):
+        return None
+    value = sample.get("rss_mb")
+    if value is None:
+        value = (sample.get("process") or {}).get("rss_mb")
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _runtime_health_post_workload_rss_trend(report: dict, samples: list[dict]) -> dict:
+    cycle_samples = list(((report.get("kline_cycle") or {}).get("cycle_samples") or []))
+    values = [
+        value
+        for value in (
+            _runtime_health_sample_rss_mb(sample)
+            for sample in cycle_samples
+            if str(sample.get("label") or "").endswith(":after_close")
+        )
+        if value is not None
+    ]
+    basis = "post_kline_close_samples"
+    if values and samples:
+        final_value = _runtime_health_sample_rss_mb(samples[-1])
+        if final_value is not None:
+            values.append(final_value)
+    if len(values) < 2:
+        stable_labels = {"after_tab_cycle", "after_f5_cycle", "after_quote_cycle", "final"}
+        tail_values = [
+            value
+            for value in (
+                _runtime_health_sample_rss_mb(sample)
+                for sample in samples
+                if str(sample.get("label") or "") in stable_labels
+            )
+            if value is not None
+        ]
+        if len(tail_values) >= 2:
+            values = tail_values[-3:]
+            basis = "tail_runtime_health_samples"
+    if len(values) < 2:
+        return {}
+    trend = _runtime_health_trend_one(values)
+    trend["tail_range"] = _tail_range(values)
+    trend["basis"] = basis
+    return trend
+
+
 def _requested_runtime_health_tabs(report: dict) -> list[str]:
     mode = report.get("mode") or {}
     tabs = mode.get("tabs") if isinstance(mode, dict) else []
@@ -856,6 +906,16 @@ def check_runtime_health_budget(report: dict, thresholds: dict | None = None) ->
 
     rss_values = _runtime_health_values(samples, lambda item: (item.get("process") or {}).get("rss_mb"))
     rss_tail_range = _tail_range(rss_values)
+    rss_trend = trend.get("rss_mb") or _runtime_health_post_workload_rss_trend(report, samples)
+    if "tail_range" in rss_trend:
+        rss_trend_range = _as_float(rss_trend.get("tail_range"))
+    else:
+        rss_trend_range = _as_float(rss_trend.get("range"))
+    if (
+        rss_trend_range is not None
+        and rss_trend.get("basis") in {"post_kline_close_samples", "tail_runtime_health_samples"}
+    ):
+        rss_tail_range = rss_trend_range
     if rss_tail_range > budget["runtime_health_rss_tail_range_mb"]:
         _fail(
             failures,

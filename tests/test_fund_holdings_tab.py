@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-from datetime import datetime
 from types import SimpleNamespace
 
 from PyQt6.QtTest import QSignalSpy
@@ -454,19 +453,17 @@ def test_fund_holdings_tab_ignores_cache_reload_after_delete(monkeypatch):
     assert calls == []
 
 
-def test_fund_holdings_tab_delete_later_stops_delayed_timers(monkeypatch):
+def test_fund_holdings_tab_delete_later_stops_view_state_timer_without_auto_timer(monkeypatch):
     _setup_store(monkeypatch, [])
     tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
     try:
         tab._schedule_view_state_save()
-        assert tab._daily_auto_sync_timer.isActive() is True
-        assert tab._daily_auto_sync_initial_check_timer.isActive() is True
+        assert not hasattr(tab, "_daily_auto_sync_timer")
+        assert not hasattr(tab, "_daily_auto_sync_initial_check_timer")
         assert tab._view_state_save_timer.isActive() is True
 
         tab.deleteLater()
 
-        assert tab._daily_auto_sync_timer.isActive() is False
-        assert tab._daily_auto_sync_initial_check_timer.isActive() is False
         assert tab._view_state_save_timer.isActive() is False
         tab = None
     finally:
@@ -909,58 +906,15 @@ def test_fund_holdings_tab_emits_updated_after_sync_success(monkeypatch):
         tab.deleteLater()
 
 
-def test_fund_holdings_tab_daily_auto_sync_starts_once_after_2030(monkeypatch):
-    settings = _setup_store(monkeypatch, [])
-    monkeypatch.setattr(
-        fund_holdings_module.MarketCalendar,
-        "now",
-        staticmethod(lambda _market="CN": datetime(2026, 4, 24, 20, 30)),
-    )
-    calls = []
-    monkeypatch.setattr(
-        fund_holdings_module.FundHoldingsTab,
-        "_run_sync_action",
-        lambda self, label, runner: calls.append((label, runner)),
-        raising=False,
-    )
-
+def test_fund_holdings_tab_has_no_daily_auto_timer(monkeypatch):
+    _setup_store(monkeypatch, [])
     tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
     try:
-        assert tab._check_daily_auto_sync() is True
-        assert calls == [("20:30自动更新", fund_holdings_module.fund_holdings_sync_service.sync_latest_all)]
-        assert settings._values[fund_holdings_module.FundHoldingsTab._DAILY_AUTO_SYNC_DATE_KEY] == "20260424"
-        assert settings.synced is True
-
-        assert tab._check_daily_auto_sync() is False
-        assert len(calls) == 1
+        assert not hasattr(tab, "_daily_auto_sync_timer")
+        assert not hasattr(tab, "_daily_auto_sync_initial_check_timer")
+        assert not hasattr(tab, "_check_daily_auto_sync")
     finally:
         tab.deleteLater()
-
-
-def test_fund_holdings_tab_daily_auto_sync_skips_before_2030():
-    now = datetime(2026, 4, 24, 20, 29)
-
-    assert fund_holdings_module.FundHoldingsTab._should_trigger_daily_auto_sync(
-        now,
-        last_auto_sync_date="",
-        pending_auto_sync_date="",
-    ) is False
-
-
-def test_fund_holdings_tab_daily_auto_sync_skips_existing_today():
-    now = datetime(2026, 4, 24, 21, 0)
-
-    assert fund_holdings_module.FundHoldingsTab._should_trigger_daily_auto_sync(
-        now,
-        last_auto_sync_date="20260424",
-        pending_auto_sync_date="",
-    ) is False
-    assert fund_holdings_module.FundHoldingsTab._should_trigger_daily_auto_sync(
-        now,
-        last_auto_sync_date="",
-        pending_auto_sync_date="20260424",
-    ) is False
-
 
 def test_fund_holdings_tab_filters_ai_related_concepts_for_display():
     assert fund_holdings_module.FundHoldingsTab._is_ai_related_concept("DeepSeek") is True

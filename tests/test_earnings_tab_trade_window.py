@@ -86,7 +86,7 @@ def test_earnings_tab_defers_scheduler_creation_until_runtime(monkeypatch, earni
         sig_new_surprises_found = DummySignal()
         sig_fetch_failed = DummySignal()
 
-        def start_patrol(self):
+        def load_cached_records_async(self):
             pass
 
         def stop_patrol(self):
@@ -117,21 +117,25 @@ def test_earnings_delete_later_stops_runtime_timers_and_scheduler(monkeypatch, e
             self.callback = callback
 
     class DummyScheduler:
-        def __init__(self):
+        def __init__(self, parent=None):
+            self._parent = parent
             self.sig_new_surprises_found = DummySignal()
             self.sig_fetch_failed = DummySignal()
-            self.stop_calls = 0
+            self.shutdown_calls = 0
 
-        def start_patrol(self):
+        def parent(self):
+            return self._parent
+
+        def load_cached_records_async(self):
             pass
 
-        def stop_patrol(self):
-            self.stop_calls += 1
+        def shutdown(self):
+            self.shutdown_calls += 1
 
     monkeypatch.setattr(
         earnings_qt.module,
         "EarningsScheduler",
-        lambda parent=None: created.append(parent) or DummyScheduler(),
+        lambda parent=None: created.append(parent) or DummyScheduler(parent),
     )
 
     tab = earnings_qt.EarningsTab()
@@ -140,14 +144,13 @@ def test_earnings_delete_later_stops_runtime_timers_and_scheduler(monkeypatch, e
         tab._recalc_pe_timer.start(0)
         scheduler = tab.scheduler
 
-        assert tab._runtime_start_timer.isActive() is True
+        assert not hasattr(tab, "_runtime_start_timer")
         assert tab._recalc_pe_timer.isActive() is True
 
         tab.deleteLater()
 
-        assert tab._runtime_start_timer.isActive() is False
         assert tab._recalc_pe_timer.isActive() is False
-        assert scheduler.stop_calls == 1
+        assert scheduler.shutdown_calls == 1
         tab = None
     finally:
         if tab is not None:

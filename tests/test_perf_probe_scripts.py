@@ -130,35 +130,30 @@ def test_round5_background_summary_flags_info_source_tail():
 
 
 def test_round5_probe_can_isolate_rt_monitor_auto_start():
-    class _Timer:
+    class _RtService:
         def __init__(self):
             self.stopped = False
-
-        def stop(self):
-            self.stopped = True
-
-    class _RtTab:
-        def __init__(self):
-            self._auto_timer = _Timer()
             self._manual_stop_requested = False
             self._manual_stop_trade_date = ""
+
+        def stop(self, auto=False):
+            self.stopped = True
 
         @staticmethod
         def _manual_stop_reference_date():
             return "2026-05-12"
 
-    tab = _RtTab()
+    service = _RtService()
 
     class _Workspace:
-        def get_loaded_tab(self, key):
-            return tab if key == "rt_monitor" else None
+        host = type("Host", (), {"rt_monitor_service": service})()
 
     result = disable_rt_monitor_auto_start(_Workspace())
 
-    assert result == {"disabled": True, "reason": "probe_isolation"}
-    assert tab._auto_timer.stopped is True
-    assert tab._manual_stop_requested is True
-    assert tab._manual_stop_trade_date == "2026-05-12"
+    assert result == {"disabled": True, "reason": "probe_isolation_service"}
+    assert service.stopped is True
+    assert service._manual_stop_requested is True
+    assert service._manual_stop_trade_date == "2026-05-12"
 
 
 def test_round5_probe_filters_info_source_tabs_when_isolated():
@@ -252,6 +247,9 @@ def test_runtime_health_suite_budget_trend_uses_post_workload_tail():
     assert trend["event_receivers"]["net_delta"] == 0
     assert trend["event_receivers"]["basis"] == "tail_runtime_health_samples"
     assert trend["active_timers"]["net_delta"] == 0
+    assert trend["rss_mb"]["range"] == 0.0
+    assert trend["rss_mb"]["tail_range"] == 0.0
+    assert trend["rss_mb"]["basis"] == "tail_runtime_health_samples"
 
 
 def test_runtime_health_suite_startup_lazy_budget_summarizes_key_timings():

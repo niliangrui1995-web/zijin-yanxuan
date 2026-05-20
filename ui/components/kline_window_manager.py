@@ -10,6 +10,7 @@ K 线窗口管理器 — 单例模式 (#1)
 现在统一收口到这里，任何人想开 K 线图只需调用 open_chart()。
 """
 
+import gc
 import os
 import threading
 import time
@@ -50,6 +51,7 @@ class KLineWindowManager:
             cls._instance._webengine_available = None
             cls._instance._webengine_failure = ""
             cls._instance._webengine_preflight_started = False
+            cls._instance._post_close_collect_scheduled = False
         return cls._instance
 
     def prewarm(
@@ -265,6 +267,29 @@ class KLineWindowManager:
             if _is_alive(item):
                 alive.append(item)
         self._charts = alive
+        self._schedule_post_close_collect()
+
+    def _schedule_post_close_collect(self) -> None:
+        if getattr(self, "_post_close_collect_scheduled", False):
+            return
+        self._post_close_collect_scheduled = True
+        try:
+            from PyQt6.QtCore import QTimer
+
+            QTimer.singleShot(1500, self._run_post_close_collect)
+        except (AttributeError, ImportError, RuntimeError, TypeError, ValueError):
+            self._run_post_close_collect()
+
+    def _run_post_close_collect(self) -> None:
+        self._post_close_collect_scheduled = False
+        active_count = self.active_count
+        collected = gc.collect()
+        record_metric(
+            "kline_post_close_gc_collect",
+            collected,
+            unit="count",
+            tags={"active_windows": str(active_count)},
+        )
 
     def open_chart(
         self,

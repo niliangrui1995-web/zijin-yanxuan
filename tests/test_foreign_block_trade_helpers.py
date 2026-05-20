@@ -247,18 +247,15 @@ def test_block_trade_exact_filters_support_multi_select():
     assert proxy.rowCount() == 2
 
 
-def test_block_trade_delete_later_stops_auto_timers(monkeypatch):
+def test_block_trade_delete_later_has_no_auto_timers(monkeypatch):
     monkeypatch.setattr(ForeignBlockTradeTab, "_load_local_cache", lambda self: None, raising=False)
 
     tab = ForeignBlockTradeTab(object())
     try:
-        assert tab._auto_timer.isActive() is True
-        assert tab._auto_initial_check_timer.isActive() is True
+        assert not hasattr(tab, "_auto_timer")
+        assert not hasattr(tab, "_auto_initial_check_timer")
 
         tab.deleteLater()
-
-        assert tab._auto_timer.isActive() is False
-        assert tab._auto_initial_check_timer.isActive() is False
         tab = None
     finally:
         if tab is not None:

@@ -31,6 +31,7 @@ class DomainEventBus(QObject):
     sig_scan_updated = pyqtSignal()
     sig_fund_holdings_updated = pyqtSignal()
     sig_stock_context_snapshot_updated = pyqtSignal()
+    sig_auto_refresh_status_changed = pyqtSignal(object)
 
     sig_watchlist_changed = pyqtSignal(str, str)
 

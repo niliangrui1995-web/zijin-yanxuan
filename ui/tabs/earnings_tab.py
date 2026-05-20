@@ -5,17 +5,18 @@ import pandas as pd
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot
 from PyQt6.QtWidgets import QDialog, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
-from app.services.ui_earnings_service import EarningsScheduler
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
 from core.logger import get_logger
 from ui.components import MultiSelectFilterButton, TableStateWrapper, VCPTableView, format_multi_select_summary
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
+from ui.services.earnings_refresh_service import EarningsRefreshService
 from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
 EARNINGS_DISPLAY_TRADE_DAYS = 10
 EARNINGS_TYPE_OPTIONS = ("预告", "快报", "财报")
+EarningsScheduler = EarningsRefreshService
 
 
 class EarningsTab(BaseStockTab):
@@ -25,9 +26,6 @@ class EarningsTab(BaseStockTab):
         self.row_data = []
         self._manual_fetch_range: tuple[str, str] | None = None
         self._init_ui()
-        self._runtime_start_timer = QTimer(self)
-        self._runtime_start_timer.setSingleShot(True)
-        self._runtime_start_timer.timeout.connect(self._start_scheduler_patrol)
         self._recalc_pe_timer = QTimer(self)
         self._recalc_pe_timer.setSingleShot(True)
         self._recalc_pe_timer.timeout.connect(self._recalc_pe_ttm)
@@ -37,13 +35,26 @@ class EarningsTab(BaseStockTab):
 
         # 调度器按需创建，避免隐藏页签挂载时加载业绩缓存。
         self.scheduler = None
+        self._owns_earnings_service = False
 
-        # 延后到页面首次显示时再启动巡逻，避免构造阶段阻塞 UI。
+        # 延后到页面首次显示时再加载视图缓存；业务巡检由全局调度器负责。
         self._patrol_started = False
 
     def _ensure_scheduler(self):
         if self.scheduler is None:
-            self.scheduler = EarningsScheduler(self)
+            parent = self.parent()
+            host = None
+            try:
+                host = parent.window() if parent is not None else self.window()
+            except RuntimeError:
+                host = None
+            service = getattr(host, "earnings_refresh_service", None)
+            if isinstance(service, EarningsRefreshService):
+                self.scheduler = service
+            else:
+                self.scheduler = EarningsScheduler(parent=self)
+            parent_getter = getattr(self.scheduler, "parent", None)
+            self._owns_earnings_service = callable(parent_getter) and parent_getter() is self
             self.scheduler.sig_new_surprises_found.connect(self._on_new_data_found)
             self.scheduler.sig_fetch_failed.connect(self._on_fetch_failed)
         return self.scheduler
@@ -52,12 +63,14 @@ class EarningsTab(BaseStockTab):
         if self._patrol_started:
             return
         self._patrol_started = True
-        self._ensure_scheduler()
-        self._runtime_start_timer.start(0)
+        scheduler = self._ensure_scheduler()
+        if not self.row_data:
+            load_cached = getattr(scheduler, "load_cached_records_async", None)
+            if callable(load_cached):
+                load_cached()
 
     def _start_scheduler_patrol(self) -> None:
-        if self.scheduler is not None:
-            self.scheduler.start_patrol()
+        return None
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -532,14 +545,26 @@ class EarningsTab(BaseStockTab):
         return BaseStockTab._should_start_interactive_runtime_on_show(self)
 
     def _cleanup_runtime_state(self):
-        runtime_timer = getattr(self, "_runtime_start_timer", None)
-        if runtime_timer is not None:
-            runtime_timer.stop()
         recalc_timer = getattr(self, "_recalc_pe_timer", None)
         if recalc_timer is not None:
             recalc_timer.stop()
         if self.scheduler is not None:
-            self.scheduler.stop_patrol()
+            try:
+                disconnect = getattr(self.scheduler.sig_new_surprises_found, "disconnect", None)
+                if callable(disconnect):
+                    disconnect(self._on_new_data_found)
+            except (TypeError, RuntimeError):
+                pass
+            try:
+                disconnect = getattr(self.scheduler.sig_fetch_failed, "disconnect", None)
+                if callable(disconnect):
+                    disconnect(self._on_fetch_failed)
+            except (TypeError, RuntimeError):
+                pass
+            if getattr(self, "_owns_earnings_service", False):
+                shutdown = getattr(self.scheduler, "shutdown", None)
+                if callable(shutdown):
+                    shutdown()
         try:
             event_bus.sig_cache_reload_completed.disconnect(self._on_cache_reload_completed)
         except (TypeError, RuntimeError):

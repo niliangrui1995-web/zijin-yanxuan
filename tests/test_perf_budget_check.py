@@ -426,9 +426,10 @@ def test_runtime_health_budget_prefers_post_warmup_budget_trend():
     report = {
         "runtime_health_samples": [
             _runtime_health_sample(process={"rss_mb": 500.0, "thread_count": 20}),
-            _runtime_health_sample(process={"rss_mb": 504.0, "thread_count": 100}),
+            _runtime_health_sample(process={"rss_mb": 700.0, "thread_count": 100}),
         ],
         "budget_trend": {
+            "rss_mb": {"range": 200.0, "tail_range": 4.0, "basis": "post_kline_close_samples"},
             "background_tasks": {"last": 0},
             "active_timers": {"net_delta": 0},
             "total_timers": {"net_delta": 0},
@@ -439,6 +440,28 @@ def test_runtime_health_budget_prefers_post_warmup_budget_trend():
     }
 
     assert check_runtime_health_budget(report) == []
+
+
+def test_runtime_health_budget_rejects_post_close_rss_trend_range():
+    report = {
+        "runtime_health_samples": [
+            _runtime_health_sample(process={"rss_mb": 500.0, "thread_count": 20}),
+            _runtime_health_sample(process={"rss_mb": 504.0, "thread_count": 20}),
+        ],
+        "budget_trend": {
+            "rss_mb": {"range": 140.0, "tail_range": 140.0, "basis": "post_kline_close_samples"},
+            "background_tasks": {"last": 0},
+            "active_timers": {"net_delta": 0},
+            "total_timers": {"net_delta": 0},
+            "event_receivers": {"net_delta": 0},
+            "threads": {"net_delta": 0},
+            "webengine_children": {"last": 0},
+        },
+    }
+
+    failures = check_runtime_health_budget(report)
+
+    assert any(failure["check"] == "runtime_health.memory.rss_tail_range" for failure in failures)
 
 
 def test_runtime_health_budget_rejects_growth_and_missing_sections():

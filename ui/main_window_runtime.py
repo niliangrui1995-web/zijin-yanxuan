@@ -153,6 +153,26 @@ def shutdown_main_window(main_window, *, event_bus, task_manager):
     if hasattr(main_window, "startup_orchestrator"):
         _run("停止启动编排器", main_window.startup_orchestrator.shutdown)
 
+    auto_refresh_scheduler = getattr(main_window, "auto_refresh_scheduler", None)
+    auto_refresh_shutdown = getattr(auto_refresh_scheduler, "shutdown", None)
+    if callable(auto_refresh_shutdown):
+        _run("停止自动刷新调度器", auto_refresh_shutdown)
+
+    rt_monitor_service = getattr(main_window, "rt_monitor_service", None)
+    rt_service_shutdown = getattr(rt_monitor_service, "shutdown", None)
+    if callable(rt_service_shutdown):
+        _run("停止盘中监控服务", rt_service_shutdown)
+
+    asian_market_service = getattr(main_window, "asian_market_service", None)
+    asian_service_shutdown = getattr(asian_market_service, "shutdown", None)
+    if callable(asian_service_shutdown):
+        _run("stop asian market service", asian_service_shutdown)
+
+    earnings_refresh_service = getattr(main_window, "earnings_refresh_service", None)
+    earnings_service_shutdown = getattr(earnings_refresh_service, "shutdown", None)
+    if callable(earnings_service_shutdown):
+        _run("stop earnings refresh service", earnings_service_shutdown)
+
     central_quotes_svc = getattr(main_window, "central_quotes_svc", None)
     central_quotes_shutdown = getattr(central_quotes_svc, "shutdown", None)
     if callable(central_quotes_shutdown):

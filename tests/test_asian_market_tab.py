@@ -187,6 +187,7 @@ def test_asian_market_table_scales_columns_to_fill_view(monkeypatch):
 
     tab = asian_module.AsianMarketTab()
     try:
+        assert not hasattr(tab, "auto_cache_timer")
         tab.resize(1200, 720)
         tab.show()
         tab._fit_asian_columns_to_viewport()

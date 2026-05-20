@@ -234,6 +234,18 @@ class StockContextService:
             return []
         return self._coerce_cache_rows(payload.get("rows", []))
 
+    def _load_na_daily_cache_rows(self) -> list[dict]:
+        cache_path = self._project_root() / "data" / "Cache" / "na_daily_latest.json"
+        try:
+            from core.json_cache import load_json_file
+
+            payload = load_json_file(str(cache_path))
+        except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
+            return []
+        if not isinstance(payload, dict):
+            return []
+        return self._coerce_cache_rows(payload.get("rows", []))
+
     def _load_earnings_cache_rows(self) -> list[dict]:
         try:
             from core.data_store import data_store
@@ -343,7 +355,10 @@ class StockContextService:
 
     def _iter_na_daily_signals(self) -> list[StockSignal]:
         signals: list[StockSignal] = []
-        for row_idx, row in enumerate(self._get_rows(self._get_tab("na_daily"))):
+        rows = self._get_rows(self._get_tab("na_daily"))
+        if not rows:
+            rows = self._load_na_daily_cache_rows()
+        for row_idx, row in enumerate(rows):
             code = str(row.get(KEY_CODE, "")).strip()
             if not code:
                 continue

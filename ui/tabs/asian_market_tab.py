@@ -13,6 +13,7 @@ from core.logger import get_logger
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.thread_shutdown import request_thread_shutdown
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
+from ui.services.asian_market_runtime_service import AsianMarketRuntimeService
 from ui.tabs.asian_market_meta import (
     format_market_display,
     get_ch_names_mapping,
@@ -135,39 +136,53 @@ class AsianMarketTab(BaseStockTab):
         self._last_health_signature = None
         self._runtime_started = False
         self.cache_thread = None
+        self._asian_market_service = self._resolve_asian_market_service()
+        self._owns_asian_market_service = self._asian_market_service.parent() is self
         self._init_ui()
 
         # 1. 冷开机瞬间加载本地 JSON (asian_klines_latest.json)
         self._load_local_cache()
 
-        # 2. 启动后台 Worker, 进行 60 秒常态轮询
-        codes = [item['代码'] for item in self.row_data]
-        self.worker = AsianMarketWorker(codes)
-        self.worker.progress.connect(self._on_worker_progress)
-        self.worker.result_ready.connect(self._on_rt_update)
-        if self._is_quote_refresh_open():
-            self._asian_runtime_state = "running"
-            self._worker_resume_auto_refresh()
-        else:
-            self._asian_runtime_state = "paused_for_cache_sync"
-            self._worker_pause_for_cache_sync()
-        # 后台轮询延后到页面首次显示，避免冷启动阶段抢占首屏。
+        # 后台轮询由全局 AsianMarketRuntimeService 接管，Tab 只渲染缓存和服务事件。
 
-        # 3. 监听全局数据更新事件 (如被 deferred_load 静默更新完毕)
+        # 2. 监听全局数据更新事件 (如被 deferred_load 静默更新完毕)
         event_bus.sig_asian_klines_ready.connect(self._on_asian_klines_ready)
-
-        # 4. 自动缓存校验器：每分钟检查本地缓存是否需要更新
-        self.auto_cache_timer = QTimer(self)
-        self.auto_cache_timer.timeout.connect(self._on_minute_tick)
+        self._connect_asian_market_service()
 
     def _ensure_runtime_started(self):
         if self._runtime_started:
             return
         self._runtime_started = True
-        if hasattr(self, "worker") and self.worker is not None and not self.worker.isRunning():
-            QTimer.singleShot(1000, self.worker.start)
-        self.auto_cache_timer.start(60000)
-        QTimer.singleShot(2000, self._on_minute_tick)
+        service = getattr(self, "_asian_market_service", None)
+        sync_runtime_state = getattr(service, "sync_runtime_state", None)
+        if callable(sync_runtime_state):
+            QTimer.singleShot(1000, sync_runtime_state)
+
+    def _resolve_asian_market_service(self):
+        parent = self.parent()
+        host = None
+        try:
+            host = parent.window() if parent is not None else self.window()
+        except RuntimeError:
+            host = None
+        service = getattr(host, "asian_market_service", None)
+        if isinstance(service, AsianMarketRuntimeService):
+            return service
+        return AsianMarketRuntimeService(parent=self)
+
+    def _connect_asian_market_service(self) -> None:
+        service = getattr(self, "_asian_market_service", None)
+        if service is None:
+            return
+        service.sig_progress.connect(self._on_worker_progress)
+        service.sig_rt_update.connect(self._on_rt_update)
+        service.sig_runtime_state_changed.connect(self._on_service_runtime_state_changed)
+
+    def _on_service_runtime_state_changed(self, payload) -> None:
+        data = payload if isinstance(payload, dict) else {}
+        state = str(data.get("state") or "").strip()
+        if state:
+            self._set_runtime_state(state)
 
     def _set_runtime_state(self, state: str):
         self._asian_runtime_state = state
@@ -176,9 +191,23 @@ class AsianMarketTab(BaseStockTab):
         return asian_runtime_state_text(self._asian_runtime_state)
 
     def _call_worker_method(self, method_name: str):
-        return asian_call_worker_method(self, method_name)
+        service = getattr(self, "_asian_market_service", None)
+        worker = service.current_worker() if service is not None else None
+        if worker is None:
+            return None
+        method = getattr(worker, method_name, None)
+        if callable(method):
+            return method()
+        return None
 
     def _get_tracked_codes(self) -> list[str]:
+        service = getattr(self, "_asian_market_service", None)
+        target_codes = getattr(service, "target_codes", None)
+        if callable(target_codes):
+            codes = [str(code).strip() for code in target_codes() or [] if str(code).strip()]
+            if codes:
+                return list(dict.fromkeys(codes))
+
         worker_codes = [
             str(code).strip()
             for code in getattr(getattr(self, "worker", None), "codes", []) or []
@@ -198,12 +227,21 @@ class AsianMarketTab(BaseStockTab):
         return is_asian_quote_refresh_time(self._get_tracked_codes())
 
     def _worker_resume_auto_refresh(self):
+        service = getattr(self, "_asian_market_service", None)
+        if service is not None:
+            return service.resume_auto_refresh()
         return asian_worker_resume_auto_refresh(self)
 
     def _worker_pause_for_cache_sync(self):
+        service = getattr(self, "_asian_market_service", None)
+        if service is not None:
+            return service.pause_for_cache_sync()
         return asian_worker_pause_for_cache_sync(self)
 
     def _worker_trigger_refresh(self):
+        service = getattr(self, "_asian_market_service", None)
+        if service is not None:
+            return service.trigger_refresh_once()
         return asian_worker_trigger_refresh(self)
 
     def _schedule_fit_columns(self):
@@ -659,6 +697,17 @@ class AsianMarketTab(BaseStockTab):
 
     def _sync_worker_codes(self):
         """让后台 worker 的轮询列表始终跟随当前表格数据，避免长期停留在旧数量。"""
+        service = getattr(self, "_asian_market_service", None)
+        set_target_codes = getattr(service, "set_target_codes", None)
+        if callable(set_target_codes):
+            set_target_codes(
+                [
+                    str(r.get("代码", "")).strip()
+                    for r in (self.row_data or [])
+                    if str(r.get("代码", "")).strip()
+                ]
+            )
+            return
         if hasattr(self, 'worker') and self.worker is not None:
             try:
                 self.worker.codes = [
@@ -1004,8 +1053,24 @@ class AsianMarketTab(BaseStockTab):
         ui_signals.sig_show_kline_with_list.emit(code, code_list, current_idx)
 
     def shutdown(self) -> None:
-        if hasattr(self, "auto_cache_timer") and self.auto_cache_timer is not None:
-            self.auto_cache_timer.stop()
+        try:
+            event_bus.sig_asian_klines_ready.disconnect(self._on_asian_klines_ready)
+        except (TypeError, RuntimeError):
+            pass
+        service = getattr(self, "_asian_market_service", None)
+        if service is not None:
+            for signal, callback in (
+                (getattr(service, "sig_progress", None), self._on_worker_progress),
+                (getattr(service, "sig_rt_update", None), self._on_rt_update),
+                (getattr(service, "sig_runtime_state_changed", None), self._on_service_runtime_state_changed),
+            ):
+                try:
+                    if signal is not None:
+                        signal.disconnect(callback)
+                except (TypeError, RuntimeError):
+                    pass
+            if getattr(self, "_owns_asian_market_service", False):
+                service.shutdown()
         cache_thread = getattr(self, "cache_thread", None)
         if cache_thread is not None:
             request_thread_shutdown(

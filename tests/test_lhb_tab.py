@@ -123,20 +123,18 @@ def test_lhb_should_refresh_after_probe_only_on_count_mismatch():
 
 def test_lhb_can_defer_pool_bootstrap_until_first_show(monkeypatch):
     calls = []
-    monkeypatch.setattr(LhbTab, "_start_auto_scheduler", lambda self: calls.append("scheduler"), raising=False)
     monkeypatch.setattr(LhbTab, "_load_and_display_pool", lambda self: calls.append("load"), raising=False)
 
     tab = LhbTab(object(), autoload_pool=False)
     try:
-        assert calls == ["scheduler"]
+        assert calls == []
         tab._ensure_pool_bootstrap_started()
-        assert calls == ["scheduler", "load"]
+        assert calls == ["load"]
     finally:
         tab.deleteLater()
 
 
 def test_lhb_deferred_status_does_not_read_pool_cache(monkeypatch):
-    monkeypatch.setattr(LhbTab, "_start_auto_scheduler", lambda self: None, raising=False)
     monkeypatch.setattr(
         lhb_tab_module,
         "LhbPoolManager",
@@ -152,7 +150,6 @@ def test_lhb_deferred_status_does_not_read_pool_cache(monkeypatch):
 
 
 def test_lhb_data_lineage_reports_deferred_without_pool_cache(monkeypatch):
-    monkeypatch.setattr(LhbTab, "_start_auto_scheduler", lambda self: None, raising=False)
     monkeypatch.setattr(
         lhb_tab_module,
         "LhbPoolManager",
@@ -174,22 +171,18 @@ def test_lhb_data_lineage_reports_deferred_without_pool_cache(monkeypatch):
         tab.deleteLater()
 
 
-def test_lhb_delete_later_stops_auto_timer(monkeypatch):
+def test_lhb_delete_later_stops_retry_timer_without_auto_scheduler(monkeypatch):
     monkeypatch.setattr(LhbTab, "_load_and_display_pool", lambda self: None, raising=False)
 
     tab = LhbTab(object(), autoload_pool=False)
-    auto_timer = tab._auto_timer
-    initial_timer = tab._auto_initial_check_timer
     retry_timer = tab._pool_retry_timer
     tab._schedule_pool_retry()
-    assert auto_timer.isActive()
-    assert initial_timer.isActive()
+    assert not hasattr(tab, "_auto_timer")
+    assert not hasattr(tab, "_auto_initial_check_timer")
     assert retry_timer.isActive()
 
     tab.deleteLater()
 
-    assert not auto_timer.isActive()
-    assert not initial_timer.isActive()
     assert not retry_timer.isActive()
 
 
@@ -212,7 +205,6 @@ def test_lhb_show_bootstrap_skips_non_interactive_load_reason():
 
 def test_lhb_prime_background_load_starts_deferred_pool_once(monkeypatch):
     calls = []
-    monkeypatch.setattr(LhbTab, "_start_auto_scheduler", lambda self: calls.append("scheduler"), raising=False)
     monkeypatch.setattr(LhbTab, "_load_and_display_pool", lambda self: calls.append("load"), raising=False)
 
     tab = LhbTab(object(), autoload_pool=False)
@@ -220,14 +212,13 @@ def test_lhb_prime_background_load_starts_deferred_pool_once(monkeypatch):
         tab.prime_background_load()
         tab.prime_background_load()
 
-        assert calls == ["scheduler"]
+        assert calls == []
         assert tab._pool_bootstrap_started is False
     finally:
         tab.deleteLater()
 
 
 def test_lhb_data_lineage_updates_after_pool_display(monkeypatch):
-    monkeypatch.setattr(LhbTab, "_start_auto_scheduler", lambda self: None, raising=False)
     monkeypatch.setattr(
         LhbTab,
         "refresh_table_quotes_and_market_caps",
@@ -253,7 +244,6 @@ def test_lhb_data_lineage_updates_after_pool_display(monkeypatch):
 
 def test_lhb_pool_bootstrap_schedules_background_task(monkeypatch):
     tasks = []
-    monkeypatch.setattr(LhbTab, "_start_auto_scheduler", lambda self: None, raising=False)
     monkeypatch.setattr(LhbTab, "_get_lhb_trade_dates", lambda self, n=20: ["20260420"], raising=False)
     monkeypatch.setattr(
         lhb_tab_module.task_manager,
@@ -273,7 +263,6 @@ def test_lhb_pool_bootstrap_schedules_background_task(monkeypatch):
 
 
 def test_lhb_watchlist_radar_rows_reads_cache_without_bootstrap(monkeypatch):
-    monkeypatch.setattr(LhbTab, "_start_auto_scheduler", lambda self: None, raising=False)
     monkeypatch.setattr(LhbTab, "_load_and_display_pool", lambda self: (_ for _ in ()).throw(AssertionError("should not load full tab")), raising=False)
     monkeypatch.setattr(LhbTab, "_get_engine", staticmethod(lambda: None), raising=False)
 

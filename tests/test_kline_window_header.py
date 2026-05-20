@@ -514,6 +514,8 @@ def test_kline_manager_removes_destroyed_chart_reference(monkeypatch):
     manager._webengine_available = True
     manager._webengine_failure = ""
     monkeypatch.setattr(kline_module, "KLineChartWindow", _Chart)
+    scheduled = []
+    monkeypatch.setattr(manager, "_schedule_post_close_collect", lambda: scheduled.append(True))
 
     try:
         chart = manager.open_chart(
@@ -533,6 +535,7 @@ def test_kline_manager_removes_destroyed_chart_reference(monkeypatch):
         chart.destroyed.callback()
 
         assert manager._charts == []
+        assert scheduled == [True]
     finally:
         manager._charts = []
         manager._prewarm_view = None

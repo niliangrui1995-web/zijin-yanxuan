@@ -135,12 +135,20 @@ class WorkspaceFacade:
         return self._workspace_navigation_service.select_scan_row(index)
 
     def is_rt_monitor_running(self) -> bool:
+        service = getattr(getattr(self._workspace, "host", None), "rt_monitor_service", None)
+        is_running = getattr(service, "is_running", None)
+        if callable(is_running):
+            return bool(is_running())
         tab = self._get_loaded_tab("rt_monitor")
         if not isinstance(tab, RtMonitorControlCapability):
             return False
         return bool(tab.is_rt_running())
 
     def toggle_rt_monitor(self) -> bool:
+        service = getattr(getattr(self._workspace, "host", None), "rt_monitor_service", None)
+        toggle = getattr(service, "toggle", None)
+        if callable(toggle):
+            return bool(toggle(auto=False))
         tab = self._get_tab("rt_monitor")
         if not isinstance(tab, RtMonitorControlCapability):
             return False
@@ -180,6 +188,10 @@ class WorkspaceFacade:
         self.schedule_watchlist_special_quotes(task_manager)
 
     def auto_start_rt_monitor(self) -> bool:
+        service = getattr(getattr(self._workspace, "host", None), "rt_monitor_service", None)
+        start = getattr(service, "start", None)
+        if callable(start):
+            return bool(start(auto=True))
         tab = self._get_tab("rt_monitor")
         if not isinstance(tab, RtMonitorControlCapability):
             return False

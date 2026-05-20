@@ -150,6 +150,7 @@ def _runtime_health_sample_summary(label: str, window: MainWindowQT) -> dict:
     return {
         "label": label,
         "rss_mb": process.get("rss_mb"),
+        "private_mb": process.get("private_mb"),
         "thread_count": process.get("thread_count"),
         "webengine_child_count": webengine.get("count"),
         "webengine_rss_mb": webengine.get("rss_mb"),
@@ -174,6 +175,11 @@ def _trend_one(values: list[float]) -> dict:
     }
 
 
+def _tail_range(values: list[float], tail_count: int = 3) -> float:
+    tail = values[-max(1, int(tail_count)) :]
+    return round(max(tail) - min(tail), 3) if tail else 0.0
+
+
 def _as_float(value) -> float | None:
     try:
         if value is None:
@@ -192,6 +198,7 @@ def _runtime_summary_from_health(sample: dict, label: str) -> dict:
     return {
         "label": label,
         "rss_mb": process.get("rss_mb"),
+        "private_mb": process.get("private_mb"),
         "thread_count": process.get("thread_count"),
         "webengine_child_count": webengine.get("count"),
         "webengine_rss_mb": webengine.get("rss_mb"),
@@ -250,6 +257,8 @@ def _overlay_budget_trend(trend: dict, summary_samples: list[dict], *, basis: st
 
     trend = dict(trend)
     for output_key, sample_key in (
+        ("rss_mb", "rss_mb"),
+        ("private_mb", "private_mb"),
         ("background_tasks", "background_task_count"),
         ("threads", "thread_count"),
         ("active_timers", "active_timer_count"),
@@ -259,8 +268,12 @@ def _overlay_budget_trend(trend: dict, summary_samples: list[dict], *, basis: st
         ("webengine_rss_mb", "webengine_rss_mb"),
         ("webengine_private_mb", "webengine_private_mb"),
     ):
+        values = _values(sample_key)
+        stats = _trend_one(values)
+        if output_key in {"rss_mb", "private_mb"}:
+            stats["tail_range"] = _tail_range(values)
         trend[output_key] = {
-            **_trend_one(_values(sample_key)),
+            **stats,
             "basis": basis,
         }
     return trend

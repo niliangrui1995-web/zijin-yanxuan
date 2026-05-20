@@ -32,7 +32,6 @@ from app.services.ui_fund_holdings_service import (
     fund_holdings_store,
     fund_holdings_sync_service,
 )
-from app.services.ui_market_calendar_service import MarketCalendar
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
 from ui.components import (
@@ -48,9 +47,6 @@ from ui.tabs.base_stock_tab import BaseStockTab
 from ui.tabs.fund_holdings_filter_proxy import FundHoldingsFilterProxyModel
 from ui.tabs.fund_holdings_rules import (
     FUND_CHANGE_TYPE_OPTIONS,
-    FUND_DAILY_AUTO_SYNC_DATE_KEY,
-    FUND_DAILY_AUTO_SYNC_HOUR,
-    FUND_DAILY_AUTO_SYNC_MINUTE,
     FUND_DISPLAY_PLACEHOLDER,
     capital_attribute_label,
     filter_ai_related_concepts,
@@ -58,8 +54,6 @@ from ui.tabs.fund_holdings_rules import (
     format_pct,
     is_ai_related_concept,
     normalize_ai_concept_display,
-    normalize_auto_sync_date,
-    should_trigger_daily_auto_sync,
 )
 
 
@@ -74,9 +68,6 @@ class FundHoldingsTab(BaseStockTab):
     _QUERY_SCOPE_SELECTED = "selected"
     _DISPLAY_PLACEHOLDER = FUND_DISPLAY_PLACEHOLDER
     _CHANGE_TYPE_OPTIONS = FUND_CHANGE_TYPE_OPTIONS
-    _DAILY_AUTO_SYNC_HOUR = FUND_DAILY_AUTO_SYNC_HOUR
-    _DAILY_AUTO_SYNC_MINUTE = FUND_DAILY_AUTO_SYNC_MINUTE
-    _DAILY_AUTO_SYNC_DATE_KEY = FUND_DAILY_AUTO_SYNC_DATE_KEY
     _CAPITAL_ATTRIBUTE_OPTIONS = (
         QFII_CAPITAL_ATTRIBUTE_SELF_OWNED,
         QFII_CAPITAL_ATTRIBUTE_CLIENT,
@@ -127,11 +118,6 @@ class FundHoldingsTab(BaseStockTab):
         self._view_state_save_timer.setSingleShot(True)
         self._view_state_save_timer.setInterval(300)
         self._view_state_save_timer.timeout.connect(self._save_view_state)
-        self._daily_auto_sync_timer = QTimer(self)
-        self._daily_auto_sync_timer.timeout.connect(self._check_daily_auto_sync)
-        self._daily_auto_sync_initial_check_timer = QTimer(self)
-        self._daily_auto_sync_initial_check_timer.setSingleShot(True)
-        self._daily_auto_sync_initial_check_timer.timeout.connect(self._check_daily_auto_sync)
 
         self._init_ui()
         if self._autoload:
@@ -142,12 +128,15 @@ class FundHoldingsTab(BaseStockTab):
 
         event_bus.sig_cache_reload_completed.connect(self._on_cache_reload_completed)
         event_bus.sig_app_closing.connect(self._save_view_state)
-        self._start_daily_auto_sync_timer()
+        event_bus.sig_fund_holdings_updated.connect(self._on_fund_holdings_updated)
 
     def showEvent(self, event):
         super().showEvent(event)
         if self._should_start_runtime_on_show():
             self._ensure_initial_load_started()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
 
     def prime_background_load(self):
         self._ensure_initial_load_started()
@@ -175,61 +164,6 @@ class FundHoldingsTab(BaseStockTab):
 
     def _view_state_key(self, name: str) -> str:
         return f"{self._VIEW_STATE_PREFIX}/{name}"
-
-    @staticmethod
-    def _normalize_auto_sync_date(value) -> str:
-        return normalize_auto_sync_date(value)
-
-    @classmethod
-    def _should_trigger_daily_auto_sync(
-        cls,
-        now,
-        *,
-        last_auto_sync_date: str,
-        pending_auto_sync_date: str,
-    ) -> bool:
-        return should_trigger_daily_auto_sync(
-            now,
-            last_auto_sync_date=last_auto_sync_date,
-            pending_auto_sync_date=pending_auto_sync_date,
-            trigger_hour=cls._DAILY_AUTO_SYNC_HOUR,
-            trigger_minute=cls._DAILY_AUTO_SYNC_MINUTE,
-        )
-
-    def _start_daily_auto_sync_timer(self) -> None:
-        self._daily_auto_sync_timer.start(5 * 60 * 1000)
-        self._daily_auto_sync_initial_check_timer.start(10_000)
-
-    def _stop_daily_auto_sync_timer(self) -> None:
-        timer = getattr(self, "_daily_auto_sync_timer", None)
-        if timer is not None:
-            timer.stop()
-        initial_timer = getattr(self, "_daily_auto_sync_initial_check_timer", None)
-        if initial_timer is not None:
-            initial_timer.stop()
-        view_state_timer = getattr(self, "_view_state_save_timer", None)
-        if view_state_timer is not None:
-            view_state_timer.stop()
-
-    def _check_daily_auto_sync(self) -> bool:
-        if self._sync_active:
-            return False
-
-        now = MarketCalendar.now("CN")
-        today_compact = now.strftime("%Y%m%d")
-        if not self._should_trigger_daily_auto_sync(
-            now,
-            last_auto_sync_date=self._settings.value(self._DAILY_AUTO_SYNC_DATE_KEY, ""),
-            pending_auto_sync_date=self._pending_daily_auto_sync_date,
-        ):
-            return False
-
-        self._pending_daily_auto_sync_date = today_compact
-        event_bus.sig_system_log.emit("info", f"[基金持仓] 触发每日20:30自动刷新: {today_compact}")
-        started = self.run_daily_auto_sync(today_compact)
-        if not started:
-            self._pending_daily_auto_sync_date = ""
-        return started
 
     @staticmethod
     def _build_workspace_task_id(name: str) -> str:
@@ -1171,15 +1105,6 @@ class FundHoldingsTab(BaseStockTab):
         self.refresh_table_from_latest_snapshot(current_model=self.model, async_local=True)
         return self.run_auto_sync_after_f5()
 
-    def run_daily_auto_sync(self, auto_sync_date: str | None = None) -> bool:
-        if self._sync_active:
-            return False
-        today_compact = self._normalize_auto_sync_date(auto_sync_date) or MarketCalendar.now("CN").strftime("%Y%m%d")
-        self._settings.setValue(self._DAILY_AUTO_SYNC_DATE_KEY, today_compact)
-        self._settings.sync()
-        self._run_sync_action("20:30自动更新", fund_holdings_sync_service.sync_latest_all)
-        return True
-
     def run_full_sync(self) -> bool:
         if self._sync_active:
             return False
@@ -1431,6 +1356,15 @@ class FundHoldingsTab(BaseStockTab):
         self._apply_latest_quotes_from_store()
         self._update_status_summary()
 
+    def _on_fund_holdings_updated(self):
+        if getattr(self, "_runtime_cleanup_done", False):
+            return
+        if not self._initial_load_started:
+            return
+        if self._sync_active:
+            return
+        self._reload_from_db()
+
     def _update_status_summary(self):
         rows = list(getattr(self.model, "row_data", []) or [])
         total = len(rows)
@@ -1527,12 +1461,16 @@ class FundHoldingsTab(BaseStockTab):
     def _cleanup_runtime_state(self):
         if not getattr(self, "_fund_holdings_cleanup_done", False):
             self._fund_holdings_cleanup_done = True
-            self._stop_daily_auto_sync_timer()
+            view_state_timer = getattr(self, "_view_state_save_timer", None)
+            if view_state_timer is not None:
+                view_state_timer.stop()
             self._save_view_state()
             with suppress(TypeError, RuntimeError):
                 event_bus.sig_cache_reload_completed.disconnect(self._on_cache_reload_completed)
             with suppress(TypeError, RuntimeError):
                 event_bus.sig_app_closing.disconnect(self._save_view_state)
+            with suppress(TypeError, RuntimeError):
+                event_bus.sig_fund_holdings_updated.disconnect(self._on_fund_holdings_updated)
         super()._cleanup_runtime_state()
 
     def shutdown(self) -> None:

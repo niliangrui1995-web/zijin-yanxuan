@@ -12,7 +12,6 @@ from core.startup_orchestrator import (
     ASIAN_DATA_SYNC_TASK_ID,
     ASIAN_DATA_SYNC_TIMEOUT_SEC,
     AUTO_RT_MONITOR_NETWORK_TASK_ID,
-    AUTO_RT_MONITOR_RETRY_INTERVAL_MS,
     DEFERRED_LOAD_TASK_ID,
     GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_HOUR,
     GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_MINUTE,
@@ -546,13 +545,12 @@ def test_global_earnings_daily_refresh_delay_targets_next_0200():
     assert GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_MINUTE == 0
 
 
-def test_startup_orchestrator_schedules_auto_rt_retry_timer():
+def test_startup_orchestrator_leaves_auto_rt_retry_to_global_scheduler():
     orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
 
     orchestrator.schedule_startup()
     try:
-        assert orchestrator._auto_rt_timer.isActive() is True
-        assert orchestrator._auto_rt_timer.interval() == AUTO_RT_MONITOR_RETRY_INTERVAL_MS
+        assert orchestrator._auto_rt_timer is None
         assert orchestrator._global_earnings_calendar_daily_timer.isActive() is True
         assert orchestrator._global_earnings_calendar_daily_timer.isSingleShot() is True
         assert 0 < orchestrator._global_earnings_calendar_daily_timer.interval() <= 24 * 60 * 60 * 1000

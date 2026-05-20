@@ -34,7 +34,6 @@ GLOBAL_EARNINGS_CALENDAR_SYNC_TASK_ID = task_registry.startup(
     "global_earnings_calendar_sync",
     description="Global oligarch earnings calendar silent sync",
 ).task_id
-AUTO_RT_MONITOR_RETRY_INTERVAL_MS = 30_000
 GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_HOUR = 2
 GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_MINUTE = 0
 AUTO_RT_MONITOR_NETWORK_TASK_ID = task_registry.network(
@@ -186,6 +185,9 @@ class StartupHostAdapter:
             callback(code2name)
 
     def auto_start_rt_monitor(self) -> bool:
+        callback = getattr(self._main_window, "auto_start_rt_monitor", None)
+        if callable(callback):
+            return bool(callback())
         workspace = self.workspace
         callback = getattr(workspace, "auto_start_rt_monitor", None)
         return bool(callback()) if callable(callback) else False
@@ -208,9 +210,7 @@ class StartupOrchestrator:
         self._global_earnings_calendar_daily_timer = QTimer(timer_parent)
         self._global_earnings_calendar_daily_timer.setSingleShot(True)
         self._global_earnings_calendar_daily_timer.timeout.connect(self._run_daily_global_earnings_calendar_refresh)
-        self._auto_rt_timer = QTimer(timer_parent)
-        self._auto_rt_timer.setSingleShot(False)
-        self._auto_rt_timer.timeout.connect(self.auto_start_rt_if_ready)
+        self._auto_rt_timer = None
         self._auto_rt_network_probe_active = False
         self._global_earnings_calendar_sync_running = False
         self._last_auto_rt_skip_reason = ""
@@ -224,7 +224,7 @@ class StartupOrchestrator:
             self._schedule_next_global_earnings_calendar_daily_refresh()
         else:
             log.info("[startup] daily_global_earnings_calendar_sync toggle disabled, skip earnings calendar daily sync")
-        self._auto_rt_timer.start(AUTO_RT_MONITOR_RETRY_INTERVAL_MS)
+        log.info("[startup] workspace_auto_rt_monitor retry timer is owned by AutoRefreshScheduler")
 
     def _schedule_next_global_earnings_calendar_daily_refresh(self):
         if self._closed:
@@ -243,7 +243,8 @@ class StartupOrchestrator:
         self._deferred_timer.stop()
         self._smart_timer.stop()
         self._global_earnings_calendar_daily_timer.stop()
-        self._auto_rt_timer.stop()
+        if self._auto_rt_timer is not None:
+            self._auto_rt_timer.stop()
         for task_id in (
             DEFERRED_LOAD_TASK_ID,
             ASIAN_DATA_SYNC_TASK_ID,

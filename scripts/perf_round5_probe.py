@@ -149,6 +149,21 @@ def _event_receiver_trend(samples: list[dict]) -> dict:
 
 
 def disable_rt_monitor_auto_start(workspace) -> dict:
+    service = getattr(getattr(workspace, "host", None), "rt_monitor_service", None)
+    if service is None:
+        tab_for_service = _loaded_tab(workspace, "rt_monitor")
+        service = getattr(tab_for_service, "_rt_monitor_service", None)
+    if service is not None:
+        try:
+            stop = getattr(service, "stop", None)
+            if callable(stop):
+                stop(auto=False)
+            service._manual_stop_requested = True
+            service._manual_stop_trade_date = service._manual_stop_reference_date()
+            return {"disabled": True, "reason": "probe_isolation_service"}
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            return {"disabled": False, "reason": f"service_stop_failed:{exc.__class__.__name__}"}
+
     tab = _loaded_tab(workspace, "rt_monitor")
     if tab is None:
         return {"disabled": False, "reason": "rt_monitor_not_loaded"}

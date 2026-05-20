@@ -41,6 +41,11 @@ from ui.shell import (
     setup_system_menu,
 )
 from ui.window_flags import apply_windows_frameless_taskbar_fix, build_frameless_main_window_flags
+from ui.services.auto_refresh_scheduler import AutoRefreshScheduler
+from ui.services.asian_market_runtime_service import AsianMarketRuntimeService
+from ui.services.earnings_refresh_service import EarningsRefreshService
+from ui.services.na_daily_service import NADailyRefreshService
+from ui.services.rt_monitor_service import RtMonitorService
 from ui.workers.central_quotes_worker import CentralQuotesService
 from ui.workspaces import ClassicWorkspace
 
@@ -139,6 +144,19 @@ class MainWindowQT(QMainWindow):
         self._splash_update(60, "正在构建主界面模块...")
         self.data_provider = create_data_provider(offline=True)
         self.engine = create_scan_engine()
+        self.rt_monitor_service = RtMonitorService(self.data_provider, self.engine, parent=self)
+        self.na_daily_service = NADailyRefreshService(parent=self)
+        self.asian_market_service = AsianMarketRuntimeService(parent=self)
+        self.earnings_refresh_service = EarningsRefreshService(parent=self)
+        self.auto_refresh_scheduler = AutoRefreshScheduler(
+            data_provider=self.data_provider,
+            engine=self.engine,
+            rt_monitor_service=self.rt_monitor_service,
+            na_daily_service=self.na_daily_service,
+            asian_market_service=self.asian_market_service,
+            earnings_service=self.earnings_refresh_service,
+            parent=self,
+        )
 
         # 全局样式（动态生成，支持主题切换）
         from ui.styles.global_qss import generate_global_qss
@@ -198,6 +216,10 @@ class MainWindowQT(QMainWindow):
             log.info("[startup] startup timers disabled for controlled window construction")
 
         self._init_central_broadcaster()
+        if self._startup_enabled:
+            self.auto_refresh_scheduler.start()
+        else:
+            log.info("[startup] auto refresh scheduler disabled for controlled window construction")
         self._update_last_f5_time()
         log_process_snapshot("main_window.init.ready", logger=log)
 
@@ -207,6 +229,13 @@ class MainWindowQT(QMainWindow):
             log.info("[UI] central quotes disabled for controlled window construction")
             return
         self._bootstrap.install_central_quotes()
+
+    def auto_start_rt_monitor(self) -> bool:
+        service = getattr(self, "rt_monitor_service", None)
+        start = getattr(service, "start", None)
+        if callable(start):
+            return bool(start(auto=True))
+        return False
 
     def _refresh_code_count_label_from_provider(self) -> int:
         provider = getattr(self, "data_provider", None)
@@ -236,7 +265,6 @@ class MainWindowQT(QMainWindow):
 
         safe_run_post_online_refresh(self, task_manager)
 
-    # _check_auto_rt_monitor 已删除 — 功能已被 RtMonitorTab._check_auto_start_stop() 完全替代，0 调用方
 
     def _toggle_network(self):
         from ui.main_window_network import toggle_network

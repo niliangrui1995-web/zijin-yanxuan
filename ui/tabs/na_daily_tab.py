@@ -17,6 +17,7 @@ from app.services.ui_task_service import task_registry
 from core.logger import get_logger
 from ui.components import TableStateWrapper, VCPTableView
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
+from ui.services.na_daily_service import NADailyRefreshService
 from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
@@ -34,6 +35,7 @@ class NADailyTab(BaseStockTab):
         self._runtime_started = False
         self._background_prime_loading = False
         self._background_prime_done = False
+        self._handling_na_daily_event = False
 
         self._init_ui()
 
@@ -42,10 +44,9 @@ class NADailyTab(BaseStockTab):
         # 订阅中央广播站报价及开启大一统市值更新
         self.subscribe_global_quotes()
 
-        # 统一巡逻定时器：每30秒检查一次（合并了增量检查 + 定时全量刷新）
-        self._patrol_timer = QTimer(self)
-        self._patrol_timer.timeout.connect(self._patrol_tick)
-        self._na_daily_fired_today = set()
+        self._na_daily_service = self._resolve_na_daily_service()
+        event_bus.sig_na_daily_updated.connect(self._on_na_daily_updated)
+        self._render_service_cache()
         self._initial_quotes_done = False
 
     def _ensure_runtime_started(self):
@@ -53,7 +54,6 @@ class NADailyTab(BaseStockTab):
             return
         self._runtime_started = True
         QTimer.singleShot(350, self._load_na_daily_report)
-        self._patrol_timer.start(30 * 1000)
 
     def prime_background_load(self):
         if self._runtime_started or self._background_prime_done:
@@ -73,29 +73,35 @@ class NADailyTab(BaseStockTab):
         if self._should_start_runtime_on_show():
             self._ensure_runtime_started()
 
-    def _patrol_tick(self):
-        """统一巡逻：盘中增量检查 + 定时全量刷新 + 首次市值拉取"""
-        from app.services.ui_market_calendar_service import MarketCalendar
-        is_active = MarketCalendar.is_market_active()
+    def _resolve_na_daily_service(self):
+        parent = self.parent()
+        host = None
+        try:
+            host = parent.window() if parent is not None else self.window()
+        except RuntimeError:
+            host = None
+        service = getattr(host, "na_daily_service", None)
+        if isinstance(service, NADailyRefreshService):
+            return service
+        return NADailyRefreshService(parent=self)
 
-        # 1. 盘中：每30秒检查战报文件是否有增量
-        if is_active:
-            self._load_na_daily_incremental()
+    def _render_service_cache(self):
+        service = getattr(self, "_na_daily_service", None)
+        if service is None:
+            return
+        service.load_cache()
+        if service.rows or service.report_files:
+            self._apply_na_daily_rows(
+                service.rows,
+                service.report_files,
+                service.report_signature,
+                emit_event=False,
+            )
 
-        # 2. 定时全量刷新（交易日 9:25 自动拉一次完整战报）
-        now = MarketCalendar.now("CN")
-        if MarketCalendar.is_trade_day(now.date(), market="CN"):
-            today_str = now.strftime('%Y%m%d')
-            key = f"{today_str}_0925"
-            if key not in self._na_daily_fired_today:
-                if 0 <= (now.hour * 60 + now.minute) - (9 * 60 + 25) <= 1:
-                    self._na_daily_fired_today.add(key)
-                    self._load_na_daily_report()
-
-        # 3. 首次启动：拉一次市值（盘后也能展示收盘数据）
-        if not self._initial_quotes_done and self._na_daily_codes:
-            self.async_update_market_caps()
-            self._initial_quotes_done = True
+    def _on_na_daily_updated(self):
+        if self._handling_na_daily_event:
+            return
+        self._render_service_cache()
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -345,7 +351,7 @@ class NADailyTab(BaseStockTab):
         )
         return final_list, report_files, report_signature
 
-    def _apply_na_daily_rows(self, final_list, report_files, report_signature):
+    def _apply_na_daily_rows(self, final_list, report_files, report_signature, *, emit_event: bool = True):
         self._last_report_signature = report_signature
         self._current_report_files = list(report_files or [])
 
@@ -353,7 +359,8 @@ class NADailyTab(BaseStockTab):
             self._set_report_status("等待北美战报", "最近窗口为空", freshness="待加载", next_step="点击刷新载入最新战报")
             self.model.update_data([])
             self._na_daily_codes = set()
-            event_bus.sig_na_daily_updated.emit()
+            if emit_event:
+                event_bus.sig_na_daily_updated.emit()
             if hasattr(self, "table_state"):
                 self.table_state.show_empty("暂无战报数据")
             return
@@ -390,22 +397,36 @@ class NADailyTab(BaseStockTab):
         if self._na_daily_codes:
             if self._background_prime_loading:
                 self._apply_quote_store_snapshot()
-                event_bus.sig_na_daily_updated.emit()
+                if emit_event:
+                    event_bus.sig_na_daily_updated.emit()
                 return
             self.refresh_table_quotes_and_market_caps(
                 quote_task_id=task_registry.quote_refresh("na_daily").task_id
             )
 
-        event_bus.sig_na_daily_updated.emit()
+        if emit_event:
+            event_bus.sig_na_daily_updated.emit()
 
     def _load_na_daily_report(self):
         if hasattr(self, "table_state"):
             self.table_state.show_loading("正在加载战报...", "请稍候")
         self._set_report_status("北美战报刷新中", freshness=self._latest_report_freshness(), next_step="等待战报文件合并")
+        service = getattr(self, "_na_daily_service", None)
+        if service is not None:
+            service.refresh_full(emit_event=False)
+            self._apply_na_daily_rows(service.rows, service.report_files, service.report_signature)
+            return
         final_list, report_files, report_signature = self._build_na_daily_rows()
         self._apply_na_daily_rows(final_list, report_files, report_signature)
 
     def _load_na_daily_incremental(self):
+        service = getattr(self, "_na_daily_service", None)
+        if service is not None:
+            result = service.refresh_incremental(emit_event=False)
+            if str(result.get("status") or "") == "skipped":
+                return
+            self._apply_na_daily_rows(service.rows, service.report_files, service.report_signature)
+            return
         report_files = self._list_recent_report_files(limit=5)
         if not report_files:
             return
@@ -425,9 +446,10 @@ class NADailyTab(BaseStockTab):
         return True
 
     def shutdown(self) -> None:
-        patrol_timer = getattr(self, "_patrol_timer", None)
-        if patrol_timer is not None:
-            patrol_timer.stop()
+        try:
+            event_bus.sig_na_daily_updated.disconnect(self._on_na_daily_updated)
+        except (TypeError, RuntimeError):
+            pass
 
 
     def _on_double_click(self, index):

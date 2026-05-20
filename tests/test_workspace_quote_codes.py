@@ -1021,10 +1021,51 @@ def test_workspace_background_prewarm_loads_lazy_tabs_without_manual_click(monke
             "fund_holdings",
             "system_log",
         }
-        assert ctor_kwargs["lhb"]["autoload_pool"] is False
-        assert ctor_kwargs["fund_holdings"]["autoload"] is False
         assert snapshot_primes == [{}]
         assert "fund_holdings" in primed
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_workspace_auto_refresh_does_not_load_daily_tabs_without_manual_click(monkeypatch):
+    ctor_kwargs = {}
+    constructed = []
+
+    def _make_tab(name):
+        class _Tab(QWidget):
+            def __init__(self, *args, **kwargs):
+                super().__init__()
+                ctor_kwargs[name] = dict(kwargs)
+                constructed.append(name)
+
+        return _Tab
+
+    monkeypatch.setattr(classic_workspace_module, "WatchlistTab", _make_tab("watchlist"))
+    monkeypatch.setattr(classic_workspace_module, "AsianMarketTab", _make_tab("asian_market"))
+    monkeypatch.setattr(classic_workspace_module, "NADailyTab", _make_tab("na_daily"))
+    monkeypatch.setattr(classic_workspace_module, "AIIndustryChainTab", _make_tab("ai_industry_chain"))
+    monkeypatch.setattr(classic_workspace_module, "RtMonitorTab", _make_tab("rt_monitor"))
+    monkeypatch.setattr(classic_workspace_module, "ScanTab", _make_tab("scan"))
+    monkeypatch.setattr(classic_workspace_module, "StockCandidateTab", _make_tab("stock_candidates"))
+    monkeypatch.setattr(classic_workspace_module, "LhbTab", _make_tab("lhb"))
+    monkeypatch.setattr(classic_workspace_module, "ForeignBlockTradeTab", _make_tab("foreign_block"))
+    monkeypatch.setattr(classic_workspace_module, "EarningsTab", _make_tab("earnings"))
+    monkeypatch.setattr(classic_workspace_module, "FundHoldingsTab", _make_tab("fund_holdings"))
+    monkeypatch.setattr(classic_workspace_module, "LogTab", _make_tab("system_log"))
+
+    workspace = classic_workspace_module.ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+    )
+    try:
+        assert constructed == ["watchlist"]
+        assert not hasattr(workspace, "_start_daily_auto_tab_bootstrap")
+        assert workspace.get_loaded_tab("rt_monitor") is None
+        assert workspace.get_loaded_tab("lhb") is None
+        assert workspace.get_loaded_tab("foreign_block") is None
+        assert workspace.get_loaded_tab("fund_holdings") is None
     finally:
         workspace.shutdown()
         workspace.deleteLater()

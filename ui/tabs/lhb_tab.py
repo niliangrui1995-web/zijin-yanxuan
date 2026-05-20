@@ -68,15 +68,12 @@ class LhbTab(BaseStockTab):
         )
         self._last_lhb_result = None
         self._last_lhb_signature = ""
-        self._auto_initial_check_timer = QTimer(self)
-        self._auto_initial_check_timer.setSingleShot(True)
-        self._auto_initial_check_timer.timeout.connect(self._check_auto_fetch)
+        self._handling_lhb_pool_update = False
         self._pool_retry_timer = QTimer(self)
         self._pool_retry_timer.setSingleShot(True)
         self._pool_retry_timer.timeout.connect(self._load_and_display_pool)
 
         self._init_ui()
-        self._start_auto_scheduler()
         if self._autoload_pool:
             self._ensure_pool_bootstrap_started()
         else:
@@ -91,11 +88,15 @@ class LhbTab(BaseStockTab):
         self._rps_injected_flag = False
         event_bus.sig_cache_bootstrap_ready.connect(self._on_cache_bootstrap_ready)
         event_bus.sig_cache_reload_completed.connect(self._on_cache_reload_completed)
+        event_bus.sig_lhb_pool_updated.connect(self._on_lhb_pool_updated)
 
     def showEvent(self, event):
         super().showEvent(event)
         if self._should_start_pool_on_show():
             self._ensure_pool_bootstrap_started()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
 
     def prime_background_load(self):
         if not self._pool_bootstrap_started:
@@ -120,6 +121,17 @@ class LhbTab(BaseStockTab):
             return
         self._pool_bootstrap_started = True
         self._load_and_display_pool()
+
+    def _on_lhb_pool_updated(self) -> None:
+        if self._handling_lhb_pool_update:
+            return
+        if not self._pool_bootstrap_started:
+            return
+        self._handling_lhb_pool_update = True
+        try:
+            self._load_and_display_pool(emit_event=False)
+        finally:
+            self._handling_lhb_pool_update = False
 
     def _on_cache_bootstrap_ready(self):
         """处理延迟的 RPS 数据加载，仅执行一次避免和自身发出的同名信号造成无限死循环"""
@@ -403,7 +415,7 @@ class LhbTab(BaseStockTab):
             if hasattr(self, "table_state"):
                 self.table_state.show_empty("暂无龙虎榜数据")
 
-    def _load_and_display_pool(self):
+    def _load_and_display_pool(self, *, emit_event: bool = True):
         """Schedule the cached pool computation off the UI thread."""
         if self._pool_load_in_progress:
             return
@@ -451,7 +463,7 @@ class LhbTab(BaseStockTab):
 
             pool = list(payload.get("pool") or [])
             if pool:
-                self._display_pool(pool)
+                self._display_pool(pool, emit_event=emit_event)
 
             missing = list(payload.get("missing") or [])
             pending_validation = list(payload.get("pending_validation") or [])
@@ -593,7 +605,7 @@ class LhbTab(BaseStockTab):
             return []
         return [self._format_pool_row(rec) for rec in pool]
 
-    def _display_pool(self, pool: list[dict]):
+    def _display_pool(self, pool: list[dict], *, emit_event: bool = True):
         """将池数据渲染到表格"""
         row_data = [self._format_pool_row(rec) for rec in pool]
 
@@ -614,7 +626,8 @@ class LhbTab(BaseStockTab):
                 self.table_state.show_empty("暂无龙虎榜数据")
 
         # 触发全局通知，让关注池 Tab 能扫描到龙虎榜数据
-        event_bus.sig_lhb_pool_updated.emit()
+        if emit_event:
+            event_bus.sig_lhb_pool_updated.emit()
 
         self.refresh_table_quotes_and_market_caps(
             quote_task_id=task_registry.quote_refresh("lhb").task_id,
@@ -857,65 +870,10 @@ class LhbTab(BaseStockTab):
         self._manual_refresh()
         return True
 
-    # ================================================================
-    # 每日 20:00 定时自动抓取
-    # ================================================================
-    def _start_auto_scheduler(self):
-        """启动定时检查器：每 5 分钟检查是否到了自动抓取时间
-
-        为什么用 5 分钟轮询而不是精确定时：
-        精确定时需要计算到 20:00 的剩余秒数，且存在系统休眠/恢复后
-        定时器失效的问题。5 分钟轮询简单可靠，CPU 开销可忽略。
-        """
-        self._auto_timer = QTimer(self)
-        self._auto_timer.timeout.connect(self._check_auto_fetch)
-        # 每 5 分钟检查一次
-        self._auto_timer.start(5 * 60 * 1000)
-        # 启动后也立即检查一次
-        self._auto_initial_check_timer.start(10_000)
-
     def _schedule_pool_retry(self) -> None:
         self._pool_retry_timer.start(5_000)
 
-    def _check_auto_fetch(self):
-        """检查是否满足自动抓取条件：
-        ① 当前时间 >= 20:00
-        ② 今天是交易日
-        ③ 今天的数据尚未抓取
-        """
-        if self._backfill_in_progress:
-            return
-
-        now = MarketCalendar.now("CN")
-        today_str = now.strftime("%Y%m%d")
-
-        # 条件①：20:00 后
-        if now.hour < 20:
-            return
-
-        # 条件③：今天已抓取则跳过
-        if self._today_auto_fetched and today_str == self._get_pool_manager().last_auto_fetch_date:
-            return
-
-        # 条件②：今天是交易日
-        if not MarketCalendar.is_trade_day(now.date(), market="CN"):
-            return
-
-        # 已经缓存了今天的数据也跳过
-        if today_str in self._get_pool_manager().get_cached_dates():
-            self._today_auto_fetched = True
-            return
-
-        event_bus.sig_system_log.emit("info", self._ensure_log_line(f"[龙虎榜池] 触发每日20:00自动抓取: {today_str}"))
-        self._fetch_single_day(today_str)
-
     def shutdown(self) -> None:
-        auto_timer = getattr(self, "_auto_timer", None)
-        if auto_timer is not None:
-            auto_timer.stop()
-        initial_timer = getattr(self, "_auto_initial_check_timer", None)
-        if initial_timer is not None:
-            initial_timer.stop()
         retry_timer = getattr(self, "_pool_retry_timer", None)
         if retry_timer is not None:
             retry_timer.stop()
@@ -927,6 +885,10 @@ class LhbTab(BaseStockTab):
             event_bus.sig_cache_reload_completed.disconnect(self._on_cache_reload_completed)
         except (TypeError, RuntimeError):
             pass
+        try:
+            event_bus.sig_lhb_pool_updated.disconnect(self._on_lhb_pool_updated)
+        except (TypeError, RuntimeError):
+            pass
 
     def closeEvent(self, event):
         self.shutdown()
@@ -936,61 +898,6 @@ class LhbTab(BaseStockTab):
         self.shutdown()
         super().deleteLater()
 
-    def _fetch_single_day(self, date_str: str):
-        """抓取单天数据并刷新池"""
-        self.btn_refresh.setEnabled(False)
-        self._set_pool_status("正在抓取单日龙虎榜", date_str, freshness="快照", next_step="等待同步完成")
-
-        def _bg_fetch():
-            from ui.workers.lhb_worker import fetch_lhb_pool_for_date
-            return fetch_lhb_pool_for_date(date_str, emit_success_log=False, return_meta=True)
-
-        def _on_done(payload):
-            self.btn_refresh.setEnabled(True)
-            records = payload.get("records", []) if isinstance(payload, dict) else payload
-            status = payload.get("status", "ok") if isinstance(payload, dict) else "ok"
-
-            # 写入池引擎
-            self._get_pool_manager().add_day(date_str, records if records else [])
-            self._get_pool_manager().last_auto_fetch_date = date_str
-            self._today_auto_fetched = True
-
-            # 裁剪并重算
-            trade_dates = self._get_lhb_trade_dates()
-            if trade_dates:
-                self._get_pool_manager().prune(trade_dates)
-            self._get_pool_manager().save()
-
-            pool = self._get_pool_manager().compute_pool(data_provider=self.data_provider, engine=self._get_engine())
-            self._display_pool(pool)
-            if status == "empty":
-                summary = f"[龙虎榜池] {date_str} 自动抓取完成 | 无可用数据 | 池中{len(pool)}只"
-            elif status == "error":
-                summary = f"[龙虎榜池] {date_str} 自动抓取完成 | 异常后记0条 | 池中{len(pool)}只"
-            else:
-                summary = f"[龙虎榜池] {date_str} 自动抓取完成 | {len(records) if records else 0}条 | 池中{len(pool)}只"
-            event_bus.sig_system_log.emit("info", self._ensure_log_line(summary))
-
-        def _on_error(error_message: str):
-            self.btn_refresh.setEnabled(True)
-            self._set_pool_status(
-                f"抓取 {date_str} 失败",
-                error_message,
-                freshness="远端失败沿用" if getattr(self.model, "row_data", []) else "待回补",
-                next_step="请稍后重试",
-            )
-            event_bus.sig_system_log.emit("error", self._ensure_log_line(f"[龙虎榜池] 自动抓取失败: {error_message}"))
-
-        task_manager.run_in_background(
-            _bg_fetch,
-            on_success=_on_done,
-            on_error=_on_error,
-            task_id=task_registry.workspace("lhb_pool_daily_fetch").task_id,
-        )
-
-    # ================================================================
-    # 搜索过滤
-    # ================================================================
     def _filter_table(self):
         search_text = self.search_box.text().strip().lower()
         self.set_proxy_filter_text(self.proxy_model, search_text)

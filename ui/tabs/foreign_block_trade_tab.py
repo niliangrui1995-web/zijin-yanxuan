@@ -10,12 +10,11 @@ import os
 import sys
 
 import pandas as pd
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QComboBox, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
-from app.services.ui_market_calendar_service import MarketCalendar
 from app.services.ui_task_service import (
     ProcessExecutionError,
     ProcessTimeoutError,
@@ -233,10 +232,16 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.days_to_fetch = 20  # 默认拉取最近20个交易日
         self._init_ui()
         self._load_local_cache()
-        self._start_auto_scheduler()
 
         # 大宗交易页只消费 F5/本地快照，不加入盘中实时行情轮询。
         event_bus.sig_cache_reload_completed.connect(self._on_cache_reload_completed)
+        event_bus.sig_block_trade_updated.connect(self._on_block_trade_updated)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -453,7 +458,7 @@ class ForeignBlockTradeTab(BaseStockTab):
             log.warning(f"[外资大宗] 保存本地缓存失败: {exc}")
             return False
 
-    def _load_local_cache(self):
+    def _load_local_cache(self, *, emit_event: bool = True):
         try:
             payload = load_json_file(_BLOCK_TRADE_CACHE_FILE)
             rows = payload.get("rows", []) if isinstance(payload, dict) else []
@@ -491,62 +496,28 @@ class ForeignBlockTradeTab(BaseStockTab):
                         "暂无大宗交易数据",
                         "当前本地缓存为空，等待每日20:00自动更新。",
                     )
-            event_bus.sig_block_trade_updated.emit()
+            if emit_event:
+                event_bus.sig_block_trade_updated.emit()
         except (CacheIOError, DataFormatError) as exc:
             log.debug(f"[外资大宗] 本地缓存不可用，跳过加载: {exc}")
             self._set_fetch_status("等待20:00更新", freshness="待刷新", next_step="等待每日自动缓存")
 
-    def _start_auto_scheduler(self):
-        self._auto_timer = QTimer(self)
-        self._auto_timer.timeout.connect(self._check_auto_refresh)
-        self._auto_timer.start(5 * 60 * 1000)
-        self._auto_initial_check_timer = QTimer(self)
-        self._auto_initial_check_timer.setSingleShot(True)
-        self._auto_initial_check_timer.timeout.connect(self._check_auto_refresh)
-        self._auto_initial_check_timer.start(10_000)
+    def _on_block_trade_updated(self) -> None:
+        self._load_local_cache(emit_event=False)
 
     def _cleanup_runtime_state(self):
-        auto_timer = getattr(self, "_auto_timer", None)
-        if auto_timer is not None:
-            auto_timer.stop()
-        initial_timer = getattr(self, "_auto_initial_check_timer", None)
-        if initial_timer is not None:
-            initial_timer.stop()
         try:
             event_bus.sig_cache_reload_completed.disconnect(self._on_cache_reload_completed)
+        except (TypeError, RuntimeError):
+            pass
+        try:
+            event_bus.sig_block_trade_updated.disconnect(self._on_block_trade_updated)
         except (TypeError, RuntimeError):
             pass
         super()._cleanup_runtime_state()
 
     def shutdown(self) -> None:
         self._cleanup_runtime_state()
-
-    def _check_auto_refresh(self):
-        if self._is_loading or task_manager.is_active_task(_FOREIGN_BLOCK_TRADE_TASK):
-            return
-
-        now = MarketCalendar.now("CN")
-        today_compact = now.strftime("%Y%m%d")
-        if (
-            self._last_success_at is not None
-            and self._last_success_at.date() == now.date()
-            and self._last_success_at.hour >= 20
-        ):
-            self._last_auto_refresh_date = today_compact
-
-        is_trade_day = MarketCalendar.is_trade_day(now.date(), market="CN")
-        if not self._should_trigger_auto_refresh(
-            now,
-            is_trade_day=is_trade_day,
-            last_auto_refresh_date=self._last_auto_refresh_date,
-            last_success_at=self._last_success_at,
-            pending_auto_refresh_date=self._pending_auto_refresh_date,
-        ):
-            return
-
-        self._pending_auto_refresh_date = today_compact
-        event_bus.sig_system_log.emit("info", self._ensure_log_line(f"[外资大宗] 触发每日20:00自动刷新: {today_compact}"))
-        self._load_block_trade_data()
 
     def _refresh_filter_button_text(self, button, prefix: str, all_text: str):
         text, tooltip = format_multi_select_summary(

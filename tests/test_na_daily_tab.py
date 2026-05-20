@@ -30,7 +30,7 @@ def _build_tab(monkeypatch, provider):
     monkeypatch.setattr(QTimer, "singleShot", lambda *args, **kwargs: None)
     tab = NADailyTab(provider)
     tab._quote_publisher = DummyQuotePublisher()
-    tab._patrol_timer.stop()
+    assert not hasattr(tab, "_patrol_timer")
     monkeypatch.setattr(
         tab,
         "_load_cached_finance_snapshot",
@@ -170,31 +170,32 @@ def test_na_daily_prime_background_loads_rows_immediately(monkeypatch, tmp_path)
 
     report_file = Path(tmp_path) / "战报_202604150930.md"
     report_file.write_text("# test\n", encoding="utf-8")
-    monkeypatch.setattr(
-        tab,
-        "_build_na_daily_rows",
-        lambda: (
-            [
-                {
-                    "代码": "000001",
-                    "名称": "A",
-                    "现价": "--",
-                    "涨幅%": "--",
-                    "市值": "--",
-                    "日报时间": "20260415",
-                    "细分板块": "先进封装",
-                    "股价弹性": "",
-                    "催化剂": "北美催化",
-                    "风控": "",
-                    "评级": "",
-                    "_report_ts": 20260415093000,
-                    "_report_row_rank": 0,
-                }
-            ],
-            [str(report_file)],
-            ("sig",),
-        ),
-    )
+    rows = [
+        {
+            "代码": "000001",
+            "名称": "A",
+            "现价": "--",
+            "涨幅%": "--",
+            "市值": "--",
+            "日报时间": "20260415",
+            "细分板块": "先进封装",
+            "股价弹性": "",
+            "催化剂": "北美催化",
+            "风控": "",
+            "评级": "",
+            "_report_ts": 20260415093000,
+            "_report_row_rank": 0,
+        }
+    ]
+
+    def fake_refresh_full(*, emit_event=False):
+        service = tab._na_daily_service
+        service._rows = rows
+        service._report_files = [str(report_file)]
+        service._report_signature = ("sig",)
+        return {"records": 1}
+
+    monkeypatch.setattr(tab._na_daily_service, "refresh_full", fake_refresh_full)
 
     try:
         tab.prime_background_load()
@@ -203,7 +204,7 @@ def test_na_daily_prime_background_loads_rows_immediately(monkeypatch, tmp_path)
         assert tab._background_prime_done is True
         assert len(tab.model.row_data) == 1
         assert tab._na_daily_codes == {"000001"}
-        assert not tab._patrol_timer.isActive()
+        assert not hasattr(tab, "_patrol_timer")
         assert refresh_calls == []
         assert len(snapshot_calls) == 1
     finally:
