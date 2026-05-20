@@ -79,6 +79,8 @@ def build_asian_history_df(
 
 
 def render_asian_history_payload(window, stock_payload: dict | None) -> bool:
+    if getattr(window, "_closing", False):
+        return False
     if not stock_payload:
         window._set_status_message("当前标的暂无历史日线数据", tone="warning")
         return False
@@ -99,19 +101,27 @@ def render_asian_history_payload(window, stock_payload: dict | None) -> bool:
 
 
 def schedule_asian_history_backfill(window, *, task_manager, fetch_single_kline):
+    if getattr(window, "_closing", False):
+        return
     window._set_status_message("本地缓存缺少该标的，正在单独补拉历史日线...", tone="loading")
 
     def _bg_fetch():
+        if getattr(window, "_closing", False):
+            return None
         return fetch_single_kline(window.name, window.code, period="1y")
 
     def _on_fetch_success(stock_payload):
         try:
+            if getattr(window, "_closing", False):
+                return
             render_asian_history_payload(window, stock_payload)
         except RuntimeError:
             pass
 
     def _on_fetch_error(error_msg):
         try:
+            if getattr(window, "_closing", False):
+                return
             window._set_status_message(f"历史日线拉取失败: {error_msg}", tone="error")
         except RuntimeError:
             pass
@@ -283,4 +293,3 @@ def apply_asian_live_quote(df: pd.DataFrame, quote: dict, *, market: str) -> pd.
         merged_df = pd.concat([merged_df, new_row])
 
     return merged_df
-

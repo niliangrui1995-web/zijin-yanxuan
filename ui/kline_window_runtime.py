@@ -140,6 +140,8 @@ def _merge_cn_realtime_bar(df, quote, *, target_trade_date):
 
 def load_and_draw(window):
     """异步加载 K 线数据并渲染 ECharts。"""
+    if getattr(window, "_closing", False):
+        return
     if "." in window.code:
         window._load_asian_chart()
         return
@@ -151,6 +153,8 @@ def load_and_draw(window):
         window._set_status_message("正在同步完整日线数据...", tone="loading")
 
     def _bg_fetch():
+        if getattr(window, "_closing", False):
+            return None
         quote_to_apply = None
         target_trade_date = window._get_cn_target_trade_date()
 
@@ -196,6 +200,8 @@ def load_and_draw(window):
 
     def _on_fetch_success(result):
         try:
+            if getattr(window, "_closing", False):
+                return
             if not result:
                 return
 

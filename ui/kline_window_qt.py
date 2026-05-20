@@ -17,6 +17,7 @@ from app.services.asian_market_service import is_yf_rate_limit_error, mark_yf_ra
 from app.services.scan_runtime_service import calculate_scan_indicators
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_market_calendar_service import MarketCalendar
+from app.services.ui_task_service import background_job_runner, task_registry
 from app.services.ui_watchlist_service import watchlist_vm
 from core.logger import get_logger
 
@@ -506,6 +507,8 @@ class KLineChartWindow(QWidget):
     # ======================== 图表渲染 ========================
     def _render_chart(self, df, loading=False):
         """将 DataFrame 转换成 ECharts 数据格式并渲染到 WebEngine"""
+        if getattr(self, "_closing", False) or getattr(self, "browser", None) is None:
+            return
         # 兼容 Polars DataFrame
         if not hasattr(df, 'iloc'):
             df = df.to_pandas()
@@ -734,9 +737,18 @@ class KLineChartWindow(QWidget):
             self._rt_timer.stop()
             self._rt_timer = None
 
+        for task_key in (
+            task_registry.window(f"kline_{self.code}"),
+            task_registry.window(f"kline_asian_{self.code}"),
+        ):
+            try:
+                background_job_runner.abandon(task_key)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                pass
+
         self.df = None
 
-        # 释放 WebEngine（先清空页面并断开信号，减少关闭后继续持有窗口）
+        # 释放 WebEngine：关闭阶段不再发起新的页面导航，避免 Qt/WebEngine teardown 竞态。
         browser = getattr(self, "browser", None)
         self.browser = None
         try:
@@ -749,13 +761,6 @@ class KLineChartWindow(QWidget):
                     browser.stop()
                 except (AttributeError, RuntimeError, TypeError):
                     pass
-                try:
-                    browser.setHtml("", QUrl("about:blank"))
-                except (AttributeError, RuntimeError, TypeError):
-                    try:
-                        browser.setUrl(QUrl("about:blank"))
-                    except (AttributeError, RuntimeError, TypeError):
-                        pass
                 try:
                     browser.setParent(None)
                 except (AttributeError, RuntimeError, TypeError):

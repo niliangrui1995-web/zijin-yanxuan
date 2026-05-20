@@ -113,6 +113,16 @@ def test_kline_close_releases_webengine_view_without_deleting_owned_page(monkeyp
     window = _build_fake_webengine_kline(monkeypatch)
     browser = _FakeWebEngineView.last_instance
     page = browser.page()
+    abandoned = []
+
+    class _Runner:
+        def abandon(self, task_key):
+            abandoned.append(str(task_key))
+            return True
+
+    monkeypatch.setattr(kline_module, "background_job_runner", _Runner())
+    browser.html_calls.clear()
+    browser.url_calls.clear()
 
     try:
         window.close()
@@ -124,6 +134,34 @@ def test_kline_close_releases_webengine_view_without_deleting_owned_page(monkeyp
         assert browser.stopped is True
         assert browser.deleted is True
         assert page.deleted is False
+        assert browser.html_calls == []
+        assert browser.url_calls == []
+        assert "kline_000001" in abandoned
+        assert "kline_asian_000001" in abandoned
+    finally:
+        _dispose_kline_window(window)
+
+
+def test_kline_late_render_callback_is_ignored_after_close(monkeypatch):
+    window = _build_fake_webengine_kline(monkeypatch)
+    browser = _FakeWebEngineView.last_instance
+    browser.html_calls.clear()
+    df = pd.DataFrame(
+        {
+            "open": [10.0, 10.1, 10.2, 10.3, 10.4, 10.5],
+            "high": [10.2, 10.3, 10.4, 10.5, 10.6, 10.7],
+            "low": [9.9, 10.0, 10.1, 10.2, 10.3, 10.4],
+            "close": [10.1, 10.2, 10.3, 10.4, 10.5, 10.6],
+            "volume": [1000.0, 1100.0, 1200.0, 1300.0, 1400.0, 1500.0],
+        },
+        index=pd.date_range("2026-04-01", periods=6),
+    )
+
+    try:
+        window._closing = True
+        window._render_chart(df, loading=False)
+
+        assert browser.html_calls == []
     finally:
         _dispose_kline_window(window)
 
