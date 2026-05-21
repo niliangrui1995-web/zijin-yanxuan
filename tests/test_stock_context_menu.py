@@ -104,8 +104,9 @@ def test_codex_stock_prompt_requests_moat_triad_skill():
     prompt = build_codex_stock_prompt("300308", "中际旭创")
 
     assert "$stock-fundamental-moat-triad" in prompt
-    assert "国际同行基准对标" in prompt
-    assert "客户认证壁垒" in prompt
+    assert "重点先判断未来亮点" in prompt
+    assert "业绩传导路径" in prompt
+    assert "客户认证里程碑" in prompt
 
 
 def test_codex_project_thread_url_sanitizes_direct_prompt():
