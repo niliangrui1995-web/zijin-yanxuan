@@ -35,19 +35,19 @@ def _titlebar_shell_style(theme: dict) -> str:
     tokens = build_ui_tokens(theme)
     return f"""
         QWidget#customTitleBar {{
-            background-color: {theme['BG_TITLEBAR']};
-            border-bottom: 1px solid {theme['TITLEBAR_BORDER']};
+            background-color: {theme["BG_TITLEBAR"]};
+            border-bottom: 1px solid {theme["TITLEBAR_BORDER"]};
         }}
         QLabel#titleBarBrand {{
-            color: {theme['BRAND_PRIMARY']};
-            font-size: {tokens['font']['size_md']}px;
-            font-weight: {tokens['font']['weight_bold']};
-            font-family: {tokens['font']['family']};
+            color: {theme["BRAND_PRIMARY"]};
+            font-size: {tokens["font"]["size_md"]}px;
+            font-weight: {tokens["font"]["weight_bold"]};
+            font-family: {tokens["font"]["family"]};
             background: transparent;
             padding-right: 6px;
         }}
         QFrame#titleBarSeparator {{
-            color: {theme['BORDER_STRONG']};
+            color: {theme["BORDER_STRONG"]};
         }}
     """
 
@@ -62,9 +62,9 @@ def _titlebar_button_style(theme: dict, color: str, hover_bg: str, *, font_size:
             border: none;
             font-size: {font_size}px;
             font-weight: bold;
-            padding: 0 {tokens['space']['xl']}px;
-            min-height: {tokens['shell']['titlebar_height']}px;
-            max-height: {tokens['shell']['titlebar_height']}px;
+            padding: 0 {tokens["space"]["xl"]}px;
+            min-height: {tokens["shell"]["titlebar_height"]}px;
+            max-height: {tokens["shell"]["titlebar_height"]}px;
         }}
         QPushButton:hover {{
             background-color: {hover_bg};
@@ -79,12 +79,12 @@ def _system_button_style(theme: dict, text_color: str, hover_bg: str) -> str:
             background: transparent;
             color: {text_color};
             border: none;
-            font-size: {max(16, tokens['font']['size_md'])}px;
+            font-size: {max(16, tokens["font"]["size_md"])}px;
             font-family: "Segoe UI Emoji", "Segoe UI Symbol", "Microsoft YaHei UI";
-            font-weight: {tokens['font']['weight_medium']};
+            font-weight: {tokens["font"]["weight_medium"]};
             padding: 0;
-            min-height: {tokens['shell']['titlebar_height']}px;
-            max-height: {tokens['shell']['titlebar_height']}px;
+            min-height: {tokens["shell"]["titlebar_height"]}px;
+            max-height: {tokens["shell"]["titlebar_height"]}px;
         }}
         QToolButton:hover {{
             background-color: {hover_bg};
@@ -109,43 +109,43 @@ def _standalone_tabbar_qss(theme: dict, *, compact: bool = False) -> str:
             border: none;
         }}
         QTabBar::tab {{
-            background: {surface['toolbar_chip']};
-            color: {theme['TAB_TEXT']};
-            padding: {tokens['control']['tab_padding_y']}px {tab_padding_x}px;
+            background: {surface["toolbar_chip"]};
+            color: {theme["TAB_TEXT"]};
+            padding: {tokens["control"]["tab_padding_y"]}px {tab_padding_x}px;
             margin: 0 {tab_gap}px 0 0;
-            border: 1px solid {border['subtle']};
+            border: 1px solid {border["subtle"]};
             border-top: 2px solid transparent;
-            font-size: {tokens['font']['size_sm']}px;
-            font-weight: {tokens['font']['weight_semibold']};
-            min-height: {tokens['shell']['tabbar_height']}px;
+            font-size: {tokens["font"]["size_sm"]}px;
+            font-weight: {tokens["font"]["weight_semibold"]};
+            min-height: {tokens["shell"]["tabbar_height"]}px;
             min-width: 44px;
             border-radius: {tab_radius}px;
-            font-family: {tokens['font']['family']};
+            font-family: {tokens["font"]["family"]};
         }}
         QTabBar QToolButton {{
-            background: {surface['toolbar_chip']};
-            color: {theme['TEXT_SECONDARY']};
-            border: 1px solid {border['subtle']};
-            border-radius: {tokens['radius']['sm']}px;
+            background: {surface["toolbar_chip"]};
+            color: {theme["TEXT_SECONDARY"]};
+            border: 1px solid {border["subtle"]};
+            border-radius: {tokens["radius"]["sm"]}px;
             min-width: 18px;
             max-width: 18px;
             margin: 1px 1px;
         }}
         QTabBar QToolButton:hover {{
-            color: {theme['TEXT_PRIMARY']};
-            border-color: {border['strong']};
-            background: {theme['BG_HOVER']};
+            color: {theme["TEXT_PRIMARY"]};
+            border-color: {border["strong"]};
+            background: {theme["BG_HOVER"]};
         }}
         QTabBar::tab:selected {{
-            color: {theme.get('TAB_ACTIVE_TEXT', theme['TEXT_PRIMARY'])};
-            background: {theme.get('TAB_ACTIVE_BG', theme['BRAND_SUBTLE'])};
-            border-color: {theme.get('TAB_ACTIVE_BORDER', theme['BORDER_BRAND'])};
-            border-top: 2px solid {theme.get('TAB_ACTIVE_TOP', 'transparent')};
+            color: {theme.get("TAB_ACTIVE_TEXT", theme["TEXT_PRIMARY"])};
+            background: {theme.get("TAB_ACTIVE_BG", theme["BRAND_SUBTLE"])};
+            border-color: {theme.get("TAB_ACTIVE_BORDER", theme["BORDER_BRAND"])};
+            border-top: 2px solid {theme.get("TAB_ACTIVE_TOP", "transparent")};
         }}
         QTabBar::tab:hover:!selected {{
-            color: {theme['TAB_TEXT_HOVER']};
-            background: {theme['TAB_HOVER_BG']};
-            border-color: {border['strong']};
+            color: {theme["TAB_TEXT_HOVER"]};
+            background: {theme["TAB_HOVER_BG"]};
+            border-color: {border["strong"]};
         }}
     """
 
@@ -170,6 +170,7 @@ class MarketPulseStrip(QWidget):
         self.apply_theme()
         try:
             from ui.theme import theme_manager
+
             theme_manager.sig_theme_changed.connect(self._on_theme_changed)
         except (AttributeError, RuntimeError, TypeError):
             pass
@@ -374,24 +375,24 @@ def _nav_group_button_qss(theme: dict) -> str:
     border = tokens["border"]
     return f"""
         QPushButton {{
-            background: {surface['toolbar_chip']};
-            color: {theme['TEXT_SECONDARY']};
-            border: 1px solid {border['subtle']};
-            border-radius: {tokens['radius']['pill']}px;
-            padding: 0 {tokens['space']['lg']}px;
-            min-height: {tokens['control']['segment_height']}px;
-            font-size: {tokens['font']['size_sm']}px;
-            font-weight: {tokens['font']['weight_semibold']};
+            background: {surface["toolbar_chip"]};
+            color: {theme["TEXT_SECONDARY"]};
+            border: 1px solid {border["subtle"]};
+            border-radius: {tokens["radius"]["pill"]}px;
+            padding: 0 {tokens["space"]["lg"]}px;
+            min-height: {tokens["control"]["segment_height"]}px;
+            font-size: {tokens["font"]["size_sm"]}px;
+            font-weight: {tokens["font"]["weight_semibold"]};
         }}
         QPushButton:hover {{
-            color: {theme['TEXT_PRIMARY']};
-            border-color: {border['strong']};
-            background: {theme['BG_HOVER']};
+            color: {theme["TEXT_PRIMARY"]};
+            border-color: {border["strong"]};
+            background: {theme["BG_HOVER"]};
         }}
         QPushButton:checked {{
-            color: {theme.get('TAB_ACTIVE_TEXT', theme['TEXT_PRIMARY'])};
-            border-color: {theme.get('TAB_ACTIVE_BORDER', theme['BORDER_BRAND'])};
-            background: {theme.get('TAB_ACTIVE_BG', theme['BRAND_SUBTLE'])};
+            color: {theme.get("TAB_ACTIVE_TEXT", theme["TEXT_PRIMARY"])};
+            border-color: {theme.get("TAB_ACTIVE_BORDER", theme["BORDER_BRAND"])};
+            background: {theme.get("TAB_ACTIVE_BG", theme["BRAND_SUBTLE"])};
         }}
     """
 
@@ -411,11 +412,11 @@ def _titlebar_sync_button_qss(theme: dict) -> str:
                 stop:0 {primary_gradient_start}, stop:1 {primary_gradient_end});
             color: {primary_button_text};
             border: 1px solid {primary_button_border};
-            border-radius: {tokens['radius']['pill']}px;
-            padding: 0 {tokens['space']['xl']}px;
-            min-height: {tokens['control']['toolbar_button_height']}px;
-            font-size: {tokens['font']['size_sm']}px;
-            font-weight: {tokens['font']['weight_bold']};
+            border-radius: {tokens["radius"]["pill"]}px;
+            padding: 0 {tokens["space"]["xl"]}px;
+            min-height: {tokens["control"]["toolbar_button_height"]}px;
+            font-size: {tokens["font"]["size_sm"]}px;
+            font-weight: {tokens["font"]["weight_bold"]};
         }}
         QPushButton:hover {{
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -516,8 +517,8 @@ class MainWindowStatusBar(QFrame):
         self.setFixedHeight(tokens["shell"]["status_height"])
         self.setStyleSheet(f"""
             QFrame#statusBarWidget {{
-                background-color: {theme['BG_STATUSBAR']};
-                border-top: 1px solid {theme['STATUSBAR_BORDER']};
+                background-color: {theme["BG_STATUSBAR"]};
+                border-top: 1px solid {theme["STATUSBAR_BORDER"]};
             }}
         """)
         self.lbl_status.setStyleSheet(
@@ -539,9 +540,7 @@ class MainWindowStatusBar(QFrame):
             f" padding: 0 {pill_padding}px; min-height: {pill_height}px;"
             f" font-size: {tokens['font']['size_sm']}px; font-family: {tokens['font']['mono_family']};"
         )
-        self.lbl_version.setStyleSheet(
-            f"color: {theme['TEXT_DISABLED']}; font-size: {tokens['font']['size_xs']}px;"
-        )
+        self.lbl_version.setStyleSheet(f"color: {theme['TEXT_DISABLED']}; font-size: {tokens['font']['size_xs']}px;")
         self.status_flow.apply_theme()
         self.set_status_tone(self._status_tone, animate=False)
 
@@ -609,9 +608,7 @@ class ShellNavigationWidget(QWidget):
             self._group_to_indices = {"全部": list(range(tabs.count()))}
 
         self._last_index_by_group = {
-            group: index
-            for group, index in self._last_index_by_group.items()
-            if group in self._group_to_indices
+            group: index for group, index in self._last_index_by_group.items() if group in self._group_to_indices
         }
 
         self._rebuild_group_buttons()
@@ -874,18 +871,18 @@ class TitleBarSyncWidget(QFrame):
                 background: transparent;
             }}
             QLabel#titleBarSyncState {{
-                background-color: {tone['bg']};
-                color: {tone['fg']};
-                border: 1px solid {tone['border']};
-                border-radius: {tokens['radius']['pill']}px;
-                padding: 0 {tokens['space']['md']}px;
-                min-height: {tokens['control']['toolbar_chip_height']}px;
-                font-size: {tokens['font']['size_sm']}px;
-                font-weight: {tokens['font']['weight_semibold']};
+                background-color: {tone["bg"]};
+                color: {tone["fg"]};
+                border: 1px solid {tone["border"]};
+                border-radius: {tokens["radius"]["pill"]}px;
+                padding: 0 {tokens["space"]["md"]}px;
+                min-height: {tokens["control"]["toolbar_chip_height"]}px;
+                font-size: {tokens["font"]["size_sm"]}px;
+                font-weight: {tokens["font"]["weight_semibold"]};
             }}
             QLabel#titleBarSyncMeta {{
-                color: {theme['TEXT_MUTED']};
-                font-size: {tokens['font']['size_sm']}px;
+                color: {theme["TEXT_MUTED"]};
+                font-size: {tokens["font"]["size_sm"]}px;
             }}
             """
         )
@@ -944,9 +941,7 @@ def setup_custom_titlebar(window, parent_layout: QVBoxLayout) -> TitleBarRefs:
     titlebar_layout.addStretch(1)
 
     btn_minimize = QPushButton("─")
-    btn_minimize.setStyleSheet(
-        _titlebar_button_style(theme, theme['TEXT_MUTED'], theme['BG_HOVER'], font_size=11)
-    )
+    btn_minimize.setStyleSheet(_titlebar_button_style(theme, theme["TEXT_MUTED"], theme["BG_HOVER"], font_size=11))
     btn_minimize.setFixedWidth(tokens["shell"]["window_button_width"])
     btn_minimize.setCursor(Qt.CursorShape.PointingHandCursor)
     btn_minimize.setToolTip("最小化窗口")
@@ -954,9 +949,7 @@ def setup_custom_titlebar(window, parent_layout: QVBoxLayout) -> TitleBarRefs:
     btn_minimize.clicked.connect(window.showMinimized)
 
     btn_maximize = QPushButton("□")
-    btn_maximize.setStyleSheet(
-        _titlebar_button_style(theme, theme['TEXT_MUTED'], theme['BG_HOVER'])
-    )
+    btn_maximize.setStyleSheet(_titlebar_button_style(theme, theme["TEXT_MUTED"], theme["BG_HOVER"]))
     btn_maximize.setFixedWidth(tokens["shell"]["window_button_width"])
     btn_maximize.setCursor(Qt.CursorShape.PointingHandCursor)
     btn_maximize.setToolTip("最大化或还原窗口")
@@ -964,9 +957,7 @@ def setup_custom_titlebar(window, parent_layout: QVBoxLayout) -> TitleBarRefs:
     btn_maximize.clicked.connect(window._toggle_maximize)
 
     btn_close = QPushButton("✕")
-    btn_close.setStyleSheet(
-        _titlebar_button_style(theme, theme['TEXT_MUTED'], "#C42B1C")
-    )
+    btn_close.setStyleSheet(_titlebar_button_style(theme, theme["TEXT_MUTED"], "#C42B1C"))
     btn_close.setFixedWidth(tokens["shell"]["window_button_width"])
     btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
     btn_close.setToolTip("关闭窗口")
@@ -1133,9 +1124,7 @@ def refresh_system_menu_theme(window) -> None:
     theme = theme_manager.current_theme
 
     if hasattr(window, "btn_sys_menu") and window.btn_sys_menu:
-        window.btn_sys_menu.setStyleSheet(
-            _system_button_style(theme, theme['TEXT_MUTED'], theme['BG_HOVER'])
-        )
+        window.btn_sys_menu.setStyleSheet(_system_button_style(theme, theme["TEXT_MUTED"], theme["BG_HOVER"]))
         window.btn_sys_menu.setText("⚙️")
         window.btn_sys_menu.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
 
@@ -1165,18 +1154,14 @@ def apply_chrome_theme(window) -> None:
 
     if hasattr(window, "_btn_minimize") and window._btn_minimize:
         window._btn_minimize.setStyleSheet(
-            _titlebar_button_style(theme, theme['TEXT_MUTED'], theme['BG_HOVER'], font_size=11)
+            _titlebar_button_style(theme, theme["TEXT_MUTED"], theme["BG_HOVER"], font_size=11)
         )
         window._btn_minimize.setFixedWidth(build_ui_tokens(theme)["shell"]["window_button_width"])
     if hasattr(window, "_btn_maximize") and window._btn_maximize:
-        window._btn_maximize.setStyleSheet(
-            _titlebar_button_style(theme, theme['TEXT_MUTED'], theme['BG_HOVER'])
-        )
+        window._btn_maximize.setStyleSheet(_titlebar_button_style(theme, theme["TEXT_MUTED"], theme["BG_HOVER"]))
         window._btn_maximize.setFixedWidth(build_ui_tokens(theme)["shell"]["window_button_width"])
     if hasattr(window, "_btn_close") and window._btn_close:
-        window._btn_close.setStyleSheet(
-            _titlebar_button_style(theme, theme['TEXT_MUTED'], "#C42B1C")
-        )
+        window._btn_close.setStyleSheet(_titlebar_button_style(theme, theme["TEXT_MUTED"], "#C42B1C"))
         window._btn_close.setFixedWidth(build_ui_tokens(theme)["shell"]["window_button_width"])
 
     if hasattr(window, "_shell_navigation_widget") and window._shell_navigation_widget:
@@ -1198,7 +1183,7 @@ def apply_chrome_theme(window) -> None:
     if hasattr(window, "tabs_wrapper") and window.tabs_wrapper:
         window.tabs_wrapper.setStyleSheet(f"""
             QFrame#tabsWrapperFrame {{
-                background-color: {theme['BG_GLASS']};
+                background-color: {theme["BG_GLASS"]};
                 border: none;
             }}
         """)

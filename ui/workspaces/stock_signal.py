@@ -61,11 +61,7 @@ def coerce_stock_signal(value) -> StockSignal | None:
             "row_ref",
             "payload",
         }
-        payload = {
-            key: val
-            for key, val in value.items()
-            if key not in metadata_keys
-        }
+        payload = {key: val for key, val in value.items() if key not in metadata_keys}
 
     return StockSignal(
         code=code,

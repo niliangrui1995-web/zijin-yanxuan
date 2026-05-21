@@ -24,12 +24,7 @@ def render_buy_point(active: bool, style: str = BUY_POINT_STYLE_TEXT) -> str:
 
 
 def is_buy_point_active(open_price: float, close_price: float, ma10: float, ma20: float) -> bool:
-    return (
-        close_price >= open_price
-        and ma10 > ma20
-        and open_price < ma10
-        and close_price > ma20 * 0.95
-    )
+    return close_price >= open_price and ma10 > ma20 and open_price < ma10 and close_price > ma20 * 0.95
 
 
 def calculate_buy_point_from_history(

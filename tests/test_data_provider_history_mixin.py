@@ -66,13 +66,12 @@ def test_get_data_prefers_existing_runtime_cache_without_local_reload():
 def _build_tnf_record(code: str, name: str) -> bytes:
     record = bytearray(TdxDataProviderHistoryMixin._TNF_RECORD_SIZE)
     record[19:23] = b"FZDM"
-    record[
-        TdxDataProviderHistoryMixin._TNF_CODE_OFFSET:
-        TdxDataProviderHistoryMixin._TNF_CODE_OFFSET + 6
-    ] = code.encode("ascii")
+    record[TdxDataProviderHistoryMixin._TNF_CODE_OFFSET : TdxDataProviderHistoryMixin._TNF_CODE_OFFSET + 6] = (
+        code.encode("ascii")
+    )
     name_bytes = name.encode("gbk")
     start = TdxDataProviderHistoryMixin._TNF_NAME_OFFSET
-    record[start:start + len(name_bytes)] = name_bytes
+    record[start : start + len(name_bytes)] = name_bytes
     return bytes(record)
 
 

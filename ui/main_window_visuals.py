@@ -153,26 +153,26 @@ def apply_theme(main_window):
             QPalette.ColorGroup.Inactive,
             QPalette.ColorGroup.Disabled,
         ):
-            pal.setColor(group, QPalette.ColorRole.ToolTipBase, QColor(t['BG_ELEVATED']))
-            pal.setColor(group, QPalette.ColorRole.ToolTipText, QColor(t['TEXT_PRIMARY']))
+            pal.setColor(group, QPalette.ColorRole.ToolTipBase, QColor(t["BG_ELEVATED"]))
+            pal.setColor(group, QPalette.ColorRole.ToolTipText, QColor(t["TEXT_PRIMARY"]))
         app.setPalette(pal)
         app.setStyleSheet(qss)
         QToolTip.hideText()
         QToolTip.setPalette(pal)
 
     apply_chrome_theme(main_window)
-    if hasattr(main_window, '_status_bar_widget') and main_window._status_bar_widget:
+    if hasattr(main_window, "_status_bar_widget") and main_window._status_bar_widget:
         main_window._status_bar_widget.apply_theme()
 
     for widget in (
         main_window,
-        getattr(main_window, '_custom_titlebar', None),
-        getattr(main_window, '_status_bar_widget', None),
-        getattr(main_window, '_standalone_tabbar', None),
-        getattr(main_window, '_workspace', None),
-        getattr(main_window, 'tabs_wrapper', None),
-        getattr(main_window, 'btn_sys_menu', None),
-        getattr(getattr(main_window, '_workspace', None), 'detail_drawer', None),
+        getattr(main_window, "_custom_titlebar", None),
+        getattr(main_window, "_status_bar_widget", None),
+        getattr(main_window, "_standalone_tabbar", None),
+        getattr(main_window, "_workspace", None),
+        getattr(main_window, "tabs_wrapper", None),
+        getattr(main_window, "btn_sys_menu", None),
+        getattr(getattr(main_window, "_workspace", None), "detail_drawer", None),
     ):
         if widget:
             widget.style().unpolish(widget)

@@ -8,11 +8,20 @@ from core.logger import get_logger
 log = get_logger(__name__)
 
 
-
 FOREIGN_KEYWORDS = [
-    "深股通", "沪股通", "陆股通",  # 北向通
-    "高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴",
-    "渣打", "野村", "汇丰", "星展", "大和"
+    "深股通",
+    "沪股通",
+    "陆股通",  # 北向通
+    "高盛",
+    "摩根大通",
+    "摩根士丹利",
+    "瑞银",
+    "法巴",
+    "渣打",
+    "野村",
+    "汇丰",
+    "星展",
+    "大和",
 ]
 
 DEFAULT_JG_INFO = {
@@ -320,7 +329,7 @@ def fetch_lhb_data_for_date(
     jg_candidates: dict[str, list[dict]] = {}
     if not df_jg.empty:
         for _, row in df_jg.iterrows():
-            code = str(row.get('代码', '')).zfill(6)
+            code = str(row.get("代码", "")).zfill(6)
             reason_key = _normalize_reason_key(row.get("上榜原因", ""))
             jg_info = _build_jg_info(row)
             jg_info["_上榜原因_key"] = reason_key
@@ -331,8 +340,6 @@ def fetch_lhb_data_for_date(
             if reason_key:
                 jg_reason_dict.setdefault((code, reason_key), []).append(jg_info)
 
-
-
     # 3. 抓取活跃营业部，拦截外资痕迹
     df_yyb = pd.DataFrame()
     try:
@@ -340,12 +347,12 @@ def fetch_lhb_data_for_date(
     except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
         log.warning(f"[龙虎榜抓取] 活跃营业部抓取失败: {e}")
 
-    foreign_buys = {}   # code -> [席位...]
+    foreign_buys = {}  # code -> [席位...]
     foreign_sells = {}  # code -> [席位...]
 
     if not df_yyb.empty:
         for _, row in df_yyb.iterrows():
-            branch_name = str(row.get('营业部名称', ''))
+            branch_name = str(row.get("营业部名称", ""))
 
             # --- 简写外资营业部名称 ---
             matched_kw = None
@@ -360,31 +367,33 @@ def fetch_lhb_data_for_date(
             short_branch = matched_kw
 
             # 解析该外资席位买入了哪些股票
-            buy_stocks_str = str(row.get('买入股票', ''))
-            sell_stocks_str = str(row.get('卖出股票', ''))
+            buy_stocks_str = str(row.get("买入股票", ""))
+            sell_stocks_str = str(row.get("卖出股票", ""))
 
             for s_name in buy_stocks_str.split():
-                if not s_name.strip(): continue
+                if not s_name.strip():
+                    continue
                 foreign_buys.setdefault(s_name.strip(), set()).add(short_branch)
 
             for s_name in sell_stocks_str.split():
-                if not s_name.strip(): continue
+                if not s_name.strip():
+                    continue
                 foreign_sells.setdefault(s_name.strip(), set()).add(short_branch)
 
     # 4. 缝合主表
     foreign_detail_cache: dict[str, pd.DataFrame] = {}
     results = []
     for _, row in df_detail.iterrows():
-        code = str(row.get('代码', '')).zfill(6)
-        name = str(row.get('名称', ''))
+        code = str(row.get("代码", "")).zfill(6)
+        name = str(row.get("名称", ""))
 
         # 提取基本字段
-        net_buy = float(row.get('龙虎榜净买额', 0) if pd.notna(row.get('龙虎榜净买额')) else 0)
-        close_p = float(row.get('收盘价', 0) if pd.notna(row.get('收盘价')) else 0)
-        pct = float(row.get('涨跌幅', 0) if pd.notna(row.get('涨跌幅')) else 0)
-        turnover = float(row.get('换手率', 0) if pd.notna(row.get('换手率')) else 0)
-        mk_cap = float(row.get('流通市值', 0) if pd.notna(row.get('流通市值')) else 0)
-        reason = str(row.get('上榜原因', ''))
+        net_buy = float(row.get("龙虎榜净买额", 0) if pd.notna(row.get("龙虎榜净买额")) else 0)
+        close_p = float(row.get("收盘价", 0) if pd.notna(row.get("收盘价")) else 0)
+        pct = float(row.get("涨跌幅", 0) if pd.notna(row.get("涨跌幅")) else 0)
+        turnover = float(row.get("换手率", 0) if pd.notna(row.get("换手率")) else 0)
+        mk_cap = float(row.get("流通市值", 0) if pd.notna(row.get("流通市值")) else 0)
+        reason = str(row.get("上榜原因", ""))
 
         # 关联机构数据
         jg_info = _resolve_jg_info(
@@ -395,7 +404,7 @@ def fetch_lhb_data_for_date(
             jg_reason_dict=jg_reason_dict,
             jg_candidates=jg_candidates,
         )
-        has_jg = (jg_info['买方机构数'] > 0) or (jg_info['卖方机构数'] > 0)
+        has_jg = (jg_info["买方机构数"] > 0) or (jg_info["卖方机构数"] > 0)
 
         # 关联外资数据 (通过简称匹配)
         f_buys = list(foreign_buys.get(name, set()))
@@ -441,7 +450,7 @@ def fetch_lhb_data_for_date(
         # ================= 深度过滤 =================
         # 至少有一方净买入(>0)的情况下才抓取
         has_any_net_buy = False
-        if has_jg and (jg_info['机构买入净额'] > 0):
+        if has_jg and (jg_info["机构买入净额"] > 0):
             has_any_net_buy = True
         if has_foreign and (foreign_net_sum > 0):
             has_any_net_buy = True
@@ -461,12 +470,12 @@ def fetch_lhb_data_for_date(
             "市值": round(mk_cap / 100000000.0, 2) if mk_cap > 0 else "--",
             "上榜日期": date_str,
             "上榜净买额(万)": round(net_buy / 10000.0, 2),
-            "机构净买(万)": round(jg_info['机构买入净额'] / 10000.0, 2),
+            "机构净买(万)": round(jg_info["机构买入净额"] / 10000.0, 2),
             "外资净买(万)": round(foreign_net_sum, 2),
             "外资净买入": foreign_str,
             "_外资净买入_tooltip": foreign_tooltip,
             "换手率%": round(turnover, 2),
-            "上榜原因": reason
+            "上榜原因": reason,
         }
         results.append(record)
 

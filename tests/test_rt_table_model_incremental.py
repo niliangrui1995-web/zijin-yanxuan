@@ -65,17 +65,21 @@ def test_rt_table_model_incremental_update_uses_layout_change_when_order_changes
 
     model.modelReset.connect(lambda: resets.append(True))
     model.layoutChanged.connect(lambda: layouts.append(True))
-    model.update_data([
-        _row("000001", "10.00", "+1.00%"),
-        _row("000002", "20.00", "+2.00%"),
-    ])
+    model.update_data(
+        [
+            _row("000001", "10.00", "+1.00%"),
+            _row("000002", "20.00", "+2.00%"),
+        ]
+    )
     resets.clear()
     layouts.clear()
 
-    reused = model.update_rows_incremental([
-        _row("000002", "20.00", "+2.00%"),
-        _row("000001", "10.00", "+1.00%"),
-    ])
+    reused = model.update_rows_incremental(
+        [
+            _row("000002", "20.00", "+2.00%"),
+            _row("000001", "10.00", "+1.00%"),
+        ]
+    )
 
     assert reused is True
     assert resets == []
@@ -84,11 +88,13 @@ def test_rt_table_model_incremental_update_uses_layout_change_when_order_changes
 
 def test_rt_table_model_pct_sort_uses_numeric_values():
     model = RtTableModel()
-    model.update_data([
-        _row("000001", "10.00", "+2.00%"),
-        _row("000002", "20.00", "+10.00%"),
-        _row("000003", "30.00", "-1.00%"),
-    ])
+    model.update_data(
+        [
+            _row("000001", "10.00", "+2.00%"),
+            _row("000002", "20.00", "+10.00%"),
+            _row("000003", "30.00", "-1.00%"),
+        ]
+    )
     proxy = RtSortFilterProxyModel()
     proxy.setSourceModel(model)
     code_col = model.headers.index("代码")

@@ -35,11 +35,13 @@ from ui.workers.scan_worker import ScanWorker
 
 log = get_logger(__name__)
 
+
 class ScanTab(BaseStockTab):
     """
     静态扫描 (VCP 区间扫描) 独立组件
     包含扫描渲染、策略表格、本地JSON缓存，并通过事件总线驱动进度。
     """
+
     AUTO_F5_INCREMENTAL_SCAN_DATE_KEY = "last_auto_incremental_after_f5_date"
 
     def __init__(self, data_provider, engine, parent=None):
@@ -150,9 +152,7 @@ class ScanTab(BaseStockTab):
 
     def _latest_scan_trigger_date(self) -> str:
         dates = [
-            str(item.get("触发日期", "")).strip()
-            for item in (self._current_results or [])
-            if isinstance(item, dict)
+            str(item.get("触发日期", "")).strip() for item in (self._current_results or []) if isinstance(item, dict)
         ]
         dates = [item for item in dates if item]
         return max(dates) if dates else ""
@@ -255,7 +255,7 @@ class ScanTab(BaseStockTab):
 
     def _merge_scan_results(self, base_results: list, incoming_results: list) -> tuple[list, dict]:
         merged: dict[str, dict] = {}
-        for row in (base_results or []):
+        for row in base_results or []:
             if not isinstance(row, dict):
                 continue
             code = str(row.get("代码", "")).strip()
@@ -263,7 +263,7 @@ class ScanTab(BaseStockTab):
                 merged[code] = dict(row)
 
         stats = {"原始命中": len(incoming_results or []), "新增": 0, "更新": 0, "刷新": 0, "忽略": 0}
-        for row in (incoming_results or []):
+        for row in incoming_results or []:
             if not isinstance(row, dict):
                 continue
             code = str(row.get("代码", "")).strip()
@@ -293,7 +293,7 @@ class ScanTab(BaseStockTab):
     def _refresh_scan_result_names(self, results: list) -> list:
         normalized_rows = []
         codes = []
-        for row in (results or []):
+        for row in results or []:
             if not isinstance(row, dict):
                 normalized_rows.append(row)
                 continue
@@ -395,7 +395,9 @@ class ScanTab(BaseStockTab):
                 else:
                     self.table_state.show_loading(
                         "新增补扫中..." if is_incremental else "扫描中...",
-                        f"正在补扫 {self._scan_target_date}" if is_incremental and self._scan_target_date else "正在计算候选信号",
+                        f"正在补扫 {self._scan_target_date}"
+                        if is_incremental and self._scan_target_date
+                        else "正在计算候选信号",
                     )
         elif state == "stopping":
             if hasattr(self, "btn_scan_increment"):
@@ -432,7 +434,8 @@ class ScanTab(BaseStockTab):
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         # 统一工具条：标题 + 副标题 + 过滤区 + 主操作
         self.lbl_scan_status = QLabel()
@@ -476,7 +479,20 @@ class ScanTab(BaseStockTab):
         self._refresh_scan_status()
 
         # 表格控件 (MVC)
-        self.columns = ["代码", "名称", "现价", "涨幅%", "市值", "触发日期", "评分", "RPS强度", "距突破", "突破状态", "区间振幅", "热门板块"]
+        self.columns = [
+            "代码",
+            "名称",
+            "现价",
+            "涨幅%",
+            "市值",
+            "触发日期",
+            "评分",
+            "RPS强度",
+            "距突破",
+            "突破状态",
+            "区间振幅",
+            "热门板块",
+        ]
         self.source_model = StockTableModel(self.columns)
         self.source_model.set_plain_style_headers(["触发日期"])
         self.proxy_model = RtSortFilterProxyModel(self)
@@ -496,6 +512,7 @@ class ScanTab(BaseStockTab):
 
         # 挂载快捷键: 拦截回车与空格模拟双击
         original_keypress = self.table_scan.keyPressEvent
+
         def table_key_press(event):
             if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
                 curr_idx = self.table_scan.currentIndex()
@@ -504,6 +521,7 @@ class ScanTab(BaseStockTab):
                 event.accept()
             else:
                 original_keypress(event)
+
         self.table_scan.keyPressEvent = table_key_press
 
         # 列宽策略 (QSettings 持久化)
@@ -527,14 +545,16 @@ class ScanTab(BaseStockTab):
         layout.addWidget(self.table_state)
 
     def _handle_show_kline(self, index=None):
-        if index is None or not index.isValid(): return
+        if index is None or not index.isValid():
+            return
         model = index.model()
         row = index.row()
         code_col = self.source_model.headers.index("代码")
         name_col = self.source_model.headers.index("名称")
         code_idx = model.index(row, code_col)
         current_code = model.data(code_idx, Qt.ItemDataRole.DisplayRole)
-        if not current_code: return
+        if not current_code:
+            return
 
         code_list = []
         visual_rows = []
@@ -549,10 +569,10 @@ class ScanTab(BaseStockTab):
                 row_data = self.source_model.get_row_data(source_idx.row()) if source_idx.isValid() else None
                 if isinstance(row_data, dict):
                     row_data = dict(row_data)
-                    row_data.setdefault('代码', c_code)
-                    row_data.setdefault('名称', c_name)
+                    row_data.setdefault("代码", c_code)
+                    row_data.setdefault("名称", c_name)
                 if not isinstance(row_data, dict):
-                    row_data = {'代码': c_code, '名称': c_name}
+                    row_data = {"代码": c_code, "名称": c_name}
 
                 code_list.append(row_data)
                 visual_rows.append(r)
@@ -646,10 +666,12 @@ class ScanTab(BaseStockTab):
         if self.worker is not None and self.worker.isRunning():
             return False
 
-        sd = sd.replace('-', '')
-        ed = ed.replace('-', '')
-        if len(sd) == 8: sd = f"{sd[:4]}-{sd[4:6]}-{sd[6:]}"
-        if len(ed) == 8: ed = f"{ed[:4]}-{ed[4:6]}-{ed[6:]}"
+        sd = sd.replace("-", "")
+        ed = ed.replace("-", "")
+        if len(sd) == 8:
+            sd = f"{sd[:4]}-{sd[4:6]}-{sd[6:]}"
+        if len(ed) == 8:
+            ed = f"{ed[:4]}-{ed[4:6]}-{ed[6:]}"
 
         self._scan_mode = "incremental" if merge_mode else "full"
         self._scan_target_date = ed if merge_mode else f"{sd} ~ {ed}"
@@ -722,7 +744,6 @@ class ScanTab(BaseStockTab):
         self._render_scan_table(self._pending_scan_results)
         event_bus.sig_scan_updated.emit()
 
-
     # ==========================
     # 数据渲染逻辑
     # ==========================
@@ -739,13 +760,14 @@ class ScanTab(BaseStockTab):
             self._refresh_scan_status("本次无结果")
             return
         import pandas as pd
+
         try:
-            df_res = pd.DataFrame(results).sort_values('触发日期').drop_duplicates(subset=['代码'], keep='last')
-            if '评分' in df_res.columns:
-                df_res['评分_tmp'] = pd.to_numeric(df_res['评分'], errors='coerce')
-                df_res = df_res.sort_values(by=['触发日期', '评分_tmp'], ascending=[False, False])
-                df_res = df_res.drop(columns=['评分_tmp'])
-            final_list = df_res.to_dict('records')
+            df_res = pd.DataFrame(results).sort_values("触发日期").drop_duplicates(subset=["代码"], keep="last")
+            if "评分" in df_res.columns:
+                df_res["评分_tmp"] = pd.to_numeric(df_res["评分"], errors="coerce")
+                df_res = df_res.sort_values(by=["触发日期", "评分_tmp"], ascending=[False, False])
+                df_res = df_res.drop(columns=["评分_tmp"])
+            final_list = df_res.to_dict("records")
             self._current_results = final_list
         except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
             event_bus.sig_system_log.emit("error", f"数据整理失败: {e}")
@@ -756,14 +778,16 @@ class ScanTab(BaseStockTab):
 
         try:
             for row_idx, row_data in enumerate(final_list):
-                code_str = str(row_data.get('代码', ''))
-                name_str = str(row_data.get('名称', ''))
+                code_str = str(row_data.get("代码", ""))
+                name_str = str(row_data.get("名称", ""))
 
                 def _safe_float_str(val, fmt="{:.2f}"):
-                    try: return fmt.format(float(val))
-                    except (ValueError, TypeError): return str(val)
+                    try:
+                        return fmt.format(float(val))
+                    except (ValueError, TypeError):
+                        return str(val)
 
-                status = str(row_data.get('突破状态', ''))
+                status = str(row_data.get("突破状态", ""))
                 row_style = ""
                 if "放量突破" in status:
                     row_style = "breakout"
@@ -775,7 +799,7 @@ class ScanTab(BaseStockTab):
                     row_style = "approaching"
 
                 # Format score cleanly
-                score_str = str(row_data.get('评分', ''))
+                score_str = str(row_data.get("评分", ""))
                 try:
                     _ = float(score_str)
                 except (ValueError, TypeError):
@@ -784,17 +808,17 @@ class ScanTab(BaseStockTab):
                 formatted_row = {
                     "代码": code_str,
                     "名称": name_str,
-                    "现价": _safe_float_str(row_data.get('收盘', 0)),
-                    "涨幅%": "--", # Historical static scan lacks intraday % change originally
-                    "触发日期": str(row_data.get('触发日期', '')),
+                    "现价": _safe_float_str(row_data.get("收盘", 0)),
+                    "涨幅%": "--",  # Historical static scan lacks intraday % change originally
+                    "触发日期": str(row_data.get("触发日期", "")),
                     "评分": score_str,
-                    "RPS强度": str(row_data.get('RPS强度', '')),
-                    "市值": str(row_data.get('市值', '')),
-                    "距突破": str(row_data.get('距突破', '')),
+                    "RPS强度": str(row_data.get("RPS强度", "")),
+                    "市值": str(row_data.get("市值", "")),
+                    "距突破": str(row_data.get("距突破", "")),
                     "突破状态": status,
-                    "区间振幅": str(row_data.get('区间振幅', '')),
-                    "热门板块": str(row_data.get('热点板块', '-')),
-                    "_row_style": row_style, # Using background dye injected to StockTableModel
+                    "区间振幅": str(row_data.get("区间振幅", "")),
+                    "热门板块": str(row_data.get("热点板块", "-")),
+                    "_row_style": row_style,  # Using background dye injected to StockTableModel
                 }
                 # Keep original data nested so double clicks can retrieve it
                 for k, v in row_data.items():
@@ -822,23 +846,24 @@ class ScanTab(BaseStockTab):
     def _save_scan_cache(self, results: list):
         try:
             from core.data_store import DataStore
+
             store = DataStore()
             if not results:
                 store.delete_key("scan_cache")
                 log.info("[扫描缓存] 本次扫描无结果，已清空旧缓存")
                 return
             params_snapshot = {
-                'rps': self.spn_scan_rps.value(),
-                'amp': self.spn_scan_amp.value(),
-                'ma_bind': self.spn_scan_ma_bind.value(),
-                'amount': self.spn_scan_amount.value(),
-                'high250': self.spn_scan_high250.value(),
+                "rps": self.spn_scan_rps.value(),
+                "amp": self.spn_scan_amp.value(),
+                "ma_bind": self.spn_scan_ma_bind.value(),
+                "amount": self.spn_scan_amount.value(),
+                "high250": self.spn_scan_high250.value(),
             }
             cache_data = {
-                'saved_at': datetime.datetime.now().isoformat(),
-                'count': len(results),
-                'params': params_snapshot,
-                'results': results,
+                "saved_at": datetime.datetime.now().isoformat(),
+                "count": len(results),
+                "params": params_snapshot,
+                "results": results,
             }
             store.save_json("scan_cache", cache_data)
             log.info(f"[扫描缓存] 已保存 {len(results)} 条结果至 SQLite")
@@ -848,15 +873,19 @@ class ScanTab(BaseStockTab):
     def _load_scan_cache(self):
         try:
             from core.data_store import DataStore
+
             cache_data = DataStore().load_json("scan_cache")
 
             # 如果 SQLite 没查到，尝试兼容旧的 JSON 并自动迁入
             if not cache_data:
-                data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'data')
-                old_path = os.path.join(data_dir, 'scan_cache.json')
+                data_dir = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data"
+                )
+                old_path = os.path.join(data_dir, "scan_cache.json")
                 if os.path.exists(old_path):
                     import json
-                    with open(old_path, 'r', encoding='utf-8') as f:
+
+                    with open(old_path, "r", encoding="utf-8") as f:
                         cache_data = json.load(f)
                     if isinstance(cache_data, dict) and cache_data:
                         DataStore().save_json("scan_cache", cache_data)
@@ -867,26 +896,29 @@ class ScanTab(BaseStockTab):
                         except OSError as _e:
                             log.debug(f"[扫描缓存] 迁移文件重命名失败: {_e}")
 
-            if not isinstance(cache_data, dict): return
-            results = cache_data.get('results', [])
-            if not results: return
+            if not isinstance(cache_data, dict):
+                return
+            results = cache_data.get("results", [])
+            if not results:
+                return
 
-            saved_at = cache_data.get('saved_at', '未知')
+            saved_at = cache_data.get("saved_at", "未知")
             refreshed_results = self._refresh_scan_result_names(results)
             self._current_results = refreshed_results
             self._render_scan_table(refreshed_results)
 
             # #9: 回显参数快照，让用户知道这批结果用的什么参数
-            params_info = cache_data.get('params')
+            params_info = cache_data.get("params")
             params_hint = ""
             if params_info and isinstance(params_info, dict):
-                params_hint = (f" | RPS≥{params_info.get('rps', '?')}"
-                               f" 振幅≤{int(params_info.get('amp', 0)*100)}%"
-                               f" 均线粘合≤{int(params_info.get('ma_bind', 0)*100)}%")
+                params_hint = (
+                    f" | RPS≥{params_info.get('rps', '?')}"
+                    f" 振幅≤{int(params_info.get('amp', 0) * 100)}%"
+                    f" 均线粘合≤{int(params_info.get('ma_bind', 0) * 100)}%"
+                )
 
             event_bus.sig_system_log.emit(
-                "info",
-                f"[扫描缓存] 已加载 {len(results)} 条记录 (保存于 {saved_at[:16]}){params_hint}"
+                "info", f"[扫描缓存] 已加载 {len(results)} 条记录 (保存于 {saved_at[:16]}){params_hint}"
             )
             ui_signals.sig_task_progress.emit("scan", 100, f"已加载 {len(results)} 条扫描缓存")
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError, sqlite3.Error, json.JSONDecodeError) as e:
@@ -917,8 +949,11 @@ class ScanTab(BaseStockTab):
             vcp_data = None
 
         from ui.components.stock_context_menu import build_stock_context_menu
+
         build_stock_context_menu(
-            self, code, name,
+            self,
+            code,
+            name,
             vcp_data=vcp_data,
         )
 

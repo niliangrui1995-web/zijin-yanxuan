@@ -58,9 +58,7 @@ def _runtime_env_issue_entry(issue: Any) -> dict[str, Any]:
     code = str(_issue_value(issue, "code", "name", default="") or "")
     message = str(_issue_value(issue, "message", "detail", "description", default="") or "")
     severity = str(_issue_value(issue, "severity", "level", default="warning") or "warning").lower()
-    hard_failure = bool(
-        _issue_value(issue, "hard_failure", "is_hard_failure", "fatal", default=False)
-    )
+    hard_failure = bool(_issue_value(issue, "hard_failure", "is_hard_failure", "fatal", default=False))
     if severity in _HARD_RUNTIME_ENV_SEVERITIES:
         hard_failure = True
     if not message:
@@ -170,18 +168,12 @@ def build_report(*, skip_webengine_preflight: bool = False, webengine_timeout_s:
         "sqlite_state": _path_snapshot(PROJECT_ROOT / "data" / "vcp_hunter.db"),
     }
     hard_failures = [
-        key
-        for key, value in imports.items()
-        if key in {"PyQt6", "PyQt6-WebEngine"} and not value.get("ok")
+        key for key, value in imports.items() if key in {"PyQt6", "PyQt6-WebEngine"} and not value.get("ok")
     ]
     if not webengine_preflight.get("ok"):
         hard_failures.append("qt_webengine_preflight")
     runtime_env_issues = _collect_runtime_env_issue_entries()
-    hard_failures.extend(
-        _runtime_env_failure_key(issue)
-        for issue in runtime_env_issues
-        if issue.get("hard_failure")
-    )
+    hard_failures.extend(_runtime_env_failure_key(issue) for issue in runtime_env_issues if issue.get("hard_failure"))
 
     status = "fail" if hard_failures else "ok"
     return {

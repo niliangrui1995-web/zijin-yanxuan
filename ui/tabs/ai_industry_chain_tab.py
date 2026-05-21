@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """AI产业链独立 Tab 组件。"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -24,8 +25,16 @@ PLACEHOLDER = "--"
 
 class AIIndustryChainTab(BaseStockTab):
     COLUMNS = [
-        "代码", "名称", "现价", "涨幅", "市值", "细分板块",
-        "5日涨幅", "10日涨幅", "20日涨幅", "备注",
+        "代码",
+        "名称",
+        "现价",
+        "涨幅",
+        "市值",
+        "细分板块",
+        "5日涨幅",
+        "10日涨幅",
+        "20日涨幅",
+        "备注",
     ]
 
     PERIOD_COLUMNS = {
@@ -75,7 +84,8 @@ class AIIndustryChainTab(BaseStockTab):
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         self.status_label = QLabel("未加载")
         self.search_box = QLineEdit()
@@ -218,18 +228,20 @@ class AIIndustryChainTab(BaseStockTab):
             code = self._normalize_code(_get(raw_row, "代码"))
             if not code:
                 continue
-            result.append({
-                "代码": code,
-                "名称": _get(raw_row, "公司名称") or _get(raw_row, "名称") or code,
-                "现价": PLACEHOLDER,
-                "涨幅": PLACEHOLDER,
-                "市值": PLACEHOLDER,
-                "细分板块": _get(raw_row, "细分板块") or _get(raw_row, "细分环节"),
-                "5日涨幅": PLACEHOLDER,
-                "10日涨幅": PLACEHOLDER,
-                "20日涨幅": PLACEHOLDER,
-                "备注": _get(raw_row, "备注"),
-            })
+            result.append(
+                {
+                    "代码": code,
+                    "名称": _get(raw_row, "公司名称") or _get(raw_row, "名称") or code,
+                    "现价": PLACEHOLDER,
+                    "涨幅": PLACEHOLDER,
+                    "市值": PLACEHOLDER,
+                    "细分板块": _get(raw_row, "细分板块") or _get(raw_row, "细分环节"),
+                    "5日涨幅": PLACEHOLDER,
+                    "10日涨幅": PLACEHOLDER,
+                    "20日涨幅": PLACEHOLDER,
+                    "备注": _get(raw_row, "备注"),
+                }
+            )
         return result
 
     @staticmethod
@@ -409,6 +421,7 @@ class AIIndustryChainTab(BaseStockTab):
             return
 
         from ui.components.stock_context_menu import build_stock_context_menu
+
         build_stock_context_menu(self, code, name, vcp_data=self._build_watchlist_payload(row))
 
     @staticmethod

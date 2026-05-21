@@ -91,9 +91,7 @@ class MarketCalendar:
             (900, 1520, "交易中"),
             (1520, 1531, "收盘集合竞价"),
         ),
-        "US": (
-            (930, 1601, "交易中"),
-        ),
+        "US": ((930, 1601, "交易中"),),
     }
     _MARKET_SESSIONS = {
         "CN": ((930, 1130), (1300, 1500)),
@@ -330,9 +328,7 @@ class MarketCalendar:
             missing = sorted(required - existing)
             if not missing:
                 continue
-            log.warning(
-                f"[交易日历] {market} 节假日年份覆盖不足，缺失 {missing}，已启动后台补齐"
-            )
+            log.warning(f"[交易日历] {market} 节假日年份覆盖不足，缺失 {missing}，已启动后台补齐")
             cls._schedule_asian_holiday_refresh(market, missing)
 
     @classmethod
@@ -581,9 +577,7 @@ class MarketCalendar:
         return True
 
     @classmethod
-    def get_latest_trade_date(
-        cls, market: str = "CN", ref_date: Any = None
-    ) -> datetime.date:
+    def get_latest_trade_date(cls, market: str = "CN", ref_date: Any = None) -> datetime.date:
         market = cls.normalize_market(market)
         cursor = cls._coerce_date(ref_date, market)
         if market == "CN":

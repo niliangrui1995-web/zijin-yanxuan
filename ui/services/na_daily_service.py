@@ -227,7 +227,15 @@ class NADailyRefreshService(QObject):
                             "strategy": advice.get("strategy", ""),
                         }
                 parsed_from_json = True
-            except (json.JSONDecodeError, AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            except (
+                json.JSONDecodeError,
+                AttributeError,
+                KeyError,
+                OSError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+            ) as exc:
                 log.warning(f"解析北美战报 JSON 失败: {exc}")
 
         if not parsed_from_json:

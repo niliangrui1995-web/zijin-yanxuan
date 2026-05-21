@@ -125,8 +125,8 @@ def test_scan_tab_refresh_data_after_f5_loads_cache_and_starts_incremental(monke
     calls = []
     try:
         tab._load_scan_cache = lambda: calls.append("load_cache")
-        tab.refresh_table_from_latest_snapshot = (
-            lambda current_model=None, *, async_local=True: calls.append((current_model, async_local))
+        tab.refresh_table_from_latest_snapshot = lambda current_model=None, *, async_local=True: calls.append(
+            (current_model, async_local)
         )
         tab.run_auto_incremental_scan_after_f5 = lambda: calls.append("incremental") or True
 
@@ -234,9 +234,7 @@ def test_refresh_scan_result_names_repairs_placeholder_name(monkeypatch):
     provider = _DummyProvider()
     tab = ScanTab(data_provider=provider, engine=None)
     try:
-        refreshed = tab._refresh_scan_result_names(
-            [{"代码": "300093", "名称": "300093", "触发日期": "2026-04-17"}]
-        )
+        refreshed = tab._refresh_scan_result_names([{"代码": "300093", "名称": "300093", "触发日期": "2026-04-17"}])
 
         assert refreshed[0]["名称"] == "*ST金刚"
         assert provider.requests == [(("300093",), True)]

@@ -19,6 +19,7 @@ _SCHEDULER_ERRORS = (
     ArithmeticError,
 )
 
+
 class FetchWorker(QThread):
     sig_finished = pyqtSignal(object, str)
     sig_failed = pyqtSignal(str, str)
@@ -62,6 +63,7 @@ class FetchWorker(QThread):
         except _SCHEDULER_ERRORS as e:
             logger.error(f"[业绩调度] ❌ 后台抓取异常退出: {e}")
             self.sig_failed.emit(self.mode, str(e))
+
 
 class EarningsScheduler(QObject):
     sig_new_surprises_found = pyqtSignal(object, str)

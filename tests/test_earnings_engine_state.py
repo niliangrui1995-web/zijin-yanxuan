@@ -57,7 +57,9 @@ def test_fetch_daily_surprises_does_not_mark_seen_when_candidate_fails_threshold
     monkeypatch.setattr(
         engine_module,
         "safe_ak_fetch",
-        lambda fetch_func, *args, **kwargs: candidate_df.copy() if fetch_func.__name__ == "stock_yjbb_em" else pd.DataFrame(),
+        lambda fetch_func, *args, **kwargs: (
+            candidate_df.copy() if fetch_func.__name__ == "stock_yjbb_em" else pd.DataFrame()
+        ),
     )
     monkeypatch.setattr(engine, "_inject_sectors", lambda records: records)
     monkeypatch.setattr(engine, "_save_cache", lambda: None)
@@ -98,7 +100,9 @@ def test_fetch_daily_surprises_marks_seen_only_after_valid_record(monkeypatch):
     monkeypatch.setattr(
         engine_module,
         "safe_ak_fetch",
-        lambda fetch_func, *args, **kwargs: candidate_df.copy() if fetch_func.__name__ == "stock_yjbb_em" else pd.DataFrame(),
+        lambda fetch_func, *args, **kwargs: (
+            candidate_df.copy() if fetch_func.__name__ == "stock_yjbb_em" else pd.DataFrame()
+        ),
     )
     monkeypatch.setattr(engine, "_inject_sectors", lambda records: records)
     monkeypatch.setattr(engine, "_save_cache", lambda: None)
@@ -144,14 +148,14 @@ def test_fetch_daily_surprises_accepts_next_trade_day_financial_report_on_today_
     monkeypatch.setattr(
         engine_module.MarketCalendar,
         "get_recent_trade_dates",
-        classmethod(
-            lambda cls, n=20, ref_date=None: ["20260417", "20260416", "20260415"]
-        ),
+        classmethod(lambda cls, n=20, ref_date=None: ["20260417", "20260416", "20260415"]),
     )
     monkeypatch.setattr(
         engine_module,
         "safe_ak_fetch",
-        lambda fetch_func, *args, **kwargs: candidate_df.copy() if fetch_func.__name__ == "stock_yjbb_em" else pd.DataFrame(),
+        lambda fetch_func, *args, **kwargs: (
+            candidate_df.copy() if fetch_func.__name__ == "stock_yjbb_em" else pd.DataFrame()
+        ),
     )
     monkeypatch.setattr(engine, "_inject_sectors", lambda records: records)
     monkeypatch.setattr(engine, "_save_cache", lambda: None)
@@ -200,14 +204,14 @@ def test_fetch_daily_surprises_does_not_accept_next_trade_day_financial_report_o
     monkeypatch.setattr(
         engine_module.MarketCalendar,
         "get_recent_trade_dates",
-        classmethod(
-            lambda cls, n=20, ref_date=None: ["20260417", "20260416", "20260415"]
-        ),
+        classmethod(lambda cls, n=20, ref_date=None: ["20260417", "20260416", "20260415"]),
     )
     monkeypatch.setattr(
         engine_module,
         "safe_ak_fetch",
-        lambda fetch_func, *args, **kwargs: candidate_df.copy() if fetch_func.__name__ == "stock_yjbb_em" else pd.DataFrame(),
+        lambda fetch_func, *args, **kwargs: (
+            candidate_df.copy() if fetch_func.__name__ == "stock_yjbb_em" else pd.DataFrame()
+        ),
     )
     monkeypatch.setattr(engine, "_inject_sectors", lambda records: records)
     monkeypatch.setattr(engine, "_save_cache", lambda: None)

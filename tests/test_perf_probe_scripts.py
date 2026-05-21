@@ -23,7 +23,7 @@ def _sample(rss: float, private: float, threads: int = 20, label: str = "") -> d
             "rss_mb": rss,
             "private_mb": private,
             "thread_count": threads,
-        }
+        },
     }
 
 

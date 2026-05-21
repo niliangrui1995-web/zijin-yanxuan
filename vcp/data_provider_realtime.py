@@ -226,13 +226,9 @@ def fetch_realtime_quotes_batch(
 
     batch_size = int(getattr(provider, "_rt_quote_batch_size", batch_size_default) or batch_size_default)
     min_batch_size = int(
-        getattr(provider, "_rt_quote_min_batch_size", min_batch_size_default)
-        or min_batch_size_default
+        getattr(provider, "_rt_quote_min_batch_size", min_batch_size_default) or min_batch_size_default
     )
-    batch_pause_sec = float(
-        getattr(provider, "_rt_quote_batch_pause_sec", batch_pause_default)
-        or batch_pause_default
-    )
+    batch_pause_sec = float(getattr(provider, "_rt_quote_batch_pause_sec", batch_pause_default) or batch_pause_default)
     batch_failures = 0
     failure_reasons = []
     new_fetch = {}
@@ -257,7 +253,7 @@ def fetch_realtime_quotes_batch(
         )
 
     for start in range(0, len(dedup_codes), batch_size):
-        batch = dedup_codes[start:start + batch_size]
+        batch = dedup_codes[start : start + batch_size]
         quotes = {}
         failures = []
         used_sina_fallback = False
@@ -356,18 +352,14 @@ def fetch_realtime_quotes_batch(
                     None,
                 )
                 if fatal_failure_reason:
-                    log.warning(
-                        f"[实时行情] 检测到断连型失败，停止本轮后续批次: {fatal_failure_reason}"
-                    )
+                    log.warning(f"[实时行情] 检测到断连型失败，停止本轮后续批次: {fatal_failure_reason}")
                     break
         if batch_pause_sec > 0 and (start + batch_size) < len(dedup_codes):
             time.sleep(batch_pause_sec)
 
     request_stats["batch_count"] = len(request_stats.get("batches") or [])
     request_stats["recent_codes_count"] = (
-        int((request_stats.get("batches") or [{}])[-1].get("codes_count") or 0)
-        if request_stats.get("batches")
-        else 0
+        int((request_stats.get("batches") or [{}])[-1].get("codes_count") or 0) if request_stats.get("batches") else 0
     )
 
     if new_fetch:
@@ -382,9 +374,7 @@ def fetch_realtime_quotes_batch(
         if batch_failures:
             log.warning(f"[实时行情] {batch_failures} 个批次抓取失败: {failure_reasons[0]}")
     elif batch_failures:
-        provider._register_realtime_failure(
-            failure_reasons[0] if failure_reasons else "全部实时行情批次失败"
-        )
+        provider._register_realtime_failure(failure_reasons[0] if failure_reasons else "全部实时行情批次失败")
 
     missing_codes = [code for code in dedup_codes if code not in result]
     if missing_codes:

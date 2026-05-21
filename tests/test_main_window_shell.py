@@ -84,6 +84,7 @@ class DummyShellWindow(QMainWindow):
     def _apply_table_density(self, density, persist=True):
         self.last_density = (density, persist)
 
+
 def test_main_window_status_bar_applies_theme():
     bar = MainWindowStatusBar("vtest")
     try:

@@ -85,9 +85,7 @@ def refresh_header_context(window) -> None:
         set_header_badge(window, window.market_badge_lbl, market_badge, "neutral")
     if hasattr(window, "nav_index_lbl"):
         total = len(window.code_list)
-        window.nav_index_lbl.setText(
-            f"{window.current_idx + 1} / {total}" if total else "单票"
-        )
+        window.nav_index_lbl.setText(f"{window.current_idx + 1} / {total}" if total else "单票")
     if hasattr(window, "feed_badge_lbl"):
         apply_header_badges(window)
     if hasattr(window, "summary_cards"):
@@ -96,10 +94,14 @@ def refresh_header_context(window) -> None:
             getattr(window, "is_fav", False),
         )
         for card_index, card_widgets in enumerate(window.summary_cards):
-            card_data = summary_cards[card_index] if card_index < len(summary_cards) else {
-                "title": "--",
-                "rows": (),
-            }
+            card_data = (
+                summary_cards[card_index]
+                if card_index < len(summary_cards)
+                else {
+                    "title": "--",
+                    "rows": (),
+                }
+            )
             card_widgets["title"].setText(str(card_data.get("title", "--")))
             rows = card_data.get("rows", ()) or ()
             for row_index, label in enumerate(card_widgets["labels"]):
@@ -115,9 +117,7 @@ def refresh_header_context(window) -> None:
                     continue
                 display_value = _elide_summary_value(label, key_text, base_value)
                 value_color = (
-                    window._summary_highlight_color
-                    if row_data.get("highlight")
-                    else window._summary_value_color
+                    window._summary_highlight_color if row_data.get("highlight") else window._summary_value_color
                 )
                 label.setText(
                     f"<span style='color:{window._summary_key_color};'>{html.escape(key_text)}</span>"
@@ -182,7 +182,7 @@ def apply_qt_theme(window) -> None:
     window.setStyleSheet(
         f"""
             QWidget {{ background-color: {widget_bg}; color: {widget_text}; }}
-            QLabel {{ font-family: {font['family']}; }}
+            QLabel {{ font-family: {font["family"]}; }}
         """
     )
 
@@ -191,7 +191,7 @@ def apply_qt_theme(window) -> None:
             QFrame#klineContainer {{
                 background-color: {widget_bg};
                 border: 1px solid {toolbar_border};
-                border-radius: {radius['lg']}px;
+                border-radius: {radius["lg"]}px;
             }}
         """
     )
@@ -200,8 +200,8 @@ def apply_qt_theme(window) -> None:
         f"""
             QWidget {{
                 background-color: {toolbar_bg};
-                border-top-left-radius: {radius['lg']}px;
-                border-top-right-radius: {radius['lg']}px;
+                border-top-left-radius: {radius["lg"]}px;
+                border-top-right-radius: {radius["lg"]}px;
                 border-bottom: 1px solid {toolbar_border};
             }}
         """
@@ -220,14 +220,12 @@ def apply_qt_theme(window) -> None:
             QToolButton:hover {{
                 background-color: #E81123;
                 color: white;
-                border-radius: {radius['xs']}px;
+                border-radius: {radius["xs"]}px;
             }}
         """
     )
 
-    window.header_widget.setStyleSheet(
-        f"background-color: {toolbar_bg}; border-bottom: 1px solid {toolbar_border};"
-    )
+    window.header_widget.setStyleSheet(f"background-color: {toolbar_bg}; border-bottom: 1px solid {toolbar_border};")
     window.identity_lbl.setStyleSheet(
         f"color: {widget_text}; font-weight: {font['weight_bold']}; font-size: {font['size_lg']}px;"
     )
@@ -251,13 +249,13 @@ def apply_qt_theme(window) -> None:
 
     nav_style = f"""
         QPushButton {{
-            background-color: {neutral_tone['bg']};
+            background-color: {neutral_tone["bg"]};
             color: {info_color};
             border: 1px solid {btn_border};
-            border-radius: {radius['md']}px;
+            border-radius: {radius["md"]}px;
             padding: 0 12px;
-            font-weight: {font['weight_semibold']};
-            font-size: {font['size_sm']}px;
+            font-weight: {font["weight_semibold"]};
+            font-size: {font["size_sm"]}px;
         }}
         QPushButton:hover {{ background-color: {btn_hover_bg}; color: {btn_hover_text}; }}
         QPushButton:disabled {{ color: {btn_disabled_text}; border-color: {btn_disabled_border}; }}
@@ -275,23 +273,23 @@ def apply_qt_theme(window) -> None:
     window.btn_fav.setStyleSheet(
         f"""
             QPushButton[watching="false"] {{
-                background-color: {neutral_tone['bg']};
+                background-color: {neutral_tone["bg"]};
                 color: {fav_accent};
                 border: 1px solid {fav_accent};
-                border-radius: {radius['md']}px;
+                border-radius: {radius["md"]}px;
                 padding: 0 12px;
-                font-weight: {font['weight_semibold']};
-                font-size: {font['size_sm']}px;
+                font-weight: {font["weight_semibold"]};
+                font-size: {font["size_sm"]}px;
             }}
             QPushButton[watching="false"]:hover {{ background-color: {fav_hover}; }}
             QPushButton[watching="true"] {{
                 background-color: {fav_active_bg};
                 color: {fav_active_text};
                 border: 1px solid {fav_active_bg};
-                border-radius: {radius['md']}px;
+                border-radius: {radius["md"]}px;
                 padding: 0 12px;
-                font-weight: {font['weight_semibold']};
-                font-size: {font['size_sm']}px;
+                font-weight: {font["weight_semibold"]};
+                font-size: {font["size_sm"]}px;
             }}
             QPushButton[watching="true"]:hover {{
                 background-color: {fav_active_hover};
@@ -301,9 +299,7 @@ def apply_qt_theme(window) -> None:
     )
     apply_header_badges(window)
 
-    window.summary_widget.setStyleSheet(
-        f"background-color: {summary_bg}; border-bottom: 1px solid {summary_border};"
-    )
+    window.summary_widget.setStyleSheet(f"background-color: {summary_bg}; border-bottom: 1px solid {summary_border};")
     window._summary_key_color = theme["TEXT_MUTED"]
     window._summary_value_color = widget_text
     window._summary_highlight_color = vcp_star
@@ -313,7 +309,7 @@ def apply_qt_theme(window) -> None:
                 QFrame#klineSummaryCard {{
                     background-color: {nav_bg};
                     border: 1px solid {summary_border};
-                    border-radius: {radius['lg']}px;
+                    border-radius: {radius["lg"]}px;
                 }}
             """
         )
@@ -322,9 +318,7 @@ def apply_qt_theme(window) -> None:
             f" font-weight: {font['weight_medium']}; letter-spacing: 0px;"
         )
         for label in card["labels"]:
-            label.setStyleSheet(
-                f"font-size: {font['size_sm']}px; font-weight: {font['weight_medium']};"
-            )
+            label.setStyleSheet(f"font-size: {font['size_sm']}px; font-weight: {font['weight_medium']};")
 
     apply_info_styles(window, widget_text=widget_text, info_color=info_color, is_dark=is_dark)
     window.browser.setStyleSheet(f"background-color: {chart_bg};")

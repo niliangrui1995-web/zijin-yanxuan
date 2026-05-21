@@ -88,9 +88,7 @@ class TdxDataProvider(TdxDataProviderHistoryMixin, TdxDataProviderRealtimeMixin)
         self.code2name = {}
         self._offline = offline
         self._is_trading_day = (
-            is_trading_day
-            if callable(is_trading_day)
-            else (lambda d=None: MarketCalendar.is_trade_day(d, market="CN"))
+            is_trading_day if callable(is_trading_day) else (lambda d=None: MarketCalendar.is_trade_day(d, market="CN"))
         )
         self.tdx_vipdoc = _load_tdx_local_config()
         self._local_gbbq = {}
@@ -200,11 +198,7 @@ class TdxDataProvider(TdxDataProviderHistoryMixin, TdxDataProviderRealtimeMixin)
             "vipdoc_available": bool(getattr(self, "tdx_vipdoc", None)),
             "vipdoc_path": str(getattr(self, "tdx_vipdoc", "") or ""),
             "fallback_or_degraded": not ok or bool(last_status.get("fallback_reason")),
-            "fallback_reason": str(
-                last_status.get("fallback_reason")
-                or warehouse_status.get("fallback_reason")
-                or ""
-            ),
+            "fallback_reason": str(last_status.get("fallback_reason") or warehouse_status.get("fallback_reason") or ""),
         }
 
     def _prune_rt_quote_cache(self, now: float | None = None) -> int:
@@ -399,18 +393,11 @@ class TdxDataProvider(TdxDataProviderHistoryMixin, TdxDataProviderRealtimeMixin)
 
         recent = history[-1] if history else {}
         network_batches = [
-            batch
-            for request in history
-            for batch in (request.get("batches") or [])
-            if isinstance(batch, dict)
+            batch for request in history for batch in (request.get("batches") or []) if isinstance(batch, dict)
         ]
         signatures = [str(batch.get("signature") or "") for batch in network_batches if batch.get("signature")]
         signature_counts = Counter(signatures)
-        repeated_signatures = {
-            signature: count
-            for signature, count in signature_counts.items()
-            if count > 1
-        }
+        repeated_signatures = {signature: count for signature, count in signature_counts.items() if count > 1}
         return {
             "history_size": len(history),
             "recent_started_at": _iso_from_timestamp(recent.get("started_at")),

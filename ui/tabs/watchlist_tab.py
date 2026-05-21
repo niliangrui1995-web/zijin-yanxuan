@@ -89,7 +89,8 @@ class WatchlistTab(BaseStockTab):
     # ================================================================
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         # 统一工具条：标题 + 副标题 + 过滤区 + 主操作
         self.lbl_sp_status = QLabel("")
@@ -137,8 +138,18 @@ class WatchlistTab(BaseStockTab):
 
         # 绑定 Model 与 Delegate
         headers = [
-            "代码", "名称", "来源", "现价", "涨幅%", "市值",
-            "RPS强度", "细分板块", "催化剂", "业绩异动", "大宗交易", "龙虎榜"
+            "代码",
+            "名称",
+            "来源",
+            "现价",
+            "涨幅%",
+            "市值",
+            "RPS强度",
+            "细分板块",
+            "催化剂",
+            "业绩异动",
+            "大宗交易",
+            "龙虎榜",
         ]
         self.model = StockTableModel(headers)
         self.proxy_model = RtSortFilterProxyModel(self.table_sp)
@@ -270,7 +281,7 @@ class WatchlistTab(BaseStockTab):
 
         # 提取当前表格中活跃的实时行情和市值，避免重绘时发生闪退或变成 '--'
         live_data_map = {}
-        if hasattr(self, 'model') and getattr(self.model, 'row_data', None):
+        if hasattr(self, "model") and getattr(self.model, "row_data", None):
             for r in self.model.row_data:
                 c = r.get("代码")
                 if c:
@@ -278,7 +289,7 @@ class WatchlistTab(BaseStockTab):
                         "现价": r.get("现价", "--"),
                         "涨幅%": r.get("涨幅%", "--"),
                         "市值": r.get("市值", "--"),
-                        "_zongguben": r.get("_zongguben", 0)
+                        "_zongguben": r.get("_zongguben", 0),
                     }
 
         final_list = []
@@ -295,22 +306,17 @@ class WatchlistTab(BaseStockTab):
             # 优先从新老池数据中提取名称，最后使用全局映射
             name = info_new.get("名称") or info_old.get("名称")
             if not name or name == str(code):
-                name = getattr(self.data_provider, 'code2name', {}).get(code, code)
+                name = getattr(self.data_provider, "code2name", {}).get(code, code)
 
             live_entry = live_data_map.get(code, {})
             # 优先保留活跃数据
-            cur_price = live_entry.get("现价") if live_entry.get("现价", "--") != "--" else info_new.get("现价", '--')
-            pct_str = live_entry.get("涨幅%") if live_entry.get("涨幅%", "--") != "--" else info_new.get("涨幅%", '--')
-            cap = live_entry.get("市值") if live_entry.get("市值", "--") != "--" else info_new.get("市值", '--')
+            cur_price = live_entry.get("现价") if live_entry.get("现价", "--") != "--" else info_new.get("现价", "--")
+            pct_str = live_entry.get("涨幅%") if live_entry.get("涨幅%", "--") != "--" else info_new.get("涨幅%", "--")
+            cap = live_entry.get("市值") if live_entry.get("市值", "--") != "--" else info_new.get("市值", "--")
 
-            rps = info_new.get("RPS强度", '--')
-            subsector = (
-                info_new.get("细分板块")
-                or info_old.get("细分板块")
-                or info_new.get("subsector", "")
-                or ""
-            )
-            cap_display = cap if cap and cap != '--' else ''
+            rps = info_new.get("RPS强度", "--")
+            subsector = info_new.get("细分板块") or info_old.get("细分板块") or info_new.get("subsector", "") or ""
+            cap_display = cap if cap and cap != "--" else ""
 
             row_data = {
                 "代码": code,
@@ -336,7 +342,7 @@ class WatchlistTab(BaseStockTab):
                 "龙虎榜日期": info_new.get("龙虎榜日期", ""),
                 "龙虎榜净额(万)": info_new.get("龙虎榜净额(万)", info_old.get("龙虎榜净额(万)", "")),
                 "来源标签": source_tags,
-                "_zongguben": live_entry.get("_zongguben", 0)
+                "_zongguben": live_entry.get("_zongguben", 0),
             }
             final_list.append(row_data)
 
@@ -345,9 +351,7 @@ class WatchlistTab(BaseStockTab):
         if result.signature != self._last_watchlist_signature:
             self.model.update_data(result.rows)
             self._last_watchlist_signature = result.signature
-        self._refresh_quotes_from_store_or_live(
-            quote_task_id=task_registry.quote_refresh("watchlist").task_id
-        )
+        self._refresh_quotes_from_store_or_live(quote_task_id=task_registry.quote_refresh("watchlist").task_id)
         self._update_status_summary()
 
     def _can_fetch_live_quotes_now(self) -> bool:
@@ -426,8 +430,9 @@ class WatchlistTab(BaseStockTab):
         # 1. 如果表格处于按某列排序模式(如按涨幅排)，禁止拖拽覆盖
         if self.proxy_model.sortColumn() != -1:
             from ui.components.toast_widget import show_toast
+
             show_toast("当前正处于条件排序状态，拖拽无效，请点击右上角【还原默认视图】后再拖拽！", "warning", self)
-            self._load_special_data() # 撤销刚刚拖拽引发的界面错乱，滚回原状
+            self._load_special_data()  # 撤销刚刚拖拽引发的界面错乱，滚回原状
             return
 
         # 2. 调用 VM 写入磁盘
@@ -435,7 +440,6 @@ class WatchlistTab(BaseStockTab):
 
         # 3. 再重新拉取一次保持严格同步
         self._load_special_data()
-
 
     # ================================================================
     # 交互事件
@@ -492,6 +496,7 @@ class WatchlistTab(BaseStockTab):
             return
 
         from ui.components.stock_context_menu import build_stock_context_menu
+
         build_stock_context_menu(self, code, name)
 
     def _get_a_share_name_map(self) -> dict:
@@ -596,7 +601,7 @@ class WatchlistTab(BaseStockTab):
 
     def _on_watchlist_changed(self, action: str, _code: str):
         """外部请求关注池变更时，防抖 300ms 后再重新加载（防止快速增删导致任务堆积）"""
-        if not hasattr(self, '_debounce_timer'):
+        if not hasattr(self, "_debounce_timer"):
             self._debounce_timer = QTimer(self)
             self._debounce_timer.setSingleShot(True)
             self._debounce_timer.timeout.connect(self._do_watchlist_reload)
@@ -622,17 +627,21 @@ class WatchlistTab(BaseStockTab):
                 except (CacheIOError, DataFormatError) as e:
                     log.debug(f"[关注池] RPS 缓存读取失败，改用空值: {e}")
 
-            rps120_series = rps_bundle.get('rps120') if rps_bundle else None
-            rps250_series = rps_bundle.get('rps250') if rps_bundle else None
+            rps120_series = rps_bundle.get("rps120") if rps_bundle else None
+            rps250_series = rps_bundle.get("rps250") if rps_bundle else None
 
             # --- 动态扫盘：三大挂载战场的雷达数据提取 ---
             na_data, na_subsector_data, block_data, earn_data, lhb_data = (
-                radar_data_tuple[0],
-                radar_data_tuple[1],
-                radar_data_tuple[2],
-                radar_data_tuple[3],
-                radar_data_tuple[4]
-            ) if radar_data_tuple else ({}, {}, {}, {}, {})
+                (
+                    radar_data_tuple[0],
+                    radar_data_tuple[1],
+                    radar_data_tuple[2],
+                    radar_data_tuple[3],
+                    radar_data_tuple[4],
+                )
+                if radar_data_tuple
+                else ({}, {}, {}, {}, {})
+            )
 
             # 剥离不再必要的重复计算市值逻辑 (由大一统机制负责)
             results = {}  # 修复局部变量未初始化的 bug
@@ -660,21 +669,21 @@ class WatchlistTab(BaseStockTab):
                         earnings_text = earnings_info or ""
                         earnings_qoq_pct = ""
 
-                    rps_display = '--'
+                    rps_display = "--"
                     if rps250_val > 0:
                         rps_display = f"{rps250_val:.0f}"
                         if rps120_val > 0:
                             rps_display += f"/{rps120_val:.0f}"
 
                     results[code] = {
-                        'rps': rps_display,
-                        'subsector': na_subsector_data.get(code, ''),
-                        'na_catalyst': na_data.get(code, ''),
-                        'block_trade': block_text,
-                        'block_trade_amount_wan': block_amount_wan,
-                        'earnings': earnings_text,
-                        'earnings_qoq_pct': earnings_qoq_pct,
-                        'lhb': lhb_data.get(code, '')
+                        "rps": rps_display,
+                        "subsector": na_subsector_data.get(code, ""),
+                        "na_catalyst": na_data.get(code, ""),
+                        "block_trade": block_text,
+                        "block_trade_amount_wan": block_amount_wan,
+                        "earnings": earnings_text,
+                        "earnings_qoq_pct": earnings_qoq_pct,
+                        "lhb": lhb_data.get(code, ""),
                     }
                 except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as _e:
                     log.debug(f"[关注池] {code} RPS指标计算异常: {_e}")
@@ -689,7 +698,8 @@ class WatchlistTab(BaseStockTab):
 
     def _apply_vcp_indicators_ui(self, results: dict):
         """主线程：将 VCP 指标更新到 Model（按股票代码匹配，不再按行号，防止排序/拖拽后错位）"""
-        if not results: return
+        if not results:
+            return
 
         with ui_stall_span(
             "WatchlistTab._apply_vcp_indicators_ui",
@@ -701,39 +711,40 @@ class WatchlistTab(BaseStockTab):
             updated_rows = [dict(row_dict) for row_dict in current_rows]
             code_to_row = {}
             for idx, row_dict in enumerate(current_rows):
-                c = row_dict.get('代码')
+                c = row_dict.get("代码")
                 if c:
                     code_to_row[c] = idx
 
             for code, data in results.items():
                 row_idx = code_to_row.get(code, -1)
-                if row_idx < 0 or row_idx >= len(updated_rows): continue
+                if row_idx < 0 or row_idx >= len(updated_rows):
+                    continue
 
                 row_dict = updated_rows[row_idx]
-                row_dict['RPS强度'] = data.get('rps', '--')
-                if data.get('subsector'):
-                    row_dict['细分板块'] = data['subsector']
+                row_dict["RPS强度"] = data.get("rps", "--")
+                if data.get("subsector"):
+                    row_dict["细分板块"] = data["subsector"]
 
                 # 三大阵营的数据注入 (如果原本有数据但不为空，我们不覆盖；如果本次扫到了，坚决覆盖)
-                if data.get('na_catalyst'):
-                    row_dict['催化剂'] = data['na_catalyst']
-                row_dict['大宗交易'] = str(data.get('block_trade', '') or '')
-                row_dict['大宗交易金额(万)'] = data.get('block_trade_amount_wan', '')
-                row_dict['业绩异动'] = str(data.get('earnings', '') or '')
-                row_dict['业绩环比%'] = data.get('earnings_qoq_pct', '')
-                new_lhb = data.get('lhb', '')
+                if data.get("na_catalyst"):
+                    row_dict["催化剂"] = data["na_catalyst"]
+                row_dict["大宗交易"] = str(data.get("block_trade", "") or "")
+                row_dict["大宗交易金额(万)"] = data.get("block_trade_amount_wan", "")
+                row_dict["业绩异动"] = str(data.get("earnings", "") or "")
+                row_dict["业绩环比%"] = data.get("earnings_qoq_pct", "")
+                new_lhb = data.get("lhb", "")
                 if isinstance(new_lhb, dict):
                     new_date = new_lhb.get("date", "")
                     new_text = new_lhb.get("text", "")
                     new_net = new_lhb.get("net_wan", "")
                     # 【逻辑变更】：根据龙虎榜表信息无条件刷新，不考虑历史日期锁定
-                    row_dict["龙虎榜"] = str(new_text or '')
-                    row_dict["龙虎榜日期"] = str(new_date or '')
-                    row_dict["龙虎榜净额(万)"] = new_net if new_net not in (None, '') else ''
+                    row_dict["龙虎榜"] = str(new_text or "")
+                    row_dict["龙虎榜日期"] = str(new_date or "")
+                    row_dict["龙虎榜净额(万)"] = new_net if new_net not in (None, "") else ""
                 else:
-                    row_dict["龙虎榜"] = str(new_lhb or '')
-                    row_dict["龙虎榜日期"] = ''
-                    row_dict["龙虎榜净额(万)"] = ''
+                    row_dict["龙虎榜"] = str(new_lhb or "")
+                    row_dict["龙虎榜日期"] = ""
+                    row_dict["龙虎榜净额(万)"] = ""
 
                 source_tags = watchlist_vm.derive_source_tags(
                     row_dict,
@@ -755,34 +766,33 @@ class WatchlistTab(BaseStockTab):
         patch_payload: dict[str, dict] = {}
         for code, data in results.items():
             entry_patch = {
-                "RPS强度": str(data.get('rps', '')),
+                "RPS强度": str(data.get("rps", "")),
             }
-            if data.get('subsector'):
-                entry_patch["细分板块"] = str(data['subsector'])
+            if data.get("subsector"):
+                entry_patch["细分板块"] = str(data["subsector"])
 
-            if data.get('na_catalyst'):
-                entry_patch["美股日报"] = str(data['na_catalyst'])
-            entry_patch["大宗交易"] = str(data.get('block_trade', '') or '')
-            entry_patch["大宗交易金额(万)"] = data.get('block_trade_amount_wan', '')
-            entry_patch["业绩异动"] = str(data.get('earnings', '') or '')
-            entry_patch["业绩环比%"] = data.get('earnings_qoq_pct', '')
-            new_lhb = data.get('lhb', '')
+            if data.get("na_catalyst"):
+                entry_patch["美股日报"] = str(data["na_catalyst"])
+            entry_patch["大宗交易"] = str(data.get("block_trade", "") or "")
+            entry_patch["大宗交易金额(万)"] = data.get("block_trade_amount_wan", "")
+            entry_patch["业绩异动"] = str(data.get("earnings", "") or "")
+            entry_patch["业绩环比%"] = data.get("earnings_qoq_pct", "")
+            new_lhb = data.get("lhb", "")
             if isinstance(new_lhb, dict):
                 new_date = new_lhb.get("date", "")
                 new_text = new_lhb.get("text", "")
                 new_net = new_lhb.get("net_wan", "")
-                entry_patch["龙虎榜"] = str(new_text or '')
-                entry_patch["龙虎榜日期"] = str(new_date or '')
-                entry_patch["龙虎榜净额(万)"] = new_net if new_net not in (None, '') else ''
+                entry_patch["龙虎榜"] = str(new_text or "")
+                entry_patch["龙虎榜日期"] = str(new_date or "")
+                entry_patch["龙虎榜净额(万)"] = new_net if new_net not in (None, "") else ""
             else:
-                entry_patch["龙虎榜"] = str(new_lhb or '')
-                entry_patch["龙虎榜日期"] = ''
-                entry_patch["龙虎榜净额(万)"] = ''
+                entry_patch["龙虎榜"] = str(new_lhb or "")
+                entry_patch["龙虎榜日期"] = ""
+                entry_patch["龙虎榜净额(万)"] = ""
 
             patch_payload[str(code)] = entry_patch
 
         watchlist_vm.bulk_patch_entries(patch_payload, remove_keys=["催化剂", "热点板块"])
-
 
     def _on_app_closing(self):
         """应用关闭前保存缓存"""
@@ -902,7 +912,7 @@ class WatchlistTab(BaseStockTab):
         """请求计算 VCP 附加指标，带有防抖功能，防止启动时多次触发"""
         if self._closing:
             return
-        if not hasattr(self, '_vcp_calc_timer'):
+        if not hasattr(self, "_vcp_calc_timer"):
             self._vcp_calc_timer = QTimer(self)
             self._vcp_calc_timer.setSingleShot(True)
             self._vcp_calc_timer.timeout.connect(self._do_vcp_calc)
@@ -942,14 +952,15 @@ class WatchlistTab(BaseStockTab):
         if self._closing:
             return
         if self.model and self.model.row_data:
-            codes_with_rows = [(idx, str(r.get("代码")))
-                               for idx, r in enumerate(self.model.row_data) if r.get("代码")]
+            codes_with_rows = [(idx, str(r.get("代码"))) for idx, r in enumerate(self.model.row_data) if r.get("代码")]
             if codes_with_rows:
                 radar_data_tuple = self._gather_radar_data()
                 task_manager.run_in_background(
-                    self._refresh_vcp_indicators, codes_with_rows, radar_data_tuple,
+                    self._refresh_vcp_indicators,
+                    codes_with_rows,
+                    radar_data_tuple,
                     on_error=lambda e: log.error(f"[关注池] 附加指标后台计算异常: {e}"),
-                    task_id=task_registry.workspace("watchlist_vcp_refresh").task_id
+                    task_id=task_registry.workspace("watchlist_vcp_refresh").task_id,
                 )
 
     # ================================================================

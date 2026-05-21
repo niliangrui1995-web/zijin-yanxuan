@@ -17,9 +17,7 @@ def prune_rt_quote_cache(provider, now: float | None = None) -> int:
 
     with provider._rt_quote_lock:
         expired_codes = [
-            code
-            for code, cached_at in provider._rt_quote_time.items()
-            if now - float(cached_at or 0) > ttl
+            code for code, cached_at in provider._rt_quote_time.items() if now - float(cached_at or 0) > ttl
         ]
         for code in expired_codes:
             provider._rt_quote_time.pop(code, None)
@@ -158,9 +156,7 @@ def load_cache_from_disk(provider, *, logger) -> str:
                 remove_cache_file(provider.legacy_cache_file)
                 remove_cache_file(provider.legacy_cache_file + ".corrupted")
                 remove_cache_file(provider.legacy_fallback_cache_file)
-                logger.info(
-                    f"\n[数据中台] Parquet 快速加载: {len(provider.cache_data)} 只标的 (缓存日期: {last_date})"
-                )
+                logger.info(f"\n[数据中台] Parquet 快速加载: {len(provider.cache_data)} 只标的 (缓存日期: {last_date})")
                 return last_date
     except ImportError:
         pass

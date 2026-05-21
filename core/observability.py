@@ -173,11 +173,7 @@ def _format_event_summary(event: str, fields: dict[str, Any]) -> str:
 def emit_structured_log(event: str, *, logger=None, level: str = "info", **fields) -> dict:
     payload = {
         "event": str(event or "").strip() or "unknown",
-        "fields": {
-            str(key): value
-            for key, value in fields.items()
-            if str(key or "").strip()
-        },
+        "fields": {str(key): value for key, value in fields.items() if str(key or "").strip()},
     }
     target_logger = logger or _log
     normalized_level = str(level or "info").lower()

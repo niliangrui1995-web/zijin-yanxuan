@@ -6,6 +6,7 @@ tests/conftest.py — pytest 通用 Fixture
     PyQt6 应用的测试需要一个 QApplication 实例存在，否则任何 QWidget/QSettings
     都会直接 segfault。这里在需要 Qt 的测试中统一创建一次，会话内共享。
 """
+
 import ast
 import atexit
 import os
@@ -56,11 +57,7 @@ def _imported_module_names(node):
     if isinstance(node, ast.ImportFrom):
         module = node.module or ""
         names = [module]
-        names.extend(
-            f"{module}.{alias.name}"
-            for alias in node.names
-            if module and alias.name != "*"
-        )
+        names.extend(f"{module}.{alias.name}" for alias in node.names if module and alias.name != "*")
         return names
     return []
 
@@ -70,17 +67,11 @@ def _is_pyqt_import(node):
 
 
 def _is_qt_application_import(node):
-    return any(
-        _module_matches(module, _QT_APPLICATION_IMPORT_PREFIXES)
-        for module in _imported_module_names(node)
-    )
+    return any(_module_matches(module, _QT_APPLICATION_IMPORT_PREFIXES) for module in _imported_module_names(node))
 
 
 def _is_qsettings_import(node):
-    return any(
-        _module_matches(module, _QT_SETTINGS_IMPORT_PREFIXES)
-        for module in _imported_module_names(node)
-    )
+    return any(_module_matches(module, _QT_SETTINGS_IMPORT_PREFIXES) for module in _imported_module_names(node))
 
 
 def _source_has_pyqt_import(source):

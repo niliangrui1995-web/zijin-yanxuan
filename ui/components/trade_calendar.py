@@ -80,14 +80,13 @@ class TradeCalendarWidget(QCalendarWidget):
         self._apply_theme_stylesheet()
         theme_manager.sig_theme_changed.connect(self._apply_theme_stylesheet)
 
-    def set_earnings_events(self, events: dict[str, list[EarningsCalendarEvent]] | list[EarningsCalendarEvent] | None) -> None:
+    def set_earnings_events(
+        self, events: dict[str, list[EarningsCalendarEvent]] | list[EarningsCalendarEvent] | None
+    ) -> None:
         if isinstance(events, list):
             self._earnings_events_by_date = events_by_date(events)
         else:
-            self._earnings_events_by_date = {
-                str(day): list(items or [])
-                for day, items in dict(events or {}).items()
-            }
+            self._earnings_events_by_date = {str(day): list(items or []) for day, items in dict(events or {}).items()}
         self.updateCells()
 
     def earnings_events_for_date(self, date_value) -> list[EarningsCalendarEvent]:
@@ -104,9 +103,7 @@ class TradeCalendarWidget(QCalendarWidget):
 
     def _configure_weekday_header(self):
         self.setFirstDayOfWeek(Qt.DayOfWeek.Monday)
-        self.setHorizontalHeaderFormat(
-            QCalendarWidget.HorizontalHeaderFormat.SingleLetterDayNames
-        )
+        self.setHorizontalHeaderFormat(QCalendarWidget.HorizontalHeaderFormat.SingleLetterDayNames)
 
         view = self.findChild(QTableView, "qt_calendar_calendarview")
         if view is not None:
@@ -168,41 +165,41 @@ class TradeCalendarWidget(QCalendarWidget):
             QCalendarWidget QToolButton {{
                 background: transparent;
                 border: none;
-                border-radius: {radius['sm']}px;
-                color: {text['secondary']};
-                font-size: {font['size_sm']}px;
-                font-weight: {font['weight_medium']};
+                border-radius: {radius["sm"]}px;
+                color: {text["secondary"]};
+                font-size: {font["size_sm"]}px;
+                font-weight: {font["weight_medium"]};
                 min-height: {nav_button_size}px;
                 padding: 0 6px;
             }}
             QCalendarWidget QToolButton:hover {{
-                color: {text['primary']};
+                color: {text["primary"]};
             }}
             QCalendarWidget QToolButton#qt_calendar_prevmonth,
             QCalendarWidget QToolButton#qt_calendar_nextmonth {{
-                background-color: {surface['soft']};
-                border: 1px solid {border['subtle']};
-                border-radius: {radius['md']}px;
+                background-color: {surface["soft"]};
+                border: 1px solid {border["subtle"]};
+                border-radius: {radius["md"]}px;
                 min-width: {nav_button_size}px;
                 max-width: {nav_button_size}px;
                 padding: 0;
-                font-size: {font['size_md']}px;
-                font-weight: {font['weight_semibold']};
+                font-size: {font["size_md"]}px;
+                font-weight: {font["weight_semibold"]};
             }}
             QCalendarWidget QToolButton#qt_calendar_prevmonth:hover,
             QCalendarWidget QToolButton#qt_calendar_nextmonth:hover {{
-                background-color: {surface['hover']};
-                border: 1px solid {border['accent']};
+                background-color: {surface["hover"]};
+                border: 1px solid {border["accent"]};
             }}
             QCalendarWidget QToolButton#qt_calendar_prevmonth:pressed,
             QCalendarWidget QToolButton#qt_calendar_nextmonth:pressed {{
-                background-color: {surface['toolbar']};
+                background-color: {surface["toolbar"]};
             }}
             QCalendarWidget QToolButton#qt_calendar_monthbutton,
             QCalendarWidget QToolButton#qt_calendar_yearbutton {{
-                color: {text['primary']};
-                font-size: {font['size_lg']}px;
-                font-weight: {font['weight_bold']};
+                color: {text["primary"]};
+                font-size: {font["size_lg"]}px;
+                font-weight: {font["weight_bold"]};
                 padding: 0 6px;
                 min-width: 0;
             }}
@@ -214,14 +211,14 @@ class TradeCalendarWidget(QCalendarWidget):
             }}
             QCalendarWidget QAbstractItemView {{
                 background: transparent;
-                color: {text['primary']};
+                color: {text["primary"]};
                 border: none;
                 outline: none;
                 selection-background-color: transparent;
-                selection-color: {text['bright']};
+                selection-color: {text["bright"]};
             }}
             QCalendarWidget QAbstractItemView::item:disabled {{
-                color: {_c('TEXT_DISABLED')};
+                color: {_c("TEXT_DISABLED")};
             }}
             QCalendarWidget QWidget#qt_calendar_calendarview,
             QCalendarWidget QTableView {{
@@ -232,19 +229,19 @@ class TradeCalendarWidget(QCalendarWidget):
             }}
             QCalendarWidget QTableView QHeaderView::section {{
                 background: transparent;
-                color: {text['header']};
+                color: {text["header"]};
                 border: none;
                 padding: 0 0 10px 0;
-                font-size: {font['size_sm']}px;
-                font-weight: {font['weight_semibold']};
+                font-size: {font["size_sm"]}px;
+                font-weight: {font["weight_semibold"]};
             }}
             QCalendarWidget QSpinBox {{
-                background-color: {_c('BG_INPUT')};
-                color: {_c('TEXT_PRIMARY')};
-                border: 1px solid {_c('BORDER_STRONG')};
-                border-radius: {radius['sm']}px;
+                background-color: {_c("BG_INPUT")};
+                color: {_c("TEXT_PRIMARY")};
+                border: 1px solid {_c("BORDER_STRONG")};
+                border-radius: {radius["sm"]}px;
                 padding: 0 8px;
-                min-height: {control['input_height']}px;
+                min-height: {control["input_height"]}px;
             }}
             """
         )
@@ -447,52 +444,52 @@ class OligarchEarningsCalendarPanel(QFrame):
         self.setStyleSheet(
             f"""
             QFrame#oligarchEarningsPanel {{
-                background: {tokens['surface']['panel']};
-                border: 1px solid {tokens['border']['subtle']};
-                border-radius: {tokens['radius']['md']}px;
+                background: {tokens["surface"]["panel"]};
+                border: 1px solid {tokens["border"]["subtle"]};
+                border-radius: {tokens["radius"]["md"]}px;
             }}
             QLabel#earningsPanelTitle {{
-                color: {tokens['text']['primary']};
-                font-size: {tokens['font']['size_lg']}px;
-                font-weight: {tokens['font']['weight_bold']};
+                color: {tokens["text"]["primary"]};
+                font-size: {tokens["font"]["size_lg"]}px;
+                font-weight: {tokens["font"]["weight_bold"]};
             }}
             QToolButton#earningsRefreshButton {{
                 min-width: 30px;
                 max-width: 30px;
                 min-height: 30px;
                 max-height: 30px;
-                border-radius: {tokens['radius']['sm']}px;
-                border: 1px solid {tokens['border']['default']};
-                background: {tokens['surface']['soft']};
-                color: {tokens['text']['secondary']};
-                font-size: {tokens['font']['size_lg']}px;
+                border-radius: {tokens["radius"]["sm"]}px;
+                border: 1px solid {tokens["border"]["default"]};
+                background: {tokens["surface"]["soft"]};
+                color: {tokens["text"]["secondary"]};
+                font-size: {tokens["font"]["size_lg"]}px;
             }}
             QToolButton#earningsRefreshButton:hover {{
-                border-color: {tokens['border']['accent']};
-                background: {tokens['surface']['hover']};
-                color: {tokens['text']['primary']};
+                border-color: {tokens["border"]["accent"]};
+                background: {tokens["surface"]["hover"]};
+                color: {tokens["text"]["primary"]};
             }}
             QLineEdit#earningsSearchBox {{
-                min-height: {tokens['control']['input_height']}px;
-                border-radius: {tokens['radius']['sm']}px;
-                border: 1px solid {tokens['border']['default']};
-                background: {tokens['surface']['input']};
-                color: {tokens['text']['primary']};
+                min-height: {tokens["control"]["input_height"]}px;
+                border-radius: {tokens["radius"]["sm"]}px;
+                border: 1px solid {tokens["border"]["default"]};
+                background: {tokens["surface"]["input"]};
+                color: {tokens["text"]["primary"]};
                 padding: 0 10px;
             }}
             QPushButton#earningsSegmentButton {{
-                min-height: {tokens['control']['segment_height']}px;
-                border-radius: {tokens['radius']['sm']}px;
-                border: 1px solid {tokens['border']['subtle']};
-                background: {tokens['surface']['soft']};
-                color: {tokens['text']['secondary']};
+                min-height: {tokens["control"]["segment_height"]}px;
+                border-radius: {tokens["radius"]["sm"]}px;
+                border: 1px solid {tokens["border"]["subtle"]};
+                background: {tokens["surface"]["soft"]};
+                color: {tokens["text"]["secondary"]};
                 padding: 0 8px;
-                font-size: {tokens['font']['size_xs']}px;
+                font-size: {tokens["font"]["size_xs"]}px;
             }}
             QPushButton#earningsSegmentButton:checked {{
-                border-color: {t['COLOR_INFO']};
-                color: {tokens['text']['primary']};
-                background: {t['BG_HOVER']};
+                border-color: {t["COLOR_INFO"]};
+                color: {tokens["text"]["primary"]};
+                background: {t["BG_HOVER"]};
             }}
             QScrollArea#earningsEventScroll {{
                 background: transparent;
@@ -502,97 +499,97 @@ class OligarchEarningsCalendarPanel(QFrame):
                 background: transparent;
             }}
             QLabel#earningsPanelStatus {{
-                color: {tokens['text']['muted']};
-                font-size: {tokens['font']['size_xs']}px;
+                color: {tokens["text"]["muted"]};
+                font-size: {tokens["font"]["size_xs"]}px;
             }}
             QLabel#earningsSummaryLabel {{
                 min-height: 24px;
-                border-radius: {tokens['radius']['sm']}px;
-                border: 1px solid {tokens['border']['subtle']};
-                background: {tokens['surface']['input']};
-                color: {tokens['text']['secondary']};
+                border-radius: {tokens["radius"]["sm"]}px;
+                border: 1px solid {tokens["border"]["subtle"]};
+                background: {tokens["surface"]["input"]};
+                color: {tokens["text"]["secondary"]};
                 padding: 0 9px;
-                font-size: {tokens['font']['size_xs']}px;
+                font-size: {tokens["font"]["size_xs"]}px;
             }}
             QWidget#earningsDateGroup {{
                 background: transparent;
             }}
             QLabel#earningsDateGroupTitle {{
-                color: {tokens['text']['primary']};
-                font-size: {tokens['font']['size_sm']}px;
-                font-weight: {tokens['font']['weight_bold']};
+                color: {tokens["text"]["primary"]};
+                font-size: {tokens["font"]["size_sm"]}px;
+                font-weight: {tokens["font"]["weight_bold"]};
             }}
             QLabel#earningsDateGroupCount {{
                 min-width: 32px;
-                border-radius: {tokens['radius']['xs']}px;
-                background: {tokens['surface']['soft']};
-                color: {tokens['text']['muted']};
+                border-radius: {tokens["radius"]["xs"]}px;
+                background: {tokens["surface"]["soft"]};
+                color: {tokens["text"]["muted"]};
                 padding: 2px 7px;
-                font-size: {tokens['font']['size_xs']}px;
-                font-weight: {tokens['font']['weight_semibold']};
+                font-size: {tokens["font"]["size_xs"]}px;
+                font-weight: {tokens["font"]["weight_semibold"]};
             }}
             QFrame#earningsEventCard {{
-                background: {tokens['surface']['input']};
-                border: 1px solid {tokens['border']['subtle']};
-                border-radius: {tokens['radius']['sm']}px;
+                background: {tokens["surface"]["input"]};
+                border: 1px solid {tokens["border"]["subtle"]};
+                border-radius: {tokens["radius"]["sm"]}px;
             }}
             QLabel#earningsEventTicker {{
-                color: {tokens['text']['primary']};
-                font-size: {tokens['font']['size_md']}px;
-                font-weight: {tokens['font']['weight_bold']};
+                color: {tokens["text"]["primary"]};
+                font-size: {tokens["font"]["size_md"]}px;
+                font-weight: {tokens["font"]["weight_bold"]};
             }}
             QLabel#earningsEventCompany {{
-                color: {tokens['text']['secondary']};
-                font-size: {tokens['font']['size_sm']}px;
-                font-weight: {tokens['font']['weight_semibold']};
+                color: {tokens["text"]["secondary"]};
+                font-size: {tokens["font"]["size_sm"]}px;
+                font-weight: {tokens["font"]["weight_semibold"]};
             }}
             QLabel#earningsEventMeta {{
-                color: {tokens['text']['muted']};
-                font-size: {tokens['font']['size_xs']}px;
+                color: {tokens["text"]["muted"]};
+                font-size: {tokens["font"]["size_xs"]}px;
             }}
             QLabel#earningsEventTimeExact {{
-                color: {tokens['text']['primary']};
-                font-size: {tokens['font']['size_xs']}px;
-                font-weight: {tokens['font']['weight_semibold']};
+                color: {tokens["text"]["primary"]};
+                font-size: {tokens["font"]["size_xs"]}px;
+                font-weight: {tokens["font"]["weight_semibold"]};
             }}
             QLabel#earningsEventTimePending {{
-                color: {tokens['text']['secondary']};
-                font-size: {tokens['font']['size_xs']}px;
+                color: {tokens["text"]["secondary"]};
+                font-size: {tokens["font"]["size_xs"]}px;
             }}
             QLabel#earningsEventSource {{
-                color: {tokens['text']['muted']};
-                font-size: {tokens['font']['size_xs']}px;
+                color: {tokens["text"]["muted"]};
+                font-size: {tokens["font"]["size_xs"]}px;
             }}
             QLabel#earningsEventBadgeConfirmed {{
-                color: {tokens['text']['primary']};
-                background: {tokens['state']['success']['bg']};
-                border: 1px solid {tokens['state']['success']['border']};
-                border-radius: {tokens['radius']['xs']}px;
+                color: {tokens["text"]["primary"]};
+                background: {tokens["state"]["success"]["bg"]};
+                border: 1px solid {tokens["state"]["success"]["border"]};
+                border-radius: {tokens["radius"]["xs"]}px;
                 padding: 2px 7px;
-                font-size: {tokens['font']['size_xs']}px;
-                font-weight: {tokens['font']['weight_semibold']};
+                font-size: {tokens["font"]["size_xs"]}px;
+                font-weight: {tokens["font"]["weight_semibold"]};
             }}
             QLabel#earningsEventBadgeBroad {{
-                color: {tokens['text']['primary']};
-                background: {tokens['state']['warning']['bg']};
-                border: 1px solid {tokens['state']['warning']['border']};
-                border-radius: {tokens['radius']['xs']}px;
+                color: {tokens["text"]["primary"]};
+                background: {tokens["state"]["warning"]["bg"]};
+                border: 1px solid {tokens["state"]["warning"]["border"]};
+                border-radius: {tokens["radius"]["xs"]}px;
                 padding: 2px 7px;
-                font-size: {tokens['font']['size_xs']}px;
-                font-weight: {tokens['font']['weight_semibold']};
+                font-size: {tokens["font"]["size_xs"]}px;
+                font-weight: {tokens["font"]["weight_semibold"]};
             }}
             QLabel#earningsEventBadgePending {{
-                color: {tokens['text']['secondary']};
-                background: {tokens['surface']['soft']};
-                border: 1px solid {tokens['border']['subtle']};
-                border-radius: {tokens['radius']['xs']}px;
+                color: {tokens["text"]["secondary"]};
+                background: {tokens["surface"]["soft"]};
+                border: 1px solid {tokens["border"]["subtle"]};
+                border-radius: {tokens["radius"]["xs"]}px;
                 padding: 2px 7px;
-                font-size: {tokens['font']['size_xs']}px;
-                font-weight: {tokens['font']['weight_semibold']};
+                font-size: {tokens["font"]["size_xs"]}px;
+                font-weight: {tokens["font"]["weight_semibold"]};
             }}
             QLabel#earningsEmptyState {{
-                color: {tokens['text']['muted']};
-                font-size: {tokens['font']['size_sm']}px;
+                color: {tokens["text"]["muted"]};
+                font-size: {tokens["font"]["size_sm"]}px;
                 padding: 18px 4px;
             }}
             """
@@ -644,9 +641,7 @@ class OligarchEarningsCalendarPanel(QFrame):
             events = [
                 event
                 for event in events
-                if query in event.ticker.lower()
-                or query in event.company.lower()
-                or query in event.sector.lower()
+                if query in event.ticker.lower() or query in event.company.lower() or query in event.sector.lower()
             ]
         return sorted_events(events)
 
@@ -877,7 +872,9 @@ class OligarchEarningsCalendarPanel(QFrame):
         if self._refresh_worker is not None and self._refresh_worker.isRunning():
             return
         self.btn_refresh.setEnabled(False)
-        self.status_label.setText("\u6b63\u5728\u62c9\u53d6\u5be1\u5934\u5b57\u5178\u5168\u5e02\u573a\u8d22\u62a5\u65e5\u5386...")
+        self.status_label.setText(
+            "\u6b63\u5728\u62c9\u53d6\u5be1\u5934\u5b57\u5178\u5168\u5e02\u573a\u8d22\u62a5\u65e5\u5386..."
+        )
         worker = EarningsCalendarRefreshWorker(self._service, self)
         self._refresh_worker = worker
         worker.sig_result.connect(self._on_refresh_result)

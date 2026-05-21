@@ -166,7 +166,9 @@ def test_watchlist_render_uses_store_only_when_live_quotes_unavailable(monkeypat
     refresh_calls = []
     snapshot_calls = []
     monkeypatch.setattr(tab, "_refresh_quotes_async_local", lambda **kwargs: refresh_calls.append(kwargs))
-    monkeypatch.setattr(tab, "_apply_quote_store_snapshot", lambda *args, **kwargs: snapshot_calls.append((args, kwargs)))
+    monkeypatch.setattr(
+        tab, "_apply_quote_store_snapshot", lambda *args, **kwargs: snapshot_calls.append((args, kwargs))
+    )
     monkeypatch.setattr(tab, "_request_vcp_calc", lambda *args, **kwargs: None)
 
     try:
@@ -196,7 +198,9 @@ def test_watchlist_render_keeps_live_refresh_during_quote_window(monkeypatch):
     refresh_calls = []
     snapshot_calls = []
     monkeypatch.setattr(tab, "_refresh_quotes_async_local", lambda **kwargs: refresh_calls.append(kwargs))
-    monkeypatch.setattr(tab, "_apply_quote_store_snapshot", lambda *args, **kwargs: snapshot_calls.append((args, kwargs)))
+    monkeypatch.setattr(
+        tab, "_apply_quote_store_snapshot", lambda *args, **kwargs: snapshot_calls.append((args, kwargs))
+    )
     monkeypatch.setattr(tab, "_request_vcp_calc", lambda *args, **kwargs: None)
 
     try:

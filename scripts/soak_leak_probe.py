@@ -33,7 +33,7 @@ def _sample(samples: list[dict], label: str) -> None:
 def _values(samples: list[dict], key: str) -> list[float]:
     values: list[float] = []
     for sample in samples:
-        value = ((sample.get("main") or {}).get(key))
+        value = (sample.get("main") or {}).get(key)
         if value is not None:
             values.append(float(value))
     return values
@@ -258,7 +258,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--kline-name", default="Ping An Bank", help="Stock name used by --kline-cycles.")
     parser.add_argument("--allow-offscreen-kline", action="store_true", help="Attempt K-line cycles offscreen.")
     parser.add_argument("--settle-ms", type=int, default=250, help="Wait/process events after each action.")
-    parser.add_argument("--growth-threshold-mb", type=float, default=48.0, help="Warn when net growth stays above this.")
+    parser.add_argument(
+        "--growth-threshold-mb", type=float, default=48.0, help="Warn when net growth stays above this."
+    )
     parser.add_argument("--output", default="", help="Write the JSON report to this path.")
     return parser.parse_args(argv)
 

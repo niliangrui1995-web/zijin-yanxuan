@@ -18,9 +18,10 @@ from core.task_errors import UserFacingTaskError
 
 class _WorkerSignals(QObject):
     """Worker 内部信号（跨线程回传结果）"""
-    finished = pyqtSignal(object)   # 成功: 传回结果
-    error = pyqtSignal(str)         # 失败: 传回错误信息
-    progress = pyqtSignal(int, str) # 进度: pct, msg
+
+    finished = pyqtSignal(object)  # 成功: 传回结果
+    error = pyqtSignal(str)  # 失败: 传回错误信息
+    progress = pyqtSignal(int, str)  # 进度: pct, msg
 
 
 class BackgroundWorker(QRunnable):
@@ -54,6 +55,7 @@ class BackgroundWorker(QRunnable):
                     pass  # 信号对象已被销毁，安全忽略
         except UserFacingTaskError as e:
             from core.logger import get_logger
+
             get_logger(__name__).warning(f"[任务调度][{task_label}] {e.log_message}")
             try:
                 self.signals.error.emit(e.user_message)
@@ -61,6 +63,7 @@ class BackgroundWorker(QRunnable):
                 pass
         except TimeoutError as e:
             from core.logger import get_logger
+
             get_logger(__name__).warning(f"[任务调度][{task_label}] 后台任务超时: {e}")
             try:
                 self.signals.error.emit(str(e))
@@ -69,6 +72,7 @@ class BackgroundWorker(QRunnable):
         except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
             tb = traceback.format_exc()
             from core.logger import get_logger
+
             get_logger(__name__).error(f"[任务调度][{task_label}] Worker 异常: {e}\n{tb}")
             # 无论是否被取消都 emit error，确保 _cleanup 触发清理 active_workers
             try:
@@ -84,6 +88,7 @@ class GlobalTaskManager(QObject):
 
     v2: 新增 run_in_background() 便捷方法
     """
+
     _instance = None
 
     def __new__(cls, *args, **kwargs):
@@ -93,14 +98,12 @@ class GlobalTaskManager(QObject):
 
     def __init__(self):
         super().__init__()
-        if hasattr(self, '_initialized'):
+        if hasattr(self, "_initialized"):
             return
         self._initialized = True
 
         self.thread_pool = QThreadPool.globalInstance()
-        self.thread_pool.setMaxThreadCount(
-            max(self.thread_pool.maxThreadCount(), 8)
-        )
+        self.thread_pool.setMaxThreadCount(max(self.thread_pool.maxThreadCount(), 8))
 
         self.active_workers: dict[str, BackgroundWorker] = {}
         self._lock = threading.RLock()
@@ -123,11 +126,7 @@ class GlobalTaskManager(QObject):
             self.thread_pool.start(worker)
             return task_id
 
-    def run_in_background(self, fn, *args,
-                          on_success=None,
-                          on_error=None,
-                          task_id: str = None,
-                          **kwargs) -> str:
+    def run_in_background(self, fn, *args, on_success=None, on_error=None, task_id: str = None, **kwargs) -> str:
         """便捷方法：后台执行函数，结果通过 Qt 信号安全回传主线程
 
         参数:
@@ -156,14 +155,16 @@ class GlobalTaskManager(QObject):
         # 防静默死亡：如果调用方没有传 on_error，注入默认兜底闭包
         # 这样后台线程崩了，至少日志里有痕迹，不会让 UI 永远卡在"加载中"
         if on_error is None:
+
             def _default_error_handler(error_message: str):
                 from core.logger import get_logger
-                get_logger(__name__).error(
-                    f"[TaskManager] 后台任务 '{tid}' 未捕获异常: {error_message}"
-                )
+
+                get_logger(__name__).error(f"[TaskManager] 后台任务 '{tid}' 未捕获异常: {error_message}")
+
             on_error = _default_error_handler
 
         from PyQt6.QtCore import Qt
+
         if on_success:
             worker.signals.finished.connect(on_success, type=Qt.ConnectionType.QueuedConnection)
         if on_error:
@@ -188,7 +189,7 @@ class GlobalTaskManager(QObject):
             self.active_workers.clear()
 
         for task_id, worker in workers:
-            if hasattr(worker, 'cancel'):
+            if hasattr(worker, "cancel"):
                 worker.cancel()
 
     def abandon_task(self, task_id: str) -> bool:
@@ -206,7 +207,7 @@ class GlobalTaskManager(QObject):
         if worker is None:
             return False
 
-        if hasattr(worker, 'cancel'):
+        if hasattr(worker, "cancel"):
             try:
                 worker.cancel()
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError):

@@ -78,8 +78,17 @@ def test_ai_industry_chain_loads_workbook_and_period_returns(monkeypatch, tmp_pa
         tab._load_chain_data()
 
         assert tab.model.headers == [
-            "序号", "代码", "名称", "现价", "涨幅", "市值", "细分板块",
-            "5日涨幅", "10日涨幅", "20日涨幅", "备注",
+            "序号",
+            "代码",
+            "名称",
+            "现价",
+            "涨幅",
+            "市值",
+            "细分板块",
+            "5日涨幅",
+            "10日涨幅",
+            "20日涨幅",
+            "备注",
         ]
         assert len(tab.model.row_data) == 2
         first = tab.model.row_data[0]
@@ -106,9 +115,11 @@ def test_ai_industry_chain_uses_plain_pct_headers_for_quotes(monkeypatch, tmp_pa
 
     try:
         tab._load_chain_data()
-        tab.model.update_quotes({
-            "002384": {"close": 12.6, "last_close": 12.0, "zongguben": 1_000_000_000},
-        })
+        tab.model.update_quotes(
+            {
+                "002384": {"close": 12.6, "last_close": 12.0, "zongguben": 1_000_000_000},
+            }
+        )
 
         row = tab.model.row_data[0]
         assert row["现价"] == "12.60"
@@ -162,9 +173,11 @@ def test_ai_industry_chain_refreshes_from_global_snapshot_without_fetch(monkeypa
 
     try:
         tab._load_chain_data()
-        global_store.merge_quotes({
-            "002384": {"close": 13.2, "last_close": 12.0, "zongguben": 1_000_000_000},
-        })
+        global_store.merge_quotes(
+            {
+                "002384": {"close": 13.2, "last_close": 12.0, "zongguben": 1_000_000_000},
+            }
+        )
 
         tab.refresh_table_from_latest_snapshot()
 
@@ -184,10 +197,12 @@ def test_ai_industry_chain_load_reuses_global_quote_snapshot(monkeypatch, tmp_pa
     _write_workbook(workbook_path)
     monkeypatch.setattr(QTimer, "singleShot", lambda *args, **kwargs: None)
     global_store.reset_quotes()
-    global_store.merge_quotes({
-        "002384": {"close": 13.2, "last_close": 12.0, "zongguben": 1_000_000_000},
-        "688498": {"close": 98.5, "last_close": 102.0, "zongguben": 120_000_000},
-    })
+    global_store.merge_quotes(
+        {
+            "002384": {"close": 13.2, "last_close": 12.0, "zongguben": 1_000_000_000},
+            "688498": {"close": 98.5, "last_close": 102.0, "zongguben": 120_000_000},
+        }
+    )
 
     tab = AIIndustryChainTab(NoFetchProvider(), workbook_path=workbook_path)
 
@@ -209,15 +224,17 @@ def test_ai_industry_chain_watchlist_payload_maps_segment_and_source(monkeypatch
     monkeypatch.setattr(watchlist_vm, "_save_data", lambda: None)
     watchlist_vm._cache = {}
 
-    payload = AIIndustryChainTab._build_watchlist_payload({
-        "代码": "002384",
-        "名称": "东山精密",
-        "现价": "13.20",
-        "涨幅": 10.0,
-        "市值": "132亿",
-        "细分板块": "200G EML / InP激光器",
-        "备注": "高速光芯片/光模块链条",
-    })
+    payload = AIIndustryChainTab._build_watchlist_payload(
+        {
+            "代码": "002384",
+            "名称": "东山精密",
+            "现价": "13.20",
+            "涨幅": 10.0,
+            "市值": "132亿",
+            "细分板块": "200G EML / InP激光器",
+            "备注": "高速光芯片/光模块链条",
+        }
+    )
 
     try:
         assert payload["细分板块"] == "200G EML / InP激光器"

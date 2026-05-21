@@ -68,7 +68,9 @@ def _summary_compact_list(*values, default: str = "--", max_items: int = 2, sep:
     return text
 
 
-def _summary_active_labels(payload: dict, mappings: list[tuple[str, tuple[str, ...]]], *, default: str = "--", max_items: int = 2) -> str:
+def _summary_active_labels(
+    payload: dict, mappings: list[tuple[str, tuple[str, ...]]], *, default: str = "--", max_items: int = 2
+) -> str:
     labels = []
     for label, keys in mappings:
         value = _summary_pick(payload, *keys, default="")
@@ -472,12 +474,8 @@ def build_kline_summary_items(vcp_data: dict | None, is_fav: bool = False) -> di
     trigger_text = _summary_pick(payload, "触发日期", "日期", "时间", "trigger_date", default="--")
     trigger_date = trigger_text[:10] if trigger_text != "--" else "--"
 
-    high_price = _summary_parse_float(
-        _summary_pick(payload, "区间最高价", "box_high", default="")
-    )
-    low_price = _summary_parse_float(
-        _summary_pick(payload, "区间最低点", "box_low", default="")
-    )
+    high_price = _summary_parse_float(_summary_pick(payload, "区间最高价", "box_high", default=""))
+    low_price = _summary_parse_float(_summary_pick(payload, "区间最低点", "box_low", default=""))
     if high_price is not None and low_price is not None:
         range_text = f"{low_price:.2f} - {high_price:.2f}"
     else:
@@ -491,7 +489,6 @@ def build_kline_summary_items(vcp_data: dict | None, is_fav: bool = False) -> di
         "RPS": _summary_pick(payload, "RPS强度", "rps_str", default="--"),
         "关注": "已关注" if is_fav else "未关注",
     }
-
 
 
 __all__ = ["build_kline_summary_cards", "build_kline_summary_items"]

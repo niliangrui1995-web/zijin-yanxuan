@@ -12,7 +12,7 @@ from ui.theme_tokens import build_ui_tokens, get_state_tone
 
 def _hex_to_rgb(color: str) -> tuple[float, float, float]:
     value = color.lstrip("#")
-    return tuple(int(value[index:index + 2], 16) / 255 for index in (0, 2, 4))
+    return tuple(int(value[index : index + 2], 16) / 255 for index in (0, 2, 4))
 
 
 def _relative_luminance(color: str) -> float:
@@ -128,7 +128,10 @@ def test_global_qss_uses_density_tokens_for_table_and_controls():
     compact_tokens = build_ui_tokens(THEME_YUEBAI, density="紧凑")
 
     assert f"min-height: {compact_tokens['control']['button_height']}px;" in compact_qss
-    assert f"padding: {compact_tokens['table']['cell_padding_y']}px {compact_tokens['table']['cell_padding_x']}px;" in compact_qss
+    assert (
+        f"padding: {compact_tokens['table']['cell_padding_y']}px {compact_tokens['table']['cell_padding_x']}px;"
+        in compact_qss
+    )
     assert "QWidget#tabToolbar" in compact_qss
     assert "QLabel#tabStatusLabel" in compact_qss
     assert "QLabel#tabStatusPrimaryChip" in compact_qss
@@ -244,13 +247,15 @@ def test_vcp_table_view_tooltip_only_shows_when_text_is_elided():
     try:
         hot_sector_text = "光通信(15d=100) | CPO概念(15d=96) | 铜连接(20d=93)"
         model = StockTableModel(["代码", "名称", "热点板块"])
-        model.update_data([
-            {
-                "代码": "000001",
-                "名称": "平安银行",
-                "热点板块": hot_sector_text,
-            }
-        ])
+        model.update_data(
+            [
+                {
+                    "代码": "000001",
+                    "名称": "平安银行",
+                    "热点板块": hot_sector_text,
+                }
+            ]
+        )
         table.setModel(model)
         target_col = model.headers.index("热点板块")
         idx = model.index(0, target_col)

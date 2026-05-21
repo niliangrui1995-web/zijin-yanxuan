@@ -11,18 +11,14 @@ from ui.components.trade_calendar import OligarchEarningsCalendarPanel, TradeCal
 def test_trade_calendar_uses_compact_weekday_labels():
     widget = TradeCalendarWidget()
     try:
-        assert (
-            widget.horizontalHeaderFormat()
-            == widget.HorizontalHeaderFormat.SingleLetterDayNames
-        )
+        assert widget.horizontalHeaderFormat() == widget.HorizontalHeaderFormat.SingleLetterDayNames
 
         view = widget.findChild(QTableView, "qt_calendar_calendarview")
         assert view is not None
 
         model = view.model()
         labels = [
-            model.data(model.index(0, column), Qt.ItemDataRole.DisplayRole)
-            for column in range(model.columnCount())
+            model.data(model.index(0, column), Qt.ItemDataRole.DisplayRole) for column in range(model.columnCount())
         ]
 
         assert len(labels) == 7
@@ -35,17 +31,19 @@ def test_trade_calendar_uses_compact_weekday_labels():
 def test_trade_calendar_accepts_earnings_events_by_date():
     widget = TradeCalendarWidget()
     try:
-        widget.set_earnings_events({
-            "2026-05-07": [
-                EarningsCalendarEvent(
-                    "NVIDIA",
-                    "NVDA",
-                    "AI加速芯片与定制ASIC",
-                    "2026-05-07",
-                    priority="super_giant",
-                )
-            ]
-        })
+        widget.set_earnings_events(
+            {
+                "2026-05-07": [
+                    EarningsCalendarEvent(
+                        "NVIDIA",
+                        "NVDA",
+                        "AI加速芯片与定制ASIC",
+                        "2026-05-07",
+                        priority="super_giant",
+                    )
+                ]
+            }
+        )
 
         events = widget.earnings_events_for_date("2026-05-07")
 
@@ -58,17 +56,19 @@ def test_trade_calendar_accepts_earnings_events_by_date():
 def test_trade_calendar_marks_earnings_on_beijing_calendar_date():
     widget = TradeCalendarWidget()
     try:
-        widget.set_earnings_events([
-            EarningsCalendarEvent(
-                "Lumentum",
-                "LITE",
-                "光芯片与硅光",
-                "2026-05-05",
-                time_label="盘后",
-                beijing_time="05-06 05:00",
-                market="US",
-            )
-        ])
+        widget.set_earnings_events(
+            [
+                EarningsCalendarEvent(
+                    "Lumentum",
+                    "LITE",
+                    "光芯片与硅光",
+                    "2026-05-05",
+                    time_label="盘后",
+                    beijing_time="05-06 05:00",
+                    market="US",
+                )
+            ]
+        )
 
         assert widget.earnings_events_for_date("2026-05-05") == []
         assert [event.ticker for event in widget.earnings_events_for_date("2026-05-06")] == ["LITE"]

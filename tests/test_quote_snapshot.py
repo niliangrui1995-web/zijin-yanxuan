@@ -55,9 +55,7 @@ def test_enrich_quotes_with_finance_builds_dynamic_market_cap():
 
 
 def test_build_finance_quote_payload_creates_mergeable_payload():
-    payload = build_finance_quote_payload(
-        {"000001": {"zongguben": 2_000_000_000, "market_cap": 20_000_000_000}}
-    )
+    payload = build_finance_quote_payload({"000001": {"zongguben": 2_000_000_000, "market_cap": 20_000_000_000}})
 
     assert payload["000001"]["zongguben"] == 2_000_000_000
     assert payload["000001"]["market_cap"] == 20_000_000_000

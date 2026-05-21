@@ -54,14 +54,18 @@ class DummyEngine:
 
     def evaluate_conditions(self, *_args, **_kwargs):
         self.evaluate_calls += 1
-        return True, "", {
-            "收盘": 21.0,
-            "评分": 96.3,
-            "RPS强度": "89/93",
-            "距突破": "-3.6%",
-            "突破状态": "放量突破",
-            "区间振幅": "29.3%",
-        }
+        return (
+            True,
+            "",
+            {
+                "收盘": 21.0,
+                "评分": 96.3,
+                "RPS强度": "89/93",
+                "距突破": "-3.6%",
+                "突破状态": "放量突破",
+                "区间振幅": "29.3%",
+            },
+        )
 
 
 def test_scan_worker_repairs_placeholder_names_before_st_filter():

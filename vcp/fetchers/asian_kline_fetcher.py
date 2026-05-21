@@ -81,6 +81,7 @@ def _is_tls_verification_error(exc: BaseException) -> bool:
         or "CERTIFICATE_VERIFY_FAILED" in error_text
     )
 
+
 # ===================================================================
 # 亚洲市场后缀映射（与 p6_mapper.py 保持一致）
 # ===================================================================
@@ -938,10 +939,7 @@ def fetch_all_asian_klines(
         logging.error("没有找到符合条件的亚洲标的")
         return []
 
-    logging.info(
-        f"📊 开始拉取 {len(tickers)} 只亚洲标的的 K 线数据 "
-        f"(period={period}, workers={max_workers})"
-    )
+    logging.info(f"📊 开始拉取 {len(tickers)} 只亚洲标的的 K 线数据 (period={period}, workers={max_workers})")
 
     results = []
     failed = []
@@ -962,10 +960,7 @@ def fetch_all_asian_klines(
             )
             if data:
                 results.append(data)
-                logging.info(
-                    f"  ✅ {name}({ticker}) [{data['market']}]: "
-                    f"{data['kline_count']} 根K线"
-                )
+                logging.info(f"  ✅ {name}({ticker}) [{data['market']}]: {data['kline_count']} 根K线")
             else:
                 failed.append(f"{name}({ticker})")
         except Exception as e:
@@ -1009,13 +1004,17 @@ def sync_asian_kline_cache(
     target_map = _build_sync_target_map(market_filter=market_filter, single_ticker=single_ticker)
     if not target_map:
         message = "没有找到符合条件的亚洲标的"
-        return False, message, {
-            "target_count": 0,
-            "written_count": 0,
-            "single_recovered": [],
-            "reused": [],
-            "missing": [],
-        }
+        return (
+            False,
+            message,
+            {
+                "target_count": 0,
+                "written_count": 0,
+                "single_recovered": [],
+                "reused": [],
+                "missing": [],
+            },
+        )
 
     ticker_to_name = {ticker: name for name, ticker in target_map.items()}
     target_tickers = set(target_map.values())
@@ -1039,24 +1038,32 @@ def sync_asian_kline_cache(
         missing = sorted(target_tickers - set(old_map.keys()))
         if preserved and not missing:
             message = "亚洲 K 线远端拉取失败，已保留现有缓存"
-            return True, message, {
-                "target_count": len(target_tickers),
-                "written_count": len(preserved),
-                "single_recovered": [],
-                "reused": preserved,
-                "missing": [],
-                "cache_preserved": True,
-            }
+            return (
+                True,
+                message,
+                {
+                    "target_count": len(target_tickers),
+                    "written_count": len(preserved),
+                    "single_recovered": [],
+                    "reused": preserved,
+                    "missing": [],
+                    "cache_preserved": True,
+                },
+            )
 
         message = "亚洲 K 线缓存全量拉取失败"
-        return False, message, {
-            "target_count": len(target_tickers),
-            "written_count": 0,
-            "single_recovered": [],
-            "reused": preserved,
-            "missing": missing or sorted(target_tickers),
-            "cache_preserved": False,
-        }
+        return (
+            False,
+            message,
+            {
+                "target_count": len(target_tickers),
+                "written_count": 0,
+                "single_recovered": [],
+                "reused": preserved,
+                "missing": missing or sorted(target_tickers),
+                "cache_preserved": False,
+            },
+        )
 
     row_map = _rows_to_map(data)
     stale_tickers = _drop_stale_kline_rows(row_map, target_tickers)
@@ -1120,18 +1127,19 @@ def sync_asian_kline_cache(
             logging.warning(f"⚠️ 旧缓存回填失败: {exc}")
 
     if missing:
-        message = (
-            f"亚洲 K 线缓存同步失败，仍缺失 {len(missing)} 只"
-            f"({', '.join(missing)})，未覆盖现有缓存"
+        message = f"亚洲 K 线缓存同步失败，仍缺失 {len(missing)} 只({', '.join(missing)})，未覆盖现有缓存"
+        return (
+            False,
+            message,
+            {
+                "target_count": len(target_tickers),
+                "written_count": 0,
+                "single_recovered": single_recovered,
+                "reused": reused,
+                "stale": stale_tickers,
+                "missing": missing,
+            },
         )
-        return False, message, {
-            "target_count": len(target_tickers),
-            "written_count": 0,
-            "single_recovered": single_recovered,
-            "reused": reused,
-            "stale": stale_tickers,
-            "missing": missing,
-        }
 
     final_data = list(row_map.values())
     final_data.sort(key=lambda item: (item.get("market", ""), item.get("name", "")))
@@ -1143,14 +1151,18 @@ def sync_asian_kline_cache(
     if reused:
         parts.append(f"旧缓存回填 {len(reused)} 只")
     message = "，".join(parts)
-    return True, message, {
-        "target_count": len(target_tickers),
-        "written_count": len(final_data),
-        "single_recovered": single_recovered,
-        "reused": reused,
-        "stale": stale_tickers,
-        "missing": [],
-    }
+    return (
+        True,
+        message,
+        {
+            "target_count": len(target_tickers),
+            "written_count": len(final_data),
+            "single_recovered": single_recovered,
+            "reused": reused,
+            "stale": stale_tickers,
+            "missing": [],
+        },
+    )
 
 
 def main():

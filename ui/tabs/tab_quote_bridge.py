@@ -89,8 +89,11 @@ def publish_quote_payload(owner, payload, *, source: str, require_valid: bool = 
         return {}
 
     owner._missing_quote_publisher_warned = False
-    return publisher.publish_external_quotes(
-        normalized,
-        source=source,
-        require_valid=require_valid,
-    ) or {}
+    return (
+        publisher.publish_external_quotes(
+            normalized,
+            source=source,
+            require_valid=require_valid,
+        )
+        or {}
+    )

@@ -321,7 +321,9 @@ class AutoRefreshScheduler(QObject):
 
     def _maybe_submit_earnings_routines(self, now: datetime.datetime) -> bool:
         trade_date = now.strftime("%Y%m%d")
-        due_times = [(hour, minute) for hour, minute in self.EARNINGS_ROUTINE_TIMES if self._time_reached(now, hour, minute)]
+        due_times = [
+            (hour, minute) for hour, minute in self.EARNINGS_ROUTINE_TIMES if self._time_reached(now, hour, minute)
+        ]
         if not due_times:
             return False
         hour, minute = due_times[-1]

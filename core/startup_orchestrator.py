@@ -229,9 +229,7 @@ class StartupOrchestrator:
     def _schedule_next_global_earnings_calendar_daily_refresh(self):
         if self._closed:
             return
-        self._global_earnings_calendar_daily_timer.start(
-            ms_until_next_global_earnings_calendar_daily_refresh()
-        )
+        self._global_earnings_calendar_daily_timer.start(ms_until_next_global_earnings_calendar_daily_refresh())
 
     def _run_daily_global_earnings_calendar_refresh(self):
         self.refresh_global_earnings_calendar()
@@ -255,11 +253,7 @@ class StartupOrchestrator:
             self._job_runner.abandon(task_id)
 
     def _alive(self):
-        return (
-            not self._closed
-            and self.host.timer_parent is not None
-            and not self.host.is_closing()
-        )
+        return not self._closed and self.host.timer_parent is not None and not self.host.is_closing()
 
     def _safe_call_in_ui(self, callback):
         if not self._alive():
@@ -294,11 +288,7 @@ class StartupOrchestrator:
 
         model = getattr(watchlist_tab, "model", None)
         rows = getattr(model, "row_data", None) or []
-        return _normalize_a_share_codes(
-            row.get("代码") or row.get("code", "")
-            for row in rows
-            if isinstance(row, dict)
-        )
+        return _normalize_a_share_codes(row.get("代码") or row.get("code", "") for row in rows if isinstance(row, dict))
 
     def _refresh_startup_code_names(self) -> dict:
         provider = self.host.data_provider
@@ -378,9 +368,7 @@ class StartupOrchestrator:
                 self._safe_call_in_ui(lambda: self.host.set_code_count_text(f"标的池 {count}"))
                 self._safe_call_in_ui(_refresh_code_count_label_from_provider)
                 self._safe_call_in_ui(
-                    lambda: self.host.set_status_text(
-                        f"已加载 {count} 只标的缓存(日线: {cache_date})"
-                    )
+                    lambda: self.host.set_status_text(f"已加载 {count} 只标的缓存(日线: {cache_date})")
                 )
                 self._safe_call_in_ui(
                     lambda: self.host.set_titlebar_sync_state(
@@ -400,9 +388,7 @@ class StartupOrchestrator:
                 return
 
             self.host.try_load_rps_from_disk(
-                set_status_callback=lambda msg: self._safe_call_in_ui(
-                    lambda: self.host.set_status_text(msg)
-                ),
+                set_status_callback=lambda msg: self._safe_call_in_ui(lambda: self.host.set_status_text(msg)),
             )
             if not self._alive():
                 log_process_snapshot(
@@ -497,9 +483,7 @@ class StartupOrchestrator:
                         level="warning",
                         extra={"status": "timeout"},
                     )
-                    log.warning(
-                        f"[启动] 亚洲市场后台静默同步超时({ASIAN_DATA_SYNC_TIMEOUT_SEC}s)，已跳过本次同步"
-                    )
+                    log.warning(f"[启动] 亚洲市场后台静默同步超时({ASIAN_DATA_SYNC_TIMEOUT_SEC}s)，已跳过本次同步")
                 except (OSError, ProcessExecutionError, ValueError) as exc:
                     log_process_snapshot(
                         "startup.asian_sync.end",

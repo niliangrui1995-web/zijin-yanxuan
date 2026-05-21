@@ -8,6 +8,7 @@ tests/test_data_store.py — DataStore SQLite 存储层测试
     3. earnings_state 专用方法正确性
     4. 不存在的 key 返回 default
 """
+
 import os
 import tempfile
 
@@ -21,7 +22,7 @@ class TestDataStore:
 
         # 绕过单例以便每次测试独立
         DataStore._instance = None
-        if hasattr(DataStore, '_initialized'):
+        if hasattr(DataStore, "_initialized"):
             del DataStore._initialized
 
         tmp_dir = tempfile.mkdtemp()
@@ -30,7 +31,7 @@ class TestDataStore:
 
         # 重置单例，不影响全局
         DataStore._instance = None
-        if hasattr(store, '_initialized'):
+        if hasattr(store, "_initialized"):
             del store._initialized
 
         return store, db_path

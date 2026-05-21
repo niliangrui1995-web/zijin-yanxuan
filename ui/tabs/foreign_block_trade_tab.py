@@ -4,6 +4,7 @@ ui/tabs/foreign_block_trade_tab.py
 大宗交易监控 Tab
 展示包含指定外资关键字的营业部近期大宗交易明细，并高亮对倒等特殊行为。
 """
+
 import datetime
 import json
 import os
@@ -47,11 +48,7 @@ class BlockTradeFilterProxyModel(RtSortFilterProxyModel):
         self.setExactFilters(col_name, [value] if value else [])
 
     def setExactFilters(self, col_name, values):
-        normalized = {
-            str(value or "").strip()
-            for value in (values or [])
-            if str(value or "").strip()
-        }
+        normalized = {str(value or "").strip() for value in (values or []) if str(value or "").strip()}
         if normalized:
             self.exact_filters[col_name] = normalized
         else:
@@ -63,8 +60,8 @@ class BlockTradeFilterProxyModel(RtSortFilterProxyModel):
             model = self.sourceModel()
             row_data = model.row_data[source_row]
             for col_name, values in self.exact_filters.items():
-                cell_val = str(row_data.get(col_name, ''))
-                candidate_values = values if isinstance(values, set) else {str(values or '').strip()}
+                cell_val = str(row_data.get(col_name, ""))
+                candidate_values = values if isinstance(values, set) else {str(values or "").strip()}
                 candidate_values = {value for value in candidate_values if value}
                 if not candidate_values:
                     continue
@@ -96,6 +93,7 @@ class BlockTradeFilterProxyModel(RtSortFilterProxyModel):
             return True
 
         return filter_text in buyer_text or filter_text in seller_text
+
 
 from core.logger import get_logger
 from ui.tabs.base_stock_tab import BaseStockTab
@@ -166,8 +164,7 @@ def _raise_block_trade_timeout(stage: str, detail: str = ""):
     extra = f"（{detail}）" if detail else ""
     raise UserFacingTaskError(
         _BLOCK_TRADE_TIMEOUT_USER_MESSAGE,
-        f"大宗交易抓取超时：{stage}{extra}，45秒内未完成全部请求，"
-        "可能是国内数据源响应慢或网络代理影响。",
+        f"大宗交易抓取超时：{stage}{extra}，45秒内未完成全部请求，可能是国内数据源响应慢或网络代理影响。",
     )
 
 
@@ -214,6 +211,7 @@ def _normalize_trade_date_value(value) -> str:
 def _normalize_trade_date_series(series: pd.Series) -> pd.Series:
     return series.apply(_normalize_trade_date_value)
 
+
 class ForeignBlockTradeTab(BaseStockTab):
     def __init__(self, data_provider, parent=None):
         super().__init__(data_provider=data_provider, parent=parent)
@@ -245,7 +243,8 @@ class ForeignBlockTradeTab(BaseStockTab):
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         # 统一工具条：标题 + 副标题 + 过滤区 + 主操作
         self.lbl_status = QLabel("等待加载...")
@@ -284,8 +283,11 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._refresh_filter_button_text(self.cmb_filter_direction, "动作", "全部")
 
         filter_widgets = [
-            self.cmb_filter_date, self.cmb_filter_branch,
-            self.cmb_filter_direction, self.search_box, self.cmb_days
+            self.cmb_filter_date,
+            self.cmb_filter_branch,
+            self.cmb_filter_direction,
+            self.search_box,
+            self.cmb_days,
         ]
 
         self.btn_refresh = QPushButton("刷新")
@@ -298,9 +300,20 @@ class ForeignBlockTradeTab(BaseStockTab):
 
         # 表格
         self.columns = [
-            "代码", "名称", "现价", "涨幅%", "市值", "交易日期", "交易详情",
-            "当日收盘价", "成交价格", "折/溢价率(%)", "成交数量(万股)", "成交金额(万元)",
-            "买方营业部", "卖方营业部"
+            "代码",
+            "名称",
+            "现价",
+            "涨幅%",
+            "市值",
+            "交易日期",
+            "交易详情",
+            "当日收盘价",
+            "成交价格",
+            "折/溢价率(%)",
+            "成交数量(万股)",
+            "成交金额(万元)",
+            "买方营业部",
+            "卖方营业部",
         ]
         self.table = VCPTableView(default_row_height=30)
         self.model = StockTableModel(self.columns)
@@ -371,11 +384,7 @@ class ForeignBlockTradeTab(BaseStockTab):
             return False
         if last_auto_refresh_date == today_compact:
             return False
-        if (
-            last_success_at is not None
-            and last_success_at.date() == now.date()
-            and last_success_at.hour >= 20
-        ):
+        if last_success_at is not None and last_success_at.date() == now.date() and last_success_at.hour >= 20:
             return False
         return True
 
@@ -399,15 +408,13 @@ class ForeignBlockTradeTab(BaseStockTab):
             reverse=True,
         )
         raw_branches = set()
-        for row in (row_data or []):
+        for row in row_data or []:
             if not isinstance(row, dict):
                 continue
             raw_branches.add(str(row.get("买方营业部", "") or "").strip())
             raw_branches.add(str(row.get("卖方营业部", "") or "").strip())
         branches = sorted(
-            branch
-            for branch in raw_branches
-            if branch and any(keyword in branch for keyword in FOREIGN_KEYWORDS)
+            branch for branch in raw_branches if branch and any(keyword in branch for keyword in FOREIGN_KEYWORDS)
         )
         return dates, branches
 
@@ -642,17 +649,16 @@ class ForeignBlockTradeTab(BaseStockTab):
                 remaining = max(5, int(deadline - time.monotonic()))
                 dates = [
                     pd.to_datetime(d).date()
-                    for d in _run_domestic_akshare(
-                        "calendar",
-                        timeout=min(_BLOCK_TRADE_CALENDAR_TIMEOUT, remaining)
-                    )
+                    for d in _run_domestic_akshare("calendar", timeout=min(_BLOCK_TRADE_CALENDAR_TIMEOUT, remaining))
                 ]
                 today_date = end_dt.date()
                 past_dates = [d for d in dates if d <= today_date]
                 if len(past_dates) >= self.days_to_fetch:
                     start_date_val = past_dates[-self.days_to_fetch]
                 else:
-                    start_date_val = past_dates[0] if past_dates else (today_date - datetime.timedelta(days=self.days_to_fetch))
+                    start_date_val = (
+                        past_dates[0] if past_dates else (today_date - datetime.timedelta(days=self.days_to_fetch))
+                    )
                 start_dt = datetime.datetime.combine(start_date_val, datetime.time())
             except ProcessTimeoutError:
                 log.warning("[大宗交易] 获取交易日历超时，回退到自然日估算")
@@ -694,7 +700,7 @@ class ForeignBlockTradeTab(BaseStockTab):
                         df = pd.DataFrame(records) if records else pd.DataFrame()
                         if df is not None and not df.empty:
                             for _, row in df.iterrows():
-                                if self._should_include_row(row.get('买方营业部'), row.get('卖方营业部')):
+                                if self._should_include_row(row.get("买方营业部"), row.get("卖方营业部")):
                                     results.append(row.to_dict())
                         chunk_done = True
                         finished_chunks += 1
@@ -704,8 +710,15 @@ class ForeignBlockTradeTab(BaseStockTab):
                         log.warning(f"[大宗交易] {chunk_key} 请求超时，可能是国内数据源响应慢或当前网络代理影响")
                         if attempt < _BLOCK_TRADE_MAX_RETRIES - 1:
                             time.sleep(1)
-                    except (json.JSONDecodeError, OSError, RuntimeError, ProcessExecutionError, TypeError, ValueError) as e:
-                        log.warning(f"[大宗交易] {chunk_key} 第{attempt+1}次失败: {e}")
+                    except (
+                        json.JSONDecodeError,
+                        OSError,
+                        RuntimeError,
+                        ProcessExecutionError,
+                        TypeError,
+                        ValueError,
+                    ) as e:
+                        log.warning(f"[大宗交易] {chunk_key} 第{attempt + 1}次失败: {e}")
                         if attempt < _BLOCK_TRADE_MAX_RETRIES - 1:
                             time.sleep(1)
 
@@ -735,7 +748,7 @@ class ForeignBlockTradeTab(BaseStockTab):
             _fetch_task,
             task_id=_FOREIGN_BLOCK_TRADE_TASK.task_id,
             on_success=self._on_data_fetched,
-            on_error=self._on_data_fetch_failed
+            on_error=self._on_data_fetch_failed,
         )
 
     def run_post_online_refresh(self) -> bool:
@@ -826,19 +839,15 @@ class ForeignBlockTradeTab(BaseStockTab):
             return
 
         df = pd.DataFrame(data_list)
-        if '交易日期' in df.columns:
-            df['交易日期'] = _normalize_trade_date_series(df['交易日期'])
+        if "交易日期" in df.columns:
+            df["交易日期"] = _normalize_trade_date_series(df["交易日期"])
 
         # 按照 (交易日期, 股票代码, 买方营业部, 卖方营业部) 分组汇总，合并拆单金额和数量
         # 对于数值类型去求和或者均值，字符去第一条
-        df = df.groupby(['交易日期', '证券代码', '买方营业部', '卖方营业部', '证券简称'], as_index=False).agg({
-            '收盘价': 'first',
-            '成交价': 'mean',
-            '折溢率': 'mean',
-            '成交量': 'sum',
-            '成交额': 'sum'
-        })
-        df = df.sort_values(by=['交易日期', '证券代码'], ascending=[False, True])
+        df = df.groupby(["交易日期", "证券代码", "买方营业部", "卖方营业部", "证券简称"], as_index=False).agg(
+            {"收盘价": "first", "成交价": "mean", "折溢率": "mean", "成交量": "sum", "成交额": "sum"}
+        )
+        df = df.sort_values(by=["交易日期", "证券代码"], ascending=[False, True])
         row_data = []
         for row, (_, record) in enumerate(df.iterrows()):
             trade_date = str(record.get("交易日期", ""))
@@ -880,7 +889,7 @@ class ForeignBlockTradeTab(BaseStockTab):
                 "成交数量(万股)": f"{vol_wan:.2f}",
                 "成交金额(万元)": f"{amt_wan:.2f}",
                 "买方营业部": buyer,
-                "卖方营业部": seller
+                "卖方营业部": seller,
             }
             row_data.append(row_dict)
 
@@ -950,10 +959,12 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._refresh_header_status()
 
     def _on_double_click(self, index):
-        if not index.isValid(): return
+        if not index.isValid():
+            return
         source_idx = self.proxy_model.mapToSource(index)
         row = source_idx.row()
-        if row >= len(self.model.row_data): return
+        if row >= len(self.model.row_data):
+            return
 
         code = self.model.row_data[row].get("代码", "")
 
@@ -976,15 +987,19 @@ class ForeignBlockTradeTab(BaseStockTab):
 
     def _show_context_menu(self, pos):
         index = self.table.indexAt(pos)
-        if not index.isValid(): return
+        if not index.isValid():
+            return
         source_idx = self.proxy_model.mapToSource(index)
         row = source_idx.row()
-        if row >= len(self.model.row_data): return
+        if row >= len(self.model.row_data):
+            return
 
         code = self.model.row_data[row].get("代码", "")
         name = self.model.row_data[row].get("名称", "")
         row_data = self.model.row_data[row]
-        if not code: return
+        if not code:
+            return
 
         from ui.components.stock_context_menu import build_stock_context_menu
+
         build_stock_context_menu(self, code, name, vcp_data=row_data)

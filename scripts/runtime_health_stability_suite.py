@@ -213,11 +213,7 @@ def _runtime_summary_from_health(sample: dict, label: str) -> dict:
 def _build_budget_trend(samples: list[dict], kline_cycle: dict | None) -> dict:
     trend = build_runtime_health_trend(samples)
     cycle_samples = list((kline_cycle or {}).get("cycle_samples") or [])
-    close_samples = [
-        sample
-        for sample in cycle_samples
-        if str(sample.get("label") or "").endswith(":after_close")
-    ]
+    close_samples = [sample for sample in cycle_samples if str(sample.get("label") or "").endswith(":after_close")]
     if close_samples and samples:
         return _overlay_budget_trend(
             trend,
@@ -241,8 +237,7 @@ def _post_workload_tail_summaries(samples: list[dict]) -> list[dict]:
     if len(selected) >= 2:
         return selected[-3:]
     return [
-        _runtime_summary_from_health(sample, str(sample.get("label") or "runtime_health"))
-        for sample in samples[-3:]
+        _runtime_summary_from_health(sample, str(sample.get("label") or "runtime_health")) for sample in samples[-3:]
     ]
 
 
@@ -334,8 +329,7 @@ def _cycle_f5(window: MainWindowQT, app: QApplication, *, cycles: int, settle_ms
         finish_f5_reload(window, count=123, elapsed=1.23, event_bus=event_bus)
         settled = _wait_until(
             app,
-            lambda: getattr(getattr(workspace, "_f5_refresh_scheduler", None), "is_running", lambda: False)()
-            is False,
+            lambda: getattr(getattr(workspace, "_f5_refresh_scheduler", None), "is_running", lambda: False)() is False,
             timeout_ms=6000,
         )
         _settle(app, settle_ms)

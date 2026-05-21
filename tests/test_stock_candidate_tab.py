@@ -145,7 +145,9 @@ def test_stock_candidate_requires_ai_chain_or_na_daily_anchor_source():
             ],
             "688629": [
                 StockSignal(code="688629", source_tab="na_daily", signal_type="catalyst", summary="北美催化"),
-                StockSignal(code="688629", source_tab="ai_industry_chain", signal_type="subsector", summary="高速连接器"),
+                StockSignal(
+                    code="688629", source_tab="ai_industry_chain", signal_type="subsector", summary="高速连接器"
+                ),
             ],
         },
     )
@@ -170,7 +172,9 @@ def test_stock_candidate_counts_na_daily_and_ai_chain_as_one_source_group():
         {
             "688629": [
                 StockSignal(code="688629", source_tab="na_daily", signal_type="catalyst", summary="北美催化"),
-                StockSignal(code="688629", source_tab="ai_industry_chain", signal_type="subsector", summary="高速连接器"),
+                StockSignal(
+                    code="688629", source_tab="ai_industry_chain", signal_type="subsector", summary="高速连接器"
+                ),
                 StockSignal(code="688629", source_tab="lhb", signal_type="lhb", summary="机构净买"),
             ],
         },
@@ -347,7 +351,9 @@ def test_stock_candidate_auto_refresh_accepts_watchlist_signal_args(monkeypatch)
 
 def test_stock_candidate_prime_background_load_primes_snapshot_and_refresh(monkeypatch):
     scheduled = []
-    monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda delay, callback: scheduled.append(delay))
+    monkeypatch.setattr(
+        "ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda delay, callback: scheduled.append(delay)
+    )
     primes = []
 
     class _Workspace(QWidget):
@@ -377,7 +383,9 @@ def test_stock_candidate_prime_background_load_primes_anchor_sources(monkeypatch
     primed = []
     loads = []
     snapshots = []
-    monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda delay, callback: scheduled.append(delay))
+    monkeypatch.setattr(
+        "ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda delay, callback: scheduled.append(delay)
+    )
 
     class _AnchorTab:
         def __init__(self, key):

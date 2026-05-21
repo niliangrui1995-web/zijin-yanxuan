@@ -13,45 +13,47 @@ from vcp.constants import PROJECT_ROOT
 _log = get_logger(__name__)
 
 
-
-
 # ==========================================
 # 通达信本地路径配置
 # ==========================================
 def _check_vipdoc_valid(vipdoc):
     """检查 vipdoc 目录是否有效（含 sh/sz 子目录）"""
-    return (os.path.isdir(vipdoc) and
-            os.path.isdir(os.path.join(vipdoc, 'sh')) and
-            os.path.isdir(os.path.join(vipdoc, 'sz')))
+    return (
+        os.path.isdir(vipdoc)
+        and os.path.isdir(os.path.join(vipdoc, "sh"))
+        and os.path.isdir(os.path.join(vipdoc, "sz"))
+    )
+
 
 def _load_tdx_local_config():
     """读取通达信本地路径配置。"""
     candidates = [
-        os.path.join('D:\\', 'vcp_qt', 'vcp_tdx_config.json'),
-        os.path.join('D:\\', 'HT', 'vcp_tdx_config.json'),
-        os.path.join(PROJECT_ROOT, 'vcp_tdx_config.json'),
+        os.path.join("D:\\", "vcp_qt", "vcp_tdx_config.json"),
+        os.path.join("D:\\", "HT", "vcp_tdx_config.json"),
+        os.path.join(PROJECT_ROOT, "vcp_tdx_config.json"),
     ]
     for cfg_path in candidates:
         try:
             if cfg_path and os.path.exists(cfg_path):
-                with open(cfg_path, 'r', encoding='utf-8') as f:
+                with open(cfg_path, "r", encoding="utf-8") as f:
                     cfg = json.load(f)
-                root = (cfg.get('tdx_vipdoc_root') or '').strip().rstrip(os.sep)
+                root = (cfg.get("tdx_vipdoc_root") or "").strip().rstrip(os.sep)
                 if not root:
                     continue
-                if os.path.basename(root).lower() == 'vipdoc':
+                if os.path.basename(root).lower() == "vipdoc":
                     vipdoc = root
                 else:
-                    vipdoc = os.path.join(root, 'vipdoc')
+                    vipdoc = os.path.join(root, "vipdoc")
                 if _check_vipdoc_valid(vipdoc):
                     return vipdoc
         except (FileNotFoundError, PermissionError, OSError, TypeError, ValueError, json.JSONDecodeError) as _e:
             _log.debug(f"[配置] 通达信配置文件 {cfg_path} 读取异常: {_e}")
             continue
-    default_ht = os.path.join('D:\\', 'HT', 'vipdoc')
+    default_ht = os.path.join("D:\\", "HT", "vipdoc")
     if _check_vipdoc_valid(default_ht):
         return default_ht
     return None
+
 
 # ==========================================
 # 通达信 .day 文件读取
@@ -69,7 +71,7 @@ def read_tdx_day_file(filepath, price_div=100.0):
     if not os.path.isfile(filepath):
         return None
     try:
-        with open(filepath, 'rb') as f:
+        with open(filepath, "rb") as f:
             buf = f.read()
     except (FileNotFoundError, PermissionError, OSError) as e:
         _log.error(f"[Error] read_tdx_day_file: {str(e)}")
@@ -78,31 +80,44 @@ def read_tdx_day_file(filepath, price_div=100.0):
     if n == 0:
         return None
     try:
-        dtype = np.dtype([('date', '<u4'), ('o', '<u4'), ('h', '<u4'), ('low', '<u4'), ('c', '<u4'), ('amount', '<f4'), ('vol', '<u4'), ('res', '<u4')])
+        dtype = np.dtype(
+            [
+                ("date", "<u4"),
+                ("o", "<u4"),
+                ("h", "<u4"),
+                ("low", "<u4"),
+                ("c", "<u4"),
+                ("amount", "<f4"),
+                ("vol", "<u4"),
+                ("res", "<u4"),
+            ]
+        )
         raw = np.frombuffer(buf[: n * 32], dtype=dtype)
-        dates = pd.to_datetime(raw['date'].astype(str), format='%Y%m%d', errors='coerce')
+        dates = pd.to_datetime(raw["date"].astype(str), format="%Y%m%d", errors="coerce")
         valid = dates.notna()
         if not valid.any():
             return None
         dates = dates[valid]
-        o = (raw['o'][valid].astype(np.float64) / price_div).round(2)
-        h = (raw['h'][valid].astype(np.float64) / price_div).round(2)
-        low = (raw['low'][valid].astype(np.float64) / price_div).round(2)
-        c = (raw['c'][valid].astype(np.float64) / price_div).round(2)
-        amount = raw['amount'][valid].astype(np.float64)
-        vol = raw['vol'][valid].astype(np.int64)
+        o = (raw["o"][valid].astype(np.float64) / price_div).round(2)
+        h = (raw["h"][valid].astype(np.float64) / price_div).round(2)
+        low = (raw["low"][valid].astype(np.float64) / price_div).round(2)
+        c = (raw["c"][valid].astype(np.float64) / price_div).round(2)
+        amount = raw["amount"][valid].astype(np.float64)
+        vol = raw["vol"][valid].astype(np.int64)
 
         # 直接构建 Pandas DataFrame 并排序，不经过 Polars→PyArrow 桥接
-        pdf = pd.DataFrame({
-            'datetime': dates.values,
-            'open': o,
-            'high': h,
-            'low': low,
-            'close': c,
-            'amount': amount,
-            'volume': vol,
-        })
-        pdf = pdf.sort_values('datetime').reset_index(drop=True)
+        pdf = pd.DataFrame(
+            {
+                "datetime": dates.values,
+                "open": o,
+                "high": h,
+                "low": low,
+                "close": c,
+                "amount": amount,
+                "volume": vol,
+            }
+        )
+        pdf = pdf.sort_values("datetime").reset_index(drop=True)
         return pdf
     except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
         _log.error(f"[Error] read_tdx_day_file: {str(e)}")
@@ -152,6 +167,7 @@ def ensure_pandas_dataframe(df, *, datetime_col: str = "datetime", set_datetime_
             pass
     return pdf
 
+
 # ==========================================
 # 交易时间判断
 # ==========================================
@@ -162,4 +178,3 @@ def is_trading_day(date=None):
     """
     d = date if date else datetime.now()
     return d.weekday() < 5
-

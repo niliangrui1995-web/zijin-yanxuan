@@ -194,8 +194,7 @@ class CacheManager:
                 )
                 if should_rebuild and data_provider is not None:
                     log.warning(
-                        f"[RPS][RULE] 磁盘预计算RPS覆盖不足({loaded_count}/{eligible_count})，"
-                        "尝试基于本地K线缓存重建"
+                        f"[RPS][RULE] 磁盘预计算RPS覆盖不足({loaded_count}/{eligible_count})，尝试基于本地K线缓存重建"
                     )
                     try:
                         if self._rebuild_rps_from_cache(
@@ -261,9 +260,7 @@ class CacheManager:
                 "rows": rows,
                 "headers": headers,
             }
-            path = os.path.join(
-                self.cache_dir, f"rt_monitor_{datetime.date.today().isoformat()}.json"
-            )
+            path = os.path.join(self.cache_dir, f"rt_monitor_{datetime.date.today().isoformat()}.json")
             self._save_json(path, data)
             remove_cache_file(self._legacy_pickle_path(path))
             log.info(f"[盘中缓存] 已保存{len(rows)}条信号到 {os.path.basename(path)}")
@@ -281,9 +278,7 @@ class CacheManager:
         path = None
         for days_ago in range(10):
             check_date = datetime.date.today() - datetime.timedelta(days=days_ago)
-            candidate = os.path.join(
-                self.cache_dir, f"rt_monitor_{check_date.isoformat()}.json"
-            )
+            candidate = os.path.join(self.cache_dir, f"rt_monitor_{check_date.isoformat()}.json")
             if os.path.exists(candidate):
                 path = candidate
                 break
@@ -348,9 +343,7 @@ class CacheManager:
                 continue
 
             try:
-                file_date = datetime.datetime.strptime(
-                    matched.group(1), "%Y-%m-%d"
-                ).date()
+                file_date = datetime.datetime.strptime(matched.group(1), "%Y-%m-%d").date()
                 if (today - file_date).days > retention_days or filename.endswith(".pkl"):
                     os.remove(os.path.join(self.cache_dir, filename))
             except (ValueError, OSError) as exc:

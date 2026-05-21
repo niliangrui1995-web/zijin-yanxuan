@@ -40,8 +40,21 @@ _QFII_SELF_OWNED_SUFFIX_RE = re.compile(r"[-－]\s*自有资金(?:[（(][^)）]*
 _QFII_CLIENT_SUFFIX_RE = re.compile(r"[-－]\s*客户资金(?:[（(][^)）]*[)）])*$")
 _EPSILON = 1e-6
 _HOLDER_NAME_SHORT_TOKENS = {
-    "AG", "CO", "PLC", "LTD", "LP", "LLC", "INC", "NV", "NA", "SA", "AB", "AS", "BV",
-    "PTE", "QFII",
+    "AG",
+    "CO",
+    "PLC",
+    "LTD",
+    "LP",
+    "LLC",
+    "INC",
+    "NV",
+    "NA",
+    "SA",
+    "AB",
+    "AS",
+    "BV",
+    "PTE",
+    "QFII",
 }
 QFII_CAPITAL_ATTRIBUTE_SELF_OWNED = "自有资金"
 QFII_CAPITAL_ATTRIBUTE_CLIENT = "客户资金"
@@ -565,7 +578,9 @@ def build_qfii_holder_change_rows(raw_rows: list[dict], subject: dict) -> list[d
         holder_identity = split_qfii_holder_identity(raw.get("holder_name"))
         holder_name = holder_identity["holder_name"]
         institution_match_key = holder_identity["institution_match_key"]
-        institution_name = best_institution_name_by_match_key.get(institution_match_key) or holder_identity["institution_name"]
+        institution_name = (
+            best_institution_name_by_match_key.get(institution_match_key) or holder_identity["institution_name"]
+        )
         capital_attribute = holder_identity["capital_attribute"]
         if not is_mainland_security_code(stock_code) or not holder_name or not institution_match_key:
             continue

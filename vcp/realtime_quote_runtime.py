@@ -65,9 +65,7 @@ class RealtimeQuoteRuntime:
         self._queue.put(state)
 
         if not state["done"].wait(timeout_sec):
-            raise TimeoutError(
-                f"实时行情批次超时（{timeout_sec:.0f}s，{len(params_list)} 个标的）"
-            )
+            raise TimeoutError(f"实时行情批次超时（{timeout_sec:.0f}s，{len(params_list)} 个标的）")
 
         if state["error"] is not None:
             raise state["error"]

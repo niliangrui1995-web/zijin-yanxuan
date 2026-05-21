@@ -51,11 +51,10 @@ def get_missing_a_share_finance_codes(codes: Iterable[str], snapshot: Mapping[st
     return missing
 
 
-def enrich_quotes_with_finance(quotes: Mapping[str, Mapping] | None, finance_data: Mapping[str, Mapping] | None) -> dict:
-    enriched = {
-        str(code): dict(payload or {})
-        for code, payload in dict(quotes or {}).items()
-    }
+def enrich_quotes_with_finance(
+    quotes: Mapping[str, Mapping] | None, finance_data: Mapping[str, Mapping] | None
+) -> dict:
+    enriched = {str(code): dict(payload or {}) for code, payload in dict(quotes or {}).items()}
 
     for raw_code, raw_info in dict(finance_data or {}).items():
         code = str(raw_code or "").strip()
@@ -97,11 +96,7 @@ def resolve_quote_metrics(item_dict: Mapping | None, quote: Mapping | None) -> d
     row = dict(item_dict or {})
     payload = dict(quote or {})
 
-    zongguben = coerce_number(
-        payload.get("_zongguben")
-        or payload.get("zongguben")
-        or row.get("_zongguben")
-    )
+    zongguben = coerce_number(payload.get("_zongguben") or payload.get("zongguben") or row.get("_zongguben"))
 
     rt_close = coerce_number(payload.get("close"))
     last_close = coerce_number(payload.get("last_close"))

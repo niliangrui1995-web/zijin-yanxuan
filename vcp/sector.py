@@ -32,13 +32,14 @@ class SectorManager:
     _instance_root = None
 
     @classmethod
-    def get_instance(cls, tdx_root: str | None = None) -> 'SectorManager':
+    def get_instance(cls, tdx_root: str | None = None) -> "SectorManager":
         """获取单例实例（首次调用时解析板块文件，后续直接返回缓存）"""
         if tdx_root is None:
             # 动态获取通达信安装路径，不再硬编码特定机器的路径
             from core.app_config import app_config
-            vipdoc = app_config.get('scan/tdx_vipdoc', '')
-            tdx_root = os.path.dirname(vipdoc) if vipdoc else r'D:\HT'
+
+            vipdoc = app_config.get("scan/tdx_vipdoc", "")
+            tdx_root = os.path.dirname(vipdoc) if vipdoc else r"D:\HT"
         if cls._instance is None or cls._instance_root != tdx_root:
             cls._instance = cls(tdx_root)
             cls._instance_root = tdx_root
@@ -52,8 +53,9 @@ class SectorManager:
         """
         if tdx_root is None:
             from core.app_config import app_config
-            vipdoc = app_config.get('scan/tdx_vipdoc', '')
-            tdx_root = os.path.dirname(vipdoc) if vipdoc else r'D:\HT'
+
+            vipdoc = app_config.get("scan/tdx_vipdoc", "")
+            tdx_root = os.path.dirname(vipdoc) if vipdoc else r"D:\HT"
         self.tdx_root = tdx_root
         # 股票代码 → 所属板块名列表
         self.code_to_sectors = defaultdict(list)
@@ -63,13 +65,15 @@ class SectorManager:
         self.all_sector_names = []
 
         # 解析文件
-        self._parse_industry(os.path.join(tdx_root, 'T0002', 'hq_cache', 'tdxhy.cfg'))
-        self._parse_concepts(os.path.join(tdx_root, 'T0002', 'hq_cache', 'infoharbor_block.dat'))
+        self._parse_industry(os.path.join(tdx_root, "T0002", "hq_cache", "tdxhy.cfg"))
+        self._parse_concepts(os.path.join(tdx_root, "T0002", "hq_cache", "infoharbor_block.dat"))
 
         # 汇总所有板块名
         self.all_sector_names = sorted(self.sector_to_codes.keys())
-        _log.info(f"[板块管理] 加载完成: {len(self.all_sector_names)} 个板块 | "
-              f"行业映射 {self._hy_count} 条 | 概念板块 {self._gn_count} 个")
+        _log.info(
+            f"[板块管理] 加载完成: {len(self.all_sector_names)} 个板块 | "
+            f"行业映射 {self._hy_count} 条 | 概念板块 {self._gn_count} 个"
+        )
 
     # ---------- 解析通达信行业分类文件 ----------
     def _parse_industry(self, filepath):
@@ -84,43 +88,43 @@ class SectorManager:
             return
 
         # 读取 incon.dat 获取行业代码→行业名称映射
-        incon_path = os.path.join(self.tdx_root, 'incon.dat')
+        incon_path = os.path.join(self.tdx_root, "incon.dat")
         hy_name_map = {}  # 行业代码 → 名称
         if os.path.exists(incon_path):
             try:
-                with open(incon_path, 'rb') as f:
+                with open(incon_path, "rb") as f:
                     raw = f.read()
-                text = raw.decode('gbk', errors='ignore')
+                text = raw.decode("gbk", errors="ignore")
                 # 解析 #TDXNHY 段（通达信行业分类）
                 in_tdx_section = False
-                for line in text.split('\n'):
+                for line in text.split("\n"):
                     line = line.strip()
-                    if line.startswith('#TDXNHY'):
+                    if line.startswith("#TDXNHY"):
                         in_tdx_section = True
                         continue
-                    if line.startswith('#') and in_tdx_section:
+                    if line.startswith("#") and in_tdx_section:
                         break  # 下一个段落开始
-                    if in_tdx_section and '|' in line:
-                        parts = line.split('|')
+                    if in_tdx_section and "|" in line:
+                        parts = line.split("|")
                         if len(parts) >= 2:
                             hy_name_map[parts[0]] = parts[1]
             except (OSError, TypeError, UnicodeDecodeError, ValueError) as e:
                 _log.error(f"[板块管理] ⚠ 解析 incon.dat 失败: {e}")
         try:
-            with open(filepath, 'r', encoding='gbk', errors='ignore') as f:
+            with open(filepath, "r", encoding="gbk", errors="ignore") as f:
                 for line in f:
                     line = line.strip()
-                    if not line or line.startswith('#'):
+                    if not line or line.startswith("#"):
                         continue
-                    parts = line.split('|')
+                    parts = line.split("|")
                     if len(parts) < 3:
                         continue
                     market = parts[0]  # 0=深圳, 1=上海
-                    code = parts[1]    # 股票代码（6位）
-                    hy_code = parts[2] # 行业代码（如 T0703）
+                    code = parts[1]  # 股票代码（6位）
+                    hy_code = parts[2]  # 行业代码（如 T0703）
 
                     # 统一股票代码格式（与 data_provider 一致）
-                    if market == '1':
+                    if market == "1":
                         full_code = f"sh{code}"
                     else:
                         full_code = f"sz{code}"
@@ -134,6 +138,7 @@ class SectorManager:
                     self._hy_count += 1
         except (OSError, TypeError, UnicodeDecodeError, ValueError) as e:
             _log.error(f"[板块管理] ⚠ 解析行业文件失败: {e}")
+
     # ---------- 解析概念板块文件 ----------
     def _parse_concepts(self, filepath):
         """解析 infoharbor_block.dat → 概念板块映射
@@ -149,19 +154,19 @@ class SectorManager:
         text = ""
         try:
             if os.path.exists(filepath):
-                with open(filepath, 'rb') as f:
+                with open(filepath, "rb") as f:
                     raw = f.read()
-                text = raw.decode('gbk', errors='replace')
+                text = raw.decode("gbk", errors="replace")
         except (OSError, TypeError, UnicodeDecodeError, ValueError) as e:
             _log.error(f"[板块管理] ⚠ 读取 {filepath} 失败: {e}，尝试 fallback")
 
         if not text:
-            fallback_path = os.path.join(self.tdx_root, 'T0002', 'hq_cache', 'block.dat')
+            fallback_path = os.path.join(self.tdx_root, "T0002", "hq_cache", "block.dat")
             if os.path.exists(fallback_path):
                 try:
-                    with open(fallback_path, 'rb') as f:
+                    with open(fallback_path, "rb") as f:
                         raw = f.read()
-                    text = raw.decode('gbk', errors='replace')
+                    text = raw.decode("gbk", errors="replace")
                     _log.info(f"[板块管理] 成功读取备用文件: {fallback_path}")
                 except (OSError, TypeError, UnicodeDecodeError, ValueError) as e:
                     _log.error(f"[板块管理] ⚠ 备用文件 {fallback_path} 读取失败: {e}")
@@ -173,28 +178,28 @@ class SectorManager:
 
         try:
             # 按 #GN_ 分割为各板块段落
-            sections = re.split(r'(?=#GN_)', text)
+            sections = re.split(r"(?=#GN_)", text)
             for section in sections:
                 section = section.strip()
-                if not section.startswith('#GN_'):
+                if not section.startswith("#GN_"):
                     continue
 
                 # 提取板块名（第一行 #GN_板块名,... ）
-                first_line_end = section.find('\n')
+                first_line_end = section.find("\n")
                 if first_line_end < 0:
                     first_line_end = len(section)
                 header = section[:first_line_end].strip()
                 # 从 header 中提取板块名
                 # 格式: #GN_板块名,数量,代码,...
-                header_parts = header.split(',')
-                sector_name = header_parts[0].replace('#', '')  # 如 "GN_人工智能"
+                header_parts = header.split(",")
+                sector_name = header_parts[0].replace("#", "")  # 如 "GN_人工智能"
 
                 # 提取成分股代码
                 body = section[first_line_end:]
                 # 格式: 市场#代码  (0=深圳, 1=上海)
-                codes = re.findall(r'([01])#(\d{6})', body)
+                codes = re.findall(r"([01])#(\d{6})", body)
                 for market, code in codes:
-                    if market == '1':
+                    if market == "1":
                         full_code = f"sh{code}"
                     else:
                         full_code = f"sz{code}"
@@ -204,6 +209,7 @@ class SectorManager:
                 self._gn_count += 1
         except (AttributeError, IndexError, OSError, TypeError, ValueError) as e:
             _log.error(f"[板块管理] ⚠ 解析概念板块文件失败: {e}")
+
     # ---------- 查询接口 ----------
     def get_sectors(self, code):
         """返回该股票所属的所有板块名（行业+概念）
@@ -214,8 +220,8 @@ class SectorManager:
             板块名列表，如 ['行业_半导体', 'GN_芯片概念', 'GN_人工智能']
         """
         # 兼容无前缀格式
-        if not code.startswith(('sh', 'sz')):
-            for prefix in ['sz', 'sh']:
+        if not code.startswith(("sh", "sz")):
+            for prefix in ["sz", "sh"]:
                 full = f"{prefix}{code}"
                 if full in self.code_to_sectors:
                     # 使用 dict.fromkeys 去重并保持顺序
@@ -241,8 +247,8 @@ class SectorManager:
         # ---- Polars 快速路径 ----
         try:
             from vcp.polars_engine import build_sector_rps_pl
-            result = build_sector_rps_pl(
-                dict(self.sector_to_codes), all_data, target_date, periods)
+
+            result = build_sector_rps_pl(dict(self.sector_to_codes), all_data, target_date, periods)
             if result:
                 return result
         except ImportError:
@@ -251,8 +257,8 @@ class SectorManager:
             _log.error(f"[板块管理] Polars 板块 RPS 计算失败，回退 numpy: {e}")
         # ---- numpy 原始路径（fallback）----
         if isinstance(target_date, str):
-            target_dt = _datetime.strptime(target_date, '%Y%m%d').date()
-        elif hasattr(target_date, 'date') and callable(getattr(target_date, 'date')):
+            target_dt = _datetime.strptime(target_date, "%Y%m%d").date()
+        elif hasattr(target_date, "date") and callable(getattr(target_date, "date")):
             target_dt = target_date.date()
         else:
             target_dt = target_date
@@ -265,20 +271,22 @@ class SectorManager:
                 continue
             try:
                 import polars as pl
+
                 # 兼容 Polars 和 Pandas 输入
                 if isinstance(df, pl.DataFrame):
-                    if 'close' not in df.columns or 'datetime' not in df.columns:
+                    if "close" not in df.columns or "datetime" not in df.columns:
                         continue
-                    dates_col = df['datetime'].cast(pl.Date)
+                    dates_col = df["datetime"].cast(pl.Date)
                     mask_list = (dates_col <= pl.lit(target_dt)).to_list()
                     valid_indices = [i for i, v in enumerate(mask_list) if v]
                     if not valid_indices:
                         continue
                     loc = valid_indices[-1]
-                    curr_close = float(df['close'][loc])
+                    curr_close = float(df["close"][loc])
                 else:
                     # Pandas fallback（向下兼容旧缓存等极端情况）
                     import pandas as pd
+
                     _target_ts = pd.to_datetime(target_date)
                     if _target_ts in df.index:
                         loc = df.index.get_loc(_target_ts)
@@ -293,7 +301,7 @@ class SectorManager:
                         loc = int(loc[-1])
                     else:
                         loc = int(loc)
-                    curr_close = float(df.iloc[loc]['close'])
+                    curr_close = float(df.iloc[loc]["close"])
             except (AttributeError, IndexError, KeyError, RuntimeError, TypeError, ValueError) as _e:
                 _log.debug(f"[板块管理] 计算 {code} 涨幅时异常: {_e}")
                 continue
@@ -307,9 +315,9 @@ class SectorManager:
                 if prev_loc < 0:
                     continue
                 if isinstance(df, pl.DataFrame):
-                    prev_close = float(df['close'][prev_loc])
+                    prev_close = float(df["close"][prev_loc])
                 else:
-                    prev_close = float(df.iloc[prev_loc]['close'])
+                    prev_close = float(df.iloc[prev_loc]["close"])
                 if prev_close > 0:
                     ret[p] = (curr_close - prev_close) / prev_close
             if ret:
@@ -317,10 +325,10 @@ class SectorManager:
                 # 兼容格式：all_data key 可能是纯数字(600000)，
                 # 而 sector_to_codes 成员是 sh600000/sz000001
                 # 同时存两种格式确保匹配
-                bare = code.replace('sh', '').replace('sz', '')
+                bare = code.replace("sh", "").replace("sz", "")
                 if bare == code:
                     # code 是纯数字，补上 sh/sz 前缀
-                    prefix = 'sh' if code.startswith(('6', '9')) else 'sz'
+                    prefix = "sh" if code.startswith(("6", "9")) else "sz"
                     stock_returns[f"{prefix}{code}"] = ret
                 else:
                     # code 已有前缀，补上纯数字版
@@ -348,8 +356,7 @@ class SectorManager:
         sector_rps = defaultdict(dict)
         for p in periods:
             # 收集所有板块在该周期的涨幅
-            items = [(name, ret.get(p)) for name, ret in sector_returns.items()
-                     if p in ret]
+            items = [(name, ret.get(p)) for name, ret in sector_returns.items() if p in ret]
             if not items:
                 continue
             items.sort(key=lambda x: x[1])
@@ -403,7 +410,7 @@ class SectorManager:
         info_parts = []
         for name, rps, period in top3:
             # 简化板块名（去掉前缀 "GN_" "行业_" 太长的截断）
-            short_name = name.replace('GN_', '').replace('行业_', '')
+            short_name = name.replace("GN_", "").replace("行业_", "")
             if len(short_name) > 6:
                 short_name = short_name[:6]
             info_parts.append(f"{short_name}({period}d={rps:.0f})")

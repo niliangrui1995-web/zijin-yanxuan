@@ -42,7 +42,8 @@ def _iter_python_files(root: Path):
             if path.suffix.lower() in PYTHON_FILE_SUFFIXES:
                 paths.append(path)
     return sorted(
-        path for path in paths
+        path
+        for path in paths
         if not any(part.lower() in IGNORED_SCAN_DIRS for part in path.relative_to(REPO_ROOT).parts)
     )
 
@@ -210,11 +211,7 @@ def _find_literal_task_id_usage(root: Path, *, allowed_paths: set[str] | None = 
                     if isinstance(keyword.value, ast.JoinedStr):
                         violations.append(rel_path)
                         break
-                if (
-                    isinstance(node.func, ast.Attribute)
-                    and node.func.attr in positional_task_api_names
-                    and node.args
-                ):
+                if isinstance(node.func, ast.Attribute) and node.func.attr in positional_task_api_names and node.args:
                     first_arg = node.args[0]
                     if isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str):
                         violations.append(rel_path)
@@ -238,11 +235,7 @@ def test_python_boundary_scan_includes_root_pyw_entry_and_excludes_noise_dirs():
     paths = {path.relative_to(REPO_ROOT).as_posix() for path in _iter_python_files(REPO_ROOT)}
 
     assert "vcp_hunter_qt.pyw" in paths
-    assert not any(
-        part.lower() in IGNORED_SCAN_DIRS
-        for rel_path in paths
-        for part in Path(rel_path).parts
-    )
+    assert not any(part.lower() in IGNORED_SCAN_DIRS for rel_path in paths for part in Path(rel_path).parts)
 
 
 def test_root_app_services_scan_catches_from_app_import_services(tmp_path, monkeypatch):
@@ -292,9 +285,7 @@ def test_prefix_scan_catches_constant_dynamic_import_calls(tmp_path, monkeypatch
 
     violations = _find_prefix_violations(ui_root, {"domains", "infra", "vcp"})
 
-    assert violations == [
-        "ui/dynamic.py: domains.scan, infra.diagnostics.runtime_health, vcp.constants"
-    ]
+    assert violations == ["ui/dynamic.py: domains.scan, infra.diagnostics.runtime_health, vcp.constants"]
 
 
 def test_vcp_constants_import_is_side_effect_free(monkeypatch):
@@ -360,9 +351,8 @@ def test_ui_layer_does_not_import_domains_or_infra_runtime_modules_directly():
         REPO_ROOT / "ui",
         {"domains", "infra"},
     )
-    assert not violations, (
-        "UI layer bypassed app services and imported domain/infra modules directly:\n"
-        + "\n".join(violations)
+    assert not violations, "UI layer bypassed app services and imported domain/infra modules directly:\n" + "\n".join(
+        violations
     )
 
 
@@ -384,7 +374,9 @@ def test_core_ui_signal_and_job_runner_usage_is_centralized():
             "core/market_calendar.py",
         },
     )
-    assert not violations, "Core layer imported UI/task orchestration helpers outside allowed hubs:\n" + "\n".join(violations)
+    assert not violations, "Core layer imported UI/task orchestration helpers outside allowed hubs:\n" + "\n".join(
+        violations
+    )
 
 
 def test_only_settings_infrastructure_uses_qsettings_directly():
@@ -420,9 +412,8 @@ def test_main_window_runtime_does_not_reach_into_workspace_tab_attributes():
             "tab_fund_holdings",
         },
     )
-    assert not violations, (
-        "Main window runtime still reaches into concrete workspace tab attributes:\n"
-        + "\n".join(violations)
+    assert not violations, "Main window runtime still reaches into concrete workspace tab attributes:\n" + "\n".join(
+        violations
     )
 
 
@@ -465,7 +456,9 @@ def test_window_command_service_avoids_ui_theme_and_private_window_hooks():
             "_on_show_kline",
         },
     )
-    assert not violations, "Window command service still references private main-window hooks:\n" + "\n".join(violations)
+    assert not violations, "Window command service still references private main-window hooks:\n" + "\n".join(
+        violations
+    )
 
 
 def test_main_window_runtime_bootstrap_goes_through_app_services():
@@ -527,9 +520,8 @@ def test_ui_layer_does_not_import_core_runtime_facades_directly():
             "core.ui_signals",
         },
     )
-    assert not violations, (
-        "UI layer still imports core runtime/config compatibility modules directly:\n"
-        + "\n".join(violations)
+    assert not violations, "UI layer still imports core runtime/config compatibility modules directly:\n" + "\n".join(
+        violations
     )
 
 
@@ -552,17 +544,15 @@ def test_ui_layer_uses_narrow_app_service_modules_instead_of_root_barrel():
     )
     assert not violations, (
         "UI layer imported the broad app.services root barrel. "
-        "Import from app.services.<narrow_service> instead:\n"
-        + "\n".join(violations)
+        "Import from app.services.<narrow_service> instead:\n" + "\n".join(violations)
     )
 
 
 def test_app_and_ui_layers_use_public_realtime_quote_port_for_cooldown():
     paths = _iter_python_files(REPO_ROOT / "app") + _iter_python_files(REPO_ROOT / "ui")
     violations = _find_text_snippets_in_files(paths, {"_enter_realtime_cooldown"})
-    assert not violations, (
-        "App/UI layers should use the public RealtimeQuotePort cooldown method:\n"
-        + "\n".join(violations)
+    assert not violations, "App/UI layers should use the public RealtimeQuotePort cooldown method:\n" + "\n".join(
+        violations
     )
 
 
@@ -583,8 +573,7 @@ def test_domain_and_market_data_layers_use_domains_market_calendar_entrypoint():
     violations.extend(_find_violations(REPO_ROOT / "domains" / "earnings", {"core.market_calendar"}))
     violations.extend(_find_violations(REPO_ROOT / "infra" / "market_data", {"core.market_calendar"}))
     assert not violations, (
-        "Domain/market-data layers still import core.market_calendar compatibility path:\n"
-        + "\n".join(violations)
+        "Domain/market-data layers still import core.market_calendar compatibility path:\n" + "\n".join(violations)
     )
 
 
@@ -598,9 +587,8 @@ def test_non_core_layers_do_not_import_legacy_event_signal_shims():
                 allowed_paths={"infra/events/ui_signal_hub.py"},
             )
         )
-    assert not violations, (
-        "Non-core layers still depend on legacy event/signal compatibility shims:\n"
-        + "\n".join(violations)
+    assert not violations, "Non-core layers still depend on legacy event/signal compatibility shims:\n" + "\n".join(
+        violations
     )
 
 

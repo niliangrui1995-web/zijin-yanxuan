@@ -21,9 +21,6 @@ from ui.tabs.asian_market_meta import (
     get_role_mapping,
 )
 from ui.tabs.asian_market_runtime import (
-    call_worker_method as asian_call_worker_method,
-)
-from ui.tabs.asian_market_runtime import (
     check_auto_cache as asian_check_auto_cache,
 )
 from ui.tabs.asian_market_runtime import (
@@ -118,6 +115,7 @@ def _normalize_cached_rt_entry(info: dict, data_points: list[dict]) -> dict:
 
 class AsianMarketTab(BaseStockTab):
     """亚洲寡头行情面板"""
+
     def __init__(self, data_provider=None, parent=None):
         super().__init__(data_provider, parent)
         self._asian_runtime_state = "running"
@@ -168,7 +166,7 @@ class AsianMarketTab(BaseStockTab):
         service = getattr(host, "asian_market_service", None)
         if isinstance(service, AsianMarketRuntimeService):
             return service
-        return AsianMarketRuntimeService(parent=self)
+        return AsianMarketRuntimeService(parent=self, worker_factory=AsianMarketWorker)
 
     def _connect_asian_market_service(self) -> None:
         service = getattr(self, "_asian_market_service", None)
@@ -190,6 +188,14 @@ class AsianMarketTab(BaseStockTab):
     def _runtime_state_text(self) -> str:
         return asian_runtime_state_text(self._asian_runtime_state)
 
+    @property
+    def worker(self):
+        service = getattr(self, "_asian_market_service", None)
+        current_worker = getattr(service, "current_worker", None)
+        if callable(current_worker):
+            return current_worker()
+        return None
+
     def _call_worker_method(self, method_name: str):
         service = getattr(self, "_asian_market_service", None)
         worker = service.current_worker() if service is not None else None
@@ -209,9 +215,7 @@ class AsianMarketTab(BaseStockTab):
                 return list(dict.fromkeys(codes))
 
         worker_codes = [
-            str(code).strip()
-            for code in getattr(getattr(self, "worker", None), "codes", []) or []
-            if str(code).strip()
+            str(code).strip() for code in getattr(getattr(self, "worker", None), "codes", []) or [] if str(code).strip()
         ]
         if worker_codes:
             return list(dict.fromkeys(worker_codes))
@@ -431,19 +435,19 @@ class AsianMarketTab(BaseStockTab):
 
             if not os.path.exists(JSON_CACHE):
                 return {}
-            with open(JSON_CACHE, 'r', encoding='utf-8') as f:
+            with open(JSON_CACHE, "r", encoding="utf-8") as f:
                 raw = json.load(f)
 
             latest_dates = {}
-            for item in raw.get('stocks', []):
-                ticker = str(item.get('ticker', '') or '').strip().upper()
+            for item in raw.get("stocks", []):
+                ticker = str(item.get("ticker", "") or "").strip().upper()
                 if "." not in ticker:
                     continue
                 market = MarketCalendar.normalize_market(ticker.split(".")[-1])
-                klines = item.get('klines', [])
+                klines = item.get("klines", [])
                 if not klines:
                     continue
-                last_date_raw = str(klines[-1].get('date', '')).strip()
+                last_date_raw = str(klines[-1].get("date", "")).strip()
                 if not last_date_raw:
                     continue
                 try:
@@ -453,7 +457,15 @@ class AsianMarketTab(BaseStockTab):
                 if latest_dates.get(market) is None or last_date > latest_dates[market]:
                     latest_dates[market] = last_date
             return latest_dates
-        except (FileNotFoundError, PermissionError, OSError, TypeError, ValueError, KeyError, json.JSONDecodeError) as e:
+        except (
+            FileNotFoundError,
+            PermissionError,
+            OSError,
+            TypeError,
+            ValueError,
+            KeyError,
+            json.JSONDecodeError,
+        ) as e:
             log.warning(f"[亚洲页] 解析缓存最新交易日失败: {e}")
             return {}
 
@@ -463,14 +475,14 @@ class AsianMarketTab(BaseStockTab):
         try:
             if not os.path.exists(JSON_CACHE):
                 return None
-            with open(JSON_CACHE, 'r', encoding='utf-8') as f:
+            with open(JSON_CACHE, "r", encoding="utf-8") as f:
                 raw = json.load(f)
             latest_date = None
-            for item in raw.get('stocks', []):
-                klines = item.get('klines', [])
+            for item in raw.get("stocks", []):
+                klines = item.get("klines", [])
                 if not klines:
                     continue
-                last_date_raw = str(klines[-1].get('date', '')).strip()
+                last_date_raw = str(klines[-1].get("date", "")).strip()
                 if not last_date_raw:
                     continue
                 try:
@@ -480,7 +492,15 @@ class AsianMarketTab(BaseStockTab):
                 if latest_date is None or last_date > latest_date:
                     latest_date = last_date
             return latest_date
-        except (FileNotFoundError, PermissionError, OSError, TypeError, ValueError, KeyError, json.JSONDecodeError) as e:
+        except (
+            FileNotFoundError,
+            PermissionError,
+            OSError,
+            TypeError,
+            ValueError,
+            KeyError,
+            json.JSONDecodeError,
+        ) as e:
             log.warning(f"[亚洲页] 解析缓存最新交易日失败: {e}")
             return None
 
@@ -489,8 +509,9 @@ class AsianMarketTab(BaseStockTab):
             from datetime import timedelta
 
             from app.services.ui_market_calendar_service import MarketCalendar
+
             markets = set()
-            for row in getattr(self, 'row_data', []) or []:
+            for row in getattr(self, "row_data", []) or []:
                 code = str(row.get("\u4ee3\u7801", row.get("code", ""))).strip()
                 if "." in code:
                     markets.add(MarketCalendar.normalize_market(code.split(".")[-1]))
@@ -531,8 +552,9 @@ class AsianMarketTab(BaseStockTab):
             from datetime import timedelta
 
             from app.services.ui_market_calendar_service import MarketCalendar
+
             markets = set()
-            for row in getattr(self, 'row_data', []) or []:
+            for row in getattr(self, "row_data", []) or []:
                 code = str(row.get("代码", "")).strip()
                 if "." in code:
                     markets.add(code.split(".")[-1].upper())
@@ -592,7 +614,8 @@ class AsianMarketTab(BaseStockTab):
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         # 统一工具条：标题 + 副标题 + 过滤区 + 主操作
         self.lbl_status = QLabel("系统初始化...")
@@ -620,7 +643,21 @@ class AsianMarketTab(BaseStockTab):
         self.table_state = TableStateWrapper(self.asian_table, empty_title="暂无亚洲数据", loading_title="加载中...")
         layout.addWidget(self.table_state)
 
-        self.header_labels = ["代码", "名称", "现价", "涨幅%", "PE", "市场", "状态", "赛道", "角色定位", "货币", "5日涨跌%", "10日涨跌%", "20日涨跌%"]
+        self.header_labels = [
+            "代码",
+            "名称",
+            "现价",
+            "涨幅%",
+            "PE",
+            "市场",
+            "状态",
+            "赛道",
+            "角色定位",
+            "货币",
+            "5日涨跌%",
+            "10日涨跌%",
+            "20日涨跌%",
+        ]
 
         self.model = StockTableModel(self.header_labels)
         self.model.set_plain_style_headers(["状态"])
@@ -663,20 +700,23 @@ class AsianMarketTab(BaseStockTab):
 
     def _show_context_menu(self, pos):
         index = self.asian_table.indexAt(pos)
-        if not index.isValid(): return
+        if not index.isValid():
+            return
         source_idx = self.proxy_model.mapToSource(index)
         row = source_idx.row()
-        if row >= len(self.model.row_data): return
+        if row >= len(self.model.row_data):
+            return
 
         code = self.model.row_data[row].get("代码", "")
         name = self.model.row_data[row].get("名称", "")
         if code and name:
             from ui.components.stock_context_menu import build_stock_context_menu
+
             build_stock_context_menu(self, code, name)
 
     def _on_cf_proxy_toggled(self, checked):
         set_cf_proxy_enabled(checked)
-        if hasattr(self, 'lbl_status'):
+        if hasattr(self, "lbl_status"):
             mode_text = "已启用稳定海外线路" if checked else "已切换为当前系统网络"
             self._set_asian_status(mode_text, "下次刷新生效", self._format_last_success_segment())
 
@@ -688,7 +728,7 @@ class AsianMarketTab(BaseStockTab):
         """手动触发外网数据更新"""
         # 先重载本地缓存并补齐缺失标的，再触发实时刷新，确保 worker 不会长期只盯着旧的 33 只
         self._load_local_cache()
-        if hasattr(self, 'worker') and self.worker.isRunning():
+        if hasattr(self, "worker") and self.worker.isRunning():
             self._set_runtime_state("manual_refresh_once")
             self._set_asian_status("刷新已触发", "正在请求最新亚洲报价...", freshness="实时", next_step="等待报价同步")
             self._worker_trigger_refresh()
@@ -701,19 +741,13 @@ class AsianMarketTab(BaseStockTab):
         set_target_codes = getattr(service, "set_target_codes", None)
         if callable(set_target_codes):
             set_target_codes(
-                [
-                    str(r.get("代码", "")).strip()
-                    for r in (self.row_data or [])
-                    if str(r.get("代码", "")).strip()
-                ]
+                [str(r.get("代码", "")).strip() for r in (self.row_data or []) if str(r.get("代码", "")).strip()]
             )
             return
-        if hasattr(self, 'worker') and self.worker is not None:
+        if hasattr(self, "worker") and self.worker is not None:
             try:
                 self.worker.codes = [
-                    str(r.get("代码", "")).strip()
-                    for r in (self.row_data or [])
-                    if str(r.get("代码", "")).strip()
+                    str(r.get("代码", "")).strip() for r in (self.row_data or []) if str(r.get("代码", "")).strip()
                 ]
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
                 log.warning(f"[亚洲页] 同步 worker 股票池失败: {e}")
@@ -757,7 +791,7 @@ class AsianMarketTab(BaseStockTab):
             cache_dir = os.path.dirname(RT_JSON_CACHE)
             if cache_dir:
                 os.makedirs(cache_dir, exist_ok=True)
-            with open(RT_JSON_CACHE, 'w', encoding='utf-8') as f:
+            with open(RT_JSON_CACHE, "w", encoding="utf-8") as f:
                 json.dump(cache_friendly, f, ensure_ascii=False)
         except (PermissionError, OSError, TypeError, ValueError) as e:
             log.error(f"[亚洲页] 持久化 RT 缓存失败: {e}")
@@ -802,9 +836,21 @@ class AsianMarketTab(BaseStockTab):
                         def _safe_pct(cur, ref_val):
                             return _round_pct(((cur / ref_val) - 1.0) * 100.0) if ref_val > 0 and cur > 0 else 0.0
 
-                        pct_5 = _safe_pct(close_val, float(data_points[-6].get("close", 0))) if len(data_points) >= 6 else 0.0
-                        pct_10 = _safe_pct(close_val, float(data_points[-11].get("close", 0))) if len(data_points) >= 11 else 0.0
-                        pct_20 = _safe_pct(close_val, float(data_points[-21].get("close", 0))) if len(data_points) >= 21 else 0.0
+                        pct_5 = (
+                            _safe_pct(close_val, float(data_points[-6].get("close", 0)))
+                            if len(data_points) >= 6
+                            else 0.0
+                        )
+                        pct_10 = (
+                            _safe_pct(close_val, float(data_points[-11].get("close", 0)))
+                            if len(data_points) >= 11
+                            else 0.0
+                        )
+                        pct_20 = (
+                            _safe_pct(close_val, float(data_points[-21].get("close", 0)))
+                            if len(data_points) >= 21
+                            else 0.0
+                        )
 
                         role_desc = roles_map.get(code, item.get("name", ""))
                         market_code = item.get("market", code.split(".")[-1] if "." in code else "")
@@ -836,7 +882,11 @@ class AsianMarketTab(BaseStockTab):
                             GLOBAL_ASIAN_RT_CACHE[code] = history_quote
 
                         close_number = float(close_val) if close_val else 0.0
-                        fmt_close = f"{close_number:.3f}" if 0 < close_number < 10 else (f"{close_number:.2f}" if close_number > 0 else "--")
+                        fmt_close = (
+                            f"{close_number:.3f}"
+                            if 0 < close_number < 10
+                            else (f"{close_number:.2f}" if close_number > 0 else "--")
+                        )
                         display_name = item.get("name", "")
                         if ch_names_map.get(code):
                             display_name = f"{display_name}  ({ch_names_map.get(code, '未录入')})"
@@ -883,7 +933,9 @@ class AsianMarketTab(BaseStockTab):
                             self.row_data.append(
                                 {
                                     "代码": ticker,
-                                    "名称": f"{en_name}  ({ch_names_map.get(ticker, '未录入')})" if ch_names_map.get(ticker) else en_name,
+                                    "名称": f"{en_name}  ({ch_names_map.get(ticker, '未录入')})"
+                                    if ch_names_map.get(ticker)
+                                    else en_name,
                                     "现价": "--",
                                     "涨幅%": 0.0,
                                     "PE": "--",
@@ -924,7 +976,15 @@ class AsianMarketTab(BaseStockTab):
                             log.warning(
                                 f"[亚洲页] 本地缓存缺失 {len(missing_codes)} 只，已补齐占位行: {sorted(missing_codes)}"
                             )
-                except (FileNotFoundError, PermissionError, OSError, TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
+                except (
+                    FileNotFoundError,
+                    PermissionError,
+                    OSError,
+                    TypeError,
+                    ValueError,
+                    KeyError,
+                    json.JSONDecodeError,
+                ) as exc:
                     log.error(f"[亚洲页] JSON 历史缓存加载失败: {exc}")
 
             if os.path.exists(RT_JSON_CACHE):
@@ -944,7 +1004,11 @@ class AsianMarketTab(BaseStockTab):
                         close_number = float(info.get("close", 0.0))
                         if close_number <= 0 and history_points_by_code.get(code):
                             continue
-                        row_dict["现价"] = f"{close_number:.3f}" if 0 < close_number < 10 else (f"{close_number:.2f}" if close_number > 0 else "--")
+                        row_dict["现价"] = (
+                            f"{close_number:.3f}"
+                            if 0 < close_number < 10
+                            else (f"{close_number:.2f}" if close_number > 0 else "--")
+                        )
                         row_dict["涨幅%"] = _round_pct(info.get("pct", 0.0))
                         row_dict["PE"] = info.get("pe") if info.get("pe") is not None else "--"
                         row_dict["5日涨跌%"] = _round_pct(info.get("pct_5", 0.0))
@@ -956,7 +1020,15 @@ class AsianMarketTab(BaseStockTab):
                         if code not in GLOBAL_ASIAN_RT_CACHE:
                             GLOBAL_ASIAN_RT_CACHE[code] = {}
                         GLOBAL_ASIAN_RT_CACHE[code].update(info)
-                except (FileNotFoundError, PermissionError, OSError, TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
+                except (
+                    FileNotFoundError,
+                    PermissionError,
+                    OSError,
+                    TypeError,
+                    ValueError,
+                    KeyError,
+                    json.JSONDecodeError,
+                ) as exc:
                     log.error(f"[亚洲页] 恢复 RT 盘口缓存失败: {exc}")
 
             self._sync_worker_codes()
@@ -970,7 +1042,9 @@ class AsianMarketTab(BaseStockTab):
                     freshness="本地缓存",
                 )
             else:
-                self._set_asian_status("本地缓存为空", "可点击刷新获取最新数据", freshness="待刷新", next_step="点击刷新获取最新报价")
+                self._set_asian_status(
+                    "本地缓存为空", "可点击刷新获取最新数据", freshness="待刷新", next_step="点击刷新获取最新报价"
+                )
         finally:
             pending_reload = self._load_cache_pending
             self._load_cache_pending = False
@@ -993,7 +1067,11 @@ class AsianMarketTab(BaseStockTab):
             row_dict["状态"] = get_market_status(market_code)
 
             close_number = float(info["close"]) if info.get("close") else 0.0
-            row_dict["现价"] = f"{close_number:.3f}" if 0 < close_number < 10 else (f"{close_number:.2f}" if close_number > 0 else "--")
+            row_dict["现价"] = (
+                f"{close_number:.3f}"
+                if 0 < close_number < 10
+                else (f"{close_number:.2f}" if close_number > 0 else "--")
+            )
             row_dict["涨幅%"] = _round_pct(info.get("pct", 0.0))
             row_dict["PE"] = info.get("pe") if info.get("pe") is not None else "--"
             row_dict["5日涨跌%"] = _round_pct(info.get("pct_5", 0.0))
@@ -1028,10 +1106,12 @@ class AsianMarketTab(BaseStockTab):
                     self._worker_pause_for_cache_sync()
 
     def _on_double_click(self, index):
-        if not index.isValid(): return
+        if not index.isValid():
+            return
         source_idx = self.proxy_model.mapToSource(index)
         row = source_idx.row()
-        if row >= len(self.model.row_data): return
+        if row >= len(self.model.row_data):
+            return
 
         code = self.model.row_data[row].get("代码", "")
         # 按当前表格视觉排序顺序构建列表，让 K 线窗口的"上一只/下一只"跟随用户排序

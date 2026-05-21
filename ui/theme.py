@@ -7,6 +7,7 @@ ui/theme.py
 为什么用单例+信号？因为主题切换需要通知所有已创建的组件刷新样式，
 就像广播电台——发一次信号，所有收音机同时收到。
 """
+
 from datetime import datetime as _datetime
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
@@ -22,7 +23,6 @@ DEFAULT_THEME_MIGRATION_KEY = "default_theme_v2_applied"
 THEME_MOYUAN = {
     "name": "墨渊",
     "appearance": "dark",
-
     # 背景色层级体系（深 → 浅）
     "BG_CANVAS": "#0E1116",
     "BG_SIDEBAR": "#131820",
@@ -40,7 +40,6 @@ THEME_MOYUAN = {
     "BG_BUTTON_HOVER": "#202835",
     "BG_MENU": "#11161E",
     "BG_GLASS": "rgba(14, 17, 22, 0.96)",
-
     # 文字色
     "TEXT_PRIMARY": "#E5E7EB",
     "TEXT_SECONDARY": "#A8B3C2",
@@ -48,72 +47,58 @@ THEME_MOYUAN = {
     "TEXT_DISABLED": "#4B5563",
     "TEXT_HEADER": "#8A96A8",
     "TEXT_BRIGHT": "#F9FAFB",
-
     # 品牌色
     "BRAND_PRIMARY": "#EF4444",
     "BRAND_HOVER": "#F87171",
     "BRAND_DEEP": "#B91C1C",
     "BRAND_SUBTLE": "rgba(239, 68, 68, 0.12)",
-
     # 功能色 — 涨跌
     "COLOR_RISE": "#FC8181",
     "COLOR_RISE_STRONG": "#E85D5D",
     "COLOR_FALL": "#68D391",
     "COLOR_FALL_STRONG": "#3CC68A",
     "COLOR_FLAT": "#C9CDD4",
-
     # 功能色 — 状态
     "COLOR_SUCCESS": "#10B981",
     "COLOR_WARNING": "#F59E0B",
     "COLOR_ERROR": "#EF4444",
     "COLOR_INFO": "#3B82F6",
-
     # 边框色
     "BORDER_DEFAULT": "rgba(148, 163, 184, 0.12)",
     "BORDER_SUBTLE": "rgba(148, 163, 184, 0.08)",
     "BORDER_STRONG": "#2A3342",
     "BORDER_BRAND": "rgba(239, 68, 68, 0.18)",
     "BORDER_MENU": "#232B36",
-
     # 评分着色梯度
     "SCORE_EXCELLENT": "#FF4757",
     "SCORE_GOOD": "#F59E0B",
     "SCORE_NORMAL": "#3A82F6",
     "SCORE_LOW": "#8E8E93",
-
     # 突破状态着色
     "STATUS_BREAKOUT": "#E85D5D",
     "STATUS_APPROACHING": "#FFD60A",
     "STATUS_VCP": "#3A82F6",
     "STATUS_INACTIVE": "#8E8E93",
-
     # 滚动条颜色
     "SCROLLBAR_HANDLE": "rgba(239, 68, 68, 0.25)",
     "SCROLLBAR_HANDLE_HOVER": "rgba(239, 68, 68, 0.45)",
-
     # 选中态颜色
     "SELECTION_BG": "rgba(239, 68, 68, 0.14)",
     "SELECTION_HOVER_BG": "rgba(239, 68, 68, 0.08)",
-
     # 标题栏分隔线颜色
     "TITLEBAR_BORDER": "rgba(148, 163, 184, 0.10)",
     "STATUSBAR_BORDER": "rgba(148, 163, 184, 0.10)",
-
     # 齿轮菜单选中色
     "MENU_SELECTED_BG": "rgba(239, 68, 68, 0.12)",
-
     # Splitter
     "SPLITTER_BG": "rgba(239, 68, 68, 0.08)",
     "SPLITTER_HOVER": "rgba(239, 68, 68, 0.25)",
-
     # Tab
     "TAB_TEXT": "#7B8794",
     "TAB_TEXT_HOVER": "#E5E7EB",
     "TAB_HOVER_BG": "rgba(255,255,255,0.05)",
-
     # 下拉箭头颜色
     "ARROW_COLOR": "#718096",
-
     # K线图专用色 — 涨跌、均线、网格、VCP 覆盖层（值与当前硬编码完全一致，保证零变化）
     "KLINE_UP_COLOR": "#F92855",
     "KLINE_DOWN_COLOR": "#00FFFF",
@@ -141,7 +126,6 @@ THEME_MOYUAN = {
 THEME_YUEBAI = {
     "name": "月白",
     "appearance": "light",
-
     # 背景色层级体系（浅 → 白）
     "BG_CANVAS": "#F5F1EA",
     "BG_SIDEBAR": "#ECE5D9",
@@ -159,7 +143,6 @@ THEME_YUEBAI = {
     "BG_BUTTON_HOVER": "#E7DDCF",
     "BG_MENU": "#FFFDF8",
     "BG_GLASS": "rgba(245, 241, 234, 0.97)",
-
     # 文字色 — 白底黑字，严格遵循 WCAG 4.5:1
     "TEXT_PRIMARY": "#172033",
     "TEXT_SECONDARY": "#516074",
@@ -167,73 +150,58 @@ THEME_YUEBAI = {
     "TEXT_DISABLED": "#97A3B3",
     "TEXT_HEADER": "#5A6778",
     "TEXT_BRIGHT": "#172033",
-
     # 品牌色 — 不变
     "BRAND_PRIMARY": "#EF4444",
     "BRAND_HOVER": "#F87171",
     "BRAND_DEEP": "#B91C1C",
     "BRAND_SUBTLE": "rgba(239, 68, 68, 0.08)",
-
     # 功能色 — 涨跌（白底加深版，确保对比度）
     "COLOR_RISE": "#DC2626",
     "COLOR_RISE_STRONG": "#B91C1C",
     "COLOR_FALL": "#16A34A",
     "COLOR_FALL_STRONG": "#15803D",
     "COLOR_FLAT": "#6B7280",
-
     # 功能色 — 状态（不变）
     "COLOR_SUCCESS": "#10B981",
     "COLOR_WARNING": "#F59E0B",
     "COLOR_ERROR": "#EF4444",
     "COLOR_INFO": "#3B82F6",
-
     # 边框色 — 白底用深色半透明
     "BORDER_DEFAULT": "rgba(93, 78, 55, 0.12)",
     "BORDER_SUBTLE": "rgba(93, 78, 55, 0.07)",
     "BORDER_STRONG": "#D4C6B5",
     "BORDER_BRAND": "rgba(239, 68, 68, 0.12)",
     "BORDER_MENU": "#E1D4C3",
-
     # 评分着色梯度 — 不变
     "SCORE_EXCELLENT": "#FF4757",
     "SCORE_GOOD": "#F59E0B",
     "SCORE_NORMAL": "#3A82F6",
     "SCORE_LOW": "#8E8E93",
-
     # 突破状态着色 — 不变
     "STATUS_BREAKOUT": "#E85D5D",
     "STATUS_APPROACHING": "#FFD60A",
     "STATUS_VCP": "#3A82F6",
     "STATUS_INACTIVE": "#8E8E93",
-
     # 滚动条颜色 — 灰色系
     "SCROLLBAR_HANDLE": "rgba(0, 0, 0, 0.12)",
     "SCROLLBAR_HANDLE_HOVER": "rgba(0, 0, 0, 0.25)",
-
     # 选中态颜色 - 增强透明度或使用更深的底色使得在月白(白底)上移动时能明显看出悬停状态
-    "SELECTION_BG": "rgba(239, 68, 68, 0.15)",     # 加深选中色
-    "SELECTION_HOVER_BG": "#F4EDE4",               # 暖白悬停色，和米白表格及顶栏更统一
-
-
+    "SELECTION_BG": "rgba(239, 68, 68, 0.15)",  # 加深选中色
+    "SELECTION_HOVER_BG": "#F4EDE4",  # 暖白悬停色，和米白表格及顶栏更统一
     # 标题栏分隔线
     "TITLEBAR_BORDER": "rgba(93, 78, 55, 0.10)",
     "STATUSBAR_BORDER": "rgba(93, 78, 55, 0.10)",
-
     # 齿轮菜单选中色
     "MENU_SELECTED_BG": "rgba(239, 68, 68, 0.12)",
-
     # Splitter
     "SPLITTER_BG": "rgba(0, 0, 0, 0.06)",
     "SPLITTER_HOVER": "rgba(0, 0, 0, 0.15)",
-
     # Tab
     "TAB_TEXT": "#5A6778",
     "TAB_TEXT_HOVER": "#172033",
     "TAB_HOVER_BG": "rgba(93, 78, 55, 0.07)",
-
     # 下拉箭头颜色
     "ARROW_COLOR": "#64748B",
-
     # K线图专用色 — 白底适配版，所有色值加深确保 WCAG 对比度
     "KLINE_UP_COLOR": "#DC2626",
     "KLINE_DOWN_COLOR": "#16A34A",
@@ -261,7 +229,6 @@ THEME_YUEBAI = {
 THEME_ZIYAO = {
     "name": "紫曜",
     "appearance": "dark",
-
     # 背景色层级体系（深蓝黑 → 终端面板）
     "BG_CANVAS": "#090D14",
     "BG_SIDEBAR": "#0F1622",
@@ -282,7 +249,6 @@ THEME_ZIYAO = {
     "BG_TOOLBAR": "#101826",
     "BG_TOOLBAR_CARD": "#172033",
     "BG_TOOLBAR_CHIP": "#1A2639",
-
     # 文字色
     "TEXT_PRIMARY": "#F2F6FF",
     "TEXT_SECONDARY": "#B7C2D8",
@@ -292,14 +258,12 @@ THEME_ZIYAO = {
     "TEXT_BRIGHT": "#FAFCFF",
     "TEXT_ON_ACCENT": "#FFFFFF",
     "TEXT_ON_DANGER": "#FFFFFF",
-
     # 品牌色（金色）
     "BRAND_PRIMARY": "#B91C1C",
     "BRAND_HOVER": "#DC2626",
     "BRAND_DEEP": "#7F1D1D",
     "BRAND_PRESSED": "#5F1717",
     "BRAND_SUBTLE": "rgba(185, 28, 28, 0.14)",
-
     # 交互强调色（冷紫）
     "ACCENT_PRIMARY": "#6E7BFF",
     "ACCENT_HOVER": "#8C96FF",
@@ -307,14 +271,12 @@ THEME_ZIYAO = {
     "ACCENT_SUBTLE": "rgba(110, 123, 255, 0.13)",
     "ACCENT_BORDER": "rgba(110, 123, 255, 0.28)",
     "ACCENT_TEXT": "#DCE1FF",
-
     # 功能色 — 涨跌
     "COLOR_RISE": "#FF5A5F",
     "COLOR_RISE_STRONG": "#FF4248",
     "COLOR_FALL": "#22C55E",
     "COLOR_FALL_STRONG": "#16A34A",
     "COLOR_FLAT": "#CBD5E8",
-
     # 功能色 — 状态
     "COLOR_SUCCESS": "#2DD4BF",
     "COLOR_WARNING": "#F59E0B",
@@ -325,7 +287,6 @@ THEME_ZIYAO = {
     "INFO_BADGE_BG": "rgba(85, 183, 255, 0.16)",
     "INFO_BADGE_BORDER": "rgba(85, 183, 255, 0.28)",
     "INFO_BADGE_FG": "#F2F6FF",
-
     # 边框色
     "BORDER_DEFAULT": "rgba(96, 115, 148, 0.34)",
     "BORDER_SUBTLE": "rgba(96, 115, 148, 0.20)",
@@ -333,24 +294,20 @@ THEME_ZIYAO = {
     "BORDER_BRAND": "rgba(185, 28, 28, 0.36)",
     "BORDER_MENU": "#33405A",
     "FOCUS_RING": "rgba(185, 28, 28, 0.34)",
-
     # 评分着色梯度
     "SCORE_EXCELLENT": "#FF5A5F",
     "SCORE_GOOD": "#F59E0B",
     "SCORE_NORMAL": "#55B7FF",
     "SCORE_LOW": "#8290AA",
-
     # 突破状态着色
     "STATUS_BREAKOUT": "#FF4248",
     "STATUS_APPROACHING": "#F59E0B",
     "STATUS_VCP": "#6E7BFF",
     "STATUS_INACTIVE": "#8290AA",
-
     # 滚动条颜色
     "SCROLLBAR_HANDLE": "rgba(130, 144, 170, 0.26)",
     "SCROLLBAR_HANDLE_HOVER": "rgba(185, 28, 28, 0.34)",
     "SCROLLBAR_HANDLE_PRESSED": "rgba(185, 28, 28, 0.58)",
-
     # 选中态颜色
     "SELECTION_BG": "rgba(185, 28, 28, 0.08)",
     "SELECTION_HOVER_BG": "rgba(185, 28, 28, 0.13)",
@@ -359,11 +316,9 @@ THEME_ZIYAO = {
     "TABLE_CURRENT_CELL_BG": "rgba(185, 28, 28, 0.06)",
     "TABLE_CURRENT_CELL_BG_SELECTED": "rgba(185, 28, 28, 0.10)",
     "TABLE_CURRENT_CELL_BORDER": "rgba(220, 38, 38, 0.72)",
-
     # 标题栏 / 状态栏
     "TITLEBAR_BORDER": "rgba(96, 115, 148, 0.34)",
     "STATUSBAR_BORDER": "rgba(96, 115, 148, 0.34)",
-
     # 菜单 / 分隔 / 当前标签
     "MENU_SELECTED_BG": "rgba(185, 28, 28, 0.11)",
     "SPLITTER_BG": "rgba(96, 115, 148, 0.14)",
@@ -375,10 +330,8 @@ THEME_ZIYAO = {
     "TAB_ACTIVE_BORDER": "rgba(220, 38, 38, 0.42)",
     "TAB_ACTIVE_TEXT": "#FFF1F2",
     "TAB_ACTIVE_TOP": "#DC2626",
-
     # 下拉箭头颜色
     "ARROW_COLOR": "#8290AA",
-
     # 主题能力 token
     "PRIMARY_GRADIENT_START": "#B91C1C",
     "PRIMARY_GRADIENT_END": "#7F1D1D",
@@ -396,7 +349,6 @@ THEME_ZIYAO = {
     "NETWORK_ONLINE": "#55B7FF",
     "NETWORK_OFFLINE": "#EF4444",
     "NETWORK_BUSY": "#F59E0B",
-
     # K线图专用色
     "KLINE_UP_COLOR": "#FF5A5F",
     "KLINE_DOWN_COLOR": "#22C55E",
@@ -450,7 +402,9 @@ def _with_alias_tokens(theme: dict) -> dict:
     enriched.setdefault("SURFACE_PANEL", enriched.get("BG_CARD", ""))
     enriched.setdefault("SURFACE_ELEVATED", enriched.get("BG_ELEVATED", ""))
     enriched.setdefault("SURFACE_INPUT", enriched.get("BG_INPUT", ""))
-    enriched.setdefault("BG_TOOLBAR", enriched.get("BG_ELEVATED", "") if appearance == "dark" else enriched.get("BG_CARD", ""))
+    enriched.setdefault(
+        "BG_TOOLBAR", enriched.get("BG_ELEVATED", "") if appearance == "dark" else enriched.get("BG_CARD", "")
+    )
     enriched.setdefault("ACCENT_PRIMARY", enriched.get("BRAND_PRIMARY", ""))
     enriched.setdefault("ACCENT_HOVER", enriched.get("BRAND_HOVER", ""))
     enriched.setdefault("ACCENT_DEEP", enriched.get("BRAND_DEEP", ""))
@@ -475,13 +429,24 @@ def _with_alias_tokens(theme: dict) -> dict:
     enriched.setdefault("PRIMARY_HOVER_GRADIENT_END", enriched.get("BRAND_PRIMARY", ""))
     enriched.setdefault("PRIMARY_BUTTON_TEXT", enriched.get("TEXT_ON_ACCENT", "#FFFFFF"))
     enriched.setdefault("PRIMARY_BUTTON_BORDER", "transparent")
-    enriched.setdefault("PRIMARY_BUTTON_PRESSED_BG", enriched.get("BRAND_PRESSED", enriched.get("BRAND_DEEP", enriched.get("BRAND_PRIMARY", ""))))
+    enriched.setdefault(
+        "PRIMARY_BUTTON_PRESSED_BG",
+        enriched.get("BRAND_PRESSED", enriched.get("BRAND_DEEP", enriched.get("BRAND_PRIMARY", ""))),
+    )
     enriched.setdefault("SEGMENT_ACTIVE_BG", enriched.get("BRAND_PRIMARY", ""))
     enriched.setdefault("SEGMENT_ACTIVE_BORDER", enriched.get("BRAND_HOVER", enriched.get("BRAND_PRIMARY", "")))
     enriched.setdefault("SEGMENT_ACTIVE_TEXT", enriched.get("TEXT_ON_ACCENT", "#FFFFFF"))
-    enriched.setdefault("PROGRESS_GRADIENT_START", enriched.get("PRIMARY_GRADIENT_START", enriched.get("BRAND_PRIMARY", "")))
-    enriched.setdefault("PROGRESS_GRADIENT_MID", enriched.get("PRIMARY_HOVER_GRADIENT_START", enriched.get("BRAND_HOVER", enriched.get("BRAND_PRIMARY", ""))))
-    enriched.setdefault("PROGRESS_GRADIENT_END", enriched.get("PRIMARY_GRADIENT_END", enriched.get("BRAND_DEEP", enriched.get("BRAND_PRIMARY", ""))))
+    enriched.setdefault(
+        "PROGRESS_GRADIENT_START", enriched.get("PRIMARY_GRADIENT_START", enriched.get("BRAND_PRIMARY", ""))
+    )
+    enriched.setdefault(
+        "PROGRESS_GRADIENT_MID",
+        enriched.get("PRIMARY_HOVER_GRADIENT_START", enriched.get("BRAND_HOVER", enriched.get("BRAND_PRIMARY", ""))),
+    )
+    enriched.setdefault(
+        "PROGRESS_GRADIENT_END",
+        enriched.get("PRIMARY_GRADIENT_END", enriched.get("BRAND_DEEP", enriched.get("BRAND_PRIMARY", ""))),
+    )
     enriched.setdefault("COLOR_ERROR_HOVER", enriched.get("BRAND_HOVER", enriched.get("COLOR_ERROR", "")))
     enriched.setdefault("COLOR_REALTIME", enriched.get("COLOR_SUCCESS", ""))
     enriched.setdefault("NETWORK_ONLINE", enriched.get("COLOR_REALTIME", enriched.get("COLOR_SUCCESS", "")))
@@ -491,7 +456,9 @@ def _with_alias_tokens(theme: dict) -> dict:
     enriched.setdefault("SCROLLBAR_HANDLE_PRESSED", enriched.get("BRAND_PRIMARY", ""))
     enriched.setdefault("TABLE_SELECTED_RAIL", enriched.get("BRAND_PRIMARY", ""))
     enriched.setdefault("TABLE_CURRENT_CELL_BG", enriched.get("SELECTION_BG", ""))
-    enriched.setdefault("TABLE_CURRENT_CELL_BG_SELECTED", enriched.get("SELECTION_HOVER_BG", enriched.get("SELECTION_BG", "")))
+    enriched.setdefault(
+        "TABLE_CURRENT_CELL_BG_SELECTED", enriched.get("SELECTION_HOVER_BG", enriched.get("SELECTION_BG", ""))
+    )
     enriched.setdefault("TABLE_CURRENT_CELL_BORDER", enriched.get("BRAND_DEEP", enriched.get("BRAND_PRIMARY", "")))
     enriched.setdefault("INFO_BADGE_BG", enriched.get("BRAND_SUBTLE", ""))
     enriched.setdefault("INFO_BADGE_BORDER", enriched.get("BORDER_SUBTLE", ""))

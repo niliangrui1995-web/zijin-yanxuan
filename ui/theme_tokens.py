@@ -58,12 +58,18 @@ def _build_state_tones(theme: dict, *, is_dark: bool) -> dict:
             "fg": theme["TEXT_SECONDARY"],
             "border": neutral_border,
         },
-        "info": tone("COLOR_INFO", fg=theme["TEXT_PRIMARY"] if is_dark else theme["COLOR_INFO"], bg_alpha=0.10, border_alpha=0.18),
-        "loading": tone("COLOR_INFO", fg=theme["TEXT_PRIMARY"] if is_dark else theme["COLOR_INFO"], bg_alpha=0.10, border_alpha=0.20),
+        "info": tone(
+            "COLOR_INFO", fg=theme["TEXT_PRIMARY"] if is_dark else theme["COLOR_INFO"], bg_alpha=0.10, border_alpha=0.18
+        ),
+        "loading": tone(
+            "COLOR_INFO", fg=theme["TEXT_PRIMARY"] if is_dark else theme["COLOR_INFO"], bg_alpha=0.10, border_alpha=0.20
+        ),
         "success": tone("COLOR_SUCCESS", bg_alpha=0.12, border_alpha=0.22),
         "warning": tone("COLOR_WARNING", bg_alpha=0.12, border_alpha=0.22),
         "error": tone("COLOR_ERROR", bg_alpha=0.12, border_alpha=0.22),
-        "cached": tone("COLOR_INFO", fg=theme["TEXT_PRIMARY"] if is_dark else theme["COLOR_INFO"], bg_alpha=0.08, border_alpha=0.18),
+        "cached": tone(
+            "COLOR_INFO", fg=theme["TEXT_PRIMARY"] if is_dark else theme["COLOR_INFO"], bg_alpha=0.08, border_alpha=0.18
+        ),
         "realtime": tone("COLOR_REALTIME", fg=theme["COLOR_REALTIME"], bg_alpha=0.10, border_alpha=0.24),
         "stale": tone("COLOR_WARNING", fg=theme["COLOR_WARNING"], bg_alpha=0.08, border_alpha=0.18),
         "focus": tone("COLOR_INFO", fg=theme["COLOR_INFO"], bg_alpha=0.10, border_alpha=0.28),
@@ -144,8 +150,12 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "selected_hover_bg": theme["SELECTION_HOVER_BG"],
         "selected_rail_width": 3 if compact else 4,
         "selected_rail_color": theme.get("TABLE_SELECTED_RAIL", theme["BRAND_PRIMARY"]),
-        "current_cell_bg": theme.get("TABLE_CURRENT_CELL_BG", _hex_to_rgba(theme["BRAND_PRIMARY"], 0.10 if is_dark else 0.06)),
-        "current_cell_bg_selected": theme.get("TABLE_CURRENT_CELL_BG_SELECTED", _hex_to_rgba(theme["BRAND_PRIMARY"], 0.16 if is_dark else 0.10)),
+        "current_cell_bg": theme.get(
+            "TABLE_CURRENT_CELL_BG", _hex_to_rgba(theme["BRAND_PRIMARY"], 0.10 if is_dark else 0.06)
+        ),
+        "current_cell_bg_selected": theme.get(
+            "TABLE_CURRENT_CELL_BG_SELECTED", _hex_to_rgba(theme["BRAND_PRIMARY"], 0.16 if is_dark else 0.10)
+        ),
         "current_cell_border": theme.get("TABLE_CURRENT_CELL_BORDER", theme["BRAND_DEEP"]),
         "sorted_column_bg": _hex_to_rgba(theme["COLOR_INFO"], 0.08 if is_dark else 0.06),
         "sorted_header_bg": _hex_to_rgba(theme["COLOR_INFO"], 0.14 if is_dark else 0.08),
@@ -180,8 +190,12 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "statusbar": theme["BG_STATUSBAR"],
         "input": theme["BG_INPUT"],
         "toolbar": theme.get("BG_TOOLBAR", theme["BG_ELEVATED"] if is_dark else theme["BG_CARD"]),
-        "toolbar_card": theme.get("BG_TOOLBAR_CARD", theme["BG_CARD"] if is_dark else _hex_to_rgba(theme["TEXT_PRIMARY"], 0.02)),
-        "toolbar_chip": theme.get("BG_TOOLBAR_CHIP", theme["BG_BUTTON"] if is_dark else _hex_to_rgba(theme["TEXT_PRIMARY"], 0.05)),
+        "toolbar_card": theme.get(
+            "BG_TOOLBAR_CARD", theme["BG_CARD"] if is_dark else _hex_to_rgba(theme["TEXT_PRIMARY"], 0.02)
+        ),
+        "toolbar_chip": theme.get(
+            "BG_TOOLBAR_CHIP", theme["BG_BUTTON"] if is_dark else _hex_to_rgba(theme["TEXT_PRIMARY"], 0.05)
+        ),
         "panel_alt": theme["BG_TABLE_ALT_ROW"],
         "overlay": _hex_to_rgba(theme["BG_ELEVATED"], 0.94 if is_dark else 0.98),
         "chart_panel": theme["BG_INPUT"] if is_dark else theme["BG_CARD"],

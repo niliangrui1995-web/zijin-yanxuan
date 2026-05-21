@@ -85,9 +85,7 @@ def test_try_load_rps_from_disk_rebuilds_incomplete_json_cache(tmp_path):
     )
 
     engine = DummyEngine()
-    provider = DummyProvider(
-        {f"{i:06d}": FakeFrame(260) for i in range(600000, 601200)}
-    )
+    provider = DummyProvider({f"{i:06d}": FakeFrame(260) for i in range(600000, 601200)})
     manager = CacheManager()
     manager.rps_path = str(cache_path)
 

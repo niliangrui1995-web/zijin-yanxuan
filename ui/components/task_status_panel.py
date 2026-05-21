@@ -79,4 +79,3 @@ class TaskStatusPanel(QFrame):
             ui_signal_hub.sig_task_progress.disconnect(self._on_task_progress)
         except (RuntimeError, TypeError):
             pass
-

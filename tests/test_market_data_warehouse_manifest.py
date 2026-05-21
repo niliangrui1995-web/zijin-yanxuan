@@ -61,4 +61,3 @@ def test_manifest_missing_dataset_returns_none(tmp_path):
 
     assert manifest.latest("cn_daily_bars") is None
     assert manifest.get("cn_daily_bars", "20260511") is None
-

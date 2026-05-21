@@ -41,10 +41,7 @@ def test_table_controls_are_reexported_from_components():
 
 
 def _rows(count: int):
-    return [
-        {"代码": f"{idx:06d}", "名称": f"N{idx}", "现价": f"{10 + idx:.2f}"}
-        for idx in range(count)
-    ]
+    return [{"代码": f"{idx:06d}", "名称": f"N{idx}", "现价": f"{10 + idx:.2f}"} for idx in range(count)]
 
 
 def _process_events(app, rounds: int = 4):
@@ -71,10 +68,7 @@ def test_vcp_table_view_restores_current_row_selection_after_model_reset(qt_appl
 
         source_model.update_data(
             [{"代码": "999999", "名称": "插入行", "现价": "1.00"}]
-            + [
-                {"代码": row["代码"], "名称": row["名称"], "现价": "88.88"}
-                for row in _rows(120)
-            ]
+            + [{"代码": row["代码"], "名称": row["名称"], "现价": "88.88"} for row in _rows(120)]
         )
         _process_events(qt_application)
 

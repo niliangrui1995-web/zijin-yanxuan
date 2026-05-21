@@ -94,11 +94,7 @@ def _clean_js_html(raw_text: str) -> str:
         raise UserFacingTaskError("睿远持仓接口返回异常，未找到内容块", "FundArchivesDatas.aspx 未匹配到 content")
     html_text = match.group("html")
     html_text = (
-        html_text.replace("\\r", "")
-        .replace("\\n", "")
-        .replace("\\t", "")
-        .replace("\\/", "/")
-        .replace('\\"', '"')
+        html_text.replace("\\r", "").replace("\\n", "").replace("\\t", "").replace("\\/", "/").replace('\\"', '"')
     )
     return html.unescape(html_text)
 
@@ -260,11 +256,7 @@ class FundHoldingsSyncService:
 
     def sync_qfii(self, quarter_key: str | None = None) -> dict:
         quarter_payloads, resolved_quarter = _candidate_qfii_payloads(quarter_key)
-        available_payloads = {
-            key: value
-            for key, value in quarter_payloads.items()
-            if value.get("raw_rows")
-        }
+        available_payloads = {key: value for key, value in quarter_payloads.items() if value.get("raw_rows")}
         for payload in available_payloads.values():
             payload["snapshots"] = build_qfii_snapshots(
                 payload["raw_rows"],
@@ -291,10 +283,7 @@ class FundHoldingsSyncService:
             payload_meta={
                 "checked_quarters": list(quarter_payloads.keys()),
                 "available_quarters": sorted(available_payloads.keys(), key=quarter_sort_value, reverse=True),
-                "raw_counts": {
-                    key: len(value.get("raw_rows") or [])
-                    for key, value in quarter_payloads.items()
-                },
+                "raw_counts": {key: len(value.get("raw_rows") or []) for key, value in quarter_payloads.items()},
             },
         )
         return {
@@ -308,11 +297,7 @@ class FundHoldingsSyncService:
 
     def sync_ruiyuan(self, quarter_key: str | None = None) -> dict:
         quarter_payloads, resolved_quarter = _candidate_ruiyuan_payloads(quarter_key)
-        available_payloads = {
-            key: value
-            for key, value in quarter_payloads.items()
-            if value.get("raw_rows")
-        }
+        available_payloads = {key: value for key, value in quarter_payloads.items() if value.get("raw_rows")}
         for payload in available_payloads.values():
             payload["snapshots"] = build_ruiyuan_snapshots(
                 payload["raw_rows"],
@@ -339,10 +324,7 @@ class FundHoldingsSyncService:
             payload_meta={
                 "checked_quarters": list(quarter_payloads.keys()),
                 "available_quarters": sorted(available_payloads.keys(), key=quarter_sort_value, reverse=True),
-                "raw_counts": {
-                    key: len(value.get("raw_rows") or [])
-                    for key, value in quarter_payloads.items()
-                },
+                "raw_counts": {key: len(value.get("raw_rows") or []) for key, value in quarter_payloads.items()},
             },
         )
         return {

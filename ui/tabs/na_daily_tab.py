@@ -3,6 +3,7 @@
 ui/tabs/na_daily_tab.py
 北美战报 独立 Tab 组件 (MVC 版本重构)
 """
+
 import datetime
 import glob
 import os
@@ -21,6 +22,7 @@ from ui.services.na_daily_service import NADailyRefreshService
 from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
+
 
 class NADailyTab(BaseStockTab):
     def __init__(self, data_provider, parent=None):
@@ -105,7 +107,8 @@ class NADailyTab(BaseStockTab):
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         # 统一工具条：标题 + 副标题 + 过滤区 + 主操作
         self.na_daily_source_label = QLabel("未加载")
@@ -123,8 +126,17 @@ class NADailyTab(BaseStockTab):
         layout.addWidget(toolbar)
 
         columns = [
-            "代码", "名称", "现价", "涨幅%", "市值", "日报时间", "细分板块",
-            "股价弹性", "催化剂", "风控", "评级"
+            "代码",
+            "名称",
+            "现价",
+            "涨幅%",
+            "市值",
+            "日报时间",
+            "细分板块",
+            "股价弹性",
+            "催化剂",
+            "风控",
+            "评级",
         ]
         self.na_daily_table = VCPTableView(default_row_height=30)
         self.table_state = TableStateWrapper(self.na_daily_table, empty_title="暂无战报数据", loading_title="加载中...")
@@ -201,15 +213,14 @@ class NADailyTab(BaseStockTab):
 
     def _get_na_daily_output_dir(self):
         return os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(
-                os.path.dirname(os.path.abspath(__file__))
-            ))),
-            "每日战报", "每日热点输出"
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
+            "每日战报",
+            "每日热点输出",
         )
 
     def _parse_report_identity(self, fpath: str):
         basename = os.path.basename(fpath)
-        match = re.search(r'战报_(\d{8})(\d{0,6})', basename)
+        match = re.search(r"战报_(\d{8})(\d{0,6})", basename)
         if match:
             report_date = match.group(1)
             time_part = match.group(2) or ""
@@ -243,33 +254,36 @@ class NADailyTab(BaseStockTab):
         if os.path.exists(json_path):
             try:
                 import json
+
                 with open(json_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
 
                 for track in data.get("sniper_tables", []):
                     raw_industry = track.get("track_name", "未知赛道")
-                    industry = re.split(r'[（(]', raw_industry)[0].strip()
-                    industry = re.sub(r'^赛道[A-Za-z0-9]+[：:\s]*', '', industry)
+                    industry = re.split(r"[（(]", raw_industry)[0].strip()
+                    industry = re.sub(r"^赛道[A-Za-z0-9]+[：:\s]*", "", industry)
 
                     for t in track.get("targets", []):
-                        stocks.append({
-                            "行业": industry,
-                            "名称": t.get("name", ""),
-                            "代码": str(t.get("code", "") or "").strip(),
-                            "近3月": t.get("chg_3m", ""),
-                            "分位": t.get("percentile_250d", ""),
-                            "量能": t.get("volume", ""),
-                            "弹性": t.get("elasticity", ""),
-                            "催化剂": t.get("catalyst", ""),
-                            "风控": t.get("risk", ""),
-                        })
+                        stocks.append(
+                            {
+                                "行业": industry,
+                                "名称": t.get("name", ""),
+                                "代码": str(t.get("code", "") or "").strip(),
+                                "近3月": t.get("chg_3m", ""),
+                                "分位": t.get("percentile_250d", ""),
+                                "量能": t.get("volume", ""),
+                                "弹性": t.get("elasticity", ""),
+                                "催化剂": t.get("catalyst", ""),
+                                "风控": t.get("risk", ""),
+                            }
+                        )
 
                 for adv in data.get("today_advice", []):
                     if isinstance(adv, dict) and adv.get("code"):
                         rec_map[str(adv["code"]).strip()] = {
                             "priority": adv.get("priority", ""),
                             "reason": adv.get("reason", ""),
-                            "strategy": adv.get("strategy", "")
+                            "strategy": adv.get("strategy", ""),
                         }
                 parsed_from_json = True
             except (json.JSONDecodeError, AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
@@ -305,8 +319,8 @@ class NADailyTab(BaseStockTab):
                     continue
 
                 raw_elasticity = stock.get("弹性", "")
-                clean_elasticity = re.split(r'[（(]', raw_elasticity)[0].strip() if raw_elasticity else ""
-                clean_elasticity = "".join(c for c in clean_elasticity if c.isalnum() or '\u4e00' <= c <= '\u9fa5')
+                clean_elasticity = re.split(r"[（(]", raw_elasticity)[0].strip() if raw_elasticity else ""
+                clean_elasticity = "".join(c for c in clean_elasticity if c.isalnum() or "\u4e00" <= c <= "\u9fa5")
 
                 # 提取红黄绿圈圈，丢弃所有文字内容
                 raw_risk = str(stock.get("风控", ""))
@@ -338,17 +352,16 @@ class NADailyTab(BaseStockTab):
             row_data["评级"] = rec_data.get("priority", "")
             final_list.append(row_data)
 
-        final_list.sort(key=lambda row: (
-            -int(row.get("日报时间", "0") or 0),
-            -int(row.get("_report_ts", 0) or 0),
-            int(row.get("_report_row_rank", 0) or 0),
-            str(row.get("代码", "") or "")
-        ))
-
-        report_signature = tuple(
-            f"{os.path.basename(path)}:{int(os.path.getmtime(path))}"
-            for path in report_files
+        final_list.sort(
+            key=lambda row: (
+                -int(row.get("日报时间", "0") or 0),
+                -int(row.get("_report_ts", 0) or 0),
+                int(row.get("_report_row_rank", 0) or 0),
+                str(row.get("代码", "") or ""),
+            )
         )
+
+        report_signature = tuple(f"{os.path.basename(path)}:{int(os.path.getmtime(path))}" for path in report_files)
         return final_list, report_files, report_signature
 
     def _apply_na_daily_rows(self, final_list, report_files, report_signature, *, emit_event: bool = True):
@@ -356,7 +369,9 @@ class NADailyTab(BaseStockTab):
         self._current_report_files = list(report_files or [])
 
         if not report_files:
-            self._set_report_status("等待北美战报", "最近窗口为空", freshness="待加载", next_step="点击刷新载入最新战报")
+            self._set_report_status(
+                "等待北美战报", "最近窗口为空", freshness="待加载", next_step="点击刷新载入最新战报"
+            )
             self.model.update_data([])
             self._na_daily_codes = set()
             if emit_event:
@@ -400,9 +415,7 @@ class NADailyTab(BaseStockTab):
                 if emit_event:
                     event_bus.sig_na_daily_updated.emit()
                 return
-            self.refresh_table_quotes_and_market_caps(
-                quote_task_id=task_registry.quote_refresh("na_daily").task_id
-            )
+            self.refresh_table_quotes_and_market_caps(quote_task_id=task_registry.quote_refresh("na_daily").task_id)
 
         if emit_event:
             event_bus.sig_na_daily_updated.emit()
@@ -410,7 +423,9 @@ class NADailyTab(BaseStockTab):
     def _load_na_daily_report(self):
         if hasattr(self, "table_state"):
             self.table_state.show_loading("正在加载战报...", "请稍候")
-        self._set_report_status("北美战报刷新中", freshness=self._latest_report_freshness(), next_step="等待战报文件合并")
+        self._set_report_status(
+            "北美战报刷新中", freshness=self._latest_report_freshness(), next_step="等待战报文件合并"
+        )
         service = getattr(self, "_na_daily_service", None)
         if service is not None:
             service.refresh_full(emit_event=False)
@@ -431,10 +446,7 @@ class NADailyTab(BaseStockTab):
         if not report_files:
             return
 
-        report_signature = tuple(
-            f"{os.path.basename(path)}:{int(os.path.getmtime(path))}"
-            for path in report_files
-        )
+        report_signature = tuple(f"{os.path.basename(path)}:{int(os.path.getmtime(path))}" for path in report_files)
         if self._last_report_signature == report_signature:
             return
 
@@ -451,9 +463,9 @@ class NADailyTab(BaseStockTab):
         except (TypeError, RuntimeError):
             pass
 
-
     def _on_double_click(self, index):
-        if not index.isValid(): return
+        if not index.isValid():
+            return
         source_index = self.proxy_model.mapToSource(index)
         row = source_index.row()
 
@@ -477,119 +489,141 @@ class NADailyTab(BaseStockTab):
 
     def _show_context_menu(self, pos):
         index = self.na_daily_table.indexAt(pos)
-        if not index.isValid(): return
+        if not index.isValid():
+            return
 
         source_index = self.proxy_model.mapToSource(index)
         row = source_index.row()
-        if row >= len(self.model.row_data): return
+        if row >= len(self.model.row_data):
+            return
 
         code = self.model.row_data[row].get("代码", "")
         name = self.model.row_data[row].get("名称", "")
         row_data = self.model.row_data[row]
-        if not code or not name: return
+        if not code or not name:
+            return
 
         from ui.components.stock_context_menu import build_stock_context_menu
+
         build_stock_context_menu(self, code, name, vcp_data=row_data)
 
     def _parse_battle_report(self, content: str) -> list:
         stocks = []
-        section_match = re.search(r'##\s*二、标的狙击表(.*?)(?=##\s*三、|$)', content, re.DOTALL)
-        if not section_match: return stocks
+        section_match = re.search(r"##\s*二、标的狙击表(.*?)(?=##\s*三、|$)", content, re.DOTALL)
+        if not section_match:
+            return stocks
 
         section = section_match.group(1)
-        industry_pattern = re.compile(r'###\s+(?:🔴\s*|🟢\s*|🟡\s*)?(.+?)[\n\r]')
+        industry_pattern = re.compile(r"###\s+(?:🔴\s*|🟢\s*|🟡\s*)?(.+?)[\n\r]")
         industry_matches = list(industry_pattern.finditer(section))
 
         for i, ind_match in enumerate(industry_matches):
             raw_industry = ind_match.group(1).strip()
-            industry = re.split(r'[（(]', raw_industry)[0].strip()
-            industry = re.sub(r'^赛道[A-Za-z0-9]+[：:\s]*', '', industry)
+            industry = re.split(r"[（(]", raw_industry)[0].strip()
+            industry = re.sub(r"^赛道[A-Za-z0-9]+[：:\s]*", "", industry)
             start = ind_match.end()
             end = industry_matches[i + 1].start() if i + 1 < len(industry_matches) else len(section)
             block = section[start:end]
-            table_rows = block.strip().split('\n')
+            table_rows = block.strip().split("\n")
 
             header_cells = []
             info_rows = []
             for row_text in table_rows:
-                cells = [c.strip() for c in row_text.split('|')]
-                if len(cells) >= 3 and cells[0] == '' and cells[-1] == '':
+                cells = [c.strip() for c in row_text.split("|")]
+                if len(cells) >= 3 and cells[0] == "" and cells[-1] == "":
                     cells = cells[1:-1]
-                elif not cells: continue
+                elif not cells:
+                    continue
 
-                if ('代码' in cells) and ('标的' in cells or '名称' in cells):
+                if ("代码" in cells) and ("标的" in cells or "名称" in cells):
                     header_cells = cells
                 elif header_cells:
-                    if all('---' in c or not c for c in cells): continue
+                    if all("---" in c or not c for c in cells):
+                        continue
                     info_rows.append(cells)
 
-            if not header_cells: continue
+            if not header_cells:
+                continue
 
             def get_col_idx(title_keywords):
                 for ind, h in enumerate(header_cells):
                     for kw in title_keywords:
-                        if kw in h: return ind
+                        if kw in h:
+                            return ind
                 return -1
 
-            idx_name = get_col_idx(['标的', '名称'])
-            idx_code = get_col_idx(['代码'])
-            idx_chg_3m = get_col_idx(['近3月'])
-            idx_pct_250d = get_col_idx(['分位'])
-            idx_elasticity = get_col_idx(['弹性'])
-            idx_rs = get_col_idx(['RS'])
-            idx_weekly = get_col_idx(['周线'])
-            idx_catalyst = get_col_idx(['催化剂'])
-            idx_risk = get_col_idx(['风控'])
+            idx_name = get_col_idx(["标的", "名称"])
+            idx_code = get_col_idx(["代码"])
+            idx_chg_3m = get_col_idx(["近3月"])
+            idx_pct_250d = get_col_idx(["分位"])
+            idx_elasticity = get_col_idx(["弹性"])
+            idx_rs = get_col_idx(["RS"])
+            idx_weekly = get_col_idx(["周线"])
+            idx_catalyst = get_col_idx(["催化剂"])
+            idx_risk = get_col_idx(["风控"])
 
             for row_data in info_rows:
-                if len(row_data) < 3 or idx_code == -1: continue
-                def get_val(idx): return row_data[idx].replace('**', '').strip() if 0 <= idx < len(row_data) else ""
+                if len(row_data) < 3 or idx_code == -1:
+                    continue
+
+                def get_val(idx):
+                    return row_data[idx].replace("**", "").strip() if 0 <= idx < len(row_data) else ""
 
                 name = get_val(idx_name)
                 code = get_val(idx_code)
-                if not re.match(r'^\d{6}$', code): continue
+                if not re.match(r"^\d{6}$", code):
+                    continue
 
-                stocks.append({
-                    "行业": industry, "名称": name, "代码": code,
-                    "近3月": get_val(idx_chg_3m), "分位": get_val(idx_pct_250d),
-                    "弹性": get_val(idx_elasticity), "RS强度": get_val(idx_rs),
-                    "周线趋势": get_val(idx_weekly), "催化剂": get_val(idx_catalyst),
-                    "风控": get_val(idx_risk),
-                })
+                stocks.append(
+                    {
+                        "行业": industry,
+                        "名称": name,
+                        "代码": code,
+                        "近3月": get_val(idx_chg_3m),
+                        "分位": get_val(idx_pct_250d),
+                        "弹性": get_val(idx_elasticity),
+                        "RS强度": get_val(idx_rs),
+                        "周线趋势": get_val(idx_weekly),
+                        "催化剂": get_val(idx_catalyst),
+                        "风控": get_val(idx_risk),
+                    }
+                )
         return stocks
 
     def _parse_recommendations(self, content: str) -> dict:
         result = {}
-        section_match = re.search(r'##\s*四、今日操作建议(.*?)(?=##\s*[一二三四五六七八九十]|$)', content, re.DOTALL)
-        if not section_match: return result
+        section_match = re.search(r"##\s*四、今日操作建议(.*?)(?=##\s*[一二三四五六七八九十]|$)", content, re.DOTALL)
+        if not section_match:
+            return result
         section = section_match.group(1)
         in_rec_table = False
         found_separator = False
 
-        for line in section.split('\n'):
+        for line in section.split("\n"):
             stripped = line.strip()
-            if not in_rec_table and stripped.startswith('|') and '优先级' in stripped:
+            if not in_rec_table and stripped.startswith("|") and "优先级" in stripped:
                 in_rec_table = True
                 found_separator = False
                 continue
             if in_rec_table:
-                if '---' in stripped and stripped.startswith('|'):
+                if "---" in stripped and stripped.startswith("|"):
                     found_separator = True
                     continue
-                if not stripped.startswith('|') or not stripped: break
+                if not stripped.startswith("|") or not stripped:
+                    break
                 if found_separator:
-                    code_match = re.search(r'(\d{6})', stripped)
+                    code_match = re.search(r"(\d{6})", stripped)
                     if code_match:
-                        raw_cells = [c.strip() for c in stripped.split('|')]
-                        if len(raw_cells) >= 3 and raw_cells[0] == '' and raw_cells[-1] == '':
+                        raw_cells = [c.strip() for c in stripped.split("|")]
+                        if len(raw_cells) >= 3 and raw_cells[0] == "" and raw_cells[-1] == "":
                             cells = raw_cells[1:-1]
                         else:
                             cells = [c for c in raw_cells if c]
 
                         if len(cells) >= 3:
                             code = code_match.group(1)
-                            priority = cells[0].replace('**', '').strip()
-                            reason = cells[3].replace('**', '').strip() if len(cells) > 3 else ""
-                            strategy = cells[4].replace('**', '').strip() if len(cells) > 4 else ""
+                            priority = cells[0].replace("**", "").strip()
+                            reason = cells[3].replace("**", "").strip() if len(cells) > 3 else ""
+                            strategy = cells[4].replace("**", "").strip() if len(cells) > 4 else ""
                             result[code] = {"priority": priority, "reason": reason, "strategy": strategy}
         return result

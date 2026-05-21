@@ -106,6 +106,7 @@ class EventBusHandler(logging.Handler):
             if level == "warning":
                 level = "warn"
             from domains.runtime import domain_events as event_bus
+
             event_bus.sig_system_log.emit(level, msg + "\n")
         except (ImportError, RuntimeError, AttributeError):
             self.handleError(record)
@@ -165,9 +166,7 @@ def _build_shared_handlers() -> list[logging.Handler]:
             encoding="utf-8",
         )
         file_handler.setLevel(logging.DEBUG)
-        file_handler.setFormatter(
-            logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-        )
+        file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
         handlers.append(file_handler)
     except OSError as e:
         _safe_stderr_write(f"[logger] create log file failed: {e}\n")

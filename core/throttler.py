@@ -7,6 +7,7 @@ class SignalThrottler(QObject):
     用于高频刷新的场景拦截，使得 UI 最多只会以 fixed interval (如 1000 毫秒) 统一渲染一次，
     丢弃掉中间极其密集的重复刷新请求，保护主 UI 线程不卡死。
     """
+
     # 当节流周期结束后，抛出合并后的最后一次数据
     throttled_signal = pyqtSignal(object)
 

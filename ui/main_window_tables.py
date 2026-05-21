@@ -36,16 +36,12 @@ def _build_copy_handler(current_table, original_handler):
                             item,
                             Qt.ItemDataRole.DisplayRole,
                         )
-                        rows_dict[item.row()][item.column()] = (
-                            str(display_val) if display_val is not None else ""
-                        )
+                        rows_dict[item.row()][item.column()] = str(display_val) if display_val is not None else ""
 
                     lines: list[str] = []
                     for row_key in sorted(rows_dict.keys()):
                         cols = rows_dict[row_key]
-                        lines.append(
-                            "\t".join(cols.get(col, "") for col in sorted(cols.keys()))
-                        )
+                        lines.append("\t".join(cols.get(col, "") for col in sorted(cols.keys())))
 
                     QApplication.clipboard().setText("\n".join(lines))
                     show_toast(

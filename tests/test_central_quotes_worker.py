@@ -75,10 +75,7 @@ def test_central_quotes_service_skips_timer_duplicate_after_cache_reload(monkeyp
 
         def fetch_realtime_quotes_batch(self, codes):
             self.calls.append(tuple(sorted(codes)))
-            return {
-                code: {"close": 12.3, "last_close": 12.0, "source": "eastmoney"}
-                for code in codes
-            }
+            return {code: {"close": 12.3, "last_close": 12.0, "source": "eastmoney"} for code in codes}
 
         def is_online(self):
             return True

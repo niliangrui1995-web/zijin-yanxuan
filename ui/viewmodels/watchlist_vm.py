@@ -4,4 +4,3 @@ from app.services.ui_watchlist_service import (
 )
 
 __all__ = ["WatchlistViewModel", "watchlist_vm"]
-

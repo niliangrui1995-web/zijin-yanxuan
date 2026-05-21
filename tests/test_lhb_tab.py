@@ -11,7 +11,9 @@ from ui.tabs.lhb_tab import LhbTab
 
 
 def test_lhb_reference_trade_date_uses_previous_day_before_20(monkeypatch):
-    monkeypatch.setattr(MarketCalendar, "_get_market_now", classmethod(lambda cls, market="CN": dt.datetime(2026, 4, 14, 8, 30)))
+    monkeypatch.setattr(
+        MarketCalendar, "_get_market_now", classmethod(lambda cls, market="CN": dt.datetime(2026, 4, 14, 8, 30))
+    )
     monkeypatch.setattr(MarketCalendar, "is_trade_day", classmethod(lambda cls, day=None, market="CN": True))
     monkeypatch.setattr(
         MarketCalendar,
@@ -27,7 +29,9 @@ def test_lhb_reference_trade_date_uses_previous_day_before_20(monkeypatch):
 
 
 def test_lhb_reference_trade_date_keeps_today_after_20(monkeypatch):
-    monkeypatch.setattr(MarketCalendar, "_get_market_now", classmethod(lambda cls, market="CN": dt.datetime(2026, 4, 14, 20, 5)))
+    monkeypatch.setattr(
+        MarketCalendar, "_get_market_now", classmethod(lambda cls, market="CN": dt.datetime(2026, 4, 14, 20, 5))
+    )
     monkeypatch.setattr(MarketCalendar, "is_trade_day", classmethod(lambda cls, day=None, market="CN": True))
     monkeypatch.setattr(
         MarketCalendar,
@@ -39,7 +43,9 @@ def test_lhb_reference_trade_date_keeps_today_after_20(monkeypatch):
 
 
 def test_lhb_manual_refresh_prefers_today_when_probe_finds_data(monkeypatch):
-    monkeypatch.setattr(MarketCalendar, "_get_market_now", classmethod(lambda cls, market="CN": dt.datetime(2026, 4, 20, 19, 45)))
+    monkeypatch.setattr(
+        MarketCalendar, "_get_market_now", classmethod(lambda cls, market="CN": dt.datetime(2026, 4, 20, 19, 45))
+    )
     monkeypatch.setattr(MarketCalendar, "is_trade_day", classmethod(lambda cls, day=None, market="CN": True))
     monkeypatch.setattr(
         MarketCalendar,
@@ -69,7 +75,9 @@ def test_lhb_manual_refresh_prefers_today_when_probe_finds_data(monkeypatch):
 
 
 def test_lhb_manual_refresh_falls_back_to_previous_trade_day_when_today_empty(monkeypatch):
-    monkeypatch.setattr(MarketCalendar, "_get_market_now", classmethod(lambda cls, market="CN": dt.datetime(2026, 4, 20, 19, 45)))
+    monkeypatch.setattr(
+        MarketCalendar, "_get_market_now", classmethod(lambda cls, market="CN": dt.datetime(2026, 4, 20, 19, 45))
+    )
     monkeypatch.setattr(MarketCalendar, "is_trade_day", classmethod(lambda cls, day=None, market="CN": True))
     monkeypatch.setattr(
         MarketCalendar,
@@ -330,22 +338,30 @@ def test_lhb_pool_bootstrap_schedules_background_task(monkeypatch):
 
 
 def test_lhb_watchlist_radar_rows_reads_cache_without_bootstrap(monkeypatch):
-    monkeypatch.setattr(LhbTab, "_load_and_display_pool", lambda self: (_ for _ in ()).throw(AssertionError("should not load full tab")), raising=False)
+    monkeypatch.setattr(
+        LhbTab,
+        "_load_and_display_pool",
+        lambda self: (_ for _ in ()).throw(AssertionError("should not load full tab")),
+        raising=False,
+    )
     monkeypatch.setattr(LhbTab, "_get_engine", staticmethod(lambda: None), raising=False)
 
     tab = LhbTab(object(), autoload_pool=False)
     calls = []
     tab.pool_manager = SimpleNamespace(
-        compute_pool=lambda data_provider=None, engine=None: calls.append((data_provider, engine)) or [
-            {
-                "代码": "300750",
-                "名称": "宁德时代",
-                "最近上榜": "20260420",
-                "上榜净买额(万)": 1200,
-                "机构净买(万)": 800,
-                "外资净买(万)": -150,
-            }
-        ]
+        compute_pool=lambda data_provider=None, engine=None: (
+            calls.append((data_provider, engine))
+            or [
+                {
+                    "代码": "300750",
+                    "名称": "宁德时代",
+                    "最近上榜": "20260420",
+                    "上榜净买额(万)": 1200,
+                    "机构净买(万)": 800,
+                    "外资净买(万)": -150,
+                }
+            ]
+        )
     )
 
     try:

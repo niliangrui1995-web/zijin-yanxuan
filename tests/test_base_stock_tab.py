@@ -57,11 +57,7 @@ def test_base_stock_toolbar_shows_single_overflow_action_directly():
     toolbar = tab.build_tab_toolbar("Example", subtitle, [], [add_input, primary, reset])
     try:
         action_wrap = toolbar.findChild(QWidget, "tabToolbarActions")
-        overflow_buttons = [
-            button
-            for button in action_wrap.findChildren(QToolButton)
-            if button.menu() is not None
-        ]
+        overflow_buttons = [button for button in action_wrap.findChildren(QToolButton) if button.menu() is not None]
 
         assert overflow_buttons == []
         assert reset.isHidden() is False
@@ -90,11 +86,7 @@ def test_base_stock_toolbar_status_uses_semantic_chips():
         assert subtitle.isHidden()
 
         primary = chip_bar.findChild(QLabel, "tabStatusPrimaryChip")
-        chips = [
-            chip
-            for chip in chip_bar.findChildren(QLabel, "tabStatusChip")
-            if not chip.isHidden()
-        ]
+        chips = [chip for chip in chip_bar.findChildren(QLabel, "tabStatusChip") if not chip.isHidden()]
 
         assert primary.text() == "已就绪"
         assert [chip.text() for chip in chips[:4]] == [
@@ -107,11 +99,7 @@ def test_base_stock_toolbar_status_uses_semantic_chips():
 
         subtitle.setText(BaseStockTab.format_workspace_status("等待刷新", result="0只", freshness="待加载"))
 
-        chips = [
-            chip
-            for chip in chip_bar.findChildren(QLabel, "tabStatusChip")
-            if not chip.isHidden()
-        ]
+        chips = [chip for chip in chip_bar.findChildren(QLabel, "tabStatusChip") if not chip.isHidden()]
         assert primary.text() == "等待刷新"
         assert [chip.text() for chip in chips[:2]] == ["结果 0只", "时效 待加载"]
     finally:
@@ -184,16 +172,18 @@ def test_base_stock_header_persistence_delegates_to_view_state_binding(monkeypat
     monkeypatch.setattr(
         base_stock_tab_module,
         "bind_table_view_state",
-        lambda owner, bound_table, bound_settings, savers, settings_key="header_state": captured.update(
-            {
-                "owner": owner,
-                "table": bound_table,
-                "settings": bound_settings,
-                "savers": savers,
-                "settings_key": settings_key,
-            }
-        )
-        or True,
+        lambda owner, bound_table, bound_settings, savers, settings_key="header_state": (
+            captured.update(
+                {
+                    "owner": owner,
+                    "table": bound_table,
+                    "settings": bound_settings,
+                    "savers": savers,
+                    "settings_key": settings_key,
+                }
+            )
+            or True
+        ),
     )
 
     try:

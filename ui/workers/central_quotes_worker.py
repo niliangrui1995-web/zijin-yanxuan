@@ -120,9 +120,7 @@ class CentralQuotesService(QObject):
 
     def _record_failure(self, reason: str):
         self._consecutive_failures += 1
-        log.warning(
-            f"[报价站] 抓取失败({self._consecutive_failures}/{self._FAILURE_THRESHOLD}): {reason}"
-        )
+        log.warning(f"[报价站] 抓取失败({self._consecutive_failures}/{self._FAILURE_THRESHOLD}): {reason}")
         if self._consecutive_failures < self._FAILURE_THRESHOLD:
             return
 
@@ -168,11 +166,7 @@ class CentralQuotesService(QObject):
 
         runtime_stats = stats.get("rt_runtime", {}) if isinstance(stats, dict) else {}
         last_success_at = float(runtime_stats.get("last_success_at") or 0)
-        last_success_text = (
-            time.strftime("%H:%M:%S", time.localtime(last_success_at))
-            if last_success_at > 0
-            else "-"
-        )
+        last_success_text = time.strftime("%H:%M:%S", time.localtime(last_success_at)) if last_success_at > 0 else "-"
         cooldown_until = float(runtime_stats.get("cooldown_until") or 0)
         cooldown_left = max(0, int(cooldown_until - time.time()))
         now_ts = time.time()
@@ -263,9 +257,7 @@ class CentralQuotesService(QObject):
             and code_signature == self._post_cache_reload_signature
             and now < self._post_cache_reload_quiet_until
         ):
-            log.debug(
-                f"[报价站] F5后窗口内跳过重复行情轮询: reason={reason} codes={len(codes)}"
-            )
+            log.debug(f"[报价站] F5后窗口内跳过重复行情轮询: reason={reason} codes={len(codes)}")
             return
 
         if not quote_refreshable:
@@ -329,8 +321,7 @@ class CentralQuotesService(QObject):
             cooldown_until = float(provider_stats.get("cooldown_until") or 0)
             has_valid = any(float(quote.get("close", 0) or 0) > 0 for quote in quotes.values())
             has_live_source = any(
-                str(quote.get("source") or "").lower() in {"eastmoney", "sina", "tencent"}
-                for quote in quotes.values()
+                str(quote.get("source") or "").lower() in {"eastmoney", "sina", "tencent"} for quote in quotes.values()
             )
             provider_failed = (not has_live_source) and (
                 (not has_valid)

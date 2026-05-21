@@ -27,14 +27,14 @@ class _FakeSession:
 
 
 def _jp_current_page_html():
-    return r'''
+    return r"""
     <section class="_BasePriceBoard_1 _CommonPriceBoard_1 styles_DetailPage__priceBoard__x">
       <span class="_StyledNumber_1 _CommonPriceBoard__price_abc">
         <span class="_StyledNumber__item_1"><span class="_StyledNumber__value_1">5,731</span></span>
       </span>
     </section>
     <script>self.__next_f.push([1,"30:{\"detailData\":{\"indicators\":{\"previousPrice\":{\"value\":\"5,689\",\"updateDateMeta\":\"2026-04-27\"},\"openPrice\":{\"value\":\"5,747\",\"updateDateMeta\":\"2026-04-28T09:00:00+09:00\"},\"highPrice\":{\"value\":\"5,751\",\"updateDateMeta\":\"2026-04-28T09:00:00+09:00\"},\"lowPrice\":{\"value\":\"5,697\",\"updateDateMeta\":\"2026-04-28T09:04:00+09:00\"},\"volume\":{\"value\":\"248,800\",\"updateDateMeta\":\"2026-04-28T10:42:00+09:00\"}}}}"])</script>
-    '''
+    """
 
 
 def test_cf_proxy_default_disabled_and_toggleable():
@@ -500,9 +500,7 @@ def test_tpex_pe_fallback_parses_openapi_endpoint():
 
 
 def test_kr_naver_pe_fallback_parses_per_element():
-    session = _FakeSession(
-        _FakeResponse(text='<table><tr><td><em id="_per">20.78</em></td></tr></table>')
-    )
+    session = _FakeSession(_FakeResponse(text='<table><tr><td><em id="_per">20.78</em></td></tr></table>'))
 
     pe, source = workers._fetch_asian_pe_fallback("000660.KS", session)
 
@@ -515,8 +513,8 @@ def test_jp_yahoo_pe_fallback_parses_per_data_item():
     session = _FakeSession(
         _FakeResponse(
             text=(
-                '<dt><a><span>PER</span><span>（会社予想）</span></a></dt>'
-                '<dd><span>(連)</span><span>22.20</span><span>倍</span></dd>'
+                "<dt><a><span>PER</span><span>（会社予想）</span></a></dt>"
+                "<dd><span>(連)</span><span>22.20</span><span>倍</span></dd>"
             )
         )
     )

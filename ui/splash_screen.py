@@ -18,9 +18,7 @@ class SplashScreen(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.SplashScreen
+            Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.SplashScreen
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFixedSize(420, 380)
@@ -43,11 +41,10 @@ class SplashScreen(QWidget):
         icon_label = QLabel()
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon_label.setStyleSheet("background: transparent;")
-        icon_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "bull_icon.ico"
-        )
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "bull_icon.ico")
         if os.path.exists(icon_path):
             from PyQt6.QtGui import QIcon
+
             icon = QIcon(icon_path)
             # 请求 128x128 以获取 ICO 内最高分辨率
             pixmap = icon.pixmap(128, 128)
@@ -61,8 +58,7 @@ class SplashScreen(QWidget):
         self.lbl_brand = QLabel("紫金研选")
         self.lbl_brand.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_brand.setStyleSheet(
-            "font-size: 28px; font-weight: 900; color: #93C5FD; "
-            "letter-spacing: 0px; background: transparent;"
+            "font-size: 28px; font-weight: 900; color: #93C5FD; letter-spacing: 0px; background: transparent;"
         )
         layout.addWidget(self.lbl_brand)
 
@@ -70,8 +66,7 @@ class SplashScreen(QWidget):
         self.lbl_sub = QLabel("量化终端")
         self.lbl_sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_sub.setStyleSheet(
-            "font-size: 13px; color: #6B7280; letter-spacing: 0px; "
-            "margin-top: 4px; background: transparent;"
+            "font-size: 13px; color: #6B7280; letter-spacing: 0px; margin-top: 4px; background: transparent;"
         )
         layout.addWidget(self.lbl_sub)
 
@@ -80,9 +75,7 @@ class SplashScreen(QWidget):
         # 加载状态文字
         self.lbl_status = QLabel("正在初始化...")
         self.lbl_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_status.setStyleSheet(
-            "font-size: 11px; color: #4B5563; background: transparent;"
-        )
+        self.lbl_status.setStyleSheet("font-size: 11px; color: #4B5563; background: transparent;")
         layout.addWidget(self.lbl_status)
 
         layout.addSpacing(10)
@@ -112,9 +105,7 @@ class SplashScreen(QWidget):
         # 版本号
         self.lbl_ver = QLabel(f"v{APP_VERSION}")
         self.lbl_ver.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_ver.setStyleSheet(
-            "font-size: 10px; color: #3A3F4D; background: transparent;"
-        )
+        self.lbl_ver.setStyleSheet("font-size: 10px; color: #3A3F4D; background: transparent;")
         layout.addWidget(self.lbl_ver)
 
     def set_progress(self, value: int, status: str = ""):

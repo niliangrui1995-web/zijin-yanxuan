@@ -76,14 +76,10 @@ def check_auto_cache(tab):
     mtime = os.path.getmtime(JSON_CACHE) if os.path.exists(JSON_CACHE) else 0
     cache_dt = MarketCalendar.from_timestamp(mtime, "CN") if mtime else dt.datetime.min
     cache_latest_trade_dates = (
-        tab._get_cache_latest_trade_dates()
-        if hasattr(tab, "_get_cache_latest_trade_dates")
-        else {}
+        tab._get_cache_latest_trade_dates() if hasattr(tab, "_get_cache_latest_trade_dates") else {}
     )
     expected_latest_trade_dates = (
-        tab._get_expected_latest_trade_dates()
-        if hasattr(tab, "_get_expected_latest_trade_dates")
-        else {}
+        tab._get_expected_latest_trade_dates() if hasattr(tab, "_get_expected_latest_trade_dates") else {}
     )
 
     cache_latest_trade_date = tab._get_cache_latest_trade_date()
@@ -277,4 +273,3 @@ def on_asian_klines_ready(tab):
     tab._load_local_cache()
     tab._last_asian_success_at = dt.datetime.now()
     _set_tab_status(tab, "本地缓存已更新", "K 线数据已重载", freshness="本地缓存")
-

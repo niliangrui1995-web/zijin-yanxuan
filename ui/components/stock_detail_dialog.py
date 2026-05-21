@@ -228,11 +228,7 @@ class StockDetailDialog(QDialog):
         payload.setdefault("代码", self._code)
         payload.setdefault("名称", self._name)
         if include_signals:
-            signals = [
-                row.get("signal")
-                for row in self._rows
-                if isinstance(row.get("signal"), StockSignal)
-            ]
+            signals = [row.get("signal") for row in self._rows if isinstance(row.get("signal"), StockSignal)]
             if signals and "_signals" not in payload:
                 payload["_signals"] = signals
         return payload

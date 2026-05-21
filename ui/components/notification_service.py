@@ -97,4 +97,5 @@ def _play_alert_sound():
     """播放系统默认提醒音。"""
     if os.name == "nt":
         import winsound
+
         winsound.MessageBeep(winsound.MB_ICONASTERISK)

@@ -104,9 +104,7 @@ def collect_quote_refresh_codes(owner, current_model=None, force: bool = False) 
         if not is_a_share_code(code):
             continue
 
-        price_blank = owner._is_blank_quote_value(
-            row_dict.get("现价", row_dict.get("市价"))
-        )
+        price_blank = owner._is_blank_quote_value(row_dict.get("现价", row_dict.get("市价")))
         pct_blank = owner._is_blank_quote_value(
             row_dict.get("涨幅%", row_dict.get("涨幅")),
             zero_is_blank=False,
@@ -149,11 +147,7 @@ def collect_missing_finance_codes(owner, current_model=None) -> list[str]:
 
 
 def load_cached_finance_snapshot(codes, *, tdx_vipdoc: str | None = None) -> dict[str, dict]:
-    normalized_codes = [
-        str(code or "").strip()
-        for code in dict.fromkeys(codes or [])
-        if is_a_share_code(code)
-    ]
+    normalized_codes = [str(code or "").strip() for code in dict.fromkeys(codes or []) if is_a_share_code(code)]
     if not normalized_codes:
         return {}
 
@@ -194,11 +188,7 @@ def _load_shared_finance_cache_payload(path: str) -> dict:
 
     signature = _get_finance_cache_signature(path)
     with _FINANCE_CACHE_LOCK:
-        if (
-            _FINANCE_CACHE_PATH == path
-            and _FINANCE_CACHE_SIGNATURE == signature
-            and _FINANCE_CACHE_PAYLOAD is not None
-        ):
+        if _FINANCE_CACHE_PATH == path and _FINANCE_CACHE_SIGNATURE == signature and _FINANCE_CACHE_PAYLOAD is not None:
             return _FINANCE_CACHE_PAYLOAD
 
         if signature is None:
@@ -244,8 +234,7 @@ def _collect_local_quote_targets(owner, model, latest_quotes: dict | None = None
             continue
         snapshot_entry = dict(latest_quotes.get(code) or {})
         has_price = (
-            coerce_number(snapshot_entry.get("close")) > 0
-            or coerce_number(snapshot_entry.get("last_close")) > 0
+            coerce_number(snapshot_entry.get("close")) > 0 or coerce_number(snapshot_entry.get("last_close")) > 0
         )
         has_cap = (
             coerce_number(snapshot_entry.get("_zongguben") or snapshot_entry.get("zongguben")) > 0
@@ -382,9 +371,7 @@ def prime_local_quote_snapshot_async(owner, current_model=None) -> bool:
 
     def _on_error(error_message: str):
         if error_message:
-            logging.getLogger(__name__).debug(
-                f"[{owner_class_name}] local quote snapshot task failed: {error_message}"
-            )
+            logging.getLogger(__name__).debug(f"[{owner_class_name}] local quote snapshot task failed: {error_message}")
 
     task_manager.run_in_background(
         _bg_local_quote,
@@ -415,11 +402,7 @@ class MarketCapRefreshBatcher:
 
     @classmethod
     def enqueue(cls, owner, codes: list[str]) -> None:
-        cleaned = {
-            str(code or "").strip()
-            for code in codes or []
-            if str(code or "").strip()
-        }
+        cleaned = {str(code or "").strip() for code in codes or [] if str(code or "").strip()}
         if not cleaned:
             _invoke_after_market_caps_updated(owner)
             return
@@ -457,17 +440,15 @@ class MarketCapRefreshBatcher:
         return waiters
 
     @classmethod
-    def _notify_waiters(cls, waiters: dict[int, tuple[weakref.ReferenceType, set[str]]], payload: dict | None = None) -> None:
+    def _notify_waiters(
+        cls, waiters: dict[int, tuple[weakref.ReferenceType, set[str]]], payload: dict | None = None
+    ) -> None:
         payload = dict(payload or {})
         for owner_ref, requested_codes in waiters.values():
             owner = owner_ref()
             if not _is_owner_runtime_active(owner):
                 continue
-            owner_payload = {
-                code: payload[code]
-                for code in requested_codes
-                if code in payload
-            }
+            owner_payload = {code: payload[code] for code in requested_codes if code in payload}
             if owner_payload:
                 owner._apply_quote_snapshot(owner_payload)
             _invoke_after_market_caps_updated(owner)
@@ -566,11 +547,7 @@ def refresh_table_quotes_and_market_caps(
     except (AttributeError, RuntimeError, TypeError, ValueError):
         snapshot = {}
 
-    quote_subset = {
-        code: dict(snapshot[code])
-        for code in codes
-        if code in snapshot
-    }
+    quote_subset = {code: dict(snapshot[code]) for code in codes if code in snapshot}
     if quote_subset:
         owner._apply_quote_snapshot(quote_subset)
 
@@ -605,9 +582,7 @@ def refresh_table_quotes_and_market_caps(
 
     def _on_error(error_message: str):
         if error_message:
-            logging.getLogger(__name__).debug(
-                f"[{owner.__class__.__name__}] 表格补价失败: {error_message}"
-            )
+            logging.getLogger(__name__).debug(f"[{owner.__class__.__name__}] 表格补价失败: {error_message}")
 
     task_manager.run_in_background(
         _bg_task,
@@ -654,11 +629,7 @@ def _refresh_table_from_latest_snapshot_impl(owner, current_model=None, *, async
     if not snapshot:
         return
 
-    quote_subset = {
-        code: dict(snapshot[code])
-        for code in codes
-        if code in snapshot
-    }
+    quote_subset = {code: dict(snapshot[code]) for code in codes if code in snapshot}
     if quote_subset:
         owner._apply_quote_snapshot(quote_subset)
 

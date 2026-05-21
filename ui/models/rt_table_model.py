@@ -30,7 +30,9 @@ class RtTableModel(QAbstractTableModel):
     def __init__(self, data=None):
         super().__init__()
         self._data = data or []
-        self._headers = _with_serial_header(["代码", "名称", "现价", "涨幅%", "市值", "时间", "评分", "RPS强度", "突破状态", "区间振幅", "热点板块"])
+        self._headers = _with_serial_header(
+            ["代码", "名称", "现价", "涨幅%", "市值", "时间", "评分", "RPS强度", "突破状态", "区间振幅", "热点板块"]
+        )
         self._flash_records = {}
         self.base_font = QFont()
         self.base_font.setFamilies(["Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "SimSun"])
@@ -253,7 +255,7 @@ class RtTableModel(QAbstractTableModel):
         col = index.column()
         item_dict = self._data[row]
         key = self._headers[col]
-        raw_val = item_dict.get(key, '')
+        raw_val = item_dict.get(key, "")
 
         if role == Qt.ItemDataRole.DisplayRole:
             if key == SERIAL_HEADER:
@@ -265,7 +267,7 @@ class RtTableModel(QAbstractTableModel):
                 if s_val.endswith("%"):
                     return s_val
                 try:
-                    f_val = float(s_val.replace('%', ''))
+                    f_val = float(s_val.replace("%", ""))
                     if "换手" in key:
                         return f"{f_val:.2f}%"
                     return f"{f_val:+.2f}%"
@@ -313,7 +315,7 @@ class RtTableModel(QAbstractTableModel):
                 return QColor(_c("TEXT_SECONDARY"))
             if "%" in key and "换手" not in key:
                 try:
-                    pct = float(str(raw_val).replace('%', '').replace('+', ''))
+                    pct = float(str(raw_val).replace("%", "").replace("+", ""))
                     if pct >= 9.0:
                         return QColor(_c("COLOR_RISE_STRONG"))
                     elif pct > 0:
@@ -391,22 +393,22 @@ class RtTableModel(QAbstractTableModel):
             if key == SERIAL_HEADER:
                 return row + 1
 
-            s_val = str(raw_val).replace(',', '')
+            s_val = str(raw_val).replace(",", "")
             parsed_value = _parse_numeric_value(raw_val)
             if parsed_value is not None and (_is_numeric_header(key) or "万" in s_val or "亿" in s_val):
                 return parsed_value
             if key in ["市值", "评分"] or "万" in s_val or "亿" in s_val:
-                if '万' in s_val:
-                    m = re.search(r'([-+]?\d*\.?\d+)', s_val)
+                if "万" in s_val:
+                    m = re.search(r"([-+]?\d*\.?\d+)", s_val)
                     if m:
                         return float(m.group(1)) * 10000
                     return 0.0
-                if '亿' in s_val:
-                    m = re.search(r'([-+]?\d*\.?\d+)', s_val)
+                if "亿" in s_val:
+                    m = re.search(r"([-+]?\d*\.?\d+)", s_val)
                     if m:
                         return float(m.group(1)) * 100000000
                     return 0.0
-                m = re.search(r'([-+]?\d*\.?\d+)', s_val)
+                m = re.search(r"([-+]?\d*\.?\d+)", s_val)
                 if m:
                     return float(m.group(1))
                 return 0.0

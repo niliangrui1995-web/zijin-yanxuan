@@ -527,4 +527,3 @@ class VCPScanSettingsDialog(_ThemedDialog):
 
     def user_presets(self) -> dict[str, dict[str, float]]:
         return self._user_presets
-

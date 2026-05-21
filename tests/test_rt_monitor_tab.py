@@ -59,7 +59,6 @@ def test_rt_monitor_tab_uses_shared_service_without_auto_timer(monkeypatch):
         assert not hasattr(tab, "_auto_timer")
         assert tab._rt_monitor_service is not None
 
-
         assert not hasattr(tab, "_auto_timer")
     finally:
         tab.deleteLater()

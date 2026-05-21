@@ -14,10 +14,7 @@ def _resolve_cache_output_dir(output_dir: str | None = None) -> str:
     """解析亚洲 K 线缓存输出目录。"""
     if output_dir:
         return output_dir
-    return os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "..", "..", "data", "Cache"
-    )
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data", "Cache")
 
 
 def _latest_cache_path(output_dir: str | None = None) -> str:
@@ -41,7 +38,6 @@ def _load_cached_row_map(output_dir: str | None = None) -> dict[str, dict]:
     with open(cache_path, "r", encoding="utf-8") as handle:
         raw = json.load(handle)
     return _rows_to_map(raw.get("stocks", []))
-
 
 
 def save_kline_data(data: list[dict], output_dir: str | None = None) -> str:
@@ -84,7 +80,6 @@ def save_kline_data(data: list[dict], output_dir: str | None = None) -> str:
     logging.info(f"💾 最新快照已更新: {latest_path}")
 
     return filepath
-
 
 
 __all__ = [

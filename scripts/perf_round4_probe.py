@@ -93,11 +93,7 @@ def _loaded_tab(workspace, key: str):
 
 
 def _loaded_tab_keys(workspace) -> list[str]:
-    return [
-        str(spec.get("key") or "").strip()
-        for spec in _tab_specs(workspace)
-        if spec.get("loaded")
-    ]
+    return [str(spec.get("key") or "").strip() for spec in _tab_specs(workspace) if spec.get("loaded")]
 
 
 def _row_count_from_model(model) -> int | None:
@@ -207,7 +203,7 @@ def _stability_trend(samples: list[dict]) -> dict:
     task_values = _values(samples, lambda item: item.get("active_background_tasks"))
     active_timer_values = _values(samples, lambda item: (item.get("timers") or {}).get("active"))
     total_timer_values = _values(samples, lambda item: (item.get("timers") or {}).get("total"))
-    thread_values = _values(samples, lambda item: ((item.get("main") or {}).get("thread_count")))
+    thread_values = _values(samples, lambda item: (item.get("main") or {}).get("thread_count"))
 
     def _one(values: list[float]) -> dict:
         if not values:

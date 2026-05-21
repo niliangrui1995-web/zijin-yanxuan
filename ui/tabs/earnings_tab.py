@@ -21,6 +21,7 @@ EarningsScheduler = EarningsRefreshService
 
 class EarningsTab(BaseStockTab):
     """业绩断层与预告高增监控面板"""
+
     def __init__(self, data_provider=None, parent=None):
         super().__init__(data_provider, parent)
         self.row_data = []
@@ -74,7 +75,8 @@ class EarningsTab(BaseStockTab):
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         # 统一工具条：标题 + 副标题 + 过滤区 + 主操作
         self.lbl_status = QLabel("监控挂机中...")
@@ -107,9 +109,21 @@ class EarningsTab(BaseStockTab):
 
         # 字段映射表：前四列必须是标准列（代码/名称/现价/涨幅%），以便接收盘中广播
         self.header_labels = [
-            "代码", "名称", "现价", "涨幅%", "市值", "PE(TTM)",
-            "环比%", "同比%", "当季利润", "上季利润",
-            "报告期", "类型", "揭晓日", "基调", "所属行业与概念"
+            "代码",
+            "名称",
+            "现价",
+            "涨幅%",
+            "市值",
+            "PE(TTM)",
+            "环比%",
+            "同比%",
+            "当季利润",
+            "上季利润",
+            "报告期",
+            "类型",
+            "揭晓日",
+            "基调",
+            "所属行业与概念",
         ]
 
         self.model = StockTableModel(self.header_labels)
@@ -144,11 +158,7 @@ class EarningsTab(BaseStockTab):
         self._refresh_window_status()
 
     def _latest_disclosure_date(self) -> str:
-        dates = [
-            str(row.get("揭晓日", "")).strip()
-            for row in (self.row_data or [])
-            if isinstance(row, dict)
-        ]
+        dates = [str(row.get("揭晓日", "")).strip() for row in (self.row_data or []) if isinstance(row, dict)]
         dates = [date for date in dates if date]
         return max(dates) if dates else ""
 
@@ -224,7 +234,9 @@ class EarningsTab(BaseStockTab):
             self._set_window_status("日期格式错误", "请使用 YYYY-MM-DD")
             return
 
-        self._set_window_status("正在历史回补", f"{start_str}→{end_str}", self._status_metric("区间 ", len(date_list), "天"))
+        self._set_window_status(
+            "正在历史回补", f"{start_str}→{end_str}", self._status_metric("区间 ", len(date_list), "天")
+        )
         if hasattr(self, "table_state"):
             self.table_state.show_loading("正在拉取业绩数据...", "请稍候")
         log.info(f"[业绩监控] 手动扫描: {start_str} ~ {end_str}")
@@ -301,7 +313,9 @@ class EarningsTab(BaseStockTab):
         return f"{oldest_trade_date[:4]}-{oldest_trade_date[4:6]}-{oldest_trade_date[6:8]}"
 
     @classmethod
-    def _prune_rows_to_recent_trade_window(cls, rows: list[dict], trade_days: int = EARNINGS_DISPLAY_TRADE_DAYS) -> list[dict]:
+    def _prune_rows_to_recent_trade_window(
+        cls, rows: list[dict], trade_days: int = EARNINGS_DISPLAY_TRADE_DAYS
+    ) -> list[dict]:
         """只保留近 N 个交易日窗口内的公告记录。
 
         注意这里用“最老交易日”作为窗口左边界，因此窗口内周末/节假日公告也会保留，
@@ -403,17 +417,17 @@ class EarningsTab(BaseStockTab):
             if v != v or v is None:
                 return "--"
             if abs(v) >= 1e8:
-                return f"{v/1e8:.2f}亿"
+                return f"{v / 1e8:.2f}亿"
             if abs(v) >= 1e4:
-                return f"{v/1e4:.0f}万"
+                return f"{v / 1e4:.0f}万"
             return f"{v:.0f}"
 
         for row in df.to_dict("records"):
-            code = str(row.get('股票代码', '')).zfill(6)
-            name = str(row.get('股票名称', ''))
-            pct = float(row.get('环比增速_百分比', 0.0))
-            cur_profit = float(row.get('单季净利润_新增', 0.0))
-            last_profit = float(row.get('单季净利润_上期', 0.0))
+            code = str(row.get("股票代码", "")).zfill(6)
+            name = str(row.get("股票名称", ""))
+            pct = float(row.get("环比增速_百分比", 0.0))
+            cur_profit = float(row.get("单季净利润_新增", 0.0))
+            last_profit = float(row.get("单季净利润_上期", 0.0))
 
             row_obj = {
                 "代码": code,
@@ -423,15 +437,15 @@ class EarningsTab(BaseStockTab):
                 "市值": "--",
                 "PE(TTM)": "--",
                 "环比%": pct,
-                "同比%": float(row.get('同比增速_百分比', 0.0)),
+                "同比%": float(row.get("同比增速_百分比", 0.0)),
                 "当季利润": fmt_money(cur_profit),
                 "上季利润": fmt_money(last_profit),
-                "_raw_profit": float(row.get('单季净利润_新增', 0.0)),  # 用于计算PE的隐含原始数值
+                "_raw_profit": float(row.get("单季净利润_新增", 0.0)),  # 用于计算PE的隐含原始数值
                 "报告期": str(row.get("报告期", "")),
                 "类型": str(row.get("数据类型", "")),
                 "揭晓日": str(row.get("公告日期", "")),
                 "基调": str(row.get("基调", "")),
-                "所属行业与概念": str(row.get("所属行业与概念", ""))
+                "所属行业与概念": str(row.get("所属行业与概念", "")),
             }
 
             # 校验与层级更替（预告 -> 财报）去重
@@ -474,23 +488,28 @@ class EarningsTab(BaseStockTab):
 
     def _show_context_menu(self, pos):
         index = self.table.indexAt(pos)
-        if not index.isValid(): return
+        if not index.isValid():
+            return
         source_idx = self.proxy_model.mapToSource(index)
         row = source_idx.row()
-        if row >= len(self.model.row_data): return
+        if row >= len(self.model.row_data):
+            return
 
         code = self.model.row_data[row].get("代码", "")
         name = self.model.row_data[row].get("名称", "")
         row_data = self.model.row_data[row]
         if code and name:
             from ui.components.stock_context_menu import build_stock_context_menu
+
             build_stock_context_menu(self, code, name, vcp_data=row_data)
 
     def _on_double_click(self, index):
-        if not index.isValid(): return
+        if not index.isValid():
+            return
         source_idx = self.proxy_model.mapToSource(index)
         row = source_idx.row()
-        if row >= len(self.model.row_data): return
+        if row >= len(self.model.row_data):
+            return
 
         code = self.model.row_data[row].get("代码", "")
         code_list = []

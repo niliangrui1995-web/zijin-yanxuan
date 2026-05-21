@@ -7,6 +7,7 @@ tests/test_app_config.py — AppConfig 单例行为验证
     2. 全局导出的 app_config 与手动 AppConfig() 是同一个实例
     3. get/set 读写正确性
 """
+
 import os
 from pathlib import Path
 
@@ -41,8 +42,7 @@ class TestAppConfigSingleton:
     def test_global_instance_is_singleton(self):
         """模块级 app_config 必须与 AppConfig() 是同一个对象"""
         assert app_config is AppConfig(), (
-            "全局 app_config 与 AppConfig() 不是同一个实例，"
-            "说明模块导出的单例创建时机有问题"
+            "全局 app_config 与 AppConfig() 不是同一个实例，说明模块导出的单例创建时机有问题"
         )
 
     def test_app_config_uses_test_settings_store(self):

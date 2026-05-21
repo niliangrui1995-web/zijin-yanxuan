@@ -18,7 +18,9 @@ def test_create_data_provider_prefers_cached_code_names(monkeypatch):
             return {"600519": "Moutai"}
 
     created = []
-    monkeypatch.setattr(runtime_services, "TdxDataProvider", lambda **kwargs: created.append(_Provider(**kwargs)) or created[-1])
+    monkeypatch.setattr(
+        runtime_services, "TdxDataProvider", lambda **kwargs: created.append(_Provider(**kwargs)) or created[-1]
+    )
 
     provider = runtime_services.create_data_provider(offline=True)
 
@@ -41,7 +43,9 @@ def test_create_data_provider_falls_back_to_full_name_map_when_cache_missing(mon
             return {"600519": "Moutai"}
 
     created = []
-    monkeypatch.setattr(runtime_services, "TdxDataProvider", lambda **kwargs: created.append(_Provider(**kwargs)) or created[-1])
+    monkeypatch.setattr(
+        runtime_services, "TdxDataProvider", lambda **kwargs: created.append(_Provider(**kwargs)) or created[-1]
+    )
 
     provider = runtime_services.create_data_provider(offline=True)
 

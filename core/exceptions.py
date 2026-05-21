@@ -20,4 +20,3 @@ class DataFormatError(AppError):
 
 class BusinessRuleError(AppError):
     """Domain/business rule validation errors."""
-

@@ -11,6 +11,7 @@ from core.sector_rps_helper import enrich_hot_sector_rows, load_sector_rps_snaps
 
 log = get_logger(__name__)
 
+
 class ScanWorker(QThread):
     progress = pyqtSignal(int, str)
     result_ready = pyqtSignal(list)
@@ -30,6 +31,7 @@ class ScanWorker(QThread):
 
     def run(self):
         import time as _time
+
         _total_start = _time.time()
 
         # 起始阶段发送正常状态文本，避免 UI 依赖特殊占位字符串
@@ -78,11 +80,10 @@ class ScanWorker(QThread):
             candidate_codes = set()
             for d_rps in matrix.values():
                 candidate_codes.update(
-                    k for k, v in d_rps['rps250'].items()
-                    if pd.notna(v) and (
-                        v >= self.params.rps_threshold
-                        or d_rps['rps120'].get(k, 0) >= self.params.rps_threshold
-                    )
+                    k
+                    for k, v in d_rps["rps250"].items()
+                    if pd.notna(v)
+                    and (v >= self.params.rps_threshold or d_rps["rps120"].get(k, 0) >= self.params.rps_threshold)
                 )
             if candidate_codes:
                 self.data_provider.code2name = self.data_provider.ensure_code_name_map(
@@ -99,11 +100,15 @@ class ScanWorker(QThread):
                     self.finished_scan.emit(False, "任务已取消")
                     return
 
-                pct = int(100 * (i+1) / total_days)
-                self.progress.emit(pct, f"扫描 {d_str} ({i+1}/{total_days})")
+                pct = int(100 * (i + 1) / total_days)
+                self.progress.emit(pct, f"扫描 {d_str} ({i + 1}/{total_days})")
 
-                targets = [k for k, v in d_rps['rps250'].items()
-                           if pd.notna(v) and (v >= self.params.rps_threshold or d_rps['rps120'].get(k, 0) >= self.params.rps_threshold)]
+                targets = [
+                    k
+                    for k, v in d_rps["rps250"].items()
+                    if pd.notna(v)
+                    and (v >= self.params.rps_threshold or d_rps["rps120"].get(k, 0) >= self.params.rps_threshold)
+                ]
 
                 for idx_code, code in enumerate(targets):
                     # 【休眠释放 GIL】每完成几只后主动释放 CPU
@@ -112,15 +117,15 @@ class ScanWorker(QThread):
                         _time.sleep(0.001)
 
                     # === ST 股过滤:ST/*ST 涨跌幅仅 5%,易伪装成 VCP 收缩形态 ===
-                    stock_name = self.data_provider.code2name.get(code, '')
-                    if 'ST' in stock_name.upper():
+                    stock_name = self.data_provider.code2name.get(code, "")
+                    if "ST" in stock_name.upper():
                         continue
                     df = self.data_provider.get_data(code)
                     if df is not None:
                         try:
                             # 【并发安全与缓存加速】避免区间扫描的每日历次重复计算指标。
                             # 先在 copy 上计算以保障安全，然后通过 dict 更新覆盖缓存，一劳永逸。
-                            if 'entangle' not in df.columns:
+                            if "entangle" not in df.columns:
                                 df = calculate_scan_indicators(df.copy())
                                 with self.data_provider.cache_lock:
                                     self.data_provider.cache_data[code] = df
@@ -130,33 +135,47 @@ class ScanWorker(QThread):
                             # 红盘仅是盘中实时判断条件，盘后扫描不应因为
                             # 当日收阴就漏掉形态完好的标的
                             ok, reason, m = self.engine.evaluate_conditions(
-                                df_safe, pd.to_datetime(d_str),
-                                d_rps['rps120'].get(code, 0),
-                                d_rps['rps250'].get(code, 0), None,
-                                self.params, skip_red_check=True)
+                                df_safe,
+                                pd.to_datetime(d_str),
+                                d_rps["rps120"].get(code, 0),
+                                d_rps["rps250"].get(code, 0),
+                                None,
+                                self.params,
+                                skip_red_check=True,
+                            )
                             if ok:
-                                m.update({
-                                    '代码': code,
-                                    '名称': self.data_provider.code2name.get(code, ""),
-                                    '触发日期': d_str,
-                                    '热点板块': "-"
-                                })
+                                m.update(
+                                    {
+                                        "代码": code,
+                                        "名称": self.data_provider.code2name.get(code, ""),
+                                        "触发日期": d_str,
+                                        "热点板块": "-",
+                                    }
+                                )
                                 all_results.append(m)
                             else:
                                 reason_stats[reason] = reason_stats.get(reason, 0) + 1
-                        except (AttributeError, IndexError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
+                        except (
+                            AttributeError,
+                            IndexError,
+                            KeyError,
+                            OSError,
+                            RuntimeError,
+                            TypeError,
+                            ValueError,
+                        ) as e:
                             log.error(f"[区间扫描] {code} 评估异常: {e}", exc_info=True)
                             continue
 
             if all_results:
                 # 按日期排序，去重保留最近一天
-                df_all = pd.DataFrame(all_results).sort_values('触发日期')
-                df_all = df_all.drop_duplicates(subset=['代码'], keep='last')
-                if '评分' in df_all.columns:
-                    df_all['评分_tmp'] = pd.to_numeric(df_all['评分'], errors='coerce')
-                    df_all = df_all.sort_values(by=['触发日期', '评分_tmp'], ascending=[False, False])
-                    df_all = df_all.drop(columns=['评分_tmp'])
-                all_results = df_all.to_dict('records')
+                df_all = pd.DataFrame(all_results).sort_values("触发日期")
+                df_all = df_all.drop_duplicates(subset=["代码"], keep="last")
+                if "评分" in df_all.columns:
+                    df_all["评分_tmp"] = pd.to_numeric(df_all["评分"], errors="coerce")
+                    df_all = df_all.sort_values(by=["触发日期", "评分_tmp"], ascending=[False, False])
+                    df_all = df_all.drop(columns=["评分_tmp"])
+                all_results = df_all.to_dict("records")
 
             # 释放 RPS 矩阵内存（可能占用几十MB，后续步骤不再需要）
             del matrix
@@ -169,25 +188,25 @@ class ScanWorker(QThread):
                 self.progress.emit(99, "计算市值...")
                 _t2 = _time.time()
                 df_res = pd.DataFrame(all_results)
-                unique_codes = df_res['代码'].unique().tolist()
+                unique_codes = df_res["代码"].unique().tolist()
                 _scan_close = {}
                 for c in unique_codes:
                     _cd = self.data_provider.get_data(c)
                     if _cd is not None and len(_cd) > 0:
-                        _scan_close[c] = float(_cd.iloc[-1]['close'])
+                        _scan_close[c] = float(_cd.iloc[-1]["close"])
 
                 # 批量查询市值
                 cap_results = batch_check_market_cap(unique_codes, close_prices=_scan_close)
 
                 for res in all_results:
-                    c = res['代码']
+                    c = res["代码"]
                     cap = cap_results.get(c)
                     if cap and cap > 0:
-                        res['市值'] = f"{cap / 1e8:.0f}亿"
-                        res['_cap_raw'] = cap  # 保留原始值用于后续过滤
+                        res["市值"] = f"{cap / 1e8:.0f}亿"
+                        res["_cap_raw"] = cap  # 保留原始值用于后续过滤
                     else:
-                        res['市值'] = "--"
-                        res['_cap_raw'] = 0
+                        res["市值"] = "--"
+                        res["_cap_raw"] = 0
 
                 log.info(f"[区间扫描] 市值查询完成 ({_time.time() - _t2:.1f}s)")
 
@@ -198,22 +217,21 @@ class ScanWorker(QThread):
             # 由于用户要求加快扫描速度，机构过滤对于初始区间扫描过于耗时（需排队查网页），故此处剔除机构筛选逻辑。
             # 如果需要看机构，可以在盘中监控或关注池中再进行查看。
 
-
             # 按评分倒序
             if all_results:
-                all_results.sort(key=lambda x: x.get('评分', 0), reverse=True)
+                all_results.sort(key=lambda x: x.get("评分", 0), reverse=True)
 
             log.info(f"[区间扫描] ✅ 完成 ({_time.time() - _total_start:.1f}s)，产生 {len(all_results)} 条结果")
 
             # 清理内部临时字段
             for r in all_results:
-                r.pop('_cap_raw', None)
+                r.pop("_cap_raw", None)
 
             # Enrich 热点板块(板块 RPS)
             if all_results:
                 self.progress.emit(99, "查询热点板块...")
                 try:
-                    target_date = all_results[-1].get('触发日期', '')
+                    target_date = all_results[-1].get("触发日期", "")
                     sector_manager, sector_rps, _, source = load_sector_rps_snapshot(
                         self.data_provider,
                         self.data_provider.get_all_valid_data(),

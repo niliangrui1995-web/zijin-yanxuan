@@ -66,21 +66,29 @@ def test_fault_tolerance_status_is_consistent_across_consumers(monkeypatch):
     status = _provider_status()
     expected = provider_fault_tolerance(status)
 
-    tab_lineage = TabDataLineageService(
-        key="scan",
-        source="unit-cache",
-        provider="unit-provider",
-        cache_refs=("cache-a",),
-        provider_status_reader=lambda: status,
-        clock=lambda: "2026-05-16T10:00:00",
-    ).describe([]).lineage.as_dict()
+    tab_lineage = (
+        TabDataLineageService(
+            key="scan",
+            source="unit-cache",
+            provider="unit-provider",
+            cache_refs=("cache-a",),
+            provider_status_reader=lambda: status,
+            clock=lambda: "2026-05-16T10:00:00",
+        )
+        .describe([])
+        .lineage.as_dict()
+    )
 
-    stock_lineage = StockCandidatesDataService(
-        context_reader=lambda: {},
-        row_builder=lambda _context: [],
-        provider_status_reader=lambda: status,
-        clock=lambda: "2026-05-16T10:00:00",
-    ).load().lineage.as_dict()
+    stock_lineage = (
+        StockCandidatesDataService(
+            context_reader=lambda: {},
+            row_builder=lambda _context: [],
+            provider_status_reader=lambda: status,
+            clock=lambda: "2026-05-16T10:00:00",
+        )
+        .load()
+        .lineage.as_dict()
+    )
 
     runtime_provider = SimpleNamespace(
         get_quote_request_stats=lambda: status["request_stats"],

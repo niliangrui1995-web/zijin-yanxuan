@@ -319,22 +319,24 @@ def test_asian_market_pct_column_keeps_rise_fall_color(monkeypatch):
 
     tab = asian_module.AsianMarketTab()
     try:
-        tab.model.update_data([
-            {
-                "代码": "00700",
-                "名称": "腾讯控股",
-                "现价": 512.0,
-                "涨幅%": 2.35,
-                "市场": "HK",
-                "状态": "交易中",
-                "赛道": "互联网",
-                "角色定位": "龙头",
-                "货币": "HKD",
-                "5日涨跌%": 1.2,
-                "10日涨跌%": -0.8,
-                "20日涨跌%": 3.6,
-            }
-        ])
+        tab.model.update_data(
+            [
+                {
+                    "代码": "00700",
+                    "名称": "腾讯控股",
+                    "现价": 512.0,
+                    "涨幅%": 2.35,
+                    "市场": "HK",
+                    "状态": "交易中",
+                    "赛道": "互联网",
+                    "角色定位": "龙头",
+                    "货币": "HKD",
+                    "5日涨跌%": 1.2,
+                    "10日涨跌%": -0.8,
+                    "20日涨跌%": 3.6,
+                }
+            ]
+        )
         pct_col = tab.model.headers.index("涨幅%")
         model_index = tab.model.index(0, pct_col)
         color = tab.model.data(model_index, Qt.ItemDataRole.ForegroundRole)
@@ -442,8 +444,22 @@ def test_asian_market_load_local_cache_normalizes_stale_yfinance_pct(monkeypatch
                 "track": "高频PCB与覆铜板材料",
                 "currency": "JPY",
                 "klines": [
-                    {"date": "2026-04-17", "open": 26820.0, "high": 27970.0, "low": 26680.0, "close": 27510.0, "volume": 2656700.0},
-                    {"date": "2026-04-20", "open": 27300.0, "high": 27850.0, "low": 26610.0, "close": 26720.0, "volume": 1689500.0},
+                    {
+                        "date": "2026-04-17",
+                        "open": 26820.0,
+                        "high": 27970.0,
+                        "low": 26680.0,
+                        "close": 27510.0,
+                        "volume": 2656700.0,
+                    },
+                    {
+                        "date": "2026-04-20",
+                        "open": 27300.0,
+                        "high": 27850.0,
+                        "low": 26610.0,
+                        "close": 26720.0,
+                        "volume": 1689500.0,
+                    },
                 ],
             }
         ]
@@ -499,8 +515,22 @@ def test_asian_market_load_local_cache_keeps_history_when_rt_cache_is_zero(monke
                 "track": "数据中心电力与配电",
                 "currency": "JPY",
                 "klines": [
-                    {"date": "2026-04-30", "open": 4848.0, "high": 5265.0, "low": 4750.0, "close": 5156.0, "volume": 30704800.0},
-                    {"date": "2026-05-01", "open": 5000.0, "high": 5253.0, "low": 4905.0, "close": 5138.0, "volume": 18404600.0},
+                    {
+                        "date": "2026-04-30",
+                        "open": 4848.0,
+                        "high": 5265.0,
+                        "low": 4750.0,
+                        "close": 5156.0,
+                        "volume": 30704800.0,
+                    },
+                    {
+                        "date": "2026-05-01",
+                        "open": 5000.0,
+                        "high": 5253.0,
+                        "low": 4905.0,
+                        "close": 5138.0,
+                        "volume": 18404600.0,
+                    },
                 ],
             }
         ]
@@ -691,9 +721,7 @@ def test_asian_worker_pause_message_turns_into_after_hours_idle_when_cache_not_s
 
     asian_module.AsianMarketTab._on_worker_progress(tab, "亚洲市场后台刷新已暂停，等待缓存同步完成")
 
-    assert tab.status_calls == [
-        ("盘后静默中", tuple(), "本地缓存", "可点击刷新亚洲市场")
-    ]
+    assert tab.status_calls == [("盘后静默中", tuple(), "本地缓存", "可点击刷新亚洲市场")]
 
 
 def test_asian_worker_pause_message_does_not_override_active_cache_sync():

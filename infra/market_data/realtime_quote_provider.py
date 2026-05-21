@@ -176,7 +176,11 @@ class RealtimeQuoteProvider:
         ratio = 1.0
         if MarketCalendar.is_market_active():
             if 9 <= hour <= 11:
-                passed = (minute - 30) if hour == 9 else (30 + minute if hour == 10 else (120 if minute > 30 else 90 + minute))
+                passed = (
+                    (minute - 30)
+                    if hour == 9
+                    else (30 + minute if hour == 10 else (120 if minute > 30 else 90 + minute))
+                )
             elif 13 <= hour < 15:
                 passed = 120 + (hour - 13) * 60 + minute
             elif hour == 15:

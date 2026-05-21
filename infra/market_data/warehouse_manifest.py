@@ -175,4 +175,3 @@ class WarehouseManifest:
                     (dataset, trade_date),
                 ).fetchone()
         return WarehouseManifestRecord.from_row(row) if row is not None else None
-

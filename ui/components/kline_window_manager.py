@@ -313,9 +313,8 @@ class KLineWindowManager:
             current_idx: 当前索引
         """
         started_at = time.perf_counter()
-        preflight_running = (
-            getattr(self, "_webengine_available", None) is None
-            and getattr(self, "_webengine_preflight_started", False)
+        preflight_running = getattr(self, "_webengine_available", None) is None and getattr(
+            self, "_webengine_preflight_started", False
         )
         if not preflight_running and not self._ensure_webengine_available():
             self._notify_webengine_unavailable(main_window, code, name)
@@ -344,6 +343,7 @@ class KLineWindowManager:
                 # 通知用户（需要在 UI 线程中调用）
                 try:
                     from ui.components.toast_widget import show_toast
+
                     show_toast(
                         f"K线窗口上限{MAX_CHART_WINDOWS}个，已自动关闭: {old_title}",
                         "info",
@@ -357,7 +357,7 @@ class KLineWindowManager:
 
         # 构建 vcp_data 兜底
         if vcp_data is None:
-            vcp_data = {'code': code, 'name': name}
+            vcp_data = {"code": code, "name": name}
 
         browser = self.take_prewarmed_browser()
         if browser is None and self._prewarm_started:

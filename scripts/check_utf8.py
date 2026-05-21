@@ -55,9 +55,7 @@ MOJIBAKE_TOKENS = (
 )
 MOJIBAKE_WINDOW_CHARS = 160
 MOJIBAKE_TOKEN_THRESHOLD = 3
-MOJIBAKE_ALLOWLIST_SNIPPETS = (
-    'LEGACY_MOJIBAKE_CODE_KEY = "\\u6d60\\uff47\\u721c"',
-)
+MOJIBAKE_ALLOWLIST_SNIPPETS = ('LEGACY_MOJIBAKE_CODE_KEY = "\\u6d60\\uff47\\u721c"',)
 
 
 def _should_scan_file(path: Path) -> bool:
@@ -114,11 +112,7 @@ def _has_suspicious_mojibake(text: str) -> bool:
     matches.sort()
     for match_index, (start, _token) in enumerate(matches):
         window_end = start + MOJIBAKE_WINDOW_CHARS
-        window_tokens = {
-            token
-            for index, token in matches[match_index:]
-            if index <= window_end
-        }
+        window_tokens = {token for index, token in matches[match_index:] if index <= window_end}
         if len(window_tokens) >= MOJIBAKE_TOKEN_THRESHOLD:
             return True
     return False

@@ -12,4 +12,3 @@ class TaskCategory(str, Enum):
     QUOTES = "quotes"
     WINDOW = "window"
     WORKSPACE = "workspace"
-

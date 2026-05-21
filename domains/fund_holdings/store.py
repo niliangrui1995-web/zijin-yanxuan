@@ -443,11 +443,13 @@ class FundHoldingsStore:
             for quarter_key, payload in sorted((quarter_payloads or {}).items()):
                 norm_quarter = normalize_quarter_key(quarter_key)
                 end_date = str(payload.get("end_date") or "").strip()
-                raw_rows = dedupe_qfii_raw_rows([
-                    dict(row)
-                    for row in (payload.get("raw_rows") or [])
-                    if is_mainland_security_code(row.get("SECURITY_CODE"))
-                ])
+                raw_rows = dedupe_qfii_raw_rows(
+                    [
+                        dict(row)
+                        for row in (payload.get("raw_rows") or [])
+                        if is_mainland_security_code(row.get("SECURITY_CODE"))
+                    ]
+                )
                 snapshots = list(payload.get("snapshots") or [])
 
                 cursor.execute(
@@ -613,11 +615,7 @@ class FundHoldingsStore:
             GROUP BY subject_code
             """
         )
-        return {
-            str(row["subject_code"]): str(row["latest_quarter"])
-            for row in rows
-            if row.get("latest_quarter")
-        }
+        return {str(row["subject_code"]): str(row["latest_quarter"]) for row in rows if row.get("latest_quarter")}
 
     def get_latest_sync_map(self) -> dict[str, dict]:
         rows = self._store.fetch_all(
@@ -727,11 +725,7 @@ class FundHoldingsStore:
         rows = build_qfii_holder_change_rows(raw_rows, SUBJECT_QFII)
         if target_quarters is None:
             return rows
-        return [
-            row
-            for row in rows
-            if str(row.get("quarter_key") or "").strip() in target_quarters
-        ]
+        return [row for row in rows if str(row.get("quarter_key") or "").strip() in target_quarters]
 
     def _query_change_rows_signature(self):
         try:

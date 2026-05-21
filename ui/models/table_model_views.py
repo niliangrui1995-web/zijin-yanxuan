@@ -30,11 +30,7 @@ class RtSortFilterProxyModel(QSortFilterProxyModel):
         self.setColumnFilters(col_name, [text] if text else [])
 
     def setColumnFilters(self, col_name, values):
-        normalized = {
-            str(value or "").strip()
-            for value in (values or [])
-            if str(value or "").strip()
-        }
+        normalized = {str(value or "").strip() for value in (values or []) if str(value or "").strip()}
         if normalized:
             self._exact_column_filters[col_name] = normalized
         else:
@@ -46,7 +42,11 @@ class RtSortFilterProxyModel(QSortFilterProxyModel):
             return None
 
         source = self.sourceModel()
-        header = source.headerData(index.column(), Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) if source else None
+        header = (
+            source.headerData(index.column(), Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole)
+            if source
+            else None
+        )
         if header == SERIAL_HEADER:
             if role == Qt.ItemDataRole.DisplayRole:
                 return str(index.row() + 1)
@@ -63,7 +63,9 @@ class RtSortFilterProxyModel(QSortFilterProxyModel):
     def sort(self, column, order=Qt.SortOrder.AscendingOrder):
         if column >= 0:
             source = self.sourceModel()
-            header = source.headerData(column, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) if source else None
+            header = (
+                source.headerData(column, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) if source else None
+            )
             if header == SERIAL_HEADER:
                 return
         super().sort(column, order)
@@ -81,15 +83,21 @@ class RtSortFilterProxyModel(QSortFilterProxyModel):
         right_str = str(rightData).strip()
 
         # Handle placeholders explicitly to sort them at the bottom
-        if left_str in ('', '--', '-'): left_val = float('-inf')
+        if left_str in ("", "--", "-"):
+            left_val = float("-inf")
         else:
-            try: left_val = float(leftData)
-            except (ValueError, TypeError): left_val = None
+            try:
+                left_val = float(leftData)
+            except (ValueError, TypeError):
+                left_val = None
 
-        if right_str in ('', '--', '-'): right_val = float('-inf')
+        if right_str in ("", "--", "-"):
+            right_val = float("-inf")
         else:
-            try: right_val = float(rightData)
-            except (ValueError, TypeError): right_val = None
+            try:
+                right_val = float(rightData)
+            except (ValueError, TypeError):
+                right_val = None
 
         if left_val is not None and right_val is not None:
             return left_val < right_val
@@ -104,8 +112,8 @@ class RtSortFilterProxyModel(QSortFilterProxyModel):
         model = self.sourceModel()
 
         # 1. 拦截层：表头精确定向筛选（模拟 Excel 表头筛选）
-        if getattr(self, '_exact_column_filters', None):
-            headers = model._headers if hasattr(model, '_headers') else []
+        if getattr(self, "_exact_column_filters", None):
+            headers = model._headers if hasattr(model, "_headers") else []
             for col_name, patterns in self._exact_column_filters.items():
                 if col_name in headers:
                     col_idx = headers.index(col_name)
@@ -120,7 +128,7 @@ class RtSortFilterProxyModel(QSortFilterProxyModel):
         if not self._filter_text:
             return True
 
-        headers = model._headers if hasattr(model, '_headers') else []
+        headers = model._headers if hasattr(model, "_headers") else []
         code_col = headers.index("代码") if "代码" in headers else 0
         name_col = headers.index("名称") if "名称" in headers else 1
         code_idx = model.index(source_row, code_col, source_parent)
@@ -164,6 +172,7 @@ class RtSortFilterProxyModel(QSortFilterProxyModel):
         确保 dropMimeData 收到的永远是 source model 的真实行号。
         """
         import json
+
         source = self.sourceModel()
         if not source:
             return QMimeData()
@@ -176,8 +185,7 @@ class RtSortFilterProxyModel(QSortFilterProxyModel):
 
         mime = QMimeData()
         if source_rows:
-            mime.setData("application/x-watchlist-row",
-                         json.dumps(sorted(source_rows)).encode('utf-8'))
+            mime.setData("application/x-watchlist-row", json.dumps(sorted(source_rows)).encode("utf-8"))
         return mime
 
     def dropMimeData(self, data, action, row, column, parent):
@@ -210,13 +218,12 @@ class RtSortFilterProxyModel(QSortFilterProxyModel):
         return source.dropMimeData(data, action, source_row, column, QModelIndex())
 
 
-
-
 class StockItemDelegate(QStyledItemDelegate):
     """
     负责高级单元格渲染的委托类，包含闪烁褪色动画（后续由定时器或外部驱动刷新）
     和高级彩色状态胶囊（Pill）绘制。
     """
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.flash_duration = FLASH_DURATION_SECONDS
@@ -285,7 +292,7 @@ class StockItemDelegate(QStyledItemDelegate):
 
         # 2. 判断是否是自定义绘制的胶囊文本 (Pill)
         text = index.data(Qt.ItemDataRole.DisplayRole)
-        pill_color = index.data(Qt.ItemDataRole.UserRole + 2) # Pill Color Role
+        pill_color = index.data(Qt.ItemDataRole.UserRole + 2)  # Pill Color Role
 
         if pill_color and text:
             opt_bg = QStyleOptionViewItem(opt)

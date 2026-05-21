@@ -10,6 +10,7 @@ from domains.runtime import domain_events as event_bus
 
 log = get_logger(__name__)
 
+
 class WatchlistViewModel:
     """
     负责维护“关注池”的幕后管家 (ViewModel)。
@@ -17,6 +18,7 @@ class WatchlistViewModel:
     为了避免各个 UI 窗口各自为战，频繁且重复地去读取和写入 JSON 文件导致文件损坏或界面卡顿。
     所有的读写、校验、状态维护统一在这里进行。
     """
+
     _instance = None
     _SOURCE_TAG_PRIORITY = ("战报", "龙虎", "业绩", "大宗", "扫描", "手动")
 
@@ -34,12 +36,13 @@ class WatchlistViewModel:
         """将数据加载到内存中，优先读SQLite数据库，不存在则兼容读JSON"""
         try:
             from core.data_store import DataStore
+
             data = DataStore().load_json("watchlist_special")
 
             if not data:
                 # 兼容旧 JSON 迁移
                 if os.path.exists(SPECIAL_LATEST_DATA):
-                    with open(SPECIAL_LATEST_DATA, 'r', encoding='utf-8') as f:
+                    with open(SPECIAL_LATEST_DATA, "r", encoding="utf-8") as f:
                         data = json.load(f)
                     if isinstance(data, dict):
                         DataStore().save_json("watchlist_special", data)
@@ -73,6 +76,7 @@ class WatchlistViewModel:
             with self._lock:
                 save_data = deepcopy(self._cache)
             from core.data_store import DataStore
+
             DataStore().save_json("watchlist_special", save_data)
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError, sqlite3.Error) as e:
             log.error(f"[WatchlistVM] 写入关注池失败: {e}")
@@ -146,17 +150,16 @@ class WatchlistViewModel:
             tags.append("业绩")
         if str(payload.get("大宗交易", "")).strip():
             tags.append("大宗")
-        if any(
-            str(payload.get(key, "")).strip()
-            for key in ("触发日期", "突破状态", "区间振幅", "距突破", "热门板块")
-        ):
+        if any(str(payload.get(key, "")).strip() for key in ("触发日期", "突破状态", "区间振幅", "距突破", "热门板块")):
             tags.append("扫描")
 
         if not tags:
             tags.append("手动")
         return cls._unique_source_tags(tags)
 
-    def patch_entry(self, stock_code: str, updates: dict | None = None, remove_keys: list[str] | tuple[str, ...] | None = None) -> bool:
+    def patch_entry(
+        self, stock_code: str, updates: dict | None = None, remove_keys: list[str] | tuple[str, ...] | None = None
+    ) -> bool:
         """更新单个关注池条目并持久化。"""
         stock_code = str(stock_code or "").strip()
         if not stock_code:
@@ -253,10 +256,7 @@ class WatchlistViewModel:
             code = str(raw_code or "").strip()
             if not code or not isinstance(raw_entry, dict):
                 continue
-            normalized_cache[code] = {
-                str(key): self._normalize_entry_value(value)
-                for key, value in raw_entry.items()
-            }
+            normalized_cache[code] = {str(key): self._normalize_entry_value(value) for key, value in raw_entry.items()}
             normalized_cache[code]["来源标签"] = self.derive_source_tags(
                 normalized_cache[code],
                 existing_tags=normalized_cache[code].get("来源标签"),
@@ -283,7 +283,7 @@ class WatchlistViewModel:
                 # 海鲜数据不写硬盘：坚决防守，切断时效性极强的实时数据污染持久层
                 if k in ["现价", "涨幅%", "涨幅", "市值", "最低", "最高", "开盘", "昨收", "成交额", "换手%"]:
                     continue
-                if hasattr(v, 'item'):
+                if hasattr(v, "item"):
                     entry[k] = v.item()
                 elif isinstance(v, (str, int, float, bool, list, dict, type(None))):
                     entry[k] = v
@@ -380,6 +380,7 @@ class WatchlistViewModel:
             self._cache = new_cache
 
         self._save_data()
+
 
 # 全局单例
 watchlist_vm = WatchlistViewModel()

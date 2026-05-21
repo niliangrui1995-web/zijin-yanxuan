@@ -38,33 +38,37 @@ class IndicatorService:
             return df if is_pandas else pldf
 
         if not core_done:
-            pldf = pldf.with_columns(
-                [
-                    pl.col("close").rolling_mean(50).alias("SMA50"),
-                    pl.col("close").rolling_mean(150).alias("SMA150"),
-                    pl.col("close").rolling_mean(200).alias("SMA200"),
-                    pl.col("high").rolling_max(250).alias("High_250"),
-                    pl.col("close").shift(1).alias("prev_close"),
-                ]
-            ).with_columns(
-                [
-                    pl.max_horizontal(
-                        [
-                            pl.col("high") - pl.col("low"),
-                            (pl.col("high") - pl.col("prev_close")).abs(),
-                            (pl.col("low") - pl.col("prev_close")).abs(),
-                        ]
-                    ).alias("TR")
-                ]
-            ).with_columns(
-                [
-                    pl.col("TR").rolling_mean(10).alias("ATR10"),
-                    pl.col("TR").rolling_mean(20).alias("ATR20"),
-                    pl.col("TR").rolling_mean(60).alias("ATR60"),
-                    pl.col("volume").rolling_mean(25).alias("vol_ma25"),
-                    pl.col("close").rolling_mean(10).alias("ma10"),
-                    pl.col("close").rolling_mean(20).alias("ma20"),
-                ]
+            pldf = (
+                pldf.with_columns(
+                    [
+                        pl.col("close").rolling_mean(50).alias("SMA50"),
+                        pl.col("close").rolling_mean(150).alias("SMA150"),
+                        pl.col("close").rolling_mean(200).alias("SMA200"),
+                        pl.col("high").rolling_max(250).alias("High_250"),
+                        pl.col("close").shift(1).alias("prev_close"),
+                    ]
+                )
+                .with_columns(
+                    [
+                        pl.max_horizontal(
+                            [
+                                pl.col("high") - pl.col("low"),
+                                (pl.col("high") - pl.col("prev_close")).abs(),
+                                (pl.col("low") - pl.col("prev_close")).abs(),
+                            ]
+                        ).alias("TR")
+                    ]
+                )
+                .with_columns(
+                    [
+                        pl.col("TR").rolling_mean(10).alias("ATR10"),
+                        pl.col("TR").rolling_mean(20).alias("ATR20"),
+                        pl.col("TR").rolling_mean(60).alias("ATR60"),
+                        pl.col("volume").rolling_mean(25).alias("vol_ma25"),
+                        pl.col("close").rolling_mean(10).alias("ma10"),
+                        pl.col("close").rolling_mean(20).alias("ma20"),
+                    ]
+                )
             )
 
             if "amount" not in pldf.columns:
@@ -87,30 +91,28 @@ class IndicatorService:
             ).with_columns([((pl.col("max_ma") / pl.col("min_ma")) - 1).alias("entangle")])
 
         if include_chart and not chart_done:
-            pldf = pldf.with_columns(
-                [
-                    pl.col("close").ewm_mean(span=12, adjust=False).alias("exp1"),
-                    pl.col("close").ewm_mean(span=26, adjust=False).alias("exp2"),
-                ]
-            ).with_columns([(pl.col("exp1") - pl.col("exp2")).alias("MACD")]).with_columns(
-                [pl.col("MACD").ewm_mean(span=9, adjust=False).alias("MACD_Signal")]
-            ).with_columns([(pl.col("MACD") - pl.col("MACD_Signal")).alias("MACD_Hist")])
+            pldf = (
+                pldf.with_columns(
+                    [
+                        pl.col("close").ewm_mean(span=12, adjust=False).alias("exp1"),
+                        pl.col("close").ewm_mean(span=26, adjust=False).alias("exp2"),
+                    ]
+                )
+                .with_columns([(pl.col("exp1") - pl.col("exp2")).alias("MACD")])
+                .with_columns([pl.col("MACD").ewm_mean(span=9, adjust=False).alias("MACD_Signal")])
+                .with_columns([(pl.col("MACD") - pl.col("MACD_Signal")).alias("MACD_Hist")])
+            )
 
-            pldf = pldf.with_columns([pl.col("close").diff().alias("delta")]).with_columns(
-                [
-                    pl.when(pl.col("delta") > 0)
-                    .then(pl.col("delta"))
-                    .otherwise(0)
-                    .rolling_mean(14)
-                    .alias("gain"),
-                    pl.when(pl.col("delta") < 0)
-                    .then(-pl.col("delta"))
-                    .otherwise(0)
-                    .rolling_mean(14)
-                    .alias("loss"),
-                ]
-            ).with_columns([(pl.col("gain") / pl.col("loss")).alias("rs")]).with_columns(
-                [(100 - (100 / (1 + pl.col("rs")))).alias("RSI")]
+            pldf = (
+                pldf.with_columns([pl.col("close").diff().alias("delta")])
+                .with_columns(
+                    [
+                        pl.when(pl.col("delta") > 0).then(pl.col("delta")).otherwise(0).rolling_mean(14).alias("gain"),
+                        pl.when(pl.col("delta") < 0).then(-pl.col("delta")).otherwise(0).rolling_mean(14).alias("loss"),
+                    ]
+                )
+                .with_columns([(pl.col("gain") / pl.col("loss")).alias("rs")])
+                .with_columns([(100 - (100 / (1 + pl.col("rs")))).alias("RSI")])
             )
 
             pldf = pldf.with_columns([pl.col("close").rolling_std(20).alias("std20")]).with_columns(

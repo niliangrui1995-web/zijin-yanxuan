@@ -47,9 +47,7 @@ class LocalHistoryProvider:
                     df = pl.DataFrame(data) if pl is not None else pd.DataFrame(data)
                     if pl is not None and "datetime" in df.columns and df.schema["datetime"] != pl.Date:
                         df = df.with_columns(
-                            pl.col("datetime")
-                            .str.strptime(pl.Datetime, "%Y-%m-%d %H:%M", strict=False)
-                            .cast(pl.Date)
+                            pl.col("datetime").str.strptime(pl.Datetime, "%Y-%m-%d %H:%M", strict=False).cast(pl.Date)
                         ).sort("datetime", descending=False)
                     if hasattr(df, "to_pandas"):
                         df = df.to_pandas()
@@ -70,12 +68,7 @@ class LocalHistoryProvider:
         existing_df = provider.get_data(code)
         if not force_sync and provider._is_before_930_today():
             return existing_df
-        if (
-            not force_sync
-            and provider._is_after_1500_today()
-            and existing_df is not None
-            and len(existing_df) > 0
-        ):
+        if not force_sync and provider._is_after_1500_today() and existing_df is not None and len(existing_df) > 0:
             try:
                 if pd.Timestamp(existing_df.index.max()).date() >= MarketCalendar.today("CN"):
                     return existing_df

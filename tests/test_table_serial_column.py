@@ -17,17 +17,23 @@ def test_stock_table_model_prepends_serial_header():
 
 def test_proxy_serial_column_stays_continuous_after_sort():
     model = StockTableModel(["代码", "名称", "现价"])
-    model.update_data([
-        {"代码": "000001", "名称": "A", "现价": "10.00"},
-        {"代码": "000002", "名称": "B", "现价": "30.00"},
-        {"代码": "000003", "名称": "C", "现价": "20.00"},
-    ])
+    model.update_data(
+        [
+            {"代码": "000001", "名称": "A", "现价": "10.00"},
+            {"代码": "000002", "名称": "B", "现价": "30.00"},
+            {"代码": "000003", "名称": "C", "现价": "20.00"},
+        ]
+    )
     proxy = RtSortFilterProxyModel()
     proxy.setSourceModel(model)
 
     proxy.sort(model.headers.index("现价"), Qt.SortOrder.DescendingOrder)
 
-    assert [proxy.data(proxy.index(row, 0), Qt.ItemDataRole.DisplayRole) for row in range(proxy.rowCount())] == ["1", "2", "3"]
+    assert [proxy.data(proxy.index(row, 0), Qt.ItemDataRole.DisplayRole) for row in range(proxy.rowCount())] == [
+        "1",
+        "2",
+        "3",
+    ]
     assert proxy.data(proxy.index(0, model.headers.index("代码")), Qt.ItemDataRole.DisplayRole) == "000002"
 
 
@@ -58,15 +64,17 @@ def test_terminal_alignment_uses_center_for_numeric_like_cells():
 
 def test_terminal_alignment_uses_left_for_pure_chinese_and_mixed_cells():
     model = StockTableModel(["代码", "名称", "市值", "外资净买入", "买点"])
-    model.update_data([
-        {
-            "代码": "AAPL",
-            "名称": "苹果",
-            "市值": "734亿",
-            "外资净买入": "净买1200万",
-            "买点": "触发",
-        }
-    ])
+    model.update_data(
+        [
+            {
+                "代码": "AAPL",
+                "名称": "苹果",
+                "市值": "734亿",
+                "外资净买入": "净买1200万",
+                "买点": "触发",
+            }
+        ]
+    )
 
     code_align = model.data(model.index(0, model.headers.index("代码")), Qt.ItemDataRole.TextAlignmentRole)
     name_align = model.data(model.index(0, model.headers.index("名称")), Qt.ItemDataRole.TextAlignmentRole)
@@ -83,9 +91,7 @@ def test_terminal_alignment_uses_left_for_pure_chinese_and_mixed_cells():
 
 def test_stock_table_model_exposes_heatmap_and_status_badges():
     model = StockTableModel(["代码", "名称", "现价", "涨幅%", "状态"])
-    model.update_data([
-        {"代码": "000001", "名称": "平安银行", "现价": "10.00", "涨幅%": "3.20", "状态": "盘中"}
-    ])
+    model.update_data([{"代码": "000001", "名称": "平安银行", "现价": "10.00", "涨幅%": "3.20", "状态": "盘中"}])
 
     price_idx = model.index(0, model.headers.index("现价"))
     status_idx = model.index(0, model.headers.index("状态"))
@@ -96,9 +102,7 @@ def test_stock_table_model_exposes_heatmap_and_status_badges():
 
 def test_stock_table_model_keeps_foreign_net_buy_left_aligned():
     model = StockTableModel(["代码", "名称", "外资净买入"])
-    model.update_data([
-        {"代码": "000001", "名称": "平安银行", "外资净买入": "净买1200万", "外资净买(万)": 1200}
-    ])
+    model.update_data([{"代码": "000001", "名称": "平安银行", "外资净买入": "净买1200万", "外资净买(万)": 1200}])
 
     foreign_idx = model.index(0, model.headers.index("外资净买入"))
     foreign_align = model.data(foreign_idx, Qt.ItemDataRole.TextAlignmentRole)
@@ -110,9 +114,15 @@ def test_stock_table_model_foreign_net_buy_display_keeps_full_normalized_text():
     model = StockTableModel(["\u4ee3\u7801", "\u540d\u79f0", "\u5916\u8d44\u51c0\u4e70\u5165"])
     raw_text = "\u51c0\u4e701.4\u4ebf\n\u6df1\u80a1\u901a+1.4\u4ebf\n\u6469\u6839\u58eb\u4e39\u5229+3200\u4e07"
     normalized_text = "\u51c0\u4e701.4\u4ebf | \u6df1\u80a1\u901a+1.4\u4ebf | \u6469\u6839\u58eb\u4e39\u5229+3200\u4e07"
-    model.update_data([
-        {"\u4ee3\u7801": "000001", "\u540d\u79f0": "\u5e73\u5b89\u94f6\u884c", "\u5916\u8d44\u51c0\u4e70\u5165": raw_text}
-    ])
+    model.update_data(
+        [
+            {
+                "\u4ee3\u7801": "000001",
+                "\u540d\u79f0": "\u5e73\u5b89\u94f6\u884c",
+                "\u5916\u8d44\u51c0\u4e70\u5165": raw_text,
+            }
+        ]
+    )
 
     idx = model.index(0, model.headers.index("\u5916\u8d44\u51c0\u4e70\u5165"))
 
@@ -122,17 +132,19 @@ def test_stock_table_model_foreign_net_buy_display_keeps_full_normalized_text():
 
 def test_stock_table_model_dates_use_center_alignment_and_secondary_text():
     model = StockTableModel(["代码", "名称", "日报时间", "交易日期", "揭晓日", "触发日期"])
-    model.update_data([
-        {
-            "代码": "000001",
-            "名称": "平安银行",
-            "日报时间": "2026-04-13",
-            "交易日期": "2026-04-12",
-            "揭晓日": "2026-04-30",
-            "触发日期": "2026-04-10",
-            "_report_ts": 20260413123000,
-        }
-    ])
+    model.update_data(
+        [
+            {
+                "代码": "000001",
+                "名称": "平安银行",
+                "日报时间": "2026-04-13",
+                "交易日期": "2026-04-12",
+                "揭晓日": "2026-04-30",
+                "触发日期": "2026-04-10",
+                "_report_ts": 20260413123000,
+            }
+        ]
+    )
 
     expected_color = QColor(theme_manager.get("TEXT_PRIMARY")).name()
     for header in ("日报时间", "交易日期", "揭晓日", "触发日期"):
@@ -145,10 +157,12 @@ def test_stock_table_model_dates_use_center_alignment_and_secondary_text():
 
 def test_recent_lhb_date_sort_uses_hidden_raw_value_instead_of_mmdd_text():
     model = StockTableModel(["代码", "名称", "最近上榜"])
-    model.update_data([
-        {"代码": "000001", "名称": "旧日期", "最近上榜": "04-13", "_最近上榜_raw": "20260413"},
-        {"代码": "000002", "名称": "新日期", "最近上榜": "04-14", "_最近上榜_raw": "20260414"},
-    ])
+    model.update_data(
+        [
+            {"代码": "000001", "名称": "旧日期", "最近上榜": "04-13", "_最近上榜_raw": "20260413"},
+            {"代码": "000002", "名称": "新日期", "最近上榜": "04-14", "_最近上榜_raw": "20260414"},
+        ]
+    )
     proxy = RtSortFilterProxyModel()
     proxy.setSourceModel(model)
 
@@ -171,9 +185,7 @@ def test_stock_table_model_uses_flat_color_for_zero_pct():
 def test_stock_table_model_does_not_badge_catalyst_text():
     long_catalyst = "关注财报催化与平台突破共振，后续还要观察新品发布节奏和北美订单兑现。"
     model = StockTableModel(["代码", "名称", "催化剂", "状态"])
-    model.update_data([
-        {"代码": "AAPL", "名称": "Apple", "催化剂": long_catalyst, "状态": "盘中"}
-    ])
+    model.update_data([{"代码": "AAPL", "名称": "Apple", "催化剂": long_catalyst, "状态": "盘中"}])
 
     catalyst_idx = model.index(0, model.headers.index("催化剂"))
     status_idx = model.index(0, model.headers.index("状态"))

@@ -3,6 +3,7 @@
 core/rps_precomputer.py
 F5 预计算核心组件，封装 RPS大矩阵 以及 Sector板块 RPS的纯后台计算流。
 """
+
 import datetime
 import gc
 import os
@@ -19,6 +20,7 @@ def _get_memory_usage_mb() -> float:
     """获取当前进程内存占用(MB)。psutil 是可选依赖，没装则返回 -1"""
     try:
         import psutil
+
         return psutil.Process().memory_info().rss / 1024 / 1024
     except ImportError:
         return -1.0
@@ -66,7 +68,7 @@ class RPSPrecomputer:
                 log.error(f"[F5] gbbq 解析异常(不影响后续): {e}")
 
             # --- 阶段1: 重读日线 ---
-            today_str = datetime.date.today().strftime('%Y%m%d')
+            today_str = datetime.date.today().strftime("%Y%m%d")
             skip_stage1 = False
             try:
                 cached_date = data_provider.load_cache_from_disk()
@@ -94,9 +96,7 @@ class RPSPrecomputer:
                             if total > 0 and done % 500 == 0:
                                 _log_and_status(f"[F5] 阶段1/3: 重读本地数据 {done}/{total}")
 
-                        data_provider.sync_market_data(
-                            codes_dict, force_refresh=True, progress_callback=_progress
-                        )
+                        data_provider.sync_market_data(codes_dict, force_refresh=True, progress_callback=_progress)
                         data_provider.code2name = codes_dict
                     finally:
                         if was_online:
@@ -106,6 +106,7 @@ class RPSPrecomputer:
 
                     try:
                         from vcp.polars_engine import save_cache_parquet
+
                         if save_cache_parquet(data_provider.cache_data, today_str):
                             log.info("[F5] stage1 checkpoint saved; next F5 can resume")
                         else:
@@ -129,20 +130,17 @@ class RPSPrecomputer:
             # --- 阶段2: RPS 矩阵 ---
             _log_and_status("[F5] 阶段2/3: 预计算 RPS 矩阵...")
             try:
-                all_data = {
-                    c: df for c, df in data_provider.cache_data.items()
-                    if df is not None and len(df) >= 60
-                }
+                all_data = {c: df for c, df in data_provider.cache_data.items() if df is not None and len(df) >= 60}
                 log.info(f"[F5] 阶段2/3: 有效标的 {len(all_data)} 只(>=60根K线)")
-                today_str = datetime.date.today().strftime('%Y%m%d')
+                today_str = datetime.date.today().strftime("%Y%m%d")
                 rps_matrix = engine.build_rps_matrix(all_data, today_str, today_str)
 
                 if rps_matrix:
                     d_str = list(rps_matrix.keys())[-1]
                     d_rps = rps_matrix[d_str]
-                    rps120 = d_rps.get('rps120', {})
-                    rps250 = d_rps.get('rps250', {})
-                    rps_pkg = {'date': d_str, 'rps120': rps120, 'rps250': rps250}
+                    rps120 = d_rps.get("rps120", {})
+                    rps250 = d_rps.get("rps250", {})
+                    rps_pkg = {"date": d_str, "rps120": rps120, "rps250": rps250}
                     save_json_file(RPS_CACHE_FILE, rps_pkg)
                     remove_cache_file(RPS_CACHE_FILE.replace(".json", ".pkl"))
                     engine.set_precomputed_rps(d_str, rps120, rps250)
@@ -168,18 +166,13 @@ class RPSPrecomputer:
             _log_and_status("[F5] 阶段2.5/3: 预计算板块 RPS...")
             try:
                 from vcp.sector import SectorManager
-                tdx_root = (
-                    os.path.dirname(data_provider.tdx_vipdoc)
-                    if data_provider.tdx_vipdoc else r'D:\HT'
-                )
+
+                tdx_root = os.path.dirname(data_provider.tdx_vipdoc) if data_provider.tdx_vipdoc else r"D:\HT"
                 sm = SectorManager.get_instance(tdx_root)
-                all_data_f5 = {
-                    c: df for c, df in data_provider.cache_data.items()
-                    if df is not None and len(df) >= 60
-                }
-                sector_date = datetime.date.today().strftime('%Y%m%d')
+                all_data_f5 = {c: df for c, df in data_provider.cache_data.items() if df is not None and len(df) >= 60}
+                sector_date = datetime.date.today().strftime("%Y%m%d")
                 sector_rps = sm.build_sector_rps(all_data_f5, sector_date)
-                sector_pkg = {'date': sector_date, 'sector_rps': sector_rps}
+                sector_pkg = {"date": sector_date, "sector_rps": sector_rps}
                 save_json_file(SECTOR_RPS_CACHE_FILE, sector_pkg)
                 remove_cache_file(SECTOR_RPS_CACHE_FILE.replace(".json", ".pkl"))
                 _log_and_status(f"[F5] 阶段2.5/3 完成 -- 板块 RPS ({len(sector_rps)} 个)")
@@ -204,6 +197,7 @@ class RPSPrecomputer:
             # 收尾过期清理
             try:
                 from core.cache_policy import cleanup_stale_caches
+
                 cleanup_stale_caches(PROJECT_ROOT)
             except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as e:
                 log.warning(f"[F5] 缓存清理跳过: {e}")

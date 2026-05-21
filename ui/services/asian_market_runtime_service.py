@@ -280,7 +280,15 @@ class AsianMarketRuntimeService(QObject):
                 if latest_dates.get(market) is None or last_date > latest_dates[market]:
                     latest_dates[market] = last_date
             return latest_dates
-        except (FileNotFoundError, PermissionError, OSError, TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        except (
+            FileNotFoundError,
+            PermissionError,
+            OSError,
+            TypeError,
+            ValueError,
+            KeyError,
+            json.JSONDecodeError,
+        ) as exc:
             log.warning(f"[亚洲市场] 解析缓存最新交易日失败: {exc}")
             return {}
 

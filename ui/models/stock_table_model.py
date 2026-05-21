@@ -265,7 +265,13 @@ class StockTableModel(QAbstractTableModel):
     def flags(self, index):
         default_flags = super().flags(index)
         if index.isValid():
-            return default_flags | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
+            return (
+                default_flags
+                | Qt.ItemFlag.ItemIsDragEnabled
+                | Qt.ItemFlag.ItemIsDropEnabled
+                | Qt.ItemFlag.ItemIsSelectable
+                | Qt.ItemFlag.ItemIsEnabled
+            )
         return default_flags | Qt.ItemFlag.ItemIsDropEnabled
 
     def mimeTypes(self):
@@ -278,7 +284,7 @@ class StockTableModel(QAbstractTableModel):
         rows = list(set([i.row() for i in indices]))
         if not rows:
             return mime_data
-        data_str = json.dumps(rows).encode('utf-8')
+        data_str = json.dumps(rows).encode("utf-8")
         mime_data.setData("application/x-watchlist-row", data_str)
         return mime_data
 
@@ -288,7 +294,7 @@ class StockTableModel(QAbstractTableModel):
         import json
 
         try:
-            drag_rows = sorted(json.loads(data.data("application/x-watchlist-row").data().decode('utf-8')))
+            drag_rows = sorted(json.loads(data.data("application/x-watchlist-row").data().decode("utf-8")))
         except (json.JSONDecodeError, ValueError, UnicodeDecodeError) as _e:
             _log.debug(f"[拖拽] MIME 数据解析失败: {_e}")
             return False
@@ -407,7 +413,7 @@ class StockTableModel(QAbstractTableModel):
                         else:
                             temp_hist = history[:-1] + [rt_close]
 
-                    rt_open = float(q.get('open') or rt_close)
+                    rt_open = float(q.get("open") or rt_close)
                     pos_str = calculate_buy_point_from_history(
                         history=temp_hist,
                         open_price=rt_open,
@@ -442,12 +448,17 @@ class StockTableModel(QAbstractTableModel):
         col = index.column()
         item_dict = self._data[row]
         key = self._headers[col]
-        raw_val = item_dict.get(key, '')
+        raw_val = item_dict.get(key, "")
 
         if role == Qt.ItemDataRole.DisplayRole:
             if key == SERIAL_HEADER:
                 return str(row + 1)
-            if key == "代码" and isinstance(raw_val, str) and not raw_val.startswith("sz") and not raw_val.startswith("sh"):
+            if (
+                key == "代码"
+                and isinstance(raw_val, str)
+                and not raw_val.startswith("sz")
+                and not raw_val.startswith("sh")
+            ):
                 pass
 
             if key == "PE":
@@ -470,7 +481,7 @@ class StockTableModel(QAbstractTableModel):
                 if s_val.endswith("%"):
                     return s_val
                 try:
-                    f_val = float(s_val.replace('%', ''))
+                    f_val = float(s_val.replace("%", ""))
                     if "换手" in key:
                         return f"{f_val:.2f}%"
                     return f"{f_val:+.2f}%"
@@ -516,7 +527,7 @@ class StockTableModel(QAbstractTableModel):
                     if key in ["现价", "收盘", "最新价"]:
                         target_pct = item_dict.get("涨幅%") or item_dict.get("涨幅") or item_dict.get("涨跌") or "0"
 
-                    pct = float(str(target_pct).replace('%', '').replace('+', '').replace(',', ''))
+                    pct = float(str(target_pct).replace("%", "").replace("+", "").replace(",", ""))
                     if pct >= 9.0:
                         return QColor(_c("COLOR_RISE_STRONG"))
                     elif pct > 0:
@@ -530,11 +541,17 @@ class StockTableModel(QAbstractTableModel):
                     return QColor(_c("COLOR_FLAT"))
             elif key == "卖方营业部":
                 val_str = str(raw_val)
-                if any(kw in val_str for kw in ["高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴", "渣打", "野村", "汇丰", "星展", "大和"]):
+                if any(
+                    kw in val_str
+                    for kw in ["高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴", "渣打", "野村", "汇丰", "星展", "大和"]
+                ):
                     return QColor(_c("COLOR_FALL"))
             elif key == "买方营业部":
                 val_str = str(raw_val)
-                if any(kw in val_str for kw in ["高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴", "渣打", "野村", "汇丰", "星展", "大和"]):
+                if any(
+                    kw in val_str
+                    for kw in ["高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴", "渣打", "野村", "汇丰", "星展", "大和"]
+                ):
                     return QColor(_c("COLOR_RISE"))
             elif key == "交易详情":
                 val_str = str(raw_val)
@@ -548,7 +565,7 @@ class StockTableModel(QAbstractTableModel):
                     return QColor(_c("COLOR_RISE"))
             elif key == "成交金额(万元)":
                 try:
-                    f_val = float(str(raw_val).replace(',', ''))
+                    f_val = float(str(raw_val).replace(",", ""))
                     if f_val >= 10000:
                         return QColor(_c("COLOR_RISE"))
                 except (ValueError, TypeError):
@@ -618,16 +635,16 @@ class StockTableModel(QAbstractTableModel):
             heat_color = _numeric_heat_color(key, raw_val)
             if heat_color is not None:
                 return heat_color
-            row_style = item_dict.get('_row_style', '')
-            if row_style == 'breakout':
+            row_style = item_dict.get("_row_style", "")
+            if row_style == "breakout":
                 return QColor(232, 93, 93, 20)
-            elif row_style == 'fake_breakout':
+            elif row_style == "fake_breakout":
                 return QColor(245, 158, 11, 20)
-            elif row_style == 'approaching':
+            elif row_style == "approaching":
                 return QColor(139, 92, 246, 20)
-            elif row_style == 'warning':
+            elif row_style == "warning":
                 return QColor(239, 68, 68, 15)
-            elif row_style == 'vcp':
+            elif row_style == "vcp":
                 return QColor(59, 130, 246, 15)
             return None
 
@@ -649,9 +666,9 @@ class StockTableModel(QAbstractTableModel):
                     return _remember(0.0)
             if key == "最近上榜":
                 raw_date = str(item_dict.get("_最近上榜_raw", "") or raw_val).strip()
-                if re.fullmatch(r'\d{8}', raw_date):
+                if re.fullmatch(r"\d{8}", raw_date):
                     return _remember(int(raw_date))
-            s_val = str(raw_val).replace(',', '')
+            s_val = str(raw_val).replace(",", "")
 
             if key == "日报时间":
                 report_ts = int(item_dict.get("_report_ts", 0) or 0)
@@ -659,23 +676,23 @@ class StockTableModel(QAbstractTableModel):
                 if report_ts:
                     return _remember(report_ts * 1000000 + max(0, 999999 - row_rank))
 
-            if re.fullmatch(r'\d{4}-\d{2}-\d{2}', s_val):
-                return _remember(int(s_val.replace('-', '')))
-            if re.fullmatch(r'\d{8}', s_val):
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s_val):
+                return _remember(int(s_val.replace("-", "")))
+            if re.fullmatch(r"\d{8}", s_val):
                 return _remember(int(s_val))
 
-            if '万' in s_val:
-                m = re.search(r'([-+]?\d*\.?\d+)', s_val)
+            if "万" in s_val:
+                m = re.search(r"([-+]?\d*\.?\d+)", s_val)
                 if m:
                     return _remember(float(m.group(1)) * 10000)
                 return _remember(0.0)
-            if '亿' in s_val:
-                m = re.search(r'([-+]?\d*\.?\d+)', s_val)
+            if "亿" in s_val:
+                m = re.search(r"([-+]?\d*\.?\d+)", s_val)
                 if m:
                     return _remember(float(m.group(1)) * 100000000)
                 return _remember(0.0)
 
-            m = re.search(r'([-+]?\d*\.?\d+)', s_val)
+            m = re.search(r"([-+]?\d*\.?\d+)", s_val)
             if m:
                 return _remember(float(m.group(1)))
             return _remember(str(raw_val))

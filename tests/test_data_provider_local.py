@@ -95,7 +95,7 @@ def test_load_local_tdx_capital_snapshot_reads_base_dbf(tmp_path):
     field_desc = bytearray()
     for name, field_type, length, decimals in fields:
         desc = bytearray(32)
-        desc[:len(name)] = name.encode("ascii")
+        desc[: len(name)] = name.encode("ascii")
         desc[11] = ord(field_type)
         desc[16] = length
         desc[17] = decimals

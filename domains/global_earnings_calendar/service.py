@@ -160,6 +160,8 @@ _SEC_6K_KEYWORDS = (
     "annual result",
     "financial statement",
 )
+
+
 def _response_text(response, *, encoding: str | None = None) -> str:
     if encoding and hasattr(response, "encoding"):
         try:
@@ -425,16 +427,10 @@ class NasdaqEarningsCalendarProvider:
         if not us_symbols:
             return []
 
-        days = [
-            today + dt.timedelta(days=offset)
-            for offset in range(max(0, int(lookahead_days)) + 1)
-        ]
+        days = [today + dt.timedelta(days=offset) for offset in range(max(0, int(lookahead_days)) + 1)]
         events: list[EarningsCalendarEvent] = []
         with futures.ThreadPoolExecutor(max_workers=min(self.max_workers, len(days))) as executor:
-            future_map = {
-                executor.submit(self._fetch_day, day, universe, us_symbols): day
-                for day in days
-            }
+            future_map = {executor.submit(self._fetch_day, day, universe, us_symbols): day for day in days}
             for future in futures.as_completed(future_map):
                 day = future_map[future]
                 try:
@@ -589,7 +585,9 @@ class JpxFinancialAnnouncementProvider:
                 values = list(row or [])
                 if header_indexes is None:
                     headers = [str(value or "") for value in values]
-                    date_idx = cls._header_index(headers, "Scheduled Dates", "\u6c7a\u7b97\u767a\u8868\u4e88\u5b9a\u65e5")
+                    date_idx = cls._header_index(
+                        headers, "Scheduled Dates", "\u6c7a\u7b97\u767a\u8868\u4e88\u5b9a\u65e5"
+                    )
                     code_idx = cls._header_index(headers, "Code", "\u30b3\u30fc\u30c9")
                     fiscal_idx = cls._header_index(headers, "Fiscal Year/Quarter", "\u7a2e\u5225")
                     fiscal_end_idx = cls._header_index(headers, "Fiscal Year-end", "\u6c7a\u7b97\u671f\u672b")
@@ -644,9 +642,7 @@ class JpxFinancialAnnouncementProvider:
     ) -> list[EarningsCalendarEvent]:
         end = today + dt.timedelta(days=max(0, int(lookahead_days)))
         return sorted_events(
-            event
-            for event in events
-            if (day := _date_from_any(event.report_date)) is not None and today <= day <= end
+            event for event in events if (day := _date_from_any(event.report_date)) is not None and today <= day <= end
         )
 
 
@@ -673,7 +669,9 @@ class TdnetEarningsDisclosureProvider:
         **_kwargs,
     ) -> list[EarningsCalendarEvent]:
         today = today or dt.date.today()
-        jp_codes = {_local_code_from_ticker(ticker): ticker for ticker, company in universe.items() if company.market == "JP"}
+        jp_codes = {
+            _local_code_from_ticker(ticker): ticker for ticker, company in universe.items() if company.market == "JP"
+        }
         if not jp_codes:
             return []
         forward_days = min(max(0, int(lookahead_days)), self.max_forward_days)
@@ -689,7 +687,9 @@ class TdnetEarningsDisclosureProvider:
             if int(getattr(response, "status_code", 200) or 200) == 404:
                 continue
             _raise_for_status(response)
-            events.extend(self.parse_html(_response_text(response, encoding="utf-8"), day, universe, jp_codes, source_url=url))
+            events.extend(
+                self.parse_html(_response_text(response, encoding="utf-8"), day, universe, jp_codes, source_url=url)
+            )
         return sorted_events(events)
 
     @staticmethod
@@ -759,7 +759,11 @@ class DartEarningsDisclosureProvider:
         page_count: int = 100,
         max_pages: int = 10,
     ):
-        self.api_key = (api_key if api_key is not None else os.environ.get("OPENDART_API_KEY") or os.environ.get("DART_API_KEY") or "").strip()
+        self.api_key = (
+            api_key
+            if api_key is not None
+            else os.environ.get("OPENDART_API_KEY") or os.environ.get("DART_API_KEY") or ""
+        ).strip()
         self.session = session or requests
         self.base_url = base_url
         self.timeout = timeout
@@ -777,7 +781,9 @@ class DartEarningsDisclosureProvider:
         if not self.api_key:
             return []
         today = today or dt.date.today()
-        kr_codes = {_local_code_from_ticker(ticker): ticker for ticker, company in universe.items() if company.market == "KR"}
+        kr_codes = {
+            _local_code_from_ticker(ticker): ticker for ticker, company in universe.items() if company.market == "KR"
+        }
         if not kr_codes:
             return []
         end = today + dt.timedelta(days=max(0, int(lookahead_days)))
@@ -832,7 +838,11 @@ class DartEarningsDisclosureProvider:
             if company is None or report_day is None:
                 continue
             receipt_no = str(row.get("rcept_no", "") or "").strip()
-            source_url = f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={receipt_no}" if receipt_no else "https://dart.fss.or.kr/"
+            source_url = (
+                f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={receipt_no}"
+                if receipt_no
+                else "https://dart.fss.or.kr/"
+            )
             events.append(
                 EarningsCalendarEvent(
                     company=company.company,
@@ -878,7 +888,9 @@ class KindEarningsDisclosureProvider:
         **_kwargs,
     ) -> list[EarningsCalendarEvent]:
         today = today or dt.date.today()
-        kr_codes = {_local_code_from_ticker(ticker): ticker for ticker, company in universe.items() if company.market == "KR"}
+        kr_codes = {
+            _local_code_from_ticker(ticker): ticker for ticker, company in universe.items() if company.market == "KR"
+        }
         if not kr_codes:
             return []
         forward_days = min(max(0, int(lookahead_days)), self.max_forward_days)
@@ -1155,7 +1167,9 @@ class SecSixKEarningsProvider:
     ) -> list[EarningsCalendarEvent]:
         today = today or dt.date.today()
         tw_universe = {ticker: company for ticker, company in universe.items() if company.market == "TW"}
-        target_tickers = [ticker for ticker in tw_universe if ticker in self.local_adr_tickers or ticker in self.ticker_ciks]
+        target_tickers = [
+            ticker for ticker in tw_universe if ticker in self.local_adr_tickers or ticker in self.ticker_ciks
+        ]
         if not target_tickers:
             return []
         cik_map = self._resolve_cik_map(target_tickers)
@@ -1247,8 +1261,7 @@ class SecSixKEarningsProvider:
             source_url = "https://www.sec.gov/edgar/search/"
             if accession and primary_doc:
                 source_url = (
-                    f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
-                    f"{accession.replace('-', '')}/{primary_doc}"
+                    f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession.replace('-', '')}/{primary_doc}"
                 )
             events.append(
                 EarningsCalendarEvent(
@@ -1367,9 +1380,7 @@ class CompanyIrEarningsCalendarProvider:
         end = today + dt.timedelta(days=max(0, int(lookahead_days)))
         if not (today <= report_day <= end):
             return []
-        original_call_time_text = str(
-            rule.get("original_call_time_text", "") or rule.get("label", "") or ""
-        ).strip()
+        original_call_time_text = str(rule.get("original_call_time_text", "") or rule.get("label", "") or "").strip()
         return [
             EarningsCalendarEvent(
                 company=company.company,
@@ -1413,11 +1424,7 @@ class YFinanceEarningsCalendarProvider:
         **_kwargs,
     ) -> list[EarningsCalendarEvent]:
         today = today or dt.date.today()
-        companies = [
-            company
-            for company in universe.values()
-            if self.include_us or company.market != "US"
-        ]
+        companies = [company for company in universe.values() if self.include_us or company.market != "US"]
         if not companies:
             return []
 
@@ -1454,7 +1461,9 @@ class YFinanceEarningsCalendarProvider:
         return lambda ticker: yf.Ticker(ticker, session=session)
 
     @staticmethod
-    def _fetch_one(ticker_factory, company: OligarchCompany, today: dt.date, lookahead_days: int) -> list[EarningsCalendarEvent]:
+    def _fetch_one(
+        ticker_factory, company: OligarchCompany, today: dt.date, lookahead_days: int
+    ) -> list[EarningsCalendarEvent]:
         ticker = ticker_factory(company.ticker)
         calendar = getattr(ticker, "calendar", None)
         if callable(calendar):
@@ -1579,9 +1588,7 @@ class GlobalEarningsCalendarService:
         rows = payload.get("events") if isinstance(payload, Mapping) else None
         events = [event for event in (EarningsCalendarEvent.from_dict(row) for row in rows or []) if event is not None]
         return sorted_events(
-            event
-            for event in (self._hydrate_event_from_universe(event) for event in events)
-            if event is not None
+            event for event in (self._hydrate_event_from_universe(event) for event in events) if event is not None
         )
 
     def _hydrate_event_from_universe(self, event: EarningsCalendarEvent) -> EarningsCalendarEvent | None:
@@ -1769,13 +1776,10 @@ class GlobalEarningsCalendarService:
         network_events: list[EarningsCalendarEvent] = []
         refreshed_sources: set[str] = set()
 
-        provider_calls = (
-            tuple(self.official_providers)
-            + (
-                ("Nasdaq", self.nasdaq_provider),
-                ("Alpha Vantage", self.provider),
-                ("Yahoo Finance", self.yfinance_provider),
-            )
+        provider_calls = tuple(self.official_providers) + (
+            ("Nasdaq", self.nasdaq_provider),
+            ("Alpha Vantage", self.provider),
+            ("Yahoo Finance", self.yfinance_provider),
         )
         for provider_name, provider in provider_calls:
             try:
@@ -1785,17 +1789,13 @@ class GlobalEarningsCalendarService:
                 continue
             network_events.extend(provider_events)
             refreshed_sources.update(
-                str(event.source or provider_name or "").strip()
-                for event in provider_events
-                if event is not None
+                str(event.source or provider_name or "").strip() for event in provider_events if event is not None
             )
 
         network_events = self._filter_window(network_events, today=today, lookahead_days=lookahead_days)
         if network_events:
             cached_fallback_events = [
-                event
-                for event in cached_events
-                if str(event.source or "").strip() not in refreshed_sources
+                event for event in cached_events if str(event.source or "").strip() not in refreshed_sources
             ]
             filtered = merge_events(confirmed_events + cached_fallback_events + network_events)
             self._save_events(filtered, "provider")

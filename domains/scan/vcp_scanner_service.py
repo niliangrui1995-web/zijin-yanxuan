@@ -192,11 +192,15 @@ class VcpScannerService:
         if not skip_red_check and row["close"] <= row["open"]:
             return False, "当天K线非红盘", {}
 
-        amount_mean = pldf.slice(max(0, curr_idx - 19), curr_idx + 1 - max(0, curr_idx - 19)).get_column("amount").mean()
+        amount_mean = (
+            pldf.slice(max(0, curr_idx - 19), curr_idx + 1 - max(0, curr_idx - 19)).get_column("amount").mean()
+        )
         if amount_mean is None or pd.isna(amount_mean) or amount_mean < params.min_amount_20d:
             return False, "日均流水不足", {}
 
-        entangle_min = pldf.slice(max(0, curr_idx - 4), curr_idx + 1 - max(0, curr_idx - 4)).get_column("entangle").min()
+        entangle_min = (
+            pldf.slice(max(0, curr_idx - 4), curr_idx + 1 - max(0, curr_idx - 4)).get_column("entangle").min()
+        )
         if entangle_min is None or pd.isna(entangle_min) or entangle_min > params.ma_bind_threshold:
             return False, "短期均线不粘合", {}
 
@@ -278,7 +282,11 @@ class VcpScannerService:
             if r1_low > r2_low and box_low > 0:
                 mid_left = (box_high + box_low) / 2
                 if r1_low > mid_left:
-                    return False, f"R1最低价高于R2时须在左侧区间下50%内(当前R1低{r1_low:.2f} > 左区中点{mid_left:.2f})", {}
+                    return (
+                        False,
+                        f"R1最低价高于R2时须在左侧区间下50%内(当前R1低{r1_low:.2f} > 左区中点{mid_left:.2f})",
+                        {},
+                    )
 
         score = rps250 * 0.5 + 15
         if row.get("ATR10") is not None and row.get("ATR20") is not None and row.get("ATR60") is not None:
@@ -286,7 +294,9 @@ class VcpScannerService:
                 if row["ATR10"] < row["ATR20"] < row["ATR60"]:
                     score += 10
 
-        vol_baseline = pldf.slice(max(0, curr_idx - 40), (curr_idx - 10) - max(0, curr_idx - 40)).get_column("volume").mean() or 1
+        vol_baseline = (
+            pldf.slice(max(0, curr_idx - 40), (curr_idx - 10) - max(0, curr_idx - 40)).get_column("volume").mean() or 1
+        )
         vol_recent = buy_zone.get_column("volume").mean() or 0
         vol_ratio = vol_recent / max(1, vol_baseline)
         if vol_ratio < 0.6:

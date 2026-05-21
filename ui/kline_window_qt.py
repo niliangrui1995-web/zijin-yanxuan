@@ -10,6 +10,7 @@ K 线图窗口 — ECharts 5.5.0 + QWebEngineView 高性能版
 - 盘中 60 秒增量热更新（无闪烁）
 - 十字光标 + 顶部工具栏实时联动
 """
+
 import json
 import os as _os
 
@@ -58,8 +59,7 @@ from ui.theme import theme_manager
 
 # ECharts JS 本地路径（断网也能用）
 _ECHARTS_JS_PATH = _os.path.join(
-    _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
-    "assets", "echarts.min.js"
+    _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "assets", "echarts.min.js"
 )
 
 
@@ -110,12 +110,14 @@ class KLineChartWindow(QWidget):
 
         # 窗口图标
         from PyQt6.QtGui import QIcon
-        icon_path = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), 'bull_icon.ico')
+
+        icon_path = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), "bull_icon.ico")
         if _os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
         # 外层圆角防锯齿容器
         from PyQt6.QtWidgets import QFrame, QToolButton
+
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
@@ -128,6 +130,7 @@ class KLineChartWindow(QWidget):
 
         # 自定义拖拽标题栏
         from ui.components.shared_title_bar import DraggableTitleBar
+
         self.title_bar = DraggableTitleBar(self)
         self.title_bar.setFixedHeight(34)
         tb_layout = QHBoxLayout(self.title_bar)
@@ -252,11 +255,13 @@ class KLineChartWindow(QWidget):
                 card_layout.addWidget(label)
 
             summary_layout.addWidget(card, 1)
-            self.summary_cards.append({
-                "frame": card,
-                "title": title_lbl,
-                "labels": value_labels,
-            })
+            self.summary_cards.append(
+                {
+                    "frame": card,
+                    "title": title_lbl,
+                    "labels": value_labels,
+                }
+            )
 
         container_layout.addWidget(self.summary_widget)
 
@@ -274,6 +279,7 @@ class KLineChartWindow(QWidget):
 
         # 快捷键 ←/→ 切换上/下一只股票
         from PyQt6.QtGui import QKeySequence, QShortcut
+
         QShortcut(QKeySequence(Qt.Key.Key_Left), self, activated=lambda: self._nav_stock(-1))
         QShortcut(QKeySequence(Qt.Key.Key_Right), self, activated=lambda: self._nav_stock(1))
         self._update_nav_buttons()
@@ -349,7 +355,9 @@ class KLineChartWindow(QWidget):
     def _apply_qt_theme(self):
         apply_qt_theme(self)
 
-    def _apply_info_styles(self, widget_text: str | None = None, info_color: str | None = None, is_dark: bool | None = None):
+    def _apply_info_styles(
+        self, widget_text: str | None = None, info_color: str | None = None, is_dark: bool | None = None
+    ):
         apply_info_styles(
             self,
             widget_text=widget_text,
@@ -400,8 +408,8 @@ class KLineChartWindow(QWidget):
             margin: 0;
             width: 100%;
             height: 100%;
-            background: {colors['bg_canvas']};
-            color: {colors['text_secondary']};
+            background: {colors["bg_canvas"]};
+            color: {colors["text_secondary"]};
             font-family: \"Microsoft YaHei UI\", sans-serif;
         }}
         .box {{
@@ -457,6 +465,7 @@ class KLineChartWindow(QWidget):
 
         if df is None:
             from app.services.ui_task_service import background_job_runner as task_manager
+
             schedule_asian_history_backfill(
                 self,
                 task_manager=task_manager,
@@ -510,13 +519,13 @@ class KLineChartWindow(QWidget):
         if getattr(self, "_closing", False) or getattr(self, "browser", None) is None:
             return
         # 兼容 Polars DataFrame
-        if not hasattr(df, 'iloc'):
+        if not hasattr(df, "iloc"):
             df = df.to_pandas()
 
         # 确保有 DatetimeIndex
-        if 'date' in df.columns and not isinstance(df.index, pd.DatetimeIndex):
-            df['date'] = pd.to_datetime(df['date'].astype(str))
-            df.set_index('date', inplace=True)
+        if "date" in df.columns and not isinstance(df.index, pd.DatetimeIndex):
+            df["date"] = pd.to_datetime(df["date"].astype(str))
+            df.set_index("date", inplace=True)
         df = self._normalize_daily_df_index(df)
 
         if df is None or len(df) < 5:
@@ -536,7 +545,7 @@ class KLineChartWindow(QWidget):
 
         # 截取最后 250 根 K 线
         self.df = df.iloc[-250:].copy()
-        for col in ['open', 'high', 'low', 'close', 'volume']:
+        for col in ["open", "high", "low", "close", "volume"]:
             if col in self.df.columns:
                 self.df[col] = self.df[col].ffill().bfill()
 
@@ -553,7 +562,7 @@ class KLineChartWindow(QWidget):
         self._last_chart_points = len(echarts_data.get("dates") or [])
 
         # 判断是首次加载还是切换股票
-        if not loading and not hasattr(self, '_first_render_done'):
+        if not loading and not hasattr(self, "_first_render_done"):
             # 首次完整渲染（替换 loading 占位）
             pass
 
@@ -562,14 +571,12 @@ class KLineChartWindow(QWidget):
             title=f"{self.name} ({self.code}) 日线",
             echarts_data=echarts_data,
             echarts_js_path=_ECHARTS_JS_PATH,
-            theme_colors=build_kline_theme_colors()
+            theme_colors=build_kline_theme_colors(),
         )
         self._last_chart_html_bytes = len(html_content.encode("utf-8"))
 
         # 用 baseUrl 确保本地 file:// 引用正常
-        base_url = QUrl.fromLocalFile(
-            _os.path.dirname(_os.path.abspath(_ECHARTS_JS_PATH)) + "/"
-        )
+        base_url = QUrl.fromLocalFile(_os.path.dirname(_os.path.abspath(_ECHARTS_JS_PATH)) + "/")
         if getattr(self, "_first_render_done", False):
             self._replace_chart_data_or_reload(
                 html_content,
@@ -671,7 +678,7 @@ class KLineChartWindow(QWidget):
         """切换股票：delta=-1 上一只, +1 下一只"""
         if not self.code_list:
             return
-        if getattr(self, '_switching', False):
+        if getattr(self, "_switching", False):
             return
         new_idx = self.current_idx + delta
         if 0 <= new_idx < len(self.code_list):
@@ -696,8 +703,8 @@ class KLineChartWindow(QWidget):
             # 重置状态
             item_data = self.code_list[new_idx]
             self.current_idx = new_idx
-            self.code = item_data.get('代码', '')
-            self.name = item_data.get('名称', '')
+            self.code = item_data.get("代码", "")
+            self.name = item_data.get("名称", "")
             self.vcp_data = self._resolve_vcp_context(self.code, self.name, item_data)
 
             title = f"{self.name} ({self.code}) - K线图"

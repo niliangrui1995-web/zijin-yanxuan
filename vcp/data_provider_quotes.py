@@ -98,11 +98,7 @@ def coerce_quote_number(value) -> float:
 
 
 def request_eastmoney_quote_batch(provider, codes, inferred_trade_date: str):
-    normalized_codes = [
-        str(code).strip()
-        for code in dict.fromkeys(codes or [])
-        if str(code or "").strip()
-    ]
+    normalized_codes = [str(code).strip() for code in dict.fromkeys(codes or []) if str(code or "").strip()]
     if not normalized_codes:
         return {}
 
@@ -195,11 +191,7 @@ def request_eastmoney_quote_batch(provider, codes, inferred_trade_date: str):
 
 
 def request_sina_quote_batch(provider, codes, inferred_trade_date: str):
-    normalized_codes = [
-        str(code).strip()
-        for code in dict.fromkeys(codes or [])
-        if str(code or "").strip()
-    ]
+    normalized_codes = [str(code).strip() for code in dict.fromkeys(codes or []) if str(code or "").strip()]
     if not normalized_codes:
         return {}
 
@@ -265,11 +257,7 @@ def request_sina_quote_batch(provider, codes, inferred_trade_date: str):
 
 
 def request_tencent_quote_batch(provider, codes, inferred_trade_date: str):
-    normalized_codes = [
-        str(code).strip()
-        for code in dict.fromkeys(codes or [])
-        if str(code or "").strip()
-    ]
+    normalized_codes = [str(code).strip() for code in dict.fromkeys(codes or []) if str(code or "").strip()]
     if not normalized_codes:
         return {}
 

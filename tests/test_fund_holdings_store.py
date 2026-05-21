@@ -130,7 +130,11 @@ def test_fund_holdings_store_rebuilds_change_cache_for_qfii():
         assert latest_map[SUBJECT_QFII["subject_code"]] == "2025Q4"
 
         change_rows = repo.query_change_rows()
-        target = next(row for row in change_rows if row["subject_code"] == SUBJECT_QFII["subject_code"] and row["quarter_key"] == "2025Q4")
+        target = next(
+            row
+            for row in change_rows
+            if row["subject_code"] == SUBJECT_QFII["subject_code"] and row["quarter_key"] == "2025Q4"
+        )
         assert target["change_type"] == "增持"
         assert target["delta_hold_num_shares"] == 500
         assert target["delta_ratio_pct"] == 0.04999999999999999
@@ -231,7 +235,11 @@ def test_fund_holdings_store_refreshes_existing_compare_quarter_cache():
         assert snapshot_row["compare_quarter_key"] == "2024Q4"
 
         change_rows = refreshed_repo.query_change_rows()
-        target = next(row for row in change_rows if row["subject_code"] == SUBJECT_RUIYUAN["subject_code"] and row["quarter_key"] == "2025Q1")
+        target = next(
+            row
+            for row in change_rows
+            if row["subject_code"] == SUBJECT_RUIYUAN["subject_code"] and row["quarter_key"] == "2025Q1"
+        )
         assert target["compare_quarter_key"] == "2024Q4"
         assert target["change_type"] == "增持"
         assert target["delta_hold_num_shares"] == 500_000
@@ -292,7 +300,11 @@ def test_fund_holdings_store_uses_hold_num_only_for_change_type():
         )
 
         change_rows = repo.query_change_rows()
-        target = next(row for row in change_rows if row["subject_code"] == SUBJECT_RUIYUAN["subject_code"] and row["quarter_key"] == "2025Q1")
+        target = next(
+            row
+            for row in change_rows
+            if row["subject_code"] == SUBJECT_RUIYUAN["subject_code"] and row["quarter_key"] == "2025Q1"
+        )
         assert target["change_type"] == "持平"
         assert target["delta_hold_num_shares"] == 0
         assert target["delta_ratio_pct"] == 0.5
@@ -368,10 +380,7 @@ def test_fund_holdings_store_qfii_subject_names_show_holder_names_and_skip_hk():
         )
 
         change_rows = repo.query_change_rows()
-        qfii_rows = [
-            row for row in change_rows
-            if row["quarter_key"] == "2025Q4" and row["stock_code"] == "000001"
-        ]
+        qfii_rows = [row for row in change_rows if row["quarter_key"] == "2025Q4" and row["stock_code"] == "000001"]
         assert len(qfii_rows) == 2
         assert {row["subject_name"] for row in qfii_rows} == {"阿布达比投资局", "科威特政府投资局"}
         assert {row["change_type"] for row in qfii_rows} == {"新进"}
@@ -446,7 +455,8 @@ def test_fund_holdings_store_qfii_prefers_current_listed_code_over_old_nq_code()
         )
 
         change_rows = [
-            row for row in repo.query_change_rows()
+            row
+            for row in repo.query_change_rows()
             if row["quarter_key"] == "2025Q4" and row["subject_name"] == "BARCLAYS BANK PLC"
         ]
         assert len(change_rows) == 1
@@ -544,10 +554,7 @@ def test_fund_holdings_store_qfii_exit_rows_fallback_to_compare_quarter_holder_n
         )
 
         change_rows = repo.query_change_rows()
-        target = next(
-            row for row in change_rows
-            if row["quarter_key"] == "2025Q4" and row["stock_code"] == "000001"
-        )
+        target = next(row for row in change_rows if row["quarter_key"] == "2025Q4" and row["stock_code"] == "000001")
         assert target["change_type"] == "退出"
         assert target["subject_name"] == "阿布达比投资局"
     finally:
@@ -630,8 +637,7 @@ def test_fund_holdings_store_qfii_multiple_holders_same_stock_track_independentl
         )
 
         q4_rows = [
-            row for row in repo.query_change_rows()
-            if row["quarter_key"] == "2025Q4" and row["stock_code"] == "000001"
+            row for row in repo.query_change_rows() if row["quarter_key"] == "2025Q4" and row["stock_code"] == "000001"
         ]
         assert len(q4_rows) == 2
 
@@ -699,8 +705,7 @@ def test_fund_holdings_store_qfii_holder_names_merge_when_only_spaces_differ():
         )
 
         q4_rows = [
-            row for row in repo.query_change_rows()
-            if row["quarter_key"] == "2025Q4" and row["stock_code"] == "000001"
+            row for row in repo.query_change_rows() if row["quarter_key"] == "2025Q4" and row["stock_code"] == "000001"
         ]
         assert len(q4_rows) == 1
         assert q4_rows[0]["subject_name"] == "UBS AG"
@@ -781,8 +786,7 @@ def test_fund_holdings_store_qfii_holder_names_merge_when_only_spaces_differ_acr
         )
 
         qfii_rows = [
-            row for row in repo.query_change_rows()
-            if row["stock_code"] == "000001" and row["subject_name"] == "UBS AG"
+            row for row in repo.query_change_rows() if row["stock_code"] == "000001" and row["subject_name"] == "UBS AG"
         ]
         assert len(qfii_rows) == 2
 
@@ -863,8 +867,7 @@ def test_fund_holdings_store_qfii_holder_names_merge_when_only_dots_differ():
         )
 
         qfii_rows = [
-            row for row in repo.query_change_rows()
-            if row["quarter_key"] == "2025Q4" and row["stock_code"] == "000001"
+            row for row in repo.query_change_rows() if row["quarter_key"] == "2025Q4" and row["stock_code"] == "000001"
         ]
         assert len(qfii_rows) == 1
         assert qfii_rows[0]["subject_name"] == "MORGAN STANLEY & CO.INTERNATIONAL PLC"
@@ -937,8 +940,7 @@ def test_fund_holdings_store_qfii_groups_rows_by_institution_and_capital_attribu
         )
 
         qfii_rows = [
-            row for row in repo.query_change_rows()
-            if row["quarter_key"] == "2025Q4" and row["stock_code"] == "000001"
+            row for row in repo.query_change_rows() if row["quarter_key"] == "2025Q4" and row["stock_code"] == "000001"
         ]
         assert len(qfii_rows) == 2
         assert {row["subject_name"] for row in qfii_rows} == {"MORGAN STANLEY & CO.INTERNATIONAL PLC"}

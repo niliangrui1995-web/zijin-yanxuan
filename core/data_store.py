@@ -42,7 +42,7 @@ class DataStore:
 
     def __init__(self, db_path: str = ""):
         # 防止重复初始化
-        if hasattr(self, '_initialized'):
+        if hasattr(self, "_initialized"):
             return
         self._initialized = True
 
@@ -79,11 +79,12 @@ class DataStore:
     def _clean_migrated_backups(self):
         """启动时自动清理超过 30 天的 .migrated 备份文件"""
         import time
+
         data_dir = os.path.dirname(self._db_path)
         cutoff = time.time() - (30 * 86400)
         try:
             for filename in os.listdir(data_dir):
-                if not filename.endswith('.migrated'):
+                if not filename.endswith(".migrated"):
                     continue
                 filepath = os.path.join(data_dir, filename)
                 if os.path.isfile(filepath) and os.path.getmtime(filepath) < cutoff:
@@ -102,16 +103,14 @@ class DataStore:
                 """INSERT INTO kv_store (key, value, updated_at)
                    VALUES (?, ?, CURRENT_TIMESTAMP)
                    ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at""",
-                (key, json_str)
+                (key, json_str),
             )
             self._conn.commit()
 
     def load_json(self, key: str, default=None):
         """从 kv_store 读取并反序列化 JSON，不存在则返回 default"""
         with self._lock:
-            cursor = self._conn.execute(
-                "SELECT value FROM kv_store WHERE key = ?", (key,)
-            )
+            cursor = self._conn.execute("SELECT value FROM kv_store WHERE key = ?", (key,))
             row = cursor.fetchone()
         if row is None:
             return default
@@ -184,11 +183,14 @@ class DataStore:
 
     def save_earnings_state(self, last_sync_date: str, seen: list, records: list) -> None:
         """持久化业绩异动引擎的全部状态"""
-        self.save_json("earnings_state", {
-            "last_sync_date": last_sync_date,
-            "seen": seen,
-            "records": records,
-        })
+        self.save_json(
+            "earnings_state",
+            {
+                "last_sync_date": last_sync_date,
+                "seen": seen,
+                "records": records,
+            },
+        )
 
     def load_earnings_state(self) -> dict:
         """读取业绩异动引擎状态，返回 dict 或空 dict"""

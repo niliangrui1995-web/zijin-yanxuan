@@ -204,9 +204,7 @@ class WorkspaceFacade:
         *,
         include_cache_fallback: bool = False,
     ) -> tuple[dict, dict, dict, dict, dict, dict | None]:
-        return self._stock_context_service.collect_watchlist_radar_data(
-            include_cache_fallback=include_cache_fallback
-        )
+        return self._stock_context_service.collect_watchlist_radar_data(include_cache_fallback=include_cache_fallback)
 
     def collect_stock_signals(self) -> list[StockSignal]:
         return self._stock_context_service.iter_stock_signals()

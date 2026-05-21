@@ -240,7 +240,9 @@ def test_asian_market_meta_roles_cover_asian_universe_with_rank_labels(monkeypat
     missing_names = sorted(code for code in tickers.values() if not names.get(code))
     missing_roles = sorted(code for code in tickers.values() if not roles.get(code))
     unlabeled_roles = sorted(
-        code for code in tickers.values() if roles.get(code) and not roles[code].startswith(("龙头｜", "头部｜", "二线｜"))
+        code
+        for code in tickers.values()
+        if roles.get(code) and not roles[code].startswith(("龙头｜", "头部｜", "二线｜"))
     )
 
     assert missing_names == []
@@ -571,15 +573,19 @@ def test_sync_asian_kline_cache_rescues_stale_symbol_before_write(monkeypatch):
     monkeypatch.setattr(
         fetcher,
         "fetch_single_kline",
-        lambda name, ticker, **kwargs: {
-            "name": name,
-            "ticker": ticker,
-            "market": "台湾",
-            "track": "边缘AI芯片",
-            "currency": "TWD",
-            "kline_count": 2,
-            "klines": [{"date": "2026-04-24", "close": 2435}, {"date": "2026-04-27", "close": 2435}],
-        } if ticker == "2454.TW" else None,
+        lambda name, ticker, **kwargs: (
+            {
+                "name": name,
+                "ticker": ticker,
+                "market": "台湾",
+                "track": "边缘AI芯片",
+                "currency": "TWD",
+                "kline_count": 2,
+                "klines": [{"date": "2026-04-24", "close": 2435}, {"date": "2026-04-27", "close": 2435}],
+            }
+            if ticker == "2454.TW"
+            else None
+        ),
     )
     monkeypatch.setattr(fetcher, "_load_cached_row_map", lambda output_dir=None: {})
 

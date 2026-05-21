@@ -114,7 +114,12 @@ class StockCandidateTab(BaseStockTab):
         if tab is None:
             return
         method_names = {
-            "na_daily": ("prime_background_load", "run_post_online_refresh", "_load_na_daily_report", "_ensure_runtime_started"),
+            "na_daily": (
+                "prime_background_load",
+                "run_post_online_refresh",
+                "_load_na_daily_report",
+                "_ensure_runtime_started",
+            ),
             "ai_industry_chain": ("prime_background_load", "_load_chain_data", "_ensure_runtime_started"),
         }.get(key, ("prime_background_load", "_ensure_runtime_started"))
         for method_name in method_names:
@@ -390,11 +395,13 @@ class StockCandidateTab(BaseStockTab):
             latest_time = max((StockCandidateTab._signal_time(signal) for signal in clean_signals), default="")
             effective_source_count = len(source_groups)
             effective_signal_count = StockCandidateTab._effective_signal_count(clean_signals)
-            score_type_count = len({
-                str(signal.signal_type or "").strip()
-                for signal in clean_signals
-                if str(signal.signal_type or "").strip()
-            })
+            score_type_count = len(
+                {
+                    str(signal.signal_type or "").strip()
+                    for signal in clean_signals
+                    if str(signal.signal_type or "").strip()
+                }
+            )
             score = len(sources) * 10 + len(clean_signals) + score_type_count
 
             rows.append(

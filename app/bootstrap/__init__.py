@@ -3,4 +3,3 @@
 from app.bootstrap.application_bootstrap import ApplicationBootstrap
 
 __all__ = ["ApplicationBootstrap"]
-

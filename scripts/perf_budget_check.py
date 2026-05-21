@@ -84,6 +84,52 @@ def _fail(failures: list[dict], check: str, detail: str, **values) -> None:
     failures.append({"check": check, "detail": detail, **values})
 
 
+def _check_gbbq_single_sample(failures: list[dict], budget: dict, single: dict) -> None:
+    result = single.get("result") or {}
+    if result.get("full_loaded") is not False:
+        _fail(failures, "gbbq.single.lazy", "single-code gbbq load materialized the full cache")
+    if _as_int(result.get("codes")) > 1:
+        _fail(failures, "gbbq.single.codes", "single-code gbbq load returned more than one code")
+    if _as_float(single.get("rss_delta_mb")) > budget["gbbq_single_max_rss_delta_mb"]:
+        _fail(
+            failures,
+            "gbbq.single.rss_delta",
+            "single-code gbbq RSS delta exceeded budget",
+            actual=single.get("rss_delta_mb"),
+            budget=budget["gbbq_single_max_rss_delta_mb"],
+        )
+    if _as_float(single.get("elapsed_ms")) > budget["gbbq_single_max_elapsed_ms"]:
+        _fail(
+            failures,
+            "gbbq.single.elapsed",
+            "single-code gbbq elapsed time exceeded budget",
+            actual=single.get("elapsed_ms"),
+            budget=budget["gbbq_single_max_elapsed_ms"],
+        )
+
+
+def _check_gbbq_full_sample(failures: list[dict], budget: dict, full: dict) -> None:
+    result = full.get("result") or {}
+    if result.get("full_loaded") is not True:
+        _fail(failures, "gbbq.full.loaded", "full gbbq run did not materialize the full cache")
+    if _as_float(full.get("rss_delta_mb")) > budget["gbbq_full_max_rss_delta_mb"]:
+        _fail(
+            failures,
+            "gbbq.full.rss_delta",
+            "full gbbq RSS delta exceeded budget",
+            actual=full.get("rss_delta_mb"),
+            budget=budget["gbbq_full_max_rss_delta_mb"],
+        )
+    if _as_float(full.get("elapsed_ms")) > budget["gbbq_full_max_elapsed_ms"]:
+        _fail(
+            failures,
+            "gbbq.full.elapsed",
+            "full gbbq elapsed time exceeded budget",
+            actual=full.get("elapsed_ms"),
+            budget=budget["gbbq_full_max_elapsed_ms"],
+        )
+
+
 def check_gbbq_budget(report: dict, thresholds: dict | None = None) -> list[dict]:
     budget = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
     failures: list[dict] = []
@@ -94,51 +140,10 @@ def check_gbbq_budget(report: dict, thresholds: dict | None = None) -> list[dict
     if single is None and full is None:
         _fail(failures, "gbbq.present", "gbbq_profile has no single_code or full sample")
         return failures
-
     if single is not None:
-        result = single.get("result") or {}
-        if result.get("full_loaded") is not False:
-            _fail(failures, "gbbq.single.lazy", "single-code gbbq load materialized the full cache")
-        if _as_int(result.get("codes")) > 1:
-            _fail(failures, "gbbq.single.codes", "single-code gbbq load returned more than one code")
-        if _as_float(single.get("rss_delta_mb")) > budget["gbbq_single_max_rss_delta_mb"]:
-            _fail(
-                failures,
-                "gbbq.single.rss_delta",
-                "single-code gbbq RSS delta exceeded budget",
-                actual=single.get("rss_delta_mb"),
-                budget=budget["gbbq_single_max_rss_delta_mb"],
-            )
-        if _as_float(single.get("elapsed_ms")) > budget["gbbq_single_max_elapsed_ms"]:
-            _fail(
-                failures,
-                "gbbq.single.elapsed",
-                "single-code gbbq elapsed time exceeded budget",
-                actual=single.get("elapsed_ms"),
-                budget=budget["gbbq_single_max_elapsed_ms"],
-            )
-
+        _check_gbbq_single_sample(failures, budget, single)
     if full is not None:
-        result = full.get("result") or {}
-        if result.get("full_loaded") is not True:
-            _fail(failures, "gbbq.full.loaded", "full gbbq run did not materialize the full cache")
-        if _as_float(full.get("rss_delta_mb")) > budget["gbbq_full_max_rss_delta_mb"]:
-            _fail(
-                failures,
-                "gbbq.full.rss_delta",
-                "full gbbq RSS delta exceeded budget",
-                actual=full.get("rss_delta_mb"),
-                budget=budget["gbbq_full_max_rss_delta_mb"],
-            )
-        if _as_float(full.get("elapsed_ms")) > budget["gbbq_full_max_elapsed_ms"]:
-            _fail(
-                failures,
-                "gbbq.full.elapsed",
-                "full gbbq elapsed time exceeded budget",
-                actual=full.get("elapsed_ms"),
-                budget=budget["gbbq_full_max_elapsed_ms"],
-            )
-
+        _check_gbbq_full_sample(failures, budget, full)
     return failures
 
 
@@ -161,14 +166,7 @@ def check_tab_cycle_budget(report: dict, thresholds: dict | None = None) -> list
     return failures
 
 
-def check_kline_budget(report: dict, thresholds: dict | None = None) -> list[dict]:
-    budget = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
-    failures: list[dict] = []
-    sample = (report.get("samples") or {}).get("kline_cycles")
-    if sample is None:
-        _fail(failures, "kline.present", "K-line cycle sample is missing")
-        return failures
-
+def _check_kline_cycle_counts(failures: list[dict], sample: dict) -> None:
     result = sample.get("result") or {}
     cycles = _as_int(result.get("cycles"))
     opened = _as_int(result.get("opened"))
@@ -185,6 +183,32 @@ def check_kline_budget(report: dict, thresholds: dict | None = None) -> list[dic
             blocked=blocked,
         )
 
+
+def _check_kline_after_close_children(failures: list[dict], budget: dict, cycle_samples: list[dict]) -> None:
+    for cycle_sample in cycle_samples or []:
+        label = str(cycle_sample.get("label") or "")
+        if label.endswith(":after_close"):
+            children = _snapshot_webengine_children(cycle_sample)
+            if children > budget["kline_max_final_webengine_children"]:
+                _fail(
+                    failures,
+                    "kline.webengine_children.after_close",
+                    "QtWebEngine child process remained after a close sample",
+                    label=label,
+                    actual=children,
+                    budget=budget["kline_max_final_webengine_children"],
+                )
+
+
+def check_kline_budget(report: dict, thresholds: dict | None = None) -> list[dict]:
+    budget = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
+    failures: list[dict] = []
+    sample = (report.get("samples") or {}).get("kline_cycles")
+    if sample is None:
+        _fail(failures, "kline.present", "K-line cycle sample is missing")
+        return failures
+
+    _check_kline_cycle_counts(failures, sample)
     if _as_float(sample.get("rss_delta_mb")) > budget["kline_max_rss_delta_mb"]:
         _fail(
             failures,
@@ -204,28 +228,12 @@ def check_kline_budget(report: dict, thresholds: dict | None = None) -> list[dic
             budget=budget["kline_max_final_webengine_children"],
         )
 
-    for cycle_sample in result.get("cycle_samples") or []:
-        label = str(cycle_sample.get("label") or "")
-        if label.endswith(":after_close"):
-            children = _snapshot_webengine_children(cycle_sample)
-            if children > budget["kline_max_final_webengine_children"]:
-                _fail(
-                    failures,
-                    "kline.webengine_children.after_close",
-                    "QtWebEngine child process remained after a close sample",
-                    label=label,
-                    actual=children,
-                    budget=budget["kline_max_final_webengine_children"],
-                )
+    result = sample.get("result") or {}
+    _check_kline_after_close_children(failures, budget, result.get("cycle_samples") or [])
     return failures
 
 
-def check_kline_lifecycle_budget(report: dict, thresholds: dict | None = None) -> list[dict]:
-    budget = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
-    failures: list[dict] = []
-    if report.get("status") == "skipped":
-        return failures
-
+def _check_kline_lifecycle_summary(failures: list[dict], budget: dict, report: dict) -> None:
     summary = report.get("summary") or {}
     if summary.get("status") != "ok":
         _fail(
@@ -246,7 +254,9 @@ def check_kline_lifecycle_budget(report: dict, thresholds: dict | None = None) -
             budget=budget["kline_max_final_webengine_children"],
         )
 
-    for cycle in report.get("cycles") or []:
+
+def _check_kline_lifecycle_cycles(failures: list[dict], budget: dict, cycles: list[dict]) -> None:
+    for cycle in cycles or []:
         cycle_index = _as_int(cycle.get("cycle_index"))
         cycle_summary = cycle.get("summary") or {}
         if cycle_summary.get("status") != "ok":
@@ -271,6 +281,16 @@ def check_kline_lifecycle_budget(report: dict, thresholds: dict | None = None) -
                         actual=children,
                         budget=budget["kline_max_final_webengine_children"],
                     )
+
+
+def check_kline_lifecycle_budget(report: dict, thresholds: dict | None = None) -> list[dict]:
+    budget = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
+    failures: list[dict] = []
+    if report.get("status") == "skipped":
+        return failures
+
+    _check_kline_lifecycle_summary(failures, budget, report)
+    _check_kline_lifecycle_cycles(failures, budget, report.get("cycles") or [])
     return failures
 
 
@@ -311,27 +331,23 @@ def check_soak_budget(report: dict, thresholds: dict | None = None) -> list[dict
     return failures
 
 
-def check_round4_budget(report: dict, thresholds: dict | None = None) -> list[dict]:
-    budget = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
-    failures: list[dict] = []
-    startup = report.get("startup") or {}
-    tab_first_open = report.get("tab_first_open") or {}
-    f5_refresh = report.get("f5_refresh") or {}
-    stability = report.get("stability") or {}
-
+def _check_round4_startup(failures: list[dict], budget: dict, startup: dict) -> None:
     if not startup:
         _fail(failures, "round4.startup.present", "round4 startup report is missing")
-    else:
-        elapsed = _as_float(startup.get("main_window_ready_ms"))
-        if elapsed > budget["round4_startup_main_window_ready_max_ms"]:
-            _fail(
-                failures,
-                "round4.startup.main_window_ready",
-                "startup main-window-ready elapsed time exceeded budget",
-                actual=elapsed,
-                budget=budget["round4_startup_main_window_ready_max_ms"],
-            )
+        return
 
+    elapsed = _as_float(startup.get("main_window_ready_ms"))
+    if elapsed > budget["round4_startup_main_window_ready_max_ms"]:
+        _fail(
+            failures,
+            "round4.startup.main_window_ready",
+            "startup main-window-ready elapsed time exceeded budget",
+            actual=elapsed,
+            budget=budget["round4_startup_main_window_ready_max_ms"],
+        )
+
+
+def _check_round4_tabs(failures: list[dict], budget: dict, tab_first_open: dict) -> None:
     tabs = tab_first_open.get("tabs") or []
     if not isinstance(tabs, list) or not tabs:
         _fail(failures, "round4.tabs.present", "round4 tab first-open samples are missing")
@@ -356,103 +372,112 @@ def check_round4_budget(report: dict, thresholds: dict | None = None) -> list[di
                 budget=budget["round4_tab_first_open_max_ms"],
             )
 
+
+def _check_round4_f5(failures: list[dict], budget: dict, f5_refresh: dict) -> None:
     if not f5_refresh:
         _fail(failures, "round4.f5.present", "round4 F5 refresh report is missing")
-    else:
-        elapsed = _as_float(f5_refresh.get("total_elapsed_ms"))
-        if elapsed > budget["round4_f5_total_max_ms"]:
-            _fail(
-                failures,
-                "round4.f5.total_elapsed",
-                "F5 total elapsed time exceeded budget",
-                actual=elapsed,
-                budget=budget["round4_f5_total_max_ms"],
-            )
-        for item in f5_refresh.get("tab_timings") or []:
-            tab_elapsed = _as_float(item.get("elapsed_ms"))
-            if tab_elapsed > budget["round4_f5_tab_refresh_max_ms"]:
-                _fail(
-                    failures,
-                    "round4.f5.tab_elapsed",
-                    "F5 per-tab refresh elapsed time exceeded budget",
-                    key=item.get("label"),
-                    actual=tab_elapsed,
-                    budget=budget["round4_f5_tab_refresh_max_ms"],
-                )
-        quote_requests = f5_refresh.get("quote_requests") or {}
-        duplicate_total = _as_int(quote_requests.get("duplicate_across_batches")) + _as_int(
-            quote_requests.get("duplicate_in_batch")
-        )
-        if duplicate_total > budget["round4_quote_duplicate_max"]:
-            _fail(
-                failures,
-                "round4.f5.quote_duplicates",
-                "F5 quote requests contained duplicate codes",
-                actual=duplicate_total,
-                budget=budget["round4_quote_duplicate_max"],
-                duplicates=quote_requests.get("duplicates_by_code") or {},
-            )
-        new_active_tasks = _as_int(f5_refresh.get("new_active_background_tasks_after"))
-        if new_active_tasks > budget["round4_new_active_task_final_max"]:
-            _fail(
-                failures,
-                "round4.f5.new_active_tasks_after",
-                "F5 left newly-started background tasks active after probe settling",
-                actual=new_active_tasks,
-                budget=budget["round4_new_active_task_final_max"],
-            )
+        return
 
+    elapsed = _as_float(f5_refresh.get("total_elapsed_ms"))
+    if elapsed > budget["round4_f5_total_max_ms"]:
+        _fail(
+            failures,
+            "round4.f5.total_elapsed",
+            "F5 total elapsed time exceeded budget",
+            actual=elapsed,
+            budget=budget["round4_f5_total_max_ms"],
+        )
+    for item in f5_refresh.get("tab_timings") or []:
+        tab_elapsed = _as_float(item.get("elapsed_ms"))
+        if tab_elapsed > budget["round4_f5_tab_refresh_max_ms"]:
+            _fail(
+                failures,
+                "round4.f5.tab_elapsed",
+                "F5 per-tab refresh elapsed time exceeded budget",
+                key=item.get("label"),
+                actual=tab_elapsed,
+                budget=budget["round4_f5_tab_refresh_max_ms"],
+            )
+    quote_requests = f5_refresh.get("quote_requests") or {}
+    duplicate_total = _as_int(quote_requests.get("duplicate_across_batches")) + _as_int(
+        quote_requests.get("duplicate_in_batch")
+    )
+    if duplicate_total > budget["round4_quote_duplicate_max"]:
+        _fail(
+            failures,
+            "round4.f5.quote_duplicates",
+            "F5 quote requests contained duplicate codes",
+            actual=duplicate_total,
+            budget=budget["round4_quote_duplicate_max"],
+            duplicates=quote_requests.get("duplicates_by_code") or {},
+        )
+    new_active_tasks = _as_int(f5_refresh.get("new_active_background_tasks_after"))
+    if new_active_tasks > budget["round4_new_active_task_final_max"]:
+        _fail(
+            failures,
+            "round4.f5.new_active_tasks_after",
+            "F5 left newly-started background tasks active after probe settling",
+            actual=new_active_tasks,
+            budget=budget["round4_new_active_task_final_max"],
+        )
+
+
+def _check_round4_stability(failures: list[dict], budget: dict, stability: dict) -> None:
     if not stability:
         _fail(failures, "round4.stability.present", "round4 stability report is missing")
-    else:
-        trend = stability.get("trend") or {}
-        active_tasks = trend.get("active_tasks") or {}
-        if _as_float(active_tasks.get("last")) > budget["round4_active_task_final_max"]:
-            _fail(
-                failures,
-                "round4.stability.active_tasks_final",
-                "stability cycle ended with active background tasks",
-                actual=active_tasks.get("last"),
-                budget=budget["round4_active_task_final_max"],
-            )
-        active_timers = trend.get("active_timers") or {}
-        if _as_float(active_timers.get("net_delta")) > budget["round4_active_timer_growth_max"]:
-            _fail(
-                failures,
-                "round4.stability.active_timer_growth",
-                "active timer count grew beyond budget",
-                actual=active_timers.get("net_delta"),
-                budget=budget["round4_active_timer_growth_max"],
-            )
-        threads = trend.get("threads") or {}
-        if _as_float(threads.get("net_delta")) > budget["round4_thread_growth_max"]:
-            _fail(
-                failures,
-                "round4.stability.thread_growth",
-                "thread count grew beyond budget",
-                actual=threads.get("net_delta"),
-                budget=budget["round4_thread_growth_max"],
-            )
+        return
+
+    trend = stability.get("trend") or {}
+    active_tasks = trend.get("active_tasks") or {}
+    if _as_float(active_tasks.get("last")) > budget["round4_active_task_final_max"]:
+        _fail(
+            failures,
+            "round4.stability.active_tasks_final",
+            "stability cycle ended with active background tasks",
+            actual=active_tasks.get("last"),
+            budget=budget["round4_active_task_final_max"],
+        )
+    active_timers = trend.get("active_timers") or {}
+    if _as_float(active_timers.get("net_delta")) > budget["round4_active_timer_growth_max"]:
+        _fail(
+            failures,
+            "round4.stability.active_timer_growth",
+            "active timer count grew beyond budget",
+            actual=active_timers.get("net_delta"),
+            budget=budget["round4_active_timer_growth_max"],
+        )
+    threads = trend.get("threads") or {}
+    if _as_float(threads.get("net_delta")) > budget["round4_thread_growth_max"]:
+        _fail(
+            failures,
+            "round4.stability.thread_growth",
+            "thread count grew beyond budget",
+            actual=threads.get("net_delta"),
+            budget=budget["round4_thread_growth_max"],
+        )
+
+
+def check_round4_budget(report: dict, thresholds: dict | None = None) -> list[dict]:
+    budget = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
+    failures: list[dict] = []
+    _check_round4_startup(failures, budget, report.get("startup") or {})
+    _check_round4_tabs(failures, budget, report.get("tab_first_open") or {})
+    _check_round4_f5(failures, budget, report.get("f5_refresh") or {})
+    _check_round4_stability(failures, budget, report.get("stability") or {})
 
     return failures
 
 
-def check_round5_budget(report: dict, thresholds: dict | None = None) -> list[dict]:
-    budget = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
-    failures: list[dict] = []
-    mode = report.get("mode") or {}
+def _check_round5_mode(failures: list[dict], mode: dict) -> None:
     if isinstance(mode, dict) and mode.get("isolate_info_source_refresh") is True:
         _fail(
             failures,
             "round5.mode.isolated_info_source_refresh",
             "round5 report was captured with information-source refresh isolation enabled; rerun with --no-isolate-info-source-refresh for a full post-F5 regression gate",
         )
-    post_f5 = report.get("post_f5") or {}
-    if not post_f5:
-        _fail(failures, "round5.post_f5.present", "round5 post-F5 report is missing")
-        return failures
 
-    quote_requests = post_f5.get("quote_requests") or {}
+
+def _check_round5_quotes(failures: list[dict], budget: dict, quote_requests: dict) -> None:
     batch_count = _as_int(quote_requests.get("batch_count"))
     if batch_count > budget["round5_post_f5_quote_batch_total_max"]:
         _fail(
@@ -485,7 +510,8 @@ def check_round5_budget(report: dict, thresholds: dict | None = None) -> list[di
             duplicates=quote_requests.get("duplicates_by_code") or {},
         )
 
-    guard = post_f5.get("cache_only_guard") or {}
+
+def _check_round5_cache_guard(failures: list[dict], budget: dict, guard: dict) -> None:
     cache_only_quote_count = _as_int(guard.get("cache_only_quote_request_count"))
     if cache_only_quote_count > budget["round5_cache_only_quote_request_max"]:
         _fail(
@@ -506,7 +532,8 @@ def check_round5_budget(report: dict, thresholds: dict | None = None) -> list[di
             budget=budget["round5_information_source_task_max"],
         )
 
-    background_tasks = post_f5.get("background_tasks") or {}
+
+def _check_round5_background(failures: list[dict], budget: dict, background_tasks: dict) -> None:
     new_active_tasks = _as_int(background_tasks.get("new_active_task_final"))
     if new_active_tasks > budget["round5_new_active_task_final_max"]:
         _fail(
@@ -529,7 +556,8 @@ def check_round5_budget(report: dict, thresholds: dict | None = None) -> list[di
             active=background_tasks.get("active_earnings_workers_final") or [],
         )
 
-    trend = post_f5.get("runtime_trend") or {}
+
+def _check_round5_runtime_trend(failures: list[dict], budget: dict, trend: dict) -> None:
     active_timers = trend.get("active_timers") or {}
     if _as_float(active_timers.get("net_delta")) > budget["round5_active_timer_growth_max"]:
         _fail(
@@ -550,7 +578,8 @@ def check_round5_budget(report: dict, thresholds: dict | None = None) -> list[di
             budget=budget["round5_thread_growth_max"],
         )
 
-    receiver_trend = post_f5.get("event_receiver_trend") or {}
+
+def _check_round5_receiver_trend(failures: list[dict], budget: dict, receiver_trend: dict) -> None:
     growing_receivers = {
         name: item
         for name, item in receiver_trend.items()
@@ -565,6 +594,22 @@ def check_round5_budget(report: dict, thresholds: dict | None = None) -> list[di
             budget=budget["round5_event_receiver_growth_max"],
         )
 
+
+def check_round5_budget(report: dict, thresholds: dict | None = None) -> list[dict]:
+    budget = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
+    failures: list[dict] = []
+    _check_round5_mode(failures, report.get("mode") or {})
+
+    post_f5 = report.get("post_f5") or {}
+    if not post_f5:
+        _fail(failures, "round5.post_f5.present", "round5 post-F5 report is missing")
+        return failures
+
+    _check_round5_quotes(failures, budget, post_f5.get("quote_requests") or {})
+    _check_round5_cache_guard(failures, budget, post_f5.get("cache_only_guard") or {})
+    _check_round5_background(failures, budget, post_f5.get("background_tasks") or {})
+    _check_round5_runtime_trend(failures, budget, post_f5.get("runtime_trend") or {})
+    _check_round5_receiver_trend(failures, budget, post_f5.get("event_receiver_trend") or {})
     return failures
 
 
@@ -911,10 +956,10 @@ def check_runtime_health_budget(report: dict, thresholds: dict | None = None) ->
         rss_trend_range = _as_float(rss_trend.get("tail_range"))
     else:
         rss_trend_range = _as_float(rss_trend.get("range"))
-    if (
-        rss_trend_range is not None
-        and rss_trend.get("basis") in {"post_kline_close_samples", "tail_runtime_health_samples"}
-    ):
+    if rss_trend_range is not None and rss_trend.get("basis") in {
+        "post_kline_close_samples",
+        "tail_runtime_health_samples",
+    }:
         rss_tail_range = rss_trend_range
     if rss_tail_range > budget["runtime_health_rss_tail_range_mb"]:
         _fail(

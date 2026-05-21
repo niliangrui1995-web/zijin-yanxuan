@@ -17,7 +17,6 @@ from PyQt6.QtWidgets import (
 
 from app.services.tab_data_lineage_service import TabDataLineageService
 from app.services.ui_config_service import app_config
-from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
 from core.logger import get_logger
 from core.throttler import SignalThrottler
@@ -29,11 +28,13 @@ from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
 
+
 class RtMonitorTab(BaseStockTab):
     """
     盘中监控 独立组件 (Controller + View)
     负责独立的盘中轮询逻辑，表格渲染。
     """
+
     _STATUS_LABELS = {
         "idle": "静默",
         "realtime": "实时",
@@ -285,22 +286,14 @@ class RtMonitorTab(BaseStockTab):
         m_fetch = re.search(r"第(\d+)轮:拉取\s*(\d+)\s*只报价", msg)
         if m_fetch:
             round_no, cnt = m_fetch.groups()
-            self._set_status(
-                "realtime",
-                f"第{round_no}轮 拉取{cnt}只报价",
-                "检测突破并刷新"
-            )
+            self._set_status("realtime", f"第{round_no}轮 拉取{cnt}只报价", "检测突破并刷新")
             return
 
         m_done = re.search(r"第(\d+)轮完成\(耗时\s*([0-9\.]+)s\),等待下轮", msg)
         if m_done:
             round_no = int(m_done.group(1))
             elapsed = m_done.group(2)
-            self._set_status(
-                "realtime",
-                f"第{round_no}轮 完成({elapsed}s)",
-                f"{interval_sec}s后第{round_no + 1}轮"
-            )
+            self._set_status("realtime", f"第{round_no}轮 完成({elapsed}s)", f"{interval_sec}s后第{round_no + 1}轮")
             return
 
         if "加载历史日线数据" in msg:
@@ -366,9 +359,11 @@ class RtMonitorTab(BaseStockTab):
         service = getattr(self, "_rt_monitor_service", None)
         if service is not None:
             service.sync_to_market_state()
+
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         # 统一工具条：标题 + 副标题 + 过滤区 + 主操作
         self.lbl_rt_info = QLabel("未启动")
@@ -524,6 +519,7 @@ class RtMonitorTab(BaseStockTab):
         if service is not None:
             return service.toggle(auto=auto)
         return False
+
     def is_rt_running(self) -> bool:
         return self._is_rt_running()
 
@@ -537,7 +533,7 @@ class RtMonitorTab(BaseStockTab):
 
     def _do_update_rt_table(self, results):
         """实际执行刷新：这部分现在由于 Throttler 保护，每秒最多只执行一次"""
-        rt_only = [r for r in results if not r.get('_is_special')]
+        rt_only = [r for r in results if not r.get("_is_special")]
         try:
             latest_time = ""
             for row in rt_only:
@@ -579,10 +575,7 @@ class RtMonitorTab(BaseStockTab):
         name_col = self.source_model.headers.index("名称")
         if not current_code:
             current_code = str(
-                self.proxy_model.data(
-                    self.proxy_model.index(idx.row(), code_col),
-                    Qt.ItemDataRole.DisplayRole
-                ) or ""
+                self.proxy_model.data(self.proxy_model.index(idx.row(), code_col), Qt.ItemDataRole.DisplayRole) or ""
             ).strip()
         if not current_code:
             return
@@ -602,10 +595,7 @@ class RtMonitorTab(BaseStockTab):
             code = str(row_data.get("代码", "")).strip()
             if not code:
                 code = str(
-                    self.proxy_model.data(
-                        self.proxy_model.index(r, code_col),
-                        Qt.ItemDataRole.DisplayRole
-                    ) or ""
+                    self.proxy_model.data(self.proxy_model.index(r, code_col), Qt.ItemDataRole.DisplayRole) or ""
                 ).strip()
             if not code:
                 continue
@@ -614,10 +604,7 @@ class RtMonitorTab(BaseStockTab):
             row_dict["代码"] = code
             if not row_dict.get("名称"):
                 row_dict["名称"] = str(
-                    self.proxy_model.data(
-                        self.proxy_model.index(r, name_col),
-                        Qt.ItemDataRole.DisplayRole
-                    ) or ""
+                    self.proxy_model.data(self.proxy_model.index(r, name_col), Qt.ItemDataRole.DisplayRole) or ""
                 )
             code_list.append(row_dict)
 
@@ -640,14 +627,17 @@ class RtMonitorTab(BaseStockTab):
         if not row_data:
             return
 
-        code = str(row_data.get('代码', ''))
-        name = str(row_data.get('名称', ''))
+        code = str(row_data.get("代码", ""))
+        name = str(row_data.get("名称", ""))
         if not code:
             return
 
         from ui.components.stock_context_menu import build_stock_context_menu
+
         build_stock_context_menu(
-            self, code, name,
+            self,
+            code,
+            name,
             vcp_data=row_data,
         )
 

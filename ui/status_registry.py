@@ -124,7 +124,7 @@ def split_status_segment(segment: str) -> tuple[str, str]:
     for prefix in _STRUCTURED_STATUS_PREFIXES:
         marker = f"{prefix} "
         if text.startswith(marker):
-            return prefix, text[len(marker):].strip()
+            return prefix, text[len(marker) :].strip()
 
     return "", text
 

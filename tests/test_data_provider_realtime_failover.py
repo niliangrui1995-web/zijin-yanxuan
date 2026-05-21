@@ -328,7 +328,9 @@ def test_test_network_uses_eastmoney_http(monkeypatch):
 
     monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
     monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
-    monkeypatch.setattr("socket.socket", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not use socket")))
+    monkeypatch.setattr(
+        "socket.socket", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not use socket"))
+    )
 
     assert provider.test_network(timeout=3) is True
     assert seen_urls

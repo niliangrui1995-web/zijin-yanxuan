@@ -16,7 +16,11 @@ def _normalize_status_value(status: str, source: str) -> str:
     status_text = str(status or "").strip() or "estimated"
     source_text = str(source or "").strip()
     if source_text == YFINANCE_SOURCE and status_text != CONFIRMED_STATUS:
-        return status_text if status_text in {YFINANCE_UNVERIFIED_STATUS, YFINANCE_CONFLICT_STATUS} else YFINANCE_UNVERIFIED_STATUS
+        return (
+            status_text
+            if status_text in {YFINANCE_UNVERIFIED_STATUS, YFINANCE_CONFLICT_STATUS}
+            else YFINANCE_UNVERIFIED_STATUS
+        )
     return status_text
 
 
@@ -93,10 +97,7 @@ def normalize_event_status(event: EarningsCalendarEvent) -> EarningsCalendarEven
 
 
 def is_yfinance_estimate_event(event: EarningsCalendarEvent) -> bool:
-    return (
-        str(event.source or "").strip() == YFINANCE_SOURCE
-        and str(event.status or "").strip() != CONFIRMED_STATUS
-    )
+    return str(event.source or "").strip() == YFINANCE_SOURCE and str(event.status or "").strip() != CONFIRMED_STATUS
 
 
 def is_yfinance_date_conflict_event(event: EarningsCalendarEvent) -> bool:

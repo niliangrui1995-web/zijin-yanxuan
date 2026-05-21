@@ -163,11 +163,7 @@ def load_and_draw(window):
         if normalized_local_df is not None and not normalized_local_df.empty:
             last_local_date = pd.Timestamp(normalized_local_df.index[-1]).date()
 
-        need_sync = (
-            target_trade_date is None
-            or last_local_date is None
-            or last_local_date < target_trade_date
-        )
+        need_sync = target_trade_date is None or last_local_date is None or last_local_date < target_trade_date
 
         if need_sync:
             try:
@@ -258,7 +254,9 @@ def poll_rt_update(window):
     except Exception as exc:
         if is_yf_rate_limit_error(exc):
             remaining_sec = mark_yf_rate_limited(exc)
-            window._log.warning(f"[K线] {window.code} 实时刷新遇到 Yahoo Finance 限流，冷却 {remaining_sec:.0f}s: {exc}")
+            window._log.warning(
+                f"[K线] {window.code} 实时刷新遇到 Yahoo Finance 限流，冷却 {remaining_sec:.0f}s: {exc}"
+            )
             return
         if isinstance(exc, (AttributeError, ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError)):
             window._log.warning(f"[K线] {window.code} 实时刷新异常: {exc}")

@@ -10,9 +10,7 @@ from core.market_calendar_holidays import (
 
 
 def test_normalize_holiday_days_filters_invalid_values():
-    result = normalize_holiday_days(
-        ["2026-04-16", "bad", None, "2026-04-16 09:30:00", "2026/04/16", "2026-04-17"]
-    )
+    result = normalize_holiday_days(["2026-04-16", "bad", None, "2026-04-16 09:30:00", "2026/04/16", "2026-04-17"])
 
     assert result == {"2026-04-16", "2026-04-17"}
 

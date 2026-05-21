@@ -32,10 +32,10 @@ class LhbPoolManager:
 
     def __init__(self):
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        self._cache_path = os.path.join(project_root, 'data', 'Cache', 'lhb_pool_20d.json')
-        self._old_cache_path = os.path.join(project_root, 'data', 'Cache', 'lhb_cache.json')
+        self._cache_path = os.path.join(project_root, "data", "Cache", "lhb_pool_20d.json")
+        self._old_cache_path = os.path.join(project_root, "data", "Cache", "lhb_cache.json")
         self._data: dict[str, list[dict]] = {}  # date_str(yyyyMMdd) -> [records]
-        self._day_meta: dict[str, dict] = {}    # date_str(yyyyMMdd) -> cache metadata
+        self._day_meta: dict[str, dict] = {}  # date_str(yyyyMMdd) -> cache metadata
         self._last_auto_fetch_date: str = ""
         self._load()
         self._migrate_old_cache()
@@ -47,7 +47,7 @@ class LhbPoolManager:
         if not os.path.exists(self._cache_path):
             return
         try:
-            with open(self._cache_path, 'r', encoding='utf-8') as f:
+            with open(self._cache_path, "r", encoding="utf-8") as f:
                 raw = json.load(f)
             self._data = raw.get("daily_data", {})
             self._day_meta = raw.get("day_meta", {})
@@ -79,7 +79,7 @@ class LhbPoolManager:
         if not summary_line.startswith(summary_prefix):
             return ""
 
-        summary = summary_line[len(summary_prefix):].strip()
+        summary = summary_line[len(summary_prefix) :].strip()
         short_parts: list[str] = []
         for line in lines[1:]:
             if "：" not in line:
@@ -147,7 +147,9 @@ class LhbPoolManager:
         normalized["record_count"] = actual_count
         normalized["source_count"] = self._to_int(meta.get("source_count"), actual_count)
         normalized["last_probe_ref_date"] = str(meta.get("last_probe_ref_date", "") or "")
-        normalized["probe_status"] = str(meta.get("probe_status", normalized["probe_status"]) or normalized["probe_status"])
+        normalized["probe_status"] = str(
+            meta.get("probe_status", normalized["probe_status"]) or normalized["probe_status"]
+        )
         return normalized
 
     def _repair_day_meta(self):
@@ -170,7 +172,7 @@ class LhbPoolManager:
                 "daily_data": self._data,
                 "day_meta": self._day_meta,
             }
-            with open(self._cache_path, 'w', encoding='utf-8') as f:
+            with open(self._cache_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False)
         except (PermissionError, OSError, TypeError, ValueError) as e:
             log.error(f"[龙虎榜池] 缓存保存失败: {e}")
@@ -180,7 +182,7 @@ class LhbPoolManager:
         if not os.path.exists(self._old_cache_path):
             return
         try:
-            with open(self._old_cache_path, 'r', encoding='utf-8') as f:
+            with open(self._old_cache_path, "r", encoding="utf-8") as f:
                 old = json.load(f)
             date_str = old.get("date_str", "")
             rows = old.get("rows", [])
@@ -374,7 +376,7 @@ class LhbPoolManager:
         if engine is not None:
             rps_bundle = engine.get_precomputed_rps()
             if rps_bundle is not None:
-                rps250_dict = rps_bundle.get('rps250', {})
+                rps250_dict = rps_bundle.get("rps250", {})
                 if rps250_dict:
                     disqualify_missing_rps = True
                     eligible_count = self._count_rps250_eligible_symbols(data_provider)
@@ -382,8 +384,7 @@ class LhbPoolManager:
                     if eligible_count >= 500 and len(rps250_dict) < minimum_coverage:
                         disqualify_missing_rps = False
                         log.warning(
-                            f"[龙虎榜池] RPS缓存覆盖不足({len(rps250_dict)}/{eligible_count})，"
-                            "本次缺失RPS不按次新剔除"
+                            f"[龙虎榜池] RPS缓存覆盖不足({len(rps250_dict)}/{eligible_count})，本次缺失RPS不按次新剔除"
                         )
 
                     disqualified_rps: set[str] = set()
@@ -402,13 +403,9 @@ class LhbPoolManager:
                     if disqualified_rps:
                         qualifying_codes -= disqualified_rps
                         if disqualify_missing_rps:
-                            log.info(
-                                f"[龙虎榜池] 剔除次新及RPS250<85共 {len(disqualified_rps)} 只"
-                            )
+                            log.info(f"[龙虎榜池] 剔除次新及RPS250<85共 {len(disqualified_rps)} 只")
                         else:
-                            log.info(
-                                f"[龙虎榜池] RPS缓存覆盖异常，当前仅剔除RPS250<85共 {len(below_threshold_rps)} 只"
-                            )
+                            log.info(f"[龙虎榜池] RPS缓存覆盖异常，当前仅剔除RPS250<85共 {len(below_threshold_rps)} 只")
 
         if not qualifying_codes:
             return []
@@ -445,16 +442,16 @@ class LhbPoolManager:
                             df_k = data_provider.get_data(code)
                             if df_k is not None and not df_k.empty and len(df_k) >= 20:
                                 # 处理日期列
-                                if 'date' in df_k.columns:
-                                    last_date = str(df_k['date'].iloc[-1])[:10]
-                                elif '日期' in df_k.columns:
-                                    last_date = str(df_k['日期'].iloc[-1])[:10]
+                                if "date" in df_k.columns:
+                                    last_date = str(df_k["date"].iloc[-1])[:10]
+                                elif "日期" in df_k.columns:
+                                    last_date = str(df_k["日期"].iloc[-1])[:10]
                                 else:
                                     last_date = str(df_k.index[-1])[:10]
 
                                 # 核心终极技：不再传任何玄学求和，直接传最干净的最后 20 根收盘价数组
                                 # 一切留给 UI 渲染层去根据“当前时间”动态推导
-                                hist_list = df_k['close'].tail(20).astype(float).tolist()
+                                hist_list = df_k["close"].tail(20).astype(float).tolist()
 
                                 record["_history_20"] = hist_list
                                 record["_history_date"] = last_date
@@ -462,7 +459,7 @@ class LhbPoolManager:
                                 # 静态回显 (用于在没有实时行情推送的初始化瞬间，把位置显示出来)
                                 # 提取开盘价（兼容盘后首次点开不跳动行情时的静态推断）
                                 try:
-                                    last_open = float(df_k.get('open', df_k['close']).iloc[-1])
+                                    last_open = float(df_k.get("open", df_k["close"]).iloc[-1])
                                 except (AttributeError, KeyError, IndexError, TypeError, ValueError):
                                     last_open = hist_list[-1]
 
@@ -489,13 +486,9 @@ class LhbPoolManager:
             reverse=True,
         )
 
-        log.debug(
-            f"[龙虎榜池] 池计算完成: {len(self._data)} 天数据中，"
-            f"{len(qualifying_codes)} 只标的入池"
-        )
+        log.debug(f"[龙虎榜池] 池计算完成: {len(self._data)} 天数据中，{len(qualifying_codes)} 只标的入池")
 
         # 挂机防漏：计算核心完成深层循环后，显式扫地出门，回收计算期产生的海量瞬态字典和列表残余
         gc.collect()
 
         return result
-

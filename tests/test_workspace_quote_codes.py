@@ -185,8 +185,8 @@ def test_workspace_collects_structured_watchlist_radar_metrics():
         },
     )
 
-    na_data, na_subsector_data, block_data, earn_data, lhb_data, rps_bundle = ClassicWorkspace.collect_watchlist_radar_data(
-        workspace
+    na_data, na_subsector_data, block_data, earn_data, lhb_data, rps_bundle = (
+        ClassicWorkspace.collect_watchlist_radar_data(workspace)
     )
 
     assert na_data == {}
@@ -343,7 +343,7 @@ def test_workspace_collects_scan_and_fund_holding_context_signals(monkeypatch):
                         "变化类型": "新进",
                         "本期占比": "1.25%",
                         "持股变化": "+120.00万",
-                    }
+                    },
                 ]
             ),
         },
@@ -759,11 +759,14 @@ def test_workspace_schedules_refreshes_all_tabs_after_f5():
     workspace = _make_workspace(tabs=tabs)
     workspace.iter_refreshable_tabs = lambda: ClassicWorkspace.iter_refreshable_tabs(workspace)
 
-    assert ClassicWorkspace.refresh_all_tabs_after_f5_scheduled(
-        workspace,
-        on_finished=lambda: done.append("done"),
-        interval_ms=0,
-    ) is True
+    assert (
+        ClassicWorkspace.refresh_all_tabs_after_f5_scheduled(
+            workspace,
+            on_finished=lambda: done.append("done"),
+            interval_ms=0,
+        )
+        is True
+    )
 
     for _ in range(10):
         app.processEvents()
@@ -797,11 +800,14 @@ def test_workspace_scheduled_f5_can_skip_cache_reload_driven_tabs():
     workspace = _make_workspace(tabs=tabs)
     workspace.iter_refreshable_tabs = lambda: ClassicWorkspace.iter_refreshable_tabs(workspace)
 
-    assert ClassicWorkspace.refresh_all_tabs_after_f5_scheduled(
-        workspace,
-        interval_ms=0,
-        skip_cache_reload_tabs=True,
-    ) is True
+    assert (
+        ClassicWorkspace.refresh_all_tabs_after_f5_scheduled(
+            workspace,
+            interval_ms=0,
+            skip_cache_reload_tabs=True,
+        )
+        is True
+    )
 
     for _ in range(10):
         app.processEvents()
@@ -847,7 +853,7 @@ def test_workspace_runs_fund_holdings_auto_sync_through_public_facade():
     calls = []
     workspace = _make_workspace(
         tabs={
-            "fund_holdings": SimpleNamespace(run_auto_sync_after_f5=lambda: (calls.append("fund") or True)),
+            "fund_holdings": SimpleNamespace(run_auto_sync_after_f5=lambda: calls.append("fund") or True),
         }
     )
 
@@ -882,10 +888,10 @@ def test_workspace_refreshes_information_sources_after_f5():
     workspace = _make_workspace(
         tabs={
             "watchlist": SimpleNamespace(refresh_data_after_f5=lambda: calls.append("watchlist")),
-            "scan": SimpleNamespace(refresh_data_after_f5=lambda: (calls.append("scan") or True)),
-            "foreign_block": SimpleNamespace(refresh_data_after_f5=lambda: (calls.append("foreign") or True)),
-            "earnings": SimpleNamespace(refresh_data_after_f5=lambda: (calls.append("earnings") or True)),
-            "fund_holdings": SimpleNamespace(refresh_data_after_f5=lambda: (calls.append("fund") or True)),
+            "scan": SimpleNamespace(refresh_data_after_f5=lambda: calls.append("scan") or True),
+            "foreign_block": SimpleNamespace(refresh_data_after_f5=lambda: calls.append("foreign") or True),
+            "earnings": SimpleNamespace(refresh_data_after_f5=lambda: calls.append("earnings") or True),
+            "fund_holdings": SimpleNamespace(refresh_data_after_f5=lambda: calls.append("fund") or True),
             "system_log": SimpleNamespace(refresh_data_after_f5=lambda: calls.append("log")),
         }
     )
@@ -927,18 +933,18 @@ def test_workspace_refreshes_information_sources_after_f5_skips_noninteractive_t
     ]
     workspace = _make_workspace(
         tabs={
-            "scan": SimpleNamespace(refresh_data_after_f5=lambda: (calls.append("scan") or True)),
+            "scan": SimpleNamespace(refresh_data_after_f5=lambda: calls.append("scan") or True),
             "foreign_block": SimpleNamespace(
                 _workspace_noninteractive_loaded=True,
-                refresh_data_after_f5=lambda: (calls.append("foreign") or True),
+                refresh_data_after_f5=lambda: calls.append("foreign") or True,
             ),
             "earnings": SimpleNamespace(
                 _workspace_load_reason="perf_memory_probe",
-                refresh_data_after_f5=lambda: (calls.append("earnings") or True),
+                refresh_data_after_f5=lambda: calls.append("earnings") or True,
             ),
             "fund_holdings": SimpleNamespace(
                 _workspace_noninteractive_loaded=True,
-                refresh_data_after_f5=lambda: (calls.append("fund") or True),
+                refresh_data_after_f5=lambda: calls.append("fund") or True,
             ),
         }
     )
@@ -1090,11 +1096,7 @@ def test_workspace_activates_loaded_lazy_tab_on_selection(monkeypatch):
     try:
         monkeypatch.setattr(classic_workspace_module.QTimer, "singleShot", lambda _delay, callback: callback())
         widget = workspace.ensure_tab_loaded("lhb", reason="background_prewarm")
-        lhb_index = next(
-            index
-            for index, spec in enumerate(workspace.tab_specs())
-            if spec.get("key") == "lhb"
-        )
+        lhb_index = next(index for index, spec in enumerate(workspace.tab_specs()) if spec.get("key") == "lhb")
 
         assert widget is workspace.get_loaded_tab("lhb")
         assert activated == []

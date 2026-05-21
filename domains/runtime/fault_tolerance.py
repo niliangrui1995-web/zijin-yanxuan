@@ -32,9 +32,7 @@ def _int_value(value: Any) -> int:
 
 def _source_layers(request_stats: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(
-        layer
-        for layer in (_text(item) for item in request_stats.get("recent_source_layers", []) or [])
-        if layer
+        layer for layer in (_text(item) for item in request_stats.get("recent_source_layers", []) or []) if layer
     )
 
 
@@ -85,9 +83,7 @@ def classify_provider_fault_tolerance(
     source_layers = _source_layers(request_stats)
     recent_status = _text(request_stats.get("recent_status"))
     last_error = _text(
-        runtime_stats.get("last_error")
-        or status.get("last_network_error")
-        or status.get("eastmoney_last_error")
+        runtime_stats.get("last_error") or status.get("last_network_error") or status.get("eastmoney_last_error")
     )
     cooldown_until = _float_value(runtime_stats.get("cooldown_until") or status.get("cooldown_until"))
     eastmoney_cooldown_until = _float_value(status.get("eastmoney_cooldown_until"))

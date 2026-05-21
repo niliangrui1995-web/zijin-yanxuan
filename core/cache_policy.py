@@ -121,7 +121,7 @@ def cleanup_stale_caches(project_root: str, dry_run: bool = False) -> dict:
                         os.remove(filepath)
                         log.info(
                             f"[缓存清理] 已删除过期文件: {os.path.basename(filepath)} "
-                            f"({policy['name']}, {age_days:.0f}天前, {size/1024:.1f}KB)"
+                            f"({policy['name']}, {age_days:.0f}天前, {size / 1024:.1f}KB)"
                         )
 
                     result["cleaned"] += 1
@@ -132,10 +132,7 @@ def cleanup_stale_caches(project_root: str, dry_run: bool = False) -> dict:
 
     if result["cleaned"] > 0:
         freed_mb = result["freed_bytes"] / (1024 * 1024)
-        log.info(
-            f"[缓存清理] 共清理 {result['cleaned']} 个过期文件, "
-            f"释放 {freed_mb:.1f} MB 磁盘空间"
-        )
+        log.info(f"[缓存清理] 共清理 {result['cleaned']} 个过期文件, 释放 {freed_mb:.1f} MB 磁盘空间")
     else:
         log.info("[缓存清理] 未发现需要清理的过期缓存")
 

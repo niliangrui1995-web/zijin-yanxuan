@@ -183,6 +183,7 @@ def _run_one_cycle(app: QApplication, window: MainWindowQT, args: argparse.Names
             browser = getattr(chart, "browser", None)
             load_signal = getattr(browser, "loadFinished", None)
             if load_signal is not None:
+
                 def _record_load_finished(ok) -> None:
                     load_events.append(bool(ok))
 
@@ -252,9 +253,7 @@ def _run_one_cycle(app: QApplication, window: MainWindowQT, args: argparse.Names
 
 def _summarize_cycles(cycles: list[dict[str, Any]], samples: list[dict[str, Any]]) -> dict[str, Any]:
     failed_cycles = [
-        int(cycle.get("cycle_index") or 0)
-        for cycle in cycles
-        if ((cycle.get("summary") or {}).get("status") != "ok")
+        int(cycle.get("cycle_index") or 0) for cycle in cycles if ((cycle.get("summary") or {}).get("status") != "ok")
     ]
     final_count = _webengine_count(samples[-1]) if samples else 0
     max_count = max((_webengine_count(sample) for sample in samples), default=0)
@@ -324,9 +323,7 @@ def run_smoke(args: argparse.Namespace) -> dict:
             pass
 
     report["load_status"]["events"] = [
-        event
-        for cycle in report["cycles"]
-        for event in ((cycle.get("load_status") or {}).get("events") or [])
+        event for cycle in report["cycles"] for event in ((cycle.get("load_status") or {}).get("events") or [])
     ]
     report["summary"] = _summarize_cycles(report["cycles"], report["samples"])
     report["status"] = report["summary"]["status"]

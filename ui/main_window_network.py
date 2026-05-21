@@ -105,4 +105,3 @@ def force_reconnect(main_window):
         on_success=lambda res: main_window._call_in_ui(lambda: _on_done(res)),
         task_id=NETWORK_FORCE_RECONNECT,
     )
-

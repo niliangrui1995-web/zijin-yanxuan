@@ -33,6 +33,11 @@ from ui.components.command_palette import CommandPaletteDialog
 from ui.components.kline_window_manager import kline_manager
 from ui.components.message_box import show_themed_question
 from ui.main_window_tables import install_table_copy_hooks
+from ui.services.asian_market_runtime_service import AsianMarketRuntimeService
+from ui.services.auto_refresh_scheduler import AutoRefreshScheduler
+from ui.services.earnings_refresh_service import EarningsRefreshService
+from ui.services.na_daily_service import NADailyRefreshService
+from ui.services.rt_monitor_service import RtMonitorService
 from ui.shell import (
     DraggableTitleBar,
     MainWindowStatusBar,
@@ -41,11 +46,6 @@ from ui.shell import (
     setup_system_menu,
 )
 from ui.window_flags import apply_windows_frameless_taskbar_fix, build_frameless_main_window_flags
-from ui.services.auto_refresh_scheduler import AutoRefreshScheduler
-from ui.services.asian_market_runtime_service import AsianMarketRuntimeService
-from ui.services.earnings_refresh_service import EarningsRefreshService
-from ui.services.na_daily_service import NADailyRefreshService
-from ui.services.rt_monitor_service import RtMonitorService
 from ui.workers.central_quotes_worker import CentralQuotesService
 from ui.workspaces import ClassicWorkspace
 
@@ -58,6 +58,7 @@ __all__ = ["DraggableTitleBar", "MainWindowQT"]
 
 class MainWindowQT(QMainWindow):
     """紫金研选主窗口 — 纯外壳控制器（Phase 2 重构后）"""
+
     _sig_f5_done = pyqtSignal(int, float)
     _sig_ui_call = pyqtSignal(object)
 
@@ -69,7 +70,7 @@ class MainWindowQT(QMainWindow):
             log.error(f"[UI回调] 异常: {e}")
 
     def _call_in_ui(self, callback):
-        if getattr(self, '_is_closing', False):
+        if getattr(self, "_is_closing", False):
             return
         self._sig_ui_call.emit(callback)
 
@@ -99,7 +100,7 @@ class MainWindowQT(QMainWindow):
         self._native_taskbar_fix_applied = False
         self._app_cursor_filter_installed = False
         self._splash = splash
-        self.setWindowTitle('紫金研选量化终端')
+        self.setWindowTitle("紫金研选量化终端")
 
         # 记录默认逻辑工作区
         self.setWindowIcon(QIcon(os.path.join(os.path.dirname(os.path.dirname(__file__)), "bull_icon.ico")))
@@ -160,25 +161,29 @@ class MainWindowQT(QMainWindow):
 
         # 全局样式（动态生成，支持主题切换）
         from ui.styles.global_qss import generate_global_qss
+
         qss = generate_global_qss()
         self.setStyleSheet(qss)
         from PyQt6.QtGui import QColor, QPalette
+
         if QApplication.instance():
             pal = QApplication.style().standardPalette()
             from ui.theme import theme_manager
+
             t = theme_manager.current_theme
             for group in (
                 QPalette.ColorGroup.Active,
                 QPalette.ColorGroup.Inactive,
                 QPalette.ColorGroup.Disabled,
             ):
-                pal.setColor(group, QPalette.ColorRole.ToolTipBase, QColor(t['BG_ELEVATED']))
-                pal.setColor(group, QPalette.ColorRole.ToolTipText, QColor(t['TEXT_PRIMARY']))
+                pal.setColor(group, QPalette.ColorRole.ToolTipBase, QColor(t["BG_ELEVATED"]))
+                pal.setColor(group, QPalette.ColorRole.ToolTipText, QColor(t["TEXT_PRIMARY"]))
             QApplication.instance().setPalette(pal)
             QApplication.instance().setStyleSheet(qss)
             QToolTip.setPalette(pal)
         # 监听主题切换信号，实时刷新全局样式
         from ui.theme import theme_manager
+
         theme_manager.sig_theme_changed.connect(self._apply_theme)
 
         main_widget = QWidget()
@@ -243,11 +248,7 @@ class MainWindowQT(QMainWindow):
         code_name_map = getattr(provider, "code2name", None) or {}
         count = len(cache_data)
         if count <= 0:
-            count = sum(
-                1
-                for raw_code in code_name_map
-                if self._is_display_a_share_code(raw_code)
-            )
+            count = sum(1 for raw_code in code_name_map if self._is_display_a_share_code(raw_code))
         if count > 0 and hasattr(self, "lbl_code_count"):
             self.lbl_code_count.setText(f"标的池: {count} 只")
         return count
@@ -264,7 +265,6 @@ class MainWindowQT(QMainWindow):
         from ui.main_window_runtime import safe_run_post_online_refresh
 
         safe_run_post_online_refresh(self, task_manager)
-
 
     def _toggle_network(self):
         from ui.main_window_network import toggle_network
@@ -535,13 +535,12 @@ class MainWindowQT(QMainWindow):
 
         apply_table_density(self, mode, persist=persist)
 
-
     def eventFilter(self, obj, event):
         target_objects = (
-            getattr(self, 'btn_sys_menu', None),
-            getattr(self, '_sys_menu', None),
-            getattr(self, '_density_menu', None),
-            getattr(self, '_theme_menu', None),
+            getattr(self, "btn_sys_menu", None),
+            getattr(self, "_sys_menu", None),
+            getattr(self, "_density_menu", None),
+            getattr(self, "_theme_menu", None),
         )
         event_type = event.type()
         if isinstance(obj, QAbstractButton) and event_type in (
@@ -550,11 +549,7 @@ class MainWindowQT(QMainWindow):
             QEvent.Type.HoverMove,
             QEvent.Type.MouseMove,
         ):
-            obj.setCursor(
-                Qt.CursorShape.PointingHandCursor
-                if obj.isEnabled()
-                else Qt.CursorShape.ArrowCursor
-            )
+            obj.setCursor(Qt.CursorShape.PointingHandCursor if obj.isEnabled() else Qt.CursorShape.ArrowCursor)
 
         if obj in target_objects:
             if event_type in (
@@ -620,7 +615,7 @@ class MainWindowQT(QMainWindow):
         """窗口状态变化时同步最大化按钮图标"""
         super().changeEvent(event)
         if event.type() == event.Type.WindowStateChange:
-            if hasattr(self, '_btn_maximize'):
+            if hasattr(self, "_btn_maximize"):
                 if self.isMaximized():
                     self._btn_maximize.setText("❐")
                 else:
@@ -632,10 +627,11 @@ class MainWindowQT(QMainWindow):
         self.tabs_wrapper = QFrame(self)
         self.tabs_wrapper.setObjectName("tabsWrapperFrame")
         from ui.theme import theme_manager as _twm
+
         _tw = _twm.current_theme
         self.tabs_wrapper.setStyleSheet(f"""
             QFrame#tabsWrapperFrame {{
-                background-color: {_tw['BG_GLASS']};
+                background-color: {_tw["BG_GLASS"]};
                 border: none;
             }}
         """)
@@ -653,9 +649,7 @@ class MainWindowQT(QMainWindow):
         self._inject_tabbar_into_titlebar()
         return
 
-
     # _filter_table 已删除 — 各 Tab 已自行实现 proxy_model.setFilterText()，0 调用方
-
 
     # _on_table_double_click 已移除(#3)，各 Tab 自行通过 EventBus 广播 K 线请求
 
@@ -732,18 +726,19 @@ class MainWindowQT(QMainWindow):
     def _update_last_f5_time(self):
         import datetime
         import os
+
         if os.path.exists(RPS_CACHE_FILE):
             mtime = os.path.getmtime(RPS_CACHE_FILE)
             dt = datetime.datetime.fromtimestamp(mtime)
             freshness = f"快照 {dt.strftime('%m-%d %H:%M')}"
             self._last_sync_freshness = freshness
-            if hasattr(self, 'act_f5'):
+            if hasattr(self, "act_f5"):
                 self.act_f5.setText(f"全局同步 (F5) [{dt.strftime('%m-%d')}]")
             if self._titlebar_sync_state != "working":
                 self._set_titlebar_sync_state("success", "可执行全局同步", freshness)
         else:
             self._last_sync_freshness = "暂无可用快照"
-            if hasattr(self, 'act_f5'):
+            if hasattr(self, "act_f5"):
                 self.act_f5.setText("全局同步 (F5) [暂无]")
             if self._titlebar_sync_state != "working":
                 self._set_titlebar_sync_state("idle", "等待首次同步", self._last_sync_freshness)
@@ -788,11 +783,10 @@ class MainWindowQT(QMainWindow):
 
         super().closeEvent(event)
 
-
-
     def _action_refresh_f5(self):
         """F5 盘后预计算界面触发层"""
         from PyQt6.QtWidgets import QMessageBox
+
         reply = show_themed_question(
             self,
             "盘后一键预计算",
@@ -806,9 +800,11 @@ class MainWindowQT(QMainWindow):
             no_text="取消",
         )
 
-        if reply != QMessageBox.StandardButton.Yes: return
+        if reply != QMessageBox.StandardButton.Yes:
+            return
 
-        if hasattr(self, 'lbl_status'): self.lbl_status.setText("F5 盘后预计算进行中...")
+        if hasattr(self, "lbl_status"):
+            self.lbl_status.setText("F5 盘后预计算进行中...")
         self._set_titlebar_sync_state("working", "全局同步进行中")
         self._f5_cancelled = False
         from ui.main_window_runtime import start_f5_precompute
@@ -820,8 +816,6 @@ class MainWindowQT(QMainWindow):
     # =======================================================================
     # _toggle_special 已删除 — 关注池操作已统一由 watchlist_vm.toggle_stock() 处理，0 调用方
 
-
-
     # _export_current_tab 已删除 — 无菜单/快捷键指向它，各 Tab 自带独立导出按钮
 
     # =======================================================================
@@ -832,9 +826,9 @@ class MainWindowQT(QMainWindow):
         """响应盘中监控刷新完成"""
         try:
             count = len(payload) if payload else 0
-            if hasattr(self, 'lbl_status'):
+            if hasattr(self, "lbl_status"):
                 self.lbl_status.setText(f"实时报价已刷新 ({count} 条)")
-            if self.data_provider.cache_data and hasattr(self, 'lbl_code_count'):
+            if self.data_provider.cache_data and hasattr(self, "lbl_code_count"):
                 total = len(self.data_provider.cache_data)
                 self.lbl_code_count.setText(f"标的池: {total}")
         except (AttributeError, RuntimeError, TypeError, ValueError) as e:
@@ -844,10 +838,13 @@ class MainWindowQT(QMainWindow):
     def _on_task_progress(self, module: str, pct: int, msg: str):
         """处理扫描进度更新"""
         if module == "scan":
-            if hasattr(self, 'progress_bar'): self.progress_bar.setValue(pct)
-            if hasattr(self, 'lbl_status'): self.lbl_status.setText(msg)
+            if hasattr(self, "progress_bar"):
+                self.progress_bar.setValue(pct)
+            if hasattr(self, "lbl_status"):
+                self.lbl_status.setText(msg)
             if pct == 100 or pct == 0:
                 import gc
+
                 QTimer.singleShot(3000, lambda: gc.collect())
 
     # ================================================================

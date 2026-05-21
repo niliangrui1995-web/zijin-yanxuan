@@ -68,7 +68,11 @@ class CommandPaletteDialog(QDialog):
                 {
                     "title": title,
                     "subtitle": str(item.get("subtitle") or "").strip(),
-                    "keywords": [str(keyword or "").strip().lower() for keyword in item.get("keywords") or [] if str(keyword or "").strip()],
+                    "keywords": [
+                        str(keyword or "").strip().lower()
+                        for keyword in item.get("keywords") or []
+                        if str(keyword or "").strip()
+                    ],
                     "shortcut": str(item.get("shortcut") or "").strip(),
                     "handler": item.get("handler"),
                 }
@@ -85,45 +89,45 @@ class CommandPaletteDialog(QDialog):
         self.setStyleSheet(
             f"""
             QDialog#commandPaletteDialog {{
-                background: {surface['overlay']};
-                border: 1px solid {border['strong']};
-                border-radius: {tokens['radius']['xl']}px;
+                background: {surface["overlay"]};
+                border: 1px solid {border["strong"]};
+                border-radius: {tokens["radius"]["xl"]}px;
             }}
             QLineEdit {{
-                background: {surface['input']};
-                color: {text['primary']};
-                border: 1px solid {border['default']};
-                border-radius: {tokens['radius']['lg']}px;
-                min-height: {tokens['control']['toolbar_button_height']}px;
-                padding: 0 {tokens['space']['lg']}px;
+                background: {surface["input"]};
+                color: {text["primary"]};
+                border: 1px solid {border["default"]};
+                border-radius: {tokens["radius"]["lg"]}px;
+                min-height: {tokens["control"]["toolbar_button_height"]}px;
+                padding: 0 {tokens["space"]["lg"]}px;
             }}
             QLineEdit:focus {{
-                border: 1px solid {border['focus']};
+                border: 1px solid {border["focus"]};
             }}
             QLabel#commandPaletteHint {{
-                color: {text['muted']};
-                font-size: {tokens['font']['size_sm']}px;
+                color: {text["muted"]};
+                font-size: {tokens["font"]["size_sm"]}px;
             }}
             QListWidget#commandPaletteList {{
-                background: {surface['input']};
-                color: {text['primary']};
-                border: 1px solid {border['default']};
-                border-radius: {tokens['radius']['lg']}px;
-                padding: {tokens['space']['xs']}px;
+                background: {surface["input"]};
+                color: {text["primary"]};
+                border: 1px solid {border["default"]};
+                border-radius: {tokens["radius"]["lg"]}px;
+                padding: {tokens["space"]["xs"]}px;
                 outline: none;
             }}
             QListWidget#commandPaletteList::item {{
-                border-radius: {tokens['radius']['md']}px;
-                padding: {tokens['space']['sm']}px {tokens['space']['md']}px;
+                border-radius: {tokens["radius"]["md"]}px;
+                padding: {tokens["space"]["sm"]}px {tokens["space"]["md"]}px;
                 margin: 2px 0;
-                min-height: {max(32, tokens['control']['button_height'])}px;
+                min-height: {max(32, tokens["control"]["button_height"])}px;
             }}
             QListWidget#commandPaletteList::item:selected {{
-                background: {theme['SELECTION_BG']};
-                color: {text['primary']};
+                background: {theme["SELECTION_BG"]};
+                color: {text["primary"]};
             }}
             QListWidget#commandPaletteList::item:hover {{
-                background: {surface['hover']};
+                background: {surface["hover"]};
             }}
             """
         )

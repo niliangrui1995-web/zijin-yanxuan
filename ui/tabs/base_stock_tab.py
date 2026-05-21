@@ -267,11 +267,7 @@ class BaseStockTab(QWidget):
         except (AttributeError, RuntimeError, TypeError, ValueError):
             snapshot = {}
 
-        quote_subset = {
-            code: dict(snapshot[code])
-            for code in codes
-            if code in snapshot
-        }
+        quote_subset = {code: dict(snapshot[code]) for code in codes if code in snapshot}
         if quote_subset:
             self._apply_quote_snapshot(quote_subset)
 
@@ -669,9 +665,13 @@ class BaseStockTab(QWidget):
     # ================================================================
     # UI 结构辅助：统一工具条 + 摘要条 + 列预设
     # ================================================================
-    def build_tab_toolbar(self, title: str, subtitle_label: QLabel | None,
-                          filter_widgets: list[QWidget] | None,
-                          action_widgets: list[QWidget] | None) -> QWidget:
+    def build_tab_toolbar(
+        self,
+        title: str,
+        subtitle_label: QLabel | None,
+        filter_widgets: list[QWidget] | None,
+        action_widgets: list[QWidget] | None,
+    ) -> QWidget:
         """统一工具条结构：标题区 + 筛选区 + 操作区，全部压缩到单行。"""
         tokens = build_ui_tokens()
         toolbar = QWidget()
@@ -844,8 +844,6 @@ class BaseStockTab(QWidget):
         self._should_start_interactive_runtime_on_show()
         replay_deferred_quotes(self)
         self._prime_visible_local_quote_snapshot()
-
-
 
     def async_update_market_caps(self):
         """异步补齐缺失股本，并通过共享批次去重后回灌动态市值。"""

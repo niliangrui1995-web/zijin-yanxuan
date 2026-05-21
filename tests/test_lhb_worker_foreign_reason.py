@@ -99,17 +99,10 @@ def test_fetch_lhb_data_for_date_splits_foreign_net_by_reason(monkeypatch):
     assert len(rows) == 2
     assert stock_detail_calls == ["买入", "卖出"]
 
-    row_by_reason = {
-        lhb_worker._normalize_reason_key(row["上榜原因"]): row
-        for row in rows
-    }
+    row_by_reason = {lhb_worker._normalize_reason_key(row["上榜原因"]): row for row in rows}
 
-    single_day_key = lhb_worker._normalize_reason_key(
-        "日换手率达到20%的前5只证券 | 日涨幅偏离值达到7%的前5只证券"
-    )
-    multi_day_key = lhb_worker._normalize_reason_key(
-        "连续三个交易日内，涨幅偏离值累计达到20%的证券"
-    )
+    single_day_key = lhb_worker._normalize_reason_key("日换手率达到20%的前5只证券 | 日涨幅偏离值达到7%的前5只证券")
+    multi_day_key = lhb_worker._normalize_reason_key("连续三个交易日内，涨幅偏离值累计达到20%的证券")
 
     assert row_by_reason[single_day_key]["外资净买(万)"] == pytest.approx(36066.32, abs=0.01)
     assert row_by_reason[single_day_key]["外资净买入"] == "净买3.61亿 | 深股通+3.61亿"

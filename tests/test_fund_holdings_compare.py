@@ -258,12 +258,10 @@ def test_build_qfii_holder_change_rows_tracks_each_holder_individually():
     )
 
     abudhabi_row = next(
-        row for row in rows
-        if row["quarter_key"] == "2025Q4" and row["subject_name"] == "阿布达比投资局"
+        row for row in rows if row["quarter_key"] == "2025Q4" and row["subject_name"] == "阿布达比投资局"
     )
     kuwait_row = next(
-        row for row in rows
-        if row["quarter_key"] == "2025Q4" and row["subject_name"] == "科威特政府投资局"
+        row for row in rows if row["quarter_key"] == "2025Q4" and row["subject_name"] == "科威特政府投资局"
     )
 
     assert abudhabi_row["change_type"] == "增持"

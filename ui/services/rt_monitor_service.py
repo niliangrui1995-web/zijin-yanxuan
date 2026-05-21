@@ -185,7 +185,9 @@ class RtMonitorService(QObject):
         worker.rt_result_ready.connect(self._on_results_ready)
         worker.progress.connect(self._on_worker_progress)
         worker.scan_count.connect(self._on_scan_count_updated)
-        worker.scan_count.connect(lambda n, pool: event_bus.sig_system_log.emit("info", f"[监控] 第{n}轮 | 待突破池 {pool} 只"))
+        worker.scan_count.connect(
+            lambda n, pool: event_bus.sig_system_log.emit("info", f"[监控] 第{n}轮 | 待突破池 {pool} 只")
+        )
         worker.finished.connect(self._on_worker_finished)
         self._rt_stop_requested = False
         worker.start()

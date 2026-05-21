@@ -133,19 +133,14 @@ def _setup_store(
         "get_latest_sync_map",
         lambda: dict(sync_map or {}),
     )
+
     def _query_change_rows(*, quarter_keys=None):
         if quarter_keys is None:
             return rows
         selected = {
-            str(quarter_key or "").strip()
-            for quarter_key in (quarter_keys or [])
-            if str(quarter_key or "").strip()
+            str(quarter_key or "").strip() for quarter_key in (quarter_keys or []) if str(quarter_key or "").strip()
         }
-        return [
-            row
-            for row in rows
-            if str(row.get("quarter_key") or "").strip() in selected
-        ]
+        return [row for row in rows if str(row.get("quarter_key") or "").strip() in selected]
 
     monkeypatch.setattr(
         fund_holdings_module.fund_holdings_store,
@@ -332,9 +327,7 @@ def test_fund_holdings_tab_local_snapshot_fills_market_fields_without_realtime(m
 
     provider = OfflineProvider()
     tab = DummyFundTab(provider)
-    tab.model.update_data([
-        {code_key: "000001", name_key: "平安银行", price_key: "--", pct_key: "--", cap_key: "--"}
-    ])
+    tab.model.update_data([{code_key: "000001", name_key: "平安银行", price_key: "--", pct_key: "--", cap_key: "--"}])
     monkeypatch.setattr(
         tab,
         "_load_cached_finance_snapshot",
@@ -380,15 +373,17 @@ def test_fund_holdings_tab_does_not_schedule_late_local_quote_after_delete(monke
         fund_holdings_module.FundHoldingsTab,
         "_load_cached_finance_snapshot",
         staticmethod(
-            lambda codes: {
-                "000001": {
-                    "zongguben": 1_000_000_000,
-                    "market_cap": 10_000_000_000,
-                    "price_base": 10.0,
+            lambda codes: (
+                {
+                    "000001": {
+                        "zongguben": 1_000_000_000,
+                        "market_cap": 10_000_000_000,
+                        "price_base": 10.0,
+                    }
                 }
-            }
-            if codes == ["000001"]
-            else {}
+                if codes == ["000001"]
+                else {}
+            )
         ),
         raising=False,
     )
@@ -614,11 +609,7 @@ def test_fund_holdings_tab_loads_latest_quarter_before_all_quarters_on_demand(mo
         if quarter_keys is None:
             return sorted(rows, key=lambda row: str(row.get("quarter_key") or ""), reverse=True)
         return sorted(
-            [
-                row
-                for row in rows
-                if str(row.get("quarter_key") or "").strip() in set(quarter_keys)
-            ],
+            [row for row in rows if str(row.get("quarter_key") or "").strip() in set(quarter_keys)],
             key=lambda row: str(row.get("quarter_key") or ""),
             reverse=True,
         )
@@ -720,7 +711,9 @@ def test_fund_holdings_tab_defers_initial_load_when_autoload_disabled(monkeypatc
     monkeypatch.setattr(
         fund_holdings_module.task_manager,
         "run_in_background",
-        lambda fn, *args, on_success=None, on_error=None, task_id=None, **kwargs: scheduled.append(task_id or "scheduled"),
+        lambda fn, *args, on_success=None, on_error=None, task_id=None, **kwargs: scheduled.append(
+            task_id or "scheduled"
+        ),
         raising=False,
     )
 
@@ -739,7 +732,9 @@ def test_fund_holdings_tab_prime_background_load_starts_deferred_load(monkeypatc
     monkeypatch.setattr(
         fund_holdings_module.task_manager,
         "run_in_background",
-        lambda fn, *args, on_success=None, on_error=None, task_id=None, **kwargs: scheduled.append(task_id or "scheduled"),
+        lambda fn, *args, on_success=None, on_error=None, task_id=None, **kwargs: scheduled.append(
+            task_id or "scheduled"
+        ),
         raising=False,
     )
 
@@ -915,6 +910,7 @@ def test_fund_holdings_tab_has_no_daily_auto_timer(monkeypatch):
         assert not hasattr(tab, "_check_daily_auto_sync")
     finally:
         tab.deleteLater()
+
 
 def test_fund_holdings_tab_filters_ai_related_concepts_for_display():
     assert fund_holdings_module.FundHoldingsTab._is_ai_related_concept("DeepSeek") is True
@@ -1238,7 +1234,9 @@ def test_fund_holdings_tab_restores_saved_view_state(monkeypatch):
         assert restored._selected_change_types() == {"新进", "持平"}
         assert restored._quarter_filter_state() == (False, {"2025Q3", "2025Q4"})
         assert restored.table.sorted_column() == code_col
-        assert restored.table.horizontalHeader().sortIndicatorOrder() == fund_holdings_module.Qt.SortOrder.DescendingOrder
+        assert (
+            restored.table.horizontalHeader().sortIndicatorOrder() == fund_holdings_module.Qt.SortOrder.DescendingOrder
+        )
         assert _visible_codes(restored) == ["000004", "000002"]
         assert settings.value(restored._view_state_key("subject_name")) == "睿远成长价值混合A"
     finally:

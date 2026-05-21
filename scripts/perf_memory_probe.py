@@ -124,7 +124,6 @@ def _snapshot_value(snapshot: dict, key: str) -> float | None:
     return None if value is None else float(value)
 
 
-
 def _process_events(app: QApplication, rounds: int = 8, sleep_ms: int = 0) -> None:
     for _ in range(max(0, int(rounds))):
         app.processEvents()
@@ -618,16 +617,30 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--background-prewarm", action="store_true", help="Enable workspace background tab prewarm.")
     parser.add_argument("--kline-prewarm-enabled", action="store_true", help="Enable hidden K-line WebEngine prewarm.")
     parser.add_argument("--central-quotes-enabled", action="store_true", help="Enable central quotes timer.")
-    parser.add_argument("--load-tabs", action="store_true", help="Load every workspace tab and record per-tab RSS deltas.")
+    parser.add_argument(
+        "--load-tabs", action="store_true", help="Load every workspace tab and record per-tab RSS deltas."
+    )
     parser.add_argument("--settle-ms", type=int, default=0, help="Wait/process events after build and tab loading.")
     parser.add_argument("--tab-cycles", type=int, default=0, help="Repeatedly switch through all workspace tabs.")
     parser.add_argument("--kline-cycles", type=int, default=0, help="Repeatedly open and close a K-line window.")
     parser.add_argument("--kline-code", default="000001", help="Stock code used by --kline-cycles.")
     parser.add_argument("--kline-name", default="平安银行", help="Stock name used by --kline-cycles.")
-    parser.add_argument("--allow-offscreen-kline", action="store_true", help="Attempt K-line WebEngine cycles even with QT_QPA_PLATFORM=offscreen.")
-    parser.add_argument("--webengine-smoke", action="store_true", help="Run an isolated QtWebEngine smoke probe and include its result.")
-    parser.add_argument("--skip-webengine-smoke", action="store_true", help="Run K-line cycles without the isolated QtWebEngine preflight.")
-    parser.add_argument("--cycle-settle-ms", type=int, default=150, help="Wait/process events inside repeated tab or K-line cycles.")
+    parser.add_argument(
+        "--allow-offscreen-kline",
+        action="store_true",
+        help="Attempt K-line WebEngine cycles even with QT_QPA_PLATFORM=offscreen.",
+    )
+    parser.add_argument(
+        "--webengine-smoke", action="store_true", help="Run an isolated QtWebEngine smoke probe and include its result."
+    )
+    parser.add_argument(
+        "--skip-webengine-smoke",
+        action="store_true",
+        help="Run K-line cycles without the isolated QtWebEngine preflight.",
+    )
+    parser.add_argument(
+        "--cycle-settle-ms", type=int, default=150, help="Wait/process events inside repeated tab or K-line cycles."
+    )
     parser.add_argument(
         "--profile-gbbq",
         choices=("none", "single", "full", "both"),

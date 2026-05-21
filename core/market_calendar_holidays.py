@@ -147,9 +147,7 @@ def ensure_holiday_table(project_root: str) -> None:
         raise CacheIOError("holiday cache table init failed") from exc
 
 
-def load_holidays_from_store(
-    project_root: str, market: str
-) -> list[tuple[int, set[str], datetime.datetime | None]]:
+def load_holidays_from_store(project_root: str, market: str) -> list[tuple[int, set[str], datetime.datetime | None]]:
     ensure_holiday_table(project_root)
     try:
         with sqlite3.connect(holiday_db_path(project_root), timeout=10) as conn:
@@ -209,9 +207,7 @@ def is_twse_holiday_row(
     return any(keyword in text for keyword in include_keywords)
 
 
-def fetch_twse_holidays(
-    year: int, include_keywords: tuple[str, ...], exclude_keywords: tuple[str, ...]
-) -> set[str]:
+def fetch_twse_holidays(year: int, include_keywords: tuple[str, ...], exclude_keywords: tuple[str, ...]) -> set[str]:
     minguo_year = year - 1911
     if minguo_year <= 0:
         raise BusinessRuleError(f"invalid TW target year: {year}")
@@ -222,10 +218,7 @@ def fetch_twse_holidays(
         raise NetworkServiceError(f"twse dependency unavailable: {year}") from exc
 
     try:
-        url = (
-            "https://www.twse.com.tw/holidaySchedule/holidaySchedule"
-            f"?response=json&queryYear={minguo_year}"
-        )
+        url = f"https://www.twse.com.tw/holidaySchedule/holidaySchedule?response=json&queryYear={minguo_year}"
         response = requests.get(url, timeout=20)
     except requests.RequestException as exc:
         raise NetworkServiceError(f"twse request failed: {year}") from exc
@@ -260,13 +253,9 @@ def fetch_twse_holidays(
             actual_year = maybe + 1911 if maybe < 1911 else maybe
 
     if actual_year is not None and actual_year != year:
-        raise BusinessRuleError(
-            f"twse holiday for target year not published yet: request={year}, title={title}"
-        )
+        raise BusinessRuleError(f"twse holiday for target year not published yet: request={year}, title={title}")
     if title and expected_marker not in title and str(year) not in title:
-        raise BusinessRuleError(
-            f"twse holiday for target year not published yet: request={year}, title={title}"
-        )
+        raise BusinessRuleError(f"twse holiday for target year not published yet: request={year}, title={title}")
 
     rows = payload.get("data")
     if not isinstance(rows, list):
@@ -305,9 +294,7 @@ def fetch_public_holidays(
     try:
         import requests
     except ImportError as exc:
-        raise NetworkServiceError(
-            f"holiday api dependency unavailable: {country_code} {year}"
-        ) from exc
+        raise NetworkServiceError(f"holiday api dependency unavailable: {country_code} {year}") from exc
 
     try:
         url = f"https://date.nager.at/api/v3/PublicHolidays/{year}/{country_code}"
@@ -318,9 +305,7 @@ def fetch_public_holidays(
     if response.status_code == 204:
         raise BusinessRuleError(f"holiday api has no data for target year: {country_code} {year}")
     if response.status_code == 404:
-        raise BusinessRuleError(
-            f"holiday api country/year unsupported: {country_code} {year}"
-        )
+        raise BusinessRuleError(f"holiday api country/year unsupported: {country_code} {year}")
     if response.status_code >= 400:
         raise NetworkServiceError(f"holiday api http {response.status_code}: {country_code} {year}")
 

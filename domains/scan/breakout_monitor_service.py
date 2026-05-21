@@ -186,7 +186,9 @@ class BreakoutMonitorService:
                             small_cap_count += 1
                     else:
                         entry["market_cap"] = "未知"
-                _log.info(f"[市值标记] 完成 | 共 {len(ready_pool)} 只，其中小市值(<40亿) {small_cap_count} 只（均保留在池中）")
+                _log.info(
+                    f"[市值标记] 完成 | 共 {len(ready_pool)} 只，其中小市值(<40亿) {small_cap_count} 只（均保留在池中）"
+                )
             except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 _log.error(f"[市值筛选] 查询异常，跳过: {exc}")
 

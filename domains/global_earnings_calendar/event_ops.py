@@ -144,9 +144,7 @@ def merge_events(events: list[EarningsCalendarEvent]) -> list[EarningsCalendarEv
                 continue
             existing_day = _date_from_any(existing.report_date)
             same_window = (
-                event_day is not None
-                and existing_day is not None
-                and abs((event_day - existing_day).days) <= 1
+                event_day is not None and existing_day is not None and abs((event_day - existing_day).days) <= 1
             )
             if existing.report_date == event.report_date or same_window:
                 existing_rank = _SOURCE_RANK.get(existing.source, 9)

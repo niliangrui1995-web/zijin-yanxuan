@@ -535,12 +535,10 @@ def test_startup_orchestrator_skips_auto_rt_monitor_when_toggle_disabled(monkeyp
 def test_global_earnings_daily_refresh_delay_targets_next_0200():
     import datetime
 
-    assert ms_until_next_global_earnings_calendar_daily_refresh(
-        datetime.datetime(2026, 5, 4, 1, 30)
-    ) == 30 * 60 * 1000
-    assert ms_until_next_global_earnings_calendar_daily_refresh(
-        datetime.datetime(2026, 5, 4, 2, 0)
-    ) == 24 * 60 * 60 * 1000
+    assert ms_until_next_global_earnings_calendar_daily_refresh(datetime.datetime(2026, 5, 4, 1, 30)) == 30 * 60 * 1000
+    assert (
+        ms_until_next_global_earnings_calendar_daily_refresh(datetime.datetime(2026, 5, 4, 2, 0)) == 24 * 60 * 60 * 1000
+    )
     assert GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_HOUR == 2
     assert GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_MINUTE == 0
 

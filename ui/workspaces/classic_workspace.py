@@ -99,32 +99,32 @@ class LazyTabPlaceholder(QWidget):
         self.setStyleSheet(
             f"""
             QWidget#lazyWorkspaceTabPlaceholder {{
-                background: {theme['BG_GLASS']};
+                background: {theme["BG_GLASS"]};
             }}
             QLabel#lazyWorkspaceTabTitle {{
-                color: {theme['TEXT_PRIMARY']};
-                font-size: {tokens['font']['size_xl']}px;
-                font-weight: {tokens['font']['weight_bold']};
+                color: {theme["TEXT_PRIMARY"]};
+                font-size: {tokens["font"]["size_xl"]}px;
+                font-weight: {tokens["font"]["weight_bold"]};
             }}
             QLabel#lazyWorkspaceTabDetail {{
-                color: {theme['TEXT_SECONDARY']};
-                font-size: {tokens['font']['size_sm']}px;
+                color: {theme["TEXT_SECONDARY"]};
+                font-size: {tokens["font"]["size_sm"]}px;
             }}
             QPushButton#lazyWorkspaceTabLoad {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 {primary_gradient_start}, stop:1 {primary_gradient_end});
                 color: {primary_button_text};
                 border: 1px solid {primary_button_border};
-                border-radius: {tokens['radius']['pill']}px;
-                padding: 0 {tokens['space']['xl']}px;
-                min-height: {tokens['control']['toolbar_button_height']}px;
-                font-size: {tokens['font']['size_sm']}px;
-                font-weight: {tokens['font']['weight_bold']};
+                border-radius: {tokens["radius"]["pill"]}px;
+                padding: 0 {tokens["space"]["xl"]}px;
+                min-height: {tokens["control"]["toolbar_button_height"]}px;
+                font-size: {tokens["font"]["size_sm"]}px;
+                font-weight: {tokens["font"]["weight_bold"]};
             }}
             QPushButton#lazyWorkspaceTabLoad:disabled {{
-                background: {theme['BG_BUTTON']};
-                color: {theme['TEXT_MUTED']};
-                border-color: {theme['BORDER_DEFAULT']};
+                background: {theme["BG_BUTTON"]};
+                color: {theme["TEXT_MUTED"]};
+                border-color: {theme["BORDER_DEFAULT"]};
             }}
             QPushButton#lazyWorkspaceTabLoad:hover:!disabled {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -197,7 +197,9 @@ class ClassicWorkspace(QWidget):
                 "group": "主工作台",
                 "group_order": 15,
                 "attr": "tab_lhb",
-                "factory": self._tab_factory("LhbTab", "ui.tabs.lhb_tab", self.data_provider, self, autoload_pool=False),
+                "factory": self._tab_factory(
+                    "LhbTab", "ui.tabs.lhb_tab", self.data_provider, self, autoload_pool=False
+                ),
                 "widget": None,
                 "loaded": False,
             },
@@ -227,7 +229,9 @@ class ClassicWorkspace(QWidget):
                 "group": "主工作台",
                 "group_order": 32,
                 "attr": "tab_stock_candidates",
-                "factory": self._tab_factory("StockCandidateTab", "ui.tabs.stock_candidate_tab", self.data_provider, self),
+                "factory": self._tab_factory(
+                    "StockCandidateTab", "ui.tabs.stock_candidate_tab", self.data_provider, self
+                ),
                 "widget": None,
                 "loaded": False,
             },
@@ -237,7 +241,9 @@ class ClassicWorkspace(QWidget):
                 "group": "主工作台",
                 "group_order": 35,
                 "attr": "tab_ai_industry_chain",
-                "factory": self._tab_factory("AIIndustryChainTab", "ui.tabs.ai_industry_chain_tab", self.data_provider, self),
+                "factory": self._tab_factory(
+                    "AIIndustryChainTab", "ui.tabs.ai_industry_chain_tab", self.data_provider, self
+                ),
                 "widget": None,
                 "loaded": False,
             },
@@ -247,7 +253,9 @@ class ClassicWorkspace(QWidget):
                 "group": "主工作台",
                 "group_order": 50,
                 "attr": "tab_rt",
-                "factory": self._tab_factory("RtMonitorTab", "ui.tabs.rt_monitor_tab", self.data_provider, self.engine, self),
+                "factory": self._tab_factory(
+                    "RtMonitorTab", "ui.tabs.rt_monitor_tab", self.data_provider, self.engine, self
+                ),
                 "widget": None,
                 "loaded": False,
             },
@@ -267,7 +275,9 @@ class ClassicWorkspace(QWidget):
                 "group": "情报源",
                 "group_order": 20,
                 "attr": "tab_foreign_block",
-                "factory": self._tab_factory("ForeignBlockTradeTab", "ui.tabs.foreign_block_trade_tab", self.data_provider, self),
+                "factory": self._tab_factory(
+                    "ForeignBlockTradeTab", "ui.tabs.foreign_block_trade_tab", self.data_provider, self
+                ),
                 "widget": None,
                 "loaded": False,
             },
@@ -287,7 +297,9 @@ class ClassicWorkspace(QWidget):
                 "group": "情报源",
                 "group_order": 40,
                 "attr": "tab_fund_holdings",
-                "factory": self._tab_factory("FundHoldingsTab", "ui.tabs.fund_holdings_tab", self.data_provider, self, autoload=False),
+                "factory": self._tab_factory(
+                    "FundHoldingsTab", "ui.tabs.fund_holdings_tab", self.data_provider, self, autoload=False
+                ),
                 "widget": None,
                 "loaded": False,
             },
@@ -690,8 +702,7 @@ class ClassicWorkspace(QWidget):
             name = str(code2name.get(code_text, "") or "").strip()
 
         tab_titles = {
-            str(spec.get("key") or "").strip(): str(spec.get("title") or "").strip()
-            for spec in self.tab_specs()
+            str(spec.get("key") or "").strip(): str(spec.get("title") or "").strip() for spec in self.tab_specs()
         }
         signals = self.collect_stock_context().get(code_text, [])
         detail_context = context.get("vcp_data")

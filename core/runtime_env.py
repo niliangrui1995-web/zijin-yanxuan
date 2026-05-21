@@ -44,9 +44,7 @@ def configure_qt_webengine_runtime(env: dict[str, str] | None = None) -> dict[st
 
     target = os.environ if env is None else env
     target.setdefault("QT_OPENGL", "software")
-    target["QTWEBENGINE_CHROMIUM_FLAGS"] = _merge_chromium_flags(
-        target.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
-    )
+    target["QTWEBENGINE_CHROMIUM_FLAGS"] = _merge_chromium_flags(target.get("QTWEBENGINE_CHROMIUM_FLAGS", ""))
     return target
 
 
@@ -264,8 +262,7 @@ def collect_runtime_env_issues(
             preferred_python = resolve_project_python(project_root, executable=current_executable)
             if os.path.normcase(current_executable) not in normalized_candidates:
                 issues.append(
-                    f"current executable is not project .venv: {current_executable} "
-                    f"(recommended: {preferred_python})"
+                    f"current executable is not project .venv: {current_executable} (recommended: {preferred_python})"
                 )
 
     if _is_windows():
@@ -281,9 +278,7 @@ def collect_runtime_env_issues(
 
     yfinance_version = package_version("yfinance")
     curl_cffi_version = package_version("curl_cffi") or package_version("curl-cffi")
-    if yfinance_version and (
-        _version_lt(yfinance_version, "1.3.0") or _version_ge(yfinance_version, "1.4.0")
-    ):
+    if yfinance_version and (_version_lt(yfinance_version, "1.3.0") or _version_ge(yfinance_version, "1.4.0")):
         issues.append(f"yfinance version incompatible: {yfinance_version} (need >=1.3.0,<1.4)")
     if not curl_cffi_version:
         issues.append("missing runtime dependency: curl_cffi")

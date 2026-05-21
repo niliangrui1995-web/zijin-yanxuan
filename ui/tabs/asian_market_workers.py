@@ -72,10 +72,7 @@ def infer_asian_markets(codes) -> list[str]:
 
 
 def is_asian_quote_refresh_time(codes) -> bool:
-    return any(
-        MarketCalendar.is_quote_refresh_time(market)
-        for market in infer_asian_markets(codes)
-    )
+    return any(MarketCalendar.is_quote_refresh_time(market) for market in infer_asian_markets(codes))
 
 
 def _asian_quote_fetch_priority(code: str) -> int:
@@ -102,13 +99,7 @@ def _to_float(value) -> float | None:
     text = str(value).strip()
     if text in _EMPTY_NUMERIC_MARKERS:
         return None
-    compact = (
-        text.replace(",", "")
-        .replace("¥", "")
-        .replace("￥", "")
-        .replace("원", "")
-        .replace("%", "")
-    )
+    compact = text.replace(",", "").replace("¥", "").replace("￥", "").replace("원", "").replace("%", "")
     match = _NUMERIC_TOKEN_RE.search(compact)
     if not match:
         return None
@@ -252,10 +243,7 @@ def _fetch_tw_realtime_quote(code: str, http_session) -> dict | None:
         return None
 
     market_prefix = "otc" if suffix == "TWO" else "tse"
-    url = (
-        "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
-        f"?ex_ch={market_prefix}_{base_code}.tw&json=1&delay=0"
-    )
+    url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch={market_prefix}_{base_code}.tw&json=1&delay=0"
     response = http_session.get(
         url,
         headers={**_DEFAULT_HTTP_HEADERS, "Referer": "https://mis.twse.com.tw/"},
@@ -311,9 +299,7 @@ def _fetch_kr_realtime_quote(code: str, http_session) -> dict | None:
         return None
 
     ratio = _to_float(info.get("fluctuationsRatioRaw") or info.get("fluctuationsRatio"))
-    diff_value = _to_float(
-        info.get("compareToPreviousClosePriceRaw") or info.get("compareToPreviousClosePrice")
-    )
+    diff_value = _to_float(info.get("compareToPreviousClosePriceRaw") or info.get("compareToPreviousClosePrice"))
     direction_code = str((info.get("compareToPreviousPrice") or {}).get("code") or "").strip()
     prev_close = None
     if diff_value is not None:
@@ -328,9 +314,7 @@ def _fetch_kr_realtime_quote(code: str, http_session) -> dict | None:
         "open": _to_float(info.get("openPriceRaw") or info.get("openPrice")) or close_price,
         "high": _to_float(info.get("highPriceRaw") or info.get("highPrice")) or close_price,
         "low": _to_float(info.get("lowPriceRaw") or info.get("lowPrice")) or close_price,
-        "volume": _to_float(
-            info.get("accumulatedTradingVolumeRaw") or info.get("accumulatedTradingVolume")
-        ) or 0.0,
+        "volume": _to_float(info.get("accumulatedTradingVolumeRaw") or info.get("accumulatedTradingVolume")) or 0.0,
         "previous_close": prev_close,
         "currency": ((info.get("currencyType") or {}).get("code") or "KRW"),
         "source": "naver_realtime",
@@ -423,7 +407,7 @@ def _parse_jp_realtime_page(html: str) -> dict | None:
     if start >= 0:
         end = html.find("</script>", start)
         if end >= 0:
-            payload = json.loads(html[start + len(prefix):end].strip())
+            payload = json.loads(html[start + len(prefix) : end].strip())
             board = (payload.get("mainStocksPriceBoard") or {}).get("priceBoard") or {}
             detail = (payload.get("mainStocksDetail") or {}).get("detail") or {}
             page_info = payload.get("pageInfo") or {}
@@ -507,11 +491,7 @@ def _extract_jp_indicator_value(page_text: str, key: str) -> tuple[float | None,
 
 
 def _latest_normalized_date(*raw_dates: str | None) -> str | None:
-    dates = [
-        parsed
-        for parsed in (_normalize_trade_date(raw_date) for raw_date in raw_dates)
-        if parsed
-    ]
+    dates = [parsed for parsed in (_normalize_trade_date(raw_date) for raw_date in raw_dates) if parsed]
     return max(dates) if dates else None
 
 
@@ -564,8 +544,7 @@ def _fetch_twse_pe(code: str, http_session) -> tuple[float | None, str]:
         return None, ""
 
     response = http_session.get(
-        "https://www.twse.com.tw/rwd/zh/afterTrading/BWIBBU_d"
-        "?response=json&selectType=ALL",
+        "https://www.twse.com.tw/rwd/zh/afterTrading/BWIBBU_d?response=json&selectType=ALL",
         headers={**_DEFAULT_HTTP_HEADERS, "Referer": "https://www.twse.com.tw/"},
         timeout=15,
     )
@@ -928,10 +907,7 @@ class AsianMarketWorker(QThread):
             return pe_value, pe_source, pe_updated_at
 
         yf_status = get_yf_rate_limit_status()
-        yahoo_allowed = (
-            not MarketCalendar.is_quote_refresh_time(market)
-            and not yf_status["active"]
-        )
+        yahoo_allowed = not MarketCalendar.is_quote_refresh_time(market) and not yf_status["active"]
 
         if yahoo_allowed:
             try:
@@ -1000,11 +976,7 @@ class AsianMarketWorker(QThread):
             fast_info=fast_info,
             df=df,
         )
-        if (
-            (prev_close is None or prev_close <= 0)
-            and df is not None
-            and not getattr(df, "empty", True)
-        ):
+        if (prev_close is None or prev_close <= 0) and df is not None and not getattr(df, "empty", True):
             prev_close = float(df.iloc[-2]["Close"]) if len(df) >= 2 else float(df.iloc[-1]["Close"])
         if prev_close is None or prev_close <= 0:
             prev_close = _to_float((GLOBAL_ASIAN_RT_CACHE.get(code, {}) or {}).get("previous_close")) or close_price
@@ -1092,10 +1064,7 @@ class AsianMarketWorker(QThread):
 
         max_workers = max(1, min(_YF_FETCH_MAX_WORKERS, len(codes)))
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
-        futures = {
-            executor.submit(self._fetch_single_code, code, yf_session, info_session): code
-            for code in codes
-        }
+        futures = {executor.submit(self._fetch_single_code, code, yf_session, info_session): code for code in codes}
         try:
             for future in concurrent.futures.as_completed(futures, timeout=_FETCH_UPDATES_TIMEOUT_SEC):
                 if not self._is_running:
@@ -1177,8 +1146,7 @@ class AsianMarketWorker(QThread):
                 if self._is_running and updates:
                     self.result_ready.emit(updates)
                     message = (
-                        f"[{datetime.datetime.now().strftime('%H:%M:%S')}] "
-                        f"亚洲市场报价更新完成，获取 {len(updates)} 只"
+                        f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 亚洲市场报价更新完成，获取 {len(updates)} 只"
                     )
                     self.progress.emit(message)
                     log.info(f"[AsianTab] {message}")

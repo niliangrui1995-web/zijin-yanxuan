@@ -20,10 +20,12 @@ from curl_cffi import requests as curl_requests
 try:
     from yfinance.exceptions import YFRateLimitError
 except (ImportError, ModuleNotFoundError):  # pragma: no cover - defensive fallback
+
     class YFRateLimitError(Exception):
         """Fallback placeholder when yfinance exceptions are unavailable."""
 
         pass
+
 
 YF_HIJACK_DOMAINS = ("query1.finance.yahoo.com", "query2.finance.yahoo.com")
 YF_HIJACK_TO = "yf.niliangrui.cloud"

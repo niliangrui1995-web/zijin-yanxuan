@@ -233,8 +233,8 @@ def build_stock_context_menu(
     if action == act_chart:
         if isinstance(vcp_data, dict) and vcp_data:
             kline_item = dict(vcp_data)
-            kline_item.setdefault('代码', code)
-            kline_item.setdefault('名称', name)
+            kline_item.setdefault("代码", code)
+            kline_item.setdefault("名称", name)
             event_bus.sig_show_kline_with_list.emit(code, [kline_item], 0)
         else:
             event_bus.sig_show_kline.emit(code)

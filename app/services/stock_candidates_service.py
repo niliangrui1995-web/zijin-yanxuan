@@ -21,6 +21,8 @@ DEFAULT_CACHE_REFS = (
     "fund_holdings_store",
 )
 
+RECOVERABLE_LOAD_ERRORS = (AttributeError, OSError, RuntimeError, TypeError, ValueError)
+
 
 def _utc_now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
@@ -93,11 +95,7 @@ def _canonical_signal(signal: Any) -> dict[str, Any]:
 
 
 def _canonical_row(row: Mapping[str, Any]) -> dict[str, Any]:
-    visible = {
-        str(key): value
-        for key, value in row.items()
-        if str(key) != "_signals"
-    }
+    visible = {str(key): value for key, value in row.items() if str(key) != "_signals"}
     signals = [_canonical_signal(signal) for signal in row.get("_signals", []) or []]
     return {
         "visible": visible,
@@ -185,32 +183,45 @@ class StockCandidatesDataService:
         self._provider_status_reader = provider_status_reader
         self._clock = clock or _utc_now_iso
 
-    def load(self) -> StockCandidatesResult:
-        errors: list[str] = []
-        warnings: list[str] = []
-        context: Mapping[str, Sequence[Any]] = {}
+    def _read_context(self, errors: list[str], warnings: list[str]) -> Mapping[str, Sequence[Any]]:
         try:
             raw_context = self._context_reader() or {}
-            if isinstance(raw_context, Mapping):
-                context = raw_context
-            else:
-                warnings.append("context_reader_returned_non_mapping")
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        except RECOVERABLE_LOAD_ERRORS as exc:
             errors.append(f"context_reader_failed:{exc.__class__.__name__}")
+            return {}
+
+        if isinstance(raw_context, Mapping):
+            return raw_context
+
+        warnings.append("context_reader_returned_non_mapping")
+        return {}
+
+    def _build_rows(self, context: Mapping[str, Sequence[Any]], errors: list[str]) -> list[dict]:
+        try:
+            return list(self._row_builder(context) or [])
+        except RECOVERABLE_LOAD_ERRORS as exc:
+            errors.append(f"row_builder_failed:{exc.__class__.__name__}")
+            return []
+
+    def _read_provider_status(self, errors: list[str]) -> Mapping[str, Any]:
+        if self._provider_status_reader is None:
+            return {}
 
         try:
-            rows = list(self._row_builder(context) or [])
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-            rows = []
-            errors.append(f"row_builder_failed:{exc.__class__.__name__}")
+            return self._provider_status_reader() or {}
+        except RECOVERABLE_LOAD_ERRORS as exc:
+            errors.append(f"provider_status_failed:{exc.__class__.__name__}")
+            return {}
 
-        provider_status: Mapping[str, Any] = {}
-        if self._provider_status_reader is not None:
-            try:
-                provider_status = self._provider_status_reader() or {}
-            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                errors.append(f"provider_status_failed:{exc.__class__.__name__}")
-
+    def _build_lineage(
+        self,
+        *,
+        context: Mapping[str, Sequence[Any]],
+        rows: list[dict],
+        errors: list[str],
+        warnings: list[str],
+        provider_status: Mapping[str, Any],
+    ) -> StockCandidatesDataLineage:
         signals = _iter_signals(context)
         source_tabs = sorted({tab for tab in (_signal_source_tab(signal) for signal in signals) if tab})
         trade_dates = sorted({date for date in (_signal_trade_date(signal) for signal in signals) if date})
@@ -218,7 +229,7 @@ class StockCandidatesDataService:
         if not rows and context:
             warnings.append("no_rows_after_candidate_filter")
 
-        lineage = StockCandidatesDataLineage(
+        return StockCandidatesDataLineage(
             trade_date=trade_dates[-1] if trade_dates else "",
             triggered_network=bool(fault_tolerance.get("recent_triggered_network")),
             fallback_or_degraded=bool(fault_tolerance.get("fallback_or_degraded") or errors),
@@ -229,6 +240,20 @@ class StockCandidatesDataService:
             errors=tuple(errors),
             warnings=tuple(warnings),
             provider_fault_tolerance=fault_tolerance,
+        )
+
+    def load(self) -> StockCandidatesResult:
+        errors: list[str] = []
+        warnings: list[str] = []
+        context = self._read_context(errors, warnings)
+        rows = self._build_rows(context, errors)
+        provider_status = self._read_provider_status(errors)
+        lineage = self._build_lineage(
+            context=context,
+            rows=rows,
+            errors=errors,
+            warnings=warnings,
+            provider_status=provider_status,
         )
         return StockCandidatesResult(
             rows=rows,

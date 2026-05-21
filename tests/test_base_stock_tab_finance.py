@@ -63,9 +63,11 @@ def test_base_stock_tab_async_market_caps_only_fetches_missing_a_share_finance(m
     monkeypatch.setattr(
         VCPEngine,
         "batch_get_finance_info",
-        staticmethod(lambda codes: finance_calls.append(list(codes)) or {
-            "000001": {"zongguben": 1_000_000_000, "source": "eastmoney"}
-        }),
+        staticmethod(
+            lambda codes: (
+                finance_calls.append(list(codes)) or {"000001": {"zongguben": 1_000_000_000, "source": "eastmoney"}}
+            )
+        ),
     )
 
     tab = DummyTab()

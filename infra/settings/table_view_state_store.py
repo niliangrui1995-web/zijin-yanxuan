@@ -84,4 +84,3 @@ class TableViewStateStore:
             QTimer.singleShot(0, _restore_sort_state)
 
         return restored_sort
-

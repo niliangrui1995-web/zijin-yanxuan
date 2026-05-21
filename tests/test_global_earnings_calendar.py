@@ -86,7 +86,9 @@ def test_alpha_vantage_provider_filters_universe_and_sorts():
     provider = AlphaVantageEarningsCalendarProvider(api_key="demo")
     universe = {
         "NVDA": SimpleNamespace(company="NVIDIA", ticker="NVDA", sector="AI加速芯片与定制ASIC", priority="super_giant"),
-        "AMAT": SimpleNamespace(company="Applied Materials", ticker="AMAT", sector="前道晶圆设备与量测", priority="normal"),
+        "AMAT": SimpleNamespace(
+            company="Applied Materials", ticker="AMAT", sector="前道晶圆设备与量测", priority="normal"
+        ),
     }
 
     events = provider.parse_csv(csv_text, universe)
@@ -161,8 +163,22 @@ def test_jpx_provider_parses_financial_announcement_workbook():
             "Fiscal Year/Quarter",
         ]
     )
-    sheet.append([dt.datetime(2026, 5, 15), 8035, "東京エレクトロン", "Tokyo Electron", dt.datetime(2026, 3, 31), "", "", "本決算", "Fiscal year"])
-    sheet.append([dt.datetime(2026, 5, 16), 9999, "Other", "Other", dt.datetime(2026, 3, 31), "", "", "本決算", "Fiscal year"])
+    sheet.append(
+        [
+            dt.datetime(2026, 5, 15),
+            8035,
+            "東京エレクトロン",
+            "Tokyo Electron",
+            dt.datetime(2026, 3, 31),
+            "",
+            "",
+            "本決算",
+            "Fiscal year",
+        ]
+    )
+    sheet.append(
+        [dt.datetime(2026, 5, 16), 9999, "Other", "Other", dt.datetime(2026, 3, 31), "", "", "本決算", "Fiscal year"]
+    )
     buffer = io.BytesIO()
     workbook.save(buffer)
     universe = {

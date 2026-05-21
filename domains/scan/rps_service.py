@@ -123,8 +123,6 @@ class RpsService:
                 "rps250": r250_d[valid].to_dict(),
             }
 
-        _log.info(
-            f"[策略中台] RPS 矩阵构建完成 — 参与标的 {prices.shape[1]} 只 | 扫描交易日 {len(target_dates)} 个"
-        )
+        _log.info(f"[策略中台] RPS 矩阵构建完成 — 参与标的 {prices.shape[1]} 只 | 扫描交易日 {len(target_dates)} 个")
         self._daily_rps_cache[cache_key] = result
         return result

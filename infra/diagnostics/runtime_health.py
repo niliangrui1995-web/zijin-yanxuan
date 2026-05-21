@@ -484,10 +484,7 @@ def _f5_scheduler_snapshot(main_window) -> dict[str, Any]:
             pending_count = None
     return {
         "workspace_available": workspace is not None,
-        "scheduler_active": bool(
-            scheduler is not None
-            and getattr(scheduler, "is_running", lambda: False)()
-        ),
+        "scheduler_active": bool(scheduler is not None and getattr(scheduler, "is_running", lambda: False)()),
         "pending_tasks": pending_count,
         "scheduler_interval_ms": int(getattr(scheduler, "_interval_ms", 0) or 0) if scheduler is not None else 0,
         "frame_budget_ms": int(getattr(scheduler, "_frame_budget_ms", 0) or 0) if scheduler is not None else 0,

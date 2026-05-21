@@ -22,10 +22,7 @@ WS_MAXIMIZEBOX = 0x00010000
 def build_frameless_main_window_flags() -> Qt.WindowType:
     """Keep the main window fully frameless at the Qt level."""
 
-    return (
-        Qt.WindowType.Window
-        | Qt.WindowType.FramelessWindowHint
-    )
+    return Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
 
 
 def apply_windows_frameless_taskbar_fix(window, *, user32=None) -> bool:

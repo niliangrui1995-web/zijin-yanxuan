@@ -18,11 +18,7 @@ class FundHoldingsFilterProxyModel(RtSortFilterProxyModel):
 
     @staticmethod
     def _normalized_values(values) -> set[str]:
-        return {
-            str(value or "").strip()
-            for value in (values or [])
-            if str(value or "").strip()
-        }
+        return {str(value or "").strip() for value in (values or []) if str(value or "").strip()}
 
     def set_filter_state(
         self,
@@ -94,7 +90,10 @@ class FundHoldingsFilterProxyModel(RtSortFilterProxyModel):
         if self._subject_names and str(row_data.get("主体", "")).strip() not in self._subject_names:
             return False
 
-        if self._capital_attributes and str(row_data.get("_capital_attribute_value", "")).strip() not in self._capital_attributes:
+        if (
+            self._capital_attributes
+            and str(row_data.get("_capital_attribute_value", "")).strip() not in self._capital_attributes
+        ):
             return False
 
         if self._change_types and str(row_data.get("变化类型", "")).strip() not in self._change_types:
@@ -122,7 +121,6 @@ class FundHoldingsFilterProxyModel(RtSortFilterProxyModel):
             if filter_text in str(value or "").lower():
                 return True
         return False
-
 
 
 __all__ = ["FundHoldingsFilterProxyModel"]

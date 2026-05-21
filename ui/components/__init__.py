@@ -36,11 +36,7 @@ class SearchFilter:
             errors=lambda item: list(str(item).lower()),
         )
         for group in heteronym_groups:
-            normalized = {
-                str(val).strip().lower()
-                for val in group
-                if str(val).strip()
-            }
+            normalized = {str(val).strip().lower() for val in group if str(val).strip()}
             if normalized:
                 options.append(normalized)
         return tuple(options)

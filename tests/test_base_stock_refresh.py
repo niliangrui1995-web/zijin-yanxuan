@@ -51,8 +51,7 @@ def test_market_cap_batcher_merges_overlapping_tab_requests(monkeypatch):
         VCPEngine,
         "batch_get_finance_info",
         staticmethod(
-            lambda codes: batch_calls.append(tuple(sorted(codes)))
-            or {code: {"zongguben": 100000000} for code in codes}
+            lambda codes: batch_calls.append(tuple(sorted(codes))) or {code: {"zongguben": 100000000} for code in codes}
         ),
     )
     monkeypatch.setattr(
@@ -150,8 +149,14 @@ def test_refresh_table_quotes_and_market_caps_can_prime_local_snapshot_async(mon
             calls.append(("market_caps", None))
 
     monkeypatch.setattr(refresh_module, "collect_table_codes", lambda _owner, _model=None: ["000001"])
-    monkeypatch.setattr(refresh_module, "prime_local_quote_snapshot", lambda *_args, **_kwargs: calls.append(("sync", None)))
-    monkeypatch.setattr(refresh_module, "prime_local_quote_snapshot_async", lambda *_args, **_kwargs: calls.append(("async", None)) or True)
+    monkeypatch.setattr(
+        refresh_module, "prime_local_quote_snapshot", lambda *_args, **_kwargs: calls.append(("sync", None))
+    )
+    monkeypatch.setattr(
+        refresh_module,
+        "prime_local_quote_snapshot_async",
+        lambda *_args, **_kwargs: calls.append(("async", None)) or True,
+    )
     monkeypatch.setattr(
         "core.global_store.global_store.get_latest_quotes",
         lambda: {"000001": {"close": 10.0}},
@@ -184,7 +189,9 @@ def test_refresh_table_from_latest_snapshot_skips_async_local_prime_when_hidden(
             calls.append(("snapshot", dict(payload or {})))
 
     monkeypatch.setattr(refresh_module, "collect_table_codes", lambda _owner, _model=None: ["000001"])
-    monkeypatch.setattr(refresh_module, "prime_local_quote_snapshot", lambda *_args, **_kwargs: calls.append(("sync", None)))
+    monkeypatch.setattr(
+        refresh_module, "prime_local_quote_snapshot", lambda *_args, **_kwargs: calls.append(("sync", None))
+    )
     monkeypatch.setattr(
         refresh_module,
         "prime_local_quote_snapshot_async",
@@ -221,7 +228,9 @@ def test_refresh_table_from_latest_snapshot_keeps_sync_local_prime_when_hidden(m
             calls.append(("snapshot", dict(payload or {})))
 
     monkeypatch.setattr(refresh_module, "collect_table_codes", lambda _owner, _model=None: ["000001"])
-    monkeypatch.setattr(refresh_module, "prime_local_quote_snapshot", lambda *_args, **_kwargs: calls.append(("sync", None)))
+    monkeypatch.setattr(
+        refresh_module, "prime_local_quote_snapshot", lambda *_args, **_kwargs: calls.append(("sync", None))
+    )
     monkeypatch.setattr(
         refresh_module,
         "prime_local_quote_snapshot_async",

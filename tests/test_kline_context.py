@@ -368,11 +368,7 @@ def test_build_kline_echarts_payload_marks_final_vcp_window_to_trigger_date():
     assert payload["vcpArea"][0][0]["yAxis"] == 9.8
     assert payload["vcpArea"][0][1]["xAxis"] == "2026-04-10"
     assert payload["vcpArea"][0][1]["yAxis"] == 14.0
-    horizontal_lines = [
-        line
-        for line in payload["vcpLines"]
-        if line[0]["yAxis"] == line[1]["yAxis"]
-    ]
+    horizontal_lines = [line for line in payload["vcpLines"] if line[0]["yAxis"] == line[1]["yAxis"]]
     assert horizontal_lines == [
         [
             {"xAxis": "2026-04-07", "yAxis": 14.0},
@@ -416,7 +412,20 @@ def test_build_kline_echarts_payload_skips_vcp_overlay_for_generic_event_date():
 def test_build_kline_html_hides_echarts_tooltip_panel():
     html = build_kline_html(
         title="测试",
-        echarts_data={"dates": [], "klines": [], "vols": [], "ma10": [], "ma20": [], "ma50": [], "ma150": [], "ma200": [], "volMa20": [], "macd": [], "diff": [], "dea": []},
+        echarts_data={
+            "dates": [],
+            "klines": [],
+            "vols": [],
+            "ma10": [],
+            "ma20": [],
+            "ma50": [],
+            "ma150": [],
+            "ma200": [],
+            "volMa20": [],
+            "macd": [],
+            "diff": [],
+            "dea": [],
+        },
         echarts_js_path=r"D:\fake\echarts.min.js",
         theme_colors=build_kline_theme_colors(),
     )

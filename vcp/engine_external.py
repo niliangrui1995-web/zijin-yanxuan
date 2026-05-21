@@ -42,11 +42,7 @@ def _to_eastmoney_secid(code: str) -> str:
 def _fetch_eastmoney_finance_info(codes):
     """批量获取总股本/总市值等财务基础数据。"""
 
-    normalized_codes = [
-        str(code).strip()
-        for code in dict.fromkeys(codes or [])
-        if str(code or "").strip()
-    ]
+    normalized_codes = [str(code).strip() for code in dict.fromkeys(codes or []) if str(code or "").strip()]
     if not normalized_codes:
         return {}
 
@@ -55,7 +51,7 @@ def _fetch_eastmoney_finance_info(codes):
     fields = "f12,f2,f18,f20,f21"
 
     for start in range(0, len(normalized_codes), batch_size):
-        batch = normalized_codes[start:start + batch_size]
+        batch = normalized_codes[start : start + batch_size]
         secids = ",".join(_to_eastmoney_secid(code) for code in batch)
         url = (
             "https://push2.eastmoney.com/api/qt/ulist/get"
@@ -228,10 +224,7 @@ def check_institutional_shareholders(code):
     else:
         prefix = "SZ"
 
-    url = (
-        "https://emweb.securities.eastmoney.com/PC_HSF10/"
-        f"ShareholderResearch/PageAjax?code={prefix}{code}"
-    )
+    url = f"https://emweb.securities.eastmoney.com/PC_HSF10/ShareholderResearch/PageAjax?code={prefix}{code}"
 
     try:
         req = urllib.request.Request(
@@ -298,10 +291,7 @@ def batch_check_institution(codes):
         need_query.append(code)
 
     if need_query:
-        _log.info(
-            f"[机构股东] 东方财富查询 {len(need_query)} 只"
-            f"（缓存命中 {len(codes) - len(need_query)} 只）..."
-        )
+        _log.info(f"[机构股东] 东方财富查询 {len(need_query)} 只（缓存命中 {len(codes) - len(need_query)} 只）...")
         for index, code in enumerate(need_query):
             has_inst, detail = check_institutional_shareholders(code)
             entry = {

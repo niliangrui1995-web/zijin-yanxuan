@@ -37,6 +37,7 @@ class TdxDataProviderRealtimeMixin:
 
     def set_online_mode(self, online=True):
         from domains.runtime import domain_events as event_bus
+
         if online and self._offline:
             self._offline = False
             _log.info("[网络] ✅ 已切换到联网模式（东方财富实时行情）")
@@ -55,12 +56,12 @@ class TdxDataProviderRealtimeMixin:
         _log.info("[网络] 🌐 正在重置东方财富实时行情连接状态...")
 
         # 清除主线程的 API 以防后续历史联网补全沿用旧连接
-        if hasattr(self.thread_local, 'api'):
+        if hasattr(self.thread_local, "api"):
             try:
                 self.thread_local.api.disconnect()
             except (AttributeError, OSError, RuntimeError, TypeError) as _e:
                 _log.debug(f"[网络] 断开旧 API 连接时异常: {_e}")
-            delattr(self.thread_local, 'api')
+            delattr(self.thread_local, "api")
         self._rt_runtime_cooldown_until = 0.0
         self._rt_runtime_consecutive_failures = 0
         self._rt_runtime_last_error = ""
@@ -82,8 +83,7 @@ class TdxDataProviderRealtimeMixin:
             "timeout_sec": timeout_sec,
             "batch_size": int(getattr(self, "_rt_quote_batch_size", RT_QUOTE_BATCH_SIZE) or RT_QUOTE_BATCH_SIZE),
             "dedup_window_sec": float(
-                getattr(self, "_rt_runtime_dedup_window_sec", RT_QUOTE_DEDUP_WINDOW_SEC)
-                or RT_QUOTE_DEDUP_WINDOW_SEC
+                getattr(self, "_rt_runtime_dedup_window_sec", RT_QUOTE_DEDUP_WINDOW_SEC) or RT_QUOTE_DEDUP_WINDOW_SEC
             ),
             "page_probe": "skip",
             "quote_probe": "skip",
@@ -211,17 +211,14 @@ class TdxDataProviderRealtimeMixin:
         return to_eastmoney_secid(code)
 
     @staticmethod
-
     def _to_sina_symbol(code: str) -> str:
         return to_sina_symbol(code)
 
     @staticmethod
-
     def _to_tencent_symbol(code: str) -> str:
         return to_tencent_symbol(code)
 
     @staticmethod
-
     def _coerce_quote_number(value) -> float:
         return coerce_quote_number(value)
 

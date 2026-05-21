@@ -94,18 +94,22 @@ def test_smooth_tab_widget_suspends_animation_after_slow_snapshot():
 
 def test_stock_table_model_same_code_update_avoids_model_reset():
     model = StockTableModel(["代码", "名称", "现价"])
-    model.update_data([
-        {"代码": "000001", "名称": "A", "现价": "10.00"},
-        {"代码": "000002", "名称": "B", "现价": "20.00"},
-    ])
+    model.update_data(
+        [
+            {"代码": "000001", "名称": "A", "现价": "10.00"},
+            {"代码": "000002", "名称": "B", "现价": "20.00"},
+        ]
+    )
 
     reset_spy = QSignalSpy(model.modelReset)
     change_spy = QSignalSpy(model.dataChanged)
 
-    model.update_data([
-        {"代码": "000001", "名称": "A", "现价": "10.10"},
-        {"代码": "000002", "名称": "B", "现价": "20.00"},
-    ])
+    model.update_data(
+        [
+            {"代码": "000001", "名称": "A", "现价": "10.10"},
+            {"代码": "000002", "名称": "B", "现价": "20.00"},
+        ]
+    )
 
     assert len(reset_spy) == 0
     assert len(change_spy) == 1
@@ -114,21 +118,25 @@ def test_stock_table_model_same_code_update_avoids_model_reset():
 
 def test_stock_table_model_same_code_reorder_avoids_model_reset():
     model = StockTableModel(["代码", "名称"])
-    model.update_data([
-        {"代码": "000001", "名称": "A"},
-        {"代码": "000002", "名称": "B"},
-        {"代码": "000003", "名称": "C"},
-    ])
+    model.update_data(
+        [
+            {"代码": "000001", "名称": "A"},
+            {"代码": "000002", "名称": "B"},
+            {"代码": "000003", "名称": "C"},
+        ]
+    )
 
     reset_spy = QSignalSpy(model.modelReset)
     layout_spy = QSignalSpy(model.layoutChanged)
     change_spy = QSignalSpy(model.dataChanged)
 
-    model.update_data([
-        {"代码": "000003", "名称": "C"},
-        {"代码": "000001", "名称": "A"},
-        {"代码": "000002", "名称": "B+"},
-    ])
+    model.update_data(
+        [
+            {"代码": "000003", "名称": "C"},
+            {"代码": "000001", "名称": "A"},
+            {"代码": "000002", "名称": "B+"},
+        ]
+    )
 
     assert len(reset_spy) == 0
     assert len(layout_spy) == 1

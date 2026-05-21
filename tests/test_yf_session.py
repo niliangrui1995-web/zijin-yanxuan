@@ -15,12 +15,14 @@ from vcp.fetchers.yf_session import (
 
 
 def test_rewrite_yfinance_url_only_updates_target_domains():
-    assert rewrite_yfinance_url(
-        "https://query1.finance.yahoo.com/v8/finance/chart/2330.TW"
-    ) == "https://yf.niliangrui.cloud/v8/finance/chart/2330.TW"
-    assert rewrite_yfinance_url(
-        "https://query2.finance.yahoo.com/v10/finance/quoteSummary/AAPL"
-    ) == "https://yf.niliangrui.cloud/v10/finance/quoteSummary/AAPL"
+    assert (
+        rewrite_yfinance_url("https://query1.finance.yahoo.com/v8/finance/chart/2330.TW")
+        == "https://yf.niliangrui.cloud/v8/finance/chart/2330.TW"
+    )
+    assert (
+        rewrite_yfinance_url("https://query2.finance.yahoo.com/v10/finance/quoteSummary/AAPL")
+        == "https://yf.niliangrui.cloud/v10/finance/quoteSummary/AAPL"
+    )
     assert rewrite_yfinance_url("https://fc.yahoo.com") == "https://fc.yahoo.com"
 
 

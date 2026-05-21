@@ -10,9 +10,7 @@ class _DummyWindow:
     def __init__(self):
         self.data_provider = object()
         self.central_quotes_svc = "stale-service"
-        self._workspace = types.SimpleNamespace(
-            get_realtime_quote_codes=lambda: {"000001", "600519"}
-        )
+        self._workspace = types.SimpleNamespace(get_realtime_quote_codes=lambda: {"000001", "600519"})
         self.created_central_quotes_services = []
         self.workspace_parent = None
         self.replaced_workspace = None

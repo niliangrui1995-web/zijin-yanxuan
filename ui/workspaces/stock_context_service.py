@@ -273,10 +273,7 @@ class StockContextService:
                     **raw_row,
                     KEY_CODE: code,
                     KEY_NAME: str(
-                        raw_row.get(RAW_STOCK_NAME)
-                        or raw_row.get(RAW_STOCK_SHORT_NAME)
-                        or raw_row.get(KEY_NAME)
-                        or ""
+                        raw_row.get(RAW_STOCK_NAME) or raw_row.get(RAW_STOCK_SHORT_NAME) or raw_row.get(KEY_NAME) or ""
                     ).strip(),
                     KEY_QOQ_PCT: raw_row.get(RAW_QOQ_PCT, raw_row.get(KEY_QOQ_PCT, "")),
                     KEY_REPORT_PERIOD: str(raw_row.get(KEY_REPORT_PERIOD, "") or "").strip(),
@@ -478,9 +475,7 @@ class StockContextService:
         if not self._has_tab_key("foreign_block", foreign_block_tab):
             return []
         foreign_keywords = (
-            foreign_block_tab.get_foreign_keywords()
-            if isinstance(foreign_block_tab, ForeignKeywordCapability)
-            else []
+            foreign_block_tab.get_foreign_keywords() if isinstance(foreign_block_tab, ForeignKeywordCapability) else []
         )
 
         block_aggregates: dict[str, dict] = {}
@@ -708,9 +703,7 @@ class StockContextService:
                     KEY_NAME: str(row.get("stock_name") or "").strip(),
                     KEY_SUBJECT: str(row.get("subject_name") or "").strip(),
                     KEY_CAPITAL_ATTRIBUTE: (
-                        capital_attribute
-                        if capital_attribute != QFII_CAPITAL_ATTRIBUTE_UNMARKED
-                        else ""
+                        capital_attribute if capital_attribute != QFII_CAPITAL_ATTRIBUTE_UNMARKED else ""
                     ),
                     KEY_SUBJECT_CODE: subject_code,
                     KEY_QUARTER: quarter_key,
@@ -848,9 +841,7 @@ class StockContextService:
 
             net_text = f"{TEXT_NET_SELL}{abs(net):.0f}\u4e07" if net < 0 else f"{TEXT_NET_BUY}{net:.0f}\u4e07"
             inst_text = (
-                f"{TEXT_INST_NET_SELL}{abs(inst):.0f}\u4e07"
-                if inst < 0
-                else f"{TEXT_INST_NET_BUY}{inst:.0f}\u4e07"
+                f"{TEXT_INST_NET_SELL}{abs(inst):.0f}\u4e07" if inst < 0 else f"{TEXT_INST_NET_BUY}{inst:.0f}\u4e07"
             )
             foreign_text = (
                 f"{TEXT_FOREIGN_NET_SELL}{abs(foreign):.0f}\u4e07"

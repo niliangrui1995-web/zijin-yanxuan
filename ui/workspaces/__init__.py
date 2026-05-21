@@ -9,4 +9,5 @@ def __getattr__(name: str):
         return ClassicWorkspace
     raise AttributeError(name)
 
+
 __all__ = ["ClassicWorkspace"]

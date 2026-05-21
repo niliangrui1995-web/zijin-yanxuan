@@ -34,11 +34,7 @@ class WorkspaceTableService:
         return tables
 
     def iter_refreshable_tabs(self) -> list:
-        return [
-            tab
-            for tab in self._iter_tabs()
-            if isinstance(tab, SnapshotRefreshCapability)
-        ]
+        return [tab for tab in self._iter_tabs() if isinstance(tab, SnapshotRefreshCapability)]
 
     def _current_tab_widget(self):
         tabs = getattr(self._workspace, "tabs", None)
@@ -129,9 +125,7 @@ class WorkspaceTableService:
             frame_budget_ms=frame_budget_ms,
             max_tasks_per_frame=1,
         )
-        scheduler.taskFailed.connect(
-            lambda label, message: log.warning(f"[F5] {label} 分帧刷新失败: {message}")
-        )
+        scheduler.taskFailed.connect(lambda label, message: log.warning(f"[F5] {label} 分帧刷新失败: {message}"))
 
         def _cleanup():
             if getattr(self._workspace, "_f5_refresh_scheduler", None) is scheduler:

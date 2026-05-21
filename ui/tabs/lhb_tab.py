@@ -349,9 +349,19 @@ class LhbTab(BaseStockTab):
 
         # 表格列配置
         self.columns = [
-            "代码", "名称", "现价", "涨幅%", "市值", "买点",
-            "上榜次数", "最近上榜", "上榜净买额(万)",
-            "机构净买(万)", "外资净买入", "换手率%", "上榜原因",
+            "代码",
+            "名称",
+            "现价",
+            "涨幅%",
+            "市值",
+            "买点",
+            "上榜次数",
+            "最近上榜",
+            "上榜净买额(万)",
+            "机构净买(万)",
+            "外资净买入",
+            "换手率%",
+            "上榜原因",
         ]
         self.table = VCPTableView(default_row_height=30)
         self.model = StockTableModel(self.columns)
@@ -783,11 +793,19 @@ class LhbTab(BaseStockTab):
                         validated_results[date_str] = probe_payload
                         probe_status = str(probe_payload.get("status", "ok") or "ok")
                         if probe_status == "ok":
-                            _safe_log_emit("info", f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 校验通过 | {cached_count}条")
+                            _safe_log_emit(
+                                "info", f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 校验通过 | {cached_count}条"
+                            )
                         elif probe_status == "empty":
-                            _safe_log_emit("warn", f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 源头暂为空，保留缓存{cached_count}条")
+                            _safe_log_emit(
+                                "warn",
+                                f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 源头暂为空，保留缓存{cached_count}条",
+                            )
                         else:
-                            _safe_log_emit("warn", f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 校验异常，保留缓存{cached_count}条")
+                            _safe_log_emit(
+                                "warn",
+                                f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 校验异常，保留缓存{cached_count}条",
+                            )
                 except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
                     log.warning(f"[龙虎榜池] 校验 {date_str} 失败: {e}")
                     _safe_log_emit("warn", f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 校验失败: {e}")
@@ -835,7 +853,7 @@ class LhbTab(BaseStockTab):
                 "info",
                 self._ensure_log_line(
                     f"[龙虎榜池] 同步完成 | 更新{len(fetched_results)}天 | 校验{len(validated_results)}天 | 入池{len(pool)}只"
-                )
+                ),
             )
 
         def _on_backfill_error(error_message: str):
@@ -863,12 +881,14 @@ class LhbTab(BaseStockTab):
         """历史回补：清空缓存，重新获取全新 20 个交易日的龙虎榜数据"""
         if self._backfill_in_progress:
             from ui.components.toast_widget import show_toast
+
             show_toast("正在抓取中，请稍候...", "warning", self)
             return
 
         trade_dates, strategy_message, strategy_level = self._get_manual_refresh_trade_dates()
         if not trade_dates:
             from ui.components.toast_widget import show_toast
+
             show_toast("交易日历尚未就绪", "warning", self)
             return
         if strategy_message:
@@ -961,4 +981,5 @@ class LhbTab(BaseStockTab):
             return
 
         from ui.components.stock_context_menu import build_stock_context_menu
+
         build_stock_context_menu(self, code, name, vcp_data=row_data)

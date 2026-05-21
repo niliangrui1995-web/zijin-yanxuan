@@ -1,4 +1,5 @@
 """Table-oriented widgets shared by the UI package."""
+
 import time
 
 from PyQt6.QtCore import (
@@ -60,6 +61,7 @@ class VCPTableView(QTableView):
         self._scrollbar_restore_timer.timeout.connect(self._restore_pending_scrollbars)
         self._init_common_styles(default_row_height)
         from ui.theme import theme_manager
+
         self._theme_manager = theme_manager
         self._theme_manager.sig_theme_changed.connect(self._on_theme_changed)
 
@@ -253,11 +255,7 @@ class VCPTableView(QTableView):
                 selected_rows = [index.row() for index in selection_model.selectedRows()]
             except (AttributeError, RuntimeError, TypeError, ValueError):
                 selected_rows = []
-            selected_codes = [
-                self._row_identity(row)
-                for row in selected_rows
-                if self._row_identity(row)
-            ]
+            selected_codes = [self._row_identity(row) for row in selected_rows if self._row_identity(row)]
 
         header = self.horizontalHeader()
         proxy_sort_column = -1
@@ -356,7 +354,9 @@ class VCPTableView(QTableView):
                     )
 
             if current_row >= 0:
-                current_index = self.model().index(current_row, min(current_col, max(0, self.model().columnCount() - 1)))
+                current_index = self.model().index(
+                    current_row, min(current_col, max(0, self.model().columnCount() - 1))
+                )
                 self.setCurrentIndex(current_index)
 
             self._restore_scrollbars(v_scroll, h_scroll)
@@ -461,6 +461,7 @@ class VCPTableView(QTableView):
                 tooltip_text = index.data(Qt.ItemDataRole.ToolTipRole)
                 if tooltip_text and self._should_show_tooltip_for_index(index):
                     from ui.theme import theme_manager
+
                     t = theme_manager.current_theme
                     pal = QPalette(QToolTip.palette())
                     for group in (
@@ -599,11 +600,7 @@ class MultiSelectFilterButton(QToolButton):
             return set()
         if self._all_action and self._all_action.isChecked():
             return set()
-        return {
-            value
-            for value, action in self._actions.items()
-            if action.isChecked()
-        }
+        return {value for value, action in self._actions.items() if action.isChecked()}
 
     def selected_labels(self) -> list[str]:
         selected = self.selected_values()
@@ -657,11 +654,7 @@ class MultiSelectFilterButton(QToolButton):
         self.set_selected_values(restored_selection, emit=False)
 
     def set_selected_values(self, values, *, emit: bool = True):
-        selected = {
-            str(value or "").strip()
-            for value in (values or [])
-            if str(value or "").strip() in self._actions
-        }
+        selected = {str(value or "").strip() for value in (values or []) if str(value or "").strip() in self._actions}
 
         self._updating = True
         try:
@@ -688,11 +681,7 @@ class MultiSelectFilterButton(QToolButton):
         if self._updating:
             return
         self.set_selected_values(
-            {
-                value
-                for value, action in self._actions.items()
-                if action.isChecked()
-            },
+            {value for value, action in self._actions.items() if action.isChecked()},
             emit=True,
         )
 
@@ -768,6 +757,7 @@ class TableStateOverlay(QWidget):
         layout.addWidget(self._card, 0, Qt.AlignmentFlag.AlignCenter)
 
         from ui.theme import theme_manager
+
         theme_manager.sig_theme_changed.connect(lambda _name: self._apply_style())
         self._sync_card_width()
         self._apply_style()
@@ -801,7 +791,7 @@ class TableStateOverlay(QWidget):
             QFrame#tableStateCard {{
                 background-color: {card_bg};
                 border: 1px solid {card_border};
-                border-radius: {tokens['radius']['md']}px;
+                border-radius: {tokens["radius"]["md"]}px;
             }}
             """
         )
@@ -809,14 +799,16 @@ class TableStateOverlay(QWidget):
             f"color: {tone['fg'] if self._mode != 'empty' else t['TEXT_PRIMARY']};"
             f" font-size: {tokens['font']['size_lg']}px; font-weight: {tokens['font']['weight_bold']};"
         )
-        self._subtitle.setStyleSheet(
-            f"color: {t['TEXT_SECONDARY']}; font-size: {tokens['font']['size_sm']}px;"
-        )
+        self._subtitle.setStyleSheet(f"color: {t['TEXT_SECONDARY']}; font-size: {tokens['font']['size_sm']}px;")
         self._meta.setStyleSheet(
             f"color: {t['TEXT_MUTED']}; font-size: {tokens['font']['size_sm']}px;"
             f" font-family: {tokens['font']['mono_family']};"
         )
-        dot_color = tone["fg"] if self._mode in ("loading", "success", "warning", "error", "info", "cached") else t.get("COLOR_INFO", "#3B82F6")
+        dot_color = (
+            tone["fg"]
+            if self._mode in ("loading", "success", "warning", "error", "info", "cached")
+            else t.get("COLOR_INFO", "#3B82F6")
+        )
         self._dot.set_color(dot_color)
 
     def set_state(

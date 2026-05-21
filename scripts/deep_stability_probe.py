@@ -14,6 +14,15 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "tmp" / "deep_stability"
+CRASH_SUMMARY_MARKERS = (
+    "Faulting application",
+    "Faulting module",
+    "Exception code",
+    "Event Name:",
+    "P1:",
+    "P4:",
+    "P8:",
+)
 
 
 @dataclass(frozen=True)
@@ -238,18 +247,12 @@ def _event_summary(message: str) -> str:
     lines = [line.strip() for line in str(message or "").splitlines() if line.strip()]
     if not lines:
         return ""
-    interesting = [
-        line
-        for line in lines
-        if "Faulting application" in line
-        or "Faulting module" in line
-        or "Exception code" in line
-        or "Event Name:" in line
-        or "P1:" in line
-        or "P4:" in line
-        or "P8:" in line
-    ]
+    interesting = [line for line in lines if _is_crash_summary_line(line)]
     return " | ".join(interesting[:4]) if interesting else lines[0]
+
+
+def _is_crash_summary_line(line: str) -> bool:
+    return any(marker in line for marker in CRASH_SUMMARY_MARKERS)
 
 
 def _extract_report_archive(message: str) -> str:
@@ -353,19 +356,40 @@ def _short_dict_value(data: dict[str, Any], *keys: str) -> Any:
 
 
 def build_markdown_report(report: dict[str, Any]) -> str:
-    lines: list[str] = []
-    lines.append(f"# 深度稳定性测试报告")
-    lines.append("")
-    lines.append(f"- 状态: `{report.get('status')}`")
-    lines.append(f"- 模式: `{_short_dict_value(report, 'mode', 'profile')}`")
-    lines.append(f"- 开始: `{report.get('started_at')}`")
-    lines.append(f"- 结束: `{report.get('finished_at')}`")
-    lines.append(f"- 输出目录: `{report.get('output_dir')}`")
-    lines.append("")
-    lines.append("## 子测试")
-    lines.append("")
-    lines.append("| 子测试 | 状态 | 退出码 | 耗时 |")
-    lines.append("|---|---:|---:|---:|")
+    lines = _report_header_markdown(report)
+    lines.extend(_child_steps_markdown(report))
+    reports = report.get("child_reports") or {}
+    runtime = reports.get("runtime_health") if isinstance(reports, dict) else {}
+    if isinstance(runtime, dict) and runtime:
+        lines.extend(_runtime_health_markdown(runtime))
+    kline = reports.get("kline_lifecycle") if isinstance(reports, dict) else {}
+    if isinstance(kline, dict) and kline:
+        lines.extend(_kline_markdown(kline))
+    lines.extend(_crash_events_markdown(report.get("windows_crash_events") or []))
+    lines.extend(_conclusion_markdown())
+    return "\n".join(lines) + "\n"
+
+
+def _report_header_markdown(report: dict[str, Any]) -> list[str]:
+    return [
+        "# 深度稳定性测试报告",
+        "",
+        f"- 状态: `{report.get('status')}`",
+        f"- 模式: `{_short_dict_value(report, 'mode', 'profile')}`",
+        f"- 开始: `{report.get('started_at')}`",
+        f"- 结束: `{report.get('finished_at')}`",
+        f"- 输出目录: `{report.get('output_dir')}`",
+        "",
+    ]
+
+
+def _child_steps_markdown(report: dict[str, Any]) -> list[str]:
+    lines = [
+        "## 子测试",
+        "",
+        "| 子测试 | 状态 | 退出码 | 耗时 |",
+        "|---|---:|---:|---:|",
+    ]
     reports = report.get("child_reports") or {}
     for step in report.get("steps") or []:
         child_report = reports.get(step.get("label")) if isinstance(reports, dict) else {}
@@ -373,33 +397,32 @@ def build_markdown_report(report: dict[str, Any]) -> str:
         lines.append(
             f"| {step.get('label')} | `{status}` | `{step.get('returncode')}` | `{step.get('elapsed_seconds')}s` |"
         )
-    runtime = reports.get("runtime_health") if isinstance(reports, dict) else {}
-    if isinstance(runtime, dict) and runtime:
-        lines.extend(_runtime_health_markdown(runtime))
-    kline = reports.get("kline_lifecycle") if isinstance(reports, dict) else {}
-    if isinstance(kline, dict) and kline:
-        lines.extend(_kline_markdown(kline))
-    lines.append("")
-    lines.append("## Windows 崩溃事件")
-    lines.append("")
-    crash_events = report.get("windows_crash_events") or []
+    return lines
+
+
+def _crash_events_markdown(crash_events: list[dict[str, Any]]) -> list[str]:
+    lines = ["", "## Windows 崩溃事件", ""]
     if not crash_events:
         lines.append("未发现本次测试窗口内新的 Python/Qt/QtWebEngine 崩溃事件。")
-    else:
-        for event in crash_events:
-            lines.append(
-                f"- `{event.get('time_created')}` `{event.get('provider')}` `{event.get('id')}`: "
-                f"{event.get('summary')}"
-            )
-            if event.get("report_archive"):
-                lines.append(f"  - WER: `{event.get('report_archive')}`")
-    lines.append("")
-    lines.append("## 结论使用方式")
-    lines.append("")
-    lines.append("- `quick` 可以立刻跑，主要验证脚本、F5、主要标签页和 K 线关闭链路没有明显崩溃。")
-    lines.append("- `standard` 更适合日常改完代码后的稳定性回归。")
-    lines.append("- `soak30` / `soak60` 才能更好暴露长时间运行后的低概率闪退、线程泄漏和 WebEngine 残留。")
-    return "\n".join(lines) + "\n"
+        return lines
+    for event in crash_events:
+        lines.append(
+            f"- `{event.get('time_created')}` `{event.get('provider')}` `{event.get('id')}`: {event.get('summary')}"
+        )
+        if event.get("report_archive"):
+            lines.append(f"  - WER: `{event.get('report_archive')}`")
+    return lines
+
+
+def _conclusion_markdown() -> list[str]:
+    return [
+        "",
+        "## 结论使用方式",
+        "",
+        "- `quick` 可以立刻跑，主要验证脚本、F5、主要标签页和 K 线关闭链路没有明显崩溃。",
+        "- `standard` 更适合日常改完代码后的稳定性回归。",
+        "- `soak30` / `soak60` 才能更好暴露长时间运行后的低概率闪退、线程泄漏和 WebEngine 残留。",
+    ]
 
 
 def _runtime_health_markdown(runtime: dict[str, Any]) -> list[str]:

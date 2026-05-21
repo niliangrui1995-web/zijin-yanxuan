@@ -175,9 +175,7 @@ def collect_pip_inspect(python: str, root: Path = REPO_ROOT) -> dict[str, Any]:
 
     installed = payload.get("installed", [])
     packages = [
-        {"name": _package_name(item), "version": _package_version(item)}
-        for item in installed
-        if isinstance(item, dict)
+        {"name": _package_name(item), "version": _package_version(item)} for item in installed if isinstance(item, dict)
     ]
     packages.sort(key=lambda item: item["name"].lower())
     return {
@@ -259,11 +257,7 @@ def collect_pip_audit(
         return {**base, "status": "failed", "finding_count": 0, "findings": []}
 
     summary = _summarize_pip_audit_payload(result["stdout"])
-    while (
-        attempts <= PIP_AUDIT_RETRY_COUNT
-        and result["returncode"] != 0
-        and summary["parse_status"] != "ok"
-    ):
+    while attempts <= PIP_AUDIT_RETRY_COUNT and result["returncode"] != 0 and summary["parse_status"] != "ok":
         result = _run_command(command, root, timeout_seconds)
         attempts += 1
         if result["timeout"]:

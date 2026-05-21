@@ -210,9 +210,7 @@ def test_kline_html_exposes_incremental_replace_bridge():
 
     assert "let rawData =" in html
     assert "window.replaceKlineData" in html
-    build_option_body = html[
-        html.index("function buildOption()"):html.index("chart.setOption(buildOption());")
-    ]
+    build_option_body = html[html.index("function buildOption()") : html.index("chart.setOption(buildOption());")]
     assert "const data = splitData(rawData);" in build_option_body
     assert html.count("const data = splitData(rawData);") == 1
 
@@ -881,8 +879,22 @@ def test_kline_load_asian_chart_fetches_realtime_quote_when_history_is_stale(mon
                         "track": "先进制程代工",
                         "currency": "TWD",
                         "klines": [
-                            {"date": "2026-04-16", "open": 2000.0, "high": 2020.0, "low": 1990.0, "close": 2010.0, "volume": 1000},
-                            {"date": "2026-04-17", "open": 2010.0, "high": 2030.0, "low": 2005.0, "close": 2030.0, "volume": 1100},
+                            {
+                                "date": "2026-04-16",
+                                "open": 2000.0,
+                                "high": 2020.0,
+                                "low": 1990.0,
+                                "close": 2010.0,
+                                "volume": 1000,
+                            },
+                            {
+                                "date": "2026-04-17",
+                                "open": 2010.0,
+                                "high": 2030.0,
+                                "low": 2005.0,
+                                "close": 2030.0,
+                                "volume": 1100,
+                            },
                         ],
                     }
                 ]

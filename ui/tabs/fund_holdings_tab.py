@@ -82,9 +82,7 @@ class FundHoldingsTab(BaseStockTab):
         super().__init__(data_provider=data_provider, parent=parent)
         self._autoload = bool(autoload)
         self._initial_load_started = False
-        self._initial_load_task_id = self._build_workspace_task_id(
-            f"initial_load_{id(self)}"
-        )
+        self._initial_load_task_id = self._build_workspace_task_id(f"initial_load_{id(self)}")
         self._latest_quarter_map: dict[str, str] = {}
         self._latest_sync_map: dict[str, dict] = {}
         self._sync_task_id = ""
@@ -226,7 +224,13 @@ class FundHoldingsTab(BaseStockTab):
         self.search_box.setMaximumWidth(320)
         self.search_box.textChanged.connect(self._apply_filters)
 
-        filter_widgets = [self.cmb_subject, self.cmb_capital_attribute, self.btn_quarter, self.btn_change, self.search_box]
+        filter_widgets = [
+            self.cmb_subject,
+            self.cmb_capital_attribute,
+            self.btn_quarter,
+            self.btn_change,
+            self.search_box,
+        ]
 
         self.btn_update = QToolButton()
         self.btn_update.setText("全部更新")
@@ -239,10 +243,19 @@ class FundHoldingsTab(BaseStockTab):
         layout.addWidget(toolbar)
 
         self.columns = [
-            "代码", "名称", "市价", "涨幅%", "市值",
-            "主体", "资金属性", "季度", "变化类型",
+            "代码",
+            "名称",
+            "市价",
+            "涨幅%",
+            "市值",
+            "主体",
+            "资金属性",
+            "季度",
+            "变化类型",
             "本期占比",
-            "本期持股", "上期持股", "持股变化",
+            "本期持股",
+            "上期持股",
+            "持股变化",
             "概念板块",
         ]
         self.table = VCPTableView(default_row_height=30)
@@ -255,7 +268,9 @@ class FundHoldingsTab(BaseStockTab):
 
         self.delegate = StockItemDelegate(self.table)
         self.table.setItemDelegate(self.delegate)
-        self.table_state = TableStateWrapper(self.table, empty_title="暂无基金持仓数据", loading_title="同步基金持仓数据中...")
+        self.table_state = TableStateWrapper(
+            self.table, empty_title="暂无基金持仓数据", loading_title="同步基金持仓数据中..."
+        )
 
         header = self.table.horizontalHeader()
         header.setStretchLastSection(True)
@@ -344,9 +359,7 @@ class FundHoldingsTab(BaseStockTab):
             return None
         if scope == cls._QUERY_SCOPE_SELECTED:
             return {
-                str(quarter_key or "").strip()
-                for quarter_key in (quarter_keys or [])
-                if str(quarter_key or "").strip()
+                str(quarter_key or "").strip() for quarter_key in (quarter_keys or []) if str(quarter_key or "").strip()
             }
         return {
             str(quarter_key or "").strip()
@@ -362,11 +375,7 @@ class FundHoldingsTab(BaseStockTab):
             rows = fund_holdings_store.query_change_rows()
             if quarter_keys is None:
                 return rows
-            return [
-                row
-                for row in rows or []
-                if str(row.get("quarter_key") or "").strip() in quarter_keys
-            ]
+            return [row for row in rows or [] if str(row.get("quarter_key") or "").strip() in quarter_keys]
 
     @classmethod
     def _load_view_payload(
@@ -558,7 +567,10 @@ class FundHoldingsTab(BaseStockTab):
             self.menu_quarter.addAction(action)
 
     def _selected_change_types(self) -> set[str]:
-        if self._change_actions.get(self._CHANGE_FILTER_ALL, None) and self._change_actions[self._CHANGE_FILTER_ALL].isChecked():
+        if (
+            self._change_actions.get(self._CHANGE_FILTER_ALL, None)
+            and self._change_actions[self._CHANGE_FILTER_ALL].isChecked()
+        ):
             return set()
         return {
             label
@@ -567,9 +579,15 @@ class FundHoldingsTab(BaseStockTab):
         }
 
     def _quarter_filter_state(self) -> tuple[bool, set[str]]:
-        if self._quarter_actions.get(self._QUARTER_FILTER_LATEST) and self._quarter_actions[self._QUARTER_FILTER_LATEST].isChecked():
+        if (
+            self._quarter_actions.get(self._QUARTER_FILTER_LATEST)
+            and self._quarter_actions[self._QUARTER_FILTER_LATEST].isChecked()
+        ):
             return True, set()
-        if self._quarter_actions.get(self._QUARTER_FILTER_ALL) and self._quarter_actions[self._QUARTER_FILTER_ALL].isChecked():
+        if (
+            self._quarter_actions.get(self._QUARTER_FILTER_ALL)
+            and self._quarter_actions[self._QUARTER_FILTER_ALL].isChecked()
+        ):
             return False, set()
         selected = {
             key
@@ -675,11 +693,7 @@ class FundHoldingsTab(BaseStockTab):
             self._set_change_filter_values(set(), apply=True)
             return
 
-        selected = {
-            label
-            for label in self._CHANGE_TYPE_OPTIONS
-            if self._change_actions[label].isChecked()
-        }
+        selected = {label for label in self._CHANGE_TYPE_OPTIONS if self._change_actions[label].isChecked()}
         self._set_change_filter_values(selected, apply=True)
 
     def _on_quarter_selection_toggled(self, _checked: bool):
@@ -888,8 +902,7 @@ class FundHoldingsTab(BaseStockTab):
             parts.append(subject_text)
 
         capital_text = " / ".join(
-            self._capital_attribute_label(item)
-            for item in sorted(self._selected_capital_attributes())
+            self._capital_attribute_label(item) for item in sorted(self._selected_capital_attributes())
         )
         if capital_text:
             parts.append(capital_text)
@@ -942,7 +955,9 @@ class FundHoldingsTab(BaseStockTab):
 
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             self._settings.setValue(self._view_state_key("subject_names"), subject_names)
-            self._settings.setValue(self._view_state_key("subject_name"), subject_names[0] if len(subject_names) == 1 else "")
+            self._settings.setValue(
+                self._view_state_key("subject_name"), subject_names[0] if len(subject_names) == 1 else ""
+            )
             self._settings.setValue(self._view_state_key("capital_attributes"), capital_attributes)
             self._settings.setValue(self._view_state_key("search_text"), search_text)
             self._settings.setValue(self._view_state_key("quarter_mode"), quarter_mode)
@@ -958,7 +973,9 @@ class FundHoldingsTab(BaseStockTab):
 
         self._restoring_view_state = True
         try:
-            subject_names = set(self._normalize_settings_values(self._settings.value(self._view_state_key("subject_names"), [])))
+            subject_names = set(
+                self._normalize_settings_values(self._settings.value(self._view_state_key("subject_names"), []))
+            )
             if not subject_names:
                 legacy_subject_name = str(self._settings.value(self._view_state_key("subject_name"), "") or "").strip()
                 if legacy_subject_name:
@@ -967,9 +984,15 @@ class FundHoldingsTab(BaseStockTab):
                 self._normalize_settings_values(self._settings.value(self._view_state_key("capital_attributes"), []))
             )
             search_text = str(self._settings.value(self._view_state_key("search_text"), "") or "")
-            quarter_mode = str(self._settings.value(self._view_state_key("quarter_mode"), "latest") or "latest").strip().lower()
-            quarter_values = set(self._normalize_settings_values(self._settings.value(self._view_state_key("quarter_values"), [])))
-            change_types = set(self._normalize_settings_values(self._settings.value(self._view_state_key("change_types"), [])))
+            quarter_mode = (
+                str(self._settings.value(self._view_state_key("quarter_mode"), "latest") or "latest").strip().lower()
+            )
+            quarter_values = set(
+                self._normalize_settings_values(self._settings.value(self._view_state_key("quarter_values"), []))
+            )
+            change_types = set(
+                self._normalize_settings_values(self._settings.value(self._view_state_key("change_types"), []))
+            )
 
             try:
                 sort_column = int(self._settings.value(self._view_state_key("sort_column"), -1) or -1)
@@ -1024,9 +1047,7 @@ class FundHoldingsTab(BaseStockTab):
             return
 
         callable_name = getattr(sync_callable, "__name__", "task")
-        self._sync_task_id = self._build_workspace_task_id(
-            f"sync_{callable_name}"
-        )
+        self._sync_task_id = self._build_workspace_task_id(f"sync_{callable_name}")
         self._set_sync_active(True, "同步基金持仓中...", label)
         total = len(getattr(self.model, "row_data", []) or [])
         visible = self.proxy_model.rowCount() if hasattr(self, "proxy_model") else total
@@ -1313,7 +1334,9 @@ class FundHoldingsTab(BaseStockTab):
                     "本期占比": curr_ratio,
                     "本期持股": self._format_amount(row.get("curr_hold_num_shares"), divisor=10000.0, show=has_curr),
                     "上期持股": self._format_amount(row.get("prev_hold_num_shares"), divisor=10000.0, show=has_prev),
-                    "持股变化": self._format_amount(row.get("delta_hold_num_shares"), divisor=10000.0, show=has_curr or has_prev, signed=True),
+                    "持股变化": self._format_amount(
+                        row.get("delta_hold_num_shares"), divisor=10000.0, show=has_curr or has_prev, signed=True
+                    ),
                     "概念板块": self._get_concept_sector_text(stock_code),
                     "_capital_attribute_value": capital_attribute,
                     "_is_latest_subject_quarter": quarter_key == self._latest_quarter_map.get(subject_code),

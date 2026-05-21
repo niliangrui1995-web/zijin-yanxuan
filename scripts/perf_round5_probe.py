@@ -473,11 +473,7 @@ def summarize_quote_calls(calls: list[dict]) -> dict:
     code_counts = Counter(all_codes)
     repeated_codes = {code: count for code, count in code_counts.items() if count > 1}
     signature_counts = Counter(signatures)
-    repeated_signatures = {
-        signature: count
-        for signature, count in signature_counts.items()
-        if count > 1
-    }
+    repeated_signatures = {signature: count for signature, count in signature_counts.items() if count > 1}
     return {
         "batch_count": len(post_calls),
         "requested_count": len(all_codes),
@@ -501,7 +497,8 @@ def summarize_background_tasks(tasks: list[dict], final_sample: dict, baseline_t
         task
         for task in post_tasks
         if any(
-            marker in " ".join(
+            marker
+            in " ".join(
                 (
                     str(task.get("task_id") or ""),
                     str(task.get("resolved_task_id") or ""),
@@ -625,7 +622,9 @@ def run_post_f5_network_probe(args: argparse.Namespace, app: QApplication) -> di
 
         final_sample = timeline[-1] if timeline else _runtime_timeline_sample(window, "post_f5:final", offset_s=None)
         quote_summary = summarize_quote_calls(list(recorder.quote_calls))
-        background_summary = summarize_background_tasks(list(recorder.background_tasks), final_sample, baseline_task_ids)
+        background_summary = summarize_background_tasks(
+            list(recorder.background_tasks), final_sample, baseline_task_ids
+        )
         post_f5 = {
             "f5_return_elapsed_ms": f5_return_elapsed_ms,
             "timeline": timeline,

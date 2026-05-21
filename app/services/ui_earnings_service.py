@@ -12,8 +12,8 @@ from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
 from core.logger import get_logger
-from domains.earnings.engine import EarningsEngine
 from domains.earnings import EarningsScheduler
+from domains.earnings.engine import EarningsEngine
 
 log = get_logger(__name__)
 

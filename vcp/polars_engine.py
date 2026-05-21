@@ -64,6 +64,7 @@ def _atomic_parquet_write(df: pl.DataFrame, final_path: str, compression: str = 
 # 工具函数: numpy 向量化 pct_change + rank
 # ================================================================
 
+
 def _numpy_pct_change(matrix: np.ndarray, period: int) -> np.ndarray:
     """纯 numpy pct_change — 比 pandas 快 3-5x
 
@@ -90,6 +91,7 @@ def _numpy_rank_pct_axis1(matrix: np.ndarray) -> np.ndarray:
 
     try:
         from scipy.stats import rankdata
+
         # scipy 路径: 逐行调用 C 级 rankdata，NaN 用 'omit' 策略
         for i in range(n_rows):
             row = matrix[i]
@@ -98,7 +100,7 @@ def _numpy_rank_pct_axis1(matrix: np.ndarray) -> np.ndarray:
             if valid_count < 2:
                 continue
             valid_vals = row[valid_mask]
-            ranks = rankdata(valid_vals, method='ordinal')
+            ranks = rankdata(valid_vals, method="ordinal")
             result[i, valid_mask] = ranks / valid_count
     except ImportError:
         # scipy 未安装时退化为原始 numpy 实现
@@ -120,15 +122,17 @@ def _numpy_rank_pct_axis1(matrix: np.ndarray) -> np.ndarray:
 # 优化1: 价格矩阵快速构建（纯 Polars）
 # ================================================================
 
+
 def _to_pldf(df) -> pl.DataFrame | None:
     """将 Polars 或 Pandas DataFrame 统一转为 pl.DataFrame，防御式兼容"""
     import pandas as pd
+
     if df is None:
         return None
     if isinstance(df, pl.DataFrame):
         return df
     if isinstance(df, pd.DataFrame):
-        temp = df.reset_index() if df.index.name == 'datetime' else df
+        temp = df.reset_index() if df.index.name == "datetime" else df
         return pl.from_pandas(temp)
     return None
 
@@ -147,18 +151,18 @@ def build_prices_matrix_fast(
 
     # 统一日期边界到 datetime.date
     if isinstance(min_start, str):
-        min_start_date = datetime.strptime(min_start.replace("-", ""), '%Y%m%d').date()
-    elif hasattr(min_start, 'date'):
-        min_start_date = min_start.date() if callable(getattr(min_start, 'date')) else min_start
+        min_start_date = datetime.strptime(min_start.replace("-", ""), "%Y%m%d").date()
+    elif hasattr(min_start, "date"):
+        min_start_date = min_start.date() if callable(getattr(min_start, "date")) else min_start
     else:
         min_start_date = min_start
 
     end_date_val = None
     if end_ts is not None:
         if isinstance(end_ts, str):
-            end_date_val = datetime.strptime(end_ts.replace("-", ""), '%Y%m%d').date()
-        elif hasattr(end_ts, 'date'):
-            end_date_val = end_ts.date() if callable(getattr(end_ts, 'date')) else end_ts
+            end_date_val = datetime.strptime(end_ts.replace("-", ""), "%Y%m%d").date()
+        elif hasattr(end_ts, "date"):
+            end_date_val = end_ts.date() if callable(getattr(end_ts, "date")) else end_ts
         else:
             end_date_val = end_ts
 
@@ -168,21 +172,23 @@ def build_prices_matrix_fast(
         pldf = _to_pldf(df)
         if pldf is None or pldf.height == 0:
             continue
-        if 'close' not in pldf.columns or 'datetime' not in pldf.columns:
+        if "close" not in pldf.columns or "datetime" not in pldf.columns:
             continue
         try:
             # 统一 datetime 为 Date 类型
-            sub = pldf.select([
-                pl.col('datetime').cast(pl.Date).alias('date'),
-                pl.col('close'),
-            ])
+            sub = pldf.select(
+                [
+                    pl.col("datetime").cast(pl.Date).alias("date"),
+                    pl.col("close"),
+                ]
+            )
             # 日期过滤
-            sub = sub.filter(pl.col('date') >= pl.lit(min_start_date))
+            sub = sub.filter(pl.col("date") >= pl.lit(min_start_date))
             if end_date_val is not None:
-                sub = sub.filter(pl.col('date') <= pl.lit(end_date_val))
+                sub = sub.filter(pl.col("date") <= pl.lit(end_date_val))
             if sub.height == 0:
                 continue
-            sub = sub.with_columns(pl.lit(code).alias('code'))
+            sub = sub.with_columns(pl.lit(code).alias("code"))
             frames.append(sub)
         except _POLARS_DATA_ERRORS as _e:
             _log.debug(f"[加速引擎] 矩阵构建跳过一只: {_e}")
@@ -192,28 +198,28 @@ def build_prices_matrix_fast(
         return np.array([]).reshape(0, 0), [], np.array([])
 
     # 垂直拼接后 pivot 成宽表
-    long_df = pl.concat(frames, how='vertical_relaxed')
+    long_df = pl.concat(frames, how="vertical_relaxed")
     del frames
 
     wide = long_df.pivot(
-        on='code',
-        index='date',
-        values='close',
-    ).sort('date')
+        on="code",
+        index="date",
+        values="close",
+    ).sort("date")
     # 为什么在这里 del？concat 的 long_df 和 pivot 的 wide 同时存在时峰值翻倍（各约 200MB）
     del long_df
 
     # 前向填充最多10天（替代 pd.ffill(limit=10)）
-    stock_cols = [c for c in wide.columns if c != 'date']
-    wide = wide.with_columns([
-        pl.col(c).forward_fill(limit=10) for c in stock_cols
-    ])
+    stock_cols = [c for c in wide.columns if c != "date"]
+    wide = wide.with_columns([pl.col(c).forward_fill(limit=10) for c in stock_cols])
 
-    dates_arr = wide['date'].to_numpy()
+    dates_arr = wide["date"].to_numpy()
     matrix = wide.select(stock_cols).to_numpy()
 
     elapsed = time.time() - t0
-    _log.info(f"[加速引擎] 价格矩阵构建完成(纯Polars): {len(stock_cols)} 只 × {len(dates_arr)} 日 (耗时 {elapsed:.2f}s)")
+    _log.info(
+        f"[加速引擎] 价格矩阵构建完成(纯Polars): {len(stock_cols)} 只 × {len(dates_arr)} 日 (耗时 {elapsed:.2f}s)"
+    )
     return matrix, stock_cols, dates_arr
 
 
@@ -222,19 +228,19 @@ def build_prices_matrix_fast(
 # ================================================================
 
 # 增量 RPS 价格矩阵磁盘缓存路径
-_PRICES_MATRIX_CACHE = os.path.join(CACHE_DIR, 'vcp_prices_matrix.parquet')
+_PRICES_MATRIX_CACHE = os.path.join(CACHE_DIR, "vcp_prices_matrix.parquet")
 
 
 def _save_prices_matrix(matrix: np.ndarray, columns: list[str], dates: np.ndarray) -> None:
     """将价格矩阵保存为 Parquet（增量 RPS 基底）— 纯 Polars"""
     try:
         # 构造 Polars DataFrame: date列 + 每只股票一列
-        data_dict = {'date': dates}
+        data_dict = {"date": dates}
         for i, col_name in enumerate(columns):
             data_dict[col_name] = matrix[:, i]
         save_df = pl.DataFrame(data_dict)
         with _PRICES_MATRIX_LOCK:
-            _atomic_parquet_write(save_df, _PRICES_MATRIX_CACHE, compression='zstd')
+            _atomic_parquet_write(save_df, _PRICES_MATRIX_CACHE, compression="zstd")
     except _POLARS_RUNTIME_ERRORS as e:
         _log.error(f"[加速引擎] 价格矩阵缓存保存失败: {e}")
 
@@ -248,8 +254,8 @@ def _load_prices_matrix() -> tuple[np.ndarray, list[str], np.ndarray] | None:
             df = pl.read_parquet(_PRICES_MATRIX_CACHE)
         if df.height == 0:
             return None
-        dates = df['date'].to_numpy()
-        stock_cols = [c for c in df.columns if c != 'date']
+        dates = df["date"].to_numpy()
+        stock_cols = [c for c in df.columns if c != "date"]
         matrix = df.select(stock_cols).to_numpy()
         return matrix, stock_cols, dates
     except _POLARS_RUNTIME_ERRORS as e:
@@ -282,8 +288,8 @@ def build_rps_matrix_pl(
     _log.info(f"\n[加速引擎] 正在计算全市场 RPS 强度矩阵... (标的数: {num_stocks})")
     t_total = time.time()
 
-    start_dt = datetime.strptime(start_date.replace("-", ""), '%Y%m%d').date()
-    end_dt = datetime.strptime(end_date.replace("-", ""), '%Y%m%d').date()
+    start_dt = datetime.strptime(start_date.replace("-", ""), "%Y%m%d").date()
+    end_dt = datetime.strptime(end_date.replace("-", ""), "%Y%m%d").date()
     min_start_dt = start_dt - timedelta(days=RPS_BUFFER_DAYS)
 
     # ---- 增量复用: 尝试加载历史矩阵 ----
@@ -296,10 +302,11 @@ def build_rps_matrix_pl(
         c_matrix, c_columns, c_dates = cached
         if len(c_dates) > 0:
             existing_end = c_dates[-1]
-            if hasattr(existing_end, 'astype'):
+            if hasattr(existing_end, "astype"):
                 import numpy as _np
-                existing_end_date = _np.datetime64(existing_end, 'D').astype('datetime64[D]').astype(object)
-                existing_start_date = _np.datetime64(c_dates[0], 'D').astype('datetime64[D]').astype(object)
+
+                existing_end_date = _np.datetime64(existing_end, "D").astype("datetime64[D]").astype(object)
+                existing_start_date = _np.datetime64(c_dates[0], "D").astype("datetime64[D]").astype(object)
             else:
                 existing_end_date = existing_end
                 existing_start_date = c_dates[0]
@@ -343,7 +350,7 @@ def build_rps_matrix_pl(
     rps250_arr = _numpy_rank_pct_axis1(pct250) * 100
     del pct250
 
-    _log.info(f"[加速引擎] numpy pct_change + rank 完成 (耗时 {time.time()-t1:.2f}s)")
+    _log.info(f"[加速引擎] numpy pct_change + rank 完成 (耗时 {time.time() - t1:.2f}s)")
 
     # ---- 组装返回字典 ----
     # 将 numpy datetime64 数组转为 date，用于过滤
@@ -365,20 +372,21 @@ def build_rps_matrix_pl(
         r250 = rps250_arr[idx]
         valid = ~np.isnan(r120) & ~np.isnan(r250)
         # numpy datetime64 -> 字符串
-        if hasattr(d, 'astype'):
-            d_date = np.datetime64(d, 'D').astype('datetime64[D]').astype(object)
+        if hasattr(d, "astype"):
+            d_date = np.datetime64(d, "D").astype("datetime64[D]").astype(object)
         else:
             d_date = d
-        d_str = d_date.strftime(DATE_FMT) if hasattr(d_date, 'strftime') else str(d_date).replace('-', '')
+        d_str = d_date.strftime(DATE_FMT) if hasattr(d_date, "strftime") else str(d_date).replace("-", "")
         result[d_str] = {
-            'rps50':  {columns[j]: float(r50[j]) for j in range(len(columns)) if valid[j]},
-            'rps120': {columns[j]: float(r120[j]) for j in range(len(columns)) if valid[j]},
-            'rps250': {columns[j]: float(r250[j]) for j in range(len(columns)) if valid[j]},
+            "rps50": {columns[j]: float(r50[j]) for j in range(len(columns)) if valid[j]},
+            "rps120": {columns[j]: float(r120[j]) for j in range(len(columns)) if valid[j]},
+            "rps250": {columns[j]: float(r250[j]) for j in range(len(columns)) if valid[j]},
         }
 
     # 释放 6 个大数组后再保存价格矩阵（推迟保存策略，降低峰值内存约 200MB）
     del rps50_arr, rps120_arr, rps250_arr, matrix, dates_arr
     import gc as _gc
+
     _gc.collect()
 
     # 延迟保存：此时 pct/rank 数组已释放，内存处于低谷
@@ -387,8 +395,10 @@ def build_rps_matrix_pl(
         del _deferred_save_data
 
     elapsed_total = time.time() - t_total
-    _log.info(f"[加速引擎] RPS 矩阵构建完成(纯Polars) — 参与标的 {len(columns)} 只 | "
-          f"扫描交易日 {len(target_indices)} 个 | 总耗时 {elapsed_total:.2f}s")
+    _log.info(
+        f"[加速引擎] RPS 矩阵构建完成(纯Polars) — 参与标的 {len(columns)} 只 | "
+        f"扫描交易日 {len(target_indices)} 个 | 总耗时 {elapsed_total:.2f}s"
+    )
 
     if rps_cache is not None:
         cache_key = (str(start_date), str(end_date))
@@ -401,7 +411,7 @@ def build_rps_matrix_pl(
 # 优化2: Parquet 缓存替代 pickle
 # ================================================================
 
-_PARQUET_CACHE_DIR = os.path.join(CACHE_DIR, 'parquet')
+_PARQUET_CACHE_DIR = os.path.join(CACHE_DIR, "parquet")
 
 
 def save_cache_parquet(cache_data: dict, date_str: str) -> bool:
@@ -423,16 +433,17 @@ def save_cache_parquet(cache_data: dict, date_str: str) -> bool:
 
     frames = []
     for code, df in cache_data.items():
-        if df is None or getattr(df, 'empty', False) or (hasattr(df, 'height') and df.height == 0):
+        if df is None or getattr(df, "empty", False) or (hasattr(df, "height") and df.height == 0):
             continue
         try:
             import pandas as pd
+
             if isinstance(df, pd.DataFrame):
                 temp = df.reset_index()
                 idx_col = temp.columns[0]
-                if idx_col != 'datetime':
-                    temp = temp.rename(columns={idx_col: 'datetime'})
-                temp['_code'] = code
+                if idx_col != "datetime":
+                    temp = temp.rename(columns={idx_col: "datetime"})
+                temp["_code"] = code
                 frames.append(pl.from_pandas(temp))
             else:
                 temp = df.with_columns(pl.lit(code).alias("_code"))
@@ -444,8 +455,8 @@ def save_cache_parquet(cache_data: dict, date_str: str) -> bool:
     if not frames:
         return False
 
-    parquet_path = os.path.join(_PARQUET_CACHE_DIR, 'market_data.parquet')
-    meta_path = os.path.join(_PARQUET_CACHE_DIR, 'meta.parquet')
+    parquet_path = os.path.join(_PARQUET_CACHE_DIR, "market_data.parquet")
+    meta_path = os.path.join(_PARQUET_CACHE_DIR, "meta.parquet")
 
     # 使用 Polars 高效垂直拼接
     pl_df = pl.concat(frames, how="vertical_relaxed")
@@ -453,15 +464,17 @@ def save_cache_parquet(cache_data: dict, date_str: str) -> bool:
     _gc.collect()
 
     row_count = int(pl_df.height)
-    symbol_count = int(pl_df['_code'].n_unique()) if '_code' in pl_df.columns else len(cache_data)
+    symbol_count = int(pl_df["_code"].n_unique()) if "_code" in pl_df.columns else len(cache_data)
     with _PARQUET_CACHE_LOCK:
-        _atomic_parquet_write(pl_df, parquet_path, compression='zstd')
-        meta = pl.DataFrame({
-            'date': [date_str],
-            'n_stocks': [symbol_count],
-            'version': [3],
-        })
-        _atomic_parquet_write(meta, meta_path, compression='zstd')
+        _atomic_parquet_write(pl_df, parquet_path, compression="zstd")
+        meta = pl.DataFrame(
+            {
+                "date": [date_str],
+                "n_stocks": [symbol_count],
+                "version": [3],
+            }
+        )
+        _atomic_parquet_write(meta, meta_path, compression="zstd")
 
     try:
         from infra.market_data.market_data_warehouse import get_default_market_data_warehouse
@@ -491,8 +504,8 @@ def load_cache_parquet() -> tuple[dict, str] | None:
 
     返回: (cache_data dict[str, pl.DataFrame], date_str) 或 None
     """
-    parquet_path = os.path.join(_PARQUET_CACHE_DIR, 'market_data.parquet')
-    meta_path = os.path.join(_PARQUET_CACHE_DIR, 'meta.parquet')
+    parquet_path = os.path.join(_PARQUET_CACHE_DIR, "market_data.parquet")
+    meta_path = os.path.join(_PARQUET_CACHE_DIR, "meta.parquet")
 
     if not os.path.exists(parquet_path):
         return None
@@ -505,12 +518,12 @@ def load_cache_parquet() -> tuple[dict, str] | None:
     t0 = time.time()
     try:
         # 读取元信息
-        date_str = ''
+        date_str = ""
         with _PARQUET_CACHE_LOCK:
             if os.path.exists(meta_path):
                 meta = pl.read_parquet(meta_path)
-                date_str = str(meta['date'][0])
-                version = int(meta['version'][0])
+                date_str = str(meta["date"][0])
+                version = int(meta["version"][0])
                 if version != 3:
                     _log.warning(f"[加速引擎] Parquet 缓存版本不匹配 (期望 3, 实际 {version})")
                     return None
@@ -519,11 +532,11 @@ def load_cache_parquet() -> tuple[dict, str] | None:
             pl_df = pl.read_parquet(parquet_path)
 
         cache_data = {}
-        if '_code' in pl_df.columns:
+        if "_code" in pl_df.columns:
             # Polars partition_by: C 级分组，避免 Pandas 的 Python dict 桥接瓶颈
-            for part in pl_df.partition_by('_code', maintain_order=True):
-                code = str(part['_code'][0])
-                part_no_code = part.drop('_code')
+            for part in pl_df.partition_by("_code", maintain_order=True):
+                code = str(part["_code"][0])
+                part_no_code = part.drop("_code")
                 cache_data[code] = part_no_code
 
         elapsed = time.time() - t0
@@ -539,6 +552,7 @@ def load_cache_parquet() -> tuple[dict, str] | None:
 # 板块 RPS 加速 — 纯 Polars join/groupby
 # ================================================================
 
+
 def build_sector_rps_pl(
     sector_to_codes: dict[str, list[str]],
     all_data: dict,
@@ -551,8 +565,8 @@ def build_sector_rps_pl(
 
     # 统一目标日期为 datetime.date
     if isinstance(target_date, str):
-        target_dt = datetime.strptime(target_date.replace("-", ""), '%Y%m%d').date()
-    elif hasattr(target_date, 'date') and callable(getattr(target_date, 'date')):
+        target_dt = datetime.strptime(target_date.replace("-", ""), "%Y%m%d").date()
+    elif hasattr(target_date, "date") and callable(getattr(target_date, "date")):
         target_dt = target_date.date()
     else:
         target_dt = target_date
@@ -568,11 +582,11 @@ def build_sector_rps_pl(
             pldf = _to_pldf(df)
             if pldf is None or pldf.height < max_lookback:
                 continue
-            if 'close' not in pldf.columns or 'datetime' not in pldf.columns:
+            if "close" not in pldf.columns or "datetime" not in pldf.columns:
                 continue
 
             # 找到 target_date 对应的位置
-            dates_col = pldf['datetime'].cast(pl.Date)
+            dates_col = pldf["datetime"].cast(pl.Date)
             # 找 <= target_dt 的最后一行
             mask = dates_col <= target_dt
             valid_indices = [i for i, v in enumerate(mask.to_list()) if v]
@@ -580,7 +594,7 @@ def build_sector_rps_pl(
                 continue
             loc = valid_indices[-1]
 
-            curr_close = float(pldf['close'][loc])
+            curr_close = float(pldf["close"][loc])
             if curr_close <= 0:
                 continue
 
@@ -588,14 +602,14 @@ def build_sector_rps_pl(
                 prev_loc = loc - p
                 if prev_loc < 0:
                     continue
-                prev_close = float(pldf['close'][prev_loc])
+                prev_close = float(pldf["close"][prev_loc])
                 if prev_close > 0:
                     ret = (curr_close - prev_close) / prev_close
                     records.append((code, p, ret))
                     # 兼容格式：补上 bare/prefixed 双版本
-                    bare = code.replace('sh', '').replace('sz', '')
+                    bare = code.replace("sh", "").replace("sz", "")
                     if bare == code:
-                        prefix = 'sh' if code.startswith(('6', '9')) else 'sz'
+                        prefix = "sh" if code.startswith(("6", "9")) else "sz"
                         records.append((f"{prefix}{code}", p, ret))
                     else:
                         records.append((bare, p, ret))
@@ -606,11 +620,13 @@ def build_sector_rps_pl(
     if not records:
         return {}
 
-    ret_df = pl.DataFrame({
-        'code': [r[0] for r in records],
-        'period': [r[1] for r in records],
-        'ret': [r[2] for r in records],
-    })
+    ret_df = pl.DataFrame(
+        {
+            "code": [r[0] for r in records],
+            "period": [r[1] for r in records],
+            "ret": [r[2] for r in records],
+        }
+    )
 
     code_sector_records = []
     for sector_name, members in sector_to_codes.items():
@@ -620,34 +636,37 @@ def build_sector_rps_pl(
     if not code_sector_records:
         return {}
 
-    cs_df = pl.DataFrame({
-        'code': [r[0] for r in code_sector_records],
-        'sector': [r[1] for r in code_sector_records],
-    })
+    cs_df = pl.DataFrame(
+        {
+            "code": [r[0] for r in code_sector_records],
+            "sector": [r[1] for r in code_sector_records],
+        }
+    )
 
-    joined = ret_df.join(cs_df, on='code', how='inner')
+    joined = ret_df.join(cs_df, on="code", how="inner")
 
     sector_avg = (
-        joined
-        .group_by(['sector', 'period'])
-        .agg([
-            pl.col('ret').median().alias('median_ret'),
-            pl.col('ret').count().alias('cnt'),
-        ])
-        .filter(pl.col('cnt') >= 3)
+        joined.group_by(["sector", "period"])
+        .agg(
+            [
+                pl.col("ret").median().alias("median_ret"),
+                pl.col("ret").count().alias("cnt"),
+            ]
+        )
+        .filter(pl.col("cnt") >= 3)
     )
 
     sector_rps_df = sector_avg.with_columns(
-        (pl.col('median_ret').rank('ordinal').over('period') /
-         pl.col('median_ret').count().over('period') * 100)
+        (pl.col("median_ret").rank("ordinal").over("period") / pl.col("median_ret").count().over("period") * 100)
         .round(1)
-        .alias('rps')
+        .alias("rps")
     )
 
     from collections import defaultdict
+
     result = defaultdict(dict)
     for row in sector_rps_df.iter_rows(named=True):
-        result[row['sector']][row['period']] = row['rps']
+        result[row["sector"]][row["period"]] = row["rps"]
 
     elapsed = time.time() - t0
     _log.info(f"[加速引擎] 板块 RPS 计算完成(纯Polars): {len(result)} 个板块 (耗时 {elapsed:.2f}s)")
