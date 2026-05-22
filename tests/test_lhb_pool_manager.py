@@ -67,6 +67,37 @@ def test_compute_pool_allows_negative_foreign_net_if_core_conditions_match(monke
     assert float(pool[0]["外资净买(万)"]) < 0
 
 
+def test_compute_pool_allows_zero_institution_net_buy(monkeypatch):
+    manager = _build_manager(monkeypatch)
+    manager._data = {
+        "20260508": [
+            {
+                "代码": "603738",
+                "名称": "泰晶科技",
+                "上榜日期": "20260508",
+                "上榜净买额(万)": 18613.18,
+                "机构净买(万)": 0.0,
+                "外资净买(万)": -2354.84,
+                "涨幅%": 9.99,
+            },
+            {
+                "代码": "600000",
+                "名称": "负机构净买",
+                "上榜日期": "20260508",
+                "上榜净买额(万)": 1200,
+                "机构净买(万)": -1.0,
+                "外资净买(万)": 0,
+                "涨幅%": 1.2,
+            },
+        ]
+    }
+
+    pool = manager.compute_pool()
+
+    assert [row["代码"] for row in pool] == ["603738"]
+    assert pool[0]["机构净买(万)"] == 0.0
+
+
 def test_compute_pool_prioritizes_recent_listing_before_older_buy_point(monkeypatch):
     manager = _build_manager(monkeypatch)
     manager._data = {

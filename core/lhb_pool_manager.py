@@ -11,7 +11,7 @@ core/lhb_pool_manager.py
 
 筛选条件：20 个交易日内至少有一天同时满足：
   ① 上榜净买额 > 0
-  ② 机构净买额 > 0
+  ② 机构净买额 >= 0
 """
 
 import gc
@@ -315,7 +315,7 @@ class LhbPoolManager:
         筛选逻辑：
         1. 遍历所有日期的所有记录
         2. 剔除 ST 股、北交所股票（纯本地字符串判断）
-        3. 找出在任何一天同时满足 上榜净买额>0 AND 机构净买>0 的股票代码
+        3. 找出在任何一天同时满足 上榜净买额>0 AND 机构净买>=0 的股票代码
         4. 如果有 data_provider，剔除 K 线行数 < 250 的次新股
         5. 对符合条件的股票，提取最近一次上榜的详细数据
         6. 附加"上榜次数"字段（满足条件的天数）
@@ -362,8 +362,8 @@ class LhbPoolManager:
 
                 # 过滤合集：
                 # 1. 榜单总净买入必须为正
-                # 2. 机构净买入必须为正
-                if net_buy > 0 and jg_net > 0:
+                # 2. 机构净买入必须非负
+                if net_buy > 0 and jg_net >= 0:
                     qualifying_codes.add(code)
                     code_hit_count[code] = code_hit_count.get(code, 0) + 1
 
@@ -411,7 +411,7 @@ class LhbPoolManager:
             return []
 
         # 第二轮扫描：对每个合格股票，取最近一次上榜数据用于展示
-        # 入池资格已由第一轮扫描保证（至少有一天双正），这里只管展示最新的
+        # 入池资格已由第一轮扫描保证（至少有一天榜单净买为正且机构净买非负），这里只管展示最新的
         sorted_dates = sorted(self._data.keys(), reverse=True)
         latest_records: dict[str, dict] = {}
 
@@ -427,8 +427,8 @@ class LhbPoolManager:
                         net_buy = jg_net = 0.0
 
                     # 【核心需求】：最后 5 列数据，必须显示【最近一次符合筛选条件的数据】
-                    # 当前口径：上榜净买额 > 0 且 机构净买 > 0，外资不设门槛
-                    if not (net_buy > 0 and jg_net > 0):
+                    # 当前口径：上榜净买额 > 0 且 机构净买 >= 0，外资不设门槛
+                    if not (net_buy > 0 and jg_net >= 0):
                         continue
 
                     record = dict(rec)
