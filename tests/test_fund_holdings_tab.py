@@ -119,6 +119,7 @@ def _setup_store(
     concept_map=None,
     sync_map=None,
     *,
+    ai_codes=None,
     patch_local_snapshot: bool = True,
 ):
     settings = settings or _FakeSettings()
@@ -159,6 +160,18 @@ def _setup_store(
         fund_holdings_module.fund_holdings_store,
         "list_quarters",
         lambda: sorted({str(row.get("quarter_key") or "").strip() for row in rows}, reverse=True),
+    )
+    if ai_codes is None:
+        ai_codes = {
+            str(row.get("stock_code") or "").strip()
+            for row in rows
+            if str(row.get("stock_code") or "").strip()
+        }
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "_stock_universe_provider",
+        staticmethod(lambda: set(ai_codes or set())),
+        raising=False,
     )
     monkeypatch.setattr(
         fund_holdings_module.FundHoldingsTab,
@@ -278,6 +291,46 @@ def test_fund_holdings_data_lineage_reports_loaded_rows(monkeypatch):
         assert lineage["latest_quarter"] == "2025Q4"
         assert lineage["triggered_network"] is False
         assert "data/vcp_hunter.db:fund holdings tables" in lineage["cache_refs"]
+    finally:
+        tab.deleteLater()
+
+
+def test_fund_holdings_tab_filters_rows_to_ai_industry_chain_pool(monkeypatch):
+    _setup_store(
+        monkeypatch,
+        [
+            _build_change_row(
+                subject_code="QFII",
+                subject_name="QFII",
+                quarter_key="2025Q4",
+                compare_quarter_key="2025Q3",
+                change_type="增持",
+                stock_code="300308",
+                stock_name="中际旭创",
+            ),
+            _build_change_row(
+                subject_code="QFII",
+                subject_name="QFII",
+                quarter_key="2025Q4",
+                compare_quarter_key="2025Q3",
+                change_type="增持",
+                stock_code="600000",
+                stock_name="浦发银行",
+            ),
+        ],
+        ai_codes={"300308"},
+    )
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "refresh_table_quotes_and_market_caps",
+        lambda self, current_model=None, force_quotes=False, quote_task_id=None: None,
+        raising=False,
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
+    try:
+        assert [row["代码"] for row in tab.model.row_data] == ["300308"]
+        assert _visible_codes(tab) == ["300308"]
     finally:
         tab.deleteLater()
 

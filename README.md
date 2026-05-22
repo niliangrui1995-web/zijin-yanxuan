@@ -24,7 +24,7 @@ Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatil
 | 北美战报 | `ui/tabs/na_daily_tab.py` | 从战报产出文件中回填标的，并挂接实时行情 |
 | 综合候选 | `ui/tabs/stock_candidate_tab.py` | 汇总扫描、战报、AI 产业链、业绩、基金持仓等多源候选 |
 | AI产业链 | `ui/tabs/ai_industry_chain_tab.py` | AI 产业链标的、细分环节与上下文信号跟踪 |
-| 龙虎榜 | `ui/tabs/lhb_tab.py` | 20 日滚动龙虎榜关注池，带上榜次数、最近上榜、净买额等字段 |
+| 龙虎榜 | `ui/tabs/lhb_tab.py` | 30 日滚动龙虎榜关注池，带上榜次数、最近上榜、净买额等字段 |
 | 盘中监控 | `ui/tabs/rt_monitor_tab.py` | 盘中轮询待突破池，展示实时突破状态 |
 | VCP 扫描 | `ui/tabs/scan_tab.py` | 全市场 VCP 静态扫描结果页 |
 | 大宗交易 | `ui/tabs/foreign_block_trade_tab.py` | 外资席位相关大宗交易监控与过滤 |

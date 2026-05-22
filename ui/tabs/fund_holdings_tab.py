@@ -34,6 +34,7 @@ from app.services.ui_fund_holdings_service import (
 )
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
+from core.ai_industry_chain_pool import filter_rows_to_ai_chain_codes, load_ai_industry_chain_stock_codes
 from ui.components import (
     MultiSelectFilterButton,
     TableStateWrapper,
@@ -77,6 +78,7 @@ class FundHoldingsTab(BaseStockTab):
         QFII_CAPITAL_ATTRIBUTE_UNMARKED: _DISPLAY_PLACEHOLDER,
     }
     _VIEW_STATE_PREFIX = "fund_holdings_view_state_v2"
+    _stock_universe_provider = staticmethod(load_ai_industry_chain_stock_codes)
 
     def __init__(self, data_provider, parent=None, autoload: bool = True):
         super().__init__(data_provider=data_provider, parent=parent)
@@ -370,12 +372,21 @@ class FundHoldingsTab(BaseStockTab):
     @classmethod
     def _query_change_rows_for_scope(cls, quarter_keys: set[str] | None) -> list[dict]:
         try:
-            return fund_holdings_store.query_change_rows(quarter_keys=quarter_keys)
+            rows = fund_holdings_store.query_change_rows(quarter_keys=quarter_keys)
         except TypeError:
             rows = fund_holdings_store.query_change_rows()
             if quarter_keys is None:
-                return rows
-            return [row for row in rows or [] if str(row.get("quarter_key") or "").strip() in quarter_keys]
+                return cls._filter_rows_to_stock_universe(rows)
+            rows = [row for row in rows or [] if str(row.get("quarter_key") or "").strip() in quarter_keys]
+        return cls._filter_rows_to_stock_universe(rows)
+
+    @classmethod
+    def _filter_rows_to_stock_universe(cls, rows: list[dict]) -> list[dict]:
+        try:
+            stock_codes = cls._stock_universe_provider() or set()
+            return filter_rows_to_ai_chain_codes(rows, code_keys=("stock_code", "代码", "股票代码"), stock_codes=stock_codes)
+        except (FileNotFoundError, RuntimeError, OSError, TypeError, ValueError):
+            return []
 
     @classmethod
     def _load_view_payload(

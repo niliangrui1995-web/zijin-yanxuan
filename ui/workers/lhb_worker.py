@@ -515,7 +515,7 @@ def fetch_lhb_pool_for_date(
     emit_success_log: bool = True,
     return_meta: bool = False,
 ) -> list[dict] | dict:
-    """为 20 日关注池抓取指定日期的龙虎榜数据。
+    """为 30 日关注池抓取指定日期的龙虎榜数据。
     现在直接复用完整提取器（strict_filter=False），彻底解决旧版历史记录外资和共振数据全部强行涂 0 的重大 BUG。
     """
     return fetch_lhb_data_for_date(

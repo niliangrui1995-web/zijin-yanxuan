@@ -6,6 +6,7 @@ from app.services.ui_config_service import app_config
 from app.services.ui_event_service import domain_events as event_bus
 from ui.services.auto_refresh_scheduler import AutoRefreshJob, AutoRefreshScheduler
 from ui.services.auto_refresh_tasks import AutoRefreshTaskService
+from ui.services import auto_refresh_tasks as auto_refresh_task_module
 
 
 class _ImmediateRunner:
@@ -406,6 +407,45 @@ def test_auto_refresh_task_service_writes_foreign_block_cache(monkeypatch):
 
     result = AutoRefreshTaskService().run_foreign_block_daily("20260420")
 
-    assert saved == [([{"代码": "300750", "交易日期": "20260420"}], 20, "20260420")]
+    assert saved == [([{"代码": "300750", "交易日期": "20260420"}], 30, "20260420")]
     assert result["records"] == 1
     assert result["latest_trade_date"] == "20260420"
+
+
+def test_auto_refresh_foreign_block_rows_filter_to_ai_chain_pool(monkeypatch):
+    monkeypatch.setattr(
+        auto_refresh_task_module,
+        "filter_rows_to_ai_chain_codes",
+        lambda rows, **kwargs: [row for row in rows if row.get("代码") == "300308"],
+    )
+
+    rows = auto_refresh_task_module._build_foreign_block_rows(
+        [
+            {
+                "交易日期": "20260420",
+                "证券代码": "300308",
+                "证券简称": "中际旭创",
+                "买方营业部": "高盛上海营业部",
+                "卖方营业部": "普通营业部",
+                "收盘价": 120,
+                "成交价格": 118,
+                "折溢率": -0.02,
+                "成交量": 10000,
+                "成交金额": 1180000,
+            },
+            {
+                "交易日期": "20260420",
+                "证券代码": "600000",
+                "证券简称": "浦发银行",
+                "买方营业部": "高盛上海营业部",
+                "卖方营业部": "普通营业部",
+                "收盘价": 10,
+                "成交价格": 9.8,
+                "折溢率": -0.02,
+                "成交量": 10000,
+                "成交金额": 98000,
+            },
+        ]
+    )
+
+    assert [row["代码"] for row in rows] == ["300308"]

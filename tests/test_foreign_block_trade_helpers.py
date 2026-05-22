@@ -176,6 +176,23 @@ def test_block_trade_load_cache_primes_local_snapshot(monkeypatch):
     assert ("local", DummyTab.model) in calls
 
 
+def test_block_trade_filters_rows_to_ai_industry_chain_pool(monkeypatch):
+    monkeypatch.setattr(
+        foreign_module,
+        "filter_rows_to_ai_chain_codes",
+        lambda rows, **kwargs: [row for row in rows if row.get("代码") == "300308"],
+    )
+
+    rows = ForeignBlockTradeTab._filter_rows_to_ai_chain(
+        [
+            {"代码": "300308", "名称": "中际旭创"},
+            {"代码": "600000", "名称": "浦发银行"},
+        ]
+    )
+
+    assert rows == [{"代码": "300308", "名称": "中际旭创"}]
+
+
 def test_block_trade_search_only_matches_code_name_and_foreign_branch():
     model = StockTableModel(["代码", "名称", "交易详情", "买方营业部", "卖方营业部"])
     model.update_data(

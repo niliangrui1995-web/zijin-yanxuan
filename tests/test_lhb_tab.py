@@ -59,7 +59,7 @@ def test_lhb_manual_refresh_prefers_today_when_probe_finds_data(monkeypatch):
     monkeypatch.setattr(
         MarketCalendar,
         "get_recent_trade_dates",
-        classmethod(lambda cls, n=20, ref_date=None: [ref_date.strftime("%Y%m%d")]),
+        classmethod(lambda cls, n=30, ref_date=None: [ref_date.strftime("%Y%m%d")]),
     )
     monkeypatch.setattr(
         lhb_worker_module,
@@ -91,7 +91,7 @@ def test_lhb_manual_refresh_falls_back_to_previous_trade_day_when_today_empty(mo
     monkeypatch.setattr(
         MarketCalendar,
         "get_recent_trade_dates",
-        classmethod(lambda cls, n=20, ref_date=None: [ref_date.strftime("%Y%m%d")]),
+        classmethod(lambda cls, n=30, ref_date=None: [ref_date.strftime("%Y%m%d")]),
     )
     monkeypatch.setattr(
         lhb_worker_module,
@@ -111,17 +111,21 @@ def test_lhb_ensure_log_line_appends_newline_once():
     assert LhbTab._ensure_log_line("[龙虎榜池] 完成\n") == "[龙虎榜池] 完成\n"
 
 
+def test_lhb_pool_window_is_30_trade_days():
+    assert lhb_tab_module.POOL_WINDOW == 30
+
+
 def test_lhb_build_backfill_progress_log_formats_statuses():
-    ok_level, ok_msg = LhbTab._build_backfill_progress_log(1, 20, "20260401", {"status": "ok", "count": 68})
-    empty_level, empty_msg = LhbTab._build_backfill_progress_log(2, 20, "20260402", {"status": "empty", "count": 0})
-    err_level, err_msg = LhbTab._build_backfill_progress_log(3, 20, "20260403", {"status": "error", "count": 0})
+    ok_level, ok_msg = LhbTab._build_backfill_progress_log(1, 30, "20260401", {"status": "ok", "count": 68})
+    empty_level, empty_msg = LhbTab._build_backfill_progress_log(2, 30, "20260402", {"status": "empty", "count": 0})
+    err_level, err_msg = LhbTab._build_backfill_progress_log(3, 30, "20260403", {"status": "error", "count": 0})
 
     assert ok_level == "info"
-    assert ok_msg == "[龙虎榜池] [01/20] 20260401 完成 | 68条"
+    assert ok_msg == "[龙虎榜池] [01/30] 20260401 完成 | 68条"
     assert empty_level == "info"
-    assert empty_msg == "[龙虎榜池] [02/20] 20260402 无可用数据"
+    assert empty_msg == "[龙虎榜池] [02/30] 20260402 无可用数据"
     assert err_level == "warn"
-    assert err_msg == "[龙虎榜池] [03/20] 20260403 抓取异常 | 已记0条"
+    assert err_msg == "[龙虎榜池] [03/30] 20260403 抓取异常 | 已记0条"
 
 
 def test_lhb_should_refresh_after_probe_only_on_count_mismatch():
@@ -191,7 +195,7 @@ def test_lhb_data_lineage_reports_deferred_without_pool_cache(monkeypatch):
         assert lineage["row_count"] == 0
         assert lineage["triggered_network"] is False
         assert "lhb_rows_deferred" in lineage["warnings"]
-        assert "data/Cache/lhb_pool_20d.json" in lineage["cache_refs"]
+        assert "data/Cache/lhb_pool_30d.json" in lineage["cache_refs"]
     finally:
         tab.deleteLater()
 
@@ -319,7 +323,7 @@ def test_lhb_pool_bootstrap_skips_duplicate_active_task(monkeypatch):
 def test_lhb_pool_bootstrap_schedules_background_task(monkeypatch):
     tasks = []
     monkeypatch.setattr(lhb_tab_module.task_manager, "is_active_task", lambda task_id: False)
-    monkeypatch.setattr(LhbTab, "_get_lhb_trade_dates", lambda self, n=20: ["20260420"], raising=False)
+    monkeypatch.setattr(LhbTab, "_get_lhb_trade_dates", lambda self, n=30: ["20260420"], raising=False)
     monkeypatch.setattr(
         lhb_tab_module.task_manager,
         "run_in_background",

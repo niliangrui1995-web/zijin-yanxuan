@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
 ui/tabs/lhb_tab.py
-龙虎榜 · 20 日关注池 Tab
+龙虎榜 · 30 日关注池 Tab
 
-替代旧的"单日视图"，改为滚动 20 个交易日的关注池：
-- 入池条件：20 日内至少有一天同时满足 上榜净买额>0 且 机构净买>0
-- 展示每只合格标的的最近一次上榜详情 + 20 日内满足条件天数
+替代旧的"单日视图"，改为滚动 30 个交易日的关注池：
+- 入池条件：30 日内至少有一天同时满足 上榜净买额>0 且 机构净买>0
+- 展示每只合格标的的最近一次上榜详情 + 30 日内满足条件天数
 - 每天 20:00 后自动抓取当天龙虎榜数据并刷新池
 - 首次使用自动回填缺失的历史交易日数据
 """
@@ -37,7 +37,7 @@ log = get_logger(__name__)
 
 
 class LhbTab(BaseStockTab):
-    """龙虎榜 20 日关注池 Tab"""
+    """龙虎榜 30 日关注池 Tab"""
 
     def __init__(self, data_provider, parent=None, autoload_pool: bool = True):
         super().__init__(data_provider=data_provider, parent=parent)
@@ -60,7 +60,7 @@ class LhbTab(BaseStockTab):
             source="LhbPoolManager cache + local_quote_snapshot",
             provider="LhbPoolManager/scan_runtime_service",
             cache_refs=(
-                "data/Cache/lhb_pool_20d.json",
+                "data/Cache/lhb_pool_30d.json",
                 "global_store.quotes",
                 "local_tdx_cache",
             ),
@@ -521,7 +521,7 @@ class LhbTab(BaseStockTab):
         """龙虎榜手动/启动回填的参考交易日。
 
         龙虎榜当日数据通常在 20:00 后才稳定可抓。交易日但 20:00 前应回退到上一交易日，
-        否则会把“尚未发布的今天”计入 20 日窗口，导致只能拿到前 19 个有效交易日。
+        否则会把“尚未发布的今天”计入 30 日窗口，导致只能拿到前 29 个有效交易日。
         """
         from datetime import timedelta
 
@@ -552,7 +552,7 @@ class LhbTab(BaseStockTab):
 
         规则：
         1. 若今天是交易日，先探针尝试今天；
-        2. 今天有数据 -> 以今天为 20 日窗口终点；
+        2. 今天有数据 -> 以今天为 30 日窗口终点；
         3. 今天为空 -> 回退到上一交易日；
         4. 今天探针异常 -> 沿用保守参考交易日，避免误清缓存。
         """
@@ -878,7 +878,7 @@ class LhbTab(BaseStockTab):
     # 历史回补
     # ================================================================
     def _manual_refresh(self):
-        """历史回补：清空缓存，重新获取全新 20 个交易日的龙虎榜数据"""
+        """历史回补：清空缓存，重新获取全新 30 个交易日的龙虎榜数据"""
         if self._backfill_in_progress:
             from ui.components.toast_widget import show_toast
 

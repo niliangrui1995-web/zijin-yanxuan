@@ -125,6 +125,82 @@ def test_fetch_daily_surprises_marks_seen_only_after_valid_record(monkeypatch):
     assert len(engine.local_records) == 1
 
 
+def test_fetch_daily_surprises_filters_candidates_to_ai_industry_chain_pool(monkeypatch):
+    engine = _build_engine()
+    engine.stock_universe_provider = lambda: {"300308"}
+
+    candidate_df = pd.DataFrame(
+        [
+            {
+                "股票代码": "300308",
+                "股票简称": "中际旭创",
+                "最新公告日期": "2026-04-16",
+                "净利润-净利润": 1000000,
+            },
+            {
+                "股票代码": "600000",
+                "股票简称": "浦发银行",
+                "最新公告日期": "2026-04-16",
+                "净利润-净利润": 1000000,
+            },
+        ]
+    )
+
+    checked_codes = []
+    monkeypatch.setattr(engine_module, "current_active_report_dates", lambda: ["20251231"])
+    monkeypatch.setattr(
+        engine_module,
+        "safe_ak_fetch",
+        lambda fetch_func, *args, **kwargs: (
+            candidate_df.copy() if fetch_func.__name__ == "stock_yjbb_em" else pd.DataFrame()
+        ),
+    )
+    monkeypatch.setattr(engine, "_inject_sectors", lambda records: records)
+    monkeypatch.setattr(engine, "_save_cache", lambda: None)
+
+    def _compute(code, *args, **kwargs):
+        checked_codes.append(code)
+        return {
+            "单季净利润_新增": 1.0,
+            "单季净利润_上期": 1.0,
+            "环比增速_百分比": 35.0,
+            "同比增速_百分比": 12.0,
+            "error": None,
+        }
+
+    monkeypatch.setattr(engine, "compute_single_quarter_qoq", _compute)
+
+    result = engine.fetch_daily_surprises(target_publish_date="2026-04-16")
+
+    assert checked_codes == ["300308"]
+    assert result["股票代码"].tolist() == ["300308"]
+    assert "SHOCK_600000_20251231_财报" not in engine.seen_fingerprints
+
+
+def test_get_cached_records_filters_to_ai_industry_chain_pool(monkeypatch):
+    engine = _build_engine()
+    engine.stock_universe_provider = lambda: {"300308"}
+    engine.local_records = [
+        {
+            "股票代码": "300308",
+            "股票名称": "中际旭创",
+            "公告日期": "2026-04-16",
+            "环比增速_百分比": 35.0,
+        },
+        {
+            "股票代码": "600000",
+            "股票名称": "浦发银行",
+            "公告日期": "2026-04-16",
+            "环比增速_百分比": 35.0,
+        },
+    ]
+    monkeypatch.setattr(engine, "_inject_sectors", lambda records: records)
+
+    result = engine.get_cached_records()
+
+    assert result["股票代码"].tolist() == ["300308"]
+
+
 def test_fetch_daily_surprises_accepts_next_trade_day_financial_report_on_today_scan(monkeypatch):
     engine = _build_engine()
 

@@ -11,6 +11,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
+from core.ai_industry_chain_pool import load_ai_industry_chain_stock_codes
 from core.logger import get_logger
 from domains.earnings import EarningsScheduler
 from domains.earnings.engine import EarningsEngine
@@ -29,7 +30,7 @@ class EarningsRefreshService(QObject):
 
     def __init__(self, parent=None, *, engine: EarningsEngine | None = None, job_runner=None):
         super().__init__(parent)
-        self.engine = engine or EarningsEngine()
+        self.engine = engine or EarningsEngine(stock_universe_provider=load_ai_industry_chain_stock_codes)
         self._job_runner = job_runner or task_manager
         self.active_workers: set[_ActiveEarningsJob] = set()
 

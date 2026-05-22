@@ -8,6 +8,7 @@ import pandas as pd
 
 from app.services.ui_fund_holdings_service import fund_holdings_sync_service
 from app.services.ui_market_calendar_service import MarketCalendar
+from core.ai_industry_chain_pool import filter_rows_to_ai_chain_codes
 from core.lhb_pool_manager import POOL_WINDOW, LhbPoolManager
 from core.logger import get_logger
 from core.task_errors import UserFacingTaskError
@@ -85,7 +86,7 @@ class AutoRefreshTaskService:
             "cached_trade_days": len(manager.get_cached_dates() or []),
         }
 
-    def run_foreign_block_daily(self, trade_date: str, *, days_to_fetch: int = 20) -> dict:
+    def run_foreign_block_daily(self, trade_date: str, *, days_to_fetch: int = 30) -> dict:
         payload = _fetch_foreign_block_records(days_to_fetch=days_to_fetch)
         row_data = _build_foreign_block_rows(payload.get("records", []))
         timeout_chunks = list(payload.get("timeout_chunks") or [])
@@ -336,7 +337,11 @@ def _build_foreign_block_rows(records: list[dict]) -> list[dict]:
                 "卖方营业部": seller,
             }
         )
-    return row_data
+    try:
+        return filter_rows_to_ai_chain_codes(row_data, code_keys=("代码",))
+    except (FileNotFoundError, RuntimeError, OSError, ValueError) as exc:
+        log.warning(f"[外资大宗] AI产业链股票池不可用，自动缓存按空股票池处理: {exc}")
+        return []
 
 
 def _safe_float(value) -> float:

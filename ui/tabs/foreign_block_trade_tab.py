@@ -26,6 +26,7 @@ from app.services.ui_task_service import (
 )
 from app.services.ui_task_service import background_job_runner as task_manager
 from core.exceptions import CacheIOError, DataFormatError
+from core.ai_industry_chain_pool import filter_rows_to_ai_chain_codes
 from core.json_cache import load_json_file, save_json_file
 from core.task_errors import UserFacingTaskError
 from ui.components import (
@@ -227,7 +228,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._last_auto_refresh_date = ""
         self._pending_auto_refresh_date = ""
 
-        self.days_to_fetch = 20  # 默认拉取最近20个交易日
+        self.days_to_fetch = 30  # 默认拉取最近30个交易日
         self._init_ui()
         self._load_local_cache()
 
@@ -272,8 +273,8 @@ class ForeignBlockTradeTab(BaseStockTab):
 
         # ── 数据拉取范围 ──
         self.cmb_days = QComboBox()
-        self.cmb_days.addItems(["近 10 交易日", "近 20 交易日", "近 40 交易日", "近 60 交易日"])
-        # 默认选中 20 交易日，与 self.days_to_fetch 初始值保持一致
+        self.cmb_days.addItems(["近 10 交易日", "近 30 交易日", "近 40 交易日", "近 60 交易日"])
+        # 默认选中 30 交易日，与 self.days_to_fetch 初始值保持一致
         self.cmb_days.setCurrentIndex(1)
         self.cmb_days.setFixedWidth(148)
         self.cmb_days.currentIndexChanged.connect(self._on_days_changed)
@@ -348,7 +349,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         layout.addWidget(self.table_state, 1)
 
     def _on_days_changed(self, idx):
-        days_map = {0: 10, 1: 20, 2: 40, 3: 60}
+        days_map = {0: 10, 1: 30, 2: 40, 3: 60}
         self.days_to_fetch = days_map.get(idx, 10)
         self._load_block_trade_data()
 
@@ -419,6 +420,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         return dates, branches
 
     def _apply_row_data(self, row_data: list[dict], *, preserve_selection: bool = True):
+        row_data = self._filter_rows_to_ai_chain(row_data)
         unique_dates, unique_branches = self._extract_cache_filter_options(row_data)
         self.cmb_filter_date.set_options(unique_dates, preserve_selection=preserve_selection)
         self.cmb_filter_branch.set_options(unique_branches, preserve_selection=preserve_selection)
@@ -433,6 +435,14 @@ class ForeignBlockTradeTab(BaseStockTab):
         )
         self.model.update_data(row_data or [])
         return unique_dates, unique_branches
+
+    @staticmethod
+    def _filter_rows_to_ai_chain(row_data: list[dict]) -> list[dict]:
+        try:
+            return filter_rows_to_ai_chain_codes(row_data, code_keys=("代码", "证券代码"))
+        except (FileNotFoundError, RuntimeError, OSError, ValueError) as exc:
+            log.warning(f"[外资大宗] AI产业链股票池不可用，已按空股票池处理: {exc}")
+            return []
 
     def _build_cache_payload(self, row_data: list[dict]) -> dict:
         latest_trade_date = ""
@@ -893,6 +903,7 @@ class ForeignBlockTradeTab(BaseStockTab):
             }
             row_data.append(row_dict)
 
+        row_data = self._filter_rows_to_ai_chain(row_data)
         unique_dates, unique_branches = self._apply_row_data(row_data)
         self._last_success_at = datetime.datetime.now()
         self._set_fetch_status(

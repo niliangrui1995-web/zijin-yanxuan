@@ -66,8 +66,8 @@ def test_prune_rows_to_recent_trade_window_keeps_records_within_trade_span(monke
     assert kept_codes == ["000001", "000002", "000004"]
 
 
-def test_earnings_display_trade_days_is_10():
-    assert _earnings_module().EARNINGS_DISPLAY_TRADE_DAYS == 10
+def test_earnings_display_trade_days_is_30():
+    assert _earnings_module().EARNINGS_DISPLAY_TRADE_DAYS == 30
 
 
 def test_earnings_tab_does_not_join_realtime_quote_universe():

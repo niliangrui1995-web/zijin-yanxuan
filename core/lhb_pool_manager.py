@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 """
 core/lhb_pool_manager.py
-龙虎榜 20 日滚动关注池 — 数据引擎
+龙虎榜 30 日滚动关注池 — 数据引擎
 
 负责：
 - 多日龙虎榜数据的持久化存储（JSON 缓存）
-- 从 20 个交易日的全量记录中筛选符合条件的标的
-- 淘汰超出 20 日窗口的历史数据
+- 从 30 个交易日的全量记录中筛选符合条件的标的
+- 淘汰超出 30 日窗口的历史数据
 - 迁移旧的单日缓存（lhb_cache.json）到新池
 
-筛选条件：20 个交易日内至少有一天同时满足：
+筛选条件：30 个交易日内至少有一天同时满足：
   ① 上榜净买额 > 0
   ② 机构净买额 >= 0
 """
@@ -23,8 +23,8 @@ from core.logger import get_logger
 
 log = get_logger(__name__)
 
-# 为什么用 20：用户定义的滚动窗口长度（约一个自然月的交易日）
-POOL_WINDOW = 20
+# 用户定义的滚动窗口长度。
+POOL_WINDOW = 30
 
 
 class LhbPoolManager:
@@ -32,7 +32,8 @@ class LhbPoolManager:
 
     def __init__(self):
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        self._cache_path = os.path.join(project_root, "data", "Cache", "lhb_pool_20d.json")
+        self._cache_path = os.path.join(project_root, "data", "Cache", "lhb_pool_30d.json")
+        self._legacy_pool_cache_path = os.path.join(project_root, "data", "Cache", "lhb_pool_20d.json")
         self._old_cache_path = os.path.join(project_root, "data", "Cache", "lhb_cache.json")
         self._data: dict[str, list[dict]] = {}  # date_str(yyyyMMdd) -> [records]
         self._day_meta: dict[str, dict] = {}  # date_str(yyyyMMdd) -> cache metadata
@@ -44,10 +45,14 @@ class LhbPoolManager:
     # 持久化
     # ================================================================
     def _load(self):
-        if not os.path.exists(self._cache_path):
+        cache_path = self._cache_path
+        if not os.path.exists(cache_path) and os.path.exists(self._legacy_pool_cache_path):
+            cache_path = self._legacy_pool_cache_path
+            log.info("[龙虎榜池] 检测到旧 20 日缓存，将作为 30 日窗口种子加载")
+        if not os.path.exists(cache_path):
             return
         try:
-            with open(self._cache_path, "r", encoding="utf-8") as f:
+            with open(cache_path, "r", encoding="utf-8") as f:
                 raw = json.load(f)
             self._data = raw.get("daily_data", {})
             self._day_meta = raw.get("day_meta", {})

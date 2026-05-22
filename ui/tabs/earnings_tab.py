@@ -14,7 +14,7 @@ from ui.services.earnings_refresh_service import EarningsRefreshService
 from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
-EARNINGS_DISPLAY_TRADE_DAYS = 10
+EARNINGS_DISPLAY_TRADE_DAYS = 30
 EARNINGS_TYPE_OPTIONS = ("预告", "快报", "财报")
 EarningsScheduler = EarningsRefreshService
 

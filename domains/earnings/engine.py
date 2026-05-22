@@ -43,6 +43,7 @@ except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as _e:
 # akshare/pandas/numpy 已在文件顶部 import，此处不再重复
 import json
 
+from core.ai_industry_chain_pool import normalize_ai_chain_code
 from core.logger import get_logger
 from domains.market_calendar import MarketCalendar
 
@@ -337,13 +338,14 @@ def current_active_report_dates() -> list:
 
 
 class EarningsEngine:
-    def __init__(self, cache_file="data/earnings_state.json", keep_days=30):
+    def __init__(self, cache_file="data/earnings_state.json", keep_days=30, stock_universe_provider=None):
         if not os.path.isabs(cache_file):
             root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             cache_file = os.path.join(root_dir, cache_file)
 
         self.cache_file = cache_file
         self.keep_days = keep_days
+        self.stock_universe_provider = stock_universe_provider
         self.seen_fingerprints = set()
         self.local_records = []
         self.last_sync_date = MarketCalendar.today("CN").strftime("%Y-%m-%d")
@@ -594,12 +596,35 @@ class EarningsEngine:
                     rec["所属行业与概念"] = "--"
         return records
 
+    def _resolve_stock_universe_codes(self) -> set[str] | None:
+        provider = getattr(self, "stock_universe_provider", None)
+        if not callable(provider):
+            return None
+        try:
+            return {code for code in (normalize_ai_chain_code(value) for value in provider()) if code}
+        except (FileNotFoundError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning(f"[业绩引擎] AI产业链股票池不可用，按空股票池处理: {exc}")
+            return set()
+
+    @staticmethod
+    def _record_stock_code(record: dict) -> str:
+        if not isinstance(record, dict):
+            return ""
+        return normalize_ai_chain_code(record.get("股票代码") or record.get("代码") or record.get("stock_code"))
+
+    def _filter_records_to_stock_universe(self, records: list[dict]) -> list[dict]:
+        allowed_codes = self._resolve_stock_universe_codes()
+        if allowed_codes is None:
+            return list(records or [])
+        return [record for record in (records or []) if self._record_stock_code(record) in allowed_codes]
+
     def get_cached_records(self) -> pd.DataFrame:
         """从长线账本中读取出所有还在存续期内的好股"""
-        if self.local_records:
+        records = self._filter_records_to_stock_universe(self.local_records)
+        if records:
             # 读取时补齐动态的本地盘后基因
-            self._inject_sectors(self.local_records)
-            df = pd.DataFrame(self.local_records).sort_values(
+            self._inject_sectors(records)
+            df = pd.DataFrame(records).sort_values(
                 by=["公告日期", "环比增速_百分比"], ascending=[False, False]
             )
             return df
@@ -751,11 +776,15 @@ class EarningsEngine:
         # 强制将携带真实扣非数值的记录排在前面，以防同日被互斥锁误杀
         all_candidates.sort(key=lambda x: not x["is_koufei"])
 
+        stock_universe_codes = self._resolve_stock_universe_codes()
+
         # 初筛：把根本不用查水表的股票直接踢掉，算出真实的待审名单
         pending_candidates = []
         for cand in all_candidates:
             code = cand["股票代码"]
             if not (code.startswith("0") or code.startswith("3") or code.startswith("6")):
+                continue
+            if stock_universe_codes is not None and code not in stock_universe_codes:
                 continue
             fingerprint = self._build_fingerprint(code, cand["报告期"], cand["数据类型"])
             if fingerprint in self.seen_fingerprints:

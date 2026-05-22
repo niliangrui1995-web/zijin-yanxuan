@@ -11,16 +11,19 @@ from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLa
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
 from app.services.ui_task_service import task_registry
+from core.ai_industry_chain_pool import (
+    AI_CHAIN_FILE,
+    PLACEHOLDER,
+    cell_text,
+    load_ai_industry_chain_rows,
+    normalize_ai_chain_code,
+)
 from core.logger import get_logger
 from ui.components import TableStateWrapper, VCPTableView
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
-
-_PROJECT_PARENT = Path(__file__).resolve().parents[3]
-AI_CHAIN_FILE = _PROJECT_PARENT / "产业链投研" / "AI产业链.xlsx"
-PLACEHOLDER = "--"
 
 
 class AIIndustryChainTab(BaseStockTab):
@@ -180,69 +183,14 @@ class AIIndustryChainTab(BaseStockTab):
 
     @staticmethod
     def _cell_text(value) -> str:
-        if value is None:
-            return ""
-        if isinstance(value, float) and value.is_integer():
-            return str(int(value))
-        return str(value).strip()
+        return cell_text(value)
 
     @classmethod
     def _normalize_code(cls, value) -> str:
-        text = cls._cell_text(value)
-        if text.endswith(".0"):
-            text = text[:-2]
-        if text.isdigit() and len(text) <= 6:
-            text = text.zfill(6)
-        return text if len(text) == 6 and text.isdigit() else ""
+        return normalize_ai_chain_code(value)
 
     def _read_workbook_rows(self) -> list[dict]:
-        if not self.workbook_path.exists():
-            raise FileNotFoundError(str(self.workbook_path))
-
-        try:
-            from openpyxl import load_workbook
-        except ImportError as exc:
-            raise RuntimeError("缺少 openpyxl，无法读取 AI产业链.xlsx") from exc
-
-        workbook = load_workbook(str(self.workbook_path), data_only=True, read_only=True)
-        try:
-            worksheet = workbook.active
-            rows = list(worksheet.iter_rows(values_only=True))
-        finally:
-            workbook.close()
-
-        if not rows:
-            return []
-
-        headers = [self._cell_text(value) for value in rows[0]]
-        header_map = {header: idx for idx, header in enumerate(headers) if header}
-
-        def _get(row, header):
-            idx = header_map.get(header)
-            if idx is None or idx >= len(row):
-                return ""
-            return self._cell_text(row[idx])
-
-        result = []
-        for raw_row in rows[1:]:
-            code = self._normalize_code(_get(raw_row, "代码"))
-            if not code:
-                continue
-            result.append(
-                {
-                    "代码": code,
-                    "名称": _get(raw_row, "公司名称") or _get(raw_row, "名称") or code,
-                    "现价": PLACEHOLDER,
-                    "涨幅": PLACEHOLDER,
-                    "市值": PLACEHOLDER,
-                    "细分板块": _get(raw_row, "细分板块") or _get(raw_row, "细分环节"),
-                    "5日涨幅": PLACEHOLDER,
-                    "10日涨幅": PLACEHOLDER,
-                    "20日涨幅": PLACEHOLDER,
-                    "备注": _get(raw_row, "备注"),
-                }
-            )
-        return result
+        return load_ai_industry_chain_rows(self.workbook_path)
 
     @staticmethod
     def _coerce_pandas_frame(frame):
