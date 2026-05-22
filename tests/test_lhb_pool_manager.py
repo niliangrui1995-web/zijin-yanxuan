@@ -24,6 +24,11 @@ class _DummyEngine:
 def _build_manager(monkeypatch):
     monkeypatch.setattr(LhbPoolManager, "_load", lambda self: None)
     monkeypatch.setattr(LhbPoolManager, "_migrate_old_cache", lambda self: None)
+    monkeypatch.setattr(
+        LhbPoolManager,
+        "_stock_universe_provider",
+        staticmethod(lambda: {"000001", "000002", "603256", "603738", "605589"}),
+    )
     manager = LhbPoolManager()
     manager._data = {}
     manager._day_meta = {}
@@ -96,6 +101,41 @@ def test_compute_pool_allows_zero_institution_net_buy(monkeypatch):
 
     assert [row["代码"] for row in pool] == ["603738"]
     assert pool[0]["机构净买(万)"] == 0.0
+
+
+def test_compute_pool_filters_to_ai_industry_chain_pool(monkeypatch):
+    manager = _build_manager(monkeypatch)
+    monkeypatch.setattr(
+        LhbPoolManager,
+        "_stock_universe_provider",
+        staticmethod(lambda: {"603738"}),
+    )
+    manager._data = {
+        "20260508": [
+            {
+                "代码": "603738",
+                "名称": "泰晶科技",
+                "上榜日期": "20260508",
+                "上榜净买额(万)": 18613.18,
+                "机构净买(万)": 0.0,
+                "外资净买(万)": -2354.84,
+                "涨幅%": 9.99,
+            },
+            {
+                "代码": "600000",
+                "名称": "非AI股票",
+                "上榜日期": "20260508",
+                "上榜净买额(万)": 8800,
+                "机构净买(万)": 3000,
+                "外资净买(万)": 1200,
+                "涨幅%": 5.2,
+            },
+        ]
+    }
+
+    pool = manager.compute_pool()
+
+    assert [row["代码"] for row in pool] == ["603738"]
 
 
 def test_compute_pool_prioritizes_recent_listing_before_older_buy_point(monkeypatch):

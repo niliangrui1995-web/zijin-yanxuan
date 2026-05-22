@@ -18,6 +18,25 @@ def _build_engine() -> EarningsEngine:
     return engine
 
 
+def test_inject_sectors_uses_ai_industry_chain_context(monkeypatch):
+    engine = _build_engine()
+    monkeypatch.setattr(
+        engine_module,
+        "load_ai_industry_chain_context_map",
+        lambda: {"300308": "光模块 | 800G"},
+    )
+    records = [
+        {"股票代码": "300308", "股票名称": "中际旭创"},
+        {"股票代码": "600000", "股票名称": "浦发银行"},
+    ]
+
+    result = engine._inject_sectors(records)
+
+    assert result is records
+    assert records[0]["所属行业与概念"] == "光模块 | 800G"
+    assert records[1]["所属行业与概念"] == "--"
+
+
 def test_prune_retryable_seen_fingerprints_removes_active_orphans(monkeypatch):
     engine = _build_engine()
     engine.seen_fingerprints = {

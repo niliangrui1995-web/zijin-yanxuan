@@ -43,7 +43,7 @@ except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as _e:
 # akshare/pandas/numpy 已在文件顶部 import，此处不再重复
 import json
 
-from core.ai_industry_chain_pool import normalize_ai_chain_code
+from core.ai_industry_chain_pool import load_ai_industry_chain_context_map, normalize_ai_chain_code
 from core.logger import get_logger
 from domains.market_calendar import MarketCalendar
 
@@ -558,42 +558,15 @@ class EarningsEngine:
     def _inject_sectors(self, records: list) -> list:
         if not records:
             return records
-        # === 灌注通达信板块与概念基因 ===
         try:
-            # 瞬间从本地挂载全市场 A 股基因字典
-            # 动态获取通达信安装路径，不再硬编码
-            from core.app_config import app_config
-            from vcp.sector import SectorManager
+            context_map = load_ai_industry_chain_context_map()
+        except (FileNotFoundError, ImportError, OSError, RuntimeError, TypeError, ValueError) as e:
+            logger.error(f"[业绩引擎] AI产业链细分板块数据加载失败: {e}")
+            context_map = {}
 
-            _tdx_vipdoc = app_config.get("scan/tdx_vipdoc", r"D:\HT\vipdoc")
-            _tdx_root = os.path.dirname(_tdx_vipdoc) if _tdx_vipdoc else r"D:\HT"
-            sm = SectorManager.get_instance(_tdx_root)
-            for rec in records:
-                raw_sectors = sm.get_sectors(rec["股票代码"])
-                if not raw_sectors:
-                    rec["所属行业与概念"] = "--"
-                    continue
-
-                industry = ""
-                concepts = []
-                for s in raw_sectors:
-                    if s.startswith("行业_"):
-                        industry = s.replace("行业_", "")
-                    elif s.startswith("GN_"):
-                        concepts.append(s.replace("GN_", ""))
-
-                parts = []
-                if industry:
-                    parts.append(f"【{industry}】")
-                if concepts:
-                    parts.append(", ".join(concepts))
-
-                rec["所属行业与概念"] = " ".join(parts) if parts else "--"
-        except (AttributeError, ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
-            logger.error(f"[业绩引擎] 板块数据加载失败: {e}")
-            for rec in records:
-                if "所属行业与概念" not in rec:
-                    rec["所属行业与概念"] = "--"
+        for rec in records:
+            code = self._record_stock_code(rec)
+            rec["所属行业与概念"] = context_map.get(code, "--")
         return records
 
     def _resolve_stock_universe_codes(self) -> set[str] | None:
@@ -864,7 +837,7 @@ class EarningsEngine:
             self._save_cache()
 
         if valid_records:
-            # === 调用刚抽离的方法，一键灌注通达信板块与概念基因 ===
+            # === 补齐 AI 产业链细分板块与备注 ===
             self._inject_sectors(valid_records)
 
             return pd.DataFrame(valid_records).sort_values(by=["公告日期", "环比增速_百分比"], ascending=[False, False])

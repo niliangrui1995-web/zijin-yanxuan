@@ -104,6 +104,7 @@ domains/data/*.db-shm
 
 data/crash_report.log
 data/Cache/lhb_pool_20d.json
+data/Cache/lhb_pool_30d.json
 data/Cache/trade_dates.json
 data/Cache/foreign_block_trade_latest.json
 data/Cache/na_daily_latest.json

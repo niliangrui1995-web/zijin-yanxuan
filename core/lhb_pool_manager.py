@@ -18,6 +18,7 @@ import gc
 import json
 import os
 
+from core.ai_industry_chain_pool import load_ai_industry_chain_stock_codes, normalize_ai_chain_code
 from core.buy_point import BUY_POINT_STYLE_TEXT, calculate_buy_point_from_history
 from core.logger import get_logger
 
@@ -29,6 +30,8 @@ POOL_WINDOW = 30
 
 class LhbPoolManager:
     """龙虎榜关注池数据引擎 — 线程不安全，仅限主线程操作"""
+
+    _stock_universe_provider = staticmethod(load_ai_industry_chain_stock_codes)
 
     def __init__(self):
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -205,9 +208,39 @@ class LhbPoolManager:
     # ================================================================
     # 数据管理
     # ================================================================
+    @staticmethod
+    def _record_stock_code(record: dict) -> str:
+        if not isinstance(record, dict):
+            return ""
+        return normalize_ai_chain_code(
+            record.get("代码")
+            or record.get("股票代码")
+            or record.get("证券代码")
+            or record.get("stock_code")
+            or record.get("code")
+        )
+
+    def _resolve_stock_universe_codes(self) -> set[str]:
+        provider = getattr(self, "stock_universe_provider", None)
+        if not callable(provider):
+            provider = getattr(type(self), "_stock_universe_provider", None)
+        if not callable(provider):
+            return set()
+        try:
+            return {code for code in (normalize_ai_chain_code(value) for value in provider()) if code}
+        except (FileNotFoundError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.warning(f"[龙虎榜池] AI产业链股票池不可用，按空股票池处理: {exc}")
+            return set()
+
+    def _filter_records_to_stock_universe(self, records: list[dict]) -> list[dict]:
+        stock_codes = self._resolve_stock_universe_codes()
+        if not stock_codes:
+            return []
+        return [record for record in (records or []) if self._record_stock_code(record) in stock_codes]
+
     def add_day(self, date_str: str, records: list[dict], meta: dict | None = None):
         """写入某一天的龙虎榜数据"""
-        safe_records = records if isinstance(records, list) else []
+        safe_records = self._filter_records_to_stock_universe(records if isinstance(records, list) else [])
         self._data[date_str] = safe_records
         self._day_meta[date_str] = self._normalize_day_meta_item(meta, safe_records)
         # 不在这里 save()，由调用方决定何时批量保存（减少 IO）
@@ -335,15 +368,21 @@ class LhbPoolManager:
         if not self._data:
             return []
 
+        stock_universe_codes = self._resolve_stock_universe_codes()
+        if not stock_universe_codes:
+            return []
+
         # 第一轮扫描：找出所有满足条件的代码 + 计数
         qualifying_codes: set[str] = set()
         code_hit_count: dict[str, int] = {}
 
         for date_str, records in self._data.items():
             for rec in records:
-                code = rec.get("代码", "")
+                code = self._record_stock_code(rec)
                 name = rec.get("名称", "")
                 if not code:
+                    continue
+                if code not in stock_universe_codes:
                     continue
 
                 # 过滤①：剔除北交所（代码前缀 43/83/87）
@@ -422,7 +461,7 @@ class LhbPoolManager:
 
         for date_str in sorted_dates:
             for rec in self._data[date_str]:
-                code = rec.get("代码", "")
+                code = self._record_stock_code(rec)
                 if code in qualifying_codes and code not in latest_records:
                     # 获取该条记录的核心净买数据
                     try:
@@ -437,6 +476,7 @@ class LhbPoolManager:
                         continue
 
                     record = dict(rec)
+                    record["代码"] = code
                     record["买点"] = ""
                     record["上榜次数"] = code_hit_count.get(code, 1)
                     record["最近上榜"] = record.get("上榜日期", date_str)

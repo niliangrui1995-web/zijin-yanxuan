@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import os
 from contextlib import suppress
 
 from PyQt6.QtCore import Qt, QTimer
@@ -17,7 +16,6 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from app.services.sector_runtime_service import get_sector_manager
 from app.services.tab_data_lineage_service import TabDataLineageService
 from app.services.ui_config_service import app_config
 from app.services.ui_diagnostics_service import ui_stall_span
@@ -34,7 +32,12 @@ from app.services.ui_fund_holdings_service import (
 )
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
-from core.ai_industry_chain_pool import filter_rows_to_ai_chain_codes, load_ai_industry_chain_stock_codes
+from core.ai_industry_chain_pool import (
+    filter_rows_to_ai_chain_codes,
+    load_ai_industry_chain_context_map,
+    load_ai_industry_chain_stock_codes,
+    normalize_ai_chain_code,
+)
 from ui.components import (
     MultiSelectFilterButton,
     TableStateWrapper,
@@ -79,6 +82,7 @@ class FundHoldingsTab(BaseStockTab):
     }
     _VIEW_STATE_PREFIX = "fund_holdings_view_state_v2"
     _stock_universe_provider = staticmethod(load_ai_industry_chain_stock_codes)
+    _chain_context_provider = staticmethod(load_ai_industry_chain_context_map)
 
     def __init__(self, data_provider, parent=None, autoload: bool = True):
         super().__init__(data_provider=data_provider, parent=parent)
@@ -94,9 +98,8 @@ class FundHoldingsTab(BaseStockTab):
         self._filter_menu_updating = False
         self._quarter_actions: dict[str, QAction] = {}
         self._change_actions: dict[str, QAction] = {}
-        self._sector_manager = None
-        self._sector_manager_initialized = False
         self._concept_sector_cache: dict[str, str] = {}
+        self._ai_chain_context_map: dict[str, str] | None = None
         self._fund_holdings_lineage_service = TabDataLineageService(
             key="fund_holdings",
             source="fund_holdings_store + local_quote_snapshot",
@@ -301,26 +304,21 @@ class FundHoldingsTab(BaseStockTab):
         self._set_initial_loading_state("正在加载基金持仓数据...", "首次进入时后台构建持仓视图")
         self._reload_from_db_async()
 
-    @staticmethod
-    def _resolve_tdx_root(data_provider) -> str | None:
-        tdx_vipdoc = str(getattr(data_provider, "tdx_vipdoc", "") or "").strip()
-        return os.path.dirname(tdx_vipdoc) if tdx_vipdoc else None
-
-    @staticmethod
-    def _build_sector_manager(tdx_root: str | None):
+    @classmethod
+    def _load_ai_chain_context_map(cls) -> dict[str, str]:
         try:
-            return get_sector_manager(tdx_root)
-        except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
-            return None
+            return dict(cls._chain_context_provider() or {})
+        except (FileNotFoundError, ImportError, OSError, RuntimeError, TypeError, ValueError):
+            return {}
 
     @classmethod
-    def _build_concept_sector_text_with_manager(
+    def _build_ai_chain_context_text(
         cls,
         stock_code: str,
-        manager,
+        context_map: dict[str, str],
         concept_sector_cache: dict[str, str],
     ) -> str:
-        code = str(stock_code or "").strip()
+        code = normalize_ai_chain_code(stock_code)
         if not code:
             return cls._DISPLAY_PLACEHOLDER
 
@@ -328,25 +326,9 @@ class FundHoldingsTab(BaseStockTab):
         if cached is not None:
             return cached
 
-        concept_text = cls._DISPLAY_PLACEHOLDER
-        if manager is not None:
-            try:
-                concepts = []
-                for sector_name in manager.get_sectors(code) or []:
-                    sector_text = str(sector_name or "").strip()
-                    if not sector_text.startswith("GN_"):
-                        continue
-                    concept_name = sector_text.replace("GN_", "", 1).strip()
-                    if concept_name:
-                        concepts.append(concept_name)
-                filtered_concepts = cls._filter_ai_related_concepts(concepts)
-                if filtered_concepts:
-                    concept_text = " | ".join(filtered_concepts)
-            except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
-                concept_text = cls._DISPLAY_PLACEHOLDER
-
-        concept_sector_cache[code] = concept_text
-        return concept_text
+        context_text = str((context_map or {}).get(code) or "").strip() or cls._DISPLAY_PLACEHOLDER
+        concept_sector_cache[code] = context_text
+        return context_text
 
     @classmethod
     def _resolve_query_quarters(
@@ -406,7 +388,7 @@ class FundHoldingsTab(BaseStockTab):
         )
         change_rows = cls._query_change_rows_for_scope(query_quarters)
         concept_sector_cache: dict[str, str] = {}
-        sector_manager = cls._build_sector_manager(cls._resolve_tdx_root(data_provider))
+        chain_context_map = cls._load_ai_chain_context_map()
         view_rows = []
         for row in change_rows or []:
             stock_code = str(row.get("stock_code") or "").strip()
@@ -441,9 +423,9 @@ class FundHoldingsTab(BaseStockTab):
                         show=has_curr or has_prev,
                         signed=True,
                     ),
-                    "概念板块": cls._build_concept_sector_text_with_manager(
+                    "概念板块": cls._build_ai_chain_context_text(
                         stock_code,
-                        sector_manager,
+                        chain_context_map,
                         concept_sector_cache,
                     ),
                     "_capital_attribute_value": capital_attribute,
@@ -1159,6 +1141,7 @@ class FundHoldingsTab(BaseStockTab):
             self._latest_quarter_map = fund_holdings_store.get_latest_quarter_map()
             self._latest_sync_map = fund_holdings_store.get_latest_sync_map()
             self._concept_sector_cache.clear()
+            self._ai_chain_context_map = None
             scope = str(quarter_scope or self._QUERY_SCOPE_LATEST).strip().lower()
             query_quarters = self._resolve_query_quarters(
                 self._latest_quarter_map,
@@ -1259,21 +1242,8 @@ class FundHoldingsTab(BaseStockTab):
             self.table_state.show_table()
         self._update_status_summary()
 
-    def _get_sector_manager(self):
-        if self._sector_manager_initialized:
-            return self._sector_manager
-
-        self._sector_manager_initialized = True
-        tdx_vipdoc = str(getattr(self.data_provider, "tdx_vipdoc", "") or "").strip()
-        tdx_root = os.path.dirname(tdx_vipdoc) if tdx_vipdoc else None
-        try:
-            self._sector_manager = get_sector_manager(tdx_root)
-        except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
-            self._sector_manager = None
-        return self._sector_manager
-
     def _get_concept_sector_text(self, stock_code: str) -> str:
-        code = str(stock_code or "").strip()
+        code = normalize_ai_chain_code(stock_code)
         if not code:
             return self._DISPLAY_PLACEHOLDER
 
@@ -1281,26 +1251,14 @@ class FundHoldingsTab(BaseStockTab):
         if cached is not None:
             return cached
 
-        concept_text = self._DISPLAY_PLACEHOLDER
-        manager = self._get_sector_manager()
-        if manager is not None:
-            try:
-                concepts = []
-                for sector_name in manager.get_sectors(code) or []:
-                    sector_text = str(sector_name or "").strip()
-                    if not sector_text.startswith("GN_"):
-                        continue
-                    concept_name = sector_text.replace("GN_", "", 1).strip()
-                    if concept_name:
-                        concepts.append(concept_name)
-                filtered_concepts = self._filter_ai_related_concepts(concepts)
-                if filtered_concepts:
-                    concept_text = " | ".join(filtered_concepts)
-            except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
-                concept_text = self._DISPLAY_PLACEHOLDER
+        if self._ai_chain_context_map is None:
+            self._ai_chain_context_map = self._load_ai_chain_context_map()
 
-        self._concept_sector_cache[code] = concept_text
-        return concept_text
+        context_text = (
+            str((self._ai_chain_context_map or {}).get(code) or "").strip() or self._DISPLAY_PLACEHOLDER
+        )
+        self._concept_sector_cache[code] = context_text
+        return context_text
 
     @classmethod
     def _is_ai_related_concept(cls, concept_name: str) -> bool:

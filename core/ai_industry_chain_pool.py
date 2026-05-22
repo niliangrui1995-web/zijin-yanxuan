@@ -83,6 +83,31 @@ def load_ai_industry_chain_stock_codes(workbook_path: str | Path | None = None) 
     return {row["代码"] for row in load_ai_industry_chain_rows(workbook_path) if row.get("代码")}
 
 
+def format_ai_industry_chain_context(row: dict | None, *, placeholder: str = PLACEHOLDER) -> str:
+    if not isinstance(row, dict):
+        return placeholder
+
+    parts = []
+    for key in ("细分板块", "细分环节", "备注"):
+        text = cell_text(row.get(key))
+        if text and text not in parts:
+            parts.append(text)
+    return " | ".join(parts) if parts else placeholder
+
+
+def load_ai_industry_chain_context_map(workbook_path: str | Path | None = None) -> dict[str, str]:
+    grouped: dict[str, list[str]] = {}
+    for row in load_ai_industry_chain_rows(workbook_path):
+        code = row.get("代码")
+        text = format_ai_industry_chain_context(row)
+        if not code or text == PLACEHOLDER:
+            continue
+        bucket = grouped.setdefault(code, [])
+        if text not in bucket:
+            bucket.append(text)
+    return {code: "；".join(values) for code, values in grouped.items()}
+
+
 def normalize_stock_code_from_row(row: dict, code_keys: Iterable[str]) -> str:
     if not isinstance(row, dict):
         return ""

@@ -5,6 +5,8 @@ import pytest
 
 from core.ai_industry_chain_pool import (
     filter_rows_to_ai_chain_codes,
+    format_ai_industry_chain_context,
+    load_ai_industry_chain_context_map,
     load_ai_industry_chain_rows,
     load_ai_industry_chain_stock_codes,
 )
@@ -43,3 +45,22 @@ def test_filter_rows_to_ai_chain_codes_uses_normalized_code_keys():
     filtered = filter_rows_to_ai_chain_codes(rows, stock_codes={"300308", "002384"})
 
     assert [row["名称"] for row in filtered] == ["中际旭创", "东山精密"]
+
+
+def test_ai_industry_chain_context_map_uses_segment_and_remark(tmp_path):
+    openpyxl = pytest.importorskip("openpyxl")
+    workbook_path = tmp_path / "AI产业链.xlsx"
+    _write_workbook(workbook_path)
+    workbook = openpyxl.load_workbook(workbook_path)
+    try:
+        worksheet = workbook.active
+        worksheet.append(["CPO", "300308", "中际旭创", "交换侧"])
+        workbook.save(workbook_path)
+    finally:
+        workbook.close()
+
+    context_map = load_ai_industry_chain_context_map(workbook_path)
+
+    assert format_ai_industry_chain_context({"细分板块": "光模块", "备注": "800G"}) == "光模块 | 800G"
+    assert context_map["300308"] == "光模块 | 800G；CPO | 交换侧"
+    assert context_map["002384"] == "PCB | 高速互联"

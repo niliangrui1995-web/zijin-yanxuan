@@ -64,6 +64,7 @@ class AutoRefreshTaskService:
         records = payload.get("records", []) if isinstance(payload, dict) else payload
         status = payload.get("status", "ok") if isinstance(payload, dict) else "ok"
         records = list(records or [])
+        records = _filter_lhb_rows_to_ai_chain(records)
 
         manager = LhbPoolManager()
         manager.add_day(date_text, records)
@@ -161,6 +162,17 @@ class AutoRefreshTaskService:
         result["trade_date"] = str(trade_date or "").strip()
         result["routine_time"] = str(routine_time or "").strip()
         return result
+
+
+def _filter_lhb_rows_to_ai_chain(row_data: list[dict]) -> list[dict]:
+    try:
+        return filter_rows_to_ai_chain_codes(
+            row_data,
+            code_keys=("代码", "股票代码", "证券代码", "stock_code", "code"),
+        )
+    except (FileNotFoundError, RuntimeError, OSError, TypeError, ValueError) as exc:
+        log.warning(f"[龙虎榜池] AI产业链股票池不可用，自动缓存按空股票池处理: {exc}")
+        return []
 
 
 def _fetch_foreign_block_records(*, days_to_fetch: int) -> dict:

@@ -187,8 +187,8 @@ def _setup_store(
     )
     monkeypatch.setattr(
         fund_holdings_module.FundHoldingsTab,
-        "_get_concept_sector_text",
-        lambda self, stock_code: concept_map.get(str(stock_code or "").strip(), "--"),
+        "_chain_context_provider",
+        staticmethod(lambda: dict(concept_map)),
         raising=False,
     )
     if patch_local_snapshot:
@@ -602,7 +602,7 @@ def test_fund_holdings_toolbar_exposes_accessible_filter_names(monkeypatch):
         tab.deleteLater()
 
 
-def test_fund_holdings_tab_shows_concept_sector_column(monkeypatch):
+def test_fund_holdings_tab_shows_ai_chain_context_column(monkeypatch):
     _setup_store(
         monkeypatch,
         [
@@ -612,11 +612,11 @@ def test_fund_holdings_tab_shows_concept_sector_column(monkeypatch):
                 quarter_key="2025Q4",
                 compare_quarter_key="2025Q3",
                 change_type="增持",
-                stock_code="000001",
-                stock_name="平安银行",
+                stock_code="300308",
+                stock_name="中际旭创",
             )
         ],
-        concept_map={"000001": "MSCI概念 | 互联金融"},
+        concept_map={"300308": "光模块 | 800G"},
     )
     monkeypatch.setattr(
         fund_holdings_module.FundHoldingsTab,
@@ -627,7 +627,7 @@ def test_fund_holdings_tab_shows_concept_sector_column(monkeypatch):
 
     tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
     try:
-        assert tab.model.get_row_data(0)["概念板块"] == "MSCI概念 | 互联金融"
+        assert tab.model.get_row_data(0)["概念板块"] == "光模块 | 800G"
     finally:
         tab.deleteLater()
 

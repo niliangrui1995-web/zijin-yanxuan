@@ -365,9 +365,14 @@ def test_auto_refresh_task_service_writes_lhb_pool_cache(monkeypatch):
     monkeypatch.setattr(
         "ui.workers.lhb_worker.fetch_lhb_pool_for_date",
         lambda date_text, emit_success_log=False, return_meta=True: {
-            "records": [{"code": "300750"}],
+            "records": [{"code": "300308"}, {"code": "600000"}],
             "status": "ok",
         },
+    )
+    monkeypatch.setattr(
+        auto_refresh_task_module,
+        "filter_rows_to_ai_chain_codes",
+        lambda rows, **kwargs: [row for row in rows if row.get("code") == "300308"],
     )
     monkeypatch.setattr("ui.services.auto_refresh_tasks.LhbPoolManager", FakePoolManager)
     monkeypatch.setattr(
@@ -378,7 +383,7 @@ def test_auto_refresh_task_service_writes_lhb_pool_cache(monkeypatch):
     result = AutoRefreshTaskService().run_lhb_daily("20260420")
 
     assert calls == [
-        ("add_day", "20260420", [{"code": "300750"}]),
+        ("add_day", "20260420", [{"code": "300308"}]),
         ("prune", ("20260420",)),
         ("save",),
     ]
