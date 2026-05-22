@@ -295,6 +295,50 @@ def test_lhb_display_pool_emits_update_without_self_reload(monkeypatch):
         tab.deleteLater()
 
 
+def test_lhb_columns_replace_listing_reason_with_ai_chain_context():
+    tab = LhbTab(object(), autoload_pool=False)
+    try:
+        assert "上榜原因" not in tab.columns
+        assert LhbTab.AI_CHAIN_CONTEXT_COLUMN in tab.columns
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_display_pool_shows_ai_chain_context_in_reason_slot(monkeypatch):
+    monkeypatch.setattr(
+        LhbTab,
+        "refresh_table_quotes_and_market_caps",
+        lambda self, *args, **kwargs: None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        LhbTab,
+        "_chain_context_provider",
+        staticmethod(lambda: {"300750": "动力电池链 | 宁德备注"}),
+    )
+
+    tab = LhbTab(object(), autoload_pool=False)
+    tab.pool_manager = SimpleNamespace(get_cached_dates=lambda: ["20260420"])
+    try:
+        tab._display_pool(
+            [
+                {
+                    "代码": "300750",
+                    "名称": "宁德时代",
+                    "最近上榜": "20260420",
+                    "上榜原因": "日涨幅偏离值达到7%",
+                }
+            ]
+        )
+        row = tab.model.get_row_data(0)
+
+        assert row[LhbTab.AI_CHAIN_CONTEXT_COLUMN] == "动力电池链 | 宁德备注"
+        assert "上榜原因" not in row
+        assert row["_原始上榜原因"] == "日涨幅偏离值达到7%"
+    finally:
+        tab.deleteLater()
+
+
 def test_lhb_pool_bootstrap_skips_duplicate_active_task(monkeypatch):
     task_ids = []
     monkeypatch.setattr(

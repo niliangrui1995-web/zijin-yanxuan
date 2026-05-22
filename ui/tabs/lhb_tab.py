@@ -27,6 +27,7 @@ from app.services.ui_event_service import ui_signals
 from app.services.ui_market_calendar_service import MarketCalendar
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
+from core.ai_industry_chain_pool import load_ai_industry_chain_context_map, normalize_ai_chain_code
 from core.lhb_pool_manager import POOL_WINDOW, LhbPoolManager
 from core.logger import get_logger
 from ui.components import TableStateWrapper, VCPTableView
@@ -38,6 +39,10 @@ log = get_logger(__name__)
 
 class LhbTab(BaseStockTab):
     """龙虎榜 30 日关注池 Tab"""
+
+    AI_CHAIN_CONTEXT_COLUMN = "AI细分板块/备注"
+    _DISPLAY_PLACEHOLDER = "--"
+    _chain_context_provider = staticmethod(load_ai_industry_chain_context_map)
 
     def __init__(self, data_provider, parent=None, autoload_pool: bool = True):
         super().__init__(data_provider=data_provider, parent=parent)
@@ -68,6 +73,7 @@ class LhbTab(BaseStockTab):
         )
         self._last_lhb_result = None
         self._last_lhb_signature = ""
+        self._ai_chain_context_map: dict[str, str] | None = None
         self._handling_lhb_pool_update = False
         self._pool_retry_timer = QTimer(self)
         self._pool_retry_timer.setSingleShot(True)
@@ -162,6 +168,34 @@ class LhbTab(BaseStockTab):
         if self.pool_manager is None:
             self.pool_manager = LhbPoolManager()
         return self.pool_manager
+
+    @classmethod
+    def _load_ai_chain_context_map(cls) -> dict[str, str]:
+        try:
+            return dict(cls._chain_context_provider() or {})
+        except (FileNotFoundError, RuntimeError, OSError, TypeError, ValueError) as exc:
+            log.warning(f"[龙虎榜池] AI产业链细分板块数据加载失败: {exc}")
+            return {}
+
+    @staticmethod
+    def _record_stock_code(record: dict) -> str:
+        if not isinstance(record, dict):
+            return ""
+        return normalize_ai_chain_code(
+            record.get("代码")
+            or record.get("股票代码")
+            or record.get("证券代码")
+            or record.get("stock_code")
+            or record.get("code")
+        )
+
+    def _get_ai_chain_context_text(self, stock_code: str) -> str:
+        code = normalize_ai_chain_code(stock_code)
+        if not code:
+            return self._DISPLAY_PLACEHOLDER
+        if self._ai_chain_context_map is None:
+            self._ai_chain_context_map = self._load_ai_chain_context_map()
+        return str((self._ai_chain_context_map or {}).get(code) or "").strip() or self._DISPLAY_PLACEHOLDER
 
     @staticmethod
     def _ensure_log_line(message: str) -> str:
@@ -361,7 +395,7 @@ class LhbTab(BaseStockTab):
             "机构净买(万)",
             "外资净买入",
             "换手率%",
-            "上榜原因",
+            self.AI_CHAIN_CONTEXT_COLUMN,
         ]
         self.table = VCPTableView(default_row_height=30)
         self.model = StockTableModel(self.columns)
@@ -599,9 +633,12 @@ class LhbTab(BaseStockTab):
         message = f"[龙虎榜池] {today_str} 今日探针异常，手动刷新沿用参考交易日 {ref_trade_date.strftime('%Y%m%d')}"
         return MarketCalendar.get_recent_trade_dates(n, ref_date=ref_trade_date), message, "warn"
 
-    @staticmethod
-    def _format_pool_row(rec: dict) -> dict:
+    def _format_pool_row(self, rec: dict) -> dict:
         row_dict = dict(rec or {})
+        original_reason = str(row_dict.pop("上榜原因", "") or "").strip()
+        if original_reason:
+            row_dict["_原始上榜原因"] = original_reason
+        row_dict[self.AI_CHAIN_CONTEXT_COLUMN] = self._get_ai_chain_context_text(self._record_stock_code(row_dict))
         # "最近上榜" 格式化：yyyyMMdd -> MM-dd 更紧凑，同时保留原始日期给关注池汇总使用
         raw_date = str(row_dict.get("最近上榜", ""))
         if len(raw_date) == 8:
