@@ -44,7 +44,7 @@ def test_build_ui_tokens_compact_density_tightens_metrics():
     assert compact["density"] == "紧凑"
     assert compact["control"]["button_height"] < comfort["control"]["button_height"]
     assert comfort["table"]["row_height_base"] == 32
-    assert comfort["table"]["cell_padding_y"] == 6
+    assert comfort["table"]["cell_padding_y"] == 8
     assert comfort["table"]["header_min_height"] == 30
     assert compact["table"]["cell_padding_y"] < comfort["table"]["cell_padding_y"]
     assert compact["table"]["row_height_delta"] == comfort["table"]["row_height_delta"]
@@ -153,7 +153,7 @@ def test_yaohei_selection_and_primary_actions_use_accent_not_market_red():
 
     assert tokens["table"]["selected_rail_color"] == THEME_YAOHEI["ACCENT_PRIMARY"]
     assert tokens["table"]["hover_rail_color"] == THEME_YAOHEI["ACCENT_PRIMARY"]
-    assert THEME_YAOHEI["BG_CANVAS"] == "#000000"
+    assert THEME_YAOHEI["BG_CANVAS"] == "#0A0C14"
     assert THEME_YAOHEI["BG_TABLE_BASE"] == "#000000"
     assert THEME_YAOHEI["BG_TABLE_ALT_ROW"] == "#090909"
     assert THEME_YAOHEI["BG_CARD"] == "#080808"
@@ -259,9 +259,9 @@ def test_global_qss_includes_themed_tooltip_style():
     qss = generate_global_qss(THEME_YAOHEI, density="紧凑")
 
     assert "QToolTip {" in qss
-    assert f"background-color: {THEME_YAOHEI['BG_ELEVATED']};" in qss
-    assert f"color: {THEME_YAOHEI['TEXT_PRIMARY']};" in qss
-    assert "border-radius: 0px;" in qss
+    assert "background-color: rgba(15, 18, 30, 0.88);" in qss
+    assert f"color: {THEME_YAOHEI['TEXT_BRIGHT']};" in qss
+    assert "border-radius: 10px;" in qss
 
 
 def test_global_qss_themes_date_edit_and_dialog_shell():
@@ -300,13 +300,14 @@ def test_vcp_table_view_width_is_capped_by_available_screen():
         table.deleteLater()
 
 
-def test_vcp_table_view_tooltip_style_uses_larger_font_without_rounded_corners():
+def test_vcp_table_view_tooltip_style_uses_frosted_compact_tooltips():
     table = VCPTableView()
     try:
         style = table.styleSheet()
         assert "QToolTip" in style
-        assert "font-size: 14px;" in style
-        assert "border-radius: 0px;" in style
+        assert "background-color: rgba(15, 18, 30, 0.88);" in style
+        assert "font-size: 12px;" in style
+        assert "border-radius: 10px;" in style
     finally:
         table.deleteLater()
 
@@ -347,3 +348,80 @@ def test_vcp_table_view_tooltip_only_shows_when_text_is_elided():
         assert table._should_show_tooltip_for_index(idx) is False
     finally:
         table.deleteLater()
+
+
+def test_stock_table_model_exposes_ui_plan_visual_payloads():
+    code = "\u4ee3\u7801"
+    source = "\u6765\u6e90"
+    lhb_net = "\u4e0a\u699c\u51c0\u4e70\u989d(\u4e07)"
+    inst_net = "\u673a\u6784\u51c0\u4e70(\u4e07)"
+    foreign_display = "\u5916\u8d44\u51c0\u4e70\u5165"
+    foreign_value = "\u5916\u8d44\u51c0\u4e70(\u4e07)"
+    risk = "\u98ce\u63a7"
+    status = "\u72b6\u6001"
+    price = "\u73b0\u4ef7"
+    currency = "\u8d27\u5e01"
+    rating = "\u8bc4\u7ea7"
+    latest = "\u6700\u8fd1\u4e0a\u699c"
+    turnover = "\u6362\u624b\u7387%"
+    ai_note = "AI\u7ec6\u5206\u677f\u5757/\u5907\u6ce8"
+    headers = [
+        code,
+        source,
+        lhb_net,
+        inst_net,
+        foreign_display,
+        foreign_value,
+        risk,
+        status,
+        price,
+        currency,
+        rating,
+        latest,
+        turnover,
+        ai_note,
+    ]
+    model = StockTableModel(headers)
+    model.update_data(
+        [
+            {
+                code: "000001",
+                source: "\u624b\u52a8|\u626b\u63cf|\u9f99\u864e\u699c",
+                lhb_net: 1200,
+                inst_net: 340,
+                foreign_display: "\u51c0\u5356",
+                foreign_value: -420,
+                risk: "\u9ad8\u98ce\u9669",
+                status: "\U0001f7e2\u4ea4\u6613\u4e2d",
+                price: "123.45",
+                currency: "USD",
+                rating: "A",
+                latest: "20260522",
+                turnover: 8.5,
+                ai_note: "AI server supply chain",
+            }
+        ]
+    )
+
+    visual_role = Qt.ItemDataRole.UserRole + 5
+
+    source_payload = model.data(model.index(0, model.headers.index(source)), visual_role)
+    assert source_payload["kind"] == "tag_badges"
+    assert [tag["text"] for tag in source_payload["tags"]] == ["\u624b\u52a8", "\u626b\u63cf", "\u9f99\u864e\u699c"]
+
+    lhb_payload = model.data(model.index(0, model.headers.index(lhb_net)), visual_role)
+    assert lhb_payload["kind"] == "money_bar"
+    assert lhb_payload["value"] == 1200
+
+    foreign_payload = model.data(model.index(0, model.headers.index(foreign_display)), visual_role)
+    assert foreign_payload["kind"] == "money_bar"
+    assert foreign_payload["value"] == -420
+
+    assert model.data(model.index(0, model.headers.index(risk)), Qt.ItemDataRole.DisplayRole) == ""
+    assert model.data(model.index(0, model.headers.index(risk)), visual_role)["kind"] == "risk_light"
+    assert model.data(model.index(0, model.headers.index(status)), visual_role)["kind"] == "status_light"
+    assert model.data(model.index(0, model.headers.index(price)), visual_role) == {"kind": "currency_stamp", "stamp": "$"}
+
+    for muted_small_header in (latest, turnover, ai_note):
+        font = model.data(model.index(0, model.headers.index(muted_small_header)), Qt.ItemDataRole.FontRole)
+        assert font.pointSizeF() == 11.5

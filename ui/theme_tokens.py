@@ -123,7 +123,7 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "xs": 4,
         "sm": 6,
         "md": 8,
-        "lg": 12,
+        "lg": 14,
         "xl": 16,
         "pill": 14,
     }
@@ -132,14 +132,14 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "2xs": 4,
         "xs": 6,
         "sm": 8,
-        "md": 10 if compact else 12,
+        "md": 10 if compact else 14,
         "lg": 12 if compact else 14,
         "xl": 14 if compact else 16,
         "2xl": 16 if compact else 20,
     }
 
     control = {
-        "button_height": 30 if compact else 34,
+        "button_height": 30 if compact else 36,
         "input_height": 30 if compact else 34,
         "toolbar_button_height": 32 if compact else 38,
         "button_padding_x": 12 if compact else 16,
@@ -153,7 +153,7 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
     table = {
         "row_height_base": 32,
         "row_height_delta": 4,
-        "cell_padding_y": 4 if compact else 6,
+        "cell_padding_y": 4 if compact else 8,
         "cell_padding_x": 10 if compact else 12,
         "header_padding_y": 3 if compact else 5,
         "header_padding_x": 9 if compact else 12,
@@ -201,6 +201,10 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "toolbar_group_gap": 3 if compact else 6,
         "toolbar_card_radius": radius["lg"],
         "tabbar_height": 26 if compact else 30,
+        "inner_border_color": "rgba(255, 255, 255, 0.08)" if is_dark else "rgba(15, 23, 42, 0.08)",
+        "window_shadow_blur": 30 if compact else 36,
+        "window_shadow_offset_y": 10 if compact else 12,
+        "window_shadow_alpha": 0.45 if is_dark else 0.20,
     }
 
     surface = {
@@ -240,6 +244,8 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "base": 180,
         "slow": 260,
         "pulse": 1500,
+        "quote_pulse_flash": 80,
+        "quote_pulse_decay": 200,
     }
 
     skeleton = {
@@ -255,7 +261,7 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
     icon = {
         "chrome_size": 16,
         "status_size": 16,
-        "stroke_width": 1.55,
+        "stroke_width": 1.40,
         "muted": theme["TEXT_MUTED"],
         "strong": theme["TEXT_PRIMARY"],
     }

@@ -10,8 +10,8 @@ from core.buy_point import BUY_POINT_STYLE_TEXT, calculate_buy_point_from_histor
 from ui.models.table_model_helpers import (
     FLASH_DURATION_SECONDS,
     SERIAL_HEADER,
-    _alignment_for_cell,
     _accent_rail_color_for_row_style,
+    _alignment_for_cell,
     _build_cell_tooltip,
     _build_flash_record,
     _build_table_model_fonts,
@@ -20,9 +20,10 @@ from ui.models.table_model_helpers import (
     _is_date_like_header,
     _is_numeric_header,
     _is_pct_like_header,
-    _is_strong_market_move,
     _is_status_header,
+    _is_strong_market_move,
     _numeric_heat_color,
+    _parse_numeric_value,
     _prune_flash_records,
     _status_badge_color,
     _summarize_long_text,
@@ -51,7 +52,9 @@ class StockTableModel(QAbstractTableModel):
 
         fonts = _build_table_model_fonts()
         self.base_font = fonts["base"]
+        self.small_font = fonts["small"]
         self.mono_font = fonts["mono"]
+        self.small_mono_font = fonts["small_mono"]
         self.bold_font = fonts["bold"]
         self.bold_mono_font = fonts["bold_mono"]
 
@@ -74,6 +77,119 @@ class StockTableModel(QAbstractTableModel):
 
     def _uses_plain_background(self, header: str) -> bool:
         return header in self._plain_background_headers
+
+    @staticmethod
+    def _split_source_tags(raw_value, row: dict) -> list[str]:
+        source_tags = row.get("来源标签") if isinstance(row, dict) else None
+        if isinstance(source_tags, (list, tuple, set)):
+            tags = [str(tag or "").strip() for tag in source_tags if str(tag or "").strip()]
+        else:
+            text = str(source_tags or raw_value or "").strip()
+            tags = [part.strip() for part in re.split(r"[|｜、,，/]+", text) if part.strip()]
+        if tags:
+            return tags
+        fallback = str(raw_value or "").strip()
+        return [fallback] if fallback else []
+
+    @staticmethod
+    def _source_badge_color(tag: str) -> str:
+        text = str(tag or "")
+        if "龙虎榜" in text:
+            return "#FF5A5F"
+        if "扫描" in text or "AI" in text or "算法" in text:
+            return "#7C4DFF"
+        if "手动" in text or "自选" in text:
+            return "#2563EB"
+        return _c("COLOR_INFO")
+
+    def _source_badges_payload(self, raw_value, row: dict) -> dict | None:
+        tags = self._split_source_tags(raw_value, row)
+        if not tags:
+            return None
+        return {
+            "kind": "tag_badges",
+            "tags": [{"text": tag, "color": self._source_badge_color(tag)} for tag in tags],
+        }
+
+    def _money_value_for_visual(self, header: str, row: dict):
+        if header == "外资净买入":
+            return _parse_numeric_value(row.get("外资净买(万)", row.get(header)))
+        return _parse_numeric_value(row.get(header))
+
+    def _money_bar_payload(self, header: str, row: dict) -> dict | None:
+        if header not in {"上榜净买额(万)", "机构净买(万)", "外资净买入"}:
+            return None
+        value = self._money_value_for_visual(header, row)
+        if value is None or abs(value) < 0.0001:
+            return None
+        max_abs = 0.0
+        for item in self._data:
+            if not isinstance(item, dict):
+                continue
+            item_value = self._money_value_for_visual(header, item)
+            if item_value is not None:
+                max_abs = max(max_abs, abs(float(item_value)))
+        return {"kind": "money_bar", "value": float(value), "max_abs": max(max_abs, abs(float(value)), 1.0)}
+
+    @staticmethod
+    def _indicator_tone(text: str) -> str:
+        value = str(text or "").strip()
+        if any(token in value for token in ("🔴", "红", "高", "风险", "异常")):
+            return "error"
+        if any(token in value for token in ("🟡", "黄", "中", "午", "竞价", "警")):
+            return "warning"
+        if any(token in value for token in ("🟢", "绿", "交易中", "开盘", "安全", "低")):
+            return "success"
+        if any(token in value for token in ("收盘", "休市", "离线")):
+            return "offline"
+        return "neutral"
+
+    def _indicator_payload(self, header: str, raw_value) -> dict | None:
+        if header == "风控":
+            return {"kind": "risk_light", "tone": self._indicator_tone(str(raw_value)), "label": ""}
+        if header == "状态":
+            return {
+                "kind": "status_light",
+                "tone": self._indicator_tone(str(raw_value)),
+                "pulse": "交易中" in str(raw_value) or "🟢" in str(raw_value),
+            }
+        return None
+
+    @staticmethod
+    def _currency_stamp_text(currency: str) -> str:
+        text = str(currency or "").strip()
+        mapping = {
+            "TWD": "NT$",
+            "NT$": "NT$",
+            "JPY": "¥",
+            "円": "円",
+            "KRW": "₩",
+            "HKD": "HK$",
+            "USD": "$",
+        }
+        return mapping.get(text.upper(), text)
+
+    def _currency_stamp_payload(self, header: str, row: dict) -> dict | None:
+        if header not in {"现价", "市价"} or "货币" not in self._headers:
+            return None
+        stamp = self._currency_stamp_text(str(row.get("货币", "") or ""))
+        if not stamp or stamp in {"--", "---"}:
+            return None
+        return {"kind": "currency_stamp", "stamp": stamp}
+
+    def _visual_payload(self, header: str, raw_value, row: dict):
+        if header == "来源":
+            return self._source_badges_payload(raw_value, row)
+        payload = self._money_bar_payload(header, row)
+        if payload:
+            return payload
+        payload = self._indicator_payload(header, raw_value)
+        if payload:
+            return payload
+        payload = self._currency_stamp_payload(header, row)
+        if payload:
+            return payload
+        return None
 
     def get_row_data(self, row):
         if 0 <= row < len(self._data):
@@ -177,6 +293,7 @@ class StockTableModel(QAbstractTableModel):
             Qt.ItemDataRole.UserRole + 1,
             Qt.ItemDataRole.UserRole + 2,
             Qt.ItemDataRole.UserRole + 4,
+            Qt.ItemDataRole.UserRole + 5,
         ]
 
     def _emit_incremental_rows(self, rows: list) -> None:
@@ -433,6 +550,7 @@ class StockTableModel(QAbstractTableModel):
                     Qt.ItemDataRole.UserRole + 1,
                     Qt.ItemDataRole.UserRole + 2,
                     Qt.ItemDataRole.UserRole + 4,
+                    Qt.ItemDataRole.UserRole + 5,
                 ],
             )
 
@@ -465,6 +583,12 @@ class StockTableModel(QAbstractTableModel):
                 except (ValueError, TypeError):
                     return str(raw_val)
 
+            if key == "风控":
+                return ""
+
+            if key == "状态":
+                return str(raw_val or "").replace("🟢", "").replace("🟡", "").replace("🔴", "").strip()
+
             if "日" in key or "期" in key or "时间" in key:
                 s_val = str(raw_val).split(" ")[0].replace("-", "").replace("/", "")
                 if len(s_val) == 8 and s_val.isdigit() and s_val.startswith("20"):
@@ -496,11 +620,21 @@ class StockTableModel(QAbstractTableModel):
             return _build_cell_tooltip(raw_val)
 
         elif role == Qt.ItemDataRole.TextAlignmentRole:
+            if key in {"风控", "评级"}:
+                return int(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
             return _alignment_for_cell(key, raw_val)
 
         elif role == Qt.ItemDataRole.FontRole:
             if key == SERIAL_HEADER:
                 return self.mono_font
+            if key == "评级":
+                return self.bold_mono_font
+            if key in {"最近上榜", "换手率%"}:
+                return self.small_mono_font
+            if key == "AI细分板块/备注":
+                return self.small_font
+            if key in {"代码", "现价"} and "上榜净买额(万)" in self._headers:
+                return self.bold_mono_font
             if _is_strong_market_move(key, raw_val, item_dict):
                 return self.bold_mono_font
             if _is_numeric_header(key) or _is_date_like_header(key):
@@ -516,6 +650,10 @@ class StockTableModel(QAbstractTableModel):
                 code = str(item_dict.get("代码", ""))
                 if watchlist_vm.is_in_watchlist(code):
                     return QColor("#E879F9")
+            if key in {"最近上榜", "换手率%", "AI细分板块/备注"}:
+                return QColor(_c("TEXT_MUTED"))
+            if key == "评级":
+                return QColor("#D7AC45")
             if self._uses_plain_style(key) or _is_date_like_header(key):
                 return QColor(_c("TEXT_PRIMARY"))
 
@@ -711,6 +849,9 @@ class StockTableModel(QAbstractTableModel):
                 if badge:
                     return badge
             return None
+
+        elif role == Qt.ItemDataRole.UserRole + 5:
+            return self._visual_payload(key, raw_val, item_dict)
 
         return None
 

@@ -78,9 +78,9 @@ def show_trade_calendar(main_window):
     container = QFrame(dlg)
     container.setObjectName("dialogContainer")
     shadow = QGraphicsDropShadowEffect(container)
-    shadow.setBlurRadius(34 if is_dark else 28)
-    shadow.setOffset(0, 12 if is_dark else 10)
-    shadow.setColor(QColor(0, 0, 0, 108 if is_dark else 52))
+    shadow.setBlurRadius(shell["window_shadow_blur"] if is_dark else 28)
+    shadow.setOffset(0, shell["window_shadow_offset_y"] if is_dark else 10)
+    shadow.setColor(QColor(0, 0, 0, int(255 * shell["window_shadow_alpha"]) if is_dark else 52))
     container.setGraphicsEffect(shadow)
     container_layout = QVBoxLayout(container)
     container_layout.setContentsMargins(1, 1, 1, 14)
@@ -126,9 +126,10 @@ def show_trade_calendar(main_window):
     def _apply_dialog_live_theme(_theme_name: str | None = None) -> None:
         live_tokens = build_ui_tokens(theme_manager.current_theme)
         live_dark = live_tokens["is_dark"]
-        shadow.setBlurRadius(34 if live_dark else 28)
-        shadow.setOffset(0, 12 if live_dark else 10)
-        shadow.setColor(QColor(0, 0, 0, 108 if live_dark else 52))
+        shell_tokens = live_tokens["shell"]
+        shadow.setBlurRadius(shell_tokens["window_shadow_blur"] if live_dark else 28)
+        shadow.setOffset(0, shell_tokens["window_shadow_offset_y"] if live_dark else 10)
+        shadow.setColor(QColor(0, 0, 0, int(255 * shell_tokens["window_shadow_alpha"]) if live_dark else 52))
         for widget in (dlg, container, title_bar, body, calendar, earnings_panel):
             widget.style().unpolish(widget)
             widget.style().polish(widget)

@@ -4,13 +4,13 @@ import json
 import os
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import QCheckBox, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
+from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from app.services.asian_market_service import filter_asian_tickers, find_asian_track
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
 from core.logger import get_logger
-from ui.components import TableStateWrapper, VCPTableView
+from ui.components import TableStateWrapper, ToggleSwitch, VCPTableView
 from ui.components.thread_shutdown import request_thread_shutdown
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.services.asian_market_runtime_service import AsianMarketRuntimeService
@@ -623,7 +623,7 @@ class AsianMarketTab(BaseStockTab):
         self.search_box.setPlaceholderText("筛选代码或名称...")
         self.search_box.setFixedWidth(180)
         self.search_box.textChanged.connect(self._on_search_text_changed)
-        self.chk_cf_proxy = QCheckBox("优先使用稳定海外线路")
+        self.chk_cf_proxy = ToggleSwitch("优先使用稳定海外线路")
         self.chk_cf_proxy.setToolTip("开启后优先使用稳定海外出口访问报价源；关闭后使用当前系统网络环境。")
         self.chk_cf_proxy.setObjectName("successStatus")
         self.chk_cf_proxy.setChecked(is_cf_proxy_enabled())
@@ -640,6 +640,7 @@ class AsianMarketTab(BaseStockTab):
         layout.addWidget(toolbar)
 
         self.asian_table = VCPTableView(default_row_height=30)
+        self.asian_table.set_ambient_repaint_enabled(True)
         self.table_state = TableStateWrapper(self.asian_table, empty_title="暂无亚洲数据", loading_title="加载中...")
         layout.addWidget(self.table_state)
 

@@ -14,8 +14,8 @@ from ui.components.main_window_shell import (
 )
 from ui.components.table_controls import StatusGlyph
 from ui.window_flags import (
-    DWMWA_NCRENDERING_POLICY,
     DWMNCRP_ENABLED,
+    DWMWA_NCRENDERING_POLICY,
     GWL_STYLE,
     SWP_FRAMECHANGED,
     SWP_NOACTIVATE,
@@ -127,6 +127,8 @@ def test_main_window_shell_builders_wire_titlebar_menu_and_tabs():
     window = DummyShellWindow()
     try:
         assert window._standalone_tabbar.count() == 2
+        assert not window._standalone_tabbar.tabIcon(0).isNull()
+        assert not window._standalone_tabbar.tabIcon(1).isNull()
         assert window.tabs.tabBar().isVisible() is False
         assert window.btn_sys_menu.menu() is window._sys_menu
         assert window.btn_sys_menu.toolTip() == "系统菜单"
@@ -144,6 +146,9 @@ def test_main_window_shell_builders_wire_titlebar_menu_and_tabs():
         assert window._titlebar_sync_widget.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Maximum
         assert window._titlebar_sync_widget.btn_trade_calendar.text() == "交易日历"
         assert window._titlebar_sync_widget.btn_trade_calendar.accessibleName() == "交易日历"
+        assert window._titlebar_sync_widget.quote_pulse_dot.toolTip() == "quotes 同步心跳"
+        window._titlebar_sync_widget.pulse_quotes()
+        assert window._titlebar_sync_widget.quote_pulse_dot._timer.isActive() is True
         window._titlebar_sync_widget.btn_trade_calendar.click()
         assert window.trade_calendar_open_count == 1
         menu_action_texts = [action.text() for action in window._sys_menu.actions()]

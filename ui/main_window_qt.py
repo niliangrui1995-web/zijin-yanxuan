@@ -46,6 +46,7 @@ from ui.shell import (
     setup_custom_titlebar,
     setup_system_menu,
 )
+from ui.theme_tokens import build_ui_tokens
 from ui.window_flags import (
     apply_windows_frameless_taskbar_fix,
     build_frameless_main_window_flags,
@@ -53,7 +54,6 @@ from ui.window_flags import (
 )
 from ui.workers.central_quotes_worker import CentralQuotesService
 from ui.workspaces import ClassicWorkspace
-from ui.theme_tokens import build_ui_tokens
 
 # 核心引擎与数据层
 
@@ -196,6 +196,8 @@ class MainWindowQT(QMainWindow):
         theme_manager.sig_theme_changed.connect(self._apply_theme)
 
         main_widget = QWidget()
+        main_widget.setObjectName("mainWindowFrame")
+        main_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setCentralWidget(main_widget)
 
         main_layout = QVBoxLayout(main_widget)
@@ -654,6 +656,7 @@ class MainWindowQT(QMainWindow):
             icon_name,
             tokens["icon"]["muted"],
             size=tokens["icon"]["chrome_size"],
+            stroke_width=tokens["icon"]["stroke_width"],
         )
 
     def _toggle_maximize(self):
@@ -689,6 +692,7 @@ class MainWindowQT(QMainWindow):
         self._tabs_wrapper_layout.setSpacing(0)
 
         event_bus.sig_rt_quotes_refreshed.connect(self._on_rt_quotes_refreshed)
+        event_bus.sig_rt_quotes.connect(self._on_rt_quotes_pulse)
         ui_signal_hub.sig_task_progress.connect(self._on_task_progress)
         ui_signal_hub.sig_show_kline.connect(self._on_show_kline)
         ui_signal_hub.sig_show_kline_with_list.connect(self._on_show_kline_with_list)
@@ -872,6 +876,16 @@ class MainWindowQT(QMainWindow):
     # =======================================================================
     # [Global Event Bus] 信号中转站
     # =======================================================================
+    @pyqtSlot(object)
+    def _on_rt_quotes_pulse(self, payload: object):
+        """Blink the titlebar quotes heartbeat when fresh quote payloads arrive."""
+        if not payload:
+            return
+        sync_widget = getattr(self, "_titlebar_sync_widget", None)
+        pulse = getattr(sync_widget, "pulse_quotes", None)
+        if callable(pulse):
+            pulse()
+
     @pyqtSlot(object)
     def _on_rt_quotes_refreshed(self, payload: object):
         """响应盘中监控刷新完成"""

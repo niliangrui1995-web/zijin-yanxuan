@@ -6,8 +6,8 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
-from PyQt6.QtCore import QEvent, QRectF, Qt, QTimer
-from PyQt6.QtGui import QActionGroup, QColor, QLinearGradient, QPainter
+from PyQt6.QtCore import QEvent, QRectF, QSize, Qt, QTimer
+from PyQt6.QtGui import QActionGroup, QBrush, QColor, QLinearGradient, QPainter, QPen
 from PyQt6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -26,8 +26,8 @@ from PyQt6.QtWidgets import (
 from core.logger import get_logger
 from ui.components import StatusGlyph
 from ui.components.motion import install_button_feedback, install_menu_fade
-from ui.components.vector_icons import set_button_svg_icon
 from ui.components.shared_title_bar import DraggableTitleBar
+from ui.components.vector_icons import set_button_svg_icon, tab_svg_icon
 from ui.theme_tokens import build_ui_tokens, get_state_tone
 
 log = get_logger(__name__)
@@ -131,6 +131,7 @@ def _standalone_tabbar_qss(theme: dict, *, compact: bool = False) -> str:
             font-weight: {tokens["font"]["weight_semibold"]};
             min-height: {tokens["shell"]["tabbar_height"]}px;
             min-width: 44px;
+            icon-size: {tokens["icon"]["chrome_size"]}px;
             border-radius: {tab_radius}px;
             font-family: {tokens["font"]["family"]};
         }}
@@ -387,6 +388,79 @@ class StatusFlowStrip(QWidget):
         painter.fillRect(rect, gradient)
 
 
+class QuotePulseDot(QWidget):
+    """Small titlebar heartbeat dot for realtime quote broadcasts."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(14, 14)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._base_color = QColor("#8290AA")
+        self._pulse_color = QColor("#34C759")
+        self._pulse_started = 0.0
+        self._pulse_duration = 0.28
+        self._timer = QTimer(self)
+        self._timer.setInterval(24)
+        self._timer.timeout.connect(self._tick)
+        self.apply_theme()
+
+    def apply_theme(self) -> None:
+        from ui.theme import theme_manager
+
+        theme = theme_manager.current_theme
+        tokens = build_ui_tokens(theme)
+        self._base_color = QColor(theme.get("TEXT_MUTED", "#8290AA"))
+        self._base_color.setAlpha(110 if tokens["is_dark"] else 140)
+        self._pulse_color = QColor(theme.get("COLOR_SUCCESS", "#34C759"))
+        flash_ms = int(tokens["motion"].get("quote_pulse_flash", 80))
+        decay_ms = int(tokens["motion"].get("quote_pulse_decay", 200))
+        self._pulse_duration = max(0.08, (flash_ms + decay_ms) / 1000.0)
+        self.update()
+
+    def pulse(self) -> None:
+        self._pulse_started = time.perf_counter()
+        if not self._timer.isActive():
+            self._timer.start()
+        self.update()
+
+    def _pulse_progress(self) -> float:
+        if self._pulse_started <= 0:
+            return 1.0
+        return max(0.0, min(1.0, (time.perf_counter() - self._pulse_started) / self._pulse_duration))
+
+    def _tick(self) -> None:
+        if self._pulse_progress() >= 1.0:
+            self._timer.stop()
+            self._pulse_started = 0.0
+        self.update()
+
+    def hideEvent(self, event) -> None:
+        self._timer.stop()
+        super().hideEvent(event)
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        progress = self._pulse_progress()
+        active = self._pulse_started > 0 and progress < 1.0
+        strength = 1.0 - progress if active else 0.0
+        center = QRectF(self.rect()).center()
+
+        if active:
+            aura = QColor(self._pulse_color)
+            aura.setAlpha(max(0, min(120, int(100 * strength))))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(aura))
+            painter.drawEllipse(center, 6.0, 6.0)
+
+        dot = QColor(self._pulse_color if active else self._base_color)
+        if active:
+            dot.setAlpha(max(110, min(255, int(180 + 75 * strength))))
+        painter.setPen(QPen(dot, 1))
+        painter.setBrush(QBrush(dot))
+        painter.drawEllipse(center, 3.0, 3.0)
+
+
 def _nav_group_button_qss(theme: dict) -> str:
     tokens = build_ui_tokens(theme)
     surface = tokens["surface"]
@@ -629,6 +703,7 @@ class ShellNavigationWidget(QWidget):
         self.tabbar.setUsesScrollButtons(True)
         self.tabbar.setElideMode(Qt.TextElideMode.ElideNone)
         self.tabbar.setAccessibleName("二级页面导航")
+        self.tabbar.setIconSize(QSize(16, 16))
         self.tabbar.currentChanged.connect(self._on_tabbar_changed)
         layout.addWidget(self.tabbar, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
@@ -714,12 +789,21 @@ class ShellNavigationWidget(QWidget):
         updates_disabled = False
         try:
             if needs_rebuild:
+                icon_theme = build_ui_tokens()["theme"]
+                icon_tokens = build_ui_tokens(icon_theme)["icon"]
                 self.tabbar.setUpdatesEnabled(False)
                 updates_disabled = True
                 while self.tabbar.count() > 0:
                     self.tabbar.removeTab(self.tabbar.count() - 1)
                 for global_index in indices:
-                    self.tabbar.addTab(self._tabs.tabText(global_index))
+                    label = self._tabs.tabText(global_index)
+                    icon = tab_svg_icon(
+                        label=label,
+                        color=icon_tokens["muted"],
+                        size=icon_tokens["chrome_size"],
+                        stroke_width=icon_tokens["stroke_width"],
+                    )
+                    self.tabbar.addTab(icon, label)
                 self._tabbar_rebuild_count += 1
                 self._update_tabbar_minimum_width()
 
@@ -765,10 +849,11 @@ class ShellNavigationWidget(QWidget):
         padding_x = max(12, tokens["control"]["tab_padding_x"] + (0 if self._compact_nav else 2))
         gap = 2 if self._compact_nav else max(3, tokens["shell"]["toolbar_group_gap"])
         metrics = self.tabbar.fontMetrics()
+        icon_size = build_ui_tokens()["icon"]["chrome_size"]
         total = 0
         for index in range(self.tabbar.count()):
             label_width = metrics.horizontalAdvance(self.tabbar.tabText(index))
-            total += label_width + padding_x * 2 + gap + 10
+            total += label_width + icon_size + padding_x * 2 + gap + 14
         self.tabbar.setMinimumWidth(max(420, min(total, 760)))
 
     def _find_group_for_index(self, tab_index: int) -> str:
@@ -822,8 +907,22 @@ class ShellNavigationWidget(QWidget):
         from ui.theme import theme_manager
 
         theme = theme_manager.current_theme
+        tokens = build_ui_tokens(theme)
         for button in self._group_buttons.values():
             button.setStyleSheet(_nav_group_button_qss(theme))
+        icon_tokens = tokens["icon"]
+        self.tabbar.setIconSize(QSize(icon_tokens["chrome_size"], icon_tokens["chrome_size"]))
+        for index in range(self.tabbar.count()):
+            label = self.tabbar.tabText(index)
+            self.tabbar.setTabIcon(
+                index,
+                tab_svg_icon(
+                    label=label,
+                    color=icon_tokens["muted"],
+                    size=icon_tokens["chrome_size"],
+                    stroke_width=icon_tokens["stroke_width"],
+                ),
+            )
         self.tabbar.setStyleSheet(_standalone_tabbar_qss(theme, compact=self._compact_nav))
 
 
@@ -866,6 +965,10 @@ class TitleBarSyncWidget(QFrame):
         install_button_feedback(self.btn_trade_calendar)
         layout.addWidget(self.btn_trade_calendar, 0, Qt.AlignmentFlag.AlignVCenter)
 
+        self.quote_pulse_dot = QuotePulseDot(self)
+        self.quote_pulse_dot.setToolTip("quotes 同步心跳")
+        layout.addWidget(self.quote_pulse_dot, 0, Qt.AlignmentFlag.AlignVCenter)
+
         self.lbl_state = QLabel("同步就绪", self)
         self.lbl_state.setObjectName("titleBarSyncState")
         layout.addWidget(self.lbl_state, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -879,6 +982,9 @@ class TitleBarSyncWidget(QFrame):
         layout.addWidget(self.lbl_meta, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self.apply_theme()
+
+    def pulse_quotes(self) -> None:
+        self.quote_pulse_dot.pulse()
 
     def set_state(self, state: str, detail: str = "", freshness: str = "") -> None:
         canonical_state = str(state or "").strip() or "idle"
@@ -935,6 +1041,7 @@ class TitleBarSyncWidget(QFrame):
         )
         self.btn_sync.setStyleSheet(_titlebar_sync_button_qss(theme))
         self.btn_trade_calendar.setStyleSheet(_titlebar_secondary_button_qss(theme))
+        self.quote_pulse_dot.apply_theme()
 
 
 @dataclass
@@ -963,6 +1070,7 @@ def setup_custom_titlebar(window, parent_layout: QVBoxLayout) -> TitleBarRefs:
     tokens = build_ui_tokens(theme)
     icon_size = tokens["icon"]["chrome_size"]
     icon_color = tokens["icon"]["muted"]
+    icon_stroke = tokens["icon"]["stroke_width"]
     titlebar = DraggableTitleBar()
     titlebar.setObjectName("customTitleBar")
     titlebar.setFixedHeight(tokens["shell"]["titlebar_height"])
@@ -998,7 +1106,7 @@ def setup_custom_titlebar(window, parent_layout: QVBoxLayout) -> TitleBarRefs:
     btn_minimize.setCursor(Qt.CursorShape.PointingHandCursor)
     btn_minimize.setToolTip("最小化窗口")
     btn_minimize.setAccessibleName("最小化窗口")
-    set_button_svg_icon(btn_minimize, "minimize", icon_color, size=icon_size)
+    set_button_svg_icon(btn_minimize, "minimize", icon_color, size=icon_size, stroke_width=icon_stroke)
     install_button_feedback(btn_minimize)
     btn_minimize.clicked.connect(window.showMinimized)
 
@@ -1008,7 +1116,7 @@ def setup_custom_titlebar(window, parent_layout: QVBoxLayout) -> TitleBarRefs:
     btn_maximize.setCursor(Qt.CursorShape.PointingHandCursor)
     btn_maximize.setToolTip("最大化或还原窗口")
     btn_maximize.setAccessibleName("最大化或还原窗口")
-    set_button_svg_icon(btn_maximize, "maximize", icon_color, size=icon_size)
+    set_button_svg_icon(btn_maximize, "maximize", icon_color, size=icon_size, stroke_width=icon_stroke)
     install_button_feedback(btn_maximize)
     btn_maximize.clicked.connect(window._toggle_maximize)
 
@@ -1018,7 +1126,7 @@ def setup_custom_titlebar(window, parent_layout: QVBoxLayout) -> TitleBarRefs:
     btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
     btn_close.setToolTip("关闭窗口")
     btn_close.setAccessibleName("关闭窗口")
-    set_button_svg_icon(btn_close, "close", icon_color, size=icon_size)
+    set_button_svg_icon(btn_close, "close", icon_color, size=icon_size, stroke_width=icon_stroke)
     install_button_feedback(btn_close)
     btn_close.clicked.connect(window.close)
 
@@ -1094,7 +1202,13 @@ def setup_system_menu(window) -> SystemMenuRefs:
     tokens = build_ui_tokens(theme_manager.current_theme)
     btn_sys_menu.setFixedWidth(tokens["shell"]["system_button_width"])
     btn_sys_menu.setFixedHeight(tokens["shell"]["titlebar_height"])
-    set_button_svg_icon(btn_sys_menu, "gear", tokens["icon"]["muted"], size=tokens["icon"]["chrome_size"])
+    set_button_svg_icon(
+        btn_sys_menu,
+        "gear",
+        tokens["icon"]["muted"],
+        size=tokens["icon"]["chrome_size"],
+        stroke_width=tokens["icon"]["stroke_width"],
+    )
     install_button_feedback(btn_sys_menu)
     btn_sys_menu.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
     btn_sys_menu.setToolTip("系统菜单")
@@ -1194,6 +1308,7 @@ def refresh_system_menu_theme(window) -> None:
             "gear",
             tokens["icon"]["muted"],
             size=tokens["icon"]["chrome_size"],
+            stroke_width=tokens["icon"]["stroke_width"],
         )
         window.btn_sys_menu.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
 
@@ -1229,7 +1344,13 @@ def apply_chrome_theme(window) -> None:
             _titlebar_button_style(theme, theme["TEXT_MUTED"], theme["BG_HOVER"], font_size=11)
         )
         window._btn_minimize.setFixedWidth(tokens["shell"]["window_button_width"])
-        set_button_svg_icon(window._btn_minimize, "minimize", icon_color, size=icon_size)
+        set_button_svg_icon(
+            window._btn_minimize,
+            "minimize",
+            icon_color,
+            size=icon_size,
+            stroke_width=tokens["icon"]["stroke_width"],
+        )
     if hasattr(window, "_btn_maximize") and window._btn_maximize:
         window._btn_maximize.setStyleSheet(_titlebar_button_style(theme, theme["TEXT_MUTED"], theme["BG_HOVER"]))
         window._btn_maximize.setFixedWidth(tokens["shell"]["window_button_width"])
@@ -1238,11 +1359,18 @@ def apply_chrome_theme(window) -> None:
             "restore" if getattr(window, "isMaximized", lambda: False)() else "maximize",
             icon_color,
             size=icon_size,
+            stroke_width=tokens["icon"]["stroke_width"],
         )
     if hasattr(window, "_btn_close") and window._btn_close:
         window._btn_close.setStyleSheet(_titlebar_button_style(theme, theme["TEXT_MUTED"], "#C42B1C"))
         window._btn_close.setFixedWidth(tokens["shell"]["window_button_width"])
-        set_button_svg_icon(window._btn_close, "close", icon_color, size=icon_size)
+        set_button_svg_icon(
+            window._btn_close,
+            "close",
+            icon_color,
+            size=icon_size,
+            stroke_width=tokens["icon"]["stroke_width"],
+        )
 
     if hasattr(window, "_shell_navigation_widget") and window._shell_navigation_widget:
         window._shell_navigation_widget.apply_theme()

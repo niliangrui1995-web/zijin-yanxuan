@@ -47,8 +47,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ui.theme_tokens import build_ui_tokens, get_state_tone
 from ui.models.table_model_helpers import FLASH_DURATION_SECONDS
+from ui.theme_tokens import build_ui_tokens, get_state_tone
 
 from .motion import install_button_feedback, install_menu_fade
 from .table_view_helpers import bounded_model_row, find_header_column
@@ -74,6 +74,9 @@ class VCPTableView(QTableView):
         self._flash_repaint_timer = QTimer(self)
         self._flash_repaint_timer.setInterval(60)
         self._flash_repaint_timer.timeout.connect(self._tick_flash_repaint)
+        self._ambient_repaint_timer = QTimer(self)
+        self._ambient_repaint_timer.setInterval(120)
+        self._ambient_repaint_timer.timeout.connect(self.viewport().update)
         self._refresh_state_restore_timer = QTimer(self)
         self._refresh_state_restore_timer.setSingleShot(True)
         self._refresh_state_restore_timer.timeout.connect(self._restore_pending_refresh_state)
@@ -164,15 +167,18 @@ class VCPTableView(QTableView):
     def _tooltip_qss(self) -> str:
         tokens = build_ui_tokens()
         t = tokens["theme"]
+        tooltip_bg = "rgba(15, 18, 30, 0.88)" if tokens["is_dark"] else "rgba(255, 255, 255, 0.96)"
+        tooltip_border = "rgba(255, 255, 255, 0.16)" if tokens["is_dark"] else "rgba(15, 23, 42, 0.12)"
+        tooltip_text = t.get("TEXT_BRIGHT", t["TEXT_PRIMARY"]) if tokens["is_dark"] else t["TEXT_PRIMARY"]
         return (
             f"QTableView::item {{ padding: {tokens['table']['cell_padding_y']}px {tokens['table']['cell_padding_x']}px; }}\n"
             "QToolTip {"
-            f" background-color: {t['BG_ELEVATED']};"
-            f" color: {t['TEXT_PRIMARY']};"
-            f" border: 1px solid {t['BORDER_DEFAULT']};"
-            f" border-radius: 0px;"
-            f" padding: {tokens['space']['sm']}px {tokens['space']['md']}px;"
-            f" font-size: {tokens['font']['size_lg']}px;"
+            f" background-color: {tooltip_bg};"
+            f" color: {tooltip_text};"
+            f" border: 1px solid {tooltip_border};"
+            f" border-radius: 10px;"
+            " padding: 8px 12px;"
+            f" font-size: {tokens['font']['size_sm']}px;"
             f" font-family: {tokens['font']['family']};"
             " margin: 0px;"
             " }"
@@ -409,6 +415,7 @@ class VCPTableView(QTableView):
             getattr(self, "_refresh_state_restore_timer", None),
             getattr(self, "_scrollbar_restore_timer", None),
             getattr(self, "_flash_repaint_timer", None),
+            getattr(self, "_ambient_repaint_timer", None),
         ):
             if timer is not None:
                 timer.stop()
@@ -463,7 +470,26 @@ class VCPTableView(QTableView):
         if self._closing:
             return
         self._apply_screen_width_limit()
+        self._sync_ambient_repaint_timer()
         super().showEvent(event)
+
+    def hideEvent(self, event):
+        self._ambient_repaint_timer.stop()
+        super().hideEvent(event)
+
+    def set_ambient_repaint_enabled(self, enabled: bool) -> None:
+        self.setProperty("ambientPulse", bool(enabled))
+        self._sync_ambient_repaint_timer()
+
+    def _sync_ambient_repaint_timer(self) -> None:
+        if self._closing:
+            self._ambient_repaint_timer.stop()
+            return
+        if self.property("ambientPulse") and self.isVisible():
+            if not self._ambient_repaint_timer.isActive():
+                self._ambient_repaint_timer.start()
+        else:
+            self._ambient_repaint_timer.stop()
 
     def _display_font_for_index(self, index):
         font = index.data(Qt.ItemDataRole.FontRole)

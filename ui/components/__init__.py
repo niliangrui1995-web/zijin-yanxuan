@@ -23,6 +23,7 @@ from .table_controls import (
 from .table_controls import (
     format_multi_select_summary as format_multi_select_summary,
 )
+from .toggle_switch import ToggleSwitch as ToggleSwitch
 
 
 class SearchFilter:

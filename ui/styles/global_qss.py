@@ -59,6 +59,10 @@ def generate_global_qss(theme: dict = None, density: str | None = None) -> str:
     scrollbar_hover = t.get("SCROLLBAR_HANDLE_HOVER", t["TEXT_MUTED"])
     scrollbar_pressed = t.get("SCROLLBAR_HANDLE_PRESSED", t["BRAND_PRIMARY"])
 
+    tooltip_bg = "rgba(15, 18, 30, 0.88)" if ui["is_dark"] else "rgba(255, 255, 255, 0.96)"
+    tooltip_border = "rgba(255, 255, 255, 0.16)" if ui["is_dark"] else "rgba(15, 23, 42, 0.12)"
+    tooltip_text = t.get("TEXT_BRIGHT", text["primary"]) if ui["is_dark"] else text["primary"]
+
     return f"""
 /* ═══════════════════════════════════════════
    紫金研选 - 全局主题 QSS (动态生成)
@@ -73,14 +77,20 @@ QMainWindow, QWidget {{
     font-size: {font["size_md"]}px;
 }}
 
+QWidget#mainWindowFrame {{
+    background-color: {t["BG_CANVAS"]};
+    border: 1px solid {shell["inner_border_color"]};
+    border-radius: {radius["lg"]}px;
+}}
+
 QToolTip {{
-    background-color: {surface["elevated"]};
-    color: {text["primary"]};
-    border: 1px solid {border["default"]};
-    border-radius: 0px;
-    padding: 6px 10px;
+    background-color: {tooltip_bg};
+    color: {tooltip_text};
+    border: 1px solid {tooltip_border};
+    border-radius: 10px;
+    padding: 8px 12px;
     font-family: {font["family"]};
-    font-size: {font["size_md"]}px;
+    font-size: {font["size_sm"]}px;
 }}
 
 /* --- 左侧面板 --- */

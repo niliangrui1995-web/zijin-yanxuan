@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import time
 
-from PyQt6.QtCore import QMimeData, QModelIndex, QRect, QSortFilterProxyModel, Qt
-from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPalette, QPen
+from PyQt6.QtCore import QMimeData, QModelIndex, QRect, QRectF, QSortFilterProxyModel, Qt
+from PyQt6.QtGui import QBrush, QColor, QFont, QLinearGradient, QPainter, QPalette, QPen
 from PyQt6.QtWidgets import QApplication, QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 from ui.components import SearchFilter
@@ -282,23 +282,29 @@ class StockItemDelegate(QStyledItemDelegate):
 
         # 1. 获取闪电更新动画数据
         flash_data = index.data(Qt.ItemDataRole.UserRole + 1)
-        if flash_data and isinstance(flash_data, dict):
+
+        def draw_flash_background():
+            if not flash_data or not isinstance(flash_data, dict):
+                return
+
             update_time = flash_data.get("time", 0)
-            diff = flash_data.get("diff", 0)  # >0 涨, <0 跌
+            diff = flash_data.get("diff", 0)
             elapsed = time.time() - update_time
-            if elapsed < self.flash_duration:
-                alpha = int(255 * _flash_decay_alpha(elapsed, self.flash_duration))
-                if diff > 0:
-                    color_hex = _c("COLOR_RISE_STRONG")
-                elif diff < 0:
-                    color_hex = _c("COLOR_FALL_STRONG")
-                else:
-                    color_hex = _c("COLOR_INFO")
-                bg_color = QColor(color_hex)
-                flash_scale = float(table_tokens.get("flash_alpha_scale", 0.24))
-                flash_max_alpha = int(table_tokens.get("flash_max_alpha", 76))
-                bg_color.setAlpha(min(flash_max_alpha, max(0, int(alpha * flash_scale))))
-                painter.fillRect(option.rect, QBrush(bg_color))
+            if elapsed < 0 or elapsed >= self.flash_duration:
+                return
+
+            alpha = int(255 * _flash_decay_alpha(elapsed, self.flash_duration))
+            if diff > 0:
+                color_hex = _c("COLOR_RISE_STRONG")
+            elif diff < 0:
+                color_hex = _c("COLOR_FALL_STRONG")
+            else:
+                color_hex = _c("COLOR_INFO")
+            bg_color = QColor(color_hex)
+            flash_scale = float(table_tokens.get("flash_alpha_scale", 0.24))
+            flash_max_alpha = int(table_tokens.get("flash_max_alpha", 76))
+            bg_color.setAlpha(min(flash_max_alpha, max(0, int(alpha * flash_scale))))
+            painter.fillRect(option.rect, QBrush(bg_color))
 
         def draw_left_rail():
             if not (show_selected_rail or show_accent_rail or show_hover_rail):
@@ -359,16 +365,227 @@ class StockItemDelegate(QStyledItemDelegate):
         # 2. 判断是否是自定义绘制的胶囊文本 (Pill)
         text = index.data(Qt.ItemDataRole.DisplayRole)
         pill_color = index.data(Qt.ItemDataRole.UserRole + 2)  # Pill Color Role
+        visual_payload = index.data(Qt.ItemDataRole.UserRole + 5)
 
-        if pill_color and text:
+        def draw_cell_base():
             opt_bg = QStyleOptionViewItem(opt)
             opt_bg.text = ""
             style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt_bg, painter, widget)
             if sorted_overlay is not None:
                 painter.fillRect(option.rect, sorted_overlay)
+            draw_flash_background()
             draw_left_rail()
             draw_flash_rail()
             draw_current_cell_indicator()
+
+        def content_rect() -> QRect:
+            left_padding = 8 + rail_width + (4 if rail_width else 0)
+            return option.rect.adjusted(left_padding, 0, -8, 0)
+
+        def surface_color() -> QColor:
+            if is_selected:
+                return QColor(opt.palette.color(QPalette.ColorRole.Highlight))
+            if sorted_overlay is not None:
+                return QColor(sorted_overlay)
+            if is_hovered:
+                return QColor(_c("BG_TABLE_HOVER"))
+            return QColor(_c("BG_TABLE_BASE"))
+
+        def resolve_text_style():
+            font = index.data(Qt.ItemDataRole.FontRole)
+            if isinstance(font, QFont):
+                painter.setFont(font)
+            else:
+                painter.setFont(opt.font)
+
+            text_color = index.data(Qt.ItemDataRole.ForegroundRole)
+            if not isinstance(text_color, QColor):
+                color_role = QPalette.ColorRole.HighlightedText if is_selected else QPalette.ColorRole.Text
+                text_color = opt.palette.color(color_role)
+
+            alignment = index.data(Qt.ItemDataRole.TextAlignmentRole)
+            if alignment is None:
+                alignment = int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            return text_color, int(alignment)
+
+        def draw_plain_text(value, rect: QRect | None = None, *, fade: bool = False, alignment_override=None):
+            target = rect or content_rect()
+            text_color, alignment = resolve_text_style()
+            if alignment_override is not None:
+                alignment = int(alignment_override)
+
+            value_text = str(value or "")
+            painter.setPen(QPen(text_color))
+            fm = painter.fontMetrics()
+            if fade and fm.horizontalAdvance(value_text) > max(0, target.width() - 2):
+                painter.save()
+                painter.setClipRect(target)
+                painter.drawText(target, alignment, value_text)
+                painter.restore()
+
+                fade_width = min(30, max(12, target.width() // 3))
+                fade_rect = QRectF(target.right() - fade_width + 1, target.top(), fade_width, target.height())
+                base = surface_color()
+                base.setAlpha(255)
+                transparent = QColor(base)
+                transparent.setAlpha(0)
+                gradient = QLinearGradient(fade_rect.left(), fade_rect.top(), fade_rect.right(), fade_rect.top())
+                gradient.setColorAt(0, transparent)
+                gradient.setColorAt(1, base)
+                painter.fillRect(fade_rect, QBrush(gradient))
+                return
+
+            elided_text = fm.elidedText(value_text, opt.textElideMode, max(0, target.width() - 2))
+            painter.drawText(target, alignment, elided_text)
+
+        def draw_money_bar(payload: dict):
+            try:
+                value = float(payload.get("value", 0.0))
+                max_abs = max(float(payload.get("max_abs", 1.0)), abs(value), 1.0)
+            except (TypeError, ValueError):
+                return
+
+            ratio = min(1.0, abs(value) / max_abs)
+            if ratio <= 0:
+                return
+
+            rect = content_rect().adjusted(0, 0, 0, -2)
+            bar_height = max(3, min(5, rect.height() // 5))
+            bar_width = max(2, int(rect.width() * ratio))
+            y = rect.bottom() - bar_height - 3
+            x = rect.left() if value >= 0 else rect.right() - bar_width + 1
+            bar_rect = QRectF(x, y, bar_width, bar_height)
+            color = QColor(_c("COLOR_RISE" if value >= 0 else "COLOR_FALL"))
+
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            glow = QColor(color)
+            glow.setAlpha(22)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(glow))
+            painter.drawRoundedRect(bar_rect.adjusted(-1, -2, 1, 2), 3, 3)
+
+            color.setAlpha(82)
+            painter.setBrush(QBrush(color))
+            painter.drawRoundedRect(bar_rect, 2, 2)
+
+        def draw_tag_badges(payload: dict) -> bool:
+            tags = payload.get("tags") if isinstance(payload, dict) else None
+            if not tags:
+                return False
+
+            rect = content_rect()
+            resolve_text_style()
+            fm = painter.fontMetrics()
+            badge_height = min(max(18, fm.height() + 4), max(18, rect.height() - 6))
+            y = rect.center().y() - badge_height // 2
+            x = rect.left()
+            drawn = False
+
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            for tag in tags[:4]:
+                label = str((tag or {}).get("text", "")).strip()
+                if not label:
+                    continue
+
+                remaining = rect.right() - x + 1
+                if remaining < 24:
+                    break
+
+                raw_width = fm.horizontalAdvance(label) + 16
+                width = min(raw_width, remaining)
+                clipped_label = fm.elidedText(label, Qt.TextElideMode.ElideRight, max(0, width - 16))
+                color = QColor((tag or {}).get("color") or _c("COLOR_INFO"))
+                if not color.isValid():
+                    color = QColor(_c("COLOR_INFO"))
+
+                badge_rect = QRectF(x, y, width, badge_height)
+                aura = QColor(color)
+                aura.setAlpha(18)
+                fill = QColor(color)
+                fill.setAlpha(44)
+                stroke = QColor(color)
+                stroke.setAlpha(108)
+                label_color = QColor(color)
+                label_color.setAlpha(235)
+
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QBrush(aura))
+                painter.drawRoundedRect(badge_rect.adjusted(-1, -1, 1, 1), 8, 8)
+                painter.setPen(QPen(stroke, 1))
+                painter.setBrush(QBrush(fill))
+                painter.drawRoundedRect(badge_rect, 7, 7)
+                painter.setPen(QPen(label_color))
+                painter.drawText(badge_rect.adjusted(8, 0, -8, 0), int(Qt.AlignmentFlag.AlignCenter), clipped_label)
+
+                x += int(width) + 6
+                drawn = True
+            return drawn
+
+        def indicator_color(tone: str) -> QColor:
+            color_map = {
+                "success": _c("COLOR_SUCCESS"),
+                "warning": _c("COLOR_WARNING"),
+                "error": _c("COLOR_ERROR"),
+                "offline": _c("TEXT_MUTED"),
+                "neutral": _c("COLOR_INFO"),
+            }
+            color = QColor(color_map.get(str(tone or ""), _c("COLOR_INFO")))
+            return color if color.isValid() else QColor(_c("COLOR_INFO"))
+
+        def draw_indicator(payload: dict, *, center_only: bool) -> bool:
+            rect = content_rect()
+            color = indicator_color(payload.get("tone", "neutral"))
+            pulse = bool(payload.get("pulse"))
+            phase = (time.time() % 1.2) / 1.2
+            dot_size = 8.0
+            cy = float(rect.center().y())
+            x = float(rect.center().x()) - dot_size / 2 if center_only else float(rect.left())
+
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            aura = QColor(color)
+            aura.setAlpha(max(18, int((52 if pulse else 28) * (1.0 - phase * 0.45))))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(aura))
+            painter.drawEllipse(QRectF(x - 4, cy - dot_size / 2 - 4, dot_size + 8, dot_size + 8))
+
+            core = QColor(color)
+            core.setAlpha(235)
+            painter.setBrush(QBrush(core))
+            painter.drawEllipse(QRectF(x, cy - dot_size / 2, dot_size, dot_size))
+
+            if center_only:
+                return True
+
+            label_rect = rect.adjusted(int(dot_size) + 10, 0, 0, 0)
+            label = payload.get("label")
+            draw_plain_text(
+                str(label if label is not None else text),
+                label_rect,
+                alignment_override=int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            )
+            return True
+
+        def draw_currency_stamp(payload: dict):
+            draw_plain_text(text)
+
+            stamp = str(payload.get("stamp", "")).strip()
+            if not stamp:
+                return
+
+            stamp_font = QFont(painter.font())
+            point_size = stamp_font.pointSizeF()
+            if point_size > 0:
+                stamp_font.setPointSizeF(max(8.0, point_size - 2.0))
+            painter.setFont(stamp_font)
+
+            stamp_color = QColor(_c("TEXT_MUTED"))
+            stamp_color.setAlpha(130)
+            painter.setPen(QPen(stamp_color))
+            rect = content_rect().adjusted(0, option.rect.height() // 3, 0, -1)
+            painter.drawText(rect, int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter), stamp)
+
+        if pill_color and text:
+            draw_cell_base()
             rect = option.rect
             painter.setFont(opt.font)
             fm = painter.fontMetrics()
@@ -399,14 +616,24 @@ class StockItemDelegate(QStyledItemDelegate):
             painter.setPen(QPen(text_color))
             painter.drawText(draw_rect, Qt.AlignmentFlag.AlignCenter, str(text))
         else:
-            opt_bg = QStyleOptionViewItem(opt)
-            opt_bg.text = ""
-            style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt_bg, painter, widget)
-            if sorted_overlay is not None:
-                painter.fillRect(option.rect, sorted_overlay)
-            draw_left_rail()
-            draw_flash_rail()
-            draw_current_cell_indicator()
+            draw_cell_base()
+            if isinstance(visual_payload, dict):
+                visual_kind = visual_payload.get("kind")
+                if visual_kind == "tag_badges" and draw_tag_badges(visual_payload):
+                    painter.restore()
+                    return
+                if visual_kind == "money_bar":
+                    draw_money_bar(visual_payload)
+                elif visual_kind == "risk_light" and draw_indicator(visual_payload, center_only=True):
+                    painter.restore()
+                    return
+                elif visual_kind == "status_light" and draw_indicator(visual_payload, center_only=False):
+                    painter.restore()
+                    return
+                elif visual_kind == "currency_stamp":
+                    draw_currency_stamp(visual_payload)
+                    painter.restore()
+                    return
             left_padding = 8 + rail_width + (4 if rail_width else 0)
             text_rect = option.rect.adjusted(left_padding, 0, -8, 0)
 
@@ -424,6 +651,12 @@ class StockItemDelegate(QStyledItemDelegate):
             alignment = index.data(Qt.ItemDataRole.TextAlignmentRole)
             if alignment is None:
                 alignment = int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+            tooltip_text = index.data(Qt.ItemDataRole.ToolTipRole)
+            if tooltip_text and len(str(text or "")) >= 12:
+                draw_plain_text(text, text_rect, fade=True)
+                painter.restore()
+                return
 
             elided_text = painter.fontMetrics().elidedText(
                 str(text or ""),

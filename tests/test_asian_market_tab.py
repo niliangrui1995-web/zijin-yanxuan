@@ -8,6 +8,7 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QApplication
 
 from core.market_calendar import MarketCalendar
+from ui.components import ToggleSwitch
 from ui.models.table_models import _c
 from ui.tabs import asian_market_runtime as asian_runtime
 from ui.tabs import asian_market_tab as asian_module
@@ -273,7 +274,9 @@ def test_asian_market_toolbar_checkbox_uses_toolbar_styling(monkeypatch):
     tab = asian_module.AsianMarketTab()
     try:
         assert tab.chk_cf_proxy.property("inToolbar") is True
+        assert isinstance(tab.chk_cf_proxy, ToggleSwitch)
         assert tab.chk_cf_proxy.text() == "优先使用稳定海外线路"
+        assert tab.asian_table.property("ambientPulse") is True
     finally:
         tab.deleteLater()
 

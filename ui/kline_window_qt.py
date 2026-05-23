@@ -95,6 +95,8 @@ class KLineChartWindow(QWidget):
         self.code_list = code_list or []
         self.current_idx = current_idx
         self._closing = False
+        self._snap_threshold = 15
+        self._snapping_to_main_window = False
 
         # 盘中实时刷新定时器
         self._rt_timer = None
@@ -341,6 +343,60 @@ class KLineChartWindow(QWidget):
         super().resizeEvent(event)
         if hasattr(self, "summary_cards"):
             self._refresh_header_context()
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        self._snap_to_main_window_edges()
+
+    def _snap_to_main_window_edges(self) -> None:
+        if self._snapping_to_main_window or getattr(self, "_closing", False):
+            return
+
+        main_window = getattr(self, "main_window", None)
+        if main_window is None:
+            return
+
+        try:
+            if main_window.isMinimized() or main_window.isMaximized():
+                return
+            main_geo = main_window.frameGeometry()
+            own_geo = self.frameGeometry()
+        except (RuntimeError, AttributeError, TypeError):
+            return
+
+        if main_geo.isNull() or own_geo.isNull():
+            return
+
+        threshold = int(getattr(self, "_snap_threshold", 15))
+        new_x = own_geo.x()
+        new_y = own_geo.y()
+
+        if abs(own_geo.left() - main_geo.right()) <= threshold:
+            new_x = main_geo.right() + 1
+        elif abs(own_geo.right() - main_geo.left()) <= threshold:
+            new_x = main_geo.left() - own_geo.width()
+        elif abs(own_geo.left() - main_geo.left()) <= threshold:
+            new_x = main_geo.left()
+        elif abs(own_geo.right() - main_geo.right()) <= threshold:
+            new_x = main_geo.right() - own_geo.width() + 1
+
+        if abs(own_geo.top() - main_geo.bottom()) <= threshold:
+            new_y = main_geo.bottom() + 1
+        elif abs(own_geo.bottom() - main_geo.top()) <= threshold:
+            new_y = main_geo.top() - own_geo.height()
+        elif abs(own_geo.top() - main_geo.top()) <= threshold:
+            new_y = main_geo.top()
+        elif abs(own_geo.bottom() - main_geo.bottom()) <= threshold:
+            new_y = main_geo.bottom() - own_geo.height() + 1
+
+        if new_x == own_geo.x() and new_y == own_geo.y():
+            return
+
+        self._snapping_to_main_window = True
+        try:
+            self.move(new_x, new_y)
+        finally:
+            self._snapping_to_main_window = False
 
     def _resolve_vcp_context(self, code: str, name: str, item_data: dict = None) -> dict:
         return resolve_vcp_context(self, code, name, item_data)

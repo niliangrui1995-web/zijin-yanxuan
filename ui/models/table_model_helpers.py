@@ -72,10 +72,13 @@ def _theme_table_tokens() -> dict:
     return _theme_table_tokens_cached(theme_manager.current_theme_name, _current_table_density())
 
 
-def _build_qfont(families: list[str], point_size: int, *, bold: bool = False, mono: bool = False) -> QFont:
+def _build_qfont(families: list[str], point_size: float, *, bold: bool = False, mono: bool = False) -> QFont:
     font = QFont()
     font.setFamilies(families)
-    font.setPointSize(point_size)
+    if float(point_size).is_integer():
+        font.setPointSize(int(point_size))
+    else:
+        font.setPointSizeF(float(point_size))
     font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
     if mono:
         font.setStyleHint(QFont.StyleHint.Monospace)
@@ -96,7 +99,9 @@ def _build_table_model_fonts() -> dict[str, QFont]:
 
     return {
         "base": _build_qfont(family_names, point_size),
+        "small": _build_qfont(family_names, 11.5),
         "mono": _build_qfont(mono_family_names, point_size, mono=True),
+        "small_mono": _build_qfont(mono_family_names, 11.5, mono=True),
         "bold": _build_qfont(family_names, point_size, bold=True),
         "bold_mono": _build_qfont(mono_family_names, point_size, bold=True, mono=True),
     }
@@ -354,6 +359,17 @@ def _numeric_heat_color(header: str, raw_val):
     if value is None:
         return None
 
+    if header in {"5日涨跌%", "10日涨跌%", "20日涨跌%"}:
+        if abs(value) < 0.01:
+            return None
+        if value > 0:
+            color = QColor("#FF455A")
+            color.setAlpha(min(24, int(6 + (abs(value) / 15.0) * 12)))
+            return color
+        color = QColor("#05C492")
+        color.setAlpha(min(20, int(5 + (abs(value) / 15.0) * 10)))
+        return color
+
     tokens = _theme_table_tokens()
     alpha = 0
     base = None
@@ -413,6 +429,10 @@ _DYNAMIC_ELIDE_HEADERS = {
     "\u4ea4\u6613\u8be6\u60c5",
     "\u89d2\u8272\u5b9a\u4f4d",
     "\u4ea7\u4e1a\u94fe\u5730\u4f4d",
+    "\u50ac\u5316\u5242",
+    "\u7ec6\u5206\u677f\u5757",
+    "\u70ed\u70b9\u677f\u5757",
+    "AI\u7ec6\u5206\u677f\u5757/\u5907\u6ce8",
 }
 
 

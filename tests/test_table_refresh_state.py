@@ -194,7 +194,7 @@ def test_table_state_overlay_uses_compact_responsive_card(qt_application):
         card = wrapper._overlay._card
         assert card.minimumWidth() <= card.maximumWidth()
         assert card.maximumWidth() <= 280
-        assert "border-radius: 12px;" in card.styleSheet()
+        assert "border-radius: 14px;" in card.styleSheet()
     finally:
         wrapper.deleteLater()
 

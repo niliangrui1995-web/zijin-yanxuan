@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidg
 from app.services.ui_diagnostics_service import ui_stall_span
 from core.logger import get_logger
 from ui.components.smooth_tab_widget import SmoothTabWidget
+from ui.components.vector_icons import tab_svg_icon
 from ui.theme_tokens import build_ui_tokens
 from ui.workspaces.stock_signal import StockSignal
 from ui.workspaces.workspace_facade import WorkspaceFacade
@@ -338,6 +339,7 @@ class ClassicWorkspace(QWidget):
         return _create
 
     def _mount_initial_tabs(self) -> None:
+        icon_tokens = build_ui_tokens()["icon"]
         for spec in self._tab_specs:
             key = str(spec.get("key") or "").strip()
             widget = self._create_real_tab(spec) if key == "watchlist" else self._create_placeholder_tab(spec)
@@ -348,7 +350,17 @@ class ClassicWorkspace(QWidget):
                 setattr(self, spec["attr"], widget)
             else:
                 setattr(self, spec["attr"], None)
-            self.tabs.addTab(widget, spec["title"])
+            self.tabs.addTab(
+                widget,
+                tab_svg_icon(
+                    key=key,
+                    label=spec["title"],
+                    color=icon_tokens["muted"],
+                    size=icon_tokens["chrome_size"],
+                    stroke_width=icon_tokens["stroke_width"],
+                ),
+                spec["title"],
+            )
 
     def _create_real_tab(self, spec: dict):
         factory = spec.get("factory")
@@ -425,7 +437,19 @@ class ClassicWorkspace(QWidget):
         old_widget = spec.get("widget")
         try:
             self.tabs.removeTab(index)
-            self.tabs.insertTab(index, widget, spec.get("title", ""))
+            icon_tokens = build_ui_tokens()["icon"]
+            self.tabs.insertTab(
+                index,
+                widget,
+                tab_svg_icon(
+                    key=key,
+                    label=spec.get("title", ""),
+                    color=icon_tokens["muted"],
+                    size=icon_tokens["chrome_size"],
+                    stroke_width=icon_tokens["stroke_width"],
+                ),
+                spec.get("title", ""),
+            )
             if 0 <= current_index < self.tabs.count():
                 self.tabs.setCurrentIndex(current_index)
         finally:
