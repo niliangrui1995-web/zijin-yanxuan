@@ -38,6 +38,7 @@ def test_rt_monitor_last_columns_are_interactive(monkeypatch):
         assert captured["settings_key"] == "header_state_rt_v5"
         assert tab.table_rt.columnWidth(tab.source_model.headers.index("热点板块")) >= 220
         assert isinstance(tab.table_rt.itemDelegate(), StockItemDelegate)
+        assert tab.table_rt.property("suppressLeftRails") is True
         assert tab.btn_rt_start.text() == "开始监控"
         assert tab.rt_search.accessibleName() == "盘中监控筛选"
         assert tab.format_status_summary("状态 已启动", "下一步 拉取报价") == "状态 已启动 | 下一步 拉取报价"

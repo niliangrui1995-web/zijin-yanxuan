@@ -21,7 +21,6 @@ from app.services.ui_config_service import app_config
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
 from app.services.ui_market_calendar_service import MarketCalendar
-from app.services.ui_watchlist_service import watchlist_vm
 from core.logger import get_logger
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.scan_dialogs import VCPScanRangeDialog, VCPScanSettingsDialog
@@ -495,6 +494,9 @@ class ScanTab(BaseStockTab):
         ]
         self.source_model = StockTableModel(self.columns)
         self.source_model.set_plain_style_headers(["触发日期"])
+        self.source_model.set_muted_text_headers(
+            ["触发日期", "评分", "RPS强度", "距突破", "突破状态", "区间振幅", "热门板块"]
+        )
         self.proxy_model = RtSortFilterProxyModel(self)
         self.proxy_model.setSourceModel(self.source_model)
 
@@ -773,7 +775,6 @@ class ScanTab(BaseStockTab):
             event_bus.sig_system_log.emit("error", f"数据整理失败: {e}")
             final_list = results
 
-        fav_codes = set(watchlist_vm.get_all_codes())
         formatted_list = []
 
         try:
@@ -788,15 +789,6 @@ class ScanTab(BaseStockTab):
                         return str(val)
 
                 status = str(row_data.get("突破状态", ""))
-                row_style = ""
-                if "放量突破" in status:
-                    row_style = "breakout"
-                elif "临近" in status:
-                    row_style = "approaching"
-                elif "假突破" in status or "缩量" in status:
-                    row_style = "fake_breakout"
-                elif "关注" in name_str or code_str in fav_codes:
-                    row_style = "approaching"
 
                 # Format score cleanly
                 score_str = str(row_data.get("评分", ""))
@@ -818,7 +810,7 @@ class ScanTab(BaseStockTab):
                     "突破状态": status,
                     "区间振幅": str(row_data.get("区间振幅", "")),
                     "热门板块": str(row_data.get("热点板块", "-")),
-                    "_row_style": row_style,  # Using background dye injected to StockTableModel
+                    "_suppress_accent_rail": True,
                 }
                 # Keep original data nested so double clicks can retrieve it
                 for k, v in row_data.items():

@@ -183,6 +183,18 @@ QTableView::item:selected {{
 QTableView::item:selected:hover {{
     background-color: {table["selected_hover_bg"]};
 }}
+QTableView::item:focus {{
+    outline: none;
+    border-bottom: 1px solid {t["BORDER_SUBTLE"]};
+    border-right: 1px solid transparent;
+}}
+QTableView::item:selected:focus {{
+    background-color: {table["selected_bg"]};
+    color: {t["TEXT_BRIGHT"]};
+    outline: none;
+    border-bottom: 1px solid {t["BORDER_SUBTLE"]};
+    border-right: 1px solid transparent;
+}}
 QTableView:focus {{
     border: 1px solid {border["focus"]};
     border-radius: {table["focus_radius"]}px;

@@ -666,6 +666,8 @@ class StockTableModel(QAbstractTableModel):
                 code = str(item_dict.get("代码", ""))
                 if watchlist_vm.is_in_watchlist(code):
                     return QColor(_c("BRAND_HOVER"))
+            if key == "变化类型" and str(raw_val or "").strip() in {"新进", "增持"}:
+                return QColor(_c("BRAND_HOVER"))
             if key in {"最近上榜", "换手率%", "AI细分板块/备注"} or self._uses_muted_text(key):
                 return QColor(_c("TEXT_MUTED"))
             if key == "评级":
@@ -673,10 +675,10 @@ class StockTableModel(QAbstractTableModel):
             if self._uses_plain_style(key) or _is_date_like_header(key):
                 return QColor(_c("TEXT_PRIMARY"))
 
-            if (_is_pct_like_header(key) and "换手" not in key) or key in ["净额", "现价", "收盘", "最新价"]:
+            if (_is_pct_like_header(key) and "换手" not in key) or key in ["净额", "现价", "市价", "收盘", "最新价"]:
                 try:
                     target_pct = raw_val
-                    if key in ["现价", "收盘", "最新价"]:
+                    if key in ["现价", "市价", "收盘", "最新价"]:
                         target_pct = item_dict.get("涨幅%") or item_dict.get("涨幅") or item_dict.get("涨跌") or "0"
 
                     pct = float(str(target_pct).replace("%", "").replace("+", "").replace(",", ""))
@@ -857,6 +859,8 @@ class StockTableModel(QAbstractTableModel):
             return self._uses_plain_style(key)
 
         elif role == Qt.ItemDataRole.UserRole + 4:
+            if item_dict.get("_suppress_accent_rail"):
+                return None
             rail_color = _accent_rail_color_for_row_style(item_dict.get("_row_style", ""))
             if rail_color:
                 return rail_color

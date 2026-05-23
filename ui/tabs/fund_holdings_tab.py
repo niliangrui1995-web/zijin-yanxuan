@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from contextlib import suppress
 
 from PyQt6.QtCore import Qt, QTimer
@@ -83,6 +84,63 @@ class FundHoldingsTab(BaseStockTab):
     _VIEW_STATE_PREFIX = "fund_holdings_view_state_v2"
     _stock_universe_provider = staticmethod(load_ai_industry_chain_stock_codes)
     _chain_context_provider = staticmethod(load_ai_industry_chain_context_map)
+    _SUBJECT_NAME_ALIASES = (
+        ("MORGANSTANLEY", "MORGAN STANLEY"),
+        ("JPMORGAN", "J.P.Morgan"),
+        ("BARCLAYS", "BARCLAYS"),
+        ("UBS", "UBS"),
+        ("GOLDMANSACHS", "GOLDMAN SACHS"),
+        ("CITIGROUP", "CITI"),
+        ("CITIBANK", "CITI"),
+        ("MERRILLLYNCH", "MERRILL LYNCH"),
+        ("BOFA", "BOFA"),
+        ("HSBC", "HSBC"),
+        ("NOMURA", "NOMURA"),
+        ("BNPPARIBAS", "BNP PARIBAS"),
+        ("DEUTSCHEBANK", "DEUTSCHE BANK"),
+        ("STANDARDCHARTERED", "STANDARD CHARTERED"),
+        ("SOCIETEGENERALE", "SOCIETE GENERALE"),
+        ("CREDITSUISSE", "CREDIT SUISSE"),
+        ("MACQUARIE", "MACQUARIE"),
+        ("DAIWASECURITIES", "DAIWA"),
+        ("MIZUHO", "MIZUHO"),
+        ("JEFFERIES", "JEFFERIES"),
+        ("CLSA", "CLSA"),
+        ("KGIASIA", "KGI ASIA"),
+        ("ABUDHABIINVESTMENTAUTHORITY", "ADIA"),
+        ("HKSCC", "HKSCC"),
+    )
+    _SUBJECT_LEGAL_SUFFIXES = frozenset({"PLC", "LIMITED", "LTD", "INC", "LLC", "LLP", "AG", "SA", "NV"})
+    _SUBJECT_TAIL_DESCRIPTORS = frozenset(
+        {"SECURITIES", "INTERNATIONAL", "MARKETS", "GLOBAL", "BANK", "CO", "COMPANY", "CORPORATION"}
+    )
+
+    @classmethod
+    def _shorten_subject_name(cls, subject_name: str) -> str:
+        raw_name = str(subject_name or "").strip()
+        if not raw_name:
+            return ""
+
+        compact_name = re.sub(r"[^A-Z0-9]+", "", raw_name.upper())
+        for marker, display_name in cls._SUBJECT_NAME_ALIASES:
+            if marker in compact_name:
+                return display_name
+
+        if not re.fullmatch(r"[A-Za-z0-9 .,&'()/+-]+", raw_name):
+            return raw_name
+
+        cleaned_name = re.sub(r"[_]+", " ", raw_name.replace("&", " "))
+        cleaned_name = re.sub(r"\s+", " ", cleaned_name).strip(" .,-")
+        tokens = [token.strip(" .,-") for token in cleaned_name.split() if token.strip(" .,-")]
+        while tokens and tokens[-1].upper().replace(".", "") in cls._SUBJECT_LEGAL_SUFFIXES:
+            tokens.pop()
+        while len(tokens) > 2 and tokens[-1].upper().replace(".", "") in cls._SUBJECT_TAIL_DESCRIPTORS:
+            tokens.pop()
+        if not tokens:
+            return raw_name
+        if len(tokens) > 3:
+            tokens = tokens[:3]
+        return " ".join(tokens)
 
     def __init__(self, data_provider, parent=None, autoload: bool = True):
         super().__init__(data_provider=data_provider, parent=parent)
@@ -266,6 +324,9 @@ class FundHoldingsTab(BaseStockTab):
         self.table = VCPTableView(default_row_height=30)
         self.model = StockTableModel(self.columns)
         self.model.set_plain_style_headers(["主体", "资金属性", "季度", "变化类型", "概念板块"])
+        self.model.set_muted_text_headers(
+            ["主体", "资金属性", "季度", "本期占比", "本期持股", "上期持股", "持股变化", "概念板块"]
+        )
 
         self.proxy_model = FundHoldingsFilterProxyModel(self.table)
         self.proxy_model.setSourceModel(self.model)
@@ -396,6 +457,7 @@ class FundHoldingsTab(BaseStockTab):
             quarter_key = str(row.get("quarter_key") or "").strip()
             change_type = str(row.get("change_type") or "").strip()
             capital_attribute = str(row.get("capital_attribute") or "").strip()
+            subject_name = str(row.get("subject_name") or "").strip()
             if subject_code == cls._SUBJECT_CODE_QFII and not capital_attribute:
                 capital_attribute = QFII_CAPITAL_ATTRIBUTE_UNMARKED
             capital_attribute_text = cls._capital_attribute_label(capital_attribute)
@@ -409,7 +471,8 @@ class FundHoldingsTab(BaseStockTab):
                     "市价": cls._DISPLAY_PLACEHOLDER,
                     "涨幅%": cls._DISPLAY_PLACEHOLDER,
                     "市值": cls._DISPLAY_PLACEHOLDER,
-                    "主体": str(row.get("subject_name") or "").strip(),
+                    "主体": cls._shorten_subject_name(subject_name),
+                    "主体原名": subject_name,
                     "资金属性": capital_attribute_text,
                     "主体代码": subject_code,
                     "季度": quarter_key,
@@ -966,13 +1029,19 @@ class FundHoldingsTab(BaseStockTab):
 
         self._restoring_view_state = True
         try:
-            subject_names = set(
-                self._normalize_settings_values(self._settings.value(self._view_state_key("subject_names"), []))
-            )
+            subject_names = set()
+            for subject_name in self._normalize_settings_values(
+                self._settings.value(self._view_state_key("subject_names"), [])
+            ):
+                shortened_subject_name = self._shorten_subject_name(subject_name)
+                if shortened_subject_name:
+                    subject_names.add(shortened_subject_name)
             if not subject_names:
                 legacy_subject_name = str(self._settings.value(self._view_state_key("subject_name"), "") or "").strip()
                 if legacy_subject_name:
-                    subject_names = {legacy_subject_name}
+                    shortened_subject_name = self._shorten_subject_name(legacy_subject_name)
+                    if shortened_subject_name:
+                        subject_names = {shortened_subject_name}
             capital_attributes = set(
                 self._normalize_settings_values(self._settings.value(self._view_state_key("capital_attributes"), []))
             )
@@ -1280,6 +1349,7 @@ class FundHoldingsTab(BaseStockTab):
             quarter_key = str(row.get("quarter_key") or "").strip()
             change_type = str(row.get("change_type") or "").strip()
             capital_attribute = str(row.get("capital_attribute") or "").strip()
+            subject_name = str(row.get("subject_name") or "").strip()
             if subject_code == self._SUBJECT_CODE_QFII and not capital_attribute:
                 capital_attribute = QFII_CAPITAL_ATTRIBUTE_UNMARKED
             capital_attribute_text = self._capital_attribute_label(capital_attribute)
@@ -1295,7 +1365,8 @@ class FundHoldingsTab(BaseStockTab):
                     "市价": self._DISPLAY_PLACEHOLDER,
                     "涨幅%": self._DISPLAY_PLACEHOLDER,
                     "市值": self._DISPLAY_PLACEHOLDER,
-                    "主体": str(row.get("subject_name") or "").strip(),
+                    "主体": self._shorten_subject_name(subject_name),
+                    "主体原名": subject_name,
                     "资金属性": capital_attribute_text,
                     "主体代码": subject_code,
                     "季度": quarter_key,

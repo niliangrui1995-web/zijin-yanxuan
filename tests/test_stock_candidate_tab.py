@@ -2,10 +2,12 @@
 from types import SimpleNamespace
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QHeaderView, QWidget
 
 from app.services.ui_event_service import domain_events as event_bus
 from ui.tabs.stock_candidate_tab import StockCandidateTab
+from ui.theme import theme_manager
 from ui.workspaces.stock_signal import StockSignal
 
 
@@ -275,6 +277,16 @@ def test_stock_candidate_listens_to_global_quote_updates(monkeypatch):
         assert round(float(row["涨幅%"]), 2) == 4.86
         assert row["市值"] == "11744亿"
         assert tab.get_realtime_quote_codes() == {"300750"}
+
+        muted = QColor(theme_manager.get("TEXT_MUTED")).name()
+        for header in ["共振分", "来源数", "信号数", "来源", "核心信号", "最近时间"]:
+            idx = tab.model.index(0, tab.model.headers.index(header))
+            assert tab.model.data(idx, Qt.ItemDataRole.ForegroundRole).name() == muted
+
+        price_idx = tab.model.index(0, tab.model.headers.index("市价"))
+        assert tab.model.data(price_idx, Qt.ItemDataRole.ForegroundRole).name() == QColor(
+            theme_manager.get("COLOR_RISE")
+        ).name()
     finally:
         tab.close()
 

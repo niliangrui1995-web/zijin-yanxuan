@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtTest import QSignalSpy
 
 from core.event_bus import event_bus
 from ui.tabs.scan_tab import ScanTab
+from ui.theme import theme_manager
 
 
 class _DummyProvider:
@@ -186,6 +189,42 @@ def test_scan_tab_lineage_and_local_snapshot_hydration_use_existing_snapshot(mon
         assert lineage["triggered_network"] is False
         assert lineage["row_count"] == 1
         assert "provider_fault_tolerance" in lineage
+    finally:
+        tab.deleteLater()
+
+
+def test_scan_tab_result_detail_columns_are_muted_without_left_accent_rail(monkeypatch):
+    monkeypatch.setattr("ui.tabs.scan_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+
+    tab = ScanTab(data_provider=None, engine=None)
+    try:
+        tab._apply_latest_quotes_from_store = lambda: None
+        tab._prime_visible_local_quote_snapshot = lambda current_model=None: True
+
+        tab._render_scan_table(
+            [
+                {
+                    "代码": "688498",
+                    "名称": "源杰科技",
+                    "收盘": 128.5,
+                    "触发日期": "2026-04-24",
+                    "评分": 91,
+                    "RPS强度": "96",
+                    "距突破": "2.3%",
+                    "突破状态": "放量突破",
+                    "区间振幅": "8.6%",
+                    "热点板块": "CPO",
+                }
+            ]
+        )
+
+        muted = QColor(theme_manager.get("TEXT_MUTED")).name()
+        for header in ["触发日期", "评分", "RPS强度", "距突破", "突破状态", "区间振幅", "热门板块"]:
+            idx = tab.source_model.index(0, tab.source_model.headers.index(header))
+            assert tab.source_model.data(idx, Qt.ItemDataRole.ForegroundRole).name() == muted
+
+        serial_idx = tab.source_model.index(0, 0)
+        assert tab.source_model.data(serial_idx, Qt.ItemDataRole.UserRole + 4) is None
     finally:
         tab.deleteLater()
 

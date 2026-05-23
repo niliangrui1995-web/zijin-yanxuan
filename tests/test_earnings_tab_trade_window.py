@@ -3,6 +3,10 @@ from types import SimpleNamespace
 
 import pandas as pd
 import pytest
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
+
+from ui.theme import theme_manager
 
 
 def _earnings_module():
@@ -105,6 +109,39 @@ def test_earnings_tab_defers_scheduler_creation_until_runtime(monkeypatch, earni
 
         assert tab._ensure_scheduler() is tab.scheduler
         assert created == [tab]
+    finally:
+        tab.deleteLater()
+
+
+def test_earnings_report_period_and_right_columns_use_muted_text(earnings_qt):
+    tab = earnings_qt.EarningsTab()
+    try:
+        tab.model.update_data(
+            [
+                {
+                    "代码": "300308",
+                    "名称": "中际旭创",
+                    "现价": "128.50",
+                    "涨幅%": "2.30",
+                    "市值": "1200亿",
+                    "PE(TTM)": "38.2",
+                    "环比%": "18.2",
+                    "同比%": "35.6",
+                    "当季利润": "18.2亿",
+                    "上季利润": "15.4亿",
+                    "报告期": "2026Q1",
+                    "类型": "财报",
+                    "揭晓日": "2026-04-24",
+                    "基调": "高增",
+                    "所属行业与概念": "CPO",
+                }
+            ]
+        )
+
+        muted = QColor(theme_manager.get("TEXT_MUTED")).name()
+        for header in ["报告期", "类型", "揭晓日", "基调", "所属行业与概念"]:
+            idx = tab.model.index(0, tab.model.headers.index(header))
+            assert tab.model.data(idx, Qt.ItemDataRole.ForegroundRole).name() == muted
     finally:
         tab.deleteLater()
 

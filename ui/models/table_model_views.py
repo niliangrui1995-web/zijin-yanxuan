@@ -240,13 +240,15 @@ class StockItemDelegate(QStyledItemDelegate):
         style = widget.style() if widget else QApplication.style()
         is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
         is_hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
-        rail_color = index.data(Qt.ItemDataRole.UserRole + 4)
-        show_selected_rail = is_selected and index.column() == 0
-        show_accent_rail = bool(rail_color) and index.column() == 0
-        show_hover_rail = is_hovered and index.column() == 0 and not show_selected_rail and not show_accent_rail
+        suppress_left_rails = bool(widget and widget.property("suppressLeftRails"))
+        show_current_cell_indicator = bool(widget and widget.property("showCurrentCellIndicator"))
+        rail_color = None if suppress_left_rails else index.data(Qt.ItemDataRole.UserRole + 4)
+        show_accent_rail = bool(rail_color) and index.column() == 0 and not suppress_left_rails
+        show_selected_rail = False
+        show_hover_rail = False
         selected_rail_width = table_tokens["selected_rail_width"] if show_selected_rail else 0
-        accent_rail_width = table_tokens["accent_rail_width"] if show_accent_rail and not show_selected_rail else 0
-        hover_rail_width = table_tokens.get("hover_rail_width", 3) if show_hover_rail else 0
+        accent_rail_width = table_tokens["accent_rail_width"] if show_accent_rail else 0
+        hover_rail_width = table_tokens.get("hover_rail_width", 3) if show_hover_rail and not suppress_left_rails else 0
         rail_width = selected_rail_width or accent_rail_width or hover_rail_width
         current_index = widget.currentIndex() if widget and hasattr(widget, "currentIndex") else QModelIndex()
         is_current = current_index.isValid() and current_index == index
@@ -257,7 +259,7 @@ class StockItemDelegate(QStyledItemDelegate):
             sorted_overlay = _qcolor_from_token(table_tokens["sorted_column_bg"])
 
         def draw_current_cell_indicator():
-            if not is_current:
+            if not show_current_cell_indicator or not is_current:
                 return
 
             left_inset = 2 + rail_width + (2 if rail_width else 0)
@@ -306,6 +308,29 @@ class StockItemDelegate(QStyledItemDelegate):
             bg_color.setAlpha(min(flash_max_alpha, max(0, int(alpha * flash_scale))))
             painter.fillRect(option.rect, QBrush(bg_color))
 
+        def clear_default_selected_left_marker():
+            if not is_selected or index.column() != 0 or show_accent_rail:
+                return
+
+            clear_width = max(1, int(table_tokens.get("selected_rail_width", 3)))
+            clear_rect = QRect(
+                option.rect.left(),
+                option.rect.top() + 1,
+                clear_width,
+                max(0, option.rect.height() - 2),
+            )
+            fill_key = "selected_hover_bg" if is_hovered else "selected_bg"
+            fill_color = _qcolor_from_token(table_tokens[fill_key])
+            if fill_color.alpha() < 255:
+                base_color = option.palette.color(QPalette.ColorRole.Base)
+                alpha = fill_color.alphaF()
+                fill_color = QColor(
+                    round(fill_color.red() * alpha + base_color.red() * (1 - alpha)),
+                    round(fill_color.green() * alpha + base_color.green() * (1 - alpha)),
+                    round(fill_color.blue() * alpha + base_color.blue() * (1 - alpha)),
+                )
+            painter.fillRect(clear_rect, fill_color)
+
         def draw_left_rail():
             if not (show_selected_rail or show_accent_rail or show_hover_rail):
                 return
@@ -335,6 +360,8 @@ class StockItemDelegate(QStyledItemDelegate):
             painter.fillRect(rail_rect, accent)
 
         def draw_flash_rail():
+            if suppress_left_rails:
+                return
             if not flash_data or not isinstance(flash_data, dict):
                 return
             update_time = flash_data.get("time", 0)
@@ -370,10 +397,14 @@ class StockItemDelegate(QStyledItemDelegate):
         def draw_cell_base():
             opt_bg = QStyleOptionViewItem(opt)
             opt_bg.text = ""
+            opt_bg.state &= ~QStyle.StateFlag.State_HasFocus
+            opt_bg.state &= ~QStyle.StateFlag.State_FocusAtBorder
+            opt_bg.state &= ~QStyle.StateFlag.State_KeyboardFocusChange
             style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt_bg, painter, widget)
             if sorted_overlay is not None:
                 painter.fillRect(option.rect, sorted_overlay)
             draw_flash_background()
+            clear_default_selected_left_marker()
             draw_left_rail()
             draw_flash_rail()
             draw_current_cell_indicator()

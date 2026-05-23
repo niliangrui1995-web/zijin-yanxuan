@@ -112,6 +112,7 @@ class AIIndustryChainTab(BaseStockTab):
 
         self.model = StockTableModel(self.COLUMNS)
         self.model.set_plain_style_headers(["细分板块", "备注"])
+        self.model.set_muted_text_headers(["备注"])
         self.proxy_model = RtSortFilterProxyModel(self.table)
         self.proxy_model.setSourceModel(self.model)
         self.table.setModel(self.proxy_model)

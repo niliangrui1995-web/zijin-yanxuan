@@ -210,6 +210,28 @@ def test_asian_market_table_scales_columns_to_fill_view(monkeypatch):
         tab.deleteLater()
 
 
+def test_asian_market_table_suppresses_left_rails(monkeypatch):
+    monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "_load_local_cache",
+        lambda self: setattr(self, "row_data", []),
+    )
+    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+
+    tab = asian_module.AsianMarketTab()
+    try:
+        assert tab.asian_table.property("suppressLeftRails") is True
+    finally:
+        tab.deleteLater()
+
+
 def test_asian_market_table_keeps_saved_column_widths(monkeypatch):
     monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
     monkeypatch.setattr(

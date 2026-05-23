@@ -5,12 +5,14 @@ from pathlib import Path
 import pandas as pd
 import pytest
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QColor
 from PyQt6.QtTest import QSignalSpy
 
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_watchlist_service import watchlist_vm
 from core.global_store import global_store
 from ui.tabs.ai_industry_chain_tab import AIIndustryChainTab
+from ui.theme import theme_manager
 
 
 class DummyProvider:
@@ -128,6 +130,10 @@ def test_ai_industry_chain_uses_plain_pct_headers_for_quotes(monkeypatch, tmp_pa
 
         pct_col = tab.model.headers.index("涨幅")
         assert tab.model.data(tab.model.index(0, pct_col), Qt.ItemDataRole.DisplayRole) == "+5.00%"
+        remark_col = tab.model.headers.index("备注")
+        assert tab.model.data(tab.model.index(0, remark_col), Qt.ItemDataRole.ForegroundRole).name() == QColor(
+            theme_manager.get("TEXT_MUTED")
+        ).name()
     finally:
         tab.close()
         tab.deleteLater()

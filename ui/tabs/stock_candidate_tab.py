@@ -176,6 +176,7 @@ class StockCandidateTab(BaseStockTab):
 
         self.model = StockTableModel(self.COLUMNS)
         self.model.set_plain_style_headers(["来源", "核心信号", "最近时间"])
+        self.model.set_muted_text_headers(["共振分", "来源数", "信号数", "来源", "核心信号", "最近时间"])
         self.proxy_model = RtSortFilterProxyModel(self)
         self.proxy_model.setSourceModel(self.model)
         self.table.setModel(self.proxy_model)

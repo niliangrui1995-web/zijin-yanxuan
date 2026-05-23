@@ -2,7 +2,8 @@
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 
-from ui.models.table_models import RtSortFilterProxyModel, StockTableModel, _qcolor_from_token
+from ui.components import VCPTableView
+from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel, _qcolor_from_token
 from ui.theme import theme_manager
 
 
@@ -131,6 +132,127 @@ def test_stock_table_model_exposes_accent_rail_without_row_fill():
 
     assert model.data(first_idx, Qt.ItemDataRole.UserRole + 4) == theme_manager.get("COLOR_RISE_STRONG")
     assert model.data(first_idx, Qt.ItemDataRole.BackgroundRole) is None
+
+
+def test_selected_row_keeps_accent_rail_color(qt_application):
+    table = VCPTableView(default_row_height=30)
+    model = StockTableModel(["代码", "名称", "状态"])
+    model.update_data([{"代码": "000001", "名称": "A", "状态": "触发", "_row_style": "breakout"}])
+    try:
+        table.setModel(model)
+        table.setItemDelegate(StockItemDelegate(table))
+        table.resize(220, 80)
+        table.setColumnWidth(0, 52)
+        table.setRowHeight(0, 30)
+        table.selectRow(0)
+        table.selectionModel().clearCurrentIndex()
+        table.show()
+        qt_application.processEvents()
+
+        rect = table.visualRect(model.index(0, 0))
+        image = table.viewport().grab().toImage()
+        rail_pixel = image.pixelColor(rect.left() + 1, rect.center().y())
+
+        assert rail_pixel.red() > rail_pixel.blue()
+        assert rail_pixel.red() > rail_pixel.green()
+    finally:
+        table.deleteLater()
+
+
+def test_selected_row_without_accent_does_not_add_left_rail(qt_application):
+    table = VCPTableView(default_row_height=30)
+    model = StockTableModel(["代码", "名称", "备注"])
+    model.update_data([{"代码": "000001", "名称": "A", "备注": "普通行"}])
+    try:
+        table.setModel(model)
+        table.setItemDelegate(StockItemDelegate(table))
+        table.resize(220, 80)
+        table.setColumnWidth(0, 52)
+        table.setRowHeight(0, 30)
+        table.selectRow(0)
+        table.selectionModel().clearCurrentIndex()
+        table.show()
+        qt_application.processEvents()
+
+        rect = table.visualRect(model.index(0, 0))
+        image = table.viewport().grab().toImage()
+        rail_pixel = image.pixelColor(rect.left() + 1, rect.center().y())
+        selected_rail = QColor(theme_manager.get("TABLE_SELECTED_RAIL"))
+
+        channel_diff = (
+            abs(rail_pixel.red() - selected_rail.red())
+            + abs(rail_pixel.green() - selected_rail.green())
+            + abs(rail_pixel.blue() - selected_rail.blue())
+        )
+        assert channel_diff > 80
+    finally:
+        table.deleteLater()
+
+
+def test_table_can_suppress_all_left_rails(qt_application):
+    table = VCPTableView(default_row_height=30)
+    table.setProperty("suppressLeftRails", True)
+    model = StockTableModel(["代码", "名称", "状态"])
+    model.update_data([{"代码": "000001", "名称": "A", "状态": "触发", "_row_style": "breakout"}])
+    try:
+        table.setModel(model)
+        table.setItemDelegate(StockItemDelegate(table))
+        table.resize(220, 80)
+        table.setColumnWidth(0, 52)
+        table.setRowHeight(0, 30)
+        table.show()
+        qt_application.processEvents()
+
+        rect = table.visualRect(model.index(0, 0))
+        image = table.viewport().grab().toImage()
+        rail_pixel = image.pixelColor(rect.left() + 1, rect.center().y())
+
+        assert not (rail_pixel.red() > rail_pixel.blue() and rail_pixel.red() > rail_pixel.green())
+    finally:
+        table.deleteLater()
+
+
+def test_table_suppresses_current_cell_indicator_by_default(qt_application):
+    def _sample_indicator_border(show_indicator: bool) -> QColor:
+        table = VCPTableView(default_row_height=30)
+        if show_indicator:
+            table.setProperty("showCurrentCellIndicator", True)
+        model = StockTableModel(["代码", "名称", "备注"])
+        model.update_data([{"代码": "000001", "名称": "A", "备注": "普通行"}])
+        try:
+            table.setModel(model)
+            table.setItemDelegate(StockItemDelegate(table))
+            table.resize(240, 80)
+            table.setColumnWidth(0, 52)
+            table.setColumnWidth(1, 80)
+            table.setRowHeight(0, 30)
+            current = model.index(0, 1)
+            table.setCurrentIndex(current)
+            table.show()
+            qt_application.processEvents()
+
+            rect = table.visualRect(current)
+            image = table.viewport().grab().toImage()
+            return image.pixelColor(rect.center().x(), rect.top() + 2)
+        finally:
+            table.deleteLater()
+
+    visible_pixel = _sample_indicator_border(True)
+    suppressed_pixel = _sample_indicator_border(False)
+    border_color = _qcolor_from_token(theme_manager.get("TABLE_CURRENT_CELL_BORDER"))
+
+    visible_distance = (
+        abs(visible_pixel.red() - border_color.red())
+        + abs(visible_pixel.green() - border_color.green())
+        + abs(visible_pixel.blue() - border_color.blue())
+    )
+    suppressed_distance = (
+        abs(suppressed_pixel.red() - border_color.red())
+        + abs(suppressed_pixel.green() - border_color.green())
+        + abs(suppressed_pixel.blue() - border_color.blue())
+    )
+
+    assert visible_distance < suppressed_distance
 
 
 def test_stock_table_model_keeps_foreign_net_buy_left_aligned():

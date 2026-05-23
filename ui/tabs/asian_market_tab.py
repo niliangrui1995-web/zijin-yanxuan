@@ -640,6 +640,7 @@ class AsianMarketTab(BaseStockTab):
         layout.addWidget(toolbar)
 
         self.asian_table = VCPTableView(default_row_height=30)
+        self.asian_table.setProperty("suppressLeftRails", True)
         self.asian_table.set_ambient_repaint_enabled(False)
         self.table_state = TableStateWrapper(self.asian_table, empty_title="暂无亚洲数据", loading_title="加载中...")
         layout.addWidget(self.table_state)

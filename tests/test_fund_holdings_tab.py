@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 from types import SimpleNamespace
 
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtTest import QSignalSpy
 
 from core.event_bus import event_bus
 from ui.tabs import fund_holdings_tab as fund_holdings_module
+from ui.theme import theme_manager
 
 
 class _DummyProvider:
@@ -602,6 +605,77 @@ def test_fund_holdings_toolbar_exposes_accessible_filter_names(monkeypatch):
         tab.deleteLater()
 
 
+def test_fund_holdings_detail_columns_are_muted_and_new_add_types_use_watchlist_accent():
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
+    try:
+        tab.model.update_data(
+            [
+                {
+                    "代码": "300308",
+                    "名称": "中际旭创",
+                    "市价": "128.50",
+                    "涨幅%": "2.30",
+                    "市值": "1200亿",
+                    "主体": "睿远成长价值混合A",
+                    "资金属性": "自有资金",
+                    "季度": "2026Q1",
+                    "变化类型": "新进",
+                    "本期占比": "1.20%",
+                    "本期持股": "150.00万",
+                    "上期持股": "--",
+                    "持股变化": "+150.00万",
+                    "概念板块": "CPO",
+                },
+                {
+                    "代码": "688498",
+                    "名称": "源杰科技",
+                    "市价": "86.00",
+                    "涨幅%": "-1.20",
+                    "市值": "320亿",
+                    "主体": "QFII",
+                    "资金属性": "客户资金",
+                    "季度": "2026Q1",
+                    "变化类型": "增持",
+                    "本期占比": "0.80%",
+                    "本期持股": "80.00万",
+                    "上期持股": "50.00万",
+                    "持股变化": "+30.00万",
+                    "概念板块": "光模块",
+                },
+                {
+                    "代码": "000001",
+                    "名称": "平安银行",
+                    "市价": "10.00",
+                    "涨幅%": "0.00",
+                    "市值": "1900亿",
+                    "主体": "QFII",
+                    "资金属性": "--",
+                    "季度": "2026Q1",
+                    "变化类型": "减持",
+                    "本期占比": "0.50%",
+                    "本期持股": "30.00万",
+                    "上期持股": "60.00万",
+                    "持股变化": "-30.00万",
+                    "概念板块": "银行",
+                },
+            ]
+        )
+
+        muted = QColor(theme_manager.get("TEXT_MUTED")).name()
+        for header in ["主体", "资金属性", "季度", "本期占比", "本期持股", "上期持股", "持股变化", "概念板块"]:
+            idx = tab.model.index(0, tab.model.headers.index(header))
+            assert tab.model.data(idx, Qt.ItemDataRole.ForegroundRole).name() == muted
+
+        accent = QColor(theme_manager.get("BRAND_HOVER")).name()
+        change_col = tab.model.headers.index("变化类型")
+        assert tab.model.data(tab.model.index(0, change_col), Qt.ItemDataRole.ForegroundRole).name() == accent
+        assert tab.model.data(tab.model.index(1, change_col), Qt.ItemDataRole.ForegroundRole).name() == accent
+        assert tab.model.data(tab.model.index(2, change_col), Qt.ItemDataRole.ForegroundRole).name() != muted
+        assert tab.model.data(tab.model.index(2, change_col), Qt.ItemDataRole.ForegroundRole).name() != accent
+    finally:
+        tab.deleteLater()
+
+
 def test_fund_holdings_tab_shows_ai_chain_context_column(monkeypatch):
     _setup_store(
         monkeypatch,
@@ -753,7 +827,8 @@ def test_fund_holdings_kline_uses_clicked_duplicate_row(monkeypatch):
         code, code_list, current_idx = spy[0]
         assert code == "300308"
         assert current_idx == 1
-        assert code_list[current_idx]["主体"] == "MORGAN STANLEY & CO.INTERNATIONAL PLC"
+        assert code_list[current_idx]["主体"] == "MORGAN STANLEY"
+        assert code_list[current_idx]["主体原名"] == "MORGAN STANLEY & CO.INTERNATIONAL PLC"
     finally:
         tab.deleteLater()
 
@@ -1013,7 +1088,70 @@ def test_fund_holdings_tab_subject_filter_uses_holder_name(monkeypatch):
 
     tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
     try:
-        assert tab.cmb_subject.option_values() == ["BARCLAYS BANK PLC", "UBS AG"]
+        assert tab.cmb_subject.option_values() == ["BARCLAYS", "UBS"]
+    finally:
+        tab.deleteLater()
+
+
+def test_fund_holdings_tab_subject_names_are_shortened_for_display_and_filter(monkeypatch):
+    _setup_store(
+        monkeypatch,
+        [
+            _build_change_row(
+                subject_code="QFII",
+                subject_name="MORGAN STANLEY&CO.INT ERNATI ONAL PLC",
+                quarter_key="2025Q4",
+                compare_quarter_key="2025Q3",
+                change_type="增持",
+                stock_code="000001",
+                stock_name="平安银行",
+            ),
+            _build_change_row(
+                subject_code="QFII",
+                subject_name="J.P.Morgan Secur ities PLC",
+                quarter_key="2025Q4",
+                compare_quarter_key="2025Q3",
+                change_type="新进",
+                stock_code="000002",
+                stock_name="万科A",
+            ),
+            _build_change_row(
+                subject_code="QFII",
+                subject_name="CITIGROUP GLOBAL MARKETS LIMITED",
+                quarter_key="2025Q4",
+                compare_quarter_key="2025Q3",
+                change_type="持平",
+                stock_code="000003",
+                stock_name="中国宝安",
+            ),
+            _build_change_row(
+                subject_code="QFII",
+                subject_name="GOLDMAN SACHS INTERNATIONAL",
+                quarter_key="2025Q4",
+                compare_quarter_key="2025Q3",
+                change_type="减持",
+                stock_code="000004",
+                stock_name="国华网安",
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "refresh_table_quotes_and_market_caps",
+        lambda self, current_model=None, force_quotes=False, quote_task_id=None: None,
+        raising=False,
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
+    try:
+        assert tab.cmb_subject.option_values() == ["MORGAN STANLEY", "J.P.Morgan", "CITI", "GOLDMAN SACHS"]
+        assert [tab.model.get_row_data(index)["主体"] for index in range(4)] == [
+            "MORGAN STANLEY",
+            "J.P.Morgan",
+            "CITI",
+            "GOLDMAN SACHS",
+        ]
+        assert tab.model.get_row_data(0)["主体原名"] == "MORGAN STANLEY&CO.INT ERNATI ONAL PLC"
     finally:
         tab.deleteLater()
 
@@ -1061,7 +1199,7 @@ def test_fund_holdings_tab_subject_filter_supports_multi_select(monkeypatch):
     tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
     try:
         tab._set_quarter_filter_state(all_quarters=True, apply=True)
-        tab.cmb_subject.set_selected_values({"BARCLAYS BANK PLC", "睿远成长价值混合A"})
+        tab.cmb_subject.set_selected_values({"BARCLAYS", "睿远成长价值混合A"})
         assert tab.proxy_model.rowCount() == 2
         assert _visible_codes(tab) == ["000001", "000004"]
     finally:
@@ -1112,13 +1250,58 @@ def test_fund_holdings_tab_capital_attribute_filter_supports_multi_select(monkey
 
     tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
     try:
-        assert tab.cmb_subject.option_values() == ["MORGAN STANLEY & CO.INTERNATIONAL PLC", "睿远成长价值混合A"]
+        assert tab.cmb_subject.option_values() == ["MORGAN STANLEY", "睿远成长价值混合A"]
         assert tab.cmb_capital_attribute.option_values() == ["自有资金", "未标注"]
         assert tab.cmb_capital_attribute.option_labels() == ["自有资金", "--"]
         assert tab.model.get_row_data(1)["资金属性"] == "--"
         tab._set_quarter_filter_state(all_quarters=True, apply=True)
         tab.cmb_capital_attribute.set_selected_values({"自有资金"})
         assert tab.proxy_model.rowCount() == 1
+        assert _visible_codes(tab) == ["000001"]
+    finally:
+        tab.deleteLater()
+
+
+def test_fund_holdings_tab_restores_legacy_subject_name_as_shortened_value(monkeypatch):
+    settings = _FakeSettings()
+    settings.setValue(
+        "fund_holdings_view_state_v2/subject_names",
+        ["MORGAN STANLEY & CO.INTERNATIONAL PLC"],
+    )
+    _setup_store(
+        monkeypatch,
+        [
+            _build_change_row(
+                subject_code="QFII",
+                subject_name="MORGAN STANLEY & CO.INTERNATIONAL PLC",
+                quarter_key="2025Q4",
+                compare_quarter_key="2025Q3",
+                change_type="增持",
+                stock_code="000001",
+                stock_name="平安银行",
+            ),
+            _build_change_row(
+                subject_code="007119",
+                subject_name="睿远成长价值混合A",
+                quarter_key="2025Q4",
+                compare_quarter_key="2025Q3",
+                change_type="新进",
+                stock_code="000004",
+                stock_name="国华网安",
+            ),
+        ],
+        settings=settings,
+    )
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "refresh_table_quotes_and_market_caps",
+        lambda self, current_model=None, force_quotes=False, quote_task_id=None: None,
+        raising=False,
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
+    try:
+        assert tab.cmb_subject.selected_values() == {"MORGAN STANLEY"}
         assert _visible_codes(tab) == ["000001"]
     finally:
         tab.deleteLater()
