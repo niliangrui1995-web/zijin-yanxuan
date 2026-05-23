@@ -1109,6 +1109,43 @@ def test_workspace_activates_loaded_lazy_tab_on_selection(monkeypatch):
         workspace.deleteLater()
 
 
+def test_workspace_restores_pending_rt_cache_after_rt_monitor_load(monkeypatch):
+    restore_calls = []
+
+    class _Host:
+        def install_workspace_table_copy_hooks(self):
+            pass
+
+        def restore_pending_rt_cache(self):
+            restore_calls.append("restore")
+
+    def _resolve_tab_class(_class_name, _module_name):
+        class _Tab(QWidget):
+            def __init__(self, *args, **kwargs):
+                super().__init__()
+
+        return _Tab
+
+    monkeypatch.setattr(classic_workspace_module, "_resolve_tab_class", _resolve_tab_class)
+    monkeypatch.setattr(classic_workspace_module.QTimer, "singleShot", lambda _delay, callback: callback())
+
+    workspace = classic_workspace_module.ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        host=_Host(),
+        background_prewarm=False,
+    )
+    try:
+        assert restore_calls == []
+
+        workspace.ensure_tab_loaded("rt_monitor")
+
+        assert restore_calls == ["restore"]
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
 def test_workspace_auto_refresh_does_not_load_daily_tabs_without_manual_click(monkeypatch):
     ctor_kwargs = {}
     constructed = []

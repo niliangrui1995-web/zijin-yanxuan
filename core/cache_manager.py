@@ -16,6 +16,27 @@ from core.runtime_paths import RPS_CACHE_FILE, ensure_cache_dir
 log = get_logger(__name__)
 
 
+def resolve_rt_cache_restore_model(table):
+    try:
+        model_getter = getattr(table, "model", None)
+        if not callable(model_getter):
+            return None
+        model = model_getter()
+        if model is None:
+            return None
+        if hasattr(model, "sourceModel"):
+            model = model.sourceModel()
+        if hasattr(model, "update_data") and hasattr(model, "headers"):
+            return model
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return None
+    return None
+
+
+def rt_cache_restore_target_available(table) -> bool:
+    return resolve_rt_cache_restore_model(table) is not None
+
+
 class CacheManager:
     """Manage disk-backed caches without touching UI concerns directly."""
 
@@ -284,7 +305,7 @@ class CacheManager:
                 break
 
         if not path:
-            return
+            return False
 
         try:
             data = self._load_json(path)
@@ -294,42 +315,41 @@ class CacheManager:
                 raise BusinessRuleError("rows is empty")
             cache_date = data.get("date", "?")
 
-            if hasattr(table, "model") and getattr(table, "model", lambda: None)():
-                model = table.model()
-                if hasattr(model, "sourceModel"):
-                    model = model.sourceModel()
+            model = resolve_rt_cache_restore_model(table)
+            if model is None:
+                log.info("[RT cache] table model not ready, skip restore")
+                return False
 
-                if hasattr(model, "update_data") and hasattr(model, "headers"):
-                    historical_headers = data.get("headers", [])
-                    effective_headers = historical_headers if historical_headers else model.headers
+            historical_headers = data.get("headers", [])
+            effective_headers = historical_headers if historical_headers else model.headers
 
-                    final_data = []
-                    for row_vals in raw_rows:
-                        if (
-                            isinstance(row_vals, (list, tuple))
-                            and len(row_vals) == 2
-                            and isinstance(row_vals[0], (list, tuple))
-                        ):
-                            row_vals = row_vals[0]
+            final_data = []
+            for row_vals in raw_rows:
+                if (
+                    isinstance(row_vals, (list, tuple))
+                    and len(row_vals) == 2
+                    and isinstance(row_vals[0], (list, tuple))
+                ):
+                    row_vals = row_vals[0]
 
-                        row_dict = {}
-                        for column_index, value in enumerate(row_vals):
-                            if column_index < len(effective_headers):
-                                row_dict[effective_headers[column_index]] = value
-                        final_data.append(row_dict)
+                row_dict = {}
+                for column_index, value in enumerate(row_vals):
+                    if column_index < len(effective_headers):
+                        row_dict[effective_headers[column_index]] = value
+                final_data.append(row_dict)
 
-                    model.update_data(final_data)
-                    if set_status_callback:
-                        set_status_callback(f"RT cache restored ({cache_date}, {len(raw_rows)} rows)")
-                    return
-
-            log.warning("[RT cache] table model not available, skip restore")
+            model.update_data(final_data)
+            if set_status_callback:
+                set_status_callback(f"RT cache restored ({cache_date}, {len(raw_rows)} rows)")
+            return True
         except CacheIOError as exc:
             log.error(f"[盘中缓存][I/O] 加载失败: {exc}")
         except DataFormatError as exc:
             log.error(f"[盘中缓存][FORMAT] 加载失败: {exc}")
         except BusinessRuleError as exc:
             log.warning(f"[盘中缓存][RULE] 缓存不可用: {exc}")
+
+        return False
 
     def _cleanup_old_rt_caches(self, retention_days=10):
         """Remove expired RT JSON cache and leftover legacy pickle files."""

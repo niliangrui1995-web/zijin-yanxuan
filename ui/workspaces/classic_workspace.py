@@ -544,6 +544,10 @@ class ClassicWorkspace(QWidget):
         install_hooks = getattr(host, "install_workspace_table_copy_hooks", None)
         if callable(install_hooks):
             QTimer.singleShot(0, install_hooks)
+        if str(_key or "").strip() == "rt_monitor":
+            restore_rt_cache = getattr(host, "restore_pending_rt_cache", None)
+            if callable(restore_rt_cache):
+                QTimer.singleShot(0, restore_rt_cache)
 
     def _notify_tab_activated(self, _key: str, widget) -> None:
         callback = getattr(widget, "on_workspace_tab_activated", None)

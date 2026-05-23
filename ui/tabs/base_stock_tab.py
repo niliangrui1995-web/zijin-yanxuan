@@ -732,13 +732,13 @@ class BaseStockTab(QWidget):
             tb_layout.addStretch(1)
 
         action_widgets = self._split_toolbar_actions(action_widgets)
-        if action_widgets:
-            self._equalize_toolbar_action_widths(action_widgets)
         action_wrap = self._build_toolbar_flow_group(
             "tabToolbarActions",
             action_widgets,
             h_spacing=max(6, tokens["shell"]["toolbar_group_gap"] + 2),
         )
+        if action_widgets:
+            self._equalize_toolbar_action_widths(action_widgets)
         if action_wrap is not None:
             action_wrap.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
             tb_layout.addWidget(action_wrap, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)

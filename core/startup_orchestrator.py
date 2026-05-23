@@ -10,6 +10,7 @@ import time
 from PyQt6.QtCore import QTimer
 
 from core.background_job_runner import background_job_runner
+from core.cache_manager import rt_cache_restore_target_available
 from core.logger import get_logger
 from core.observability import emit_structured_log, record_metric
 from core.process_watchdog import log_process_snapshot
@@ -154,10 +155,30 @@ class StartupHostAdapter:
         getter = getattr(workspace, "get_rt_table", None)
         return getter() if callable(getter) else None
 
-    def load_rt_cache(self) -> None:
+    def mark_rt_cache_restore_pending(self) -> bool:
+        callback = getattr(self._main_window, "mark_rt_cache_restore_pending", None)
+        if callable(callback):
+            return bool(callback())
+        try:
+            if bool(getattr(self._main_window, "_rt_cache_restore_pending", False)):
+                return False
+            setattr(self._main_window, "_rt_cache_restore_pending", True)
+            return True
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return False
+
+    def load_rt_cache(self) -> bool:
         cache_manager = self.cache_manager
-        if cache_manager is not None:
-            cache_manager.load_rt_cache(self.get_rt_table(), self.set_status_text)
+        if cache_manager is None:
+            return False
+
+        table = self.get_rt_table()
+        if not rt_cache_restore_target_available(table):
+            if self.mark_rt_cache_restore_pending():
+                log.info("[RT cache] rt_monitor table not ready; restore deferred until tab loads")
+            return False
+
+        return bool(cache_manager.load_rt_cache(table, self.set_status_text))
 
     def try_load_rps_from_disk(self, set_status_callback) -> None:
         cache_manager = self.cache_manager

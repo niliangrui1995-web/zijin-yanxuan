@@ -75,6 +75,7 @@ class _DummyMainWindow(QObject):
         self._workspace = None
         self.network_updates = []
         self.online_done_count = 0
+        self.rt_cache_restore_pending = False
 
     def _call_in_ui(self, callback):
         callback()
@@ -87,6 +88,27 @@ class _DummyMainWindow(QObject):
 
     def _on_smart_startup_online_done(self):
         self.online_done_count += 1
+
+    def mark_rt_cache_restore_pending(self):
+        self.rt_cache_restore_pending = True
+
+
+class _ReadyRtModel:
+    headers = ["代码", "现价"]
+
+    def __init__(self):
+        self.rows = []
+
+    def update_data(self, rows):
+        self.rows = list(rows or [])
+
+
+class _ReadyRtTable:
+    def __init__(self):
+        self._model = _ReadyRtModel()
+
+    def model(self):
+        return self._model
 
 
 class _InlineJobRunner:
@@ -139,6 +161,34 @@ def test_startup_host_adapter_exposes_narrow_main_window_boundary():
     assert mw.titlebar_sync_states == [("cache", "ok", "today")]
     assert mw.network_updates == [True]
     assert mw.online_done_count == 1
+
+
+def test_startup_host_adapter_defers_rt_cache_until_table_model_exists():
+    mw = _DummyMainWindow()
+    calls = []
+    mw.cache_manager.load_rt_cache = lambda *args, **kwargs: calls.append((args, kwargs)) or True
+    mw._workspace = types.SimpleNamespace(get_rt_table=lambda: None)
+    adapter = StartupHostAdapter(mw)
+
+    assert adapter.load_rt_cache() is False
+
+    assert calls == []
+    assert mw.rt_cache_restore_pending is True
+
+
+def test_startup_host_adapter_loads_rt_cache_when_table_model_exists():
+    mw = _DummyMainWindow()
+    table = _ReadyRtTable()
+    calls = []
+    mw.cache_manager.load_rt_cache = lambda *args, **kwargs: calls.append((args, kwargs)) or True
+    mw._workspace = types.SimpleNamespace(get_rt_table=lambda: table)
+    adapter = StartupHostAdapter(mw)
+
+    assert adapter.load_rt_cache() is True
+
+    assert len(calls) == 1
+    assert calls[0][0][0] is table
+    assert mw.rt_cache_restore_pending is False
 
 
 def test_startup_orchestrator_asian_sync_uses_process_runner(monkeypatch):

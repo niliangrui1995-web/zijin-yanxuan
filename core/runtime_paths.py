@@ -34,7 +34,7 @@ DATE_FMT = "%Y%m%d"
 MARKET_OPEN_AM, MARKET_CLOSE_AM = (9, 25), (11, 30)
 MARKET_OPEN_PM, MARKET_CLOSE_PM = (13, 0), (15, 0)
 
-APP_VERSION = "8.0.0"
+APP_VERSION = "1.8.8"
 
 CACHE_DIR = get_data_dir("Cache")
 RPS_CACHE_FILE = os.path.join(CACHE_DIR, "vcp_rps_precomputed.json")

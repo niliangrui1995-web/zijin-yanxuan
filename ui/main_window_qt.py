@@ -105,6 +105,7 @@ class MainWindowQT(QMainWindow):
         self._kline_prewarm_enabled = bool(kline_prewarm_enabled)
         self._central_quotes_enabled = bool(central_quotes_enabled)
         self._restore_last_tab_enabled = bool(restore_last_tab_enabled)
+        self._rt_cache_restore_pending = False
         self._native_taskbar_fix_applied = False
         self._app_cursor_filter_installed = False
         self._splash = splash
@@ -368,6 +369,37 @@ class MainWindowQT(QMainWindow):
                 background_prewarm=self._workspace_background_prewarm,
                 watchlist_startup_tasks=self._startup_enabled,
             )
+
+    def mark_rt_cache_restore_pending(self) -> bool:
+        if self._rt_cache_restore_pending:
+            return False
+        self._rt_cache_restore_pending = True
+        return True
+
+    def restore_pending_rt_cache(self) -> bool:
+        if not getattr(self, "_rt_cache_restore_pending", False):
+            return False
+
+        workspace = getattr(self, "_workspace", None)
+        get_rt_table = getattr(workspace, "get_rt_table", None)
+        rt_table = get_rt_table() if callable(get_rt_table) else None
+
+        from core.cache_manager import rt_cache_restore_target_available
+
+        if not rt_cache_restore_target_available(rt_table):
+            return False
+
+        cache_manager = getattr(self, "cache_manager", None)
+        if cache_manager is None:
+            return False
+
+        self._rt_cache_restore_pending = False
+        return bool(cache_manager.load_rt_cache(rt_table, self._set_status_text))
+
+    def _set_status_text(self, text: str) -> None:
+        label = getattr(self, "lbl_status", None)
+        if label is not None:
+            label.setText(str(text or ""))
 
     def _current_workspace_tab_key(self) -> str:
         workspace = getattr(self, "_workspace", None)
