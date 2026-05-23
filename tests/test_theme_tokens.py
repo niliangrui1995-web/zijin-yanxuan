@@ -176,9 +176,11 @@ def test_yaohei_selection_and_primary_actions_use_accent_not_market_red():
 
     assert tokens["table"]["selected_rail_color"] == THEME_YAOHEI["ACCENT_PRIMARY"]
     assert tokens["table"]["hover_rail_color"] == THEME_YAOHEI["ACCENT_PRIMARY"]
-    assert THEME_YAOHEI["BG_CANVAS"] == "#090D14"
-    assert THEME_YAOHEI["BG_TABLE_BASE"] == "#090D14"
-    assert THEME_YAOHEI["BG_TABLE_ALT_ROW"] == "#121824"
+    assert THEME_YAOHEI["BG_CANVAS"] == "#000000"
+    assert THEME_YAOHEI["BG_TABLE_ALT"] == "#000000"
+    assert THEME_YAOHEI["BG_TABLE_BASE"] == "#000000"
+    assert THEME_YAOHEI["BG_TABLE_ALT_ROW"] == "#000000"
+    assert tokens["surface"]["panel_alt"] == "#000000"
     assert THEME_YAOHEI["BG_CARD"] == "#121824"
     assert THEME_YAOHEI["BG_ELEVATED"] == "#1A2234"
     assert THEME_YAOHEI["BG_HOVER"] == "#1A2234"

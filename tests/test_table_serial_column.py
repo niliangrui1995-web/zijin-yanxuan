@@ -251,13 +251,12 @@ def test_stock_table_model_plain_style_headers_disable_color_and_heat():
     assert model.data(idx, Qt.ItemDataRole.BackgroundRole) is None
 
 
-def test_buy_point_badge_uses_rise_red():
+def test_buy_point_trigger_displays_rocket_without_badge_pill():
     model = StockTableModel(["代码", "名称", "买点"])
     model.update_data([{"代码": "000001", "名称": "平安银行", "买点": "触发"}])
 
     idx = model.index(0, model.headers.index("买点"))
-    badge = model.data(idx, Qt.ItemDataRole.UserRole + 2)
 
     assert model.data(idx, Qt.ItemDataRole.DisplayRole) == "🚀"
     assert model.get_row_data(0)["买点"] == "触发"
-    assert QColor(badge).name() == QColor(theme_manager.get("COLOR_RISE_STRONG")).name()
+    assert model.data(idx, Qt.ItemDataRole.UserRole + 2) is None

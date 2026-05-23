@@ -338,6 +338,7 @@ def test_lhb_display_pool_shows_ai_chain_context_in_reason_slot(monkeypatch):
         assert row[LhbTab.AI_CHAIN_CONTEXT_COLUMN] == "动力电池链 | 宁德备注"
         assert row["买点"] == "触发"
         assert tab.model.data(buy_point_idx, Qt.ItemDataRole.DisplayRole) == "🚀"
+        assert tab.model.data(buy_point_idx, Qt.ItemDataRole.UserRole + 2) is None
         assert "上榜原因" not in row
         assert row["_原始上榜原因"] == "日涨幅偏离值达到7%"
     finally:

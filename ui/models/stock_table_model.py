@@ -840,6 +840,8 @@ class StockTableModel(QAbstractTableModel):
             return flash_record
 
         elif role == Qt.ItemDataRole.UserRole + 2:
+            if key == "买点" and str(raw_val or "").strip() == BUY_POINT_TEXT:
+                return None
             if not self._uses_plain_style(key) and _is_status_header(key):
                 return _status_badge_color(raw_val, key)
             return None
