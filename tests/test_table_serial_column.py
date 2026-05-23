@@ -258,4 +258,6 @@ def test_buy_point_badge_uses_rise_red():
     idx = model.index(0, model.headers.index("买点"))
     badge = model.data(idx, Qt.ItemDataRole.UserRole + 2)
 
+    assert model.data(idx, Qt.ItemDataRole.DisplayRole) == "🚀"
+    assert model.get_row_data(0)["买点"] == "触发"
     assert QColor(badge).name() == QColor(theme_manager.get("COLOR_RISE_STRONG")).name()

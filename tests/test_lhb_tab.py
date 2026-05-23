@@ -2,6 +2,7 @@
 import datetime as dt
 from types import SimpleNamespace
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QSignalSpy
 
 import ui.tabs.lhb_tab as lhb_tab_module
@@ -326,13 +327,17 @@ def test_lhb_display_pool_shows_ai_chain_context_in_reason_slot(monkeypatch):
                     "代码": "300750",
                     "名称": "宁德时代",
                     "最近上榜": "20260420",
+                    "买点": "触发",
                     "上榜原因": "日涨幅偏离值达到7%",
                 }
             ]
         )
         row = tab.model.get_row_data(0)
+        buy_point_idx = tab.model.index(0, tab.model.headers.index("买点"))
 
         assert row[LhbTab.AI_CHAIN_CONTEXT_COLUMN] == "动力电池链 | 宁德备注"
+        assert row["买点"] == "触发"
+        assert tab.model.data(buy_point_idx, Qt.ItemDataRole.DisplayRole) == "🚀"
         assert "上榜原因" not in row
         assert row["_原始上榜原因"] == "日涨幅偏离值达到7%"
     finally:

@@ -6,7 +6,7 @@ from PyQt6.QtCore import QAbstractTableModel, QMimeData, QModelIndex, Qt, pyqtSi
 from PyQt6.QtGui import QColor
 
 from app.services.ui_quote_service import resolve_quote_metrics
-from core.buy_point import BUY_POINT_STYLE_TEXT, calculate_buy_point_from_history
+from core.buy_point import BUY_POINT_STYLE_TEXT, BUY_POINT_TEXT, calculate_buy_point_from_history
 from ui.models.table_model_helpers import (
     FLASH_DURATION_SECONDS,
     SERIAL_HEADER,
@@ -36,6 +36,7 @@ _log = logging.getLogger(__name__)
 
 LEGACY_MOJIBAKE_CODE_KEY = "\u6d60\uff47\u721c"
 ROW_IDENTITY_KEYS = ("代码", LEGACY_MOJIBAKE_CODE_KEY, "code", "symbol", "股票代码", "证券代码")
+BUY_POINT_TRIGGER_ICON = "🚀"
 
 
 class StockTableModel(QAbstractTableModel):
@@ -589,6 +590,9 @@ class StockTableModel(QAbstractTableModel):
 
             if key == "状态":
                 return str(raw_val or "").replace("🟢", "").replace("🟡", "").replace("🔴", "").strip()
+
+            if key == "买点" and str(raw_val or "").strip() == BUY_POINT_TEXT:
+                return BUY_POINT_TRIGGER_ICON
 
             if "日" in key or "期" in key or "时间" in key:
                 s_val = str(raw_val).split(" ")[0].replace("-", "").replace("/", "")
