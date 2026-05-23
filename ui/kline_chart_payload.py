@@ -17,6 +17,7 @@ from ui.kline_summary_payload import (
     build_kline_summary_items as build_kline_summary_items,
 )
 from ui.theme import theme_manager
+from ui.theme_tokens import build_ui_tokens
 
 KEY_CODE = "\u4ee3\u7801"
 KEY_NAME = "\u540d\u79f0"
@@ -168,7 +169,12 @@ def resolve_kline_vcp_context(
 
 def build_kline_theme_colors() -> dict:
     t = theme_manager.current_theme
-    is_dark = theme_manager.is_dark()
+    tokens = build_ui_tokens(t)
+    chart_tokens = tokens.get("chart") or {}
+    font_tokens = tokens.get("font") or {}
+    text_tokens = tokens.get("text") or {}
+    border_tokens = tokens.get("border") or {}
+    is_dark = bool(tokens.get("is_dark"))
 
     colors = {
         "up_color": t["KLINE_UP_COLOR"],
@@ -179,10 +185,10 @@ def build_kline_theme_colors() -> dict:
         "ma150": t["KLINE_MA150"],
         "ma200": t["KLINE_MA200"],
         "vol_ma20": t["KLINE_VOL_MA20"],
-        "grid_line": t["KLINE_GRID_LINE"],
-        "axis_line": t["KLINE_AXIS_LINE"],
-        "axis_label": t["KLINE_AXIS_LABEL"],
-        "pointer_bg": t["KLINE_POINTER_BG"],
+        "grid_line": chart_tokens.get("grid_line") or t["KLINE_GRID_LINE"],
+        "axis_line": chart_tokens.get("axis_line") or t["KLINE_AXIS_LINE"],
+        "axis_label": chart_tokens.get("axis_label") or t["KLINE_AXIS_LABEL"],
+        "pointer_bg": chart_tokens.get("crosshair_bg") or t["KLINE_POINTER_BG"],
         "vcp_star": t["KLINE_VCP_STAR"],
         "vcp_line": t["KLINE_VCP_LINE"],
         "vcp_line_soft": t["KLINE_VCP_LINE_SOFT"],
@@ -193,16 +199,32 @@ def build_kline_theme_colors() -> dict:
         "tooltip_text": t.get("KLINE_TOOLTIP_TEXT", "#F3F4F6"),
         "macd_diff": t.get("KLINE_MACD_DIFF", "#FBBF24"),
         "macd_dea": t.get("KLINE_MACD_DEA", "#60A5FA"),
+        "crosshair_line": t.get("KLINE_CROSSHAIR_LINE", t["KLINE_AXIS_LABEL"]),
+        "datazoom_bg": t.get("KLINE_DATAZOOM_BG", t.get("KLINE_BG_TOOLBAR", t["BG_ELEVATED"])),
+        "datazoom_fill": t.get("KLINE_DATAZOOM_FILL", t.get("KLINE_VCP_AREA", t["SELECTION_BG"])),
+        "datazoom_handle": t.get("KLINE_DATAZOOM_HANDLE", t["KLINE_AXIS_LINE"]),
+        "font_family": t.get(
+            "KLINE_FONT_FAMILY",
+            font_tokens.get("family") or '"Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif',
+        ),
+        "mono_font_family": t.get(
+            "KLINE_MONO_FONT_FAMILY",
+            font_tokens.get("mono_family")
+            or '"JetBrains Mono", "Cascadia Mono", "Consolas", "Microsoft YaHei UI", monospace',
+        ),
     }
 
     colors.update(
         {
-            "bg_canvas": t.get("KLINE_BG_CANVAS", "#0A0A0A" if is_dark else t["BG_ELEVATED"]),
-            "bg_toolbar": t.get("KLINE_BG_TOOLBAR", "#0A0A0A" if is_dark else t["BG_ELEVATED"]),
-            "text_primary": t.get("KLINE_WIDGET_TEXT", "#FFF" if is_dark else t["TEXT_PRIMARY"]),
-            "text_secondary": t["TEXT_SECONDARY"],
-            "text_muted": t.get("KLINE_INFO_COLOR", "#A0A0A0" if is_dark else t["TEXT_MUTED"]),
-            "border": t.get("KLINE_TOOLBAR_BORDER", "#222" if is_dark else t["BORDER_DEFAULT"]),
+            "bg_canvas": t.get("KLINE_BG_CANVAS", "#0A0A0A" if is_dark else chart_tokens.get("panel_bg", t["BG_ELEVATED"])),
+            "bg_toolbar": t.get(
+                "KLINE_BG_TOOLBAR",
+                "#0A0A0A" if is_dark else chart_tokens.get("toolbar_bg", t["BG_ELEVATED"]),
+            ),
+            "text_primary": t.get("KLINE_WIDGET_TEXT", "#FFF" if is_dark else text_tokens.get("primary", t["TEXT_PRIMARY"])),
+            "text_secondary": text_tokens.get("secondary", t["TEXT_SECONDARY"]),
+            "text_muted": t.get("KLINE_INFO_COLOR", "#A0A0A0" if is_dark else text_tokens.get("muted", t["TEXT_MUTED"])),
+            "border": t.get("KLINE_TOOLBAR_BORDER", "#222" if is_dark else border_tokens.get("default", t["BORDER_DEFAULT"])),
         }
     )
 
@@ -280,23 +302,39 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
     <meta charset="utf-8">
     <script src="{js_url}"></script>
     <style>
-        body {{ margin: 0; padding: 0; background-color: {theme_colors["bg_canvas"]}; color: {theme_colors["text_secondary"]}; font-family: "Microsoft YaHei UI", sans-serif; overflow: hidden; }}
+        :root {{
+            --bg-canvas: {theme_colors["bg_canvas"]};
+            --bg-toolbar: {theme_colors["bg_toolbar"]};
+            --border: {theme_colors["border"]};
+            --text-primary: {theme_colors["text_primary"]};
+            --text-secondary: {theme_colors["text_secondary"]};
+            --text-muted: {theme_colors["text_muted"]};
+            --ma10: {theme_colors["ma10"]};
+            --ma20: {theme_colors["ma20"]};
+            --ma50: {theme_colors["ma50"]};
+            --ma150: {theme_colors["ma150"]};
+            --ma200: {theme_colors["ma200"]};
+            --font-family: {theme_colors["font_family"]};
+            --mono-font-family: {theme_colors["mono_font_family"]};
+        }}
+
+        body {{ margin: 0; padding: 0; background-color: var(--bg-canvas); color: var(--text-secondary); font-family: var(--font-family); overflow: hidden; transition: background-color 180ms ease, color 180ms ease; }}
         #chart {{ width: 100vw; height: calc(100vh - 30px); margin-top: 30px; }}
 
-        .top-toolbar {{ position: absolute; top: 0; left: 0; right: 0; height: 30px; background: {theme_colors["bg_toolbar"]}; border-bottom: 1px solid {theme_colors["border"]}; display: flex; align-items: center; padding: 0 12px; z-index: 100; gap: 10px; }}
-        .info-item {{ font-size: 11px; color: {theme_colors["text_muted"]}; white-space: nowrap; }}
-        .info-val {{ font-size: 11px; font-weight: 700; margin-left: 2px; color: {theme_colors["text_secondary"]}; }}
-        .ma-display {{ margin-left: auto; font-size: 11px; font-weight: 700; display: flex; gap: 8px; flex-wrap: nowrap; white-space: nowrap; }}
-        .ma-display span.ma10 {{ color: {theme_colors["ma10"]}; }}
-        .ma-display span.ma20 {{ color: {theme_colors["ma20"]}; }}
-        .ma-display span.ma50 {{ color: {theme_colors["ma50"]}; }}
-        .ma-display span.ma150 {{ color: {theme_colors["ma150"]}; }}
-        .ma-display span.ma200 {{ color: {theme_colors["ma200"]}; }}
+        .top-toolbar {{ position: absolute; top: 0; left: 0; right: 0; height: 30px; background: var(--bg-toolbar); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 12px; z-index: 100; gap: 10px; transition: background-color 180ms ease, border-color 180ms ease; }}
+        .info-item {{ font-size: 11px; color: var(--text-muted); white-space: nowrap; transition: color 180ms ease; }}
+        .info-val {{ font-family: var(--mono-font-family); font-size: 11px; font-weight: 700; margin-left: 2px; color: var(--text-secondary); transition: color 180ms ease; }}
+        .ma-display {{ margin-left: auto; font-family: var(--mono-font-family); font-size: 11px; font-weight: 700; display: flex; gap: 8px; flex-wrap: nowrap; white-space: nowrap; }}
+        .ma-display span.ma10 {{ color: var(--ma10); }}
+        .ma-display span.ma20 {{ color: var(--ma20); }}
+        .ma-display span.ma50 {{ color: var(--ma50); }}
+        .ma-display span.ma150 {{ color: var(--ma150); }}
+        .ma-display span.ma200 {{ color: var(--ma200); }}
     </style>
 </head>
 <body>
     <div class="top-toolbar" id="toolbar">
-        <div class="info-item">日期: <span id="v-date" class="info-val" style="color: {theme_colors["text_primary"]}">-</span></div>
+        <div class="info-item">日期: <span id="v-date" class="info-val" style="color: var(--text-primary)">-</span></div>
         <div class="info-item">开: <span id="v-open" class="info-val">-</span></div>
         <div class="info-item">高: <span id="v-high" class="info-val">-</span></div>
         <div class="info-item">低: <span id="v-low" class="info-val">-</span></div>
@@ -314,11 +352,34 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
     </div>
     <div id="chart"></div>
 
-    <script>
+        <script>
         let rawData = {data_json};
 
-        const upColor = '{theme_colors["up_color"]}';
-        const downColor = '{theme_colors["down_color"]}';
+        let themeState = {json.dumps(theme_colors, ensure_ascii=False)};
+        let upColor = themeState.up_color;
+        let downColor = themeState.down_color;
+
+        function _setCssVar(name, value) {{
+            if (value === undefined || value === null) return;
+            document.documentElement.style.setProperty(name, String(value));
+        }}
+
+        function _applyCssTheme(t) {{
+            if (!t) return;
+            _setCssVar('--bg-canvas', t.bg_canvas);
+            _setCssVar('--bg-toolbar', t.bg_toolbar);
+            _setCssVar('--border', t.border);
+            _setCssVar('--text-primary', t.text_primary);
+            _setCssVar('--text-secondary', t.text_secondary);
+            _setCssVar('--text-muted', t.text_muted);
+            _setCssVar('--ma10', t.ma10);
+            _setCssVar('--ma20', t.ma20);
+            _setCssVar('--ma50', t.ma50);
+            _setCssVar('--ma150', t.ma150);
+            _setCssVar('--ma200', t.ma200);
+            _setCssVar('--font-family', t.font_family);
+            _setCssVar('--mono-font-family', t.mono_font_family);
+        }}
 
         const chart = echarts.init(document.getElementById('chart'));
 
@@ -370,25 +431,40 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             const data = splitData(rawData);
             return {{
                 animation: false,
-                backgroundColor: '{theme_colors["bg_canvas"]}',
+                backgroundColor: themeState.bg_canvas,
                 legend: {{
                     show: false
                 }},
                 axisPointer: {{
                     link: [{{ xAxisIndex: 'all' }}],
+                    lineStyle: {{
+                        color: themeState.crosshair_line,
+                        width: 1,
+                        type: 'dashed',
+                        opacity: 0.76
+                    }},
+                    crossStyle: {{
+                        color: themeState.crosshair_line,
+                        width: 1,
+                        opacity: 0.76
+                    }},
                     label: {{
-                        backgroundColor: '{theme_colors["pointer_bg"]}'
+                        backgroundColor: themeState.pointer_bg,
+                        color: themeState.tooltip_text,
+                        fontFamily: themeState.mono_font_family
                     }}
                 }},
                 tooltip: {{
                     trigger: 'axis',
                     showContent: false,
                     axisPointer: {{
-                        type: 'cross'
+                        type: 'cross',
+                        lineStyle: {{ color: themeState.crosshair_line, width: 1, opacity: 0.76 }},
+                        crossStyle: {{ color: themeState.crosshair_line, width: 1, opacity: 0.76 }}
                     }},
-                    backgroundColor: '{theme_colors["tooltip_bg"]}',
+                    backgroundColor: themeState.tooltip_bg,
                     borderWidth: 0,
-                    textStyle: {{ color: '{theme_colors["tooltip_text"]}' }}
+                    textStyle: {{ color: themeState.tooltip_text, fontFamily: themeState.mono_font_family }}
                 }},
                 grid: [
                     {{ left: '7%', right: '2%', top: 18, height: '56%' }},
@@ -401,8 +477,8 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         data: data.categoryData,
                         scale: true,
                         boundaryGap: false,
-                        axisLine: {{ lineStyle: {{ color: '{theme_colors["axis_line"]}' }} }},
-                        axisLabel: {{ color: '{theme_colors["axis_label"]}' }},
+                        axisLine: {{ lineStyle: {{ color: themeState.axis_line }} }},
+                        axisLabel: {{ color: themeState.axis_label, fontFamily: themeState.mono_font_family }},
                         splitLine: {{ show: false }},
                         min: 'dataMin',
                         max: 'dataMax'
@@ -413,7 +489,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         data: data.categoryData,
                         scale: true,
                         boundaryGap: false,
-                        axisLine: {{ lineStyle: {{ color: '{theme_colors["axis_line"]}' }} }},
+                        axisLine: {{ lineStyle: {{ color: themeState.axis_line }} }},
                         axisLabel: {{ show: false }},
                         axisTick: {{ show: false }},
                         splitLine: {{ show: false }},
@@ -426,8 +502,8 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         data: data.categoryData,
                         scale: true,
                         boundaryGap: false,
-                        axisLine: {{ lineStyle: {{ color: '{theme_colors["axis_line"]}' }} }},
-                        axisLabel: {{ color: '{theme_colors["axis_label"]}' }},
+                        axisLine: {{ lineStyle: {{ color: themeState.axis_line }} }},
+                        axisLabel: {{ color: themeState.axis_label, fontFamily: themeState.mono_font_family }},
                         min: 'dataMin',
                         max: 'dataMax'
                     }}
@@ -436,25 +512,25 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                     {{
                         scale: true,
                         splitArea: {{ show: false }},
-                        splitLine: {{ lineStyle: {{ color: '{theme_colors["grid_line"]}' }} }},
-                        axisLine: {{ lineStyle: {{ color: '{theme_colors["axis_line"]}' }} }},
-                        axisLabel: {{ color: '{theme_colors["axis_label"]}' }}
+                        splitLine: {{ lineStyle: {{ color: themeState.grid_line }} }},
+                        axisLine: {{ lineStyle: {{ color: themeState.axis_line }} }},
+                        axisLabel: {{ color: themeState.axis_label, fontFamily: themeState.mono_font_family }}
                     }},
                     {{
                         scale: true,
                         gridIndex: 1,
                         splitNumber: 2,
-                        axisLabel: {{ color: '{theme_colors["axis_label"]}' }},
-                        axisLine: {{ lineStyle: {{ color: '{theme_colors["axis_line"]}' }} }},
+                        axisLabel: {{ color: themeState.axis_label, fontFamily: themeState.mono_font_family }},
+                        axisLine: {{ lineStyle: {{ color: themeState.axis_line }} }},
                         splitLine: {{ show: false }}
                     }},
                     {{
                         scale: true,
                         gridIndex: 2,
                         splitNumber: 2,
-                        axisLabel: {{ color: '{theme_colors["axis_label"]}' }},
-                        axisLine: {{ lineStyle: {{ color: '{theme_colors["axis_line"]}' }} }},
-                        splitLine: {{ lineStyle: {{ color: '{theme_colors["grid_line"]}' }} }}
+                        axisLabel: {{ color: themeState.axis_label, fontFamily: themeState.mono_font_family }},
+                        axisLine: {{ lineStyle: {{ color: themeState.axis_line }} }},
+                        splitLine: {{ lineStyle: {{ color: themeState.grid_line }} }}
                     }}
                 ],
                 dataZoom: [
@@ -470,7 +546,18 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         type: 'slider',
                         top: '94%',
                         start: 55,
-                        end: 100
+                        end: 100,
+                        backgroundColor: themeState.datazoom_bg,
+                        fillerColor: themeState.datazoom_fill,
+                        borderColor: themeState.border,
+                        handleStyle: {{
+                            color: themeState.datazoom_handle,
+                            borderColor: themeState.datazoom_handle
+                        }},
+                        textStyle: {{
+                            color: themeState.axis_label,
+                            fontFamily: themeState.mono_font_family
+                        }}
                     }}
                 ],
                 series: [
@@ -494,7 +581,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                             animation: false,
                             label: {{ show: false }},
                             lineStyle: {{
-                                color: '{theme_colors["vcp_line"]}',
+                                color: themeState.vcp_line,
                                 width: 1.2,
                                 type: 'solid'
                             }},
@@ -504,7 +591,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                             silent: true,
                             animation: false,
                             itemStyle: {{
-                                color: '{theme_colors["vcp_area"]}'
+                                color: themeState.vcp_area
                             }},
                             data: rawData.vcpArea
                         }} : undefined
@@ -515,7 +602,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         data: rawData.ma10,
                         smooth: true,
                         showSymbol: false,
-                        lineStyle: {{ width: 1.2, color: '{theme_colors["ma10"]}' }}
+                        lineStyle: {{ width: 1.2, color: themeState.ma10 }}
                     }},
                     {{
                         name: 'MA20',
@@ -523,7 +610,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         data: rawData.ma20,
                         smooth: true,
                         showSymbol: false,
-                        lineStyle: {{ width: 1.2, color: '{theme_colors["ma20"]}' }}
+                        lineStyle: {{ width: 1.2, color: themeState.ma20 }}
                     }},
                     {{
                         name: 'MA50',
@@ -531,7 +618,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         data: rawData.ma50,
                         smooth: true,
                         showSymbol: false,
-                        lineStyle: {{ width: 1.2, color: '{theme_colors["ma50"]}' }}
+                        lineStyle: {{ width: 1.2, color: themeState.ma50 }}
                     }},
                     {{
                         name: 'MA150',
@@ -539,7 +626,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         data: rawData.ma150,
                         smooth: true,
                         showSymbol: false,
-                        lineStyle: {{ width: 1.2, color: '{theme_colors["ma150"]}' }}
+                        lineStyle: {{ width: 1.2, color: themeState.ma150 }}
                     }},
                     {{
                         name: 'MA200',
@@ -547,7 +634,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         data: rawData.ma200,
                         smooth: true,
                         showSymbol: false,
-                        lineStyle: {{ width: 1.2, color: '{theme_colors["ma200"]}' }}
+                        lineStyle: {{ width: 1.2, color: themeState.ma200 }}
                     }},
                     {{
                         name: 'Volume',
@@ -564,7 +651,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         data: rawData.volMa20,
                         showSymbol: false,
                         smooth: true,
-                        lineStyle: {{ width: 1.1, color: '{theme_colors["vol_ma20"]}' }}
+                        lineStyle: {{ width: 1.1, color: themeState.vol_ma20 }}
                     }},
                     {{
                         name: 'MACD',
@@ -581,7 +668,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         data: rawData.diff,
                         showSymbol: false,
                         smooth: true,
-                        lineStyle: {{ width: 1.1, color: '{theme_colors["macd_diff"]}' }}
+                        lineStyle: {{ width: 1.1, color: themeState.macd_diff }}
                     }},
                     {{
                         name: 'DEA',
@@ -591,13 +678,32 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         data: rawData.dea,
                         showSymbol: false,
                         smooth: true,
-                        lineStyle: {{ width: 1.1, color: '{theme_colors["macd_dea"]}' }}
+                        lineStyle: {{ width: 1.1, color: themeState.macd_dea }}
                     }}
                 ]
             }};
         }}
 
         chart.setOption(buildOption());
+
+        window.applyTheme = function (payload) {{
+            const t = payload && payload.theme ? payload.theme : payload;
+            if (!t) return false;
+            themeState = t;
+            if (t.up_color) upColor = t.up_color;
+            if (t.down_color) downColor = t.down_color;
+            _applyCssTheme(themeState);
+
+            const currentOption = chart.getOption ? chart.getOption() : null;
+            const dataZoom = currentOption && currentOption.dataZoom ? currentOption.dataZoom : null;
+            const nextOption = buildOption();
+            if (dataZoom) {{
+                nextOption.dataZoom = dataZoom;
+            }}
+            chart.setOption(nextOption, true, true);
+            chart.resize();
+            return true;
+        }};
 
         window.replaceKlineData = function (payload) {{
             if (!payload || !payload.data) return false;

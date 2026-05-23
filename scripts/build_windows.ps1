@@ -93,8 +93,6 @@ $PyInstallerArgs = @(
     "--workpath", $WorkPath,
     "--specpath", $WorkPath,
     "--hidden-import", "PyQt6.QtWebEngineWidgets",
-    "--collect-submodules", "qdarkstyle",
-    "--collect-data", "qdarkstyle",
     "--add-data", "$IconPath;.",
     "--add-data", "$AssetsPath;assets"
 )

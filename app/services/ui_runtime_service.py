@@ -56,6 +56,7 @@ from app.services.ui_task_service import (
     task_id_of,
     task_registry,
     windows_no_window_creationflags,
+    windows_no_window_kwargs,
 )
 from app.services.ui_watchlist_service import WatchlistViewModel, watchlist_vm
 
@@ -105,5 +106,6 @@ __all__ = [
     "ui_signal_hub",
     "ui_signals",
     "watchlist_vm",
+    "windows_no_window_kwargs",
     "windows_no_window_creationflags",
 ]

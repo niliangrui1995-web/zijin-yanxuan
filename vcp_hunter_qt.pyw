@@ -9,11 +9,16 @@ from core.runtime_env import (
     relaunch_into_project_venv_if_needed,
     set_windows_app_user_model_id,
 )
+from core.single_instance import acquire_single_instance_lock
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 # Prefer the project-local interpreter before importing Qt or other native modules.
 relaunch_into_project_venv_if_needed(PROJECT_ROOT, script_path=__file__)
+
+SINGLE_INSTANCE_LOCK = acquire_single_instance_lock()
+if SINGLE_INSTANCE_LOCK.already_running:
+    sys.exit(0)
 
 CRASH_LOG_DIR = os.path.join(PROJECT_ROOT, "data")
 os.makedirs(CRASH_LOG_DIR, exist_ok=True)
@@ -68,21 +73,6 @@ def main():
     app = QApplication(sys.argv)
     log_runtime_env_report(PROJECT_ROOT)
 
-    import ctypes
-
-    mutex_name = "VCPHunterQuantTerminal_SingleInstance"
-    mutex_handle = ctypes.windll.kernel32.CreateMutexW(None, False, mutex_name)
-    last_error = ctypes.windll.kernel32.GetLastError()
-    error_already_exists = 183
-    if last_error == error_already_exists:
-        QMessageBox.warning(
-            None,
-            "紫金研选量化终端",
-            "程序已在运行中，请勿重复启动。\n\n如需重新启动，请先关闭已有窗口。",
-        )
-        ctypes.windll.kernel32.CloseHandle(mutex_handle)
-        sys.exit(0)
-
     from ui.splash_screen import SplashScreen
 
     splash = SplashScreen()
@@ -91,12 +81,15 @@ def main():
 
     splash.set_progress(10, "加载主题样式...")
 
-    import qdarkstyle
+    # 优化维度一：启动阶段直接挂载系统定制的高级动态 QSS，彻底消除启动时的二次闪烁
+    from ui.styles.global_qss import generate_global_qss
+    from ui.theme import theme_manager
 
-    app.setStyleSheet(qdarkstyle.load_stylesheet(qt_api="pyqt6"))
+    app.setStyleSheet(generate_global_qss(theme_manager.current_theme))
 
+    # 优化维度三：全局配置 Microsoft YaHei UI 提高中英排版抗锯齿效果
     font = app.font()
-    font.setFamily("Segoe UI")
+    font.setFamily("Microsoft YaHei UI")
     font.setPointSize(10)
     app.setFont(font)
 
@@ -114,8 +107,10 @@ def main():
     splash.close()
     splash.deleteLater()
 
-    exit_code = app.exec()
-    ctypes.windll.kernel32.CloseHandle(mutex_handle)
+    try:
+        exit_code = app.exec()
+    finally:
+        SINGLE_INSTANCE_LOCK.release()
     sys.exit(exit_code)
 
 

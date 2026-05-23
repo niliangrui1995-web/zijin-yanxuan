@@ -68,14 +68,15 @@ def test_theme_tokens_expose_terminal_layers_and_toolbar_metrics():
     assert "chart" in tokens
     assert "toolbar_card" in tokens["surface"]
     assert tokens["table"]["selected_rail_width"] > 0
-    assert tokens["table"]["current_cell_border"] == THEME_YUEBAI["BRAND_DEEP"]
+    assert tokens["table"]["current_cell_border"] == THEME_YUEBAI["TABLE_CURRENT_CELL_BORDER"]
     assert tokens["table"]["current_cell_bg"]
     assert tokens["table"]["current_cell_bg_selected"]
     assert tokens["table"]["numeric_heat_max_alpha"] >= 32
     assert tokens["shell"]["toolbar_min_height"] >= tokens["control"]["button_height"]
     assert tokens["shell"]["toolbar_min_height"] < 48
     assert tokens["shell"]["toolbar_group_gap"] <= 4
-    assert tokens["surface"]["toolbar"] == THEME_YUEBAI["BG_CARD"]
+    assert tokens["surface"]["toolbar"] == THEME_YUEBAI["BG_TOOLBAR"]
+    assert tokens["surface"]["toolbar_chip"] == THEME_YUEBAI["BG_TOOLBAR_CHIP"]
     assert tokens["surface"]["toolbar_card"] != tokens["surface"]["toolbar"]
     assert tokens["surface"]["toolbar_chip"] != THEME_YUEBAI["BG_BUTTON"]
     assert dark_tokens["surface"]["toolbar"] == THEME_MOYUAN["BG_ELEVATED"]
@@ -116,10 +117,40 @@ def test_ziyao_selection_and_primary_actions_do_not_use_gold_background_tokens()
     assert THEME_ZIYAO["COLOR_RISE"] != THEME_ZIYAO["BRAND_PRIMARY"]
 
 
+def test_yuebai_uses_cool_professional_light_palette():
+    tokens = build_ui_tokens(THEME_YUEBAI, density="舒展")
+
+    assert THEME_YUEBAI["BG_CANVAS"] == "#F4F7FB"
+    assert THEME_YUEBAI["BG_CARD"] == "#FFFFFF"
+    assert THEME_YUEBAI["BG_TOOLBAR_CHIP"] == "#EEF4FA"
+    assert THEME_YUEBAI["ACCENT_PRIMARY"] == "#2563EB"
+    assert THEME_YUEBAI["ACCENT_PRIMARY"] != THEME_YUEBAI["BRAND_PRIMARY"]
+    assert THEME_YUEBAI["TAB_ACTIVE_TOP"] == THEME_YUEBAI["ACCENT_PRIMARY"]
+    assert THEME_YUEBAI["TABLE_SELECTED_RAIL"] == THEME_YUEBAI["ACCENT_PRIMARY"]
+    assert tokens["table"]["selected_rail_color"] == THEME_YUEBAI["ACCENT_PRIMARY"]
+    assert tokens["border"]["focus"] == THEME_YUEBAI["FOCUS_RING"]
+    assert tokens["chart"]["panel_bg"] == "#FFFFFF"
+    assert "93, 78, 55" not in THEME_YUEBAI["BORDER_DEFAULT"]
+    assert "239, 68, 68" not in THEME_YUEBAI["SELECTION_BG"]
+
+
+def test_theme_tokens_expose_calendar_marker_palette():
+    tokens = build_ui_tokens(THEME_YUEBAI, density="舒展")
+    calendar = tokens["calendar"]
+
+    assert calendar["selected_color"] == THEME_YUEBAI["ACCENT_PRIMARY"]
+    assert calendar["marker_strategic_giant"] == THEME_YUEBAI["ACCENT_PRIMARY"]
+    assert calendar["marker_super_giant"] == THEME_YUEBAI["COLOR_WARNING"]
+    assert calendar["marker_normal"] == THEME_YUEBAI["COLOR_INFO"]
+    assert 0 < calendar["marker_normal_alpha"] <= 255
+
+
 def test_light_theme_muted_text_contrast_meets_toolbar_threshold():
     assert _contrast_ratio(THEME_YUEBAI["TEXT_MUTED"], THEME_YUEBAI["BG_CARD"]) >= 4.5
     assert _contrast_ratio(THEME_YUEBAI["TEXT_MUTED"], THEME_YUEBAI["BG_BUTTON"]) >= 4.5
     assert _contrast_ratio(THEME_YUEBAI["TAB_TEXT"], THEME_YUEBAI["BG_CARD"]) >= 4.5
+    assert _contrast_ratio(THEME_YUEBAI["TEXT_SECONDARY"], THEME_YUEBAI["BG_TOOLBAR_CHIP"]) >= 4.5
+    assert _contrast_ratio(THEME_YUEBAI["ACCENT_TEXT"], THEME_YUEBAI["BG_CARD"]) >= 4.5
 
 
 def test_global_qss_uses_density_tokens_for_table_and_controls():
@@ -168,11 +199,12 @@ def test_ziyao_global_qss_uses_red_primary_button_and_scrollbar_pressed():
     assert "215, 172, 69" not in scrollbar_block
 
 
-def test_global_qss_selected_tab_does_not_use_brand_top_rule():
+def test_global_qss_selected_tab_uses_yuebai_information_accent_top_rule():
     qss = generate_global_qss(THEME_YUEBAI, density="紧凑")
 
     assert "QTabBar::tab:selected" in qss
-    assert "border-top: 2px solid transparent;" in qss
+    assert f"border-top: 2px solid {THEME_YUEBAI['TAB_ACTIVE_TOP']};" in qss
+    assert THEME_YUEBAI["TAB_ACTIVE_TOP"] == THEME_YUEBAI["ACCENT_PRIMARY"]
     assert f"border-top: 2px solid {THEME_YUEBAI['BRAND_PRIMARY']};" not in qss
 
 

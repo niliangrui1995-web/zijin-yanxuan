@@ -117,6 +117,23 @@ def test_vcp_table_view_delete_later_stops_deferred_restores():
             table.deleteLater()
 
 
+def test_vcp_table_view_model_flash_role_starts_table_repaint_timer():
+    table = VCPTableView()
+    source_model = StockTableModel(["代码", "名称", "现价"])
+    table.setModel(source_model)
+    try:
+        source_model.update_data(_rows(1))
+        assert table._flash_repaint_timer.isActive() is False
+
+        updated_rows = _rows(1)
+        updated_rows[0]["现价"] = "11.00"
+        source_model.update_data(updated_rows)
+
+        assert table._flash_repaint_timer.isActive() is True
+    finally:
+        table.deleteLater()
+
+
 def test_pulsing_dot_delete_later_stops_deferred_animation_start():
     dot = PulsingDot()
     try:

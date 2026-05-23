@@ -122,9 +122,31 @@ def show_trade_calendar(main_window):
     earnings_panel.eventsChanged.connect(calendar.set_earnings_events)
     calendar.clicked.connect(lambda date: earnings_panel.set_selected_date(date.toString("yyyy-MM-dd")))
     domain_events.sig_earnings_updated.connect(earnings_panel.reload_from_service_cache)
-    dlg.finished.connect(
-        lambda _result: domain_events.sig_earnings_updated.disconnect(earnings_panel.reload_from_service_cache)
-    )
+
+    def _apply_dialog_live_theme(_theme_name: str | None = None) -> None:
+        live_tokens = build_ui_tokens(theme_manager.current_theme)
+        live_dark = live_tokens["is_dark"]
+        shadow.setBlurRadius(34 if live_dark else 28)
+        shadow.setOffset(0, 12 if live_dark else 10)
+        shadow.setColor(QColor(0, 0, 0, 108 if live_dark else 52))
+        for widget in (dlg, container, title_bar, body, calendar, earnings_panel):
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
+            widget.update()
+
+    def _cleanup_dialog(_result) -> None:
+        try:
+            domain_events.sig_earnings_updated.disconnect(earnings_panel.reload_from_service_cache)
+        except (RuntimeError, TypeError):
+            pass
+        try:
+            theme_manager.sig_theme_changed.disconnect(_apply_dialog_live_theme)
+        except (RuntimeError, TypeError):
+            pass
+
+    theme_manager.sig_theme_changed.connect(_apply_dialog_live_theme)
+    dlg.finished.connect(_cleanup_dialog)
+    _apply_dialog_live_theme()
     QTimer.singleShot(0, earnings_panel.refresh_from_service)
 
     content_layout = QVBoxLayout()

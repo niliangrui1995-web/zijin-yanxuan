@@ -8,6 +8,7 @@ from infra.tasks.process_runner import (
     run_python_module,
     spawn_process,
     windows_no_window_creationflags,
+    windows_no_window_kwargs,
 )
 from infra.tasks.task_scheduler import BackgroundWorker, GlobalTaskManager, UserFacingTaskError, task_manager
 from infra.tasks.typed_task_registry import (
@@ -52,5 +53,6 @@ __all__ = [
     "task_manager",
     "task_id_of",
     "task_registry",
+    "windows_no_window_kwargs",
     "windows_no_window_creationflags",
 ]

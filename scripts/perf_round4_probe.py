@@ -332,6 +332,7 @@ def _build_window(args: argparse.Namespace, app: QApplication) -> tuple[MainWind
     stages = []
     window = MainWindowQT(
         startup_enabled=bool(args.startup_enabled),
+        auto_refresh_enabled=args.auto_refresh_enabled,
         background_prewarm=bool(args.background_prewarm),
         kline_prewarm_enabled=bool(args.kline_prewarm_enabled),
         central_quotes_enabled=bool(args.central_quotes_enabled),
@@ -593,6 +594,11 @@ def run_probe(args: argparse.Namespace) -> dict:
             "qt_platform": os.environ.get("QT_QPA_PLATFORM", ""),
             "native_qt": bool(args.native_qt),
             "startup_enabled": bool(args.startup_enabled),
+            "auto_refresh_enabled": (
+                bool(args.auto_refresh_enabled)
+                if args.auto_refresh_enabled is not None
+                else bool(args.startup_enabled)
+            ),
             "background_prewarm": bool(args.background_prewarm),
             "central_quotes_enabled": bool(args.central_quotes_enabled),
             "execute_post_f5_refresh": bool(args.execute_post_f5_refresh),
@@ -645,6 +651,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Round 4 interaction, F5, and stability performance probe.")
     parser.add_argument("--native-qt", action="store_true")
     parser.add_argument("--startup-enabled", action="store_true")
+    parser.add_argument("--auto-refresh-enabled", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--background-prewarm", action="store_true")
     parser.add_argument("--kline-prewarm-enabled", action="store_true")
     parser.add_argument("--central-quotes-enabled", action="store_true")

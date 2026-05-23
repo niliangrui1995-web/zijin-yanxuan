@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 
 from PyQt6.QtCore import Qt
@@ -61,3 +62,49 @@ def apply_windows_frameless_taskbar_fix(window, *, user32=None) -> bool:
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
     )
     return True
+
+
+DWMWA_NCRENDERING_POLICY = 2
+DWMNCRP_ENABLED = 2
+
+
+def enable_windows_native_shadow(window, *, dwmapi=None, logger=None) -> bool:
+    """Enable the native DWM shadow for a frameless Windows window."""
+
+    if os.name != "nt":
+        return False
+
+    hwnd = int(window.winId())
+    if hwnd <= 0:
+        return False
+
+    try:
+        import ctypes
+        from ctypes import Structure, byref, c_int, sizeof
+
+        class MARGINS(Structure):
+            _fields_ = [
+                ("cxLeftWidth", c_int),
+                ("cxRightWidth", c_int),
+                ("cyTopHeight", c_int),
+                ("cyBottomHeight", c_int),
+            ]
+
+        if dwmapi is None:
+            dwmapi = ctypes.windll.dwmapi
+
+        margins = MARGINS(1, 1, 1, 1)
+        dwmapi.DwmExtendFrameIntoClientArea(hwnd, byref(margins))
+
+        policy = c_int(DWMNCRP_ENABLED)
+        dwmapi.DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_NCRENDERING_POLICY,
+            byref(policy),
+            sizeof(policy),
+        )
+        return True
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        log = logger or logging.getLogger(__name__)
+        log.debug("[DWM阴影] 原生投影启用失败: %s", exc)
+        return False

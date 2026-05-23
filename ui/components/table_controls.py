@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ui.theme_tokens import build_ui_tokens, get_state_tone
+from ui.models.table_model_helpers import FLASH_DURATION_SECONDS
 
 from .table_view_helpers import bounded_model_row, find_header_column
 
@@ -404,7 +405,16 @@ class VCPTableView(QTableView):
         super().deleteLater()
 
     def _on_model_data_changed(self, *_args) -> None:
-        self._flash_repaint_until = max(self._flash_repaint_until, time.time() + 0.8)
+        roles = _args[2] if len(_args) >= 3 else None
+        flash_role = int(Qt.ItemDataRole.UserRole) + 1
+        if roles:
+            role_values = {int(getattr(role, "value", role)) for role in roles}
+            if flash_role not in role_values:
+                return
+        self.schedule_flash_repaint_until(time.time() + FLASH_DURATION_SECONDS)
+
+    def schedule_flash_repaint_until(self, active_until: float) -> None:
+        self._flash_repaint_until = max(self._flash_repaint_until, float(active_until))
         if not self._flash_repaint_timer.isActive():
             self._flash_repaint_timer.start()
 

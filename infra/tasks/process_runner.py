@@ -38,6 +38,33 @@ def windows_no_window_creationflags() -> int:
     return CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
+def windows_hidden_startupinfo():
+    if os.name != "nt":
+        return None
+    try:
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        return startupinfo
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def apply_windows_no_window_kwargs(kwargs: dict) -> None:
+    if os.name != "nt":
+        return
+    kwargs["creationflags"] = int(kwargs.get("creationflags") or 0) | CREATE_NO_WINDOW
+    startupinfo = windows_hidden_startupinfo()
+    if startupinfo is not None:
+        kwargs.setdefault("startupinfo", startupinfo)
+
+
+def windows_no_window_kwargs() -> dict:
+    kwargs = {}
+    apply_windows_no_window_kwargs(kwargs)
+    return kwargs
+
+
 def build_domestic_process_env(*, extra: dict[str, str] | None = None) -> dict[str, str]:
     env = os.environ.copy()
     for key in PROXY_ENV_KEYS:
@@ -88,7 +115,7 @@ def run_python_module(
     **kwargs,
 ):
     if no_window:
-        kwargs.setdefault("creationflags", windows_no_window_creationflags())
+        apply_windows_no_window_kwargs(kwargs)
     return run_process(
         build_python_module_command(
             module_name,

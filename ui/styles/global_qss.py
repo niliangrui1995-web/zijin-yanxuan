@@ -29,6 +29,14 @@ def generate_global_qss(theme: dict = None, density: str | None = None) -> str:
     tab_active_border = t.get("TAB_ACTIVE_BORDER", t["BORDER_BRAND"])
     tab_active_text = t.get("TAB_ACTIVE_TEXT", t["TEXT_PRIMARY"])
     tab_active_top = t.get("TAB_ACTIVE_TOP", "transparent")
+    tab_active_indicator = t.get("TAB_ACTIVE_INDICATOR", tab_active_top)
+    if t.get("TAB_ACTIVE_INDICATOR_SIDE") == "bottom":
+        tab_active_indicator_rule = (
+            f"border-top: 1px solid {tab_active_border};\n"
+            f"    border-bottom: 2px solid {tab_active_indicator};"
+        )
+    else:
+        tab_active_indicator_rule = f"border-top: 2px solid {tab_active_top};"
     primary_gradient_start = t.get("PRIMARY_GRADIENT_START", t["BRAND_PRIMARY"])
     primary_gradient_end = t.get("PRIMARY_GRADIENT_END", t.get("BRAND_PRESSED", t["BRAND_DEEP"]))
     primary_hover_start = t.get("PRIMARY_HOVER_GRADIENT_START", t["BRAND_HOVER"])
@@ -114,7 +122,7 @@ QTabBar::tab:selected {{
     font-weight: {font["weight_semibold"]};
     background: {tab_active_bg};
     border-color: {tab_active_border};
-    border-top: 2px solid {tab_active_top};
+    {tab_active_indicator_rule}
 }}
 
 /* ═══════════════════════════════════════════

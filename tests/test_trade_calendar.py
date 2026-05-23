@@ -5,7 +5,9 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QTableView
 
 from domains.global_earnings_calendar.service import EarningsCalendarEvent
-from ui.components.trade_calendar import OligarchEarningsCalendarPanel, TradeCalendarWidget
+from ui.components.trade_calendar import OligarchEarningsCalendarPanel, TradeCalendarWidget, _priority_marker_styles
+from ui.theme import THEME_YUEBAI
+from ui.theme_tokens import build_ui_tokens
 
 
 def test_trade_calendar_uses_compact_weekday_labels():
@@ -110,6 +112,16 @@ def test_trade_calendar_earnings_marker_policy_uses_dots_without_count_text():
 
     assert marker["count_text"] == ""
     assert marker["dot_tones"] == ["super_giant", "strategic_giant", "normal"]
+
+
+def test_trade_calendar_marker_styles_follow_calendar_tokens():
+    calendar_tokens = build_ui_tokens(THEME_YUEBAI)["calendar"]
+
+    styles = _priority_marker_styles(calendar_tokens)
+
+    assert styles["super_giant"]["color"] == calendar_tokens["marker_super_giant"]
+    assert styles["strategic_giant"]["color"] == calendar_tokens["marker_strategic_giant"]
+    assert styles["normal"]["color"] == calendar_tokens["marker_normal"]
 
 
 def test_oligarch_earnings_panel_filters_events_by_search_and_segment():

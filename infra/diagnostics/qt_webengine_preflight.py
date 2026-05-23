@@ -6,23 +6,7 @@ import sys
 import time
 
 from core.runtime_env import configure_qt_webengine_runtime
-
-CREATE_NO_WINDOW = 0x08000000
-
-
-def _windows_hidden_process_kwargs() -> dict:
-    if os.name != "nt":
-        return {}
-
-    kwargs = {"creationflags": CREATE_NO_WINDOW}
-    try:
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = subprocess.SW_HIDE
-        kwargs["startupinfo"] = startupinfo
-    except (AttributeError, TypeError, ValueError):
-        pass
-    return kwargs
+from infra.tasks.process_runner import windows_no_window_kwargs
 
 
 def _webengine_smoke_code() -> str:
@@ -80,7 +64,7 @@ def check_qt_webengine_available(
             capture_output=True,
             text=True,
             timeout=max(1, int(timeout_s)),
-            **_windows_hidden_process_kwargs(),
+            **windows_no_window_kwargs(),
         )
     except subprocess.TimeoutExpired:
         return {

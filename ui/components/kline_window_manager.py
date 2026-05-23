@@ -10,7 +10,6 @@ K 线窗口管理器 — 单例模式 (#1)
 现在统一收口到这里，任何人想开 K 线图只需调用 open_chart()。
 """
 
-import gc
 import os
 import threading
 import time
@@ -283,10 +282,9 @@ class KLineWindowManager:
     def _run_post_close_collect(self) -> None:
         self._post_close_collect_scheduled = False
         active_count = self.active_count
-        collected = gc.collect()
         record_metric(
-            "kline_post_close_gc_collect",
-            collected,
+            "kline_post_close_gc_skipped",
+            1,
             unit="count",
             tags={"active_windows": str(active_count)},
         )

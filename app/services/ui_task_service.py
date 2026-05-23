@@ -18,6 +18,7 @@ from infra.tasks import (
     task_id_of,
     task_registry,
     windows_no_window_creationflags,
+    windows_no_window_kwargs,
 )
 
 __all__ = [
@@ -34,5 +35,6 @@ __all__ = [
     "run_process",
     "task_id_of",
     "task_registry",
+    "windows_no_window_kwargs",
     "windows_no_window_creationflags",
 ]

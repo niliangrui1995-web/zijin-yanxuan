@@ -222,7 +222,7 @@ class StockItemDelegate(QStyledItemDelegate):
     """
     负责高级单元格渲染的委托类，包含闪烁褪色动画（后续由定时器或外部驱动刷新）
     和高级彩色状态胶囊（Pill）绘制。
-    """
+        """
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -287,8 +287,10 @@ class StockItemDelegate(QStyledItemDelegate):
                 else:
                     color_hex = _c("COLOR_INFO")
                 bg_color = QColor(color_hex)
-                bg_color.setAlpha(min(72, max(0, int(alpha * 0.24))))
-                painter.fillRect(option.rect, bg_color)
+                flash_scale = float(table_tokens.get("flash_alpha_scale", 0.24))
+                flash_max_alpha = int(table_tokens.get("flash_max_alpha", 76))
+                bg_color.setAlpha(min(flash_max_alpha, max(0, int(alpha * flash_scale))))
+                painter.fillRect(option.rect, QBrush(bg_color))
 
         # 2. 判断是否是自定义绘制的胶囊文本 (Pill)
         text = index.data(Qt.ItemDataRole.DisplayRole)

@@ -6,7 +6,7 @@ def test_windows_toast_passes_user_text_as_process_arguments(monkeypatch):
     calls = []
 
     monkeypatch.setattr(notification_service.os, "name", "nt", raising=False)
-    monkeypatch.setattr(notification_service, "windows_no_window_creationflags", lambda: 0)
+    monkeypatch.setattr(notification_service, "windows_no_window_kwargs", lambda: {"creationflags": 0})
     monkeypatch.setattr(
         notification_service,
         "run_process",

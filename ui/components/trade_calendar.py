@@ -31,12 +31,12 @@ from app.services.ui_market_calendar_service import MarketCalendar
 from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens
 
-_PRIORITY_TONE_COLORS = {
+_PRIORITY_TONE_FALLBACK_COLORS = {
     "super_giant": "#F6C453",
     "strategic_giant": "#A78BFA",
     "normal": "#22D3EE",
 }
-_PRIORITY_TONE_ALPHA = {
+_PRIORITY_TONE_FALLBACK_ALPHA = {
     "super_giant": 230,
     "strategic_giant": 220,
     "normal": 205,
@@ -66,7 +66,25 @@ def _c(token: str) -> str:
 
 def _priority_tone(priority: str) -> str:
     priority_text = str(priority or "").strip()
-    return priority_text if priority_text in _PRIORITY_TONE_COLORS else "normal"
+    return priority_text if priority_text in _PRIORITY_TONE_FALLBACK_COLORS else "normal"
+
+
+def _priority_marker_styles(calendar_tokens: dict | None = None) -> dict[str, dict[str, int | str]]:
+    tokens = calendar_tokens or build_ui_tokens(theme_manager.current_theme).get("calendar", {})
+    return {
+        "super_giant": {
+            "color": tokens.get("marker_super_giant", _PRIORITY_TONE_FALLBACK_COLORS["super_giant"]),
+            "alpha": int(tokens.get("marker_super_giant_alpha", _PRIORITY_TONE_FALLBACK_ALPHA["super_giant"])),
+        },
+        "strategic_giant": {
+            "color": tokens.get("marker_strategic_giant", _PRIORITY_TONE_FALLBACK_COLORS["strategic_giant"]),
+            "alpha": int(tokens.get("marker_strategic_giant_alpha", _PRIORITY_TONE_FALLBACK_ALPHA["strategic_giant"])),
+        },
+        "normal": {
+            "color": tokens.get("marker_normal", _PRIORITY_TONE_FALLBACK_COLORS["normal"]),
+            "alpha": int(tokens.get("marker_normal_alpha", _PRIORITY_TONE_FALLBACK_ALPHA["normal"])),
+        },
+    }
 
 
 class TradeCalendarWidget(QCalendarWidget):
@@ -245,12 +263,14 @@ class TradeCalendarWidget(QCalendarWidget):
             }}
             """
         )
+        self.updateCells()
+        self.update()
 
     def paintCell(self, painter, rect, date):
         painter.save()
         painter.setRenderHint(painter.RenderHint.Antialiasing)
 
-        is_dark = theme_manager.is_dark()
+        calendar_tokens = build_ui_tokens(theme_manager.current_theme)["calendar"]
         current_month = self.monthShown()
         current_year = self.yearShown()
         is_current_month = date.month() == current_month and date.year() == current_year
@@ -258,7 +278,7 @@ class TradeCalendarWidget(QCalendarWidget):
         is_today = date == QDate.currentDate()
         is_trade_day = MarketCalendar.is_trade_day(date.toPyDate(), "CN")
 
-        painter.fillRect(rect, QColor(_c("BG_INPUT")))
+        painter.fillRect(rect, QColor(str(calendar_tokens["cell_fill"])))
 
         chip_rect = QRectF(rect.adjusted(6, 5, -6, -5))
         if chip_rect.width() < 14 or chip_rect.height() < 14:
@@ -267,15 +287,15 @@ class TradeCalendarWidget(QCalendarWidget):
         fill_color = None
         border_color = None
         if is_selected:
-            fill_color = QColor(_c("COLOR_INFO"))
-            fill_color.setAlpha(42 if is_dark else 28)
-            border_color = QColor(_c("COLOR_INFO"))
-            border_color.setAlpha(184 if is_dark else 150)
+            fill_color = QColor(str(calendar_tokens["selected_color"]))
+            fill_color.setAlpha(int(calendar_tokens["selected_bg_alpha"]))
+            border_color = QColor(str(calendar_tokens["selected_color"]))
+            border_color.setAlpha(int(calendar_tokens["selected_border_alpha"]))
         elif is_today and is_current_month:
-            fill_color = QColor(_c("COLOR_INFO"))
-            fill_color.setAlpha(16 if is_dark else 10)
-            border_color = QColor(_c("COLOR_INFO"))
-            border_color.setAlpha(148 if is_dark else 116)
+            fill_color = QColor(str(calendar_tokens["today_color"]))
+            fill_color.setAlpha(int(calendar_tokens["today_bg_alpha"]))
+            border_color = QColor(str(calendar_tokens["today_color"]))
+            border_color.setAlpha(int(calendar_tokens["today_border_alpha"]))
 
         if fill_color is not None:
             painter.setPen(Qt.PenStyle.NoPen)
@@ -290,8 +310,8 @@ class TradeCalendarWidget(QCalendarWidget):
         if is_selected:
             text_color = QColor(_c("TEXT_BRIGHT"))
         elif is_current_month and not is_trade_day:
-            text_color = QColor(_c("COLOR_ERROR"))
-            text_color.setAlpha(208 if is_dark else 180)
+            text_color = QColor(str(calendar_tokens["non_trade_color"]))
+            text_color.setAlpha(int(calendar_tokens["non_trade_text_alpha"]))
         elif is_current_month:
             text_color = QColor(_c("TEXT_PRIMARY"))
         else:
@@ -305,8 +325,8 @@ class TradeCalendarWidget(QCalendarWidget):
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, str(date.day()))
 
         if is_today and not is_selected and is_current_month:
-            dot_color = QColor(_c("COLOR_INFO"))
-            dot_color.setAlpha(220 if is_dark else 180)
+            dot_color = QColor(str(calendar_tokens["today_color"]))
+            dot_color.setAlpha(int(calendar_tokens["today_dot_alpha"]))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(dot_color)
             dot_rect = QRectF(
@@ -322,12 +342,14 @@ class TradeCalendarWidget(QCalendarWidget):
             marker = self.earnings_marker_policy(day_events)
             dot_tones = list(marker.get("dot_tones", []))
             if dot_tones:
+                marker_styles = _priority_marker_styles(calendar_tokens)
                 dot_y = rect.center().y() + 13.0
                 first_x = rect.center().x() - ((len(dot_tones) - 1) * 4.2)
                 painter.setPen(Qt.PenStyle.NoPen)
                 for idx, tone in enumerate(dot_tones):
-                    dot_color = QColor(_PRIORITY_TONE_COLORS.get(tone, _PRIORITY_TONE_COLORS["normal"]))
-                    dot_color.setAlpha(_PRIORITY_TONE_ALPHA.get(tone, _PRIORITY_TONE_ALPHA["normal"]))
+                    style = marker_styles.get(str(tone), marker_styles["normal"])
+                    dot_color = QColor(str(style["color"]))
+                    dot_color.setAlpha(int(style["alpha"]))
                     painter.setBrush(dot_color)
                     painter.drawEllipse(QRectF(first_x + idx * 8.4 - 2.2, dot_y, 4.4, 4.4))
 
@@ -487,9 +509,9 @@ class OligarchEarningsCalendarPanel(QFrame):
                 font-size: {tokens["font"]["size_xs"]}px;
             }}
             QPushButton#earningsSegmentButton:checked {{
-                border-color: {t["COLOR_INFO"]};
-                color: {tokens["text"]["primary"]};
-                background: {t["BG_HOVER"]};
+                border-color: {t.get("SEGMENT_ACTIVE_BORDER", t["COLOR_INFO"])};
+                color: {t.get("SEGMENT_ACTIVE_TEXT", tokens["text"]["primary"])};
+                background: {t.get("SEGMENT_ACTIVE_BG", t["BG_HOVER"])};
             }}
             QScrollArea#earningsEventScroll {{
                 background: transparent;
@@ -561,7 +583,7 @@ class OligarchEarningsCalendarPanel(QFrame):
                 font-size: {tokens["font"]["size_xs"]}px;
             }}
             QLabel#earningsEventBadgeConfirmed {{
-                color: {tokens["text"]["primary"]};
+                color: {tokens["state"]["success"]["fg"]};
                 background: {tokens["state"]["success"]["bg"]};
                 border: 1px solid {tokens["state"]["success"]["border"]};
                 border-radius: {tokens["radius"]["xs"]}px;
@@ -570,7 +592,7 @@ class OligarchEarningsCalendarPanel(QFrame):
                 font-weight: {tokens["font"]["weight_semibold"]};
             }}
             QLabel#earningsEventBadgeBroad {{
-                color: {tokens["text"]["primary"]};
+                color: {tokens["state"]["warning"]["fg"]};
                 background: {tokens["state"]["warning"]["bg"]};
                 border: 1px solid {tokens["state"]["warning"]["border"]};
                 border-radius: {tokens["radius"]["xs"]}px;

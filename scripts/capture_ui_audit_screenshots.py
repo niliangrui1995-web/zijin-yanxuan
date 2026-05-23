@@ -69,6 +69,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Fail when screenshots do not meet audit dimensions, tab coverage, or dark-theme checks.",
     )
     parser.add_argument(
+        "--theme",
+        type=str,
+        default="",
+        help="Temporarily render screenshots with this UI theme without persisting the choice.",
+    )
+    parser.add_argument(
         "--strict-tabs-min",
         type=int,
         default=None,
@@ -178,6 +184,7 @@ def _validate_saved_screenshots(
     height: int,
     tabs: bool,
     strict_tabs_min: int,
+    theme_appearance: str,
 ) -> list[str]:
     from PyQt6.QtGui import QImage
 
@@ -208,7 +215,7 @@ def _validate_saved_screenshots(
         if image.isNull():
             errors.append(f"{path.name} could not be read")
             continue
-        if _has_large_white_panel(image):
+        if theme_appearance != "light" and _has_large_white_panel(image):
             errors.append(f"{path.name} appears to contain a large white panel")
     return errors
 
@@ -364,9 +371,15 @@ def main() -> int:
 
     _disable_noisy_startup_paths()
     from app.services.ui_task_service import background_job_runner
+    from ui.theme import theme_manager
 
     app = QApplication.instance() or QApplication(sys.argv)
     args.output.mkdir(parents=True, exist_ok=True)
+    if args.theme:
+        if args.theme not in theme_manager.THEMES:
+            print(f"[capture] unknown theme: {args.theme}", file=sys.stderr)
+            return 2
+        theme_manager._current_name = args.theme
 
     window = _create_audit_main_window()
     window._save_ui_state = lambda: None
@@ -406,6 +419,7 @@ def main() -> int:
             height=max(600, args.height),
             tabs=args.tabs,
             strict_tabs_min=strict_tabs_min,
+            theme_appearance=theme_manager.current_theme.get("appearance", ""),
         )
 
     workspace = getattr(window, "_workspace", None)

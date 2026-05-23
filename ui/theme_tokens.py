@@ -93,8 +93,21 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
     is_dark = _is_dark_theme(theme)
 
     font = {
-        "family": '"Microsoft YaHei UI", "Segoe UI", sans-serif',
-        "mono_family": '"Consolas", "Courier New", monospace',
+        "family": '"Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif',
+        "family_names": ["Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "SimSun"],
+        "mono_family": (
+            '"JetBrains Mono", "Cascadia Mono", "Consolas", '
+            '"Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", monospace'
+        ),
+        "mono_family_names": [
+            "JetBrains Mono",
+            "Cascadia Mono",
+            "Consolas",
+            "Microsoft YaHei UI",
+            "Microsoft YaHei",
+            "Segoe UI",
+            "SimSun",
+        ],
         "size_xs": 11,
         "size_sm": 12,
         "size_md": 13,
@@ -161,6 +174,8 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "sorted_header_bg": _hex_to_rgba(theme["COLOR_INFO"], 0.14 if is_dark else 0.08),
         "status_pill_radius": radius["sm"],
         "numeric_heat_max_alpha": 40 if is_dark else 32,
+        "flash_alpha_scale": float(theme.get("TABLE_FLASH_ALPHA_SCALE", 0.24)),
+        "flash_max_alpha": int(theme.get("TABLE_FLASH_MAX_ALPHA", 76)),
     }
 
     shell = {
@@ -236,6 +251,27 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "vcp_star": theme["KLINE_VCP_STAR"],
     }
 
+    calendar = {
+        "cell_fill": surface["input"],
+        "selected_color": theme.get("ACCENT_PRIMARY", theme["COLOR_INFO"]),
+        "today_color": theme["COLOR_INFO"],
+        "non_trade_color": theme["COLOR_ERROR"],
+        "selected_bg_alpha": 42 if is_dark else 28,
+        "selected_border_alpha": 184 if is_dark else 150,
+        "today_bg_alpha": 16 if is_dark else 10,
+        "today_border_alpha": 148 if is_dark else 116,
+        "today_dot_alpha": 220 if is_dark else 180,
+        "non_trade_text_alpha": 208 if is_dark else 180,
+        "marker_super_giant": theme.get("CALENDAR_SUPER_GIANT_MARKER", theme["COLOR_WARNING"]),
+        "marker_strategic_giant": theme.get(
+            "CALENDAR_STRATEGIC_GIANT_MARKER", theme.get("ACCENT_PRIMARY", theme["COLOR_INFO"])
+        ),
+        "marker_normal": theme.get("CALENDAR_NORMAL_MARKER", theme["COLOR_INFO"]),
+        "marker_super_giant_alpha": 230 if is_dark else 214,
+        "marker_strategic_giant_alpha": 220 if is_dark else 204,
+        "marker_normal_alpha": 205 if is_dark else 192,
+    }
+
     text = {
         "primary": theme["TEXT_PRIMARY"],
         "secondary": theme["TEXT_SECONDARY"],
@@ -261,6 +297,7 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "motion": motion,
         "z_index": z_index,
         "chart": chart,
+        "calendar": calendar,
         "text": text,
         "state": _build_state_tones(theme, is_dark=is_dark),
     }

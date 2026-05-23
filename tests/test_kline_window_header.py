@@ -109,7 +109,7 @@ def _build_fake_webengine_kline(monkeypatch):
     )
 
 
-def test_kline_close_releases_webengine_view_without_deleting_owned_page(monkeypatch):
+def test_kline_close_stops_webengine_view_without_manual_delete(monkeypatch):
     window = _build_fake_webengine_kline(monkeypatch)
     browser = _FakeWebEngineView.last_instance
     page = browser.page()
@@ -132,7 +132,7 @@ def test_kline_close_releases_webengine_view_without_deleting_owned_page(monkeyp
 
         assert window.browser is None
         assert browser.stopped is True
-        assert browser.deleted is True
+        assert browser.deleted is False
         assert page.deleted is False
         assert browser.html_calls == []
         assert browser.url_calls == []
@@ -209,6 +209,10 @@ def test_kline_html_exposes_incremental_replace_bridge():
     html = build_kline_html("T", payload, __file__, build_kline_theme_colors())
 
     assert "let rawData =" in html
+    assert "window.applyTheme" in html
+    assert "themeState.crosshair_line" in html
+    assert "themeState.datazoom_bg" in html
+    assert "themeState.mono_font_family" in html
     assert "window.replaceKlineData" in html
     build_option_body = html[html.index("function buildOption()") : html.index("chart.setOption(buildOption());")]
     assert "const data = splitData(rawData);" in build_option_body
@@ -543,6 +547,28 @@ def test_kline_manager_removes_destroyed_chart_reference(monkeypatch):
         manager._webengine_available = None
         manager._webengine_failure = ""
         manager._webengine_preflight_started = False
+
+
+def test_kline_manager_post_close_cleanup_skips_forced_gc(monkeypatch):
+    metrics = []
+
+    manager = KLineWindowManager()
+    manager._charts = []
+    manager._post_close_collect_scheduled = True
+    monkeypatch.setattr(
+        manager_module,
+        "record_metric",
+        lambda metric, value, unit="", tags=None: metrics.append((metric, value, unit, tags or {})),
+    )
+
+    try:
+        manager._run_post_close_collect()
+
+        assert manager._post_close_collect_scheduled is False
+        assert metrics == [("kline_post_close_gc_skipped", 1, "count", {"active_windows": "0"})]
+    finally:
+        manager._charts = []
+        manager._post_close_collect_scheduled = False
 
 
 def test_kline_manager_starts_async_preflight_before_prewarm(monkeypatch):

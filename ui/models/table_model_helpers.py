@@ -16,7 +16,7 @@ from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens
 
 SERIAL_HEADER = "序号"
-FLASH_DURATION_SECONDS = 0.75
+FLASH_DURATION_SECONDS = 0.42
 _TABLE_DENSITY_CACHE_LOADED = False
 _TABLE_DENSITY_CACHE: str | None = None
 

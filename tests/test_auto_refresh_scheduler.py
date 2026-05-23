@@ -4,9 +4,9 @@ from PyQt6.QtTest import QSignalSpy
 
 from app.services.ui_config_service import app_config
 from app.services.ui_event_service import domain_events as event_bus
+from ui.services import auto_refresh_tasks as auto_refresh_task_module
 from ui.services.auto_refresh_scheduler import AutoRefreshJob, AutoRefreshScheduler
 from ui.services.auto_refresh_tasks import AutoRefreshTaskService
-from ui.services import auto_refresh_tasks as auto_refresh_task_module
 
 
 class _ImmediateRunner:

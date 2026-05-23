@@ -347,13 +347,33 @@ class KLineChartWindow(QWidget):
 
     # ======================== 主题切换 ========================
     def _on_theme_changed(self, _theme_name: str):
-        """主题切换时重新渲染整个 K 线图——换衣服，不是染色"""
+        """主题切换时同步刷新 Qt 外壳 + WebEngine 图表配色。"""
         self._apply_qt_theme()
-        if self.df is not None and len(self.df) > 0:
-            self._render_chart(self.df, loading=False)
+        self._apply_chart_theme()
 
     def _apply_qt_theme(self):
         apply_qt_theme(self)
+
+    def _apply_chart_theme(self, *, animate: bool = True) -> None:
+        browser = getattr(self, "browser", None)
+        if getattr(self, "_closing", False) or browser is None:
+            return
+
+        payload_json = json.dumps(
+            {"theme": build_kline_theme_colors(), "animate": bool(animate)},
+            ensure_ascii=False,
+        )
+        script = (
+            "(function(payload) {"
+            " if (typeof window.applyTheme !== 'function') return false;"
+            " return window.applyTheme(payload);"
+            " })(" + payload_json + ");"
+        )
+
+        try:
+            browser.page().runJavaScript(script)
+        except (AttributeError, RuntimeError, TypeError):
+            pass
 
     def _apply_info_styles(
         self, widget_text: str | None = None, info_color: str | None = None, is_dark: bool | None = None
@@ -608,7 +628,7 @@ class KLineChartWindow(QWidget):
             "(function(payload) {"
             " if (typeof window.replaceKlineData !== 'function') return false;"
             " return window.replaceKlineData(payload);"
-            f" }})({payload_json});"
+            " })(" + payload_json + ");"
         )
 
         def _fallback_if_needed(applied):
@@ -769,10 +789,9 @@ class KLineChartWindow(QWidget):
                 except (AttributeError, RuntimeError, TypeError):
                     pass
                 try:
-                    browser.setParent(None)
+                    browser.setUpdatesEnabled(False)
                 except (AttributeError, RuntimeError, TypeError):
                     pass
-                browser.deleteLater()
         except (AttributeError, RuntimeError, TypeError) as _e:
             log.debug(f"[K线] WebEngine 释放异常: {_e}")
 

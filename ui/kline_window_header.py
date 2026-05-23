@@ -38,6 +38,40 @@ def _elide_summary_value(label, key_text: str, value_text: str) -> str:
     return metrics.elidedText(clean_value, Qt.TextElideMode.ElideRight, value_width)
 
 
+def _summary_signed_number(value_text: str) -> float | None:
+    text = str(value_text or "").strip().replace(",", "").replace("%", "")
+    if not text or text in {"--", "-"}:
+        return None
+    for marker in ("+", "＋"):
+        text = text.replace(marker, "")
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _resolve_summary_value_color(window, key_text: str, value_text: str, highlighted: bool) -> str:
+    theme = theme_manager.current_theme
+    if highlighted:
+        return window._summary_highlight_color
+
+    key = str(key_text or "")
+    value = str(value_text or "")
+    if "%" in value or any(keyword in key for keyword in ("涨幅", "涨跌", "振幅", "20日涨跌")):
+        number = _summary_signed_number(value)
+        if number is not None:
+            if number > 0:
+                return theme["COLOR_RISE"]
+            if number < 0:
+                return theme["COLOR_FALL"]
+            return theme["COLOR_FLAT"]
+
+    if any(keyword in key for keyword in ("异动", "提醒", "催化", "盘口")):
+        return theme["COLOR_WARNING"]
+
+    return window._summary_value_color
+
+
 def set_header_badge(window, label, text: str, tone_name: str) -> None:
     tokens = build_ui_tokens(theme_manager.current_theme)
     tone = get_state_tone(tone_name, theme_manager.current_theme)
@@ -116,12 +150,22 @@ def refresh_header_context(window) -> None:
                     label.setToolTip("")
                     continue
                 display_value = _elide_summary_value(label, key_text, base_value)
-                value_color = (
-                    window._summary_highlight_color if row_data.get("highlight") else window._summary_value_color
+                value_color = _resolve_summary_value_color(
+                    window,
+                    key_text,
+                    raw_value,
+                    bool(row_data.get("highlight")),
                 )
+                value_size = (
+                    getattr(window, "_summary_core_size", 14)
+                    if row_index == 0
+                    else getattr(window, "_summary_aux_size", 12)
+                )
+                value_weight = 700 if row_index == 0 else 600
                 label.setText(
                     f"<span style='color:{window._summary_key_color};'>{html.escape(key_text)}</span>"
-                    f"&nbsp;&nbsp;<span style='color:{value_color}; font-weight:600;'>"
+                    f"&nbsp;&nbsp;<span style='color:{value_color}; font-weight:{value_weight};"
+                    f" font-size:{value_size}px;'>"
                     f"{html.escape(display_value)}</span>"
                 )
                 tooltip = f"{key_text}: {raw_value}" if raw_value and raw_value != "--" else ""
@@ -303,6 +347,8 @@ def apply_qt_theme(window) -> None:
     window._summary_key_color = theme["TEXT_MUTED"]
     window._summary_value_color = widget_text
     window._summary_highlight_color = vcp_star
+    window._summary_core_size = font["size_lg"]
+    window._summary_aux_size = font["size_sm"]
     for card in window.summary_cards:
         card["frame"].setStyleSheet(
             f"""

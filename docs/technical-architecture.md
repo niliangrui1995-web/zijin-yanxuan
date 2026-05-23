@@ -11,7 +11,7 @@
 它不是 Web 服务，也没有后端 API 服务器。当前主要运行形态是单机桌面应用：
 
 - 入口：`vcp_hunter_qt.pyw`
-- UI 框架：PyQt6、PyQt6-WebEngine、QSS、qdarkstyle
+- UI 框架：PyQt6、PyQt6-WebEngine、自研动态 QSS 主题系统
 - 本地历史数据：Parquet/SQLite-first 本地仓库，通达信 `vipdoc` 保留为生产源和 fallback
 - 盘中行情：东方财富 HTTP，异常时回退新浪批量报价
 - 海外/亚洲辅助数据：AkShare、yfinance、`curl_cffi`

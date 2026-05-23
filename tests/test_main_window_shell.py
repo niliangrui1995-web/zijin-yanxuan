@@ -13,6 +13,8 @@ from ui.components.main_window_shell import (
     setup_system_menu,
 )
 from ui.window_flags import (
+    DWMWA_NCRENDERING_POLICY,
+    DWMNCRP_ENABLED,
     GWL_STYLE,
     SWP_FRAMECHANGED,
     SWP_NOACTIVATE,
@@ -25,6 +27,7 @@ from ui.window_flags import (
     WS_SYSMENU,
     apply_windows_frameless_taskbar_fix,
     build_frameless_main_window_flags,
+    enable_windows_native_shadow,
 )
 
 
@@ -307,3 +310,42 @@ def test_apply_windows_frameless_taskbar_fix_updates_native_styles(monkeypatch):
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
         )
     ]
+
+
+class DummyDwmApi:
+    def __init__(self):
+        self.extend_calls = []
+        self.attribute_calls = []
+
+    def DwmExtendFrameIntoClientArea(self, hwnd, margins):
+        self.extend_calls.append((hwnd, margins))
+        return 0
+
+    def DwmSetWindowAttribute(self, hwnd, attr, value, size):
+        self.attribute_calls.append((hwnd, attr, value, size))
+        return 0
+
+
+def test_enable_windows_native_shadow_sets_dwm_attributes_once(monkeypatch):
+    monkeypatch.setattr("ui.window_flags.os.name", "nt")
+    dwmapi = DummyDwmApi()
+
+    changed = enable_windows_native_shadow(DummyNativeWindow(), dwmapi=dwmapi)
+
+    assert changed is True
+    assert len(dwmapi.extend_calls) == 1
+    assert dwmapi.extend_calls[0][0] == 9527
+    assert len(dwmapi.attribute_calls) == 1
+    hwnd, attr, value, size = dwmapi.attribute_calls[0]
+    assert hwnd == 9527
+    assert attr == DWMWA_NCRENDERING_POLICY
+    assert value._obj.value == DWMNCRP_ENABLED
+    assert size > 0
+
+
+def test_enable_windows_native_shadow_fails_silently(monkeypatch):
+    monkeypatch.setattr("ui.window_flags.os.name", "nt")
+
+    changed = enable_windows_native_shadow(DummyNativeWindow(), dwmapi=object())
+
+    assert changed is False

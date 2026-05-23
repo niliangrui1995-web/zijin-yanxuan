@@ -30,6 +30,7 @@ def test_strict_screenshot_validation_accepts_1280_dark_audit(tmp_path):
         height=720,
         tabs=True,
         strict_tabs_min=1,
+        theme_appearance="dark",
     )
 
     assert errors == []
@@ -74,8 +75,25 @@ def test_strict_screenshot_validation_flags_white_panel_and_missing_tabs(tmp_pat
         height=720,
         tabs=True,
         strict_tabs_min=12,
+        theme_appearance="dark",
     )
 
     assert any("white panel" in error for error in errors)
     assert any("red titlebar pulse" in error for error in errors)
     assert any("expected at least 12" in error for error in errors)
+
+
+def test_strict_screenshot_validation_allows_light_theme_white_panels(tmp_path):
+    main = tmp_path / "00_main_window.png"
+    _save_image(main, color="#FFFFFF")
+
+    errors = _validate_saved_screenshots(
+        [main],
+        width=1280,
+        height=720,
+        tabs=False,
+        strict_tabs_min=0,
+        theme_appearance="light",
+    )
+
+    assert not any("white panel" in error for error in errors)

@@ -9,7 +9,7 @@ import os
 from app.services.ui_task_service import (
     ProcessSubprocessError,
     run_process,
-    windows_no_window_creationflags,
+    windows_no_window_kwargs,
 )
 from core.logger import get_logger
 
@@ -88,7 +88,7 @@ def _send_windows_toast(title: str, message: str):
         ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script, str(title), str(message)],
         capture_output=True,
         timeout=5,
-        creationflags=windows_no_window_creationflags(),
+        **windows_no_window_kwargs(),
         check=False,
     )
 

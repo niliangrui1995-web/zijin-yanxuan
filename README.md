@@ -64,7 +64,7 @@ Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatil
 ## 技术栈
 
 - 语言：Python 3.10+
-- UI：PyQt6、PyQt6-WebEngine、QSS、qdarkstyle
+- UI：PyQt6、PyQt6-WebEngine、自研动态 QSS 主题系统
 - 表格模型：`QTableView` + `QAbstractTableModel`
 - 数据处理：pandas、numpy、polars、pyarrow、openpyxl、lxml
 - 拼音辅助：`pypinyin`
@@ -296,7 +296,6 @@ python -m pip install -r requirements.txt
 
 - `PyQt6`
 - `PyQt6-WebEngine`
-- `qdarkstyle`
 - `pytdx`
 - `pandas`
 - `numpy`

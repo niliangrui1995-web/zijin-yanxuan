@@ -45,7 +45,11 @@ from ui.shell import (
     setup_custom_titlebar,
     setup_system_menu,
 )
-from ui.window_flags import apply_windows_frameless_taskbar_fix, build_frameless_main_window_flags
+from ui.window_flags import (
+    apply_windows_frameless_taskbar_fix,
+    build_frameless_main_window_flags,
+    enable_windows_native_shadow,
+)
 from ui.workers.central_quotes_worker import CentralQuotesService
 from ui.workspaces import ClassicWorkspace
 
@@ -82,6 +86,7 @@ class MainWindowQT(QMainWindow):
         splash=None,
         *,
         startup_enabled: bool = True,
+        auto_refresh_enabled: bool | None = None,
         background_prewarm: bool = True,
         kline_prewarm_enabled: bool = True,
         central_quotes_enabled: bool = True,
@@ -93,6 +98,7 @@ class MainWindowQT(QMainWindow):
         self._first_paint_recorded = False
         self._is_closing = False
         self._startup_enabled = bool(startup_enabled)
+        self._auto_refresh_enabled = self._startup_enabled if auto_refresh_enabled is None else bool(auto_refresh_enabled)
         self._workspace_background_prewarm = bool(background_prewarm)
         self._kline_prewarm_enabled = bool(kline_prewarm_enabled)
         self._central_quotes_enabled = bool(central_quotes_enabled)
@@ -221,7 +227,7 @@ class MainWindowQT(QMainWindow):
             log.info("[startup] startup timers disabled for controlled window construction")
 
         self._init_central_broadcaster()
-        if self._startup_enabled:
+        if self._auto_refresh_enabled:
             self.auto_refresh_scheduler.start()
         else:
             log.info("[startup] auto refresh scheduler disabled for controlled window construction")
@@ -754,6 +760,8 @@ class MainWindowQT(QMainWindow):
         if not self._native_taskbar_fix_applied:
             self._native_taskbar_fix_applied = True
             apply_windows_frameless_taskbar_fix(self)
+            # 优化维度二：在主窗口显现时激活 Windows 底层 DWM 原生投影，带给无边框窗口顶级的立体呼吸感
+            enable_windows_native_shadow(self)
         if hasattr(self, "_process_watchdog"):
             self._process_watchdog.pulse("showEvent")
         if self._first_paint_recorded:

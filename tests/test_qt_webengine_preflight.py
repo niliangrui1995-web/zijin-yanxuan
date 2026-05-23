@@ -26,7 +26,7 @@ def test_qt_webengine_preflight_hides_child_process(monkeypatch):
         return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.delenv("VCP_KLINE_WEBENGINE_PREFLIGHT", raising=False)
-    monkeypatch.setattr(preflight, "_windows_hidden_process_kwargs", lambda: {"creationflags": 123})
+    monkeypatch.setattr(preflight, "windows_no_window_kwargs", lambda: {"creationflags": 123})
     monkeypatch.setattr(preflight.subprocess, "run", fake_run)
 
     result = preflight.check_qt_webengine_available()

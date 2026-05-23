@@ -22,11 +22,11 @@ from app.services.ui_task_service import (
     build_domestic_process_env,
     run_process,
     task_registry,
-    windows_no_window_creationflags,
+    windows_no_window_kwargs,
 )
 from app.services.ui_task_service import background_job_runner as task_manager
-from core.exceptions import CacheIOError, DataFormatError
 from core.ai_industry_chain_pool import filter_rows_to_ai_chain_codes
+from core.exceptions import CacheIOError, DataFormatError
 from core.json_cache import load_json_file, save_json_file
 from core.task_errors import UserFacingTaskError
 from ui.components import (
@@ -152,7 +152,7 @@ def _run_domestic_akshare(mode: str, *args, timeout: int = 15):
         errors="ignore",
         timeout=timeout,
         env=env,
-        creationflags=windows_no_window_creationflags(),
+        **windows_no_window_kwargs(),
         check=True,
     )
     payload = (proc.stdout or "").strip()

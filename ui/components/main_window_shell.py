@@ -39,7 +39,7 @@ def _titlebar_shell_style(theme: dict) -> str:
             border-bottom: 1px solid {theme["TITLEBAR_BORDER"]};
         }}
         QLabel#titleBarBrand {{
-            color: {theme["BRAND_PRIMARY"]};
+            color: {theme.get("TITLEBAR_BRAND_TEXT", theme["BRAND_PRIMARY"])};
             font-size: {tokens["font"]["size_md"]}px;
             font-weight: {tokens["font"]["weight_bold"]};
             font-family: {tokens["font"]["family"]};
@@ -103,6 +103,16 @@ def _standalone_tabbar_qss(theme: dict, *, compact: bool = False) -> str:
     tab_radius = max(8, tokens["radius"]["md"])
     surface = tokens["surface"]
     border = tokens["border"]
+    tab_active_border = theme.get("TAB_ACTIVE_BORDER", theme["BORDER_BRAND"])
+    tab_active_top = theme.get("TAB_ACTIVE_TOP", "transparent")
+    tab_active_indicator = theme.get("TAB_ACTIVE_INDICATOR", tab_active_top)
+    if theme.get("TAB_ACTIVE_INDICATOR_SIDE") == "bottom":
+        tab_active_indicator_rule = (
+            f"border-top: 1px solid {tab_active_border};\n"
+            f"            border-bottom: 2px solid {tab_active_indicator};"
+        )
+    else:
+        tab_active_indicator_rule = f"border-top: 2px solid {tab_active_top};"
     return f"""
         QTabBar {{
             background: transparent;
@@ -139,8 +149,8 @@ def _standalone_tabbar_qss(theme: dict, *, compact: bool = False) -> str:
         QTabBar::tab:selected {{
             color: {theme.get("TAB_ACTIVE_TEXT", theme["TEXT_PRIMARY"])};
             background: {theme.get("TAB_ACTIVE_BG", theme["BRAND_SUBTLE"])};
-            border-color: {theme.get("TAB_ACTIVE_BORDER", theme["BORDER_BRAND"])};
-            border-top: 2px solid {theme.get("TAB_ACTIVE_TOP", "transparent")};
+            border-color: {tab_active_border};
+            {tab_active_indicator_rule}
         }}
         QTabBar::tab:hover:!selected {{
             color: {theme["TAB_TEXT_HOVER"]};
@@ -185,8 +195,12 @@ class MarketPulseStrip(QWidget):
         from ui.theme import theme_manager
 
         theme = theme_manager.current_theme
-        self._brand = QColor(theme.get("BRAND_HOVER", theme.get("BRAND_PRIMARY", "#B91C1C")))
-        self._deep = QColor(theme.get("BRAND_DEEP", theme.get("BRAND_PRIMARY", "#7F1D1D")))
+        self._brand = QColor(
+            theme.get("TITLEBAR_PULSE", theme.get("BRAND_HOVER", theme.get("BRAND_PRIMARY", "#B91C1C")))
+        )
+        self._deep = QColor(
+            theme.get("TITLEBAR_BORDER", theme.get("BRAND_DEEP", theme.get("BRAND_PRIMARY", "#7F1D1D")))
+        )
         self.update()
 
     def _on_theme_changed(self, _theme_name: str) -> None:
@@ -285,7 +299,7 @@ class StatusFlowStrip(QWidget):
         theme = theme_manager.current_theme
         self._neutral = QColor(theme.get("STATUSBAR_BORDER", theme.get("BORDER_SUBTLE", "#1F2937")))
         self._cyan = QColor(theme.get("COLOR_REALTIME", theme.get("NETWORK_ONLINE", "#22D3EE")))
-        self._brand = QColor(theme.get("BRAND_PRIMARY", "#B91C1C"))
+        self._brand = QColor(theme.get("STATUS_FLOW_WORKING", theme.get("BRAND_PRIMARY", "#B91C1C")))
         self._error = QColor(theme.get("COLOR_ERROR", theme.get("NETWORK_OFFLINE", "#EF4444")))
         self.update()
 
@@ -424,6 +438,32 @@ def _titlebar_sync_button_qss(theme: dict) -> str:
         }}
         QPushButton:pressed {{
             background: {primary_button_pressed_bg};
+        }}
+    """
+
+
+def _titlebar_secondary_button_qss(theme: dict) -> str:
+    tokens = build_ui_tokens(theme)
+    surface = tokens["surface"]
+    border = tokens["border"]
+    return f"""
+        QPushButton {{
+            background: {surface["toolbar_chip"]};
+            color: {theme["TEXT_SECONDARY"]};
+            border: 1px solid {border["subtle"]};
+            border-radius: {tokens["radius"]["pill"]}px;
+            padding: 0 {tokens["space"]["lg"]}px;
+            min-height: {tokens["control"]["toolbar_button_height"]}px;
+            font-size: {tokens["font"]["size_sm"]}px;
+            font-weight: {tokens["font"]["weight_semibold"]};
+        }}
+        QPushButton:hover {{
+            background: {theme["BG_HOVER"]};
+            color: {theme["TEXT_PRIMARY"]};
+            border: 1px solid {border["focus"]};
+        }}
+        QPushButton:pressed {{
+            background: {theme["BG_BUTTON_HOVER"]};
         }}
     """
 
@@ -887,7 +927,7 @@ class TitleBarSyncWidget(QFrame):
             """
         )
         self.btn_sync.setStyleSheet(_titlebar_sync_button_qss(theme))
-        self.btn_trade_calendar.setStyleSheet(_titlebar_sync_button_qss(theme))
+        self.btn_trade_calendar.setStyleSheet(_titlebar_secondary_button_qss(theme))
 
 
 @dataclass

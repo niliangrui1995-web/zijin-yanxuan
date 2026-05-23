@@ -26,6 +26,7 @@ from ui.models.table_model_helpers import (
     _sync_serial_values,
     _with_serial_header,
 )
+from ui.theme_tokens import build_ui_tokens
 
 _log = logging.getLogger(__name__)
 
@@ -46,18 +47,20 @@ class StockTableModel(QAbstractTableModel):
         self._plain_background_headers = set()
         self.dataChanged.connect(self._invalidate_sort_cache_for_changed_indexes)
 
+        font_tokens = build_ui_tokens()["font"]
+
         self.base_font = QFont()
-        self.base_font.setFamilies(["Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "SimSun"])
+        self.base_font.setFamilies(font_tokens["family_names"])
         self.base_font.setPointSize(12)
         self.base_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
 
         self.mono_font = QFont()
-        self.mono_font.setFamilies(["Consolas", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "SimSun"])
+        self.mono_font.setFamilies(font_tokens["mono_family_names"])
         self.mono_font.setPointSize(12)
         self.mono_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
 
         self.bold_font = QFont()
-        self.bold_font.setFamilies(["Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "SimSun"])
+        self.bold_font.setFamilies(font_tokens["family_names"])
         self.bold_font.setPointSize(12)
         self.bold_font.setBold(True)
 
