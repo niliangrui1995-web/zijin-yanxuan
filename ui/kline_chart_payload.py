@@ -335,8 +335,9 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
         ::-webkit-scrollbar-thumb:active {{ background: var(--scrollbar-handle-pressed); }}
 
         .top-toolbar {{ position: absolute; top: 0; left: 0; right: 0; height: 30px; background: var(--bg-toolbar); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 12px; z-index: 100; gap: 10px; transition: background-color 180ms ease, border-color 180ms ease; }}
+        .top-toolbar.is-updating .info-val {{ opacity: 0.55; }}
         .info-item {{ font-size: 11px; color: var(--text-muted); white-space: nowrap; transition: color 180ms ease; }}
-        .info-val {{ font-family: var(--mono-font-family); font-size: 11px; font-weight: 700; margin-left: 2px; color: var(--text-secondary); transition: color 180ms ease; }}
+        .info-val {{ font-family: var(--mono-font-family); font-size: 11px; font-weight: 700; margin-left: 2px; color: var(--text-secondary); transition: color 180ms ease, opacity 50ms ease; }}
         .ma-display {{ margin-left: auto; font-family: var(--mono-font-family); font-size: 11px; font-weight: 700; display: flex; gap: 8px; flex-wrap: nowrap; white-space: nowrap; }}
         .ma-display span.ma10 {{ color: var(--ma10); }}
         .ma-display span.ma20 {{ color: var(--ma20); }}
@@ -398,41 +399,230 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
         }}
 
         const chart = echarts.init(document.getElementById('chart'));
+        const toolbar = document.getElementById('toolbar');
+        const zoomEaseMs = 150;
+        let zoomFrame = 0;
+        let zoomStart = null;
+        let zoomTarget = null;
+        let zoomStartedAt = 0;
+        let pointerFrame = 0;
+        let pendingPointerIdx = null;
+        let lastToolbarIdx = -1;
+        let toolbarFadeTimer = 0;
+
+        function _clamp(value, min, max) {{
+            return Math.min(max, Math.max(min, value));
+        }}
+
+        function _easeOutCubic(t) {{
+            const x = 1 - _clamp(t, 0, 1);
+            return 1 - x * x * x;
+        }}
+
+        function _minZoomSpan() {{
+            const count = Math.max(rawData.dates.length, 1);
+            return Math.min(100, Math.max(6, Math.min(30, 20 / count * 100)));
+        }}
+
+        function _currentZoomRange() {{
+            const option = chart.getOption ? chart.getOption() : null;
+            const zoom = option && option.dataZoom && option.dataZoom[0] ? option.dataZoom[0] : {{}};
+            const start = Number(zoom.start !== undefined ? zoom.start : 55);
+            const end = Number(zoom.end !== undefined ? zoom.end : 100);
+            return {{
+                start: _clamp(Number.isFinite(start) ? start : 55, 0, 100),
+                end: _clamp(Number.isFinite(end) ? end : 100, 0, 100)
+            }};
+        }}
+
+        function _applyZoomRange(range) {{
+            chart.dispatchAction({{
+                type: 'dataZoom',
+                dataZoomIndex: 0,
+                start: _clamp(range.start, 0, 100),
+                end: _clamp(range.end, 0, 100)
+            }});
+        }}
+
+        function _smoothZoomTo(target) {{
+            zoomStart = _currentZoomRange();
+            zoomTarget = {{
+                start: _clamp(target.start, 0, 100),
+                end: _clamp(target.end, 0, 100)
+            }};
+            zoomStartedAt = performance.now();
+            if (zoomFrame) {{
+                cancelAnimationFrame(zoomFrame);
+            }}
+
+            const step = function (now) {{
+                const t = _clamp((now - zoomStartedAt) / zoomEaseMs, 0, 1);
+                const eased = _easeOutCubic(t);
+                _applyZoomRange({{
+                    start: zoomStart.start + (zoomTarget.start - zoomStart.start) * eased,
+                    end: zoomStart.end + (zoomTarget.end - zoomStart.end) * eased
+                }});
+                if (t < 1) {{
+                    zoomFrame = requestAnimationFrame(step);
+                }} else {{
+                    zoomFrame = 0;
+                    zoomStart = null;
+                    zoomTarget = null;
+                }}
+            }};
+            zoomFrame = requestAnimationFrame(step);
+        }}
+
+        function _installSmoothWheelZoom() {{
+            const zr = chart.getZr && chart.getZr();
+            if (!zr || !zr.on) return;
+            zr.on('mousewheel', function (params) {{
+                const event = params.event && params.event.event ? params.event.event : params.event;
+                if (event && event.preventDefault) event.preventDefault();
+                if (event && event.stopPropagation) event.stopPropagation();
+
+                const deltaY = event && typeof event.deltaY === 'number'
+                    ? event.deltaY
+                    : -(params.wheelDelta || 0);
+                const range = _currentZoomRange();
+                const span = Math.max(range.end - range.start, _minZoomSpan());
+                const nextSpan = _clamp(span * (deltaY > 0 ? 1.10 : 0.90), _minZoomSpan(), 100);
+                let anchorPct = range.start + span / 2;
+
+                try {{
+                    const point = chart.convertFromPixel({{ xAxisIndex: 0 }}, [params.offsetX, params.offsetY]);
+                    if (Array.isArray(point) && Number.isFinite(point[0]) && rawData.dates.length > 1) {{
+                        anchorPct = _clamp(point[0] / (rawData.dates.length - 1) * 100, range.start, range.end);
+                    }}
+                }} catch (_err) {{
+                    anchorPct = range.start + span / 2;
+                }}
+
+                const anchorRatio = _clamp((anchorPct - range.start) / Math.max(span, 0.001), 0, 1);
+                let nextStart = anchorPct - nextSpan * anchorRatio;
+                let nextEnd = nextStart + nextSpan;
+                if (nextStart < 0) {{
+                    nextEnd -= nextStart;
+                    nextStart = 0;
+                }}
+                if (nextEnd > 100) {{
+                    nextStart -= nextEnd - 100;
+                    nextEnd = 100;
+                }}
+                _smoothZoomTo({{ start: nextStart, end: nextEnd }});
+            }});
+        }}
+
+        function _formatPrice(value) {{
+            const num = Number(value);
+            return Number.isFinite(num) ? num.toFixed(2) : '-';
+        }}
+
+        function _formatVolume(value) {{
+            const volume = Number(value || 0);
+            return Number.isFinite(volume) ? (volume / 10000).toFixed(0) + '\\u4e07' : '-';
+        }}
+
+        function _setText(id, value) {{
+            const el = document.getElementById(id);
+            if (el) el.innerText = value;
+        }}
+
+        function _setPointerCloseMarker(idx) {{
+            const kline = rawData.klines[idx];
+            if (!kline) return;
+            chart.setOption({{
+                series: [
+                    {{
+                        id: 'pointerClose',
+                        data: [[idx, Number(kline[1])]]
+                    }}
+                ]
+            }}, false, true);
+        }}
+
+        function _clearPointerCloseMarker() {{
+            chart.setOption({{ series: [{{ id: 'pointerClose', data: [] }}] }}, false, true);
+        }}
+
+        function _updateToolbar(idx, fade) {{
+            if (idx < 0 || idx >= rawData.dates.length) return;
+            const dt = rawData.dates[idx];
+            const kline = rawData.klines[idx];
+            if (!kline) return;
+
+            const applyValues = function () {{
+                _setText('v-date', dt);
+                _setText('v-open', _formatPrice(kline[0]));
+                _setText('v-low', _formatPrice(kline[2]));
+                _setText('v-high', _formatPrice(kline[3]));
+
+                const prevClose = idx > 0 ? Number(rawData.klines[idx - 1][1]) : Number(kline[0]);
+                const close = Number(kline[1]);
+                const pct = prevClose > 0 ? ((close - prevClose) / prevClose * 100) : 0;
+                const pctStr = pct >= 0 ? '+' + pct.toFixed(2) + '%' : pct.toFixed(2) + '%';
+                const trendColor = pct >= 0 ? upColor : downColor;
+                const closeEl = document.getElementById('v-close');
+                if (closeEl) {{
+                    closeEl.innerText = _formatPrice(close);
+                    closeEl.style.color = trendColor;
+                }}
+                const pctEl = document.getElementById('v-pct');
+                if (pctEl) {{
+                    pctEl.innerText = pctStr;
+                    pctEl.style.color = trendColor;
+                }}
+
+                const volEntry = rawData.vols[idx];
+                const vol = volEntry && volEntry.value !== undefined ? volEntry.value : volEntry;
+                _setText('v-vol', _formatVolume(vol));
+
+                const maKeys = ['ma10', 'ma20', 'ma50', 'ma150', 'ma200'];
+                for (const key of maKeys) {{
+                    const val = rawData[key] ? rawData[key][idx] : null;
+                    _setText('v-' + key, (val !== null && val !== undefined) ? Number(val).toFixed(2) : '-');
+                }}
+            }};
+
+            if (!fade || !toolbar || idx === lastToolbarIdx) {{
+                applyValues();
+                lastToolbarIdx = idx;
+                return;
+            }}
+
+            toolbar.classList.add('is-updating');
+            window.clearTimeout(toolbarFadeTimer);
+            toolbarFadeTimer = window.setTimeout(function () {{
+                applyValues();
+                toolbar.classList.remove('is-updating');
+            }}, 50);
+            lastToolbarIdx = idx;
+        }}
+
+        function _schedulePointerUpdate(value) {{
+            const idx = Math.round(Number(value));
+            if (!Number.isFinite(idx) || idx < 0 || idx >= rawData.dates.length) return;
+            pendingPointerIdx = idx;
+            if (pointerFrame) return;
+            pointerFrame = requestAnimationFrame(function () {{
+                pointerFrame = 0;
+                const nextIdx = pendingPointerIdx;
+                pendingPointerIdx = null;
+                if (nextIdx === null) return;
+                _updateToolbar(nextIdx, true);
+                _setPointerCloseMarker(nextIdx);
+            }});
+        }}
 
         chart.on('updateAxisPointer', function (event) {{
-            const axisInfo = event.axesInfo[0];
+            const axisInfo = event.axesInfo && event.axesInfo[0];
             if (axisInfo) {{
-                const idx = axisInfo.value;
-                if (idx >= 0 && idx < rawData.dates.length) {{
-                    const dt = rawData.dates[idx];
-                    const kline = rawData.klines[idx];
-
-                    document.getElementById('v-date').innerText = dt;
-                    document.getElementById('v-open').innerText = kline[0].toFixed(2);
-                    document.getElementById('v-close').innerText = kline[1].toFixed(2);
-                    document.getElementById('v-low').innerText = kline[2].toFixed(2);
-                    document.getElementById('v-high').innerText = kline[3].toFixed(2);
-
-                    let prevClose = idx > 0 ? rawData.klines[idx-1][1] : kline[0];
-                    let pct = ((kline[1] - prevClose) / prevClose * 100);
-                    let pctStr = pct >= 0 ? '+' + pct.toFixed(2) + '%' : pct.toFixed(2) + '%';
-
-                    document.getElementById('v-pct').innerText = pctStr;
-                    document.getElementById('v-pct').style.color = pct >= 0 ? upColor : downColor;
-
-                    const vol = rawData.vols[idx].value || rawData.vols[idx];
-                    document.getElementById('v-vol').innerText = (vol / 10000).toFixed(0) + '万';
-
-                    const maKeys = ['ma10', 'ma20', 'ma50', 'ma150', 'ma200'];
-                    for (const key of maKeys) {{
-                        const el = document.getElementById('v-' + key);
-                        if (el && rawData[key]) {{
-                            const val = rawData[key][idx];
-                            el.innerText = (val !== null && val !== undefined) ? Number(val).toFixed(2) : '-';
-                        }}
-                    }}
-                }}
+                _schedulePointerUpdate(axisInfo.value);
             }}
+        }});
+
+        chart.on('globalout', function () {{
+            _clearPointerCloseMarker();
         }});
 
         function splitData(rawData) {{
@@ -458,6 +648,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             const data = splitData(rawData);
             return {{
                 animation: false,
+                stateAnimation: {{ duration: 0 }},
                 backgroundColor: themeState.bg_canvas,
                 legend: {{
                     show: false
@@ -569,6 +760,12 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                     {{
                         type: 'inside',
                         xAxisIndex: [0, 1, 2],
+                        zoomOnMouseWheel: false,
+                        moveOnMouseWheel: false,
+                        moveOnMouseMove: true,
+                        preventDefaultMouseMove: true,
+                        throttle: 16,
+                        minSpan: _minZoomSpan(),
                         start: 55,
                         end: 100
                     }},
@@ -577,6 +774,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         xAxisIndex: [0, 1, 2],
                         type: 'slider',
                         top: '94%',
+                        minSpan: _minZoomSpan(),
                         start: 55,
                         end: 100,
                         backgroundColor: themeState.datazoom_bg,
@@ -595,8 +793,11 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                 series: [
                     {{
                         name: '日K',
+                        id: 'kline',
                         type: 'candlestick',
                         data: data.values,
+                        barMinWidth: 2,
+                        barMaxWidth: 18,
                         itemStyle: {{
                             color: upColor,
                             color0: downColor,
@@ -626,6 +827,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                     }},
                     {{
                         name: 'VCP Breakout',
+                        id: 'vcpBreakout',
                         type: 'effectScatter',
                         coordinateSystem: 'cartesian2d',
                         xAxisIndex: 0,
@@ -647,46 +849,87 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         }}
                     }},
                     {{
+                        id: 'pointerClose',
+                        name: 'Pointer Close',
+                        type: 'scatter',
+                        coordinateSystem: 'cartesian2d',
+                        xAxisIndex: 0,
+                        yAxisIndex: 0,
+                        data: [],
+                        symbol: 'circle',
+                        symbolSize: 7,
+                        silent: true,
+                        z: 16,
+                        itemStyle: {{
+                            color: themeState.crosshair_line,
+                            borderColor: themeState.bg_canvas,
+                            borderWidth: 1,
+                            shadowBlur: 10,
+                            shadowColor: themeState.crosshair_line
+                        }}
+                    }},
+                    {{
+                        id: 'ma10',
                         name: 'MA10',
                         type: 'line',
+                        xAxisIndex: 0,
+                        yAxisIndex: 0,
                         data: rawData.ma10,
-                        smooth: true,
+                        smooth: false,
+                        animation: false,
                         showSymbol: false,
                         lineStyle: {{ width: 1.2, color: themeState.ma10 }}
                     }},
                     {{
+                        id: 'ma20',
                         name: 'MA20',
                         type: 'line',
+                        xAxisIndex: 0,
+                        yAxisIndex: 0,
                         data: rawData.ma20,
-                        smooth: true,
+                        smooth: false,
+                        animation: false,
                         showSymbol: false,
                         lineStyle: {{ width: 1.2, color: themeState.ma20 }}
                     }},
                     {{
+                        id: 'ma50',
                         name: 'MA50',
                         type: 'line',
+                        xAxisIndex: 0,
+                        yAxisIndex: 0,
                         data: rawData.ma50,
-                        smooth: true,
+                        smooth: false,
+                        animation: false,
                         showSymbol: false,
                         lineStyle: {{ width: 1.2, color: themeState.ma50 }}
                     }},
                     {{
+                        id: 'ma150',
                         name: 'MA150',
                         type: 'line',
+                        xAxisIndex: 0,
+                        yAxisIndex: 0,
                         data: rawData.ma150,
-                        smooth: true,
+                        smooth: false,
+                        animation: false,
                         showSymbol: false,
                         lineStyle: {{ width: 1.2, color: themeState.ma150 }}
                     }},
                     {{
+                        id: 'ma200',
                         name: 'MA200',
                         type: 'line',
+                        xAxisIndex: 0,
+                        yAxisIndex: 0,
                         data: rawData.ma200,
-                        smooth: true,
+                        smooth: false,
+                        animation: false,
                         showSymbol: false,
                         lineStyle: {{ width: 1.2, color: themeState.ma200 }}
                     }},
                     {{
+                        id: 'volume',
                         name: 'Volume',
                         type: 'bar',
                         xAxisIndex: 1,
@@ -694,6 +937,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         data: data.volumes
                     }},
                     {{
+                        id: 'volMa20',
                         name: 'VOL-MA20',
                         type: 'line',
                         xAxisIndex: 1,
@@ -704,6 +948,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         lineStyle: {{ width: 1.1, color: themeState.vol_ma20 }}
                     }},
                     {{
+                        id: 'macd',
                         name: 'MACD',
                         type: 'bar',
                         xAxisIndex: 2,
@@ -711,6 +956,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         data: rawData.macd
                     }},
                     {{
+                        id: 'diff',
                         name: 'DIFF',
                         type: 'line',
                         xAxisIndex: 2,
@@ -721,6 +967,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         lineStyle: {{ width: 1.1, color: themeState.macd_diff }}
                     }},
                     {{
+                        id: 'dea',
                         name: 'DEA',
                         type: 'line',
                         xAxisIndex: 2,
@@ -735,6 +982,8 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
         }}
 
         chart.setOption(buildOption());
+        _installSmoothWheelZoom();
+        _updateToolbar(rawData.dates.length - 1, false);
 
         window.applyTheme = function (payload) {{
             const t = payload && payload.theme ? payload.theme : payload;
@@ -752,6 +1001,8 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             }}
             chart.setOption(nextOption, true, true);
             chart.resize();
+            _updateToolbar(rawData.dates.length - 1, false);
+            _clearPointerCloseMarker();
             return true;
         }};
 
@@ -770,6 +1021,9 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             }}
             chart.setOption(nextOption, true, true);
             chart.resize();
+            lastToolbarIdx = -1;
+            _updateToolbar(rawData.dates.length - 1, false);
+            _clearPointerCloseMarker();
             return true;
         }};
 
@@ -802,19 +1056,20 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                     {{ data: rawData.dates }}
                 ],
                 series: [
-                    {{ data: rawData.klines }},
-                    {{ data: rawData.ma10 }},
-                    {{ data: rawData.ma20 }},
-                    {{ data: rawData.ma50 }},
-                    {{ data: rawData.ma150 }},
-                    {{ data: rawData.ma200 }},
-                    {{ data: rawData.vols }},
-                    {{ data: rawData.volMa20 }},
-                    {{ data: rawData.macd }},
-                    {{ data: rawData.diff }},
-                    {{ data: rawData.dea }}
+                    {{ id: 'kline', data: rawData.klines }},
+                    {{ id: 'ma10', data: rawData.ma10 }},
+                    {{ id: 'ma20', data: rawData.ma20 }},
+                    {{ id: 'ma50', data: rawData.ma50 }},
+                    {{ id: 'ma150', data: rawData.ma150 }},
+                    {{ id: 'ma200', data: rawData.ma200 }},
+                    {{ id: 'volume', data: rawData.vols }},
+                    {{ id: 'volMa20', data: rawData.volMa20 }},
+                    {{ id: 'macd', data: rawData.macd }},
+                    {{ id: 'diff', data: rawData.diff }},
+                    {{ id: 'dea', data: rawData.dea }}
                 ]
             }}, false, true);
+            _updateToolbar(rawData.dates.length - 1, false);
         }};
 
         window.addEventListener('resize', function () {{

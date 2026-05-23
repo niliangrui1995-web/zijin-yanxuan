@@ -66,6 +66,11 @@ def apply_windows_frameless_taskbar_fix(window, *, user32=None) -> bool:
 
 DWMWA_NCRENDERING_POLICY = 2
 DWMNCRP_ENABLED = 2
+DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+DWMWA_SYSTEMBACKDROP_TYPE = 38
+DWMSBT_MAINWINDOW = 2
+DWMSBT_TRANSIENTWINDOW = 3
+DWMSBT_TABBEDWINDOW = 4
 
 
 def enable_windows_native_shadow(window, *, dwmapi=None, logger=None) -> bool:
@@ -107,4 +112,57 @@ def enable_windows_native_shadow(window, *, dwmapi=None, logger=None) -> bool:
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
         log = logger or logging.getLogger(__name__)
         log.debug("[DWM阴影] 原生投影启用失败: %s", exc)
+        return False
+
+
+def enable_windows_system_backdrop(
+    window,
+    *,
+    backdrop: str = "mica",
+    dark: bool | None = None,
+    dwmapi=None,
+    logger=None,
+) -> bool:
+    """Enable a Windows 11 system backdrop such as Mica or Acrylic when available."""
+
+    if os.name != "nt":
+        return False
+
+    hwnd = int(window.winId())
+    if hwnd <= 0:
+        return False
+
+    backdrop_value = {
+        "mica": DWMSBT_MAINWINDOW,
+        "acrylic": DWMSBT_TRANSIENTWINDOW,
+        "tabbed": DWMSBT_TABBEDWINDOW,
+    }.get(str(backdrop or "mica").lower(), DWMSBT_MAINWINDOW)
+
+    try:
+        import ctypes
+        from ctypes import byref, c_int, sizeof
+
+        if dwmapi is None:
+            dwmapi = ctypes.windll.dwmapi
+
+        if dark is not None:
+            dark_value = c_int(1 if dark else 0)
+            dwmapi.DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_USE_IMMERSIVE_DARK_MODE,
+                byref(dark_value),
+                sizeof(dark_value),
+            )
+
+        value = c_int(backdrop_value)
+        result = dwmapi.DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_SYSTEMBACKDROP_TYPE,
+            byref(value),
+            sizeof(value),
+        )
+        return result in (0, None)
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        log = logger or logging.getLogger(__name__)
+        log.debug("[DWM backdrop] enable failed: %s", exc)
         return False

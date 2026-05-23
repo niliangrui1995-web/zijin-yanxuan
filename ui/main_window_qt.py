@@ -51,6 +51,7 @@ from ui.window_flags import (
     apply_windows_frameless_taskbar_fix,
     build_frameless_main_window_flags,
     enable_windows_native_shadow,
+    enable_windows_system_backdrop,
 )
 from ui.workers.central_quotes_worker import CentralQuotesService
 from ui.workspaces import ClassicWorkspace
@@ -809,6 +810,7 @@ class MainWindowQT(QMainWindow):
             apply_windows_frameless_taskbar_fix(self)
             # 优化维度二：在主窗口显现时激活 Windows 底层 DWM 原生投影，带给无边框窗口顶级的立体呼吸感
             enable_windows_native_shadow(self)
+            enable_windows_system_backdrop(self, backdrop="mica", dark=bool(build_ui_tokens()["is_dark"]))
         if hasattr(self, "_process_watchdog"):
             self._process_watchdog.pulse("showEvent")
         if self._first_paint_recorded:

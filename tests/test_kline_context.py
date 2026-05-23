@@ -437,6 +437,15 @@ def test_build_kline_html_hides_echarts_tooltip_panel():
     assert "opacity: 0.92" in html
     assert "borderRadius: 4" in html
     assert "type: [4, 4]" in html
+    assert "zoomOnMouseWheel: false" in html
+    assert "requestAnimationFrame" in html
+    assert "id: 'pointerClose'" in html
+    assert "stateAnimation: { duration: 0 }" in html
+    assert "barMaxWidth: 18" in html
+    assert html.count("smooth: false") >= 5
+    assert "const trendColor = pct >= 0 ? upColor : downColor;" in html
+    assert "closeEl.style.color = trendColor;" in html
+    assert "pctEl.style.color = trendColor;" in html
     assert "splitLine: { show: false }" in html
     assert "type: 'effectScatter'" in html
     assert "rippleEffect" in html

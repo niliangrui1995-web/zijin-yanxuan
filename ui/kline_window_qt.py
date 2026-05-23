@@ -56,6 +56,7 @@ from ui.kline_window_runtime import (
     refresh_last_bar,
 )
 from ui.theme import theme_manager
+from ui.window_flags import enable_windows_native_shadow, enable_windows_system_backdrop
 
 # ECharts JS 本地路径（断网也能用）
 _ECHARTS_JS_PATH = _os.path.join(
@@ -95,6 +96,8 @@ class KLineChartWindow(QWidget):
         self.code_list = code_list or []
         self.current_idx = current_idx
         self._closing = False
+        self._render_generation = 0
+        self._native_window_effects_applied = False
         self._snap_threshold = 15
         self._snapping_to_main_window = False
 
@@ -339,6 +342,14 @@ class KLineChartWindow(QWidget):
     def _refresh_header_context(self):
         refresh_header_context(self)
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._native_window_effects_applied:
+            return
+        self._native_window_effects_applied = True
+        enable_windows_native_shadow(self)
+        enable_windows_system_backdrop(self, backdrop="mica", dark=theme_manager.is_dark())
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if hasattr(self, "summary_cards"):
@@ -465,6 +476,7 @@ class KLineChartWindow(QWidget):
 
     # ======================== 数据加载 ========================
     def _load_and_draw(self):
+        self._render_generation = int(getattr(self, "_render_generation", 0) or 0) + 1
         load_and_draw(self)
 
     def _show_chart_placeholder(self):
@@ -777,6 +789,17 @@ class KLineChartWindow(QWidget):
                 self._rt_timer.stop()
 
             # 重置状态
+            old_code = str(getattr(self, "code", "") or "").strip()
+            if old_code:
+                for task_key in (
+                    task_registry.window(f"kline_{old_code}"),
+                    task_registry.window(f"kline_asian_{old_code}"),
+                ):
+                    try:
+                        background_job_runner.abandon(task_key)
+                    except (AttributeError, RuntimeError, TypeError, ValueError):
+                        pass
+
             item_data = self.code_list[new_idx]
             self.current_idx = new_idx
             self.code = item_data.get("代码", "")

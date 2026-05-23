@@ -142,23 +142,33 @@ def load_and_draw(window):
     """异步加载 K 线数据并渲染 ECharts。"""
     if getattr(window, "_closing", False):
         return
-    if "." in window.code:
+    request_code = str(getattr(window, "code", "") or "").strip()
+    request_generation = int(getattr(window, "_render_generation", 0) or 0)
+
+    def _is_current_request() -> bool:
+        return (
+            not getattr(window, "_closing", False)
+            and str(getattr(window, "code", "") or "").strip() == request_code
+            and int(getattr(window, "_render_generation", 0) or 0) == request_generation
+        )
+
+    if "." in request_code:
         window._load_asian_chart()
         return
 
-    local_df = window.data_provider.get_data(window.code)
+    local_df = window.data_provider.get_data(request_code)
     if local_df is not None and len(local_df) >= 60:
         window._render_chart(local_df, loading=True)
     else:
         window._set_status_message("正在同步完整日线数据...", tone="loading")
 
     def _bg_fetch():
-        if getattr(window, "_closing", False):
+        if not _is_current_request():
             return None
         quote_to_apply = None
         target_trade_date = window._get_cn_target_trade_date()
 
-        normalized_local_df = normalize_daily_df_index(window.data_provider.get_data(window.code), logger=window._log)
+        normalized_local_df = normalize_daily_df_index(window.data_provider.get_data(request_code), logger=window._log)
         last_local_date = None
         if normalized_local_df is not None and not normalized_local_df.empty:
             last_local_date = pd.Timestamp(normalized_local_df.index[-1]).date()
@@ -167,12 +177,15 @@ def load_and_draw(window):
 
         if need_sync:
             try:
-                fresh_df = window.data_provider.get_data_fresh_for_chart(window.code, force_sync=True)
+                fresh_df = window.data_provider.get_data_fresh_for_chart(request_code, force_sync=True)
             except TypeError:
-                fresh_df = window.data_provider.get_data_fresh_for_chart(window.code)
+                fresh_df = window.data_provider.get_data_fresh_for_chart(request_code)
             fresh_df = normalize_daily_df_index(fresh_df, logger=window._log)
         else:
             fresh_df = normalized_local_df
+
+        if not _is_current_request():
+            return None
 
         if (
             not getattr(window.data_provider, "_offline", False)
@@ -186,17 +199,17 @@ def load_and_draw(window):
             already_has_latest = last_dt is not None and last_dt >= target_trade_date
             if not already_has_latest:
                 try:
-                    quotes = window.data_provider.fetch_realtime_quotes_batch([window.code])
+                    quotes = window.data_provider.fetch_realtime_quotes_batch([request_code])
                 except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
                     window._log.warning(f"[K线] {window.code} 实时行情合并失败: {exc}")
                 else:
-                    quote_to_apply = quotes.get(window.code) if quotes else None
+                    quote_to_apply = quotes.get(request_code) if quotes else None
 
         return fresh_df, quote_to_apply, target_trade_date
 
     def _on_fetch_success(result):
         try:
-            if getattr(window, "_closing", False):
+            if not _is_current_request():
                 return
             if not result:
                 return
@@ -222,7 +235,7 @@ def load_and_draw(window):
     task_manager.run_in_background(
         _bg_fetch,
         on_success=_on_fetch_success,
-        task_id=task_registry.window(f"kline_{window.code}").task_id,
+        task_id=task_registry.window(f"kline_{request_code}").task_id,
     )
 
 

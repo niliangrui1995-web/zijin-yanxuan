@@ -837,6 +837,78 @@ def test_kline_load_and_draw_appends_today_bar_during_lunch_break(monkeypatch):
         _dispose_kline_window(window)
 
 
+def test_kline_load_and_draw_ignores_stale_switch_result(monkeypatch):
+    original_load = kline_module.KLineChartWindow._load_and_draw
+
+    class _SwitchingProvider:
+        _offline = True
+
+        def __init__(self):
+            self.window = None
+
+        def get_data(self, _code):
+            return None
+
+        def get_data_fresh_for_chart(self, _code, force_sync=False):
+            self.window.code = "000002"
+            self.window._render_generation += 1
+            return pd.DataFrame(
+                {
+                    "open": [10.0, 10.1, 10.2, 10.3, 10.4, 10.5],
+                    "high": [10.2, 10.3, 10.4, 10.5, 10.6, 10.7],
+                    "low": [9.9, 10.0, 10.1, 10.2, 10.3, 10.4],
+                    "close": [10.1, 10.2, 10.3, 10.4, 10.5, 10.6],
+                    "volume": [1000.0, 1100.0, 1200.0, 1300.0, 1400.0, 1500.0],
+                },
+                index=pd.date_range("2026-04-01", periods=6),
+            )
+
+    monkeypatch.setattr(kline_module, "QWebEngineView", QWidget)
+    monkeypatch.setattr(kline_module.KLineChartWindow, "_load_and_draw", lambda self: None)
+    monkeypatch.setattr(
+        kline_module.KLineChartWindow,
+        "_check_fav_status",
+        lambda self: setattr(self, "is_fav", False),
+    )
+
+    provider = _SwitchingProvider()
+    window = kline_module.KLineChartWindow(
+        None,
+        "000001",
+        "骞冲畨閾惰",
+        provider,
+        vcp_data={},
+        code_list=[{"浠ｇ爜": "000001", "鍚嶇О": "骞冲畨閾惰"}],
+        current_idx=0,
+    )
+    provider.window = window
+    rendered = []
+
+    def _run_inline(fn, *args, on_success=None, on_error=None, task_id=None, **kwargs):
+        try:
+            result = fn(*args, **kwargs)
+            if on_success:
+                on_success(result)
+        except (AttributeError, KeyError, RuntimeError, TypeError, ValueError) as exc:
+            if on_error:
+                on_error(str(exc))
+            else:
+                raise exc
+        return task_id or "test-kline-stale"
+
+    monkeypatch.setattr(window, "_render_chart", lambda df, loading=False: rendered.append((df, loading)))
+    monkeypatch.setattr(window, "_set_status_message", lambda *args, **kwargs: None)
+    monkeypatch.setattr(window, "_get_cn_target_trade_date", lambda: dt.date(2026, 4, 14))
+    monkeypatch.setattr(task_manager, "run_in_background", _run_inline)
+
+    try:
+        original_load(window)
+
+        assert rendered == []
+    finally:
+        _dispose_kline_window(window)
+
+
 def test_kline_load_asian_chart_falls_back_to_single_ticket_fetch(monkeypatch, tmp_path):
     cache_file = tmp_path / "asian_klines_latest.json"
     cache_file.write_text(json.dumps({"stocks": []}, ensure_ascii=False), encoding="utf-8")

@@ -15,7 +15,10 @@ from ui.components.main_window_shell import (
 from ui.components.table_controls import StatusGlyph
 from ui.window_flags import (
     DWMNCRP_ENABLED,
+    DWMSBT_MAINWINDOW,
     DWMWA_NCRENDERING_POLICY,
+    DWMWA_SYSTEMBACKDROP_TYPE,
+    DWMWA_USE_IMMERSIVE_DARK_MODE,
     GWL_STYLE,
     SWP_FRAMECHANGED,
     SWP_NOACTIVATE,
@@ -29,6 +32,7 @@ from ui.window_flags import (
     apply_windows_frameless_taskbar_fix,
     build_frameless_main_window_flags,
     enable_windows_native_shadow,
+    enable_windows_system_backdrop,
 )
 
 
@@ -363,3 +367,19 @@ def test_enable_windows_native_shadow_fails_silently(monkeypatch):
     changed = enable_windows_native_shadow(DummyNativeWindow(), dwmapi=object())
 
     assert changed is False
+
+
+def test_enable_windows_system_backdrop_sets_mica_and_dark_mode(monkeypatch):
+    monkeypatch.setattr("ui.window_flags.os.name", "nt")
+    dwmapi = DummyDwmApi()
+
+    changed = enable_windows_system_backdrop(DummyNativeWindow(), dwmapi=dwmapi, backdrop="mica", dark=True)
+
+    assert changed is True
+    assert len(dwmapi.attribute_calls) == 2
+    _, dark_attr, dark_value, _ = dwmapi.attribute_calls[0]
+    _, backdrop_attr, backdrop_value, _ = dwmapi.attribute_calls[1]
+    assert dark_attr == DWMWA_USE_IMMERSIVE_DARK_MODE
+    assert dark_value._obj.value == 1
+    assert backdrop_attr == DWMWA_SYSTEMBACKDROP_TYPE
+    assert backdrop_value._obj.value == DWMSBT_MAINWINDOW
