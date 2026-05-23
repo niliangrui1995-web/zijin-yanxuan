@@ -500,16 +500,56 @@ class KLineChartWindow(QWidget):
             color: {colors["text_secondary"]};
             font-family: \"Microsoft YaHei UI\", sans-serif;
         }}
-        .box {{
+        .stage {{
             height: 100%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 13px;
+            overflow: hidden;
+        }}
+        .skeleton {{
+            width: min(860px, 82vw);
+            height: min(420px, 64vh);
+            border: 1px solid {colors["depth_line"]};
+            border-radius: 12px;
+            background:
+                linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.08) 48%, transparent 100%),
+                repeating-linear-gradient(0deg, transparent 0 47px, {colors["grid_line"]} 48px),
+                repeating-linear-gradient(90deg, transparent 0 63px, {colors["grid_line"]} 64px),
+                linear-gradient(180deg, {colors["vcp_area_top"]}, {colors["vcp_area_bottom"]});
+            background-size: 220px 100%, auto, auto, auto;
+            animation: sweep 1.25s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+            box-shadow: 0 16px 36px rgba(0, 0, 0, 0.14);
+            position: relative;
+        }}
+        .skeleton::before {{
+            content: "";
+            position: absolute;
+            left: 6%;
+            right: 6%;
+            top: 18%;
+            bottom: 20%;
+            background:
+                linear-gradient(135deg, transparent 0 12%, {colors["up_gradient_top"]} 13% 14%, transparent 15% 32%, {colors["down_gradient_top"]} 33% 34%, transparent 35% 54%, {colors["volume_spike"]} 55% 56%, transparent 57%);
+            opacity: 0.40;
+        }}
+        .skeleton::after {{
+            content: "";
+            position: absolute;
+            left: 7%;
+            right: 7%;
+            bottom: 8%;
+            height: 14%;
+            background: repeating-linear-gradient(90deg, {colors["volume_dry"]} 0 8px, transparent 8px 18px);
+            opacity: 0.58;
+        }}
+        @keyframes sweep {{
+            from {{ background-position: -240px 0, 0 0, 0 0, 0 0; }}
+            to {{ background-position: 1000px 0, 0 0, 0 0, 0 0; }}
         }}
     </style>
 </head>
-<body><div class=\"box\">正在绘制K线...</div></body>
+<body><div class=\"stage\"><div class=\"skeleton\" aria-label=\"K line loading\"></div></div></body>
 </html>"""
         try:
             browser.setHtml(placeholder, QUrl("about:blank"))

@@ -6,6 +6,7 @@ from datetime import timedelta
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import QGraphicsDropShadowEffect
 
 from app.services.ui_market_calendar_service import MarketCalendar
 from app.services.ui_watchlist_service import watchlist_vm
@@ -70,6 +71,15 @@ def _resolve_summary_value_color(window, key_text: str, value_text: str, highlig
         return theme["COLOR_WARNING"]
 
     return window._summary_value_color
+
+
+def _apply_ambient_shadow(widget, *, is_dark: bool, blur: int = 12, offset_y: int = 2) -> None:
+    effect = QGraphicsDropShadowEffect(widget)
+    effect.setBlurRadius(blur)
+    effect.setOffset(0, offset_y)
+    alpha = 54 if is_dark else 28
+    effect.setColor(QColor(0, 0, 0, alpha))
+    widget.setGraphicsEffect(effect)
 
 
 def set_header_badge(window, label, text: str, tone_name: str) -> None:
@@ -216,7 +226,7 @@ def apply_qt_theme(window) -> None:
     btn_disabled_border = palette["btn_disabled_border"]
     chart_bg = palette["chart_bg"]
     nav_bg = palette["nav_bg"]
-    summary_border = palette["summary_border"]
+    depth_line = theme.get("KLINE_DEPTH_LINE", "rgba(255, 255, 255, 0.05)" if is_dark else "rgba(15, 23, 42, 0.04)")
     radius = tokens["radius"]
     font = tokens["font"]
     control = tokens["control"]
@@ -234,7 +244,7 @@ def apply_qt_theme(window) -> None:
         f"""
             QFrame#klineContainer {{
                 background-color: {widget_bg};
-                border: 1px solid {toolbar_border};
+                border: 1px solid {depth_line};
                 border-radius: {radius["lg"]}px;
             }}
         """
@@ -269,7 +279,7 @@ def apply_qt_theme(window) -> None:
         """
     )
 
-    window.header_widget.setStyleSheet(f"background-color: {toolbar_bg}; border-bottom: 1px solid {toolbar_border};")
+    window.header_widget.setStyleSheet(f"background-color: {toolbar_bg}; border-bottom: 1px solid {depth_line};")
     window.identity_lbl.setStyleSheet(
         f"color: {widget_text}; font-weight: {font['weight_bold']}; font-size: {font['size_lg']}px;"
     )
@@ -343,7 +353,7 @@ def apply_qt_theme(window) -> None:
     )
     apply_header_badges(window)
 
-    window.summary_widget.setStyleSheet(f"background-color: {summary_bg}; border-bottom: 1px solid {summary_border};")
+    window.summary_widget.setStyleSheet(f"background-color: {summary_bg}; border-bottom: 1px solid {depth_line};")
     window._summary_key_color = theme["TEXT_MUTED"]
     window._summary_value_color = widget_text
     window._summary_highlight_color = vcp_star
@@ -353,12 +363,14 @@ def apply_qt_theme(window) -> None:
         card["frame"].setStyleSheet(
             f"""
                 QFrame#klineSummaryCard {{
-                    background-color: {nav_bg};
-                    border: 1px solid {summary_border};
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 {nav_bg}, stop:1 {summary_bg});
+                    border: 1px solid {depth_line};
                     border-radius: {radius["lg"]}px;
                 }}
             """
         )
+        _apply_ambient_shadow(card["frame"], is_dark=is_dark, blur=12, offset_y=2)
         card["title"].setStyleSheet(
             f"color: {theme['TEXT_MUTED']}; font-size: {font['size_xs']}px;"
             f" font-weight: {font['weight_medium']}; letter-spacing: 0px;"

@@ -69,6 +69,12 @@ def generate_global_qss(theme: dict = None, density: str | None = None) -> str:
     tooltip_bg = "rgba(15, 18, 30, 0.88)" if ui["is_dark"] else "rgba(255, 255, 255, 0.96)"
     tooltip_border = "rgba(255, 255, 255, 0.16)" if ui["is_dark"] else "rgba(15, 23, 42, 0.12)"
     tooltip_text = t.get("TEXT_BRIGHT", text["primary"]) if ui["is_dark"] else text["primary"]
+    depth_line = t.get("KLINE_DEPTH_LINE", "rgba(255, 255, 255, 0.05)" if ui["is_dark"] else "rgba(15, 23, 42, 0.04)")
+    panel_depth_bg = (
+        f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {surface['panel']}, stop:1 {surface['elevated']})"
+        if ui["is_dark"]
+        else surface["panel"]
+    )
 
     return f"""
 /* ═══════════════════════════════════════════
@@ -111,8 +117,8 @@ QWidget#leftPanel {{
    QTabWidget - 现代标签页
    ═══════════════════════════════════════════ */
 QTabWidget::pane {{
-    background-color: {t["BG_CARD"]};
-    border: 1px solid {border["default"]};
+    background: {panel_depth_bg};
+    border: 1px solid {depth_line};
     border-radius: {radius["lg"]}px;
     top: -1px;
 }}
@@ -451,12 +457,12 @@ QProgressBar::chunk {{
    ═══════════════════════════════════════════ */
 QWidget#tabToolbar {{
     background: {toolbar_background};
-    border-bottom: 1px solid {border["default"]};
+    border-bottom: 1px solid {depth_line};
     min-height: {shell["toolbar_min_height"]}px;
 }}
 QFrame#tabToolbarTitleWrap {{
     background-color: {surface["toolbar_card"]};
-    border: 1px solid {border["default"]};
+    border: 1px solid {depth_line};
     border-radius: {radius["xl"]}px;
     min-height: {control["toolbar_button_height"] + 1}px;
 }}
@@ -572,7 +578,7 @@ QLabel#warningStatus {{
 
 QFrame#taskStatusPanel {{
     background-color: {surface["elevated"]};
-    border: 1px solid {border["default"]};
+    border: 1px solid {depth_line};
     border-radius: {radius["lg"]}px;
 }}
 QLabel#taskStatusPanelTitle {{

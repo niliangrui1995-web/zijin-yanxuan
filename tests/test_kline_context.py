@@ -438,6 +438,10 @@ def test_build_kline_html_hides_echarts_tooltip_panel():
     assert "borderRadius: 4" in html
     assert "type: [4, 4]" in html
     assert "zoomOnMouseWheel: false" in html
+    assert html.count("filterMode: 'none'") == 2
+    assert "throttle: 0" in html
+    assert "_smoothZoomTo" not in html
+    assert "zoomEaseMs" not in html
     assert "requestAnimationFrame" in html
     assert "id: 'pointerClose'" in html
     assert "stateAnimation: { duration: 0 }" in html
@@ -447,7 +451,19 @@ def test_build_kline_html_hides_echarts_tooltip_panel():
     assert "closeEl.style.color = trendColor;" in html
     assert "pctEl.style.color = trendColor;" in html
     assert "splitLine: { show: false }" in html
+    assert "function buildVcpMarkerData()" in html
+    assert "const category = rawData.dates[idx];" in html
+    assert "value: [category, y]" in html
+    assert "id: 'vcpBreakout'" in html
     assert "type: 'effectScatter'" in html
+    assert "animationDuration: 150" in html
+    assert "animationEasing: 'cubicOut'" in html
+    assert "VCP_STAR_SYMBOL" in html
+    assert "function buildVolumeData()" in html
+    assert "function buildVcpCurveSeries()" in html
+    assert "buildVcpAreaData()" in html
+    assert "color: upColor" in html
+    assert "color0: downColor" in html
     assert "rippleEffect" in html
     assert "markPoint:" not in html
 

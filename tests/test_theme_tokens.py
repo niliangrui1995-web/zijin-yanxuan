@@ -173,6 +173,10 @@ def test_yaohei_selection_and_primary_actions_use_accent_not_market_red():
     assert THEME_YAOHEI["KLINE_GRID_LINE"] == "rgba(126, 142, 160, 0.08)"
     assert THEME_YAOHEI["KLINE_CROSSHAIR_LINE"] == "rgba(232, 237, 243, 0.86)"
     assert THEME_YAOHEI["KLINE_VCP_STAR"] == "#D0A44E"
+    assert THEME_YAOHEI["KLINE_UP_GRADIENT_TOP"] == "#F06455"
+    assert THEME_YAOHEI["KLINE_DOWN_GRADIENT_BOTTOM"] == "#146343"
+    assert THEME_YAOHEI["KLINE_VOLUME_SPIKE"] == "#D0A44E"
+    assert THEME_YAOHEI["KLINE_DEPTH_LINE"] == "rgba(255, 255, 255, 0.05)"
     assert THEME_YAOHEI["BRAND_PRIMARY"] == "#B93A32"
     assert THEME_YAOHEI["COLOR_RISE"] != THEME_YAOHEI["BRAND_PRIMARY"]
 

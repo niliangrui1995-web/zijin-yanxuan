@@ -179,6 +179,12 @@ def build_kline_theme_colors() -> dict:
     colors = {
         "up_color": t["KLINE_UP_COLOR"],
         "down_color": t["KLINE_DOWN_COLOR"],
+        "up_gradient_top": t.get("KLINE_UP_GRADIENT_TOP", t["KLINE_UP_COLOR"]),
+        "up_gradient_bottom": t.get("KLINE_UP_GRADIENT_BOTTOM", t["KLINE_UP_COLOR"]),
+        "up_border": t.get("KLINE_UP_BORDER", t["KLINE_UP_COLOR"]),
+        "down_gradient_top": t.get("KLINE_DOWN_GRADIENT_TOP", t["KLINE_DOWN_COLOR"]),
+        "down_gradient_bottom": t.get("KLINE_DOWN_GRADIENT_BOTTOM", t["KLINE_DOWN_COLOR"]),
+        "down_border": t.get("KLINE_DOWN_BORDER", t["KLINE_DOWN_COLOR"]),
         "ma10": t["KLINE_MA10"],
         "ma20": t["KLINE_MA20"],
         "ma50": t["KLINE_MA50"],
@@ -193,8 +199,17 @@ def build_kline_theme_colors() -> dict:
         "vcp_line": t["KLINE_VCP_LINE"],
         "vcp_line_soft": t["KLINE_VCP_LINE_SOFT"],
         "vcp_area": t["KLINE_VCP_AREA"],
+        "vcp_area_top": t.get("KLINE_VCP_AREA_TOP", t["KLINE_VCP_AREA"]),
+        "vcp_area_bottom": t.get("KLINE_VCP_AREA_BOTTOM", t["KLINE_VCP_AREA"]),
+        "vcp_area_border": t.get("KLINE_VCP_AREA_BORDER", t["KLINE_VCP_LINE_SOFT"]),
         "vcp_guide": t["KLINE_VCP_GUIDE"],
         "vcp_breakout_bg": t["KLINE_VCP_BREAKOUT_BG"],
+        "ma_ribbon_up": t.get("KLINE_MA_RIBBON_UP", "rgba(224, 82, 67, 0.08)"),
+        "ma_ribbon_down": t.get("KLINE_MA_RIBBON_DOWN", "rgba(42, 168, 118, 0.08)"),
+        "volume_dry": t.get("KLINE_VOLUME_DRY", "rgba(126, 142, 160, 0.22)"),
+        "volume_spike": t.get("KLINE_VOLUME_SPIKE", t["KLINE_VCP_STAR"]),
+        "volume_spike_shadow": t.get("KLINE_VOLUME_SPIKE_SHADOW", t["KLINE_VCP_STAR"]),
+        "depth_line": t.get("KLINE_DEPTH_LINE", "rgba(255, 255, 255, 0.05)" if is_dark else "rgba(15, 23, 42, 0.04)"),
         "tooltip_bg": t.get("KLINE_TOOLTIP_BG", "rgba(17, 24, 39, 0.92)"),
         "tooltip_text": t.get("KLINE_TOOLTIP_TEXT", "#F3F4F6"),
         "macd_diff": t.get("KLINE_MACD_DIFF", "#FBBF24"),
@@ -312,6 +327,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             --text-primary: {theme_colors["text_primary"]};
             --text-secondary: {theme_colors["text_secondary"]};
             --text-muted: {theme_colors["text_muted"]};
+            --depth-line: {theme_colors["depth_line"]};
             --ma10: {theme_colors["ma10"]};
             --ma20: {theme_colors["ma20"]};
             --ma50: {theme_colors["ma50"]};
@@ -334,7 +350,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
         ::-webkit-scrollbar-thumb:hover {{ background: var(--scrollbar-handle-hover); }}
         ::-webkit-scrollbar-thumb:active {{ background: var(--scrollbar-handle-pressed); }}
 
-        .top-toolbar {{ position: absolute; top: 0; left: 0; right: 0; height: 30px; background: var(--bg-toolbar); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 12px; z-index: 100; gap: 10px; transition: background-color 180ms ease, border-color 180ms ease; }}
+        .top-toolbar {{ position: absolute; top: 0; left: 0; right: 0; height: 30px; background: var(--bg-toolbar); border-bottom: 1px solid var(--depth-line); box-shadow: 0 2px 10px rgba(0, 0, 0, 0.10); display: flex; align-items: center; padding: 0 12px; z-index: 100; gap: 10px; transition: background-color 180ms ease, border-color 180ms ease; }}
         .top-toolbar.is-updating .info-val {{ opacity: 0.55; }}
         .info-item {{ font-size: 11px; color: var(--text-muted); white-space: nowrap; transition: color 180ms ease; }}
         .info-val {{ font-family: var(--mono-font-family); font-size: 11px; font-weight: 700; margin-left: 2px; color: var(--text-secondary); transition: color 180ms ease, opacity 50ms ease; }}
@@ -386,6 +402,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             _setCssVar('--text-primary', t.text_primary);
             _setCssVar('--text-secondary', t.text_secondary);
             _setCssVar('--text-muted', t.text_muted);
+            _setCssVar('--depth-line', t.depth_line);
             _setCssVar('--ma10', t.ma10);
             _setCssVar('--ma20', t.ma20);
             _setCssVar('--ma50', t.ma50);
@@ -400,11 +417,6 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
 
         const chart = echarts.init(document.getElementById('chart'));
         const toolbar = document.getElementById('toolbar');
-        const zoomEaseMs = 150;
-        let zoomFrame = 0;
-        let zoomStart = null;
-        let zoomTarget = null;
-        let zoomStartedAt = 0;
         let pointerFrame = 0;
         let pendingPointerIdx = null;
         let lastToolbarIdx = -1;
@@ -412,11 +424,6 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
 
         function _clamp(value, min, max) {{
             return Math.min(max, Math.max(min, value));
-        }}
-
-        function _easeOutCubic(t) {{
-            const x = 1 - _clamp(t, 0, 1);
-            return 1 - x * x * x;
         }}
 
         function _minZoomSpan() {{
@@ -442,35 +449,6 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                 start: _clamp(range.start, 0, 100),
                 end: _clamp(range.end, 0, 100)
             }});
-        }}
-
-        function _smoothZoomTo(target) {{
-            zoomStart = _currentZoomRange();
-            zoomTarget = {{
-                start: _clamp(target.start, 0, 100),
-                end: _clamp(target.end, 0, 100)
-            }};
-            zoomStartedAt = performance.now();
-            if (zoomFrame) {{
-                cancelAnimationFrame(zoomFrame);
-            }}
-
-            const step = function (now) {{
-                const t = _clamp((now - zoomStartedAt) / zoomEaseMs, 0, 1);
-                const eased = _easeOutCubic(t);
-                _applyZoomRange({{
-                    start: zoomStart.start + (zoomTarget.start - zoomStart.start) * eased,
-                    end: zoomStart.end + (zoomTarget.end - zoomStart.end) * eased
-                }});
-                if (t < 1) {{
-                    zoomFrame = requestAnimationFrame(step);
-                }} else {{
-                    zoomFrame = 0;
-                    zoomStart = null;
-                    zoomTarget = null;
-                }}
-            }};
-            zoomFrame = requestAnimationFrame(step);
         }}
 
         function _installSmoothWheelZoom() {{
@@ -509,7 +487,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                     nextStart -= nextEnd - 100;
                     nextEnd = 100;
                 }}
-                _smoothZoomTo({{ start: nextStart, end: nextEnd }});
+                _applyZoomRange({{ start: nextStart, end: nextEnd }});
             }});
         }}
 
@@ -633,21 +611,168 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             }};
         }}
 
-        function buildVcpEffectData() {{
-            return (rawData.vcpMarkers || []).map((item) => ({{
-                value: item.coord,
-                symbol: item.symbol || 'circle',
-                symbolSize: item.symbolSize || 10,
-                symbolOffset: item.symbolOffset || [0, -10],
-                itemStyle: item.itemStyle,
-                label: item.label
-            }}));
+        const VCP_STAR_SYMBOL = 'path://M0 -13 L3 -3 L13 0 L3 3 L0 13 L-3 3 L-13 0 L-3 -3 Z';
+
+        function _verticalGradient(topColor, bottomColor) {{
+            return new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                {{ offset: 0, color: topColor }},
+                {{ offset: 1, color: bottomColor }}
+            ]);
+        }}
+
+        function _volumeRawValue(entry) {{
+            if (entry && typeof entry === 'object' && entry.value !== undefined) {{
+                return Number(entry.value || 0);
+            }}
+            return Number(entry || 0);
+        }}
+
+        function _volumeItemStyle(idx) {{
+            const kline = rawData.klines[idx] || [];
+            const volume = _volumeRawValue((rawData.vols || [])[idx]);
+            const volMa = Number((rawData.volMa20 || [])[idx]);
+            const isUp = Number(kline[1]) >= Number(kline[0]);
+
+            if (Number.isFinite(volMa) && volMa > 0 && volume > 0) {{
+                if (volume <= volMa / 3) {{
+                    return {{
+                        color: themeState.volume_dry,
+                        opacity: 0.42
+                    }};
+                }}
+                if (volume >= volMa * 2) {{
+                    return {{
+                        color: themeState.volume_spike,
+                        borderColor: themeState.volume_spike,
+                        borderWidth: 0.6,
+                        shadowBlur: 10,
+                        shadowColor: themeState.volume_spike_shadow
+                    }};
+                }}
+            }}
+
+            return {{
+                color: isUp ? upColor : downColor,
+                opacity: 0.72
+            }};
+        }}
+
+        function buildVolumeData() {{
+            return (rawData.vols || []).map((entry, idx) => {{
+                const base = entry && typeof entry === 'object' ? entry : {{ value: entry }};
+                return {{
+                    ...base,
+                    itemStyle: {{
+                        ...(base.itemStyle || {{}}),
+                        ..._volumeItemStyle(idx)
+                    }}
+                }};
+            }});
+        }}
+
+        function buildVcpAreaData() {{
+            return (rawData.vcpArea || []).map((area, idx) => {{
+                if (!Array.isArray(area) || area.length < 2) return area;
+                const topOpacity = Math.max(0.04, 0.12 - idx * 0.03);
+                const bottomOpacity = Math.max(0.01, 0.03 - idx * 0.006);
+                const topColor = idx === 0 ? themeState.vcp_area_top : `rgba(208, 164, 78, ${{topOpacity.toFixed(3)}})`;
+                const bottomColor = idx === 0 ? themeState.vcp_area_bottom : `rgba(208, 164, 78, ${{bottomOpacity.toFixed(3)}})`;
+                return [
+                    {{
+                        ...area[0],
+                        itemStyle: {{
+                            color: _verticalGradient(topColor, bottomColor),
+                            borderWidth: 1,
+                            borderColor: themeState.vcp_area_border,
+                            borderType: idx > 0 ? 'dashed' : 'solid'
+                        }}
+                    }},
+                    area[1]
+                ];
+            }});
+        }}
+
+        function buildVcpCurveSeries() {{
+            const areas = rawData.vcpArea || [];
+            const dateIndex = new Map((rawData.dates || []).map((date, idx) => [date, idx]));
+            const series = [];
+            areas.forEach((area, idx) => {{
+                if (!Array.isArray(area) || area.length < 2) return;
+                const start = area[0] || {{}};
+                const end = area[1] || {{}};
+                const xStart = start.xAxis;
+                const xEnd = end.xAxis;
+                const yStart = Number(start.yAxis);
+                const yEnd = Number(end.yAxis);
+                if (!xStart || !xEnd || !Number.isFinite(yStart) || !Number.isFinite(yEnd)) return;
+
+                const startIdx = dateIndex.has(xStart) ? dateIndex.get(xStart) : 0;
+                const endIdx = dateIndex.has(xEnd) ? dateIndex.get(xEnd) : startIdx;
+                const midIdx = Math.max(0, Math.min(rawData.dates.length - 1, Math.round((startIdx + endIdx) / 2)));
+                const xMid = rawData.dates[midIdx] || xStart;
+                const high = Math.max(yStart, yEnd);
+                const low = Math.min(yStart, yEnd);
+                const bend = Math.max((high - low) * 0.07, high * 0.002);
+                const common = {{
+                    type: 'line',
+                    xAxisIndex: 0,
+                    yAxisIndex: 0,
+                    showSymbol: false,
+                    smooth: true,
+                    silent: true,
+                    animation: false,
+                    z: 9,
+                    emphasis: {{ disabled: true }}
+                }};
+                series.push({{
+                    ...common,
+                    id: 'vcpUpperCurve_' + idx,
+                    data: [[xStart, high], [xMid, high - bend], [xEnd, high]],
+                    lineStyle: {{
+                        width: 1.4,
+                        color: themeState.vcp_guide,
+                        opacity: 0.78
+                    }}
+                }});
+                series.push({{
+                    ...common,
+                    id: 'vcpLowerCurve_' + idx,
+                    data: [[xStart, low], [xMid, low + bend], [xEnd, low]],
+                    lineStyle: {{
+                        width: 1.2,
+                        color: themeState.vcp_line_soft,
+                        opacity: 0.62
+                    }}
+                }});
+            }});
+            return series;
+        }}
+
+        function buildVcpMarkerData() {{
+            return (rawData.vcpMarkers || []).map((item) => {{
+                const idx = Math.round(Number(item.coord && item.coord[0]));
+                const y = Number(item.coord && item.coord[1]);
+                const category = rawData.dates[idx];
+                if (!category || !Number.isFinite(y)) return null;
+                return {{
+                    value: [category, y],
+                    symbol: item.symbol || VCP_STAR_SYMBOL,
+                    symbolSize: item.symbolSize || 18,
+                    symbolOffset: item.symbolOffset || [0, -10],
+                    itemStyle: item.itemStyle,
+                    label: item.label
+                }};
+            }}).filter(Boolean);
         }}
 
         function buildOption() {{
             const data = splitData(rawData);
             return {{
-                animation: false,
+                animation: true,
+                animationDuration: 150,
+                animationDurationUpdate: 150,
+                animationEasing: 'cubicOut',
+                animationEasingUpdate: 'cubicOut',
                 stateAnimation: {{ duration: 0 }},
                 backgroundColor: themeState.bg_canvas,
                 legend: {{
@@ -764,7 +889,8 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         moveOnMouseWheel: false,
                         moveOnMouseMove: true,
                         preventDefaultMouseMove: true,
-                        throttle: 16,
+                        filterMode: 'none',
+                        throttle: 0,
                         minSpan: _minZoomSpan(),
                         start: 55,
                         end: 100
@@ -774,6 +900,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         xAxisIndex: [0, 1, 2],
                         type: 'slider',
                         top: '94%',
+                        filterMode: 'none',
                         minSpan: _minZoomSpan(),
                         start: 55,
                         end: 100,
@@ -801,8 +928,9 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         itemStyle: {{
                             color: upColor,
                             color0: downColor,
-                            borderColor: upColor,
-                            borderColor0: downColor
+                            borderColor: themeState.up_border,
+                            borderColor0: themeState.down_border,
+                            borderWidth: 1
                         }},
                         markLine: rawData.vcpLines ? {{
                             symbol: ['none', 'none'],
@@ -811,8 +939,9 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                             label: {{ show: false }},
                             lineStyle: {{
                                 color: themeState.vcp_line,
-                                width: 1.2,
-                                type: 'solid'
+                                width: 1,
+                                type: 'dashed',
+                                opacity: 0.78
                             }},
                             data: rawData.vcpLines
                         }} : undefined,
@@ -822,9 +951,10 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                             itemStyle: {{
                                 color: themeState.vcp_area
                             }},
-                            data: rawData.vcpArea
+                            data: buildVcpAreaData()
                         }} : undefined
                     }},
+                    ...buildVcpCurveSeries(),
                     {{
                         name: 'VCP Breakout',
                         id: 'vcpBreakout',
@@ -832,7 +962,10 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         coordinateSystem: 'cartesian2d',
                         xAxisIndex: 0,
                         yAxisIndex: 0,
-                        data: buildVcpEffectData(),
+                        data: buildVcpMarkerData(),
+                        clip: true,
+                        z: 12,
+                        silent: true,
                         showEffectOn: 'render',
                         rippleEffect: {{
                             period: 4,
@@ -840,11 +973,15 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                             brushType: 'stroke',
                             color: themeState.vcp_star
                         }},
-                        z: 12,
                         animation: true,
+                        animationDuration: 150,
+                        animationDurationUpdate: 150,
+                        emphasis: {{ disabled: true }},
                         itemStyle: {{
                             color: themeState.vcp_star,
-                            shadowBlur: 12,
+                            borderColor: themeState.vcp_area_border,
+                            borderWidth: 1,
+                            shadowBlur: 14,
                             shadowColor: themeState.vcp_star
                         }}
                     }},
@@ -878,7 +1015,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         smooth: false,
                         animation: false,
                         showSymbol: false,
-                        lineStyle: {{ width: 1.2, color: themeState.ma10 }}
+                        lineStyle: {{ width: 1, color: themeState.ma10, opacity: 0.72 }}
                     }},
                     {{
                         id: 'ma20',
@@ -890,7 +1027,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         smooth: false,
                         animation: false,
                         showSymbol: false,
-                        lineStyle: {{ width: 1.2, color: themeState.ma20 }}
+                        lineStyle: {{ width: 1, color: themeState.ma20, opacity: 0.76 }}
                     }},
                     {{
                         id: 'ma50',
@@ -902,7 +1039,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         smooth: false,
                         animation: false,
                         showSymbol: false,
-                        lineStyle: {{ width: 1.2, color: themeState.ma50 }}
+                        lineStyle: {{ width: 1.7, color: themeState.ma50, opacity: 0.90 }}
                     }},
                     {{
                         id: 'ma150',
@@ -914,7 +1051,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         smooth: false,
                         animation: false,
                         showSymbol: false,
-                        lineStyle: {{ width: 1.2, color: themeState.ma150 }}
+                        lineStyle: {{ width: 1, color: themeState.ma150, opacity: 0.46, type: 'dashed' }}
                     }},
                     {{
                         id: 'ma200',
@@ -926,7 +1063,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         smooth: false,
                         animation: false,
                         showSymbol: false,
-                        lineStyle: {{ width: 1.2, color: themeState.ma200 }}
+                        lineStyle: {{ width: 1, color: themeState.ma200, opacity: 0.46, type: 'dashed' }}
                     }},
                     {{
                         id: 'volume',
@@ -934,7 +1071,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         type: 'bar',
                         xAxisIndex: 1,
                         yAxisIndex: 1,
-                        data: data.volumes
+                        data: buildVolumeData()
                     }},
                     {{
                         id: 'volMa20',
@@ -999,7 +1136,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             if (dataZoom) {{
                 nextOption.dataZoom = dataZoom;
             }}
-            chart.setOption(nextOption, true, true);
+            chart.setOption(nextOption, {{ notMerge: false, lazyUpdate: true, replaceMerge: ['series'] }});
             chart.resize();
             _updateToolbar(rawData.dates.length - 1, false);
             _clearPointerCloseMarker();
@@ -1019,7 +1156,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             if (dataZoom) {{
                 nextOption.dataZoom = dataZoom;
             }}
-            chart.setOption(nextOption, true, true);
+            chart.setOption(nextOption, {{ notMerge: false, lazyUpdate: true, replaceMerge: ['series'] }});
             chart.resize();
             lastToolbarIdx = -1;
             _updateToolbar(rawData.dates.length - 1, false);
@@ -1034,10 +1171,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             const isSameDay = lastIndex >= 0 && rawData.dates[lastIndex] === payload.date;
             const klineEntry = [payload.open, payload.close, payload.low, payload.high];
             const volEntry = {{
-                value: payload.vol || 0,
-                itemStyle: {{
-                    color: payload.close >= payload.open ? upColor : downColor
-                }}
+                value: payload.vol || 0
             }};
 
             if (isSameDay) {{
@@ -1062,7 +1196,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                     {{ id: 'ma50', data: rawData.ma50 }},
                     {{ id: 'ma150', data: rawData.ma150 }},
                     {{ id: 'ma200', data: rawData.ma200 }},
-                    {{ id: 'volume', data: rawData.vols }},
+                    {{ id: 'volume', data: buildVolumeData() }},
                     {{ id: 'volMa20', data: rawData.volMa20 }},
                     {{ id: 'macd', data: rawData.macd }},
                     {{ id: 'diff', data: rawData.diff }},
@@ -1127,17 +1261,19 @@ def _build_vcp_markers(data: dict, trigger_idx: int, theme: dict) -> list:
         return []
 
     kline = data["klines"][trigger_idx]
+    star_symbol = "path://M0 -13 L3 -3 L13 0 L3 3 L0 13 L-3 3 L-13 0 L-3 -3 Z"
     return [
         {
             "coord": [trigger_idx, kline[3]],
-            "symbol": "circle",
-            "symbolSize": 10,
+            "symbol": star_symbol,
+            "symbolSize": 18,
             "symbolOffset": [0, -10],
             "itemStyle": {
                 "color": theme["KLINE_VCP_STAR"],
-                "borderColor": theme["KLINE_VCP_LINE"],
+                "borderColor": theme.get("KLINE_VCP_AREA_BORDER", theme["KLINE_VCP_LINE"]),
                 "borderWidth": 1,
-                "shadowBlur": 0,
+                "shadowBlur": 14,
+                "shadowColor": theme["KLINE_VCP_STAR"],
             },
             "label": {
                 "show": True,

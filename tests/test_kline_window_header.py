@@ -235,6 +235,10 @@ def test_yaohei_kline_theme_colors_bind_terminal_chart_tokens(monkeypatch):
     assert colors["datazoom_fill"] == THEME_YAOHEI["KLINE_DATAZOOM_FILL"]
     assert colors["datazoom_handle"] == THEME_YAOHEI["SCROLLBAR_HANDLE"]
     assert colors["tooltip_bg"] == THEME_YAOHEI["KLINE_TOOLTIP_BG"]
+    assert colors["up_gradient_top"] == THEME_YAOHEI["KLINE_UP_GRADIENT_TOP"]
+    assert colors["down_gradient_bottom"] == THEME_YAOHEI["KLINE_DOWN_GRADIENT_BOTTOM"]
+    assert colors["volume_spike"] == THEME_YAOHEI["KLINE_VOLUME_SPIKE"]
+    assert colors["depth_line"] == THEME_YAOHEI["KLINE_DEPTH_LINE"]
 
 
 class _LunchQuoteProvider:
