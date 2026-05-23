@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 import textwrap
 import time
@@ -16,7 +17,7 @@ from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens
 
 SERIAL_HEADER = "序号"
-FLASH_DURATION_SECONDS = 0.42
+FLASH_DURATION_SECONDS = 0.5
 _TABLE_DENSITY_CACHE_LOADED = False
 _TABLE_DENSITY_CACHE: str | None = None
 
@@ -213,6 +214,12 @@ def _build_flash_record(header: str, old_value, new_value, *, now: float | None 
     return {"time": time.time() if now is None else now, "diff": diff}
 
 
+def _flash_decay_alpha(elapsed: float, duration: float = FLASH_DURATION_SECONDS) -> float:
+    duration = max(0.001, float(duration or FLASH_DURATION_SECONDS))
+    progress = max(0.0, min(1.0, float(elapsed or 0.0) / duration))
+    return max(0.0, 1.0 - (math.log1p(progress * 4.0) / math.log(5.0)))
+
+
 def _prune_flash_records(flash_records: dict, *, now: float | None = None) -> None:
     """Drop expired flash metadata so long-running quote refreshes do not retain stale cells."""
     if not flash_records:
@@ -384,6 +391,19 @@ def _status_badge_color(text: str, header: str | None = None):
         "rise_strong": "COLOR_RISE_STRONG",
     }
     color_key = tone_map.get(tone_name)
+    return _c(color_key) if color_key else None
+
+
+def _accent_rail_color_for_row_style(row_style: str):
+    style = str(row_style or "").strip()
+    style_map = {
+        "breakout": "COLOR_RISE_STRONG",
+        "fake_breakout": "COLOR_WARNING",
+        "approaching": "STATUS_APPROACHING",
+        "warning": "COLOR_ERROR",
+        "vcp": "STATUS_VCP",
+    }
+    color_key = style_map.get(style)
     return _c(color_key) if color_key else None
 
 

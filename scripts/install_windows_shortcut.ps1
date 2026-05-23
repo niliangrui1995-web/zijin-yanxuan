@@ -223,11 +223,10 @@ function Resolve-Launcher {
     Assert-PathExists -Path $PythonExe -Label "pythonw.exe"
     Assert-PathExists -Path $EntryScript -Label "Entry script"
     Assert-PathExists -Path $IconPath -Label "Icon"
-    Ensure-SilentLauncherExe
 
     return @{
-        TargetPath = $LauncherExe
-        Arguments = ('"{0}"' -f $RepoRoot)
+        TargetPath = $PythonExe
+        Arguments = ('"{0}"' -f $EntryScript)
         IconLocation = $IconPath
         Description = ("Launch {0} (dev)" -f $DisplayName)
     }

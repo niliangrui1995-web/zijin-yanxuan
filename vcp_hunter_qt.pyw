@@ -70,21 +70,11 @@ def main():
     except ImportError:
         pass
 
-    app = QApplication(sys.argv)
-    log_runtime_env_report(PROJECT_ROOT)
-
-    from ui.splash_screen import SplashScreen
-
-    splash = SplashScreen()
-    splash.show()
-    app.processEvents()
-
-    splash.set_progress(10, "加载主题与字体...")
-
-    # 优化维度一：启动阶段直接挂载系统定制的高级动态 QSS，彻底消除启动时的二次闪烁
     from ui.styles.global_qss import generate_global_qss
     from ui.theme import theme_manager
 
+    app = QApplication(sys.argv)
+    log_runtime_env_report(PROJECT_ROOT)
     app.setStyleSheet(generate_global_qss(theme_manager.current_theme))
 
     # 优化维度三：全局配置 Microsoft YaHei UI 提高中英排版抗锯齿效果
@@ -92,6 +82,13 @@ def main():
     font.setFamily("Microsoft YaHei UI")
     font.setPointSize(10)
     app.setFont(font)
+
+    from ui.splash_screen import SplashScreen
+
+    splash = SplashScreen()
+    splash.set_progress(10, "加载主题与字体...")
+    splash.show()
+    app.processEvents()
 
     splash.set_progress(30, "初始化本地数据引擎...")
 

@@ -15,16 +15,27 @@ import faulthandler
 import sys
 import time
 faulthandler.enable()
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import QEventLoop, Qt, QTimer, QUrl
 from PyQt6.QtWidgets import QApplication
 QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 app = QApplication(sys.argv)
-from PyQt6.QtWebEngineWidgets import QWebEngineView
-view = QWebEngineView()
-view.setHtml("<!doctype html><html><body>ok</body></html>", QUrl("about:blank"))
-for _ in range(20):
+from PyQt6.QtWebEngineCore import QWebEnginePage
+page = QWebEnginePage()
+loop = QEventLoop()
+load_state = {"done": False, "ok": False}
+def _finish(ok):
+    load_state["done"] = True
+    load_state["ok"] = bool(ok)
+    loop.quit()
+page.loadFinished.connect(_finish)
+QTimer.singleShot(1500, loop.quit)
+page.setHtml("<!doctype html><html><body>ok</body></html>", QUrl("about:blank"))
+loop.exec()
+for _ in range(5):
     app.processEvents()
-    time.sleep(0.05)
+    time.sleep(0.02)
+if load_state["done"] and not load_state["ok"]:
+    sys.exit(2)
 """
 
 

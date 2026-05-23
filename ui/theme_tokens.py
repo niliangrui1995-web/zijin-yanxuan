@@ -174,8 +174,14 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "sorted_header_bg": _hex_to_rgba(theme["COLOR_INFO"], 0.14 if is_dark else 0.08),
         "status_pill_radius": radius["sm"],
         "numeric_heat_max_alpha": 40 if is_dark else 32,
+        "accent_rail_width": 3,
+        "accent_rail_alpha": 210 if is_dark else 180,
+        "accent_rail_bg_alpha": 28 if is_dark else 22,
         "flash_alpha_scale": float(theme.get("TABLE_FLASH_ALPHA_SCALE", 0.24)),
         "flash_max_alpha": int(theme.get("TABLE_FLASH_MAX_ALPHA", 76)),
+        "flash_duration_ms": 500,
+        "flash_rail_width": 3,
+        "flash_rail_alpha": 180 if is_dark else 150,
     }
 
     shell = {
@@ -231,6 +237,42 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "base": 180,
         "slow": 260,
         "pulse": 1500,
+    }
+
+    skeleton = {
+        "base": _hex_to_rgba(theme["TEXT_PRIMARY"], 0.08 if is_dark else 0.06),
+        "shine": _hex_to_rgba(theme["COLOR_INFO"], 0.18 if is_dark else 0.12),
+        "line": _hex_to_rgba(theme["TEXT_PRIMARY"], 0.12 if is_dark else 0.08),
+        "duration": 1400,
+        "row_height": 12,
+        "row_gap": 10,
+        "radius": radius["xs"],
+    }
+
+    icon = {
+        "chrome_size": 16,
+        "status_size": 16,
+        "stroke_width": 1.55,
+        "muted": theme["TEXT_MUTED"],
+        "strong": theme["TEXT_PRIMARY"],
+    }
+
+    status_glyph = {
+        "online": {
+            "shape": "circle",
+            "symbol": "check",
+            "color": theme.get("NETWORK_ONLINE", theme["COLOR_REALTIME"]),
+        },
+        "busy": {
+            "shape": "hexagon",
+            "symbol": "hourglass",
+            "color": theme.get("NETWORK_BUSY", theme["COLOR_WARNING"]),
+        },
+        "offline": {
+            "shape": "triangle",
+            "symbol": "alert",
+            "color": theme.get("NETWORK_OFFLINE", theme["COLOR_ERROR"]),
+        },
     }
 
     z_index = {
@@ -295,6 +337,9 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "surface": surface,
         "border": border,
         "motion": motion,
+        "skeleton": skeleton,
+        "icon": icon,
+        "status_glyph": status_glyph,
         "z_index": z_index,
         "chart": chart,
         "calendar": calendar,

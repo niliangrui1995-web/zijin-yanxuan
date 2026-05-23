@@ -7,6 +7,7 @@ from PyQt6.QtGui import QColor, QFont
 from ui.models.table_model_helpers import (
     FLASH_DURATION_SECONDS,
     SERIAL_HEADER,
+    _accent_rail_color_for_row_style,
     _alignment_for_cell,
     _apply_quote_metrics_to_row,
     _build_cell_tooltip,
@@ -87,6 +88,7 @@ class RtTableModel(QAbstractTableModel):
             Qt.ItemDataRole.UserRole,
             Qt.ItemDataRole.UserRole + 1,
             Qt.ItemDataRole.UserRole + 2,
+            Qt.ItemDataRole.UserRole + 4,
         ]
 
     def _record_cell_flash(self, row: int, col: int, old_value, new_value) -> None:
@@ -389,6 +391,17 @@ class RtTableModel(QAbstractTableModel):
         elif role == Qt.ItemDataRole.UserRole + 2:
             if _is_status_header(key):
                 badge = _status_badge_color(raw_val, key)
+                if badge:
+                    return badge
+
+        elif role == Qt.ItemDataRole.UserRole + 4:
+            rail_color = _accent_rail_color_for_row_style(item_dict.get("_row_style", ""))
+            if rail_color:
+                return rail_color
+            for header in self._headers:
+                if not _is_status_header(header):
+                    continue
+                badge = _status_badge_color(item_dict.get(header, ""), header)
                 if badge:
                     return badge
 

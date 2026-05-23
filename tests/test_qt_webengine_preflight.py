@@ -34,3 +34,10 @@ def test_qt_webengine_preflight_hides_child_process(monkeypatch):
     assert result["ok"] is True
     assert captured["command"][1] == "-c"
     assert captured["kwargs"]["creationflags"] == 123
+
+
+def test_qt_webengine_preflight_smoke_uses_windowless_page():
+    smoke_code = preflight._webengine_smoke_code()
+
+    assert "QWebEnginePage" in smoke_code
+    assert "QWebEngineView" not in smoke_code

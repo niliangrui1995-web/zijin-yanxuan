@@ -14,6 +14,7 @@ from ui.models.table_model_helpers import (
     FLASH_DURATION_SECONDS,
     SERIAL_HEADER,
     _c,
+    _flash_decay_alpha,
     _qcolor_from_token,
     _theme_table_tokens,
 )
@@ -238,8 +239,12 @@ class StockItemDelegate(QStyledItemDelegate):
         widget = option.widget
         style = widget.style() if widget else QApplication.style()
         is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        rail_color = index.data(Qt.ItemDataRole.UserRole + 4)
         show_selected_rail = is_selected and index.column() == 0
+        show_accent_rail = bool(rail_color) and index.column() == 0
         selected_rail_width = table_tokens["selected_rail_width"] if show_selected_rail else 0
+        accent_rail_width = table_tokens["accent_rail_width"] if show_accent_rail and not show_selected_rail else 0
+        rail_width = selected_rail_width or accent_rail_width
         current_index = widget.currentIndex() if widget and hasattr(widget, "currentIndex") else QModelIndex()
         is_current = current_index.isValid() and current_index == index
         skip_sorted_overlay = bool(index.data(Qt.ItemDataRole.UserRole + 3))
@@ -252,7 +257,7 @@ class StockItemDelegate(QStyledItemDelegate):
             if not is_current:
                 return
 
-            left_inset = 2 + selected_rail_width + (2 if show_selected_rail else 0)
+            left_inset = 2 + rail_width + (2 if rail_width else 0)
             indicator_rect = option.rect.adjusted(left_inset, 2, -2, -2)
             if indicator_rect.width() <= 4 or indicator_rect.height() <= 4:
                 return

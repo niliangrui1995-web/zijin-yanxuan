@@ -11,6 +11,7 @@ from ui.models.table_model_helpers import (
     FLASH_DURATION_SECONDS,
     SERIAL_HEADER,
     _alignment_for_cell,
+    _accent_rail_color_for_row_style,
     _build_cell_tooltip,
     _build_flash_record,
     _c,
@@ -185,6 +186,7 @@ class StockTableModel(QAbstractTableModel):
             Qt.ItemDataRole.UserRole,
             Qt.ItemDataRole.UserRole + 1,
             Qt.ItemDataRole.UserRole + 2,
+            Qt.ItemDataRole.UserRole + 4,
         ]
 
     def _emit_incremental_rows(self, rows: list) -> None:
@@ -638,17 +640,6 @@ class StockTableModel(QAbstractTableModel):
             heat_color = _numeric_heat_color(key, raw_val)
             if heat_color is not None:
                 return heat_color
-            row_style = item_dict.get("_row_style", "")
-            if row_style == "breakout":
-                return QColor(232, 93, 93, 20)
-            elif row_style == "fake_breakout":
-                return QColor(245, 158, 11, 20)
-            elif row_style == "approaching":
-                return QColor(139, 92, 246, 20)
-            elif row_style == "warning":
-                return QColor(239, 68, 68, 15)
-            elif row_style == "vcp":
-                return QColor(59, 130, 246, 15)
             return None
 
         elif role == Qt.ItemDataRole.UserRole:
@@ -715,6 +706,18 @@ class StockTableModel(QAbstractTableModel):
 
         elif role == Qt.ItemDataRole.UserRole + 3:
             return self._uses_plain_style(key)
+
+        elif role == Qt.ItemDataRole.UserRole + 4:
+            rail_color = _accent_rail_color_for_row_style(item_dict.get("_row_style", ""))
+            if rail_color:
+                return rail_color
+            for header in self._headers:
+                if not _is_status_header(header):
+                    continue
+                badge = _status_badge_color(item_dict.get(header, ""), header)
+                if badge:
+                    return badge
+            return None
 
         return None
 

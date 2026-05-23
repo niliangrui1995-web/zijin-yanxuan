@@ -84,7 +84,7 @@ QToolTip {{
 QWidget#leftPanel {{
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
         stop:0 {t["BG_SIDEBAR"]}, stop:1 {t["BG_INPUT"]});
-    border-right: 1px solid {t["BRAND_SUBTLE"]};
+    border-right: none;
 }}
 
 /* ═══════════════════════════════════════════
@@ -92,7 +92,7 @@ QWidget#leftPanel {{
    ═══════════════════════════════════════════ */
 QTabWidget::pane {{
     background-color: {t["BG_CARD"]};
-    border: 1px solid {t["BORDER_DEFAULT"]};
+    border: 1px solid {t["BORDER_SUBTLE"]};
     border-radius: {radius["lg"]}px;
     top: -1px;
 }}
@@ -132,7 +132,7 @@ QTableView {{
     background-color: {t["BG_TABLE_BASE"]};
     alternate-background-color: {t["BG_TABLE_ALT_ROW"]};
     color: {t["TEXT_PRIMARY"]};
-    gridline-color: {t["BORDER_SUBTLE"]};
+    gridline-color: transparent;
     border: none;
     font-family: "Microsoft YaHei", "微软雅黑";
     font-size: {font["size_md"]}px;
@@ -143,7 +143,7 @@ QTableView {{
 QTableView::item {{
     padding: {table["cell_padding_y"]}px {table["cell_padding_x"]}px;
     border-bottom: 1px solid {t["BORDER_SUBTLE"]};
-    border-right: 1px solid {t["BORDER_SUBTLE"]};
+    border-right: 1px solid transparent;
 }}
 QTableView::item:hover {{
     background-color: {t["BG_TABLE_HOVER"]};
@@ -151,8 +151,8 @@ QTableView::item:hover {{
 QTableView::item:selected {{
     background-color: {table["selected_bg"]};
     color: {t["TEXT_BRIGHT"]};
-    border-bottom: 1px solid {border["accent"]};
-    border-right: 1px solid {border["accent"]};
+    border-bottom: 1px solid {t["BORDER_SUBTLE"]};
+    border-right: 1px solid transparent;
 }}
 QTableView::item:selected:hover {{
     background-color: {table["selected_hover_bg"]};
@@ -180,7 +180,7 @@ QHeaderView::section {{
     min-height: {table["header_min_height"]}px;
     border: none;
     border-bottom: 1px solid {border["strong"]};
-    border-right: 1px solid {border["subtle"]};
+    border-right: 1px solid transparent;
 }}
 QHeaderView::section:hover {{
     background-color: {surface["elevated"]};

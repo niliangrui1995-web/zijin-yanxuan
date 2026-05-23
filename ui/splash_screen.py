@@ -17,6 +17,7 @@ class SplashScreen(QWidget):
 
     def __init__(self):
         super().__init__()
+        self.setWindowTitle("紫金研选")
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.SplashScreen
         )
@@ -107,6 +108,8 @@ class SplashScreen(QWidget):
         self.lbl_ver.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_ver.setStyleSheet("font-size: 10px; color: #586174; background: transparent;")
         layout.addWidget(self.lbl_ver)
+        layout.activate()
+        self.resize(420, 340)
 
     def set_progress(self, value: int, status: str = ""):
         """更新进度条和状态文字"""
