@@ -7,9 +7,9 @@ from PyQt6.QtWidgets import QTableView
 
 from domains.global_earnings_calendar.service import EarningsCalendarEvent
 from ui.components.trade_calendar import (
+    _DETACHED_EARNINGS_REFRESH_WORKERS,
     OligarchEarningsCalendarPanel,
     TradeCalendarWidget,
-    _DETACHED_EARNINGS_REFRESH_WORKERS,
     _priority_marker_styles,
 )
 from ui.theme import THEME_YUEBAI

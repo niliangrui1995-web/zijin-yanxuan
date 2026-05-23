@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QEasingCurve, QEvent, QPropertyAnimation, QObject, QTimer
+from PyQt6.QtCore import QEasingCurve, QEvent, QObject, QPropertyAnimation, QTimer
 from PyQt6.QtWidgets import QGraphicsOpacityEffect
 
 from ui.theme_tokens import build_ui_tokens

@@ -119,7 +119,9 @@ def _clean_old_logs(log_dir: str, max_age_days: int = 7):
     cutoff = now - (max_age_days * 86400)
     try:
         for filename in os.listdir(log_dir):
-            if not filename.endswith(".log"):
+            is_plain_log = filename.endswith(".log")
+            is_rotated_log = ".log." in filename and filename.rsplit(".log.", 1)[-1].isdigit()
+            if not (is_plain_log or is_rotated_log):
                 continue
             filepath = os.path.join(log_dir, filename)
             if os.path.isfile(filepath) and os.path.getmtime(filepath) < cutoff:

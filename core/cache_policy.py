@@ -66,6 +66,19 @@ CACHE_POLICIES = [
         "max_age_days": 1,
     },
     {
+        "name": "亚洲市场 K 线历史快照",
+        "directory": "data/Cache",
+        "pattern": "asian_klines_*.json",
+        "max_age_days": 3,
+        "exclude_names": ["asian_klines_latest.json"],
+    },
+    {
+        "name": "临时写入残片",
+        "directory": "data/Cache",
+        "pattern": "*.tmp",
+        "max_age_days": 1,
+    },
+    {
         "name": "扫描结果缓存",
         "directory": "data",
         "pattern": "scan_cache.json",
@@ -101,9 +114,13 @@ def cleanup_stale_caches(project_root: str, dry_run: bool = False) -> dict:
 
         pattern = os.path.join(target_dir, policy["pattern"])
         files = glob.glob(pattern)
+        exclude_names = set(policy.get("exclude_names", []))
 
         for filepath in files:
             try:
+                if os.path.basename(filepath) in exclude_names:
+                    continue
+
                 mtime = os.path.getmtime(filepath)
                 age_days = (now - mtime) / 86400
 
