@@ -171,7 +171,7 @@ def test_yaohei_selection_and_primary_actions_use_accent_not_market_red():
     assert THEME_YAOHEI["KLINE_MA150"] == "rgba(150, 162, 174, 0.56)"
     assert THEME_YAOHEI["KLINE_MA200"] == "rgba(199, 107, 91, 0.54)"
     assert THEME_YAOHEI["KLINE_GRID_LINE"] == "rgba(126, 142, 160, 0.08)"
-    assert THEME_YAOHEI["KLINE_CROSSHAIR_LINE"] == "rgba(132, 149, 169, 0.48)"
+    assert THEME_YAOHEI["KLINE_CROSSHAIR_LINE"] == "rgba(232, 237, 243, 0.86)"
     assert THEME_YAOHEI["KLINE_VCP_STAR"] == "#D0A44E"
     assert THEME_YAOHEI["BRAND_PRIMARY"] == "#B93A32"
     assert THEME_YAOHEI["COLOR_RISE"] != THEME_YAOHEI["BRAND_PRIMARY"]

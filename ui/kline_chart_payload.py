@@ -466,14 +466,14 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                     link: [{{ xAxisIndex: 'all' }}],
                     lineStyle: {{
                         color: themeState.crosshair_line,
-                        width: 0.8,
+                        width: 1.2,
                         type: 'dashed',
-                        opacity: 0.4
+                        opacity: 0.92
                     }},
                     crossStyle: {{
                         color: themeState.crosshair_line,
-                        width: 0.8,
-                        opacity: 0.4
+                        width: 1.2,
+                        opacity: 0.92
                     }},
                     label: {{
                         backgroundColor: themeState.pointer_bg,
@@ -491,8 +491,8 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                     showContent: false,
                     axisPointer: {{
                         type: 'cross',
-                        lineStyle: {{ color: themeState.crosshair_line, width: 0.8, opacity: 0.4 }},
-                        crossStyle: {{ color: themeState.crosshair_line, width: 0.8, opacity: 0.4 }}
+                        lineStyle: {{ color: themeState.crosshair_line, width: 1.2, opacity: 0.92 }},
+                        crossStyle: {{ color: themeState.crosshair_line, width: 1.2, opacity: 0.92 }}
                     }},
                     backgroundColor: themeState.tooltip_bg,
                     borderWidth: 0,

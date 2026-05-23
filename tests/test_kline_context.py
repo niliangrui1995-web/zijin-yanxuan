@@ -433,8 +433,8 @@ def test_build_kline_html_hides_echarts_tooltip_panel():
     )
 
     assert "showContent: false" in html
-    assert "width: 0.8" in html
-    assert "opacity: 0.4" in html
+    assert "width: 1.2" in html
+    assert "opacity: 0.92" in html
     assert "borderRadius: 4" in html
     assert "type: [4, 4]" in html
     assert "splitLine: { show: false }" in html
