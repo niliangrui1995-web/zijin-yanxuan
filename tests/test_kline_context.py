@@ -433,6 +433,14 @@ def test_build_kline_html_hides_echarts_tooltip_panel():
     )
 
     assert "showContent: false" in html
+    assert "width: 0.8" in html
+    assert "opacity: 0.4" in html
+    assert "borderRadius: 4" in html
+    assert "type: [4, 4]" in html
+    assert "splitLine: { show: false }" in html
+    assert "type: 'effectScatter'" in html
+    assert "rippleEffect" in html
+    assert "markPoint:" not in html
 
 
 def test_yaohei_kline_html_syncs_canvas_scrollbar_and_tabular_nums(monkeypatch):
@@ -458,7 +466,7 @@ def test_yaohei_kline_html_syncs_canvas_scrollbar_and_tabular_nums(monkeypatch):
         theme_colors=colors,
     )
 
-    assert colors["bg_canvas"] == THEME_YAOHEI["BG_CANVAS"] == "#0A0C14"
+    assert colors["bg_canvas"] == THEME_YAOHEI["BG_CANVAS"] == "#06070B"
     assert colors["datazoom_handle"] == THEME_YAOHEI["SCROLLBAR_HANDLE"]
     assert colors["scrollbar_handle"] == THEME_YAOHEI["SCROLLBAR_HANDLE"]
     assert colors["scrollbar_handle_hover"] == THEME_YAOHEI["SCROLLBAR_HANDLE_HOVER"]

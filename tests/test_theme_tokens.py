@@ -77,6 +77,8 @@ def test_theme_tokens_expose_terminal_layers_and_toolbar_metrics():
     assert tokens["table"]["accent_rail_width"] == 3
     assert tokens["table"]["flash_duration_ms"] == 500
     assert tokens["table"]["flash_rail_width"] == 3
+    assert tokens["table"]["flash_rail_alpha"] == THEME_YUEBAI["TABLE_FLASH_RAIL_ALPHA"]
+    assert dark_tokens["table"]["flash_rail_alpha"] == THEME_YAOHEI["TABLE_FLASH_RAIL_ALPHA"]
     assert tokens["table"]["current_cell_border"] == THEME_YUEBAI["TABLE_CURRENT_CELL_BORDER"]
     assert tokens["table"]["current_cell_bg"]
     assert tokens["table"]["current_cell_bg_selected"]
@@ -153,11 +155,21 @@ def test_yaohei_selection_and_primary_actions_use_accent_not_market_red():
 
     assert tokens["table"]["selected_rail_color"] == THEME_YAOHEI["ACCENT_PRIMARY"]
     assert tokens["table"]["hover_rail_color"] == THEME_YAOHEI["ACCENT_PRIMARY"]
-    assert THEME_YAOHEI["BG_CANVAS"] == "#0A0C14"
-    assert THEME_YAOHEI["BG_TABLE_BASE"] == "#000000"
-    assert THEME_YAOHEI["BG_TABLE_ALT_ROW"] == "#090909"
-    assert THEME_YAOHEI["BG_CARD"] == "#080808"
-    assert THEME_YAOHEI["BG_HOVER"] == "#141414"
+    assert THEME_YAOHEI["BG_CANVAS"] == "#06070B"
+    assert THEME_YAOHEI["BG_TABLE_BASE"] == "#0A0D15"
+    assert THEME_YAOHEI["BG_TABLE_ALT_ROW"] == "#0F1220"
+    assert THEME_YAOHEI["BG_CARD"] == "#121422"
+    assert THEME_YAOHEI["BG_HOVER"] == "rgba(110, 123, 255, 0.08)"
+    assert THEME_YAOHEI["BORDER_DEFAULT"] == "rgba(110, 123, 255, 0.12)"
+    assert THEME_YAOHEI["INFO_BADGE_BG"] == "rgba(110, 123, 255, 0.08)"
+    assert THEME_YAOHEI["KLINE_MA10"] == "rgba(210, 219, 235, 0.82)"
+    assert THEME_YAOHEI["KLINE_MA20"] == "rgba(85, 183, 255, 0.82)"
+    assert THEME_YAOHEI["KLINE_MA50"] == "rgba(215, 172, 69, 0.42)"
+    assert THEME_YAOHEI["KLINE_MA150"] == "rgba(110, 123, 255, 0.34)"
+    assert THEME_YAOHEI["KLINE_MA200"] == "rgba(255, 138, 143, 0.36)"
+    assert THEME_YAOHEI["KLINE_GRID_LINE"] == "rgba(96, 115, 148, 0.06)"
+    assert THEME_YAOHEI["KLINE_CROSSHAIR_LINE"] == "rgba(110, 123, 255, 0.40)"
+    assert THEME_YAOHEI["KLINE_VCP_STAR"] == "#FFD700"
     assert THEME_YAOHEI["BRAND_PRIMARY"] == "#B91C1C"
     assert THEME_YAOHEI["COLOR_RISE"] != THEME_YAOHEI["BRAND_PRIMARY"]
 
@@ -165,11 +177,15 @@ def test_yaohei_selection_and_primary_actions_use_accent_not_market_red():
 def test_yuebai_uses_cool_professional_light_palette():
     tokens = build_ui_tokens(THEME_YUEBAI, density="舒展")
 
-    assert THEME_YUEBAI["BG_CANVAS"] == "#F9F9FB"
+    assert THEME_YUEBAI["BG_CANVAS"] == "#F4F6F9"
+    assert THEME_YUEBAI["BG_SIDEBAR"] == "#E6EDF5"
+    assert THEME_YUEBAI["BG_SIDEBAR_END"] == "#F4F6F9"
     assert THEME_YUEBAI["BG_CARD"] == "#FFFFFF"
-    assert THEME_YUEBAI["BG_TOOLBAR_CHIP"] == "#F3F5FA"
-    assert THEME_YUEBAI["BORDER_DEFAULT"] == "rgba(0, 0, 0, 0.06)"
-    assert THEME_YUEBAI["BORDER_SUBTLE"] == "rgba(0, 0, 0, 0.04)"
+    assert THEME_YUEBAI["BG_HOVER"] == "rgba(37, 99, 235, 0.06)"
+    assert THEME_YUEBAI["BG_TOOLBAR_CHIP"] == "#F0F4FA"
+    assert THEME_YUEBAI["BORDER_DEFAULT"] == "rgba(15, 23, 42, 0.05)"
+    assert THEME_YUEBAI["BORDER_SUBTLE"] == "rgba(15, 23, 42, 0.04)"
+    assert THEME_YUEBAI["INFO_BADGE_FG"] == "#334155"
     assert THEME_YUEBAI["ACCENT_PRIMARY"] == "#2563EB"
     assert THEME_YUEBAI["ACCENT_PRIMARY"] != THEME_YUEBAI["BRAND_PRIMARY"]
     assert THEME_YUEBAI["TAB_ACTIVE_TOP"] == THEME_YUEBAI["ACCENT_PRIMARY"]
@@ -218,7 +234,8 @@ def test_global_qss_uses_density_tokens_for_table_and_controls():
     assert 'QLineEdit[inToolbar="true"]' in compact_qss
     assert "QPushButton:focus {" in compact_qss
     assert 'QToolButton[class="toolbarGhost"]:focus {' in compact_qss
-    assert f"background-color: {compact_tokens['surface']['toolbar']};" in compact_qss
+    assert f"stop:0 {compact_tokens['surface']['toolbar']}" in compact_qss
+    assert f"stop:1 {THEME_YUEBAI['BG_TOOLBAR_END']}" in compact_qss
     assert f"background-color: {compact_tokens['surface']['toolbar_card']};" in compact_qss
     assert f"background-color: {compact_tokens['surface']['toolbar_chip']};" in compact_qss
     assert compact_tokens["control"]["button_height"] < comfort_tokens["control"]["button_height"]

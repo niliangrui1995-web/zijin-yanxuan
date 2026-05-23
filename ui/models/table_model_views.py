@@ -606,13 +606,16 @@ class StockItemDelegate(QStyledItemDelegate):
 
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             p_color = QColor(pill_color)
-            p_color.setAlpha(35)
+            p_color.setAlpha(31)
+            border_color = QColor(pill_color)
+            border_color.setAlpha(51)
             painter.setBrush(QBrush(p_color))
-            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setPen(QPen(border_color, 1))
             painter.drawRoundedRect(draw_rect, 6, 6)
 
-            text_color = QColor(pill_color)
-            text_color.setAlpha(255)
+            text_color = _qcolor_from_token(_c("INFO_BADGE_FG"))
+            if not text_color.isValid():
+                text_color = _qcolor_from_token(_c("TEXT_SECONDARY"))
             painter.setPen(QPen(text_color))
             painter.drawText(draw_rect, Qt.AlignmentFlag.AlignCenter, str(text))
         else:

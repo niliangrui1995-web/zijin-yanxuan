@@ -59,16 +59,25 @@ def _build_state_tones(theme: dict, *, is_dark: bool) -> dict:
             "border": neutral_border,
         },
         "info": tone(
-            "COLOR_INFO", fg=theme["TEXT_PRIMARY"] if is_dark else theme["COLOR_INFO"], bg_alpha=0.10, border_alpha=0.18
+            "COLOR_INFO",
+            fg=theme.get("INFO_BADGE_FG", theme["TEXT_PRIMARY"] if is_dark else theme["COLOR_INFO"]),
+            bg_alpha=0.08,
+            border_alpha=0.18,
         ),
         "loading": tone(
-            "COLOR_INFO", fg=theme["TEXT_PRIMARY"] if is_dark else theme["COLOR_INFO"], bg_alpha=0.10, border_alpha=0.20
+            "COLOR_INFO",
+            fg=theme.get("INFO_BADGE_FG", theme["TEXT_PRIMARY"] if is_dark else theme["COLOR_INFO"]),
+            bg_alpha=0.08,
+            border_alpha=0.20,
         ),
         "success": tone("COLOR_SUCCESS", bg_alpha=0.12, border_alpha=0.22),
         "warning": tone("COLOR_WARNING", bg_alpha=0.12, border_alpha=0.22),
         "error": tone("COLOR_ERROR", bg_alpha=0.12, border_alpha=0.22),
         "cached": tone(
-            "COLOR_INFO", fg=theme["TEXT_PRIMARY"] if is_dark else theme["COLOR_INFO"], bg_alpha=0.08, border_alpha=0.18
+            "COLOR_INFO",
+            fg=theme.get("INFO_BADGE_FG", theme["TEXT_PRIMARY"] if is_dark else theme["COLOR_INFO"]),
+            bg_alpha=0.08,
+            border_alpha=0.18,
         ),
         "realtime": tone("COLOR_REALTIME", fg=theme["COLOR_REALTIME"], bg_alpha=0.10, border_alpha=0.24),
         "stale": tone("COLOR_WARNING", fg=theme["COLOR_WARNING"], bg_alpha=0.08, border_alpha=0.18),
@@ -184,7 +193,7 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "flash_max_alpha": int(theme.get("TABLE_FLASH_MAX_ALPHA", 76)),
         "flash_duration_ms": 500,
         "flash_rail_width": 3,
-        "flash_rail_alpha": 180 if is_dark else 150,
+        "flash_rail_alpha": int(theme.get("TABLE_FLASH_RAIL_ALPHA", 120 if is_dark else 105)),
     }
 
     shell = {

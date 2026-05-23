@@ -58,6 +58,13 @@ def generate_global_qss(theme: dict = None, density: str | None = None) -> str:
     scrollbar_handle = t.get("SCROLLBAR_HANDLE", t["BORDER_DEFAULT"])
     scrollbar_hover = t.get("SCROLLBAR_HANDLE_HOVER", t["TEXT_MUTED"])
     scrollbar_pressed = t.get("SCROLLBAR_HANDLE_PRESSED", t["BRAND_PRIMARY"])
+    sidebar_end = t.get("BG_SIDEBAR_END", t["BG_INPUT"])
+    toolbar_end = t.get("BG_TOOLBAR_END", surface["toolbar"])
+    toolbar_background = (
+        f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {surface['toolbar']}, stop:1 {toolbar_end})"
+        if toolbar_end != surface["toolbar"]
+        else surface["toolbar"]
+    )
 
     tooltip_bg = "rgba(15, 18, 30, 0.88)" if ui["is_dark"] else "rgba(255, 255, 255, 0.96)"
     tooltip_border = "rgba(255, 255, 255, 0.16)" if ui["is_dark"] else "rgba(15, 23, 42, 0.12)"
@@ -96,7 +103,7 @@ QToolTip {{
 /* --- 左侧面板 --- */
 QWidget#leftPanel {{
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 {t["BG_SIDEBAR"]}, stop:1 {t["BG_INPUT"]});
+        stop:0 {t["BG_SIDEBAR"]}, stop:1 {sidebar_end});
     border-right: none;
 }}
 
@@ -105,7 +112,7 @@ QWidget#leftPanel {{
    ═══════════════════════════════════════════ */
 QTabWidget::pane {{
     background-color: {t["BG_CARD"]};
-    border: 1px solid {t["BORDER_SUBTLE"]};
+    border: 1px solid {border["default"]};
     border-radius: {radius["lg"]}px;
     top: -1px;
 }}
@@ -443,13 +450,13 @@ QProgressBar::chunk {{
    QLabel / QLineEdit
    ═══════════════════════════════════════════ */
 QWidget#tabToolbar {{
-    background-color: {surface["toolbar"]};
+    background: {toolbar_background};
     border-bottom: 1px solid {border["default"]};
     min-height: {shell["toolbar_min_height"]}px;
 }}
 QFrame#tabToolbarTitleWrap {{
     background-color: {surface["toolbar_card"]};
-    border: 1px solid {border["strong"]};
+    border: 1px solid {border["default"]};
     border-radius: {radius["xl"]}px;
     min-height: {control["toolbar_button_height"] + 1}px;
 }}

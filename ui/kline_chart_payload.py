@@ -443,6 +443,17 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             }};
         }}
 
+        function buildVcpEffectData() {{
+            return (rawData.vcpMarkers || []).map((item) => ({{
+                value: item.coord,
+                symbol: item.symbol || 'circle',
+                symbolSize: item.symbolSize || 10,
+                symbolOffset: item.symbolOffset || [0, -10],
+                itemStyle: item.itemStyle,
+                label: item.label
+            }}));
+        }}
+
         function buildOption() {{
             const data = splitData(rawData);
             return {{
@@ -455,19 +466,24 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                     link: [{{ xAxisIndex: 'all' }}],
                     lineStyle: {{
                         color: themeState.crosshair_line,
-                        width: 1,
+                        width: 0.8,
                         type: 'dashed',
-                        opacity: 0.76
+                        opacity: 0.4
                     }},
                     crossStyle: {{
                         color: themeState.crosshair_line,
-                        width: 1,
-                        opacity: 0.76
+                        width: 0.8,
+                        opacity: 0.4
                     }},
                     label: {{
                         backgroundColor: themeState.pointer_bg,
                         color: themeState.tooltip_text,
-                        fontFamily: themeState.mono_font_family
+                        fontFamily: themeState.mono_font_family,
+                        borderRadius: 4,
+                        padding: [3, 6],
+                        shadowBlur: 8,
+                        shadowColor: themeState.crosshair_line,
+                        shadowOffsetY: 0
                     }}
                 }},
                 tooltip: {{
@@ -475,8 +491,8 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                     showContent: false,
                     axisPointer: {{
                         type: 'cross',
-                        lineStyle: {{ color: themeState.crosshair_line, width: 1, opacity: 0.76 }},
-                        crossStyle: {{ color: themeState.crosshair_line, width: 1, opacity: 0.76 }}
+                        lineStyle: {{ color: themeState.crosshair_line, width: 0.8, opacity: 0.4 }},
+                        crossStyle: {{ color: themeState.crosshair_line, width: 0.8, opacity: 0.4 }}
                     }},
                     backgroundColor: themeState.tooltip_bg,
                     borderWidth: 0,
@@ -528,7 +544,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                     {{
                         scale: true,
                         splitArea: {{ show: false }},
-                        splitLine: {{ lineStyle: {{ color: themeState.grid_line }} }},
+                        splitLine: {{ lineStyle: {{ color: themeState.grid_line, type: [4, 4] }} }},
                         axisLine: {{ lineStyle: {{ color: themeState.axis_line }} }},
                         axisLabel: {{ color: themeState.axis_label, fontFamily: themeState.mono_font_family }}
                     }},
@@ -546,7 +562,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         splitNumber: 2,
                         axisLabel: {{ color: themeState.axis_label, fontFamily: themeState.mono_font_family }},
                         axisLine: {{ lineStyle: {{ color: themeState.axis_line }} }},
-                        splitLine: {{ lineStyle: {{ color: themeState.grid_line }} }}
+                        splitLine: {{ show: false }}
                     }}
                 ],
                 dataZoom: [
@@ -587,10 +603,6 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                             borderColor: upColor,
                             borderColor0: downColor
                         }},
-                        markPoint: rawData.vcpMarkers ? {{
-                            symbolKeepAspect: true,
-                            data: rawData.vcpMarkers
-                        }} : undefined,
                         markLine: rawData.vcpLines ? {{
                             symbol: ['none', 'none'],
                             silent: true,
@@ -611,6 +623,28 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                             }},
                             data: rawData.vcpArea
                         }} : undefined
+                    }},
+                    {{
+                        name: 'VCP Breakout',
+                        type: 'effectScatter',
+                        coordinateSystem: 'cartesian2d',
+                        xAxisIndex: 0,
+                        yAxisIndex: 0,
+                        data: buildVcpEffectData(),
+                        showEffectOn: 'render',
+                        rippleEffect: {{
+                            period: 4,
+                            scale: 3.2,
+                            brushType: 'stroke',
+                            color: themeState.vcp_star
+                        }},
+                        z: 12,
+                        animation: true,
+                        itemStyle: {{
+                            color: themeState.vcp_star,
+                            shadowBlur: 12,
+                            shadowColor: themeState.vcp_star
+                        }}
                     }},
                     {{
                         name: 'MA10',
