@@ -79,7 +79,7 @@ def main():
     splash.show()
     app.processEvents()
 
-    splash.set_progress(10, "加载主题样式...")
+    splash.set_progress(10, "加载主题与字体...")
 
     # 优化维度一：启动阶段直接挂载系统定制的高级动态 QSS，彻底消除启动时的二次闪烁
     from ui.styles.global_qss import generate_global_qss
@@ -93,15 +93,15 @@ def main():
     font.setPointSize(10)
     app.setFont(font)
 
-    splash.set_progress(30, "初始化数据引擎...")
+    splash.set_progress(30, "初始化本地数据引擎...")
 
     from ui.main_window_qt import MainWindowQT
 
-    splash.set_progress(50, "构建界面组件...")
+    splash.set_progress(50, "恢复主工作台界面...")
 
     window = MainWindowQT(splash=splash)
 
-    splash.set_progress(95, "即将就绪...")
+    splash.set_progress(95, "准备进入主工作台...")
     window.show()
 
     splash.close()

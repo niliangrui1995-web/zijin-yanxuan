@@ -23,6 +23,9 @@ $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $PackagedExe = Join-Path $RepoRoot ("dist\{0}\{0}.exe" -f $DisplayName)
 $PythonExe = Join-Path $RepoRoot ".venv\Scripts\pythonw.exe"
 $EntryScript = Join-Path $RepoRoot "vcp_hunter_qt.pyw"
+$LauncherSource = Join-Path $RepoRoot "scripts\launch_windows_silent.cs"
+$LauncherOutputDir = Join-Path $env:LOCALAPPDATA "ZijinResearch\Launcher"
+$LauncherExe = Join-Path $LauncherOutputDir "ZijinResearchLauncher.exe"
 $IconPath = Join-Path $RepoRoot "bull_icon.ico"
 
 function Assert-PathExists {
@@ -34,6 +37,36 @@ function Assert-PathExists {
     if (-not (Test-Path -LiteralPath $Path)) {
         throw "$Label not found: $Path"
     }
+}
+
+function Ensure-SilentLauncherExe {
+    Assert-PathExists -Path $LauncherSource -Label "Launcher source"
+
+    if (-not (Test-Path -LiteralPath $LauncherOutputDir)) {
+        New-Item -ItemType Directory -Path $LauncherOutputDir -Force | Out-Null
+    }
+
+    $sourceInfo = Get-Item -LiteralPath $LauncherSource
+    $exeInfo = Get-Item -LiteralPath $LauncherExe -ErrorAction SilentlyContinue
+    $needsBuild = $true
+    if ($exeInfo -and ($exeInfo.LastWriteTimeUtc -ge $sourceInfo.LastWriteTimeUtc)) {
+        $needsBuild = $false
+    }
+
+    if ($needsBuild) {
+        if (Test-Path -LiteralPath $LauncherExe) {
+            Remove-Item -LiteralPath $LauncherExe -Force -ErrorAction SilentlyContinue
+        }
+
+        $launcherCode = Get-Content -LiteralPath $LauncherSource -Raw
+        Add-Type `
+            -TypeDefinition $launcherCode `
+            -OutputAssembly $LauncherExe `
+            -OutputType WindowsApplication `
+            -ReferencedAssemblies @("System.dll")
+    }
+
+    Assert-PathExists -Path $LauncherExe -Label "Compiled launcher"
 }
 
 if (-not ("ShortcutNative.IShellLinkW" -as [type])) {
@@ -190,10 +223,11 @@ function Resolve-Launcher {
     Assert-PathExists -Path $PythonExe -Label "pythonw.exe"
     Assert-PathExists -Path $EntryScript -Label "Entry script"
     Assert-PathExists -Path $IconPath -Label "Icon"
+    Ensure-SilentLauncherExe
 
     return @{
-        TargetPath = $PythonExe
-        Arguments = ('"{0}"' -f $EntryScript)
+        TargetPath = $LauncherExe
+        Arguments = ('"{0}"' -f $RepoRoot)
         IconLocation = $IconPath
         Description = ("Launch {0} (dev)" -f $DisplayName)
     }

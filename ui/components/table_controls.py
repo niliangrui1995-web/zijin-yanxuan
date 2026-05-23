@@ -1,5 +1,6 @@
 """Table-oriented widgets shared by the UI package."""
 
+import logging
 import time
 
 from PyQt6.QtCore import (
@@ -36,6 +37,8 @@ from ui.models.table_model_helpers import FLASH_DURATION_SECONDS
 
 from .table_view_helpers import bounded_model_row, find_header_column
 
+log = logging.getLogger(__name__)
+
 
 class VCPTableView(QTableView):
     """
@@ -51,6 +54,7 @@ class VCPTableView(QTableView):
         self._restoring_refresh_state = False
         self._bound_refresh_model = None
         self._flash_repaint_until = 0.0
+        self._closing = False
         self._flash_repaint_timer = QTimer(self)
         self._flash_repaint_timer.setInterval(60)
         self._flash_repaint_timer.timeout.connect(self._tick_flash_repaint)
@@ -162,6 +166,8 @@ class VCPTableView(QTableView):
         self.setStyleSheet(self._tooltip_qss())
 
     def _on_theme_changed(self, _theme_name: str):
+        if self._closing:
+            return
         self._apply_screen_width_limit()
         self._apply_runtime_style()
         self.style().unpolish(self)
@@ -382,6 +388,7 @@ class VCPTableView(QTableView):
         self.horizontalScrollBar().setValue(h_scroll)
 
     def _stop_deferred_restores(self) -> None:
+        self._closing = True
         for timer in (
             getattr(self, "_refresh_state_restore_timer", None),
             getattr(self, "_scrollbar_restore_timer", None),
@@ -391,6 +398,11 @@ class VCPTableView(QTableView):
                 timer.stop()
         self._pending_refresh_state_restore = None
         self._pending_scrollbar_restore = None
+        self._disconnect_refresh_model()
+        try:
+            QToolTip.hideText()
+        except RuntimeError:
+            pass
         try:
             self._theme_manager.sig_theme_changed.disconnect(self._on_theme_changed)
         except (AttributeError, TypeError, RuntimeError):
@@ -405,6 +417,8 @@ class VCPTableView(QTableView):
         super().deleteLater()
 
     def _on_model_data_changed(self, *_args) -> None:
+        if self._closing:
+            return
         roles = _args[2] if len(_args) >= 3 else None
         flash_role = int(Qt.ItemDataRole.UserRole) + 1
         if roles:
@@ -419,6 +433,9 @@ class VCPTableView(QTableView):
             self._flash_repaint_timer.start()
 
     def _tick_flash_repaint(self) -> None:
+        if self._closing:
+            self._flash_repaint_timer.stop()
+            return
         if time.time() >= self._flash_repaint_until:
             self._flash_repaint_timer.stop()
             self._flash_repaint_until = 0.0
@@ -427,6 +444,8 @@ class VCPTableView(QTableView):
         self.viewport().update()
 
     def showEvent(self, event):
+        if self._closing:
+            return
         self._apply_screen_width_limit()
         super().showEvent(event)
 
@@ -465,29 +484,44 @@ class VCPTableView(QTableView):
         return fm.horizontalAdvance(display_text) > available_width
 
     def viewportEvent(self, event):
-        if event.type() == QEvent.Type.ToolTip:
-            index = self.indexAt(event.pos())
-            if index.isValid():
-                tooltip_text = index.data(Qt.ItemDataRole.ToolTipRole)
-                if tooltip_text and self._should_show_tooltip_for_index(index):
-                    from ui.theme import theme_manager
-
-                    t = theme_manager.current_theme
-                    pal = QPalette(QToolTip.palette())
-                    for group in (
-                        QPalette.ColorGroup.Active,
-                        QPalette.ColorGroup.Inactive,
-                        QPalette.ColorGroup.Disabled,
-                    ):
-                        pal.setColor(group, QPalette.ColorRole.ToolTipBase, QColor(t["BG_ELEVATED"]))
-                        pal.setColor(group, QPalette.ColorRole.ToolTipText, QColor(t["TEXT_PRIMARY"]))
-                    QToolTip.setPalette(pal)
-                    QToolTip.showText(event.globalPos(), str(tooltip_text), self.viewport(), self.visualRect(index))
+        try:
+            if self._closing:
+                if event.type() == QEvent.Type.ToolTip:
+                    QToolTip.hideText()
+                    event.ignore()
                     return True
-            QToolTip.hideText()
-            event.ignore()
+                return False
+            if event.type() == QEvent.Type.ToolTip:
+                index = self.indexAt(event.pos())
+                if index.isValid():
+                    tooltip_text = index.data(Qt.ItemDataRole.ToolTipRole)
+                    if tooltip_text and self._should_show_tooltip_for_index(index):
+                        from ui.theme import theme_manager
+
+                        t = theme_manager.current_theme
+                        pal = QPalette(QToolTip.palette())
+                        for group in (
+                            QPalette.ColorGroup.Active,
+                            QPalette.ColorGroup.Inactive,
+                            QPalette.ColorGroup.Disabled,
+                        ):
+                            pal.setColor(group, QPalette.ColorRole.ToolTipBase, QColor(t["BG_ELEVATED"]))
+                            pal.setColor(group, QPalette.ColorRole.ToolTipText, QColor(t["TEXT_PRIMARY"]))
+                        QToolTip.setPalette(pal)
+                        QToolTip.showText(event.globalPos(), str(tooltip_text), self.viewport(), self.visualRect(index))
+                        return True
+                QToolTip.hideText()
+                event.ignore()
+                return True
+            return super().viewportEvent(event)
+        except Exception as exc:  # noqa: BLE001 - Qt event handlers must not leak into sys.excepthook.
+            try:
+                QToolTip.hideText()
+                event.ignore()
+            except Exception:
+                pass
+            log.debug("suppressed VCPTableView viewport event failure during Qt event handling: %s", exc)
             return True
-        return super().viewportEvent(event)
 
 
 class PulsingDot(QWidget):

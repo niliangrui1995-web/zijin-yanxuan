@@ -135,6 +135,13 @@ def show_trade_calendar(main_window):
             widget.update()
 
     def _cleanup_dialog(_result) -> None:
+        for widget in (earnings_panel, calendar):
+            dispose = getattr(widget, "_dispose", None)
+            if dispose is not None:
+                try:
+                    dispose()
+                except (RuntimeError, TypeError):
+                    pass
         try:
             domain_events.sig_earnings_updated.disconnect(earnings_panel.reload_from_service_cache)
         except (RuntimeError, TypeError):
@@ -156,7 +163,11 @@ def show_trade_calendar(main_window):
 
     container_layout.addLayout(content_layout)
     main_layout.addWidget(container)
-    dlg.exec()
+    try:
+        dlg.exec()
+    finally:
+        _cleanup_dialog(None)
+        dlg.deleteLater()
 
 
 def apply_theme(main_window):

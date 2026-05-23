@@ -21,7 +21,7 @@ class SplashScreen(QWidget):
             Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.SplashScreen
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setFixedSize(420, 380)
+        self.setFixedSize(420, 340)
 
         # 居中到屏幕
         screen = QApplication.primaryScreen()
@@ -34,7 +34,7 @@ class SplashScreen(QWidget):
 
         # 布局
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(40, 32, 40, 24)
+        layout.setContentsMargins(40, 26, 40, 20)
         layout.setSpacing(0)
 
         # 图标（使用 QIcon 提取 ICO 内最大分辨率）
@@ -46,19 +46,19 @@ class SplashScreen(QWidget):
             from PyQt6.QtGui import QIcon
 
             icon = QIcon(icon_path)
-            # 请求 128x128 以获取 ICO 内最高分辨率
-            pixmap = icon.pixmap(128, 128)
+            # 请求 112x112 以保持启动页紧凑，避免视觉重心过高。
+            pixmap = icon.pixmap(112, 112)
             icon_label.setPixmap(pixmap)
-        icon_label.setFixedHeight(136)
+        icon_label.setFixedHeight(116)
         layout.addWidget(icon_label)
 
-        layout.addSpacing(8)
+        layout.addSpacing(4)
 
         # 品牌标题
         self.lbl_brand = QLabel("紫金研选")
         self.lbl_brand.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_brand.setStyleSheet(
-            "font-size: 28px; font-weight: 900; color: #93C5FD; letter-spacing: 0px; background: transparent;"
+            "font-size: 29px; font-weight: 900; color: #F4F7FF; letter-spacing: 0px; background: transparent;"
         )
         layout.addWidget(self.lbl_brand)
 
@@ -66,16 +66,16 @@ class SplashScreen(QWidget):
         self.lbl_sub = QLabel("量化终端")
         self.lbl_sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_sub.setStyleSheet(
-            "font-size: 13px; color: #6B7280; letter-spacing: 0px; margin-top: 4px; background: transparent;"
+            "font-size: 13px; color: #9CA3AF; letter-spacing: 0px; margin-top: 4px; background: transparent;"
         )
         layout.addWidget(self.lbl_sub)
 
-        layout.addSpacing(30)
+        layout.addSpacing(26)
 
         # 加载状态文字
-        self.lbl_status = QLabel("正在初始化...")
+        self.lbl_status = QLabel("准备启动环境...")
         self.lbl_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_status.setStyleSheet("font-size: 11px; color: #4B5563; background: transparent;")
+        self.lbl_status.setStyleSheet("font-size: 12px; color: #8B95A7; background: transparent;")
         layout.addWidget(self.lbl_status)
 
         layout.addSpacing(10)
@@ -85,17 +85,17 @@ class SplashScreen(QWidget):
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
         self.progress.setTextVisible(False)
-        self.progress.setFixedHeight(3)
+        self.progress.setFixedHeight(4)
         self.progress.setStyleSheet("""
             QProgressBar {
-                background-color: rgba(255, 255, 255, 0.06);
+                background-color: rgba(255, 255, 255, 0.09);
                 border: none;
-                border-radius: 1px;
+                border-radius: 2px;
             }
             QProgressBar::chunk {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #2563EB, stop:0.5 #60A5FA, stop:1 #93C5FD);
-                border-radius: 1px;
+                    stop:0 #B91C1C, stop:0.52 #E11D48, stop:1 #93C5FD);
+                border-radius: 2px;
             }
         """)
         layout.addWidget(self.progress)
@@ -105,7 +105,7 @@ class SplashScreen(QWidget):
         # 版本号
         self.lbl_ver = QLabel(f"v{APP_VERSION}")
         self.lbl_ver.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_ver.setStyleSheet("font-size: 10px; color: #3A3F4D; background: transparent;")
+        self.lbl_ver.setStyleSheet("font-size: 10px; color: #586174; background: transparent;")
         layout.addWidget(self.lbl_ver)
 
     def set_progress(self, value: int, status: str = ""):
@@ -124,9 +124,9 @@ class SplashScreen(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # 深色圆角矩形背景
-        painter.setPen(QPen(QColor(255, 255, 255, 8), 1))
-        painter.setBrush(QColor(11, 13, 18, 245))
+        # 不透明黑色圆角背景，避免启动时透出后方窗口内容。
+        painter.setPen(QPen(QColor(255, 255, 255, 24), 1))
+        painter.setBrush(QColor(5, 6, 10, 255))
         painter.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 16, 16)
 
         painter.end()

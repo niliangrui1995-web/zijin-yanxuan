@@ -24,3 +24,19 @@ def test_set_progress_does_not_process_global_event_loop(monkeypatch):
     finally:
         splash.close()
         splash.deleteLater()
+
+
+def test_splash_uses_compact_opaque_brand_frame():
+    QApplication.instance() or QApplication([])
+
+    splash = SplashScreen()
+    try:
+        assert splash.width() == 420
+        assert splash.height() == 340
+        assert splash.lbl_status.text() == "准备启动环境..."
+        assert "#F4F7FF" in splash.lbl_brand.styleSheet()
+        assert "#B91C1C" in splash.progress.styleSheet()
+        assert "#93C5FD" in splash.progress.styleSheet()
+    finally:
+        splash.close()
+        splash.deleteLater()

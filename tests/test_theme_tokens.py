@@ -113,6 +113,11 @@ def test_ziyao_selection_and_primary_actions_do_not_use_gold_background_tokens()
         assert all(fragment not in token for fragment in gold_fragments)
 
     assert tokens["table"]["selected_rail_color"] == THEME_ZIYAO["BRAND_HOVER"]
+    assert THEME_ZIYAO["BG_CANVAS"] == "#000000"
+    assert THEME_ZIYAO["BG_TABLE_BASE"] == "#000000"
+    assert THEME_ZIYAO["BG_TABLE_ALT_ROW"] == "#090909"
+    assert THEME_ZIYAO["BG_CARD"] == "#080808"
+    assert THEME_ZIYAO["BG_HOVER"] == "#141414"
     assert THEME_ZIYAO["BRAND_PRIMARY"] == "#B91C1C"
     assert THEME_ZIYAO["COLOR_RISE"] != THEME_ZIYAO["BRAND_PRIMARY"]
 

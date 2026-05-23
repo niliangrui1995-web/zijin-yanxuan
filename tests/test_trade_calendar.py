@@ -1,11 +1,17 @@
 # -*- coding: utf-8 -*-
 import datetime as dt
+import threading
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QTableView
 
 from domains.global_earnings_calendar.service import EarningsCalendarEvent
-from ui.components.trade_calendar import OligarchEarningsCalendarPanel, TradeCalendarWidget, _priority_marker_styles
+from ui.components.trade_calendar import (
+    OligarchEarningsCalendarPanel,
+    TradeCalendarWidget,
+    _DETACHED_EARNINGS_REFRESH_WORKERS,
+    _priority_marker_styles,
+)
 from ui.theme import THEME_YUEBAI
 from ui.theme_tokens import build_ui_tokens
 
@@ -237,6 +243,45 @@ def test_oligarch_earnings_panel_reloads_cached_events_from_service():
         assert [event.ticker for event in panel.filtered_events()] == ["LITE"]
     finally:
         panel.deleteLater()
+
+
+def test_oligarch_earnings_panel_detaches_running_refresh_worker_on_delete(qt_application):
+    started = threading.Event()
+    release = threading.Event()
+    worker = None
+    panel = None
+
+    class _SlowService:
+        universe = {}
+
+        def refresh_events(self):
+            started.set()
+            release.wait(2)
+            return []
+
+    try:
+        panel = OligarchEarningsCalendarPanel(events=[], service=_SlowService())
+        panel.refresh_from_service()
+
+        assert started.wait(1)
+        worker = panel._refresh_worker
+        assert worker is not None
+        assert worker.parent() is None
+
+        panel.deleteLater()
+
+        assert panel._closing is True
+        assert panel._refresh_worker is None
+        if worker.isRunning():
+            assert worker in _DETACHED_EARNINGS_REFRESH_WORKERS
+        panel = None
+    finally:
+        release.set()
+        if worker is not None:
+            worker.wait(2000)
+        qt_application.processEvents()
+        if panel is not None:
+            panel.deleteLater()
 
 
 def test_oligarch_earnings_panel_groups_filtered_events_by_beijing_calendar_date():

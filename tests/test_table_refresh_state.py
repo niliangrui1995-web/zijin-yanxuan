@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QEvent, QPoint, Qt
+from PyQt6.QtGui import QHelpEvent, QStandardItem, QStandardItemModel
 
 from ui.components import (
     MultiSelectFilterButton,
@@ -87,6 +88,33 @@ def test_vcp_table_view_elides_long_cell_text():
     table = VCPTableView()
     try:
         assert table.textElideMode() == Qt.TextElideMode.ElideRight
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_suppresses_tooltip_event_errors(qt_application):
+    table = VCPTableView()
+    model = QStandardItemModel(1, 1)
+    item = QStandardItem("truncated cell text")
+    item.setToolTip("tooltip text")
+    model.setItem(0, 0, item)
+    table.setModel(model)
+    table.resize(220, 120)
+    table.show()
+    _process_events(qt_application)
+
+    try:
+        index = model.index(0, 0)
+        rect = table.visualRect(index)
+        pos = rect.center() if rect.isValid() else QPoint(5, 5)
+
+        def _raise_for_deleted_wrapper(_index):
+            raise RuntimeError("wrapped C/C++ object of type QTableView has been deleted")
+
+        table._should_show_tooltip_for_index = _raise_for_deleted_wrapper
+        event = QHelpEvent(QEvent.Type.ToolTip, pos, table.viewport().mapToGlobal(pos))
+
+        assert table.viewportEvent(event) is True
     finally:
         table.deleteLater()
 

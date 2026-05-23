@@ -41,6 +41,7 @@ _PRIORITY_TONE_FALLBACK_ALPHA = {
     "strategic_giant": 220,
     "normal": 205,
 }
+_DETACHED_EARNINGS_REFRESH_WORKERS: list[QThread] = []
 _PRIORITY_LABELS = {
     "super_giant": "\u8d85\u7ea7\u5de8\u5934",
     "strategic_giant": "\u6218\u7565\u6838\u5fc3",
@@ -69,6 +70,23 @@ def _priority_tone(priority: str) -> str:
     return priority_text if priority_text in _PRIORITY_TONE_FALLBACK_COLORS else "normal"
 
 
+def _remember_detached_refresh_worker(worker: QThread) -> None:
+    if worker in _DETACHED_EARNINGS_REFRESH_WORKERS:
+        return
+    _DETACHED_EARNINGS_REFRESH_WORKERS.append(worker)
+
+    def _forget_worker() -> None:
+        try:
+            _DETACHED_EARNINGS_REFRESH_WORKERS.remove(worker)
+        except ValueError:
+            pass
+
+    try:
+        worker.finished.connect(_forget_worker)
+    except (RuntimeError, TypeError):
+        pass
+
+
 def _priority_marker_styles(calendar_tokens: dict | None = None) -> dict[str, dict[str, int | str]]:
     tokens = calendar_tokens or build_ui_tokens(theme_manager.current_theme).get("calendar", {})
     return {
@@ -90,6 +108,7 @@ def _priority_marker_styles(calendar_tokens: dict | None = None) -> dict[str, di
 class TradeCalendarWidget(QCalendarWidget):
     def __init__(self, parent=None, *, earnings_events: dict[str, list[EarningsCalendarEvent]] | None = None):
         super().__init__(parent)
+        self._closing = False
         self._earnings_events_by_date: dict[str, list[EarningsCalendarEvent]] = {}
         self.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
         self.setGridVisible(False)
@@ -101,6 +120,8 @@ class TradeCalendarWidget(QCalendarWidget):
     def set_earnings_events(
         self, events: dict[str, list[EarningsCalendarEvent]] | list[EarningsCalendarEvent] | None
     ) -> None:
+        if self._closing:
+            return
         if isinstance(events, list):
             self._earnings_events_by_date = events_by_date(events)
         else:
@@ -152,6 +173,8 @@ class TradeCalendarWidget(QCalendarWidget):
         self.setWeekdayTextFormat(Qt.DayOfWeek.Sunday, weekend_format)
 
     def _apply_theme_stylesheet(self):
+        if self._closing:
+            return
         ui = build_ui_tokens(theme_manager.current_theme)
         font = ui["font"]
         radius = ui["radius"]
@@ -266,7 +289,24 @@ class TradeCalendarWidget(QCalendarWidget):
         self.updateCells()
         self.update()
 
+    def _dispose(self) -> None:
+        self._closing = True
+        try:
+            theme_manager.sig_theme_changed.disconnect(self._apply_theme_stylesheet)
+        except (RuntimeError, TypeError):
+            pass
+
+    def closeEvent(self, event):
+        self._dispose()
+        super().closeEvent(event)
+
+    def deleteLater(self):
+        self._dispose()
+        super().deleteLater()
+
     def paintCell(self, painter, rect, date):
+        if self._closing:
+            return
         painter.save()
         painter.setRenderHint(painter.RenderHint.Antialiasing)
 
@@ -384,6 +424,7 @@ class OligarchEarningsCalendarPanel(QFrame):
 
     def __init__(self, parent=None, *, events: list[EarningsCalendarEvent] | None = None, service=None):
         super().__init__(parent)
+        self._closing = False
         self._events = list(events or [])
         self._service = service
         self._filter_mode = "30d"
@@ -461,6 +502,8 @@ class OligarchEarningsCalendarPanel(QFrame):
         layout.addWidget(self.status_label)
 
     def _apply_theme(self) -> None:
+        if self._closing:
+            return
         tokens = build_ui_tokens(theme_manager.current_theme)
         t = tokens["theme"]
         self.setStyleSheet(
@@ -618,15 +661,21 @@ class OligarchEarningsCalendarPanel(QFrame):
         )
 
     def set_events(self, events: list[EarningsCalendarEvent]) -> None:
+        if self._closing:
+            return
         self._events = list(events or [])
         self._rebuild_cards()
         self.eventsChanged.emit(list(self._events))
 
     def set_selected_date(self, date_text: str) -> None:
+        if self._closing:
+            return
         self._selected_date = str(date_text or "").strip()[:10]
         self._rebuild_cards()
 
     def set_filter_mode(self, mode: str) -> None:
+        if self._closing:
+            return
         if mode not in dict(self.FILTER_MODES):
             mode = "30d"
         self._filter_mode = mode
@@ -681,6 +730,8 @@ class OligarchEarningsCalendarPanel(QFrame):
         return groups
 
     def _clear_cards(self) -> None:
+        if self._closing:
+            return
         while self.cards_layout.count():
             item = self.cards_layout.takeAt(0)
             widget = item.widget()
@@ -843,7 +894,7 @@ class OligarchEarningsCalendarPanel(QFrame):
         return card
 
     def _rebuild_cards(self, *_args) -> None:
-        if not hasattr(self, "cards_layout"):
+        if self._closing or not hasattr(self, "cards_layout"):
             return
         self._clear_cards()
         groups = self.grouped_events()
@@ -888,6 +939,8 @@ class OligarchEarningsCalendarPanel(QFrame):
         self.status_label.setText("\uff5c".join(source_parts))
 
     def refresh_from_service(self) -> None:
+        if self._closing:
+            return
         if self._service is None:
             self._rebuild_cards()
             return
@@ -897,7 +950,7 @@ class OligarchEarningsCalendarPanel(QFrame):
         self.status_label.setText(
             "\u6b63\u5728\u62c9\u53d6\u5be1\u5934\u5b57\u5178\u5168\u5e02\u573a\u8d22\u62a5\u65e5\u5386..."
         )
-        worker = EarningsCalendarRefreshWorker(self._service, self)
+        worker = EarningsCalendarRefreshWorker(self._service)
         self._refresh_worker = worker
         worker.sig_result.connect(self._on_refresh_result)
         worker.sig_error.connect(self._on_refresh_error)
@@ -906,16 +959,24 @@ class OligarchEarningsCalendarPanel(QFrame):
         worker.start()
 
     def _on_refresh_result(self, events) -> None:
+        if self._closing:
+            return
         self.set_events(list(events or []))
 
     def _on_refresh_error(self, message: str) -> None:
+        if self._closing:
+            return
         self.status_label.setText(f"\u5237\u65b0\u5931\u8d25: {message}")
 
     def _on_refresh_finished(self) -> None:
+        if self._closing:
+            return
         self.btn_refresh.setEnabled(True)
         self._refresh_worker = None
 
     def reload_from_service_cache(self) -> None:
+        if self._closing:
+            return
         if self._service is None:
             return
         if self._refresh_worker is not None and self._refresh_worker.isRunning():
@@ -925,6 +986,51 @@ class OligarchEarningsCalendarPanel(QFrame):
         except (OSError, RuntimeError, TypeError, ValueError):
             return
         self.set_events(list(events or []))
+
+    def _dispose(self) -> None:
+        if self._closing:
+            return
+        self._closing = True
+        try:
+            theme_manager.sig_theme_changed.disconnect(self._apply_theme)
+        except (RuntimeError, TypeError):
+            pass
+        worker = self._refresh_worker
+        self._refresh_worker = None
+        if worker is None:
+            return
+        for signal_name, slot in (
+            ("sig_result", self._on_refresh_result),
+            ("sig_error", self._on_refresh_error),
+            ("finished", self._on_refresh_finished),
+        ):
+            signal = getattr(worker, signal_name, None)
+            if signal is None:
+                continue
+            try:
+                signal.disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass
+        try:
+            worker.setParent(None)
+        except (RuntimeError, TypeError):
+            pass
+        try:
+            if worker.isRunning():
+                worker.requestInterruption()
+                _remember_detached_refresh_worker(worker)
+            else:
+                worker.deleteLater()
+        except (RuntimeError, TypeError):
+            pass
+
+    def closeEvent(self, event):
+        self._dispose()
+        super().closeEvent(event)
+
+    def deleteLater(self):
+        self._dispose()
+        super().deleteLater()
 
 
 class TradeDateEdit(QDateEdit):
