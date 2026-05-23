@@ -86,7 +86,7 @@ def test_theme_tokens_expose_terminal_layers_and_toolbar_metrics():
     assert tokens["shell"]["toolbar_group_gap"] <= 4
     assert tokens["surface"]["toolbar"] == THEME_YUEBAI["BG_TOOLBAR"]
     assert tokens["surface"]["toolbar_chip"] == THEME_YUEBAI["BG_TOOLBAR_CHIP"]
-    assert tokens["surface"]["toolbar_card"] != tokens["surface"]["toolbar"]
+    assert tokens["surface"]["toolbar_card"] == THEME_YUEBAI["BG_CARD"]
     assert tokens["surface"]["toolbar_chip"] != THEME_YUEBAI["BG_BUTTON"]
     assert dark_tokens["surface"]["toolbar"] == THEME_YAOHEI["BG_TOOLBAR"]
     assert dark_tokens["surface"]["toolbar_chip"] == THEME_YAOHEI["BG_BUTTON"]
@@ -107,36 +107,52 @@ def test_global_qss_uses_subtle_depth_instead_of_hard_table_borders():
     assert "border-right: 1px solid transparent;" in qss
 
 
-def test_yaohei_selection_and_primary_actions_do_not_use_gold_background_tokens():
+def test_yaohei_selection_and_primary_actions_use_accent_not_market_red():
     tokens = build_ui_tokens(THEME_YAOHEI, density="舒展")
-    gold_fragments = ("215, 172, 69", "#D7AC45", "#E9C867", "#B78926")
+    blocked_fragments = (
+        "215, 172, 69",
+        "#D7AC45",
+        "#E9C867",
+        "#B78926",
+        "185, 28, 28",
+        "220, 38, 38",
+        "#B91C1C",
+        "#DC2626",
+        "#7F1D1D",
+        "#F87171",
+    )
     background_tokens = [
         THEME_YAOHEI["SELECTION_BG"],
         THEME_YAOHEI["SELECTION_HOVER_BG"],
         THEME_YAOHEI["INPUT_SELECTION_BG"],
+        THEME_YAOHEI["FOCUS_RING"],
         THEME_YAOHEI["TAB_ACTIVE_BG"],
         THEME_YAOHEI["TAB_ACTIVE_BORDER"],
         THEME_YAOHEI["TAB_ACTIVE_TOP"],
         THEME_YAOHEI["SEGMENT_ACTIVE_BG"],
         THEME_YAOHEI["SEGMENT_ACTIVE_BORDER"],
+        THEME_YAOHEI["SCROLLBAR_HANDLE_HOVER"],
         THEME_YAOHEI["SCROLLBAR_HANDLE_PRESSED"],
         THEME_YAOHEI["PRIMARY_GRADIENT_START"],
         THEME_YAOHEI["PRIMARY_GRADIENT_END"],
         THEME_YAOHEI["PRIMARY_HOVER_GRADIENT_START"],
         THEME_YAOHEI["PRIMARY_HOVER_GRADIENT_END"],
         THEME_YAOHEI["PRIMARY_BUTTON_PRESSED_BG"],
+        THEME_YAOHEI["PROGRESS_GRADIENT_MID"],
         tokens["table"]["selected_bg"],
         tokens["table"]["selected_hover_bg"],
         tokens["table"]["selected_rail_color"],
+        tokens["table"]["hover_rail_color"],
         tokens["table"]["current_cell_bg"],
         tokens["table"]["current_cell_bg_selected"],
         tokens["table"]["current_cell_border"],
     ]
 
     for token in background_tokens:
-        assert all(fragment not in token for fragment in gold_fragments)
+        assert all(fragment not in token for fragment in blocked_fragments)
 
-    assert tokens["table"]["selected_rail_color"] == THEME_YAOHEI["BRAND_HOVER"]
+    assert tokens["table"]["selected_rail_color"] == THEME_YAOHEI["ACCENT_PRIMARY"]
+    assert tokens["table"]["hover_rail_color"] == THEME_YAOHEI["ACCENT_PRIMARY"]
     assert THEME_YAOHEI["BG_CANVAS"] == "#000000"
     assert THEME_YAOHEI["BG_TABLE_BASE"] == "#000000"
     assert THEME_YAOHEI["BG_TABLE_ALT_ROW"] == "#090909"
@@ -149,9 +165,11 @@ def test_yaohei_selection_and_primary_actions_do_not_use_gold_background_tokens(
 def test_yuebai_uses_cool_professional_light_palette():
     tokens = build_ui_tokens(THEME_YUEBAI, density="舒展")
 
-    assert THEME_YUEBAI["BG_CANVAS"] == "#F4F7FB"
+    assert THEME_YUEBAI["BG_CANVAS"] == "#F9F9FB"
     assert THEME_YUEBAI["BG_CARD"] == "#FFFFFF"
-    assert THEME_YUEBAI["BG_TOOLBAR_CHIP"] == "#EEF4FA"
+    assert THEME_YUEBAI["BG_TOOLBAR_CHIP"] == "#F3F5FA"
+    assert THEME_YUEBAI["BORDER_DEFAULT"] == "rgba(0, 0, 0, 0.06)"
+    assert THEME_YUEBAI["BORDER_SUBTLE"] == "rgba(0, 0, 0, 0.04)"
     assert THEME_YUEBAI["ACCENT_PRIMARY"] == "#2563EB"
     assert THEME_YUEBAI["ACCENT_PRIMARY"] != THEME_YUEBAI["BRAND_PRIMARY"]
     assert THEME_YUEBAI["TAB_ACTIVE_TOP"] == THEME_YUEBAI["ACCENT_PRIMARY"]
@@ -206,7 +224,7 @@ def test_global_qss_uses_density_tokens_for_table_and_controls():
     assert compact_tokens["control"]["button_height"] < comfort_tokens["control"]["button_height"]
 
 
-def test_yaohei_global_qss_uses_red_primary_button_and_scrollbar_pressed():
+def test_yaohei_global_qss_uses_accent_primary_button_and_scrollbar_pressed():
     qss = generate_global_qss(THEME_YAOHEI, density="舒展")
     selected_start = qss.index("QTableView::item:selected {")
     selected_end = qss.index("QTableView::item:selected:hover")
@@ -219,13 +237,13 @@ def test_yaohei_global_qss_uses_red_primary_button_and_scrollbar_pressed():
     scrollbar_block = qss[scrollbar_start:scrollbar_end]
 
     assert THEME_YAOHEI["SELECTION_BG"] in selected_block
-    assert "215, 172, 69" not in selected_block
+    assert "185, 28, 28" not in selected_block
     assert THEME_YAOHEI["PRIMARY_BUTTON_TEXT"] in primary_block
     assert THEME_YAOHEI["PRIMARY_BUTTON_BORDER"] in primary_block
     assert THEME_YAOHEI["PRIMARY_GRADIENT_START"] in primary_block
-    assert THEME_YAOHEI["BRAND_PRIMARY"] in primary_block
+    assert THEME_YAOHEI["BRAND_PRIMARY"] not in primary_block
     assert THEME_YAOHEI["SCROLLBAR_HANDLE_PRESSED"] in scrollbar_block
-    assert "215, 172, 69" not in scrollbar_block
+    assert THEME_YAOHEI["BRAND_PRIMARY"] not in scrollbar_block
 
 
 def test_global_qss_selected_tab_uses_yuebai_information_accent_top_rule():

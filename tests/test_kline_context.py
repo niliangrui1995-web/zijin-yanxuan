@@ -9,7 +9,7 @@ from ui.kline_chart_payload import (
     format_kline_market_badge,
     resolve_kline_vcp_context,
 )
-from ui.theme import THEME_YUEBAI
+from ui.theme import THEME_YAOHEI, THEME_YUEBAI, theme_manager
 from ui.workspaces.stock_signal import StockSignal
 
 
@@ -259,6 +259,8 @@ def test_kline_theme_colors_include_vcp_overlay_tokens():
     assert colors["vcp_area"]
     assert colors["vcp_guide"]
     assert colors["vcp_breakout_bg"]
+    assert colors["scrollbar_handle"]
+    assert colors["scrollbar_handle_hover"]
 
 
 def test_kline_window_palette_keeps_yuebai_top_area_unified():
@@ -431,3 +433,38 @@ def test_build_kline_html_hides_echarts_tooltip_panel():
     )
 
     assert "showContent: false" in html
+
+
+def test_yaohei_kline_html_syncs_canvas_scrollbar_and_tabular_nums(monkeypatch):
+    monkeypatch.setattr(theme_manager, "_current_name", THEME_YAOHEI["name"])
+    colors = build_kline_theme_colors()
+    html = build_kline_html(
+        title="test",
+        echarts_data={
+            "dates": [],
+            "klines": [],
+            "vols": [],
+            "ma10": [],
+            "ma20": [],
+            "ma50": [],
+            "ma150": [],
+            "ma200": [],
+            "volMa20": [],
+            "macd": [],
+            "diff": [],
+            "dea": [],
+        },
+        echarts_js_path=r"D:\fake\echarts.min.js",
+        theme_colors=colors,
+    )
+
+    assert colors["bg_canvas"] == THEME_YAOHEI["BG_CARD"] == "#080808"
+    assert colors["datazoom_handle"] == THEME_YAOHEI["SCROLLBAR_HANDLE"]
+    assert colors["scrollbar_handle"] == THEME_YAOHEI["SCROLLBAR_HANDLE"]
+    assert colors["scrollbar_handle_hover"] == THEME_YAOHEI["SCROLLBAR_HANDLE_HOVER"]
+    assert "font-variant-numeric: tabular-nums" in html
+    assert 'font-feature-settings: "tnum" 1' in html
+    assert "::-webkit-scrollbar" in html
+    assert "--scrollbar-handle:" in html
+    assert "scrollbar_handle" in html
+    assert "backgroundColor: themeState.bg_canvas" in html

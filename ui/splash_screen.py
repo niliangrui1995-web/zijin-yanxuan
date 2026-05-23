@@ -64,11 +64,12 @@ class SplashScreen(QWidget):
         layout.addWidget(self.lbl_brand)
 
         # 副标题
-        self.lbl_sub = QLabel("量化终端")
+        self.lbl_sub = QLabel("")
         self.lbl_sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_sub.setStyleSheet(
             "font-size: 13px; color: #9CA3AF; letter-spacing: 0px; margin-top: 4px; background: transparent;"
         )
+        self.lbl_sub.setVisible(False)
         layout.addWidget(self.lbl_sub)
 
         layout.addSpacing(26)

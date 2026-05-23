@@ -3,14 +3,13 @@
 
 from __future__ import annotations
 
-import math
 import re
 import textwrap
 import time
 from functools import lru_cache
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QFont
 
 from app.services.ui_quote_service import resolve_quote_metrics
 from ui.theme import theme_manager
@@ -71,6 +70,36 @@ def _theme_table_tokens_cached(theme_name: str, density: str | None) -> dict:
 
 def _theme_table_tokens() -> dict:
     return _theme_table_tokens_cached(theme_manager.current_theme_name, _current_table_density())
+
+
+def _build_qfont(families: list[str], point_size: int, *, bold: bool = False, mono: bool = False) -> QFont:
+    font = QFont()
+    font.setFamilies(families)
+    font.setPointSize(point_size)
+    font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+    if mono:
+        font.setStyleHint(QFont.StyleHint.Monospace)
+        font.setFixedPitch(True)
+    if bold:
+        font.setBold(True)
+    return font
+
+
+def _build_table_model_fonts() -> dict[str, QFont]:
+    font_tokens = build_ui_tokens()["font"]
+    point_size = 12
+    family_names = list(font_tokens.get("family_names") or ["Microsoft YaHei UI", "Segoe UI"])
+    mono_family_names = list(
+        font_tokens.get("mono_family_names")
+        or ["JetBrains Mono", "Cascadia Mono", "Consolas", "Segoe UI Historic", "Microsoft YaHei UI"]
+    )
+
+    return {
+        "base": _build_qfont(family_names, point_size),
+        "mono": _build_qfont(mono_family_names, point_size, mono=True),
+        "bold": _build_qfont(family_names, point_size, bold=True),
+        "bold_mono": _build_qfont(mono_family_names, point_size, bold=True, mono=True),
+    }
 
 
 @lru_cache(maxsize=512)
@@ -217,7 +246,8 @@ def _build_flash_record(header: str, old_value, new_value, *, now: float | None 
 def _flash_decay_alpha(elapsed: float, duration: float = FLASH_DURATION_SECONDS) -> float:
     duration = max(0.001, float(duration or FLASH_DURATION_SECONDS))
     progress = max(0.0, min(1.0, float(elapsed or 0.0) / duration))
-    return max(0.0, 1.0 - (math.log1p(progress * 4.0) / math.log(5.0)))
+    eased = progress * progress * (3.0 - 2.0 * progress)
+    return max(0.0, 1.0 - eased)
 
 
 def _prune_flash_records(flash_records: dict, *, now: float | None = None) -> None:
@@ -297,6 +327,26 @@ def _is_numeric_header(header: str) -> bool:
 
 def _is_pct_like_header(header: str) -> bool:
     return "%" in header or "涨幅" in header or header == "涨跌"
+
+
+def _strong_market_pct_from_row(row_data: dict | None):
+    if not isinstance(row_data, dict):
+        return None
+    for pct_key in ("涨幅%", "涨幅", "涨跌%", "涨跌"):
+        value = _parse_numeric_value(row_data.get(pct_key))
+        if value is not None:
+            return value
+    return None
+
+
+def _is_strong_market_move(header: str, raw_val, row_data: dict | None = None) -> bool:
+    header_text = str(header or "").strip()
+    pct_value = None
+    if _is_pct_like_header(header_text) and "换手" not in header_text:
+        pct_value = _parse_numeric_value(raw_val)
+    elif header_text in {"现价", "市价", "最新价", "收盘"}:
+        pct_value = _strong_market_pct_from_row(row_data)
+    return pct_value is not None and abs(float(pct_value)) >= 9.0
 
 
 def _numeric_heat_color(header: str, raw_val):

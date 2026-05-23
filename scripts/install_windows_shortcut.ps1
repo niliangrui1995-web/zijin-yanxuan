@@ -11,7 +11,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 function Get-AppDisplayName {
-    return (-join @([char]0x7D2B, [char]0x91D1, [char]0x6295, [char]0x7814))
+    return (-join @([char]0x7D2B, [char]0x91D1, [char]0x7814, [char]0x9009))
 }
 
 $DisplayName = Get-AppDisplayName

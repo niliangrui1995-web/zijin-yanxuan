@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from PyQt6.QtWidgets import QApplication
+import inspect
+
+from PyQt6.QtWidgets import QApplication, QWidget
 
 from ui.main_window_qt import MainWindowQT
 
@@ -38,6 +40,35 @@ def _process_events(rounds: int = 4):
     if app is not None:
         for _ in range(rounds):
             app.processEvents()
+
+
+def test_main_window_keeps_data_prewarm_but_disables_kline_prewarm_by_default():
+    signature = inspect.signature(MainWindowQT)
+
+    assert signature.parameters["background_prewarm"].default is True
+    assert signature.parameters["kline_prewarm_enabled"].default is False
+
+
+def test_apply_theme_suppresses_toast_before_main_window_visible(monkeypatch, qt_application):
+    from ui import main_window_visuals
+    from ui.components import toast_widget
+
+    calls = []
+    monkeypatch.setattr(main_window_visuals, "apply_chrome_theme", lambda _window: None)
+    monkeypatch.setattr(toast_widget, "show_toast", lambda *args, **kwargs: calls.append((args, kwargs)))
+
+    window = QWidget()
+    try:
+        main_window_visuals.apply_theme(window, notify=True)
+        assert calls == []
+
+        window.show()
+        qt_application.processEvents()
+        main_window_visuals.apply_theme(window, notify=True)
+        assert len(calls) == 1
+    finally:
+        window.close()
+        window.deleteLater()
 
 
 def test_main_window_builds_and_closes_with_controlled_background_services(monkeypatch, qt_application):

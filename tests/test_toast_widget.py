@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import pytest
+from PyQt6.QtWidgets import QWidget
 
 
 @pytest.fixture
@@ -47,3 +48,24 @@ def test_toast_text_uses_primary_theme_color(toast_dependencies):
     finally:
         toast.hide_toast()
         toast.close()
+
+
+def test_global_toast_suppresses_hidden_parent(qt_application):
+    from ui.components import toast_widget
+
+    parent = QWidget()
+    try:
+        toast_widget.clear_active_toast()
+
+        assert toast_widget.show_toast("hidden", "success", parent=parent, duration=10) is None
+        assert toast_widget._active_toast is None
+
+        parent.show()
+        qt_application.processEvents()
+        toast = toast_widget.show_toast("visible", "success", parent=parent, duration=10)
+        assert toast is not None
+        assert toast_widget._active_toast is toast
+    finally:
+        toast_widget.clear_active_toast()
+        parent.close()
+        parent.deleteLater()

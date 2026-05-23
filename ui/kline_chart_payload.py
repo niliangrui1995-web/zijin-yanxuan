@@ -202,7 +202,10 @@ def build_kline_theme_colors() -> dict:
         "crosshair_line": t.get("KLINE_CROSSHAIR_LINE", t["KLINE_AXIS_LABEL"]),
         "datazoom_bg": t.get("KLINE_DATAZOOM_BG", t.get("KLINE_BG_TOOLBAR", t["BG_ELEVATED"])),
         "datazoom_fill": t.get("KLINE_DATAZOOM_FILL", t.get("KLINE_VCP_AREA", t["SELECTION_BG"])),
-        "datazoom_handle": t.get("KLINE_DATAZOOM_HANDLE", t["KLINE_AXIS_LINE"]),
+        "datazoom_handle": t.get("SCROLLBAR_HANDLE", t.get("KLINE_DATAZOOM_HANDLE", t["KLINE_AXIS_LINE"])),
+        "scrollbar_handle": t.get("SCROLLBAR_HANDLE", border_tokens.get("default", t["BORDER_DEFAULT"])),
+        "scrollbar_handle_hover": t.get("SCROLLBAR_HANDLE_HOVER", text_tokens.get("muted", t["TEXT_MUTED"])),
+        "scrollbar_handle_pressed": t.get("SCROLLBAR_HANDLE_PRESSED", t.get("ACCENT_PRIMARY", t["BRAND_PRIMARY"])),
         "font_family": t.get(
             "KLINE_FONT_FAMILY",
             font_tokens.get("family") or '"Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif',
@@ -314,12 +317,22 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             --ma50: {theme_colors["ma50"]};
             --ma150: {theme_colors["ma150"]};
             --ma200: {theme_colors["ma200"]};
+            --scrollbar-handle: {theme_colors["scrollbar_handle"]};
+            --scrollbar-handle-hover: {theme_colors["scrollbar_handle_hover"]};
+            --scrollbar-handle-pressed: {theme_colors["scrollbar_handle_pressed"]};
             --font-family: {theme_colors["font_family"]};
             --mono-font-family: {theme_colors["mono_font_family"]};
         }}
 
+        * {{ scrollbar-width: thin; scrollbar-color: var(--scrollbar-handle) transparent; }}
+        body, #chart, .top-toolbar, .info-val, .ma-display {{ font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }}
         body {{ margin: 0; padding: 0; background-color: var(--bg-canvas); color: var(--text-secondary); font-family: var(--font-family); overflow: hidden; transition: background-color 180ms ease, color 180ms ease; }}
         #chart {{ width: 100vw; height: calc(100vh - 30px); margin-top: 30px; }}
+        ::-webkit-scrollbar {{ width: 10px; height: 10px; }}
+        ::-webkit-scrollbar-track {{ background: transparent; }}
+        ::-webkit-scrollbar-thumb {{ background: var(--scrollbar-handle); border-radius: 5px; }}
+        ::-webkit-scrollbar-thumb:hover {{ background: var(--scrollbar-handle-hover); }}
+        ::-webkit-scrollbar-thumb:active {{ background: var(--scrollbar-handle-pressed); }}
 
         .top-toolbar {{ position: absolute; top: 0; left: 0; right: 0; height: 30px; background: var(--bg-toolbar); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 12px; z-index: 100; gap: 10px; transition: background-color 180ms ease, border-color 180ms ease; }}
         .info-item {{ font-size: 11px; color: var(--text-muted); white-space: nowrap; transition: color 180ms ease; }}
@@ -377,6 +390,9 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             _setCssVar('--ma50', t.ma50);
             _setCssVar('--ma150', t.ma150);
             _setCssVar('--ma200', t.ma200);
+            _setCssVar('--scrollbar-handle', t.scrollbar_handle);
+            _setCssVar('--scrollbar-handle-hover', t.scrollbar_handle_hover);
+            _setCssVar('--scrollbar-handle-pressed', t.scrollbar_handle_pressed);
             _setCssVar('--font-family', t.font_family);
             _setCssVar('--mono-font-family', t.mono_font_family);
         }}

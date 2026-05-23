@@ -140,6 +140,30 @@ def test_flash_decay_alpha_is_monotonic_and_soft_lands():
     assert samples[1] > samples[2] > samples[3]
 
 
+def test_stock_table_model_uses_bold_mono_font_for_large_market_moves():
+    model = StockTableModel(["代码", "名称", "现价", "涨幅%"])
+    model.update_data(
+        [
+            {"代码": "000001", "名称": "A", "现价": "10.00", "涨幅%": 9.5},
+        ],
+        hydrate_latest_quotes=False,
+    )
+
+    price_col = model.headers.index("现价")
+    pct_col = model.headers.index("涨幅%")
+    name_col = model.headers.index("名称")
+    price_font = model.data(model.index(0, price_col), Qt.ItemDataRole.FontRole)
+    pct_font = model.data(model.index(0, pct_col), Qt.ItemDataRole.FontRole)
+    name_font = model.data(model.index(0, name_col), Qt.ItemDataRole.FontRole)
+
+    assert price_font.bold()
+    assert pct_font.bold()
+    assert price_font.fixedPitch()
+    assert pct_font.pointSize() == 12
+    assert "JetBrains Mono" in pct_font.families()
+    assert not name_font.bold()
+
+
 def test_stock_table_model_update_data_hydrates_latest_global_quotes(monkeypatch):
     monkeypatch.setattr(
         global_store,

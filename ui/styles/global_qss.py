@@ -54,11 +54,14 @@ def generate_global_qss(theme: dict = None, density: str | None = None) -> str:
     text_on_danger = t.get("TEXT_ON_DANGER", t["TEXT_ON_ACCENT"])
     input_selection_bg = t.get("INPUT_SELECTION_BG", t["SELECTION_BG"])
     info_badge_text = t.get("INFO_BADGE_FG", t["TEXT_PRIMARY"])
+    accent_border = t.get("ACCENT_BORDER", t["BORDER_BRAND"])
+    scrollbar_handle = t.get("SCROLLBAR_HANDLE", t["BORDER_DEFAULT"])
+    scrollbar_hover = t.get("SCROLLBAR_HANDLE_HOVER", t["TEXT_MUTED"])
     scrollbar_pressed = t.get("SCROLLBAR_HANDLE_PRESSED", t["BRAND_PRIMARY"])
 
     return f"""
 /* ═══════════════════════════════════════════
-   紫金研选量化终端 - 全局主题 QSS (动态生成)
+   紫金研选 - 全局主题 QSS (动态生成)
    当前主题: {t.get("name", "未知")}
    ═══════════════════════════════════════════ */
 
@@ -134,7 +137,7 @@ QTableView {{
     color: {t["TEXT_PRIMARY"]};
     gridline-color: transparent;
     border: none;
-    font-family: "Microsoft YaHei", "微软雅黑";
+    font-family: {font["mono_family"]};
     font-size: {font["size_md"]}px;
     selection-background-color: {table["selected_bg"]};
     selection-color: {t["TEXT_BRIGHT"]};
@@ -172,7 +175,7 @@ QTableCornerButton::section {{
 QHeaderView::section {{
     background-color: {surface["toolbar"]};
     color: {text["header"]};
-    font-family: "Microsoft YaHei", "微软雅黑";
+    font-family: {font["family"]};
     font-size: {table["header_font_size"]}px;
     font-weight: {font["weight_semibold"]};
     letter-spacing: 0px;
@@ -207,7 +210,7 @@ QPushButton {{
 }}
 QPushButton:hover {{
     background-color: {t["BG_BUTTON_HOVER"]};
-    border: 1px solid {t["BORDER_BRAND"]};
+    border: 1px solid {accent_border};
     color: {t["TEXT_PRIMARY"]};
 }}
 QPushButton:focus {{
@@ -228,7 +231,7 @@ QPushButton[class="secondary"] {{
 QPushButton[class="secondary"]:hover {{
     background-color: {t["BG_BUTTON_HOVER"]};
     color: {t["TEXT_PRIMARY"]};
-    border: 1px solid {t["BORDER_BRAND"]};
+    border: 1px solid {accent_border};
 }}
 QPushButton[class="ghost"] {{
     background: transparent;
@@ -282,7 +285,7 @@ QToolButton[class="toolbarGhost"] {{
 QToolButton[class="toolbarGhost"]:hover {{
     background-color: {t["BG_BUTTON_HOVER"]};
     color: {t["TEXT_PRIMARY"]};
-    border: 1px solid {t["BORDER_BRAND"]};
+    border: 1px solid {accent_border};
 }}
 QToolButton[class="toolbarGhost"]:focus {{
     border: 1px solid {border["focus"]};
@@ -340,7 +343,7 @@ QComboBox {{
     border: 1px solid {t["BORDER_STRONG"]}; border-radius: {radius["sm"]}px;
     padding: 0 30px 0 10px; font-size: {font["size_sm"]}px; min-height: {control["input_height"]}px;
 }}
-QComboBox:hover {{ border: 1px solid {t["BORDER_BRAND"]}; }}
+QComboBox:hover {{ border: 1px solid {accent_border}; }}
 QComboBox:focus {{ border: 1px solid {border["focus"]}; outline: none; }}
 QComboBox::drop-down {{ border: none; width: 24px; }}
 QComboBox::down-arrow {{
@@ -362,7 +365,7 @@ QSpinBox, QDoubleSpinBox {{
     border: 1px solid {t["BORDER_STRONG"]}; border-radius: {radius["sm"]}px;
     padding: 0 8px; font-size: {font["size_sm"]}px; min-height: {control["input_height"]}px;
 }}
-QSpinBox:hover, QDoubleSpinBox:hover {{ border: 1px solid {t["BORDER_BRAND"]}; }}
+QSpinBox:hover, QDoubleSpinBox:hover {{ border: 1px solid {accent_border}; }}
 QSpinBox:focus, QDoubleSpinBox:focus {{ border: 1px solid {border["focus"]}; }}
 QSpinBox::up-button, QDoubleSpinBox::up-button,
 QSpinBox::down-button, QDoubleSpinBox::down-button {{
@@ -388,7 +391,7 @@ QDateEdit {{
     min-height: {control["input_height"]}px;
     selection-background-color: {input_selection_bg};
 }}
-QDateEdit:hover {{ border: 1px solid {t["BORDER_BRAND"]}; }}
+QDateEdit:hover {{ border: 1px solid {accent_border}; }}
 QDateEdit:focus {{ border: 1px solid {border["focus"]}; }}
 QDateEdit::drop-down {{
     subcontrol-origin: padding;
@@ -477,7 +480,7 @@ QCheckBox[inToolbar="true"] {{
 QCheckBox[inToolbar="true"]:hover {{
     background-color: {t["BG_BUTTON_HOVER"]};
     color: {text["primary"]};
-    border: 1px solid {t["BORDER_BRAND"]};
+    border: 1px solid {accent_border};
 }}
 QCheckBox[inToolbar="true"]:focus {{
     border: 1px solid {border["focus"]};
@@ -485,7 +488,7 @@ QCheckBox[inToolbar="true"]:focus {{
 QCheckBox[inToolbar="true"]:checked {{
     background-color: {surface["toolbar_chip"]};
     color: {text["primary"]};
-    border: 1px solid {t["BORDER_BRAND"]};
+    border: 1px solid {accent_border};
 }}
 QCheckBox[inToolbar="true"]::indicator {{
     width: 14px;
@@ -581,7 +584,7 @@ QLineEdit {{
     padding: 0 12px; font-size: {font["size_sm"]}px;
     selection-background-color: {input_selection_bg}; min-height: {control["input_height"]}px;
 }}
-QLineEdit:hover {{ border: 1px solid {t["BORDER_BRAND"]}; }}
+QLineEdit:hover {{ border: 1px solid {accent_border}; }}
 QLineEdit:focus {{ border: 1px solid {border["focus"]}; background-color: {t["BG_INPUT"]}; }}
 QLineEdit::placeholder {{ color: {t["TEXT_DISABLED"]}; }}
 
@@ -714,11 +717,11 @@ QScrollBar:vertical {{
     margin: 0px;
 }}
 QScrollBar::handle:vertical {{
-    background: {t["BORDER_DEFAULT"]};
+    background: {scrollbar_handle};
     min-height: 30px;
     border-radius: 5px;
 }}
-QScrollBar::handle:vertical:hover {{ background: {t["TEXT_MUTED"]}; }}
+QScrollBar::handle:vertical:hover {{ background: {scrollbar_hover}; }}
 QScrollBar::handle:vertical:pressed {{ background: {scrollbar_pressed}; }}
 QScrollBar::sub-line:vertical, QScrollBar::add-line:vertical {{ height: 0px; background: none; }}
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
@@ -730,11 +733,11 @@ QScrollBar:horizontal {{
     margin: 0px;
 }}
 QScrollBar::handle:horizontal {{
-    background: {t["BORDER_DEFAULT"]};
+    background: {scrollbar_handle};
     min-width: 30px;
     border-radius: 5px;
 }}
-QScrollBar::handle:horizontal:hover {{ background: {t["TEXT_MUTED"]}; }}
+QScrollBar::handle:horizontal:hover {{ background: {scrollbar_hover}; }}
 QScrollBar::handle:horizontal:pressed {{ background: {scrollbar_pressed}; }}
 QScrollBar::sub-line:horizontal, QScrollBar::add-line:horizontal {{ width: 0px; background: none; }}
 QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background: transparent; }}

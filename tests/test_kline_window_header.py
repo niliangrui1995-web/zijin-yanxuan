@@ -213,7 +213,9 @@ def test_kline_html_exposes_incremental_replace_bridge():
     assert "window.applyTheme" in html
     assert "themeState.crosshair_line" in html
     assert "themeState.datazoom_bg" in html
+    assert "scrollbar_handle" in html
     assert "themeState.mono_font_family" in html
+    assert 'font-feature-settings: "tnum" 1' in html
     assert "window.replaceKlineData" in html
     build_option_body = html[html.index("function buildOption()") : html.index("chart.setOption(buildOption());")]
     assert "const data = splitData(rawData);" in build_option_body
@@ -226,10 +228,12 @@ def test_yaohei_kline_theme_colors_bind_terminal_chart_tokens(monkeypatch):
     colors = build_kline_theme_colors()
 
     assert colors["bg_canvas"] == THEME_YAOHEI["KLINE_BG_CANVAS"]
+    assert colors["bg_canvas"] == THEME_YAOHEI["BG_CARD"]
     assert colors["grid_line"] == THEME_YAOHEI["KLINE_GRID_LINE"]
     assert colors["crosshair_line"] == THEME_YAOHEI["KLINE_CROSSHAIR_LINE"]
     assert colors["pointer_bg"] == THEME_YAOHEI["KLINE_POINTER_BG"]
     assert colors["datazoom_fill"] == THEME_YAOHEI["KLINE_DATAZOOM_FILL"]
+    assert colors["datazoom_handle"] == THEME_YAOHEI["SCROLLBAR_HANDLE"]
     assert colors["tooltip_bg"] == THEME_YAOHEI["KLINE_TOOLTIP_BG"]
 
 

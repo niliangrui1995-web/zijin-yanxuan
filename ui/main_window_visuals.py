@@ -170,7 +170,7 @@ def show_trade_calendar(main_window):
         dlg.deleteLater()
 
 
-def apply_theme(main_window):
+def apply_theme(main_window, *, notify: bool = True):
     from ui.models.table_model_helpers import invalidate_table_token_cache
 
     invalidate_table_token_cache()
@@ -212,11 +212,12 @@ def apply_theme(main_window):
             widget.style().polish(widget)
             widget.update()
 
-    from ui.components.toast_widget import show_toast
+    if notify and main_window.isVisible():
+        from ui.components.toast_widget import show_toast
 
-    show_toast(
-        f"已切换至「{theme_manager.current_theme_name}」主题",
-        "success",
-        main_window,
-        duration=2000,
-    )
+        show_toast(
+            f"已切换至「{theme_manager.current_theme_name}」主题",
+            "success",
+            main_window,
+            duration=2000,
+        )

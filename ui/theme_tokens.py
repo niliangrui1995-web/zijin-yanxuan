@@ -96,13 +96,14 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "family": '"Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif',
         "family_names": ["Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "SimSun"],
         "mono_family": (
-            '"JetBrains Mono", "Cascadia Mono", "Consolas", '
+            '"JetBrains Mono", "Cascadia Mono", "Consolas", "Segoe UI Historic", '
             '"Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", monospace'
         ),
         "mono_family_names": [
             "JetBrains Mono",
             "Cascadia Mono",
             "Consolas",
+            "Segoe UI Historic",
             "Microsoft YaHei UI",
             "Microsoft YaHei",
             "Segoe UI",
@@ -163,6 +164,8 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "selected_hover_bg": theme["SELECTION_HOVER_BG"],
         "selected_rail_width": 3 if compact else 4,
         "selected_rail_color": theme.get("TABLE_SELECTED_RAIL", theme["BRAND_PRIMARY"]),
+        "hover_rail_width": 3,
+        "hover_rail_color": theme.get("TABLE_HOVER_RAIL", theme.get("ACCENT_PRIMARY", theme["COLOR_INFO"])),
         "current_cell_bg": theme.get(
             "TABLE_CURRENT_CELL_BG", _hex_to_rgba(theme["BRAND_PRIMARY"], 0.10 if is_dark else 0.06)
         ),
@@ -219,7 +222,7 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         ),
         "panel_alt": theme["BG_TABLE_ALT_ROW"],
         "overlay": _hex_to_rgba(theme["BG_ELEVATED"], 0.94 if is_dark else 0.98),
-        "chart_panel": theme["BG_INPUT"] if is_dark else theme["BG_CARD"],
+        "chart_panel": theme["BG_CARD"],
         "selection": theme["SELECTION_BG"],
         "selection_hover": theme["SELECTION_HOVER_BG"],
     }
@@ -241,8 +244,8 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
 
     skeleton = {
         "base": _hex_to_rgba(theme["TEXT_PRIMARY"], 0.08 if is_dark else 0.06),
-        "shine": _hex_to_rgba(theme["COLOR_INFO"], 0.18 if is_dark else 0.12),
-        "line": _hex_to_rgba(theme["TEXT_PRIMARY"], 0.12 if is_dark else 0.08),
+        "shine": _hex_to_rgba(theme.get("ACCENT_PRIMARY", theme["COLOR_INFO"]), 0.22 if is_dark else 0.14),
+        "line": _hex_to_rgba(theme.get("ACCENT_PRIMARY", theme["COLOR_INFO"]), 0.12 if is_dark else 0.08),
         "duration": 1400,
         "row_height": 12,
         "row_gap": 10,

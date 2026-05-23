@@ -34,6 +34,8 @@ def test_splash_uses_compact_opaque_brand_frame():
         assert splash.width() == 420
         assert splash.height() == 340
         assert splash.windowTitle() == "紫金研选"
+        assert splash.lbl_sub.text() == ""
+        assert splash.lbl_sub.isHidden()
         assert splash.lbl_status.text() == "准备启动环境..."
         assert "#F4F7FF" in splash.lbl_brand.styleSheet()
         assert "#B91C1C" in splash.progress.styleSheet()

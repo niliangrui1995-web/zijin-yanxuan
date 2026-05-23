@@ -90,7 +90,7 @@ class MainWindowQT(QMainWindow):
         startup_enabled: bool = True,
         auto_refresh_enabled: bool | None = None,
         background_prewarm: bool = True,
-        kline_prewarm_enabled: bool = True,
+        kline_prewarm_enabled: bool = False,
         central_quotes_enabled: bool = True,
         restore_last_tab_enabled: bool = True,
     ):
@@ -109,7 +109,7 @@ class MainWindowQT(QMainWindow):
         self._native_taskbar_fix_applied = False
         self._app_cursor_filter_installed = False
         self._splash = splash
-        self.setWindowTitle("紫金研选量化终端")
+        self.setWindowTitle("紫金研选")
 
         # 记录默认逻辑工作区
         self.setWindowIcon(QIcon(os.path.join(os.path.dirname(os.path.dirname(__file__)), "bull_icon.ico")))
@@ -941,4 +941,4 @@ class MainWindowQT(QMainWindow):
     def _apply_theme(self, _theme_name: str = ""):
         from ui.main_window_visuals import apply_theme
 
-        apply_theme(self)
+        apply_theme(self, notify=self.isVisible())

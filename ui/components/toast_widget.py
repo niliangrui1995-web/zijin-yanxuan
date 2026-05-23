@@ -138,7 +138,14 @@ def clear_active_toast():
 
 def show_toast(message: str, level: str = "info", parent=None, duration=3000):
     global _active_toast
+    if parent is not None:
+        try:
+            if not parent.isVisible():
+                return None
+        except RuntimeError:
+            return None
     clear_active_toast()
 
     _active_toast = Toast(parent, duration)
     _active_toast.show_toast(message, level)
+    return _active_toast

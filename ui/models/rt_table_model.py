@@ -2,7 +2,7 @@ import re
 import time
 
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtGui import QColor
 
 from ui.models.table_model_helpers import (
     FLASH_DURATION_SECONDS,
@@ -12,10 +12,12 @@ from ui.models.table_model_helpers import (
     _apply_quote_metrics_to_row,
     _build_cell_tooltip,
     _build_flash_record,
+    _build_table_model_fonts,
     _c,
     _emit_model_row_ranges,
     _is_date_like_header,
     _is_numeric_header,
+    _is_strong_market_move,
     _is_status_header,
     _numeric_heat_color,
     _parse_numeric_value,
@@ -25,7 +27,6 @@ from ui.models.table_model_helpers import (
     _sync_serial_values,
     _with_serial_header,
 )
-from ui.theme_tokens import build_ui_tokens
 
 
 class RtTableModel(QAbstractTableModel):
@@ -36,22 +37,11 @@ class RtTableModel(QAbstractTableModel):
             ["代码", "名称", "现价", "涨幅%", "市值", "时间", "评分", "RPS强度", "突破状态", "区间振幅", "热点板块"]
         )
         self._flash_records = {}
-        font_tokens = build_ui_tokens()["font"]
-
-        self.base_font = QFont()
-        self.base_font.setFamilies(font_tokens["family_names"])
-        self.base_font.setPointSize(12)
-        self.base_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
-
-        self.mono_font = QFont()
-        self.mono_font.setFamilies(font_tokens["mono_family_names"])
-        self.mono_font.setPointSize(12)
-        self.mono_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
-
-        self.bold_font = QFont()
-        self.bold_font.setFamilies(font_tokens["family_names"])
-        self.bold_font.setPointSize(12)
-        self.bold_font.setBold(True)
+        fonts = _build_table_model_fonts()
+        self.base_font = fonts["base"]
+        self.mono_font = fonts["mono"]
+        self.bold_font = fonts["bold"]
+        self.bold_mono_font = fonts["bold_mono"]
 
     @property
     def row_data(self):
@@ -305,6 +295,8 @@ class RtTableModel(QAbstractTableModel):
         elif role == Qt.ItemDataRole.FontRole:
             if key == SERIAL_HEADER:
                 return self.mono_font
+            if _is_strong_market_move(key, raw_val, item_dict):
+                return self.bold_mono_font
             if _is_numeric_header(key) or _is_date_like_header(key):
                 return self.mono_font
             if key in ["涨幅%", "市值", "时间", "评分", "突破状态", "区间振幅"]:

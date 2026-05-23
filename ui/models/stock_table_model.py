@@ -3,7 +3,7 @@ import re
 import time
 
 from PyQt6.QtCore import QAbstractTableModel, QMimeData, QModelIndex, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtGui import QColor
 
 from app.services.ui_quote_service import resolve_quote_metrics
 from core.buy_point import BUY_POINT_STYLE_TEXT, calculate_buy_point_from_history
@@ -14,11 +14,13 @@ from ui.models.table_model_helpers import (
     _accent_rail_color_for_row_style,
     _build_cell_tooltip,
     _build_flash_record,
+    _build_table_model_fonts,
     _c,
     _emit_model_row_ranges,
     _is_date_like_header,
     _is_numeric_header,
     _is_pct_like_header,
+    _is_strong_market_move,
     _is_status_header,
     _numeric_heat_color,
     _prune_flash_records,
@@ -27,7 +29,6 @@ from ui.models.table_model_helpers import (
     _sync_serial_values,
     _with_serial_header,
 )
-from ui.theme_tokens import build_ui_tokens
 
 _log = logging.getLogger(__name__)
 
@@ -48,22 +49,11 @@ class StockTableModel(QAbstractTableModel):
         self._plain_background_headers = set()
         self.dataChanged.connect(self._invalidate_sort_cache_for_changed_indexes)
 
-        font_tokens = build_ui_tokens()["font"]
-
-        self.base_font = QFont()
-        self.base_font.setFamilies(font_tokens["family_names"])
-        self.base_font.setPointSize(12)
-        self.base_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
-
-        self.mono_font = QFont()
-        self.mono_font.setFamilies(font_tokens["mono_family_names"])
-        self.mono_font.setPointSize(12)
-        self.mono_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
-
-        self.bold_font = QFont()
-        self.bold_font.setFamilies(font_tokens["family_names"])
-        self.bold_font.setPointSize(12)
-        self.bold_font.setBold(True)
+        fonts = _build_table_model_fonts()
+        self.base_font = fonts["base"]
+        self.mono_font = fonts["mono"]
+        self.bold_font = fonts["bold"]
+        self.bold_mono_font = fonts["bold_mono"]
 
     @property
     def row_data(self):
@@ -511,6 +501,8 @@ class StockTableModel(QAbstractTableModel):
         elif role == Qt.ItemDataRole.FontRole:
             if key == SERIAL_HEADER:
                 return self.mono_font
+            if _is_strong_market_move(key, raw_val, item_dict):
+                return self.bold_mono_font
             if _is_numeric_header(key) or _is_date_like_header(key):
                 return self.mono_font
             return self.base_font

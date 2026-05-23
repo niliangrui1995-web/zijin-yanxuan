@@ -239,12 +239,15 @@ class StockItemDelegate(QStyledItemDelegate):
         widget = option.widget
         style = widget.style() if widget else QApplication.style()
         is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        is_hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
         rail_color = index.data(Qt.ItemDataRole.UserRole + 4)
         show_selected_rail = is_selected and index.column() == 0
         show_accent_rail = bool(rail_color) and index.column() == 0
+        show_hover_rail = is_hovered and index.column() == 0 and not show_selected_rail and not show_accent_rail
         selected_rail_width = table_tokens["selected_rail_width"] if show_selected_rail else 0
         accent_rail_width = table_tokens["accent_rail_width"] if show_accent_rail and not show_selected_rail else 0
-        rail_width = selected_rail_width or accent_rail_width
+        hover_rail_width = table_tokens.get("hover_rail_width", 3) if show_hover_rail else 0
+        rail_width = selected_rail_width or accent_rail_width or hover_rail_width
         current_index = widget.currentIndex() if widget and hasattr(widget, "currentIndex") else QModelIndex()
         is_current = current_index.isValid() and current_index == index
         skip_sorted_overlay = bool(index.data(Qt.ItemDataRole.UserRole + 3))
@@ -298,7 +301,7 @@ class StockItemDelegate(QStyledItemDelegate):
                 painter.fillRect(option.rect, QBrush(bg_color))
 
         def draw_left_rail():
-            if not (show_selected_rail or show_accent_rail):
+            if not (show_selected_rail or show_accent_rail or show_hover_rail):
                 return
 
             width = rail_width
@@ -313,6 +316,12 @@ class StockItemDelegate(QStyledItemDelegate):
             )
             if show_selected_rail:
                 painter.fillRect(rail_rect, _qcolor_from_token(table_tokens["selected_rail_color"]))
+                return
+
+            if show_hover_rail:
+                hover_color = _qcolor_from_token(table_tokens.get("hover_rail_color"))
+                hover_color.setAlpha(int(table_tokens.get("accent_rail_alpha", 190)))
+                painter.fillRect(rail_rect, hover_color)
                 return
 
             accent = QColor(rail_color)

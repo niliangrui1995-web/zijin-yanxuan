@@ -12,6 +12,15 @@ def test_build_windows_delete_guard_uses_path_boundary():
     assert "TrimEnd([char[]]@" in script
 
 
+def test_windows_scripts_use_yanxuan_display_name():
+    repo = Path(__file__).resolve().parents[1]
+
+    for script_name in ("build_windows.ps1", "install_windows_shortcut.ps1"):
+        script = (repo / "scripts" / script_name).read_text(encoding="utf-8")
+        assert "0x9009" in script
+        assert "0x6295" not in script
+
+
 def test_qdarkstyle_is_removed_from_startup_packaging_and_docs():
     repo = Path(__file__).resolve().parents[1]
     checked_paths = [

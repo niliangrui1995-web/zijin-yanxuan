@@ -201,7 +201,7 @@ class MarketPulseStrip(QWidget):
             theme.get("TITLEBAR_PULSE", theme.get("BRAND_HOVER", theme.get("BRAND_PRIMARY", "#B91C1C")))
         )
         self._deep = QColor(
-            theme.get("TITLEBAR_BORDER", theme.get("BRAND_DEEP", theme.get("BRAND_PRIMARY", "#7F1D1D")))
+            theme.get("TITLEBAR_PULSE_BASE", theme.get("BRAND_DEEP", theme.get("BRAND_PRIMARY", "#7F1D1D")))
         )
         self.update()
 
@@ -213,8 +213,10 @@ class MarketPulseStrip(QWidget):
             QEvent.Type.Resize,
             QEvent.Type.Show,
             QEvent.Type.LayoutRequest,
+            QEvent.Type.ChildAdded,
         }:
             self._sync_geometry()
+            QTimer.singleShot(0, self._sync_geometry)
         return super().eventFilter(watched, event)
 
     def showEvent(self, event) -> None:
@@ -240,7 +242,7 @@ class MarketPulseStrip(QWidget):
             return
 
         base = QColor(self._deep)
-        base.setAlpha(70)
+        base.setAlpha(220)
         painter.fillRect(rect, base)
 
         span = max(180.0, rect.width() * 0.34)
