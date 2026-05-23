@@ -109,6 +109,24 @@ def test_global_qss_uses_subtle_depth_instead_of_hard_table_borders():
     assert "border-right: 1px solid transparent;" in qss
 
 
+def test_market_rise_fall_tokens_use_tradingview_classic_palette():
+    for theme in (THEME_YUEBAI, THEME_YAOHEI):
+        assert theme["COLOR_RISE"] == "#F23645"
+        assert theme["COLOR_RISE_STRONG"] == "#F23645"
+        assert theme["COLOR_FALL"] == "#089981"
+        assert theme["COLOR_FALL_STRONG"] == "#089981"
+        assert theme["KLINE_UP_COLOR"] == "#F23645"
+        assert theme["KLINE_DOWN_COLOR"] == "#089981"
+        assert theme["KLINE_UP_GRADIENT_TOP"] == "#F23645"
+        assert theme["KLINE_UP_GRADIENT_BOTTOM"] == "#F23645"
+        assert theme["KLINE_UP_BORDER"] == "#F23645"
+        assert theme["KLINE_DOWN_GRADIENT_TOP"] == "#089981"
+        assert theme["KLINE_DOWN_GRADIENT_BOTTOM"] == "#089981"
+        assert theme["KLINE_DOWN_BORDER"] == "#089981"
+        assert theme["KLINE_MA_RIBBON_UP"] == "rgba(242, 54, 69, 0.08)"
+        assert theme["KLINE_MA_RIBBON_DOWN"] == "rgba(8, 153, 129, 0.08)"
+
+
 def test_yaohei_selection_and_primary_actions_use_accent_not_market_red():
     tokens = build_ui_tokens(THEME_YAOHEI, density="舒展")
     blocked_fragments = (
@@ -158,11 +176,12 @@ def test_yaohei_selection_and_primary_actions_use_accent_not_market_red():
 
     assert tokens["table"]["selected_rail_color"] == THEME_YAOHEI["ACCENT_PRIMARY"]
     assert tokens["table"]["hover_rail_color"] == THEME_YAOHEI["ACCENT_PRIMARY"]
-    assert THEME_YAOHEI["BG_CANVAS"] == "#0B1017"
-    assert THEME_YAOHEI["BG_TABLE_BASE"] == "#0D141D"
-    assert THEME_YAOHEI["BG_TABLE_ALT_ROW"] == "#111A24"
-    assert THEME_YAOHEI["BG_CARD"] == "#151C26"
-    assert THEME_YAOHEI["BG_HOVER"] == "rgba(78, 127, 168, 0.10)"
+    assert THEME_YAOHEI["BG_CANVAS"] == "#090D14"
+    assert THEME_YAOHEI["BG_TABLE_BASE"] == "#090D14"
+    assert THEME_YAOHEI["BG_TABLE_ALT_ROW"] == "#121824"
+    assert THEME_YAOHEI["BG_CARD"] == "#121824"
+    assert THEME_YAOHEI["BG_ELEVATED"] == "#1A2234"
+    assert THEME_YAOHEI["BG_HOVER"] == "#1A2234"
     assert THEME_YAOHEI["BORDER_DEFAULT"] == "rgba(132, 149, 169, 0.14)"
     assert THEME_YAOHEI["INFO_BADGE_BG"] == "rgba(78, 127, 168, 0.10)"
     assert THEME_YAOHEI["KLINE_MA10"] == "rgba(218, 225, 234, 0.82)"
@@ -173,8 +192,8 @@ def test_yaohei_selection_and_primary_actions_use_accent_not_market_red():
     assert THEME_YAOHEI["KLINE_GRID_LINE"] == "rgba(126, 142, 160, 0.08)"
     assert THEME_YAOHEI["KLINE_CROSSHAIR_LINE"] == "rgba(232, 237, 243, 0.86)"
     assert THEME_YAOHEI["KLINE_VCP_STAR"] == "#D0A44E"
-    assert THEME_YAOHEI["KLINE_UP_GRADIENT_TOP"] == "#F06455"
-    assert THEME_YAOHEI["KLINE_DOWN_GRADIENT_BOTTOM"] == "#146343"
+    assert THEME_YAOHEI["KLINE_UP_GRADIENT_TOP"] == "#F23645"
+    assert THEME_YAOHEI["KLINE_DOWN_GRADIENT_BOTTOM"] == "#089981"
     assert THEME_YAOHEI["KLINE_VOLUME_SPIKE"] == "#D0A44E"
     assert THEME_YAOHEI["KLINE_DEPTH_LINE"] == "rgba(255, 255, 255, 0.05)"
     assert THEME_YAOHEI["BRAND_PRIMARY"] == "#B93A32"
