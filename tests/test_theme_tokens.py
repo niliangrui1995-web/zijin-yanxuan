@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import QApplication
 from ui.components import VCPTableView
 from ui.models.table_models import StockTableModel
 from ui.styles.global_qss import generate_global_qss
-from ui.theme import DEFAULT_THEME_NAME, THEME_MOYUAN, THEME_YUEBAI, THEME_ZIYAO
+from ui.theme import DEFAULT_THEME_NAME, THEME_MOYUAN, THEME_YAOHEI, THEME_YUEBAI, THEME_ZIYAO
 from ui.theme_tokens import build_ui_tokens, get_state_tone
 
 
@@ -115,6 +115,46 @@ def test_ziyao_selection_and_primary_actions_do_not_use_gold_background_tokens()
     assert tokens["table"]["selected_rail_color"] == THEME_ZIYAO["BRAND_HOVER"]
     assert THEME_ZIYAO["BRAND_PRIMARY"] == "#B91C1C"
     assert THEME_ZIYAO["COLOR_RISE"] != THEME_ZIYAO["BRAND_PRIMARY"]
+
+
+def test_yaohei_uses_graphite_cyan_selection_and_amber_attention_tokens():
+    tokens = build_ui_tokens(THEME_YAOHEI, density="舒展")
+
+    assert THEME_YAOHEI["name"] == "曜黑"
+    assert THEME_YAOHEI["BG_CANVAS"] == "#0A0C0F"
+    assert THEME_YAOHEI["BG_TITLEBAR"] == "#0B0E12"
+    assert THEME_YAOHEI["ACCENT_PRIMARY"] == "#22C7D8"
+    assert THEME_YAOHEI["COLOR_WARNING"] == "#D7A13D"
+    assert THEME_YAOHEI["SELECTION_BG"].startswith("rgba(34, 199, 216")
+    assert THEME_YAOHEI["TABLE_SELECTED_RAIL"] == THEME_YAOHEI["ACCENT_PRIMARY"]
+    assert THEME_YAOHEI["FOCUS_RING"].startswith("rgba(34, 199, 216")
+    assert THEME_YAOHEI["TAB_ACTIVE_INDICATOR_SIDE"] == "bottom"
+    assert THEME_YAOHEI["TAB_ACTIVE_INDICATOR"] == THEME_YAOHEI["ACCENT_PRIMARY"]
+    assert THEME_YAOHEI["BORDER_BRAND"].startswith("rgba(34, 199, 216")
+    assert THEME_YAOHEI["BRAND_PRIMARY"] == "#C93A3A"
+    assert tokens["table"]["selected_rail_color"] == THEME_YAOHEI["ACCENT_PRIMARY"]
+    assert tokens["table"]["flash_max_alpha"] < 76
+    assert tokens["table"]["flash_alpha_scale"] < 0.24
+    assert tokens["border"]["focus"] == THEME_YAOHEI["FOCUS_RING"]
+
+
+def test_yaohei_global_qss_uses_bottom_tab_indicator_and_cyan_selection():
+    qss = generate_global_qss(THEME_YAOHEI, density="舒展")
+    selected_start = qss.index("QTableView::item:selected {")
+    selected_end = qss.index("QTableView::item:selected:hover")
+    selected_block = qss[selected_start:selected_end]
+    tab_start = qss.index("QTabBar::tab:selected")
+    tab_end = qss.index("/* ═", tab_start)
+    tab_block = qss[tab_start:tab_end]
+    primary_start = qss.index("QPushButton#primaryButton {")
+    primary_end = qss.index("QPushButton#primaryButton:hover")
+    primary_block = qss[primary_start:primary_end]
+
+    assert THEME_YAOHEI["SELECTION_BG"] in selected_block
+    assert THEME_YAOHEI["TABLE_SELECTED_RAIL"] not in primary_block
+    assert f"border-bottom: 2px solid {THEME_YAOHEI['TAB_ACTIVE_INDICATOR']};" in tab_block
+    assert f"border-top: 2px solid {THEME_YAOHEI['BRAND_PRIMARY']};" not in tab_block
+    assert THEME_YAOHEI["PRIMARY_GRADIENT_START"] in primary_block
 
 
 def test_yuebai_uses_cool_professional_light_palette():
