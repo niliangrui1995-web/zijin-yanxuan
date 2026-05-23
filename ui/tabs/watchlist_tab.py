@@ -587,14 +587,14 @@ class WatchlistTab(BaseStockTab):
     # ================================================================
     # EventBus 事件监听及同步更新
     # ================================================================
-    def _gather_radar_data(self):
+    def _gather_radar_data(self, codes=None):
         """主线程快速提取 UI 数据，供后台线程使用（避免跨线程访问UI崩溃）"""
         workspace = getattr(self.window(), "_workspace", None)
         if workspace is None:
             return {}, {}, {}, {}, {}, None
 
         try:
-            return workspace.collect_watchlist_radar_data()
+            return workspace.collect_watchlist_radar_data(target_codes=codes)
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
             log.warning(f"[关注池] 提取工作区雷达数据异常: {e}")
             return {}, {}, {}, {}, {}, None
@@ -954,7 +954,7 @@ class WatchlistTab(BaseStockTab):
         if self.model and self.model.row_data:
             codes_with_rows = [(idx, str(r.get("代码"))) for idx, r in enumerate(self.model.row_data) if r.get("代码")]
             if codes_with_rows:
-                radar_data_tuple = self._gather_radar_data()
+                radar_data_tuple = self._gather_radar_data([code for _, code in codes_with_rows])
                 task_manager.run_in_background(
                     self._refresh_vcp_indicators,
                     codes_with_rows,

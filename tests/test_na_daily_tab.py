@@ -2,7 +2,8 @@
 from pathlib import Path
 
 import pytest
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QColor
 from PyQt6.QtTest import QSignalSpy
 
 from core.event_bus import event_bus
@@ -12,6 +13,7 @@ from core.task_manager import task_manager
 from ui.services import na_daily_service as na_daily_service_module
 from ui.services.na_daily_service import NADailyRefreshService
 from ui.tabs.na_daily_tab import NADailyTab
+from ui.theme import theme_manager
 
 
 @pytest.fixture(autouse=True)
@@ -177,6 +179,37 @@ def test_na_daily_tab_apply_rows_triggers_cap_and_quote_refresh(monkeypatch, tmp
 
         assert tab._na_daily_codes == {"000001"}
         assert refresh_calls == [{"quote_task_id": "na_daily_quotes"}]
+    finally:
+        tab.close()
+        tab.deleteLater()
+
+
+def test_na_daily_report_time_column_uses_muted_text(monkeypatch):
+    provider = DummyProvider()
+    tab = _build_tab(monkeypatch, provider)
+    try:
+        tab.model.update_data(
+            [
+                {
+                    "代码": "000001",
+                    "名称": "A",
+                    "现价": "--",
+                    "涨幅%": "--",
+                    "市值": "--",
+                    "日报时间": "20260415",
+                    "细分板块": "",
+                    "股价弹性": "",
+                    "催化剂": "",
+                    "风控": "",
+                    "评级": "",
+                }
+            ]
+        )
+
+        muted = QColor(theme_manager.get("TEXT_MUTED")).name()
+        report_time_col = tab.model.headers.index("日报时间")
+        idx = tab.model.index(0, report_time_col)
+        assert tab.model.data(idx, Qt.ItemDataRole.ForegroundRole).name() == muted
     finally:
         tab.close()
         tab.deleteLater()

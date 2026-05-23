@@ -671,18 +671,23 @@ def test_workspace_watchlist_subsector_prefers_ai_chain_over_na_daily():
                 [
                     {"代码": "300750", "细分板块": "北美战报旧分类"},
                     {"代码": "002415", "细分板块": "北美战报独有分类"},
+                    {"代码": "000001", "细分板块": "非关注池分类"},
                 ]
             ),
             "ai_industry_chain": _make_rows_tab(
                 [
                     {"代码": "300750", "细分板块": "液冷 / 储能链"},
                     {"代码": "300750", "细分板块": "后续重复分类"},
+                    {"代码": "688498", "细分板块": "光芯片"},
                 ]
             ),
         },
     )
 
-    _, na_subsector_data, *_ = ClassicWorkspace.collect_watchlist_radar_data(workspace)
+    _, na_subsector_data, *_ = ClassicWorkspace.collect_watchlist_radar_data(
+        workspace,
+        target_codes={"300750", "002415"},
+    )
 
     assert na_subsector_data == {
         "300750": "液冷 / 储能链",
@@ -1050,6 +1055,8 @@ def test_workspace_background_prewarm_loads_lazy_tabs_without_manual_click(monke
         workspace._start_background_tab_prewarm()
 
         assert constructed[1] == "fund_holdings"
+        assert constructed.index("ai_industry_chain") < constructed.index("na_daily")
+        assert primed.index("ai_industry_chain") < primed.index("na_daily")
         assert set(ctor_kwargs) == {
             "watchlist",
             "asian_market",

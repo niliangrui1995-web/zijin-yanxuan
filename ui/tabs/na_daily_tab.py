@@ -143,6 +143,7 @@ class NADailyTab(BaseStockTab):
 
         self.model = StockTableModel(columns)
         self.model.set_plain_style_headers(["日报时间"])
+        self.model.set_muted_text_headers(["日报时间"])
         self.proxy_model = RtSortFilterProxyModel(self)
         self.proxy_model.setSourceModel(self.model)
         self.na_daily_table.setModel(self.proxy_model)

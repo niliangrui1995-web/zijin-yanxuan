@@ -147,6 +147,7 @@ class ClassicWorkspace(QWidget):
     mode = "classic"
     BACKGROUND_PREWARM_DELAY_MS = 350
     BACKGROUND_PREWARM_INTERVAL_MS = 260
+    CONTEXT_PREWARM_PRIORITY = ("ai_industry_chain", "na_daily")
     RESTORE_LAST_TAB_DELAY_MS = 750
 
     def __init__(
@@ -528,6 +529,12 @@ class ClassicWorkspace(QWidget):
         if pending_key in unloaded_keys:
             unloaded_keys.remove(pending_key)
             unloaded_keys.insert(0, pending_key)
+        priority_insert_at = 1 if pending_key and unloaded_keys[:1] == [pending_key] else 0
+        for priority_key in reversed(self.CONTEXT_PREWARM_PRIORITY):
+            if priority_key not in unloaded_keys:
+                continue
+            unloaded_keys.remove(priority_key)
+            unloaded_keys.insert(priority_insert_at, priority_key)
         self._background_prewarm_queue = unloaded_keys
         self._prewarm_next_tab()
 
@@ -704,9 +711,11 @@ class ClassicWorkspace(QWidget):
         self,
         *,
         include_cache_fallback: bool = False,
+        target_codes=None,
     ) -> tuple[dict, dict, dict, dict, dict, dict | None]:
         return _resolve_workspace_facade(self).collect_watchlist_radar_data(
-            include_cache_fallback=include_cache_fallback
+            include_cache_fallback=include_cache_fallback,
+            target_codes=target_codes,
         )
 
     def collect_stock_signals(self) -> list[StockSignal]:

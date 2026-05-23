@@ -201,6 +201,12 @@ class StockContextService:
                 rows.append(dict(row))
         return rows
 
+    @staticmethod
+    def _normalize_target_codes(target_codes) -> set[str]:
+        if target_codes is None:
+            return set()
+        return {str(code or "").strip() for code in target_codes if str(code or "").strip()}
+
     def _load_scan_cache_rows(self) -> list[dict]:
         payload = None
         try:
@@ -878,10 +884,10 @@ class StockContextService:
 
         if "scan" not in direct_keys:
             signals.extend(self._iter_scan_signals(include_cache_fallback=include_cache_fallback))
-        if "na_daily" not in direct_keys:
-            signals.extend(self._iter_na_daily_signals())
         if "ai_industry_chain" not in direct_keys:
             signals.extend(self._iter_ai_chain_signals())
+        if "na_daily" not in direct_keys:
+            signals.extend(self._iter_na_daily_signals())
         if "foreign_block" not in direct_keys:
             signals.extend(self._iter_block_trade_signals(include_cache_fallback=include_cache_fallback))
         if "earnings" not in direct_keys:
@@ -903,6 +909,7 @@ class StockContextService:
         self,
         *,
         include_cache_fallback: bool = False,
+        target_codes=None,
     ) -> tuple[dict, dict, dict, dict, dict, dict | None]:
         workspace = self._workspace
         engine = getattr(workspace, "engine", None)
@@ -910,27 +917,32 @@ class StockContextService:
 
         signals = self.iter_stock_signals(include_cache_fallback=include_cache_fallback)
         na_data, na_subsector_data, block_data, earn_data, lhb_data = {}, {}, {}, {}, {}
+        target_code_set = self._normalize_target_codes(target_codes)
 
+        def in_scope(code: str) -> bool:
+            return not target_code_set or code in target_code_set
+
+        ai_subsector_data: dict[str, str] = {}
+        na_subsector_fallback: dict[str, str] = {}
         for signal in signals:
             code = signal.normalized_code()
+            if not in_scope(code):
+                continue
             if signal.source_tab == "na_daily" and signal.signal_type == SIGNAL_CATALYST:
                 na_data[code] = signal.summary
             if signal.source_tab == "na_daily" and signal.signal_type == SIGNAL_SUBSECTOR:
-                na_subsector_data[code] = signal.summary
+                na_subsector_fallback.setdefault(code, signal.summary)
+            if signal.source_tab == "ai_industry_chain" and signal.signal_type == SIGNAL_SUBSECTOR and signal.summary:
+                ai_subsector_data.setdefault(code, signal.summary)
 
-        seen_ai_chain_codes: set[str] = set()
-        for signal in signals:
-            code = signal.normalized_code()
-            if signal.source_tab != "ai_industry_chain" or signal.signal_type != SIGNAL_SUBSECTOR:
-                continue
-            if code in seen_ai_chain_codes:
-                continue
-            if signal.summary:
-                na_subsector_data[code] = signal.summary
-                seen_ai_chain_codes.add(code)
+        na_subsector_data.update(ai_subsector_data)
+        for code, summary in na_subsector_fallback.items():
+            na_subsector_data.setdefault(code, summary)
 
         for signal in signals:
             code = signal.normalized_code()
+            if not in_scope(code):
+                continue
             if signal.signal_type == SIGNAL_BLOCK_TRADE and signal.summary:
                 block_data[code] = {
                     "text": signal.summary,
