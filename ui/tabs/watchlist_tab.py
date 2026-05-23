@@ -140,7 +140,6 @@ class WatchlistTab(BaseStockTab):
         headers = [
             "代码",
             "名称",
-            "来源",
             "现价",
             "涨幅%",
             "市值",
@@ -152,6 +151,7 @@ class WatchlistTab(BaseStockTab):
             "龙虎榜",
         ]
         self.model = StockTableModel(headers)
+        self.model.set_muted_text_headers(["RPS强度", "细分板块", "催化剂", "业绩异动", "大宗交易", "龙虎榜"])
         self.proxy_model = RtSortFilterProxyModel(self.table_sp)
         self.proxy_model.setSourceModel(self.model)
         self.table_sp.setModel(self.proxy_model)
@@ -167,11 +167,11 @@ class WatchlistTab(BaseStockTab):
         header = self.table_sp.horizontalHeader()
         self.apply_table_column_preset(
             self.table_sp,
-            [64, 76, 92, 70, 70, 88, 84, 112, 126, 126, 118, 168],
+            [64, 76, 70, 70, 88, 84, 112, 126, 126, 118, 168],
             stretch_last=True,
         )
         # 绑定防抖自动保存与恢复配置（列结构变更后沿用新 key，避免旧状态错位）
-        restored_sort = self.bind_header_persistence(self.table_sp, "header_state_watchlist_v8")
+        restored_sort = self.bind_header_persistence(self.table_sp, "header_state_watchlist_v9")
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
         if not restored_sort:
             self.table_sp.sortByColumn(-1, Qt.SortOrder.AscendingOrder)

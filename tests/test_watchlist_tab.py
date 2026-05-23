@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
 from copy import deepcopy
 
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtTest import QSignalSpy
 from PyQt6.QtWidgets import QPushButton
 
 from core.event_bus import event_bus
 from ui.tabs import watchlist_tab as watchlist_module
+from ui.theme import theme_manager
 from ui.viewmodels.watchlist_vm import watchlist_vm
 
 
@@ -15,6 +18,65 @@ class _DummyProvider:
 
     def is_online(self):
         return False
+
+
+def test_watchlist_source_column_is_hidden_from_display_model():
+    tab = watchlist_module.WatchlistTab(_DummyProvider())
+    try:
+        tab.model.update_data(
+            [
+                {
+                    "代码": "600519",
+                    "名称": "贵州茅台",
+                    "来源": "手动｜龙虎榜",
+                    "现价": "--",
+                    "涨幅%": "--",
+                    "市值": "--",
+                    "RPS强度": "--",
+                    "细分板块": "",
+                    "催化剂": "",
+                    "业绩异动": "",
+                    "大宗交易": "",
+                    "龙虎榜": "",
+                    "来源标签": ["手动", "龙虎榜"],
+                }
+            ]
+        )
+
+        assert "来源" not in tab.model.headers
+        assert tab.model.get_row_data(0)["来源"] == "手动｜龙虎榜"
+    finally:
+        tab.deleteLater()
+
+
+def test_watchlist_detail_columns_use_muted_text_like_lhb_context():
+    tab = watchlist_module.WatchlistTab(_DummyProvider())
+    try:
+        tab.model.update_data(
+            [
+                {
+                    "代码": "600519",
+                    "名称": "贵州茅台",
+                    "来源": "手动｜龙虎榜",
+                    "现价": "1688.00",
+                    "涨幅%": "1.20",
+                    "市值": "21000亿",
+                    "RPS强度": "95/93",
+                    "细分板块": "白酒",
+                    "催化剂": "渠道库存改善",
+                    "业绩异动": "预增25%",
+                    "大宗交易": "机构专用买入2709万",
+                    "龙虎榜": "04-20 | 净买1200万",
+                }
+            ]
+        )
+
+        muted = QColor(theme_manager.get("TEXT_MUTED")).name()
+        for header in ["RPS强度", "细分板块", "催化剂", "业绩异动", "大宗交易", "龙虎榜"]:
+            idx = tab.model.index(0, tab.model.headers.index(header))
+            assert tab.model.data(idx, Qt.ItemDataRole.ForegroundRole).name() == muted
+    finally:
+        tab.deleteLater()
 
 
 def test_watchlist_vm_add_stock_emits_add_signal(monkeypatch):

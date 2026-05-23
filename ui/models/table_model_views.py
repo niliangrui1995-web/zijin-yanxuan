@@ -6,7 +6,7 @@ from __future__ import annotations
 import time
 
 from PyQt6.QtCore import QMimeData, QModelIndex, QRect, QRectF, QSortFilterProxyModel, Qt
-from PyQt6.QtGui import QBrush, QColor, QFont, QLinearGradient, QPainter, QPalette, QPen
+from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPalette, QPen
 from PyQt6.QtWidgets import QApplication, QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 from ui.components import SearchFilter
@@ -382,15 +382,6 @@ class StockItemDelegate(QStyledItemDelegate):
             left_padding = 8 + rail_width + (4 if rail_width else 0)
             return option.rect.adjusted(left_padding, 0, -8, 0)
 
-        def surface_color() -> QColor:
-            if is_selected:
-                return QColor(opt.palette.color(QPalette.ColorRole.Highlight))
-            if sorted_overlay is not None:
-                return QColor(sorted_overlay)
-            if is_hovered:
-                return QColor(_c("BG_TABLE_HOVER"))
-            return QColor(_c("BG_TABLE_BASE"))
-
         def resolve_text_style():
             font = index.data(Qt.ItemDataRole.FontRole)
             if isinstance(font, QFont):
@@ -418,21 +409,8 @@ class StockItemDelegate(QStyledItemDelegate):
             painter.setPen(QPen(text_color))
             fm = painter.fontMetrics()
             if fade and fm.horizontalAdvance(value_text) > max(0, target.width() - 2):
-                painter.save()
-                painter.setClipRect(target)
-                painter.drawText(target, alignment, value_text)
-                painter.restore()
-
-                fade_width = min(30, max(12, target.width() // 3))
-                fade_rect = QRectF(target.right() - fade_width + 1, target.top(), fade_width, target.height())
-                base = surface_color()
-                base.setAlpha(255)
-                transparent = QColor(base)
-                transparent.setAlpha(0)
-                gradient = QLinearGradient(fade_rect.left(), fade_rect.top(), fade_rect.right(), fade_rect.top())
-                gradient.setColorAt(0, transparent)
-                gradient.setColorAt(1, base)
-                painter.fillRect(fade_rect, QBrush(gradient))
+                elided_text = fm.elidedText(value_text, opt.textElideMode, max(0, target.width() - 2))
+                painter.drawText(target, alignment, elided_text)
                 return
 
             elided_text = fm.elidedText(value_text, opt.textElideMode, max(0, target.width() - 2))

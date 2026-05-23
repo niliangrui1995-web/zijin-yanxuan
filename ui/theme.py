@@ -104,10 +104,12 @@ THEME_YUEBAI = {
     "SCROLLBAR_HANDLE": "rgba(71, 85, 105, 0.22)",
     "SCROLLBAR_HANDLE_HOVER": "rgba(49, 95, 134, 0.30)",
     "SCROLLBAR_HANDLE_PRESSED": "rgba(49, 95, 134, 0.46)",
-    # 选中态颜色 - 浅色模式用蓝色轨道表达焦点，避免和涨跌红混淆。
+    # 选中态颜色 - 输入/控件保持蓝色，表格行选中使用低饱和浅红。
     "SELECTION_BG": "rgba(49, 95, 134, 0.10)",
     "SELECTION_HOVER_BG": "rgba(49, 95, 134, 0.16)",
     "INPUT_SELECTION_BG": "rgba(49, 95, 134, 0.18)",
+    "TABLE_SELECTION_BG": "rgba(242, 54, 69, 0.10)",
+    "TABLE_SELECTION_HOVER_BG": "rgba(242, 54, 69, 0.16)",
     "TABLE_SELECTED_RAIL": "#315F86",
     "TABLE_CURRENT_CELL_BG": "rgba(49, 95, 134, 0.07)",
     "TABLE_CURRENT_CELL_BG_SELECTED": "rgba(49, 95, 134, 0.13)",
@@ -305,6 +307,8 @@ THEME_YAOHEI = {
     "SELECTION_BG": "rgba(78, 127, 168, 0.12)",
     "SELECTION_HOVER_BG": "rgba(78, 127, 168, 0.18)",
     "INPUT_SELECTION_BG": "rgba(78, 127, 168, 0.24)",
+    "TABLE_SELECTION_BG": "rgba(242, 54, 69, 0.14)",
+    "TABLE_SELECTION_HOVER_BG": "rgba(242, 54, 69, 0.20)",
     "TABLE_SELECTED_RAIL": "#4E7FA8",
     "TABLE_HOVER_RAIL": "#4E7FA8",
     "TABLE_CURRENT_CELL_BG": "rgba(78, 127, 168, 0.09)",

@@ -50,6 +50,7 @@ class StockTableModel(QAbstractTableModel):
         self._sort_value_cache = {}
         self._plain_style_headers = set()
         self._plain_background_headers = set()
+        self._muted_text_headers = set()
         self.dataChanged.connect(self._invalidate_sort_cache_for_changed_indexes)
 
         fonts = _build_table_model_fonts()
@@ -79,6 +80,12 @@ class StockTableModel(QAbstractTableModel):
 
     def _uses_plain_background(self, header: str) -> bool:
         return header in self._plain_background_headers
+
+    def set_muted_text_headers(self, headers):
+        self._muted_text_headers = {str(header) for header in (headers or []) if str(header).strip()}
+
+    def _uses_muted_text(self, header: str) -> bool:
+        return header in self._muted_text_headers
 
     @staticmethod
     def _split_source_tags(raw_value, row: dict) -> list[str]:
@@ -180,7 +187,7 @@ class StockTableModel(QAbstractTableModel):
         return {"kind": "currency_stamp", "stamp": stamp}
 
     def _visual_payload(self, header: str, raw_value, row: dict):
-        if header == "来源":
+        if header == "来源" and not self._uses_plain_style(header):
             return self._source_badges_payload(raw_value, row)
         payload = self._money_bar_payload(header, row)
         if payload:
@@ -659,7 +666,7 @@ class StockTableModel(QAbstractTableModel):
                 code = str(item_dict.get("代码", ""))
                 if watchlist_vm.is_in_watchlist(code):
                     return QColor(_c("BRAND_HOVER"))
-            if key in {"最近上榜", "换手率%", "AI细分板块/备注"}:
+            if key in {"最近上榜", "换手率%", "AI细分板块/备注"} or self._uses_muted_text(key):
                 return QColor(_c("TEXT_MUTED"))
             if key == "评级":
                 return QColor(_c("COLOR_WARNING"))

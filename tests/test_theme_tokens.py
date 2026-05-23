@@ -127,7 +127,7 @@ def test_market_rise_fall_tokens_use_tradingview_classic_palette():
         assert theme["KLINE_MA_RIBBON_DOWN"] == "rgba(8, 153, 129, 0.08)"
 
 
-def test_yaohei_selection_and_primary_actions_use_accent_not_market_red():
+def test_yaohei_non_table_selection_and_primary_actions_use_accent_not_market_red():
     tokens = build_ui_tokens(THEME_YAOHEI, density="舒展")
     blocked_fragments = (
         "215, 172, 69",
@@ -162,8 +162,6 @@ def test_yaohei_selection_and_primary_actions_use_accent_not_market_red():
         THEME_YAOHEI["PRIMARY_HOVER_GRADIENT_END"],
         THEME_YAOHEI["PRIMARY_BUTTON_PRESSED_BG"],
         THEME_YAOHEI["PROGRESS_GRADIENT_MID"],
-        tokens["table"]["selected_bg"],
-        tokens["table"]["selected_hover_bg"],
         tokens["table"]["selected_rail_color"],
         tokens["table"]["hover_rail_color"],
         tokens["table"]["current_cell_bg"],
@@ -176,6 +174,8 @@ def test_yaohei_selection_and_primary_actions_use_accent_not_market_red():
 
     assert tokens["table"]["selected_rail_color"] == THEME_YAOHEI["ACCENT_PRIMARY"]
     assert tokens["table"]["hover_rail_color"] == THEME_YAOHEI["ACCENT_PRIMARY"]
+    assert tokens["table"]["selected_bg"] == THEME_YAOHEI["TABLE_SELECTION_BG"]
+    assert tokens["table"]["selected_hover_bg"] == THEME_YAOHEI["TABLE_SELECTION_HOVER_BG"]
     assert THEME_YAOHEI["BG_CANVAS"] == "#000000"
     assert THEME_YAOHEI["BG_TABLE_ALT"] == "#000000"
     assert THEME_YAOHEI["BG_TABLE_BASE"] == "#000000"
@@ -219,6 +219,8 @@ def test_yuebai_uses_cool_professional_light_palette():
     assert THEME_YUEBAI["TAB_ACTIVE_TOP"] == THEME_YUEBAI["ACCENT_PRIMARY"]
     assert THEME_YUEBAI["TABLE_SELECTED_RAIL"] == THEME_YUEBAI["ACCENT_PRIMARY"]
     assert tokens["table"]["selected_rail_color"] == THEME_YUEBAI["ACCENT_PRIMARY"]
+    assert tokens["table"]["selected_bg"] == THEME_YUEBAI["TABLE_SELECTION_BG"]
+    assert tokens["table"]["selected_hover_bg"] == THEME_YUEBAI["TABLE_SELECTION_HOVER_BG"]
     assert tokens["border"]["focus"] == THEME_YUEBAI["FOCUS_RING"]
     assert tokens["chart"]["panel_bg"] == "#FFFFFF"
     assert "93, 78, 55" not in THEME_YUEBAI["BORDER_DEFAULT"]
@@ -281,7 +283,7 @@ def test_yaohei_global_qss_uses_accent_primary_button_and_scrollbar_pressed():
     scrollbar_end = qss.index("QScrollBar::sub-line:vertical")
     scrollbar_block = qss[scrollbar_start:scrollbar_end]
 
-    assert THEME_YAOHEI["SELECTION_BG"] in selected_block
+    assert THEME_YAOHEI["TABLE_SELECTION_BG"] in selected_block
     assert "185, 28, 28" not in selected_block
     assert THEME_YAOHEI["PRIMARY_BUTTON_TEXT"] in primary_block
     assert THEME_YAOHEI["PRIMARY_BUTTON_BORDER"] in primary_block
