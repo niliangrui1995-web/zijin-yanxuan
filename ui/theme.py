@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 ui/theme.py
-紫金研选 — 多主题色彩系统（墨渊 / 月白 / 紫曜 / 曜黑）
+紫金研选 — 多主题色彩系统（月白 / 曜黑）
 
 所有 UI 组件应引用此文件中的常量或调用 ThemeManager 获取当前主题色值。
 为什么用单例+信号？因为主题切换需要通知所有已创建的组件刷新样式，
@@ -14,111 +14,8 @@ from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from app.services.ui_config_service import app_config
 
-DEFAULT_THEME_NAME = "紫曜"
+DEFAULT_THEME_NAME = "曜黑"
 DEFAULT_THEME_MIGRATION_KEY = "default_theme_v2_applied"
-
-# ============================================================
-# 墨渊主题（暗色，即当前默认主题）
-# ============================================================
-THEME_MOYUAN = {
-    "name": "墨渊",
-    "appearance": "dark",
-    # 背景色层级体系（深 → 浅）
-    "BG_CANVAS": "#0E1116",
-    "BG_SIDEBAR": "#131820",
-    "BG_TABLE_ALT": "#151B23",
-    "BG_CARD": "#171C24",
-    "BG_HOVER": "#1B212B",
-    "BG_INPUT": "#10151D",
-    "BG_ELEVATED": "#1C232E",
-    "BG_TITLEBAR": "#0C1016",
-    "BG_STATUSBAR": "#0C1016",
-    "BG_TABLE_BASE": "#10151D",
-    "BG_TABLE_ALT_ROW": "#141B24",
-    "BG_TABLE_HOVER": "rgba(148, 163, 184, 0.10)",
-    "BG_BUTTON": "#18202A",
-    "BG_BUTTON_HOVER": "#202835",
-    "BG_MENU": "#11161E",
-    "BG_GLASS": "rgba(14, 17, 22, 0.96)",
-    # 文字色
-    "TEXT_PRIMARY": "#E5E7EB",
-    "TEXT_SECONDARY": "#A8B3C2",
-    "TEXT_MUTED": "#7B8794",
-    "TEXT_DISABLED": "#4B5563",
-    "TEXT_HEADER": "#8A96A8",
-    "TEXT_BRIGHT": "#F9FAFB",
-    # 品牌色
-    "BRAND_PRIMARY": "#EF4444",
-    "BRAND_HOVER": "#F87171",
-    "BRAND_DEEP": "#B91C1C",
-    "BRAND_SUBTLE": "rgba(239, 68, 68, 0.12)",
-    # 功能色 — 涨跌
-    "COLOR_RISE": "#FC8181",
-    "COLOR_RISE_STRONG": "#E85D5D",
-    "COLOR_FALL": "#68D391",
-    "COLOR_FALL_STRONG": "#3CC68A",
-    "COLOR_FLAT": "#C9CDD4",
-    # 功能色 — 状态
-    "COLOR_SUCCESS": "#10B981",
-    "COLOR_WARNING": "#F59E0B",
-    "COLOR_ERROR": "#EF4444",
-    "COLOR_INFO": "#3B82F6",
-    # 边框色
-    "BORDER_DEFAULT": "rgba(148, 163, 184, 0.12)",
-    "BORDER_SUBTLE": "rgba(148, 163, 184, 0.08)",
-    "BORDER_STRONG": "#2A3342",
-    "BORDER_BRAND": "rgba(239, 68, 68, 0.18)",
-    "BORDER_MENU": "#232B36",
-    # 评分着色梯度
-    "SCORE_EXCELLENT": "#FF4757",
-    "SCORE_GOOD": "#F59E0B",
-    "SCORE_NORMAL": "#3A82F6",
-    "SCORE_LOW": "#8E8E93",
-    # 突破状态着色
-    "STATUS_BREAKOUT": "#E85D5D",
-    "STATUS_APPROACHING": "#FFD60A",
-    "STATUS_VCP": "#3A82F6",
-    "STATUS_INACTIVE": "#8E8E93",
-    # 滚动条颜色
-    "SCROLLBAR_HANDLE": "rgba(239, 68, 68, 0.25)",
-    "SCROLLBAR_HANDLE_HOVER": "rgba(239, 68, 68, 0.45)",
-    # 选中态颜色
-    "SELECTION_BG": "rgba(239, 68, 68, 0.14)",
-    "SELECTION_HOVER_BG": "rgba(239, 68, 68, 0.08)",
-    # 标题栏分隔线颜色
-    "TITLEBAR_BORDER": "rgba(148, 163, 184, 0.10)",
-    "STATUSBAR_BORDER": "rgba(148, 163, 184, 0.10)",
-    # 齿轮菜单选中色
-    "MENU_SELECTED_BG": "rgba(239, 68, 68, 0.12)",
-    # Splitter
-    "SPLITTER_BG": "rgba(239, 68, 68, 0.08)",
-    "SPLITTER_HOVER": "rgba(239, 68, 68, 0.25)",
-    # Tab
-    "TAB_TEXT": "#7B8794",
-    "TAB_TEXT_HOVER": "#E5E7EB",
-    "TAB_HOVER_BG": "rgba(255,255,255,0.05)",
-    # 下拉箭头颜色
-    "ARROW_COLOR": "#718096",
-    # K线图专用色 — 涨跌、均线、网格、VCP 覆盖层（值与当前硬编码完全一致，保证零变化）
-    "KLINE_UP_COLOR": "#F92855",
-    "KLINE_DOWN_COLOR": "#00FFFF",
-    "KLINE_MA10": "#FFFFFF",
-    "KLINE_MA20": "#00A2E8",
-    "KLINE_MA50": "#FF9000",
-    "KLINE_MA150": "#BF5AF2",
-    "KLINE_MA200": "#FF375F",
-    "KLINE_VOL_MA20": "#FFD700",
-    "KLINE_GRID_LINE": "rgba(255,255,255,0.05)",
-    "KLINE_AXIS_LINE": "#444444",
-    "KLINE_AXIS_LABEL": "#888888",
-    "KLINE_POINTER_BG": "#777777",
-    "KLINE_VCP_STAR": "#FFD60A",
-    "KLINE_VCP_LINE": "rgba(245, 198, 92, 0.96)",
-    "KLINE_VCP_LINE_SOFT": "rgba(245, 198, 92, 0.72)",
-    "KLINE_VCP_AREA": "rgba(245, 198, 92, 0.11)",
-    "KLINE_VCP_GUIDE": "rgba(245, 198, 92, 0.62)",
-    "KLINE_VCP_BREAKOUT_BG": "rgba(245, 198, 92, 0.18)",
-}
 
 # ============================================================
 # 月白主题（亮色，参照 Gemini 页面风格）
@@ -298,10 +195,10 @@ THEME_YUEBAI = {
 }
 
 # ============================================================
-# 紫曜主题（新增暗色，金融终端语义）
+# 曜黑主题（暗色，金融终端语义）
 # ============================================================
-THEME_ZIYAO = {
-    "name": "紫曜",
+THEME_YAOHEI = {
+    "name": "曜黑",
     "appearance": "dark",
     # 背景色层级体系（纯黑 → 终端面板）
     "BG_CANVAS": "#000000",
@@ -464,175 +361,10 @@ THEME_ZIYAO = {
     "KLINE_TOOLTIP_TEXT": "#F3F7FF",
     "KLINE_MACD_DIFF": "#D7AC45",
     "KLINE_MACD_DEA": "#55B7FF",
-}
-
-# ============================================================
-# 曜黑主题（石墨黑交易工作台）
-# ============================================================
-THEME_YAOHEI = {
-    "name": "曜黑",
-    "appearance": "dark",
-    # 背景色层级体系：石墨黑为主，不引入紫红底色。
-    "BG_CANVAS": "#0A0C0F",
-    "BG_SIDEBAR": "#101419",
-    "BG_TABLE_ALT": "#11161B",
-    "BG_CARD": "#11161B",
-    "BG_HOVER": "#1A2027",
-    "BG_INPUT": "#0D1116",
-    "BG_ELEVATED": "#151B22",
-    "BG_TITLEBAR": "#0B0E12",
-    "BG_STATUSBAR": "#0B0E12",
-    "BG_TABLE_BASE": "#0D1116",
-    "BG_TABLE_ALT_ROW": "#10151B",
-    "BG_TABLE_HOVER": "rgba(148, 163, 184, 0.08)",
-    "BG_BUTTON": "#151B22",
-    "BG_BUTTON_HOVER": "#1E2630",
-    "BG_MENU": "#0F1318",
-    "BG_GLASS": "rgba(10, 12, 15, 0.96)",
-    "BG_TOOLBAR": "#0E1217",
-    "BG_TOOLBAR_CARD": "#121820",
-    "BG_TOOLBAR_CHIP": "#151B22",
-    "TEXT_PRIMARY": "#E8EDF2",
-    "TEXT_SECONDARY": "#AAB4C0",
-    "TEXT_MUTED": "#7F8A96",
-    "TEXT_DISABLED": "#4E5965",
-    "TEXT_HEADER": "#94A0AD",
-    "TEXT_BRIGHT": "#F7FAFC",
-    "TEXT_ON_ACCENT": "#FFFFFF",
-    "TEXT_ON_DANGER": "#FFFFFF",
-    # 红色只承担上涨、风险和主操作按钮。
-    "BRAND_PRIMARY": "#C93A3A",
-    "BRAND_HOVER": "#E24A4A",
-    "BRAND_DEEP": "#9F2424",
-    "BRAND_PRESSED": "#781C1C",
-    "BRAND_SUBTLE": "rgba(201, 58, 58, 0.10)",
-    # 青蓝用于选中、焦点和数据联动；琥珀用于提醒和中性强调。
-    "ACCENT_PRIMARY": "#22C7D8",
-    "ACCENT_HOVER": "#3DDDEA",
-    "ACCENT_DEEP": "#1497A8",
-    "ACCENT_SUBTLE": "rgba(34, 199, 216, 0.11)",
-    "ACCENT_BORDER": "rgba(34, 199, 216, 0.30)",
-    "ACCENT_TEXT": "#BDF7FF",
-    "COLOR_RISE": "#E05252",
-    "COLOR_RISE_STRONG": "#F05B5B",
-    "COLOR_FALL": "#2AC77D",
-    "COLOR_FALL_STRONG": "#20A968",
-    "COLOR_FLAT": "#AAB4C0",
-    "COLOR_SUCCESS": "#21BFAE",
-    "COLOR_WARNING": "#D7A13D",
-    "COLOR_ERROR": "#E05252",
-    "COLOR_ERROR_HOVER": "#F05B5B",
-    "COLOR_INFO": "#22C7D8",
-    "COLOR_REALTIME": "#22C7D8",
-    "INFO_BADGE_BG": "rgba(34, 199, 216, 0.11)",
-    "INFO_BADGE_BORDER": "rgba(34, 199, 216, 0.25)",
-    "INFO_BADGE_FG": "#DFFBFF",
-    "BORDER_DEFAULT": "rgba(139, 151, 166, 0.22)",
-    "BORDER_SUBTLE": "rgba(139, 151, 166, 0.12)",
-    "BORDER_STRONG": "#2B3540",
-    "BORDER_BRAND": "rgba(34, 199, 216, 0.26)",
-    "BORDER_MENU": "#27313B",
-    "FOCUS_RING": "rgba(34, 199, 216, 0.34)",
-    "SCORE_EXCELLENT": "#E05252",
-    "SCORE_GOOD": "#D7A13D",
-    "SCORE_NORMAL": "#22C7D8",
-    "SCORE_LOW": "#7F8A96",
-    "STATUS_BREAKOUT": "#E05252",
-    "STATUS_APPROACHING": "#D7A13D",
-    "STATUS_VCP": "#22C7D8",
-    "STATUS_INACTIVE": "#7F8A96",
-    "SCROLLBAR_HANDLE": "rgba(139, 151, 166, 0.24)",
-    "SCROLLBAR_HANDLE_HOVER": "rgba(34, 199, 216, 0.34)",
-    "SCROLLBAR_HANDLE_PRESSED": "rgba(34, 199, 216, 0.52)",
-    "SELECTION_BG": "rgba(34, 199, 216, 0.13)",
-    "SELECTION_HOVER_BG": "rgba(34, 199, 216, 0.18)",
-    "INPUT_SELECTION_BG": "rgba(34, 199, 216, 0.24)",
-    "TABLE_SELECTED_RAIL": "#22C7D8",
-    "TABLE_CURRENT_CELL_BG": "rgba(34, 199, 216, 0.08)",
-    "TABLE_CURRENT_CELL_BG_SELECTED": "rgba(34, 199, 216, 0.16)",
-    "TABLE_CURRENT_CELL_BORDER": "rgba(34, 199, 216, 0.72)",
-    "TABLE_FLASH_ALPHA_SCALE": 0.16,
-    "TABLE_FLASH_MAX_ALPHA": 46,
-    "TITLEBAR_BORDER": "rgba(139, 151, 166, 0.18)",
-    "TITLEBAR_BRAND_TEXT": "#E8EDF2",
-    "STATUSBAR_BORDER": "rgba(139, 151, 166, 0.18)",
-    "TITLEBAR_PULSE": "#22C7D8",
-    "STATUS_FLOW_WORKING": "#D7A13D",
-    "MENU_SELECTED_BG": "rgba(34, 199, 216, 0.12)",
-    "SPLITTER_BG": "rgba(139, 151, 166, 0.12)",
-    "SPLITTER_HOVER": "rgba(34, 199, 216, 0.26)",
-    "TAB_TEXT": "#7F8A96",
-    "TAB_TEXT_HOVER": "#DDE6EE",
-    "TAB_HOVER_BG": "rgba(232, 237, 242, 0.05)",
-    "TAB_ACTIVE_BG": "rgba(34, 199, 216, 0.09)",
-    "TAB_ACTIVE_BORDER": "rgba(34, 199, 216, 0.24)",
-    "TAB_ACTIVE_TEXT": "#DFFBFF",
-    "TAB_ACTIVE_TOP": "transparent",
-    "TAB_ACTIVE_INDICATOR": "#22C7D8",
-    "TAB_ACTIVE_INDICATOR_SIDE": "bottom",
-    "ARROW_COLOR": "#7F8A96",
-    "PRIMARY_GRADIENT_START": "#C93A3A",
-    "PRIMARY_GRADIENT_END": "#9F2424",
-    "PRIMARY_HOVER_GRADIENT_START": "#E24A4A",
-    "PRIMARY_HOVER_GRADIENT_END": "#B72E2E",
-    "PRIMARY_BUTTON_TEXT": "#FFF7F7",
-    "PRIMARY_BUTTON_BORDER": "rgba(240, 91, 91, 0.36)",
-    "PRIMARY_BUTTON_PRESSED_BG": "#781C1C",
-    "SEGMENT_ACTIVE_BG": "rgba(34, 199, 216, 0.12)",
-    "SEGMENT_ACTIVE_BORDER": "#22C7D8",
-    "SEGMENT_ACTIVE_TEXT": "#DFFBFF",
-    "PROGRESS_GRADIENT_START": "#1497A8",
-    "PROGRESS_GRADIENT_MID": "#22C7D8",
-    "PROGRESS_GRADIENT_END": "#D7A13D",
-    "NETWORK_ONLINE": "#22C7D8",
-    "NETWORK_OFFLINE": "#E05252",
-    "NETWORK_BUSY": "#D7A13D",
-    "KLINE_UP_COLOR": "#E05252",
-    "KLINE_DOWN_COLOR": "#2AC77D",
-    "KLINE_MA10": "#DDE6EE",
-    "KLINE_MA20": "#22C7D8",
-    "KLINE_MA50": "#D7A13D",
-    "KLINE_MA150": "#9FB3C8",
-    "KLINE_MA200": "#F05B5B",
-    "KLINE_VOL_MA20": "#D7A13D",
-    "KLINE_GRID_LINE": "rgba(139, 151, 166, 0.12)",
-    "KLINE_AXIS_LINE": "#2B3540",
-    "KLINE_AXIS_LABEL": "#7F8A96",
-    "KLINE_POINTER_BG": "#16252B",
-    "KLINE_VCP_STAR": "#D7A13D",
-    "KLINE_VCP_LINE": "rgba(215, 161, 61, 0.88)",
-    "KLINE_VCP_LINE_SOFT": "rgba(215, 161, 61, 0.58)",
-    "KLINE_VCP_AREA": "rgba(34, 199, 216, 0.08)",
-    "KLINE_VCP_GUIDE": "rgba(215, 161, 61, 0.42)",
-    "KLINE_VCP_BREAKOUT_BG": "rgba(215, 161, 61, 0.13)",
-    "KLINE_BG_CANVAS": "#0A0C0F",
-    "KLINE_BG_TOOLBAR": "#0E1217",
-    "KLINE_WIDGET_BG": "#101419",
-    "KLINE_WIDGET_TEXT": "#E8EDF2",
-    "KLINE_TOOLBAR_BG": "#0E1217",
-    "KLINE_TOOLBAR_BORDER": "rgba(139, 151, 166, 0.18)",
-    "KLINE_SUMMARY_BG": "#0D1116",
-    "KLINE_INFO_COLOR": "#AAB4C0",
-    "KLINE_BTN_BORDER": "#2B3540",
-    "KLINE_BTN_HOVER_BG": "#1A2027",
-    "KLINE_BTN_HOVER_TEXT": "#E8EDF2",
-    "KLINE_BTN_DISABLED_TEXT": "#4E5965",
-    "KLINE_BTN_DISABLED_BORDER": "rgba(139, 151, 166, 0.12)",
-    "KLINE_CHART_BG": "#0A0C0F",
-    "KLINE_NAV_BG": "#121820",
-    "KLINE_BADGE_BG": "rgba(34, 199, 216, 0.11)",
-    "KLINE_BADGE_FG": "#DFFBFF",
-    "KLINE_SUMMARY_BORDER": "rgba(139, 151, 166, 0.16)",
-    "KLINE_TOOLTIP_BG": "rgba(10, 12, 15, 0.96)",
-    "KLINE_TOOLTIP_TEXT": "#E8EDF2",
-    "KLINE_MACD_DIFF": "#D7A13D",
-    "KLINE_MACD_DEA": "#22C7D8",
-    "KLINE_CROSSHAIR_LINE": "rgba(34, 199, 216, 0.62)",
-    "KLINE_DATAZOOM_BG": "#0E1217",
-    "KLINE_DATAZOOM_FILL": "rgba(34, 199, 216, 0.14)",
-    "KLINE_DATAZOOM_HANDLE": "#22C7D8",
-    "KLINE_FONT_FAMILY": '"Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif',
-    "KLINE_MONO_FONT_FAMILY": '"JetBrains Mono", "Cascadia Mono", "Consolas", "Microsoft YaHei UI", monospace',
+    "KLINE_CROSSHAIR_LINE": "#8290AA",
+    "KLINE_DATAZOOM_BG": "#050505",
+    "KLINE_DATAZOOM_FILL": "rgba(110, 123, 255, 0.11)",
+    "KLINE_DATAZOOM_HANDLE": "#42516E",
 }
 
 
@@ -716,9 +448,7 @@ def _with_alias_tokens(theme: dict) -> dict:
     return enriched
 
 
-THEME_MOYUAN = _with_alias_tokens(THEME_MOYUAN)
 THEME_YUEBAI = _with_alias_tokens(THEME_YUEBAI)
-THEME_ZIYAO = _with_alias_tokens(THEME_ZIYAO)
 THEME_YAOHEI = _with_alias_tokens(THEME_YAOHEI)
 
 
@@ -735,10 +465,8 @@ class ThemeManager(QObject):
     _instance = None
 
     THEMES = {
-        "墨渊": THEME_MOYUAN,
-        "月白": THEME_YUEBAI,
-        "紫曜": THEME_ZIYAO,
         "曜黑": THEME_YAOHEI,
+        "月白": THEME_YUEBAI,
     }
 
     def __new__(cls):
@@ -756,10 +484,10 @@ class ThemeManager(QObject):
             return
         self._initialized = True
         self._settings = app_config.section("ui/theme", legacy_scope="ThemeManager")
-        # 从持久化配置恢复上次选择的主题；v2 默认切到“紫曜”。
+        # 从持久化配置恢复上次选择的主题；默认切到“曜黑”。
         saved = self._settings.value("current_theme", None)
         if not self._settings.contains(DEFAULT_THEME_MIGRATION_KEY):
-            if not saved or saved == "墨渊":
+            if not saved or saved in {"墨渊", "紫曜"}:
                 saved = DEFAULT_THEME_NAME
                 self._settings.setValue("current_theme", saved)
             self._settings.setValue(DEFAULT_THEME_MIGRATION_KEY, True)
@@ -768,7 +496,7 @@ class ThemeManager(QObject):
             saved = DEFAULT_THEME_NAME
         self._current_name = saved if saved in self.THEMES else DEFAULT_THEME_NAME
 
-        # 日夜自动切换：白天月白、晚上墨渊，像手机的自动暗色模式
+        # 日夜自动切换：白天月白、晚上曜黑，像手机的自动暗色模式
         self._auto_switch = self._settings.value("auto_switch_theme", False, type=bool)
         self._auto_timer = QTimer()
         self._auto_timer.setInterval(60 * 1000)  # 每 60 秒检查一次
@@ -784,7 +512,7 @@ class ThemeManager(QObject):
 
     @property
     def current_theme(self) -> dict:
-        return self.THEMES.get(self._current_name, THEME_MOYUAN)
+        return self.THEMES.get(self._current_name, THEME_YAOHEI)
 
     def get(self, token: str) -> str:
         """获取当前主题的某个 token 值"""
@@ -796,7 +524,7 @@ class ThemeManager(QObject):
             return
         if name == self._current_name:
             return
-        if self._auto_switch and name not in {"墨渊", "月白"}:
+        if self._auto_switch and name not in {"曜黑", "月白"}:
             self.set_auto_switch(False)
         self._current_name = name
         self._settings.setValue("current_theme", name)
@@ -831,14 +559,14 @@ class ThemeManager(QObject):
 
     def _check_auto_switch(self):
         """根据当前时间决定应该用哪个主题。
-        规则：7:00–18:00 → 月白（亮色），其余时段 → 墨渊（暗色）。
+        规则：7:00–18:00 → 月白（亮色），其余时段 → 曜黑（暗色）。
         就像太阳升起开灯，太阳落山关灯。
         """
         if not self._auto_switch:
             return
         hour = _datetime.now().hour
-        # 白天 7:00 ~ 17:59 用月白，晚上用墨渊
-        target = "月白" if 7 <= hour < 18 else "墨渊"
+        # 白天 7:00 ~ 17:59 用月白，晚上用曜黑
+        target = "月白" if 7 <= hour < 18 else "曜黑"
         if target != self._current_name:
             self.switch_theme(target)
 

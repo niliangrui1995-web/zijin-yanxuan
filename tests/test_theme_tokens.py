@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import QApplication
 from ui.components import VCPTableView
 from ui.models.table_models import StockTableModel
 from ui.styles.global_qss import generate_global_qss
-from ui.theme import DEFAULT_THEME_NAME, THEME_MOYUAN, THEME_YAOHEI, THEME_YUEBAI, THEME_ZIYAO
+from ui.theme import DEFAULT_THEME_NAME, THEME_YAOHEI, THEME_YUEBAI, theme_manager
 from ui.theme_tokens import build_ui_tokens, get_state_tone
 
 
@@ -29,14 +29,17 @@ def _contrast_ratio(foreground: str, background: str) -> float:
     return (light + 0.05) / (dark + 0.05)
 
 
-def test_default_theme_name_is_ziyao():
-    assert DEFAULT_THEME_NAME == "紫曜"
-    assert THEME_ZIYAO["name"] == DEFAULT_THEME_NAME
+def test_available_theme_names_only_include_yuebai_and_yaohei():
+    assert DEFAULT_THEME_NAME == "曜黑"
+    assert THEME_YAOHEI["name"] == DEFAULT_THEME_NAME
+    assert set(theme_manager.theme_names()) == {"曜黑", "月白"}
+    assert "墨渊" not in theme_manager.THEMES
+    assert "紫曜" not in theme_manager.THEMES
 
 
 def test_build_ui_tokens_compact_density_tightens_metrics():
-    comfort = build_ui_tokens(THEME_MOYUAN, density="舒展")
-    compact = build_ui_tokens(THEME_MOYUAN, density="紧凑")
+    comfort = build_ui_tokens(THEME_YAOHEI, density="舒展")
+    compact = build_ui_tokens(THEME_YAOHEI, density="紧凑")
 
     assert compact["density"] == "紧凑"
     assert compact["control"]["button_height"] < comfort["control"]["button_height"]
@@ -61,7 +64,7 @@ def test_theme_tokens_expose_state_tones_for_terminal_statuses():
 
 def test_theme_tokens_expose_terminal_layers_and_toolbar_metrics():
     tokens = build_ui_tokens(THEME_YUEBAI, density="紧凑")
-    dark_tokens = build_ui_tokens(THEME_MOYUAN, density="紧凑")
+    dark_tokens = build_ui_tokens(THEME_YAOHEI, density="紧凑")
 
     assert "motion" in tokens
     assert "z_index" in tokens
@@ -79,28 +82,28 @@ def test_theme_tokens_expose_terminal_layers_and_toolbar_metrics():
     assert tokens["surface"]["toolbar_chip"] == THEME_YUEBAI["BG_TOOLBAR_CHIP"]
     assert tokens["surface"]["toolbar_card"] != tokens["surface"]["toolbar"]
     assert tokens["surface"]["toolbar_chip"] != THEME_YUEBAI["BG_BUTTON"]
-    assert dark_tokens["surface"]["toolbar"] == THEME_MOYUAN["BG_ELEVATED"]
-    assert dark_tokens["surface"]["toolbar_chip"] == THEME_MOYUAN["BG_BUTTON"]
+    assert dark_tokens["surface"]["toolbar"] == THEME_YAOHEI["BG_TOOLBAR"]
+    assert dark_tokens["surface"]["toolbar_chip"] == THEME_YAOHEI["BG_BUTTON"]
 
 
-def test_ziyao_selection_and_primary_actions_do_not_use_gold_background_tokens():
-    tokens = build_ui_tokens(THEME_ZIYAO, density="舒展")
+def test_yaohei_selection_and_primary_actions_do_not_use_gold_background_tokens():
+    tokens = build_ui_tokens(THEME_YAOHEI, density="舒展")
     gold_fragments = ("215, 172, 69", "#D7AC45", "#E9C867", "#B78926")
     background_tokens = [
-        THEME_ZIYAO["SELECTION_BG"],
-        THEME_ZIYAO["SELECTION_HOVER_BG"],
-        THEME_ZIYAO["INPUT_SELECTION_BG"],
-        THEME_ZIYAO["TAB_ACTIVE_BG"],
-        THEME_ZIYAO["TAB_ACTIVE_BORDER"],
-        THEME_ZIYAO["TAB_ACTIVE_TOP"],
-        THEME_ZIYAO["SEGMENT_ACTIVE_BG"],
-        THEME_ZIYAO["SEGMENT_ACTIVE_BORDER"],
-        THEME_ZIYAO["SCROLLBAR_HANDLE_PRESSED"],
-        THEME_ZIYAO["PRIMARY_GRADIENT_START"],
-        THEME_ZIYAO["PRIMARY_GRADIENT_END"],
-        THEME_ZIYAO["PRIMARY_HOVER_GRADIENT_START"],
-        THEME_ZIYAO["PRIMARY_HOVER_GRADIENT_END"],
-        THEME_ZIYAO["PRIMARY_BUTTON_PRESSED_BG"],
+        THEME_YAOHEI["SELECTION_BG"],
+        THEME_YAOHEI["SELECTION_HOVER_BG"],
+        THEME_YAOHEI["INPUT_SELECTION_BG"],
+        THEME_YAOHEI["TAB_ACTIVE_BG"],
+        THEME_YAOHEI["TAB_ACTIVE_BORDER"],
+        THEME_YAOHEI["TAB_ACTIVE_TOP"],
+        THEME_YAOHEI["SEGMENT_ACTIVE_BG"],
+        THEME_YAOHEI["SEGMENT_ACTIVE_BORDER"],
+        THEME_YAOHEI["SCROLLBAR_HANDLE_PRESSED"],
+        THEME_YAOHEI["PRIMARY_GRADIENT_START"],
+        THEME_YAOHEI["PRIMARY_GRADIENT_END"],
+        THEME_YAOHEI["PRIMARY_HOVER_GRADIENT_START"],
+        THEME_YAOHEI["PRIMARY_HOVER_GRADIENT_END"],
+        THEME_YAOHEI["PRIMARY_BUTTON_PRESSED_BG"],
         tokens["table"]["selected_bg"],
         tokens["table"]["selected_hover_bg"],
         tokens["table"]["selected_rail_color"],
@@ -112,54 +115,14 @@ def test_ziyao_selection_and_primary_actions_do_not_use_gold_background_tokens()
     for token in background_tokens:
         assert all(fragment not in token for fragment in gold_fragments)
 
-    assert tokens["table"]["selected_rail_color"] == THEME_ZIYAO["BRAND_HOVER"]
-    assert THEME_ZIYAO["BG_CANVAS"] == "#000000"
-    assert THEME_ZIYAO["BG_TABLE_BASE"] == "#000000"
-    assert THEME_ZIYAO["BG_TABLE_ALT_ROW"] == "#090909"
-    assert THEME_ZIYAO["BG_CARD"] == "#080808"
-    assert THEME_ZIYAO["BG_HOVER"] == "#141414"
-    assert THEME_ZIYAO["BRAND_PRIMARY"] == "#B91C1C"
-    assert THEME_ZIYAO["COLOR_RISE"] != THEME_ZIYAO["BRAND_PRIMARY"]
-
-
-def test_yaohei_uses_graphite_cyan_selection_and_amber_attention_tokens():
-    tokens = build_ui_tokens(THEME_YAOHEI, density="舒展")
-
-    assert THEME_YAOHEI["name"] == "曜黑"
-    assert THEME_YAOHEI["BG_CANVAS"] == "#0A0C0F"
-    assert THEME_YAOHEI["BG_TITLEBAR"] == "#0B0E12"
-    assert THEME_YAOHEI["ACCENT_PRIMARY"] == "#22C7D8"
-    assert THEME_YAOHEI["COLOR_WARNING"] == "#D7A13D"
-    assert THEME_YAOHEI["SELECTION_BG"].startswith("rgba(34, 199, 216")
-    assert THEME_YAOHEI["TABLE_SELECTED_RAIL"] == THEME_YAOHEI["ACCENT_PRIMARY"]
-    assert THEME_YAOHEI["FOCUS_RING"].startswith("rgba(34, 199, 216")
-    assert THEME_YAOHEI["TAB_ACTIVE_INDICATOR_SIDE"] == "bottom"
-    assert THEME_YAOHEI["TAB_ACTIVE_INDICATOR"] == THEME_YAOHEI["ACCENT_PRIMARY"]
-    assert THEME_YAOHEI["BORDER_BRAND"].startswith("rgba(34, 199, 216")
-    assert THEME_YAOHEI["BRAND_PRIMARY"] == "#C93A3A"
-    assert tokens["table"]["selected_rail_color"] == THEME_YAOHEI["ACCENT_PRIMARY"]
-    assert tokens["table"]["flash_max_alpha"] < 76
-    assert tokens["table"]["flash_alpha_scale"] < 0.24
-    assert tokens["border"]["focus"] == THEME_YAOHEI["FOCUS_RING"]
-
-
-def test_yaohei_global_qss_uses_bottom_tab_indicator_and_cyan_selection():
-    qss = generate_global_qss(THEME_YAOHEI, density="舒展")
-    selected_start = qss.index("QTableView::item:selected {")
-    selected_end = qss.index("QTableView::item:selected:hover")
-    selected_block = qss[selected_start:selected_end]
-    tab_start = qss.index("QTabBar::tab:selected")
-    tab_end = qss.index("/* ═", tab_start)
-    tab_block = qss[tab_start:tab_end]
-    primary_start = qss.index("QPushButton#primaryButton {")
-    primary_end = qss.index("QPushButton#primaryButton:hover")
-    primary_block = qss[primary_start:primary_end]
-
-    assert THEME_YAOHEI["SELECTION_BG"] in selected_block
-    assert THEME_YAOHEI["TABLE_SELECTED_RAIL"] not in primary_block
-    assert f"border-bottom: 2px solid {THEME_YAOHEI['TAB_ACTIVE_INDICATOR']};" in tab_block
-    assert f"border-top: 2px solid {THEME_YAOHEI['BRAND_PRIMARY']};" not in tab_block
-    assert THEME_YAOHEI["PRIMARY_GRADIENT_START"] in primary_block
+    assert tokens["table"]["selected_rail_color"] == THEME_YAOHEI["BRAND_HOVER"]
+    assert THEME_YAOHEI["BG_CANVAS"] == "#000000"
+    assert THEME_YAOHEI["BG_TABLE_BASE"] == "#000000"
+    assert THEME_YAOHEI["BG_TABLE_ALT_ROW"] == "#090909"
+    assert THEME_YAOHEI["BG_CARD"] == "#080808"
+    assert THEME_YAOHEI["BG_HOVER"] == "#141414"
+    assert THEME_YAOHEI["BRAND_PRIMARY"] == "#B91C1C"
+    assert THEME_YAOHEI["COLOR_RISE"] != THEME_YAOHEI["BRAND_PRIMARY"]
 
 
 def test_yuebai_uses_cool_professional_light_palette():
@@ -222,8 +185,8 @@ def test_global_qss_uses_density_tokens_for_table_and_controls():
     assert compact_tokens["control"]["button_height"] < comfort_tokens["control"]["button_height"]
 
 
-def test_ziyao_global_qss_uses_red_primary_button_and_scrollbar_pressed():
-    qss = generate_global_qss(THEME_ZIYAO, density="舒展")
+def test_yaohei_global_qss_uses_red_primary_button_and_scrollbar_pressed():
+    qss = generate_global_qss(THEME_YAOHEI, density="舒展")
     selected_start = qss.index("QTableView::item:selected {")
     selected_end = qss.index("QTableView::item:selected:hover")
     selected_block = qss[selected_start:selected_end]
@@ -234,13 +197,13 @@ def test_ziyao_global_qss_uses_red_primary_button_and_scrollbar_pressed():
     scrollbar_end = qss.index("QScrollBar::sub-line:vertical")
     scrollbar_block = qss[scrollbar_start:scrollbar_end]
 
-    assert THEME_ZIYAO["SELECTION_BG"] in selected_block
+    assert THEME_YAOHEI["SELECTION_BG"] in selected_block
     assert "215, 172, 69" not in selected_block
-    assert THEME_ZIYAO["PRIMARY_BUTTON_TEXT"] in primary_block
-    assert THEME_ZIYAO["PRIMARY_BUTTON_BORDER"] in primary_block
-    assert THEME_ZIYAO["PRIMARY_GRADIENT_START"] in primary_block
-    assert THEME_ZIYAO["BRAND_PRIMARY"] in primary_block
-    assert THEME_ZIYAO["SCROLLBAR_HANDLE_PRESSED"] in scrollbar_block
+    assert THEME_YAOHEI["PRIMARY_BUTTON_TEXT"] in primary_block
+    assert THEME_YAOHEI["PRIMARY_BUTTON_BORDER"] in primary_block
+    assert THEME_YAOHEI["PRIMARY_GRADIENT_START"] in primary_block
+    assert THEME_YAOHEI["BRAND_PRIMARY"] in primary_block
+    assert THEME_YAOHEI["SCROLLBAR_HANDLE_PRESSED"] in scrollbar_block
     assert "215, 172, 69" not in scrollbar_block
 
 
@@ -254,16 +217,16 @@ def test_global_qss_selected_tab_uses_yuebai_information_accent_top_rule():
 
 
 def test_global_qss_includes_themed_tooltip_style():
-    qss = generate_global_qss(THEME_MOYUAN, density="紧凑")
+    qss = generate_global_qss(THEME_YAOHEI, density="紧凑")
 
     assert "QToolTip {" in qss
-    assert f"background-color: {THEME_MOYUAN['BG_ELEVATED']};" in qss
-    assert f"color: {THEME_MOYUAN['TEXT_PRIMARY']};" in qss
+    assert f"background-color: {THEME_YAOHEI['BG_ELEVATED']};" in qss
+    assert f"color: {THEME_YAOHEI['TEXT_PRIMARY']};" in qss
     assert "border-radius: 0px;" in qss
 
 
 def test_global_qss_themes_date_edit_and_dialog_shell():
-    qss = generate_global_qss(THEME_MOYUAN, density="紧凑")
+    qss = generate_global_qss(THEME_YAOHEI, density="紧凑")
 
     assert "QDateEdit {" in qss
     assert "QDialog#scanRangeDialog QFrame#dialogContainer" in qss
