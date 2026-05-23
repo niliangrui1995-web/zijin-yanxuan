@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QByteArray, Qt
+from PyQt6.QtCore import QByteArray, QSize, Qt
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtSvg import QSvgRenderer
 
@@ -54,11 +54,5 @@ def svg_icon(name: str, color: str, *, size: int = 18, stroke_width: float = 1.5
 def set_button_svg_icon(button, name: str, color: str, *, size: int = 18) -> None:
     button.setText("")
     button.setIcon(svg_icon(name, color, size=size))
-    button.setIconSize(button.iconSize().expandedTo(pixmap_size(size)))
-
-
-def pixmap_size(size: int):
-    from PyQt6.QtCore import QSize
-
     value = max(8, int(size or 18))
-    return QSize(value, value)
+    button.setIconSize(QSize(value, value))

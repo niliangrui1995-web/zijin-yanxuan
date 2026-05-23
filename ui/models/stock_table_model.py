@@ -442,6 +442,7 @@ class StockTableModel(QAbstractTableModel):
                     Qt.ItemDataRole.UserRole,
                     Qt.ItemDataRole.UserRole + 1,
                     Qt.ItemDataRole.UserRole + 2,
+                    Qt.ItemDataRole.UserRole + 4,
                 ],
             )
 

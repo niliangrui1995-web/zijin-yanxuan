@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QEasingCurve, QEvent, QPropertyAnimation, QObject
+from PyQt6.QtCore import QEasingCurve, QEvent, QPropertyAnimation, QObject, QTimer
 from PyQt6.QtWidgets import QGraphicsOpacityEffect
 
 from ui.theme_tokens import build_ui_tokens
@@ -59,3 +59,14 @@ def install_button_feedback(button) -> None:
     event_filter = ButtonFeedbackFilter(button)
     button.installEventFilter(event_filter)
     button._motion_feedback_filter = event_filter
+
+
+def install_menu_fade(menu) -> None:
+    if menu is None or getattr(menu, "_motion_fade_installed", False):
+        return
+
+    def _run_fade() -> None:
+        fade_in(menu, duration=motion_duration("fast"), start=0.0, end=1.0)
+
+    menu.aboutToShow.connect(lambda: QTimer.singleShot(0, _run_fade))
+    menu._motion_fade_installed = True

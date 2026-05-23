@@ -1002,7 +1002,7 @@ def test_workspace_defers_heavy_tab_autoload(monkeypatch):
         assert "autoload_pool" not in ctor_kwargs["watchlist"]
         assert "autoload" not in ctor_kwargs["watchlist"]
         assert isinstance(workspace.tabs, SmoothTabWidget)
-        assert workspace.tabs._transition_enabled is False
+        assert workspace.tabs._transition_enabled is True
     finally:
         workspace.shutdown()
         workspace.deleteLater()

@@ -44,6 +44,7 @@ def test_rt_table_model_incremental_update_emits_data_changed_without_reset():
     status_col = model.headers.index("突破状态")
     assert model.data(model.index(0, price_col), Qt.ItemDataRole.UserRole + 1)["diff"] > 0
     assert model.data(model.index(0, status_col), Qt.ItemDataRole.UserRole + 1)["diff"] == 0
+    assert model.data(model.index(0, 0), Qt.ItemDataRole.UserRole + 4)
 
 
 def test_rt_table_model_prunes_expired_flash_records_on_update():

@@ -171,7 +171,7 @@ class ClassicWorkspace(QWidget):
 
         self.tabs = SmoothTabWidget(self)
         self.tabs.setDocumentMode(True)
-        self.tabs.setTransitionEnabled(False)
+        self.tabs.setTransitionEnabled(True)
         layout.addWidget(self.tabs, 1)
 
         self._tab_specs = [

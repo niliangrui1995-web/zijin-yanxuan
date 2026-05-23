@@ -1,20 +1,35 @@
 """Table-oriented widgets shared by the UI package."""
 
 import logging
+import math
 import time
 
 from PyQt6.QtCore import (
     QEasingCurve,
     QEvent,
     QItemSelectionModel,
+    QPointF,
     QPropertyAnimation,
+    QRectF,
     QSize,
     Qt,
     QTimer,
     pyqtProperty,
     pyqtSignal,
 )
-from PyQt6.QtGui import QAction, QBrush, QColor, QFont, QFontMetrics, QPainter, QPalette
+from PyQt6.QtGui import (
+    QAction,
+    QBrush,
+    QColor,
+    QFont,
+    QFontMetrics,
+    QLinearGradient,
+    QPainter,
+    QPainterPath,
+    QPalette,
+    QPen,
+    QPolygonF,
+)
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -35,6 +50,7 @@ from PyQt6.QtWidgets import (
 from ui.theme_tokens import build_ui_tokens, get_state_tone
 from ui.models.table_model_helpers import FLASH_DURATION_SECONDS
 
+from .motion import install_button_feedback, install_menu_fade
 from .table_view_helpers import bounded_model_row, find_header_column
 
 log = logging.getLogger(__name__)
@@ -589,6 +605,202 @@ class PulsingDot(QWidget):
         painter.end()
 
 
+class StatusGlyph(QWidget):
+    """Color plus geometry status indicator for the shell status bar."""
+
+    def __init__(self, tone: str = "offline", parent=None):
+        super().__init__(parent)
+        self._tone = tone if tone in {"online", "busy", "offline"} else "offline"
+        self._color_override: QColor | None = None
+        size = build_ui_tokens()["icon"]["status_size"]
+        self.setFixedSize(size + 2, size + 2)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+    def set_tone(self, tone: str) -> None:
+        normalized = tone if tone in {"online", "busy", "offline"} else "offline"
+        if normalized == self._tone:
+            return
+        self._tone = normalized
+        self._color_override = None
+        self.update()
+
+    def set_color(self, color) -> None:
+        self._color_override = QColor(color)
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        tokens = build_ui_tokens()
+        glyph = tokens["status_glyph"].get(self._tone, tokens["status_glyph"]["offline"])
+        color = QColor(self._color_override or glyph.get("color", "#EF4444"))
+        rect = QRectF(self.rect()).adjusted(2, 2, -2, -2)
+        if rect.width() <= 0 or rect.height() <= 0:
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        fill = QColor(color)
+        fill.setAlpha(46)
+        stroke = QColor(color)
+        stroke.setAlpha(220)
+        painter.setPen(QPen(stroke, 1.3))
+        painter.setBrush(QBrush(fill))
+
+        shape = glyph.get("shape", "circle")
+        if shape == "hexagon":
+            center = rect.center()
+            radius = min(rect.width(), rect.height()) / 2
+            polygon = QPolygonF(
+                [
+                    QPointF(
+                        center.x() + math.cos(math.radians(60 * idx - 30)) * radius,
+                        center.y() + math.sin(math.radians(60 * idx - 30)) * radius,
+                    )
+                    for idx in range(6)
+                ]
+            )
+            painter.drawPolygon(polygon)
+        elif shape == "triangle":
+            polygon = QPolygonF(
+                [
+                    QPointF(rect.center().x(), rect.top()),
+                    QPointF(rect.right(), rect.bottom()),
+                    QPointF(rect.left(), rect.bottom()),
+                ]
+            )
+            painter.drawPolygon(polygon)
+        else:
+            painter.drawEllipse(rect)
+
+        symbol = glyph.get("symbol", "")
+        painter.setPen(QPen(stroke, 1.35, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        if symbol == "check":
+            path = QPainterPath(QPointF(rect.left() + rect.width() * 0.28, rect.center().y()))
+            path.lineTo(rect.left() + rect.width() * 0.44, rect.bottom() - rect.height() * 0.30)
+            path.lineTo(rect.right() - rect.width() * 0.24, rect.top() + rect.height() * 0.30)
+            painter.drawPath(path)
+        elif symbol == "hourglass":
+            left = rect.left() + rect.width() * 0.32
+            right = rect.right() - rect.width() * 0.32
+            top = rect.top() + rect.height() * 0.26
+            mid = rect.center().y()
+            bottom = rect.bottom() - rect.height() * 0.26
+            painter.drawLine(QPointF(left, top), QPointF(right, top))
+            painter.drawLine(QPointF(left, bottom), QPointF(right, bottom))
+            painter.drawLine(QPointF(left, top), QPointF(right, mid))
+            painter.drawLine(QPointF(right, top), QPointF(left, mid))
+            painter.drawLine(QPointF(left, mid), QPointF(right, bottom))
+            painter.drawLine(QPointF(right, mid), QPointF(left, bottom))
+        else:
+            x = rect.center().x()
+            painter.drawLine(QPointF(x, rect.top() + rect.height() * 0.28), QPointF(x, rect.bottom() - rect.height() * 0.36))
+            dot_center = QPointF(x, rect.bottom() - rect.height() * 0.20)
+            painter.setBrush(QBrush(stroke))
+            painter.drawEllipse(QRectF(dot_center.x() - 0.65, dot_center.y() - 0.65, 1.3, 1.3))
+
+        painter.end()
+
+
+class SkeletonShimmer(QWidget):
+    """Matte skeleton rows with a soft left-to-right shimmer."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._phase = 0.0
+        self.setFixedHeight(72)
+        self.setMinimumWidth(240)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._timer = QTimer(self)
+        self._timer.setInterval(45)
+        self._timer.timeout.connect(self._tick)
+
+    def _tick(self) -> None:
+        self._phase = (self._phase + 0.045) % 1.0
+        self.update()
+
+    def set_running(self, running: bool) -> None:
+        if running:
+            if not self._timer.isActive():
+                self._timer.start()
+            return
+        self._timer.stop()
+
+    def hideEvent(self, event) -> None:
+        self.set_running(False)
+        super().hideEvent(event)
+
+    def closeEvent(self, event) -> None:
+        self.set_running(False)
+        super().closeEvent(event)
+
+    def deleteLater(self):
+        self.set_running(False)
+        super().deleteLater()
+
+    def paintEvent(self, event) -> None:
+        tokens = build_ui_tokens()
+        skel = tokens["skeleton"]
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        row_h = int(skel["row_height"])
+        gap = int(skel["row_gap"])
+        radius = int(skel["radius"])
+        widths = (0.82, 0.64, 0.74)
+        y = 2
+        for factor in widths:
+            rect = QRectF(0, y, max(40.0, self.width() * factor), row_h)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(skel["base"])))
+            painter.drawRoundedRect(rect, radius, radius)
+
+            span = max(80.0, self.width() * 0.55)
+            center = (self.width() + span * 2.0) * self._phase - span
+            gradient = QLinearGradient(center - span, 0, center + span, 0)
+            edge = QColor(skel["base"])
+            edge.setAlpha(0)
+            shine = QColor(skel["shine"])
+            gradient.setColorAt(0.0, edge)
+            gradient.setColorAt(0.50, shine)
+            gradient.setColorAt(1.0, edge)
+            painter.setBrush(QBrush(gradient))
+            painter.drawRoundedRect(rect, radius, radius)
+            y += row_h + gap
+        painter.end()
+
+
+class BullGlyph(QWidget):
+    """A tiny line mascot used only for warm empty states."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(76, 42)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+    def paintEvent(self, event) -> None:
+        tokens = build_ui_tokens()
+        color = QColor(tokens["theme"].get("BRAND_PRIMARY", "#B91C1C"))
+        soft = QColor(color)
+        soft.setAlpha(28)
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(soft))
+        painter.drawEllipse(QRectF(12, 12, 52, 24))
+
+        pen = QPen(color, 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        painter.drawArc(QRectF(14, 14, 48, 22), 0, 180 * 16)
+        painter.drawLine(QPointF(22, 23), QPointF(10, 12))
+        painter.drawLine(QPointF(54, 23), QPointF(66, 12))
+        painter.drawLine(QPointF(29, 31), QPointF(27, 37))
+        painter.drawLine(QPointF(47, 31), QPointF(49, 37))
+        painter.drawPoint(QPointF(35, 24))
+        painter.drawPoint(QPointF(43, 24))
+        painter.end()
+
+
 def format_multi_select_summary(
     prefix: str,
     selected_labels,
@@ -629,6 +841,7 @@ class MultiSelectFilterButton(QToolButton):
         self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.setMenu(self._menu)
+        install_menu_fade(self._menu)
         self.setText(self._all_label)
         self.setToolTip(self._all_label)
         self.set_options([])
@@ -734,7 +947,7 @@ class TableStateOverlay(QWidget):
     """统一空/加载状态覆盖层"""
 
     _DEFAULT_SUBTITLES = {
-        "empty": "当前条件下暂无可显示内容，可调整筛选条件或稍后刷新。",
+        "empty": "今天风平浪静，标的正在悄悄积蓄力量。",
         "loading": "正在同步最新数据，请稍候。",
         "offline": "当前处于离线模式，仅展示本地缓存。",
         "cached": "本次未拿到新结果，当前展示的是最近一次成功数据。",
@@ -766,6 +979,12 @@ class TableStateOverlay(QWidget):
         self._dot = PulsingDot(parent=self)
         self._dot.setVisible(False)
 
+        self._bull = BullGlyph(parent=self)
+        self._bull.setVisible(False)
+
+        self._skeleton = SkeletonShimmer(parent=self)
+        self._skeleton.setVisible(False)
+
         self._title = QLabel("")
         self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._title.setWordWrap(True)
@@ -786,13 +1005,16 @@ class TableStateOverlay(QWidget):
         self._meta.setMinimumWidth(260)
         self._meta.setMaximumWidth(420)
 
-        self._action = QPushButton("")
+        self._action = QPushButton("", self._card)
         self._action.setVisible(False)
         self._action.setCursor(Qt.CursorShape.PointingHandCursor)
         self._action.setProperty("class", "secondary")
         self._action_callback = None
         self._action.clicked.connect(self._handle_action)
+        install_button_feedback(self._action)
 
+        card_layout.addWidget(self._bull, 0, Qt.AlignmentFlag.AlignCenter)
+        card_layout.addWidget(self._skeleton, 0, Qt.AlignmentFlag.AlignCenter)
         card_layout.addWidget(self._dot, 0, Qt.AlignmentFlag.AlignCenter)
         card_layout.addWidget(self._title)
         card_layout.addWidget(self._subtitle)
@@ -835,7 +1057,7 @@ class TableStateOverlay(QWidget):
             QFrame#tableStateCard {{
                 background-color: {card_bg};
                 border: 1px solid {card_border};
-                border-radius: {tokens["radius"]["md"]}px;
+                border-radius: {tokens["radius"]["lg"]}px;
             }}
             """
         )
@@ -873,8 +1095,20 @@ class TableStateOverlay(QWidget):
         self._action.setText(action_text)
         self._action.setVisible(bool(action_text))
         self._action_callback = action_callback
-        self._dot.setVisible(mode == "loading")
+        is_loading = mode == "loading"
+        self._dot.setVisible(False)
+        self._bull.setVisible(mode == "empty")
+        self._skeleton.setVisible(is_loading)
+        self._skeleton.set_running(is_loading)
         self._apply_style()
+
+    def closeEvent(self, event):  # noqa: N802 - Qt API naming
+        self._skeleton.set_running(False)
+        super().closeEvent(event)
+
+    def deleteLater(self):
+        self._skeleton.set_running(False)
+        super().deleteLater()
 
 
 class TableStateWrapper(QWidget):

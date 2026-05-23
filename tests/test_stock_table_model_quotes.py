@@ -6,6 +6,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QSignalSpy
 
 from core.global_store import global_store
+from ui.models.table_model_helpers import _flash_decay_alpha
 from ui.models.table_models import RtSortFilterProxyModel, StockTableModel
 
 
@@ -128,6 +129,15 @@ def test_stock_table_model_prunes_expired_flash_records_on_update():
     model.update_quotes({"000001": {"close": 10.5, "last_close": 10.0}})
 
     assert 99 not in model._flash_records
+
+
+def test_flash_decay_alpha_is_monotonic_and_soft_lands():
+    samples = [_flash_decay_alpha(elapsed, 0.5) for elapsed in (0.0, 0.08, 0.18, 0.32, 0.5)]
+
+    assert samples[0] == 1.0
+    assert samples[-1] == 0.0
+    assert samples == sorted(samples, reverse=True)
+    assert samples[1] > samples[2] > samples[3]
 
 
 def test_stock_table_model_update_data_hydrates_latest_global_quotes(monkeypatch):

@@ -67,10 +67,16 @@ def test_theme_tokens_expose_terminal_layers_and_toolbar_metrics():
     dark_tokens = build_ui_tokens(THEME_YAOHEI, density="紧凑")
 
     assert "motion" in tokens
+    assert "skeleton" in tokens
+    assert "icon" in tokens
+    assert "status_glyph" in tokens
     assert "z_index" in tokens
     assert "chart" in tokens
     assert "toolbar_card" in tokens["surface"]
     assert tokens["table"]["selected_rail_width"] > 0
+    assert tokens["table"]["accent_rail_width"] == 3
+    assert tokens["table"]["flash_duration_ms"] == 500
+    assert tokens["table"]["flash_rail_width"] == 3
     assert tokens["table"]["current_cell_border"] == THEME_YUEBAI["TABLE_CURRENT_CELL_BORDER"]
     assert tokens["table"]["current_cell_bg"]
     assert tokens["table"]["current_cell_bg_selected"]
@@ -84,6 +90,21 @@ def test_theme_tokens_expose_terminal_layers_and_toolbar_metrics():
     assert tokens["surface"]["toolbar_chip"] != THEME_YUEBAI["BG_BUTTON"]
     assert dark_tokens["surface"]["toolbar"] == THEME_YAOHEI["BG_TOOLBAR"]
     assert dark_tokens["surface"]["toolbar_chip"] == THEME_YAOHEI["BG_BUTTON"]
+    assert tokens["skeleton"]["duration"] >= 1200
+    assert tokens["icon"]["chrome_size"] > 0
+    assert tokens["status_glyph"]["online"]["shape"] == "circle"
+    assert tokens["status_glyph"]["busy"]["shape"] == "hexagon"
+    assert tokens["status_glyph"]["offline"]["shape"] == "triangle"
+
+
+def test_global_qss_uses_subtle_depth_instead_of_hard_table_borders():
+    qss = generate_global_qss(THEME_YAOHEI)
+
+    assert "QWidget#leftPanel" in qss
+    assert "border-right: none;" in qss
+    assert "gridline-color: transparent;" in qss
+    assert "QHeaderView::section" in qss
+    assert "border-right: 1px solid transparent;" in qss
 
 
 def test_yaohei_selection_and_primary_actions_do_not_use_gold_background_tokens():

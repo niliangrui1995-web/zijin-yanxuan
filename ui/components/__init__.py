@@ -9,6 +9,9 @@ from .table_controls import (
     PulsingDot as PulsingDot,
 )
 from .table_controls import (
+    StatusGlyph as StatusGlyph,
+)
+from .table_controls import (
     TableStateOverlay as TableStateOverlay,
 )
 from .table_controls import (

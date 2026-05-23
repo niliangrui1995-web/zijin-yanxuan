@@ -32,6 +32,7 @@ from core.process_watchdog import ProcessWatchdog, log_process_snapshot
 from ui.components.command_palette import CommandPaletteDialog
 from ui.components.kline_window_manager import kline_manager
 from ui.components.message_box import show_themed_question
+from ui.components.vector_icons import set_button_svg_icon
 from ui.main_window_tables import install_table_copy_hooks
 from ui.services.asian_market_runtime_service import AsianMarketRuntimeService
 from ui.services.auto_refresh_scheduler import AutoRefreshScheduler
@@ -52,6 +53,7 @@ from ui.window_flags import (
 )
 from ui.workers.central_quotes_worker import CentralQuotesService
 from ui.workspaces import ClassicWorkspace
+from ui.theme_tokens import build_ui_tokens
 
 # 核心引擎与数据层
 
@@ -608,24 +610,33 @@ class MainWindowQT(QMainWindow):
         """在标题栏创建独立 TabBar 并与 QTabWidget 双向同步。"""
         self._standalone_tabbar = inject_standalone_tabbar(self)
 
+    def _sync_maximize_button_icon(self):
+        from ui.theme import theme_manager
+
+        if not hasattr(self, "_btn_maximize") or self._btn_maximize is None:
+            return
+        tokens = build_ui_tokens(theme_manager.current_theme)
+        icon_name = "restore" if self.isMaximized() else "maximize"
+        set_button_svg_icon(
+            self._btn_maximize,
+            icon_name,
+            tokens["icon"]["muted"],
+            size=tokens["icon"]["chrome_size"],
+        )
+
     def _toggle_maximize(self):
         """切换最大化/还原"""
         if self.isMaximized():
             self.showNormal()
-            self._btn_maximize.setText("□")
         else:
             self.showMaximized()
-            self._btn_maximize.setText("❐")
+        self._sync_maximize_button_icon()
 
     def changeEvent(self, event):
         """窗口状态变化时同步最大化按钮图标"""
         super().changeEvent(event)
         if event.type() == event.Type.WindowStateChange:
-            if hasattr(self, "_btn_maximize"):
-                if self.isMaximized():
-                    self._btn_maximize.setText("❐")
-                else:
-                    self._btn_maximize.setText("□")
+            self._sync_maximize_button_icon()
 
     def _init_right_panel(self):
         # 不使用嵌套 QSplitter——大量 QTableView 子组件在嵌套 QSplitter 中

@@ -24,7 +24,9 @@ from PyQt6.QtWidgets import (
 )
 
 from core.logger import get_logger
-from ui.components import PulsingDot
+from ui.components import StatusGlyph
+from ui.components.motion import install_button_feedback, install_menu_fade
+from ui.components.vector_icons import set_button_svg_icon
 from ui.components.shared_title_bar import DraggableTitleBar
 from ui.theme_tokens import build_ui_tokens, get_state_tone
 
@@ -489,7 +491,8 @@ class MainWindowStatusBar(QFrame):
             "NETWORK_OFFLINE",
             theme_manager.current_theme.get("COLOR_ERROR", "#EF4444"),
         )
-        self.status_dot = PulsingDot(color=default_dot)
+        self.status_dot = StatusGlyph("offline")
+        self.status_dot.set_color(default_dot)
         layout.addWidget(self.status_dot)
 
         self.lbl_status = QLabel("---")
@@ -529,7 +532,7 @@ class MainWindowStatusBar(QFrame):
 
     def set_status_tone(self, tone: str, *, animate: bool = True) -> None:
         self._status_tone = tone if tone in {"online", "busy", "offline"} else "offline"
-        self.status_dot.set_color(self._resolve_status_dot_color(self._status_tone))
+        self.status_dot.set_tone(self._status_tone)
         self.status_flow.set_mode(self._status_tone, animate=animate)
 
     def show_sync_feedback(self, state: str) -> None:
@@ -851,12 +854,14 @@ class TitleBarSyncWidget(QFrame):
         self.btn_sync.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_sync.setAccessibleName("全局同步")
         self.btn_sync.setToolTip("执行盘后全局同步（F5）")
+        install_button_feedback(self.btn_sync)
         layout.addWidget(self.btn_sync, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self.btn_trade_calendar = QPushButton("交易日历", self)
         self.btn_trade_calendar.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_trade_calendar.setAccessibleName("交易日历")
         self.btn_trade_calendar.setToolTip("查看 A股交易日历与寡头财报日历")
+        install_button_feedback(self.btn_trade_calendar)
         layout.addWidget(self.btn_trade_calendar, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self.lbl_state = QLabel("同步就绪", self)
@@ -954,6 +959,8 @@ def setup_custom_titlebar(window, parent_layout: QVBoxLayout) -> TitleBarRefs:
 
     theme = theme_manager.current_theme
     tokens = build_ui_tokens(theme)
+    icon_size = tokens["icon"]["chrome_size"]
+    icon_color = tokens["icon"]["muted"]
     titlebar = DraggableTitleBar()
     titlebar.setObjectName("customTitleBar")
     titlebar.setFixedHeight(tokens["shell"]["titlebar_height"])
@@ -980,28 +987,37 @@ def setup_custom_titlebar(window, parent_layout: QVBoxLayout) -> TitleBarRefs:
     titlebar_layout.addWidget(placeholder)
     titlebar_layout.addStretch(1)
 
-    btn_minimize = QPushButton("─")
+    icon_size = tokens["icon"]["chrome_size"]
+    icon_color = tokens["icon"]["muted"]
+
+    btn_minimize = QPushButton("", titlebar)
     btn_minimize.setStyleSheet(_titlebar_button_style(theme, theme["TEXT_MUTED"], theme["BG_HOVER"], font_size=11))
     btn_minimize.setFixedWidth(tokens["shell"]["window_button_width"])
     btn_minimize.setCursor(Qt.CursorShape.PointingHandCursor)
     btn_minimize.setToolTip("最小化窗口")
     btn_minimize.setAccessibleName("最小化窗口")
+    set_button_svg_icon(btn_minimize, "minimize", icon_color, size=icon_size)
+    install_button_feedback(btn_minimize)
     btn_minimize.clicked.connect(window.showMinimized)
 
-    btn_maximize = QPushButton("□")
+    btn_maximize = QPushButton("", titlebar)
     btn_maximize.setStyleSheet(_titlebar_button_style(theme, theme["TEXT_MUTED"], theme["BG_HOVER"]))
     btn_maximize.setFixedWidth(tokens["shell"]["window_button_width"])
     btn_maximize.setCursor(Qt.CursorShape.PointingHandCursor)
     btn_maximize.setToolTip("最大化或还原窗口")
     btn_maximize.setAccessibleName("最大化或还原窗口")
+    set_button_svg_icon(btn_maximize, "maximize", icon_color, size=icon_size)
+    install_button_feedback(btn_maximize)
     btn_maximize.clicked.connect(window._toggle_maximize)
 
-    btn_close = QPushButton("✕")
+    btn_close = QPushButton("", titlebar)
     btn_close.setStyleSheet(_titlebar_button_style(theme, theme["TEXT_MUTED"], "#C42B1C"))
     btn_close.setFixedWidth(tokens["shell"]["window_button_width"])
     btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
     btn_close.setToolTip("关闭窗口")
     btn_close.setAccessibleName("关闭窗口")
+    set_button_svg_icon(btn_close, "close", icon_color, size=icon_size)
+    install_button_feedback(btn_close)
     btn_close.clicked.connect(window.close)
 
     titlebar_layout.addWidget(btn_minimize)
@@ -1066,7 +1082,8 @@ def setup_system_menu(window) -> SystemMenuRefs:
     from app.services.ui_config_service import app_config
     from ui.theme import theme_manager
 
-    btn_sys_menu = QToolButton()
+    btn_parent = getattr(window, "_custom_titlebar", None) or window
+    btn_sys_menu = QToolButton(btn_parent)
     btn_sys_menu.setText("")
     btn_sys_menu.setObjectName("btnSysMenu")
     btn_sys_menu.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1075,8 +1092,9 @@ def setup_system_menu(window) -> SystemMenuRefs:
     tokens = build_ui_tokens(theme_manager.current_theme)
     btn_sys_menu.setFixedWidth(tokens["shell"]["system_button_width"])
     btn_sys_menu.setFixedHeight(tokens["shell"]["titlebar_height"])
-    btn_sys_menu.setText("⚙️")
-    btn_sys_menu.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+    set_button_svg_icon(btn_sys_menu, "gear", tokens["icon"]["muted"], size=tokens["icon"]["chrome_size"])
+    install_button_feedback(btn_sys_menu)
+    btn_sys_menu.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
     btn_sys_menu.setToolTip("系统菜单")
     btn_sys_menu.setAccessibleName("系统菜单")
 
@@ -1084,6 +1102,7 @@ def setup_system_menu(window) -> SystemMenuRefs:
     window._titlebar_layout.insertWidget(min_idx, btn_sys_menu)
 
     sys_menu = QMenu(window)
+    install_menu_fade(sys_menu)
     try:
         sys_menu.aboutToShow.connect(lambda: QApplication.restoreOverrideCursor())
         sys_menu.aboutToHide.connect(lambda: QApplication.restoreOverrideCursor())
@@ -1106,6 +1125,7 @@ def setup_system_menu(window) -> SystemMenuRefs:
     sys_menu.addSeparator()
 
     density_menu = sys_menu.addMenu("表格密度")
+    install_menu_fade(density_menu)
     density_group = QActionGroup(window)
     density_group.setExclusive(True)
 
@@ -1123,6 +1143,7 @@ def setup_system_menu(window) -> SystemMenuRefs:
     window._apply_table_density(app_config.table_density, persist=False)
 
     theme_menu = sys_menu.addMenu(f"界面主题：{theme_manager.current_theme_name}")
+    install_menu_fade(theme_menu)
     theme_group = QActionGroup(window)
     theme_group.setExclusive(True)
     window._theme_actions = {}
@@ -1162,11 +1183,17 @@ def refresh_system_menu_theme(window) -> None:
     from ui.theme import theme_manager
 
     theme = theme_manager.current_theme
+    tokens = build_ui_tokens(theme)
 
     if hasattr(window, "btn_sys_menu") and window.btn_sys_menu:
         window.btn_sys_menu.setStyleSheet(_system_button_style(theme, theme["TEXT_MUTED"], theme["BG_HOVER"]))
-        window.btn_sys_menu.setText("⚙️")
-        window.btn_sys_menu.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        set_button_svg_icon(
+            window.btn_sys_menu,
+            "gear",
+            tokens["icon"]["muted"],
+            size=tokens["icon"]["chrome_size"],
+        )
+        window.btn_sys_menu.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
 
     menu_qss = generate_context_menu_qss(theme)
     for attr_name in ("_sys_menu", "_density_menu", "_theme_menu"):
@@ -1188,6 +1215,9 @@ def apply_chrome_theme(window) -> None:
     from ui.theme import theme_manager
 
     theme = theme_manager.current_theme
+    tokens = build_ui_tokens(theme)
+    icon_size = tokens["icon"]["chrome_size"]
+    icon_color = tokens["icon"]["muted"]
 
     if hasattr(window, "_custom_titlebar") and window._custom_titlebar:
         window._custom_titlebar.setStyleSheet(_titlebar_shell_style(theme))
@@ -1196,13 +1226,21 @@ def apply_chrome_theme(window) -> None:
         window._btn_minimize.setStyleSheet(
             _titlebar_button_style(theme, theme["TEXT_MUTED"], theme["BG_HOVER"], font_size=11)
         )
-        window._btn_minimize.setFixedWidth(build_ui_tokens(theme)["shell"]["window_button_width"])
+        window._btn_minimize.setFixedWidth(tokens["shell"]["window_button_width"])
+        set_button_svg_icon(window._btn_minimize, "minimize", icon_color, size=icon_size)
     if hasattr(window, "_btn_maximize") and window._btn_maximize:
         window._btn_maximize.setStyleSheet(_titlebar_button_style(theme, theme["TEXT_MUTED"], theme["BG_HOVER"]))
-        window._btn_maximize.setFixedWidth(build_ui_tokens(theme)["shell"]["window_button_width"])
+        window._btn_maximize.setFixedWidth(tokens["shell"]["window_button_width"])
+        set_button_svg_icon(
+            window._btn_maximize,
+            "restore" if getattr(window, "isMaximized", lambda: False)() else "maximize",
+            icon_color,
+            size=icon_size,
+        )
     if hasattr(window, "_btn_close") and window._btn_close:
         window._btn_close.setStyleSheet(_titlebar_button_style(theme, theme["TEXT_MUTED"], "#C42B1C"))
-        window._btn_close.setFixedWidth(build_ui_tokens(theme)["shell"]["window_button_width"])
+        window._btn_close.setFixedWidth(tokens["shell"]["window_button_width"])
+        set_button_svg_icon(window._btn_close, "close", icon_color, size=icon_size)
 
     if hasattr(window, "_shell_navigation_widget") and window._shell_navigation_widget:
         window._shell_navigation_widget.apply_theme()
@@ -1214,11 +1252,11 @@ def apply_chrome_theme(window) -> None:
         window._market_pulse_strip.apply_theme()
 
     if hasattr(window, "_custom_titlebar") and window._custom_titlebar:
-        window._custom_titlebar.setFixedHeight(build_ui_tokens(theme)["shell"]["titlebar_height"])
+        window._custom_titlebar.setFixedHeight(tokens["shell"]["titlebar_height"])
 
     if hasattr(window, "btn_sys_menu") and window.btn_sys_menu:
-        window.btn_sys_menu.setFixedWidth(build_ui_tokens(theme)["shell"]["system_button_width"])
-        window.btn_sys_menu.setFixedHeight(build_ui_tokens(theme)["shell"]["titlebar_height"])
+        window.btn_sys_menu.setFixedWidth(tokens["shell"]["system_button_width"])
+        window.btn_sys_menu.setFixedHeight(tokens["shell"]["titlebar_height"])
 
     if hasattr(window, "tabs_wrapper") and window.tabs_wrapper:
         window.tabs_wrapper.setStyleSheet(f"""

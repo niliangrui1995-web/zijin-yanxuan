@@ -12,6 +12,7 @@ from ui.components.main_window_shell import (
     setup_custom_titlebar,
     setup_system_menu,
 )
+from ui.components.table_controls import StatusGlyph
 from ui.window_flags import (
     DWMWA_NCRENDERING_POLICY,
     DWMNCRP_ENABLED,
@@ -96,6 +97,7 @@ def test_main_window_status_bar_applies_theme():
         assert "statusBarWidget" in bar.styleSheet()
         assert "color:" in bar.lbl_status.styleSheet()
         assert isinstance(bar.status_flow, StatusFlowStrip)
+        assert isinstance(bar.status_dot, StatusGlyph)
         assert bar.status_flow.objectName() == "statusFlowStrip"
         assert bar.status_flow.height() == 2
         assert bar.status_flow._timer.isActive() is False
@@ -117,8 +119,8 @@ def test_main_window_status_bar_applies_theme():
         bar.deleteLater()
 
 
-def test_app_version_is_v8_for_shell_surfaces():
-    assert APP_VERSION == "8.0.0"
+def test_app_version_is_v188_for_shell_surfaces():
+    assert APP_VERSION == "1.8.8"
 
 
 def test_main_window_shell_builders_wire_titlebar_menu_and_tabs():
@@ -128,7 +130,9 @@ def test_main_window_shell_builders_wire_titlebar_menu_and_tabs():
         assert window.tabs.tabBar().isVisible() is False
         assert window.btn_sys_menu.menu() is window._sys_menu
         assert window.btn_sys_menu.toolTip() == "系统菜单"
-        assert window.btn_sys_menu.text() == "⚙️"
+        assert window.btn_sys_menu.text() == ""
+        assert not window.btn_sys_menu.icon().isNull()
+        assert window.btn_sys_menu.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly
         assert window._standalone_tabbar.toolTip() == ""
         assert window._standalone_tabbar.expanding() is False
         assert window._standalone_tabbar.usesScrollButtons() is True
@@ -179,7 +183,12 @@ def test_main_window_shell_builders_wire_titlebar_menu_and_tabs():
         assert window._btn_minimize.cursor().shape() == Qt.CursorShape.PointingHandCursor
         assert window._btn_maximize.cursor().shape() == Qt.CursorShape.PointingHandCursor
         assert window._btn_close.cursor().shape() == Qt.CursorShape.PointingHandCursor
-        assert window._btn_close.text() == "✕"
+        assert window._btn_minimize.text() == ""
+        assert window._btn_maximize.text() == ""
+        assert window._btn_close.text() == ""
+        assert not window._btn_minimize.icon().isNull()
+        assert not window._btn_maximize.icon().isNull()
+        assert not window._btn_close.icon().isNull()
     finally:
         window.deleteLater()
 

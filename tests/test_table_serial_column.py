@@ -100,6 +100,16 @@ def test_stock_table_model_exposes_heatmap_and_status_badges():
     assert model.data(status_idx, Qt.ItemDataRole.UserRole + 2) is not None
 
 
+def test_stock_table_model_exposes_accent_rail_without_row_fill():
+    model = StockTableModel(["代码", "名称", "状态"])
+    model.update_data([{"代码": "000001", "名称": "A", "状态": "触发", "_row_style": "breakout"}])
+
+    first_idx = model.index(0, 0)
+
+    assert model.data(first_idx, Qt.ItemDataRole.UserRole + 4) == theme_manager.get("COLOR_RISE_STRONG")
+    assert model.data(first_idx, Qt.ItemDataRole.BackgroundRole) is None
+
+
 def test_stock_table_model_keeps_foreign_net_buy_left_aligned():
     model = StockTableModel(["代码", "名称", "外资净买入"])
     model.update_data([{"代码": "000001", "名称": "平安银行", "外资净买入": "净买1200万", "外资净买(万)": 1200}])

@@ -284,7 +284,7 @@ class StockItemDelegate(QStyledItemDelegate):
             diff = flash_data.get("diff", 0)  # >0 涨, <0 跌
             elapsed = time.time() - update_time
             if elapsed < self.flash_duration:
-                alpha = int(255 * (1.0 - (elapsed / self.flash_duration)))
+                alpha = int(255 * _flash_decay_alpha(elapsed, self.flash_duration))
                 if diff > 0:
                     color_hex = _c("COLOR_RISE_STRONG")
                 elif diff < 0:
@@ -297,6 +297,56 @@ class StockItemDelegate(QStyledItemDelegate):
                 bg_color.setAlpha(min(flash_max_alpha, max(0, int(alpha * flash_scale))))
                 painter.fillRect(option.rect, QBrush(bg_color))
 
+        def draw_left_rail():
+            if not (show_selected_rail or show_accent_rail):
+                return
+
+            width = rail_width
+            if width <= 0:
+                return
+
+            rail_rect = QRect(
+                option.rect.left(),
+                option.rect.top() + 1,
+                width,
+                max(0, option.rect.height() - 2),
+            )
+            if show_selected_rail:
+                painter.fillRect(rail_rect, _qcolor_from_token(table_tokens["selected_rail_color"]))
+                return
+
+            accent = QColor(rail_color)
+            accent.setAlpha(int(table_tokens.get("accent_rail_alpha", 190)))
+            painter.fillRect(rail_rect, accent)
+
+        def draw_flash_rail():
+            if not flash_data or not isinstance(flash_data, dict):
+                return
+            update_time = flash_data.get("time", 0)
+            diff = flash_data.get("diff", 0)
+            elapsed = time.time() - update_time
+            if elapsed < 0 or elapsed >= self.flash_duration:
+                return
+
+            decay = _flash_decay_alpha(elapsed, self.flash_duration)
+            if diff > 0:
+                color_hex = _c("COLOR_RISE_STRONG")
+            elif diff < 0:
+                color_hex = _c("COLOR_FALL_STRONG")
+            else:
+                color_hex = _c("COLOR_INFO")
+
+            width = max(1, int(table_tokens.get("flash_rail_width", 3)))
+            rail_rect = QRect(
+                option.rect.left(),
+                option.rect.top() + 1,
+                width,
+                max(0, option.rect.height() - 2),
+            )
+            rail_color = QColor(color_hex)
+            rail_color.setAlpha(max(0, min(255, int(table_tokens.get("flash_rail_alpha", 160) * decay))))
+            painter.fillRect(rail_rect, rail_color)
+
         # 2. 判断是否是自定义绘制的胶囊文本 (Pill)
         text = index.data(Qt.ItemDataRole.DisplayRole)
         pill_color = index.data(Qt.ItemDataRole.UserRole + 2)  # Pill Color Role
@@ -307,14 +357,8 @@ class StockItemDelegate(QStyledItemDelegate):
             style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt_bg, painter, widget)
             if sorted_overlay is not None:
                 painter.fillRect(option.rect, sorted_overlay)
-            if show_selected_rail:
-                rail_rect = QRect(
-                    option.rect.left(),
-                    option.rect.top() + 1,
-                    selected_rail_width,
-                    max(0, option.rect.height() - 2),
-                )
-                painter.fillRect(rail_rect, _qcolor_from_token(table_tokens["selected_rail_color"]))
+            draw_left_rail()
+            draw_flash_rail()
             draw_current_cell_indicator()
             rect = option.rect
             painter.setFont(opt.font)
@@ -330,7 +374,7 @@ class StockItemDelegate(QStyledItemDelegate):
             draw_rect = QRect(0, 0, text_width + pad_x, text_height + pad_y)
             if align and (align & Qt.AlignmentFlag.AlignLeft.value):
                 draw_rect.moveCenter(rect.center())
-                draw_rect.moveLeft(rect.left() + 8 + selected_rail_width + (4 if show_selected_rail else 0))
+                draw_rect.moveLeft(rect.left() + 8 + rail_width + (4 if rail_width else 0))
             else:
                 draw_rect.moveCenter(rect.center())
 
@@ -351,16 +395,10 @@ class StockItemDelegate(QStyledItemDelegate):
             style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt_bg, painter, widget)
             if sorted_overlay is not None:
                 painter.fillRect(option.rect, sorted_overlay)
-            if show_selected_rail:
-                rail_rect = QRect(
-                    option.rect.left(),
-                    option.rect.top() + 1,
-                    selected_rail_width,
-                    max(0, option.rect.height() - 2),
-                )
-                painter.fillRect(rail_rect, _qcolor_from_token(table_tokens["selected_rail_color"]))
+            draw_left_rail()
+            draw_flash_rail()
             draw_current_cell_indicator()
-            left_padding = 8 + selected_rail_width + (4 if show_selected_rail else 0)
+            left_padding = 8 + rail_width + (4 if rail_width else 0)
             text_rect = option.rect.adjusted(left_padding, 0, -8, 0)
 
             font = index.data(Qt.ItemDataRole.FontRole)

@@ -21,6 +21,7 @@ from app.services.ui_event_service import ui_signals
 from core.logger import get_logger
 from core.throttler import SignalThrottler
 from ui.components import TableStateWrapper, VCPTableView
+from ui.components.motion import install_button_feedback
 from ui.components.toast_widget import show_toast
 from ui.models.table_models import RtSortFilterProxyModel, RtTableModel, StockItemDelegate
 from ui.services.rt_monitor_service import RtMonitorService
@@ -383,6 +384,7 @@ class RtMonitorTab(BaseStockTab):
         self.btn_rt_start.setObjectName("primaryButton")
         self.btn_rt_start.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_rt_start.setProperty("toolbarWidthHints", ["开始监控", "停止监控", "正在停止..."])
+        install_button_feedback(self.btn_rt_start)
         self.btn_rt_start.clicked.connect(lambda *args: self.toggle_rt_monitor())
 
         # 清空盘中记录按钮

@@ -6,6 +6,7 @@ from PyQt6.QtGui import QHelpEvent, QStandardItem, QStandardItemModel
 from ui.components import (
     MultiSelectFilterButton,
     PulsingDot,
+    StatusGlyph,
     TableStateOverlay,
     TableStateWrapper,
     VCPTableView,
@@ -16,6 +17,9 @@ from ui.components.table_controls import (
 )
 from ui.components.table_controls import (
     PulsingDot as ModulePulsingDot,
+)
+from ui.components.table_controls import (
+    StatusGlyph as ModuleStatusGlyph,
 )
 from ui.components.table_controls import (
     TableStateOverlay as ModuleTableStateOverlay,
@@ -35,6 +39,7 @@ from ui.models.table_models import RtSortFilterProxyModel, StockTableModel
 def test_table_controls_are_reexported_from_components():
     assert VCPTableView is ModuleVCPTableView
     assert PulsingDot is ModulePulsingDot
+    assert StatusGlyph is ModuleStatusGlyph
     assert MultiSelectFilterButton is ModuleMultiSelectFilterButton
     assert TableStateOverlay is ModuleTableStateOverlay
     assert TableStateWrapper is ModuleTableStateWrapper
@@ -189,6 +194,36 @@ def test_table_state_overlay_uses_compact_responsive_card(qt_application):
         card = wrapper._overlay._card
         assert card.minimumWidth() <= card.maximumWidth()
         assert card.maximumWidth() <= 280
-        assert "border-radius: 8px;" in card.styleSheet()
+        assert "border-radius: 12px;" in card.styleSheet()
     finally:
         wrapper.deleteLater()
+
+
+def test_table_state_overlay_loading_skeleton_timer_stops_on_delete():
+    overlay = TableStateOverlay()
+    try:
+        overlay.set_state("loading", "Loading")
+
+        assert overlay._skeleton.isVisibleTo(overlay) is True
+        assert overlay._skeleton._timer.isActive() is True
+        assert overlay._dot.isVisible() is False
+
+        overlay.deleteLater()
+
+        assert overlay._skeleton._timer.isActive() is False
+        overlay = None
+    finally:
+        if overlay is not None:
+            overlay.deleteLater()
+
+
+def test_table_state_overlay_empty_state_uses_warm_glyph():
+    overlay = TableStateOverlay()
+    try:
+        overlay.set_state("empty", "Empty")
+
+        assert overlay._bull.isVisibleTo(overlay) is True
+        assert overlay._skeleton.isVisible() is False
+        assert "积蓄力量" in overlay._subtitle.text()
+    finally:
+        overlay.deleteLater()

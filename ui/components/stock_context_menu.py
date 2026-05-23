@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import QApplication, QMenu, QMessageBox
 
 from app.services.ui_event_service import ui_signals as event_bus
 from app.services.ui_watchlist_service import watchlist_vm
+from ui.components.motion import install_menu_fade
 from ui.styles.context_menu_qss import generate_context_menu_qss
 
 CODEX_INDUSTRY_RESEARCH_PROJECT = Path(r"D:\vcp_hunter\产业链投研")
@@ -199,6 +200,7 @@ def build_stock_context_menu(
         None — 菜单在内部 exec 并处理所有动作
     """
     menu = QMenu(parent)
+    install_menu_fade(menu)
     # 每次创建菜单时动态获取当前主题的 QSS（而非模块加载时的快照）
     menu.setStyleSheet(generate_context_menu_qss())
 
