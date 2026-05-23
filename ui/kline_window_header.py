@@ -309,8 +309,8 @@ def apply_qt_theme(window) -> None:
 
     vcp_star = theme.get("KLINE_VCP_STAR", "#FFD60A")
     fav_accent = theme.get("BRAND_HOVER", theme.get("BRAND_PRIMARY", vcp_star))
-    fav_hover = "rgba(185, 28, 28, 0.12)" if is_dark else "rgba(185, 28, 28, 0.08)"
-    fav_active_bg = theme.get("BRAND_PRIMARY", "#B91C1C")
+    fav_hover = theme.get("BRAND_SUBTLE", "rgba(185, 58, 50, 0.12)" if is_dark else "rgba(179, 52, 43, 0.08)")
+    fav_active_bg = theme.get("BRAND_PRIMARY", "#B93A32")
     fav_active_text = theme.get("TEXT_ON_ACCENT", "#FFFFFF")
     fav_active_hover = theme.get("BRAND_HOVER", fav_active_bg)
     window.btn_fav.setProperty("watching", bool(getattr(window, "is_fav", False)))

@@ -466,7 +466,7 @@ def test_yaohei_kline_html_syncs_canvas_scrollbar_and_tabular_nums(monkeypatch):
         theme_colors=colors,
     )
 
-    assert colors["bg_canvas"] == THEME_YAOHEI["BG_CANVAS"] == "#06070B"
+    assert colors["bg_canvas"] == THEME_YAOHEI["BG_CANVAS"] == "#0B1017"
     assert colors["datazoom_handle"] == THEME_YAOHEI["SCROLLBAR_HANDLE"]
     assert colors["scrollbar_handle"] == THEME_YAOHEI["SCROLLBAR_HANDLE"]
     assert colors["scrollbar_handle_hover"] == THEME_YAOHEI["SCROLLBAR_HANDLE_HOVER"]

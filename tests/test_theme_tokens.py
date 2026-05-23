@@ -116,6 +116,9 @@ def test_yaohei_selection_and_primary_actions_use_accent_not_market_red():
         "#D7AC45",
         "#E9C867",
         "#B78926",
+        "110, 123, 255",
+        "#6E7BFF",
+        "#8C96FF",
         "185, 28, 28",
         "220, 38, 38",
         "#B91C1C",
@@ -155,38 +158,38 @@ def test_yaohei_selection_and_primary_actions_use_accent_not_market_red():
 
     assert tokens["table"]["selected_rail_color"] == THEME_YAOHEI["ACCENT_PRIMARY"]
     assert tokens["table"]["hover_rail_color"] == THEME_YAOHEI["ACCENT_PRIMARY"]
-    assert THEME_YAOHEI["BG_CANVAS"] == "#06070B"
-    assert THEME_YAOHEI["BG_TABLE_BASE"] == "#0A0D15"
-    assert THEME_YAOHEI["BG_TABLE_ALT_ROW"] == "#0F1220"
-    assert THEME_YAOHEI["BG_CARD"] == "#121422"
-    assert THEME_YAOHEI["BG_HOVER"] == "rgba(110, 123, 255, 0.08)"
-    assert THEME_YAOHEI["BORDER_DEFAULT"] == "rgba(110, 123, 255, 0.12)"
-    assert THEME_YAOHEI["INFO_BADGE_BG"] == "rgba(110, 123, 255, 0.08)"
-    assert THEME_YAOHEI["KLINE_MA10"] == "rgba(210, 219, 235, 0.82)"
-    assert THEME_YAOHEI["KLINE_MA20"] == "rgba(85, 183, 255, 0.82)"
-    assert THEME_YAOHEI["KLINE_MA50"] == "rgba(215, 172, 69, 0.42)"
-    assert THEME_YAOHEI["KLINE_MA150"] == "rgba(110, 123, 255, 0.34)"
-    assert THEME_YAOHEI["KLINE_MA200"] == "rgba(255, 138, 143, 0.36)"
-    assert THEME_YAOHEI["KLINE_GRID_LINE"] == "rgba(96, 115, 148, 0.06)"
-    assert THEME_YAOHEI["KLINE_CROSSHAIR_LINE"] == "rgba(110, 123, 255, 0.40)"
-    assert THEME_YAOHEI["KLINE_VCP_STAR"] == "#FFD700"
-    assert THEME_YAOHEI["BRAND_PRIMARY"] == "#B91C1C"
+    assert THEME_YAOHEI["BG_CANVAS"] == "#0B1017"
+    assert THEME_YAOHEI["BG_TABLE_BASE"] == "#0D141D"
+    assert THEME_YAOHEI["BG_TABLE_ALT_ROW"] == "#111A24"
+    assert THEME_YAOHEI["BG_CARD"] == "#151C26"
+    assert THEME_YAOHEI["BG_HOVER"] == "rgba(78, 127, 168, 0.10)"
+    assert THEME_YAOHEI["BORDER_DEFAULT"] == "rgba(132, 149, 169, 0.14)"
+    assert THEME_YAOHEI["INFO_BADGE_BG"] == "rgba(78, 127, 168, 0.10)"
+    assert THEME_YAOHEI["KLINE_MA10"] == "rgba(218, 225, 234, 0.82)"
+    assert THEME_YAOHEI["KLINE_MA20"] == "rgba(87, 145, 179, 0.82)"
+    assert THEME_YAOHEI["KLINE_MA50"] == "rgba(201, 145, 58, 0.62)"
+    assert THEME_YAOHEI["KLINE_MA150"] == "rgba(150, 162, 174, 0.56)"
+    assert THEME_YAOHEI["KLINE_MA200"] == "rgba(199, 107, 91, 0.54)"
+    assert THEME_YAOHEI["KLINE_GRID_LINE"] == "rgba(126, 142, 160, 0.08)"
+    assert THEME_YAOHEI["KLINE_CROSSHAIR_LINE"] == "rgba(132, 149, 169, 0.48)"
+    assert THEME_YAOHEI["KLINE_VCP_STAR"] == "#D0A44E"
+    assert THEME_YAOHEI["BRAND_PRIMARY"] == "#B93A32"
     assert THEME_YAOHEI["COLOR_RISE"] != THEME_YAOHEI["BRAND_PRIMARY"]
 
 
 def test_yuebai_uses_cool_professional_light_palette():
     tokens = build_ui_tokens(THEME_YUEBAI, density="舒展")
 
-    assert THEME_YUEBAI["BG_CANVAS"] == "#F4F6F9"
-    assert THEME_YUEBAI["BG_SIDEBAR"] == "#E6EDF5"
-    assert THEME_YUEBAI["BG_SIDEBAR_END"] == "#F4F6F9"
+    assert THEME_YUEBAI["BG_CANVAS"] == "#F3F5F7"
+    assert THEME_YUEBAI["BG_SIDEBAR"] == "#E8EDF2"
+    assert THEME_YUEBAI["BG_SIDEBAR_END"] == "#F3F5F7"
     assert THEME_YUEBAI["BG_CARD"] == "#FFFFFF"
-    assert THEME_YUEBAI["BG_HOVER"] == "rgba(37, 99, 235, 0.06)"
-    assert THEME_YUEBAI["BG_TOOLBAR_CHIP"] == "#F0F4FA"
+    assert THEME_YUEBAI["BG_HOVER"] == "rgba(49, 95, 134, 0.07)"
+    assert THEME_YUEBAI["BG_TOOLBAR_CHIP"] == "#EEF3F7"
     assert THEME_YUEBAI["BORDER_DEFAULT"] == "rgba(15, 23, 42, 0.05)"
     assert THEME_YUEBAI["BORDER_SUBTLE"] == "rgba(15, 23, 42, 0.04)"
     assert THEME_YUEBAI["INFO_BADGE_FG"] == "#334155"
-    assert THEME_YUEBAI["ACCENT_PRIMARY"] == "#2563EB"
+    assert THEME_YUEBAI["ACCENT_PRIMARY"] == "#315F86"
     assert THEME_YUEBAI["ACCENT_PRIMARY"] != THEME_YUEBAI["BRAND_PRIMARY"]
     assert THEME_YUEBAI["TAB_ACTIVE_TOP"] == THEME_YUEBAI["ACCENT_PRIMARY"]
     assert THEME_YUEBAI["TABLE_SELECTED_RAIL"] == THEME_YUEBAI["ACCENT_PRIMARY"]

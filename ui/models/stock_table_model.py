@@ -95,11 +95,11 @@ class StockTableModel(QAbstractTableModel):
     def _source_badge_color(tag: str) -> str:
         text = str(tag or "")
         if "龙虎榜" in text:
-            return "#FF5A5F"
+            return _c("COLOR_RISE")
         if "扫描" in text or "AI" in text or "算法" in text:
-            return "#7C4DFF"
+            return _c("ACCENT_PRIMARY")
         if "手动" in text or "自选" in text:
-            return "#2563EB"
+            return _c("COLOR_INFO")
         return _c("COLOR_INFO")
 
     def _source_badges_payload(self, raw_value, row: dict) -> dict | None:
@@ -649,11 +649,11 @@ class StockTableModel(QAbstractTableModel):
 
                 code = str(item_dict.get("代码", ""))
                 if watchlist_vm.is_in_watchlist(code):
-                    return QColor("#E879F9")
+                    return QColor(_c("BRAND_HOVER"))
             if key in {"最近上榜", "换手率%", "AI细分板块/备注"}:
                 return QColor(_c("TEXT_MUTED"))
             if key == "评级":
-                return QColor("#D7AC45")
+                return QColor(_c("COLOR_WARNING"))
             if self._uses_plain_style(key) or _is_date_like_header(key):
                 return QColor(_c("TEXT_PRIMARY"))
 

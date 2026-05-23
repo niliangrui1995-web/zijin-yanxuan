@@ -38,8 +38,8 @@ def test_splash_uses_compact_opaque_brand_frame():
         assert splash.lbl_sub.isHidden()
         assert splash.lbl_status.text() == "准备启动环境..."
         assert "#F4F7FF" in splash.lbl_brand.styleSheet()
-        assert "#B91C1C" in splash.progress.styleSheet()
-        assert "#93C5FD" in splash.progress.styleSheet()
+        assert "#B93A32" in splash.progress.styleSheet()
+        assert "#4E7FA8" in splash.progress.styleSheet()
     finally:
         splash.close()
         splash.deleteLater()

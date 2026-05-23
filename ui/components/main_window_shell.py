@@ -170,8 +170,8 @@ class MarketPulseStrip(QWidget):
         super().__init__(host if parent is None else parent)
         self._host = host
         self._phase = 0.0
-        self._brand = QColor("#B91C1C")
-        self._deep = QColor("#7F1D1D")
+        self._brand = QColor("#B93A32")
+        self._deep = QColor("#6F211D")
         self.setObjectName("marketPulseStrip")
         self.setFixedHeight(3)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
@@ -199,10 +199,10 @@ class MarketPulseStrip(QWidget):
 
         theme = theme_manager.current_theme
         self._brand = QColor(
-            theme.get("TITLEBAR_PULSE", theme.get("BRAND_HOVER", theme.get("BRAND_PRIMARY", "#B91C1C")))
+            theme.get("TITLEBAR_PULSE", theme.get("BRAND_HOVER", theme.get("BRAND_PRIMARY", "#B93A32")))
         )
         self._deep = QColor(
-            theme.get("TITLEBAR_PULSE_BASE", theme.get("BRAND_DEEP", theme.get("BRAND_PRIMARY", "#7F1D1D")))
+            theme.get("TITLEBAR_PULSE_BASE", theme.get("BRAND_DEEP", theme.get("BRAND_PRIMARY", "#6F211D")))
         )
         self.update()
 
@@ -285,8 +285,8 @@ class StatusFlowStrip(QWidget):
         self._ticks_left = 0
         self._neutral = QColor("#1F2937")
         self._cyan = QColor("#22D3EE")
-        self._brand = QColor("#B91C1C")
-        self._error = QColor("#EF4444")
+        self._brand = QColor("#B93A32")
+        self._error = QColor("#E05243")
         self.setObjectName("statusFlowStrip")
         self.setFixedHeight(2)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
@@ -303,9 +303,9 @@ class StatusFlowStrip(QWidget):
 
         theme = theme_manager.current_theme
         self._neutral = QColor(theme.get("STATUSBAR_BORDER", theme.get("BORDER_SUBTLE", "#1F2937")))
-        self._cyan = QColor(theme.get("COLOR_REALTIME", theme.get("NETWORK_ONLINE", "#22D3EE")))
-        self._brand = QColor(theme.get("STATUS_FLOW_WORKING", theme.get("BRAND_PRIMARY", "#B91C1C")))
-        self._error = QColor(theme.get("COLOR_ERROR", theme.get("NETWORK_OFFLINE", "#EF4444")))
+        self._cyan = QColor(theme.get("COLOR_REALTIME", theme.get("NETWORK_ONLINE", "#4E9CC9")))
+        self._brand = QColor(theme.get("STATUS_FLOW_WORKING", theme.get("BRAND_PRIMARY", "#B93A32")))
+        self._error = QColor(theme.get("COLOR_ERROR", theme.get("NETWORK_OFFLINE", "#E05243")))
         self.update()
 
     def set_mode(self, mode: str, *, animate: bool = True) -> None:

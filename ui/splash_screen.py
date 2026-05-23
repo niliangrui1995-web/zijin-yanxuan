@@ -96,7 +96,7 @@ class SplashScreen(QWidget):
             }
             QProgressBar::chunk {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #B91C1C, stop:0.52 #E11D48, stop:1 #93C5FD);
+                    stop:0 #B93A32, stop:0.52 #C9913A, stop:1 #4E7FA8);
                 border-radius: 2px;
             }
         """)

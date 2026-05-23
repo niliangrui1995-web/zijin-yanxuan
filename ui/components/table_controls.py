@@ -804,7 +804,7 @@ class BullGlyph(QWidget):
 
     def paintEvent(self, event) -> None:
         tokens = build_ui_tokens()
-        color = QColor(tokens["theme"].get("BRAND_PRIMARY", "#B91C1C"))
+        color = QColor(tokens["theme"].get("BRAND_PRIMARY", "#B93A32"))
         soft = QColor(color)
         soft.setAlpha(28)
 
