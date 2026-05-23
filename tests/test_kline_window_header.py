@@ -13,6 +13,7 @@ from ui.components.kline_window_manager import KLineWindowManager
 from ui.kline_chart_payload import build_kline_html, build_kline_theme_colors
 from ui.tabs import asian_market_tab as asian_module
 from ui.tabs import asian_market_workers as asian_workers_module
+from ui.theme import THEME_YAOHEI, theme_manager
 from vcp.fetchers import asian_kline_fetcher as asian_fetcher_module
 
 
@@ -217,6 +218,19 @@ def test_kline_html_exposes_incremental_replace_bridge():
     build_option_body = html[html.index("function buildOption()") : html.index("chart.setOption(buildOption());")]
     assert "const data = splitData(rawData);" in build_option_body
     assert html.count("const data = splitData(rawData);") == 1
+
+
+def test_yaohei_kline_theme_colors_bind_terminal_chart_tokens(monkeypatch):
+    monkeypatch.setattr(theme_manager, "_current_name", "曜黑")
+
+    colors = build_kline_theme_colors()
+
+    assert colors["bg_canvas"] == THEME_YAOHEI["KLINE_BG_CANVAS"]
+    assert colors["grid_line"] == THEME_YAOHEI["KLINE_GRID_LINE"]
+    assert colors["crosshair_line"] == THEME_YAOHEI["KLINE_CROSSHAIR_LINE"]
+    assert colors["pointer_bg"] == THEME_YAOHEI["KLINE_POINTER_BG"]
+    assert colors["datazoom_fill"] == THEME_YAOHEI["KLINE_DATAZOOM_FILL"]
+    assert colors["tooltip_bg"] == THEME_YAOHEI["KLINE_TOOLTIP_BG"]
 
 
 class _LunchQuoteProvider:
