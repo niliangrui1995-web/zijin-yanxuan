@@ -24,13 +24,14 @@ from core.logger import get_logger
 
 log = get_logger(__name__)
 import pandas as pd
-from PyQt6.QtCore import Qt, QTimer, QUrl
+from PyQt6.QtCore import QEvent, Qt, QTimer, QUrl
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from ui.kline_chart_payload import (
     build_kline_echarts_payload,
     build_kline_html,
+    build_kline_market_state,
     build_kline_theme_colors,
 )
 from ui.kline_window_asian import (
@@ -100,6 +101,8 @@ class KLineChartWindow(QWidget):
         self._native_window_effects_applied = False
         self._snap_threshold = 15
         self._snapping_to_main_window = False
+        self._magnetically_attached = False
+        self._fullscreen_geometry = None
 
         # 盘中实时刷新定时器
         self._rt_timer = None
@@ -138,12 +141,21 @@ class KLineChartWindow(QWidget):
 
         self.title_bar = DraggableTitleBar(self)
         self.title_bar.setFixedHeight(34)
+        self.title_bar.installEventFilter(self)
         tb_layout = QHBoxLayout(self.title_bar)
         tb_layout.setContentsMargins(12, 0, 8, 0)
 
         self.title_lbl = QLabel("K线图")
         tb_layout.addWidget(self.title_lbl)
         tb_layout.addStretch()
+
+        self.btn_fullscreen = QToolButton()
+        self.btn_fullscreen.setText("□")
+        self.btn_fullscreen.setFixedSize(32, 28)
+        self.btn_fullscreen.setToolTip("全屏 / 还原 K 线图 (F11)")
+        self.btn_fullscreen.setAccessibleName("全屏 / 还原 K 线图")
+        self.btn_fullscreen.clicked.connect(self._toggle_fullscreen)
+        tb_layout.addWidget(self.btn_fullscreen)
 
         self.btn_close = QToolButton()
         self.btn_close.setText("✕")
@@ -287,6 +299,8 @@ class KLineChartWindow(QWidget):
 
         QShortcut(QKeySequence(Qt.Key.Key_Left), self, activated=lambda: self._nav_stock(-1))
         QShortcut(QKeySequence(Qt.Key.Key_Right), self, activated=lambda: self._nav_stock(1))
+        QShortcut(QKeySequence(Qt.Key.Key_F11), self, activated=self._toggle_fullscreen)
+        QShortcut(QKeySequence(Qt.Key.Key_Escape), self, activated=self._leave_fullscreen)
         self._update_nav_buttons()
 
         # 初始化主题样式（必须在所有控件创建完成后调用）
@@ -359,48 +373,70 @@ class KLineChartWindow(QWidget):
         super().moveEvent(event)
         self._snap_to_main_window_edges()
 
+    def eventFilter(self, obj, event):
+        if obj is getattr(self, "title_bar", None) and event.type() == QEvent.Type.MouseButtonDblClick:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._toggle_fullscreen()
+                event.accept()
+                return True
+        return super().eventFilter(obj, event)
+
     def _snap_to_main_window_edges(self) -> None:
-        if self._snapping_to_main_window or getattr(self, "_closing", False):
+        if self._snapping_to_main_window or getattr(self, "_closing", False) or self.isFullScreen():
             return
 
         main_window = getattr(self, "main_window", None)
         if main_window is None:
+            self._set_magnetically_attached(False)
             return
 
         try:
             if main_window.isMinimized() or main_window.isMaximized():
+                self._set_magnetically_attached(False)
                 return
             main_geo = main_window.frameGeometry()
             own_geo = self.frameGeometry()
         except (RuntimeError, AttributeError, TypeError):
+            self._set_magnetically_attached(False)
             return
 
         if main_geo.isNull() or own_geo.isNull():
+            self._set_magnetically_attached(False)
             return
 
         threshold = int(getattr(self, "_snap_threshold", 15))
         new_x = own_geo.x()
         new_y = own_geo.y()
+        attached = False
 
         if abs(own_geo.left() - main_geo.right()) <= threshold:
             new_x = main_geo.right() + 1
+            attached = True
         elif abs(own_geo.right() - main_geo.left()) <= threshold:
             new_x = main_geo.left() - own_geo.width()
+            attached = True
         elif abs(own_geo.left() - main_geo.left()) <= threshold:
             new_x = main_geo.left()
+            attached = True
         elif abs(own_geo.right() - main_geo.right()) <= threshold:
             new_x = main_geo.right() - own_geo.width() + 1
+            attached = True
 
         if abs(own_geo.top() - main_geo.bottom()) <= threshold:
             new_y = main_geo.bottom() + 1
+            attached = True
         elif abs(own_geo.bottom() - main_geo.top()) <= threshold:
             new_y = main_geo.top() - own_geo.height()
+            attached = True
         elif abs(own_geo.top() - main_geo.top()) <= threshold:
             new_y = main_geo.top()
+            attached = True
         elif abs(own_geo.bottom() - main_geo.bottom()) <= threshold:
             new_y = main_geo.bottom() - own_geo.height() + 1
+            attached = True
 
         if new_x == own_geo.x() and new_y == own_geo.y():
+            self._set_magnetically_attached(attached)
             return
 
         self._snapping_to_main_window = True
@@ -408,6 +444,15 @@ class KLineChartWindow(QWidget):
             self.move(new_x, new_y)
         finally:
             self._snapping_to_main_window = False
+        self._set_magnetically_attached(attached)
+
+    def _set_magnetically_attached(self, attached: bool) -> None:
+        attached = bool(attached)
+        if getattr(self, "_magnetically_attached", False) == attached:
+            return
+        self._magnetically_attached = attached
+        self._apply_qt_theme()
+        self._apply_chart_glass_mode()
 
     def _resolve_vcp_context(self, code: str, name: str, item_data: dict = None) -> dict:
         return resolve_vcp_context(self, code, name, item_data)
@@ -441,6 +486,71 @@ class KLineChartWindow(QWidget):
             browser.page().runJavaScript(script)
         except (AttributeError, RuntimeError, TypeError):
             pass
+
+    def _apply_chart_market_state(self) -> None:
+        browser = getattr(self, "browser", None)
+        if getattr(self, "_closing", False) or browser is None:
+            return
+        payload_json = json.dumps(
+            {"marketState": build_kline_market_state(self.code)},
+            ensure_ascii=False,
+        )
+        script = (
+            "(function(payload) {"
+            " if (typeof window.applyMarketState !== 'function') return false;"
+            " return window.applyMarketState(payload);"
+            " })(" + payload_json + ");"
+        )
+        try:
+            browser.page().runJavaScript(script)
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+
+    def _apply_chart_glass_mode(self) -> None:
+        browser = getattr(self, "browser", None)
+        if getattr(self, "_closing", False) or browser is None:
+            return
+        payload_json = json.dumps({"enabled": bool(getattr(self, "_magnetically_attached", False))})
+        script = (
+            "(function(payload) {"
+            " if (typeof window.setGlassMode !== 'function') return false;"
+            " return window.setGlassMode(payload);"
+            " })(" + payload_json + ");"
+        )
+        try:
+            browser.page().runJavaScript(script)
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+
+    def _toggle_fullscreen(self) -> None:
+        if self.isFullScreen():
+            self._leave_fullscreen()
+        else:
+            self._enter_fullscreen()
+
+    def _enter_fullscreen(self) -> None:
+        if self.isFullScreen() or getattr(self, "_closing", False):
+            return
+        self._fullscreen_geometry = self.geometry()
+        self._set_magnetically_attached(False)
+        self.setMinimumSize(0, 0)
+        self.setMaximumSize(16777215, 16777215)
+        self.showFullScreen()
+        self.btn_fullscreen.setText("▣")
+        self.btn_fullscreen.setToolTip("退出全屏 (Esc / F11)")
+        self._apply_qt_theme()
+
+    def _leave_fullscreen(self) -> None:
+        if not self.isFullScreen():
+            return
+        self.showNormal()
+        geometry = self._fullscreen_geometry
+        self._fullscreen_geometry = None
+        if geometry is not None and not geometry.isNull():
+            self.setGeometry(geometry)
+        self.btn_fullscreen.setText("□")
+        self.btn_fullscreen.setToolTip("全屏 / 还原 K 线图 (F11)")
+        self._apply_qt_theme()
 
     def _apply_info_styles(
         self, widget_text: str | None = None, info_color: str | None = None, is_dark: bool | None = None
@@ -571,6 +681,8 @@ class KLineChartWindow(QWidget):
         if getattr(self, "_closing", False):
             return
         if ok:
+            self._apply_chart_market_state()
+            self._apply_chart_glass_mode()
             self._finish_pending_chart_status()
         elif getattr(self, "_pending_chart_status", None):
             self._pending_chart_status = None
@@ -770,6 +882,7 @@ class KLineChartWindow(QWidget):
     def _start_rt_timer(self):
         """启动盘中实时刷新定时器（60秒间隔），只在交易时段运行"""
         market = self._get_market()
+        self._apply_chart_market_state()
         if not MarketCalendar.is_quote_refresh_time(market):
             if self._rt_timer is not None:
                 self._rt_timer.stop()

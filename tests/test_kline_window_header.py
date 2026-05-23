@@ -3,7 +3,7 @@ import datetime as dt
 import json
 
 import pandas as pd
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import QEvent, Qt, QUrl
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from core.task_manager import task_manager
@@ -32,7 +32,10 @@ def _dispose_kline_window(window):
     app = QApplication.instance()
     if app is not None:
         app.processEvents()
-    window.deleteLater()
+    try:
+        window.deleteLater()
+    except RuntimeError:
+        return
     if app is not None:
         app.processEvents()
 
@@ -47,6 +50,22 @@ class _FakeSignal:
     def disconnect(self, callback):
         if callback in self.callbacks:
             self.callbacks.remove(callback)
+
+
+class _FakeMouseEvent:
+    def __init__(self, event_type, button):
+        self._event_type = event_type
+        self._button = button
+        self.accepted = False
+
+    def type(self):
+        return self._event_type
+
+    def button(self):
+        return self._button
+
+    def accept(self):
+        self.accepted = True
 
 
 class _FakeWebPage:
@@ -355,6 +374,78 @@ def test_kline_header_exposes_session_and_feed_badges(monkeypatch):
         assert window.info_lbl.minimumHeight() >= window.market_badge_lbl.minimumHeight()
         assert "padding: 0 10px;" in window.info_lbl.styleSheet()
         assert "max-height" in window.info_lbl.styleSheet()
+    finally:
+        _dispose_kline_window(window)
+
+
+def test_kline_magnetic_attach_switches_transparent_shell(monkeypatch):
+    window = _build_fake_webengine_kline(monkeypatch)
+    glass_calls = []
+    monkeypatch.setattr(window, "_apply_chart_glass_mode", lambda: glass_calls.append(window._magnetically_attached))
+
+    try:
+        window._set_magnetically_attached(True)
+
+        assert window._magnetically_attached is True
+        assert "border: 1px solid rgba(0, 0, 0, 0)" in window.container.styleSheet()
+        assert "background-color: rgba(0, 0, 0, 0)" in window.container.styleSheet()
+        assert glass_calls == [True]
+
+        window._set_magnetically_attached(False)
+
+        assert window._magnetically_attached is False
+        assert glass_calls == [True, False]
+    finally:
+        _dispose_kline_window(window)
+
+
+def test_kline_fullscreen_toggle_uses_window_fullscreen_mode(monkeypatch):
+    window = _build_fake_webengine_kline(monkeypatch)
+    fullscreen_state = {"active": False}
+
+    monkeypatch.setattr(window, "isFullScreen", lambda: fullscreen_state["active"])
+    monkeypatch.setattr(window, "showFullScreen", lambda: fullscreen_state.__setitem__("active", True))
+    monkeypatch.setattr(window, "showNormal", lambda: fullscreen_state.__setitem__("active", False))
+
+    try:
+        window._toggle_fullscreen()
+
+        assert fullscreen_state["active"] is True
+        assert window.btn_fullscreen.text() == "▣"
+        assert "退出全屏" in window.btn_fullscreen.toolTip()
+
+        window._toggle_fullscreen()
+
+        assert fullscreen_state["active"] is False
+        assert window.btn_fullscreen.text() == "□"
+        assert "F11" in window.btn_fullscreen.toolTip()
+    finally:
+        _dispose_kline_window(window)
+
+
+def test_kline_title_bar_double_click_toggles_fullscreen(monkeypatch):
+    window = _build_fake_webengine_kline(monkeypatch)
+    fullscreen_calls = []
+    monkeypatch.setattr(window, "_toggle_fullscreen", lambda: fullscreen_calls.append("fullscreen"))
+
+    try:
+        event = _FakeMouseEvent(QEvent.Type.MouseButtonDblClick, Qt.MouseButton.LeftButton)
+
+        assert window.eventFilter(window.title_bar, event) is True
+        assert event.accepted is True
+        assert fullscreen_calls == ["fullscreen"]
+    finally:
+        _dispose_kline_window(window)
+
+
+def test_kline_window_has_no_widget_pill_mode(monkeypatch):
+    window = _build_fake_webengine_kline(monkeypatch)
+
+    try:
+        assert not hasattr(window, "widget_mode_panel")
+        assert not hasattr(window, "_toggle_widget_mode")
+        assert not hasattr(window, "_enter_widget_mode")
+        assert not hasattr(window, "_leave_widget_mode")
     finally:
         _dispose_kline_window(window)
 

@@ -196,6 +196,35 @@ def _parse_numeric_value(raw_val):
     return value
 
 
+_MARKET_CAP_HEADERS = {"\u5e02\u503c", "\u603b\u5e02\u503c"}
+
+
+def _is_market_cap_header(header: str) -> bool:
+    return str(header or "").strip() in _MARKET_CAP_HEADERS
+
+
+def _format_market_cap_display(header: str, raw_val):
+    if not _is_market_cap_header(header):
+        return None
+
+    text = str(raw_val or "").strip()
+    if not text or text in {"--", "-"}:
+        return text
+
+    def _replace(match: re.Match) -> str:
+        sign, integer_part, decimal_part = match.groups()
+        digits = integer_part.replace(",", "")
+        if len(digits) <= 3:
+            return match.group(0)
+        try:
+            grouped = f"{int(digits):,}"
+        except ValueError:
+            return match.group(0)
+        return f"{sign or ''}{grouped}{decimal_part or ''}"
+
+    return re.sub(r"(?<![\d,.])([+-]?)(\d[\d,]*)(\.\d+)?", _replace, text)
+
+
 _FLASH_EXACT_HEADERS = {
     "现价",
     "市价",

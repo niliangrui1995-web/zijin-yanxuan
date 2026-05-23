@@ -89,6 +89,29 @@ def test_terminal_alignment_uses_left_for_pure_chinese_and_mixed_cells():
     assert buypoint_align & Qt.AlignmentFlag.AlignLeft.value
 
 
+def test_stock_table_model_groups_market_cap_display_without_mutating_raw_value():
+    code_key = "\u4ee3\u7801"
+    name_key = "\u540d\u79f0"
+    cap_key = "\u5e02\u503c"
+    total_cap_key = "\u603b\u5e02\u503c"
+    model = StockTableModel([code_key, name_key, cap_key, total_cap_key])
+    model.update_data(
+        [
+            {
+                code_key: "000001",
+                name_key: "A",
+                cap_key: "18800\u4ebf",
+                total_cap_key: "1.18\u4e07\u4ebf",
+            }
+        ],
+        hydrate_latest_quotes=False,
+    )
+
+    assert model.data(model.index(0, model.headers.index(cap_key)), Qt.ItemDataRole.DisplayRole) == "18,800\u4ebf"
+    assert model.data(model.index(0, model.headers.index(total_cap_key)), Qt.ItemDataRole.DisplayRole) == "1.18\u4e07\u4ebf"
+    assert model.row_data[0][cap_key] == "18800\u4ebf"
+
+
 def test_stock_table_model_exposes_heatmap_and_status_badges():
     model = StockTableModel(["代码", "名称", "现价", "涨幅%", "状态"])
     model.update_data([{"代码": "000001", "名称": "平安银行", "现价": "10.00", "涨幅%": "3.20", "状态": "盘中"}])

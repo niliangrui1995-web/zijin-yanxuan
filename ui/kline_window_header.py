@@ -232,10 +232,14 @@ def apply_qt_theme(window) -> None:
     control = tokens["control"]
     neutral_tone = tokens["state"]["neutral"]
     action_height = control["button_height"]
+    glass_attached = bool(getattr(window, "_magnetically_attached", False))
+    shell_bg = "rgba(0, 0, 0, 0)" if glass_attached else widget_bg
+    shell_border = "rgba(0, 0, 0, 0)" if glass_attached else depth_line
+    shell_radius = radius["lg"]
 
     window.setStyleSheet(
         f"""
-            QWidget {{ background-color: {widget_bg}; color: {widget_text}; }}
+            QWidget {{ background-color: {shell_bg}; color: {widget_text}; }}
             QLabel {{ font-family: {font["family"]}; }}
         """
     )
@@ -243,9 +247,9 @@ def apply_qt_theme(window) -> None:
     window.container.setStyleSheet(
         f"""
             QFrame#klineContainer {{
-                background-color: {widget_bg};
-                border: 1px solid {depth_line};
-                border-radius: {radius["lg"]}px;
+                background-color: {shell_bg};
+                border: 1px solid {shell_border};
+                border-radius: {shell_radius}px;
             }}
         """
     )
@@ -262,6 +266,22 @@ def apply_qt_theme(window) -> None:
     )
     window.title_lbl.setStyleSheet(
         f"color: {widget_text}; font-weight: {font['weight_bold']}; font-size: {font['size_md']}px;"
+    )
+
+    window.btn_fullscreen.setStyleSheet(
+        f"""
+            QToolButton {{
+                background: transparent;
+                border: none;
+                color: {info_color};
+                font-weight: {font["weight_bold"]};
+            }}
+            QToolButton:hover {{
+                background-color: {btn_hover_bg};
+                color: {btn_hover_text};
+                border-radius: {radius["xs"]}px;
+            }}
+        """
     )
 
     window.btn_close.setStyleSheet(
@@ -379,10 +399,11 @@ def apply_qt_theme(window) -> None:
             label.setStyleSheet(f"font-size: {font['size_sm']}px; font-weight: {font['weight_medium']};")
 
     apply_info_styles(window, widget_text=widget_text, info_color=info_color, is_dark=is_dark)
-    window.browser.setStyleSheet(f"background-color: {chart_bg};")
+    chart_shell_bg = "rgba(0, 0, 0, 0)" if glass_attached else chart_bg
+    window.browser.setStyleSheet(f"background-color: {chart_shell_bg};")
     try:
         window.browser.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        window.browser.page().setBackgroundColor(QColor(chart_bg))
+        window.browser.page().setBackgroundColor(QColor(0, 0, 0, 0) if glass_attached else QColor(chart_bg))
     except (AttributeError, RuntimeError, TypeError, ValueError):
         pass
 

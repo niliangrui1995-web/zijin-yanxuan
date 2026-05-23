@@ -243,6 +243,8 @@ def poll_rt_update(window):
     """定时器回调：拉取最新实时报价，通过 JS 增量更新最后一根 K 线。"""
     market = window._get_market()
     if not MarketCalendar.is_quote_refresh_time(market):
+        if hasattr(window, "_apply_chart_market_state"):
+            window._apply_chart_market_state()
         if window._rt_timer:
             window._rt_timer.stop()
             window._log.debug(f"[K线] {window.code} 已收盘，停止实时刷新")

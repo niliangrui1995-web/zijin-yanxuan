@@ -209,6 +209,8 @@ def build_kline_theme_colors() -> dict:
         "volume_dry": t.get("KLINE_VOLUME_DRY", "rgba(126, 142, 160, 0.22)"),
         "volume_spike": t.get("KLINE_VOLUME_SPIKE", t["KLINE_VCP_STAR"]),
         "volume_spike_shadow": t.get("KLINE_VOLUME_SPIKE_SHADOW", t["KLINE_VCP_STAR"]),
+        "volume_spike_top": t.get("KLINE_VOLUME_SPIKE_TOP", t.get("KLINE_VOLUME_SPIKE_SHADOW", t["KLINE_VCP_STAR"])),
+        "live_pulse": t.get("KLINE_LIVE_PULSE", t.get("KLINE_VCP_STAR", t["KLINE_UP_COLOR"])),
         "depth_line": t.get("KLINE_DEPTH_LINE", "rgba(255, 255, 255, 0.05)" if is_dark else "rgba(15, 23, 42, 0.04)"),
         "tooltip_bg": t.get("KLINE_TOOLTIP_BG", "rgba(17, 24, 39, 0.92)"),
         "tooltip_text": t.get("KLINE_TOOLTIP_TEXT", "#F3F4F6"),
@@ -310,6 +312,22 @@ def format_kline_market_badge(code: str) -> str:
     }.get(market, market or "市场")
 
 
+def build_kline_market_state(code: str) -> dict:
+    market = MarketCalendar.infer_market(code)
+    try:
+        status = MarketCalendar.get_market_status(market)
+        active = MarketCalendar.is_market_active(market)
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        status = ""
+        active = False
+    return {
+        "market": market,
+        "status": status,
+        "active": bool(active),
+        "live": bool(active),
+    }
+
+
 def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme_colors: dict) -> str:
     js_url = QUrl.fromLocalFile(echarts_js_path).toString()
     data_json = json.dumps(echarts_data, ensure_ascii=False)
@@ -341,9 +359,13 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
         }}
 
         * {{ scrollbar-width: thin; scrollbar-color: var(--scrollbar-handle) transparent; }}
+        html {{ background: transparent; }}
         body, #chart, .top-toolbar, .info-val, .ma-display {{ font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }}
         body {{ margin: 0; padding: 0; background-color: var(--bg-canvas); color: var(--text-secondary); font-family: var(--font-family); overflow: hidden; transition: background-color 180ms ease, color 180ms ease; }}
-        #chart {{ width: 100vw; height: calc(100vh - 30px); margin-top: 30px; }}
+        body.glass-fused {{ background-color: transparent; }}
+        #chart {{ width: 100vw; height: calc(100vh - 30px); margin-top: 30px; transition: filter 180ms ease; }}
+        body.market-live #chart {{ filter: saturate(1.06) brightness(1.035); }}
+        body.market-sleeping #chart {{ filter: none; }}
         ::-webkit-scrollbar {{ width: 10px; height: 10px; }}
         ::-webkit-scrollbar-track {{ background: transparent; }}
         ::-webkit-scrollbar-thumb {{ background: var(--scrollbar-handle); border-radius: 5px; }}
@@ -388,6 +410,9 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
         let themeState = {json.dumps(theme_colors, ensure_ascii=False)};
         let upColor = themeState.up_color;
         let downColor = themeState.down_color;
+        const MA_LINE_WIDTH_SCALE = 1.18;
+        const VOLUME_SPIKE_RATIO = 2.5;
+        let glassFused = false;
 
         function _setCssVar(name, value) {{
             if (value === undefined || value === null) return;
@@ -413,6 +438,26 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             _setCssVar('--scrollbar-handle-pressed', t.scrollbar_handle_pressed);
             _setCssVar('--font-family', t.font_family);
             _setCssVar('--mono-font-family', t.mono_font_family);
+        }}
+
+        function _marketState() {{
+            return rawData.marketState || {{ market: '', status: '', active: false, live: false }};
+        }}
+
+        function _isLiveMarket() {{
+            const state = _marketState();
+            return !!(state && (state.live || state.active));
+        }}
+
+        function _chartBackgroundColor() {{
+            return glassFused ? 'rgba(0, 0, 0, 0)' : themeState.bg_canvas;
+        }}
+
+        function _applyMarketChrome() {{
+            const live = _isLiveMarket();
+            document.body.classList.toggle('market-live', live);
+            document.body.classList.toggle('market-sleeping', !live);
+            document.body.classList.toggle('glass-fused', !!glassFused);
         }}
 
         const chart = echarts.init(document.getElementById('chart'));
@@ -613,6 +658,25 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
 
         const VCP_STAR_SYMBOL = 'path://M0 -13 L3 -3 L13 0 L3 3 L0 13 L-3 3 L-13 0 L-3 -3 Z';
 
+        function _maLineStyle(key, baseWidth, baseOpacity, defaultType) {{
+            const styleMap = rawData.maStyles || {{}};
+            const style = styleMap[key] || {{}};
+            const width = Number.isFinite(Number(style.width)) ? Number(style.width) : baseWidth;
+            const opacity = Number.isFinite(Number(style.opacity)) ? Number(style.opacity) : baseOpacity;
+            const result = {{
+                width: width * MA_LINE_WIDTH_SCALE,
+                color: themeState[key],
+                opacity: opacity
+            }};
+            const lineType = style.type || defaultType;
+            if (lineType) result.type = lineType;
+            if (style.emphasis) {{
+                result.shadowBlur = 9;
+                result.shadowColor = themeState[key];
+            }}
+            return result;
+        }}
+
         function _verticalGradient(topColor, bottomColor) {{
             return new echarts.graphic.LinearGradient(0, 0, 0, 1, [
                 {{ offset: 0, color: topColor }},
@@ -627,47 +691,89 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             return Number(entry || 0);
         }}
 
-        function _volumeItemStyle(idx) {{
+        function _volumeMetrics(idx) {{
             const kline = rawData.klines[idx] || [];
             const volume = _volumeRawValue((rawData.vols || [])[idx]);
             const volMa = Number((rawData.volMa20 || [])[idx]);
             const isUp = Number(kline[1]) >= Number(kline[0]);
-
+            let kind = 'normal';
             if (Number.isFinite(volMa) && volMa > 0 && volume > 0) {{
-                if (volume <= volMa / 3) {{
-                    return {{
-                        color: themeState.volume_dry,
-                        opacity: 0.42
-                    }};
-                }}
-                if (volume >= volMa * 2) {{
-                    return {{
-                        color: themeState.volume_spike,
-                        borderColor: themeState.volume_spike,
-                        borderWidth: 0.6,
-                        shadowBlur: 10,
-                        shadowColor: themeState.volume_spike_shadow
-                    }};
-                }}
+                if (volume <= volMa / 3) kind = 'dry';
+                else if (volume >= volMa * VOLUME_SPIKE_RATIO) kind = 'spike';
             }}
+            return {{ volume, volMa, isUp, kind }};
+        }}
 
+        function _volumeItemStyle(idx, kind) {{
+            const metrics = _volumeMetrics(idx);
+            if (kind === 'dry') {{
+                return {{
+                    color: themeState.volume_dry,
+                    opacity: 0.24
+                }};
+            }}
+            if (metrics.kind === 'spike') {{
+                return {{
+                    color: _verticalGradient(themeState.volume_spike_top, themeState.volume_spike),
+                    borderColor: themeState.volume_spike,
+                    borderWidth: 0.8,
+                    opacity: 0.96,
+                    shadowBlur: 16,
+                    shadowColor: themeState.volume_spike_shadow
+                }};
+            }}
             return {{
-                color: isUp ? upColor : downColor,
+                color: metrics.isUp ? upColor : downColor,
                 opacity: 0.72
             }};
         }}
 
-        function buildVolumeData() {{
+        function buildVolumeData(kind) {{
             return (rawData.vols || []).map((entry, idx) => {{
+                const metrics = _volumeMetrics(idx);
+                if (kind === 'dry' && metrics.kind !== 'dry') return null;
+                if (kind !== 'dry' && metrics.kind === 'dry') return null;
                 const base = entry && typeof entry === 'object' ? entry : {{ value: entry }};
                 return {{
                     ...base,
                     itemStyle: {{
                         ...(base.itemStyle || {{}}),
-                        ..._volumeItemStyle(idx)
+                        ..._volumeItemStyle(idx, kind)
                     }}
                 }};
             }});
+        }}
+
+        function buildVolumeSpikeParticles() {{
+            return (rawData.vols || []).map((entry, idx) => {{
+                const metrics = _volumeMetrics(idx);
+                if (metrics.kind !== 'spike') return null;
+                return {{
+                    value: [rawData.dates[idx], metrics.volume],
+                    symbolSize: Math.max(5, Math.min(10, metrics.volMa > 0 ? metrics.volume / metrics.volMa * 2.4 : 6)),
+                    itemStyle: {{
+                        color: themeState.volume_spike_top,
+                        shadowBlur: 12,
+                        shadowColor: themeState.volume_spike_shadow
+                    }}
+                }};
+            }}).filter(Boolean);
+        }}
+
+        function buildLastLivePulseData() {{
+            if (!_isLiveMarket()) return [];
+            const idx = rawData.dates.length - 1;
+            const kline = rawData.klines[idx] || [];
+            const close = Number(kline[1]);
+            if (idx < 0 || !Number.isFinite(close)) return [];
+            return [{{
+                value: [rawData.dates[idx], close],
+                itemStyle: {{
+                    color: themeState.live_pulse,
+                    shadowBlur: 16,
+                    shadowColor: themeState.live_pulse
+                }}
+            }}];
         }}
 
         function buildVcpAreaData() {{
@@ -770,7 +876,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             return {{
                 animation: false,
                 stateAnimation: {{ duration: 0 }},
-                backgroundColor: themeState.bg_canvas,
+                backgroundColor: _chartBackgroundColor(),
                 legend: {{
                     show: false
                 }},
@@ -823,6 +929,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         boundaryGap: false,
                         axisLine: {{ lineStyle: {{ color: themeState.axis_line }} }},
                         axisLabel: {{ color: themeState.axis_label, fontFamily: themeState.mono_font_family }},
+                        axisPointer: {{ label: {{ show: false }} }},
                         splitLine: {{ show: false }},
                         min: 'dataMin',
                         max: 'dataMax'
@@ -835,6 +942,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         boundaryGap: false,
                         axisLine: {{ lineStyle: {{ color: themeState.axis_line }} }},
                         axisLabel: {{ show: false }},
+                        axisPointer: {{ label: {{ show: false }} }},
                         axisTick: {{ show: false }},
                         splitLine: {{ show: false }},
                         min: 'dataMin',
@@ -1002,6 +1110,26 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         }}
                     }},
                     {{
+                        id: 'lastLivePulse',
+                        name: 'Live Pulse',
+                        type: 'effectScatter',
+                        coordinateSystem: 'cartesian2d',
+                        xAxisIndex: 0,
+                        yAxisIndex: 0,
+                        data: buildLastLivePulseData(),
+                        symbol: 'circle',
+                        symbolSize: 8,
+                        showEffectOn: 'render',
+                        rippleEffect: {{
+                            period: 2.8,
+                            scale: 3.0,
+                            brushType: 'stroke',
+                            color: themeState.live_pulse
+                        }},
+                        silent: true,
+                        z: 18
+                    }},
+                    {{
                         id: 'ma10',
                         name: 'MA10',
                         type: 'line',
@@ -1011,7 +1139,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         smooth: false,
                         animation: false,
                         showSymbol: false,
-                        lineStyle: {{ width: 1, color: themeState.ma10, opacity: 0.72 }}
+                        lineStyle: _maLineStyle('ma10', 1, 0.72)
                     }},
                     {{
                         id: 'ma20',
@@ -1023,7 +1151,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         smooth: false,
                         animation: false,
                         showSymbol: false,
-                        lineStyle: {{ width: 1, color: themeState.ma20, opacity: 0.76 }}
+                        lineStyle: _maLineStyle('ma20', 1, 0.76)
                     }},
                     {{
                         id: 'ma50',
@@ -1035,7 +1163,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         smooth: false,
                         animation: false,
                         showSymbol: false,
-                        lineStyle: {{ width: 1.7, color: themeState.ma50, opacity: 0.90 }}
+                        lineStyle: _maLineStyle('ma50', 1.7, 0.90)
                     }},
                     {{
                         id: 'ma150',
@@ -1047,7 +1175,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         smooth: false,
                         animation: false,
                         showSymbol: false,
-                        lineStyle: {{ width: 1, color: themeState.ma150, opacity: 0.46, type: 'dashed' }}
+                        lineStyle: _maLineStyle('ma150', 1, 0.46, 'dashed')
                     }},
                     {{
                         id: 'ma200',
@@ -1059,7 +1187,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         smooth: false,
                         animation: false,
                         showSymbol: false,
-                        lineStyle: {{ width: 1, color: themeState.ma200, opacity: 0.46, type: 'dashed' }}
+                        lineStyle: _maLineStyle('ma200', 1, 0.46, 'dashed')
                     }},
                     {{
                         id: 'volume',
@@ -1067,7 +1195,41 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         type: 'bar',
                         xAxisIndex: 1,
                         yAxisIndex: 1,
-                        data: buildVolumeData()
+                        barMinWidth: 2,
+                        barMaxWidth: 18,
+                        barCategoryGap: '42%',
+                        data: buildVolumeData('normal')
+                    }},
+                    {{
+                        id: 'volumeDry',
+                        name: 'Dry Volume',
+                        type: 'bar',
+                        xAxisIndex: 1,
+                        yAxisIndex: 1,
+                        barMinWidth: 1,
+                        barMaxWidth: 9,
+                        barGap: '-100%',
+                        data: buildVolumeData('dry'),
+                        z: 4
+                    }},
+                    {{
+                        id: 'volumeSpikeParticles',
+                        name: 'Spike Volume Particles',
+                        type: 'effectScatter',
+                        coordinateSystem: 'cartesian2d',
+                        xAxisIndex: 1,
+                        yAxisIndex: 1,
+                        data: buildVolumeSpikeParticles(),
+                        symbol: 'circle',
+                        showEffectOn: 'render',
+                        rippleEffect: {{
+                            period: 3.2,
+                            scale: 2.6,
+                            brushType: 'stroke',
+                            color: themeState.volume_spike_top
+                        }},
+                        silent: true,
+                        z: 9
                     }},
                     {{
                         id: 'volMa20',
@@ -1114,6 +1276,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             }};
         }}
 
+        _applyMarketChrome();
         chart.setOption(buildOption());
         _installSmoothWheelZoom();
         _updateToolbar(rawData.dates.length - 1, false);
@@ -1125,6 +1288,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             if (t.up_color) upColor = t.up_color;
             if (t.down_color) downColor = t.down_color;
             _applyCssTheme(themeState);
+            _applyMarketChrome();
 
             const currentOption = chart.getOption ? chart.getOption() : null;
             const dataZoom = currentOption && currentOption.dataZoom ? currentOption.dataZoom : null;
@@ -1139,9 +1303,32 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             return true;
         }};
 
+        window.applyMarketState = function (payload) {{
+            const state = payload && payload.marketState ? payload.marketState : payload;
+            if (!state) return false;
+            rawData.marketState = state;
+            _applyMarketChrome();
+            chart.setOption({{
+                backgroundColor: _chartBackgroundColor(),
+                series: [
+                    {{ id: 'lastLivePulse', data: buildLastLivePulseData() }}
+                ]
+            }}, false, true);
+            return true;
+        }};
+
+        window.setGlassMode = function (payload) {{
+            glassFused = !!(payload && payload.enabled);
+            _applyMarketChrome();
+            chart.setOption({{ backgroundColor: _chartBackgroundColor() }}, false, true);
+            chart.resize();
+            return true;
+        }};
+
         window.replaceKlineData = function (payload) {{
             if (!payload || !payload.data) return false;
             rawData = payload.data;
+            _applyMarketChrome();
             if (payload.title) {{
                 document.title = payload.title;
             }}
@@ -1187,12 +1374,15 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                 ],
                 series: [
                     {{ id: 'kline', data: rawData.klines }},
+                    {{ id: 'lastLivePulse', data: buildLastLivePulseData() }},
                     {{ id: 'ma10', data: rawData.ma10 }},
                     {{ id: 'ma20', data: rawData.ma20 }},
                     {{ id: 'ma50', data: rawData.ma50 }},
                     {{ id: 'ma150', data: rawData.ma150 }},
                     {{ id: 'ma200', data: rawData.ma200 }},
-                    {{ id: 'volume', data: buildVolumeData() }},
+                    {{ id: 'volume', data: buildVolumeData('normal') }},
+                    {{ id: 'volumeDry', data: buildVolumeData('dry') }},
+                    {{ id: 'volumeSpikeParticles', data: buildVolumeSpikeParticles() }},
                     {{ id: 'volMa20', data: rawData.volMa20 }},
                     {{ id: 'macd', data: rawData.macd }},
                     {{ id: 'diff', data: rawData.diff }},
@@ -1428,6 +1618,75 @@ def _build_moving_average_data(closes) -> dict:
     return ma_data
 
 
+def _last_finite(values) -> float | None:
+    if values is None:
+        return None
+    for value in reversed(list(values)):
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if not np.isnan(number):
+            return number
+    return None
+
+
+def _finite_close_ma_pairs(closes, ma_values: list) -> list[tuple[float, float]]:
+    pairs = []
+    for close, ma_value in zip(closes, ma_values, strict=False):
+        try:
+            close_number = float(close)
+            ma_number = float(ma_value)
+        except (TypeError, ValueError):
+            continue
+        if np.isnan(close_number) or np.isnan(ma_number):
+            continue
+        pairs.append((close_number, ma_number))
+    return pairs
+
+
+def _crossed_ma200(closes, ma_values: list) -> bool:
+    pairs = _finite_close_ma_pairs(closes, ma_values)
+    if len(pairs) < 2:
+        return False
+    prev_close, prev_ma = pairs[-2]
+    last_close, last_ma = pairs[-1]
+    prev_delta = prev_close - prev_ma
+    last_delta = last_close - last_ma
+    if prev_delta == 0:
+        return last_delta != 0
+    return prev_delta * last_delta < 0
+
+
+def _build_ma_line_styles(ma_data: dict, closes) -> dict:
+    defaults = {
+        "ma10": {"width": 1.0, "opacity": 0.72},
+        "ma20": {"width": 1.0, "opacity": 0.76},
+        "ma50": {"width": 1.7, "opacity": 0.90},
+        "ma150": {"width": 1.0, "opacity": 0.46, "type": "dashed"},
+        "ma200": {"width": 1.0, "opacity": 0.46, "type": "dashed"},
+    }
+    styles = {key: dict(value) for key, value in defaults.items()}
+    latest_close = _last_finite(closes)
+    latest_ma = {key: _last_finite(values) for key, values in ma_data.items()}
+    latest_values = [value for value in latest_ma.values() if value is not None]
+
+    if latest_close and len(latest_values) >= 3:
+        spread = (max(latest_values) - min(latest_values)) / max(abs(latest_close), 0.01)
+        if spread <= 0.025:
+            for key, value in latest_ma.items():
+                if value is not None:
+                    styles[key]["width"] = 0.8
+                    styles[key]["opacity"] = 0.2
+
+    if _crossed_ma200(closes, ma_data.get("ma200") or []):
+        styles["ma200"]["width"] = 2.0
+        styles["ma200"]["opacity"] = 1.0
+        styles["ma200"]["emphasis"] = "break"
+
+    return styles
+
+
 def _build_macd_payload(df: pd.DataFrame, up_color: str, down_color: str) -> tuple[list, list, list]:
     macd_bars = []
     diff_line = []
@@ -1498,6 +1757,8 @@ def build_kline_echarts_payload(df: pd.DataFrame, *, code: str, name: str, vcp_d
         "diff": diff_line,
         "dea": dea_line,
         **ma_data,
+        "maStyles": _build_ma_line_styles(ma_data, closes),
+        "marketState": build_kline_market_state(code),
         "vcpMarkers": None,
         "vcpLines": None,
         "vcpArea": None,

@@ -21,6 +21,19 @@ def _row(code, price, pct, status="跟踪"):
     }
 
 
+def test_rt_table_model_groups_market_cap_display_without_mutating_raw_value():
+    cap_key = "\u5e02\u503c"
+    model = RtTableModel()
+    row = _row("000001", "10.00", "+1.00%")
+    row[cap_key] = "18800\u4ebf"
+    model.update_data([row])
+
+    cap_col = model.headers.index(cap_key)
+
+    assert model.data(model.index(0, cap_col), Qt.ItemDataRole.DisplayRole) == "18,800\u4ebf"
+    assert model.row_data[0][cap_key] == "18800\u4ebf"
+
+
 def test_rt_table_model_incremental_update_emits_data_changed_without_reset():
     model = RtTableModel()
     resets = []

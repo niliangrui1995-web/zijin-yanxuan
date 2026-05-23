@@ -17,6 +17,7 @@ from ui.models.table_model_helpers import (
     _build_table_model_fonts,
     _c,
     _emit_model_row_ranges,
+    _format_market_cap_display,
     _is_date_like_header,
     _is_numeric_header,
     _is_pct_like_header,
@@ -593,6 +594,10 @@ class StockTableModel(QAbstractTableModel):
                 s_val = str(raw_val).split(" ")[0].replace("-", "").replace("/", "")
                 if len(s_val) == 8 and s_val.isdigit() and s_val.startswith("20"):
                     return s_val
+
+            market_cap_text = _format_market_cap_display(key, raw_val)
+            if market_cap_text is not None:
+                return market_cap_text
 
             if _is_pct_like_header(key):
                 s_val = str(raw_val)

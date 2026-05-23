@@ -15,10 +15,11 @@ from ui.models.table_model_helpers import (
     _build_table_model_fonts,
     _c,
     _emit_model_row_ranges,
+    _format_market_cap_display,
     _is_date_like_header,
     _is_numeric_header,
-    _is_strong_market_move,
     _is_status_header,
+    _is_strong_market_move,
     _numeric_heat_color,
     _parse_numeric_value,
     _prune_flash_records,
@@ -255,6 +256,9 @@ class RtTableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.DisplayRole:
             if key == SERIAL_HEADER:
                 return str(row + 1)
+            market_cap_text = _format_market_cap_display(key, raw_val)
+            if market_cap_text is not None:
+                return market_cap_text
             if "%" in key:
                 s_val = str(raw_val)
                 if s_val == "--" or s_val == "":

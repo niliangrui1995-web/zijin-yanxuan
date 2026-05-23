@@ -1,8 +1,10 @@
 import pandas as pd
 
+from ui import kline_chart_payload as payload_module
 from ui.kline_chart_payload import (
     build_kline_echarts_payload,
     build_kline_html,
+    build_kline_market_state,
     build_kline_summary_items,
     build_kline_theme_colors,
     build_kline_window_palette,
@@ -411,6 +413,68 @@ def test_build_kline_echarts_payload_skips_vcp_overlay_for_generic_event_date():
     assert payload["vcpArea"] is None
 
 
+def test_kline_market_state_uses_calendar_active_flag(monkeypatch):
+    monkeypatch.setattr(payload_module.MarketCalendar, "infer_market", lambda code: "CN")
+    monkeypatch.setattr(payload_module.MarketCalendar, "get_market_status", lambda market: "LIVE")
+    monkeypatch.setattr(payload_module.MarketCalendar, "is_market_active", lambda market: True)
+
+    state = build_kline_market_state("000001")
+
+    assert state == {"market": "CN", "status": "LIVE", "active": True, "live": True}
+
+
+def test_build_kline_echarts_payload_dims_compressed_moving_averages(monkeypatch):
+    monkeypatch.setattr(
+        payload_module,
+        "build_kline_market_state",
+        lambda code: {"market": "CN", "status": "OFF", "active": False, "live": False},
+    )
+    dates = pd.date_range("2025-01-01", periods=210)
+    df = pd.DataFrame(
+        {
+            "open": [100.0] * 210,
+            "high": [101.0] * 210,
+            "low": [99.0] * 210,
+            "close": [100.0] * 210,
+            "volume": [10000.0] * 210,
+        },
+        index=dates,
+    )
+
+    payload = build_kline_echarts_payload(df, code="000001", name="PingAn", vcp_data={})
+
+    assert payload["marketState"]["live"] is False
+    assert payload["maStyles"]["ma10"]["width"] == 0.8
+    assert payload["maStyles"]["ma10"]["opacity"] == 0.2
+    assert payload["maStyles"]["ma200"]["opacity"] == 0.2
+
+
+def test_build_kline_echarts_payload_emphasizes_ma200_cross(monkeypatch):
+    monkeypatch.setattr(
+        payload_module,
+        "build_kline_market_state",
+        lambda code: {"market": "CN", "status": "LIVE", "active": True, "live": True},
+    )
+    closes = [100.0] * 200 + [95.0, 110.0]
+    dates = pd.date_range("2025-01-01", periods=len(closes))
+    df = pd.DataFrame(
+        {
+            "open": closes,
+            "high": [value + 1 for value in closes],
+            "low": [value - 1 for value in closes],
+            "close": closes,
+            "volume": [10000.0] * len(closes),
+        },
+        index=dates,
+    )
+
+    payload = build_kline_echarts_payload(df, code="000001", name="PingAn", vcp_data={})
+
+    assert payload["maStyles"]["ma200"]["width"] == 2.0
+    assert payload["maStyles"]["ma200"]["opacity"] == 1.0
+    assert payload["maStyles"]["ma200"]["emphasis"] == "break"
+
+
 def test_build_kline_html_hides_echarts_tooltip_panel():
     html = build_kline_html(
         title="测试",
@@ -445,8 +509,12 @@ def test_build_kline_html_hides_echarts_tooltip_panel():
     assert "requestAnimationFrame" in html
     assert "id: 'pointerClose'" in html
     assert "stateAnimation: { duration: 0 }" in html
+    assert html.count("axisPointer: { label: { show: false } }") == 2
     assert "barMaxWidth: 18" in html
     assert html.count("smooth: false") >= 5
+    assert "const MA_LINE_WIDTH_SCALE = 1.18;" in html
+    assert "width: width * MA_LINE_WIDTH_SCALE" in html
+    assert "function _maLineStyle(key, baseWidth, baseOpacity, defaultType)" in html
     assert "const trendColor = pct >= 0 ? upColor : downColor;" in html
     assert "closeEl.style.color = trendColor;" in html
     assert "pctEl.style.color = trendColor;" in html
@@ -460,7 +528,7 @@ def test_build_kline_html_hides_echarts_tooltip_panel():
     assert "animationDuration: 150" not in html
     assert "animationEasing" not in html
     assert "VCP_STAR_SYMBOL" in html
-    assert "function buildVolumeData()" in html
+    assert "function buildVolumeData(kind)" in html
     assert "function buildVcpCurveSeries()" in html
     assert "buildVcpAreaData()" in html
     assert "color: upColor" in html
@@ -471,6 +539,18 @@ def test_build_kline_html_hides_echarts_tooltip_panel():
     assert "borderColor0: themeState.down_border" not in html
     assert "rippleEffect" in html
     assert "markPoint:" not in html
+    assert "body.market-sleeping #chart { filter: none; }" in html
+    assert "backdrop-filter" not in html
+    assert "blur(1px)" not in html
+    assert "market-frost-mask" not in html
+    assert "market-clock" not in html
+    assert "window.applyMarketState" in html
+    assert "window.setGlassMode" in html
+    assert "id: 'lastLivePulse'" in html
+    assert "const VOLUME_SPIKE_RATIO = 2.5;" in html
+    assert "id: 'volumeDry'" in html
+    assert "barMaxWidth: 9" in html
+    assert "buildVolumeSpikeParticles()" in html
 
 
 def test_yaohei_kline_html_syncs_canvas_scrollbar_and_tabular_nums(monkeypatch):
@@ -505,4 +585,4 @@ def test_yaohei_kline_html_syncs_canvas_scrollbar_and_tabular_nums(monkeypatch):
     assert "::-webkit-scrollbar" in html
     assert "--scrollbar-handle:" in html
     assert "scrollbar_handle" in html
-    assert "backgroundColor: themeState.bg_canvas" in html
+    assert "backgroundColor: _chartBackgroundColor()" in html
