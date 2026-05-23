@@ -475,6 +475,31 @@ def test_build_kline_echarts_payload_emphasizes_ma200_cross(monkeypatch):
     assert payload["maStyles"]["ma200"]["emphasis"] == "break"
 
 
+def test_build_kline_echarts_payload_keeps_long_ma_lines_slightly_stronger(monkeypatch):
+    monkeypatch.setattr(
+        payload_module,
+        "build_kline_market_state",
+        lambda code: {"market": "CN", "status": "LIVE", "active": True, "live": True},
+    )
+    closes = [float(value) for value in range(1, 221)]
+    dates = pd.date_range("2025-01-01", periods=len(closes))
+    df = pd.DataFrame(
+        {
+            "open": closes,
+            "high": [value + 1 for value in closes],
+            "low": [value - 1 for value in closes],
+            "close": closes,
+            "volume": [10000.0] * len(closes),
+        },
+        index=dates,
+    )
+
+    payload = build_kline_echarts_payload(df, code="000001", name="PingAn", vcp_data={})
+
+    assert payload["maStyles"]["ma150"]["width"] == 1.2
+    assert payload["maStyles"]["ma200"]["width"] == 1.2
+
+
 def test_build_kline_html_hides_echarts_tooltip_panel():
     html = build_kline_html(
         title="测试",
@@ -515,6 +540,8 @@ def test_build_kline_html_hides_echarts_tooltip_panel():
     assert "const MA_LINE_WIDTH_SCALE = 1.18;" in html
     assert "width: width * MA_LINE_WIDTH_SCALE" in html
     assert "function _maLineStyle(key, baseWidth, baseOpacity, defaultType)" in html
+    assert "lineStyle: _maLineStyle('ma150', 1.2, 0.46, 'dashed')" in html
+    assert "lineStyle: _maLineStyle('ma200', 1.2, 0.46, 'dashed')" in html
     assert "const trendColor = pct >= 0 ? upColor : downColor;" in html
     assert "closeEl.style.color = trendColor;" in html
     assert "pctEl.style.color = trendColor;" in html

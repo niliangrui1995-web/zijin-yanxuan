@@ -1175,7 +1175,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         smooth: false,
                         animation: false,
                         showSymbol: false,
-                        lineStyle: _maLineStyle('ma150', 1, 0.46, 'dashed')
+                        lineStyle: _maLineStyle('ma150', 1.2, 0.46, 'dashed')
                     }},
                     {{
                         id: 'ma200',
@@ -1187,7 +1187,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         smooth: false,
                         animation: false,
                         showSymbol: false,
-                        lineStyle: _maLineStyle('ma200', 1, 0.46, 'dashed')
+                        lineStyle: _maLineStyle('ma200', 1.2, 0.46, 'dashed')
                     }},
                     {{
                         id: 'volume',
@@ -1663,8 +1663,8 @@ def _build_ma_line_styles(ma_data: dict, closes) -> dict:
         "ma10": {"width": 1.0, "opacity": 0.72},
         "ma20": {"width": 1.0, "opacity": 0.76},
         "ma50": {"width": 1.7, "opacity": 0.90},
-        "ma150": {"width": 1.0, "opacity": 0.46, "type": "dashed"},
-        "ma200": {"width": 1.0, "opacity": 0.46, "type": "dashed"},
+        "ma150": {"width": 1.2, "opacity": 0.46, "type": "dashed"},
+        "ma200": {"width": 1.2, "opacity": 0.46, "type": "dashed"},
     }
     styles = {key: dict(value) for key, value in defaults.items()}
     latest_close = _last_finite(closes)
