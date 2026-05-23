@@ -640,7 +640,7 @@ class AsianMarketTab(BaseStockTab):
         layout.addWidget(toolbar)
 
         self.asian_table = VCPTableView(default_row_height=30)
-        self.asian_table.set_ambient_repaint_enabled(True)
+        self.asian_table.set_ambient_repaint_enabled(False)
         self.table_state = TableStateWrapper(self.asian_table, empty_title="暂无亚洲数据", loading_title="加载中...")
         layout.addWidget(self.table_state)
 
@@ -1058,6 +1058,19 @@ class AsianMarketTab(BaseStockTab):
         if not updates:
             return
 
+        update_roles = [
+            Qt.ItemDataRole.DisplayRole,
+            Qt.ItemDataRole.ToolTipRole,
+            Qt.ItemDataRole.ForegroundRole,
+            Qt.ItemDataRole.BackgroundRole,
+            Qt.ItemDataRole.FontRole,
+            Qt.ItemDataRole.TextAlignmentRole,
+            Qt.ItemDataRole.UserRole,
+            Qt.ItemDataRole.UserRole + 2,
+            Qt.ItemDataRole.UserRole + 4,
+            Qt.ItemDataRole.UserRole + 5,
+        ]
+
         for row_idx, row_dict in enumerate(self.model.row_data):
             code = row_dict.get("代码")
             if code not in updates:
@@ -1083,6 +1096,7 @@ class AsianMarketTab(BaseStockTab):
             self.model.dataChanged.emit(
                 self.model.index(row_idx, 0),
                 self.model.index(row_idx, len(self.model._headers) - 1),
+                update_roles,
             )
 
         self._last_asian_success_at = datetime.datetime.now()

@@ -456,14 +456,19 @@ def test_build_kline_html_hides_echarts_tooltip_panel():
     assert "value: [category, y]" in html
     assert "id: 'vcpBreakout'" in html
     assert "type: 'effectScatter'" in html
-    assert "animationDuration: 150" in html
-    assert "animationEasing: 'cubicOut'" in html
+    assert "animation: false" in html
+    assert "animationDuration: 150" not in html
+    assert "animationEasing" not in html
     assert "VCP_STAR_SYMBOL" in html
     assert "function buildVolumeData()" in html
     assert "function buildVcpCurveSeries()" in html
     assert "buildVcpAreaData()" in html
     assert "color: upColor" in html
     assert "color0: downColor" in html
+    assert "borderColor: upColor" in html
+    assert "borderColor0: downColor" in html
+    assert "borderColor: themeState.up_border" not in html
+    assert "borderColor0: themeState.down_border" not in html
     assert "rippleEffect" in html
     assert "markPoint:" not in html
 

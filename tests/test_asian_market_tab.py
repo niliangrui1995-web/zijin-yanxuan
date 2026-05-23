@@ -276,7 +276,65 @@ def test_asian_market_toolbar_checkbox_uses_toolbar_styling(monkeypatch):
         assert tab.chk_cf_proxy.property("inToolbar") is True
         assert isinstance(tab.chk_cf_proxy, ToggleSwitch)
         assert tab.chk_cf_proxy.text() == "优先使用稳定海外线路"
-        assert tab.asian_table.property("ambientPulse") is True
+        assert tab.asian_table.property("ambientPulse") is False
+    finally:
+        tab.deleteLater()
+
+
+def test_asian_market_rt_update_does_not_start_flash_repaint_timer(monkeypatch):
+    monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "_load_local_cache",
+        lambda self: setattr(self, "row_data", []),
+    )
+    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
+    monkeypatch.setattr(asian_module.AsianMarketTab, "_save_rt_cache", lambda self: None)
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+
+    tab = asian_module.AsianMarketTab()
+    try:
+        tab.row_data = [
+            {
+                "代码": "2330.TW",
+                "名称": "TSMC",
+                "现价": "--",
+                "涨幅%": 0.0,
+                "PE": "--",
+                "市场": "台湾",
+                "状态": "",
+                "赛道": "半导体",
+                "角色定位": "龙头",
+                "货币": "TWD",
+                "5日涨跌%": 0.0,
+                "10日涨跌%": 0.0,
+                "20日涨跌%": 0.0,
+            }
+        ]
+        tab.model.update_data(tab.row_data)
+        tab.asian_table._flash_repaint_timer.stop()
+
+        tab._on_rt_update(
+            {
+                "2330.TW": {
+                    "close": 123.45,
+                    "pct": 1.2,
+                    "pe": 22.5,
+                    "pct_5": 2.0,
+                    "pct_10": 3.0,
+                    "pct_20": 4.0,
+                    "currency": "TWD",
+                }
+            }
+        )
+
+        assert tab.model.row_data[0]["现价"] == "123.45"
+        assert tab.asian_table._flash_repaint_timer.isActive() is False
     finally:
         tab.deleteLater()
 

@@ -768,11 +768,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
         function buildOption() {{
             const data = splitData(rawData);
             return {{
-                animation: true,
-                animationDuration: 150,
-                animationDurationUpdate: 150,
-                animationEasing: 'cubicOut',
-                animationEasingUpdate: 'cubicOut',
+                animation: false,
                 stateAnimation: {{ duration: 0 }},
                 backgroundColor: themeState.bg_canvas,
                 legend: {{
@@ -928,8 +924,8 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         itemStyle: {{
                             color: upColor,
                             color0: downColor,
-                            borderColor: themeState.up_border,
-                            borderColor0: themeState.down_border,
+                            borderColor: upColor,
+                            borderColor0: downColor,
                             borderWidth: 1
                         }},
                         markLine: rawData.vcpLines ? {{
@@ -973,9 +969,9 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                             brushType: 'stroke',
                             color: themeState.vcp_star
                         }},
-                        animation: true,
-                        animationDuration: 150,
-                        animationDurationUpdate: 150,
+                        animation: false,
+                        animationDuration: 0,
+                        animationDurationUpdate: 0,
                         emphasis: {{ disabled: true }},
                         itemStyle: {{
                             color: themeState.vcp_star,
