@@ -175,6 +175,10 @@ def load_cached_finance_snapshot(codes, *, tdx_vipdoc: str | None = None) -> dic
     return finance_snapshot
 
 
+def _finance_entry_has_share_capital(entry: dict | None) -> bool:
+    return coerce_number((entry or {}).get("_zongguben") or (entry or {}).get("zongguben")) > 0
+
+
 def _get_finance_cache_signature(path: str) -> tuple[int, int] | None:
     try:
         stat_result = os.stat(path)
@@ -454,6 +458,40 @@ class MarketCapRefreshBatcher:
             _invoke_after_market_caps_updated(owner)
 
     @classmethod
+    def _load_waiter_finance_snapshot(
+        cls, waiters: dict[int, tuple[weakref.ReferenceType, set[str]]], batch_codes: list[str]
+    ) -> tuple[dict, list[str]]:
+        finance_data: dict[str, dict] = {}
+        missing_codes = set(batch_codes)
+        for owner_ref, requested_codes in waiters.values():
+            owner = owner_ref()
+            if not _is_owner_runtime_active(owner):
+                continue
+
+            owner_codes = sorted(missing_codes.intersection(requested_codes))
+            if not owner_codes:
+                continue
+
+            try:
+                loader = getattr(owner, "_load_cached_finance_snapshot", None)
+                if callable(loader):
+                    snapshot = loader(owner_codes) or {}
+                else:
+                    data_provider = getattr(owner, "data_provider", None)
+                    tdx_vipdoc = getattr(data_provider, "tdx_vipdoc", None)
+                    snapshot = load_cached_finance_snapshot(owner_codes, tdx_vipdoc=tdx_vipdoc) if tdx_vipdoc else {}
+            except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
+                snapshot = {}
+
+            for code in owner_codes:
+                entry = snapshot.get(code)
+                if _finance_entry_has_share_capital(entry):
+                    finance_data[code] = dict(entry or {})
+                    missing_codes.discard(code)
+
+        return finance_data, sorted(missing_codes)
+
+    @classmethod
     def flush(cls) -> None:
         cls._scheduled = False
         if not cls._pending_codes:
@@ -482,7 +520,10 @@ class MarketCapRefreshBatcher:
                 return {}
 
             try:
-                return batch_get_finance_info(batch_codes)
+                finance_data, missing_codes = cls._load_waiter_finance_snapshot(waiters, batch_codes)
+                if missing_codes:
+                    finance_data.update(batch_get_finance_info(missing_codes) or {})
+                return finance_data
             except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 logging.getLogger(__name__).error(f"[市值统一刷新] 获取股本失败: {exc}")
                 return {}

@@ -25,6 +25,41 @@ def test_central_quote_poller_builds_enriched_payload_with_finance_gap():
     assert payload["quotes"]["000001"]["market_cap"] == 10_500_000_000
 
 
+def test_central_quote_poller_prefers_local_tdx_capital(monkeypatch):
+    from app.services import central_quote_polling_service as polling_service
+
+    class DummyProvider:
+        tdx_vipdoc = "D:/HT/vipdoc"
+
+        def fetch_realtime_quotes_batch(self, codes):
+            return {codes[0]: {"close": 10.5, "last_close": 10.0, "source": "local_cache"}}
+
+        def get_realtime_runtime_stats(self):
+            return {"consecutive_failures": 0}
+
+    monkeypatch.setattr(
+        polling_service,
+        "load_local_tdx_capital_snapshot",
+        lambda codes, tdx_vipdoc: {"000001": {"zongguben": 2_000_000_000, "source": "tdx_base"}},
+    )
+    monkeypatch.setattr(
+        polling_service,
+        "batch_get_finance_info",
+        lambda codes: (_ for _ in ()).throw(AssertionError("local TDX capital should be used first")),
+    )
+
+    poller = CentralQuotePoller(
+        DummyProvider(),
+        missing_finance_codes=lambda codes: sorted(codes),
+    )
+
+    payload = poller.fetch_payload({"000001"})
+
+    assert payload["finance_data"]["000001"]["source"] == "tdx_base"
+    assert payload["quotes"]["000001"]["_zongguben"] == 2_000_000_000
+    assert payload["quotes"]["000001"]["market_cap"] == 21_000_000_000
+
+
 def test_central_quote_poller_runtime_guards_delegate_to_provider():
     calls = []
 

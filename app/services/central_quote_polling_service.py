@@ -3,12 +3,20 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from app.services.runtime_services import load_local_tdx_capital_snapshot
 from app.services.scan_runtime_service import batch_get_finance_info
 from app.services.ui_quote_service import enrich_quotes_with_finance
 from core.logger import get_logger
 from infra.market_data.provider_ports import RealtimeQuotePort
 
 log = get_logger(__name__)
+
+
+def _has_valid_share_capital(entry: dict | None) -> bool:
+    try:
+        return float((entry or {}).get("zongguben") or (entry or {}).get("_zongguben") or 0) > 0
+    except (TypeError, ValueError):
+        return False
 
 
 class CentralQuotePoller:
@@ -24,8 +32,28 @@ class CentralQuotePoller:
     ):
         self.data_provider = data_provider
         self._missing_finance_codes = missing_finance_codes
-        self._finance_lookup = finance_lookup or batch_get_finance_info
+        self._finance_lookup = finance_lookup or self._lookup_finance_with_local_tdx
         self._quote_enricher = quote_enricher or enrich_quotes_with_finance
+
+    def _lookup_finance_with_local_tdx(self, codes: list[str]) -> dict:
+        normalized_codes = [str(code or "").strip().zfill(6) for code in dict.fromkeys(codes or [])]
+        normalized_codes = [code for code in normalized_codes if len(code) == 6 and code.isdigit()]
+        if not normalized_codes:
+            return {}
+
+        finance_data: dict[str, dict] = {}
+        tdx_vipdoc = getattr(self.data_provider, "tdx_vipdoc", None)
+        if tdx_vipdoc:
+            try:
+                finance_data.update(load_local_tdx_capital_snapshot(normalized_codes, tdx_vipdoc))
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                log.debug(f"[报价站] 读取本地通达信股本失败: {exc}")
+
+        missing_codes = [code for code in normalized_codes if not _has_valid_share_capital(finance_data.get(code))]
+        if missing_codes:
+            finance_data.update(batch_get_finance_info(missing_codes) or {})
+
+        return finance_data
 
     def missing_finance_codes(self, codes: set[str]) -> list[str]:
         if not callable(self._missing_finance_codes):

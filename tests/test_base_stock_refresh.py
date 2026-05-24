@@ -76,6 +76,68 @@ def test_market_cap_batcher_merges_overlapping_tab_requests(monkeypatch):
     assert set(owner_b.snapshots[0].keys()) == {"600519", "300750"}
 
 
+def test_market_cap_batcher_prefers_local_tdx_capital(monkeypatch, tmp_path):
+    from core.task_manager import task_manager
+    from ui.tabs import base_stock_refresh as refresh_module
+
+    MarketCapRefreshBatcher._scheduled = False
+    MarketCapRefreshBatcher._pending_codes = set()
+    MarketCapRefreshBatcher._waiters = {}
+
+    scheduled = []
+
+    monkeypatch.setattr(refresh_module, "FINANCE_CACHE_FILE", str(tmp_path / "finance.json"))
+    monkeypatch.setattr(
+        refresh_module,
+        "load_local_tdx_capital_snapshot",
+        lambda codes, tdx_vipdoc: {"000001": {"zongguben": 2_000_000_000, "source": "tdx_base"}},
+    )
+    refresh_module._FINANCE_CACHE_PATH = None
+    refresh_module._FINANCE_CACHE_SIGNATURE = None
+    refresh_module._FINANCE_CACHE_PAYLOAD = None
+    monkeypatch.setattr(
+        refresh_module.QCoreApplication,
+        "instance",
+        staticmethod(lambda: SimpleNamespace(closingDown=lambda: False)),
+    )
+    monkeypatch.setattr(
+        refresh_module.QTimer,
+        "singleShot",
+        staticmethod(lambda _ms, callback: scheduled.append(callback)),
+    )
+    monkeypatch.setattr(task_manager, "is_active_task", lambda _task_id: False)
+    monkeypatch.setattr(
+        task_manager,
+        "run_in_background",
+        lambda fn, task_id=None, on_success=None, on_error=None: on_success(fn()),
+    )
+    monkeypatch.setattr(
+        refresh_module,
+        "batch_get_finance_info",
+        lambda codes: (_ for _ in ()).throw(AssertionError("local TDX capital should be used first")),
+    )
+    monkeypatch.setattr(refresh_module, "publish_rt_quotes", lambda payload, source="": dict(payload or {}))
+
+    owner = _DummyOwner()
+    owner.data_provider = SimpleNamespace(tdx_vipdoc="D:/HT/vipdoc")
+
+    MarketCapRefreshBatcher.enqueue(owner, ["000001"])
+
+    assert len(scheduled) == 1
+    scheduled.pop()()
+
+    assert owner.after_cap_calls == 1
+    assert owner.snapshots == [
+        {
+            "000001": {
+                "zongguben": 2_000_000_000,
+                "_zongguben": 2_000_000_000,
+                "finance_source": "tdx_base",
+            }
+        }
+    ]
+
+
 def test_local_quote_snapshot_async_runs_in_background(monkeypatch):
     from core.task_manager import task_manager
     from ui.tabs import base_stock_refresh as refresh_module
