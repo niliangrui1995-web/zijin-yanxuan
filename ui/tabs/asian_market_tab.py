@@ -730,10 +730,20 @@ class AsianMarketTab(BaseStockTab):
         """手动触发外网数据更新"""
         # 先重载本地缓存并补齐缺失标的，再触发实时刷新，确保 worker 不会长期只盯着旧的 33 只
         self._load_local_cache()
-        if hasattr(self, "worker") and self.worker.isRunning():
+        service = getattr(self, "_asian_market_service", None)
+        worker = getattr(self, "worker", None)
+        worker_running = False
+        if worker is not None:
+            try:
+                worker_running = bool(worker.isRunning())
+            except RuntimeError:
+                worker_running = False
+
+        if service is not None or worker_running:
             self._set_runtime_state("manual_refresh_once")
             self._set_asian_status("刷新已触发", "正在请求最新亚洲报价...", freshness="实时", next_step="等待报价同步")
-            self._worker_trigger_refresh()
+            if self._worker_trigger_refresh() is False:
+                self._set_asian_status("后台刷新线程未就绪", "请稍后再试", freshness="待刷新", next_step="稍后重试")
         else:
             self._set_asian_status("后台刷新线程未就绪", "请稍后再试", freshness="待刷新", next_step="稍后重试")
 

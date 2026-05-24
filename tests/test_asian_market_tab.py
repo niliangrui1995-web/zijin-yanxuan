@@ -39,6 +39,7 @@ class _DummyWorker:
         self.codes = list(codes)
         self.progress = _Signal()
         self.result_ready = _Signal()
+        self.finished = _Signal()
 
     def start(self):
         return None
@@ -756,6 +757,36 @@ def test_asian_market_runtime_state_uses_actual_tracked_markets(monkeypatch):
     tab = asian_module.AsianMarketTab()
     try:
         assert tab._asian_runtime_state == "running"
+    finally:
+        tab.deleteLater()
+
+
+def test_manual_refresh_starts_lazy_runtime_worker(monkeypatch):
+    monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "_load_local_cache",
+        lambda self: setattr(self, "row_data", [{"代码": "0522.HK"}]),
+    )
+    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+
+    tab = asian_module.AsianMarketTab()
+    try:
+        tab._asian_market_service.set_target_codes(["0522.HK"])
+
+        assert tab.worker is None
+
+        tab._on_manual_refresh()
+
+        assert tab.worker is not None
+        assert tab._asian_runtime_state == "manual_refresh_once"
+        assert tab._status_primary == "刷新已触发"
     finally:
         tab.deleteLater()
 
