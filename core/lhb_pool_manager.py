@@ -130,6 +130,30 @@ class LhbPoolManager:
         except (TypeError, ValueError):
             return default
 
+    @staticmethod
+    def _to_float(value, default: float = 0.0) -> float:
+        try:
+            if isinstance(value, str):
+                value = value.strip().replace("%", "").replace("+", "")
+                if value in {"", "-", "--"}:
+                    return default
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    @classmethod
+    def _pool_sort_key(cls, row: dict) -> tuple:
+        has_buy_point = 1 if str((row or {}).get("买点", "") or "").strip() else 0
+        pct = cls._to_float((row or {}).get("涨幅%"), 0.0)
+        recent_date = str((row or {}).get("_最近上榜_raw") or (row or {}).get("最近上榜", "") or "")
+        if has_buy_point:
+            return (1, pct, recent_date, 0.0)
+        return (0, 0.0, recent_date, pct)
+
+    @classmethod
+    def sort_pool_rows_for_display(cls, rows) -> list[dict]:
+        return sorted(list(rows or []), key=cls._pool_sort_key, reverse=True)
+
     def _build_day_meta(
         self,
         records: list[dict],
@@ -363,7 +387,7 @@ class LhbPoolManager:
                            用于通过 K 线缓存行数判断上市天数。
                            没有传入则跳过次新股过滤。
 
-        返回：按 最近上榜日降序 → 买点触发优先 → 涨幅%降序 排列的列表
+        返回：按 买点触发优先 → 买点组内涨幅%降序 → 非买点按最近上榜日降序 排列的列表
         """
         if not self._data:
             return []
@@ -520,16 +544,9 @@ class LhbPoolManager:
 
                     latest_records[code] = record
 
-        # 排序：优先按最近上榜日由近到远（降序），同一天优先展示买点触发，最后按涨跌幅倒序（降序）
+        # 排序：优先展示买点触发，买点组内按涨跌幅倒序；非买点仍按最近上榜日由近到远。
         result = list(latest_records.values())
-        result.sort(
-            key=lambda x: (
-                str(x.get("最近上榜", "")),
-                1 if x.get("买点", "") != "" else 0,
-                float(x.get("涨幅%", 0)),
-            ),
-            reverse=True,
-        )
+        result = self.sort_pool_rows_for_display(result)
 
         log.debug(f"[龙虎榜池] 池计算完成: {len(self._data)} 天数据中，{len(qualifying_codes)} 只标的入池")
 

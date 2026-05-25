@@ -345,6 +345,50 @@ def test_lhb_display_pool_shows_ai_chain_context_in_reason_slot(monkeypatch):
         tab.deleteLater()
 
 
+def test_lhb_display_keeps_buy_points_sorted_by_live_pct(monkeypatch):
+    monkeypatch.setattr(
+        LhbTab,
+        "refresh_table_quotes_and_market_caps",
+        lambda self, *args, **kwargs: None,
+        raising=False,
+    )
+
+    tab = LhbTab(object(), autoload_pool=False)
+    tab.pool_manager = SimpleNamespace(get_cached_dates=lambda: ["20260420"])
+    try:
+        tab._display_pool(
+            [
+                {
+                    "代码": "000001",
+                    "名称": "低涨幅买点",
+                    "最近上榜": "20260418",
+                    "买点": "触发",
+                    "涨幅%": 1.0,
+                    "_history_20": [8.0] * 10 + [12.0] * 10,
+                    "_history_date": "2026-04-18",
+                },
+                {"代码": "000002", "名称": "高涨幅买点", "最近上榜": "20260417", "买点": "触发", "涨幅%": 3.0},
+                {"代码": "000003", "名称": "无买点高涨幅", "最近上榜": "20260420", "买点": "", "涨幅%": 9.0},
+            ]
+        )
+
+        assert [tab.model.get_row_data(row)["代码"] for row in range(tab.model.rowCount())] == [
+            "000002",
+            "000001",
+            "000003",
+        ]
+
+        tab._apply_quote_snapshot({"000001": {"open": 9.0, "close": 12.0, "last_close": 10.0}})
+
+        assert [tab.model.get_row_data(row)["代码"] for row in range(tab.model.rowCount())] == [
+            "000001",
+            "000002",
+            "000003",
+        ]
+    finally:
+        tab.deleteLater()
+
+
 def test_lhb_pool_bootstrap_skips_duplicate_active_task(monkeypatch):
     task_ids = []
     monkeypatch.setattr(

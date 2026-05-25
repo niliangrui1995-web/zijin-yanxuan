@@ -138,9 +138,20 @@ def test_compute_pool_filters_to_ai_industry_chain_pool(monkeypatch):
     assert [row["代码"] for row in pool] == ["603738"]
 
 
-def test_compute_pool_prioritizes_recent_listing_before_older_buy_point(monkeypatch):
+def test_compute_pool_prioritizes_buy_points_by_pct(monkeypatch):
     manager = _build_manager(monkeypatch)
     manager._data = {
+        "20260415": [
+            {
+                "代码": "605589",
+                "名称": "新低涨幅买点",
+                "上榜日期": "20260415",
+                "上榜净买额(万)": 7600,
+                "机构净买(万)": 1800,
+                "外资净买(万)": 300,
+                "涨幅%": 2.0,
+            }
+        ],
         "20260414": [
             {
                 "代码": "000002",
@@ -168,14 +179,15 @@ def test_compute_pool_prioritizes_recent_listing_before_older_buy_point(monkeypa
     provider = _DummyProvider(
         {
             "000001": _make_kline(20, list(range(1, 21)), last_open=14),
+            "605589": _make_kline(20, list(range(1, 21)), last_open=14),
             "000002": _make_kline(10, list(range(1, 11))),
         }
     )
 
     pool = manager.compute_pool(data_provider=provider)
 
-    assert [row["代码"] for row in pool] == ["000002", "000001"]
-    assert pool[1]["买点"] == "触发"
+    assert [row["代码"] for row in pool] == ["000001", "605589", "000002"]
+    assert [row["买点"] for row in pool[:2]] == ["触发", "触发"]
 
 
 def test_add_day_records_cache_meta(monkeypatch):

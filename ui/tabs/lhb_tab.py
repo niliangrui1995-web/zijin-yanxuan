@@ -646,6 +646,30 @@ class LhbTab(BaseStockTab):
             row_dict["最近上榜"] = f"{raw_date[4:6]}-{raw_date[6:8]}"
         return row_dict
 
+    def _is_default_lhb_sort_active(self) -> bool:
+        try:
+            return int(self.proxy_model.sortColumn()) < 0
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return True
+
+    def _sort_model_for_default_lhb_order(self) -> None:
+        if not self._is_default_lhb_sort_active():
+            return
+        rows = list(getattr(self.model, "row_data", []) or [])
+        if not rows:
+            return
+        sorted_rows = LhbPoolManager.sort_pool_rows_for_display(rows)
+        current_order = [row.get("代码") for row in rows]
+        sorted_order = [row.get("代码") for row in sorted_rows]
+        if sorted_order == current_order:
+            return
+        self.model.update_data(sorted_rows)
+        self._refresh_lhb_lineage(sorted_rows)
+
+    def _apply_quote_snapshot(self, quotes: dict | None):
+        super()._apply_quote_snapshot(quotes)
+        self._sort_model_for_default_lhb_order()
+
     def get_watchlist_radar_rows(self) -> list[dict]:
         """给关注池读取龙虎榜信号；未打开本 tab 时也只读本地池缓存，不触发整页加载。"""
         rows = self.get_row_data()
@@ -661,7 +685,7 @@ class LhbTab(BaseStockTab):
 
     def _display_pool(self, pool: list[dict], *, emit_event: bool = True):
         """将池数据渲染到表格"""
-        row_data = [self._format_pool_row(rec) for rec in pool]
+        row_data = LhbPoolManager.sort_pool_rows_for_display([self._format_pool_row(rec) for rec in pool])
 
         self.model.update_data(row_data)
         self._refresh_lhb_lineage(row_data)
