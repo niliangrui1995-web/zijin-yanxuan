@@ -413,6 +413,42 @@
       "original_timezone": "America/Los_Angeles",
       "call_time_source_url": "https://www.semtech.com/company/press/semtech-announces-first-quarter-of-fiscal-year-2027-conference-call",
       "call_time_source_type": "official_ir_press_release"
+    },
+    {
+      "company": "Marvell",
+      "ticker": "MRVL",
+      "sector": "AI加速芯片与定制ASIC",
+      "report_date": "2026-05-27",
+      "fiscal_period": "Apr/2026",
+      "time_label": "盘后",
+      "beijing_time": "2026-05-28 04:45",
+      "status": "confirmed",
+      "source": "confirmed",
+      "priority": "strategic_giant",
+      "conference_url": "https://investor.marvell.com/news-events/ir-calendar",
+      "market": "US",
+      "original_call_time_text": "May 27, 2026 1:45 pm PDT",
+      "original_timezone": "America/Los_Angeles",
+      "call_time_source_url": "https://investor.marvell.com/news-events/ir-calendar",
+      "call_time_source_type": "official_ir_event"
+    },
+    {
+      "company": "Synopsys",
+      "ticker": "SNPS",
+      "sector": "EDA与底层IP",
+      "report_date": "2026-05-27",
+      "fiscal_period": "Apr/2026",
+      "time_label": "盘后",
+      "beijing_time": "2026-05-28 05:00",
+      "status": "confirmed",
+      "source": "confirmed",
+      "priority": "normal",
+      "conference_url": "https://news.synopsys.com/2026-04-27-Synopsys-Announces-Earnings-Release-Date-for-Second-Quarter-Fiscal-Year-2026",
+      "market": "US",
+      "original_call_time_text": "2:00 p.m. Pacific Time / 5:00 p.m. Eastern Time on Wednesday, May 27, 2026",
+      "original_timezone": "America/Los_Angeles",
+      "call_time_source_url": "https://news.synopsys.com/2026-04-27-Synopsys-Announces-Earnings-Release-Date-for-Second-Quarter-Fiscal-Year-2026",
+      "call_time_source_type": "official_ir_press_release"
     }
   ]
 }
