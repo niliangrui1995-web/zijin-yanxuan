@@ -573,7 +573,8 @@ def test_build_kline_html_hides_echarts_tooltip_panel():
     assert "market-clock" not in html
     assert "window.applyMarketState" in html
     assert "window.setGlassMode" in html
-    assert "id: 'lastLivePulse'" in html
+    assert "id: 'lastLivePulse'" not in html
+    assert "buildLastLivePulseData" not in html
     assert "const VOLUME_SPIKE_RATIO = 2.5;" in html
     assert "id: 'volumeDry'" in html
     assert "barMaxWidth: 9" in html

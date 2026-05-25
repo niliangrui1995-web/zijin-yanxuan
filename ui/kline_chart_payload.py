@@ -210,7 +210,6 @@ def build_kline_theme_colors() -> dict:
         "volume_spike": t.get("KLINE_VOLUME_SPIKE", t["KLINE_VCP_STAR"]),
         "volume_spike_shadow": t.get("KLINE_VOLUME_SPIKE_SHADOW", t["KLINE_VCP_STAR"]),
         "volume_spike_top": t.get("KLINE_VOLUME_SPIKE_TOP", t.get("KLINE_VOLUME_SPIKE_SHADOW", t["KLINE_VCP_STAR"])),
-        "live_pulse": t.get("KLINE_LIVE_PULSE", t.get("KLINE_VCP_STAR", t["KLINE_UP_COLOR"])),
         "depth_line": t.get("KLINE_DEPTH_LINE", "rgba(255, 255, 255, 0.05)" if is_dark else "rgba(15, 23, 42, 0.04)"),
         "tooltip_bg": t.get("KLINE_TOOLTIP_BG", "rgba(17, 24, 39, 0.92)"),
         "tooltip_text": t.get("KLINE_TOOLTIP_TEXT", "#F3F4F6"),
@@ -760,22 +759,6 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             }}).filter(Boolean);
         }}
 
-        function buildLastLivePulseData() {{
-            if (!_isLiveMarket()) return [];
-            const idx = rawData.dates.length - 1;
-            const kline = rawData.klines[idx] || [];
-            const close = Number(kline[1]);
-            if (idx < 0 || !Number.isFinite(close)) return [];
-            return [{{
-                value: [rawData.dates[idx], close],
-                itemStyle: {{
-                    color: themeState.live_pulse,
-                    shadowBlur: 16,
-                    shadowColor: themeState.live_pulse
-                }}
-            }}];
-        }}
-
         function buildVcpAreaData() {{
             return (rawData.vcpArea || []).map((area, idx) => {{
                 if (!Array.isArray(area) || area.length < 2) return area;
@@ -1110,26 +1093,6 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         }}
                     }},
                     {{
-                        id: 'lastLivePulse',
-                        name: 'Live Pulse',
-                        type: 'effectScatter',
-                        coordinateSystem: 'cartesian2d',
-                        xAxisIndex: 0,
-                        yAxisIndex: 0,
-                        data: buildLastLivePulseData(),
-                        symbol: 'circle',
-                        symbolSize: 8,
-                        showEffectOn: 'render',
-                        rippleEffect: {{
-                            period: 2.8,
-                            scale: 3.0,
-                            brushType: 'stroke',
-                            color: themeState.live_pulse
-                        }},
-                        silent: true,
-                        z: 18
-                    }},
-                    {{
                         id: 'ma10',
                         name: 'MA10',
                         type: 'line',
@@ -1309,10 +1272,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             rawData.marketState = state;
             _applyMarketChrome();
             chart.setOption({{
-                backgroundColor: _chartBackgroundColor(),
-                series: [
-                    {{ id: 'lastLivePulse', data: buildLastLivePulseData() }}
-                ]
+                backgroundColor: _chartBackgroundColor()
             }}, false, true);
             return true;
         }};
@@ -1374,7 +1334,6 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                 ],
                 series: [
                     {{ id: 'kline', data: rawData.klines }},
-                    {{ id: 'lastLivePulse', data: buildLastLivePulseData() }},
                     {{ id: 'ma10', data: rawData.ma10 }},
                     {{ id: 'ma20', data: rawData.ma20 }},
                     {{ id: 'ma50', data: rawData.ma50 }},
