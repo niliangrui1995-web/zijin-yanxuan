@@ -45,6 +45,7 @@ def test_batch_get_finance_info_uses_eastmoney_market_cap_fields(monkeypatch, tm
         return _FakeResponse(payload)
 
     monkeypatch.setattr(engine_external, "FINANCE_CACHE_FILE", str(cache_file))
+    monkeypatch.setattr(engine_external, "_load_local_tdx_finance_info", lambda codes: {})
     monkeypatch.setattr(engine_external.urllib.request, "urlopen", _fake_urlopen)
 
     result = engine_external.batch_get_finance_info(["000001"])
@@ -82,6 +83,7 @@ def test_batch_get_finance_info_falls_back_to_last_close_when_latest_price_missi
     }
 
     monkeypatch.setattr(engine_external, "FINANCE_CACHE_FILE", str(cache_file))
+    monkeypatch.setattr(engine_external, "_load_local_tdx_finance_info", lambda codes: {})
     monkeypatch.setattr(
         engine_external.urllib.request,
         "urlopen",
@@ -92,6 +94,41 @@ def test_batch_get_finance_info_falls_back_to_last_close_when_latest_price_missi
 
     assert result["600519"]["zongguben"] == pytest.approx(1837706540513 / 1462.07)
     assert result["600519"]["market_cap"] == 1837706540513
+
+
+def test_batch_get_finance_info_prefers_local_tdx_capital(monkeypatch, tmp_path):
+    cache_file = tmp_path / "finance.json"
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    save_json_file(
+        str(cache_file),
+        {
+            "000001": {
+                "date": today,
+                "info": {
+                    "zongguben": 1_000_000_000,
+                    "market_cap": 10_000_000_000,
+                    "source": "eastmoney",
+                },
+            }
+        },
+    )
+
+    monkeypatch.setattr(engine_external, "FINANCE_CACHE_FILE", str(cache_file))
+    monkeypatch.setattr(
+        engine_external,
+        "_load_local_tdx_finance_info",
+        lambda codes: {"000001": {"zongguben": 2_000_000_000, "source": "tdx_base"}},
+    )
+    monkeypatch.setattr(
+        engine_external,
+        "_fetch_eastmoney_finance_info",
+        lambda codes: pytest.fail("Eastmoney should not be queried when local TDX capital exists"),
+    )
+
+    result = engine_external.batch_get_finance_info(["000001"])
+
+    assert result == {"000001": {"zongguben": 2_000_000_000, "source": "tdx_base"}}
 
 
 def test_batch_check_market_cap_prefers_direct_market_cap_scaling(monkeypatch):
@@ -113,6 +150,26 @@ def test_batch_check_market_cap_prefers_direct_market_cap_scaling(monkeypatch):
     assert result == {"000001": 1200.0}
 
 
+def test_batch_check_market_cap_uses_local_tdx_capital(monkeypatch, tmp_path):
+    cache_file = tmp_path / "finance.json"
+
+    monkeypatch.setattr(engine_external, "FINANCE_CACHE_FILE", str(cache_file))
+    monkeypatch.setattr(
+        engine_external,
+        "_load_local_tdx_finance_info",
+        lambda codes: {"000001": {"zongguben": 2_000_000_000, "source": "tdx_base"}},
+    )
+    monkeypatch.setattr(
+        engine_external,
+        "_fetch_eastmoney_finance_info",
+        lambda codes: pytest.fail("Eastmoney should not be queried for market-cap calculation"),
+    )
+
+    result = engine_external.batch_check_market_cap(["000001"], close_prices={"000001": 12.0})
+
+    assert result == {"000001": 24_000_000_000}
+
+
 def test_batch_get_finance_info_uses_recent_cache_when_network_fails(monkeypatch, tmp_path):
     cache_file = tmp_path / "finance.json"
     today = datetime.now().strftime("%Y-%m-%d")
@@ -132,6 +189,7 @@ def test_batch_get_finance_info_uses_recent_cache_when_network_fails(monkeypatch
     )
 
     monkeypatch.setattr(engine_external, "FINANCE_CACHE_FILE", str(cache_file))
+    monkeypatch.setattr(engine_external, "_load_local_tdx_finance_info", lambda codes: {})
     monkeypatch.setattr(
         engine_external.urllib.request,
         "urlopen",

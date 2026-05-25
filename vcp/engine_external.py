@@ -20,6 +20,8 @@ from vcp.constants import (
     INSTITUTION_NAME_KEYWORDS,
     SHAREHOLDER_CACHE_FILE,
 )
+from vcp.data_provider_local import load_local_tdx_capital_snapshot
+from vcp.utils import _load_tdx_local_config
 
 _log = get_logger(__name__)
 
@@ -39,10 +41,32 @@ def _to_eastmoney_secid(code: str) -> str:
     return f"{market}.{code}"
 
 
+def _normalize_stock_codes(codes) -> list[str]:
+    normalized_codes = [
+        str(code or "").strip().zfill(6) for code in dict.fromkeys(codes or []) if str(code or "").strip()
+    ]
+    return [code for code in normalized_codes if len(code) == 6 and code.isdigit()]
+
+
+def _has_valid_share_capital(entry) -> bool:
+    return _coerce_number((entry or {}).get("zongguben") or (entry or {}).get("_zongguben")) > 0
+
+
+def _load_local_tdx_finance_info(codes) -> dict[str, dict]:
+    tdx_vipdoc = _load_tdx_local_config()
+    if not tdx_vipdoc:
+        return {}
+    try:
+        return load_local_tdx_capital_snapshot(codes, tdx_vipdoc)
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        _log.debug(f"[财务股本] 读取通达信本地总股本失败: {exc}")
+        return {}
+
+
 def _fetch_eastmoney_finance_info(codes):
     """批量获取总股本/总市值等财务基础数据。"""
 
-    normalized_codes = [str(code).strip() for code in dict.fromkeys(codes or []) if str(code or "").strip()]
+    normalized_codes = _normalize_stock_codes(codes)
     if not normalized_codes:
         return {}
 
@@ -106,6 +130,10 @@ def _fetch_eastmoney_finance_info(codes):
 def batch_get_finance_info(codes):
     """批量获取财务信息，带 30 天磁盘缓存。"""
 
+    normalized_codes = _normalize_stock_codes(codes)
+    if not normalized_codes:
+        return {}
+
     cache = {}
     if os.path.exists(FINANCE_CACHE_FILE):
         try:
@@ -115,15 +143,22 @@ def batch_get_finance_info(codes):
             cache = {}
 
     results = {}
+    local_results = _load_local_tdx_finance_info(normalized_codes)
+    for code, info in (local_results or {}).items():
+        if _has_valid_share_capital(info):
+            results[code] = info
+
     need_query = []
     now = datetime.now()
 
-    for code in codes:
+    for code in normalized_codes:
+        if code in results:
+            continue
         if code in cache:
             cached = cache[code]
             try:
                 cache_date = datetime.strptime(cached.get("date", "2000-01-01"), "%Y-%m-%d")
-                if (now - cache_date).days < 30:
+                if (now - cache_date).days < 30 and _has_valid_share_capital(cached.get("info")):
                     results[code] = cached["info"]
                     continue
             except (KeyError, ValueError) as exc:
@@ -138,13 +173,13 @@ def batch_get_finance_info(codes):
     except (json.JSONDecodeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
         _log.warning(f"[eastmoney] 无法获取总股本，回退本地旧缓存: {exc}")
         for code in need_query:
-            if code in cache:
+            if code in cache and _has_valid_share_capital(cache[code].get("info")):
                 results[code] = cache[code]["info"]
         return results
 
     if not online_results:
         for code in need_query:
-            if code in cache:
+            if code in cache and _has_valid_share_capital(cache[code].get("info")):
                 results[code] = cache[code]["info"]
         return results
 
