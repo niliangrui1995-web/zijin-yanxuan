@@ -415,8 +415,9 @@ class LhbTab(BaseStockTab):
 
         # 持久化表头（v9: 外资净买入列摘要+tooltip重构版）
         restored_sort = self.bind_header_persistence(self.table, "lhb_header_state_v9")
-        if not restored_sort:
-            self.table.sortByColumn(-1, Qt.SortOrder.AscendingOrder)
+        self._clear_proxy_sort_for_default_lhb_order()
+        if restored_sort:
+            QTimer.singleShot(0, self._clear_proxy_sort_for_default_lhb_order)
 
         # 交互：双击查看 K 线，右键菜单
         self.table.doubleClicked.connect(self._on_double_click)
@@ -652,6 +653,12 @@ class LhbTab(BaseStockTab):
         except (AttributeError, RuntimeError, TypeError, ValueError):
             return True
 
+    def _clear_proxy_sort_for_default_lhb_order(self) -> None:
+        try:
+            self.table.sortByColumn(-1, Qt.SortOrder.AscendingOrder)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+
     def _sort_model_for_default_lhb_order(self) -> None:
         if not self._is_default_lhb_sort_active():
             return
@@ -687,6 +694,7 @@ class LhbTab(BaseStockTab):
         """将池数据渲染到表格"""
         row_data = LhbPoolManager.sort_pool_rows_for_display([self._format_pool_row(rec) for rec in pool])
 
+        self._clear_proxy_sort_for_default_lhb_order()
         self.model.update_data(row_data)
         self._refresh_lhb_lineage(row_data)
 

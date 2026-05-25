@@ -2,13 +2,21 @@
 import datetime as dt
 from types import SimpleNamespace
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtTest import QSignalSpy
 
 import ui.tabs.lhb_tab as lhb_tab_module
 import ui.workers.lhb_worker as lhb_worker_module
 from core.market_calendar import MarketCalendar
 from ui.tabs.lhb_tab import LhbTab
+
+
+def _visible_lhb_codes(tab: LhbTab) -> list[str]:
+    code_col = tab.model.headers.index("代码")
+    return [
+        str(tab.proxy_model.data(tab.proxy_model.index(row, code_col), Qt.ItemDataRole.DisplayRole) or "")
+        for row in range(tab.proxy_model.rowCount())
+    ]
 
 
 def test_lhb_reference_trade_date_uses_previous_day_before_20(monkeypatch):
@@ -372,7 +380,7 @@ def test_lhb_display_keeps_buy_points_sorted_by_live_pct(monkeypatch):
             ]
         )
 
-        assert [tab.model.get_row_data(row)["代码"] for row in range(tab.model.rowCount())] == [
+        assert _visible_lhb_codes(tab) == [
             "000002",
             "000001",
             "000003",
@@ -380,11 +388,46 @@ def test_lhb_display_keeps_buy_points_sorted_by_live_pct(monkeypatch):
 
         tab._apply_quote_snapshot({"000001": {"open": 9.0, "close": 12.0, "last_close": 10.0}})
 
-        assert [tab.model.get_row_data(row)["代码"] for row in range(tab.model.rowCount())] == [
+        assert _visible_lhb_codes(tab) == [
             "000001",
             "000002",
             "000003",
         ]
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_display_default_order_overrides_restored_header_sort(monkeypatch, qt_application):
+    monkeypatch.setattr(
+        LhbTab,
+        "refresh_table_quotes_and_market_caps",
+        lambda self, *args, **kwargs: None,
+        raising=False,
+    )
+
+    def fake_bind_header_persistence(self, table, settings_key="header_state"):
+        QTimer.singleShot(
+            0,
+            lambda: table.sortByColumn(self.model.headers.index("最近上榜"), Qt.SortOrder.DescendingOrder),
+        )
+        return True
+
+    monkeypatch.setattr(LhbTab, "bind_header_persistence", fake_bind_header_persistence)
+
+    tab = LhbTab(object(), autoload_pool=False)
+    tab.pool_manager = SimpleNamespace(get_cached_dates=lambda: ["20260420"])
+    try:
+        qt_application.processEvents()
+        tab._display_pool(
+            [
+                {"代码": "000001", "名称": "低涨幅买点", "最近上榜": "20260418", "买点": "触发", "涨幅%": 1.0},
+                {"代码": "000002", "名称": "高涨幅买点", "最近上榜": "20260417", "买点": "触发", "涨幅%": 3.0},
+                {"代码": "000003", "名称": "无买点高涨幅", "最近上榜": "20260420", "买点": "", "涨幅%": 9.0},
+            ]
+        )
+
+        assert _visible_lhb_codes(tab) == ["000002", "000001", "000003"]
+        assert tab.proxy_model.sortColumn() == -1
     finally:
         tab.deleteLater()
 
