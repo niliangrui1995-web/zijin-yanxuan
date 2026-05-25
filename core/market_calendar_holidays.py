@@ -101,10 +101,21 @@ def _japan_exchange_holiday_supplements(year: int) -> set[str]:
     return {day.isoformat() for day in holidays}
 
 
+def _korea_exchange_holiday_supplements(year: int) -> set[str]:
+    """Return deterministic KRX holiday supplements for upstream drift repair."""
+    explicit_days = {
+        2026: {"2026-05-25"},
+    }
+    return set(explicit_days.get(int(year), set()))
+
+
 def apply_market_holiday_supplements(market: str, year: int, days: Any) -> set[str]:
     normalized = normalize_holiday_days(days)
-    if str(market or "").strip().upper() in {"T", "JP", "JPN", "TYO"}:
+    market_code = str(market or "").strip().upper()
+    if market_code in {"T", "JP", "JPN", "TYO"}:
         normalized.update(_japan_exchange_holiday_supplements(int(year)))
+    if market_code in {"KS", "KQ", "KR", "KOR"}:
+        normalized.update(_korea_exchange_holiday_supplements(int(year)))
     return normalized
 
 

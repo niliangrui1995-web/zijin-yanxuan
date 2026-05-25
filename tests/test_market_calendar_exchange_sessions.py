@@ -106,6 +106,25 @@ def test_japan_stale_holiday_cache_marks_20260506_closed(monkeypatch):
     assert MarketCalendar.is_market_active("T") is False
 
 
+def test_korea_stale_holiday_cache_marks_20260525_closed(monkeypatch):
+    monkeypatch.setattr(MarketCalendar, "_asian_bootstrapped", True, raising=False)
+    monkeypatch.setattr(
+        MarketCalendar,
+        "_asian_holidays",
+        {"TW": {}, "HK": {}, "T": {}, "KS": {2026: {"2026-05-05", "2026-05-24"}}},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        MarketCalendar,
+        "_get_market_now",
+        _fake_now(datetime.datetime(2026, 5, 25, 10, 0)),
+    )
+
+    assert MarketCalendar.get_market_status("KS") == "\u4f11\u5e02"
+    assert MarketCalendar.is_market_active("KS") is False
+    assert MarketCalendar.is_quote_refresh_time("KS") is False
+
+
 def test_hk_closing_auction_status(monkeypatch):
     monkeypatch.setattr(MarketCalendar, "is_trade_day", _always_trade_day())
     monkeypatch.setattr(

@@ -49,6 +49,26 @@ def test_japan_holiday_store_load_repairs_stale_cache(tmp_path):
     assert "2026-05-06" in days
 
 
+def test_korea_holiday_supplement_repairs_2026_temporary_public_holiday():
+    stale_source_days = {"2026-05-05", "2026-05-24"}
+
+    result = apply_market_holiday_supplements("KS", 2026, stale_source_days)
+
+    assert "2026-05-25" in result
+
+
+def test_korea_holiday_store_load_repairs_stale_cache(tmp_path):
+    project_root = str(tmp_path)
+    save_holidays_to_store(project_root, "KS", 2026, {"2026-05-05", "2026-05-24"})
+
+    rows = load_holidays_from_store(project_root, "KS")
+
+    assert len(rows) == 1
+    year, days, _ = rows[0]
+    assert year == 2026
+    assert "2026-05-25" in days
+
+
 def test_fetch_public_holidays_for_tw_delegates_to_twse(monkeypatch):
     calls: list[tuple[int, tuple[str, ...], tuple[str, ...]]] = []
 
