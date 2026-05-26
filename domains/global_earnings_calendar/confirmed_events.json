@@ -449,6 +449,24 @@
       "original_timezone": "America/Los_Angeles",
       "call_time_source_url": "https://news.synopsys.com/2026-04-27-Synopsys-Announces-Earnings-Release-Date-for-Second-Quarter-Fiscal-Year-2026",
       "call_time_source_type": "official_ir_press_release"
+    },
+    {
+      "company": "Soitec",
+      "ticker": "SOI.PA",
+      "sector": "关键晶圆材料与特种工艺",
+      "report_date": "2026-05-27",
+      "fiscal_period": "FY2026",
+      "time_label": "official webcast",
+      "beijing_time": "2026-05-28 20:00",
+      "status": "confirmed",
+      "source": "confirmed",
+      "priority": "normal",
+      "conference_url": "https://soitec.engagestream.euronext.com/20260528-full-year-2026/register?embed-view=1",
+      "market": "FR",
+      "original_call_time_text": "Soitec IR-linked Euronext webcast FULL-YEAR RESULTS FY'26 publishingDate 2026-05-28T12:00:00.000Z",
+      "original_timezone": "UTC",
+      "call_time_source_url": "https://www.soitec.com/home/investors/full-year-results-of-fiscal-year-2025---2026",
+      "call_time_source_type": "official_ir_webcast"
     }
   ]
 }
