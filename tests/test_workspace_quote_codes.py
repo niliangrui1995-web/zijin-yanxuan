@@ -822,6 +822,41 @@ def test_workspace_scheduled_f5_can_skip_cache_reload_driven_tabs():
     assert calls == ["watchlist"]
 
 
+def test_workspace_refreshes_ai_chain_dependent_tabs_after_update():
+    calls = []
+    tabs = {
+        "watchlist": SimpleNamespace(workspace_key="watchlist"),
+        "lhb": SimpleNamespace(
+            workspace_key="lhb",
+            refresh_data_after_ai_industry_chain_update=lambda: calls.append("lhb") or True,
+        ),
+        "stock_candidates": SimpleNamespace(workspace_key="stock_candidates"),
+        "foreign_block": SimpleNamespace(
+            workspace_key="foreign_block",
+            refresh_data_after_ai_industry_chain_update=lambda: calls.append("foreign") or True,
+        ),
+        "fund_holdings": SimpleNamespace(
+            workspace_key="fund_holdings",
+            refresh_data_after_ai_industry_chain_update=lambda: calls.append("fund") or True,
+        ),
+        "earnings": SimpleNamespace(
+            workspace_key="earnings",
+            refresh_data_after_ai_industry_chain_update=lambda: calls.append("earnings") or True,
+        ),
+    }
+    workspace = _make_workspace(tabs=tabs)
+
+    results = ClassicWorkspace.refresh_tabs_after_ai_industry_chain_update(workspace)
+
+    assert calls == ["lhb", "foreign", "fund", "earnings"]
+    assert results == {
+        "lhb": True,
+        "foreign_block": True,
+        "fund_holdings": True,
+        "earnings": True,
+    }
+
+
 def test_workspace_f5_snapshot_refresh_uses_async_local_snapshot():
     calls = []
 

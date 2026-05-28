@@ -156,6 +156,13 @@ class LhbTab(BaseStockTab):
             return
         self._load_and_display_pool()
 
+    def refresh_data_after_ai_industry_chain_update(self) -> bool:
+        self._ai_chain_context_map = None
+        if not self._pool_bootstrap_started:
+            return False
+        self._load_and_display_pool()
+        return True
+
     @staticmethod
     def _get_engine():
         """懒加载获取 VCPEngine 单例，用于读取 F5 预算的 RPS250 缓存"""

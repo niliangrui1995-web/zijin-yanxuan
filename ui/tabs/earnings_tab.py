@@ -543,6 +543,22 @@ class EarningsTab(BaseStockTab):
             return bool(trigger(reason="f5"))
         return False
 
+    def refresh_data_after_ai_industry_chain_update(self) -> bool:
+        scheduler = self._ensure_scheduler()
+        engine = getattr(scheduler, "engine", None)
+        get_cached_records = getattr(engine, "get_cached_records", None)
+        if not callable(get_cached_records):
+            self._apply_display_trade_window(force_refresh=True)
+            self.refresh_table_from_latest_snapshot(current_model=self.model, async_local=True)
+            return False
+
+        cached_records = get_cached_records()
+        self.row_data = []
+        self.model.update_data([], hydrate_latest_quotes=False)
+        self._on_new_data_found(cached_records, "warm_cache")
+        self.refresh_table_from_latest_snapshot(current_model=self.model, async_local=True)
+        return True
+
     def _apply_latest_quotes_from_store(self):
         self._apply_quote_store_snapshot()
         self._recalc_pe_ttm()

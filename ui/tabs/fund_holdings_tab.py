@@ -1188,6 +1188,16 @@ class FundHoldingsTab(BaseStockTab):
         self.refresh_table_from_latest_snapshot(current_model=self.model, async_local=True)
         return self.run_auto_sync_after_f5()
 
+    def refresh_data_after_ai_industry_chain_update(self) -> bool:
+        if getattr(self, "_runtime_cleanup_done", False):
+            return False
+        self._concept_sector_cache.clear()
+        self._ai_chain_context_map = None
+        if not self._initial_load_started:
+            return False
+        self._reload_from_db()
+        return True
+
     def run_full_sync(self) -> bool:
         if self._sync_active:
             return False

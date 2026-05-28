@@ -99,6 +99,9 @@ class WorkspaceFacade:
             skip_cache_reload_tabs=skip_cache_reload_tabs,
         )
 
+    def refresh_tabs_after_ai_industry_chain_update(self) -> dict[str, bool]:
+        return self._workspace_table_service.refresh_tabs_after_ai_industry_chain_update()
+
     def refresh_information_sources_after_f5(self) -> dict[str, bool]:
         """F5 完成后触发情报源自身的数据刷新，不只回灌行情快照。"""
         tab_specs = getattr(self._workspace, "tab_specs", None)

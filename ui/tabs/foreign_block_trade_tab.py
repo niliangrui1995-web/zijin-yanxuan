@@ -770,6 +770,11 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.refresh_table_from_latest_snapshot(current_model=self.model, async_local=True)
         return self.run_post_online_refresh()
 
+    def refresh_data_after_ai_industry_chain_update(self) -> bool:
+        self._load_local_cache(emit_event=False)
+        self.refresh_table_from_latest_snapshot(current_model=self.model, async_local=True)
+        return self.run_post_online_refresh()
+
     @staticmethod
     def get_foreign_keywords() -> list[str]:
         return list(FOREIGN_KEYWORDS)

@@ -344,6 +344,7 @@ class ClassicWorkspace(QWidget):
         for spec in self._tab_specs:
             key = str(spec.get("key") or "").strip()
             widget = self._create_real_tab(spec) if key == "watchlist" else self._create_placeholder_tab(spec)
+            setattr(widget, "workspace_key", key)
             spec["widget"] = widget
             spec["loaded"] = key == "watchlist"
             if spec["loaded"]:
@@ -427,6 +428,7 @@ class ClassicWorkspace(QWidget):
             return widget
 
         load_reason = str(reason or "")
+        setattr(widget, "workspace_key", key)
         setattr(widget, "_workspace_load_reason", load_reason)
         setattr(
             widget,
@@ -494,6 +496,7 @@ class ClassicWorkspace(QWidget):
         try:
             from app.services.ui_event_service import domain_events as event_bus
 
+            event_bus.sig_ai_industry_chain_updated.connect(self._on_ai_industry_chain_source_updated)
             event_bus.sig_fund_holdings_updated.connect(self._on_fund_holdings_source_updated)
             self._workspace_event_bus = event_bus
             self._workspace_events_connected = True
@@ -505,10 +508,18 @@ class ClassicWorkspace(QWidget):
         if event_bus is None or not getattr(self, "_workspace_events_connected", False):
             return
         try:
+            event_bus.sig_ai_industry_chain_updated.disconnect(self._on_ai_industry_chain_source_updated)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+        try:
             event_bus.sig_fund_holdings_updated.disconnect(self._on_fund_holdings_source_updated)
         except (AttributeError, RuntimeError, TypeError, ValueError):
             pass
         self._workspace_events_connected = False
+
+    def _on_ai_industry_chain_source_updated(self, *_args) -> None:
+        _resolve_workspace_facade(self).refresh_tabs_after_ai_industry_chain_update()
+        self.prime_stock_context_snapshots(force=True)
 
     def _on_fund_holdings_source_updated(self, *_args) -> None:
         self.prime_stock_context_snapshots(force=True)
@@ -664,6 +675,9 @@ class ClassicWorkspace(QWidget):
             interval_ms=interval_ms,
             skip_cache_reload_tabs=skip_cache_reload_tabs,
         )
+
+    def refresh_tabs_after_ai_industry_chain_update(self) -> dict[str, bool]:
+        return _resolve_workspace_facade(self).refresh_tabs_after_ai_industry_chain_update()
 
     def refresh_information_sources_after_f5(self) -> dict[str, bool]:
         return _resolve_workspace_facade(self).refresh_information_sources_after_f5()

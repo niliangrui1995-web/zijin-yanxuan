@@ -350,3 +350,18 @@ def test_foreign_block_trade_refresh_after_f5_loads_cache_and_starts_online_refr
 
     assert ForeignBlockTradeTab.refresh_data_after_f5(tab) is True
     assert calls == ["local_cache", ("snapshot", tab.model, True), "online"]
+
+
+def test_foreign_block_trade_refresh_after_ai_chain_update_reloads_without_reemitting():
+    calls = []
+    tab = SimpleNamespace(
+        _load_local_cache=lambda **kwargs: calls.append(("local_cache", kwargs)),
+        model=object(),
+        refresh_table_from_latest_snapshot=(
+            lambda current_model=None, *, async_local=True: calls.append(("snapshot", current_model, async_local))
+        ),
+        run_post_online_refresh=lambda: calls.append("online") or True,
+    )
+
+    assert ForeignBlockTradeTab.refresh_data_after_ai_industry_chain_update(tab) is True
+    assert calls == [("local_cache", {"emit_event": False}), ("snapshot", tab.model, True), "online"]

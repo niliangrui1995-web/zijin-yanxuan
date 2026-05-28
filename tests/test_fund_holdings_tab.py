@@ -1010,6 +1010,31 @@ def test_fund_holdings_refresh_after_f5_starts_auto_sync(monkeypatch):
         tab.deleteLater()
 
 
+def test_fund_holdings_refresh_after_ai_chain_update_reloads_loaded_view(monkeypatch):
+    _setup_store(monkeypatch, [])
+    calls = []
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "_reload_from_db",
+        lambda self: calls.append("reload"),
+        raising=False,
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
+    try:
+        tab._initial_load_started = True
+        tab._concept_sector_cache["300750"] = "old"
+        tab._ai_chain_context_map = {"300750": "old"}
+
+        assert tab.refresh_data_after_ai_industry_chain_update() is True
+
+        assert tab._concept_sector_cache == {}
+        assert tab._ai_chain_context_map is None
+        assert calls == ["reload"]
+    finally:
+        tab.deleteLater()
+
+
 def test_fund_holdings_tab_emits_updated_after_sync_success(monkeypatch):
     _setup_store(monkeypatch, [])
 

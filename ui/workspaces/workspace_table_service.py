@@ -6,7 +6,11 @@ from PyQt6.QtCore import QObject
 from app.services.ui_diagnostics_service import ui_stall_span
 from core.logger import get_logger
 from ui.components.frame_task_scheduler import FrameTaskScheduler
-from ui.workspaces.tab_capabilities import SnapshotRefreshCapability, TableCollectionCapability
+from ui.workspaces.tab_capabilities import (
+    AIIndustryChainUpdateCapability,
+    SnapshotRefreshCapability,
+    TableCollectionCapability,
+)
 
 log = get_logger(__name__)
 
@@ -138,3 +142,19 @@ class WorkspaceTableService:
         setattr(self._workspace, "_f5_refresh_scheduler", scheduler)
         scheduler.start(tasks)
         return True
+
+    def refresh_tabs_after_ai_industry_chain_update(self) -> dict[str, bool]:
+        results: dict[str, bool] = {}
+        for index, tab in enumerate(self._iter_tabs()):
+            if not isinstance(tab, AIIndustryChainUpdateCapability):
+                continue
+
+            label = str(getattr(tab, "workspace_key", "") or tab.__class__.__name__)
+            if label in results:
+                label = f"{label}:{index}"
+            try:
+                results[label] = bool(tab.refresh_data_after_ai_industry_chain_update())
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                results[label] = False
+                log.warning(f"[AI chain] {label} dependent refresh failed: {exc}")
+        return results

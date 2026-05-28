@@ -304,6 +304,22 @@ def test_lhb_display_pool_emits_update_without_self_reload(monkeypatch):
         tab.deleteLater()
 
 
+def test_lhb_refresh_after_ai_chain_update_reloads_started_pool(monkeypatch):
+    tab = LhbTab(object(), autoload_pool=False)
+    calls = []
+    monkeypatch.setattr(tab, "_load_and_display_pool", lambda: calls.append("reload"))
+    try:
+        tab._pool_bootstrap_started = True
+        tab._ai_chain_context_map = {"300750": "old"}
+
+        assert tab.refresh_data_after_ai_industry_chain_update() is True
+
+        assert tab._ai_chain_context_map is None
+        assert calls == ["reload"]
+    finally:
+        tab.deleteLater()
+
+
 def test_lhb_columns_replace_listing_reason_with_ai_chain_context():
     tab = LhbTab(object(), autoload_pool=False)
     try:

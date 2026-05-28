@@ -369,6 +369,40 @@ def test_earnings_refresh_after_f5_triggers_routine_scan():
     assert calls == ["quotes", ("window", True), ("snapshot", tab.model, True), ("routine", "f5")]
 
 
+def test_earnings_refresh_after_ai_chain_update_replays_filtered_cache():
+    EarningsTab = _earnings_tab_class()
+    cached_frame = pd.DataFrame([{"stock": "300750"}])
+    calls = []
+
+    class Model:
+        def update_data(self, rows, **kwargs):
+            calls.append(("update", list(rows), kwargs))
+
+    class Engine:
+        def get_cached_records(self):
+            calls.append("cached")
+            return cached_frame
+
+    tab = SimpleNamespace(
+        row_data=[{"old": "row"}],
+        model=Model(),
+        _ensure_scheduler=lambda: SimpleNamespace(engine=Engine()),
+        _on_new_data_found=lambda df, mode="routine": calls.append(("new_data", df, mode)),
+        refresh_table_from_latest_snapshot=(
+            lambda current_model=None, *, async_local=True: calls.append(("snapshot", current_model, async_local))
+        ),
+    )
+
+    assert EarningsTab.refresh_data_after_ai_industry_chain_update(tab) is True
+    assert tab.row_data == []
+    assert calls[0] == "cached"
+    assert calls[1] == ("update", [], {"hydrate_latest_quotes": False})
+    assert calls[2][0] == "new_data"
+    assert calls[2][1] is cached_frame
+    assert calls[2][2] == "warm_cache"
+    assert calls[3] == ("snapshot", tab.model, True)
+
+
 def test_earnings_display_window_primes_local_snapshot_after_cache_render():
     EarningsTab = _earnings_tab_class()
     calls = []

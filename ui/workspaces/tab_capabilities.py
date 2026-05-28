@@ -29,6 +29,11 @@ class PostF5DataRefreshCapability(Protocol):
 
 
 @runtime_checkable
+class AIIndustryChainUpdateCapability(Protocol):
+    def refresh_data_after_ai_industry_chain_update(self) -> bool: ...
+
+
+@runtime_checkable
 class PrimaryRowSelectionCapability(Protocol):
     def select_primary_row(self, index: int) -> bool: ...
 
