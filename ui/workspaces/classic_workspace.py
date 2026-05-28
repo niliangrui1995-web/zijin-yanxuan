@@ -240,8 +240,8 @@ class ClassicWorkspace(QWidget):
             {
                 "key": "ai_industry_chain",
                 "title": "AI产业链",
-                "group": "主工作台",
-                "group_order": 35,
+                "group": "情报源",
+                "group_order": 15,
                 "attr": "tab_ai_industry_chain",
                 "factory": self._tab_factory(
                     "AIIndustryChainTab", "ui.tabs.ai_industry_chain_tab", self.data_provider, self

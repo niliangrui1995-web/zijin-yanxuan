@@ -10,7 +10,6 @@ from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLa
 
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
-from app.services.ui_task_service import task_registry
 from core.ai_industry_chain_pool import (
     AI_CHAIN_FILE,
     PLACEHOLDER,
@@ -59,7 +58,6 @@ class AIIndustryChainTab(BaseStockTab):
         self._background_prime_done = False
 
         self._init_ui()
-        self.subscribe_global_quotes()
 
     def _ensure_runtime_started(self):
         if self._runtime_started:
@@ -193,6 +191,10 @@ class AIIndustryChainTab(BaseStockTab):
     def _read_workbook_rows(self) -> list[dict]:
         return load_ai_industry_chain_rows(self.workbook_path)
 
+    def get_realtime_quote_codes(self, current_model=None) -> set[str]:
+        """情报源 tab 不向中央报价站贡献代码，避免盘中触发联网补价。"""
+        return set()
+
     @staticmethod
     def _coerce_pandas_frame(frame):
         if frame is None:
@@ -310,13 +312,15 @@ class AIIndustryChainTab(BaseStockTab):
             if self._background_prime_loading:
                 self._apply_quote_store_snapshot()
             else:
-                self.refresh_table_quotes_and_market_caps(
-                    quote_task_id=task_registry.quote_refresh("ai_industry_chain").task_id
-                )
+                self.refresh_table_from_latest_snapshot(current_model=self.model, async_local=True)
             event_bus.sig_ai_industry_chain_updated.emit()
         else:
             self.table_state.show_empty("暂无AI产业链数据")
             self._set_chain_status("AI产业链为空", freshness=self._workbook_freshness(), next_step="检查Excel内容")
+
+    def refresh_data_after_f5(self) -> bool:
+        self._load_chain_data()
+        return True
 
     def refresh_table_from_latest_snapshot(self, current_model=None, *, async_local: bool = True):
         super().refresh_table_from_latest_snapshot(current_model=current_model, async_local=async_local)

@@ -65,7 +65,6 @@ def test_workspace_collects_a_share_quote_codes_from_public_tab_apis():
         "300750",
         "688001",
         "002415",
-        "688498",
         "601318",
     }
 
@@ -75,7 +74,7 @@ def test_workspace_quote_universe_skips_information_source_group_and_non_a_share
         {"key": "watchlist", "group": "主工作台"},
         {"key": "asian_market", "group": "主工作台"},
         {"key": "stock_candidates", "group": "主工作台"},
-        {"key": "ai_industry_chain", "group": "主工作台"},
+        {"key": "ai_industry_chain", "group": "情报源"},
         {"key": "lhb", "group": "主工作台"},
         {"key": "rt_monitor", "group": "主工作台"},
         {"key": "scan", "group": "情报源"},
@@ -101,7 +100,7 @@ def test_workspace_quote_universe_skips_information_source_group_and_non_a_share
 
     codes = ClassicWorkspace.get_realtime_quote_codes(workspace)
 
-    assert codes == {"000001", "300750", "688498", "601318", "002415"}
+    assert codes == {"000001", "300750", "601318", "002415"}
 
 
 def test_workspace_quote_universe_does_not_instantiate_lazy_tabs():
@@ -920,6 +919,7 @@ def test_workspace_refreshes_information_sources_after_f5():
     specs = [
         {"key": "watchlist", "group": "主工作台"},
         {"key": "scan", "group": "情报源"},
+        {"key": "ai_industry_chain", "group": "情报源"},
         {"key": "foreign_block", "group": "情报源"},
         {"key": "earnings", "group": "情报源"},
         {"key": "fund_holdings", "group": "情报源"},
@@ -929,6 +929,7 @@ def test_workspace_refreshes_information_sources_after_f5():
         tabs={
             "watchlist": SimpleNamespace(refresh_data_after_f5=lambda: calls.append("watchlist")),
             "scan": SimpleNamespace(refresh_data_after_f5=lambda: calls.append("scan") or True),
+            "ai_industry_chain": SimpleNamespace(refresh_data_after_f5=lambda: calls.append("ai") or True),
             "foreign_block": SimpleNamespace(refresh_data_after_f5=lambda: calls.append("foreign") or True),
             "earnings": SimpleNamespace(refresh_data_after_f5=lambda: calls.append("earnings") or True),
             "fund_holdings": SimpleNamespace(refresh_data_after_f5=lambda: calls.append("fund") or True),
@@ -939,9 +940,10 @@ def test_workspace_refreshes_information_sources_after_f5():
 
     results = ClassicWorkspace.refresh_information_sources_after_f5(workspace)
 
-    assert calls == ["scan", "foreign", "earnings", "fund"]
+    assert calls == ["scan", "ai", "foreign", "earnings", "fund"]
     assert results == {
         "scan": True,
+        "ai_industry_chain": True,
         "foreign_block": True,
         "earnings": True,
         "fund_holdings": True,
@@ -1033,12 +1035,13 @@ def test_workspace_defers_heavy_tab_autoload(monkeypatch):
         groups = {spec["key"]: spec["group"] for spec in workspace.tab_specs()}
         tab_keys = [spec["key"] for spec in workspace.tab_specs()]
         assert groups["lhb"] == "主工作台"
-        assert groups["ai_industry_chain"] == "主工作台"
+        assert groups["ai_industry_chain"] == "情报源"
         assert groups["stock_candidates"] == "主工作台"
         assert groups["scan"] == "情报源"
         assert tab_keys.index("watchlist") < tab_keys.index("lhb") < tab_keys.index("asian_market")
-        assert tab_keys.index("na_daily") < tab_keys.index("stock_candidates") < tab_keys.index("ai_industry_chain")
-        assert tab_keys.index("ai_industry_chain") < tab_keys.index("rt_monitor")
+        assert tab_keys.index("na_daily") < tab_keys.index("stock_candidates") < tab_keys.index("rt_monitor")
+        info_keys = [tab_keys[index] for index in workspace.tab_indices_by_group()["情报源"]]
+        assert info_keys == ["scan", "ai_industry_chain", "foreign_block", "earnings", "fund_holdings"]
         assert "autoload_pool" not in ctor_kwargs["watchlist"]
         assert "autoload" not in ctor_kwargs["watchlist"]
         assert isinstance(workspace.tabs, SmoothTabWidget)

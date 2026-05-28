@@ -190,6 +190,38 @@ def test_compute_pool_prioritizes_buy_points_by_pct(monkeypatch):
     assert [row["买点"] for row in pool[:2]] == ["触发", "触发"]
 
 
+def test_lhb_buy_point_uses_local_kline_without_realtime_quote_fetch(monkeypatch):
+    manager = _build_manager(monkeypatch)
+    manager._data = {
+        "20260415": [
+            {
+                "代码": "000001",
+                "名称": "本地买点",
+                "上榜日期": "20260415",
+                "上榜净买额(万)": 7600,
+                "机构净买(万)": 1800,
+                "涨幅%": 2.0,
+            }
+        ]
+    }
+
+    class _NoRealtimeFetchProvider(_DummyProvider):
+        def fetch_realtime_quotes_batch(self, codes):
+            raise AssertionError(f"龙虎榜买点不应触发实时补价: {codes}")
+
+    provider = _NoRealtimeFetchProvider(
+        {
+            "000001": _make_kline(20, list(range(1, 21)), last_open=14),
+        }
+    )
+
+    pool = manager.compute_pool(data_provider=provider)
+
+    assert [row["代码"] for row in pool] == ["000001"]
+    assert pool[0]["买点"] == "触发"
+    assert pool[0]["_history_20"] == [float(value) for value in range(1, 21)]
+
+
 def test_add_day_records_cache_meta(monkeypatch):
     manager = _build_manager(monkeypatch)
 

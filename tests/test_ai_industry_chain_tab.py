@@ -68,12 +68,13 @@ def test_ai_industry_chain_loads_workbook_and_period_returns(monkeypatch, tmp_pa
     _write_workbook(workbook_path)
     monkeypatch.setattr(QTimer, "singleShot", lambda *args, **kwargs: None)
 
-    tab = AIIndustryChainTab(DummyProvider(), workbook_path=workbook_path)
-    refresh_calls = []
+    provider = DummyProvider()
+    tab = AIIndustryChainTab(provider, workbook_path=workbook_path)
+    cache_refresh_calls = []
     monkeypatch.setattr(
         tab,
-        "refresh_table_quotes_and_market_caps",
-        lambda **kwargs: refresh_calls.append(kwargs),
+        "refresh_table_from_latest_snapshot",
+        lambda current_model=None, *, async_local=True: cache_refresh_calls.append((current_model, async_local)),
     )
 
     try:
@@ -101,7 +102,31 @@ def test_ai_industry_chain_loads_workbook_and_period_returns(monkeypatch, tmp_pa
         assert first["5日涨幅"] == pytest.approx((21 / 16 - 1) * 100)
         assert first["10日涨幅"] == pytest.approx((21 / 11 - 1) * 100)
         assert first["20日涨幅"] == pytest.approx((21 / 1 - 1) * 100)
-        assert refresh_calls == [{"quote_task_id": "ai_industry_chain_quotes"}]
+        assert cache_refresh_calls == [(tab.model, True)]
+        assert provider.calls == []
+    finally:
+        tab.close()
+        tab.deleteLater()
+
+
+def test_ai_industry_chain_does_not_subscribe_or_contribute_realtime_codes(monkeypatch, tmp_path):
+    workbook_path = tmp_path / "AI产业链.xlsx"
+    _write_workbook(workbook_path)
+    monkeypatch.setattr(QTimer, "singleShot", lambda *args, **kwargs: None)
+    subscribe_calls = []
+    monkeypatch.setattr(
+        AIIndustryChainTab,
+        "subscribe_global_quotes",
+        lambda self, *args, **kwargs: subscribe_calls.append((args, kwargs)),
+    )
+
+    tab = AIIndustryChainTab(DummyProvider(), workbook_path=workbook_path)
+
+    try:
+        tab._load_chain_data()
+
+        assert subscribe_calls == []
+        assert tab.get_realtime_quote_codes() == set()
     finally:
         tab.close()
         tab.deleteLater()

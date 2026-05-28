@@ -89,7 +89,7 @@ vcp_hunter_qt.pyw
 | `asian_market` | 亚洲寡头 | `ui/tabs/asian_market_tab.py` | 主工作台 |
 | `na_daily` | 北美战报 | `ui/tabs/na_daily_tab.py` | 主工作台 |
 | `stock_candidates` | 综合候选 | `ui/tabs/stock_candidate_tab.py` | 主工作台 |
-| `ai_industry_chain` | AI产业链 | `ui/tabs/ai_industry_chain_tab.py` | 主工作台 |
+| `ai_industry_chain` | AI产业链 | `ui/tabs/ai_industry_chain_tab.py` | 情报源 |
 | `lhb` | 龙虎榜 | `ui/tabs/lhb_tab.py` | 主工作台 |
 | `rt_monitor` | 盘中监控 | `ui/tabs/rt_monitor_tab.py` | 主工作台 |
 | `scan` | VCP扫描 | `ui/tabs/scan_tab.py` | 情报源 |

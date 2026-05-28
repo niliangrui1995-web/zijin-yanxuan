@@ -12,7 +12,6 @@ DEFAULT_REALTIME_TAB_KEYS = (
     "stock_candidates",
     "foreign_block",
     "na_daily",
-    "ai_industry_chain",
     "earnings",
     "lhb",
 )
