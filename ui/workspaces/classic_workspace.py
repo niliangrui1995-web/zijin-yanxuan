@@ -343,15 +343,11 @@ class ClassicWorkspace(QWidget):
         icon_tokens = build_ui_tokens()["icon"]
         for spec in self._tab_specs:
             key = str(spec.get("key") or "").strip()
-            widget = self._create_real_tab(spec) if key == "watchlist" else self._create_placeholder_tab(spec)
+            widget = self._create_placeholder_tab(spec)
             setattr(widget, "workspace_key", key)
             spec["widget"] = widget
-            spec["loaded"] = key == "watchlist"
-            if spec["loaded"]:
-                self._tabs_by_key[key] = widget
-                setattr(self, spec["attr"], widget)
-            else:
-                setattr(self, spec["attr"], None)
+            spec["loaded"] = False
+            setattr(self, spec["attr"], None)
             self.tabs.addTab(
                 widget,
                 tab_svg_icon(
@@ -537,10 +533,13 @@ class ClassicWorkspace(QWidget):
         ]
         pending_spec = self._spec_for_key_or_index(self._pending_restore_index)
         pending_key = str((pending_spec or {}).get("key") or "").strip()
-        if pending_key in unloaded_keys:
-            unloaded_keys.remove(pending_key)
-            unloaded_keys.insert(0, pending_key)
-        priority_insert_at = 1 if pending_key and unloaded_keys[:1] == [pending_key] else 0
+        current_spec = self._spec_for_key_or_index(self.tabs.currentIndex())
+        current_key = str((current_spec or {}).get("key") or "").strip()
+        lead_key = pending_key or current_key
+        if lead_key in unloaded_keys:
+            unloaded_keys.remove(lead_key)
+            unloaded_keys.insert(0, lead_key)
+        priority_insert_at = 1 if lead_key and unloaded_keys[:1] == [lead_key] else 0
         for priority_key in reversed(self.CONTEXT_PREWARM_PRIORITY):
             if priority_key not in unloaded_keys:
                 continue

@@ -113,7 +113,7 @@ vcp_hunter_qt.pyw
 - 主窗口外壳：`ui/main_window_qt.py`
 - 工作区装配：`ui/workspaces/classic_workspace.py`
 - 当前仅装配 `ClassicWorkspace`
-- 首屏只加载关注池，其余页面先用 `LazyTabPlaceholder` 占位，再按需加载和后台预热
+- 首屏先挂载 `LazyTabPlaceholder` 占位，所有页面再按需加载或进入后台预热队列逐个创建
 - 跨 Tab 表格聚合、实时订阅代码收集、个股信号汇总和导航定位统一通过 `WorkspaceFacade` 及能力协议完成
 - 各 Tab 大多继承 `ui/tabs/base_stock_tab.py`，共享：
   - 右键菜单

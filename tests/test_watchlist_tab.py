@@ -34,6 +34,7 @@ def test_watchlist_source_column_is_hidden_from_display_model():
                     "市值": "--",
                     "RPS强度": "--",
                     "细分板块": "",
+                    "摘要": "",
                     "备注": "",
                     "业绩异动": "",
                     "大宗交易": "",
@@ -44,6 +45,11 @@ def test_watchlist_source_column_is_hidden_from_display_model():
         )
 
         assert "来源" not in tab.model.headers
+        assert "摘要" in tab.model.headers
+        assert "备注" in tab.model.headers
+        assert "业绩异动" not in tab.model.headers
+        assert "大宗交易" not in tab.model.headers
+        assert "龙虎榜" not in tab.model.headers
         assert tab.model.get_row_data(0)["来源"] == "手动｜龙虎榜"
     finally:
         tab.deleteLater()
@@ -81,6 +87,7 @@ def test_watchlist_lhb_column_displays_buy_point_rocket(monkeypatch):
                     "市值": "--",
                     "RPS强度": "",
                     "细分板块": "",
+                    "摘要": "",
                     "备注": "",
                     "业绩异动": "",
                     "大宗交易": "",
@@ -113,12 +120,13 @@ def test_watchlist_lhb_column_displays_buy_point_rocket(monkeypatch):
         )
 
         row = tab.model.row_data[0]
-        lhb_idx = tab.model.index(0, tab.model.headers.index("龙虎榜"))
+        note_idx = tab.model.index(0, tab.model.headers.index("备注"))
 
         assert row["龙虎榜"] == "触发"
         assert row["龙虎榜日期"] == "20260420"
         assert row["龙虎榜净额(万)"] == 1200
-        assert tab.model.data(lhb_idx, Qt.ItemDataRole.DisplayRole) == "🚀"
+        assert row["备注"] == "🚀"
+        assert tab.model.data(note_idx, Qt.ItemDataRole.DisplayRole) == "🚀"
         assert captured["payload"]["600519"]["龙虎榜"] == "触发"
     finally:
         tab.deleteLater()
@@ -138,7 +146,8 @@ def test_watchlist_detail_columns_use_muted_text_like_lhb_context():
                     "市值": "21000亿",
                     "RPS强度": "95/93",
                     "细分板块": "白酒",
-                    "备注": "AI链备注",
+                    "摘要": "AI链备注",
+                    "备注": "预增25% / 机构专用买入2709万 / 04-20 | 净买1200万",
                     "业绩异动": "预增25%",
                     "大宗交易": "机构专用买入2709万",
                     "龙虎榜": "04-20 | 净买1200万",
@@ -147,11 +156,18 @@ def test_watchlist_detail_columns_use_muted_text_like_lhb_context():
         )
 
         muted = QColor(theme_manager.get("TEXT_MUTED")).name()
-        for header in ["RPS强度", "细分板块", "备注", "业绩异动", "大宗交易", "龙虎榜"]:
+        for header in ["RPS强度", "细分板块", "摘要", "备注"]:
             idx = tab.model.index(0, tab.model.headers.index(header))
             assert tab.model.data(idx, Qt.ItemDataRole.ForegroundRole).name() == muted
     finally:
         tab.deleteLater()
+
+
+def test_watchlist_note_merges_signal_columns_into_single_cell():
+    assert (
+        watchlist_module.WatchlistTab._format_watchlist_note("预增25%", "机构专用买入2709万", "触发")
+        == "预增25% / 机构专用买入2709万 / 🚀"
+    )
 
 
 def test_watchlist_vm_add_stock_emits_add_signal(monkeypatch):
@@ -525,7 +541,8 @@ def test_watchlist_clears_stale_special_columns_when_current_round_has_no_signal
                     "市值": "--",
                     "RPS强度": "95/93",
                     "细分板块": "",
-                    "备注": "旧备注",
+                    "摘要": "旧备注",
+                    "备注": "预增25% / 机构专用买入2709万 / 04-20 | 净买1200万",
                     "业绩异动": "预增25%",
                     "业绩环比%": 25.0,
                     "大宗交易": "机构专用买入2709万",
@@ -557,6 +574,7 @@ def test_watchlist_clears_stale_special_columns_when_current_round_has_no_signal
 
         assert row["大宗交易"] == ""
         assert row["大宗交易金额(万)"] == ""
+        assert row["摘要"] == ""
         assert row["备注"] == ""
         assert row["业绩异动"] == ""
         assert row["业绩环比%"] == ""
@@ -600,6 +618,7 @@ def test_watchlist_indicator_apply_batches_model_update(monkeypatch):
                     "市值": "--",
                     "RPS强度": "",
                     "细分板块": "",
+                    "摘要": "",
                     "备注": "",
                     "业绩异动": "",
                     "大宗交易": "",
@@ -614,6 +633,7 @@ def test_watchlist_indicator_apply_batches_model_update(monkeypatch):
                     "市值": "--",
                     "RPS强度": "",
                     "细分板块": "",
+                    "摘要": "",
                     "备注": "",
                     "业绩异动": "",
                     "大宗交易": "",
@@ -632,7 +652,8 @@ def test_watchlist_indicator_apply_batches_model_update(monkeypatch):
 
         assert len(spy) == 1
         assert tab.model.row_data[0]["RPS强度"] == "95"
-        assert tab.model.row_data[0]["备注"] == "AI链备注"
+        assert tab.model.row_data[0]["摘要"] == "AI链备注"
+        assert tab.model.row_data[0]["备注"] == ""
         assert tab.model.row_data[1]["细分板块"] == "银行"
     finally:
         tab.deleteLater()
@@ -670,6 +691,7 @@ def test_watchlist_writes_earnings_report_label_to_column(monkeypatch):
                     "市值": "--",
                     "RPS强度": "",
                     "细分板块": "",
+                    "摘要": "",
                     "备注": "",
                     "业绩异动": "",
                     "业绩环比%": "",
@@ -699,7 +721,8 @@ def test_watchlist_writes_earnings_report_label_to_column(monkeypatch):
         )
 
         row = tab.model.row_data[0]
-        assert row["备注"] == "AI链备注"
+        assert row["摘要"] == "AI链备注"
+        assert row["备注"] == "一季度 32.5%"
         assert row["业绩异动"] == "一季度 32.5%"
         assert row["业绩环比%"] == 32.5
         assert captured["payload"]["600519"]["备注"] == "AI链备注"

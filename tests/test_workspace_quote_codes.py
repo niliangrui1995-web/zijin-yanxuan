@@ -1031,10 +1031,12 @@ def test_workspace_defers_heavy_tab_autoload(monkeypatch):
 
     workspace = classic_workspace_module.ClassicWorkspace(data_provider=object(), engine=object())
     try:
-        assert set(ctor_kwargs) == {"watchlist"}
+        assert ctor_kwargs == {}
+        assert workspace.get_loaded_tab("watchlist") is None
         assert workspace.get_loaded_tab("lhb") is None
         assert workspace.get_loaded_tab("fund_holdings") is None
 
+        workspace.ensure_tab_loaded("watchlist")
         workspace.ensure_tab_loaded("lhb")
         assert ctor_kwargs["lhb"]["autoload_pool"] is False
         workspace.ensure_tab_loaded("fund_holdings")
@@ -1090,7 +1092,7 @@ def test_workspace_background_prewarm_loads_lazy_tabs_without_manual_click(monke
 
     workspace = classic_workspace_module.ClassicWorkspace(data_provider=object(), engine=object())
     try:
-        assert constructed == ["watchlist"]
+        assert constructed == []
 
         workspace.schedule_restore_last_tab(10, delay_ms=999_999)
         snapshot_primes = []
@@ -1099,7 +1101,7 @@ def test_workspace_background_prewarm_loads_lazy_tabs_without_manual_click(monke
 
         workspace._start_background_tab_prewarm()
 
-        assert constructed[1] == "fund_holdings"
+        assert constructed[0] == "fund_holdings"
         assert constructed.index("ai_industry_chain") < constructed.index("na_daily")
         assert primed.index("ai_industry_chain") < primed.index("na_daily")
         assert set(ctor_kwargs) == {
@@ -1118,6 +1120,49 @@ def test_workspace_background_prewarm_loads_lazy_tabs_without_manual_click(monke
         }
         assert snapshot_primes == [{}]
         assert "fund_holdings" in primed
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_workspace_background_prewarm_creates_current_tab_first_without_restore(monkeypatch):
+    constructed = []
+
+    def _resolve_tab_class(class_name, _module_name):
+        class _Tab(QWidget):
+            def __init__(self, *args, **kwargs):
+                super().__init__()
+                constructed.append(class_name)
+
+            def prime_background_load(self):
+                pass
+
+        return _Tab
+
+    monkeypatch.setattr(classic_workspace_module, "_resolve_tab_class", _resolve_tab_class)
+
+    workspace = classic_workspace_module.ClassicWorkspace(data_provider=object(), engine=object())
+    try:
+        workspace.prime_stock_context_snapshots = lambda **kwargs: True
+        monkeypatch.setattr(classic_workspace_module.QTimer, "singleShot", lambda _delay, callback: callback())
+
+        workspace._start_background_tab_prewarm()
+
+        assert constructed[0] == "WatchlistTab"
+        assert set(constructed) == {
+            "WatchlistTab",
+            "LhbTab",
+            "AsianMarketTab",
+            "NADailyTab",
+            "StockCandidateTab",
+            "AIIndustryChainTab",
+            "RtMonitorTab",
+            "ScanTab",
+            "ForeignBlockTradeTab",
+            "EarningsTab",
+            "FundHoldingsTab",
+            "LogTab",
+        }
     finally:
         workspace.shutdown()
         workspace.deleteLater()
@@ -1230,8 +1275,9 @@ def test_workspace_auto_refresh_does_not_load_daily_tabs_without_manual_click(mo
         background_prewarm=False,
     )
     try:
-        assert constructed == ["watchlist"]
+        assert constructed == []
         assert not hasattr(workspace, "_start_daily_auto_tab_bootstrap")
+        assert workspace.get_loaded_tab("watchlist") is None
         assert workspace.get_loaded_tab("rt_monitor") is None
         assert workspace.get_loaded_tab("lhb") is None
         assert workspace.get_loaded_tab("foreign_block") is None

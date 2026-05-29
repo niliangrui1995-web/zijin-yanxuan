@@ -105,8 +105,7 @@ class LhbTab(BaseStockTab):
         super().hideEvent(event)
 
     def prime_background_load(self):
-        if not self._pool_bootstrap_started:
-            self._set_pool_status("等待进入龙虎榜", freshness="未加载", next_step="首次进入时自动读取缓存")
+        self._ensure_pool_bootstrap_started()
 
     def on_workspace_tab_activated(self) -> None:
         self._ensure_pool_bootstrap_started()

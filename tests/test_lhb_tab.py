@@ -250,8 +250,8 @@ def test_lhb_prime_background_load_starts_deferred_pool_once(monkeypatch):
         tab.prime_background_load()
         tab.prime_background_load()
 
-        assert calls == []
-        assert tab._pool_bootstrap_started is False
+        assert calls == ["load"]
+        assert tab._pool_bootstrap_started is True
     finally:
         tab.deleteLater()
 

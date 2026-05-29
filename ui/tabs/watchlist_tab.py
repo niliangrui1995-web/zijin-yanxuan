@@ -23,6 +23,7 @@ from core.logger import get_logger
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.toast_widget import show_toast
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
+from ui.models.stock_table_model import BUY_POINT_TRIGGER_ICON
 from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
@@ -146,13 +147,11 @@ class WatchlistTab(BaseStockTab):
             "市值",
             "RPS强度",
             "细分板块",
+            "摘要",
             "备注",
-            "业绩异动",
-            "大宗交易",
-            "龙虎榜",
         ]
         self.model = StockTableModel(headers)
-        self.model.set_muted_text_headers(["RPS强度", "细分板块", "备注", "业绩异动", "大宗交易", "龙虎榜"])
+        self.model.set_muted_text_headers(["RPS强度", "细分板块", "摘要", "备注"])
         self.proxy_model = RtSortFilterProxyModel(self.table_sp)
         self.proxy_model.setSourceModel(self.model)
         self.table_sp.setModel(self.proxy_model)
@@ -168,11 +167,11 @@ class WatchlistTab(BaseStockTab):
         header = self.table_sp.horizontalHeader()
         self.apply_table_column_preset(
             self.table_sp,
-            [64, 76, 70, 70, 88, 84, 112, 126, 126, 118, 168],
+            [64, 76, 70, 70, 88, 84, 112, 150, 220],
             stretch_last=True,
         )
         # 绑定防抖自动保存与恢复配置（列结构变更后沿用新 key，避免旧状态错位）
-        restored_sort = self.bind_header_persistence(self.table_sp, "header_state_watchlist_v10")
+        restored_sort = self.bind_header_persistence(self.table_sp, "header_state_watchlist_v11")
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
         if not restored_sort:
             self.table_sp.sortByColumn(-1, Qt.SortOrder.AscendingOrder)
@@ -189,6 +188,20 @@ class WatchlistTab(BaseStockTab):
     @staticmethod
     def _now_hhmm() -> str:
         return datetime.now().strftime("%H:%M")
+
+    @staticmethod
+    def _format_watchlist_note(earnings: object = "", block_trade: object = "", lhb: object = "") -> str:
+        parts = []
+        for raw_value in (earnings, block_trade):
+            text = str(raw_value or "").strip()
+            if text and text != "--":
+                parts.append(text)
+
+        lhb_text = str(lhb or "").strip()
+        if lhb_text and lhb_text != "--":
+            parts.append(BUY_POINT_TRIGGER_ICON if lhb_text == BUY_POINT_TEXT else lhb_text)
+
+        return " / ".join(parts)
 
     def _touch_watchlist_update(self, stamp: str | None = None) -> bool:
         text = str(stamp or "").strip() or self._now_hhmm()
@@ -320,6 +333,10 @@ class WatchlistTab(BaseStockTab):
             rps = info_new.get("RPS强度", "--")
             subsector = info_new.get("细分板块") or info_old.get("细分板块") or info_new.get("subsector", "") or ""
             cap_display = cap if cap and cap != "--" else ""
+            summary = str(info_new.get("备注") or info_old.get("备注", "") or "")
+            block_trade = info_new.get("大宗交易", "")
+            earnings = info_new.get("业绩异动", "")
+            lhb = info_new.get("龙虎榜", "")
 
             row_data = {
                 "代码": code,
@@ -330,12 +347,13 @@ class WatchlistTab(BaseStockTab):
                 "市值": str(cap_display),
                 "RPS强度": str(rps),
                 "细分板块": str(subsector),
-                "备注": str(info_new.get("备注") or info_old.get("备注", "") or ""),
-                "大宗交易": info_new.get("大宗交易", ""),
+                "摘要": summary,
+                "备注": self._format_watchlist_note(earnings, block_trade, lhb),
+                "大宗交易": block_trade,
                 "大宗交易金额(万)": info_new.get("大宗交易金额(万)", info_old.get("大宗交易金额(万)", "")),
-                "业绩异动": info_new.get("业绩异动", ""),
+                "业绩异动": earnings,
                 "业绩环比%": info_new.get("业绩环比%", info_old.get("业绩环比%", "")),
-                "龙虎榜": info_new.get("龙虎榜", ""),
+                "龙虎榜": lhb,
                 "龙虎榜日期": info_new.get("龙虎榜日期", ""),
                 "龙虎榜净额(万)": info_new.get("龙虎榜净额(万)", info_old.get("龙虎榜净额(万)", "")),
                 "来源标签": source_tags,
@@ -723,7 +741,7 @@ class WatchlistTab(BaseStockTab):
                     row_dict["细分板块"] = data["subsector"]
 
                 # 三大阵营的数据注入 (如果原本有数据但不为空，我们不覆盖；如果本次扫到了，坚决覆盖)
-                row_dict["备注"] = str(data.get("remark", "") or "")
+                row_dict["摘要"] = str(data.get("remark", "") or "")
                 row_dict["大宗交易"] = str(data.get("block_trade", "") or "")
                 row_dict["大宗交易金额(万)"] = data.get("block_trade_amount_wan", "")
                 row_dict["业绩异动"] = str(data.get("earnings", "") or "")
@@ -741,6 +759,11 @@ class WatchlistTab(BaseStockTab):
                     row_dict["龙虎榜"] = str(new_lhb or "")
                     row_dict["龙虎榜日期"] = ""
                     row_dict["龙虎榜净额(万)"] = ""
+                row_dict["备注"] = self._format_watchlist_note(
+                    row_dict.get("业绩异动", ""),
+                    row_dict.get("大宗交易", ""),
+                    row_dict.get("龙虎榜", ""),
+                )
 
                 source_tags = watchlist_vm.derive_source_tags(
                     row_dict,
@@ -851,7 +874,7 @@ class WatchlistTab(BaseStockTab):
                 entry["RPS强度"] = str(row_dict.get("RPS强度", ""))
                 entry["AI结论"] = str(row_dict.get("AI结论", ""))
                 entry["细分板块"] = str(row_dict.get("细分板块", ""))
-                entry["备注"] = str(row_dict.get("备注", ""))
+                entry["备注"] = str(row_dict.get("摘要", ""))
                 entry["大宗交易"] = str(row_dict.get("大宗交易", ""))
                 entry["大宗交易金额(万)"] = row_dict.get("大宗交易金额(万)", "")
                 entry["业绩异动"] = str(row_dict.get("业绩异动", ""))
