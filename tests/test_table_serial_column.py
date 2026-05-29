@@ -382,3 +382,14 @@ def test_buy_point_trigger_displays_rocket_without_badge_pill():
     assert model.data(idx, Qt.ItemDataRole.DisplayRole) == "🚀"
     assert model.get_row_data(0)["买点"] == "触发"
     assert model.data(idx, Qt.ItemDataRole.UserRole + 2) is None
+
+
+def test_watchlist_lhb_trigger_displays_buy_point_rocket():
+    model = StockTableModel(["代码", "名称", "龙虎榜"])
+    model.update_data([{"代码": "000001", "名称": "平安银行", "龙虎榜": "触发"}])
+
+    idx = model.index(0, model.headers.index("龙虎榜"))
+
+    assert model.data(idx, Qt.ItemDataRole.DisplayRole) == "🚀"
+    assert model.get_row_data(0)["龙虎榜"] == "触发"
+    assert model.data(idx, Qt.ItemDataRole.UserRole + 2) is None

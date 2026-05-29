@@ -17,6 +17,7 @@ KEY_CATALYST = "\u50ac\u5316\u5242"
 KEY_CATALYST_EMOJI = "\U0001f4e0\u50ac\u5316\u5242"
 KEY_SUBSECTOR = "\u7ec6\u5206\u677f\u5757"
 KEY_OLD_CHAIN_SEGMENT = "\u7ec6\u5206\u73af\u8282"
+KEY_REMARK = "\u5907\u6ce8"
 KEY_DETAIL = "\u4ea4\u6613\u8be6\u60c5"
 KEY_BUY_BRANCH = "\u4e70\u65b9\u8425\u4e1a\u90e8"
 KEY_SELL_BRANCH = "\u5356\u65b9\u8425\u4e1a\u90e8"
@@ -399,15 +400,39 @@ class StockContextService:
 
     def _iter_ai_chain_signals(self) -> list[StockSignal]:
         signals: list[StockSignal] = []
-        seen_codes: set[str] = set()
+        rows_by_code: dict[str, dict] = {}
+        row_refs_by_code: dict[str, int] = {}
+        segments_by_code: dict[str, list[str]] = {}
+        remarks_by_code: dict[str, list[str]] = {}
         for row_idx, row in enumerate(self._get_rows(self._get_tab("ai_industry_chain"))):
             code = str(row.get(KEY_CODE, "")).strip()
-            if not code or code in seen_codes:
+            if not code:
                 continue
             segment = str(row.get(KEY_SUBSECTOR, "") or row.get(KEY_OLD_CHAIN_SEGMENT, "") or "").strip()
-            if not segment:
+            remark = str(row.get(KEY_REMARK, "") or "").strip()
+            if not segment and not remark:
                 continue
-            seen_codes.add(code)
+
+            rows_by_code.setdefault(code, dict(row))
+            row_refs_by_code.setdefault(code, row_idx)
+            if segment:
+                segments = segments_by_code.setdefault(code, [])
+                if segment not in segments:
+                    segments.append(segment)
+            if remark:
+                remarks = remarks_by_code.setdefault(code, [])
+                if remark not in remarks:
+                    remarks.append(remark)
+
+        for code in rows_by_code:
+            segments = segments_by_code.get(code, [])
+            remarks = remarks_by_code.get(code, [])
+            row = rows_by_code.get(code, {})
+            merged_segment = " / ".join(segments)
+            merged_remark = " / ".join(remarks)
+            payload = dict(row)
+            payload[KEY_SUBSECTOR] = merged_segment
+            payload[KEY_REMARK] = merged_remark
             signals.append(
                 StockSignal(
                     code=code,
@@ -415,9 +440,9 @@ class StockContextService:
                     source_tab="ai_industry_chain",
                     source_label="ai_industry_chain",
                     signal_type=SIGNAL_SUBSECTOR,
-                    summary=segment,
-                    row_ref=row_idx,
-                    payload=dict(row),
+                    summary=merged_segment,
+                    row_ref=row_refs_by_code.get(code),
+                    payload=payload,
                 )
             )
         return signals
@@ -916,7 +941,7 @@ class StockContextService:
         rps_bundle = engine.get_precomputed_rps() if hasattr(engine, "get_precomputed_rps") else None
 
         signals = self.iter_stock_signals(include_cache_fallback=include_cache_fallback)
-        na_data, na_subsector_data, block_data, earn_data, lhb_data = {}, {}, {}, {}, {}
+        remark_data, na_subsector_data, block_data, earn_data, lhb_data = {}, {}, {}, {}, {}
         target_code_set = self._normalize_target_codes(target_codes)
 
         def in_scope(code: str) -> bool:
@@ -929,11 +954,15 @@ class StockContextService:
             if not in_scope(code):
                 continue
             if signal.source_tab == "na_daily" and signal.signal_type == SIGNAL_CATALYST:
-                na_data[code] = signal.summary
+                continue
             if signal.source_tab == "na_daily" and signal.signal_type == SIGNAL_SUBSECTOR:
                 na_subsector_fallback.setdefault(code, signal.summary)
-            if signal.source_tab == "ai_industry_chain" and signal.signal_type == SIGNAL_SUBSECTOR and signal.summary:
-                ai_subsector_data.setdefault(code, signal.summary)
+            if signal.source_tab == "ai_industry_chain" and signal.signal_type == SIGNAL_SUBSECTOR:
+                if signal.summary:
+                    ai_subsector_data.setdefault(code, signal.summary)
+                remark = str((signal.payload or {}).get(KEY_REMARK, "") or "").strip()
+                if remark:
+                    remark_data.setdefault(code, remark)
 
         na_subsector_data.update(ai_subsector_data)
         for code, summary in na_subsector_fallback.items():
@@ -960,6 +989,7 @@ class StockContextService:
                     "net_wan": signal.payload.get("net_wan", signal.numeric_value or 0.0),
                     "inst_wan": signal.payload.get("inst_wan", 0.0),
                     "foreign_wan": signal.payload.get("foreign_wan", 0.0),
+                    "buy_point": str(signal.payload.get("买点", "") or "").strip(),
                 }
 
-        return na_data, na_subsector_data, block_data, earn_data, lhb_data, rps_bundle
+        return remark_data, na_subsector_data, block_data, earn_data, lhb_data, rps_bundle

@@ -147,6 +147,7 @@ def test_workspace_collects_structured_watchlist_radar_metrics():
                     {
                         "代码": "300750",
                         "细分板块": "液冷 / 储能链",
+                        "备注": "宁德液冷主线",
                     }
                 ]
             ),
@@ -178,17 +179,18 @@ def test_workspace_collects_structured_watchlist_radar_metrics():
                         "上榜净买额(万)": 1200,
                         "机构净买(万)": 800,
                         "外资净买(万)": -150,
+                        "买点": "触发",
                     }
                 ]
             ),
         },
     )
 
-    na_data, na_subsector_data, block_data, earn_data, lhb_data, rps_bundle = (
+    remark_data, na_subsector_data, block_data, earn_data, lhb_data, rps_bundle = (
         ClassicWorkspace.collect_watchlist_radar_data(workspace)
     )
 
-    assert na_data == {}
+    assert remark_data == {"300750": "宁德液冷主线"}
     assert na_subsector_data == {"300750": "液冷 / 储能链"}
     assert rps_bundle == {"cached": True}
     assert block_data["300750"]["text"] == "机构专用买入2709万"
@@ -197,6 +199,7 @@ def test_workspace_collects_structured_watchlist_radar_metrics():
     assert earn_data["300750"]["qoq_pct"] == 32.5
     assert lhb_data["300750"]["text"] == "04-20 | 净买1200万 | 机构净买800万 | 外资净卖150万"
     assert lhb_data["300750"]["net_wan"] == 1200
+    assert lhb_data["300750"]["buy_point"] == "触发"
 
 
 def test_workspace_collects_na_daily_context_from_cache_without_loading_lazy_tab(monkeypatch):
@@ -675,21 +678,23 @@ def test_workspace_watchlist_subsector_prefers_ai_chain_over_na_daily():
             ),
             "ai_industry_chain": _make_rows_tab(
                 [
-                    {"代码": "300750", "细分板块": "液冷 / 储能链"},
-                    {"代码": "300750", "细分板块": "后续重复分类"},
+                    {"代码": "300750", "细分板块": "液冷 / 储能链", "备注": "液冷主线"},
+                    {"代码": "300750", "细分板块": "后续重复分类", "备注": "补充备注"},
+                    {"代码": "300750", "细分板块": "后续重复分类", "备注": "补充备注"},
                     {"代码": "688498", "细分板块": "光芯片"},
                 ]
             ),
         },
     )
 
-    _, na_subsector_data, *_ = ClassicWorkspace.collect_watchlist_radar_data(
+    remark_data, na_subsector_data, *_ = ClassicWorkspace.collect_watchlist_radar_data(
         workspace,
         target_codes={"300750", "002415"},
     )
 
+    assert remark_data == {"300750": "液冷主线 / 补充备注"}
     assert na_subsector_data == {
-        "300750": "液冷 / 储能链",
+        "300750": "液冷 / 储能链 / 后续重复分类",
         "002415": "北美战报独有分类",
     }
 
@@ -705,6 +710,7 @@ def test_workspace_collects_lhb_radar_from_deferred_cache_reader():
                         "上榜净买额(万)": 1200,
                         "机构净买(万)": 800,
                         "外资净买(万)": -150,
+                        "买点": "触发",
                     }
                 ]
             ),
@@ -715,6 +721,7 @@ def test_workspace_collects_lhb_radar_from_deferred_cache_reader():
 
     assert lhb_data["300750"]["text"] == "04-20 | 净买1200万 | 机构净买800万 | 外资净卖150万"
     assert lhb_data["300750"]["date"] == "20260420"
+    assert lhb_data["300750"]["buy_point"] == "触发"
 
 
 def test_workspace_refreshes_all_tabs_after_f5():

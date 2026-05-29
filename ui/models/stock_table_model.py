@@ -598,7 +598,7 @@ class StockTableModel(QAbstractTableModel):
             if key == "状态":
                 return str(raw_val or "").replace("🟢", "").replace("🟡", "").replace("🔴", "").strip()
 
-            if key == "买点" and str(raw_val or "").strip() == BUY_POINT_TEXT:
+            if key in {"买点", "龙虎榜"} and str(raw_val or "").strip() == BUY_POINT_TEXT:
                 return BUY_POINT_TRIGGER_ICON
 
             if "日" in key or "期" in key or "时间" in key:
