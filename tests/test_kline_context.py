@@ -576,6 +576,15 @@ def test_build_kline_html_hides_echarts_tooltip_panel():
     assert "id: 'lastLivePulse'" not in html
     assert "buildLastLivePulseData" not in html
     assert "const VOLUME_SPIKE_RATIO = 2.5;" in html
+    assert "function _formatVolumeWan(value)" in html
+    assert "_setText('v-vol', _formatVolumeWan(vol));" in html
+    assert "formatter: _formatVolumeWan" in html
+    assert "const KLINE_GRID_LEFT = 88;" in html
+    assert "const KLINE_GRID_RIGHT = 38;" in html
+    assert html.count("left: KLINE_GRID_LEFT") == 3
+    assert html.count("right: KLINE_GRID_RIGHT") == 3
+    assert "left: '7%'" not in html
+    assert "right: '2%'" not in html
     assert "id: 'volumeDry'" in html
     assert "barMaxWidth: 9" in html
     assert "buildVolumeSpikeParticles()" in html

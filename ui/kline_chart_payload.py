@@ -411,6 +411,8 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
         let downColor = themeState.down_color;
         const MA_LINE_WIDTH_SCALE = 1.18;
         const VOLUME_SPIKE_RATIO = 2.5;
+        const KLINE_GRID_LEFT = 88;
+        const KLINE_GRID_RIGHT = 38;
         let glassFused = false;
 
         function _setCssVar(name, value) {{
@@ -540,9 +542,15 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             return Number.isFinite(num) ? num.toFixed(2) : '-';
         }}
 
-        function _formatVolume(value) {{
+        function _formatVolumeWan(value) {{
             const volume = Number(value || 0);
-            return Number.isFinite(volume) ? (volume / 10000).toFixed(0) + '\\u4e07' : '-';
+            if (!Number.isFinite(volume)) return '-';
+            const wan = volume / 10000;
+            const absWan = Math.abs(wan);
+            if (absWan >= 1000) return Math.round(wan).toLocaleString('zh-CN') + '\\u4e07';
+            if (absWan >= 100) return wan.toFixed(0) + '\\u4e07';
+            if (absWan >= 10) return wan.toFixed(1).replace(/\\.0$/, '') + '\\u4e07';
+            return wan.toFixed(2).replace(/\\.00$/, '').replace(/(\\.\\d)0$/, '$1') + '\\u4e07';
         }}
 
         function _setText(id, value) {{
@@ -597,7 +605,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
 
                 const volEntry = rawData.vols[idx];
                 const vol = volEntry && volEntry.value !== undefined ? volEntry.value : volEntry;
-                _setText('v-vol', _formatVolume(vol));
+                _setText('v-vol', _formatVolumeWan(vol));
 
                 const maKeys = ['ma10', 'ma20', 'ma50', 'ma150', 'ma200'];
                 for (const key of maKeys) {{
@@ -900,9 +908,9 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                     textStyle: {{ color: themeState.tooltip_text, fontFamily: themeState.mono_font_family }}
                 }},
                 grid: [
-                    {{ left: '7%', right: '2%', top: 18, height: '56%' }},
-                    {{ left: '7%', right: '2%', top: '67%', height: '11%' }},
-                    {{ left: '7%', right: '2%', top: '81%', height: '12%' }}
+                    {{ left: KLINE_GRID_LEFT, right: KLINE_GRID_RIGHT, top: 18, height: '56%' }},
+                    {{ left: KLINE_GRID_LEFT, right: KLINE_GRID_RIGHT, top: '67%', height: '11%' }},
+                    {{ left: KLINE_GRID_LEFT, right: KLINE_GRID_RIGHT, top: '81%', height: '12%' }}
                 ],
                 xAxis: [
                     {{
@@ -955,7 +963,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         scale: true,
                         gridIndex: 1,
                         splitNumber: 2,
-                        axisLabel: {{ color: themeState.axis_label, fontFamily: themeState.mono_font_family }},
+                        axisLabel: {{ color: themeState.axis_label, fontFamily: themeState.mono_font_family, formatter: _formatVolumeWan }},
                         axisLine: {{ lineStyle: {{ color: themeState.axis_line }} }},
                         splitLine: {{ show: false }}
                     }},
