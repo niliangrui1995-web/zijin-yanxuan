@@ -19,7 +19,7 @@ internal static class Program
             var basePythonw = !string.IsNullOrWhiteSpace(baseHome)
                 ? Path.Combine(baseHome, "pythonw.exe")
                 : "";
-            var pythonw = File.Exists(venvPythonw) ? venvPythonw : basePythonw;
+            var pythonw = File.Exists(basePythonw) ? basePythonw : venvPythonw;
             if (string.IsNullOrWhiteSpace(pythonw) || !File.Exists(pythonw))
             {
                 throw new FileNotFoundException("pythonw.exe not found", venvPythonw);

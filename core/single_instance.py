@@ -40,6 +40,8 @@ def acquire_single_instance_lock(
     kernel32_api = kernel32 or ctypes.WinDLL("kernel32", use_last_error=True)
     last_error = get_last_error or ctypes.get_last_error
 
+    if get_last_error is None:
+        ctypes.set_last_error(0)
     handle = kernel32_api.CreateMutexW(None, True, name)
     if not handle:
         return SingleInstanceLock()
@@ -49,3 +51,30 @@ def acquire_single_instance_lock(
         return SingleInstanceLock(already_running=True)
 
     return SingleInstanceLock(_handle=handle, _close_handle=kernel32_api.CloseHandle)
+
+
+def is_single_instance_running(
+    name: str = APP_SINGLE_INSTANCE_MUTEX,
+    *,
+    os_name: str | None = None,
+    kernel32: Any | None = None,
+    get_last_error: Callable[[], int] | None = None,
+) -> bool:
+    if (os_name or os.name) != "nt":
+        return False
+
+    import ctypes
+
+    kernel32_api = kernel32 or ctypes.WinDLL("kernel32", use_last_error=True)
+    last_error = get_last_error or ctypes.get_last_error
+
+    if get_last_error is None:
+        ctypes.set_last_error(0)
+    handle = kernel32_api.CreateMutexW(None, False, name)
+    if not handle:
+        return False
+
+    try:
+        return last_error() == ERROR_ALREADY_EXISTS
+    finally:
+        kernel32_api.CloseHandle(handle)

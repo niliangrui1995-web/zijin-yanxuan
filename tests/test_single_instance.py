@@ -1,4 +1,4 @@
-from core.single_instance import ERROR_ALREADY_EXISTS, acquire_single_instance_lock
+from core.single_instance import ERROR_ALREADY_EXISTS, acquire_single_instance_lock, is_single_instance_running
 
 
 class FakeKernel32:
@@ -55,3 +55,31 @@ def test_single_instance_lock_closes_duplicate_mutex_handle():
     lock.release()
 
     assert kernel32.closed == [456]
+
+
+def test_single_instance_probe_detects_existing_mutex():
+    kernel32 = FakeKernel32(handle=789)
+
+    running = is_single_instance_running(
+        os_name="nt",
+        kernel32=kernel32,
+        get_last_error=lambda: ERROR_ALREADY_EXISTS,
+    )
+
+    assert running is True
+    assert kernel32.names == [(None, False, "VCPHunterQuantTerminal_SingleInstance")]
+    assert kernel32.closed == [789]
+
+
+def test_single_instance_probe_closes_new_mutex():
+    kernel32 = FakeKernel32(handle=987)
+
+    running = is_single_instance_running(
+        os_name="nt",
+        kernel32=kernel32,
+        get_last_error=lambda: 0,
+    )
+
+    assert running is False
+    assert kernel32.names == [(None, False, "VCPHunterQuantTerminal_SingleInstance")]
+    assert kernel32.closed == [987]

@@ -43,3 +43,21 @@ def test_runtime_requirements_target_python314_scipy():
     assert "# Python 3.14+" in requirements
     assert "scipy>=1.17.1" in requirements
     assert "python_version" not in requirements
+
+
+def test_dev_shortcut_uses_silent_launcher():
+    script = (Path(__file__).resolve().parents[1] / "scripts" / "install_windows_shortcut.ps1").read_text(
+        encoding="utf-8",
+    )
+
+    assert "Ensure-SilentLauncherExe" in script
+    assert "TargetPath = $LauncherExe" in script
+    assert 'Arguments = (\'"{0}"\' -f $RepoRoot)' in script
+
+
+def test_silent_launcher_prefers_base_pythonw_to_avoid_venv_redirector_parent():
+    source = (Path(__file__).resolve().parents[1] / "scripts" / "launch_windows_silent.cs").read_text(
+        encoding="utf-8",
+    )
+
+    assert "File.Exists(basePythonw) ? basePythonw : venvPythonw" in source

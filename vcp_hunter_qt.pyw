@@ -9,9 +9,12 @@ from core.runtime_env import (
     relaunch_into_project_venv_if_needed,
     set_windows_app_user_model_id,
 )
-from core.single_instance import acquire_single_instance_lock
+from core.single_instance import acquire_single_instance_lock, is_single_instance_running
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+
+if is_single_instance_running():
+    sys.exit(0)
 
 # Prefer the project-local interpreter before importing Qt or other native modules.
 relaunch_into_project_venv_if_needed(PROJECT_ROOT, script_path=__file__)
