@@ -1,3 +1,4 @@
+from scripts import perf_round5_probe
 from scripts.perf_round5_probe import (
     _effective_probe_tabs,
     _loaded_info_source_keys,
@@ -190,6 +191,12 @@ def test_round5_report_lists_only_loaded_info_source_tabs():
             ]
 
     assert _loaded_info_source_keys(_Workspace()) == {"earnings"}
+
+
+def test_round5_probe_parse_args_exposes_auto_refresh_enabled_flag():
+    args = perf_round5_probe._parse_args(["--no-auto-refresh-enabled"])
+
+    assert args.auto_refresh_enabled is False
 
 
 def test_runtime_health_suite_supports_explicit_soak_minutes():

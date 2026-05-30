@@ -8,7 +8,7 @@ Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatil
 >
 > 当前仓库已经移除 `AI 诊股`、`AI 追踪`、`ai_service.py`、`ai_diag_panel.py` 等旧模块。本文档仅描述仓库当前实际存在的架构和代码。
 
-![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue)
+![Python 3.14](https://img.shields.io/badge/Python-3.14-blue)
 ![PyQt6](https://img.shields.io/badge/UI-PyQt6-green)
 ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)
 ![License](https://img.shields.io/badge/License-Private-red)
@@ -63,7 +63,7 @@ Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatil
 
 ## 技术栈
 
-- 语言：Python 3.10+
+- 语言：Python 3.14
 - UI：PyQt6、PyQt6-WebEngine、自研动态 QSS 主题系统
 - 表格模型：`QTableView` + `QAbstractTableModel`
 - 数据处理：pandas、numpy、polars、pyarrow、openpyxl、lxml
@@ -254,7 +254,7 @@ QuoteUniverseService.collect_realtime_quote_codes()
 推荐环境：
 
 - Windows 10 / 11
-- Python 3.10 或 3.11（64 位）
+- Python 3.14（64 位）
 - 已安装通达信，并可访问本地 `vipdoc` 数据目录
 - 可访问东方财富、AkShare、Yahoo Finance 相关数据源
 
@@ -279,7 +279,7 @@ cd 紫金研选
 ### 2. 创建虚拟环境
 
 ```powershell
-py -3.10 -m venv .venv
+py -3.14 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 ```
@@ -432,7 +432,7 @@ pytest tests/test_table_refresh_state.py tests/test_rt_table_model_incremental.p
 
 - `tests/conftest.py` 会统一创建 `QApplication`，避免 PyQt 测试直接崩溃
 - 多数表格与行情链路已经有回归测试覆盖
-- CI 当前覆盖 Python 3.10 快速审计、Python 3.11 主测试、Windows smoke、Ruff、UTF-8、架构边界、启动编排、服务边界和工作区聚合等核心护栏，配置位于 `.github/workflows/ci.yml`
+- CI 当前覆盖 Python 3.14 快速审计、主测试、Windows smoke、Ruff、UTF-8、架构边界、启动编排、服务边界和工作区聚合等核心护栏，配置位于 `.github/workflows/ci.yml`
 
 ### 代码检查
 

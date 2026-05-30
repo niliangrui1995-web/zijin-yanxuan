@@ -29,6 +29,43 @@ def test_watchlist_summary_card_prefers_structured_amount_and_qoq_metrics():
     assert "龙虎 净买1,200万" in event_row["value"]
 
 
+def test_watchlist_summary_card_uses_watchlist_remark_before_legacy_catalyst():
+    cards = build_kline_summary_cards(
+        {
+            "__source_tab_key": "watchlist",
+            "摘要": "AI链备注",
+            "备注": "一季度 32.5%",
+            "催化剂": "旧催化剂",
+            "业绩异动": "一季度 32.5%",
+        },
+        is_fav=True,
+    )
+
+    remark_row = cards[1]["rows"][0]
+
+    assert remark_row["label"] == "备注"
+    assert remark_row["value"] == "AI链备注"
+
+
+def test_watchlist_summary_card_falls_back_to_legacy_battle_report_fields():
+    cards = build_kline_summary_cards(
+        {
+            "__source_tab_key": "watchlist",
+            "催化剂": "800VDC电源架构转型",
+            "美股日报": "旧战报摘要",
+            "风控": "中",
+            "评级": "★★★",
+        },
+        is_fav=True,
+    )
+
+    remark_row = cards[1]["rows"][0]
+
+    assert cards[1]["title"] == "事件跟踪"
+    assert remark_row["label"] == "催化剂"
+    assert remark_row["value"] == "800VDC电源架构转型"
+
+
 def test_generic_kline_summary_formats_plain_pct_value():
     cards = build_kline_summary_cards(
         {

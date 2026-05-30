@@ -242,6 +242,7 @@ def _build_watchlist_summary_cards(payload: dict) -> list[dict]:
                 _summary_option_row(
                     payload,
                     [
+                        ("备注", ("摘要", "备注")),
                         ("催化剂", ("催化剂",)),
                         ("美股日报", ("美股日报",)),
                     ],

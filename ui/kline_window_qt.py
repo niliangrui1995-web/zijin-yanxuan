@@ -26,7 +26,7 @@ log = get_logger(__name__)
 import pandas as pd
 from PyQt6.QtCore import QEvent, Qt, QTimer, QUrl
 from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
 from ui.kline_chart_payload import (
     build_kline_echarts_payload,
@@ -251,23 +251,31 @@ class KLineChartWindow(QWidget):
         self._summary_key_color = ""
         self._summary_value_color = ""
         self._summary_highlight_color = ""
-        for _ in range(3):
+        summary_card_widths = ((160, 240), (260, 520), (180, 280))
+        for card_idx in range(3):
             card = QFrame()
             card.setObjectName("klineSummaryCard")
+            min_width, max_width = summary_card_widths[card_idx]
+            card.setMinimumWidth(min_width)
+            card.setMaximumWidth(max_width)
+            card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             card_layout = QVBoxLayout(card)
             card_layout.setContentsMargins(10, 6, 10, 6)
             card_layout.setSpacing(3)
 
             title_lbl = QLabel("--")
             title_lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+            title_lbl.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
             card_layout.addWidget(title_lbl)
 
             value_labels = []
             for _row_idx in range(2):
                 label = QLabel("--")
+                label.setMinimumWidth(0)
                 label.setMinimumHeight(18)
                 label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
                 label.setTextFormat(Qt.TextFormat.RichText)
+                label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
                 value_labels.append(label)
                 card_layout.addWidget(label)
 

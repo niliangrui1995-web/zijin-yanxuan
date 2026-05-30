@@ -11,7 +11,7 @@ import os
 import sys
 
 import pandas as pd
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QComboBox, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from app.services.ui_event_service import domain_events as event_bus
@@ -112,6 +112,7 @@ _BLOCK_TRADE_CHUNK_TIMEOUT = 15
 _BLOCK_TRADE_CALENDAR_TIMEOUT = 10
 _BLOCK_TRADE_MAX_RETRIES = 2
 _BLOCK_TRADE_TOTAL_TIMEOUT = 45
+F5_AUTO_ONLINE_REFRESH_DELAY_MS = 3000
 _BLOCK_TRADE_TIMEOUT_USER_MESSAGE = (
     "抓取超时：45秒内未拿到完整结果。通常是当前网络较慢，"
     "或 VPN/代理影响了国内数据源；可稍后重试，必要时临时关闭 VPN 后再刷新。"
@@ -227,6 +228,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._had_rows_before_refresh = False
         self._last_auto_refresh_date = ""
         self._pending_auto_refresh_date = ""
+        self._pending_f5_online_refresh = False
 
         self.days_to_fetch = 30  # 默认拉取最近30个交易日
         self._init_ui()
@@ -765,10 +767,21 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._load_block_trade_data()
         return True
 
+    def schedule_post_online_refresh_after_f5(self) -> bool:
+        if self._pending_f5_online_refresh:
+            return False
+        self._pending_f5_online_refresh = True
+        QTimer.singleShot(F5_AUTO_ONLINE_REFRESH_DELAY_MS, self._run_pending_post_online_refresh_after_f5)
+        return True
+
+    def _run_pending_post_online_refresh_after_f5(self) -> bool:
+        self._pending_f5_online_refresh = False
+        return self.run_post_online_refresh()
+
     def refresh_data_after_f5(self) -> bool:
         self._load_local_cache()
         self.refresh_table_from_latest_snapshot(current_model=self.model, async_local=True)
-        return self.run_post_online_refresh()
+        return self.schedule_post_online_refresh_after_f5()
 
     def refresh_data_after_ai_industry_chain_update(self) -> bool:
         self._load_local_cache(emit_event=False)

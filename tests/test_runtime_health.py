@@ -96,6 +96,11 @@ def test_collect_runtime_health_includes_core_sections(qt_application):
     asian_lineage = next(entry for entry in report["data_lineage"] if entry["key"] == "asian_market")
     assert "data/Cache/asian_rt_latest.json" in asian_lineage["cache_refs"]
     assert "data/Cache/asian_realtime_latest.json" not in asian_lineage["cache_refs"]
+    lhb_lineage = next(entry for entry in report["data_lineage"] if entry["key"] == "lhb")
+    assert lhb_lineage["source"] == "LhbPoolManager cache + local_quote_snapshot"
+    assert "data/Cache/lhb_pool_30d.json" in lhb_lineage["cache_refs"]
+    assert "data/Cache/lhb_pool_20d.json" not in lhb_lineage["cache_refs"]
+    assert "local_tdx_cache" in lhb_lineage["cache_refs"]
     lineage_keys = {entry["key"] for entry in report["data_lineage"]}
     assert {"asian_market", "na_daily", "ai_industry_chain"} <= lineage_keys
     assert "system_log" not in lineage_keys

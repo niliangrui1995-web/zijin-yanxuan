@@ -460,10 +460,14 @@ class StartupOrchestrator:
             if not os.path.exists(json_cache):
                 needs_update = True
             else:
-                mtime = os.path.getmtime(json_cache)
-                mdate = datetime.date.fromtimestamp(mtime)
-                if mdate < datetime.date.today():
+                try:
+                    mtime = os.path.getmtime(json_cache)
+                except OSError:
                     needs_update = True
+                else:
+                    mdate = datetime.date.fromtimestamp(mtime)
+                    if mdate < datetime.date.today():
+                        needs_update = True
 
             if needs_update and os.path.exists(module_entry):
                 log_process_snapshot("startup.asian_sync.begin", logger=log)

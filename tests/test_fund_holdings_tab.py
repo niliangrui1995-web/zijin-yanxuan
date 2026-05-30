@@ -983,9 +983,10 @@ def test_fund_holdings_tab_runs_auto_sync_after_f5(monkeypatch):
         tab.deleteLater()
 
 
-def test_fund_holdings_refresh_after_f5_starts_auto_sync(monkeypatch):
+def test_fund_holdings_refresh_after_f5_schedules_auto_sync(monkeypatch):
     _setup_store(monkeypatch, [])
     calls = []
+    scheduled = []
     monkeypatch.setattr(
         fund_holdings_module.FundHoldingsTab,
         "refresh_table_from_latest_snapshot",
@@ -998,10 +999,19 @@ def test_fund_holdings_refresh_after_f5_starts_auto_sync(monkeypatch):
         lambda self, label, runner: calls.append(("sync", label, runner)),
         raising=False,
     )
+    monkeypatch.setattr(
+        fund_holdings_module.QTimer,
+        "singleShot",
+        lambda delay, callback: scheduled.append((delay, callback)),
+    )
 
     tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
     try:
         assert tab.refresh_data_after_f5() is True
+        assert calls == [("snapshot", tab.model, True)]
+        assert scheduled[0][0] == tab._F5_AUTO_SYNC_DELAY_MS
+
+        assert scheduled[0][1]() is True
         assert calls == [
             ("snapshot", tab.model, True),
             ("sync", "F5后自动更新", fund_holdings_module.fund_holdings_sync_service.sync_latest_all),

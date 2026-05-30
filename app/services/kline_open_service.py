@@ -6,6 +6,7 @@ KEY_NAME = "\u540d\u79f0"
 KEY_TRIGGER_DATE = "\u89e6\u53d1\u65e5\u671f"
 SCAN_CODE_KEY = KEY_CODE
 SCAN_SOURCE_KEY = "scan"
+WATCHLIST_SOURCE_KEY = "watchlist"
 
 
 def _get_signal_value(signal, key: str, default=""):
@@ -87,12 +88,20 @@ def _normalize_code_list(
     source_tab_key: str = "",
 ) -> list[dict]:
     normalized: list[dict] = []
+    source_key = str(source_tab_key or "").strip()
     for item in code_list or []:
         enriched = dict(item) if isinstance(item, dict) else {}
-        if source_tab_index >= 0:
-            enriched.setdefault("__source_tab_index", source_tab_index)
-        if source_tab_key:
-            enriched.setdefault("__source_tab_key", source_tab_key)
+        if source_key == WATCHLIST_SOURCE_KEY:
+            enriched["__source_tab_key"] = WATCHLIST_SOURCE_KEY
+            if source_tab_index >= 0:
+                enriched["__source_tab_index"] = source_tab_index
+            else:
+                enriched.pop("__source_tab_index", None)
+        else:
+            if source_tab_index >= 0:
+                enriched.setdefault("__source_tab_index", source_tab_index)
+            if source_key:
+                enriched.setdefault("__source_tab_key", source_key)
         normalized.append(enriched)
     return normalized
 

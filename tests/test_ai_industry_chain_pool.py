@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+import core.ai_industry_chain_pool as ai_pool_module
 from core.ai_industry_chain_pool import (
     filter_rows_to_ai_chain_codes,
     format_ai_industry_chain_context,
@@ -64,3 +65,38 @@ def test_ai_industry_chain_context_map_uses_segment_and_remark(tmp_path):
     assert format_ai_industry_chain_context({"细分板块": "光模块", "备注": "800G"}) == "光模块 | 800G"
     assert context_map["300308"] == "光模块 | 800G；CPO | 交换侧"
     assert context_map["002384"] == "PCB | 高速互联"
+
+
+def test_ai_industry_chain_default_stock_code_cache_reuses_matching_signature(monkeypatch, tmp_path):
+    workbook_path = tmp_path / "AI产业链.xlsx"
+    codes_cache = tmp_path / "ai_industry_chain_stock_codes.json"
+    _write_workbook(workbook_path)
+    monkeypatch.setattr(ai_pool_module, "AI_CHAIN_FILE", workbook_path)
+    monkeypatch.setattr(ai_pool_module, "AI_CHAIN_CODES_CACHE_FILE", codes_cache)
+
+    assert ai_pool_module.load_ai_industry_chain_stock_codes() == {"300308", "002384"}
+
+    def fail_rows(*_args, **_kwargs):
+        raise AssertionError("matching signature should use stock-code cache")
+
+    monkeypatch.setattr(ai_pool_module, "load_ai_industry_chain_rows", fail_rows)
+
+    assert ai_pool_module.load_ai_industry_chain_stock_codes() == {"300308", "002384"}
+
+
+def test_ai_industry_chain_default_context_cache_reuses_matching_signature(monkeypatch, tmp_path):
+    workbook_path = tmp_path / "AI产业链.xlsx"
+    context_cache = tmp_path / "ai_industry_chain_context_map.json"
+    _write_workbook(workbook_path)
+    monkeypatch.setattr(ai_pool_module, "AI_CHAIN_FILE", workbook_path)
+    monkeypatch.setattr(ai_pool_module, "AI_CHAIN_CONTEXT_CACHE_FILE", context_cache)
+
+    context_map = ai_pool_module.load_ai_industry_chain_context_map()
+    assert context_map["300308"] == "光模块 | 800G"
+
+    def fail_rows(*_args, **_kwargs):
+        raise AssertionError("matching signature should use context cache")
+
+    monkeypatch.setattr(ai_pool_module, "load_ai_industry_chain_rows", fail_rows)
+
+    assert ai_pool_module.load_ai_industry_chain_context_map()["300308"] == "光模块 | 800G"

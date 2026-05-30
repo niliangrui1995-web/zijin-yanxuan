@@ -122,11 +122,13 @@ def test_scan_tab_auto_f5_incremental_scan_starts_when_idle(monkeypatch):
 
 
 def test_scan_tab_refresh_data_after_f5_loads_cache_and_starts_incremental(monkeypatch):
-    monkeypatch.setattr("ui.tabs.scan_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+    scheduled = []
+    monkeypatch.setattr("ui.tabs.scan_tab.QTimer.singleShot", lambda delay, callback: scheduled.append((delay, callback)))
 
     tab = ScanTab(data_provider=None, engine=None)
     calls = []
     try:
+        scheduled.clear()
         tab._load_scan_cache = lambda: calls.append("load_cache")
         tab.refresh_table_from_latest_snapshot = lambda current_model=None, *, async_local=True: calls.append(
             (current_model, async_local)
@@ -134,6 +136,10 @@ def test_scan_tab_refresh_data_after_f5_loads_cache_and_starts_incremental(monke
         tab.run_auto_incremental_scan_after_f5 = lambda: calls.append("incremental") or True
 
         assert tab.refresh_data_after_f5() is True
+        assert calls == ["load_cache", (tab.source_model, True)]
+        assert scheduled[0][0] == ScanTab.F5_AUTO_INCREMENTAL_DELAY_MS
+
+        assert scheduled[0][1]() is True
         assert calls == ["load_cache", (tab.source_model, True), "incremental"]
     finally:
         tab.deleteLater()

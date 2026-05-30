@@ -337,7 +337,7 @@ def test_extract_cache_filter_options_and_save_gate():
     assert not ForeignBlockTradeTab._should_save_cache(["20260420-20260420"], [])
 
 
-def test_foreign_block_trade_refresh_after_f5_loads_cache_and_starts_online_refresh():
+def test_foreign_block_trade_refresh_after_f5_loads_cache_and_schedules_online_refresh():
     calls = []
     tab = SimpleNamespace(
         _load_local_cache=lambda: calls.append("local_cache"),
@@ -345,11 +345,32 @@ def test_foreign_block_trade_refresh_after_f5_loads_cache_and_starts_online_refr
         refresh_table_from_latest_snapshot=(
             lambda current_model=None, *, async_local=True: calls.append(("snapshot", current_model, async_local))
         ),
-        run_post_online_refresh=lambda: calls.append("online") or True,
+        schedule_post_online_refresh_after_f5=lambda: calls.append("scheduled") or True,
     )
 
     assert ForeignBlockTradeTab.refresh_data_after_f5(tab) is True
-    assert calls == ["local_cache", ("snapshot", tab.model, True), "online"]
+    assert calls == ["local_cache", ("snapshot", tab.model, True), "scheduled"]
+
+
+def test_foreign_block_trade_f5_online_refresh_runs_after_delay(monkeypatch):
+    calls = []
+    scheduled = []
+    monkeypatch.setattr(
+        foreign_module.QTimer,
+        "singleShot",
+        lambda delay, callback: scheduled.append((delay, callback)),
+    )
+    tab = ForeignBlockTradeTab.__new__(ForeignBlockTradeTab)
+    tab._pending_f5_online_refresh = False
+    tab.run_post_online_refresh = lambda: calls.append("online") or True
+
+    assert ForeignBlockTradeTab.schedule_post_online_refresh_after_f5(tab) is True
+    assert tab._pending_f5_online_refresh is True
+    assert scheduled[0][0] == foreign_module.F5_AUTO_ONLINE_REFRESH_DELAY_MS
+
+    assert scheduled[0][1]() is True
+    assert tab._pending_f5_online_refresh is False
+    assert calls == ["online"]
 
 
 def test_foreign_block_trade_refresh_after_ai_chain_update_reloads_without_reemitting():

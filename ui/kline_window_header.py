@@ -23,6 +23,16 @@ from ui.theme_tokens import build_ui_tokens, get_state_tone
 
 log = get_logger(__name__)
 
+SUMMARY_TOOLTIP_WIDE_THRESHOLD = 36
+SUMMARY_TOOLTIP_WIDTH = 560
+
+
+def _summary_tooltip_value_html(value_text: str) -> str:
+    clean_value = str(value_text or "").strip()
+    if not clean_value:
+        return ""
+    return "<br/>".join(html.escape(line.strip()) for line in clean_value.splitlines())
+
 
 def _elide_summary_value(label, key_text: str, value_text: str) -> str:
     clean_value = str(value_text or "").strip()
@@ -37,6 +47,31 @@ def _elide_summary_value(label, key_text: str, value_text: str) -> str:
     key_width = metrics.horizontalAdvance(key_text) + 24
     value_width = max(available_width - key_width, 36)
     return metrics.elidedText(clean_value, Qt.TextElideMode.ElideRight, value_width)
+
+
+def _build_summary_tooltip(key_text: str, value_text: str) -> str:
+    clean_value = str(value_text or "").strip()
+    if not clean_value or clean_value == "--":
+        return ""
+
+    clean_key = str(key_text or "").strip()
+    is_long = len(clean_value) >= SUMMARY_TOOLTIP_WIDE_THRESHOLD
+    width_style = f"width: {SUMMARY_TOOLTIP_WIDTH}px;" if is_long else ""
+    key_text_html = html.escape(clean_key)
+    if is_long:
+        key_html = f"<div style='color:#9CA3AF; margin-bottom:4px;'>{key_text_html}</div>" if clean_key else ""
+    else:
+        key_html = f"<span style='color:#9CA3AF;'>{key_text_html}：</span>" if clean_key else ""
+    value_html = _summary_tooltip_value_html(clean_value)
+    return (
+        "<qt>"
+        f"<div style='{width_style} white-space: normal; word-break: normal; overflow-wrap: normal; "
+        'font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif; '
+        "font-size: 14px; line-height: 1.55; color: #E5E7EB;'>"
+        f"{key_html}<span>{value_html}</span>"
+        "</div>"
+        "</qt>"
+    )
 
 
 def _summary_signed_number(value_text: str) -> float | None:
@@ -172,14 +207,14 @@ def refresh_header_context(window) -> None:
                     else getattr(window, "_summary_aux_size", 12)
                 )
                 value_weight = 700 if row_index == 0 else 600
+                value_font = getattr(window, "_summary_value_font", "monospace")
                 label.setText(
                     f"<span style='color:{window._summary_key_color};'>{html.escape(key_text)}</span>"
                     f"&nbsp;&nbsp;<span style='color:{value_color}; font-weight:{value_weight};"
-                    f" font-size:{value_size}px;'>"
+                    f" font-size:{value_size}px; font-family:{value_font};'>"
                     f"{html.escape(display_value)}</span>"
                 )
-                tooltip = f"{key_text}: {raw_value}" if raw_value and raw_value != "--" else ""
-                label.setToolTip(tooltip)
+                label.setToolTip(_build_summary_tooltip(key_text, raw_value))
 
 
 def resolve_vcp_context(window, code: str, name: str, item_data: dict | None = None) -> dict:
@@ -377,8 +412,9 @@ def apply_qt_theme(window) -> None:
     window._summary_key_color = theme["TEXT_MUTED"]
     window._summary_value_color = widget_text
     window._summary_highlight_color = vcp_star
-    window._summary_core_size = font["size_lg"]
+    window._summary_core_size = font["size_xl"]
     window._summary_aux_size = font["size_sm"]
+    window._summary_value_font = font["mono_family"]
     for card in window.summary_cards:
         card["frame"].setStyleSheet(
             f"""

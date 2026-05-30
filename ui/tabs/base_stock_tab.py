@@ -565,7 +565,6 @@ class BaseStockTab(QWidget):
         widgets: list[QWidget] | None,
         *,
         h_spacing: int | None = None,
-        v_spacing: int | None = None,
     ) -> QWidget | None:
         valid_widgets = [widget for widget in (widgets or []) if widget is not None]
         if not valid_widgets:

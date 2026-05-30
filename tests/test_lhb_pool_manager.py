@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import pandas as pd
 
+import core.lhb_pool_manager as lhb_pool_module
 from core.lhb_pool_manager import LhbPoolManager
 
 
@@ -292,3 +293,51 @@ def test_compute_pool_keeps_missing_rps_when_rps_cache_coverage_is_abnormal(monk
     pool = manager.compute_pool(data_provider=provider, engine=engine)
 
     assert [row["代码"] for row in pool] == ["000002", "000001"]
+
+
+def test_lhb_pool_manager_reuses_json_payload_by_file_signature(monkeypatch, tmp_path):
+    cache_path = tmp_path / "lhb_pool_30d.json"
+    cache_path.write_text(
+        """
+{
+  "version": 2,
+  "last_auto_fetch_date": "20260508",
+  "daily_data": {
+    "20260508": [
+      {"代码": "603738", "名称": "泰晶科技"}
+    ]
+  },
+  "day_meta": {}
+}
+""".strip(),
+        encoding="utf-8",
+    )
+    LhbPoolManager._loaded_payload_cache.clear()
+    load_calls = []
+    real_load = lhb_pool_module.json.load
+
+    def counting_load(handle):
+        load_calls.append(handle.name)
+        return real_load(handle)
+
+    monkeypatch.setattr(lhb_pool_module.json, "load", counting_load)
+
+    first = object.__new__(LhbPoolManager)
+    first._cache_path = str(cache_path)
+    first._legacy_pool_cache_path = str(tmp_path / "lhb_pool_20d.json")
+    first._data = {}
+    first._day_meta = {}
+    first._last_auto_fetch_date = ""
+    first._load()
+    first._data["20260508"][0]["代码"] = "MUTATED"
+
+    second = object.__new__(LhbPoolManager)
+    second._cache_path = str(cache_path)
+    second._legacy_pool_cache_path = str(tmp_path / "lhb_pool_20d.json")
+    second._data = {}
+    second._day_meta = {}
+    second._last_auto_fetch_date = ""
+    second._load()
+
+    assert len(load_calls) == 1
+    assert second._data["20260508"][0]["代码"] == "603738"

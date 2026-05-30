@@ -1,32 +1,32 @@
 # Runtime dependencies for 紫金研选
-# Python 3.10+
+# Python 3.14+
 
 # Core dependencies
-PyQt6>=6.5.0
-PyQt6-WebEngine>=6.5.0
+PyQt6>=6.11.0
+PyQt6-WebEngine>=6.11.0
 pytdx>=1.72
-pandas>=1.5.0
-numpy>=1.23.0
-requests>=2.33.0
+pandas>=3.0.3
+numpy>=2.4.6
+requests>=2.34.2
 urllib3>=2.7.0
-certifi>=2024.8.30
-idna>=3.15
-openpyxl>=3.1.0
+certifi>=2026.5.20
+idna>=3.17
+openpyxl>=3.1.5
 
 # Performance helpers
-polars>=0.20.0
-pyarrow>=12.0.0
-scipy>=1.16.0
+polars>=1.41.2
+pyarrow>=24.0.0
+scipy>=1.17.1
 
 # Runtime diagnostics
-psutil>=5.9.0
+psutil>=7.2.2
 
 # Feature dependencies
 pypinyin>=0.55.0
 pyautogui>=0.9.54
 pywin32>=311; platform_system == "Windows"
-akshare>=1.18.35
-yfinance>=1.3.0,<1.4
+akshare>=1.18.64
+yfinance>=1.4.1
 curl_cffi>=0.15.0,<0.16
-lxml>=6.1.0
-tqdm>=4.66.0
+lxml>=6.1.1
+tqdm>=4.67.3

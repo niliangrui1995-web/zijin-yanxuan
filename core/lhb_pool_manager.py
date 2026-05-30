@@ -14,9 +14,11 @@ core/lhb_pool_manager.py
   ② 机构净买额 >= 0
 """
 
+import copy
 import gc
 import json
 import os
+import threading
 
 from core.ai_industry_chain_pool import load_ai_industry_chain_stock_codes, normalize_ai_chain_code
 from core.buy_point import BUY_POINT_STYLE_TEXT, calculate_buy_point_from_history
@@ -31,6 +33,8 @@ POOL_WINDOW = 30
 class LhbPoolManager:
     """龙虎榜关注池数据引擎 — 线程不安全，仅限主线程操作"""
 
+    _loaded_payload_lock = threading.RLock()
+    _loaded_payload_cache: dict[str, tuple[tuple[int, int], dict]] = {}
     _stock_universe_provider = staticmethod(load_ai_industry_chain_stock_codes)
 
     def __init__(self):
@@ -47,6 +51,42 @@ class LhbPoolManager:
     # ================================================================
     # 持久化
     # ================================================================
+    @staticmethod
+    def _cache_file_signature(cache_path: str) -> tuple[int, int] | None:
+        try:
+            stat = os.stat(cache_path)
+        except OSError:
+            return None
+        return (int(stat.st_size), int(stat.st_mtime_ns))
+
+    @classmethod
+    def _load_json_payload(cls, cache_path: str) -> dict:
+        signature = cls._cache_file_signature(cache_path)
+        if signature is None:
+            return {}
+        cache_key = os.path.abspath(cache_path)
+        with cls._loaded_payload_lock:
+            cached = cls._loaded_payload_cache.get(cache_key)
+            if cached is not None and cached[0] == signature:
+                return copy.deepcopy(cached[1])
+
+        with open(cache_path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        if not isinstance(raw, dict):
+            raw = {}
+        with cls._loaded_payload_lock:
+            cls._loaded_payload_cache[cache_key] = (signature, copy.deepcopy(raw))
+        return raw
+
+    @classmethod
+    def _remember_json_payload(cls, cache_path: str, payload: dict) -> None:
+        signature = cls._cache_file_signature(cache_path)
+        if signature is None:
+            return
+        cache_key = os.path.abspath(cache_path)
+        with cls._loaded_payload_lock:
+            cls._loaded_payload_cache[cache_key] = (signature, copy.deepcopy(payload))
+
     def _load(self):
         cache_path = self._cache_path
         if not os.path.exists(cache_path) and os.path.exists(self._legacy_pool_cache_path):
@@ -55,8 +95,7 @@ class LhbPoolManager:
         if not os.path.exists(cache_path):
             return
         try:
-            with open(cache_path, "r", encoding="utf-8") as f:
-                raw = json.load(f)
+            raw = self._load_json_payload(cache_path)
             self._data = raw.get("daily_data", {})
             self._day_meta = raw.get("day_meta", {})
             self._last_auto_fetch_date = raw.get("last_auto_fetch_date", "")
@@ -206,6 +245,7 @@ class LhbPoolManager:
             }
             with open(self._cache_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False)
+            self._remember_json_payload(self._cache_path, payload)
         except (PermissionError, OSError, TypeError, ValueError) as e:
             log.error(f"[龙虎榜池] 缓存保存失败: {e}")
 

@@ -42,6 +42,7 @@ class ScanTab(BaseStockTab):
     """
 
     AUTO_F5_INCREMENTAL_SCAN_DATE_KEY = "last_auto_incremental_after_f5_date"
+    F5_AUTO_INCREMENTAL_DELAY_MS = 1500
 
     def __init__(self, data_provider, engine, parent=None):
         super().__init__(data_provider=data_provider, parent=parent)
@@ -66,6 +67,7 @@ class ScanTab(BaseStockTab):
         )
         self._last_scan_result = None
         self._last_scan_signature = ""
+        self._pending_f5_auto_incremental = False
 
         self._init_settings_widgets()
         self._init_ui()
@@ -642,10 +644,21 @@ class ScanTab(BaseStockTab):
             self._settings.sync()
         return True
 
+    def schedule_auto_incremental_scan_after_f5(self) -> bool:
+        if self._pending_f5_auto_incremental:
+            return False
+        self._pending_f5_auto_incremental = True
+        QTimer.singleShot(self.F5_AUTO_INCREMENTAL_DELAY_MS, self._run_pending_auto_incremental_scan_after_f5)
+        return True
+
+    def _run_pending_auto_incremental_scan_after_f5(self) -> bool:
+        self._pending_f5_auto_incremental = False
+        return self.run_auto_incremental_scan_after_f5()
+
     def refresh_data_after_f5(self) -> bool:
         self._load_scan_cache()
         self.refresh_table_from_latest_snapshot(current_model=self.source_model, async_local=True)
-        return self.run_auto_incremental_scan_after_f5()
+        return self.schedule_auto_incremental_scan_after_f5()
 
     def open_scan_settings(self) -> bool:
         self._show_scan_settings()

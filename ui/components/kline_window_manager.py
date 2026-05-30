@@ -10,10 +10,13 @@ K 线窗口管理器 — 单例模式 (#1)
 现在统一收口到这里，任何人想开 K 线图只需调用 open_chart()。
 """
 
+import importlib.util
 import os
+import sys
 import threading
 import time
 import weakref
+from pathlib import Path
 
 from app.services.kline_webengine_preflight import check_qt_webengine_available
 from core.logger import get_logger
@@ -26,6 +29,29 @@ MAX_CHART_WINDOWS = 5
 PREWARM_VIEW_TTL_MS = 120_000
 WEBENGINE_PREFLIGHT_TIMEOUT_S = 8
 HIDDEN_PREWARM_ENV = "VCP_KLINE_HIDDEN_PREWARM"
+
+
+def _load_kline_window_class():
+    try:
+        from ui.kline_window_qt import KLineChartWindow
+
+        return KLineChartWindow
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"ui", "ui.kline_window_qt"}:
+            raise
+
+        module_path = Path(__file__).resolve().parents[1] / "kline_window_qt.py"
+        if not module_path.exists():
+            raise
+
+        spec = importlib.util.spec_from_file_location("ui.kline_window_qt", module_path)
+        if spec is None or spec.loader is None:
+            raise
+
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module.KLineChartWindow
 
 
 def _hidden_prewarm_enabled() -> bool:
@@ -136,6 +162,34 @@ class KLineWindowManager:
         )
         emit_structured_log(
             "kline.webengine_unavailable",
+            code=str(code or "").strip(),
+            name=str(name or "").strip(),
+            reason=reason,
+        )
+
+    def _notify_kline_module_unavailable(self, main_window, code: str, name: str, error: Exception) -> None:
+        reason = str(error or "unknown")
+        message = "K线窗口模块加载失败，请重启程序后再试"
+        try:
+            from ui.components.toast_widget import show_toast
+
+            show_toast(f"{message}：{reason}", "warning", main_window, duration=3500)
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.debug(f"[K线管理] K线模块加载失败提示发送失败: {exc}")
+        try:
+            status_bar = main_window.statusBar() if main_window is not None else None
+            if status_bar is not None:
+                status_bar.showMessage(f"{message}：{reason}", 5000)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+        record_metric(
+            "kline_window_module_unavailable",
+            1,
+            unit="count",
+            tags={"code": str(code or "").strip()},
+        )
+        emit_structured_log(
+            "kline.module_unavailable",
             code=str(code or "").strip(),
             name=str(name or "").strip(),
             reason=reason,
@@ -318,7 +372,11 @@ class KLineWindowManager:
             self._notify_webengine_unavailable(main_window, code, name)
             return None
 
-        from ui.kline_window_qt import KLineChartWindow
+        try:
+            KLineChartWindow = _load_kline_window_class()
+        except ModuleNotFoundError as exc:
+            self._notify_kline_module_unavailable(main_window, code, name, exc)
+            return None
 
         # 清理已关闭/已销毁的窗口
         alive = []

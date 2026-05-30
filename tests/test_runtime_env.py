@@ -45,10 +45,10 @@ def test_collect_runtime_env_issues_accepts_project_pythonw(tmp_path):
 
 def test_collect_runtime_env_issues_detects_requests_and_runtime_dependency_conflicts(tmp_path):
     versions = {
-        "requests": "2.32.5",
-        "yfinance": "1.2.0",
+        "requests": "2.34.1",
+        "yfinance": "1.4.0",
         "curl_cffi": "0.14.0",
-        "lxml": "6.0.4",
+        "lxml": "6.1.0",
     }
 
     issues = collect_runtime_env_issues(
@@ -66,10 +66,10 @@ def test_collect_runtime_env_issues_detects_requests_and_runtime_dependency_conf
 
 def test_collect_runtime_env_issues_accepts_security_dependency_floors(tmp_path):
     versions = {
-        "requests": "2.33.0",
-        "yfinance": "1.3.0",
+        "requests": "2.34.2",
+        "yfinance": "1.4.1",
         "curl_cffi": "0.15.0",
-        "lxml": "6.1.0",
+        "lxml": "6.1.1",
     }
 
     issues = collect_runtime_env_issues(

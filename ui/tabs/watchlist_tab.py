@@ -22,8 +22,8 @@ from core.json_cache import load_json_file
 from core.logger import get_logger
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.toast_widget import show_toast
-from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.models.stock_table_model import BUY_POINT_TRIGGER_ICON
+from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)

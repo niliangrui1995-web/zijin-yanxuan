@@ -6,6 +6,7 @@ import sys
 from collections.abc import Sequence
 
 CREATE_NO_WINDOW = 0x08000000
+PROCESS_DEVNULL = subprocess.DEVNULL
 PROXY_ENV_KEYS = (
     "HTTP_PROXY",
     "HTTPS_PROXY",
@@ -86,6 +87,18 @@ def spawn_process(command: Sequence[str | os.PathLike[str]], **kwargs):
     _validate_process_kwargs(kwargs)
     # Arguments are validated and shell=True is blocked above.
     return subprocess.Popen(_normalize_command(command), **kwargs)  # nosec
+
+
+def spawn_silent_process(command: Sequence[str | os.PathLike[str]], **kwargs):
+    kwargs.setdefault("stdin", PROCESS_DEVNULL)
+    kwargs.setdefault("stdout", PROCESS_DEVNULL)
+    kwargs.setdefault("stderr", PROCESS_DEVNULL)
+    apply_windows_no_window_kwargs(kwargs)
+    return spawn_process(command, **kwargs)
+
+
+def spawn_detached_process(command: Sequence[str | os.PathLike[str]], **kwargs):
+    return spawn_silent_process(command, **kwargs)
 
 
 def build_python_module_command(

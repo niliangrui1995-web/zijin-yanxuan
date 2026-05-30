@@ -120,6 +120,31 @@ def test_build_kline_open_request_does_not_add_scan_context_for_plain_watchlist(
     assert "_vcp_overlay_allowed" not in request["vcp_data"]
 
 
+def test_build_kline_open_request_overrides_stale_source_for_watchlist_rows():
+    request = build_kline_open_request(
+        code="002851",
+        code_name_map={"002851": "麦格米特"},
+        code_list=[
+            {
+                "代码": "002851",
+                "名称": "麦格米特",
+                "__source_tab_key": "na_daily",
+                "__source_tab_index": 2,
+                "催化剂": "800VDC电源架构转型",
+            }
+        ],
+        current_idx=0,
+        workspace=SimpleNamespace(get_scan_results=lambda: []),
+        source_tab_index=1,
+        source_tab_key="watchlist",
+    )
+
+    assert request["code_list"][0]["__source_tab_key"] == "watchlist"
+    assert request["code_list"][0]["__source_tab_index"] == 1
+    assert request["vcp_data"]["__source_tab_key"] == "watchlist"
+    assert request["vcp_data"]["__source_tab_index"] == 1
+
+
 def test_build_kline_open_request_uses_workspace_stock_context_scan_signal_for_watchlist():
     scan_signal = StockSignal(
         code="002975",

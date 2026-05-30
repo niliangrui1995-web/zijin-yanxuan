@@ -468,6 +468,57 @@ def test_workspace_collects_lhb_context_from_pool_cache_without_loading_lazy_tab
     assert signals[0].observed_at == "20260430"
 
 
+def test_workspace_skips_lhb_cache_fallback_while_loaded_lhb_tab_is_loading(monkeypatch):
+    monkeypatch.setattr(
+        StockContextService,
+        "_load_lhb_pool_rows",
+        lambda self: (_ for _ in ()).throw(AssertionError("loading LHB tab should own its cache read")),
+    )
+    lhb_tab = SimpleNamespace(get_row_data=lambda: [], _pool_load_in_progress=True)
+    workspace = SimpleNamespace(
+        tab_specs=lambda: [{"key": "lhb", "group": "info"}],
+        get_loaded_tab=lambda key: lhb_tab if key == "lhb" else None,
+        get_tab=lambda key: (_ for _ in ()).throw(AssertionError("lazy tab should not load")),
+        iter_tabs=lambda: [],
+    )
+
+    context = ClassicWorkspace.collect_stock_context(workspace)
+
+    assert context == {}
+
+
+def test_stock_context_service_reuses_lhb_fallback_cache_for_same_signature(monkeypatch):
+    import core.lhb_pool_manager as lhb_pool_module
+
+    calls = []
+
+    class _FakePoolManager:
+        def compute_pool(self, *, data_provider=None, engine=None):
+            calls.append((data_provider, engine))
+            return [
+                {
+                    stock_context_module.KEY_CODE: "300750",
+                    stock_context_module.KEY_NAME: "sample",
+                    stock_context_module.KEY_LAST_LISTED: "20260430",
+                    stock_context_module.KEY_NET_WAN: 1200,
+                    stock_context_module.KEY_INST_WAN: 800,
+                    stock_context_module.KEY_FOREIGN_WAN: 50,
+                }
+            ]
+
+    monkeypatch.setattr(lhb_pool_module, "LhbPoolManager", _FakePoolManager)
+    workspace = SimpleNamespace(engine="engine")
+    service = StockContextService(workspace)
+    monkeypatch.setattr(service, "_lhb_pool_cache_signature", lambda: ("cache", 1, 2))
+
+    first = service._load_lhb_pool_rows()
+    first[0][stock_context_module.KEY_CODE] = "MUTATED"
+    second = service._load_lhb_pool_rows()
+
+    assert calls == [(None, "engine")]
+    assert second[0][stock_context_module.KEY_CODE] == "300750"
+
+
 def test_workspace_collects_fund_holding_context_from_snapshot_without_open_tab(monkeypatch):
     monkeypatch.setattr(
         StockContextService,

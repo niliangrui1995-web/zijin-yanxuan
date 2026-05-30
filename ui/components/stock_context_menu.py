@@ -11,7 +11,6 @@ ui/components/stock_context_menu.py
 
 import os
 import re
-import subprocess
 import webbrowser
 from pathlib import Path
 from urllib.parse import urlencode
@@ -21,6 +20,8 @@ from PyQt6.QtGui import QCursor, QDesktopServices
 from PyQt6.QtWidgets import QApplication, QMenu, QMessageBox
 
 from app.services.ui_event_service import ui_signals as event_bus
+from app.services.ui_navigation_service import CODEX_LOCAL_LAUNCHER
+from app.services.ui_navigation_service import open_codex_desktop_thread as launch_codex_desktop_thread
 from app.services.ui_watchlist_service import watchlist_vm
 from ui.components.motion import install_menu_fade
 from ui.styles.context_menu_qss import generate_context_menu_qss
@@ -30,7 +31,6 @@ CODEX_NEW_THREAD_ROUTE = "codex://new"
 CODEX_PROMPT_MAX_LENGTH = 800
 CODEX_STOCK_FIELD_MAX_LENGTH = 80
 CODEX_STOCK_ANALYSIS_SKILL = "$stock-fundamental-moat-triad"
-CODEX_LOCAL_LAUNCHER = Path.home() / ".codex" / "local-tools" / "open-codex-project.ps1"
 CODEX_STOCK_PROMPT_INTRO = "深度研究"
 CODEX_CURRENT_STOCK_PROMPT = "深度研究 当前股票"
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]+")
@@ -99,8 +99,12 @@ def _warn_codex_open_failed(parent, message: str) -> None:
     QMessageBox.warning(parent, "无法打开 Codex", message)
 
 
+def _is_windows_os() -> bool:
+    return os.name == "nt"
+
+
 def _is_codex_scheme_registered() -> bool:
-    if os.name != "nt":
+    if not _is_windows_os():
         return True
 
     try:
@@ -132,31 +136,7 @@ def _open_codex_url(url: str) -> bool:
 
 
 def _open_codex_desktop_thread(thread_url: str) -> bool:
-    if not CODEX_LOCAL_LAUNCHER.is_file():
-        return False
-
-    powershell = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
-    executable = str(powershell if powershell.is_file() else "powershell.exe")
-    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    try:
-        subprocess.Popen(
-            [
-                executable,
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(CODEX_LOCAL_LAUNCHER),
-                thread_url,
-            ],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=creationflags,
-        )
-    except OSError:
-        return False
-    return True
+    return launch_codex_desktop_thread(thread_url, launcher=CODEX_LOCAL_LAUNCHER)
 
 
 def open_codex_project_thread(
@@ -169,13 +149,13 @@ def open_codex_project_thread(
     if not project_path.exists():
         _warn_codex_open_failed(parent, f"产业链投研项目路径不存在：{project_path}")
         return False
-    if os.name != "nt" and not _is_codex_scheme_registered():
+    if not _is_windows_os() and not _is_codex_scheme_registered():
         _warn_codex_open_failed(parent, "当前系统没有注册 codex:// 深链接，请先安装或修复 Codex 桌面端。")
         return False
 
     launch_prompt = prompt if prompt is not None else CODEX_CURRENT_STOCK_PROMPT
     url = build_codex_project_thread_url(project_path, prompt=launch_prompt)
-    if os.name == "nt":
+    if _is_windows_os():
         opened = _open_codex_desktop_thread(url)
     else:
         opened = _open_codex_url(url)

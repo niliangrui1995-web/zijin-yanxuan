@@ -4,9 +4,10 @@ import json
 
 import pandas as pd
 from PyQt6.QtCore import QEvent, Qt, QUrl
-from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtWidgets import QApplication, QSizePolicy, QWidget
 
 from core.task_manager import task_manager
+from ui import kline_window_header as header_module
 from ui import kline_window_qt as kline_module
 from ui.components import kline_window_manager as manager_module
 from ui.components.kline_window_manager import KLineWindowManager
@@ -337,6 +338,76 @@ def test_kline_header_action_controls_share_same_height(monkeypatch):
         assert window.btn_fav.accessibleDescription() == "将当前股票加入或移出关注池"
     finally:
         _dispose_kline_window(window)
+
+
+def test_kline_summary_cards_keep_bounded_width_for_long_watchlist_note(monkeypatch):
+    monkeypatch.setattr(kline_module, "QWebEngineView", QWidget)
+    monkeypatch.setattr(kline_module.KLineChartWindow, "_load_and_draw", lambda self: None)
+    monkeypatch.setattr(
+        kline_module.KLineChartWindow,
+        "_check_fav_status",
+        lambda self: setattr(self, "is_fav", True),
+    )
+
+    long_note = "光纤光缆、特种光缆和通信网络平台，公开资料披露AI算力带动高性能特种光纤光缆需求"
+    window = kline_module.KLineChartWindow(
+        None,
+        "600522",
+        "中天科技",
+        _DummyProvider(),
+        vcp_data={
+            "__source_tab_key": "watchlist",
+            "摘要": long_note,
+            "业绩异动": "净买204.005.83万",
+        },
+        code_list=[{"代码": "600522", "名称": "中天科技"}],
+        current_idx=0,
+    )
+    try:
+        assert [card["frame"].maximumWidth() for card in window.summary_cards] == [240, 520, 280]
+        assert all(
+            label.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Ignored
+            for card in window.summary_cards
+            for label in card["labels"]
+        )
+        tooltip = window.summary_cards[1]["labels"][0].toolTip()
+        assert "width: 560px" in tooltip
+        assert "font-size: 14px" in tooltip
+        assert "line-height: 1.55" in tooltip
+        assert "<br/>" not in tooltip
+        assert "光纤光缆、特种光缆和通信网络平台" in tooltip
+    finally:
+        _dispose_kline_window(window)
+
+
+def test_kline_summary_tooltip_uses_natural_wrap_for_long_watchlist_note():
+    note = (
+        "电力电子平台，2025年报披露数据中心通用及AI服务器电源和系统产品拓展顺利，"
+        "并聚焦AI算力基础设施供电系统；网络电源可支持通信、交换机、通用服务器和AI服务器场景。"
+        "主板块保留数据中心电源，风险是AI电源研发投入压制利润、海外客户导入节奏和800VDC/BBU/Power Shelf规模收入验证。"
+        "证据A/B。"
+    )
+
+    tooltip = header_module._build_summary_tooltip("备注", note)
+
+    assert "width: 560px" in tooltip
+    assert ">备注</div>" in tooltip
+    assert "<br/>" not in tooltip
+    assert "AI" in tooltip
+    assert "拓展" in tooltip
+    assert "顺利" in tooltip
+    assert "800VDC/BBU/" in tooltip
+    assert "Power Shelf规模收入验证" in tooltip
+
+
+def test_kline_summary_tooltip_preserves_source_newlines_only():
+    note = "第一行是原文自带换行。\n第二行仍然按悬浮框宽度自然换行。"
+
+    tooltip = header_module._build_summary_tooltip("备注", note)
+
+    assert "<br/>" in tooltip
+    assert "第一行是原文自带换行" in tooltip
+    assert "第二行仍然按悬浮框宽度自然换行" in tooltip
 
 
 def test_kline_header_exposes_session_and_feed_badges(monkeypatch):

@@ -8,6 +8,7 @@ from collections import defaultdict
 from collections.abc import Iterable
 from pathlib import Path
 
+from core.exceptions import CacheIOError, DataFormatError
 from ui.workspaces.stock_signal import StockSignal, coerce_stock_signal
 from ui.workspaces.tab_capabilities import ForeignKeywordCapability, StockSignalSourceCapability
 
@@ -82,6 +83,9 @@ class StockContextService:
         self._fund_rows_snapshot: list[dict] = []
         self._fund_rows_loaded = False
         self._fund_rows_loading = False
+        self._lhb_rows_lock = threading.RLock()
+        self._lhb_rows_snapshot: list[dict] = []
+        self._lhb_rows_signature: tuple[str, int, int] | None = None
 
     @staticmethod
     def _safe_float(value, default: float = 0.0) -> float:
@@ -235,7 +239,16 @@ class StockContextService:
             from core.json_cache import load_json_file
 
             payload = load_json_file(str(cache_path))
-        except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
+        except (
+            AttributeError,
+            ImportError,
+            CacheIOError,
+            DataFormatError,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ):
             return []
         if not isinstance(payload, dict):
             return []
@@ -247,7 +260,16 @@ class StockContextService:
             from core.json_cache import load_json_file
 
             payload = load_json_file(str(cache_path))
-        except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
+        except (
+            AttributeError,
+            ImportError,
+            CacheIOError,
+            DataFormatError,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ):
             return []
         if not isinstance(payload, dict):
             return []
@@ -290,7 +312,24 @@ class StockContextService:
             )
         return rows
 
+    def _lhb_pool_cache_signature(self) -> tuple[str, int, int] | None:
+        cache_path = self._project_root() / "data" / "Cache" / "lhb_pool_30d.json"
+        legacy_path = self._project_root() / "data" / "Cache" / "lhb_pool_20d.json"
+        if not cache_path.exists() and legacy_path.exists():
+            cache_path = legacy_path
+        try:
+            stat = cache_path.stat()
+        except OSError:
+            return None
+        return (str(cache_path), int(stat.st_size), int(stat.st_mtime_ns))
+
     def _load_lhb_pool_rows(self) -> list[dict]:
+        signature = self._lhb_pool_cache_signature()
+        if signature is not None:
+            with self._lhb_rows_lock:
+                if signature == self._lhb_rows_signature:
+                    return [dict(row) for row in self._lhb_rows_snapshot]
+
         try:
             from core.lhb_pool_manager import LhbPoolManager
 
@@ -308,6 +347,10 @@ class StockContextService:
                 row[KEY_LAST_LISTED_RAW] = raw_date
                 row[KEY_LAST_LISTED] = f"{raw_date[4:6]}-{raw_date[6:8]}"
             rows.append(row)
+        if signature is not None:
+            with self._lhb_rows_lock:
+                self._lhb_rows_snapshot = [dict(row) for row in rows]
+                self._lhb_rows_signature = signature
         return rows
 
     def refresh_watchlist_names(self, code2name: dict[str, str]) -> bool:
@@ -849,7 +892,8 @@ class StockContextService:
         if not self._has_tab_key("lhb", lhb_tab):
             return []
         rows = self._get_rows(lhb_tab)
-        if not rows and include_cache_fallback:
+        is_lhb_loading = bool(lhb_tab is not None and getattr(lhb_tab, "_pool_load_in_progress", False))
+        if not rows and include_cache_fallback and not is_lhb_loading:
             rows = self._load_lhb_pool_rows()
         for row_idx, row in enumerate(rows):
             code = str(row.get(KEY_CODE, "")).strip()

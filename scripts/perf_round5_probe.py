@@ -659,6 +659,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Round 5 post-F5 network synchronization timeline probe.")
     parser.add_argument("--native-qt", action="store_true")
     parser.add_argument("--startup-enabled", action="store_true")
+    parser.add_argument("--auto-refresh-enabled", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--background-prewarm", action="store_true")
     parser.add_argument("--kline-prewarm-enabled", action="store_true")
     parser.add_argument("--central-quotes-enabled", action="store_true")

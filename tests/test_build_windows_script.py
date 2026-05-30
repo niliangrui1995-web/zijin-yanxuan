@@ -35,3 +35,11 @@ def test_qdarkstyle_is_removed_from_startup_packaging_and_docs():
         assert "qdarkstyle" not in path.read_text(encoding="utf-8").lower()
 
     assert "generate_global_qss" in (repo / "vcp_hunter_qt.pyw").read_text(encoding="utf-8")
+
+
+def test_runtime_requirements_target_python314_scipy():
+    requirements = (Path(__file__).resolve().parents[1] / "requirements.txt").read_text(encoding="utf-8")
+
+    assert "# Python 3.14+" in requirements
+    assert "scipy>=1.17.1" in requirements
+    assert "python_version" not in requirements

@@ -113,8 +113,9 @@ KEY_VIEW_LINEAGE = {
     },
     "lhb": {
         "view": "lhb",
-        "source": "LhbPoolManager cache",
-        "cache_refs": ["data/Cache/lhb_pool_20d.json"],
+        "source": "LhbPoolManager cache + local_quote_snapshot",
+        "provider": "LhbPoolManager",
+        "cache_refs": ["data/Cache/lhb_pool_30d.json", "global_store.quotes", "local_tdx_cache"],
         "triggered_network": False,
         "fallback_or_degraded": False,
     },

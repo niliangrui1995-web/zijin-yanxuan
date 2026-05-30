@@ -71,3 +71,24 @@ def test_run_python_module_no_window_preserves_existing_creationflags(monkeypatc
     assert captured["kwargs"]["creationflags"] & 0x20
     assert captured["kwargs"]["creationflags"] & process_runner.CREATE_NO_WINDOW
     assert captured["kwargs"]["startupinfo"].wShowWindow == 7
+
+
+def test_spawn_silent_process_redirects_standard_streams(monkeypatch):
+    captured = {}
+
+    def fake_spawn_process(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return "process"
+
+    monkeypatch.setattr(process_runner, "spawn_process", fake_spawn_process)
+    monkeypatch.setattr(process_runner, "apply_windows_no_window_kwargs", lambda kwargs: kwargs.update(hidden=True))
+
+    result = process_runner.spawn_silent_process(["python", "-V"])
+
+    assert result == "process"
+    assert captured["command"] == ["python", "-V"]
+    assert captured["kwargs"]["stdin"] is process_runner.PROCESS_DEVNULL
+    assert captured["kwargs"]["stdout"] is process_runner.PROCESS_DEVNULL
+    assert captured["kwargs"]["stderr"] is process_runner.PROCESS_DEVNULL
+    assert captured["kwargs"]["hidden"] is True

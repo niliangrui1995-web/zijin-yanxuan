@@ -3,6 +3,7 @@ from urllib.parse import parse_qs, unquote_plus, urlparse
 
 from PyQt6.QtCore import QUrl, QUrlQuery
 
+from app.services import ui_navigation_service
 from ui.components import stock_context_menu
 from ui.components.stock_context_menu import (
     CODEX_CURRENT_STOCK_PROMPT,
@@ -109,7 +110,7 @@ def test_codex_project_thread_url_sanitizes_direct_prompt():
 def test_open_codex_project_thread_uses_codex_url_opener(monkeypatch, tmp_path):
     opened_urls = []
 
-    monkeypatch.setattr(stock_context_menu.os, "name", "posix")
+    monkeypatch.setattr(stock_context_menu, "_is_windows_os", lambda: False)
     monkeypatch.setattr(stock_context_menu, "_is_codex_scheme_registered", lambda: True)
     monkeypatch.setattr(
         stock_context_menu,
@@ -132,7 +133,7 @@ def test_open_codex_project_thread_uses_codex_url_opener(monkeypatch, tmp_path):
 def test_open_codex_project_thread_supplies_default_prompt(monkeypatch, tmp_path):
     opened_urls = []
 
-    monkeypatch.setattr(stock_context_menu.os, "name", "posix")
+    monkeypatch.setattr(stock_context_menu, "_is_windows_os", lambda: False)
     monkeypatch.setattr(stock_context_menu, "_is_codex_scheme_registered", lambda: True)
     monkeypatch.setattr(
         stock_context_menu,
@@ -149,7 +150,7 @@ def test_open_codex_project_thread_supplies_default_prompt(monkeypatch, tmp_path
 def test_open_codex_project_thread_opens_codex_launcher_on_windows(monkeypatch, tmp_path):
     opened_urls = []
 
-    monkeypatch.setattr(stock_context_menu.os, "name", "nt")
+    monkeypatch.setattr(stock_context_menu, "_is_windows_os", lambda: True)
     monkeypatch.setattr(stock_context_menu, "_is_codex_scheme_registered", lambda: True)
     monkeypatch.setattr(
         stock_context_menu,
@@ -168,7 +169,7 @@ def test_open_codex_project_thread_opens_codex_launcher_on_windows(monkeypatch, 
 def test_open_codex_project_thread_warns_when_windows_project_opener_rejects(monkeypatch, tmp_path):
     warnings = []
 
-    monkeypatch.setattr(stock_context_menu.os, "name", "nt")
+    monkeypatch.setattr(stock_context_menu, "_is_windows_os", lambda: True)
     monkeypatch.setattr(stock_context_menu, "_is_codex_scheme_registered", lambda: True)
     monkeypatch.setattr(stock_context_menu, "_open_codex_desktop_thread", lambda _url: False)
     monkeypatch.setattr(
@@ -184,20 +185,45 @@ def test_open_codex_desktop_thread_uses_local_launcher(monkeypatch, tmp_path):
     launcher.write_text("", encoding="utf-8")
     captured = {}
 
-    class FakeProcess:
-        pass
-
-    def fake_popen(args, **kwargs):
-        captured["args"] = args
-        captured["kwargs"] = kwargs
-        return FakeProcess()
+    def fake_launch(thread_url, *, launcher):
+        captured["thread_url"] = thread_url
+        captured["launcher"] = launcher
+        return True
 
     monkeypatch.setattr(stock_context_menu, "CODEX_LOCAL_LAUNCHER", launcher)
-    monkeypatch.setattr(stock_context_menu.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(stock_context_menu, "launch_codex_desktop_thread", fake_launch)
 
     assert stock_context_menu._open_codex_desktop_thread("codex://new?path=/tmp/demo")
-    assert captured["args"][-2:] == [str(launcher), "codex://new?path=/tmp/demo"]
-    assert captured["kwargs"]["stdout"] == stock_context_menu.subprocess.DEVNULL
+    assert captured == {
+        "thread_url": "codex://new?path=/tmp/demo",
+        "launcher": launcher,
+    }
+
+
+def test_navigation_service_open_codex_desktop_thread_uses_silent_launcher(monkeypatch, tmp_path):
+    launcher = tmp_path / "open-codex-project.ps1"
+    launcher.write_text("", encoding="utf-8")
+    captured = {}
+
+    def fake_spawn(args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return object()
+
+    monkeypatch.setattr(ui_navigation_service, "_powershell_executable", lambda: "powershell.exe")
+    monkeypatch.setattr(ui_navigation_service, "spawn_silent_process", fake_spawn)
+
+    assert ui_navigation_service.open_codex_desktop_thread("codex://new?path=/tmp/demo", launcher=launcher)
+    assert captured["args"] == [
+        "powershell.exe",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(launcher),
+        "codex://new?path=/tmp/demo",
+    ]
+    assert captured["kwargs"] == {}
 
 
 def test_open_codex_url_keeps_qdesktopservices_fallback_off_windows(monkeypatch):
@@ -209,7 +235,7 @@ def test_open_codex_url_keeps_qdesktopservices_fallback_off_windows(monkeypatch)
             opened_urls.append(qurl.toString())
             return True
 
-    monkeypatch.setattr(stock_context_menu.os, "name", "posix")
+    monkeypatch.setattr(stock_context_menu, "_is_windows_os", lambda: False)
     monkeypatch.setattr(stock_context_menu, "QDesktopServices", FakeDesktopServices)
     monkeypatch.setattr(
         stock_context_menu.webbrowser,
@@ -247,7 +273,7 @@ def test_open_codex_project_thread_warns_when_codex_scheme_is_missing(monkeypatc
         def openUrl(_qurl):
             raise AssertionError("desktop opener should not run")
 
-    monkeypatch.setattr(stock_context_menu.os, "name", "posix")
+    monkeypatch.setattr(stock_context_menu, "_is_windows_os", lambda: False)
     monkeypatch.setattr(stock_context_menu, "QDesktopServices", FakeDesktopServices)
     monkeypatch.setattr(stock_context_menu, "_is_codex_scheme_registered", lambda: False)
     monkeypatch.setattr(

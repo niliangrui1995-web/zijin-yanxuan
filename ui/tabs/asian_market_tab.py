@@ -472,37 +472,6 @@ class AsianMarketTab(BaseStockTab):
     def _get_cache_latest_trade_date(self):
         latest_dates = self._get_cache_latest_trade_dates()
         return max(latest_dates.values()) if latest_dates else None
-        try:
-            if not os.path.exists(JSON_CACHE):
-                return None
-            with open(JSON_CACHE, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-            latest_date = None
-            for item in raw.get("stocks", []):
-                klines = item.get("klines", [])
-                if not klines:
-                    continue
-                last_date_raw = str(klines[-1].get("date", "")).strip()
-                if not last_date_raw:
-                    continue
-                try:
-                    last_date = datetime.datetime.strptime(last_date_raw[:10], "%Y-%m-%d").date()
-                except (TypeError, ValueError):
-                    continue
-                if latest_date is None or last_date > latest_date:
-                    latest_date = last_date
-            return latest_date
-        except (
-            FileNotFoundError,
-            PermissionError,
-            OSError,
-            TypeError,
-            ValueError,
-            KeyError,
-            json.JSONDecodeError,
-        ) as e:
-            log.warning(f"[亚洲页] 解析缓存最新交易日失败: {e}")
-            return None
 
     def _get_expected_latest_trade_dates(self):
         try:
@@ -548,48 +517,6 @@ class AsianMarketTab(BaseStockTab):
     def _get_expected_latest_trade_date(self):
         latest_dates = self._get_expected_latest_trade_dates()
         return max(latest_dates.values()) if latest_dates else None
-        try:
-            from datetime import timedelta
-
-            from app.services.ui_market_calendar_service import MarketCalendar
-
-            markets = set()
-            for row in getattr(self, "row_data", []) or []:
-                code = str(row.get("代码", "")).strip()
-                if "." in code:
-                    markets.add(code.split(".")[-1].upper())
-            if not markets:
-                markets = {"TW", "TWO", "T", "KS", "HK"}
-
-            # 收盘缓冲时间：只有超过该时间，才把“当日”视作应落地到本地缓存的目标交易日。
-            close_cutoff_hhmm = {
-                "TW": 1400,
-                "TWO": 1400,
-                "HK": 1630,
-                "T": 1530,
-                "KS": 1600,
-            }
-
-            latest_expected = None
-            for mkt in markets:
-                now_mkt = MarketCalendar.now(mkt)
-                today_mkt = now_mkt.date()
-                hhmm = now_mkt.hour * 100 + now_mkt.minute
-                cutoff = close_cutoff_hhmm.get(mkt, 1630)
-
-                # 交易日但仍处于盘前/盘中：期望缓存仍是“上一交易日”。
-                if MarketCalendar.is_trade_day(today_mkt, market=mkt) and hhmm < cutoff:
-                    ref_date = today_mkt - timedelta(days=1)
-                else:
-                    ref_date = today_mkt
-
-                trade_date = MarketCalendar.get_latest_trade_date(market=mkt, ref_date=ref_date)
-                if trade_date is not None and (latest_expected is None or trade_date > latest_expected):
-                    latest_expected = trade_date
-            return latest_expected
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
-            log.warning(f"[亚洲页] 计算期望最新交易日失败: {e}")
-            return None
 
     def _check_auto_cache(self):
         return asian_check_auto_cache(self)

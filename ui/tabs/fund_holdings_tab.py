@@ -63,6 +63,7 @@ from ui.tabs.fund_holdings_rules import (
 
 
 class FundHoldingsTab(BaseStockTab):
+    _F5_AUTO_SYNC_DELAY_MS = 1500
     _SUBJECT_CODE_QFII = SUBJECT_QFII["subject_code"]
     _SUBJECT_CODE_RUIYUAN = SUBJECT_RUIYUAN["subject_code"]
     _QUARTER_FILTER_LATEST = "__LATEST__"
@@ -173,6 +174,7 @@ class FundHoldingsTab(BaseStockTab):
         self._last_fund_holdings_signature = ""
         self._settings = self._create_settings()
         self._pending_daily_auto_sync_date = ""
+        self._pending_f5_auto_sync = False
         self._restoring_view_state = False
         self._view_state_restored = False
         self._view_state_save_timer = QTimer(self)
@@ -1184,9 +1186,20 @@ class FundHoldingsTab(BaseStockTab):
         self._run_sync_action("F5后自动更新", fund_holdings_sync_service.sync_latest_all)
         return True
 
+    def schedule_auto_sync_after_f5(self) -> bool:
+        if self._pending_f5_auto_sync:
+            return False
+        self._pending_f5_auto_sync = True
+        QTimer.singleShot(self._F5_AUTO_SYNC_DELAY_MS, self._run_pending_auto_sync_after_f5)
+        return True
+
+    def _run_pending_auto_sync_after_f5(self) -> bool:
+        self._pending_f5_auto_sync = False
+        return self.run_auto_sync_after_f5()
+
     def refresh_data_after_f5(self) -> bool:
         self.refresh_table_from_latest_snapshot(current_model=self.model, async_local=True)
-        return self.run_auto_sync_after_f5()
+        return self.schedule_auto_sync_after_f5()
 
     def refresh_data_after_ai_industry_chain_update(self) -> bool:
         if getattr(self, "_runtime_cleanup_done", False):
