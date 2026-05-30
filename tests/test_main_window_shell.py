@@ -150,6 +150,7 @@ def test_main_window_shell_builders_wire_titlebar_menu_and_tabs():
         assert window._titlebar_sync_widget.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Maximum
         assert window._titlebar_sync_widget.btn_trade_calendar.text() == "交易日历"
         assert window._titlebar_sync_widget.btn_trade_calendar.accessibleName() == "交易日历"
+        assert "outline: none;" in window._titlebar_sync_widget.btn_trade_calendar.styleSheet()
         assert window._titlebar_sync_widget.quote_pulse_dot.toolTip() == "quotes 同步心跳"
         window._titlebar_sync_widget.pulse_quotes()
         assert window._titlebar_sync_widget.quote_pulse_dot._timer.isActive() is True
@@ -221,6 +222,7 @@ def test_shell_navigation_widget_restores_last_subtab_per_group():
         tabs.addTab(QWidget(), "亚洲")
 
         nav.bind_workspace(DummyGroupedWorkspace(), tabs)
+        assert all("outline: none;" in button.styleSheet() for button in nav._group_buttons.values())
 
         tabs.setCurrentIndex(1)
         assert tabs.currentIndex() == 1

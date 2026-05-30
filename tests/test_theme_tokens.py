@@ -263,6 +263,7 @@ def test_global_qss_uses_density_tokens_for_table_and_controls():
     assert 'QPushButton[inToolbar="true"]' in compact_qss
     assert 'QLineEdit[inToolbar="true"]' in compact_qss
     assert "QPushButton:focus {" in compact_qss
+    assert "outline: none;" in compact_qss
     assert 'QToolButton[class="toolbarGhost"]:focus {' in compact_qss
     assert f"stop:0 {compact_tokens['surface']['toolbar']}" in compact_qss
     assert f"stop:1 {THEME_YUEBAI['BG_TOOLBAR_END']}" in compact_qss

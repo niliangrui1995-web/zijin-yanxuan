@@ -475,6 +475,7 @@ def _nav_group_button_qss(theme: dict) -> str:
             min-height: {tokens["control"]["segment_height"]}px;
             font-size: {tokens["font"]["size_sm"]}px;
             font-weight: {tokens["font"]["weight_semibold"]};
+            outline: none;
         }}
         QPushButton:hover {{
             color: {theme["TEXT_PRIMARY"]};
@@ -509,6 +510,7 @@ def _titlebar_sync_button_qss(theme: dict) -> str:
             min-height: {tokens["control"]["toolbar_button_height"]}px;
             font-size: {tokens["font"]["size_sm"]}px;
             font-weight: {tokens["font"]["weight_bold"]};
+            outline: none;
         }}
         QPushButton:hover {{
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -534,6 +536,7 @@ def _titlebar_secondary_button_qss(theme: dict) -> str:
             min-height: {tokens["control"]["toolbar_button_height"]}px;
             font-size: {tokens["font"]["size_sm"]}px;
             font-weight: {tokens["font"]["weight_semibold"]};
+            outline: none;
         }}
         QPushButton:hover {{
             background: {theme["BG_HOVER"]};

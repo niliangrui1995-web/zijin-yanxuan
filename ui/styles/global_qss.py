@@ -242,6 +242,7 @@ QPushButton {{
     font-size: {font["size_sm"]}px;
     font-weight: {font["weight_medium"]};
     min-height: {control["button_height"]}px;
+    outline: none;
 }}
 QPushButton:hover {{
     background-color: {t["BG_BUTTON_HOVER"]};
@@ -316,6 +317,7 @@ QToolButton[class="toolbarGhost"] {{
     font-size: {font["size_sm"]}px;
     font-weight: {font["weight_medium"]};
     min-height: {control["button_height"]}px;
+    outline: none;
 }}
 QToolButton[class="toolbarGhost"]:hover {{
     background-color: {t["BG_BUTTON_HOVER"]};
