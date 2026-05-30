@@ -3,6 +3,7 @@
 from PyQt6.QtCore import QEvent, QPoint, Qt
 from PyQt6.QtGui import QHelpEvent, QStandardItem, QStandardItemModel
 
+import ui.components.table_controls as table_controls_module
 from ui.components import (
     MultiSelectFilterButton,
     PulsingDot,
@@ -120,6 +121,38 @@ def test_vcp_table_view_suppresses_tooltip_event_errors(qt_application):
         event = QHelpEvent(QEvent.Type.ToolTip, pos, table.viewport().mapToGlobal(pos))
 
         assert table.viewportEvent(event) is True
+    finally:
+        table.deleteLater()
+
+
+def test_vcp_table_view_uses_floating_tooltip_for_truncated_cells(qt_application, monkeypatch):
+    table = VCPTableView()
+    model = QStandardItemModel(1, 1)
+    item = QStandardItem("truncated cell text")
+    item.setToolTip("tooltip text")
+    model.setItem(0, 0, item)
+    table.setModel(model)
+    table.resize(140, 80)
+    table.show()
+    _process_events(qt_application)
+
+    calls = []
+
+    def _record_tooltip(text, global_pos, *, owner=None, rich_text=None):
+        calls.append((text, bool(global_pos), owner is table.viewport(), rich_text))
+        return True
+
+    monkeypatch.setattr(table_controls_module, "show_floating_tooltip", _record_tooltip)
+    table._should_show_tooltip_for_index = lambda _index: True
+
+    try:
+        index = model.index(0, 0)
+        rect = table.visualRect(index)
+        pos = rect.center() if rect.isValid() else QPoint(5, 5)
+        event = QHelpEvent(QEvent.Type.ToolTip, pos, table.viewport().mapToGlobal(pos))
+
+        assert table.viewportEvent(event) is True
+        assert calls == [("tooltip text", True, True, False)]
     finally:
         table.deleteLater()
 

@@ -1,5 +1,5 @@
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QColor, QPalette
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
@@ -8,7 +8,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QToolButton,
-    QToolTip,
     QVBoxLayout,
 )
 
@@ -19,6 +18,7 @@ from app.services.ui_earnings_calendar_service import (
 from app.services.ui_event_service import domain_events
 from ui.components.main_window_shell import apply_chrome_theme
 from ui.components.shared_title_bar import DraggableTitleBar
+from ui.components.tooltip_popup import hide_floating_tooltip
 from ui.components.trade_calendar import OligarchEarningsCalendarPanel, TradeCalendarWidget
 from ui.styles.global_qss import generate_global_qss
 from ui.theme import theme_manager
@@ -175,24 +175,13 @@ def apply_theme(main_window, *, notify: bool = True):
     from ui.models.table_model_helpers import invalidate_table_token_cache
 
     invalidate_table_token_cache()
-    t = theme_manager.current_theme
     qss = generate_global_qss()
     main_window.setStyleSheet(qss)
 
     app = QApplication.instance()
     if app is not None:
-        pal = app.style().standardPalette()
-        for group in (
-            QPalette.ColorGroup.Active,
-            QPalette.ColorGroup.Inactive,
-            QPalette.ColorGroup.Disabled,
-        ):
-            pal.setColor(group, QPalette.ColorRole.ToolTipBase, QColor(t["BG_ELEVATED"]))
-            pal.setColor(group, QPalette.ColorRole.ToolTipText, QColor(t["TEXT_PRIMARY"]))
-        app.setPalette(pal)
         app.setStyleSheet(qss)
-        QToolTip.hideText()
-        QToolTip.setPalette(pal)
+        hide_floating_tooltip()
 
     apply_chrome_theme(main_window)
     if hasattr(main_window, "_status_bar_widget") and main_window._status_bar_widget:

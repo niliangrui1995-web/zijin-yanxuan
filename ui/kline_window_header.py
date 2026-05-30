@@ -201,13 +201,9 @@ def refresh_header_context(window) -> None:
                     raw_value,
                     bool(row_data.get("highlight")),
                 )
-                value_size = (
-                    getattr(window, "_summary_core_size", 14)
-                    if row_index == 0
-                    else getattr(window, "_summary_aux_size", 12)
-                )
-                value_weight = 700 if row_index == 0 else 600
-                value_font = getattr(window, "_summary_value_font", "monospace")
+                value_size = getattr(window, "_summary_value_size", 12)
+                value_weight = getattr(window, "_summary_value_weight", 600)
+                value_font = getattr(window, "_summary_value_font", "sans-serif")
                 label.setText(
                     f"<span style='color:{window._summary_key_color};'>{html.escape(key_text)}</span>"
                     f"&nbsp;&nbsp;<span style='color:{value_color}; font-weight:{value_weight};"
@@ -412,9 +408,9 @@ def apply_qt_theme(window) -> None:
     window._summary_key_color = theme["TEXT_MUTED"]
     window._summary_value_color = widget_text
     window._summary_highlight_color = vcp_star
-    window._summary_core_size = font["size_xl"]
-    window._summary_aux_size = font["size_sm"]
-    window._summary_value_font = font["mono_family"]
+    window._summary_value_size = font["size_sm"]
+    window._summary_value_weight = font["weight_semibold"]
+    window._summary_value_font = font["family"]
     for card in window.summary_cards:
         card["frame"].setStyleSheet(
             f"""

@@ -303,13 +303,18 @@ def test_global_qss_selected_tab_uses_yuebai_information_accent_top_rule():
     assert f"border-top: 2px solid {THEME_YUEBAI['BRAND_PRIMARY']};" not in qss
 
 
-def test_global_qss_includes_themed_tooltip_style():
+def test_theme_tokens_include_theme_adaptive_floating_tooltip():
+    dark_tooltip = build_ui_tokens(THEME_YAOHEI, density="紧凑")["tooltip"]
+    light_tooltip = build_ui_tokens(THEME_YUEBAI, density="紧凑")["tooltip"]
     qss = generate_global_qss(THEME_YAOHEI, density="紧凑")
 
-    assert "QToolTip {" in qss
-    assert "background-color: rgba(15, 18, 30, 0.88);" in qss
-    assert f"color: {THEME_YAOHEI['TEXT_BRIGHT']};" in qss
-    assert "border-radius: 10px;" in qss
+    assert "QToolTip" not in qss
+    assert dark_tooltip["bg"] != light_tooltip["bg"]
+    assert dark_tooltip["text"] == THEME_YAOHEI["TEXT_BRIGHT"]
+    assert light_tooltip["text"] == THEME_YUEBAI["TEXT_PRIMARY"]
+    assert dark_tooltip["radius"] == light_tooltip["radius"] == 8
+    assert dark_tooltip["font_size"] == build_ui_tokens(THEME_YAOHEI, density="紧凑")["font"]["size_xl"]
+    assert dark_tooltip["font_size"] >= 16
 
 
 def test_global_qss_themes_date_edit_and_dialog_shell():
@@ -348,14 +353,12 @@ def test_vcp_table_view_width_is_capped_by_available_screen():
         table.deleteLater()
 
 
-def test_vcp_table_view_tooltip_style_uses_frosted_compact_tooltips():
+def test_vcp_table_view_runtime_style_only_keeps_table_padding():
     table = VCPTableView()
     try:
         style = table.styleSheet()
-        assert "QToolTip" in style
-        assert "background-color: rgba(15, 18, 30, 0.88);" in style
-        assert "font-size: 12px;" in style
-        assert "border-radius: 10px;" in style
+        assert "QTableView::item" in style
+        assert "QToolTip" not in style
     finally:
         table.deleteLater()
 

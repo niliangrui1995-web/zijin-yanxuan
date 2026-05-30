@@ -332,6 +332,21 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "marker_normal_alpha": 205 if is_dark else 192,
     }
 
+    tooltip = {
+        "bg": theme.get("TOOLTIP_BG", "rgba(15, 18, 30, 0.95)" if is_dark else "rgba(255, 255, 255, 0.98)"),
+        "border": theme.get("TOOLTIP_BORDER", "rgba(255, 255, 255, 0.16)" if is_dark else "rgba(15, 23, 42, 0.12)"),
+        "text": theme.get("TOOLTIP_TEXT", theme.get("TEXT_BRIGHT", theme["TEXT_PRIMARY"]) if is_dark else theme["TEXT_PRIMARY"]),
+        "shadow": theme.get("TOOLTIP_SHADOW", "rgba(0, 0, 0, 0.26)" if is_dark else "rgba(15, 23, 42, 0.14)"),
+        "radius": radius["md"],
+        "padding_x": 18,
+        "padding_y": 14,
+        "font_size": font["size_xl"],
+        "max_width": 560,
+        "offset_x": 14,
+        "offset_y": 18,
+        "margin": 6,
+    }
+
     text = {
         "primary": theme["TEXT_PRIMARY"],
         "secondary": theme["TEXT_SECONDARY"],
@@ -361,6 +376,7 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "z_index": z_index,
         "chart": chart,
         "calendar": calendar,
+        "tooltip": tooltip,
         "text": text,
         "state": _build_state_tones(theme, is_dark=is_dark),
     }

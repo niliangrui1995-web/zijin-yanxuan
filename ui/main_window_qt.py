@@ -5,11 +5,11 @@ from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractButton,
+    QAbstractItemView,
     QApplication,
     QFrame,
     QLineEdit,
     QMainWindow,
-    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -32,6 +32,7 @@ from core.process_watchdog import ProcessWatchdog, log_process_snapshot
 from ui.components.command_palette import CommandPaletteDialog
 from ui.components.kline_window_manager import kline_manager
 from ui.components.message_box import show_themed_question
+from ui.components.tooltip_popup import hide_floating_tooltip, show_floating_tooltip
 from ui.components.vector_icons import set_button_svg_icon
 from ui.main_window_tables import install_table_copy_hooks
 from ui.services.asian_market_runtime_service import AsianMarketRuntimeService
@@ -174,23 +175,10 @@ class MainWindowQT(QMainWindow):
 
         qss = generate_global_qss()
         self.setStyleSheet(qss)
-        from PyQt6.QtGui import QColor, QPalette
 
-        if QApplication.instance():
-            pal = QApplication.style().standardPalette()
-            from ui.theme import theme_manager
-
-            t = theme_manager.current_theme
-            for group in (
-                QPalette.ColorGroup.Active,
-                QPalette.ColorGroup.Inactive,
-                QPalette.ColorGroup.Disabled,
-            ):
-                pal.setColor(group, QPalette.ColorRole.ToolTipBase, QColor(t["BG_ELEVATED"]))
-                pal.setColor(group, QPalette.ColorRole.ToolTipText, QColor(t["TEXT_PRIMARY"]))
-            QApplication.instance().setPalette(pal)
-            QApplication.instance().setStyleSheet(qss)
-            QToolTip.setPalette(pal)
+        app_instance = QApplication.instance()
+        if app_instance:
+            app_instance.setStyleSheet(qss)
         # 监听主题切换信号，实时刷新全局样式
         from ui.theme import theme_manager
 
@@ -578,6 +566,29 @@ class MainWindowQT(QMainWindow):
 
         apply_table_density(self, mode, persist=persist)
 
+    def _tooltip_text_for_event(self, obj, event) -> str:
+        if obj is None:
+            return ""
+
+        object_name = getattr(obj, "objectName", lambda: "")()
+        if object_name == "floatingTooltip":
+            return ""
+
+        view = getattr(obj, "parent", lambda: None)()
+        if isinstance(view, QAbstractItemView) and view.__class__.__name__ != "VCPTableView":
+            index_at = getattr(view, "indexAt", None)
+            if callable(index_at) and hasattr(event, "pos"):
+                index = index_at(event.pos())
+                if index.isValid():
+                    tooltip_text = index.data(Qt.ItemDataRole.ToolTipRole)
+                    if tooltip_text:
+                        return str(tooltip_text).strip()
+
+        tool_tip = getattr(obj, "toolTip", None)
+        if callable(tool_tip):
+            return str(tool_tip() or "").strip()
+        return ""
+
     def eventFilter(self, obj, event):
         target_objects = (
             getattr(self, "btn_sys_menu", None),
@@ -586,6 +597,22 @@ class MainWindowQT(QMainWindow):
             getattr(self, "_theme_menu", None),
         )
         event_type = event.type()
+        if event_type == QEvent.Type.ToolTip:
+            tooltip_text = self._tooltip_text_for_event(obj, event)
+            if tooltip_text and hasattr(event, "globalPos"):
+                show_floating_tooltip(tooltip_text, event.globalPos(), owner=obj)
+                return True
+            hide_floating_tooltip()
+
+        if event_type in (
+            QEvent.Type.Leave,
+            QEvent.Type.Hide,
+            QEvent.Type.MouseButtonPress,
+            QEvent.Type.Wheel,
+            QEvent.Type.WindowDeactivate,
+        ):
+            hide_floating_tooltip()
+
         if isinstance(obj, QAbstractButton) and event_type in (
             QEvent.Type.Enter,
             QEvent.Type.HoverEnter,

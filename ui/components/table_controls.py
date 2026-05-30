@@ -26,7 +26,6 @@ from PyQt6.QtGui import (
     QLinearGradient,
     QPainter,
     QPainterPath,
-    QPalette,
     QPen,
     QPolygonF,
 )
@@ -42,11 +41,11 @@ from PyQt6.QtWidgets import (
     QStackedLayout,
     QTableView,
     QToolButton,
-    QToolTip,
     QVBoxLayout,
     QWidget,
 )
 
+from ui.components.tooltip_popup import hide_floating_tooltip, show_floating_tooltip
 from ui.models.table_model_helpers import FLASH_DURATION_SECONDS
 from ui.theme_tokens import build_ui_tokens, get_state_tone
 
@@ -164,28 +163,12 @@ class VCPTableView(QTableView):
         self.verticalHeader().setDefaultSectionSize(row_height)
         self.horizontalHeader().setMinimumHeight(tokens["table"]["header_min_height"])
 
-    def _tooltip_qss(self) -> str:
+    def _table_qss(self) -> str:
         tokens = build_ui_tokens()
-        t = tokens["theme"]
-        tooltip_bg = "rgba(15, 18, 30, 0.88)" if tokens["is_dark"] else "rgba(255, 255, 255, 0.96)"
-        tooltip_border = "rgba(255, 255, 255, 0.16)" if tokens["is_dark"] else "rgba(15, 23, 42, 0.12)"
-        tooltip_text = t.get("TEXT_BRIGHT", t["TEXT_PRIMARY"]) if tokens["is_dark"] else t["TEXT_PRIMARY"]
-        return (
-            f"QTableView::item {{ padding: {tokens['table']['cell_padding_y']}px {tokens['table']['cell_padding_x']}px; }}\n"
-            "QToolTip {"
-            f" background-color: {tooltip_bg};"
-            f" color: {tooltip_text};"
-            f" border: 1px solid {tooltip_border};"
-            f" border-radius: 10px;"
-            " padding: 8px 12px;"
-            f" font-size: {tokens['font']['size_sm']}px;"
-            f" font-family: {tokens['font']['family']};"
-            " margin: 0px;"
-            " }"
-        )
+        return f"QTableView::item {{ padding: {tokens['table']['cell_padding_y']}px {tokens['table']['cell_padding_x']}px; }}"
 
     def _apply_runtime_style(self):
-        self.setStyleSheet(self._tooltip_qss())
+        self.setStyleSheet(self._table_qss())
 
     def _on_theme_changed(self, _theme_name: str):
         if self._closing:
@@ -422,10 +405,7 @@ class VCPTableView(QTableView):
         self._pending_refresh_state_restore = None
         self._pending_scrollbar_restore = None
         self._disconnect_refresh_model()
-        try:
-            QToolTip.hideText()
-        except RuntimeError:
-            pass
+        hide_floating_tooltip()
         try:
             self._theme_manager.sig_theme_changed.disconnect(self._on_theme_changed)
         except (AttributeError, TypeError, RuntimeError):
@@ -529,7 +509,7 @@ class VCPTableView(QTableView):
         try:
             if self._closing:
                 if event.type() == QEvent.Type.ToolTip:
-                    QToolTip.hideText()
+                    hide_floating_tooltip()
                     event.ignore()
                     return True
                 return False
@@ -538,27 +518,20 @@ class VCPTableView(QTableView):
                 if index.isValid():
                     tooltip_text = index.data(Qt.ItemDataRole.ToolTipRole)
                     if tooltip_text and self._should_show_tooltip_for_index(index):
-                        from ui.theme import theme_manager
-
-                        t = theme_manager.current_theme
-                        pal = QPalette(QToolTip.palette())
-                        for group in (
-                            QPalette.ColorGroup.Active,
-                            QPalette.ColorGroup.Inactive,
-                            QPalette.ColorGroup.Disabled,
-                        ):
-                            pal.setColor(group, QPalette.ColorRole.ToolTipBase, QColor(t["BG_ELEVATED"]))
-                            pal.setColor(group, QPalette.ColorRole.ToolTipText, QColor(t["TEXT_PRIMARY"]))
-                        QToolTip.setPalette(pal)
-                        QToolTip.showText(event.globalPos(), str(tooltip_text), self.viewport(), self.visualRect(index))
+                        show_floating_tooltip(
+                            str(tooltip_text),
+                            event.globalPos(),
+                            owner=self.viewport(),
+                            rich_text=False,
+                        )
                         return True
-                QToolTip.hideText()
+                hide_floating_tooltip()
                 event.ignore()
                 return True
             return super().viewportEvent(event)
         except Exception as exc:  # noqa: BLE001 - Qt event handlers must not leak into sys.excepthook.
             try:
-                QToolTip.hideText()
+                hide_floating_tooltip()
                 event.ignore()
             except Exception:
                 pass

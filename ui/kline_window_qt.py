@@ -251,13 +251,12 @@ class KLineChartWindow(QWidget):
         self._summary_key_color = ""
         self._summary_value_color = ""
         self._summary_highlight_color = ""
-        summary_card_widths = ((160, 240), (260, 520), (180, 280))
+        summary_card_specs = ((160, 20), (260, 48), (180, 24))
         for card_idx in range(3):
             card = QFrame()
             card.setObjectName("klineSummaryCard")
-            min_width, max_width = summary_card_widths[card_idx]
+            min_width, stretch = summary_card_specs[card_idx]
             card.setMinimumWidth(min_width)
-            card.setMaximumWidth(max_width)
             card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             card_layout = QVBoxLayout(card)
             card_layout.setContentsMargins(10, 6, 10, 6)
@@ -279,7 +278,7 @@ class KLineChartWindow(QWidget):
                 value_labels.append(label)
                 card_layout.addWidget(label)
 
-            summary_layout.addWidget(card, 1)
+            summary_layout.addWidget(card, stretch)
             self.summary_cards.append(
                 {
                     "frame": card,
@@ -469,6 +468,7 @@ class KLineChartWindow(QWidget):
     def _on_theme_changed(self, _theme_name: str):
         """主题切换时同步刷新 Qt 外壳 + WebEngine 图表配色。"""
         self._apply_qt_theme()
+        self._refresh_header_context()
         self._apply_chart_theme()
 
     def _apply_qt_theme(self):

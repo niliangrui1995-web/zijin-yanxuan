@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import re
-import textwrap
 import time
 from functools import lru_cache
 
@@ -438,15 +437,11 @@ def _numeric_heat_color(header: str, raw_val):
 def _build_cell_tooltip_cached(text: str):
     if not text:
         return None
-
-    wrapped_lines = []
-    for line in text.splitlines() or [text]:
-        wrapped_lines.append(textwrap.fill(line, width=50) if len(line) > 40 else line)
-    return "\n".join(wrapped_lines)
+    return "\n".join(text.splitlines())
 
 
 def _build_cell_tooltip(raw_val):
-    """统一表格悬浮提示文本，交给 QToolTip 自身样式渲染。"""
+    """统一表格悬浮提示文本，交给自绘悬浮窗渲染。"""
     text = str(raw_val).strip()
     return _build_cell_tooltip_cached(text)
 

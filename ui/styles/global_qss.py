@@ -66,9 +66,6 @@ def generate_global_qss(theme: dict = None, density: str | None = None) -> str:
         else surface["toolbar"]
     )
 
-    tooltip_bg = "rgba(15, 18, 30, 0.88)" if ui["is_dark"] else "rgba(255, 255, 255, 0.96)"
-    tooltip_border = "rgba(255, 255, 255, 0.16)" if ui["is_dark"] else "rgba(15, 23, 42, 0.12)"
-    tooltip_text = t.get("TEXT_BRIGHT", text["primary"]) if ui["is_dark"] else text["primary"]
     depth_line = t.get("KLINE_DEPTH_LINE", "rgba(255, 255, 255, 0.05)" if ui["is_dark"] else "rgba(15, 23, 42, 0.04)")
     panel_depth_bg = (
         f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {surface['panel']}, stop:1 {surface['elevated']})"
@@ -94,16 +91,6 @@ QWidget#mainWindowFrame {{
     background-color: {t["BG_CANVAS"]};
     border: 1px solid {shell["inner_border_color"]};
     border-radius: {radius["lg"]}px;
-}}
-
-QToolTip {{
-    background-color: {tooltip_bg};
-    color: {tooltip_text};
-    border: 1px solid {tooltip_border};
-    border-radius: 10px;
-    padding: 8px 12px;
-    font-family: {font["family"]};
-    font-size: {font["size_sm"]}px;
 }}
 
 /* --- 左侧面板 --- */

@@ -15,6 +15,7 @@ from ui.kline_chart_payload import build_kline_html, build_kline_theme_colors
 from ui.tabs import asian_market_tab as asian_module
 from ui.tabs import asian_market_workers as asian_workers_module
 from ui.theme import THEME_YAOHEI, theme_manager
+from ui.theme_tokens import build_ui_tokens
 from vcp.fetchers import asian_kline_fetcher as asian_fetcher_module
 
 
@@ -340,7 +341,7 @@ def test_kline_header_action_controls_share_same_height(monkeypatch):
         _dispose_kline_window(window)
 
 
-def test_kline_summary_cards_keep_bounded_width_for_long_watchlist_note(monkeypatch):
+def test_kline_summary_cards_expand_and_elide_long_watchlist_note(monkeypatch):
     monkeypatch.setattr(kline_module, "QWebEngineView", QWidget)
     monkeypatch.setattr(kline_module.KLineChartWindow, "_load_and_draw", lambda self: None)
     monkeypatch.setattr(
@@ -364,7 +365,8 @@ def test_kline_summary_cards_keep_bounded_width_for_long_watchlist_note(monkeypa
         current_idx=0,
     )
     try:
-        assert [card["frame"].maximumWidth() for card in window.summary_cards] == [240, 520, 280]
+        assert [window.summary_widget.layout().stretch(idx) for idx in range(3)] == [20, 48, 24]
+        assert all(card["frame"].maximumWidth() > 10000 for card in window.summary_cards)
         assert all(
             label.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Ignored
             for card in window.summary_cards
@@ -376,6 +378,54 @@ def test_kline_summary_cards_keep_bounded_width_for_long_watchlist_note(monkeypa
         assert "line-height: 1.55" in tooltip
         assert "<br/>" not in tooltip
         assert "光纤光缆、特种光缆和通信网络平台" in tooltip
+    finally:
+        _dispose_kline_window(window)
+
+
+def test_kline_summary_cards_use_uniform_value_typography(monkeypatch):
+    monkeypatch.setattr(kline_module, "QWebEngineView", QWidget)
+    monkeypatch.setattr(kline_module.KLineChartWindow, "_load_and_draw", lambda self: None)
+    monkeypatch.setattr(
+        kline_module.KLineChartWindow,
+        "_check_fav_status",
+        lambda self: setattr(self, "is_fav", True),
+    )
+
+    window = kline_module.KLineChartWindow(
+        None,
+        "601138",
+        "工业富联",
+        _DummyProvider(),
+        vcp_data={
+            "__source_tab_key": "watchlist",
+            "来源": "手动",
+            "摘要": "证券强：2025年报披露公司与全球头部客户协同下一代AI服务器及液冷技术",
+            "RPS强度": "97/78",
+        },
+        code_list=[{"代码": "601138", "名称": "工业富联"}],
+        current_idx=0,
+    )
+    try:
+        tokens = build_ui_tokens(theme_manager.current_theme)
+        expected_size = tokens["font"]["size_sm"]
+        expected_weight = tokens["font"]["weight_semibold"]
+        expected_family = tokens["font"]["family"]
+
+        assert window._summary_value_size == expected_size
+        assert window._summary_value_weight == expected_weight
+        assert window._summary_value_font == expected_family
+
+        card_text = "".join(
+            label.text()
+            for card in window.summary_cards
+            for label in card["labels"]
+            if label.text()
+        )
+        assert f"font-size:{expected_size}px" in card_text
+        assert f"font-weight:{expected_weight}" in card_text
+        assert "font-size:16px" not in card_text
+        assert "font-weight:700" not in card_text
+        assert tokens["font"]["mono_family"] not in card_text
     finally:
         _dispose_kline_window(window)
 
