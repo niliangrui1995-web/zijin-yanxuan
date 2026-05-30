@@ -162,6 +162,24 @@ def test_open_codex_project_thread_opens_codex_launcher_on_windows(monkeypatch, 
         project_path=tmp_path, prompt="stock code: 300308"
     )
     query = parse_qs(urlparse(opened_urls[0]).query)
+    assert opened_urls[0].startswith("codex://")
+    assert query["path"][0].replace("/", "\\") == str(tmp_path)
+    assert query["prompt"] == ["stock code: 300308"]
+
+
+def test_open_codex_project_thread_passes_prompt_deeplink_to_windows_launcher(monkeypatch, tmp_path):
+    opened_urls = []
+
+    monkeypatch.setattr(stock_context_menu, "_is_windows_os", lambda: True)
+    monkeypatch.setattr(stock_context_menu, "_is_codex_scheme_registered", lambda: True)
+    monkeypatch.setattr(
+        stock_context_menu,
+        "_open_codex_desktop_thread",
+        lambda url: opened_urls.append(url) or True,
+    )
+
+    assert stock_context_menu.open_codex_project_thread(project_path=tmp_path, prompt="stock code: 300308")
+    query = parse_qs(urlparse(opened_urls[0]).query)
     assert query["path"][0].replace("/", "\\") == str(tmp_path)
     assert query["prompt"] == ["stock code: 300308"]
 
