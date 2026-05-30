@@ -840,6 +840,56 @@ class MainWindowQT(QMainWindow):
 
         super().closeEvent(event)
 
+    def _is_launch_at_login_supported(self) -> bool:
+        from app.services.ui_autostart_service import is_launch_at_login_supported
+
+        return is_launch_at_login_supported(self._project_root)
+
+    def _is_launch_at_login_enabled(self) -> bool:
+        from app.services.ui_autostart_service import AutoStartError, is_launch_at_login_enabled
+
+        try:
+            return is_launch_at_login_enabled(self._project_root)
+        except (AutoStartError, OSError, RuntimeError) as exc:
+            log.warning(f"[UI] launch-at-login state probe failed: {exc}")
+            return False
+
+    def _set_launch_at_login_action_checked(self, checked: bool) -> None:
+        action = getattr(self, "_act_launch_at_login", None)
+        if action is None:
+            return
+        previous = action.blockSignals(True)
+        try:
+            action.setChecked(bool(checked))
+        finally:
+            action.blockSignals(previous)
+
+    def _toggle_launch_at_login(self, checked: bool) -> None:
+        from app.services.ui_autostart_service import AutoStartError, set_launch_at_login_enabled
+        from ui.components.toast_widget import show_toast
+
+        target = bool(checked)
+        try:
+            set_launch_at_login_enabled(target, self._project_root)
+        except (AutoStartError, OSError, RuntimeError) as exc:
+            log.warning(f"[UI] launch-at-login toggle failed: {exc}")
+            self._set_launch_at_login_action_checked(self._is_launch_at_login_enabled())
+            show_toast(
+                "\u5f00\u673a\u81ea\u542f\u52a8\u8bbe\u7f6e\u5931\u8d25\uff1a" + str(exc),
+                "error",
+                self,
+                duration=3500,
+            )
+            return
+
+        self._set_launch_at_login_action_checked(target)
+        message = (
+            "\u5df2\u5f00\u542f\u5f00\u673a\u81ea\u542f\u52a8"
+            if target
+            else "\u5df2\u5173\u95ed\u5f00\u673a\u81ea\u542f\u52a8"
+        )
+        show_toast(message, "success", self, duration=2500)
+
     def _action_refresh_f5(self):
         """F5 盘后预计算界面触发层"""
         from PyQt6.QtWidgets import QMessageBox

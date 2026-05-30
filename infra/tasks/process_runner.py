@@ -119,6 +119,32 @@ def build_python_module_command(
     return command
 
 
+def _sibling_console_python_for_no_window(executable: str | None) -> str | None:
+    text = str(executable or "").strip()
+    if not text:
+        return None
+    normalized = text.replace("\\", "/").lower()
+    if not (normalized == "pythonw.exe" or normalized.endswith("/pythonw.exe")):
+        return None
+
+    if "\\" in text:
+        directory = text.rsplit("\\", 1)[0]
+        candidate = f"{directory}\\python.exe" if directory else "python.exe"
+    else:
+        directory = os.path.dirname(text)
+        candidate = os.path.join(directory, "python.exe") if directory else "python.exe"
+
+    return candidate if os.path.exists(candidate) else None
+
+
+def _python_executable_for_no_window(python_executable: str | None) -> str | None:
+    if python_executable:
+        return python_executable
+    if os.name != "nt":
+        return None
+    return _sibling_console_python_for_no_window(sys.executable)
+
+
 def run_python_module(
     module_name: str,
     module_args: Sequence[str] | None = None,
@@ -129,6 +155,7 @@ def run_python_module(
 ):
     if no_window:
         apply_windows_no_window_kwargs(kwargs)
+        python_executable = _python_executable_for_no_window(python_executable)
     return run_process(
         build_python_module_command(
             module_name,

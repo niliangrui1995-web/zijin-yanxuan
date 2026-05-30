@@ -1,4 +1,9 @@
-from core.single_instance import ERROR_ALREADY_EXISTS, acquire_single_instance_lock, is_single_instance_running
+from core.single_instance import (
+    ERROR_ALREADY_EXISTS,
+    acquire_single_instance_lock,
+    is_entry_script_process_running,
+    is_single_instance_running,
+)
 
 
 class FakeKernel32:
@@ -14,6 +19,11 @@ class FakeKernel32:
     def CloseHandle(self, handle):
         self.closed.append(handle)
         return True
+
+
+class FakeProcess:
+    def __init__(self, pid, cmdline):
+        self.info = {"pid": pid, "cmdline": cmdline}
 
 
 def test_single_instance_lock_is_noop_outside_windows():
@@ -83,3 +93,43 @@ def test_single_instance_probe_closes_new_mutex():
     assert running is False
     assert kernel32.names == [(None, False, "VCPHunterQuantTerminal_SingleInstance")]
     assert kernel32.closed == [987]
+
+
+def test_entry_script_process_probe_detects_other_process():
+    running = is_entry_script_process_running(
+        "D:/vcp_hunter/紫金研选/vcp_hunter_qt.pyw",
+        current_pid=10,
+        process_iter=lambda _attrs: [
+            FakeProcess(10, ["pythonw.exe", "D:/vcp_hunter/紫金研选/vcp_hunter_qt.pyw"]),
+            FakeProcess(11, ["C:/Python314/pythonw.exe", '"D:/vcp_hunter/紫金研选/vcp_hunter_qt.pyw"']),
+        ],
+        process_has_visible_window=lambda pid: pid == 11,
+    )
+
+    assert running is True
+
+
+def test_entry_script_process_probe_ignores_current_process():
+    running = is_entry_script_process_running(
+        "D:/vcp_hunter/紫金研选/vcp_hunter_qt.pyw",
+        current_pid=10,
+        process_iter=lambda _attrs: [
+            FakeProcess(10, ["pythonw.exe", "D:/vcp_hunter/紫金研选/vcp_hunter_qt.pyw"]),
+        ],
+        process_has_visible_window=lambda _pid: True,
+    )
+
+    assert running is False
+
+
+def test_entry_script_process_probe_ignores_windowless_stale_process():
+    running = is_entry_script_process_running(
+        "D:/vcp_hunter/紫金研选/vcp_hunter_qt.pyw",
+        current_pid=10,
+        process_iter=lambda _attrs: [
+            FakeProcess(11, ["C:/Python314/pythonw.exe", "D:/vcp_hunter/紫金研选/vcp_hunter_qt.pyw"]),
+        ],
+        process_has_visible_window=lambda _pid: False,
+    )
+
+    assert running is False

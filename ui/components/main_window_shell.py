@@ -32,6 +32,10 @@ from ui.theme_tokens import build_ui_tokens, get_state_tone
 
 log = get_logger(__name__)
 
+_LAUNCH_AT_LOGIN_TEXT = "\u5f00\u673a\u81ea\u542f\u52a8"
+_LAUNCH_AT_LOGIN_UNSUPPORTED_TIP = "\u4ec5\u652f\u6301 Windows \u7cfb\u7edf"
+_LAUNCH_AT_LOGIN_TIP = "\u968f Windows \u767b\u5f55\u81ea\u52a8\u542f\u52a8"
+
 
 def _titlebar_shell_style(theme: dict) -> str:
     tokens = build_ui_tokens(theme)
@@ -96,6 +100,25 @@ def _system_button_style(theme: dict, text_color: str, hover_bg: str) -> str:
             width: 0px;
         }}
     """
+
+
+def _sync_launch_at_login_action(window) -> None:
+    action = getattr(window, "_act_launch_at_login", None)
+    if action is None:
+        return
+
+    supported_probe = getattr(window, "_is_launch_at_login_supported", None)
+    enabled_probe = getattr(window, "_is_launch_at_login_enabled", None)
+    supported = bool(supported_probe()) if callable(supported_probe) else False
+    enabled = bool(enabled_probe()) if supported and callable(enabled_probe) else False
+
+    previous = action.blockSignals(True)
+    try:
+        action.setEnabled(supported)
+        action.setChecked(enabled)
+        action.setToolTip(_LAUNCH_AT_LOGIN_TIP if supported else _LAUNCH_AT_LOGIN_UNSUPPORTED_TIP)
+    finally:
+        action.blockSignals(previous)
 
 
 def _standalone_tabbar_qss(theme: dict, *, compact: bool = False) -> str:
@@ -1224,6 +1247,7 @@ def setup_system_menu(window) -> SystemMenuRefs:
     install_menu_fade(sys_menu)
     try:
         sys_menu.aboutToShow.connect(lambda: QApplication.restoreOverrideCursor())
+        sys_menu.aboutToShow.connect(lambda: _sync_launch_at_login_action(window))
         sys_menu.aboutToHide.connect(lambda: QApplication.restoreOverrideCursor())
     except (AttributeError, RuntimeError, TypeError):
         pass
@@ -1240,6 +1264,11 @@ def setup_system_menu(window) -> SystemMenuRefs:
 
     act_runtime_health = sys_menu.addAction("运行时健康")
     act_runtime_health.triggered.connect(window._open_runtime_health)
+
+    window._act_launch_at_login = sys_menu.addAction(_LAUNCH_AT_LOGIN_TEXT)
+    window._act_launch_at_login.setCheckable(True)
+    window._act_launch_at_login.triggered.connect(window._toggle_launch_at_login)
+    _sync_launch_at_login_action(window)
 
     sys_menu.addSeparator()
 
@@ -1329,6 +1358,7 @@ def refresh_system_menu_theme(window) -> None:
         action.setChecked(theme_name == theme_manager.current_theme_name)
     if hasattr(window, "_act_auto_theme") and window._act_auto_theme:
         window._act_auto_theme.setChecked(theme_manager.is_auto_switch())
+    _sync_launch_at_login_action(window)
 
 
 def apply_chrome_theme(window) -> None:
