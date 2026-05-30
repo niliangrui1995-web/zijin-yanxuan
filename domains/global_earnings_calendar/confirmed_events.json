@@ -467,6 +467,24 @@
       "original_timezone": "UTC",
       "call_time_source_url": "https://www.soitec.com/home/investors/full-year-results-of-fiscal-year-2025---2026",
       "call_time_source_type": "official_ir_webcast"
+    },
+    {
+      "company": "Credo",
+      "ticker": "CRDO",
+      "sector": "数据中心网络与高速电互连",
+      "report_date": "2026-06-01",
+      "fiscal_period": "Apr/2026",
+      "time_label": "盘后",
+      "beijing_time": "2026-06-02 05:00",
+      "status": "confirmed",
+      "source": "confirmed",
+      "priority": "normal",
+      "conference_url": "https://investors.credosemi.com/news-events/news/news-details/2026/Credo-Schedules-Fourth-Quarter-and-Fiscal-Year-2026-Financial-Results-Conference-Call/",
+      "market": "US",
+      "original_call_time_text": "Monday, June 1, 2026, at 2:00 p.m. Pacific Time",
+      "original_timezone": "America/Los_Angeles",
+      "call_time_source_url": "https://investors.credosemi.com/news-events/news/news-details/2026/Credo-Schedules-Fourth-Quarter-and-Fiscal-Year-2026-Financial-Results-Conference-Call/",
+      "call_time_source_type": "official_ir_press_release"
     }
   ]
 }
