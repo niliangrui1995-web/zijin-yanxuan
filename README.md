@@ -39,6 +39,7 @@ Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatil
 - 标题栏全局导航、同步与交易日历入口：`ui/components/main_window_shell.py` + `ui/main_window_visuals.py`
 - A 股交易日历与全球寡头财报面板：`ui/components/trade_calendar.py` + `domains/global_earnings_calendar/service.py`
 - 统一股票右键菜单与 Codex 投研跳转：`ui/components/stock_context_menu.py` + `ui/workspaces/stock_context_service.py`
+- Windows 系统菜单开机自启动：`ui/components/main_window_shell.py` + `infra/navigation/windows_autostart.py`
 
 ## 技术文档
 
@@ -345,6 +346,16 @@ $env:OPENDART_API_KEY = "<your-opendart-key>"
 ```powershell
 .\.venv\Scripts\python.exe .\vcp_hunter_qt.pyw
 ```
+
+### 7. 可选：开机自启动
+
+Windows 环境下可以在标题栏的系统菜单中勾选 `开机自启动`。
+
+该开关写入当前用户的 Windows Run 注册表项，并按顺序选择可用启动命令：
+
+1. 打包后的 `dist/紫金研选/紫金研选.exe`
+2. 本机静默启动器 `%LOCALAPPDATA%\ZijinResearch\Launcher\ZijinResearchLauncher.exe`
+3. 当前项目 `.venv\Scripts\pythonw.exe .\vcp_hunter_qt.pyw`
 
 ## 数据源与运行模式
 
