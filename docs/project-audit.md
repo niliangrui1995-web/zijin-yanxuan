@@ -36,10 +36,26 @@
 
 该入口会以严格模式调用 `pip-audit`：如果工具缺失、超时、运行失败或发现漏洞，命令都会失败，避免供应链审计被静默跳过。
 
+快速审计并显式追加分阶段 Ruff 扩展规则：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\project_audit.py --quick --extended-ruff
+```
+
+`--extended-ruff` 先启用当前仓库已经清零的 Bugbear、simplify、comprehensions 和部分 Ruff 规则，避免 `RUF001/RUF002/RUF003` 这类中文标点误伤进入默认门禁。后续每轮规则清零后再把对应规则加入该集合。
+
 带性能预算报告：
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\project_audit.py --runtime-health-report tmp\runtime_health_report.json
+```
+
+## 依赖复现
+
+现有 `requirements.txt` / `requirements-dev.txt` 继续表达运行下限。需要复现当前 Windows + Python 3.14 验证环境时，追加 constraints 文件：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt -c constraints-py314-windows.txt
 ```
 
 ## 检查范围
@@ -47,6 +63,7 @@
 完整审计当前包括：
 
 - Ruff 静态检查
+- 可选分阶段 Ruff 扩展规则
 - UTF-8 / 疑似文本异常检查
 - `git diff --check` 差异空白错误检查
 - `compileall` 编译检查

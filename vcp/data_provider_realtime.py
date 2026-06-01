@@ -150,22 +150,19 @@ def fetch_eastmoney_quotes_with_split_retry(
     return merged_quotes, left_failures + right_failures
 
 
-def fetch_realtime_quotes_batch(
-    provider,
-    codes,
-    *,
-    log,
-    batch_size_default: int,
-    min_batch_size_default: int,
-    batch_pause_default: float,
-):
-    provider._ensure_eastmoney_quote_state()
-    raw_codes = [str(code).strip() for code in (codes or []) if str(code or "").strip()]
-    normalized_codes = normalize_quote_codes(codes)
-    if not normalized_codes:
-        return {}
-    request_stats = _new_quote_request_stats(normalized_codes, raw_codes=raw_codes, started_at=time.time())
+def _infer_quote_trade_date() -> str:
+    try:
+        latest_trade_date = MarketCalendar.get_latest_trade_date("CN")
+        return (
+            latest_trade_date.strftime("%Y-%m-%d")
+            if latest_trade_date is not None
+            else MarketCalendar.today("CN").strftime("%Y-%m-%d")
+        )
+    except (RuntimeError, TypeError, ValueError):
+        return MarketCalendar.today("CN").strftime("%Y-%m-%d")
 
+
+def _apply_realtime_quote_cache_gate(provider, normalized_codes: list[str], request_stats: dict, *, log) -> dict:
     try:
         quote_refreshable = MarketCalendar.is_quote_refresh_time()
     except (RuntimeError, TypeError, ValueError) as exc:
@@ -177,18 +174,9 @@ def fetch_realtime_quotes_batch(
         request_stats["recent_codes_count"] = len(normalized_codes)
         _add_quote_source(request_stats, "offline_market_closed")
         _finish_quote_request(provider, request_stats, status="market_closed_offline", result=result)
-        return result
+        return {"done": True, "result": result}
 
-    try:
-        latest_trade_date = MarketCalendar.get_latest_trade_date("CN")
-        inferred_trade_date = (
-            latest_trade_date.strftime("%Y-%m-%d")
-            if latest_trade_date is not None
-            else MarketCalendar.today("CN").strftime("%Y-%m-%d")
-        )
-    except (RuntimeError, TypeError, ValueError):
-        inferred_trade_date = MarketCalendar.today("CN").strftime("%Y-%m-%d")
-
+    inferred_trade_date = _infer_quote_trade_date()
     now = time.time()
     provider._prune_rt_quote_cache(now=now)
     dedup_window = float(provider._rt_runtime_dedup_window_sec or 0.5)
@@ -206,7 +194,7 @@ def fetch_realtime_quotes_batch(
     if not dedup_codes:
         _add_quote_source(request_stats, "runtime_cache")
         _finish_quote_request(provider, request_stats, status="runtime_cache_hit", result=result)
-        return result
+        return {"done": True, "result": result}
 
     if now < float(provider._rt_runtime_cooldown_until or 0):
         fallback_res = provider._build_offline_quotes(dedup_codes)
@@ -214,7 +202,7 @@ def fetch_realtime_quotes_batch(
         request_stats["recent_codes_count"] = len(dedup_codes)
         _add_quote_source(request_stats, "offline_runtime_cooldown")
         _finish_quote_request(provider, request_stats, status="runtime_cooldown_offline", result=result)
-        return result
+        return {"done": True, "result": result}
 
     if provider._offline:
         fallback_res = provider._build_offline_quotes(dedup_codes)
@@ -222,8 +210,130 @@ def fetch_realtime_quotes_batch(
         request_stats["recent_codes_count"] = len(dedup_codes)
         _add_quote_source(request_stats, "offline_mode")
         _finish_quote_request(provider, request_stats, status="offline_mode", result=result)
-        return result
+        return {"done": True, "result": result}
 
+    return {
+        "done": False,
+        "result": result,
+        "dedup_codes": dedup_codes,
+        "inferred_trade_date": inferred_trade_date,
+        "now": now,
+        "dedup_window": dedup_window,
+    }
+
+
+def _fetch_realtime_quote_batch_sources(
+    provider,
+    batch: list[str],
+    *,
+    inferred_trade_date: str,
+    min_batch_size: int,
+    eastmoney_available: bool,
+) -> tuple[dict, list[str], bool, bool, bool]:
+    quotes = {}
+    failures = []
+    used_sina_fallback = False
+    used_tencent_fallback = False
+
+    if eastmoney_available:
+        quotes, failures = provider._fetch_eastmoney_quotes_with_split_retry(
+            batch,
+            inferred_trade_date,
+            min_batch_size,
+        )
+        if failures and any(is_disconnect_like_error(reason) for reason in failures):
+            provider._enter_eastmoney_cooldown(failures[0])
+            eastmoney_available = False
+
+    if (not eastmoney_available) or failures or len(quotes) < len(batch):
+        missing_batch = [code for code in batch if code not in quotes]
+        if missing_batch:
+            try:
+                sina_quotes = provider._request_sina_quote_batch(missing_batch, inferred_trade_date)
+                if sina_quotes:
+                    quotes.update(sina_quotes)
+                    used_sina_fallback = True
+            except (OSError, RuntimeError, TimeoutError, ValueError) as sina_exc:
+                if not failures:
+                    failures = [str(sina_exc)]
+                else:
+                    failures.append(str(sina_exc))
+
+        missing_batch = [code for code in batch if code not in quotes]
+        if missing_batch:
+            try:
+                tencent_quotes = provider._request_tencent_quote_batch(missing_batch, inferred_trade_date)
+                if tencent_quotes:
+                    quotes.update(tencent_quotes)
+                    used_tencent_fallback = True
+            except (OSError, RuntimeError, TimeoutError, ValueError) as tencent_exc:
+                if not failures:
+                    failures = [str(tencent_exc)]
+                else:
+                    failures.append(str(tencent_exc))
+
+    return quotes, failures, eastmoney_available, used_sina_fallback, used_tencent_fallback
+
+
+def _record_realtime_batch_sources(
+    provider,
+    request_stats: dict,
+    batch_record: dict,
+    batch: list[str],
+    quotes: dict,
+    failures: list[str],
+    *,
+    used_sina_fallback: bool,
+    used_tencent_fallback: bool,
+) -> None:
+    batch_fully_covered = all(code in quotes for code in batch)
+    batch_record["used_sina_fallback"] = bool(used_sina_fallback)
+    batch_record["used_tencent_fallback"] = bool(used_tencent_fallback)
+    batch_record["failure_count"] = len(failures)
+    batch_record["returned_count"] = len(quotes)
+    if batch_fully_covered:
+        batch_record["status"] = "ok"
+    elif quotes:
+        batch_record["status"] = "partial"
+    else:
+        batch_record["status"] = "failed"
+    if quotes:
+        sources = {
+            str(quote.get("source") or "").strip()
+            for quote in quotes.values()
+            if isinstance(quote, dict) and str(quote.get("source") or "").strip()
+        }
+        for source in sorted(sources):
+            _add_quote_source(request_stats, source)
+    if used_sina_fallback:
+        fallback_msg = provider._rt_eastmoney_last_error or "东方财富链路异常"
+        provider._log_quote_fallback(
+            f"[实时行情] 已切换新浪批量报价，覆盖 {len(quotes)}/{len(batch)} 只: {fallback_msg}",
+            warning=False,
+        )
+    if used_tencent_fallback:
+        fallback_msg = provider._rt_eastmoney_last_error or "eastmoney realtime quote unavailable"
+        provider._log_quote_fallback(
+            f"[realtime quotes] switched to Tencent fallback, covered {len(quotes)}/{len(batch)} codes: {fallback_msg}",
+            warning=False,
+        )
+
+
+def _fetch_realtime_quote_sources(
+    provider,
+    normalized_codes: list[str],
+    dedup_codes: list[str],
+    result: dict,
+    request_stats: dict,
+    *,
+    inferred_trade_date: str,
+    now: float,
+    dedup_window: float,
+    log,
+    batch_size_default: int,
+    min_batch_size_default: int,
+    batch_pause_default: float,
+) -> dict:
     batch_size = int(getattr(provider, "_rt_quote_batch_size", batch_size_default) or batch_size_default)
     min_batch_size = int(
         getattr(provider, "_rt_quote_min_batch_size", min_batch_size_default) or min_batch_size_default
@@ -254,10 +364,6 @@ def fetch_realtime_quotes_batch(
 
     for start in range(0, len(dedup_codes), batch_size):
         batch = dedup_codes[start : start + batch_size]
-        quotes = {}
-        failures = []
-        used_sina_fallback = False
-        used_tencent_fallback = False
         batch_record = {
             "index": int(start // batch_size) + 1,
             "codes_count": len(batch),
@@ -273,76 +379,29 @@ def fetch_realtime_quotes_batch(
         }
         request_stats["batches"].append(batch_record)
 
-        if eastmoney_available:
-            quotes, failures = provider._fetch_eastmoney_quotes_with_split_retry(
+        quotes, failures, eastmoney_available, used_sina_fallback, used_tencent_fallback = (
+            _fetch_realtime_quote_batch_sources(
+                provider,
                 batch,
-                inferred_trade_date,
-                min_batch_size,
+                inferred_trade_date=inferred_trade_date,
+                min_batch_size=min_batch_size,
+                eastmoney_available=eastmoney_available,
             )
-            if failures and any(is_disconnect_like_error(reason) for reason in failures):
-                provider._enter_eastmoney_cooldown(failures[0])
-                eastmoney_available = False
-
-        if (not eastmoney_available) or failures or len(quotes) < len(batch):
-            missing_batch = [code for code in batch if code not in quotes]
-            if missing_batch:
-                try:
-                    sina_quotes = provider._request_sina_quote_batch(missing_batch, inferred_trade_date)
-                    if sina_quotes:
-                        quotes.update(sina_quotes)
-                        used_sina_fallback = True
-                except (OSError, RuntimeError, TimeoutError, ValueError) as sina_exc:
-                    if not failures:
-                        failures = [str(sina_exc)]
-                    else:
-                        failures.append(str(sina_exc))
-
-            missing_batch = [code for code in batch if code not in quotes]
-            if missing_batch:
-                try:
-                    tencent_quotes = provider._request_tencent_quote_batch(missing_batch, inferred_trade_date)
-                    if tencent_quotes:
-                        quotes.update(tencent_quotes)
-                        used_tencent_fallback = True
-                except (OSError, RuntimeError, TimeoutError, ValueError) as tencent_exc:
-                    if not failures:
-                        failures = [str(tencent_exc)]
-                    else:
-                        failures.append(str(tencent_exc))
+        )
 
         new_fetch.update(quotes)
-        batch_fully_covered = all(code in quotes for code in batch)
-        batch_record["used_sina_fallback"] = bool(used_sina_fallback)
-        batch_record["used_tencent_fallback"] = bool(used_tencent_fallback)
-        batch_record["failure_count"] = len(failures)
-        batch_record["returned_count"] = len(quotes)
-        if batch_fully_covered:
-            batch_record["status"] = "ok"
-        elif quotes:
-            batch_record["status"] = "partial"
-        else:
-            batch_record["status"] = "failed"
-        if quotes:
-            sources = {
-                str(quote.get("source") or "").strip()
-                for quote in quotes.values()
-                if isinstance(quote, dict) and str(quote.get("source") or "").strip()
-            }
-            for source in sorted(sources):
-                _add_quote_source(request_stats, source)
-        if used_sina_fallback:
-            fallback_msg = provider._rt_eastmoney_last_error or "东方财富链路异常"
-            provider._log_quote_fallback(
-                f"[实时行情] 已切换新浪批量报价，覆盖 {len(quotes)}/{len(batch)} 只: {fallback_msg}",
-                warning=False,
-            )
-        if used_tencent_fallback:
-            fallback_msg = provider._rt_eastmoney_last_error or "eastmoney realtime quote unavailable"
-            provider._log_quote_fallback(
-                f"[realtime quotes] switched to Tencent fallback, covered {len(quotes)}/{len(batch)} codes: {fallback_msg}",
-                warning=False,
-            )
+        _record_realtime_batch_sources(
+            provider,
+            request_stats,
+            batch_record,
+            batch,
+            quotes,
+            failures,
+            used_sina_fallback=used_sina_fallback,
+            used_tencent_fallback=used_tencent_fallback,
+        )
 
+        batch_fully_covered = all(code in quotes for code in batch)
         if failures and not batch_fully_covered:
             batch_failures += len(failures)
             failure_reasons.extend(failures)
@@ -376,6 +435,21 @@ def fetch_realtime_quotes_batch(
     elif batch_failures:
         provider._register_realtime_failure(failure_reasons[0] if failure_reasons else "全部实时行情批次失败")
 
+    return {
+        "batch_failures": batch_failures,
+        "failure_reasons": failure_reasons,
+        "new_fetch": new_fetch,
+    }
+
+
+def _apply_realtime_quote_fallbacks(
+    provider,
+    result: dict,
+    dedup_codes: list[str],
+    request_stats: dict,
+    *,
+    inferred_trade_date: str,
+) -> list[str]:
     missing_codes = [code for code in dedup_codes if code not in result]
     if missing_codes:
         stale_quotes = {}
@@ -396,10 +470,75 @@ def fetch_realtime_quotes_batch(
         result.update(fallback_res)
         _add_quote_source(request_stats, "offline_missing_fallback")
 
+    return missing_codes
+
+
+def _finalize_realtime_quote_stats(
+    provider,
+    result: dict,
+    request_stats: dict,
+    *,
+    batch_failures: int,
+    new_fetch: dict,
+    missing_codes: list[str],
+) -> None:
     final_status = "network_ok"
     if batch_failures and new_fetch:
         final_status = "network_partial_with_fallback"
     elif batch_failures:
         final_status = "network_failed_offline_fallback" if missing_codes else "network_failed"
     _finish_quote_request(provider, request_stats, status=final_status, result=result)
+
+
+def fetch_realtime_quotes_batch(
+    provider,
+    codes,
+    *,
+    log,
+    batch_size_default: int,
+    min_batch_size_default: int,
+    batch_pause_default: float,
+):
+    provider._ensure_eastmoney_quote_state()
+    raw_codes = [str(code).strip() for code in (codes or []) if str(code or "").strip()]
+    normalized_codes = normalize_quote_codes(codes)
+    if not normalized_codes:
+        return {}
+    request_stats = _new_quote_request_stats(normalized_codes, raw_codes=raw_codes, started_at=time.time())
+
+    gate = _apply_realtime_quote_cache_gate(provider, normalized_codes, request_stats, log=log)
+    if gate["done"]:
+        return gate["result"]
+
+    result = gate["result"]
+    dedup_codes = gate["dedup_codes"]
+    fetch_state = _fetch_realtime_quote_sources(
+        provider,
+        normalized_codes,
+        dedup_codes,
+        result,
+        request_stats,
+        inferred_trade_date=gate["inferred_trade_date"],
+        now=gate["now"],
+        dedup_window=gate["dedup_window"],
+        log=log,
+        batch_size_default=batch_size_default,
+        min_batch_size_default=min_batch_size_default,
+        batch_pause_default=batch_pause_default,
+    )
+    missing_codes = _apply_realtime_quote_fallbacks(
+        provider,
+        result,
+        dedup_codes,
+        request_stats,
+        inferred_trade_date=gate["inferred_trade_date"],
+    )
+    _finalize_realtime_quote_stats(
+        provider,
+        result,
+        request_stats,
+        batch_failures=fetch_state["batch_failures"],
+        new_fetch=fetch_state["new_fetch"],
+        missing_codes=missing_codes,
+    )
     return result

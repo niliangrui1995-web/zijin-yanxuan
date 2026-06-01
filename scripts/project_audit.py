@@ -37,6 +37,62 @@ RUNTIME_HEALTH_SHORT_OUTPUT = "tmp/runtime_health_stability_short.json"
 RUNTIME_HEALTH_SHORT_SAMPLE_OUTPUT_DIR = "tmp/runtime_health_stability_short_samples"
 DEPENDENCY_AUDIT_OUTPUT = "tmp/dependency_audit.json"
 
+EXTENDED_RUFF_SELECT = (
+    "B006",
+    "B011",
+    "B013",
+    "B014",
+    "B015",
+    "B017",
+    "B020",
+    "B026",
+    "B904",
+    "SIM101",
+    "SIM109",
+    "SIM115",
+    "C400",
+    "C401",
+    "C402",
+    "C404",
+    "C405",
+    "C409",
+    "C410",
+    "C411",
+    "C413",
+    "C415",
+    "C416",
+    "C417",
+    "C418",
+    "C419",
+    "RUF006",
+    "RUF007",
+    "RUF008",
+    "RUF015",
+    "RUF016",
+    "RUF017",
+    "RUF018",
+    "RUF019",
+    "RUF020",
+    "RUF021",
+    "RUF024",
+    "RUF026",
+    "RUF028",
+    "RUF030",
+    "RUF032",
+    "RUF033",
+    "RUF034",
+    "RUF040",
+    "RUF041",
+    "RUF043",
+    "RUF048",
+    "RUF049",
+    "RUF053",
+    "RUF057",
+    "RUF058",
+    "RUF060",
+    "RUF064",
+)
+
 
 @dataclass(frozen=True)
 class AuditCommand:
@@ -65,6 +121,22 @@ def build_audit_commands(args: argparse.Namespace) -> list[AuditCommand]:
             [python, "-m", "pytest", "-q", "tests/test_architecture_boundaries.py"],
         ),
     ]
+
+    if args.extended_ruff:
+        commands.append(
+            AuditCommand(
+                "extended-ruff",
+                [
+                    python,
+                    "-m",
+                    "ruff",
+                    "check",
+                    *PYTHON_TARGETS,
+                    "--select",
+                    ",".join(EXTENDED_RUFF_SELECT),
+                ],
+            )
+        )
 
     if not args.quick and not args.skip_full_pytest:
         commands.append(AuditCommand("full-pytest", [python, "-m", "pytest", "-q"]))
@@ -137,6 +209,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--skip-full-pytest", action="store_true")
     parser.add_argument("--skip-runtime-self-check", action="store_true")
     parser.add_argument("--skip-webengine-preflight", action="store_true")
+    parser.add_argument(
+        "--extended-ruff",
+        action="store_true",
+        help="Run phased-in Bugbear, simplify, comprehensions, and Ruff rules that currently pass.",
+    )
     parser.add_argument(
         "--runtime-health-short",
         action="store_true",

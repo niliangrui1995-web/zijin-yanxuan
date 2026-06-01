@@ -42,6 +42,26 @@ def test_project_audit_quick_gate_skips_full_pytest_and_webengine_preflight():
     assert "--skip-webengine-preflight" in runtime.command
     assert "runtime-health-short" not in labels
     assert "dependency-audit" not in labels
+    assert "extended-ruff" not in labels
+
+
+def test_project_audit_adds_extended_ruff_only_when_requested():
+    commands = _commands(["--python", "python", "--quick", "--extended-ruff"])
+
+    extended = next(command for command in commands if command.label == "extended-ruff")
+
+    assert extended.command == [
+        "python",
+        "-m",
+        "ruff",
+        "check",
+        *project_audit.PYTHON_TARGETS,
+        "--select",
+        ",".join(project_audit.EXTENDED_RUFF_SELECT),
+    ]
+    assert "B006" in extended.command[-1]
+    assert "SIM115" in extended.command[-1]
+    assert "RUF064" in extended.command[-1]
 
 
 def test_project_audit_adds_runtime_health_short_only_when_requested():
@@ -105,3 +125,15 @@ def test_project_audit_list_includes_dependency_audit_when_requested(capsys):
     assert "dependency-audit: python scripts/dependency_audit.py" in output
     assert "--strict" in output
     assert f"--output {project_audit.DEPENDENCY_AUDIT_OUTPUT}" in output
+
+
+def test_project_audit_list_includes_extended_ruff_when_requested(capsys):
+    result = project_audit.main(["--python", "python", "--quick", "--extended-ruff", "--list"])
+
+    output = capsys.readouterr().out
+    assert result == 0
+    assert "extended-ruff: python -m ruff check" in output
+    assert "--select" in output
+    assert "B904" in output
+    assert "SIM115" in output
+    assert "RUF064" in output

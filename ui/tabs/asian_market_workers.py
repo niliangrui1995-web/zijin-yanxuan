@@ -26,6 +26,14 @@ from app.services.asian_market_service import (
 from app.services.runtime_constants import CACHE_DIR
 from app.services.ui_market_calendar_service import MarketCalendar
 from core.logger import get_logger
+from ui.services.asian_market_http import (
+    ASIAN_MARKET_HTTP_HEADERS,
+    ASIAN_MARKET_HTTP_TIMEOUT_SEC,
+    asian_market_get,
+    asian_market_headers,
+    is_http_success,
+    response_status_code,
+)
 
 log = get_logger(__name__)
 
@@ -40,13 +48,8 @@ _FETCH_UPDATES_TIMEOUT_SEC = 80
 _USE_CF_PROXY = False
 _EMPTY_NUMERIC_MARKERS = {"", "-", "--", "---", "—", "－", "None", "null"}
 _NUMERIC_TOKEN_RE = re.compile(r"-?\d+(?:\.\d+)?")
-_DEFAULT_HTTP_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
-    ),
-    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-}
+_DEFAULT_HTTP_HEADERS = ASIAN_MARKET_HTTP_HEADERS
+_HTTP_TIMEOUT_SEC = ASIAN_MARKET_HTTP_TIMEOUT_SEC
 
 
 def is_cf_proxy_enabled() -> bool:
@@ -378,24 +381,25 @@ def _fetch_jp_realtime_quote(code: str, http_session) -> dict | None:
         return None
 
     url = f"https://finance.yahoo.co.jp/quote/{base_code}.T"
-    response = http_session.get(url, headers=_DEFAULT_HTTP_HEADERS, timeout=15)
+    response = http_session.get(url, headers=_DEFAULT_HTTP_HEADERS, timeout=_HTTP_TIMEOUT_SEC)
     html = response.text
     quote = _parse_jp_realtime_page(html)
     if quote:
         return quote
 
-    status_code = int(getattr(response, "status_code", 200) or 200)
+    status_code = response_status_code(response)
     if status_code >= 400 or "現在表示できません" in html:
-        retry_response = requests.get(
+        retry_response = asian_market_get(
             url,
-            headers={
-                **_DEFAULT_HTTP_HEADERS,
-                "Accept-Language": "ja,en;q=0.8,zh-CN;q=0.6",
-                "Referer": "https://finance.yahoo.co.jp/",
-            },
-            timeout=15,
+            headers=asian_market_headers(
+                {
+                    "Accept-Language": "ja,en;q=0.8,zh-CN;q=0.6",
+                    "Referer": "https://finance.yahoo.co.jp/",
+                }
+            ),
+            timeout=_HTTP_TIMEOUT_SEC,
         )
-        if int(getattr(retry_response, "status_code", 200) or 200) < 400:
+        if is_http_success(retry_response):
             return _parse_jp_realtime_page(retry_response.text)
 
     return None
@@ -634,16 +638,17 @@ def _parse_jp_yahoo_pe_from_html(page_text: str) -> tuple[float | None, str]:
 
 
 def _fetch_jp_kabutan_pe(base_code: str) -> tuple[float | None, str]:
-    response = requests.get(
+    response = asian_market_get(
         f"https://kabutan.jp/stock/?code={base_code}",
-        headers={
-            **_DEFAULT_HTTP_HEADERS,
-            "Accept-Language": "ja,en;q=0.8,zh-CN;q=0.6",
-            "Referer": "https://kabutan.jp/",
-        },
-        timeout=15,
+        headers=asian_market_headers(
+            {
+                "Accept-Language": "ja,en;q=0.8,zh-CN;q=0.6",
+                "Referer": "https://kabutan.jp/",
+            }
+        ),
+        timeout=_HTTP_TIMEOUT_SEC,
     )
-    if int(getattr(response, "status_code", 200) or 200) >= 400:
+    if not is_http_success(response):
         return None, ""
 
     match = re.search(
@@ -662,28 +667,29 @@ def _fetch_jp_yahoo_pe(code: str, http_session) -> tuple[float | None, str]:
         return None, ""
 
     url = f"https://finance.yahoo.co.jp/quote/{base_code}.T"
-    headers = {
-        **_DEFAULT_HTTP_HEADERS,
-        "Accept-Language": "ja,en;q=0.8,zh-CN;q=0.6",
-        "Referer": "https://finance.yahoo.co.jp/",
-    }
+    headers = asian_market_headers(
+        {
+            "Accept-Language": "ja,en;q=0.8,zh-CN;q=0.6",
+            "Referer": "https://finance.yahoo.co.jp/",
+        }
+    )
     response = http_session.get(
         url,
         headers=headers,
-        timeout=15,
+        timeout=_HTTP_TIMEOUT_SEC,
     )
     page_text = response.text
     pe_value, source = _parse_jp_yahoo_pe_from_html(page_text)
     if pe_value is not None:
         return pe_value, source
 
-    status_code = int(getattr(response, "status_code", 200) or 200)
+    status_code = response_status_code(response)
     yahoo_error_page = "ご覧になろうとしているページは現在表示できません" in page_text
     if status_code < 400 and not yahoo_error_page:
         return _fetch_jp_kabutan_pe(base_code)
 
-    retry_response = requests.get(url, headers=headers, timeout=15)
-    if int(getattr(retry_response, "status_code", 200) or 200) < 400:
+    retry_response = asian_market_get(url, headers=headers, timeout=_HTTP_TIMEOUT_SEC)
+    if is_http_success(retry_response):
         pe_value, source = _parse_jp_yahoo_pe_from_html(retry_response.text)
         if pe_value is not None:
             return pe_value, source
