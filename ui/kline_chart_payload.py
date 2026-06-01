@@ -327,17 +327,8 @@ def build_kline_market_state(code: str) -> dict:
     }
 
 
-def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme_colors: dict) -> str:
-    js_url = QUrl.fromLocalFile(echarts_js_path).toString()
-    data_json = json.dumps(echarts_data, ensure_ascii=False)
-
-    return f'''<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <script src="{js_url}"></script>
-    <style>
-        :root {{
+def _build_kline_style_block(theme_colors: dict) -> str:
+    return f'''        :root {{
             --bg-canvas: {theme_colors["bg_canvas"]};
             --bg-toolbar: {theme_colors["bg_toolbar"]};
             --border: {theme_colors["border"]};
@@ -381,10 +372,11 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
         .ma-display span.ma50 {{ color: var(--ma50); }}
         .ma-display span.ma150 {{ color: var(--ma150); }}
         .ma-display span.ma200 {{ color: var(--ma200); }}
-    </style>
-</head>
-<body>
-    <div class="top-toolbar" id="toolbar">
+'''
+
+
+def _build_kline_toolbar_html() -> str:
+    return '''    <div class="top-toolbar" id="toolbar">
         <div class="info-item">日期: <span id="v-date" class="info-val" style="color: var(--text-primary)">-</span></div>
         <div class="info-item">开: <span id="v-open" class="info-val">-</span></div>
         <div class="info-item">高: <span id="v-high" class="info-val">-</span></div>
@@ -401,12 +393,13 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             <span class="ma200">MA200: <span id="v-ma200">-</span></span>
         </div>
     </div>
-    <div id="chart"></div>
+'''
 
-        <script>
-        let rawData = {data_json};
 
-        let themeState = {json.dumps(theme_colors, ensure_ascii=False)};
+def _build_kline_bootstrap_script(data_json: str, theme_json: str) -> str:
+    return f'''        let rawData = {data_json};
+
+        let themeState = {theme_json};
         let upColor = themeState.up_color;
         let downColor = themeState.down_color;
         const MA_LINE_WIDTH_SCALE = 1.18;
@@ -460,47 +453,50 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             document.body.classList.toggle('market-sleeping', !live);
             document.body.classList.toggle('glass-fused', !!glassFused);
         }}
+'''
 
-        const chart = echarts.init(document.getElementById('chart'));
+
+def _build_kline_interaction_script() -> str:
+    return '''        const chart = echarts.init(document.getElementById('chart'));
         const toolbar = document.getElementById('toolbar');
         let pointerFrame = 0;
         let pendingPointerIdx = null;
         let lastToolbarIdx = -1;
         let toolbarFadeTimer = 0;
 
-        function _clamp(value, min, max) {{
+        function _clamp(value, min, max) {
             return Math.min(max, Math.max(min, value));
-        }}
+        }
 
-        function _minZoomSpan() {{
+        function _minZoomSpan() {
             const count = Math.max(rawData.dates.length, 1);
             return Math.min(100, Math.max(6, Math.min(30, 20 / count * 100)));
-        }}
+        }
 
-        function _currentZoomRange() {{
+        function _currentZoomRange() {
             const option = chart.getOption ? chart.getOption() : null;
-            const zoom = option && option.dataZoom && option.dataZoom[0] ? option.dataZoom[0] : {{}};
+            const zoom = option && option.dataZoom && option.dataZoom[0] ? option.dataZoom[0] : {};
             const start = Number(zoom.start !== undefined ? zoom.start : 55);
             const end = Number(zoom.end !== undefined ? zoom.end : 100);
-            return {{
+            return {
                 start: _clamp(Number.isFinite(start) ? start : 55, 0, 100),
                 end: _clamp(Number.isFinite(end) ? end : 100, 0, 100)
-            }};
-        }}
+            };
+        }
 
-        function _applyZoomRange(range) {{
-            chart.dispatchAction({{
+        function _applyZoomRange(range) {
+            chart.dispatchAction({
                 type: 'dataZoom',
                 dataZoomIndex: 0,
                 start: _clamp(range.start, 0, 100),
                 end: _clamp(range.end, 0, 100)
-            }});
-        }}
+            });
+        }
 
-        function _installSmoothWheelZoom() {{
+        function _installSmoothWheelZoom() {
             const zr = chart.getZr && chart.getZr();
             if (!zr || !zr.on) return;
-            zr.on('mousewheel', function (params) {{
+            zr.on('mousewheel', function (params) {
                 const event = params.event && params.event.event ? params.event.event : params.event;
                 if (event && event.preventDefault) event.preventDefault();
                 if (event && event.stopPropagation) event.stopPropagation();
@@ -513,36 +509,36 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                 const nextSpan = _clamp(span * (deltaY > 0 ? 1.10 : 0.90), _minZoomSpan(), 100);
                 let anchorPct = range.start + span / 2;
 
-                try {{
-                    const point = chart.convertFromPixel({{ xAxisIndex: 0 }}, [params.offsetX, params.offsetY]);
-                    if (Array.isArray(point) && Number.isFinite(point[0]) && rawData.dates.length > 1) {{
+                try {
+                    const point = chart.convertFromPixel({ xAxisIndex: 0 }, [params.offsetX, params.offsetY]);
+                    if (Array.isArray(point) && Number.isFinite(point[0]) && rawData.dates.length > 1) {
                         anchorPct = _clamp(point[0] / (rawData.dates.length - 1) * 100, range.start, range.end);
-                    }}
-                }} catch (_err) {{
+                    }
+                } catch (_err) {
                     anchorPct = range.start + span / 2;
-                }}
+                }
 
                 const anchorRatio = _clamp((anchorPct - range.start) / Math.max(span, 0.001), 0, 1);
                 let nextStart = anchorPct - nextSpan * anchorRatio;
                 let nextEnd = nextStart + nextSpan;
-                if (nextStart < 0) {{
+                if (nextStart < 0) {
                     nextEnd -= nextStart;
                     nextStart = 0;
-                }}
-                if (nextEnd > 100) {{
+                }
+                if (nextEnd > 100) {
                     nextStart -= nextEnd - 100;
                     nextEnd = 100;
-                }}
-                _applyZoomRange({{ start: nextStart, end: nextEnd }});
-            }});
-        }}
+                }
+                _applyZoomRange({ start: nextStart, end: nextEnd });
+            });
+        }
 
-        function _formatPrice(value) {{
+        function _formatPrice(value) {
             const num = Number(value);
             return Number.isFinite(num) ? num.toFixed(2) : '-';
-        }}
+        }
 
-        function _formatVolumeWan(value) {{
+        function _formatVolumeWan(value) {
             const volume = Number(value || 0);
             if (!Number.isFinite(volume)) return '-';
             const wan = volume / 10000;
@@ -551,37 +547,37 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             if (absWan >= 100) return wan.toFixed(0) + '\\u4e07';
             if (absWan >= 10) return wan.toFixed(1).replace(/\\.0$/, '') + '\\u4e07';
             return wan.toFixed(2).replace(/\\.00$/, '').replace(/(\\.\\d)0$/, '$1') + '\\u4e07';
-        }}
+        }
 
-        function _setText(id, value) {{
+        function _setText(id, value) {
             const el = document.getElementById(id);
             if (el) el.innerText = value;
-        }}
+        }
 
-        function _setPointerCloseMarker(idx) {{
+        function _setPointerCloseMarker(idx) {
             const kline = rawData.klines[idx];
             if (!kline) return;
-            chart.setOption({{
+            chart.setOption({
                 series: [
-                    {{
+                    {
                         id: 'pointerClose',
                         data: [[idx, Number(kline[1])]]
-                    }}
+                    }
                 ]
-            }}, false, true);
-        }}
+            }, false, true);
+        }
 
-        function _clearPointerCloseMarker() {{
-            chart.setOption({{ series: [{{ id: 'pointerClose', data: [] }}] }}, false, true);
-        }}
+        function _clearPointerCloseMarker() {
+            chart.setOption({ series: [{ id: 'pointerClose', data: [] }] }, false, true);
+        }
 
-        function _updateToolbar(idx, fade) {{
+        function _updateToolbar(idx, fade) {
             if (idx < 0 || idx >= rawData.dates.length) return;
             const dt = rawData.dates[idx];
             const kline = rawData.klines[idx];
             if (!kline) return;
 
-            const applyValues = function () {{
+            const applyValues = function () {
                 _setText('v-date', dt);
                 _setText('v-open', _formatPrice(kline[0]));
                 _setText('v-low', _formatPrice(kline[2]));
@@ -593,210 +589,213 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                 const pctStr = pct >= 0 ? '+' + pct.toFixed(2) + '%' : pct.toFixed(2) + '%';
                 const trendColor = pct >= 0 ? upColor : downColor;
                 const closeEl = document.getElementById('v-close');
-                if (closeEl) {{
+                if (closeEl) {
                     closeEl.innerText = _formatPrice(close);
                     closeEl.style.color = trendColor;
-                }}
+                }
                 const pctEl = document.getElementById('v-pct');
-                if (pctEl) {{
+                if (pctEl) {
                     pctEl.innerText = pctStr;
                     pctEl.style.color = trendColor;
-                }}
+                }
 
                 const volEntry = rawData.vols[idx];
                 const vol = volEntry && volEntry.value !== undefined ? volEntry.value : volEntry;
                 _setText('v-vol', _formatVolumeWan(vol));
 
                 const maKeys = ['ma10', 'ma20', 'ma50', 'ma150', 'ma200'];
-                for (const key of maKeys) {{
+                for (const key of maKeys) {
                     const val = rawData[key] ? rawData[key][idx] : null;
                     _setText('v-' + key, (val !== null && val !== undefined) ? Number(val).toFixed(2) : '-');
-                }}
-            }};
+                }
+            };
 
-            if (!fade || !toolbar || idx === lastToolbarIdx) {{
+            if (!fade || !toolbar || idx === lastToolbarIdx) {
                 applyValues();
                 lastToolbarIdx = idx;
                 return;
-            }}
+            }
 
             toolbar.classList.add('is-updating');
             window.clearTimeout(toolbarFadeTimer);
-            toolbarFadeTimer = window.setTimeout(function () {{
+            toolbarFadeTimer = window.setTimeout(function () {
                 applyValues();
                 toolbar.classList.remove('is-updating');
-            }}, 50);
+            }, 50);
             lastToolbarIdx = idx;
-        }}
+        }
 
-        function _schedulePointerUpdate(value) {{
+        function _schedulePointerUpdate(value) {
             const idx = Math.round(Number(value));
             if (!Number.isFinite(idx) || idx < 0 || idx >= rawData.dates.length) return;
             pendingPointerIdx = idx;
             if (pointerFrame) return;
-            pointerFrame = requestAnimationFrame(function () {{
+            pointerFrame = requestAnimationFrame(function () {
                 pointerFrame = 0;
                 const nextIdx = pendingPointerIdx;
                 pendingPointerIdx = null;
                 if (nextIdx === null) return;
                 _updateToolbar(nextIdx, true);
                 _setPointerCloseMarker(nextIdx);
-            }});
-        }}
+            });
+        }
 
-        chart.on('updateAxisPointer', function (event) {{
+        chart.on('updateAxisPointer', function (event) {
             const axisInfo = event.axesInfo && event.axesInfo[0];
-            if (axisInfo) {{
+            if (axisInfo) {
                 _schedulePointerUpdate(axisInfo.value);
-            }}
-        }});
+            }
+        });
 
-        chart.on('globalout', function () {{
+        chart.on('globalout', function () {
             _clearPointerCloseMarker();
-        }});
+        });
+'''
 
-        function splitData(rawData) {{
-            return {{
+
+def _build_kline_data_builder_script() -> str:
+    return '''        function splitData(rawData) {
+            return {
                 categoryData: rawData.dates,
                 values: rawData.klines,
                 volumes: rawData.vols
-            }};
-        }}
+            };
+        }
 
         const VCP_STAR_SYMBOL = 'path://M0 -13 L3 -3 L13 0 L3 3 L0 13 L-3 3 L-13 0 L-3 -3 Z';
 
-        function _maLineStyle(key, baseWidth, baseOpacity, defaultType) {{
-            const styleMap = rawData.maStyles || {{}};
-            const style = styleMap[key] || {{}};
+        function _maLineStyle(key, baseWidth, baseOpacity, defaultType) {
+            const styleMap = rawData.maStyles || {};
+            const style = styleMap[key] || {};
             const width = Number.isFinite(Number(style.width)) ? Number(style.width) : baseWidth;
             const opacity = Number.isFinite(Number(style.opacity)) ? Number(style.opacity) : baseOpacity;
-            const result = {{
+            const result = {
                 width: width * MA_LINE_WIDTH_SCALE,
                 color: themeState[key],
                 opacity: opacity
-            }};
+            };
             const lineType = style.type || defaultType;
             if (lineType) result.type = lineType;
-            if (style.emphasis) {{
+            if (style.emphasis) {
                 result.shadowBlur = 9;
                 result.shadowColor = themeState[key];
-            }}
+            }
             return result;
-        }}
+        }
 
-        function _verticalGradient(topColor, bottomColor) {{
+        function _verticalGradient(topColor, bottomColor) {
             return new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                {{ offset: 0, color: topColor }},
-                {{ offset: 1, color: bottomColor }}
+                { offset: 0, color: topColor },
+                { offset: 1, color: bottomColor }
             ]);
-        }}
+        }
 
-        function _volumeRawValue(entry) {{
-            if (entry && typeof entry === 'object' && entry.value !== undefined) {{
+        function _volumeRawValue(entry) {
+            if (entry && typeof entry === 'object' && entry.value !== undefined) {
                 return Number(entry.value || 0);
-            }}
+            }
             return Number(entry || 0);
-        }}
+        }
 
-        function _volumeMetrics(idx) {{
+        function _volumeMetrics(idx) {
             const kline = rawData.klines[idx] || [];
             const volume = _volumeRawValue((rawData.vols || [])[idx]);
             const volMa = Number((rawData.volMa20 || [])[idx]);
             const isUp = Number(kline[1]) >= Number(kline[0]);
             let kind = 'normal';
-            if (Number.isFinite(volMa) && volMa > 0 && volume > 0) {{
+            if (Number.isFinite(volMa) && volMa > 0 && volume > 0) {
                 if (volume <= volMa / 3) kind = 'dry';
                 else if (volume >= volMa * VOLUME_SPIKE_RATIO) kind = 'spike';
-            }}
-            return {{ volume, volMa, isUp, kind }};
-        }}
+            }
+            return { volume, volMa, isUp, kind };
+        }
 
-        function _volumeItemStyle(idx, kind) {{
+        function _volumeItemStyle(idx, kind) {
             const metrics = _volumeMetrics(idx);
-            if (kind === 'dry') {{
-                return {{
+            if (kind === 'dry') {
+                return {
                     color: themeState.volume_dry,
                     opacity: 0.24
-                }};
-            }}
-            if (metrics.kind === 'spike') {{
-                return {{
+                };
+            }
+            if (metrics.kind === 'spike') {
+                return {
                     color: _verticalGradient(themeState.volume_spike_top, themeState.volume_spike),
                     borderColor: themeState.volume_spike,
                     borderWidth: 0.8,
                     opacity: 0.96,
                     shadowBlur: 16,
                     shadowColor: themeState.volume_spike_shadow
-                }};
-            }}
-            return {{
+                };
+            }
+            return {
                 color: metrics.isUp ? upColor : downColor,
                 opacity: 0.72
-            }};
-        }}
+            };
+        }
 
-        function buildVolumeData(kind) {{
-            return (rawData.vols || []).map((entry, idx) => {{
+        function buildVolumeData(kind) {
+            return (rawData.vols || []).map((entry, idx) => {
                 const metrics = _volumeMetrics(idx);
                 if (kind === 'dry' && metrics.kind !== 'dry') return null;
                 if (kind !== 'dry' && metrics.kind === 'dry') return null;
-                const base = entry && typeof entry === 'object' ? entry : {{ value: entry }};
-                return {{
+                const base = entry && typeof entry === 'object' ? entry : { value: entry };
+                return {
                     ...base,
-                    itemStyle: {{
-                        ...(base.itemStyle || {{}}),
+                    itemStyle: {
+                        ...(base.itemStyle || {}),
                         ..._volumeItemStyle(idx, kind)
-                    }}
-                }};
-            }});
-        }}
+                    }
+                };
+            });
+        }
 
-        function buildVolumeSpikeParticles() {{
-            return (rawData.vols || []).map((entry, idx) => {{
+        function buildVolumeSpikeParticles() {
+            return (rawData.vols || []).map((entry, idx) => {
                 const metrics = _volumeMetrics(idx);
                 if (metrics.kind !== 'spike') return null;
-                return {{
+                return {
                     value: [rawData.dates[idx], metrics.volume],
                     symbolSize: Math.max(5, Math.min(10, metrics.volMa > 0 ? metrics.volume / metrics.volMa * 2.4 : 6)),
-                    itemStyle: {{
+                    itemStyle: {
                         color: themeState.volume_spike_top,
                         shadowBlur: 12,
                         shadowColor: themeState.volume_spike_shadow
-                    }}
-                }};
-            }}).filter(Boolean);
-        }}
+                    }
+                };
+            }).filter(Boolean);
+        }
 
-        function buildVcpAreaData() {{
-            return (rawData.vcpArea || []).map((area, idx) => {{
+        function buildVcpAreaData() {
+            return (rawData.vcpArea || []).map((area, idx) => {
                 if (!Array.isArray(area) || area.length < 2) return area;
                 const topOpacity = Math.max(0.04, 0.12 - idx * 0.03);
                 const bottomOpacity = Math.max(0.01, 0.03 - idx * 0.006);
-                const topColor = idx === 0 ? themeState.vcp_area_top : `rgba(208, 164, 78, ${{topOpacity.toFixed(3)}})`;
-                const bottomColor = idx === 0 ? themeState.vcp_area_bottom : `rgba(208, 164, 78, ${{bottomOpacity.toFixed(3)}})`;
+                const topColor = idx === 0 ? themeState.vcp_area_top : `rgba(208, 164, 78, ${topOpacity.toFixed(3)})`;
+                const bottomColor = idx === 0 ? themeState.vcp_area_bottom : `rgba(208, 164, 78, ${bottomOpacity.toFixed(3)})`;
                 return [
-                    {{
+                    {
                         ...area[0],
-                        itemStyle: {{
+                        itemStyle: {
                             color: _verticalGradient(topColor, bottomColor),
                             borderWidth: 1,
                             borderColor: themeState.vcp_area_border,
                             borderType: idx > 0 ? 'dashed' : 'solid'
-                        }}
-                    }},
+                        }
+                    },
                     area[1]
                 ];
-            }});
-        }}
+            });
+        }
 
-        function buildVcpCurveSeries() {{
+        function buildVcpCurveSeries() {
             const areas = rawData.vcpArea || [];
             const dateIndex = new Map((rawData.dates || []).map((date, idx) => [date, idx]));
             const series = [];
-            areas.forEach((area, idx) => {{
+            areas.forEach((area, idx) => {
                 if (!Array.isArray(area) || area.length < 2) return;
-                const start = area[0] || {{}};
-                const end = area[1] || {{}};
+                const start = area[0] || {};
+                const end = area[1] || {};
                 const xStart = start.xAxis;
                 const xEnd = end.xAxis;
                 const yStart = Number(start.yAxis);
@@ -810,7 +809,7 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                 const high = Math.max(yStart, yEnd);
                 const low = Math.min(yStart, yEnd);
                 const bend = Math.max((high - low) * 0.07, high * 0.002);
-                const common = {{
+                const common = {
                     type: 'line',
                     xAxisIndex: 0,
                     yAxisIndex: 0,
@@ -819,72 +818,75 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                     silent: true,
                     animation: false,
                     z: 9,
-                    emphasis: {{ disabled: true }}
-                }};
-                series.push({{
+                    emphasis: { disabled: true }
+                };
+                series.push({
                     ...common,
                     id: 'vcpUpperCurve_' + idx,
                     data: [[xStart, high], [xMid, high - bend], [xEnd, high]],
-                    lineStyle: {{
+                    lineStyle: {
                         width: 1.4,
                         color: themeState.vcp_guide,
                         opacity: 0.78
-                    }}
-                }});
-                series.push({{
+                    }
+                });
+                series.push({
                     ...common,
                     id: 'vcpLowerCurve_' + idx,
                     data: [[xStart, low], [xMid, low + bend], [xEnd, low]],
-                    lineStyle: {{
+                    lineStyle: {
                         width: 1.2,
                         color: themeState.vcp_line_soft,
                         opacity: 0.62
-                    }}
-                }});
-            }});
+                    }
+                });
+            });
             return series;
-        }}
+        }
 
-        function buildVcpMarkerData() {{
-            return (rawData.vcpMarkers || []).map((item) => {{
+        function buildVcpMarkerData() {
+            return (rawData.vcpMarkers || []).map((item) => {
                 const idx = Math.round(Number(item.coord && item.coord[0]));
                 const y = Number(item.coord && item.coord[1]);
                 const category = rawData.dates[idx];
                 if (!category || !Number.isFinite(y)) return null;
-                return {{
+                return {
                     value: [category, y],
                     symbol: item.symbol || VCP_STAR_SYMBOL,
                     symbolSize: item.symbolSize || 18,
                     symbolOffset: item.symbolOffset || [0, -10],
                     itemStyle: item.itemStyle,
                     label: item.label
-                }};
-            }}).filter(Boolean);
-        }}
+                };
+            }).filter(Boolean);
+        }
+'''
 
-        function buildOption() {{
+
+def _build_kline_option_script() -> str:
+    return '''        function buildOption() {
             const data = splitData(rawData);
-            return {{
+            return {
                 animation: false,
-                stateAnimation: {{ duration: 0 }},
+                stateAnimation: { duration: 0 },
                 backgroundColor: _chartBackgroundColor(),
-                legend: {{
+                legend: {
                     show: false
-                }},
-                axisPointer: {{
-                    link: [{{ xAxisIndex: 'all' }}],
-                    lineStyle: {{
+                },
+                axisPointer: {
+                    link: [{ xAxisIndex: 'all' }],
+                    lineStyle: {
                         color: themeState.crosshair_line,
                         width: 1.2,
                         type: 'dashed',
                         opacity: 0.92
-                    }},
-                    crossStyle: {{
+                    },
+                    crossStyle: {
                         color: themeState.crosshair_line,
                         width: 1.2,
                         opacity: 0.92
-                    }},
-                    label: {{
+                    },
+                    label: {
                         backgroundColor: themeState.pointer_bg,
                         color: themeState.tooltip_text,
                         fontFamily: themeState.mono_font_family,
@@ -893,91 +895,91 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         shadowBlur: 8,
                         shadowColor: themeState.crosshair_line,
                         shadowOffsetY: 0
-                    }}
-                }},
-                tooltip: {{
+                    }
+                },
+                tooltip: {
                     trigger: 'axis',
                     showContent: false,
-                    axisPointer: {{
+                    axisPointer: {
                         type: 'cross',
-                        lineStyle: {{ color: themeState.crosshair_line, width: 1.2, opacity: 0.92 }},
-                        crossStyle: {{ color: themeState.crosshair_line, width: 1.2, opacity: 0.92 }}
-                    }},
+                        lineStyle: { color: themeState.crosshair_line, width: 1.2, opacity: 0.92 },
+                        crossStyle: { color: themeState.crosshair_line, width: 1.2, opacity: 0.92 }
+                    },
                     backgroundColor: themeState.tooltip_bg,
                     borderWidth: 0,
-                    textStyle: {{ color: themeState.tooltip_text, fontFamily: themeState.mono_font_family }}
-                }},
+                    textStyle: { color: themeState.tooltip_text, fontFamily: themeState.mono_font_family }
+                },
                 grid: [
-                    {{ left: KLINE_GRID_LEFT, right: KLINE_GRID_RIGHT, top: 18, height: '56%' }},
-                    {{ left: KLINE_GRID_LEFT, right: KLINE_GRID_RIGHT, top: '67%', height: '11%' }},
-                    {{ left: KLINE_GRID_LEFT, right: KLINE_GRID_RIGHT, top: '81%', height: '12%' }}
+                    { left: KLINE_GRID_LEFT, right: KLINE_GRID_RIGHT, top: 18, height: '56%' },
+                    { left: KLINE_GRID_LEFT, right: KLINE_GRID_RIGHT, top: '67%', height: '11%' },
+                    { left: KLINE_GRID_LEFT, right: KLINE_GRID_RIGHT, top: '81%', height: '12%' }
                 ],
                 xAxis: [
-                    {{
+                    {
                         type: 'category',
                         data: data.categoryData,
                         scale: true,
                         boundaryGap: false,
-                        axisLine: {{ lineStyle: {{ color: themeState.axis_line }} }},
-                        axisLabel: {{ color: themeState.axis_label, fontFamily: themeState.mono_font_family }},
-                        axisPointer: {{ label: {{ show: false }} }},
-                        splitLine: {{ show: false }},
+                        axisLine: { lineStyle: { color: themeState.axis_line } },
+                        axisLabel: { color: themeState.axis_label, fontFamily: themeState.mono_font_family },
+                        axisPointer: { label: { show: false } },
+                        splitLine: { show: false },
                         min: 'dataMin',
                         max: 'dataMax'
-                    }},
-                    {{
+                    },
+                    {
                         type: 'category',
                         gridIndex: 1,
                         data: data.categoryData,
                         scale: true,
                         boundaryGap: false,
-                        axisLine: {{ lineStyle: {{ color: themeState.axis_line }} }},
-                        axisLabel: {{ show: false }},
-                        axisPointer: {{ label: {{ show: false }} }},
-                        axisTick: {{ show: false }},
-                        splitLine: {{ show: false }},
+                        axisLine: { lineStyle: { color: themeState.axis_line } },
+                        axisLabel: { show: false },
+                        axisPointer: { label: { show: false } },
+                        axisTick: { show: false },
+                        splitLine: { show: false },
                         min: 'dataMin',
                         max: 'dataMax'
-                    }},
-                    {{
+                    },
+                    {
                         type: 'category',
                         gridIndex: 2,
                         data: data.categoryData,
                         scale: true,
                         boundaryGap: false,
-                        axisLine: {{ lineStyle: {{ color: themeState.axis_line }} }},
-                        axisLabel: {{ color: themeState.axis_label, fontFamily: themeState.mono_font_family }},
+                        axisLine: { lineStyle: { color: themeState.axis_line } },
+                        axisLabel: { color: themeState.axis_label, fontFamily: themeState.mono_font_family },
                         min: 'dataMin',
                         max: 'dataMax'
-                    }}
+                    }
                 ],
                 yAxis: [
-                    {{
+                    {
                         scale: true,
-                        splitArea: {{ show: false }},
-                        splitLine: {{ lineStyle: {{ color: themeState.grid_line, type: [4, 4] }} }},
-                        axisLine: {{ lineStyle: {{ color: themeState.axis_line }} }},
-                        axisLabel: {{ color: themeState.axis_label, fontFamily: themeState.mono_font_family }}
-                    }},
-                    {{
+                        splitArea: { show: false },
+                        splitLine: { lineStyle: { color: themeState.grid_line, type: [4, 4] } },
+                        axisLine: { lineStyle: { color: themeState.axis_line } },
+                        axisLabel: { color: themeState.axis_label, fontFamily: themeState.mono_font_family }
+                    },
+                    {
                         scale: true,
                         gridIndex: 1,
                         splitNumber: 2,
-                        axisLabel: {{ color: themeState.axis_label, fontFamily: themeState.mono_font_family, formatter: _formatVolumeWan }},
-                        axisLine: {{ lineStyle: {{ color: themeState.axis_line }} }},
-                        splitLine: {{ show: false }}
-                    }},
-                    {{
+                        axisLabel: { color: themeState.axis_label, fontFamily: themeState.mono_font_family, formatter: _formatVolumeWan },
+                        axisLine: { lineStyle: { color: themeState.axis_line } },
+                        splitLine: { show: false }
+                    },
+                    {
                         scale: true,
                         gridIndex: 2,
                         splitNumber: 2,
-                        axisLabel: {{ color: themeState.axis_label, fontFamily: themeState.mono_font_family }},
-                        axisLine: {{ lineStyle: {{ color: themeState.axis_line }} }},
-                        splitLine: {{ show: false }}
-                    }}
+                        axisLabel: { color: themeState.axis_label, fontFamily: themeState.mono_font_family },
+                        axisLine: { lineStyle: { color: themeState.axis_line } },
+                        splitLine: { show: false }
+                    }
                 ],
                 dataZoom: [
-                    {{
+                    {
                         type: 'inside',
                         xAxisIndex: [0, 1, 2],
                         zoomOnMouseWheel: false,
@@ -989,8 +991,8 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         minSpan: _minZoomSpan(),
                         start: 55,
                         end: 100
-                    }},
-                    {{
+                    },
+                    {
                         show: false,
                         xAxisIndex: [0, 1, 2],
                         type: 'slider',
@@ -1002,55 +1004,55 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         backgroundColor: themeState.datazoom_bg,
                         fillerColor: themeState.datazoom_fill,
                         borderColor: themeState.border,
-                        handleStyle: {{
+                        handleStyle: {
                             color: themeState.datazoom_handle,
                             borderColor: themeState.datazoom_handle
-                        }},
-                        textStyle: {{
+                        },
+                        textStyle: {
                             color: themeState.axis_label,
                             fontFamily: themeState.mono_font_family
-                        }}
-                    }}
+                        }
+                    }
                 ],
                 series: [
-                    {{
+                    {
                         name: '日K',
                         id: 'kline',
                         type: 'candlestick',
                         data: data.values,
                         barMinWidth: 2,
                         barMaxWidth: 18,
-                        itemStyle: {{
+                        itemStyle: {
                             color: upColor,
                             color0: downColor,
                             borderColor: upColor,
                             borderColor0: downColor,
                             borderWidth: 1
-                        }},
-                        markLine: rawData.vcpLines ? {{
+                        },
+                        markLine: rawData.vcpLines ? {
                             symbol: ['none', 'none'],
                             silent: true,
                             animation: false,
-                            label: {{ show: false }},
-                            lineStyle: {{
+                            label: { show: false },
+                            lineStyle: {
                                 color: themeState.vcp_line,
                                 width: 1,
                                 type: 'dashed',
                                 opacity: 0.78
-                            }},
+                            },
                             data: rawData.vcpLines
-                        }} : undefined,
-                        markArea: rawData.vcpArea ? {{
+                        } : undefined,
+                        markArea: rawData.vcpArea ? {
                             silent: true,
                             animation: false,
-                            itemStyle: {{
+                            itemStyle: {
                                 color: themeState.vcp_area
-                            }},
+                            },
                             data: buildVcpAreaData()
-                        }} : undefined
-                    }},
+                        } : undefined
+                    },
                     ...buildVcpCurveSeries(),
-                    {{
+                    {
                         name: 'VCP Breakout',
                         id: 'vcpBreakout',
                         type: 'effectScatter',
@@ -1062,25 +1064,25 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         z: 12,
                         silent: true,
                         showEffectOn: 'render',
-                        rippleEffect: {{
+                        rippleEffect: {
                             period: 4,
                             scale: 3.2,
                             brushType: 'stroke',
                             color: themeState.vcp_star
-                        }},
+                        },
                         animation: false,
                         animationDuration: 0,
                         animationDurationUpdate: 0,
-                        emphasis: {{ disabled: true }},
-                        itemStyle: {{
+                        emphasis: { disabled: true },
+                        itemStyle: {
                             color: themeState.vcp_star,
                             borderColor: themeState.vcp_area_border,
                             borderWidth: 1,
                             shadowBlur: 14,
                             shadowColor: themeState.vcp_star
-                        }}
-                    }},
-                    {{
+                        }
+                    },
+                    {
                         id: 'pointerClose',
                         name: 'Pointer Close',
                         type: 'scatter',
@@ -1092,15 +1094,15 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         symbolSize: 7,
                         silent: true,
                         z: 16,
-                        itemStyle: {{
+                        itemStyle: {
                             color: themeState.crosshair_line,
                             borderColor: themeState.bg_canvas,
                             borderWidth: 1,
                             shadowBlur: 10,
                             shadowColor: themeState.crosshair_line
-                        }}
-                    }},
-                    {{
+                        }
+                    },
+                    {
                         id: 'ma10',
                         name: 'MA10',
                         type: 'line',
@@ -1111,8 +1113,8 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         animation: false,
                         showSymbol: false,
                         lineStyle: _maLineStyle('ma10', 1, 0.72)
-                    }},
-                    {{
+                    },
+                    {
                         id: 'ma20',
                         name: 'MA20',
                         type: 'line',
@@ -1123,8 +1125,8 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         animation: false,
                         showSymbol: false,
                         lineStyle: _maLineStyle('ma20', 1, 0.76)
-                    }},
-                    {{
+                    },
+                    {
                         id: 'ma50',
                         name: 'MA50',
                         type: 'line',
@@ -1135,8 +1137,8 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         animation: false,
                         showSymbol: false,
                         lineStyle: _maLineStyle('ma50', 1.7, 0.90)
-                    }},
-                    {{
+                    },
+                    {
                         id: 'ma150',
                         name: 'MA150',
                         type: 'line',
@@ -1147,8 +1149,8 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         animation: false,
                         showSymbol: false,
                         lineStyle: _maLineStyle('ma150', 1.2, 0.46, 'dashed')
-                    }},
-                    {{
+                    },
+                    {
                         id: 'ma200',
                         name: 'MA200',
                         type: 'line',
@@ -1159,8 +1161,8 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         animation: false,
                         showSymbol: false,
                         lineStyle: _maLineStyle('ma200', 1.2, 0.46, 'dashed')
-                    }},
-                    {{
+                    },
+                    {
                         id: 'volume',
                         name: 'Volume',
                         type: 'bar',
@@ -1170,8 +1172,8 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         barMaxWidth: 18,
                         barCategoryGap: '42%',
                         data: buildVolumeData('normal')
-                    }},
-                    {{
+                    },
+                    {
                         id: 'volumeDry',
                         name: 'Dry Volume',
                         type: 'bar',
@@ -1182,8 +1184,8 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         barGap: '-100%',
                         data: buildVolumeData('dry'),
                         z: 4
-                    }},
-                    {{
+                    },
+                    {
                         id: 'volumeSpikeParticles',
                         name: 'Spike Volume Particles',
                         type: 'effectScatter',
@@ -1193,16 +1195,16 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         data: buildVolumeSpikeParticles(),
                         symbol: 'circle',
                         showEffectOn: 'render',
-                        rippleEffect: {{
+                        rippleEffect: {
                             period: 3.2,
                             scale: 2.6,
                             brushType: 'stroke',
                             color: themeState.volume_spike_top
-                        }},
+                        },
                         silent: true,
                         z: 9
-                    }},
-                    {{
+                    },
+                    {
                         id: 'volMa20',
                         name: 'VOL-MA20',
                         type: 'line',
@@ -1211,17 +1213,17 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         data: rawData.volMa20,
                         showSymbol: false,
                         smooth: true,
-                        lineStyle: {{ width: 1.1, color: themeState.vol_ma20 }}
-                    }},
-                    {{
+                        lineStyle: { width: 1.1, color: themeState.vol_ma20 }
+                    },
+                    {
                         id: 'macd',
                         name: 'MACD',
                         type: 'bar',
                         xAxisIndex: 2,
                         yAxisIndex: 2,
                         data: rawData.macd
-                    }},
-                    {{
+                    },
+                    {
                         id: 'diff',
                         name: 'DIFF',
                         type: 'line',
@@ -1230,9 +1232,9 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         data: rawData.diff,
                         showSymbol: false,
                         smooth: true,
-                        lineStyle: {{ width: 1.1, color: themeState.macd_diff }}
-                    }},
-                    {{
+                        lineStyle: { width: 1.1, color: themeState.macd_diff }
+                    },
+                    {
                         id: 'dea',
                         name: 'DEA',
                         type: 'line',
@@ -1241,18 +1243,21 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
                         data: rawData.dea,
                         showSymbol: false,
                         smooth: true,
-                        lineStyle: {{ width: 1.1, color: themeState.macd_dea }}
-                    }}
+                        lineStyle: { width: 1.1, color: themeState.macd_dea }
+                    }
                 ]
-            }};
-        }}
+            };
+        }
+'''
 
-        _applyMarketChrome();
+
+def _build_kline_window_api_script() -> str:
+    return '''        _applyMarketChrome();
         chart.setOption(buildOption());
         _installSmoothWheelZoom();
         _updateToolbar(rawData.dates.length - 1, false);
 
-        window.applyTheme = function (payload) {{
+        window.applyTheme = function (payload) {
             const t = payload && payload.theme ? payload.theme : payload;
             if (!t) return false;
             themeState = t;
@@ -1264,104 +1269,143 @@ def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme
             const currentOption = chart.getOption ? chart.getOption() : null;
             const dataZoom = currentOption && currentOption.dataZoom ? currentOption.dataZoom : null;
             const nextOption = buildOption();
-            if (dataZoom) {{
+            if (dataZoom) {
                 nextOption.dataZoom = dataZoom;
-            }}
-            chart.setOption(nextOption, {{ notMerge: false, lazyUpdate: true, replaceMerge: ['series'] }});
+            }
+            chart.setOption(nextOption, { notMerge: false, lazyUpdate: true, replaceMerge: ['series'] });
             chart.resize();
             _updateToolbar(rawData.dates.length - 1, false);
             _clearPointerCloseMarker();
             return true;
-        }};
+        };
 
-        window.applyMarketState = function (payload) {{
+        window.applyMarketState = function (payload) {
             const state = payload && payload.marketState ? payload.marketState : payload;
             if (!state) return false;
             rawData.marketState = state;
             _applyMarketChrome();
-            chart.setOption({{
+            chart.setOption({
                 backgroundColor: _chartBackgroundColor()
-            }}, false, true);
+            }, false, true);
             return true;
-        }};
+        };
 
-        window.setGlassMode = function (payload) {{
+        window.setGlassMode = function (payload) {
             glassFused = !!(payload && payload.enabled);
             _applyMarketChrome();
-            chart.setOption({{ backgroundColor: _chartBackgroundColor() }}, false, true);
+            chart.setOption({ backgroundColor: _chartBackgroundColor() }, false, true);
             chart.resize();
             return true;
-        }};
+        };
 
-        window.replaceKlineData = function (payload) {{
+        window.replaceKlineData = function (payload) {
             if (!payload || !payload.data) return false;
             rawData = payload.data;
             _applyMarketChrome();
-            if (payload.title) {{
+            if (payload.title) {
                 document.title = payload.title;
-            }}
+            }
 
             const currentOption = chart.getOption ? chart.getOption() : null;
             const dataZoom = currentOption && currentOption.dataZoom ? currentOption.dataZoom : null;
             const nextOption = buildOption();
-            if (dataZoom) {{
+            if (dataZoom) {
                 nextOption.dataZoom = dataZoom;
-            }}
-            chart.setOption(nextOption, {{ notMerge: false, lazyUpdate: true, replaceMerge: ['series'] }});
+            }
+            chart.setOption(nextOption, { notMerge: false, lazyUpdate: true, replaceMerge: ['series'] });
             chart.resize();
             lastToolbarIdx = -1;
             _updateToolbar(rawData.dates.length - 1, false);
             _clearPointerCloseMarker();
             return true;
-        }};
+        };
 
-        window.updateLastBar = function (payload) {{
+        window.updateLastBar = function (payload) {
             if (!payload || !payload.date) return;
 
             const lastIndex = rawData.dates.length - 1;
             const isSameDay = lastIndex >= 0 && rawData.dates[lastIndex] === payload.date;
             const klineEntry = [payload.open, payload.close, payload.low, payload.high];
-            const volEntry = {{
+            const volEntry = {
                 value: payload.vol || 0
-            }};
+            };
 
-            if (isSameDay) {{
+            if (isSameDay) {
                 rawData.klines[lastIndex] = klineEntry;
                 rawData.vols[lastIndex] = volEntry;
-            }} else {{
+            } else {
                 rawData.dates.push(payload.date);
                 rawData.klines.push(klineEntry);
                 rawData.vols.push(volEntry);
-            }}
+            }
 
-            chart.setOption({{
+            chart.setOption({
                 xAxis: [
-                    {{ data: rawData.dates }},
-                    {{ data: rawData.dates }},
-                    {{ data: rawData.dates }}
+                    { data: rawData.dates },
+                    { data: rawData.dates },
+                    { data: rawData.dates }
                 ],
                 series: [
-                    {{ id: 'kline', data: rawData.klines }},
-                    {{ id: 'ma10', data: rawData.ma10 }},
-                    {{ id: 'ma20', data: rawData.ma20 }},
-                    {{ id: 'ma50', data: rawData.ma50 }},
-                    {{ id: 'ma150', data: rawData.ma150 }},
-                    {{ id: 'ma200', data: rawData.ma200 }},
-                    {{ id: 'volume', data: buildVolumeData('normal') }},
-                    {{ id: 'volumeDry', data: buildVolumeData('dry') }},
-                    {{ id: 'volumeSpikeParticles', data: buildVolumeSpikeParticles() }},
-                    {{ id: 'volMa20', data: rawData.volMa20 }},
-                    {{ id: 'macd', data: rawData.macd }},
-                    {{ id: 'diff', data: rawData.diff }},
-                    {{ id: 'dea', data: rawData.dea }}
+                    { id: 'kline', data: rawData.klines },
+                    { id: 'ma10', data: rawData.ma10 },
+                    { id: 'ma20', data: rawData.ma20 },
+                    { id: 'ma50', data: rawData.ma50 },
+                    { id: 'ma150', data: rawData.ma150 },
+                    { id: 'ma200', data: rawData.ma200 },
+                    { id: 'volume', data: buildVolumeData('normal') },
+                    { id: 'volumeDry', data: buildVolumeData('dry') },
+                    { id: 'volumeSpikeParticles', data: buildVolumeSpikeParticles() },
+                    { id: 'volMa20', data: rawData.volMa20 },
+                    { id: 'macd', data: rawData.macd },
+                    { id: 'diff', data: rawData.diff },
+                    { id: 'dea', data: rawData.dea }
                 ]
-            }}, false, true);
+            }, false, true);
             _updateToolbar(rawData.dates.length - 1, false);
-        }};
+        };
 
-        window.addEventListener('resize', function () {{
+        window.addEventListener('resize', function () {
             chart.resize();
-        }});
+        });
+'''
+
+
+def _build_kline_runtime_script() -> str:
+    return "\n".join(
+        [
+            _build_kline_interaction_script(),
+            _build_kline_data_builder_script(),
+            _build_kline_option_script(),
+            _build_kline_window_api_script(),
+        ]
+    )
+
+
+def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme_colors: dict) -> str:
+    js_url = QUrl.fromLocalFile(echarts_js_path).toString()
+    data_json = json.dumps(echarts_data, ensure_ascii=False)
+    theme_json = json.dumps(theme_colors, ensure_ascii=False)
+    style_block = _build_kline_style_block(theme_colors)
+    toolbar_html = _build_kline_toolbar_html()
+    bootstrap_script = _build_kline_bootstrap_script(data_json, theme_json)
+    runtime_script = _build_kline_runtime_script()
+
+    return f'''<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <script src="{js_url}"></script>
+    <style>
+{style_block}
+    </style>
+</head>
+<body>
+{toolbar_html}
+    <div id="chart"></div>
+
+        <script>
+{bootstrap_script}
+{runtime_script}
     </script>
 </body>
 </html>'''

@@ -95,6 +95,18 @@ def test_stock_table_model_sort_cache_invalidates_on_external_data_changed():
     ]
 
 
+def test_stock_table_model_percent_display_falls_back_to_text():
+    model = StockTableModel(["代码", "名称", "涨幅%"])
+    model.update_data(
+        [
+            {"代码": "000001", "名称": "A", "涨幅%": "停牌"},
+        ]
+    )
+
+    pct_col = model.headers.index("涨幅%")
+    assert model.data(model.index(0, pct_col), Qt.ItemDataRole.DisplayRole) == "停牌"
+
+
 def test_stock_table_model_incremental_update_marks_status_and_time_flash():
     model = StockTableModel(["代码", "名称", "状态", "最近时间"])
     model.update_data(

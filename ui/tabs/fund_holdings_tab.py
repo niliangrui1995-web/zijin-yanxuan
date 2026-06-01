@@ -246,6 +246,15 @@ class FundHoldingsTab(BaseStockTab):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
+        filter_widgets = self._init_filter_controls()
+        action_widgets = self._init_action_controls()
+        toolbar = self.build_tab_toolbar("基金持仓", self.lbl_status, filter_widgets, action_widgets)
+        layout.addWidget(toolbar)
+
+        self._init_table()
+        layout.addWidget(self.table_state, 1)
+
+    def _init_filter_controls(self):
         self.lbl_status = QLabel("等待同步基金持仓数据库")
 
         self.cmb_subject = MultiSelectFilterButton("全部主体")
@@ -289,7 +298,7 @@ class FundHoldingsTab(BaseStockTab):
         self.search_box.setMaximumWidth(320)
         self.search_box.textChanged.connect(self._apply_filters)
 
-        filter_widgets = [
+        return [
             self.cmb_subject,
             self.cmb_capital_attribute,
             self.btn_quarter,
@@ -297,16 +306,15 @@ class FundHoldingsTab(BaseStockTab):
             self.search_box,
         ]
 
+    def _init_action_controls(self):
         self.btn_update = QToolButton()
         self.btn_update.setText("全部更新")
         self.btn_update.setAccessibleName("更新基金持仓数据库")
         self.btn_update.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.btn_update.clicked.connect(self.run_full_sync)
+        return [self.btn_update]
 
-        action_widgets = [self.btn_update]
-        toolbar = self.build_tab_toolbar("基金持仓", self.lbl_status, filter_widgets, action_widgets)
-        layout.addWidget(toolbar)
-
+    def _init_table(self):
         self.columns = [
             "代码",
             "名称",
@@ -339,7 +347,12 @@ class FundHoldingsTab(BaseStockTab):
         self.table_state = TableStateWrapper(
             self.table, empty_title="暂无基金持仓数据", loading_title="同步基金持仓数据中..."
         )
+        self._configure_table_header()
+        self.table.doubleClicked.connect(self._on_double_click)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_context_menu)
 
+    def _configure_table_header(self):
         header = self.table.horizontalHeader()
         header.setStretchLastSection(True)
         default_widths = [70, 90, 70, 70, 75, 180, 96, 90, 80, 90, 110, 110, 110, 240]
@@ -349,12 +362,6 @@ class FundHoldingsTab(BaseStockTab):
         self.bind_header_persistence(self.table, "fund_holdings_header_state_v3")
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
         header.sortIndicatorChanged.connect(self._on_sort_indicator_changed)
-
-        self.table.doubleClicked.connect(self._on_double_click)
-        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.table.customContextMenuRequested.connect(self._show_context_menu)
-
-        layout.addWidget(self.table_state, 1)
 
     def _set_initial_loading_state(self, title: str, subtitle: str = ""):
         self.lbl_status.setText(title)

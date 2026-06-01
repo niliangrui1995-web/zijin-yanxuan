@@ -40,6 +40,7 @@ class DummyShellWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.last_density = None
+        self.launch_at_login_enabled = False
         self.trade_calendar_open_count = 0
 
         central = QWidget(self)
@@ -88,6 +89,15 @@ class DummyShellWindow(QMainWindow):
 
     def _open_runtime_health(self):
         pass
+
+    def _is_launch_at_login_supported(self):
+        return True
+
+    def _is_launch_at_login_enabled(self):
+        return self.launch_at_login_enabled
+
+    def _toggle_launch_at_login(self, checked):
+        self.launch_at_login_enabled = bool(checked)
 
     def _apply_table_density(self, density, persist=True):
         self.last_density = (density, persist)
