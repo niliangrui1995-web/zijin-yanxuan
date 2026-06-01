@@ -485,6 +485,24 @@
       "original_timezone": "America/Los_Angeles",
       "call_time_source_url": "https://investors.credosemi.com/news-events/news/news-details/2026/Credo-Schedules-Fourth-Quarter-and-Fiscal-Year-2026-Financial-Results-Conference-Call/",
       "call_time_source_type": "official_ir_press_release"
+    },
+    {
+      "company": "Broadcom",
+      "ticker": "AVGO",
+      "sector": "AI加速芯片与定制ASIC",
+      "report_date": "2026-06-03",
+      "fiscal_period": "Apr/2026",
+      "time_label": "盘后",
+      "beijing_time": "2026-06-04 05:00",
+      "status": "confirmed",
+      "source": "confirmed",
+      "priority": "super_giant",
+      "conference_url": "https://investors.broadcom.com/news-releases/news-release-details/broadcom-inc-announce-second-quarter-fiscal-year-2026-financial",
+      "market": "US",
+      "original_call_time_text": "Wednesday, June 3, 2026, 2:00 PM Pacific Time; 5:00 PM Eastern Time",
+      "original_timezone": "America/Los_Angeles",
+      "call_time_source_url": "https://investors.broadcom.com/news-releases/news-release-details/broadcom-inc-announce-second-quarter-fiscal-year-2026-financial",
+      "call_time_source_type": "official_ir_press_release"
     }
   ]
 }
