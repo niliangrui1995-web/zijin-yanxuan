@@ -75,6 +75,22 @@ def _disable_saved_asian_header_state(monkeypatch):
     )
 
 
+def _install_immediate_local_cache_runner(monkeypatch):
+    class FakeTaskRunner:
+        def run_in_background(self, fn, *, task_id=None, on_success=None, on_error=None):
+            try:
+                result = fn()
+            except Exception as exc:
+                if on_error is not None:
+                    on_error(str(exc))
+            else:
+                if on_success is not None:
+                    on_success(result)
+            return str(task_id)
+
+    monkeypatch.setattr(asian_module, "task_manager", FakeTaskRunner())
+
+
 def test_infer_asian_markets_normalizes_from_code_suffixes():
     assert infer_asian_markets(["0522.HK", "3324.TWO", "8035.T", "000660.KS"]) == [
         "HK",
@@ -463,6 +479,36 @@ def test_asian_market_status_display_uses_market_specific_labels(monkeypatch):
     monkeypatch.setattr(MarketCalendar, "get_market_status", original)
 
 
+def test_asian_market_constructor_schedules_local_cache_background(monkeypatch, tmp_path):
+    calls = []
+
+    class FakeTaskRunner:
+        def run_in_background(self, fn, *, task_id=None, on_success=None, on_error=None):
+            calls.append((fn, task_id, on_success, on_error))
+            return str(task_id)
+
+    monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
+    monkeypatch.setattr(asian_module, "task_manager", FakeTaskRunner())
+    monkeypatch.setattr(asian_module, "JSON_CACHE", str(tmp_path / "asian_klines_latest.json"))
+    monkeypatch.setattr(asian_module, "RT_JSON_CACHE", str(tmp_path / "asian_rt_latest.json"))
+    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+
+    tab = asian_module.AsianMarketTab()
+    try:
+        assert len(calls) == 1
+        assert calls[0][1] == asian_module._ASIAN_MARKET_LOCAL_CACHE_TASK
+        assert tab.row_data == []
+        assert tab._load_cache_in_progress is True
+    finally:
+        tab.deleteLater()
+
+
 def test_asian_market_display_uses_taiwan_label_for_tw_codes():
     assert format_market_display("TW", "2330.TW") == "台湾"
     assert format_market_display("TWO", "3324.TWO") == "台湾"
@@ -477,6 +523,7 @@ def test_asian_market_placeholder_rows_fill_track_for_missing_cache(monkeypatch,
     monkeypatch.setattr(asian_module, "JSON_CACHE", str(cache_file))
     monkeypatch.setattr(asian_module, "RT_JSON_CACHE", str(tmp_path / "asian_rt_cache.json"))
     monkeypatch.setattr(asian_module, "GLOBAL_ASIAN_RT_CACHE", {})
+    _install_immediate_local_cache_runner(monkeypatch)
     monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
     monkeypatch.setattr(
         asian_module.AsianMarketTab,
@@ -572,6 +619,7 @@ def test_asian_market_load_local_cache_normalizes_stale_yfinance_pct(monkeypatch
     monkeypatch.setattr(asian_module, "JSON_CACHE", str(cache_file))
     monkeypatch.setattr(asian_module, "RT_JSON_CACHE", str(rt_cache_file))
     monkeypatch.setattr(asian_module, "GLOBAL_ASIAN_RT_CACHE", {})
+    _install_immediate_local_cache_runner(monkeypatch)
     monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
     monkeypatch.setattr(
         asian_module.AsianMarketTab,
@@ -644,6 +692,7 @@ def test_asian_market_load_local_cache_keeps_history_when_rt_cache_is_zero(monke
     monkeypatch.setattr(asian_module, "RT_JSON_CACHE", str(rt_cache_file))
     monkeypatch.setattr(asian_module, "GLOBAL_ASIAN_RT_CACHE", {})
     monkeypatch.setattr(asian_module, "filter_asian_tickers", lambda: {"Murata": "6981.T"})
+    _install_immediate_local_cache_runner(monkeypatch)
     monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
     monkeypatch.setattr(
         asian_module.AsianMarketTab,

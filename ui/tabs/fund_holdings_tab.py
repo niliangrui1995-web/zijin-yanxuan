@@ -50,6 +50,14 @@ from ui.models.table_models import StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_refresh import load_cached_finance_snapshot
 from ui.tabs.base_stock_tab import BaseStockTab
 from ui.tabs.fund_holdings_filter_proxy import FundHoldingsFilterProxyModel
+from ui.tabs.fund_holdings_filter_state import (
+    build_current_filter_summary,
+    format_change_filter_button_text,
+    format_quarter_filter_button_text,
+    normalize_settings_values,
+    quarter_scope_loaded,
+    resolve_quarter_query_scope,
+)
 from ui.tabs.fund_holdings_rules import (
     FUND_CHANGE_TYPE_OPTIONS,
     FUND_DISPLAY_PLACEHOLDER,
@@ -665,22 +673,24 @@ class FundHoldingsTab(BaseStockTab):
 
     def _current_quarter_query_scope(self) -> tuple[str, set[str]]:
         latest_only, selected_quarters = self._quarter_filter_state()
-        if latest_only:
-            return self._QUERY_SCOPE_LATEST, set()
-        if selected_quarters:
-            return self._QUERY_SCOPE_SELECTED, set(selected_quarters)
-        return self._QUERY_SCOPE_ALL, set()
+        return resolve_quarter_query_scope(
+            latest_only,
+            selected_quarters,
+            latest_scope=self._QUERY_SCOPE_LATEST,
+            all_scope=self._QUERY_SCOPE_ALL,
+            selected_scope=self._QUERY_SCOPE_SELECTED,
+        )
 
     def _quarter_scope_loaded(self, scope: str, quarter_keys: set[str]) -> bool:
-        loaded_scope = str(getattr(self, "_loaded_quarter_scope", "") or "").strip().lower()
-        loaded_keys = set(getattr(self, "_loaded_quarter_keys", set()) or set())
-        if loaded_scope == self._QUERY_SCOPE_ALL:
-            return True
-        if scope == self._QUERY_SCOPE_LATEST:
-            return loaded_scope == self._QUERY_SCOPE_LATEST
-        if scope == self._QUERY_SCOPE_SELECTED:
-            return bool(quarter_keys) and quarter_keys.issubset(loaded_keys)
-        return False
+        return quarter_scope_loaded(
+            scope,
+            quarter_keys,
+            loaded_scope=getattr(self, "_loaded_quarter_scope", ""),
+            loaded_keys=getattr(self, "_loaded_quarter_keys", set()) or set(),
+            latest_scope=self._QUERY_SCOPE_LATEST,
+            all_scope=self._QUERY_SCOPE_ALL,
+            selected_scope=self._QUERY_SCOPE_SELECTED,
+        )
 
     def _ensure_current_quarter_scope_loaded(self, *, async_load: bool) -> bool:
         scope, quarter_keys = self._current_quarter_query_scope()
@@ -781,48 +791,22 @@ class FundHoldingsTab(BaseStockTab):
         self._set_quarter_filter_state(selected_quarters=selected_quarters, apply=True)
 
     def _refresh_change_button_text(self):
-        selected = sorted(self._selected_change_types(), key=self._CHANGE_TYPE_OPTIONS.index)
-        if not selected:
-            text = "变化：全部"
-            tooltip = "全部变化"
-        elif len(selected) <= 2:
-            text = f"变化：{' / '.join(selected)}"
-            tooltip = "、".join(selected)
-        else:
-            text = f"变化：{len(selected)}项"
-            tooltip = "、".join(selected)
+        text, tooltip = format_change_filter_button_text(
+            self._selected_change_types(),
+            self._CHANGE_TYPE_OPTIONS,
+        )
         self.btn_change.setText(text)
         self.btn_change.setToolTip(tooltip)
 
     def _refresh_quarter_button_text(self):
         latest_only, selected = self._quarter_filter_state()
-        if latest_only:
-            text = "季度：最新"
-            tooltip = "仅显示各主体最新季度"
-        elif not selected:
-            text = "季度：全部"
-            tooltip = "显示全部季度"
-        elif len(selected) <= 2:
-            ordered = sorted(selected, reverse=True)
-            text = f"季度：{' / '.join(ordered)}"
-            tooltip = "、".join(ordered)
-        else:
-            text = f"季度：{len(selected)}项"
-            tooltip = "、".join(sorted(selected, reverse=True))
+        text, tooltip = format_quarter_filter_button_text(latest_only, selected)
         self.btn_quarter.setText(text)
         self.btn_quarter.setToolTip(tooltip)
 
     @staticmethod
     def _normalize_settings_values(value) -> list[str]:
-        if value is None:
-            return []
-        if isinstance(value, str):
-            text = value.strip()
-            return [text] if text else []
-        if isinstance(value, (list, tuple, set)):
-            return [str(item).strip() for item in value if str(item).strip()]
-        text = str(value).strip()
-        return [text] if text else []
+        return normalize_settings_values(value)
 
     def _schedule_view_state_save(self):
         if self._restoring_view_state:
@@ -961,32 +945,16 @@ class FundHoldingsTab(BaseStockTab):
         return result.lineage.as_dict()
 
     def _current_filter_summary(self) -> str:
-        parts = []
-        subject_text = " / ".join(sorted(self._selected_subject_names()))
-        if subject_text:
-            parts.append(subject_text)
-
-        capital_text = " / ".join(
-            self._capital_attribute_label(item) for item in sorted(self._selected_capital_attributes())
-        )
-        if capital_text:
-            parts.append(capital_text)
-
         latest_only, selected_quarters = self._quarter_filter_state()
-        if latest_only:
-            parts.append("最新季度")
-        elif selected_quarters:
-            parts.append(" / ".join(sorted(selected_quarters, reverse=True)))
-
-        change_text = " / ".join(sorted(self._selected_change_types()))
-        if change_text:
-            parts.append(change_text)
-
-        search_text = self.search_box.text().strip()
-        if search_text:
-            parts.append(search_text)
-
-        return "｜".join(parts) if parts else "全部"
+        return build_current_filter_summary(
+            subject_names=self._selected_subject_names(),
+            capital_attributes=self._selected_capital_attributes(),
+            capital_label=self._capital_attribute_label,
+            latest_only=latest_only,
+            selected_quarters=selected_quarters,
+            change_types=self._selected_change_types(),
+            search_text=self.search_box.text(),
+        )
 
     @staticmethod
     def _sort_order_to_int(order) -> int:

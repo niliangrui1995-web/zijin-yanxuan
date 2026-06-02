@@ -12,6 +12,7 @@ from core.quote_dispatcher import publish_rt_quotes
 from core.task_manager import task_manager
 from ui.services import na_daily_service as na_daily_service_module
 from ui.services.na_daily_service import NADailyRefreshService
+from ui.tabs import na_daily_tab as na_daily_tab_module
 from ui.tabs.na_daily_tab import NADailyTab
 from ui.theme import theme_manager
 
@@ -215,7 +216,7 @@ def test_na_daily_report_time_column_uses_muted_text(monkeypatch):
         tab.deleteLater()
 
 
-def test_na_daily_prime_background_loads_rows_immediately(monkeypatch, tmp_path):
+def test_na_daily_prime_background_load_schedules_rows_without_ui_thread_parse(monkeypatch, tmp_path):
     provider = DummyProvider()
     monkeypatch.setattr(global_store, "get_latest_quotes", lambda: {})
 
@@ -253,20 +254,50 @@ def test_na_daily_prime_background_loads_rows_immediately(monkeypatch, tmp_path)
         }
     ]
 
-    def fake_refresh_full(*, emit_event=False):
-        service = tab._na_daily_service
-        service._rows = rows
-        service._report_files = [str(report_file)]
-        service._report_signature = ("sig",)
-        return {"records": 1}
+    monkeypatch.setattr(
+        tab._na_daily_service,
+        "refresh_full",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("refresh_full must not run in UI thread")),
+    )
+    monkeypatch.setattr(
+        na_daily_tab_module,
+        "build_na_daily_refresh_payload",
+        lambda output_dir, *, limit=5: {
+            "status": "success",
+            "rows": rows,
+            "report_files": [str(report_file)],
+            "report_signature": ("sig",),
+            "records": 1,
+        },
+    )
+    scheduled = {}
 
-    monkeypatch.setattr(tab._na_daily_service, "refresh_full", fake_refresh_full)
+    class FakeTaskRunner:
+        def is_active_task(self, task_id):
+            return False
+
+        def run_in_background(self, fn, *, task_id=None, on_success=None, on_error=None):
+            scheduled["fn"] = fn
+            scheduled["task_id"] = task_id
+            scheduled["on_success"] = on_success
+            scheduled["on_error"] = on_error
+            return str(task_id)
+
+    monkeypatch.setattr(na_daily_tab_module, "task_manager", FakeTaskRunner())
 
     try:
         tab.prime_background_load()
 
         assert tab._runtime_started is False
+        assert tab._background_prime_done is False
+        assert tab._background_prime_loading is True
+        assert len(tab.model.row_data) == 0
+        assert scheduled["task_id"] == na_daily_tab_module._NA_DAILY_REFRESH_TASK
+
+        scheduled["on_success"](scheduled["fn"]())
+
         assert tab._background_prime_done is True
+        assert tab._background_prime_loading is False
         assert len(tab.model.row_data) == 1
         assert tab._na_daily_codes == {"000001"}
         assert not hasattr(tab, "_patrol_timer")

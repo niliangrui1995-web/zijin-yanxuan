@@ -11,6 +11,7 @@ import sqlite3
 from typing import Any
 
 from core.exceptions import BusinessRuleError, CacheIOError, DataFormatError, NetworkServiceError
+from infra.http_safety import requests_get_https
 
 _ISO_DATE_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
 
@@ -230,7 +231,7 @@ def fetch_twse_holidays(year: int, include_keywords: tuple[str, ...], exclude_ke
 
     try:
         url = f"https://www.twse.com.tw/holidaySchedule/holidaySchedule?response=json&queryYear={minguo_year}"
-        response = requests.get(url, timeout=20)
+        response = requests_get_https(url, timeout=20)
     except requests.RequestException as exc:
         raise NetworkServiceError(f"twse request failed: {year}") from exc
 
@@ -309,7 +310,7 @@ def fetch_public_holidays(
 
     try:
         url = f"https://date.nager.at/api/v3/PublicHolidays/{year}/{country_code}"
-        response = requests.get(url, timeout=15)
+        response = requests_get_https(url, timeout=15)
     except requests.RequestException as exc:
         raise NetworkServiceError(f"holiday api request failed: {country_code} {year}") from exc
 

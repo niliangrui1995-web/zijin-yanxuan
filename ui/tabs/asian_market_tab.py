@@ -9,6 +9,8 @@ from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLa
 from app.services.asian_market_service import filter_asian_tickers, find_asian_track
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
+from app.services.ui_task_service import background_job_runner as task_manager
+from app.services.ui_task_service import task_registry
 from core.logger import get_logger
 from ui.components import TableStateWrapper, ToggleSwitch, VCPTableView
 from ui.components.thread_shutdown import request_thread_shutdown
@@ -65,6 +67,7 @@ from ui.tabs.asian_market_workers import (
 from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
+_ASIAN_MARKET_LOCAL_CACHE_TASK = task_registry.workspace("asian_market_local_cache")
 
 
 def _safe_float(value) -> float:
@@ -113,6 +116,222 @@ def _normalize_cached_rt_entry(info: dict, data_points: list[dict]) -> dict:
     return normalized
 
 
+def _format_asian_close(close_number: float) -> str:
+    if 0 < close_number < 10:
+        return f"{close_number:.3f}"
+    if close_number > 0:
+        return f"{close_number:.2f}"
+    return "--"
+
+
+def _empty_asian_rt_entry() -> dict:
+    return {
+        "date": None,
+        "close": 0.0,
+        "open": 0.0,
+        "high": 0.0,
+        "low": 0.0,
+        "volume": 0.0,
+        "previous_close": 0.0,
+        "pct": 0.0,
+        "pe": None,
+        "pe_source": "",
+        "pe_updated_at": 0.0,
+        "pct_5": 0.0,
+        "pct_10": 0.0,
+        "pct_20": 0.0,
+        "currency": "",
+        "source": "",
+        "quote_quality": "",
+        "df_today": None,
+    }
+
+
+def build_asian_market_local_cache_payload(
+    *,
+    json_cache: str | None = None,
+    rt_json_cache: str | None = None,
+    existing_rt_cache: dict | None = None,
+) -> dict:
+    json_cache = json_cache or JSON_CACHE
+    rt_json_cache = rt_json_cache or RT_JSON_CACHE
+    existing_rt_cache = dict(existing_rt_cache or {})
+    row_data = []
+    rt_updates: dict[str, dict] = {}
+    history_points_by_code = {}
+
+    if os.path.exists(json_cache):
+        try:
+            with open(json_cache, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+
+            roles_map = get_role_mapping()
+            ch_names_map = get_ch_names_mapping()
+            stocks_list = raw.get("stocks", [])
+
+            for item in stocks_list:
+                code = item.get("ticker")
+                if not code:
+                    continue
+
+                data_points = item.get("klines", [])
+                history_points_by_code[code] = data_points
+                close_val = 0.0
+                pct_val = 0.0
+                if len(data_points) >= 2:
+                    close_val = float(data_points[-1].get("close", 0))
+                    prev_close = float(data_points[-2].get("close", 0))
+                    if prev_close > 0:
+                        pct_val = _round_pct(((close_val / prev_close) - 1.0) * 100.0)
+
+                def _safe_pct(cur, ref_val):
+                    return _round_pct(((cur / ref_val) - 1.0) * 100.0) if ref_val > 0 and cur > 0 else 0.0
+
+                pct_5 = _safe_pct(close_val, float(data_points[-6].get("close", 0))) if len(data_points) >= 6 else 0.0
+                pct_10 = _safe_pct(close_val, float(data_points[-11].get("close", 0))) if len(data_points) >= 11 else 0.0
+                pct_20 = _safe_pct(close_val, float(data_points[-21].get("close", 0))) if len(data_points) >= 21 else 0.0
+
+                role_desc = roles_map.get(code, item.get("name", ""))
+                market_code = item.get("market", code.split(".")[-1] if "." in code else "")
+                history_quote = {
+                    "date": data_points[-1].get("date") if data_points else None,
+                    "close": close_val,
+                    "open": float(data_points[-1].get("open", 0)) if data_points else 0.0,
+                    "high": float(data_points[-1].get("high", 0)) if data_points else 0.0,
+                    "low": float(data_points[-1].get("low", 0)) if data_points else 0.0,
+                    "volume": float(data_points[-1].get("volume", 0)) if data_points else 0.0,
+                    "previous_close": float(data_points[-2].get("close", 0)) if len(data_points) >= 2 else 0.0,
+                    "pct": pct_val,
+                    "pe": None,
+                    "pe_source": "",
+                    "pe_updated_at": 0.0,
+                    "pct_5": pct_5,
+                    "pct_10": pct_10,
+                    "pct_20": pct_20,
+                    "currency": item.get("currency", ""),
+                    "source": "history_cache",
+                    "quote_quality": "",
+                    "df_today": None,
+                }
+                existing_rt = existing_rt_cache.get(code)
+                if not existing_rt or (_safe_float(existing_rt.get("close")) <= 0 and close_val > 0):
+                    rt_updates[code] = history_quote
+
+                display_name = item.get("name", "")
+                if ch_names_map.get(code):
+                    display_name = f"{display_name}  ({ch_names_map.get(code, '未录入')})"
+
+                row_data.append(
+                    {
+                        "代码": code,
+                        "名称": display_name,
+                        "现价": _format_asian_close(float(close_val) if close_val else 0.0),
+                        "涨幅%": pct_val,
+                        "PE": "--",
+                        "市场": format_market_display(market_code, code),
+                        "状态": get_market_status(code.split(".")[-1] if "." in code else ""),
+                        "赛道": item.get("track", ""),
+                        "角色定位": role_desc,
+                        "货币": item.get("currency", "---"),
+                        "5日涨跌%": pct_5,
+                        "10日涨跌%": pct_10,
+                        "20日涨跌%": pct_20,
+                    }
+                )
+
+            try:
+                target_map = filter_asian_tickers() or {}
+            except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as fetch_exc:
+                target_map = {}
+                log.warning(f"[亚洲页] 读取亚洲目标池失败，跳过缺失补齐: {fetch_exc}")
+
+            if target_map:
+                existing_codes = {str(row.get("代码", "")).strip() for row in row_data if str(row.get("代码", "")).strip()}
+                missing_codes = []
+
+                for en_name, ticker in target_map.items():
+                    ticker = str(ticker).strip()
+                    if not ticker or ticker in existing_codes:
+                        continue
+
+                    missing_codes.append(ticker)
+                    market_code = ticker.split(".")[-1] if "." in ticker else ""
+                    row_data.append(
+                        {
+                            "代码": ticker,
+                            "名称": f"{en_name}  ({ch_names_map.get(ticker, '未录入')})"
+                            if ch_names_map.get(ticker)
+                            else en_name,
+                            "现价": "--",
+                            "涨幅%": 0.0,
+                            "PE": "--",
+                            "市场": format_market_display(market_code, ticker),
+                            "状态": get_market_status(market_code),
+                            "赛道": find_asian_track(ticker),
+                            "角色定位": roles_map.get(ticker, en_name),
+                            "货币": "---",
+                            "5日涨跌%": 0.0,
+                            "10日涨跌%": 0.0,
+                            "20日涨跌%": 0.0,
+                        }
+                    )
+
+                    if ticker not in existing_rt_cache:
+                        rt_updates[ticker] = _empty_asian_rt_entry()
+
+                if missing_codes:
+                    log.warning(f"[亚洲页] 本地缓存缺失 {len(missing_codes)} 只，已补齐占位行: {sorted(missing_codes)}")
+        except (
+            FileNotFoundError,
+            PermissionError,
+            OSError,
+            TypeError,
+            ValueError,
+            KeyError,
+            json.JSONDecodeError,
+        ) as exc:
+            log.error(f"[亚洲页] JSON 历史缓存加载失败: {exc}")
+
+    if os.path.exists(rt_json_cache):
+        try:
+            with open(rt_json_cache, "r", encoding="utf-8") as f:
+                rt_cache = json.load(f)
+
+            for row_dict in row_data:
+                code = row_dict.get("代码")
+                if code not in rt_cache:
+                    continue
+
+                info = _normalize_cached_rt_entry(rt_cache[code], history_points_by_code.get(code, []))
+                close_number = float(info.get("close", 0.0))
+                if close_number <= 0 and history_points_by_code.get(code):
+                    continue
+                row_dict["现价"] = _format_asian_close(close_number)
+                row_dict["涨幅%"] = _round_pct(info.get("pct", 0.0))
+                row_dict["PE"] = info.get("pe") if info.get("pe") is not None else "--"
+                row_dict["5日涨跌%"] = _round_pct(info.get("pct_5", 0.0))
+                row_dict["10日涨跌%"] = _round_pct(info.get("pct_10", 0.0))
+                row_dict["20日涨跌%"] = _round_pct(info.get("pct_20", 0.0))
+                if info.get("currency"):
+                    row_dict["货币"] = info["currency"]
+
+                updated_info = dict(rt_updates.get(code) or {})
+                updated_info.update(info)
+                rt_updates[code] = updated_info
+        except (
+            FileNotFoundError,
+            PermissionError,
+            OSError,
+            TypeError,
+            ValueError,
+            KeyError,
+            json.JSONDecodeError,
+        ) as exc:
+            log.error(f"[亚洲页] 恢复 RT 盘口缓存失败: {exc}")
+
+    return {"rows": row_data, "rt_updates": rt_updates}
+
+
 class AsianMarketTab(BaseStockTab):
     """亚洲寡头行情面板"""
 
@@ -133,6 +352,7 @@ class AsianMarketTab(BaseStockTab):
         self._last_health_log_at = 0.0
         self._last_health_signature = None
         self._runtime_started = False
+        self.row_data = []
         self.cache_thread = None
         self._asian_market_service = self._resolve_asian_market_service()
         self._owns_asian_market_service = self._asian_market_service.parent() is self
@@ -742,234 +962,38 @@ class AsianMarketTab(BaseStockTab):
             return
 
         self._load_cache_in_progress = True
+        if hasattr(self, "table_state") and not getattr(self, "row_data", None):
+            self.table_state.show_loading("正在加载本地缓存...", "请稍候")
+
+        existing_rt_cache = dict(GLOBAL_ASIAN_RT_CACHE or {})
+        task_manager.run_in_background(
+            lambda: build_asian_market_local_cache_payload(
+                json_cache=JSON_CACHE,
+                rt_json_cache=RT_JSON_CACHE,
+                existing_rt_cache=existing_rt_cache,
+            ),
+            task_id=_ASIAN_MARKET_LOCAL_CACHE_TASK,
+            on_success=self._apply_local_cache_payload,
+            on_error=self._on_local_cache_failed,
+        )
+
+    def _finish_local_cache_load(self):
+        pending_reload = self._load_cache_pending
+        self._load_cache_pending = False
+        self._load_cache_in_progress = False
+        if pending_reload:
+            log.info("[亚洲页] 执行排队中的一次本地缓存重载")
+            QTimer.singleShot(0, self._load_local_cache)
+
+    def _apply_local_cache_payload(self, payload: dict):
         try:
-            if hasattr(self, "table_state") and not getattr(self, "row_data", None):
-                self.table_state.show_loading("正在加载本地缓存...", "请稍候")
+            payload = payload or {}
+            for code, info in dict(payload.get("rt_updates") or {}).items():
+                if code not in GLOBAL_ASIAN_RT_CACHE:
+                    GLOBAL_ASIAN_RT_CACHE[code] = {}
+                GLOBAL_ASIAN_RT_CACHE[code].update(dict(info or {}))
 
-            self.row_data = []
-            history_points_by_code = {}
-            if os.path.exists(JSON_CACHE):
-                try:
-                    with open(JSON_CACHE, "r", encoding="utf-8") as f:
-                        raw = json.load(f)
-
-                    roles_map = get_role_mapping()
-                    ch_names_map = get_ch_names_mapping()
-                    stocks_list = raw.get("stocks", [])
-
-                    for item in stocks_list:
-                        code = item.get("ticker")
-                        if not code:
-                            continue
-
-                        data_points = item.get("klines", [])
-                        history_points_by_code[code] = data_points
-                        close_val = 0.0
-                        pct_val = 0.0
-                        if len(data_points) >= 2:
-                            close_val = float(data_points[-1].get("close", 0))
-                            prev_close = float(data_points[-2].get("close", 0))
-                            if prev_close > 0:
-                                pct_val = _round_pct(((close_val / prev_close) - 1.0) * 100.0)
-
-                        def _safe_pct(cur, ref_val):
-                            return _round_pct(((cur / ref_val) - 1.0) * 100.0) if ref_val > 0 and cur > 0 else 0.0
-
-                        pct_5 = (
-                            _safe_pct(close_val, float(data_points[-6].get("close", 0)))
-                            if len(data_points) >= 6
-                            else 0.0
-                        )
-                        pct_10 = (
-                            _safe_pct(close_val, float(data_points[-11].get("close", 0)))
-                            if len(data_points) >= 11
-                            else 0.0
-                        )
-                        pct_20 = (
-                            _safe_pct(close_val, float(data_points[-21].get("close", 0)))
-                            if len(data_points) >= 21
-                            else 0.0
-                        )
-
-                        role_desc = roles_map.get(code, item.get("name", ""))
-                        market_code = item.get("market", code.split(".")[-1] if "." in code else "")
-                        market_display = format_market_display(market_code, code)
-                        real_status = get_market_status(code.split(".")[-1] if "." in code else "")
-
-                        history_quote = {
-                            "date": data_points[-1].get("date") if data_points else None,
-                            "close": close_val,
-                            "open": float(data_points[-1].get("open", 0)) if data_points else 0.0,
-                            "high": float(data_points[-1].get("high", 0)) if data_points else 0.0,
-                            "low": float(data_points[-1].get("low", 0)) if data_points else 0.0,
-                            "volume": float(data_points[-1].get("volume", 0)) if data_points else 0.0,
-                            "previous_close": float(data_points[-2].get("close", 0)) if len(data_points) >= 2 else 0.0,
-                            "pct": pct_val,
-                            "pe": None,
-                            "pe_source": "",
-                            "pe_updated_at": 0.0,
-                            "pct_5": pct_5,
-                            "pct_10": pct_10,
-                            "pct_20": pct_20,
-                            "currency": item.get("currency", ""),
-                            "source": "history_cache",
-                            "quote_quality": "",
-                            "df_today": None,
-                        }
-                        existing_rt = GLOBAL_ASIAN_RT_CACHE.get(code)
-                        if not existing_rt or (_safe_float(existing_rt.get("close")) <= 0 and close_val > 0):
-                            GLOBAL_ASIAN_RT_CACHE[code] = history_quote
-
-                        close_number = float(close_val) if close_val else 0.0
-                        fmt_close = (
-                            f"{close_number:.3f}"
-                            if 0 < close_number < 10
-                            else (f"{close_number:.2f}" if close_number > 0 else "--")
-                        )
-                        display_name = item.get("name", "")
-                        if ch_names_map.get(code):
-                            display_name = f"{display_name}  ({ch_names_map.get(code, '未录入')})"
-
-                        self.row_data.append(
-                            {
-                                "代码": code,
-                                "名称": display_name,
-                                "现价": fmt_close,
-                                "涨幅%": pct_val,
-                                "PE": "--",
-                                "市场": market_display,
-                                "状态": real_status,
-                                "赛道": item.get("track", ""),
-                                "角色定位": role_desc,
-                                "货币": item.get("currency", "---"),
-                                "5日涨跌%": pct_5,
-                                "10日涨跌%": pct_10,
-                                "20日涨跌%": pct_20,
-                            }
-                        )
-
-                    try:
-                        target_map = filter_asian_tickers() or {}
-                    except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as fetch_exc:
-                        target_map = {}
-                        log.warning(f"[亚洲页] 读取亚洲目标池失败，跳过缺失补齐: {fetch_exc}")
-
-                    if target_map:
-                        existing_codes = {
-                            str(row.get("代码", "")).strip()
-                            for row in self.row_data
-                            if str(row.get("代码", "")).strip()
-                        }
-                        missing_codes = []
-
-                        for en_name, ticker in target_map.items():
-                            ticker = str(ticker).strip()
-                            if not ticker or ticker in existing_codes:
-                                continue
-
-                            missing_codes.append(ticker)
-                            market_code = ticker.split(".")[-1] if "." in ticker else ""
-                            self.row_data.append(
-                                {
-                                    "代码": ticker,
-                                    "名称": f"{en_name}  ({ch_names_map.get(ticker, '未录入')})"
-                                    if ch_names_map.get(ticker)
-                                    else en_name,
-                                    "现价": "--",
-                                    "涨幅%": 0.0,
-                                    "PE": "--",
-                                    "市场": format_market_display(market_code, ticker),
-                                    "状态": get_market_status(market_code),
-                                    "赛道": find_asian_track(ticker),
-                                    "角色定位": roles_map.get(ticker, en_name),
-                                    "货币": "---",
-                                    "5日涨跌%": 0.0,
-                                    "10日涨跌%": 0.0,
-                                    "20日涨跌%": 0.0,
-                                }
-                            )
-
-                            if ticker not in GLOBAL_ASIAN_RT_CACHE:
-                                GLOBAL_ASIAN_RT_CACHE[ticker] = {
-                                    "date": None,
-                                    "close": 0.0,
-                                    "open": 0.0,
-                                    "high": 0.0,
-                                    "low": 0.0,
-                                    "volume": 0.0,
-                                    "previous_close": 0.0,
-                                    "pct": 0.0,
-                                    "pe": None,
-                                    "pe_source": "",
-                                    "pe_updated_at": 0.0,
-                                    "pct_5": 0.0,
-                                    "pct_10": 0.0,
-                                    "pct_20": 0.0,
-                                    "currency": "",
-                                    "source": "",
-                                    "quote_quality": "",
-                                    "df_today": None,
-                                }
-
-                        if missing_codes:
-                            log.warning(
-                                f"[亚洲页] 本地缓存缺失 {len(missing_codes)} 只，已补齐占位行: {sorted(missing_codes)}"
-                            )
-                except (
-                    FileNotFoundError,
-                    PermissionError,
-                    OSError,
-                    TypeError,
-                    ValueError,
-                    KeyError,
-                    json.JSONDecodeError,
-                ) as exc:
-                    log.error(f"[亚洲页] JSON 历史缓存加载失败: {exc}")
-
-            if os.path.exists(RT_JSON_CACHE):
-                try:
-                    with open(RT_JSON_CACHE, "r", encoding="utf-8") as f:
-                        rt_cache = json.load(f)
-
-                    for row_dict in self.row_data:
-                        code = row_dict.get("代码")
-                        if code not in rt_cache:
-                            continue
-
-                        info = _normalize_cached_rt_entry(
-                            rt_cache[code],
-                            history_points_by_code.get(code, []),
-                        )
-                        close_number = float(info.get("close", 0.0))
-                        if close_number <= 0 and history_points_by_code.get(code):
-                            continue
-                        row_dict["现价"] = (
-                            f"{close_number:.3f}"
-                            if 0 < close_number < 10
-                            else (f"{close_number:.2f}" if close_number > 0 else "--")
-                        )
-                        row_dict["涨幅%"] = _round_pct(info.get("pct", 0.0))
-                        row_dict["PE"] = info.get("pe") if info.get("pe") is not None else "--"
-                        row_dict["5日涨跌%"] = _round_pct(info.get("pct_5", 0.0))
-                        row_dict["10日涨跌%"] = _round_pct(info.get("pct_10", 0.0))
-                        row_dict["20日涨跌%"] = _round_pct(info.get("pct_20", 0.0))
-                        if info.get("currency"):
-                            row_dict["货币"] = info["currency"]
-
-                        if code not in GLOBAL_ASIAN_RT_CACHE:
-                            GLOBAL_ASIAN_RT_CACHE[code] = {}
-                        GLOBAL_ASIAN_RT_CACHE[code].update(info)
-                except (
-                    FileNotFoundError,
-                    PermissionError,
-                    OSError,
-                    TypeError,
-                    ValueError,
-                    KeyError,
-                    json.JSONDecodeError,
-                ) as exc:
-                    log.error(f"[亚洲页] 恢复 RT 盘口缓存失败: {exc}")
-
+            self.row_data = list(payload.get("rows") or [])
             self._sync_worker_codes()
             self.update_table_ui()
             if self.row_data:
@@ -985,12 +1009,16 @@ class AsianMarketTab(BaseStockTab):
                     "本地缓存为空", "可点击刷新获取最新数据", freshness="待刷新", next_step="点击刷新获取最新报价"
                 )
         finally:
-            pending_reload = self._load_cache_pending
-            self._load_cache_pending = False
-            self._load_cache_in_progress = False
-            if pending_reload:
-                log.info("[亚洲页] 执行排队中的一次本地缓存重载")
-                QTimer.singleShot(0, self._load_local_cache)
+            self._finish_local_cache_load()
+
+    def _on_local_cache_failed(self, error_message: str):
+        try:
+            log.error(f"[亚洲页] 本地缓存后台加载失败: {error_message}")
+            self._set_asian_status("本地缓存加载失败", str(error_message or ""), freshness="待刷新", next_step="点击刷新重试")
+            if hasattr(self, "table_state") and not getattr(self, "row_data", None):
+                self.table_state.show_empty("暂无亚洲市场缓存")
+        finally:
+            self._finish_local_cache_load()
 
     def _on_rt_update(self, updates: dict):
         if not updates:

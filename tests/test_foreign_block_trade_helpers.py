@@ -10,6 +10,7 @@ from ui.tabs.foreign_block_trade_tab import (
     ForeignBlockTradeTab,
     _normalize_trade_date_series,
     _normalize_trade_date_value,
+    build_foreign_block_trade_rows,
 )
 
 
@@ -21,6 +22,74 @@ def test_normalize_trade_date_series_handles_iso_and_plain_text():
     series = pd.Series(["2026-04-10T00:00:00.000", "20260411", "2026-04-08"])
     result = _normalize_trade_date_series(series).tolist()
     assert result == ["2026-04-10", "2026-04-11", "2026-04-08"]
+
+
+def test_build_foreign_block_trade_rows_groups_records_and_filters_ai_chain(monkeypatch):
+    monkeypatch.setattr(
+        foreign_module,
+        "filter_rows_to_ai_chain_codes",
+        lambda rows, **kwargs: [row for row in rows if row.get("代码") == "600000"],
+    )
+    records = [
+        {
+            "交易日期": "20260410",
+            "证券代码": "600000",
+            "证券简称": "浦发银行",
+            "买方营业部": "高盛上海营业部",
+            "卖方营业部": "普通营业部",
+            "收盘价": 10.0,
+            "成交价": 9.5,
+            "折溢率": -0.05,
+            "成交量": 10000,
+            "成交额": 95000,
+        },
+        {
+            "交易日期": "2026-04-10",
+            "证券代码": "600000",
+            "证券简称": "浦发银行",
+            "买方营业部": "高盛上海营业部",
+            "卖方营业部": "普通营业部",
+            "收盘价": 10.0,
+            "成交价": 9.7,
+            "折溢率": -0.03,
+            "成交量": 20000,
+            "成交额": 194000,
+        },
+        {
+            "交易日期": "2026-04-11",
+            "证券代码": "000001",
+            "证券简称": "平安银行",
+            "买方营业部": "普通营业部",
+            "卖方营业部": "瑞银证券上海浦东新区营业部",
+            "收盘价": 12.0,
+            "成交价": 12.2,
+            "折溢率": 0.02,
+            "成交量": 10000,
+            "成交额": 122000,
+        },
+    ]
+
+    rows, grouped_count = build_foreign_block_trade_rows(records)
+
+    assert grouped_count == 2
+    assert rows == [
+        {
+            "代码": "600000",
+            "名称": "浦发银行",
+            "现价": "--",
+            "涨幅%": "--",
+            "市值": "--",
+            "交易日期": "2026-04-10",
+            "交易详情": "外资买入",
+            "当日收盘价": "10.00",
+            "成交价格": "9.60",
+            "折/溢价率(%)": "-4.00%",
+            "成交数量(万股)": "3.00",
+            "成交金额(万元)": "28.90",
+            "买方营业部": "高盛上海营业部",
+            "卖方营业部": "普通营业部",
+        }
+    ]
 
 
 def test_should_include_row_only_matches_foreign_branches():
@@ -150,11 +219,35 @@ def test_block_trade_load_cache_primes_local_snapshot(monkeypatch):
         },
     )
 
+    class FakeTaskRunner:
+        def run_in_background(self, fn, *, task_id=None, on_success=None, on_error=None):
+            try:
+                result = fn()
+            except Exception as exc:
+                if on_error is not None:
+                    on_error(str(exc))
+            else:
+                if on_success is not None:
+                    on_success(result)
+            return str(task_id)
+
+    monkeypatch.setattr(foreign_module, "task_manager", FakeTaskRunner())
+    monkeypatch.setattr(
+        foreign_module,
+        "filter_rows_to_ai_chain_codes",
+        lambda rows, **kwargs: list(rows or []),
+    )
+
     class DummyTab:
         model = object()
         table_state = SimpleNamespace(show_table=lambda: calls.append("show_table"))
+        _local_cache_loading = False
+        _local_cache_pending_emit_event = None
+        _apply_local_cache_payload = ForeignBlockTradeTab._apply_local_cache_payload
+        _on_local_cache_failed = ForeignBlockTradeTab._on_local_cache_failed
+        _finish_local_cache_load = ForeignBlockTradeTab._finish_local_cache_load
 
-        def _apply_row_data(self, rows, preserve_selection=False):
+        def _apply_row_data(self, rows, preserve_selection=False, already_filtered=False):
             return calls.append(("rows", rows)) or (["20260508"], ["机构"])
 
         _status_metric = staticmethod(lambda label, value, suffix="": f"{label}{value}{suffix}")

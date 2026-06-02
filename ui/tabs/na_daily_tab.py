@@ -11,14 +11,16 @@ from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLa
 
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
+from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
 from core.logger import get_logger
 from ui.components import TableStateWrapper, VCPTableView
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
-from ui.services.na_daily_service import NADailyRefreshService, parse_report_identity
+from ui.services.na_daily_service import NADailyRefreshService, build_na_daily_refresh_payload, parse_report_identity
 from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
+_NA_DAILY_REFRESH_TASK = task_registry.workspace("na_daily_refresh")
 
 
 class NADailyTab(BaseStockTab):
@@ -35,6 +37,7 @@ class NADailyTab(BaseStockTab):
         self._background_prime_loading = False
         self._background_prime_done = False
         self._handling_na_daily_event = False
+        self._na_daily_refresh_task_active = False
 
         self._init_ui()
 
@@ -58,9 +61,8 @@ class NADailyTab(BaseStockTab):
         if self._runtime_started or self._background_prime_done:
             return
         self._background_prime_loading = True
-        try:
-            self._load_na_daily_report()
-        finally:
+        scheduled = self._load_na_daily_report()
+        if not scheduled:
             self._background_prime_loading = False
             self._background_prime_done = True
 
@@ -95,6 +97,7 @@ class NADailyTab(BaseStockTab):
                 service.report_files,
                 service.report_signature,
                 emit_event=False,
+                refresh_quotes=False,
             )
 
     def _on_na_daily_updated(self):
@@ -215,7 +218,15 @@ class NADailyTab(BaseStockTab):
     def _list_recent_report_files(self, limit: int = 5):
         return self._na_daily_service._list_recent_report_files(limit=limit)
 
-    def _apply_na_daily_rows(self, final_list, report_files, report_signature, *, emit_event: bool = True):
+    def _apply_na_daily_rows(
+        self,
+        final_list,
+        report_files,
+        report_signature,
+        *,
+        emit_event: bool = True,
+        refresh_quotes: bool = True,
+    ):
         self._last_report_signature = report_signature
         self._current_report_files = list(report_files or [])
 
@@ -261,7 +272,7 @@ class NADailyTab(BaseStockTab):
                 self.table_state.show_empty("暂无战报数据")
 
         if self._na_daily_codes:
-            if self._background_prime_loading:
+            if self._background_prime_loading or not refresh_quotes:
                 self._apply_quote_store_snapshot()
                 if emit_event:
                     event_bus.sig_na_daily_updated.emit()
@@ -271,7 +282,39 @@ class NADailyTab(BaseStockTab):
         if emit_event:
             event_bus.sig_na_daily_updated.emit()
 
-    def _load_na_daily_report(self):
+    def _apply_na_daily_refresh_payload(self, payload: dict):
+        self._na_daily_refresh_task_active = False
+        service = getattr(self, "_na_daily_service", None)
+        if service is None:
+            self._background_prime_loading = False
+            self._background_prime_done = True
+            return
+        try:
+            service.apply_refresh_payload(payload or {}, emit_event=False)
+            self._apply_na_daily_rows(
+                service.rows,
+                service.report_files,
+                service.report_signature,
+                emit_event=not self._background_prime_loading,
+            )
+        finally:
+            if self._background_prime_loading:
+                self._background_prime_loading = False
+                self._background_prime_done = True
+
+    def _on_na_daily_refresh_failed(self, error_message: str):
+        self._na_daily_refresh_task_active = False
+        self._background_prime_loading = False
+        self._background_prime_done = True
+        msg = str(error_message or "").strip() or "战报加载失败"
+        self._set_report_status("北美战报刷新失败", msg, freshness=self._latest_report_freshness(), next_step="点击刷新重试")
+        if hasattr(self, "table_state"):
+            if getattr(self.model, "row_data", []):
+                self.table_state.show_table()
+            else:
+                self.table_state.show_error("北美战报加载失败", msg, action_text="重新加载", action_callback=self._load_na_daily_report)
+
+    def _load_na_daily_report(self, *, run_in_background: bool = True):
         if hasattr(self, "table_state"):
             self.table_state.show_loading("正在加载战报...", "请稍候")
         self._set_report_status(
@@ -279,9 +322,27 @@ class NADailyTab(BaseStockTab):
         )
         service = getattr(self, "_na_daily_service", None)
         if service is not None:
+            if run_in_background:
+                if self._na_daily_refresh_task_active or task_manager.is_active_task(_NA_DAILY_REFRESH_TASK):
+                    self._set_report_status(
+                        "北美战报刷新中",
+                        freshness=self._latest_report_freshness(),
+                        next_step="上一轮刷新尚未结束",
+                    )
+                    return False
+                output_dir = service._get_na_daily_output_dir()
+                self._na_daily_refresh_task_active = True
+                task_manager.run_in_background(
+                    lambda: build_na_daily_refresh_payload(output_dir, limit=5),
+                    task_id=_NA_DAILY_REFRESH_TASK,
+                    on_success=self._apply_na_daily_refresh_payload,
+                    on_error=self._on_na_daily_refresh_failed,
+                )
+                return True
             service.refresh_full(emit_event=False)
             self._apply_na_daily_rows(service.rows, service.report_files, service.report_signature)
-            return
+            return True
+        return False
 
     def _load_na_daily_incremental(self):
         service = getattr(self, "_na_daily_service", None)

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import urllib.request
+from collections.abc import Mapping
 from urllib.parse import urlsplit
+
+DEFAULT_REQUESTS_USER_AGENT = "vcp-hunter/1.0"
 
 
 def _request_url(request) -> str:
@@ -23,3 +26,20 @@ def urlopen_https(request, *args, **kwargs):
     ensure_https_request(request)
     # URL scheme is validated above.
     return urllib.request.urlopen(request, *args, **kwargs)  # nosec B310
+
+
+def requests_get_https(
+    url: str,
+    *,
+    session=None,
+    headers: Mapping[str, str] | None = None,
+    timeout=15,
+    **kwargs,
+):
+    ensure_https_request(url)
+    import requests
+
+    request_headers = dict(headers or {})
+    request_headers.setdefault("User-Agent", DEFAULT_REQUESTS_USER_AGENT)
+    getter = session.get if session is not None else requests.get
+    return getter(url, headers=request_headers, timeout=timeout, **kwargs)

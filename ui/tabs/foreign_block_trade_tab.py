@@ -105,6 +105,7 @@ FOREIGN_KEYWORDS = ["高盛", "摩根大通", "摩根士丹利", "瑞银", "法�
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _BLOCK_TRADE_CACHE_FILE = os.path.join(_PROJECT_ROOT, "data", "Cache", "foreign_block_trade_latest.json")
 _FOREIGN_BLOCK_TRADE_TASK = task_registry.workspace("foreign_block_trade")
+_FOREIGN_BLOCK_LOCAL_CACHE_TASK = task_registry.workspace("foreign_block_trade_local_cache")
 
 # 模块级K线缓存：每只股票的文件只读一次，后续直接从内存取
 _kline_cache: dict = {}
@@ -214,6 +215,113 @@ def _normalize_trade_date_series(series: pd.Series) -> pd.Series:
     return series.apply(_normalize_trade_date_value)
 
 
+def should_include_foreign_block_row(buyer, seller) -> bool:
+    buyer_str = str(buyer) if pd.notna(buyer) else ""
+    seller_str = str(seller) if pd.notna(seller) else ""
+    return any(kw in buyer_str or kw in seller_str for kw in FOREIGN_KEYWORDS)
+
+
+def determine_foreign_block_direction(buyer, seller):
+    buyer_str = str(buyer) if pd.notna(buyer) else ""
+    seller_str = str(seller) if pd.notna(seller) else ""
+
+    buy_foreign = any(kw in buyer_str for kw in FOREIGN_KEYWORDS)
+    sell_foreign = any(kw in seller_str for kw in FOREIGN_KEYWORDS)
+
+    if buy_foreign and sell_foreign:
+        return "外资对倒", "#F59E0B"
+
+    if buy_foreign:
+        return "外资买入", COLOR_RISE
+    if sell_foreign:
+        return "外资卖出", COLOR_FALL
+
+    return "--", COLOR_FLAT
+
+
+def filter_foreign_block_rows_to_ai_chain(row_data: list[dict]) -> list[dict]:
+    try:
+        return filter_rows_to_ai_chain_codes(row_data, code_keys=("代码", "证券代码"))
+    except (FileNotFoundError, RuntimeError, OSError, ValueError) as exc:
+        log.warning(f"[外资大宗] AI产业链股票池不可用，已按空股票池处理: {exc}")
+        return []
+
+
+def build_foreign_block_trade_rows(records: list[dict]) -> tuple[list[dict], int]:
+    if not records:
+        return [], 0
+
+    df = pd.DataFrame(records)
+    if df is None or df.empty:
+        return [], 0
+    if "交易日期" in df.columns:
+        df["交易日期"] = _normalize_trade_date_series(df["交易日期"])
+
+    df = df.groupby(["交易日期", "证券代码", "买方营业部", "卖方营业部", "证券简称"], as_index=False).agg(
+        {"收盘价": "first", "成交价": "mean", "折溢率": "mean", "成交量": "sum", "成交额": "sum"}
+    )
+    df = df.sort_values(by=["交易日期", "证券代码"], ascending=[False, True])
+    row_data = []
+    for _, record in df.iterrows():
+        trade_date = str(record.get("交易日期", ""))
+        code = str(record.get("证券代码", "")).zfill(6)
+        name = str(record.get("证券简称", ""))
+
+        close_price = record.get("收盘价", 0)
+        trade_price = record.get("成交价", 0)
+        premium = record.get("折溢率", 0)
+        vol = record.get("成交量", 0)
+        amt = record.get("成交额", 0)
+
+        close_price = 0 if pd.isna(close_price) else close_price
+        trade_price = 0 if pd.isna(trade_price) else trade_price
+        premium = 0 if pd.isna(premium) else premium
+        vol = 0 if pd.isna(vol) else vol
+        amt = 0 if pd.isna(amt) else amt
+
+        premium_pct = premium * 100
+        vol_wan = vol / 10000.0
+        amt_wan = amt / 10000.0
+
+        buyer = str(record.get("买方营业部", ""))
+        seller = str(record.get("卖方营业部", ""))
+        direction, _ = determine_foreign_block_direction(buyer, seller)
+
+        row_data.append(
+            {
+                "代码": code,
+                "名称": name,
+                "现价": "--",
+                "涨幅%": "--",
+                "市值": "--",
+                "交易日期": trade_date,
+                "交易详情": direction,
+                "当日收盘价": f"{close_price:.2f}" if close_price else "--",
+                "成交价格": f"{trade_price:.2f}" if trade_price else "--",
+                "折/溢价率(%)": f"{premium_pct:.2f}%" if not pd.isna(premium_pct) else "--",
+                "成交数量(万股)": f"{vol_wan:.2f}",
+                "成交金额(万元)": f"{amt_wan:.2f}",
+                "买方营业部": buyer,
+                "卖方营业部": seller,
+            }
+        )
+
+    return filter_foreign_block_rows_to_ai_chain(row_data), len(df)
+
+
+def build_foreign_block_local_cache_payload(cache_file: str = _BLOCK_TRADE_CACHE_FILE) -> dict:
+    payload = load_json_file(cache_file)
+    rows = payload.get("rows", []) if isinstance(payload, dict) else []
+    if not isinstance(rows, list):
+        raise DataFormatError("block trade cache rows invalid")
+    return {
+        "rows": filter_foreign_block_rows_to_ai_chain(rows),
+        "raw_count": len(rows),
+        "latest_trade_date": str(payload.get("latest_trade_date", "")).strip() if isinstance(payload, dict) else "",
+        "saved_at": str(payload.get("saved_at", "")).strip() if isinstance(payload, dict) else "",
+    }
+
+
 class ForeignBlockTradeTab(BaseStockTab):
     def __init__(self, data_provider, parent=None):
         super().__init__(data_provider=data_provider, parent=parent)
@@ -229,6 +337,8 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._last_auto_refresh_date = ""
         self._pending_auto_refresh_date = ""
         self._pending_f5_online_refresh = False
+        self._local_cache_loading = False
+        self._local_cache_pending_emit_event: bool | None = None
 
         self.days_to_fetch = 30  # 默认拉取最近30个交易日
         self._init_ui()
@@ -421,8 +531,9 @@ class ForeignBlockTradeTab(BaseStockTab):
         )
         return dates, branches
 
-    def _apply_row_data(self, row_data: list[dict], *, preserve_selection: bool = True):
-        row_data = self._filter_rows_to_ai_chain(row_data)
+    def _apply_row_data(self, row_data: list[dict], *, preserve_selection: bool = True, already_filtered: bool = False):
+        if not already_filtered:
+            row_data = self._filter_rows_to_ai_chain(row_data)
         unique_dates, unique_branches = self._extract_cache_filter_options(row_data)
         self.cmb_filter_date.set_options(unique_dates, preserve_selection=preserve_selection)
         self.cmb_filter_branch.set_options(unique_branches, preserve_selection=preserve_selection)
@@ -440,11 +551,7 @@ class ForeignBlockTradeTab(BaseStockTab):
 
     @staticmethod
     def _filter_rows_to_ai_chain(row_data: list[dict]) -> list[dict]:
-        try:
-            return filter_rows_to_ai_chain_codes(row_data, code_keys=("代码", "证券代码"))
-        except (FileNotFoundError, RuntimeError, OSError, ValueError) as exc:
-            log.warning(f"[外资大宗] AI产业链股票池不可用，已按空股票池处理: {exc}")
-            return []
+        return filter_foreign_block_rows_to_ai_chain(row_data)
 
     def _build_cache_payload(self, row_data: list[dict]) -> dict:
         latest_trade_date = ""
@@ -478,23 +585,51 @@ class ForeignBlockTradeTab(BaseStockTab):
             return False
 
     def _load_local_cache(self, *, emit_event: bool = True):
+        if getattr(self, "_local_cache_loading", False):
+            self._local_cache_pending_emit_event = bool(emit_event)
+            return
+        self._local_cache_loading = True
+
+        def _load_task():
+            result = build_foreign_block_local_cache_payload(_BLOCK_TRADE_CACHE_FILE)
+            result["emit_event"] = bool(emit_event)
+            return result
+
+        task_manager.run_in_background(
+            _load_task,
+            task_id=_FOREIGN_BLOCK_LOCAL_CACHE_TASK,
+            on_success=self._apply_local_cache_payload,
+            on_error=self._on_local_cache_failed,
+        )
+
+    def _finish_local_cache_load(self):
+        pending_emit_event = self._local_cache_pending_emit_event
+        self._local_cache_pending_emit_event = None
+        self._local_cache_loading = False
+        if pending_emit_event is not None:
+            QTimer.singleShot(0, lambda: self._load_local_cache(emit_event=pending_emit_event))
+
+    def _apply_local_cache_payload(self, payload: dict):
         try:
-            payload = load_json_file(_BLOCK_TRADE_CACHE_FILE)
-            rows = payload.get("rows", []) if isinstance(payload, dict) else []
-            if not isinstance(rows, list):
-                raise DataFormatError("block trade cache rows invalid")
-            latest_trade_date = str(payload.get("latest_trade_date", "")).strip() if isinstance(payload, dict) else ""
-            saved_at = str(payload.get("saved_at", "")).strip() if isinstance(payload, dict) else ""
+            payload = payload or {}
+            rows = payload.get("rows", [])
+            raw_count = int(payload.get("raw_count") or len(rows or []))
+            latest_trade_date = str(payload.get("latest_trade_date", "")).strip()
+            saved_at = str(payload.get("saved_at", "")).strip()
             try:
                 self._last_success_at = datetime.datetime.fromisoformat(saved_at) if saved_at else None
             except ValueError:
                 self._last_success_at = None
 
-            unique_dates, unique_branches = self._apply_row_data(rows, preserve_selection=False)
+            unique_dates, unique_branches = self._apply_row_data(
+                rows,
+                preserve_selection=False,
+                already_filtered=True,
+            )
             if rows:
                 self._set_fetch_status(
                     "已加载本地缓存",
-                    self._status_metric("命中 ", len(rows), "笔"),
+                    self._status_metric("命中 ", raw_count, "笔"),
                     self._status_metric("日期 ", len(unique_dates)),
                     self._status_metric("席位 ", len(unique_branches)),
                     freshness=f"快照 {latest_trade_date or self._latest_trade_date_text()}",
@@ -515,11 +650,17 @@ class ForeignBlockTradeTab(BaseStockTab):
                         "暂无大宗交易数据",
                         "当前本地缓存为空，等待每日20:00自动更新。",
                     )
-            if emit_event:
+            if bool(payload.get("emit_event", True)):
                 event_bus.sig_block_trade_updated.emit()
-        except (CacheIOError, DataFormatError) as exc:
-            log.debug(f"[外资大宗] 本地缓存不可用，跳过加载: {exc}")
+        finally:
+            self._finish_local_cache_load()
+
+    def _on_local_cache_failed(self, error_message: str):
+        try:
+            log.debug(f"[外资大宗] 本地缓存不可用，跳过加载: {error_message}")
             self._set_fetch_status("等待20:00更新", freshness="待刷新", next_step="等待每日自动缓存")
+        finally:
+            self._finish_local_cache_load()
 
     def _on_block_trade_updated(self) -> None:
         self._load_local_cache(emit_event=False)
@@ -608,28 +749,11 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._refresh_header_status()
 
     def _should_include_row(self, buyer, seller):
-        buyer_str = str(buyer) if pd.notna(buyer) else ""
-        seller_str = str(seller) if pd.notna(seller) else ""
-
-        return any(kw in buyer_str or kw in seller_str for kw in FOREIGN_KEYWORDS)
+        return should_include_foreign_block_row(buyer, seller)
 
     def _determine_direction(self, buyer, seller):
         """判断外资买卖动作"""
-        buyer_str = str(buyer) if pd.notna(buyer) else ""
-        seller_str = str(seller) if pd.notna(seller) else ""
-
-        buy_foreign = any(kw in buyer_str for kw in FOREIGN_KEYWORDS)
-        sell_foreign = any(kw in seller_str for kw in FOREIGN_KEYWORDS)
-
-        if buy_foreign and sell_foreign:
-            return "外资对倒", "#F59E0B"
-
-        if buy_foreign:
-            return "外资买入", COLOR_RISE
-        if sell_foreign:
-            return "外资卖出", COLOR_FALL
-
-        return "--", COLOR_FLAT
+        return determine_foreign_block_direction(buyer, seller)
 
     def _load_block_trade_data(self):
         if self._is_loading or task_manager.is_active_task(_FOREIGN_BLOCK_TRADE_TASK):
@@ -712,7 +836,7 @@ class ForeignBlockTradeTab(BaseStockTab):
                         df = pd.DataFrame(records) if records else pd.DataFrame()
                         if df is not None and not df.empty:
                             for _, row in df.iterrows():
-                                if self._should_include_row(row.get("买方营业部"), row.get("卖方营业部")):
+                                if should_include_foreign_block_row(row.get("买方营业部"), row.get("卖方营业部")):
                                     results.append(row.to_dict())
                         chunk_done = True
                         finished_chunks += 1
@@ -750,8 +874,11 @@ class ForeignBlockTradeTab(BaseStockTab):
                     "大宗交易抓取失败：所有分段均未返回有效结果。",
                 )
 
+            row_data, grouped_count = build_foreign_block_trade_rows(results)
             return {
                 "records": results,
+                "row_data": row_data,
+                "grouped_count": grouped_count,
                 "timeout_chunks": timeout_chunks,
                 "failed_chunks": failed_chunks,
             }
@@ -807,10 +934,14 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.btn_refresh.setEnabled(True)
         if isinstance(payload, dict):
             data_list = payload.get("records", [])
+            row_data = payload.get("row_data")
+            grouped_count = int(payload.get("grouped_count") or 0)
             timeout_chunks = payload.get("timeout_chunks", [])
             failed_chunks = payload.get("failed_chunks", [])
         else:
             data_list = payload
+            row_data = None
+            grouped_count = 0
             timeout_chunks = []
             failed_chunks = []
 
@@ -866,66 +997,12 @@ class ForeignBlockTradeTab(BaseStockTab):
             self._pending_auto_refresh_date = ""
             return
 
-        df = pd.DataFrame(data_list)
-        if "交易日期" in df.columns:
-            df["交易日期"] = _normalize_trade_date_series(df["交易日期"])
-
-        # 按照 (交易日期, 股票代码, 买方营业部, 卖方营业部) 分组汇总，合并拆单金额和数量
-        # 对于数值类型去求和或者均值，字符去第一条
-        df = df.groupby(["交易日期", "证券代码", "买方营业部", "卖方营业部", "证券简称"], as_index=False).agg(
-            {"收盘价": "first", "成交价": "mean", "折溢率": "mean", "成交量": "sum", "成交额": "sum"}
-        )
-        df = df.sort_values(by=["交易日期", "证券代码"], ascending=[False, True])
-        row_data = []
-        for row, (_, record) in enumerate(df.iterrows()):
-            trade_date = str(record.get("交易日期", ""))
-            code = str(record.get("证券代码", "")).zfill(6)
-            name = str(record.get("证券简称", ""))
-
-            close_price = record.get("收盘价", 0)
-            trade_price = record.get("成交价", 0)
-            premium = record.get("折溢率", 0)
-            vol = record.get("成交量", 0)
-            amt = record.get("成交额", 0)
-
-            close_price = 0 if pd.isna(close_price) else close_price
-            trade_price = 0 if pd.isna(trade_price) else trade_price
-            premium = 0 if pd.isna(premium) else premium
-            vol = 0 if pd.isna(vol) else vol
-            amt = 0 if pd.isna(amt) else amt
-
-            premium_pct = premium * 100
-            vol_wan = vol / 10000.0
-            amt_wan = amt / 10000.0
-
-            buyer = str(record.get("买方营业部", ""))
-            seller = str(record.get("卖方营业部", ""))
-
-            direction, _ = self._determine_direction(buyer, seller)
-
-            row_dict = {
-                "代码": code,
-                "名称": name,
-                "现价": "--",
-                "涨幅%": "--",
-                "市值": "--",
-                "交易日期": trade_date,
-                "交易详情": direction,
-                "当日收盘价": f"{close_price:.2f}" if close_price else "--",
-                "成交价格": f"{trade_price:.2f}" if trade_price else "--",
-                "折/溢价率(%)": f"{premium_pct:.2f}%" if not pd.isna(premium_pct) else "--",
-                "成交数量(万股)": f"{vol_wan:.2f}",
-                "成交金额(万元)": f"{amt_wan:.2f}",
-                "买方营业部": buyer,
-                "卖方营业部": seller,
-            }
-            row_data.append(row_dict)
-
-        row_data = self._filter_rows_to_ai_chain(row_data)
+        if row_data is None:
+            row_data, grouped_count = build_foreign_block_trade_rows(data_list)
         unique_dates, unique_branches = self._apply_row_data(row_data)
         self._last_success_at = datetime.datetime.now()
         self._set_fetch_status(
-            self._status_metric("命中 ", len(df), "笔"),
+            self._status_metric("命中 ", grouped_count or len(row_data), "笔"),
             self._status_metric("日期 ", len(unique_dates)),
             self._status_metric("席位 ", len(unique_branches)),
             self._status_metric("窗口 ", self.days_to_fetch, "交易日"),

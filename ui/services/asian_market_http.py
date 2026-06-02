@@ -7,6 +7,8 @@ from collections.abc import Mapping
 
 import requests
 
+from app.services.http_client_service import requests_get_https
+
 ASIAN_MARKET_HTTP_TIMEOUT_SEC = 15
 ASIAN_MARKET_HTTP_HEADERS = {
     "User-Agent": (
@@ -42,14 +44,23 @@ def asian_market_get(
     timeout: int = ASIAN_MARKET_HTTP_TIMEOUT_SEC,
     retries: int = 0,
 ):
-    getter = session.get if session is not None else requests.get
     attempts = max(0, int(retries or 0)) + 1
     last_exc = None
     for _attempt in range(attempts):
         try:
-            return getter(url, headers=dict(headers or ASIAN_MARKET_HTTP_HEADERS), timeout=timeout)
+            return requests_get_https(
+                url,
+                session=session,
+                headers=dict(headers or ASIAN_MARKET_HTTP_HEADERS),
+                timeout=timeout,
+            )
         except requests.RequestException as exc:
             last_exc = exc
     if last_exc is not None:
         raise last_exc
-    return getter(url, headers=dict(headers or ASIAN_MARKET_HTTP_HEADERS), timeout=timeout)
+    return requests_get_https(
+        url,
+        session=session,
+        headers=dict(headers or ASIAN_MARKET_HTTP_HEADERS),
+        timeout=timeout,
+    )

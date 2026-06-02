@@ -46,6 +46,7 @@ import json
 from core.ai_industry_chain_pool import load_ai_industry_chain_context_map, normalize_ai_chain_code
 from core.logger import get_logger
 from domains.market_calendar import MarketCalendar
+from infra.http_safety import requests_get_https
 
 logger = get_logger()
 EARNINGS_QOQ_MIN_PCT = 30.0
@@ -187,7 +188,7 @@ def _fetch_stock_financial_benefit_ths(symbol: str, indicator: str = "按报告�
     headers.setdefault("Referer", f"https://basic.10jqka.com.cn/new/{symbol}/finance.html")
 
     try:
-        response = requests.get(url, headers=headers, timeout=_THS_REQUEST_TIMEOUT)
+        response = requests_get_https(url, headers=headers, timeout=_THS_REQUEST_TIMEOUT)
     except requests.RequestException as exc:
         raise RuntimeError(f"THS 请求失败: symbol={symbol}, {exc}") from exc
 

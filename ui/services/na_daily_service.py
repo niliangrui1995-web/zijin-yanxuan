@@ -19,6 +19,14 @@ log = get_logger(__name__)
 NA_DAILY_CACHE_FILE = os.path.join(CACHE_DIR, "na_daily_latest.json")
 
 
+def project_root() -> str:
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def na_daily_output_dir() -> str:
+    return os.path.join(os.path.dirname(project_root()), "每日战报", "每日热点输出")
+
+
 def parse_report_identity(fpath: str):
     basename = os.path.basename(fpath)
     match = re.search(r"战报_(\d{8})(\d{0,6})", basename)
@@ -41,6 +49,15 @@ def parse_report_identity(fpath: str):
 
 def signature_for_report_files(report_files: list[str]) -> tuple[str, ...]:
     return tuple(f"{os.path.basename(path)}:{int(os.path.getmtime(path))}" for path in report_files)
+
+
+def list_recent_report_files(output_dir: str | None = None, *, limit: int = 5) -> list[str]:
+    pattern = os.path.join(output_dir or na_daily_output_dir(), "**", "战报_*.md")
+    files = glob.glob(pattern, recursive=True)
+    if not files:
+        return []
+    files.sort(key=lambda path: (parse_report_identity(path)[1], path))
+    return files[-limit:]
 
 
 def parse_battle_report(content: str) -> list[dict]:
@@ -288,6 +305,30 @@ def build_na_daily_rows(report_files: list[str]) -> tuple[list[dict], list[str],
     return final_list, report_files, signature_for_report_files(report_files)
 
 
+def build_na_daily_refresh_payload(output_dir: str | None = None, *, limit: int = 5) -> dict:
+    report_files = list_recent_report_files(output_dir, limit=limit)
+    if not report_files:
+        return {
+            "job_key": "na_daily_full",
+            "status": "skipped",
+            "message": "no report files",
+            "rows": [],
+            "report_files": [],
+            "report_signature": (),
+            "cache_file": NA_DAILY_CACHE_FILE,
+        }
+    rows, report_files, report_signature = build_na_daily_rows(report_files)
+    return {
+        "job_key": "na_daily_full",
+        "status": "success",
+        "rows": list(rows or []),
+        "records": len(rows or []),
+        "report_files": list(report_files or []),
+        "report_signature": tuple(report_signature or ()),
+        "cache_file": NA_DAILY_CACHE_FILE,
+    }
+
+
 class NADailyRefreshService(QObject):
     """Background parser/cache for the North America daily battle report."""
 
@@ -320,22 +361,17 @@ class NADailyRefreshService(QObject):
 
     @staticmethod
     def _project_root() -> str:
-        return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        return project_root()
 
     def _get_na_daily_output_dir(self) -> str:
-        return os.path.join(os.path.dirname(self._project_root()), "每日战报", "每日热点输出")
+        return na_daily_output_dir()
 
     @staticmethod
     def _parse_report_identity(fpath: str):
         return parse_report_identity(fpath)
 
     def _list_recent_report_files(self, limit: int = 5) -> list[str]:
-        pattern = os.path.join(self._get_na_daily_output_dir(), "**", "战报_*.md")
-        files = glob.glob(pattern, recursive=True)
-        if not files:
-            return []
-        files.sort(key=lambda path: (self._parse_report_identity(path)[1], path))
-        return files[-limit:]
+        return list_recent_report_files(self._get_na_daily_output_dir(), limit=limit)
 
     @staticmethod
     def _signature_for(report_files: list[str]) -> tuple[str, ...]:
@@ -380,15 +416,18 @@ class NADailyRefreshService(QObject):
         ]
         return max(dates) if dates else ""
 
-    def refresh_full(self, *, emit_event: bool = True) -> dict:
-        rows, report_files, report_signature = self._build_na_daily_rows()
+    def apply_refresh_payload(self, payload: dict, *, emit_event: bool = True) -> dict:
+        status = str((payload or {}).get("status") or "").strip()
+        rows = list((payload or {}).get("rows") or [])
+        report_files = list((payload or {}).get("report_files") or [])
+        report_signature = tuple((payload or {}).get("report_signature") or ())
         if not report_files:
             if not self._rows and not self._report_files:
                 self.load_cache()
             self._last_result = {
                 "job_key": "na_daily_full",
-                "status": "skipped",
-                "message": "no report files",
+                "status": status or "skipped",
+                "message": (payload or {}).get("message") or "no report files",
                 "records": len(self._rows),
                 "report_files": list(self._report_files),
                 "report_signature": tuple(self._report_signature),
@@ -399,10 +438,11 @@ class NADailyRefreshService(QObject):
         self._rows = list(rows or [])
         self._report_files = list(report_files or [])
         self._report_signature = tuple(report_signature or ())
-        self._save_cache(status="full")
+        cache_status = "full" if status in {"", "success"} else status
+        self._save_cache(status=cache_status)
         self._last_result = {
-            "job_key": "na_daily_full",
-            "status": "success",
+            "job_key": (payload or {}).get("job_key") or "na_daily_full",
+            "status": status or "success",
             "records": len(self._rows),
             "report_files": list(self._report_files),
             "report_signature": tuple(self._report_signature),
@@ -411,6 +451,20 @@ class NADailyRefreshService(QObject):
         if emit_event:
             event_bus.sig_na_daily_updated.emit()
         return self.latest_result()
+
+    def refresh_full(self, *, emit_event: bool = True) -> dict:
+        rows, report_files, report_signature = self._build_na_daily_rows()
+        payload = {
+            "job_key": "na_daily_full",
+            "status": "success" if report_files else "skipped",
+            "message": "" if report_files else "no report files",
+            "rows": list(rows or []),
+            "records": len(rows or []),
+            "report_files": list(report_files or []),
+            "report_signature": tuple(report_signature or ()),
+            "cache_file": NA_DAILY_CACHE_FILE,
+        }
+        return self.apply_refresh_payload(payload, emit_event=emit_event)
 
     def refresh_incremental(self, *, emit_event: bool = True) -> dict:
         report_files = self._list_recent_report_files(limit=5)

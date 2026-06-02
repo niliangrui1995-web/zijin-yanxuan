@@ -8,6 +8,17 @@ import pandas as pd
 from core.json_cache import remove_cache_file
 from core.logger import get_logger
 from core.market_calendar import MarketCalendar
+from domains.quotes.tdx_name_map import (
+    TNF_CODE_OFFSET,
+    TNF_NAME_FIELD_LEN,
+    TNF_NAME_FILES,
+    TNF_NAME_OFFSET,
+    TNF_RECORD_SIZE,
+    decode_tnf_name,
+    is_placeholder_name,
+    normalize_code_name_targets,
+    parse_tnf_name_file,
+)
 from vcp.constants import DATE_FMT, INCREMENTAL_BARS, MARKET_SYNC_WORKERS, MAX_HISTORY_BARS
 from vcp.data_provider_cache import load_cache_from_disk
 from vcp.utils import ensure_pandas_dataframe
@@ -16,75 +27,30 @@ _log = get_logger(__name__)
 
 
 class TdxDataProviderHistoryMixin:
-    _TNF_RECORD_SIZE = 360
-    _TNF_CODE_OFFSET = 50
-    _TNF_NAME_OFFSET = 81
-    _TNF_NAME_FIELD_LEN = 45
-    _TNF_NAME_FILES = ("shs.tnf", "szs.tnf")
+    _TNF_RECORD_SIZE = TNF_RECORD_SIZE
+    _TNF_CODE_OFFSET = TNF_CODE_OFFSET
+    _TNF_NAME_OFFSET = TNF_NAME_OFFSET
+    _TNF_NAME_FIELD_LEN = TNF_NAME_FIELD_LEN
+    _TNF_NAME_FILES = TNF_NAME_FILES
     _MANUAL_NAME_ALIASES = {
         "603196": "\u749e\u6e90\u6750\u6599",
     }
 
     @staticmethod
     def _is_placeholder_name(code, name) -> bool:
-        code_text = str(code or "").strip()
-        name_text = str(name or "").strip()
-        return not name_text or name_text == code_text
+        return is_placeholder_name(code, name)
 
     @staticmethod
     def _normalize_code_name_targets(codes) -> list[str]:
-        normalized: list[str] = []
-        for raw_code in codes or []:
-            code = str(raw_code or "").strip()
-            if len(code) == 6 and code.isdigit():
-                normalized.append(code)
-        return list(dict.fromkeys(normalized))
+        return normalize_code_name_targets(codes)
 
     @classmethod
     def _decode_tnf_name(cls, raw_name: bytes) -> str:
-        payload = bytes(raw_name or b"").split(b"\x00", 1)[0].rstrip(b" \x00")
-        if not payload:
-            return ""
-        for encoding in ("gbk", "gb18030", "utf-8"):
-            try:
-                return payload.decode(encoding).strip()
-            except UnicodeDecodeError:
-                continue
-        return payload.decode("latin1", errors="ignore").strip()
+        return decode_tnf_name(raw_name)
 
     @classmethod
     def _parse_tnf_name_file(cls, tnf_path: str) -> dict[str, str]:
-        if not tnf_path or not os.path.exists(tnf_path):
-            return {}
-
-        try:
-            with open(tnf_path, "rb") as handle:
-                payload = handle.read()
-        except OSError as exc:
-            _log.debug(f"[名称映射] 读取本地证券主表失败: {tnf_path} {exc}")
-            return {}
-
-        code_names: dict[str, str] = {}
-        stride = cls._TNF_RECORD_SIZE
-        code_start = cls._TNF_CODE_OFFSET
-        code_end = code_start + 6
-        name_start = cls._TNF_NAME_OFFSET
-        name_end = name_start + cls._TNF_NAME_FIELD_LEN
-
-        for offset in range(0, len(payload) - stride + 1, stride):
-            record = payload[offset : offset + stride]
-            code_bytes = record[code_start:code_end]
-            if len(code_bytes) != 6 or not code_bytes.isdigit():
-                continue
-            code = code_bytes.decode("ascii", errors="ignore").strip()
-            if len(code) != 6:
-                continue
-            name = cls._decode_tnf_name(record[name_start:name_end])
-            if cls._is_placeholder_name(code, name):
-                continue
-            code_names[code] = name
-
-        return code_names
+        return parse_tnf_name_file(tnf_path)
 
     def _load_local_tdx_name_map(self) -> dict[str, str]:
         cached_map = getattr(self, "_local_tdx_name_map_cache", None)
@@ -109,37 +75,9 @@ class TdxDataProviderHistoryMixin:
 
     @classmethod
     def _parse_tnf_name_file_for_codes(cls, tnf_path: str, target_codes: set[str]) -> dict[str, str]:
-        remaining = set(target_codes or set())
-        if not remaining or not tnf_path or not os.path.exists(tnf_path):
+        if not target_codes:
             return {}
-
-        code_names: dict[str, str] = {}
-        stride = cls._TNF_RECORD_SIZE
-        code_start = cls._TNF_CODE_OFFSET
-        code_end = code_start + 6
-        name_start = cls._TNF_NAME_OFFSET
-        name_end = name_start + cls._TNF_NAME_FIELD_LEN
-
-        try:
-            with open(tnf_path, "rb") as handle:
-                while remaining:
-                    record = handle.read(stride)
-                    if len(record) < stride:
-                        break
-                    code_bytes = record[code_start:code_end]
-                    if len(code_bytes) != 6 or not code_bytes.isdigit():
-                        continue
-                    code = code_bytes.decode("ascii", errors="ignore").strip()
-                    if code not in remaining:
-                        continue
-                    name = cls._decode_tnf_name(record[name_start:name_end])
-                    if not cls._is_placeholder_name(code, name):
-                        code_names[code] = name
-                    remaining.discard(code)
-        except OSError as exc:
-            _log.debug(f"[名称映射] 读取本地证券主表失败: {tnf_path} {exc}")
-
-        return code_names
+        return parse_tnf_name_file(tnf_path, target_codes=set(target_codes or set()))
 
     def _load_local_tdx_name_map_for_codes(self, codes) -> dict[str, str]:
         target_codes = set(self._normalize_code_name_targets(codes))
