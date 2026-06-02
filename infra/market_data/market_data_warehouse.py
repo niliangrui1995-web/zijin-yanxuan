@@ -16,6 +16,12 @@ from core.logger import get_logger
 from core.runtime_paths import CACHE_DIR
 from infra.market_data.warehouse_manifest import WarehouseManifest, WarehouseManifestRecord
 
+try:
+    from polars.exceptions import PolarsError
+except ImportError:  # pragma: no cover - exercised when optional dependency is absent
+    class PolarsError(Exception):
+        pass
+
 log = get_logger(__name__)
 
 MARKET_DATASET = "cn_daily_bars"
@@ -203,7 +209,7 @@ class MarketDataWarehouse:
             )
         try:
             inspected = self._inspect_parquet(parquet_path)
-        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        except (OSError, RuntimeError, TypeError, ValueError, PolarsError) as exc:
             return WarehouseStatus(
                 **{
                     **base,
@@ -331,7 +337,7 @@ class MarketDataWarehouse:
                     }
                 ),
             )
-        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError, PolarsError) as exc:
             return WarehouseReadResult(
                 None,
                 WarehouseStatus(
@@ -409,7 +415,7 @@ class MarketDataWarehouse:
                     }
                 ),
             )
-        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError, PolarsError) as exc:
             return WarehouseReadResult(
                 None,
                 WarehouseStatus(
@@ -450,7 +456,7 @@ class MarketDataWarehouse:
         for code, frame in (cache_data or {}).items():
             try:
                 converted = _frame_to_polars(str(code), frame)
-            except (AttributeError, KeyError, RuntimeError, TypeError, ValueError) as exc:
+            except (AttributeError, KeyError, RuntimeError, TypeError, ValueError, PolarsError) as exc:
                 log.debug("[warehouse] skip %s while converting to parquet: %s", code, exc)
                 converted = None
             if converted is not None:
@@ -513,7 +519,7 @@ class MarketDataWarehouse:
             trade_date = self._read_meta_trade_date()
         try:
             inspected = self._inspect_parquet(parquet_path)
-        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        except (OSError, RuntimeError, TypeError, ValueError, PolarsError) as exc:
             return WarehouseStatus(
                 ok=False,
                 dataset=self.dataset,
@@ -597,7 +603,7 @@ class MarketDataWarehouse:
             meta = pl.read_parquet(str(self.meta_path))
             if "date" in meta.columns and meta.height > 0:
                 return str(meta["date"][0])
-        except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError, PolarsError):
             return ""
         return ""
 

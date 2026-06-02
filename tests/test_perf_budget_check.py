@@ -387,6 +387,7 @@ def _runtime_health_sample(**overrides):
 
 def test_runtime_health_budget_accepts_structured_suite_report():
     report = {
+        "startup_ready_ms": 900.0,
         "mode": {"tabs": ["stock_candidates"]},
         "tab_cycle": {
             "tabs": [
@@ -394,15 +395,27 @@ def test_runtime_health_budget_accepts_structured_suite_report():
             ]
         },
         "runtime_health_samples": [
-            _runtime_health_sample(),
+            _runtime_health_sample(ui_stalls={"installed": True, "critical_count": 0, "max_elapsed_ms": 0.0}),
             _runtime_health_sample(
                 timers={"active": 5, "total": 9},
                 process={"rss_mb": 504.0, "thread_count": 25},
+                ui_stalls={"installed": True, "critical_count": 0, "max_elapsed_ms": 0.0},
             ),
         ],
     }
 
     assert check_runtime_health_budget(report) == []
+
+
+def test_runtime_health_budget_rejects_slow_startup_ready():
+    report = {
+        "startup_ready_ms": 1900.0,
+        "runtime_health_samples": [_runtime_health_sample()],
+    }
+
+    failures = check_runtime_health_budget(report)
+
+    assert any(failure["check"] == "runtime_health.startup.ready" for failure in failures)
 
 
 def test_runtime_health_budget_rejects_slow_tab_first_open():
@@ -420,6 +433,56 @@ def test_runtime_health_budget_rejects_slow_tab_first_open():
     failures = check_runtime_health_budget(report)
 
     assert any(failure["check"] == "runtime_health.tab_first_open.elapsed" for failure in failures)
+
+
+def test_runtime_health_budget_rejects_critical_ui_stalls():
+    report = {
+        "runtime_health_samples": [
+            _runtime_health_sample(
+                ui_stalls={
+                    "installed": True,
+                    "critical_count": 16,
+                    "event_loop_critical_count": 13,
+                    "max_elapsed_ms": 301.0,
+                }
+            )
+        ],
+    }
+
+    failures = check_runtime_health_budget(report)
+
+    assert {failure["check"] for failure in failures} >= {
+        "runtime_health.ui_stall.critical_count",
+        "runtime_health.ui_stall.event_loop_critical_count",
+        "runtime_health.ui_stall.max_elapsed",
+    }
+
+
+def test_runtime_health_budget_excludes_startup_ui_stalls_from_tab_budget():
+    report = {
+        "runtime_health_samples": [
+            _runtime_health_sample(
+                label="startup",
+                ui_stalls={
+                    "installed": True,
+                    "critical_count": 1,
+                    "event_loop_critical_count": 1,
+                    "max_elapsed_ms": 650.0,
+                },
+            ),
+            _runtime_health_sample(
+                label="after_tab_cycle",
+                ui_stalls={
+                    "installed": True,
+                    "critical_count": 2,
+                    "event_loop_critical_count": 2,
+                    "max_elapsed_ms": 130.0,
+                },
+            ),
+        ],
+    }
+
+    assert check_runtime_health_budget(report) == []
 
 
 def test_runtime_health_budget_accepts_key_tab_first_open_within_budget():
@@ -475,7 +538,7 @@ def test_runtime_health_budget_rejects_key_tab_first_open_before_global_budget()
         "mode": {"tabs": ["foreign_block"]},
         "tab_cycle": {
             "tabs": [
-                {"cycle": 1, "key": "foreign_block", "status": "ok", "elapsed_ms": 3000.0},
+                {"cycle": 1, "key": "foreign_block", "status": "ok", "elapsed_ms": 800.0},
             ]
         },
         "runtime_health_samples": [

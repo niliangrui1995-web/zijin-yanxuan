@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from core.quote_snapshot import (
     build_finance_quote_payload,
+    coerce_number,
     enrich_quotes_with_finance,
     get_missing_a_share_finance_codes,
     merge_quote_snapshot_inplace,
@@ -70,3 +71,44 @@ def test_resolve_quote_metrics_prefers_live_price_times_zongguben():
     assert metrics["price_text"] == "8.00"
     assert round(metrics["pct"], 4) == round((8.0 / 7.5 - 1.0) * 100.0, 4)
     assert metrics["market_cap_text"] == "120亿"
+
+
+def test_quote_snapshot_handles_empty_none_and_invalid_values():
+    assert coerce_number(None) == 0.0
+    assert coerce_number(object()) == 0.0
+
+    snapshot = {"000001": {"close": 10.0, "market_cap": 100}}
+    merge_quote_snapshot_inplace(snapshot, {"000001": {"close": None, "last_close": 9.5}})
+    assert snapshot["000001"]["close"] == 10.0
+    assert snapshot["000001"]["last_close"] == 9.5
+
+    enriched = enrich_quotes_with_finance(
+        {"000001": {"close": 12.0}},
+        {
+            "": {"zongguben": 1_000},
+            "000001": {"market_cap": 20_000_000_000, "price_base": 10.0, "source": ""},
+            "000002": None,
+        },
+    )
+
+    assert "" not in enriched
+    assert enriched["000001"]["market_cap"] == 24_000_000_000
+    assert enriched["000001"]["price_base"] == 10.0
+    assert enriched["000002"] == {}
+
+
+def test_resolve_quote_metrics_falls_back_to_last_close_pct_and_static_market_cap():
+    metrics = resolve_quote_metrics(
+        {},
+        {"close": 0, "last_close": 7.5, "pct": "bad", "market_cap": 15_000_000_000},
+    )
+
+    assert metrics["rt_close"] == 7.5
+    assert metrics["pct"] == 0.0
+    assert metrics["market_cap_value"] == 15_000_000_000
+
+    metrics = resolve_quote_metrics({}, {"close": 0, "last_close": 0, "pct": "3.5"})
+    assert metrics["pct"] == 3.5
+
+    metrics = resolve_quote_metrics({}, {"close": 0, "last_close": 0, "pct": object()})
+    assert metrics["pct"] is None

@@ -233,19 +233,23 @@ class MarketCalendar:
             from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
             utc_now = datetime.datetime.now(datetime.timezone.utc)
-            return utc_now.astimezone(ZoneInfo(tz_name)).replace(tzinfo=None)
-        except (ImportError, ZoneInfoNotFoundError):
-            # safe fallback without timezone db
-            utc_now = datetime.datetime.utcnow()
-            offset_hours = {
-                "CN": 8,
-                "HK": 8,
-                "TW": 8,
-                "T": 9,
-                "KS": 9,
-                "US": -5,
-            }.get(canonical, 8)
-            return utc_now + datetime.timedelta(hours=offset_hours)
+            try:
+                return utc_now.astimezone(ZoneInfo(tz_name)).replace(tzinfo=None)
+            except ZoneInfoNotFoundError:
+                pass
+        except ImportError:
+            pass
+        # safe fallback without timezone db
+        utc_now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+        offset_hours = {
+            "CN": 8,
+            "HK": 8,
+            "TW": 8,
+            "T": 9,
+            "KS": 9,
+            "US": -5,
+        }.get(canonical, 8)
+        return utc_now + datetime.timedelta(hours=offset_hours)
 
     @classmethod
     def now(cls, market: str = "CN") -> datetime.datetime:
@@ -263,17 +267,23 @@ class MarketCalendar:
             from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
             utc_dt = datetime.datetime.fromtimestamp(ts, datetime.timezone.utc)
-            return utc_dt.astimezone(ZoneInfo(tz_name)).replace(tzinfo=None)
-        except (ImportError, ZoneInfoNotFoundError):
-            offset_hours = {
-                "CN": 8,
-                "HK": 8,
-                "TW": 8,
-                "T": 9,
-                "KS": 9,
-                "US": -5,
-            }.get(canonical, 8)
-            return datetime.datetime.utcfromtimestamp(ts) + datetime.timedelta(hours=offset_hours)
+            try:
+                return utc_dt.astimezone(ZoneInfo(tz_name)).replace(tzinfo=None)
+            except ZoneInfoNotFoundError:
+                pass
+        except ImportError:
+            pass
+        offset_hours = {
+            "CN": 8,
+            "HK": 8,
+            "TW": 8,
+            "T": 9,
+            "KS": 9,
+            "US": -5,
+        }.get(canonical, 8)
+        return datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).replace(tzinfo=None) + datetime.timedelta(
+            hours=offset_hours
+        )
 
     @classmethod
     def _coerce_date(cls, day: Any, market: str = "CN") -> datetime.date:

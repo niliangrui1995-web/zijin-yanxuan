@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import QApplication
 
 from core.process_watchdog import collect_process_snapshot
 from domains.runtime.fault_tolerance import provider_fault_tolerance
+from infra.diagnostics.ui_stall_probe import get_ui_stall_probe
 
 try:  # pragma: no cover - psutil is optional outside the packaged runtime.
     import psutil
@@ -613,6 +614,16 @@ def _lineage_coverage_snapshot() -> dict[str, Any]:
     }
 
 
+def _ui_stall_snapshot() -> dict[str, Any]:
+    probe = get_ui_stall_probe()
+    if probe is None:
+        return {"installed": False}
+    try:
+        return dict(probe.stall_snapshot())
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return {"installed": False, "error": "snapshot_failed"}
+
+
 def collect_runtime_health(main_window=None) -> dict[str, Any]:
     app = QApplication.instance()
     root = main_window
@@ -639,6 +650,7 @@ def collect_runtime_health(main_window=None) -> dict[str, Any]:
         "market_data": _market_data_snapshot(root) if root is not None else {},
         "f5_refresh": _f5_scheduler_snapshot(root) if root is not None else {},
         "f5_cache": _f5_cache_snapshot(),
+        "ui_stalls": _ui_stall_snapshot(),
         "data_lineage": _workspace_lineage(root) if root is not None else [],
         "data_lineage_coverage": _lineage_coverage_snapshot(),
         "data_lineage_exclusions": _workspace_lineage_exclusions(root) if root is not None else [],

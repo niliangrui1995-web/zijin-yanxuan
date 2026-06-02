@@ -1014,15 +1014,13 @@ class FundHoldingsTab(BaseStockTab):
         if self._sync_active:
             self.table_state.show_loading(title or "同步基金持仓中...", subtitle)
 
-    def _run_sync_action(self, label: str, sync_callable):
-        if self._sync_active:
-            return
-
-        callable_name = getattr(sync_callable, "__name__", "task")
-        self._sync_task_id = self._build_workspace_task_id(f"sync_{callable_name}")
-        self._set_sync_active(True, "同步基金持仓中...", label)
+    def _current_visible_row_counts(self) -> tuple[int, int]:
         total = len(getattr(self.model, "row_data", []) or [])
         visible = self.proxy_model.rowCount() if hasattr(self, "proxy_model") else total
+        return total, visible
+
+    def _set_sync_start_status(self, label: str) -> None:
+        total, visible = self._current_visible_row_counts()
         self.lbl_status.setText(
             self.format_workspace_status(
                 "基金持仓刷新中",
@@ -1034,57 +1032,64 @@ class FundHoldingsTab(BaseStockTab):
             )
         )
 
-        def _on_success(result):
-            if getattr(self, "_runtime_cleanup_done", False):
-                return
-            self._set_sync_active(False)
-            self._reload_from_db()
-            message = str((result or {}).get("message") or label).strip()
-            total = len(getattr(self.model, "row_data", []) or [])
-            visible = self.proxy_model.rowCount() if hasattr(self, "proxy_model") else total
-            self.lbl_status.setText(
-                self.format_workspace_status(
-                    "基金持仓已刷新",
-                    result=f"{visible}/{total}只" if total else "0只",
-                    freshness=self._latest_sync_freshness_text(),
-                    current_filter=self._current_filter_summary(),
-                    next_step="",
-                    extra_segments=(message,),
-                )
+    def _handle_sync_success(self, result, label: str) -> None:
+        if getattr(self, "_runtime_cleanup_done", False):
+            return
+        self._set_sync_active(False)
+        self._reload_from_db()
+        message = str((result or {}).get("message") or label).strip()
+        total, visible = self._current_visible_row_counts()
+        self.lbl_status.setText(
+            self.format_workspace_status(
+                "基金持仓已刷新",
+                result=f"{visible}/{total}只" if total else "0只",
+                freshness=self._latest_sync_freshness_text(),
+                current_filter=self._current_filter_summary(),
+                next_step="",
+                extra_segments=(message,),
             )
-            event_bus.sig_system_log.emit("info", f"[基金持仓] {message}")
-            event_bus.sig_fund_holdings_updated.emit()
+        )
+        event_bus.sig_system_log.emit("info", f"[基金持仓] {message}")
+        event_bus.sig_fund_holdings_updated.emit()
 
-        def _on_error(error_message: str):
-            if getattr(self, "_runtime_cleanup_done", False):
-                return
-            self._set_sync_active(False)
-            self._reload_from_db()
-            message = str(error_message or "更新失败").strip()
-            total = len(getattr(self.model, "row_data", []) or [])
-            visible = self.proxy_model.rowCount() if hasattr(self, "proxy_model") else total
-            self.lbl_status.setText(
-                self.format_workspace_status(
-                    "基金持仓刷新失败",
-                    result=f"{visible}/{total}只" if total else "0只",
-                    freshness="远端失败沿用" if total else "待同步",
-                    current_filter=self._current_filter_summary(),
-                    next_step="请稍后重试",
-                    extra_segments=(message,),
-                )
+    def _handle_sync_error(self, error_message: str, label: str, sync_callable) -> None:
+        if getattr(self, "_runtime_cleanup_done", False):
+            return
+        self._set_sync_active(False)
+        self._reload_from_db()
+        message = str(error_message or "更新失败").strip()
+        total, visible = self._current_visible_row_counts()
+        self.lbl_status.setText(
+            self.format_workspace_status(
+                "基金持仓刷新失败",
+                result=f"{visible}/{total}只" if total else "0只",
+                freshness="远端失败沿用" if total else "待同步",
+                current_filter=self._current_filter_summary(),
+                next_step="请稍后重试",
+                extra_segments=(message,),
             )
-            self.table_state.show_error(
-                title="基金持仓更新失败",
-                subtitle=message,
-                action_text="重试",
-                action_callback=lambda: self._run_sync_action(label, sync_callable),
-            )
-            event_bus.sig_system_log.emit("error", f"[基金持仓] {message}")
+        )
+        self.table_state.show_error(
+            title="基金持仓更新失败",
+            subtitle=message,
+            action_text="重试",
+            action_callback=lambda: self._run_sync_action(label, sync_callable),
+        )
+        event_bus.sig_system_log.emit("error", f"[基金持仓] {message}")
+
+    def _run_sync_action(self, label: str, sync_callable):
+        if self._sync_active:
+            return
+
+        callable_name = getattr(sync_callable, "__name__", "task")
+        self._sync_task_id = self._build_workspace_task_id(f"sync_{callable_name}")
+        self._set_sync_active(True, "同步基金持仓中...", label)
+        self._set_sync_start_status(label)
 
         task_manager.run_in_background(
             sync_callable,
-            on_success=_on_success,
-            on_error=_on_error,
+            on_success=lambda result: self._handle_sync_success(result, label),
+            on_error=lambda error_message: self._handle_sync_error(error_message, label, sync_callable),
             task_id=self._sync_task_id,
         )
 

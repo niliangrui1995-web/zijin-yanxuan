@@ -15,11 +15,13 @@ core/data_store.py — 统一 SQLite 数据存储层（单例）
     5. 幂等建表 — IF NOT EXISTS，脚本可重跑
 """
 
+import atexit
 import json
 import os
 import sqlite3
 import threading
-from contextlib import contextmanager
+import weakref
+from contextlib import contextmanager, suppress
 from typing import Optional
 
 from core.logger import get_logger
@@ -31,6 +33,7 @@ class DataStore:
     """VCP Hunter 统一数据存储 — SQLite 单例"""
 
     _instance: Optional["DataStore"] = None
+    _instances = weakref.WeakSet()
     _lock = threading.Lock()
 
     def __new__(cls, *args, **kwargs):
@@ -52,6 +55,7 @@ class DataStore:
 
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self._db_path = db_path
+        self._closed = False
 
         # check_same_thread=False: 因为我们用 _lock 自己管线程安全
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
@@ -62,6 +66,7 @@ class DataStore:
 
         self._ensure_tables()
         self._clean_migrated_backups()
+        self._instances.add(self)
         log.info(f"[DataStore] SQLite 存储已就绪: {db_path}")
 
     def _ensure_tables(self):
@@ -200,12 +205,28 @@ class DataStore:
 
     def close(self):
         """应用退出时调用，确保数据落盘"""
+        conn = getattr(self, "_conn", None)
+        if getattr(self, "_closed", False) or conn is None:
+            return
         try:
-            self._conn.close()
-            log.info("[DataStore] SQLite 连接已关闭")
+            conn.close()
         except sqlite3.Error as _e:
             log.debug(f"[DataStore] SQLite 关闭异常: {_e}")
+        finally:
+            self._closed = True
+            self._conn = None
+        log.info("[DataStore] SQLite 连接已关闭")
+
+    def __del__(self):
+        with suppress(Exception):
+            self.close()
+
+    @classmethod
+    def close_all(cls):
+        for store in list(cls._instances):
+            store.close()
 
 
 # 全局单例
 data_store = DataStore()
+atexit.register(DataStore.close_all)

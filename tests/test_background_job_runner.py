@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 
 from core.background_job_runner import BackgroundJobRunner
+from domains.runtime import TaskCategory
 from infra.tasks import task_registry
+from infra.tasks.typed_task_registry import TypedTaskRegistry
 
 
 class _FakeManager:
@@ -87,3 +89,30 @@ def test_background_job_runner_accepts_typed_task_key(monkeypatch):
         ("abandon_task", "test_typed_task"),
         ("is_active_task", "test_typed_task"),
     ]
+
+
+def test_typed_task_registry_validation_and_quote_refresh_helpers():
+    registry = TypedTaskRegistry()
+
+    try:
+        registry.register(" ", category=TaskCategory.NETWORK)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("blank task id should fail")
+
+    assert registry.resolve(None) is None
+
+    first = registry.register("job", category=TaskCategory.NETWORK, description="First")
+    assert registry.register("job", category=TaskCategory.WINDOW, description="Second") is first
+
+    try:
+        registry.quote_refresh(" ")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("blank quote refresh scope should fail")
+
+    assert registry.quote_refresh("watchlist").task_id == "watchlist_quotes"
+    assert registry.quote_refresh("central_quotes").task_id == "central_quotes"
+    assert registry.quotes("quote_job").category is TaskCategory.QUOTES

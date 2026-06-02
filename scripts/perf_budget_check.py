@@ -40,8 +40,12 @@ DEFAULT_THRESHOLDS = {
     "runtime_health_thread_growth_max": 16,
     "runtime_health_webengine_final_max": 0,
     "runtime_health_rss_tail_range_mb": 96.0,
-    "runtime_health_tab_first_open_max_ms": 6500.0,
-    "runtime_health_key_tab_first_open_max_ms": 2500.0,
+    "runtime_health_startup_ready_max_ms": 1800.0,
+    "runtime_health_tab_first_open_max_ms": 1200.0,
+    "runtime_health_key_tab_first_open_max_ms": 500.0,
+    "runtime_health_ui_critical_stall_max": 15,
+    "runtime_health_ui_event_loop_critical_stall_max": 12,
+    "runtime_health_ui_max_stall_ms": 300.0,
 }
 
 RUNTIME_HEALTH_KEY_TAB_FIRST_OPEN_BUDGET_KEYS = frozenset({"foreign_block", "fund_holdings", "earnings"})
@@ -743,6 +747,28 @@ def _lineage_by_key(lineage: list[dict]) -> dict[str, dict]:
     return entries
 
 
+def _runtime_health_startup_ready_ms(report: dict) -> float | None:
+    value = _optional_float(report.get("startup_ready_ms"))
+    if value is not None:
+        return value
+    startup = ((report.get("startup_lazy_budget") or {}).get("startup") or {})
+    return _optional_float(startup.get("main_window_ready_ms"))
+
+
+def _check_runtime_health_startup(report: dict, failures: list[dict], budget: dict) -> None:
+    elapsed = _runtime_health_startup_ready_ms(report)
+    if elapsed is None:
+        return
+    if elapsed > budget["runtime_health_startup_ready_max_ms"]:
+        _fail(
+            failures,
+            "runtime_health.startup.ready",
+            "runtime health startup ready elapsed time exceeded budget",
+            actual=elapsed,
+            budget=budget["runtime_health_startup_ready_max_ms"],
+        )
+
+
 def _check_runtime_health_tab_cycle(report: dict, failures: list[dict], budget: dict) -> None:
     requested_tabs = _requested_runtime_health_tabs(report)
     tab_cycle = report.get("tab_cycle")
@@ -842,6 +868,54 @@ def _check_runtime_health_tab_cycle(report: dict, failures: list[dict], budget: 
         )
 
 
+def _check_runtime_health_ui_stalls(samples: list[dict], failures: list[dict], budget: dict) -> None:
+    budget_samples = [
+        sample
+        for sample in samples
+        if isinstance(sample, dict) and str(sample.get("label") or "").strip().lower() != "startup"
+    ]
+    if budget_samples:
+        samples = budget_samples
+    snapshots = [
+        sample.get("ui_stalls") or {}
+        for sample in samples
+        if isinstance(sample, dict) and isinstance(sample.get("ui_stalls") or {}, dict)
+    ]
+    if not any(snapshot.get("installed") for snapshot in snapshots):
+        return
+
+    critical_count = max((_as_int(snapshot.get("critical_count")) for snapshot in snapshots), default=0)
+    event_loop_critical_count = max(
+        (_as_int(snapshot.get("event_loop_critical_count")) for snapshot in snapshots),
+        default=0,
+    )
+    max_elapsed_ms = max((_as_float(snapshot.get("max_elapsed_ms")) for snapshot in snapshots), default=0.0)
+    if critical_count > budget["runtime_health_ui_critical_stall_max"]:
+        _fail(
+            failures,
+            "runtime_health.ui_stall.critical_count",
+            "critical UI stall count exceeded budget",
+            actual=critical_count,
+            budget=budget["runtime_health_ui_critical_stall_max"],
+        )
+    if event_loop_critical_count > budget["runtime_health_ui_event_loop_critical_stall_max"]:
+        _fail(
+            failures,
+            "runtime_health.ui_stall.event_loop_critical_count",
+            "critical event-loop stall count exceeded budget",
+            actual=event_loop_critical_count,
+            budget=budget["runtime_health_ui_event_loop_critical_stall_max"],
+        )
+    if max_elapsed_ms > budget["runtime_health_ui_max_stall_ms"]:
+        _fail(
+            failures,
+            "runtime_health.ui_stall.max_elapsed",
+            "maximum UI stall elapsed time exceeded budget",
+            actual=max_elapsed_ms,
+            budget=budget["runtime_health_ui_max_stall_ms"],
+        )
+
+
 def _check_runtime_health_lineage(report: dict, last: dict, failures: list[dict]) -> None:
     lineage = last.get("data_lineage")
     if not isinstance(lineage, list):
@@ -914,7 +988,9 @@ def check_runtime_health_budget(report: dict, thresholds: dict | None = None) ->
         if key not in f5_cache:
             _fail(failures, f"runtime_health.f5_cache.{key}", f"F5 cache {key} field is missing")
 
+    _check_runtime_health_startup(report, failures, budget)
     _check_runtime_health_tab_cycle(report, failures, budget)
+    _check_runtime_health_ui_stalls(samples, failures, budget)
     _check_runtime_health_lineage(report, last, failures)
 
     trend = report.get("budget_trend") or report.get("trend") or _runtime_health_trend(samples)
@@ -1038,8 +1114,12 @@ def run_budget_checks(args: argparse.Namespace) -> dict:
         "runtime_health_thread_growth_max": args.runtime_health_thread_growth_max,
         "runtime_health_webengine_final_max": args.runtime_health_webengine_final_max,
         "runtime_health_rss_tail_range_mb": args.runtime_health_rss_tail_range_mb,
+        "runtime_health_startup_ready_max_ms": args.runtime_health_startup_ready_max_ms,
         "runtime_health_tab_first_open_max_ms": args.runtime_health_tab_first_open_max_ms,
         "runtime_health_key_tab_first_open_max_ms": args.runtime_health_key_tab_first_open_max_ms,
+        "runtime_health_ui_critical_stall_max": args.runtime_health_ui_critical_stall_max,
+        "runtime_health_ui_event_loop_critical_stall_max": args.runtime_health_ui_event_loop_critical_stall_max,
+        "runtime_health_ui_max_stall_ms": args.runtime_health_ui_max_stall_ms,
     }
     checks: list[dict] = []
 
@@ -1237,6 +1317,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         default=DEFAULT_THRESHOLDS["runtime_health_rss_tail_range_mb"],
     )
     parser.add_argument(
+        "--runtime-health-startup-ready-max-ms",
+        type=float,
+        default=DEFAULT_THRESHOLDS["runtime_health_startup_ready_max_ms"],
+    )
+    parser.add_argument(
         "--runtime-health-tab-first-open-max-ms",
         type=float,
         default=DEFAULT_THRESHOLDS["runtime_health_tab_first_open_max_ms"],
@@ -1245,6 +1330,21 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--runtime-health-key-tab-first-open-max-ms",
         type=float,
         default=DEFAULT_THRESHOLDS["runtime_health_key_tab_first_open_max_ms"],
+    )
+    parser.add_argument(
+        "--runtime-health-ui-critical-stall-max",
+        type=int,
+        default=DEFAULT_THRESHOLDS["runtime_health_ui_critical_stall_max"],
+    )
+    parser.add_argument(
+        "--runtime-health-ui-event-loop-critical-stall-max",
+        type=int,
+        default=DEFAULT_THRESHOLDS["runtime_health_ui_event_loop_critical_stall_max"],
+    )
+    parser.add_argument(
+        "--runtime-health-ui-max-stall-ms",
+        type=float,
+        default=DEFAULT_THRESHOLDS["runtime_health_ui_max_stall_ms"],
     )
     return parser.parse_args(argv)
 

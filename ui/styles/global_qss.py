@@ -10,11 +10,10 @@ from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens
 
 
-def generate_global_qss(theme: dict = None, density: str | None = None) -> str:
-    """根据主题 token 字典生成完整的全局 QSS 字符串"""
+def _global_qss_tokens(theme: dict = None, density: str | None = None) -> tuple:
     if theme is None:
         theme = theme_manager.current_theme
-    t = theme  # 简写
+    t = theme
     ui = build_ui_tokens(theme, density)
     font = ui["font"]
     radius = ui["radius"]
@@ -65,13 +64,102 @@ def generate_global_qss(theme: dict = None, density: str | None = None) -> str:
         if toolbar_end != surface["toolbar"]
         else surface["toolbar"]
     )
-
     depth_line = t.get("KLINE_DEPTH_LINE", "rgba(255, 255, 255, 0.05)" if ui["is_dark"] else "rgba(15, 23, 42, 0.04)")
     panel_depth_bg = (
         f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {surface['panel']}, stop:1 {surface['elevated']})"
         if ui["is_dark"]
         else surface["panel"]
     )
+    return (
+        theme,
+        t,
+        ui,
+        font,
+        radius,
+        space,
+        control,
+        table,
+        shell,
+        surface,
+        border,
+        text,
+        tab_active_bg,
+        tab_active_border,
+        tab_active_text,
+        tab_active_indicator_rule,
+        primary_gradient_start,
+        primary_gradient_end,
+        primary_hover_start,
+        primary_hover_end,
+        primary_button_text,
+        primary_button_border,
+        primary_button_pressed_bg,
+        segment_active_bg,
+        segment_active_border,
+        segment_active_text,
+        progress_gradient_start,
+        progress_gradient_mid,
+        progress_gradient_end,
+        error_hover,
+        text_on_danger,
+        input_selection_bg,
+        info_badge_text,
+        accent_border,
+        scrollbar_handle,
+        scrollbar_hover,
+        scrollbar_pressed,
+        sidebar_end,
+        toolbar_background,
+        depth_line,
+        panel_depth_bg,
+    )
+
+
+def generate_global_qss(theme: dict = None, density: str | None = None) -> str:
+    """根据主题 token 字典生成完整的全局 QSS 字符串"""
+    (
+        theme,
+        t,
+        ui,
+        font,
+        radius,
+        space,
+        control,
+        table,
+        shell,
+        surface,
+        border,
+        text,
+        tab_active_bg,
+        tab_active_border,
+        tab_active_text,
+        tab_active_indicator_rule,
+        primary_gradient_start,
+        primary_gradient_end,
+        primary_hover_start,
+        primary_hover_end,
+        primary_button_text,
+        primary_button_border,
+        primary_button_pressed_bg,
+        segment_active_bg,
+        segment_active_border,
+        segment_active_text,
+        progress_gradient_start,
+        progress_gradient_mid,
+        progress_gradient_end,
+        error_hover,
+        text_on_danger,
+        input_selection_bg,
+        info_badge_text,
+        accent_border,
+        scrollbar_handle,
+        scrollbar_hover,
+        scrollbar_pressed,
+        sidebar_end,
+        toolbar_background,
+        depth_line,
+        panel_depth_bg,
+    ) = _global_qss_tokens(theme, density)
 
     return f"""
 /* ═══════════════════════════════════════════

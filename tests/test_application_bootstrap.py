@@ -78,3 +78,28 @@ def test_mount_workspace_uses_host_factory_and_replace_hook():
     samples = metric_history("workspace_mount_ms")
     assert samples
     assert samples[-1].unit == "ms"
+
+
+def test_application_bootstrap_host_and_workspace_table_fallbacks():
+    window = _DummyWindow()
+    bootstrap = ApplicationBootstrap(window)
+
+    try:
+        bootstrap._call_host("missing_hook")
+    except AttributeError:
+        pass
+    else:
+        raise AssertionError("missing bootstrap hook should fail")
+
+    window.iter_workspace_tables = lambda: ("direct",)
+    assert bootstrap.workspace_tables() == ["direct"]
+
+    del window.iter_workspace_tables
+    window._workspace = types.SimpleNamespace(iter_tables=lambda: ("workspace",))
+    assert bootstrap.workspace_tables() == ["workspace"]
+
+    window._workspace = None
+    assert bootstrap.workspace_tables() == []
+
+    window._workspace = types.SimpleNamespace()
+    assert bootstrap.workspace_tables() == []

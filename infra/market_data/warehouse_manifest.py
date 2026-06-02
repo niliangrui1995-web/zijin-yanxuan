@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -97,9 +98,18 @@ class WarehouseManifest:
         conn.execute("PRAGMA synchronous=NORMAL")
         return conn
 
+    @contextmanager
+    def _connection(self):
+        conn = self._connect()
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
+
     def _ensure_table(self) -> None:
         with self._lock:
-            with self._connect() as conn:
+            with self._connection() as conn:
                 conn.executescript(
                     """
                     CREATE TABLE IF NOT EXISTS market_data_manifest (
@@ -125,7 +135,7 @@ class WarehouseManifest:
     def upsert(self, record: WarehouseManifestRecord) -> None:
         payload = record.to_dict()
         with self._lock:
-            with self._connect() as conn:
+            with self._connection() as conn:
                 conn.execute(
                     """
                     INSERT INTO market_data_manifest (
@@ -152,7 +162,7 @@ class WarehouseManifest:
 
     def latest(self, dataset: str) -> WarehouseManifestRecord | None:
         with self._lock:
-            with self._connect() as conn:
+            with self._connection() as conn:
                 row = conn.execute(
                     """
                     SELECT * FROM market_data_manifest
@@ -166,7 +176,7 @@ class WarehouseManifest:
 
     def get(self, dataset: str, trade_date: str) -> WarehouseManifestRecord | None:
         with self._lock:
-            with self._connect() as conn:
+            with self._connection() as conn:
                 row = conn.execute(
                     """
                     SELECT * FROM market_data_manifest

@@ -65,6 +65,15 @@ class UiStallProbe(QObject):
         self._last_tick = time.perf_counter()
         self._last_span_context: dict[str, str] = {}
         self._last_event_loop_record_at = 0.0
+        self._stall_counts = {
+            "total_count": 0,
+            "critical_count": 0,
+            "event_loop_count": 0,
+            "event_loop_critical_count": 0,
+            "method_count": 0,
+            "method_critical_count": 0,
+        }
+        self._max_elapsed_ms = 0.0
         if auto_start:
             self.start()
 
@@ -99,6 +108,20 @@ class UiStallProbe(QObject):
             metric_name="ui_method_stall_ms",
         )
 
+    def stall_snapshot(self) -> dict:
+        return {
+            "installed": True,
+            **self._stall_counts,
+            "max_elapsed_ms": round(float(self._max_elapsed_ms), 3),
+            "warn_threshold_ms": float(self.thresholds.warn_ms),
+            "critical_threshold_ms": float(self.thresholds.critical_ms),
+        }
+
+    def reset_stall_snapshot(self) -> None:
+        for key in self._stall_counts:
+            self._stall_counts[key] = 0
+        self._max_elapsed_ms = 0.0
+
     def _poll_event_loop(self) -> None:
         now = time.perf_counter()
         gap_ms = (now - self._last_tick) * 1000.0
@@ -129,6 +152,7 @@ class UiStallProbe(QObject):
         extra: dict | None = None,
     ) -> None:
         severity = "critical" if elapsed_ms >= self.thresholds.critical_ms else "warn"
+        self._record_stall_stats(event, elapsed_ms, severity)
         fields = {
             "elapsed_ms": round(float(elapsed_ms), 3),
             "threshold_ms": self.thresholds.critical_ms if severity == "critical" else self.thresholds.warn_ms,
@@ -155,6 +179,15 @@ class UiStallProbe(QObject):
             logger=log,
             level="debug",
         )
+
+    def _record_stall_stats(self, event: str, elapsed_ms: float, severity: str) -> None:
+        event_type = "event_loop" if event == "ui.stall.event_loop" else "method"
+        self._stall_counts["total_count"] += 1
+        self._stall_counts[f"{event_type}_count"] += 1
+        if severity == "critical":
+            self._stall_counts["critical_count"] += 1
+            self._stall_counts[f"{event_type}_critical_count"] += 1
+        self._max_elapsed_ms = max(float(self._max_elapsed_ms), float(elapsed_ms))
 
 
 def install_ui_stall_probe(

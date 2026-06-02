@@ -29,6 +29,43 @@ class ScanWorker(QThread):
     def cancel(self):
         self._is_cancelled = True
 
+    def _target_codes_for_day(self, d_rps):
+        return [
+            k
+            for k, v in d_rps["rps250"].items()
+            if pd.notna(v)
+            and (v >= self.params.rps_threshold or d_rps["rps120"].get(k, 0) >= self.params.rps_threshold)
+        ]
+
+    def _refresh_candidate_names(self, matrix):
+        candidate_codes = set()
+        for d_rps in matrix.values():
+            candidate_codes.update(self._target_codes_for_day(d_rps))
+        if candidate_codes:
+            self.data_provider.code2name = self.data_provider.ensure_code_name_map(
+                candidate_codes,
+                refresh_missing=True,
+            )
+
+    def _prepare_scan_dataframe(self, code, df):
+        if "entangle" in df.columns:
+            return df
+        prepared = calculate_scan_indicators(df.copy())
+        with self.data_provider.cache_lock:
+            self.data_provider.cache_data[code] = prepared
+        return prepared
+
+    def _dedupe_scan_results(self, all_results):
+        if not all_results:
+            return all_results
+        df_all = pd.DataFrame(all_results).sort_values("触发日期")
+        df_all = df_all.drop_duplicates(subset=["代码"], keep="last")
+        if "评分" in df_all.columns:
+            df_all["评分_tmp"] = pd.to_numeric(df_all["评分"], errors="coerce")
+            df_all = df_all.sort_values(by=["触发日期", "评分_tmp"], ascending=[False, False])
+            df_all = df_all.drop(columns=["评分_tmp"])
+        return df_all.to_dict("records")
+
     def run(self):
         import time as _time
 
@@ -77,19 +114,7 @@ class ScanWorker(QThread):
                 self.finished_scan.emit(False, "区间无效或无通达信本地数据")
                 return
 
-            candidate_codes = set()
-            for d_rps in matrix.values():
-                candidate_codes.update(
-                    k
-                    for k, v in d_rps["rps250"].items()
-                    if pd.notna(v)
-                    and (v >= self.params.rps_threshold or d_rps["rps120"].get(k, 0) >= self.params.rps_threshold)
-                )
-            if candidate_codes:
-                self.data_provider.code2name = self.data_provider.ensure_code_name_map(
-                    candidate_codes,
-                    refresh_missing=True,
-                )
+            self._refresh_candidate_names(matrix)
 
             total_days = len(matrix)
             all_results = []
@@ -103,12 +128,7 @@ class ScanWorker(QThread):
                 pct = int(100 * (i + 1) / total_days)
                 self.progress.emit(pct, f"扫描 {d_str} ({i + 1}/{total_days})")
 
-                targets = [
-                    k
-                    for k, v in d_rps["rps250"].items()
-                    if pd.notna(v)
-                    and (v >= self.params.rps_threshold or d_rps["rps120"].get(k, 0) >= self.params.rps_threshold)
-                ]
+                targets = self._target_codes_for_day(d_rps)
 
                 for idx_code, code in enumerate(targets):
                     # 【休眠释放 GIL】每完成几只后主动释放 CPU
@@ -125,11 +145,7 @@ class ScanWorker(QThread):
                         try:
                             # 【并发安全与缓存加速】避免区间扫描的每日历次重复计算指标。
                             # 先在 copy 上计算以保障安全，然后通过 dict 更新覆盖缓存，一劳永逸。
-                            if "entangle" not in df.columns:
-                                df = calculate_scan_indicators(df.copy())
-                                with self.data_provider.cache_lock:
-                                    self.data_provider.cache_data[code] = df
-                            df_safe = df
+                            df_safe = self._prepare_scan_dataframe(code, df)
 
                             # 【与盘中一致】skip_red_check=True，
                             # 红盘仅是盘中实时判断条件，盘后扫描不应因为
@@ -167,15 +183,7 @@ class ScanWorker(QThread):
                             log.error(f"[区间扫描] {code} 评估异常: {e}", exc_info=True)
                             continue
 
-            if all_results:
-                # 按日期排序，去重保留最近一天
-                df_all = pd.DataFrame(all_results).sort_values("触发日期")
-                df_all = df_all.drop_duplicates(subset=["代码"], keep="last")
-                if "评分" in df_all.columns:
-                    df_all["评分_tmp"] = pd.to_numeric(df_all["评分"], errors="coerce")
-                    df_all = df_all.sort_values(by=["触发日期", "评分_tmp"], ascending=[False, False])
-                    df_all = df_all.drop(columns=["评分_tmp"])
-                all_results = df_all.to_dict("records")
+            all_results = self._dedupe_scan_results(all_results)
 
             # 释放 RPS 矩阵内存（可能占用几十MB，后续步骤不再需要）
             del matrix

@@ -29,6 +29,7 @@ from infra.diagnostics.runtime_health import (
     collect_runtime_health,
     export_runtime_health_report,
 )
+from infra.diagnostics.ui_stall_probe import get_ui_stall_probe
 from scripts.perf_budget_check import check_runtime_health_budget
 from ui.main_window_qt import MainWindowQT
 from ui.main_window_runtime import finish_f5_reload
@@ -552,6 +553,9 @@ def run_suite(args: argparse.Namespace) -> dict:
             export_each_sample=not args.no_export_samples,
             sample_output_dir=args.sample_output_dir,
         )
+        stall_probe = get_ui_stall_probe()
+        if stall_probe is not None:
+            stall_probe.reset_stall_snapshot()
 
         for second in range(max(0, int(args.idle_seconds))):
             _settle(app, 1000)

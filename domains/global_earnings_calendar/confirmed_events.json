@@ -503,6 +503,24 @@
       "original_timezone": "America/Los_Angeles",
       "call_time_source_url": "https://investors.broadcom.com/news-releases/news-release-details/broadcom-inc-announce-second-quarter-fiscal-year-2026-financial",
       "call_time_source_type": "official_ir_press_release"
+    },
+    {
+      "company": "Ciena",
+      "ticker": "CIEN",
+      "sector": "光模块与光引擎",
+      "report_date": "2026-06-04",
+      "fiscal_period": "Apr/2026",
+      "time_label": "盘前",
+      "beijing_time": "2026-06-04 20:30",
+      "status": "confirmed",
+      "source": "confirmed",
+      "priority": "normal",
+      "conference_url": "https://investor.ciena.com/events-and-presentations/event-details/2026/Ciena-Fiscal-Q2-2026-Financial-Results-Call/default.aspx",
+      "market": "US",
+      "original_call_time_text": "June 4, 2026 8:30 AM EST",
+      "original_timezone": "America/New_York",
+      "call_time_source_url": "https://investor.ciena.com/events-and-presentations/event-details/2026/Ciena-Fiscal-Q2-2026-Financial-Results-Call/default.aspx",
+      "call_time_source_type": "official_ir_event"
     }
   ]
 }

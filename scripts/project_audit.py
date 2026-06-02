@@ -36,6 +36,15 @@ PERF_REPORT_OPTIONS = (
 RUNTIME_HEALTH_SHORT_OUTPUT = "tmp/runtime_health_stability_short.json"
 RUNTIME_HEALTH_SHORT_SAMPLE_OUTPUT_DIR = "tmp/runtime_health_stability_short_samples"
 DEPENDENCY_AUDIT_OUTPUT = "tmp/dependency_audit.json"
+HTTP_SAFETY_AUDIT_OUTPUT = "tmp/http_safety_audit.json"
+COVERAGE_REPORT_OUTPUT = "tmp/coverage.json"
+TYPE_CHECK_TARGETS = (
+    "app/services/http_client_service.py",
+    "app/services/ui_diagnostics_service.py",
+    "domains/runtime/fault_tolerance.py",
+    "infra/http_safety.py",
+    "infra/tasks/process_runner.py",
+)
 
 EXTENDED_RUFF_SELECT = (
     "B006",
@@ -173,6 +182,36 @@ def build_audit_commands(args: argparse.Namespace) -> list[AuditCommand]:
             )
         )
 
+    if args.http_safety_audit:
+        commands.append(
+            AuditCommand(
+                "http-safety-audit",
+                [python, "scripts/http_safety_audit.py", "--output", HTTP_SAFETY_AUDIT_OUTPUT],
+            )
+        )
+
+    if args.type_check:
+        commands.append(AuditCommand("type-check", [python, "-m", "pyright", *TYPE_CHECK_TARGETS]))
+
+    if args.coverage_report:
+        commands.append(
+            AuditCommand(
+                "coverage-report",
+                [
+                    python,
+                    "-m",
+                    "pytest",
+                    "-q",
+                    "--cov=app",
+                    "--cov=domains",
+                    "--cov=infra",
+                    "--cov-report=term-missing",
+                    f"--cov-report=json:{COVERAGE_REPORT_OUTPUT}",
+                    "--cov-fail-under=0",
+                ],
+            )
+        )
+
     if _has_perf_reports(args):
         perf_command = [python, "scripts/perf_budget_check.py"]
         for name in PERF_REPORT_OPTIONS:
@@ -223,6 +262,21 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--dependency-audit",
         action="store_true",
         help="Run the optional dependency supply-chain audit report.",
+    )
+    parser.add_argument(
+        "--http-safety-audit",
+        action="store_true",
+        help="Run the optional direct external HTTP safety-wrapper audit.",
+    )
+    parser.add_argument(
+        "--type-check",
+        action="store_true",
+        help="Run gradual pyright checking for app/, domains/, and infra/.",
+    )
+    parser.add_argument(
+        "--coverage-report",
+        action="store_true",
+        help="Generate an observation-only pytest coverage report with no minimum threshold.",
     )
     parser.add_argument("--gbbq-report", type=Path, default=None)
     parser.add_argument("--tab-report", type=Path, default=None)

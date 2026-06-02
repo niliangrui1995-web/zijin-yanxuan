@@ -141,7 +141,7 @@ class VcpScannerService:
 
         try:
             idx_query = pldf.with_row_index().filter(pl.col("datetime").cast(pl.Date) == cd_date).select("index")
-        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        except (AttributeError, RuntimeError, TypeError, ValueError, pl.exceptions.PolarsError) as exc:
             _log.debug(f"[策略中台] 日期类型转换异常，回退字符串匹配: {exc}")
             idx_query = (
                 pldf.with_row_index()

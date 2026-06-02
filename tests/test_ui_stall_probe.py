@@ -56,3 +56,109 @@ def test_ui_stall_probe_does_not_keep_fast_span_context(monkeypatch, qt_applicat
     assert "method" not in probe.current_context()
     assert recorded
     probe.deleteLater()
+
+
+def test_ui_stall_probe_exposes_cumulative_stall_snapshot(monkeypatch, qt_application):
+    monkeypatch.setattr(probe_module, "emit_structured_log", lambda *args, **kwargs: None)
+    monkeypatch.setattr(probe_module, "record_metric", lambda *args, **kwargs: None)
+    probe = UiStallProbe(
+        thresholds=StallThresholds(warn_ms=50, critical_ms=100),
+        auto_start=False,
+    )
+
+    probe.record_span(75, {"method": "Warn.method", "tab": "watchlist"})
+    probe.record_span(125, {"method": "Critical.method", "tab": "watchlist"})
+
+    snapshot = probe.stall_snapshot()
+    assert snapshot["installed"] is True
+    assert snapshot["total_count"] == 2
+    assert snapshot["method_count"] == 2
+    assert snapshot["critical_count"] == 1
+    assert snapshot["method_critical_count"] == 1
+    assert snapshot["max_elapsed_ms"] == 125.0
+    probe.reset_stall_snapshot()
+    reset_snapshot = probe.stall_snapshot()
+    assert reset_snapshot["total_count"] == 0
+    assert reset_snapshot["critical_count"] == 0
+    assert reset_snapshot["max_elapsed_ms"] == 0.0
+    probe.deleteLater()
+
+
+def test_ui_stall_probe_stop_and_context_provider_error(qt_application):
+    probe = UiStallProbe(
+        thresholds=StallThresholds(warn_ms=50, critical_ms=100),
+        context_provider=lambda: (_ for _ in ()).throw(RuntimeError("bad context")),
+        auto_start=False,
+    )
+
+    probe.start()
+    probe.stop()
+
+    assert probe.current_context()["context_error"] == "RuntimeError"
+    probe.deleteLater()
+
+
+def test_ui_stall_probe_throttles_event_loop_records(monkeypatch, qt_application):
+    records = []
+    probe = UiStallProbe(
+        timer_interval_ms=5,
+        thresholds=StallThresholds(warn_ms=1, critical_ms=10),
+        auto_start=False,
+    )
+    now = probe_module.time.perf_counter()
+    probe._last_tick = now - 0.1
+    probe._last_event_loop_record_at = now
+    monkeypatch.setattr(probe, "_record_stall", lambda *args, **kwargs: records.append((args, kwargs)))
+
+    probe._poll_event_loop()
+
+    assert records == []
+    probe.deleteLater()
+
+
+def test_ui_stall_probe_ignores_fast_event_loop_poll(monkeypatch, qt_application):
+    records = []
+    probe = UiStallProbe(
+        timer_interval_ms=25,
+        thresholds=StallThresholds(warn_ms=50, critical_ms=100),
+        auto_start=False,
+    )
+    probe._last_tick = probe_module.time.perf_counter()
+    monkeypatch.setattr(probe, "_record_stall", lambda *args, **kwargs: records.append((args, kwargs)))
+
+    probe._poll_event_loop()
+
+    assert records == []
+    probe.deleteLater()
+
+
+def test_install_ui_stall_probe_handles_missing_and_stale_application(monkeypatch, qt_application):
+    monkeypatch.setattr(probe_module, "_ACTIVE_PROBE", None)
+    monkeypatch.setattr(probe_module.QApplication, "instance", staticmethod(lambda: None))
+
+    assert probe_module.install_ui_stall_probe() is None
+
+    class StaleProbe:
+        def objectName(self):
+            raise RuntimeError("deleted")
+
+    monkeypatch.setattr(probe_module, "_ACTIVE_PROBE", StaleProbe())
+
+    probe = probe_module.install_ui_stall_probe(app=qt_application, timer_interval_ms=5)
+
+    assert probe is probe_module.get_ui_stall_probe()
+    probe.stop()
+    probe.deleteLater()
+    monkeypatch.setattr(probe_module, "_ACTIVE_PROBE", None)
+
+
+def test_install_ui_stall_probe_reuses_live_probe(monkeypatch, qt_application):
+    class LiveProbe:
+        def objectName(self):
+            return "live"
+
+    live_probe = LiveProbe()
+    monkeypatch.setattr(probe_module, "_ACTIVE_PROBE", live_probe)
+
+    assert probe_module.install_ui_stall_probe(app=qt_application) is live_probe
+    monkeypatch.setattr(probe_module, "_ACTIVE_PROBE", None)

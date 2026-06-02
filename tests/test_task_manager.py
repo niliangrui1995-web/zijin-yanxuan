@@ -1,9 +1,11 @@
 import threading
 import time
+from types import SimpleNamespace
 
 from PyQt6.QtCore import QCoreApplication
 
 from core.task_manager import UserFacingTaskError, task_manager
+from infra.tasks.task_scheduler import BackgroundWorker
 
 
 def _pump_events_until(predicate, timeout=3.0):
@@ -108,3 +110,103 @@ def test_task_manager_abandon_task_releases_same_id_slot():
 
     release.set()
     assert _pump_events_until(lambda: task_manager.active_count == 0)
+
+
+def test_background_worker_direct_run_covers_cancel_and_emit_failures():
+    calls = []
+
+    worker = BackgroundWorker(lambda: calls.append("ran"))
+    worker.signals = SimpleNamespace(
+        finished=SimpleNamespace(emit=lambda result: calls.append(("finished", result))),
+        error=SimpleNamespace(emit=lambda message: calls.append(("error", message))),
+    )
+    worker.cancel()
+    worker.run()
+    assert calls == []
+
+    worker = BackgroundWorker(lambda: "ok")
+    worker.task_id = "finish_fail"
+    worker.signals = SimpleNamespace(
+        finished=SimpleNamespace(emit=lambda result: (_ for _ in ()).throw(RuntimeError("deleted"))),
+        error=SimpleNamespace(emit=lambda message: calls.append(("error", message))),
+    )
+    worker.run()
+
+    worker = BackgroundWorker(lambda: (_ for _ in ()).throw(UserFacingTaskError("clean", "log detail")))
+    worker.task_id = "user_error"
+    worker.signals = SimpleNamespace(
+        finished=SimpleNamespace(emit=lambda result: calls.append(("finished", result))),
+        error=SimpleNamespace(emit=lambda message: (_ for _ in ()).throw(RuntimeError("deleted"))),
+    )
+    worker.run()
+
+    worker = BackgroundWorker(lambda: (_ for _ in ()).throw(TimeoutError("slow")))
+    worker.task_id = "timeout_error"
+    worker.signals = SimpleNamespace(
+        finished=SimpleNamespace(emit=lambda result: calls.append(("finished", result))),
+        error=SimpleNamespace(emit=lambda message: calls.append(("timeout", message))),
+    )
+    worker.run()
+
+    worker = BackgroundWorker(lambda: (_ for _ in ()).throw(ValueError("bad")))
+    worker.task_id = "generic_error"
+    worker.signals = SimpleNamespace(
+        finished=SimpleNamespace(emit=lambda result: calls.append(("finished", result))),
+        error=SimpleNamespace(emit=lambda message: (_ for _ in ()).throw(RuntimeError("deleted"))),
+    )
+    worker.run()
+
+    assert ("timeout", "slow") in calls
+
+
+def test_task_manager_direct_submit_status_and_abandon_branches(monkeypatch):
+    task_manager.cancel_all()
+    task_manager._shutting_down = True
+    assert task_manager.submit_task(BackgroundWorker(lambda: None), task_id="blocked") == "blocked"
+
+    task_manager._shutting_down = False
+    existing = BackgroundWorker(lambda: None)
+    task_manager.active_workers["dup_direct"] = existing
+    assert task_manager.submit_task(BackgroundWorker(lambda: None), task_id="dup_direct") == "dup_direct"
+
+    starts = []
+    monkeypatch.setattr(task_manager, "thread_pool", SimpleNamespace(start=lambda worker: starts.append(worker), clear=lambda: None))
+    task_manager.active_workers.clear()
+
+    generated_id = task_manager.submit_task(BackgroundWorker(lambda: None))
+
+    assert starts
+    assert task_manager.is_active_task(generated_id) is True
+    assert task_manager.active_count == 1
+    assert task_manager.abandon_task("missing") is False
+
+    class BadCancel:
+        def cancel(self):
+            raise RuntimeError("cancel failed")
+
+    task_manager.active_workers["bad_cancel"] = BadCancel()
+    assert task_manager.abandon_task("bad_cancel") is True
+    assert task_manager.active_count == 1
+    task_manager.cancel_all()
+
+
+def test_task_manager_run_in_background_connects_callbacks_without_starting(monkeypatch):
+    task_manager.cancel_all()
+    task_manager._shutting_down = False
+    captured = []
+
+    def fake_submit(worker, tid):
+        captured.append((worker, tid))
+        return tid
+
+    monkeypatch.setattr(task_manager, "submit_task", fake_submit)
+
+    tid = task_manager.run_in_background(
+        lambda: "ok",
+        on_success=lambda result: result,
+        on_error=lambda message: message,
+        task_id="connect_only",
+    )
+
+    assert tid == "connect_only"
+    assert captured[0][1] == "connect_only"

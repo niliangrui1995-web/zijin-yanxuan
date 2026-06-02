@@ -14,8 +14,9 @@ from pathlib import Path
 from PyQt6.QtCore import QSettings
 
 from core.app_config import AppConfig, app_config
+from infra.settings import settings_repository as settings_repository_module
 from infra.settings.settings_repository import SettingsRepository
-from infra.settings.settings_schema import SettingsMigrator, SettingsSchemaVersion
+from infra.settings.settings_schema import SettingsMigrationStep, SettingsMigrator, SettingsSchemaVersion
 
 TEST_SETTINGS_ORGANIZATION = os.environ.get("VCP_HUNTER_SETTINGS_ORGANIZATION", "VCPHunterTests")
 TEST_SETTINGS_APPLICATION = os.environ.get("VCP_HUNTER_SETTINGS_APPLICATION", "MainTest")
@@ -147,6 +148,63 @@ class TestAppConfigSingleton:
                 },
             )
         ]
+
+    def test_settings_migrator_skips_current_steps_and_non_callable_telemetry(self):
+        settings = _test_qsettings("SchemaMigratorSkipTest")
+        settings.setValue(SettingsSchemaVersion.KEY, SettingsSchemaVersion.CURRENT)
+        settings.sync()
+        called = []
+
+        try:
+            migrator = SettingsMigrator(
+                settings,
+                steps=[
+                    SettingsMigrationStep(
+                        target_version=SettingsSchemaVersion.CURRENT,
+                        description="already applied",
+                        handler=lambda _settings: called.append("ran"),
+                    )
+                ],
+                telemetry_writer=object(),
+            )
+            assert migrator.migrate() == SettingsSchemaVersion.CURRENT
+            assert called == []
+        finally:
+            settings.remove(SettingsSchemaVersion.KEY)
+            settings.sync()
+
+    def test_settings_repository_internal_fallbacks(self, monkeypatch):
+        monkeypatch.delenv("VCP_HUNTER_TEST_QSETTINGS_DIR", raising=False)
+        assert settings_repository_module._configure_test_settings_path_from_env() is False
+        fallback = settings_repository_module._settings_store(TEST_SETTINGS_ORGANIZATION, "SettingsStoreFallbackTest")
+        assert fallback.organizationName() == TEST_SETTINGS_ORGANIZATION
+
+        repo = SettingsRepository(TEST_SETTINGS_ORGANIZATION, "SettingsRepositoryFallbackTest", telemetry_writer=object())
+        section = repo.section("")
+        assert section._full_key("key") == "key"
+        assert section._full_key("") == ""
+        section.set("plain", 3)
+        assert section.get("plain", 0, int) == 3
+        assert section.contains("plain") is True
+        section.remove("plain")
+        assert repo.contains("plain") is False
+
+        legacy = _test_qsettings("SettingsRepositoryFallbackLegacy")
+        legacy.setValue("legacy_key", "legacy")
+        legacy.sync()
+        try:
+            legacy_section = settings_repository_module.SettingsSection(
+                repo.root_settings,
+                prefix="legacy_target",
+                legacy_settings=legacy,
+                legacy_scope="SettingsRepositoryFallbackLegacy",
+                telemetry_writer=object(),
+            )
+            assert legacy_section.get("legacy_key", "") == "legacy"
+        finally:
+            repo.root_settings.remove("legacy_target")
+            legacy.remove("legacy_key")
+            legacy.sync()
 
     def test_repository_records_legacy_scope_migration_event(self):
         telemetry = []

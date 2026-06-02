@@ -10,6 +10,7 @@ from domains.global_earnings_calendar.service import (
     AlphaVantageEarningsCalendarProvider,
     CompanyIrEarningsCalendarProvider,
     ConfirmedEarningsEventsProvider,
+    ConfirmedEventWriteError,
     DartEarningsDisclosureProvider,
     EarningsCalendarEvent,
     GlobalEarningsCalendarService,
@@ -1043,3 +1044,139 @@ def test_build_demo_events_are_relative_to_current_month():
     assert events[0].report_date == "2026-05-07"
     assert events[0].beijing_time == "05-08 05:00"
     assert events[0].status == "confirmed"
+
+
+def test_build_oligarch_universe_handles_missing_module_and_empty_tickers(monkeypatch):
+    monkeypatch.setattr(
+        "domains.global_earnings_calendar.service.importlib.import_module",
+        lambda name: (_ for _ in ()).throw(ImportError("missing")),
+    )
+    assert build_oligarch_universe(None) == {}
+
+    module = SimpleNamespace(
+        OLIGARCH_DICT={"sector": ["EmptyTicker", "NormalCo"]},
+        VANGUARD_TICKERS={"EmptyTicker": "", "NormalCo": "NORM"},
+        SUPER_GIANTS=set(),
+        STRATEGIC_GIANTS=set(),
+    )
+    universe = build_oligarch_universe(module)
+    assert set(universe) == {"NORM"}
+
+
+def test_service_lazy_data_store_and_load_events_network_fallback(monkeypatch):
+    store = SimpleNamespace(load_json=lambda key, default=None: default, save_json=lambda key, data: None)
+    monkeypatch.setattr("core.data_store.data_store", store)
+
+    service = GlobalEarningsCalendarService(
+        data_store=None,
+        universe={"LITE": OligarchCompany("Lumentum", "LITE", "sector", "normal", "US")},
+        confirmed_provider=SimpleNamespace(fetch=lambda universe: []),
+        official_providers=[],
+        nasdaq_provider=SimpleNamespace(fetch=lambda *_args, **_kwargs: []),
+        provider=SimpleNamespace(fetch=lambda *_args, **_kwargs: []),
+        yfinance_provider=SimpleNamespace(fetch=lambda *_args, **_kwargs: []),
+    )
+    refreshed = [EarningsCalendarEvent("Lumentum", "LITE", "sector", "2026-05-05", market="US")]
+    service.refresh_events = lambda **_kwargs: refreshed
+
+    assert service.data_store is store
+    assert service.load_events(today=dt.date(2026, 5, 5), allow_network=True) == refreshed
+
+
+def test_service_cached_and_confirmed_fallback_edges():
+    class Store:
+        def __init__(self):
+            self.saved = None
+            self.payload = {
+                "global_earnings_calendar": {
+                    "source": "provider",
+                    "events": [
+                        None,
+                        EarningsCalendarEvent("Other", "OTHER", "legacy", "2026-05-10", source="Nasdaq").to_dict(),
+                    ],
+                }
+            }
+
+        def load_json(self, key, default=None):
+            return json.loads(json.dumps(self.payload.get(key, default), ensure_ascii=False))
+
+        def save_json(self, key, data):
+            self.saved = (key, data)
+            self.payload[key] = json.loads(json.dumps(data, ensure_ascii=False))
+
+    class BadConfirmedProvider:
+        @staticmethod
+        def fetch(universe):
+            raise RuntimeError("confirmed broken")
+
+        @staticmethod
+        def upsert(event):
+            return None
+
+    store = Store()
+    universe = {
+        "LITE": OligarchCompany("Lumentum", "LITE", "sector", "normal", "US"),
+        "OTHER": OligarchCompany("Other", "OTHER", "legacy", "normal", "US"),
+    }
+    service = GlobalEarningsCalendarService(
+        data_store=store,
+        universe=universe,
+        confirmed_provider=BadConfirmedProvider(),
+        official_providers=[],
+    )
+
+    assert service._hydrate_event_from_universe(EarningsCalendarEvent("Unknown", "MISS", "x", "2026-05-05")) is None
+    assert service._load_confirmed_events() == []
+
+    event = EarningsCalendarEvent("Lumentum", "LITE", "sector", "2026-05-05", source="confirmed", status="confirmed")
+    service._sync_cached_confirmed_event(event)
+    saved_events = store.saved[1]["events"]
+    assert {row["ticker"] for row in saved_events} == {"LITE", "OTHER"}
+
+    try:
+        service.upsert_confirmed_event(EarningsCalendarEvent("Unknown", "MISS", "x", "2026-05-05"))
+    except ConfirmedEventWriteError as exc:
+        assert "unknown_ticker" in str(exc)
+    else:
+        raise AssertionError("unknown ticker should fail")
+
+
+def test_service_sync_cache_shape_edges_and_filter_invalid_dates():
+    class Store:
+        def __init__(self, payload):
+            self.payload = payload
+            self.saved = None
+
+        def load_json(self, key, default=None):
+            return json.loads(json.dumps(self.payload, ensure_ascii=False))
+
+        def save_json(self, key, data):
+            self.saved = (key, data)
+            self.payload = json.loads(json.dumps(data, ensure_ascii=False))
+
+    assert GlobalEarningsCalendarService(data_store=Store({"events": "bad"}), universe={}, official_providers=[]).sync_unverified_yfinance_cache() == 0
+
+    store = Store(
+        {
+            "source": "provider",
+            "events": [
+                "raw-row",
+                {
+                    "company": "TSMC",
+                    "ticker": "2330.TW",
+                    "sector": "foundry",
+                    "report_date": "2026-07-16",
+                    "status": "estimated",
+                    "source": "Yahoo Finance",
+                    "market": "TW",
+                },
+            ],
+        }
+    )
+    service = GlobalEarningsCalendarService(data_store=store, universe={}, official_providers=[])
+    assert service.sync_unverified_yfinance_cache() == 1
+    assert store.payload["events"][0] == "raw-row"
+    assert store.payload["events"][1]["status"] == "estimated_unverified"
+
+    invalid = EarningsCalendarEvent("Bad", "BAD", "sector", "not-a-date")
+    assert GlobalEarningsCalendarService._filter_window([invalid], today=dt.date(2026, 5, 5), lookahead_days=10) == []

@@ -11,6 +11,11 @@ def test_ensure_https_request_accepts_https_request_object():
     assert ensure_https_request(request) is request
 
 
+def test_ensure_https_request_rejects_non_string_request_url():
+    with pytest.raises(TypeError):
+        ensure_https_request(object())
+
+
 @pytest.mark.parametrize("url", ["http://example.com/path", "file:///C:/secret.txt", "/relative/path"])
 def test_ensure_https_request_rejects_non_https_urls(url):
     with pytest.raises(ValueError):

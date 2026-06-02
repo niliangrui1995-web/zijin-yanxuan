@@ -31,7 +31,10 @@ class LocalHistoryProvider:
                 try:
                     local_df = provider._apply_forward_adjustment(api, market, code, local_df)
                     if "vol" in local_df.columns:
-                        local_df = local_df.rename({"vol": "volume"})
+                        if isinstance(local_df, pd.DataFrame):
+                            local_df = local_df.rename(columns={"vol": "volume"})
+                        else:
+                            local_df = local_df.rename({"vol": "volume"})
                     return local_df
                 except (AttributeError, KeyError, RuntimeError, TypeError, ValueError) as exc:
                     self._log.error(f"[数据中台] 本地 {code} 复权失败，改用网络: {exc}")

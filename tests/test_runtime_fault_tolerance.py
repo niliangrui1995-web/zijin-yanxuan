@@ -61,6 +61,27 @@ def test_provider_fault_tolerance_accepts_runtime_health_provider_runtime_shape(
     assert result["eastmoney_cooldown_seconds_left"] == 45
 
 
+def test_provider_fault_tolerance_handles_invalid_numeric_values(monkeypatch):
+    monkeypatch.setattr(fault_tolerance_module.time, "time", lambda: NOW)
+
+    result = provider_fault_tolerance(
+        {
+            "request_stats": {
+                "recent_cache_hit_count": object(),
+                "recent_pending_count": object(),
+                "recent_source_layers": [None, "online"],
+            },
+            "runtime_stats": {"cooldown_until": object()},
+            "eastmoney_cooldown_until": object(),
+        }
+    )
+
+    assert result["cooldown_seconds_left"] == 0
+    assert result["eastmoney_cooldown_seconds_left"] == 0
+    assert result["recent_cache_hit_count"] == 0
+    assert result["recent_pending_count"] == 0
+
+
 def test_fault_tolerance_status_is_consistent_across_consumers(monkeypatch):
     monkeypatch.setattr(fault_tolerance_module.time, "time", lambda: NOW)
     status = _provider_status()

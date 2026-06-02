@@ -90,18 +90,8 @@ def _build_state_tones(theme: dict, *, is_dark: bool) -> dict:
     }
 
 
-def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> dict:
-    """构建统一 UI token。
-
-    density 当前复用“表格密度”设置，后续可以自然扩展成全局视觉密度模式。
-    """
-
-    theme = theme or theme_manager.current_theme
-    mode = _normalize_density(density)
-    compact = mode == "紧凑"
-    is_dark = _is_dark_theme(theme)
-
-    font = {
+def _build_font_tokens() -> dict:
+    return {
         "family": '"Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif',
         "family_names": ["Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "SimSun"],
         "mono_family": (
@@ -128,7 +118,9 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "weight_bold": 700,
     }
 
-    radius = {
+
+def _build_radius_tokens() -> dict:
+    return {
         "xs": 4,
         "sm": 6,
         "md": 8,
@@ -137,7 +129,9 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "pill": 14,
     }
 
-    space = {
+
+def _build_space_tokens(*, compact: bool) -> dict:
+    return {
         "2xs": 4,
         "xs": 6,
         "sm": 8,
@@ -147,7 +141,9 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "2xl": 16 if compact else 20,
     }
 
-    control = {
+
+def _build_control_tokens(*, compact: bool) -> dict:
+    return {
         "button_height": 30 if compact else 36,
         "input_height": 30 if compact else 34,
         "toolbar_button_height": 32 if compact else 38,
@@ -159,7 +155,9 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "segment_height": 26 if compact else 30,
     }
 
-    table = {
+
+def _build_table_tokens(theme: dict, radius: dict, *, compact: bool, is_dark: bool) -> dict:
+    return {
         "row_height_base": 32,
         "row_height_delta": 4,
         "cell_padding_y": 4 if compact else 8,
@@ -196,7 +194,9 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "flash_rail_alpha": int(theme.get("TABLE_FLASH_RAIL_ALPHA", 120 if is_dark else 105)),
     }
 
-    shell = {
+
+def _build_shell_tokens(theme: dict, radius: dict, *, compact: bool, is_dark: bool) -> dict:
+    return {
         "titlebar_height": 38 if compact else 42,
         "window_button_width": 44 if compact else 48,
         "system_button_width": 44 if compact else 48,
@@ -215,6 +215,26 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "window_shadow_offset_y": 10 if compact else 12,
         "window_shadow_alpha": 0.45 if is_dark else 0.20,
     }
+
+
+def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> dict:
+    """构建统一 UI token。
+
+    density 当前复用“表格密度”设置，后续可以自然扩展成全局视觉密度模式。
+    """
+
+    theme = theme or theme_manager.current_theme
+    mode = _normalize_density(density)
+    compact = mode == "紧凑"
+    is_dark = _is_dark_theme(theme)
+
+    font = _build_font_tokens()
+    radius = _build_radius_tokens()
+    space = _build_space_tokens(compact=compact)
+    control = _build_control_tokens(compact=compact)
+
+    table = _build_table_tokens(theme, radius, compact=compact, is_dark=is_dark)
+    shell = _build_shell_tokens(theme, radius, compact=compact, is_dark=is_dark)
 
     surface = {
         "canvas": theme["BG_CANVAS"],

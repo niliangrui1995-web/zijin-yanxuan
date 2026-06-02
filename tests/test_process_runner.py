@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from infra.tasks import process_runner
@@ -22,6 +24,11 @@ def test_process_runner_rejects_string_command():
         process_runner.run_process("python -V")
 
 
+def test_process_runner_rejects_blank_executable():
+    with pytest.raises(ValueError):
+        process_runner.run_process([" "])
+
+
 def test_process_runner_rejects_shell_true():
     with pytest.raises(ValueError):
         process_runner.spawn_process(["python", "-V"], shell=True)
@@ -43,6 +50,94 @@ def test_windows_no_window_kwargs_uses_creationflags_and_startupinfo(monkeypatch
     assert kwargs["creationflags"] & process_runner.CREATE_NO_WINDOW
     assert kwargs["startupinfo"].dwFlags & 4
     assert kwargs["startupinfo"].wShowWindow == 7
+
+
+def test_windows_no_window_helpers_cover_non_windows_and_startupinfo_failure(monkeypatch):
+    monkeypatch.setattr(process_runner.os, "name", "nt", raising=False)
+    assert process_runner.windows_no_window_creationflags() == process_runner.CREATE_NO_WINDOW
+
+    monkeypatch.setattr(process_runner.os, "name", "posix", raising=False)
+    assert process_runner.windows_no_window_creationflags() == 0
+    assert process_runner.windows_hidden_startupinfo() is None
+
+    kwargs = {}
+    process_runner.apply_windows_no_window_kwargs(kwargs)
+    assert kwargs == {}
+
+    monkeypatch.setattr(process_runner.os, "name", "nt", raising=False)
+    monkeypatch.setattr(
+        process_runner.subprocess,
+        "STARTUPINFO",
+        lambda: (_ for _ in ()).throw(TypeError("bad startupinfo")),
+        raising=False,
+    )
+    assert process_runner.windows_hidden_startupinfo() is None
+
+
+def test_build_domestic_process_env_strips_proxy_and_applies_extra(monkeypatch):
+    for key in process_runner.PROXY_ENV_KEYS:
+        monkeypatch.setenv(key, "http://proxy.invalid")
+
+    env = process_runner.build_domestic_process_env(extra={"CUSTOM": "1"})
+
+    for key in process_runner.PROXY_ENV_KEYS:
+        assert key not in env
+    assert env["NO_PROXY"] == "*"
+    assert env["no_proxy"] == "*"
+    assert env["CUSTOM"] == "1"
+
+
+def test_spawn_process_normalizes_pathlike_command(monkeypatch):
+    captured = {}
+
+    def fake_popen(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return "process"
+
+    monkeypatch.setattr(process_runner.subprocess, "Popen", fake_popen)
+
+    assert process_runner.spawn_process([Path("python"), "-V"], cwd="D:/tmp") == "process"
+    assert captured == {"command": ["python", "-V"], "kwargs": {"cwd": "D:/tmp"}}
+
+
+def test_spawn_detached_process_delegates_to_silent_process(monkeypatch):
+    captured = {}
+
+    def fake_spawn_silent_process(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return "detached"
+
+    monkeypatch.setattr(process_runner, "spawn_silent_process", fake_spawn_silent_process)
+
+    assert process_runner.spawn_detached_process(["python", "-V"], cwd="D:/tmp") == "detached"
+    assert captured == {"command": ["python", "-V"], "kwargs": {"cwd": "D:/tmp"}}
+
+
+def test_build_python_module_command_validates_and_filters_args():
+    with pytest.raises(ValueError):
+        process_runner.build_python_module_command(" ")
+
+    assert process_runner.build_python_module_command(
+        " pkg.tool ",
+        ["", " --flag ", None, "value"],
+        python_executable="py",
+    ) == ["py", "-m", "pkg.tool", "--flag", "value"]
+
+
+def test_python_executable_for_no_window_branches(monkeypatch):
+    assert process_runner._sibling_console_python_for_no_window(None) is None
+    assert process_runner._sibling_console_python_for_no_window("python.exe") is None
+
+    monkeypatch.setattr(process_runner.os.path, "exists", lambda path: True)
+    expected = process_runner.os.path.join("C:/Python314", "python.exe")
+    assert process_runner._sibling_console_python_for_no_window("C:/Python314/pythonw.exe") == expected
+
+    assert process_runner._python_executable_for_no_window("custom-python") == "custom-python"
+
+    monkeypatch.setattr(process_runner.os, "name", "posix", raising=False)
+    assert process_runner._python_executable_for_no_window(None) is None
 
 
 def test_run_python_module_no_window_preserves_existing_creationflags(monkeypatch):

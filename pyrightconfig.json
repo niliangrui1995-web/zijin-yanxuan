@@ -1,0 +1,26 @@
+{
+  "include": [
+    "app/services/http_client_service.py",
+    "app/services/ui_diagnostics_service.py",
+    "domains/runtime/fault_tolerance.py",
+    "infra/http_safety.py",
+    "infra/tasks/process_runner.py"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    "build",
+    "data",
+    "dist",
+    "tmp"
+  ],
+  "pythonVersion": "3.14",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "warning",
+  "reportMissingModuleSource": "warning",
+  "reportMissingTypeStubs": "none",
+  "reportUnknownArgumentType": "none",
+  "reportUnknownLambdaType": "none",
+  "reportUnknownMemberType": "none",
+  "reportUnknownParameterType": "none",
+  "reportUnknownVariableType": "none"
+}

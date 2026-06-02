@@ -2,11 +2,14 @@ from pathlib import Path
 
 import pytest
 
+from app.services import ui_autostart_service
 from infra.navigation.windows_autostart import (
+    APP_DISPLAY_NAME,
     RUN_KEY,
     RUN_VALUE_NAME,
     AutoStartError,
     WindowsAutoStartManager,
+    _default_repo_root,
 )
 
 
@@ -55,6 +58,29 @@ class _FakeRegistry:
         if name not in self.values:
             raise FileNotFoundError(name)
         del self.values[name]
+
+
+class _FailingRegistry(_FakeRegistry):
+    def __init__(self, *, open_error=None, create_error=None, delete_error=None):
+        super().__init__()
+        self.open_error = open_error
+        self.create_error = create_error
+        self.delete_error = delete_error
+
+    def OpenKey(self, *args, **kwargs):
+        if self.open_error is not None:
+            raise self.open_error
+        return super().OpenKey(*args, **kwargs)
+
+    def CreateKey(self, *args, **kwargs):
+        if self.create_error is not None:
+            raise self.create_error
+        return super().CreateKey(*args, **kwargs)
+
+    def DeleteValue(self, *args, **kwargs):
+        if self.delete_error is not None:
+            raise self.delete_error
+        return super().DeleteValue(*args, **kwargs)
 
 
 def _touch(path: Path) -> None:
@@ -125,3 +151,79 @@ def test_autostart_enable_reports_missing_launcher(tmp_path):
 
     with pytest.raises(AutoStartError):
         manager.set_enabled(True)
+
+
+def test_default_repo_root_points_to_project_root():
+    assert _default_repo_root().name
+
+
+def test_autostart_current_command_wraps_registry_os_errors(tmp_path):
+    manager = WindowsAutoStartManager(
+        tmp_path,
+        os_name="nt",
+        registry=_FailingRegistry(open_error=OSError("registry locked")),
+        environ={},
+    )
+
+    with pytest.raises(AutoStartError, match="registry locked"):
+        manager.current_command()
+
+
+def test_autostart_prefers_packaged_exe(tmp_path):
+    registry = _FakeRegistry()
+    repo_root = tmp_path / "repo"
+    packaged_exe = repo_root / "dist" / APP_DISPLAY_NAME / f"{APP_DISPLAY_NAME}.exe"
+    _touch(packaged_exe)
+
+    manager = WindowsAutoStartManager(repo_root, os_name="nt", registry=registry, environ={})
+
+    command = manager.resolve_launch_command()
+
+    assert command.source == "packaged-exe"
+    assert command.command == f'"{packaged_exe}"'
+
+
+def test_autostart_enable_wraps_registry_write_errors(tmp_path):
+    repo_root = tmp_path / "repo"
+    _touch(repo_root / ".venv" / "Scripts" / "pythonw.exe")
+    _touch(repo_root / "vcp_hunter_qt.pyw")
+    manager = WindowsAutoStartManager(
+        repo_root,
+        os_name="nt",
+        registry=_FailingRegistry(create_error=OSError("write denied")),
+        environ={},
+    )
+
+    with pytest.raises(AutoStartError, match="write denied"):
+        manager.set_enabled(True)
+
+
+def test_autostart_disable_ignores_missing_registry_value(tmp_path):
+    registry = _FakeRegistry()
+    manager = WindowsAutoStartManager(tmp_path, os_name="nt", registry=registry, environ={})
+
+    manager.set_enabled(False)
+
+    assert RUN_VALUE_NAME not in registry.values
+
+
+def test_autostart_disable_wraps_registry_delete_errors(tmp_path):
+    registry = _FailingRegistry(delete_error=OSError("delete denied"))
+    manager = WindowsAutoStartManager(tmp_path, os_name="nt", registry=registry, environ={})
+
+    with pytest.raises(AutoStartError, match="delete denied"):
+        manager.set_enabled(False)
+
+
+def test_ui_autostart_service_delegates_set_enabled(monkeypatch, tmp_path):
+    calls = []
+
+    class FakeManager:
+        def set_enabled(self, enabled):
+            calls.append(enabled)
+
+    monkeypatch.setattr(ui_autostart_service, "windows_autostart_manager", lambda repo_root=None: FakeManager())
+
+    ui_autostart_service.set_launch_at_login_enabled(True, tmp_path)
+
+    assert calls == [True]

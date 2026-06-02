@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sqlite3
+from contextlib import closing
 from typing import Any
 
 from core.exceptions import BusinessRuleError, CacheIOError, DataFormatError, NetworkServiceError
@@ -142,7 +143,7 @@ def ensure_holiday_table(project_root: str) -> None:
     db_path = holiday_db_path(project_root)
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     try:
-        with sqlite3.connect(db_path, timeout=10) as conn:
+        with closing(sqlite3.connect(db_path, timeout=10)) as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS market_holiday_cache (
@@ -162,7 +163,7 @@ def ensure_holiday_table(project_root: str) -> None:
 def load_holidays_from_store(project_root: str, market: str) -> list[tuple[int, set[str], datetime.datetime | None]]:
     ensure_holiday_table(project_root)
     try:
-        with sqlite3.connect(holiday_db_path(project_root), timeout=10) as conn:
+        with closing(sqlite3.connect(holiday_db_path(project_root), timeout=10)) as conn:
             rows = conn.execute(
                 "SELECT year, days_json, updated_at FROM market_holiday_cache WHERE market = ?",
                 (market,),
@@ -193,7 +194,7 @@ def save_holidays_to_store(project_root: str, market: str, year: int, days: set[
     normalized_days = apply_market_holiday_supplements(market, year, days)
     payload = json.dumps(sorted(normalized_days), ensure_ascii=False)
     try:
-        with sqlite3.connect(holiday_db_path(project_root), timeout=10) as conn:
+        with closing(sqlite3.connect(holiday_db_path(project_root), timeout=10)) as conn:
             conn.execute(
                 """
                 INSERT INTO market_holiday_cache (market, year, days_json, updated_at)

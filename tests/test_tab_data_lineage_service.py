@@ -60,3 +60,37 @@ def test_tab_data_lineage_service_marks_provider_degraded():
     assert lineage["provider_fault_tolerance"]["provider_degraded"] is True
     assert lineage["provider_fault_tolerance"]["last_network_error"] == "network down"
     assert lineage["warnings"] == ["empty"]
+
+
+def test_tab_data_lineage_result_as_dict_includes_rows_and_signature():
+    service = TabDataLineageService(
+        key="scan",
+        source="cache",
+        provider="provider",
+        cache_refs=(),
+        clock=lambda: "2026-05-10T10:00:00",
+    )
+
+    payload = service.describe([{"code": "000001"}]).as_dict()
+
+    assert payload["rows"] == [{"code": "000001"}]
+    assert payload["signature"]
+    assert payload["last_updated"] == "2026-05-10T10:00:00"
+
+
+def test_tab_data_lineage_records_provider_status_reader_failures_and_empty_lineage():
+    service = TabDataLineageService(
+        key="watchlist",
+        source="cache",
+        provider="provider",
+        cache_refs=("cache",),
+        provider_status_reader=lambda: (_ for _ in ()).throw(RuntimeError("offline")),
+        clock=lambda: "2026-05-10T10:00:00",
+    )
+
+    lineage = service.empty_lineage(row_count=-3, warnings=("empty",)).as_dict()
+
+    assert lineage["row_count"] == 0
+    assert lineage["fallback_or_degraded"] is True
+    assert lineage["errors"] == ["provider_status_failed:RuntimeError"]
+    assert lineage["warnings"] == ["empty"]
