@@ -208,6 +208,70 @@ def _resolve_previous_close(*, realtime_quote: dict | None, fast_info, df) -> fl
     return last_close if last_close is not None and last_close > 0 else None
 
 
+def _has_history_rows(df) -> bool:
+    return df is not None and not getattr(df, "empty", True)
+
+
+def _resolve_daily_field(
+    *,
+    realtime_quote: dict | None,
+    fast_info,
+    df,
+    quote_key: str,
+    fast_info_key: str,
+    history_column: str,
+    default: float | None = None,
+) -> float | None:
+    quote_payload = realtime_quote or {}
+    value = _to_float(quote_payload.get(quote_key)) or _to_float(fast_info.get(fast_info_key))
+    if (value is None or value <= 0) and _has_history_rows(df):
+        value = float(df.iloc[-1][history_column])
+    if value is None or value <= 0:
+        return default
+    return value
+
+
+def _resolve_previous_close_value(
+    *,
+    close_price: float,
+    realtime_quote: dict | None,
+    fast_info,
+    df,
+    cached_payload: dict,
+) -> float:
+    prev_close = _resolve_previous_close(realtime_quote=realtime_quote, fast_info=fast_info, df=df)
+    if (prev_close is None or prev_close <= 0) and _has_history_rows(df):
+        prev_close = float(df.iloc[-2]["Close"]) if len(df) >= 2 else float(df.iloc[-1]["Close"])
+    if prev_close is None or prev_close <= 0:
+        prev_close = _to_float((cached_payload or {}).get("previous_close")) or close_price
+    return prev_close
+
+
+def _past_pct_from_history(close_price: float, df, cached_payload: dict, days_ago: int) -> float:
+    cache_key = f"pct_{days_ago}"
+    if not _has_history_rows(df):
+        return _to_float(cached_payload.get(cache_key)) or 0.0
+    if len(df) <= days_ago:
+        return _to_float(cached_payload.get(cache_key)) or 0.0
+    past_close = float(df.iloc[-(days_ago + 1)]["Close"])
+    if past_close <= 0:
+        return _to_float(cached_payload.get(cache_key)) or 0.0
+    return ((close_price / past_close) - 1.0) * 100.0
+
+
+def _resolve_quote_date(realtime_quote: dict | None, df) -> str | None:
+    quote_date = (realtime_quote or {}).get("date")
+    if quote_date or not _has_history_rows(df):
+        return quote_date
+    try:
+        last_idx = df.index[-1]
+        if getattr(last_idx, "tzinfo", None) is not None:
+            last_idx = last_idx.tz_localize(None)
+        return str(last_idx)[:10]
+    except (AttributeError, IndexError, TypeError, ValueError):
+        return None
+
+
 def _format_cooldown_eta(seconds: float) -> str:
     remaining = max(1, int(round(float(seconds or 0.0))))
     if remaining >= 60:
@@ -953,66 +1017,58 @@ class AsianMarketWorker(QThread):
             if history_df is not None:
                 df = history_df
 
-        close_price = _to_float((realtime_quote or {}).get("close")) or _to_float(fast_info.get("lastPrice"))
-        if (close_price is None or close_price <= 0) and df is not None and not getattr(df, "empty", True):
-            close_price = float(df.iloc[-1]["Close"])
-        if close_price is None or close_price <= 0:
-            return code, None
-
-        day_open = _to_float((realtime_quote or {}).get("open")) or _to_float(fast_info.get("open"))
-        if (day_open is None or day_open <= 0) and df is not None and not getattr(df, "empty", True):
-            day_open = float(df.iloc[-1]["Open"])
-        if day_open is None or day_open <= 0:
-            day_open = close_price
-
-        day_high = _to_float((realtime_quote or {}).get("high")) or _to_float(fast_info.get("dayHigh"))
-        if (day_high is None or day_high <= 0) and df is not None and not getattr(df, "empty", True):
-            day_high = float(df.iloc[-1]["High"])
-        if day_high is None or day_high <= 0:
-            day_high = max(day_open, close_price)
-
-        day_low = _to_float((realtime_quote or {}).get("low")) or _to_float(fast_info.get("dayLow"))
-        if (day_low is None or day_low <= 0) and df is not None and not getattr(df, "empty", True):
-            day_low = float(df.iloc[-1]["Low"])
-        if day_low is None or day_low <= 0:
-            day_low = min(day_open, close_price)
-
-        prev_close = _resolve_previous_close(
+        close_price = _resolve_daily_field(
             realtime_quote=realtime_quote,
             fast_info=fast_info,
             df=df,
+            quote_key="close",
+            fast_info_key="lastPrice",
+            history_column="Close",
         )
-        if (prev_close is None or prev_close <= 0) and df is not None and not getattr(df, "empty", True):
-            prev_close = float(df.iloc[-2]["Close"]) if len(df) >= 2 else float(df.iloc[-1]["Close"])
-        if prev_close is None or prev_close <= 0:
-            prev_close = _to_float((GLOBAL_ASIAN_RT_CACHE.get(code, {}) or {}).get("previous_close")) or close_price
+        if close_price is None or close_price <= 0:
+            return code, None
+
+        day_open = _resolve_daily_field(
+            realtime_quote=realtime_quote,
+            fast_info=fast_info,
+            df=df,
+            quote_key="open",
+            fast_info_key="open",
+            history_column="Open",
+            default=close_price,
+        )
+        day_high = _resolve_daily_field(
+            realtime_quote=realtime_quote,
+            fast_info=fast_info,
+            df=df,
+            quote_key="high",
+            fast_info_key="dayHigh",
+            history_column="High",
+            default=max(day_open, close_price),
+        )
+        day_low = _resolve_daily_field(
+            realtime_quote=realtime_quote,
+            fast_info=fast_info,
+            df=df,
+            quote_key="low",
+            fast_info_key="dayLow",
+            history_column="Low",
+            default=min(day_open, close_price),
+        )
+
+        cached_payload = GLOBAL_ASIAN_RT_CACHE.get(code, {}) or {}
+        prev_close = _resolve_previous_close_value(
+            close_price=close_price,
+            realtime_quote=realtime_quote,
+            fast_info=fast_info,
+            df=df,
+            cached_payload=cached_payload,
+        )
 
         pct = 0.0
         if prev_close > 0:
             pct = ((close_price / prev_close) - 1.0) * 100.0
-
-        cached_payload = GLOBAL_ASIAN_RT_CACHE.get(code, {}) or {}
-
-        def _past_pct(days_ago: int) -> float:
-            cache_key = f"pct_{days_ago}"
-            if df is None or getattr(df, "empty", True):
-                return _to_float(cached_payload.get(cache_key)) or 0.0
-            if len(df) <= days_ago:
-                return _to_float(cached_payload.get(cache_key)) or 0.0
-            past_close = float(df.iloc[-(days_ago + 1)]["Close"])
-            if past_close <= 0:
-                return _to_float(cached_payload.get(cache_key)) or 0.0
-            return ((close_price / past_close) - 1.0) * 100.0
-
-        quote_date = (realtime_quote or {}).get("date")
-        if not quote_date and df is not None and not getattr(df, "empty", True):
-            try:
-                last_idx = df.index[-1]
-                if getattr(last_idx, "tzinfo", None) is not None:
-                    last_idx = last_idx.tz_localize(None)
-                quote_date = str(last_idx)[:10]
-            except (AttributeError, IndexError, TypeError, ValueError):
-                quote_date = None
+        quote_date = _resolve_quote_date(realtime_quote, df)
 
         pe_value = cached_payload.get("pe")
         pe_source = cached_payload.get("pe_source", "")
@@ -1035,9 +1091,9 @@ class AsianMarketWorker(QThread):
             "volume": _to_float((realtime_quote or {}).get("volume")) or 0.0,
             "previous_close": prev_close,
             "pct": pct,
-            "pct_5": _past_pct(5),
-            "pct_10": _past_pct(10),
-            "pct_20": _past_pct(20),
+            "pct_5": _past_pct_from_history(close_price, df, cached_payload, 5),
+            "pct_10": _past_pct_from_history(close_price, df, cached_payload, 10),
+            "pct_20": _past_pct_from_history(close_price, df, cached_payload, 20),
             "currency": (realtime_quote or {}).get("currency") or fast_info.get("currency", "USD"),
             "pe": pe_value,
             "pe_source": pe_source,

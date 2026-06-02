@@ -28,6 +28,8 @@
 .\.venv\Scripts\python.exe scripts\project_audit.py --quick --runtime-health-short
 ```
 
+短运行健康预算会覆盖默认数据 Tab 的首开、数据血缘、Timer/线程/事件订阅增长和收尾内存稳定性；其中 `foreign_block`、`fund_holdings`、`earnings` 作为重点 Tab 有更严格的首开耗时预算，用于持续盯住情报源重页面的交互退化。
+
 快速审计并显式追加依赖/供应链 JSON 报告：
 
 ```powershell
@@ -77,4 +79,6 @@
 
 ## CI 入口
 
-CI 使用 `requirements-dev.txt` 安装测试工具。Linux job 继续跑现有架构、服务、运行时和性能护栏；Windows smoke job 覆盖架构边界、运行环境自检和审计命令契约，避免桌面端项目只在 Linux 上验证。PR 默认不运行桌面短稳和供应链审计；手动触发或定时 workflow 会追加 `--dependency-audit --runtime-health-short`。
+CI 使用 `requirements-dev.txt` 安装测试工具。Linux test job 先跑架构、服务、运行时和性能护栏，再跑完整 `python -m pytest -q`，避免新增测试文件遗漏在 CI 之外。Windows smoke job 使用 `constraints-py314-windows.txt` 复现已验证的 Windows Python 3.14 依赖组合，并覆盖架构边界、运行环境自检和审计命令契约，避免桌面端项目只在 Linux 上验证。PR 默认不运行桌面短稳和供应链审计；手动触发或定时 workflow 会追加 `--dependency-audit --runtime-health-short`。
+
+架构边界测试还包含 `app/`、`domains/`、`infra/` 的温和代码健康基线：新增宽泛异常需要进入显式 allowlist 或改窄异常类型，类型标注比例不能低于当前基线。UI 层 PyQt 动态代码暂不强推该规则。

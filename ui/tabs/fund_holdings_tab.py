@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import re
 from contextlib import suppress
 
 from PyQt6.QtCore import Qt, QTimer
@@ -54,7 +53,6 @@ from ui.tabs.fund_holdings_filter_state import (
     build_current_filter_summary,
     format_change_filter_button_text,
     format_quarter_filter_button_text,
-    normalize_settings_values,
     quarter_scope_loaded,
     resolve_quarter_query_scope,
 )
@@ -67,6 +65,14 @@ from ui.tabs.fund_holdings_rules import (
     format_pct,
     is_ai_related_concept,
     normalize_ai_concept_display,
+)
+from ui.tabs.fund_holdings_subjects import shorten_subject_name
+from ui.tabs.fund_holdings_view_state import (
+    FundHoldingsViewState,
+    quarter_mode_from_filter,
+    read_fund_holdings_view_state,
+    sort_order_to_int,
+    write_fund_holdings_view_state,
 )
 
 
@@ -93,64 +99,6 @@ class FundHoldingsTab(BaseStockTab):
     _VIEW_STATE_PREFIX = "fund_holdings_view_state_v2"
     _stock_universe_provider = staticmethod(load_ai_industry_chain_stock_codes)
     _chain_context_provider = staticmethod(load_ai_industry_chain_context_map)
-    _SUBJECT_NAME_ALIASES = (
-        ("MORGANSTANLEY", "MORGAN STANLEY"),
-        ("JPMORGAN", "J.P.Morgan"),
-        ("BARCLAYS", "BARCLAYS"),
-        ("UBS", "UBS"),
-        ("GOLDMANSACHS", "GOLDMAN SACHS"),
-        ("CITIGROUP", "CITI"),
-        ("CITIBANK", "CITI"),
-        ("MERRILLLYNCH", "MERRILL LYNCH"),
-        ("BOFA", "BOFA"),
-        ("HSBC", "HSBC"),
-        ("NOMURA", "NOMURA"),
-        ("BNPPARIBAS", "BNP PARIBAS"),
-        ("DEUTSCHEBANK", "DEUTSCHE BANK"),
-        ("STANDARDCHARTERED", "STANDARD CHARTERED"),
-        ("SOCIETEGENERALE", "SOCIETE GENERALE"),
-        ("CREDITSUISSE", "CREDIT SUISSE"),
-        ("MACQUARIE", "MACQUARIE"),
-        ("DAIWASECURITIES", "DAIWA"),
-        ("MIZUHO", "MIZUHO"),
-        ("JEFFERIES", "JEFFERIES"),
-        ("CLSA", "CLSA"),
-        ("KGIASIA", "KGI ASIA"),
-        ("ABUDHABIINVESTMENTAUTHORITY", "ADIA"),
-        ("HKSCC", "HKSCC"),
-    )
-    _SUBJECT_LEGAL_SUFFIXES = frozenset({"PLC", "LIMITED", "LTD", "INC", "LLC", "LLP", "AG", "SA", "NV"})
-    _SUBJECT_TAIL_DESCRIPTORS = frozenset(
-        {"SECURITIES", "INTERNATIONAL", "MARKETS", "GLOBAL", "BANK", "CO", "COMPANY", "CORPORATION"}
-    )
-
-    @classmethod
-    def _shorten_subject_name(cls, subject_name: str) -> str:
-        raw_name = str(subject_name or "").strip()
-        if not raw_name:
-            return ""
-
-        compact_name = re.sub(r"[^A-Z0-9]+", "", raw_name.upper())
-        for marker, display_name in cls._SUBJECT_NAME_ALIASES:
-            if marker in compact_name:
-                return display_name
-
-        if not re.fullmatch(r"[A-Za-z0-9 .,&'()/+-]+", raw_name):
-            return raw_name
-
-        cleaned_name = re.sub(r"[_]+", " ", raw_name.replace("&", " "))
-        cleaned_name = re.sub(r"\s+", " ", cleaned_name).strip(" .,-")
-        tokens = [token.strip(" .,-") for token in cleaned_name.split() if token.strip(" .,-")]
-        while tokens and tokens[-1].upper().replace(".", "") in cls._SUBJECT_LEGAL_SUFFIXES:
-            tokens.pop()
-        while len(tokens) > 2 and tokens[-1].upper().replace(".", "") in cls._SUBJECT_TAIL_DESCRIPTORS:
-            tokens.pop()
-        if not tokens:
-            return raw_name
-        if len(tokens) > 3:
-            tokens = tokens[:3]
-        return " ".join(tokens)
-
     def __init__(self, data_provider, parent=None, autoload: bool = True):
         super().__init__(data_provider=data_provider, parent=parent)
         self._autoload = bool(autoload)
@@ -488,7 +436,7 @@ class FundHoldingsTab(BaseStockTab):
                     "市价": cls._DISPLAY_PLACEHOLDER,
                     "涨幅%": cls._DISPLAY_PLACEHOLDER,
                     "市值": cls._DISPLAY_PLACEHOLDER,
-                    "主体": cls._shorten_subject_name(subject_name),
+                    "主体": shorten_subject_name(subject_name),
                     "主体原名": subject_name,
                     "资金属性": capital_attribute_text,
                     "主体代码": subject_code,
@@ -804,10 +752,6 @@ class FundHoldingsTab(BaseStockTab):
         self.btn_quarter.setText(text)
         self.btn_quarter.setToolTip(tooltip)
 
-    @staticmethod
-    def _normalize_settings_values(value) -> list[str]:
-        return normalize_settings_values(value)
-
     def _schedule_view_state_save(self):
         if self._restoring_view_state:
             return
@@ -956,24 +900,21 @@ class FundHoldingsTab(BaseStockTab):
             search_text=self.search_box.text(),
         )
 
-    @staticmethod
-    def _sort_order_to_int(order) -> int:
-        value = getattr(order, "value", order)
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return Qt.SortOrder.AscendingOrder.value
-
     def _save_view_state(self):
         if self._restoring_view_state:
             return
         try:
             latest_only, selected_quarters = self._quarter_filter_state()
-            quarter_mode = "latest" if latest_only else ("all" if not selected_quarters else "selected")
-            change_types = list(self._selected_change_types())
-            subject_names = sorted(self._selected_subject_names())
-            capital_attributes = sorted(self._selected_capital_attributes())
-            search_text = self.search_box.text().strip()
+            state = FundHoldingsViewState(
+                subject_names=self._selected_subject_names(),
+                capital_attributes=self._selected_capital_attributes(),
+                search_text=self.search_box.text().strip(),
+                quarter_mode=quarter_mode_from_filter(latest_only, selected_quarters),
+                quarter_values=set(selected_quarters),
+                change_types=self._selected_change_types(),
+                sort_column=-1,
+                sort_order=Qt.SortOrder.AscendingOrder.value,
+            )
         except (AttributeError, RuntimeError, TypeError, ValueError):
             return
 
@@ -982,23 +923,25 @@ class FundHoldingsTab(BaseStockTab):
         except (AttributeError, RuntimeError, TypeError, ValueError):
             sort_column = -1
         try:
-            sort_order = self._sort_order_to_int(self.table.horizontalHeader().sortIndicatorOrder())
+            sort_order = sort_order_to_int(
+                self.table.horizontalHeader().sortIndicatorOrder(),
+                default=Qt.SortOrder.AscendingOrder.value,
+            )
         except (AttributeError, RuntimeError, TypeError, ValueError):
             sort_order = Qt.SortOrder.AscendingOrder.value
+        state = FundHoldingsViewState(
+            subject_names=state.subject_names,
+            capital_attributes=state.capital_attributes,
+            search_text=state.search_text,
+            quarter_mode=state.quarter_mode,
+            quarter_values=state.quarter_values,
+            change_types=state.change_types,
+            sort_column=sort_column,
+            sort_order=sort_order,
+        )
 
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-            self._settings.setValue(self._view_state_key("subject_names"), subject_names)
-            self._settings.setValue(
-                self._view_state_key("subject_name"), subject_names[0] if len(subject_names) == 1 else ""
-            )
-            self._settings.setValue(self._view_state_key("capital_attributes"), capital_attributes)
-            self._settings.setValue(self._view_state_key("search_text"), search_text)
-            self._settings.setValue(self._view_state_key("quarter_mode"), quarter_mode)
-            self._settings.setValue(self._view_state_key("quarter_values"), sorted(selected_quarters, reverse=True))
-            self._settings.setValue(self._view_state_key("change_types"), change_types)
-            self._settings.setValue(self._view_state_key("sort_column"), sort_column)
-            self._settings.setValue(self._view_state_key("sort_order"), sort_order)
-            self._settings.sync()
+            write_fund_holdings_view_state(self._settings, self._view_state_key, state)
 
     def _restore_view_state(self):
         if self._view_state_restored:
@@ -1006,67 +949,37 @@ class FundHoldingsTab(BaseStockTab):
 
         self._restoring_view_state = True
         try:
-            subject_names = set()
-            for subject_name in self._normalize_settings_values(
-                self._settings.value(self._view_state_key("subject_names"), [])
-            ):
-                shortened_subject_name = self._shorten_subject_name(subject_name)
-                if shortened_subject_name:
-                    subject_names.add(shortened_subject_name)
-            if not subject_names:
-                legacy_subject_name = str(self._settings.value(self._view_state_key("subject_name"), "") or "").strip()
-                if legacy_subject_name:
-                    shortened_subject_name = self._shorten_subject_name(legacy_subject_name)
-                    if shortened_subject_name:
-                        subject_names = {shortened_subject_name}
-            capital_attributes = set(
-                self._normalize_settings_values(self._settings.value(self._view_state_key("capital_attributes"), []))
-            )
-            search_text = str(self._settings.value(self._view_state_key("search_text"), "") or "")
-            quarter_mode = (
-                str(self._settings.value(self._view_state_key("quarter_mode"), "latest") or "latest").strip().lower()
-            )
-            quarter_values = set(
-                self._normalize_settings_values(self._settings.value(self._view_state_key("quarter_values"), []))
-            )
-            change_types = set(
-                self._normalize_settings_values(self._settings.value(self._view_state_key("change_types"), []))
+            state = read_fund_holdings_view_state(
+                self._settings,
+                self._view_state_key,
+                default_sort_order=Qt.SortOrder.AscendingOrder.value,
             )
 
-            try:
-                sort_column = int(self._settings.value(self._view_state_key("sort_column"), -1) or -1)
-            except (TypeError, ValueError):
-                sort_column = -1
-            try:
-                sort_order_value = self._settings.value(
-                    self._view_state_key("sort_order"),
-                    Qt.SortOrder.AscendingOrder.value,
-                )
-                sort_order = Qt.SortOrder(self._sort_order_to_int(sort_order_value))
-            except (TypeError, ValueError):
-                sort_order = Qt.SortOrder.AscendingOrder
-
-            self.cmb_subject.set_selected_values(subject_names, emit=False)
+            self.cmb_subject.set_selected_values(state.subject_names, emit=False)
             self._refresh_subject_button_text()
-            self.cmb_capital_attribute.set_selected_values(capital_attributes, emit=False)
+            self.cmb_capital_attribute.set_selected_values(state.capital_attributes, emit=False)
             self._refresh_capital_attribute_button_text()
 
             search_was_blocked = self.search_box.blockSignals(True)
             try:
-                self.search_box.setText(search_text)
+                self.search_box.setText(state.search_text)
             finally:
                 self.search_box.blockSignals(search_was_blocked)
 
-            self._set_change_filter_values(change_types, apply=False)
+            self._set_change_filter_values(state.change_types, apply=False)
             self._set_quarter_filter_state(
-                latest_only=quarter_mode == "latest",
-                all_quarters=quarter_mode == "all",
-                selected_quarters=quarter_values,
+                latest_only=state.quarter_mode == "latest",
+                all_quarters=state.quarter_mode == "all",
+                selected_quarters=state.quarter_values,
                 apply=False,
             )
 
-            if 0 <= sort_column < self.model.columnCount():
-                self.table.sortByColumn(sort_column, sort_order)
+            if 0 <= state.sort_column < self.model.columnCount():
+                try:
+                    sort_order = Qt.SortOrder(state.sort_order)
+                except (TypeError, ValueError):
+                    sort_order = Qt.SortOrder.AscendingOrder
+                self.table.sortByColumn(state.sort_column, sort_order)
         finally:
             self._restoring_view_state = False
             self._view_state_restored = True
@@ -1363,7 +1276,7 @@ class FundHoldingsTab(BaseStockTab):
                     "市价": self._DISPLAY_PLACEHOLDER,
                     "涨幅%": self._DISPLAY_PLACEHOLDER,
                     "市值": self._DISPLAY_PLACEHOLDER,
-                    "主体": self._shorten_subject_name(subject_name),
+                    "主体": shorten_subject_name(subject_name),
                     "主体原名": subject_name,
                     "资金属性": capital_attribute_text,
                     "主体代码": subject_code,

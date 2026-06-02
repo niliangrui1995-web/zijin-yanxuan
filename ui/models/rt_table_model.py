@@ -243,6 +243,193 @@ class RtTableModel(QAbstractTableModel):
             self._flash_roles(),
         )
 
+    def _display_value(self, row: int, key: str, raw_val):
+        if key == SERIAL_HEADER:
+            return str(row + 1)
+        market_cap_text = _format_market_cap_display(key, raw_val)
+        if market_cap_text is not None:
+            return market_cap_text
+        if "%" in key:
+            s_val = str(raw_val)
+            if s_val == "--" or s_val == "":
+                return s_val
+            if s_val.endswith("%"):
+                return s_val
+            try:
+                f_val = float(s_val.replace("%", ""))
+                if "换手" in key:
+                    return f"{f_val:.2f}%"
+                return f"{f_val:+.2f}%"
+            except (ValueError, TypeError):
+                pass
+
+        if key in ["现价", "市价"]:
+            try:
+                f_val = float(raw_val)
+                if f_val <= 0:
+                    return "--"
+                return f"{f_val:.3f}" if f_val < 10 else f"{f_val:.2f}"
+            except (ValueError, TypeError):
+                pass
+
+        return _summarize_long_text(key, raw_val)
+
+    def _tooltip_value(self, key: str, raw_val, item_dict: dict):
+        if key == SERIAL_HEADER:
+            return None
+        if key == "外资净买入":
+            custom_tip = item_dict.get("_外资净买入_tooltip")
+            if custom_tip:
+                return custom_tip
+        return _build_cell_tooltip(raw_val)
+
+    def _font_value(self, key: str, raw_val, item_dict: dict):
+        if key == SERIAL_HEADER:
+            return self.mono_font
+        if _is_strong_market_move(key, raw_val, item_dict):
+            return self.bold_mono_font
+        if _is_numeric_header(key) or _is_date_like_header(key):
+            return self.mono_font
+        if key in ["涨幅%", "市值", "时间", "评分", "突破状态", "区间振幅"]:
+            return self.mono_font
+        if key == "突破状态":
+            st = str(raw_val)
+            if "放量突破" in st or "缩量突破" in st:
+                return self.bold_font
+        return self.base_font
+
+    def _percentage_foreground(self, key: str, raw_val):
+        if "%" not in key or "换手" in key:
+            return None
+        try:
+            pct = float(str(raw_val).replace("%", "").replace("+", ""))
+            if pct >= 9.0:
+                return QColor(_c("COLOR_RISE_STRONG"))
+            if pct > 0:
+                return QColor(_c("COLOR_RISE"))
+            if pct <= -9.0:
+                return QColor(_c("COLOR_FALL_STRONG"))
+            if pct < 0:
+                return QColor(_c("COLOR_FALL"))
+            return QColor(_c("COLOR_FLAT"))
+        except (ValueError, TypeError):
+            return QColor(_c("COLOR_FLAT"))
+
+    def _status_foreground(self, key: str, raw_val):
+        if key != "突破状态":
+            return None
+        st = str(raw_val)
+        if "放量突破" in st:
+            return QColor(_c("COLOR_RISE_STRONG"))
+        if "缩量突破" in st:
+            return QColor(_c("COLOR_WARNING"))
+        if "临近" in st:
+            return QColor(_c("STATUS_APPROACHING"))
+        if "VCP蓄力" in st:
+            return QColor(_c("STATUS_VCP"))
+        if "非红盘" in st or "异常" in st or "一字" in st or "观望" in st:
+            return QColor(_c("STATUS_INACTIVE"))
+        return None
+
+    def _signed_amount_foreground(self, key: str, raw_val):
+        if key not in ["上榜净买额(万)", "机构净买(万)"]:
+            return None
+        try:
+            f_val = float(raw_val)
+            if f_val > 0:
+                return QColor(_c("COLOR_RISE"))
+            if f_val < 0:
+                return QColor(_c("COLOR_FALL"))
+        except (ValueError, TypeError):
+            pass
+        return None
+
+    def _foreign_net_buy_foreground(self, key: str, item_dict: dict):
+        if key != "外资净买入":
+            return None
+        try:
+            f_val = float(item_dict.get("外资净买(万)", 0) or 0)
+            if f_val > 0:
+                return QColor(_c("COLOR_RISE"))
+            if f_val < 0:
+                return QColor(_c("COLOR_FALL"))
+            return QColor(_c("TEXT_SECONDARY"))
+        except (ValueError, TypeError):
+            return None
+
+    def _foreign_pool_foreground(self, key: str, item_dict: dict):
+        if key != "外资潜伏池":
+            return None
+        try:
+            fz_val = float(item_dict.get("外资净买(万)", 0))
+            if fz_val > 0:
+                return QColor(_c("COLOR_RISE"))
+            if fz_val < 0:
+                return QColor(_c("COLOR_FALL"))
+        except (ValueError, TypeError):
+            pass
+        return None
+
+    def _foreground_value(self, key: str, raw_val, item_dict: dict):
+        if key == SERIAL_HEADER:
+            return QColor(_c("TEXT_SECONDARY"))
+        for resolver in (
+            lambda: self._percentage_foreground(key, raw_val),
+            lambda: self._status_foreground(key, raw_val),
+            lambda: self._signed_amount_foreground(key, raw_val),
+            lambda: self._foreign_net_buy_foreground(key, item_dict),
+            lambda: self._foreign_pool_foreground(key, item_dict),
+        ):
+            color = resolver()
+            if color is not None:
+                return color
+        return QColor(_c("TEXT_PRIMARY"))
+
+    def _flash_value(self, row: int, col: int):
+        flash_record = self._flash_records.get(row, {}).get(col, None)
+        if not flash_record:
+            return None
+        if time.time() - float(flash_record.get("time", 0) or 0) > FLASH_DURATION_SECONDS:
+            return None
+        return flash_record
+
+    def _row_accent_value(self, item_dict: dict):
+        rail_color = _accent_rail_color_for_row_style(item_dict.get("_row_style", ""))
+        if rail_color:
+            return rail_color
+        for header in self._headers:
+            if not _is_status_header(header):
+                continue
+            badge = _status_badge_color(item_dict.get(header, ""), header)
+            if badge:
+                return badge
+        return None
+
+    def _sort_value(self, row: int, key: str, raw_val):
+        if key == SERIAL_HEADER:
+            return row + 1
+
+        s_val = str(raw_val).replace(",", "")
+        parsed_value = _parse_numeric_value(raw_val)
+        if parsed_value is not None and (_is_numeric_header(key) or "万" in s_val or "亿" in s_val):
+            return parsed_value
+        if key in ["市值", "评分"] or "万" in s_val or "亿" in s_val:
+            if "万" in s_val:
+                m = re.search(r"([-+]?\d*\.?\d+)", s_val)
+                if m:
+                    return float(m.group(1)) * 10000
+                return 0.0
+            if "亿" in s_val:
+                m = re.search(r"([-+]?\d*\.?\d+)", s_val)
+                if m:
+                    return float(m.group(1)) * 100000000
+                return 0.0
+            m = re.search(r"([-+]?\d*\.?\d+)", s_val)
+            if m:
+                return float(m.group(1))
+            return 0.0
+        return str(raw_val)
+
     def data(self, index, role):
         if not index.isValid():
             return None
@@ -254,122 +441,19 @@ class RtTableModel(QAbstractTableModel):
         raw_val = item_dict.get(key, "")
 
         if role == Qt.ItemDataRole.DisplayRole:
-            if key == SERIAL_HEADER:
-                return str(row + 1)
-            market_cap_text = _format_market_cap_display(key, raw_val)
-            if market_cap_text is not None:
-                return market_cap_text
-            if "%" in key:
-                s_val = str(raw_val)
-                if s_val == "--" or s_val == "":
-                    return s_val
-                if s_val.endswith("%"):
-                    return s_val
-                try:
-                    f_val = float(s_val.replace("%", ""))
-                    if "换手" in key:
-                        return f"{f_val:.2f}%"
-                    return f"{f_val:+.2f}%"
-                except (ValueError, TypeError):
-                    pass
-
-            if key in ["现价", "市价"]:
-                try:
-                    f_val = float(raw_val)
-                    if f_val <= 0:
-                        return "--"
-                    return f"{f_val:.3f}" if f_val < 10 else f"{f_val:.2f}"
-                except (ValueError, TypeError):
-                    pass
-
-            return _summarize_long_text(key, raw_val)
+            return self._display_value(row, key, raw_val)
 
         elif role == Qt.ItemDataRole.ToolTipRole:
-            if key == SERIAL_HEADER:
-                return None
-            if key == "外资净买入":
-                custom_tip = item_dict.get("_外资净买入_tooltip")
-                if custom_tip:
-                    return custom_tip
-            return _build_cell_tooltip(raw_val)
+            return self._tooltip_value(key, raw_val, item_dict)
 
         elif role == Qt.ItemDataRole.TextAlignmentRole:
             return _alignment_for_cell(key, raw_val)
 
         elif role == Qt.ItemDataRole.FontRole:
-            if key == SERIAL_HEADER:
-                return self.mono_font
-            if _is_strong_market_move(key, raw_val, item_dict):
-                return self.bold_mono_font
-            if _is_numeric_header(key) or _is_date_like_header(key):
-                return self.mono_font
-            if key in ["涨幅%", "市值", "时间", "评分", "突破状态", "区间振幅"]:
-                return self.mono_font
-            if key == "突破状态":
-                st = str(raw_val)
-                if "放量突破" in st or "缩量突破" in st:
-                    return self.bold_font
-            return self.base_font
+            return self._font_value(key, raw_val, item_dict)
 
         elif role == Qt.ItemDataRole.ForegroundRole:
-            if key == SERIAL_HEADER:
-                return QColor(_c("TEXT_SECONDARY"))
-            if "%" in key and "换手" not in key:
-                try:
-                    pct = float(str(raw_val).replace("%", "").replace("+", ""))
-                    if pct >= 9.0:
-                        return QColor(_c("COLOR_RISE_STRONG"))
-                    elif pct > 0:
-                        return QColor(_c("COLOR_RISE"))
-                    elif pct <= -9.0:
-                        return QColor(_c("COLOR_FALL_STRONG"))
-                    elif pct < 0:
-                        return QColor(_c("COLOR_FALL"))
-                    return QColor(_c("COLOR_FLAT"))
-                except (ValueError, TypeError):
-                    return QColor(_c("COLOR_FLAT"))
-            elif key == "突破状态":
-                st = str(raw_val)
-                if "放量突破" in st:
-                    return QColor(_c("COLOR_RISE_STRONG"))
-                elif "缩量突破" in st:
-                    return QColor(_c("COLOR_WARNING"))
-                elif "临近" in st:
-                    return QColor(_c("STATUS_APPROACHING"))
-                elif "VCP蓄力" in st:
-                    return QColor(_c("STATUS_VCP"))
-                elif "非红盘" in st or "异常" in st or "一字" in st or "观望" in st:
-                    return QColor(_c("STATUS_INACTIVE"))
-            elif key in ["上榜净买额(万)", "机构净买(万)"]:
-                try:
-                    f_val = float(raw_val)
-                    if f_val > 0:
-                        return QColor(_c("COLOR_RISE"))
-                    elif f_val < 0:
-                        return QColor(_c("COLOR_FALL"))
-                except (ValueError, TypeError):
-                    pass
-            elif key == "外资净买入":
-                try:
-                    f_val = float(item_dict.get("外资净买(万)", 0) or 0)
-                    if f_val > 0:
-                        return QColor(_c("COLOR_RISE"))
-                    if f_val < 0:
-                        return QColor(_c("COLOR_FALL"))
-                    return QColor(_c("TEXT_SECONDARY"))
-                except (ValueError, TypeError):
-                    pass
-            elif key == "外资潜伏池":
-                try:
-                    fz_val = float(item_dict.get("外资净买(万)", 0))
-                    if fz_val > 0:
-                        return QColor(_c("COLOR_RISE"))
-                    elif fz_val < 0:
-                        return QColor(_c("COLOR_FALL"))
-                except (ValueError, TypeError):
-                    pass
-
-            return QColor(_c("TEXT_PRIMARY"))
+            return self._foreground_value(key, raw_val, item_dict)
 
         elif role == Qt.ItemDataRole.BackgroundRole:
             heat_color = _numeric_heat_color(key, raw_val)
@@ -377,12 +461,7 @@ class RtTableModel(QAbstractTableModel):
                 return heat_color
 
         elif role == Qt.ItemDataRole.UserRole + 1:
-            flash_record = self._flash_records.get(row, {}).get(col, None)
-            if not flash_record:
-                return None
-            if time.time() - float(flash_record.get("time", 0) or 0) > FLASH_DURATION_SECONDS:
-                return None
-            return flash_record
+            return self._flash_value(row, col)
 
         elif role == Qt.ItemDataRole.UserRole + 2:
             if _is_status_header(key):
@@ -391,40 +470,10 @@ class RtTableModel(QAbstractTableModel):
                     return badge
 
         elif role == Qt.ItemDataRole.UserRole + 4:
-            rail_color = _accent_rail_color_for_row_style(item_dict.get("_row_style", ""))
-            if rail_color:
-                return rail_color
-            for header in self._headers:
-                if not _is_status_header(header):
-                    continue
-                badge = _status_badge_color(item_dict.get(header, ""), header)
-                if badge:
-                    return badge
+            return self._row_accent_value(item_dict)
 
         elif role == Qt.ItemDataRole.UserRole:
-            if key == SERIAL_HEADER:
-                return row + 1
-
-            s_val = str(raw_val).replace(",", "")
-            parsed_value = _parse_numeric_value(raw_val)
-            if parsed_value is not None and (_is_numeric_header(key) or "万" in s_val or "亿" in s_val):
-                return parsed_value
-            if key in ["市值", "评分"] or "万" in s_val or "亿" in s_val:
-                if "万" in s_val:
-                    m = re.search(r"([-+]?\d*\.?\d+)", s_val)
-                    if m:
-                        return float(m.group(1)) * 10000
-                    return 0.0
-                if "亿" in s_val:
-                    m = re.search(r"([-+]?\d*\.?\d+)", s_val)
-                    if m:
-                        return float(m.group(1)) * 100000000
-                    return 0.0
-                m = re.search(r"([-+]?\d*\.?\d+)", s_val)
-                if m:
-                    return float(m.group(1))
-                return 0.0
-            return str(raw_val)
+            return self._sort_value(row, key, raw_val)
 
         return None
 

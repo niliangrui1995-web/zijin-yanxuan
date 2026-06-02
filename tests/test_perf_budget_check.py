@@ -422,6 +422,85 @@ def test_runtime_health_budget_rejects_slow_tab_first_open():
     assert any(failure["check"] == "runtime_health.tab_first_open.elapsed" for failure in failures)
 
 
+def test_runtime_health_budget_accepts_key_tab_first_open_within_budget():
+    report = {
+        "mode": {"tabs": ["foreign_block", "fund_holdings", "earnings"]},
+        "tab_cycle": {
+            "tabs": [
+                {"cycle": 1, "key": "foreign_block", "status": "ok", "elapsed_ms": 450.0},
+                {"cycle": 1, "key": "fund_holdings", "status": "ok", "elapsed_ms": 350.0},
+                {"cycle": 1, "key": "earnings", "status": "ok", "elapsed_ms": 300.0},
+            ]
+        },
+        "runtime_health_samples": [
+            _runtime_health_sample(
+                data_lineage=[
+                    {
+                        "key": "foreign_block",
+                        "title": "大宗交易",
+                        "source": "foreign_block_trade_latest.json",
+                        "cache_refs": ["data/Cache/foreign_block_trade_latest.json"],
+                        "triggered_network": False,
+                        "fallback_or_degraded": False,
+                        "loaded": True,
+                    },
+                    {
+                        "key": "fund_holdings",
+                        "title": "基金持仓",
+                        "source": "fund_holdings_store",
+                        "cache_refs": ["data/vcp_hunter.db"],
+                        "triggered_network": False,
+                        "fallback_or_degraded": False,
+                        "loaded": True,
+                    },
+                    {
+                        "key": "earnings",
+                        "title": "业绩异动",
+                        "source": "earnings_state",
+                        "cache_refs": ["data/vcp_hunter.db"],
+                        "triggered_network": False,
+                        "fallback_or_degraded": False,
+                        "loaded": True,
+                    },
+                ]
+            )
+        ],
+    }
+
+    assert check_runtime_health_budget(report) == []
+
+
+def test_runtime_health_budget_rejects_key_tab_first_open_before_global_budget():
+    report = {
+        "mode": {"tabs": ["foreign_block"]},
+        "tab_cycle": {
+            "tabs": [
+                {"cycle": 1, "key": "foreign_block", "status": "ok", "elapsed_ms": 3000.0},
+            ]
+        },
+        "runtime_health_samples": [
+            _runtime_health_sample(
+                data_lineage=[
+                    {
+                        "key": "foreign_block",
+                        "title": "大宗交易",
+                        "source": "foreign_block_trade_latest.json",
+                        "cache_refs": ["data/Cache/foreign_block_trade_latest.json"],
+                        "triggered_network": False,
+                        "fallback_or_degraded": False,
+                        "loaded": True,
+                    }
+                ]
+            )
+        ],
+    }
+
+    failures = check_runtime_health_budget(report)
+
+    assert any(failure["check"] == "runtime_health.tab_first_open.key_elapsed" for failure in failures)
+    assert not any(failure["check"] == "runtime_health.tab_first_open.elapsed" for failure in failures)
+
+
 def test_runtime_health_budget_prefers_post_warmup_budget_trend():
     report = {
         "runtime_health_samples": [

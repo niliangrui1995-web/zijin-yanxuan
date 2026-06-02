@@ -41,7 +41,10 @@ DEFAULT_THRESHOLDS = {
     "runtime_health_webengine_final_max": 0,
     "runtime_health_rss_tail_range_mb": 96.0,
     "runtime_health_tab_first_open_max_ms": 6500.0,
+    "runtime_health_key_tab_first_open_max_ms": 2500.0,
 }
+
+RUNTIME_HEALTH_KEY_TAB_FIRST_OPEN_BUDGET_KEYS = frozenset({"foreign_block", "fund_holdings", "earnings"})
 
 
 def _read_json(path: str | Path) -> dict:
@@ -812,6 +815,32 @@ def _check_runtime_health_tab_cycle(report: dict, failures: list[dict], budget: 
             tabs=elapsed_failures,
         )
 
+    key_elapsed_failures = []
+    for key in sorted(RUNTIME_HEALTH_KEY_TAB_FIRST_OPEN_BUDGET_KEYS):
+        item = first_open_by_key.get(key)
+        if item is None:
+            continue
+        elapsed = _optional_float(item.get("elapsed_ms"))
+        if elapsed is None:
+            key_elapsed_failures.append({"key": key, "elapsed_ms": item.get("elapsed_ms"), "reason": "missing"})
+            continue
+        if elapsed > budget["runtime_health_key_tab_first_open_max_ms"]:
+            key_elapsed_failures.append(
+                {
+                    "key": key,
+                    "elapsed_ms": elapsed,
+                    "budget": budget["runtime_health_key_tab_first_open_max_ms"],
+                    "reason": "over_key_tab_budget",
+                }
+            )
+    if key_elapsed_failures:
+        _fail(
+            failures,
+            "runtime_health.tab_first_open.key_elapsed",
+            "runtime health key tab first-open elapsed time exceeded budget or was not recorded",
+            tabs=key_elapsed_failures,
+        )
+
 
 def _check_runtime_health_lineage(report: dict, last: dict, failures: list[dict]) -> None:
     lineage = last.get("data_lineage")
@@ -1010,6 +1039,7 @@ def run_budget_checks(args: argparse.Namespace) -> dict:
         "runtime_health_webengine_final_max": args.runtime_health_webengine_final_max,
         "runtime_health_rss_tail_range_mb": args.runtime_health_rss_tail_range_mb,
         "runtime_health_tab_first_open_max_ms": args.runtime_health_tab_first_open_max_ms,
+        "runtime_health_key_tab_first_open_max_ms": args.runtime_health_key_tab_first_open_max_ms,
     }
     checks: list[dict] = []
 
@@ -1210,6 +1240,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--runtime-health-tab-first-open-max-ms",
         type=float,
         default=DEFAULT_THRESHOLDS["runtime_health_tab_first_open_max_ms"],
+    )
+    parser.add_argument(
+        "--runtime-health-key-tab-first-open-max-ms",
+        type=float,
+        default=DEFAULT_THRESHOLDS["runtime_health_key_tab_first_open_max_ms"],
     )
     return parser.parse_args(argv)
 

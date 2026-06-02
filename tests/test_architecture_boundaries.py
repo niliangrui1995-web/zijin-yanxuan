@@ -30,6 +30,16 @@ IGNORED_SCAN_DIRS = {
     "tmp",
     "venv",
 }
+BROAD_EXCEPTION_SCAN_ROOTS = ("app", "domains", "infra")
+BROAD_EXCEPTION_ALLOWED_HANDLERS = {
+    "app/services/ui_earnings_service.py:run_startup_gap_fill",
+    "app/services/ui_earnings_service.py:run_gap_fill",
+    "app/services/ui_earnings_service.py:run_routine_scan",
+    "infra/diagnostics/runtime_health.py:<module>",
+}
+TYPE_ANNOTATION_SCAN_ROOTS = ("app", "domains", "infra")
+MIN_RETURN_ANNOTATION_RATIO = 0.75
+MIN_ARGUMENT_ANNOTATION_RATIO = 0.76
 
 
 def _iter_python_files(root: Path):
@@ -231,6 +241,64 @@ def _find_vcp_constants_imports_outside_vcp(root: Path):
     return violations
 
 
+def _enclosing_function_name(node, parents: dict[ast.AST, ast.AST]) -> str:
+    parent = parents.get(node)
+    while parent is not None:
+        if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return parent.name
+        parent = parents.get(parent)
+    return "<module>"
+
+
+def _find_broad_exception_handlers(root: Path) -> list[str]:
+    violations: list[str] = []
+    for path in _iter_python_files(root):
+        rel_path = path.relative_to(REPO_ROOT).as_posix()
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        parents = {
+            child: node
+            for node in ast.walk(tree)
+            for child in ast.iter_child_nodes(node)
+        }
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ExceptHandler):
+                continue
+            if node.type is None:
+                violations.append(f"{rel_path}:{_enclosing_function_name(node, parents)}")
+            elif isinstance(node.type, ast.Name) and node.type.id in {"Exception", "BaseException"}:
+                violations.append(f"{rel_path}:{_enclosing_function_name(node, parents)}")
+    return sorted(set(violations))
+
+
+def _type_annotation_stats(root: Path) -> dict[str, int]:
+    stats = {
+        "functions": 0,
+        "return_annotated": 0,
+        "arguments": 0,
+        "argument_annotated": 0,
+    }
+    for path in _iter_python_files(root):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            stats["functions"] += 1
+            if node.returns is not None:
+                stats["return_annotated"] += 1
+            arguments = list(node.args.posonlyargs) + list(node.args.args) + list(node.args.kwonlyargs)
+            for argument in arguments:
+                if argument.arg in {"self", "cls"}:
+                    continue
+                stats["arguments"] += 1
+                if argument.annotation is not None:
+                    stats["argument_annotated"] += 1
+    return stats
+
+
+def _safe_ratio(numerator: int, denominator: int) -> float:
+    return 1.0 if denominator == 0 else numerator / denominator
+
+
 def test_python_boundary_scan_includes_root_pyw_entry_and_excludes_noise_dirs():
     paths = {path.relative_to(REPO_ROOT).as_posix() for path in _iter_python_files(REPO_ROOT)}
 
@@ -328,6 +396,42 @@ def test_runtime_paths_create_directories_only_when_explicitly_ensured(tmp_path,
 def test_non_vcp_layers_do_not_import_vcp_constants_directly():
     violations = _find_vcp_constants_imports_outside_vcp(REPO_ROOT)
     assert not violations, "Non-VCP layers imported vcp.constants directly:\n" + "\n".join(violations)
+
+
+def test_app_domain_infra_broad_exceptions_stay_allowlisted():
+    broad_handlers: list[str] = []
+    for root in BROAD_EXCEPTION_SCAN_ROOTS:
+        broad_handlers.extend(_find_broad_exception_handlers(REPO_ROOT / root))
+    violations = sorted(set(broad_handlers) - BROAD_EXCEPTION_ALLOWED_HANDLERS)
+    assert not violations, (
+        "App/domain/infra broad exception handlers must be narrowed or explicitly allowlisted:\n"
+        + "\n".join(violations)
+    )
+
+
+def test_app_domain_infra_type_annotation_baseline_does_not_regress():
+    stats = {
+        "functions": 0,
+        "return_annotated": 0,
+        "arguments": 0,
+        "argument_annotated": 0,
+    }
+    for root in TYPE_ANNOTATION_SCAN_ROOTS:
+        root_stats = _type_annotation_stats(REPO_ROOT / root)
+        for key, value in root_stats.items():
+            stats[key] += value
+
+    return_ratio = _safe_ratio(stats["return_annotated"], stats["functions"])
+    argument_ratio = _safe_ratio(stats["argument_annotated"], stats["arguments"])
+
+    assert return_ratio >= MIN_RETURN_ANNOTATION_RATIO, (
+        f"App/domain/infra return annotation ratio regressed to {return_ratio:.3f}; "
+        f"minimum is {MIN_RETURN_ANNOTATION_RATIO:.3f}"
+    )
+    assert argument_ratio >= MIN_ARGUMENT_ANNOTATION_RATIO, (
+        f"App/domain/infra argument annotation ratio regressed to {argument_ratio:.3f}; "
+        f"minimum is {MIN_ARGUMENT_ANNOTATION_RATIO:.3f}"
+    )
 
 
 def test_ui_layer_does_not_import_legacy_event_or_task_manager_modules():

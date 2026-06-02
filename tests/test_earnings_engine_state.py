@@ -18,6 +18,59 @@ def _build_engine() -> EarningsEngine:
     return engine
 
 
+def test_select_profit_columns_prefers_matching_profit_basis():
+    columns = [
+        "报告期",
+        "净利润",
+        "归属于母公司所有者的净利润",
+        "扣除非经常性损益后的净利润",
+    ]
+
+    assert engine_module._select_profit_columns(columns, is_koufei=True) == ["扣除非经常性损益后的净利润"]
+    assert engine_module._select_profit_columns(columns, is_koufei=False) == ["归属于母公司所有者的净利润"]
+
+
+def test_compute_single_quarter_metrics_uses_q4_cumulative_bases():
+    values = {
+        "2025-09-30": (80.0, False),
+        "2025-06-30": (50.0, True),
+        "2024-12-31": (100.0, False),
+        "2024-09-30": (70.0, False),
+    }
+
+    def _get_cum_profit_with_quick(target_date, basis_desc):
+        return values.get(target_date, (engine_module.np.nan, False))
+
+    metrics, error = engine_module._compute_single_quarter_metrics(
+        2025,
+        12,
+        120.0,
+        _get_cum_profit_with_quick,
+    )
+
+    assert error is None
+    assert metrics.current_single == 40.0
+    assert metrics.last_single == 30.0
+    assert metrics.yoy_base_single == 30.0
+    assert metrics.last_single_basis == "快报净利润回填"
+
+
+def test_compute_single_quarter_metrics_preserves_missing_record_error():
+    def _get_cum_profit_with_quick(target_date, basis_desc):
+        return engine_module.np.nan, False
+
+    metrics, error = engine_module._compute_single_quarter_metrics(
+        2025,
+        6,
+        120.0,
+        _get_cum_profit_with_quick,
+    )
+
+    assert error == "缺记录"
+    assert pd.isna(metrics.current_single)
+    assert pd.isna(metrics.last_single)
+
+
 def test_inject_sectors_uses_ai_industry_chain_context(monkeypatch):
     engine = _build_engine()
     monkeypatch.setattr(
