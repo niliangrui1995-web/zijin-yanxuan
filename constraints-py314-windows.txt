@@ -81,7 +81,6 @@ tqdm==4.67.3
 typing_extensions==4.15.0
 tzdata==2026.2
 urllib3==2.7.0
-vulture==2.16
 webencodings==0.5.1
 websockets==16.0
 xlrd==2.0.2

@@ -943,6 +943,73 @@ def test_fund_holdings_apply_view_payload_primes_local_snapshot():
     assert ("local", tab.model) in calls
 
 
+def test_fund_holdings_apply_view_payload_defers_empty_state_until_finish(monkeypatch):
+    calls = []
+    queued = []
+
+    monkeypatch.setattr(
+        fund_holdings_module.QTimer,
+        "singleShot",
+        lambda _delay_ms, callback: queued.append(callback),
+    )
+
+    class Model:
+        row_data = []
+
+        def update_data(self, rows, **_kwargs):
+            self.row_data = list(rows)
+            calls.append(("update", list(rows)))
+
+    class DummyTab:
+        model = Model()
+        table_state = SimpleNamespace(show_empty=lambda *_args: calls.append("empty"))
+        _sync_active = False
+
+        def _should_defer_view_payload_finish(self):
+            return True
+
+        def _refresh_filter_options(self):
+            calls.append("filters")
+
+        def _restore_view_state(self):
+            calls.append("restore")
+
+        def _ensure_current_quarter_scope_loaded(self, *, async_load: bool):
+            calls.append(("ensure", async_load))
+            return True
+
+        def _apply_filters(self):
+            calls.append("apply_filters")
+
+        def _apply_latest_quotes_from_store(self):
+            calls.append("store")
+
+        def _prime_visible_local_quote_snapshot(self, current_model=None):
+            calls.append(("local", current_model))
+
+        def _update_status_summary(self):
+            calls.append("status")
+
+    tab = DummyTab()
+    fund_holdings_module.FundHoldingsTab._apply_view_payload(
+        tab,
+        {
+            "latest_quarter_map": {},
+            "latest_sync_map": {},
+            "concept_sector_cache": {},
+            "view_rows": [],
+        },
+    )
+
+    assert "empty" not in calls
+    assert len(queued) == 1
+
+    queued[0]()
+
+    assert ("ensure", False) in calls
+    assert "empty" not in calls
+
+
 def test_fund_holdings_tab_update_button_runs_sync_all_directly(monkeypatch):
     _setup_store(monkeypatch, [])
     calls = []

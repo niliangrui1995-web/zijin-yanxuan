@@ -342,7 +342,7 @@ class ForeignBlockTradeTab(BaseStockTab):
 
         self.days_to_fetch = 30  # 默认拉取最近30个交易日
         self._init_ui()
-        self._load_local_cache()
+        QTimer.singleShot(50, self._load_local_cache)
 
         # 大宗交易页只消费 F5/本地快照，不加入盘中实时行情轮询。
         event_bus.sig_cache_reload_completed.connect(self._on_cache_reload_completed)

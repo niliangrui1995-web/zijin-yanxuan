@@ -325,6 +325,7 @@ class ClassicWorkspace(QWidget):
         self._restore_last_tab_timer: QTimer | None = None
         self._workspace_event_bus = None
         self._workspace_events_connected = False
+        self._workspace_icon_tokens = build_ui_tokens()["icon"]
         self._mount_initial_tabs()
         self._workspace_facade = WorkspaceFacade(self)
         self.tabs.currentChanged.connect(self._on_current_tab_changed)
@@ -340,7 +341,7 @@ class ClassicWorkspace(QWidget):
         return _create
 
     def _mount_initial_tabs(self) -> None:
-        icon_tokens = build_ui_tokens()["icon"]
+        icon_tokens = self._workspace_icon_tokens
         for spec in self._tab_specs:
             key = str(spec.get("key") or "").strip()
             widget = self._create_placeholder_tab(spec)
@@ -436,7 +437,7 @@ class ClassicWorkspace(QWidget):
         old_widget = spec.get("widget")
         try:
             self.tabs.removeTab(index)
-            icon_tokens = build_ui_tokens()["icon"]
+            icon_tokens = self._workspace_icon_tokens
             self.tabs.insertTab(
                 index,
                 widget,

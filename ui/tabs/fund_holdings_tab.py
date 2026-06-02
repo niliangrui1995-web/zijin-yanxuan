@@ -486,20 +486,40 @@ class FundHoldingsTab(BaseStockTab):
             }
             view_rows = list(payload.get("view_rows") or [])
             self.model.update_data(view_rows, hydrate_latest_quotes=False)
-            self._refresh_filter_options()
-            self._restore_view_state()
-            ensure_scope_loaded = getattr(self, "_ensure_current_quarter_scope_loaded", None)
-            if callable(ensure_scope_loaded) and ensure_scope_loaded(async_load=False):
-                return
-            self._apply_filters()
-            self._apply_latest_quotes_from_store()
-            self._prime_visible_local_quote_snapshot(self.model)
-            self._update_status_summary()
-            lineage_updater = getattr(self, "_refresh_fund_holdings_lineage", None)
-            if callable(lineage_updater):
-                lineage_updater(view_rows)
+            should_defer = getattr(self, "_should_defer_view_payload_finish", None)
 
-        if not view_rows and not self._sync_active:
+            def finish(rows):
+                skip_empty_state = FundHoldingsTab._finish_apply_view_payload(self, rows)
+                if not skip_empty_state:
+                    FundHoldingsTab._show_empty_view_payload_if_needed(self, rows)
+
+            if callable(should_defer) and should_defer():
+                QTimer.singleShot(0, lambda view_rows=view_rows: finish(view_rows))
+            else:
+                finish(view_rows)
+
+    def _should_defer_view_payload_finish(self) -> bool:
+        return callable(getattr(self, "deleteLater", None)) and not bool(getattr(self, "_autoload", True))
+
+    def _finish_apply_view_payload(self, view_rows: list[dict]) -> bool:
+        if getattr(self, "_runtime_cleanup_done", False):
+            return True
+        self._refresh_filter_options()
+        self._restore_view_state()
+        ensure_scope_loaded = getattr(self, "_ensure_current_quarter_scope_loaded", None)
+        if callable(ensure_scope_loaded) and ensure_scope_loaded(async_load=False):
+            return True
+        self._apply_filters()
+        self._apply_latest_quotes_from_store()
+        self._prime_visible_local_quote_snapshot(self.model)
+        self._update_status_summary()
+        lineage_updater = getattr(self, "_refresh_fund_holdings_lineage", None)
+        if callable(lineage_updater):
+            lineage_updater(view_rows)
+        return False
+
+    def _show_empty_view_payload_if_needed(self, view_rows: list[dict]) -> None:
+        if not view_rows and not getattr(self, "_sync_active", False):
             self.table_state.show_empty("暂无基金持仓数据", "请使用右上角“刷新”同步 QFII 或睿远持仓")
 
     def _reload_from_db_async(

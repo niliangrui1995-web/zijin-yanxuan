@@ -907,6 +907,18 @@ class ScanTab(BaseStockTab):
             if not results:
                 return
 
+            QTimer.singleShot(
+                0,
+                lambda cache_data=cache_data, results=list(results): self._apply_scan_cache_payload(
+                    cache_data,
+                    results,
+                ),
+            )
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError, sqlite3.Error, json.JSONDecodeError) as e:
+            event_bus.sig_system_log.emit("error", f"[扫描缓存] 加载失败: {e}")
+
+    def _apply_scan_cache_payload(self, cache_data: dict, results: list):
+        try:
             saved_at = cache_data.get("saved_at", "未知")
             refreshed_results = self._refresh_scan_result_names(results)
             self._current_results = refreshed_results
