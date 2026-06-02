@@ -23,6 +23,7 @@ import sys
 import time
 from datetime import date, datetime, timedelta
 
+from infra.http_safety import requests_get_https
 from vcp.fetchers.asian_kline_cache import (
     _latest_cache_path as _latest_cache_path,
 )
@@ -487,8 +488,9 @@ def _fetch_tw_history_twse(
             f"?response=json&date={month_start.strftime('%Y%m01')}&stockNo={base_code}"
         )
         try:
-            response = http_session.get(
+            response = requests_get_https(
                 url,
+                session=http_session,
                 headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.twse.com.tw/"},
                 timeout=20,
             )
@@ -531,8 +533,9 @@ def _fetch_tw_history_tpex(
 
     rows: list[dict] = []
     for month_start in _iter_month_starts(start_date, end_date):
-        response = http_session.get(
+        response = requests_get_https(
             "https://www.tpex.org.tw/www/en-us/afterTrading/tradingStock",
+            session=http_session,
             params={"code": base_code, "date": month_start.strftime("%Y/%m/01")},
             headers={
                 "User-Agent": "Mozilla/5.0",
@@ -577,8 +580,9 @@ def _fetch_kr_history_naver(
     rows: list[dict] = []
     page = 1
     while True:
-        response = http_session.get(
+        response = requests_get_https(
             f"https://m.stock.naver.com/api/stock/{base_code}/price?page={page}",
+            session=http_session,
             headers={
                 "User-Agent": "Mozilla/5.0",
                 "Referer": "https://m.stock.naver.com/",
@@ -625,8 +629,9 @@ def _fetch_jp_history_yahoo_japan(
         return []
 
     history_url = f"https://finance.yahoo.co.jp/quote/{base_code}.T/history"
-    response = http_session.get(
+    response = requests_get_https(
         history_url,
+        session=http_session,
         headers={"User-Agent": "Mozilla/5.0", "Referer": history_url},
         timeout=20,
     )
@@ -638,8 +643,9 @@ def _fetch_jp_history_yahoo_japan(
     rows: list[dict] = []
     page = 1
     while True:
-        api_response = http_session.get(
+        api_response = requests_get_https(
             "https://finance.yahoo.co.jp/bff-quote-stocks/v1/ajax/history/price",
+            session=http_session,
             params={
                 "code": f"{base_code}.T",
                 "fromDate": start_date.strftime("%Y%m%d"),
@@ -740,8 +746,9 @@ def _fetch_hk_history_tencent(
 
     row_count = min(max(target_rows + 30, 120), 800)
     symbol = f"hk{base_code}"
-    response = http_session.get(
+    response = requests_get_https(
         f"https://web.ifzq.gtimg.cn/appstock/app/hkfqkline/get?param={symbol},day,,,{row_count},qfq",
+        session=http_session,
         headers={
             "User-Agent": "Mozilla/5.0",
             "Referer": "https://stockapp.finance.qq.com/",

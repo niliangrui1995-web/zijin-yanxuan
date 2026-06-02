@@ -42,6 +42,7 @@ from domains.global_earnings_calendar.rules import (
 from domains.global_earnings_calendar.rules import (
     text_has_any as _text_has_any,
 )
+from infra.http_safety import requests_get_https, requests_post_https
 
 _JP_EARNINGS_KEYWORDS = (
     "\u6c7a\u7b97\u77ed\u4fe1",
@@ -93,8 +94,9 @@ class JpxFinancialAnnouncementProvider:
         if not jp_symbols:
             return []
 
-        response = self.session.get(
+        response = requests_get_https(
             self.page_url,
+            session=self.session,
             headers={"User-Agent": "Mozilla/5.0"},
             timeout=self.timeout,
         )
@@ -102,8 +104,9 @@ class JpxFinancialAnnouncementProvider:
         workbook_links = self._parse_workbook_links(_response_text(response, encoding="utf-8"), self.page_url)
         events: list[EarningsCalendarEvent] = []
         for workbook_url in workbook_links:
-            workbook_response = self.session.get(
+            workbook_response = requests_get_https(
                 workbook_url,
+                session=self.session,
                 headers={"User-Agent": "Mozilla/5.0", "Referer": self.page_url},
                 timeout=self.timeout,
             )
@@ -253,8 +256,9 @@ class TdnetEarningsDisclosureProvider:
         for offset in range(forward_days + 1):
             day = today + dt.timedelta(days=offset)
             url = self.base_url_template.format(date=day.strftime("%Y%m%d"))
-            response = self.session.get(
+            response = requests_get_https(
                 url,
+                session=self.session,
                 headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.release.tdnet.info/inbs/"},
                 timeout=self.timeout,
             )
@@ -363,8 +367,9 @@ class DartEarningsDisclosureProvider:
         end = today + dt.timedelta(days=max(0, int(lookahead_days)))
         events: list[EarningsCalendarEvent] = []
         for page_no in range(1, self.max_pages + 1):
-            response = self.session.get(
+            response = requests_get_https(
                 self.base_url,
+                session=self.session,
                 params={
                     "crtfc_key": self.api_key,
                     "bgn_de": today.strftime("%Y%m%d"),
@@ -471,8 +476,9 @@ class KindEarningsDisclosureProvider:
         events: list[EarningsCalendarEvent] = []
         for offset in range(forward_days + 1):
             day = today + dt.timedelta(days=offset)
-            response = self.session.post(
+            response = requests_post_https(
                 self.base_url,
+                session=self.session,
                 data={
                     "method": "searchTodayDisclosureSub",
                     "currentPageSize": "100",
@@ -590,9 +596,9 @@ class MopsEarningsDisclosureProvider:
 
     def _get(self, url: str, **kwargs):
         try:
-            return self.session.get(url, impersonate="chrome", **kwargs)
+            return requests_get_https(url, session=self.session, impersonate="chrome", **kwargs)
         except TypeError:
-            return self.session.get(url, **kwargs)
+            return requests_get_https(url, session=self.session, **kwargs)
 
     def fetch(
         self,

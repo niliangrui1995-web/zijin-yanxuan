@@ -13,6 +13,7 @@ from domains.global_earnings_calendar.http_utils import raise_for_status as _rai
 from domains.global_earnings_calendar.models import CONFIRMED_STATUS, EarningsCalendarEvent, OligarchCompany
 from domains.global_earnings_calendar.rules import date_from_any as _date_from_any
 from domains.global_earnings_calendar.rules import text_has_any as _text_has_any
+from infra.http_safety import requests_get_https
 
 _SEC_6K_KEYWORDS = (
     "earnings",
@@ -78,8 +79,9 @@ class SecSixKEarningsProvider:
             company = tw_universe.get(ticker)
             if not cik or company is None:
                 continue
-            response = self.session.get(
+            response = requests_get_https(
                 self.submissions_url_template.format(cik=str(cik).zfill(10)),
+                session=self.session,
                 headers=self._headers(),
                 timeout=self.timeout,
             )
@@ -100,8 +102,9 @@ class SecSixKEarningsProvider:
         missing = [ticker for ticker in target_tickers if ticker not in resolved and ticker in self.local_adr_tickers]
         if not missing:
             return resolved
-        response = self.session.get(
+        response = requests_get_https(
             self.company_tickers_url,
+            session=self.session,
             headers={**self._headers(), "Host": "www.sec.gov"},
             timeout=self.timeout,
         )

@@ -43,3 +43,20 @@ def requests_get_https(
     request_headers.setdefault("User-Agent", DEFAULT_REQUESTS_USER_AGENT)
     getter = session.get if session is not None else requests.get
     return getter(url, headers=request_headers, timeout=timeout, **kwargs)
+
+
+def requests_post_https(
+    url: str,
+    *,
+    session=None,
+    headers: Mapping[str, str] | None = None,
+    timeout=15,
+    **kwargs,
+):
+    ensure_https_request(url)
+    import requests
+
+    request_headers = dict(headers or {})
+    request_headers.setdefault("User-Agent", DEFAULT_REQUESTS_USER_AGENT)
+    poster = session.post if session is not None else requests.post
+    return poster(url, headers=request_headers, timeout=timeout, **kwargs)

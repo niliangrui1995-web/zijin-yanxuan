@@ -16,6 +16,7 @@ from domains.global_earnings_calendar.providers import _utils as provider_utils
 from domains.global_earnings_calendar.providers.alpha_vantage import AlphaVantageEarningsCalendarProvider
 from domains.global_earnings_calendar.providers.nasdaq import NasdaqEarningsCalendarProvider
 from domains.global_earnings_calendar.storage import ConfirmedEarningsEventsProvider
+from infra.http_safety import DEFAULT_REQUESTS_USER_AGENT
 
 
 def test_asian_market_service_delegates_to_fetcher_and_rate_limit_modules(monkeypatch):
@@ -269,8 +270,8 @@ def test_alpha_vantage_provider_fetch_and_parse_edges():
             self.response = Response()
             self.calls = []
 
-        def get(self, url, *, params, timeout):
-            self.calls.append((url, params, timeout))
+        def get(self, url, *, headers, params, timeout):
+            self.calls.append((url, headers, params, timeout))
             return self.response
 
     session = Session()
@@ -280,7 +281,8 @@ def test_alpha_vantage_provider_fetch_and_parse_edges():
     events = provider.fetch(universe, horizon="3month")
 
     assert session.response.raised is True
-    assert session.calls[0][1]["apikey"] == "key"
+    assert session.calls[0][1]["User-Agent"] == DEFAULT_REQUESTS_USER_AGENT
+    assert session.calls[0][2]["apikey"] == "key"
     assert events[0].ticker == "NVDA"
     assert AlphaVantageEarningsCalendarProvider().fetch(universe) == []
     assert provider.parse_csv("", universe) == []

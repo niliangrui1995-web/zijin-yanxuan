@@ -22,6 +22,11 @@ if str(ROOT) not in sys.path:
 
 from core.runtime_env import configure_qt_webengine_runtime
 
+DEFAULT_STRICT_STALL_TOTAL_MAX = 80
+DEFAULT_STRICT_STALL_CRITICAL_MAX = 32
+DEFAULT_STRICT_STALL_EVENT_LOOP_CRITICAL_MAX = 32
+DEFAULT_STRICT_STALL_MAX_MS = 1200.0
+
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Capture UI audit screenshots.")
@@ -79,6 +84,30 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         default=None,
         help="Minimum numbered tab screenshots required in strict mode. Defaults to the current workspace tab count.",
+    )
+    parser.add_argument(
+        "--strict-stall-total-max",
+        type=int,
+        default=DEFAULT_STRICT_STALL_TOTAL_MAX,
+        help="Maximum UI stall events allowed in strict mode.",
+    )
+    parser.add_argument(
+        "--strict-stall-critical-max",
+        type=int,
+        default=DEFAULT_STRICT_STALL_CRITICAL_MAX,
+        help="Maximum critical UI stall events allowed in strict mode.",
+    )
+    parser.add_argument(
+        "--strict-stall-event-loop-critical-max",
+        type=int,
+        default=DEFAULT_STRICT_STALL_EVENT_LOOP_CRITICAL_MAX,
+        help="Maximum critical event-loop stall events allowed in strict mode.",
+    )
+    parser.add_argument(
+        "--strict-stall-max-ms",
+        type=float,
+        default=DEFAULT_STRICT_STALL_MAX_MS,
+        help="Maximum single UI stall duration allowed in strict mode.",
     )
     return parser.parse_args(argv)
 
@@ -217,6 +246,35 @@ def _validate_saved_screenshots(
             continue
         if theme_appearance != "light" and _has_large_white_panel(image):
             errors.append(f"{path.name} appears to contain a large white panel")
+    return errors
+
+
+def _validate_ui_stall_budget(
+    snapshot: dict | None,
+    *,
+    total_max: int,
+    critical_max: int,
+    event_loop_critical_max: int,
+    max_elapsed_ms: float,
+) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(snapshot, dict) or not snapshot.get("installed"):
+        return ["UI stall probe was not installed"]
+
+    checks = (
+        ("total_count", int(total_max), "UI stall total"),
+        ("critical_count", int(critical_max), "critical UI stall"),
+        ("event_loop_critical_count", int(event_loop_critical_max), "critical event-loop stall"),
+    )
+    for key, budget, label in checks:
+        value = int(snapshot.get(key) or 0)
+        if value > budget:
+            errors.append(f"{label} count {value} exceeded budget {budget}")
+
+    elapsed = float(snapshot.get("max_elapsed_ms") or 0.0)
+    budget_ms = float(max_elapsed_ms)
+    if elapsed > budget_ms:
+        errors.append(f"max UI stall {elapsed:.1f}ms exceeded budget {budget_ms:.1f}ms")
     return errors
 
 
@@ -420,6 +478,19 @@ def main() -> int:
             tabs=args.tabs,
             strict_tabs_min=strict_tabs_min,
             theme_appearance=theme_manager.current_theme.get("appearance", ""),
+        )
+        from app.services.ui_diagnostics_service import get_ui_stall_probe
+
+        probe = get_ui_stall_probe()
+        stall_snapshot = probe.stall_snapshot() if probe is not None else None
+        validation_errors.extend(
+            _validate_ui_stall_budget(
+                stall_snapshot,
+                total_max=args.strict_stall_total_max,
+                critical_max=args.strict_stall_critical_max,
+                event_loop_critical_max=args.strict_stall_event_loop_critical_max,
+                max_elapsed_ms=args.strict_stall_max_ms,
+            )
         )
 
     workspace = getattr(window, "_workspace", None)

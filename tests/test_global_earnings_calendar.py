@@ -127,10 +127,15 @@ def test_nasdaq_provider_parses_lite_after_hours_calendar_row():
             }
 
     class FakeSession:
+        def __init__(self):
+            self.calls = []
+
         def get(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
             return FakeResponse()
 
-    provider = NasdaqEarningsCalendarProvider(session=FakeSession())
+    session = FakeSession()
+    provider = NasdaqEarningsCalendarProvider(session=session)
     universe = {
         "LITE": OligarchCompany("Lumentum", "LITE", "光芯片与硅光", "normal", "US"),
     }
@@ -142,6 +147,10 @@ def test_nasdaq_provider_parses_lite_after_hours_calendar_row():
     assert events[0].report_date == "2026-05-05"
     assert events[0].time_label == "盘后"
     assert events[0].source == "Nasdaq"
+    assert session.calls[0][0] == ("https://api.nasdaq.com/api/calendar/earnings",)
+    assert session.calls[0][1]["params"] == {"date": "2026-05-05"}
+    assert session.calls[0][1]["headers"]["User-Agent"] == "Mozilla/5.0"
+    assert session.calls[0][1]["timeout"] == (5, 20)
 
 
 def test_jpx_provider_parses_financial_announcement_workbook():

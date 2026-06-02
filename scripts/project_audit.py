@@ -35,6 +35,7 @@ PERF_REPORT_OPTIONS = (
 
 RUNTIME_HEALTH_SHORT_OUTPUT = "tmp/runtime_health_stability_short.json"
 RUNTIME_HEALTH_SHORT_SAMPLE_OUTPUT_DIR = "tmp/runtime_health_stability_short_samples"
+COMPLEXITY_HOTSPOT_AUDIT_OUTPUT = "tmp/complexity_hotspot_audit.json"
 DEPENDENCY_AUDIT_OUTPUT = "tmp/dependency_audit.json"
 HTTP_SAFETY_AUDIT_OUTPUT = "tmp/http_safety_audit.json"
 COVERAGE_REPORT_OUTPUT = "tmp/coverage.json"
@@ -129,6 +130,14 @@ def build_audit_commands(args: argparse.Namespace) -> list[AuditCommand]:
             "architecture-boundaries",
             [python, "-m", "pytest", "-q", "tests/test_architecture_boundaries.py"],
         ),
+        AuditCommand(
+            "complexity-hotspots",
+            [python, "scripts/complexity_hotspot_audit.py", "--output", COMPLEXITY_HOTSPOT_AUDIT_OUTPUT],
+        ),
+        AuditCommand(
+            "http-safety-audit",
+            [python, "scripts/http_safety_audit.py", "--output", HTTP_SAFETY_AUDIT_OUTPUT],
+        ),
     ]
 
     if args.extended_ruff:
@@ -174,19 +183,19 @@ def build_audit_commands(args: argparse.Namespace) -> list[AuditCommand]:
             )
         )
 
+    if args.ui_stall_budget:
+        commands.append(
+            AuditCommand(
+                "ui-stall-budget",
+                [python, "scripts/capture_ui_audit_screenshots.py", "--offscreen", "--strict"],
+            )
+        )
+
     if args.dependency_audit:
         commands.append(
             AuditCommand(
                 "dependency-audit",
                 [python, "scripts/dependency_audit.py", "--strict", "--output", DEPENDENCY_AUDIT_OUTPUT],
-            )
-        )
-
-    if args.http_safety_audit:
-        commands.append(
-            AuditCommand(
-                "http-safety-audit",
-                [python, "scripts/http_safety_audit.py", "--output", HTTP_SAFETY_AUDIT_OUTPUT],
             )
         )
 
@@ -259,6 +268,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="Run the short runtime health stability suite with its budget gate.",
     )
     parser.add_argument(
+        "--ui-stall-budget",
+        action="store_true",
+        help="Run strict offscreen UI screenshots and fail when the UI stall budget is exceeded.",
+    )
+    parser.add_argument(
         "--dependency-audit",
         action="store_true",
         help="Run the optional dependency supply-chain audit report.",
@@ -266,7 +280,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--http-safety-audit",
         action="store_true",
-        help="Run the optional direct external HTTP safety-wrapper audit.",
+        help="Compatibility flag; the direct external HTTP safety-wrapper audit now runs in the standard gate.",
     )
     parser.add_argument(
         "--type-check",

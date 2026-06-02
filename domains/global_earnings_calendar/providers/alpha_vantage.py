@@ -11,6 +11,7 @@ from domains.global_earnings_calendar.constants import DEFAULT_HORIZON
 from domains.global_earnings_calendar.event_ops import sorted_events
 from domains.global_earnings_calendar.models import EarningsCalendarEvent, OligarchCompany
 from domains.global_earnings_calendar.rules import market_from_ticker
+from infra.http_safety import requests_get_https
 
 
 class AlphaVantageEarningsCalendarProvider:
@@ -36,8 +37,9 @@ class AlphaVantageEarningsCalendarProvider:
     ) -> list[EarningsCalendarEvent]:
         if not self.api_key:
             return []
-        response = self.session.get(
+        response = requests_get_https(
             self.base_url,
+            session=self.session,
             params={
                 "function": "EARNINGS_CALENDAR",
                 "horizon": horizon,

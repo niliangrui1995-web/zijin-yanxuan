@@ -25,7 +25,8 @@ class _JsonResponse:
         return None
 
 
-def test_sec_provider_resolves_adr_cik_and_fetches_6k_event():
+def test_sec_provider_resolves_adr_cik_and_fetches_6k_event(monkeypatch):
+    monkeypatch.setenv("SEC_USER_AGENT", "test-sec-agent")
     calls = []
 
     def fake_get(url, **kwargs):
@@ -57,6 +58,14 @@ def test_sec_provider_resolves_adr_cik_and_fetches_6k_event():
     assert events[0].status == "confirmed"
     assert "Archives/edgar/data/1234" in events[0].conference_url
     assert len(calls) == 2
+    assert calls[0][0] == "https://www.sec.gov/files/company_tickers.json"
+    assert calls[0][1]["headers"]["Host"] == "www.sec.gov"
+    assert calls[0][1]["headers"]["User-Agent"] == "test-sec-agent"
+    assert calls[0][1]["timeout"] == (5, 20)
+    assert calls[1][0] == "https://data.sec.gov/submissions/CIK0000001234.json"
+    assert calls[1][1]["headers"]["Host"] == "data.sec.gov"
+    assert calls[1][1]["headers"]["User-Agent"] == "test-sec-agent"
+    assert calls[1][1]["timeout"] == (5, 20)
 
 
 def test_sec_parse_submissions_filters_payload_shape_dates_and_keywords():
@@ -115,7 +124,13 @@ def test_company_ir_provider_loads_rules_file_and_fetches_matching_event(tmp_pat
         ),
         encoding="utf-8",
     )
-    session = SimpleNamespace(get=lambda *_args, **_kwargs: _JsonResponse(text="<html>Q1 results May 4, 2026</html>"))
+    calls = []
+
+    def fake_get(url, **kwargs):
+        calls.append((url, kwargs))
+        return _JsonResponse(text="<html>Q1 results May 4, 2026</html>")
+
+    session = SimpleNamespace(get=fake_get)
     provider = CompanyIrEarningsCalendarProvider(session=session, rules_path=rules_path)
     universe = {"ALP": OligarchCompany("Alpha", "ALP", "AI", "normal", "US")}
 
@@ -126,6 +141,9 @@ def test_company_ir_provider_loads_rules_file_and_fetches_matching_event(tmp_pat
     assert events[0].report_date == "2026-05-04"
     assert events[0].fiscal_period == "Q1"
     assert events[0].source
+    assert calls[0][0] == "https://example.test/ir"
+    assert calls[0][1]["headers"]["User-Agent"] == "Mozilla/5.0"
+    assert calls[0][1]["timeout"] == (5, 20)
 
 
 def test_company_ir_parse_page_uses_explicit_dates_and_filters_keywords():

@@ -11,6 +11,7 @@ from core.logger import get_logger
 from domains.global_earnings_calendar.constants import DEFAULT_LOOKAHEAD_DAYS
 from domains.global_earnings_calendar.event_ops import sorted_events
 from domains.global_earnings_calendar.models import EarningsCalendarEvent, OligarchCompany
+from infra.http_safety import requests_get_https
 
 log = get_logger(__name__)
 
@@ -67,8 +68,9 @@ class NasdaqEarningsCalendarProvider:
         universe: Mapping[str, OligarchCompany],
         us_symbols: set[str],
     ) -> list[EarningsCalendarEvent]:
-        response = self.session.get(
+        response = requests_get_https(
             self.base_url,
+            session=self.session,
             params={"date": day.strftime("%Y-%m-%d")},
             headers={
                 "User-Agent": "Mozilla/5.0",

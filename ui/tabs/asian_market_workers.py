@@ -311,8 +311,9 @@ def _fetch_tw_realtime_quote(code: str, http_session) -> dict | None:
 
     market_prefix = "otc" if suffix == "TWO" else "tse"
     url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch={market_prefix}_{base_code}.tw&json=1&delay=0"
-    response = http_session.get(
+    response = asian_market_get(
         url,
+        session=http_session,
         headers={**_DEFAULT_HTTP_HEADERS, "Referer": "https://mis.twse.com.tw/"},
         timeout=15,
     )
@@ -351,8 +352,9 @@ def _fetch_kr_realtime_quote(code: str, http_session) -> dict | None:
         return None
 
     url = f"https://polling.finance.naver.com/api/realtime/domestic/stock/{base_code}"
-    response = http_session.get(
+    response = asian_market_get(
         url,
+        session=http_session,
         headers={**_DEFAULT_HTTP_HEADERS, "Referer": "https://finance.naver.com/"},
         timeout=15,
     )
@@ -396,8 +398,9 @@ def _fetch_hk_realtime_quote(code: str, http_session) -> dict | None:
 
     quote_code = base_code.zfill(5) if base_code.isdigit() else base_code
     url = f"https://qt.gtimg.cn/q=hk{quote_code}"
-    response = http_session.get(
+    response = asian_market_get(
         url,
+        session=http_session,
         headers={**_DEFAULT_HTTP_HEADERS, "Referer": "https://stockapp.finance.qq.com/"},
         timeout=15,
     )
@@ -445,7 +448,7 @@ def _fetch_jp_realtime_quote(code: str, http_session) -> dict | None:
         return None
 
     url = f"https://finance.yahoo.co.jp/quote/{base_code}.T"
-    response = http_session.get(url, headers=_DEFAULT_HTTP_HEADERS, timeout=_HTTP_TIMEOUT_SEC)
+    response = asian_market_get(url, session=http_session, headers=_DEFAULT_HTTP_HEADERS, timeout=_HTTP_TIMEOUT_SEC)
     html = response.text
     quote = _parse_jp_realtime_page(html)
     if quote:
@@ -611,8 +614,9 @@ def _fetch_twse_pe(code: str, http_session) -> tuple[float | None, str]:
     if not base_code:
         return None, ""
 
-    response = http_session.get(
+    response = asian_market_get(
         "https://www.twse.com.tw/rwd/zh/afterTrading/BWIBBU_d?response=json&selectType=ALL",
+        session=http_session,
         headers={**_DEFAULT_HTTP_HEADERS, "Referer": "https://www.twse.com.tw/"},
         timeout=15,
     )
@@ -642,8 +646,9 @@ def _fetch_tpex_pe(code: str, http_session) -> tuple[float | None, str]:
     if not base_code:
         return None, ""
 
-    response = http_session.get(
+    response = asian_market_get(
         "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis",
+        session=http_session,
         headers={**_DEFAULT_HTTP_HEADERS, "Referer": "https://www.tpex.org.tw/"},
         timeout=15,
     )
@@ -665,8 +670,9 @@ def _fetch_kr_naver_pe(code: str, http_session) -> tuple[float | None, str]:
     if not base_code:
         return None, ""
 
-    response = http_session.get(
+    response = asian_market_get(
         f"https://finance.naver.com/item/main.naver?code={base_code}",
+        session=http_session,
         headers={**_DEFAULT_HTTP_HEADERS, "Referer": "https://finance.naver.com/"},
         timeout=15,
     )
@@ -737,8 +743,9 @@ def _fetch_jp_yahoo_pe(code: str, http_session) -> tuple[float | None, str]:
             "Referer": "https://finance.yahoo.co.jp/",
         }
     )
-    response = http_session.get(
+    response = asian_market_get(
         url,
+        session=http_session,
         headers=headers,
         timeout=_HTTP_TIMEOUT_SEC,
     )

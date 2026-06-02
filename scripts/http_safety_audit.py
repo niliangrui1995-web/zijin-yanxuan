@@ -15,7 +15,9 @@ SOURCE_ROOTS = (
     "app",
     "core",
     "domains",
+    "earnings",
     "infra",
+    "scripts",
     "ui",
     "vcp",
 )
@@ -33,13 +35,6 @@ DIRECT_HTTP_METHODS = {
 
 LEGACY_ALLOWED_DIRECT_HTTP_FILES = {
     "infra/http_safety.py": "central HTTPS wrapper implementation",
-    "vcp/fetchers/asian_kline_fetcher.py": "legacy market-data fetcher migration target",
-    "ui/tabs/asian_market_workers.py": "legacy Asian-market worker migration target",
-    "domains/global_earnings_calendar/providers/alpha_vantage.py": "legacy earnings provider migration target",
-    "domains/global_earnings_calendar/providers/asia_disclosures.py": "legacy earnings provider migration target",
-    "domains/global_earnings_calendar/providers/company_ir.py": "legacy earnings provider migration target",
-    "domains/global_earnings_calendar/providers/nasdaq.py": "legacy earnings provider migration target",
-    "domains/global_earnings_calendar/providers/sec.py": "legacy earnings provider migration target",
 }
 
 
@@ -65,12 +60,117 @@ def _attribute_chain(node: ast.AST) -> tuple[str, ...]:
     return ()
 
 
-def _direct_http_reason(call: ast.Call) -> str | None:
+def _request_import_aliases(tree: ast.AST) -> tuple[set[str], set[str], set[str], set[str], set[str]]:
+    request_method_names: set[str] = set()
+    request_session_factory_names: set[str] = set()
+    curl_method_names: set[str] = set()
+    curl_session_factory_names: set[str] = set()
+    curl_request_module_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "curl_cffi.requests":
+                    curl_request_module_names.add(alias.asname or alias.name)
+            continue
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        if node.module == "curl_cffi":
+            for alias in node.names:
+                if alias.name == "requests":
+                    curl_request_module_names.add(alias.asname or alias.name)
+            continue
+        if node.module == "curl_cffi.requests":
+            for alias in node.names:
+                local_name = alias.asname or alias.name
+                if alias.name in DIRECT_HTTP_METHODS:
+                    curl_method_names.add(local_name)
+                if alias.name == "Session":
+                    curl_session_factory_names.add(local_name)
+            continue
+        if node.module != "requests":
+            continue
+        for alias in node.names:
+            local_name = alias.asname or alias.name
+            if alias.name in DIRECT_HTTP_METHODS:
+                request_method_names.add(local_name)
+            if alias.name == "Session":
+                request_session_factory_names.add(local_name)
+    return (
+        request_method_names,
+        request_session_factory_names,
+        curl_method_names,
+        curl_session_factory_names,
+        curl_request_module_names,
+    )
+
+
+def _is_requests_session_factory(node: ast.AST, session_factory_names: set[str]) -> bool:
+    chain = _attribute_chain(node)
+    return chain in {("requests", "Session"), ("requests", "sessions", "Session")} or (
+        isinstance(node, ast.Name) and node.id in session_factory_names
+    )
+
+
+def _is_curl_session_factory(
+    node: ast.AST,
+    session_factory_names: set[str],
+    module_names: set[str],
+) -> bool:
+    chain = _attribute_chain(node)
+    return (
+        chain == ("curl_cffi", "requests", "Session")
+        or (len(chain) == 2 and chain[0] in module_names and chain[1] == "Session")
+        or (isinstance(node, ast.Name) and node.id in session_factory_names)
+    )
+
+
+def _direct_http_reason(
+    call: ast.Call,
+    *,
+    request_method_names: set[str] | None = None,
+    session_factory_names: set[str] | None = None,
+    curl_method_names: set[str] | None = None,
+    curl_session_factory_names: set[str] | None = None,
+    curl_request_module_names: set[str] | None = None,
+) -> str | None:
+    request_method_names = request_method_names or set()
+    session_factory_names = session_factory_names or set()
+    curl_method_names = curl_method_names or set()
+    curl_session_factory_names = curl_session_factory_names or set()
+    curl_request_module_names = curl_request_module_names or set()
+    if isinstance(call.func, ast.Name) and call.func.id in request_method_names:
+        return "requests imported direct calls must be routed through requests_get_https"
+    if isinstance(call.func, ast.Name) and call.func.id in curl_method_names:
+        return "curl_cffi imported direct calls must be routed through requests_get_https or an approved session helper"
+
+    if (
+        isinstance(call.func, ast.Attribute)
+        and call.func.attr in DIRECT_HTTP_METHODS
+        and isinstance(call.func.value, ast.Call)
+        and _is_requests_session_factory(call.func.value.func, session_factory_names)
+    ):
+        return "requests Session direct calls must be routed through requests_get_https"
+    if (
+        isinstance(call.func, ast.Attribute)
+        and call.func.attr in DIRECT_HTTP_METHODS
+        and isinstance(call.func.value, ast.Call)
+        and _is_curl_session_factory(call.func.value.func, curl_session_factory_names, curl_request_module_names)
+    ):
+        return "curl_cffi Session direct calls must be routed through requests_get_https or an approved session helper"
+
     chain = _attribute_chain(call.func)
     if not chain:
         return None
 
     method = chain[-1]
+    if (
+        method in DIRECT_HTTP_METHODS
+        and (
+            chain[:2] == ("curl_cffi", "requests")
+            or (len(chain) >= 2 and chain[0] in curl_request_module_names)
+        )
+    ):
+        return "curl_cffi direct calls must be routed through requests_get_https or an approved session helper"
     if chain in {("urllib", "request", "urlopen"), ("urllib2", "urlopen")}:
         return "urllib.request.urlopen must be routed through urlopen_https"
     if method == "urlopen":
@@ -87,11 +187,25 @@ def _scan_file(path: Path, *, root: Path) -> list[HttpSafetyFinding]:
     tree = ast.parse(text, filename=str(path))
     repo_path = _to_repo_path(path, root)
     allow_reason = LEGACY_ALLOWED_DIRECT_HTTP_FILES.get(repo_path)
+    (
+        request_method_names,
+        session_factory_names,
+        curl_method_names,
+        curl_session_factory_names,
+        curl_request_module_names,
+    ) = _request_import_aliases(tree)
     findings: list[HttpSafetyFinding] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        reason = _direct_http_reason(node)
+        reason = _direct_http_reason(
+            node,
+            request_method_names=request_method_names,
+            session_factory_names=session_factory_names,
+            curl_method_names=curl_method_names,
+            curl_session_factory_names=curl_session_factory_names,
+            curl_request_module_names=curl_request_module_names,
+        )
         if reason is None:
             continue
         call_text = ast.get_source_segment(text, node) or ".".join(_attribute_chain(node.func))
