@@ -20,7 +20,6 @@ from PyQt6.QtGui import QCursor, QDesktopServices
 from PyQt6.QtWidgets import QApplication, QMenu, QMessageBox
 
 from app.services.ui_event_service import ui_signals as event_bus
-from app.services.ui_navigation_service import CODEX_LOCAL_LAUNCHER
 from app.services.ui_navigation_service import open_codex_desktop_thread as launch_codex_desktop_thread
 from app.services.ui_watchlist_service import watchlist_vm
 from ui.components.motion import install_menu_fade
@@ -136,7 +135,7 @@ def _open_codex_url(url: str) -> bool:
 
 
 def _open_codex_desktop_thread(thread_url: str) -> bool:
-    return launch_codex_desktop_thread(thread_url, launcher=CODEX_LOCAL_LAUNCHER)
+    return launch_codex_desktop_thread(thread_url)
 
 
 def open_codex_project_thread(

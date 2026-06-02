@@ -198,24 +198,17 @@ def test_open_codex_project_thread_warns_when_windows_project_opener_rejects(mon
     assert "Codex" in warnings[0]
 
 
-def test_open_codex_desktop_thread_uses_local_launcher(monkeypatch, tmp_path):
-    launcher = tmp_path / "open-codex-project.ps1"
-    launcher.write_text("", encoding="utf-8")
+def test_open_codex_desktop_thread_uses_navigation_service_fast_path(monkeypatch):
     captured = {}
 
-    def fake_launch(thread_url, *, launcher):
+    def fake_launch(thread_url):
         captured["thread_url"] = thread_url
-        captured["launcher"] = launcher
         return True
 
-    monkeypatch.setattr(stock_context_menu, "CODEX_LOCAL_LAUNCHER", launcher)
     monkeypatch.setattr(stock_context_menu, "launch_codex_desktop_thread", fake_launch)
 
     assert stock_context_menu._open_codex_desktop_thread("codex://new?path=/tmp/demo")
-    assert captured == {
-        "thread_url": "codex://new?path=/tmp/demo",
-        "launcher": launcher,
-    }
+    assert captured == {"thread_url": "codex://new?path=/tmp/demo"}
 
 
 def test_navigation_service_open_codex_desktop_thread_uses_silent_launcher(monkeypatch, tmp_path):
