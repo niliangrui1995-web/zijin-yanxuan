@@ -34,6 +34,17 @@ def _load_kline_script(filename: str) -> str:
     return (_KLINE_SCRIPT_DIR / filename).read_text(encoding="utf-8")
 
 
+def dumps_json_for_script(value, **kwargs) -> str:
+    text = json.dumps(value, ensure_ascii=False, **kwargs)
+    return (
+        text.replace("&", "\\u0026")
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
+
+
 
 def merge_kline_context(base: dict, extra: dict, *, overwrite: bool = False) -> dict:
     if not isinstance(extra, dict):
@@ -495,8 +506,8 @@ def _build_kline_runtime_script() -> str:
 
 def build_kline_html(title: str, echarts_data: dict, echarts_js_path: str, theme_colors: dict) -> str:
     js_url = QUrl.fromLocalFile(echarts_js_path).toString()
-    data_json = json.dumps(echarts_data, ensure_ascii=False)
-    theme_json = json.dumps(theme_colors, ensure_ascii=False)
+    data_json = dumps_json_for_script(echarts_data)
+    theme_json = dumps_json_for_script(theme_colors)
     style_block = _build_kline_style_block(theme_colors)
     toolbar_html = _build_kline_toolbar_html()
     bootstrap_script = _build_kline_bootstrap_script(data_json, theme_json)

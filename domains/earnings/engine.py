@@ -58,6 +58,12 @@ _THS_FINANCIAL_BENEFIT_CACHE = {}
 _THS_FINANCIAL_BENEFIT_CACHE_TTL_SEC = 30 * 60
 _THS_FINANCIAL_BENEFIT_FALLBACK_TTL_SEC = 6 * 60 * 60
 _THS_REQUEST_TIMEOUT = (5, 15)
+_THS_MAX_RESPONSE_CHARS = 2_000_000
+_THS_MAX_FLASHDATA_CHARS = 2_000_000
+_THS_MAX_TITLE_ROWS = 512
+_THS_MAX_SECTION_ROWS = 512
+_THS_MAX_SECTION_COLUMNS = 128
+_THS_FINANCIAL_BENEFIT_CACHE_MAX_ENTRIES = 512
 _AKSHARE_FETCH_ERRORS = (
     AttributeError,
     ConnectionError,
@@ -321,6 +327,10 @@ def _get_cached_ths_financial_benefit(
 
 def _set_cached_ths_financial_benefit(symbol: str, indicator: str, df: pd.DataFrame) -> pd.DataFrame:
     cache_key = _ths_financial_benefit_cache_key(symbol, indicator)
+    if cache_key not in _THS_FINANCIAL_BENEFIT_CACHE and len(_THS_FINANCIAL_BENEFIT_CACHE) >= _THS_FINANCIAL_BENEFIT_CACHE_MAX_ENTRIES:
+        excess = len(_THS_FINANCIAL_BENEFIT_CACHE) - _THS_FINANCIAL_BENEFIT_CACHE_MAX_ENTRIES + 1
+        for old_key, _old_value in sorted(_THS_FINANCIAL_BENEFIT_CACHE.items(), key=lambda item: item[1][0])[:excess]:
+            _THS_FINANCIAL_BENEFIT_CACHE.pop(old_key, None)
     cached_df = df.copy()
     _THS_FINANCIAL_BENEFIT_CACHE[cache_key] = (time.time(), cached_df)
     return cached_df.copy()
@@ -334,6 +344,40 @@ def _format_ths_payload_error(symbol: str, response_text: str, detail: str, stat
     parts.append(f"preview={_preview_remote_text(response_text)}")
     parts.append(detail)
     return "THS 返回异常: " + ", ".join(parts)
+
+
+def _raise_if_ths_text_too_large(
+    symbol: str,
+    text: str,
+    *,
+    limit: int,
+    label: str,
+    response_text: str,
+    status_code: int | None = None,
+) -> None:
+    if len(text or "") > limit:
+        raise ValueError(
+            _format_ths_payload_error(
+                symbol,
+                response_text,
+                f"{label} too large: len={len(text or '')}, limit={limit}",
+                status_code,
+            )
+        )
+
+
+def _validate_ths_financial_shape(symbol: str, section_key: str, title_data: list, header_row: list, data_rows: list) -> None:
+    if len(title_data) > _THS_MAX_TITLE_ROWS:
+        raise ValueError(f"THS 数据结构异常: symbol={symbol}, title rows exceed limit")
+    if len(data_rows) > _THS_MAX_SECTION_ROWS:
+        raise ValueError(f"THS 数据结构异常: symbol={symbol}, {section_key} rows exceed limit")
+    if len(header_row) > _THS_MAX_SECTION_COLUMNS:
+        raise ValueError(f"THS 数据结构异常: symbol={symbol}, {section_key} columns exceed limit")
+    for row in data_rows:
+        if not isinstance(row, list):
+            raise ValueError(f"THS 数据结构异常: symbol={symbol}, {section_key} 行不是列表")
+        if len(row) > _THS_MAX_SECTION_COLUMNS:
+            raise ValueError(f"THS 数据结构异常: symbol={symbol}, {section_key} row columns exceed limit")
 
 
 def _fetch_stock_financial_benefit_ths(symbol: str, indicator: str = "按报告期") -> pd.DataFrame:
@@ -375,6 +419,14 @@ def _fetch_stock_financial_benefit_ths(symbol: str, indicator: str = "按报告�
                 response.status_code,
             )
         )
+    _raise_if_ths_text_too_large(
+        symbol,
+        response_text,
+        limit=_THS_MAX_RESPONSE_CHARS,
+        label="response",
+        response_text=response_text,
+        status_code=response.status_code,
+    )
 
     stripped_text = response_text.strip()
     if not stripped_text:
@@ -392,6 +444,16 @@ def _fetch_stock_financial_benefit_ths(symbol: str, indicator: str = "按报告�
     flash_data = payload.get("flashData")
     if not flash_data:
         raise ValueError(_format_ths_payload_error(symbol, response_text, "缺少 flashData", response.status_code))
+    if not isinstance(flash_data, str):
+        raise ValueError(_format_ths_payload_error(symbol, response_text, "flashData 类型异常", response.status_code))
+    _raise_if_ths_text_too_large(
+        symbol,
+        flash_data,
+        limit=_THS_MAX_FLASHDATA_CHARS,
+        label="flashData",
+        response_text=response_text,
+        status_code=response.status_code,
+    )
 
     try:
         data_json = json.loads(flash_data)
@@ -402,13 +464,16 @@ def _fetch_stock_financial_benefit_ths(symbol: str, indicator: str = "按报告�
     section_data = data_json.get(section_key) or []
     if not isinstance(title_data, list) or not title_data:
         raise ValueError(f"THS 数据结构异常: symbol={symbol}, title 缺失")
-    if not isinstance(section_data, list) or not section_data:
+    if not isinstance(section_data, list):
+        raise ValueError(f"THS 数据结构异常: symbol={symbol}, {section_key} 不是列表")
+    if not section_data:
         return _set_cached_ths_financial_benefit(symbol, indicator, pd.DataFrame(columns=["报告期"]))
 
     header_row = section_data[0]
     data_rows = section_data[1:]
     if not isinstance(header_row, list):
         raise ValueError(f"THS 数据结构异常: symbol={symbol}, {section_key} 表头缺失")
+    _validate_ths_financial_shape(symbol, section_key, title_data, header_row, data_rows)
 
     df_index = [item[0] if isinstance(item, list) else item for item in title_data]
     if data_rows and len(df_index[1:]) != len(data_rows):

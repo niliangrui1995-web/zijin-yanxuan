@@ -201,7 +201,7 @@ def test_fetch_text_closes_response_and_wraps_network_errors(monkeypatch):
         def __init__(self):
             self.closed = False
 
-        def read(self):
+        def read(self, size=-1):
             return "成功".encode("utf-8")
 
         def close(self):
@@ -214,6 +214,21 @@ def test_fetch_text_closes_response_and_wraps_network_errors(monkeypatch):
     assert response.closed is True
 
     monkeypatch.setattr(sync_module, "urlopen_https", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("down")))
+    with pytest.raises(UserFacingTaskError):
+        sync_module._fetch_text("https://example.test")
+
+
+def test_fetch_text_rejects_oversized_response(monkeypatch):
+    class _Response:
+        def read(self, size=-1):
+            return b"a" * (size + 1)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(sync_module, "urlopen_https", lambda request, timeout=15: _Response())
+    monkeypatch.setattr(sync_module, "_MAX_RESPONSE_BYTES", 8)
+
     with pytest.raises(UserFacingTaskError):
         sync_module._fetch_text("https://example.test")
 
@@ -268,6 +283,32 @@ def test_fetch_qfii_quarter_paginates_until_last_page(monkeypatch):
     assert calls == ["1", "2"]
     assert payload["quarter_key"] == "2025Q4"
     assert [row["SECURITY_CODE"] for row in payload["raw_rows"]] == ["000001", "000002"]
+
+
+def test_fetch_qfii_quarter_rejects_excessive_pages(monkeypatch):
+    calls = []
+
+    def fake_fetch_json(_url, *, params, referer=""):
+        calls.append(params["pageNumber"])
+        return {"result": {"pages": sync_module._QFII_MAX_PAGES + 1, "data": [{"SECURITY_CODE": "000001"}]}}
+
+    monkeypatch.setattr(sync_module, "_fetch_json", fake_fetch_json)
+
+    with pytest.raises(UserFacingTaskError):
+        sync_module._fetch_qfii_quarter("2025Q4")
+
+    assert calls == ["1"]
+
+
+def test_fetch_qfii_quarter_rejects_excessive_rows(monkeypatch):
+    def fake_fetch_json(_url, *, params, referer=""):
+        return {"result": {"pages": 1, "data": [{"SECURITY_CODE": "000001"}, {"SECURITY_CODE": "000002"}]}}
+
+    monkeypatch.setattr(sync_module, "_fetch_json", fake_fetch_json)
+    monkeypatch.setattr(sync_module, "_QFII_MAX_ROWS", 1)
+
+    with pytest.raises(UserFacingTaskError):
+        sync_module._fetch_qfii_quarter("2025Q4")
 
 
 def test_candidate_specific_payloads_raise_when_current_quarter_missing(monkeypatch):

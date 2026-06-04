@@ -209,6 +209,12 @@ def test_block_trade_local_snapshot_fills_market_fields_without_realtime(monkeyp
 
 def test_block_trade_load_cache_primes_local_snapshot(monkeypatch):
     calls = []
+    queued = []
+    monkeypatch.setattr(
+        foreign_module.QTimer,
+        "singleShot",
+        lambda delay, callback: queued.append((delay, callback)),
+    )
     monkeypatch.setattr(
         foreign_module,
         "load_json_file",
@@ -265,6 +271,11 @@ def test_block_trade_load_cache_primes_local_snapshot(monkeypatch):
             return calls.append(("local", current_model)) or True
 
     ForeignBlockTradeTab._load_local_cache(DummyTab())
+
+    assert ("local", DummyTab.model) not in calls
+    assert queued[0][0] == 0
+
+    queued[0][1]()
 
     assert ("local", DummyTab.model) in calls
 

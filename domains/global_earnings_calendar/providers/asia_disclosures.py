@@ -5,6 +5,7 @@ import datetime as dt
 import io
 import os
 import re
+import zipfile
 from typing import Mapping
 from urllib.parse import urljoin
 
@@ -42,7 +43,7 @@ from domains.global_earnings_calendar.rules import (
 from domains.global_earnings_calendar.rules import (
     text_has_any as _text_has_any,
 )
-from infra.http_safety import requests_get_https, requests_post_https
+from infra.http_safety import ensure_https_request, requests_get_https, requests_post_https
 
 _JP_EARNINGS_KEYWORDS = (
     "\u6c7a\u7b97\u77ed\u4fe1",
@@ -67,6 +68,13 @@ _MOPS_EARNINGS_KEYWORDS = (
     "annual results",
     "results",
 )
+
+_JPX_ALLOWED_HOSTS = frozenset({"www.jpx.co.jp"})
+_JPX_MAX_WORKBOOK_BYTES = 8 * 1024 * 1024
+_JPX_MAX_WORKBOOK_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
+_JPX_MAX_WORKBOOK_FILES = 256
+_JPX_MAX_WORKSHEETS = 12
+_JPX_MAX_WORKSHEET_ROWS = 20_000
 
 
 class JpxFinancialAnnouncementProvider:
@@ -99,6 +107,7 @@ class JpxFinancialAnnouncementProvider:
             session=self.session,
             headers={"User-Agent": "Mozilla/5.0"},
             timeout=self.timeout,
+            allowed_hosts=_JPX_ALLOWED_HOSTS,
         )
         _raise_for_status(response)
         workbook_links = self._parse_workbook_links(_response_text(response, encoding="utf-8"), self.page_url)
@@ -109,6 +118,7 @@ class JpxFinancialAnnouncementProvider:
                 session=self.session,
                 headers={"User-Agent": "Mozilla/5.0", "Referer": self.page_url},
                 timeout=self.timeout,
+                allowed_hosts=_JPX_ALLOWED_HOSTS,
             )
             _raise_for_status(workbook_response)
             events.extend(
@@ -129,9 +139,28 @@ class JpxFinancialAnnouncementProvider:
         links: list[str] = []
         for href in tree.xpath('//a[contains(translate(@href, "XLSX", "xlsx"), ".xlsx")]/@href'):
             full_url = urljoin(page_url, str(href))
+            try:
+                ensure_https_request(full_url, allowed_hosts=_JPX_ALLOWED_HOSTS)
+            except ValueError:
+                continue
             if full_url not in links:
                 links.append(full_url)
         return links
+
+    @staticmethod
+    def _validate_workbook_bytes(workbook_bytes: bytes) -> None:
+        if len(workbook_bytes) > _JPX_MAX_WORKBOOK_BYTES:
+            raise ValueError(f"JPX workbook is too large: bytes={len(workbook_bytes)}")
+        try:
+            with zipfile.ZipFile(io.BytesIO(workbook_bytes)) as archive:
+                members = archive.infolist()
+                if len(members) > _JPX_MAX_WORKBOOK_FILES:
+                    raise ValueError(f"JPX workbook has too many files: files={len(members)}")
+                total_size = sum(max(0, item.file_size) for item in members)
+                if total_size > _JPX_MAX_WORKBOOK_UNCOMPRESSED_BYTES:
+                    raise ValueError(f"JPX workbook expands too large: bytes={total_size}")
+        except zipfile.BadZipFile:
+            return
 
     @staticmethod
     def _header_index(headers: list[str], *needles: str) -> int | None:
@@ -152,62 +181,70 @@ class JpxFinancialAnnouncementProvider:
     ) -> list[EarningsCalendarEvent]:
         if not workbook_bytes:
             return []
+        cls._validate_workbook_bytes(workbook_bytes)
         import openpyxl
 
         workbook = openpyxl.load_workbook(io.BytesIO(workbook_bytes), read_only=True, data_only=True)
         events: list[EarningsCalendarEvent] = []
-        for worksheet in workbook.worksheets:
-            header_indexes: tuple[int, int, int | None, int | None] | None = None
-            for row in worksheet.iter_rows(values_only=True):
-                values = list(row or [])
-                if header_indexes is None:
-                    headers = [str(value or "") for value in values]
-                    date_idx = cls._header_index(
-                        headers, "Scheduled Dates", "\u6c7a\u7b97\u767a\u8868\u4e88\u5b9a\u65e5"
-                    )
-                    code_idx = cls._header_index(headers, "Code", "\u30b3\u30fc\u30c9")
-                    fiscal_idx = cls._header_index(headers, "Fiscal Year/Quarter", "\u7a2e\u5225")
-                    fiscal_end_idx = cls._header_index(headers, "Fiscal Year-end", "\u6c7a\u7b97\u671f\u672b")
-                    if date_idx is not None and code_idx is not None:
-                        header_indexes = (date_idx, code_idx, fiscal_idx, fiscal_end_idx)
-                    continue
+        try:
+            for worksheet_index, worksheet in enumerate(workbook.worksheets, start=1):
+                if worksheet_index > _JPX_MAX_WORKSHEETS:
+                    raise ValueError(f"JPX workbook has too many worksheets: sheets={worksheet_index}")
+                header_indexes: tuple[int, int, int | None, int | None] | None = None
+                for row_index, row in enumerate(worksheet.iter_rows(values_only=True), start=1):
+                    if row_index > _JPX_MAX_WORKSHEET_ROWS:
+                        raise ValueError(f"JPX worksheet has too many rows: rows={row_index}")
+                    values = list(row or [])
+                    if header_indexes is None:
+                        headers = [str(value or "") for value in values]
+                        date_idx = cls._header_index(
+                            headers, "Scheduled Dates", "\u6c7a\u7b97\u767a\u8868\u4e88\u5b9a\u65e5"
+                        )
+                        code_idx = cls._header_index(headers, "Code", "\u30b3\u30fc\u30c9")
+                        fiscal_idx = cls._header_index(headers, "Fiscal Year/Quarter", "\u7a2e\u5225")
+                        fiscal_end_idx = cls._header_index(headers, "Fiscal Year-end", "\u6c7a\u7b97\u671f\u672b")
+                        if date_idx is not None and code_idx is not None:
+                            header_indexes = (date_idx, code_idx, fiscal_idx, fiscal_end_idx)
+                        continue
 
-                date_idx, code_idx, fiscal_idx, fiscal_end_idx = header_indexes
-                if max(date_idx, code_idx) >= len(values):
-                    continue
-                report_day = _date_from_any(values[date_idx])
-                code_digits = re.sub(r"\D", "", str(values[code_idx] or ""))
-                if not code_digits:
-                    continue
-                ticker = f"{code_digits[:4]}.T"
-                if allowed_symbols is not None and ticker not in allowed_symbols:
-                    continue
-                company = universe.get(ticker)
-                if company is None or report_day is None:
-                    continue
-                fiscal_parts = []
-                if fiscal_idx is not None and fiscal_idx < len(values) and values[fiscal_idx]:
-                    fiscal_parts.append(str(values[fiscal_idx]).strip())
-                if fiscal_end_idx is not None and fiscal_end_idx < len(values):
-                    fiscal_end = _date_from_any(values[fiscal_end_idx])
-                    if fiscal_end is not None:
-                        fiscal_parts.append(fiscal_end.isoformat())
-                events.append(
-                    EarningsCalendarEvent(
-                        company=company.company,
-                        ticker=ticker,
-                        sector=company.sector,
-                        report_date=report_day.isoformat(),
-                        fiscal_period=" / ".join(fiscal_parts),
-                        time_label="\u5f85\u786e\u8ba4",
-                        status=CONFIRMED_STATUS,
-                        source=JPX_SOURCE,
-                        priority=company.priority,
-                        market=company.market,
-                        call_time_source_url=source_url,
-                        call_time_source_type="jpx_financial_announcement_schedule",
+                    date_idx, code_idx, fiscal_idx, fiscal_end_idx = header_indexes
+                    if max(date_idx, code_idx) >= len(values):
+                        continue
+                    report_day = _date_from_any(values[date_idx])
+                    code_digits = re.sub(r"\D", "", str(values[code_idx] or ""))
+                    if not code_digits:
+                        continue
+                    ticker = f"{code_digits[:4]}.T"
+                    if allowed_symbols is not None and ticker not in allowed_symbols:
+                        continue
+                    company = universe.get(ticker)
+                    if company is None or report_day is None:
+                        continue
+                    fiscal_parts = []
+                    if fiscal_idx is not None and fiscal_idx < len(values) and values[fiscal_idx]:
+                        fiscal_parts.append(str(values[fiscal_idx]).strip())
+                    if fiscal_end_idx is not None and fiscal_end_idx < len(values):
+                        fiscal_end = _date_from_any(values[fiscal_end_idx])
+                        if fiscal_end is not None:
+                            fiscal_parts.append(fiscal_end.isoformat())
+                    events.append(
+                        EarningsCalendarEvent(
+                            company=company.company,
+                            ticker=ticker,
+                            sector=company.sector,
+                            report_date=report_day.isoformat(),
+                            fiscal_period=" / ".join(fiscal_parts),
+                            time_label="\u5f85\u786e\u8ba4",
+                            status=CONFIRMED_STATUS,
+                            source=JPX_SOURCE,
+                            priority=company.priority,
+                            market=company.market,
+                            call_time_source_url=source_url,
+                            call_time_source_type="jpx_financial_announcement_schedule",
+                        )
                     )
-                )
+        finally:
+            workbook.close()
         return sorted_events(events)
 
     @staticmethod

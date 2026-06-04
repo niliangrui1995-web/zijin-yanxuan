@@ -590,6 +590,36 @@ def test_build_kline_html_hides_echarts_tooltip_panel():
     assert "buildVolumeSpikeParticles()" in html
 
 
+def test_build_kline_html_escapes_script_tag_breakout_payload():
+    attack = "</script><script>globalThis.__kline_xss=1</script>"
+
+    html = build_kline_html(
+        title=attack,
+        echarts_data={
+            "title": attack,
+            "dates": [attack],
+            "klines": [],
+            "vols": [],
+            "ma10": [],
+            "ma20": [],
+            "ma50": [],
+            "ma150": [],
+            "ma200": [],
+            "volMa20": [],
+            "macd": [],
+            "diff": [],
+            "dea": [],
+        },
+        echarts_js_path=r"D:\fake\echarts.min.js",
+        theme_colors=build_kline_theme_colors(),
+    )
+
+    assert attack not in html
+    assert "\\u003c/script\\u003e\\u003cscript\\u003e" in html
+    assert html.count("<script") == 2
+    assert html.count("</script>") == 2
+
+
 def test_yaohei_kline_html_syncs_canvas_scrollbar_and_tabular_nums(monkeypatch):
     monkeypatch.setattr(theme_manager, "_current_name", THEME_YAOHEI["name"])
     colors = build_kline_theme_colors()

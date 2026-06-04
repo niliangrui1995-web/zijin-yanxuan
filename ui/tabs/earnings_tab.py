@@ -40,6 +40,7 @@ class EarningsTab(BaseStockTab):
 
         # 延后到页面首次显示时再加载视图缓存；业务巡检由全局调度器负责。
         self._patrol_started = False
+        self._runtime_start_queued = False
 
     def _ensure_scheduler(self):
         if self.scheduler is None:
@@ -69,6 +70,18 @@ class EarningsTab(BaseStockTab):
             load_cached = getattr(scheduler, "load_cached_records_async", None)
             if callable(load_cached):
                 load_cached()
+
+    def _queue_runtime_start(self) -> None:
+        if self._patrol_started or self._runtime_start_queued or getattr(self, "_runtime_cleanup_done", False):
+            return
+        self._runtime_start_queued = True
+        QTimer.singleShot(0, self._start_queued_runtime)
+
+    def _start_queued_runtime(self) -> None:
+        self._runtime_start_queued = False
+        if self._patrol_started or getattr(self, "_runtime_cleanup_done", False) or not self._is_current_workspace_tab():
+            return
+        self._ensure_runtime_started()
 
     def _start_scheduler_patrol(self) -> None:
         return None
@@ -618,7 +631,7 @@ class EarningsTab(BaseStockTab):
         """隐藏页首次打开时，父类会补现价/市值快照，这里紧跟着补算 PE。"""
         super().showEvent(event)
         if self._should_start_runtime_on_show():
-            self._ensure_runtime_started()
+            self._queue_runtime_start()
         if self.row_data:
             self._recalc_pe_timer.start(0)
 

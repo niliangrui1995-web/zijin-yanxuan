@@ -4,6 +4,7 @@ import datetime as dt
 import io
 
 import openpyxl
+import pytest
 
 import domains.global_earnings_calendar.providers.asia_disclosures as asia_module
 from domains.global_earnings_calendar.models import OligarchCompany
@@ -82,6 +83,38 @@ def test_jpx_fetch_discovers_workbook_links_and_filters_window():
     assert events[0].fiscal_period == "Q1 / 2026-03-31"
     assert session.get_calls[1][0] == "https://www.jpx.co.jp/files/a.xlsx"
     assert JpxFinancialAnnouncementProvider.parse_workbook(b"", universe) == []
+
+
+def test_jpx_workbook_links_reject_off_origin_and_unsafe_targets():
+    html = """
+    <a href="/files/a.xlsx">A</a>
+    <a href="https://evil.example/a.xlsx">external</a>
+    <a href="http://www.jpx.co.jp/insecure.xlsx">insecure</a>
+    <a href="//127.0.0.1/private.xlsx">private</a>
+    """
+
+    links = JpxFinancialAnnouncementProvider._parse_workbook_links(
+        html,
+        "https://www.jpx.co.jp/listing/index.html",
+    )
+
+    assert links == ["https://www.jpx.co.jp/files/a.xlsx"]
+
+
+def test_jpx_parse_workbook_rejects_oversized_workbook(monkeypatch):
+    universe = {"8035.T": _company("Tokyo Electron", "8035.T", "JP")}
+    monkeypatch.setattr(asia_module, "_JPX_MAX_WORKBOOK_BYTES", 1)
+
+    with pytest.raises(ValueError, match="too large"):
+        JpxFinancialAnnouncementProvider.parse_workbook(_jpx_workbook_bytes(), universe)
+
+
+def test_jpx_parse_workbook_rejects_excessive_rows(monkeypatch):
+    universe = {"8035.T": _company("Tokyo Electron", "8035.T", "JP")}
+    monkeypatch.setattr(asia_module, "_JPX_MAX_WORKSHEET_ROWS", 1)
+
+    with pytest.raises(ValueError, match="too many rows"):
+        JpxFinancialAnnouncementProvider.parse_workbook(_jpx_workbook_bytes(), universe)
 
 
 def test_tdnet_fetch_skips_404_and_parse_html_filters_rows():

@@ -621,6 +621,25 @@ class ForeignBlockTradeTab(BaseStockTab):
             except ValueError:
                 self._last_success_at = None
 
+            QTimer.singleShot(
+                0,
+                lambda rows=rows, raw_count=raw_count, latest_trade_date=latest_trade_date, payload=payload: (
+                    ForeignBlockTradeTab._finish_apply_local_cache_payload(
+                        self,
+                        rows=rows,
+                        raw_count=raw_count,
+                        latest_trade_date=latest_trade_date,
+                        payload=payload,
+                    )
+                ),
+            )
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            self._on_local_cache_failed(str(exc))
+
+    def _finish_apply_local_cache_payload(self, *, rows: list[dict], raw_count: int, latest_trade_date: str, payload: dict):
+        try:
+            if getattr(self, "_runtime_cleanup_done", False):
+                return
             unique_dates, unique_branches = self._apply_row_data(
                 rows,
                 preserve_selection=False,

@@ -103,11 +103,11 @@ def test_watchlist_service_tags_entries_and_mutations_stay_in_memory(monkeypatch
         assert "000004" in watchlist_vm._cache
 
         watchlist_vm.pin_to_top("000004")
-        assert list(watchlist_vm._cache)[0] == "000004"
+        assert next(iter(watchlist_vm._cache)) == "000004"
         watchlist_vm.move_to_bottom("000004")
         assert list(watchlist_vm._cache)[-1] == "000004"
         watchlist_vm.reorder(["000004"])
-        assert list(watchlist_vm._cache)[0] == "000004"
+        assert next(iter(watchlist_vm._cache)) == "000004"
         assert saves
         assert events
     finally:

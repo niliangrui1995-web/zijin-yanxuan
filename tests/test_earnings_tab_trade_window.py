@@ -218,6 +218,63 @@ def test_earnings_runtime_start_is_gated_to_current_workspace_tab():
     assert EarningsTab._is_current_workspace_tab(tab)
 
 
+def test_earnings_runtime_start_is_queued_once(monkeypatch, earnings_qt):
+    EarningsTab = earnings_qt.EarningsTab
+    queued = []
+    calls = []
+    monkeypatch.setattr(earnings_qt.module.QTimer, "singleShot", lambda delay, callback: queued.append((delay, callback)))
+
+    class DummyTab:
+        _patrol_started = False
+        _runtime_start_queued = False
+        _runtime_cleanup_done = False
+
+        def _is_current_workspace_tab(self):
+            return True
+
+        def _ensure_runtime_started(self):
+            calls.append("start")
+            self._patrol_started = True
+
+    tab = DummyTab()
+    tab._start_queued_runtime = lambda: EarningsTab._start_queued_runtime(tab)
+
+    EarningsTab._queue_runtime_start(tab)
+    EarningsTab._queue_runtime_start(tab)
+
+    assert queued[0][0] == 0
+    assert len(queued) == 1
+    assert tab._runtime_start_queued is True
+
+    queued[0][1]()
+
+    assert calls == ["start"]
+    assert tab._runtime_start_queued is False
+
+
+def test_earnings_queued_runtime_start_skips_stale_tab(earnings_qt):
+    EarningsTab = earnings_qt.EarningsTab
+    calls = []
+
+    class DummyTab:
+        _patrol_started = False
+        _runtime_start_queued = True
+        _runtime_cleanup_done = False
+
+        def _is_current_workspace_tab(self):
+            return False
+
+        def _ensure_runtime_started(self):
+            calls.append("start")
+
+    tab = DummyTab()
+
+    EarningsTab._start_queued_runtime(tab)
+
+    assert calls == []
+    assert tab._runtime_start_queued is False
+
+
 def test_earnings_runtime_show_skips_non_interactive_load_reason():
     EarningsTab = _earnings_tab_class()
 

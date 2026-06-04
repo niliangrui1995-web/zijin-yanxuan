@@ -1003,8 +1003,15 @@ def test_fund_holdings_apply_view_payload_defers_empty_state_until_finish(monkey
 
     assert "empty" not in calls
     assert len(queued) == 1
+    assert calls == []
 
     queued[0]()
+
+    assert ("update", []) in calls
+    assert "empty" not in calls
+    assert len(queued) == 2
+
+    queued[1]()
 
     assert ("ensure", False) in calls
     assert "empty" not in calls

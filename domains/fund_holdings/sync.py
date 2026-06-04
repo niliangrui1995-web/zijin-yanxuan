@@ -30,6 +30,10 @@ from infra.http_safety import urlopen_https
 _USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 _QFII_API_URL = "https://datacenter-web.eastmoney.com/api/data/v1/get"
 _RUIYUAN_API_URL = "https://fundf10.eastmoney.com/FundArchivesDatas.aspx"
+_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+_QFII_PAGE_SIZE = 500
+_QFII_MAX_PAGES = 20
+_QFII_MAX_ROWS = _QFII_PAGE_SIZE * _QFII_MAX_PAGES
 
 _RUIYUAN_SECTION_RE = re.compile(
     r"(?P<header><h4 class='t'>.*?</h4>).*?(?P<table><table.*?</table>)",
@@ -48,6 +52,14 @@ _RUIYUAN_ROW_RE = re.compile(
 )
 
 
+def _read_limited_response(response, *, max_bytes: int | None = None) -> bytes:
+    max_bytes = _MAX_RESPONSE_BYTES if max_bytes is None else int(max_bytes)
+    payload = response.read(max_bytes + 1)
+    if len(payload) > max_bytes:
+        raise UserFacingTaskError("基金持仓接口返回过大，已停止处理", f"response bytes exceed {max_bytes}")
+    return payload
+
+
 def _fetch_text(url: str, *, params: dict | None = None, referer: str = "") -> str:
     if params:
         url = f"{url}?{urllib.parse.urlencode(params)}"
@@ -62,7 +74,7 @@ def _fetch_text(url: str, *, params: dict | None = None, referer: str = "") -> s
     try:
         response = urlopen_https(request, timeout=15)
         try:
-            return response.read().decode("utf-8", errors="ignore")
+            return _read_limited_response(response).decode("utf-8", errors="ignore")
         finally:
             with suppress(AttributeError, OSError, RuntimeError, TypeError):
                 response.close()
@@ -195,7 +207,7 @@ def _fetch_qfii_quarter(quarter_key: str) -> dict:
             params={
                 "sortColumns": "UPDATE_DATE,SECURITY_CODE",
                 "sortTypes": "-1,-1",
-                "pageSize": "500",
+                "pageSize": str(_QFII_PAGE_SIZE),
                 "pageNumber": str(page_number),
                 "reportName": "RPT_F10_EH_FREEHOLDERS",
                 "columns": "ALL",
@@ -206,11 +218,20 @@ def _fetch_qfii_quarter(quarter_key: str) -> dict:
             referer="https://data.eastmoney.com/",
         )
         result = payload.get("result") or {}
+        try:
+            pages = int(result.get("pages") or 0)
+        except (TypeError, ValueError) as exc:
+            raise UserFacingTaskError("基金持仓接口返回异常，稍后再试", "QFII pages 不是整数") from exc
+        if pages < 0 or pages > _QFII_MAX_PAGES:
+            raise UserFacingTaskError("基金持仓接口返回过多分页，已停止处理", f"QFII pages={pages}")
         data = result.get("data") or []
+        if not isinstance(data, list):
+            raise UserFacingTaskError("基金持仓接口返回异常，稍后再试", "QFII data 不是列表")
         if not data:
             break
+        if len(raw_rows) + len(data) > _QFII_MAX_ROWS:
+            raise UserFacingTaskError("基金持仓接口返回过多记录，已停止处理", f"QFII rows>{_QFII_MAX_ROWS}")
         raw_rows.extend(dict(row) for row in data)
-        pages = int(result.get("pages") or 0)
         if page_number >= pages:
             break
         page_number += 1

@@ -485,18 +485,41 @@ class FundHoldingsTab(BaseStockTab):
                 if str(quarter_key or "").strip()
             }
             view_rows = list(payload.get("view_rows") or [])
-            self.model.update_data(view_rows, hydrate_latest_quotes=False)
             should_defer = getattr(self, "_should_defer_view_payload_finish", None)
-
-            def finish(rows):
-                skip_empty_state = FundHoldingsTab._finish_apply_view_payload(self, rows)
-                if not skip_empty_state:
-                    FundHoldingsTab._show_empty_view_payload_if_needed(self, rows)
-
-            if callable(should_defer) and should_defer():
-                QTimer.singleShot(0, lambda view_rows=view_rows: finish(view_rows))
+            defer_update = callable(should_defer) and should_defer()
+            if defer_update:
+                QTimer.singleShot(
+                    0,
+                    lambda view_rows=view_rows: FundHoldingsTab._apply_view_rows_and_finish(
+                        self,
+                        view_rows,
+                        defer_finish=True,
+                    ),
+                )
             else:
-                finish(view_rows)
+                FundHoldingsTab._apply_view_rows_and_finish(self, view_rows, defer_finish=False)
+
+    def _apply_view_rows_and_finish(self, view_rows: list[dict], *, defer_finish: bool) -> None:
+        if getattr(self, "_runtime_cleanup_done", False):
+            return
+        with ui_stall_span(
+            "FundHoldingsTab._apply_view_rows_and_finish",
+            tab="fund_holdings",
+            signal="deferred" if defer_finish else "sync",
+        ):
+            self.model.update_data(view_rows, hydrate_latest_quotes=False)
+
+        def finish(rows=view_rows):
+            if getattr(self, "_runtime_cleanup_done", False):
+                return
+            skip_empty_state = FundHoldingsTab._finish_apply_view_payload(self, rows)
+            if not skip_empty_state:
+                FundHoldingsTab._show_empty_view_payload_if_needed(self, rows)
+
+        if defer_finish:
+            QTimer.singleShot(0, finish)
+        else:
+            finish()
 
     def _should_defer_view_payload_finish(self) -> bool:
         return callable(getattr(self, "deleteLater", None)) and not bool(getattr(self, "_autoload", True))

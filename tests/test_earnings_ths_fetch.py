@@ -42,8 +42,8 @@ def test_fetch_stock_financial_benefit_ths_parses_valid_payload(monkeypatch):
     }
 
     monkeypatch.setattr(
-        engine_module.requests,
-        "get",
+        engine_module,
+        "requests_get_https",
         lambda *args, **kwargs: _FakeResponse(json.dumps(payload, ensure_ascii=False)),
     )
 
@@ -63,8 +63,8 @@ def test_fetch_stock_financial_benefit_ths_raises_readable_error_on_empty_payloa
     _clear_ths_cache()
 
     monkeypatch.setattr(
-        engine_module.requests,
-        "get",
+        engine_module,
+        "requests_get_https",
         lambda *args, **kwargs: _FakeResponse(""),
     )
 

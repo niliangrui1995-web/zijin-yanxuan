@@ -995,6 +995,14 @@ class AsianMarketTab(BaseStockTab):
 
             self.row_data = list(payload.get("rows") or [])
             self._sync_worker_codes()
+            QTimer.singleShot(0, lambda: AsianMarketTab._finish_apply_local_cache_payload(self))
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            self._on_local_cache_failed(str(exc))
+
+    def _finish_apply_local_cache_payload(self):
+        try:
+            if getattr(self, "_runtime_cleanup_done", False):
+                return
             self.update_table_ui()
             if self.row_data:
                 self._last_asian_success_at = datetime.datetime.now()

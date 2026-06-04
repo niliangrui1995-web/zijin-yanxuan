@@ -33,6 +33,7 @@ from ui.kline_chart_payload import (
     build_kline_html,
     build_kline_market_state,
     build_kline_theme_colors,
+    dumps_json_for_script,
 )
 from ui.kline_window_asian import (
     apply_asian_live_quote,
@@ -479,9 +480,8 @@ class KLineChartWindow(QWidget):
         if getattr(self, "_closing", False) or browser is None:
             return
 
-        payload_json = json.dumps(
+        payload_json = dumps_json_for_script(
             {"theme": build_kline_theme_colors(), "animate": bool(animate)},
-            ensure_ascii=False,
         )
         script = (
             "(function(payload) {"
@@ -499,9 +499,8 @@ class KLineChartWindow(QWidget):
         browser = getattr(self, "browser", None)
         if getattr(self, "_closing", False) or browser is None:
             return
-        payload_json = json.dumps(
+        payload_json = dumps_json_for_script(
             {"marketState": build_kline_market_state(self.code)},
-            ensure_ascii=False,
         )
         script = (
             "(function(payload) {"
@@ -518,7 +517,7 @@ class KLineChartWindow(QWidget):
         browser = getattr(self, "browser", None)
         if getattr(self, "_closing", False) or browser is None:
             return
-        payload_json = json.dumps({"enabled": bool(getattr(self, "_magnetically_attached", False))})
+        payload_json = dumps_json_for_script({"enabled": bool(getattr(self, "_magnetically_attached", False))})
         script = (
             "(function(payload) {"
             " if (typeof window.setGlassMode !== 'function') return false;"
@@ -848,9 +847,8 @@ class KLineChartWindow(QWidget):
         browser = getattr(self, "browser", None)
         if getattr(self, "_closing", False) or browser is None:
             return
-        payload_json = json.dumps(
+        payload_json = dumps_json_for_script(
             {"title": title, "data": echarts_data},
-            ensure_ascii=False,
         )
         script = (
             "(function(payload) {"

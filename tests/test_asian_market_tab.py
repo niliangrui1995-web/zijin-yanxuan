@@ -509,6 +509,48 @@ def test_asian_market_constructor_schedules_local_cache_background(monkeypatch, 
         tab.deleteLater()
 
 
+def test_asian_market_apply_local_cache_payload_defers_table_update(monkeypatch):
+    queued = []
+    calls = []
+    monkeypatch.setattr(asian_module.QTimer, "singleShot", lambda delay, callback: queued.append((delay, callback)))
+
+    class DummyTab:
+        row_data = []
+        _runtime_cleanup_done = False
+
+        def _sync_worker_codes(self):
+            calls.append("sync")
+
+        def update_table_ui(self):
+            calls.append(("update", list(self.row_data)))
+
+        @staticmethod
+        def _status_metric(label, value, suffix=""):
+            return f"{label}{value}{suffix}"
+
+        def _set_asian_status(self, *args, **kwargs):
+            calls.append(("status", args, kwargs))
+
+        def _finish_local_cache_load(self):
+            calls.append("finish")
+
+    tab = DummyTab()
+
+    asian_module.AsianMarketTab._apply_local_cache_payload(
+        tab,
+        {"rt_updates": {}, "rows": [{"代码": "2330.TW"}]},
+    )
+
+    assert calls == ["sync"]
+    assert tab.row_data == [{"代码": "2330.TW"}]
+    assert queued[0][0] == 0
+
+    queued[0][1]()
+
+    assert ("update", [{"代码": "2330.TW"}]) in calls
+    assert "finish" in calls
+
+
 def test_asian_market_display_uses_taiwan_label_for_tw_codes():
     assert format_market_display("TW", "2330.TW") == "台湾"
     assert format_market_display("TWO", "3324.TWO") == "台湾"
