@@ -7,6 +7,7 @@ from pathlib import Path
 from PyQt6.QtCore import QObject
 from PyQt6.QtTest import QSignalSpy
 
+import core.startup_orchestrator as startup_module
 from core.event_bus import event_bus
 from core.startup_orchestrator import (
     ASIAN_DATA_SYNC_TASK_ID,
@@ -16,6 +17,7 @@ from core.startup_orchestrator import (
     GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_HOUR,
     GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_MINUTE,
     GLOBAL_EARNINGS_CALENDAR_SYNC_TASK_ID,
+    GLOBAL_EARNINGS_CALENDAR_SYNC_TIMEOUT_SEC,
     SMART_STARTUP_TASK_ID,
     StartupHostAdapter,
     StartupOrchestrator,
@@ -593,6 +595,27 @@ def test_global_earnings_daily_refresh_delay_targets_next_0200():
     assert GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_MINUTE == 0
 
 
+def test_global_earnings_refresh_subprocess_uses_hidden_timeout(monkeypatch):
+    captured = {}
+
+    def fake_run_python_module(module_name, module_args=None, **kwargs):
+        captured["module_name"] = module_name
+        captured["module_args"] = module_args
+        captured["kwargs"] = kwargs
+        return types.SimpleNamespace(stdout='log line\n{"status":"success","events":7}\n')
+
+    monkeypatch.setattr(startup_module, "run_python_module", fake_run_python_module)
+
+    assert startup_module._run_global_earnings_calendar_refresh_subprocess() == 7
+    assert captured["module_name"] == "domains.global_earnings_calendar.refresh_cache"
+    assert captured["module_args"] is None
+    assert captured["kwargs"]["no_window"] is True
+    assert captured["kwargs"]["capture_output"] is True
+    assert captured["kwargs"]["text"] is True
+    assert captured["kwargs"]["check"] is True
+    assert captured["kwargs"]["timeout"] == GLOBAL_EARNINGS_CALENDAR_SYNC_TIMEOUT_SEC
+
+
 def test_startup_orchestrator_leaves_auto_rt_retry_to_global_scheduler():
     orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
 
@@ -609,14 +632,13 @@ def test_startup_orchestrator_leaves_auto_rt_retry_to_global_scheduler():
 def test_startup_orchestrator_global_earnings_sync_allows_next_period_after_completion(monkeypatch):
     calls = []
 
-    class _FakeService:
-        def refresh_events(self):
-            calls.append("refresh")
-            return [object(), object()]
+    def fake_refresh():
+        calls.append("refresh")
+        return 2
 
     monkeypatch.setattr(
-        "domains.global_earnings_calendar.service.GlobalEarningsCalendarService",
-        _FakeService,
+        "core.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
+        fake_refresh,
     )
 
     orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
@@ -628,13 +650,9 @@ def test_startup_orchestrator_global_earnings_sync_allows_next_period_after_comp
 
 
 def test_startup_orchestrator_global_earnings_sync_emits_update_event(monkeypatch):
-    class _FakeService:
-        def refresh_events(self):
-            return [object()]
-
     monkeypatch.setattr(
-        "domains.global_earnings_calendar.service.GlobalEarningsCalendarService",
-        _FakeService,
+        "core.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
+        lambda: 1,
     )
 
     orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
@@ -648,14 +666,13 @@ def test_startup_orchestrator_global_earnings_sync_emits_update_event(monkeypatc
 def test_startup_orchestrator_daily_earnings_timer_refreshes_and_rearms(monkeypatch):
     calls = []
 
-    class _FakeService:
-        def refresh_events(self):
-            calls.append("refresh")
-            return [object()]
+    def fake_refresh():
+        calls.append("refresh")
+        return 1
 
     monkeypatch.setattr(
-        "domains.global_earnings_calendar.service.GlobalEarningsCalendarService",
-        _FakeService,
+        "core.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
+        fake_refresh,
     )
 
     orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
@@ -672,14 +689,13 @@ def test_startup_orchestrator_daily_earnings_timer_refreshes_and_rearms(monkeypa
 def test_startup_orchestrator_global_earnings_sync_skips_overlapping_runs(monkeypatch):
     calls = []
 
-    class _FakeService:
-        def refresh_events(self):
-            calls.append("refresh")
-            return [object()]
+    def fake_refresh():
+        calls.append("refresh")
+        return 1
 
     monkeypatch.setattr(
-        "domains.global_earnings_calendar.service.GlobalEarningsCalendarService",
-        _FakeService,
+        "core.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
+        fake_refresh,
     )
 
     runner = _QueuedJobRunner()
@@ -707,8 +723,8 @@ def test_startup_orchestrator_skips_global_earnings_sync_when_toggle_disabled(mo
 
     monkeypatch.setattr("core.startup_orchestrator.service_toggle_registry.is_enabled", fake_is_enabled)
     monkeypatch.setattr(
-        "domains.global_earnings_calendar.service.GlobalEarningsCalendarService",
-        lambda: calls.append("constructed"),
+        "core.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
+        lambda: calls.append("refresh"),
     )
 
     orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())

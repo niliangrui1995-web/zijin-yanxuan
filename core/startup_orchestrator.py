@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import datetime
+import json
 import os
 import time
 
@@ -35,6 +36,7 @@ GLOBAL_EARNINGS_CALENDAR_SYNC_TASK_ID = task_registry.startup(
     "global_earnings_calendar_sync",
     description="Global oligarch earnings calendar silent sync",
 ).task_id
+GLOBAL_EARNINGS_CALENDAR_SYNC_TIMEOUT_SEC = 90
 GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_HOUR = 2
 GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_MINUTE = 0
 AUTO_RT_MONITOR_NETWORK_TASK_ID = task_registry.network(
@@ -64,6 +66,31 @@ def _format_subprocess_failure(exc: Exception) -> tuple[str, str]:
 
     message = str(exc or "").strip() or exc.__class__.__name__
     return message, message
+
+
+def _parse_global_earnings_calendar_refresh_stdout(stdout: str | bytes | None) -> int:
+    text = stdout.decode("utf-8", errors="replace") if isinstance(stdout, bytes) else str(stdout or "")
+    for line in reversed(text.splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        payload = json.loads(line)
+        if not isinstance(payload, dict) or payload.get("status") != "success":
+            continue
+        return max(0, int(payload.get("events") or 0))
+    raise ValueError("global earnings calendar refresh result missing")
+
+
+def _run_global_earnings_calendar_refresh_subprocess() -> int:
+    completed = run_python_module(
+        "domains.global_earnings_calendar.refresh_cache",
+        no_window=True,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=GLOBAL_EARNINGS_CALENDAR_SYNC_TIMEOUT_SEC,
+    )
+    return _parse_global_earnings_calendar_refresh_stdout(getattr(completed, "stdout", ""))
 
 
 def _normalize_a_share_codes(codes) -> list[str]:
@@ -544,13 +571,10 @@ class StartupOrchestrator:
                 return
             log_process_snapshot("startup.global_earnings_calendar.begin", logger=log)
             try:
-                from domains.global_earnings_calendar.service import GlobalEarningsCalendarService
-
-                events = GlobalEarningsCalendarService().refresh_events()
+                event_count = _run_global_earnings_calendar_refresh_subprocess()
                 if not self._alive():
                     return
                 elapsed_ms = (time.perf_counter() - started_at) * 1000.0
-                event_count = len(events or [])
                 log.info(f"[启动] 寡头财报日历静默刷新完成: {event_count} 条")
                 record_metric(
                     "startup_global_earnings_calendar_sync_ms",
@@ -569,7 +593,17 @@ class StartupOrchestrator:
                     events=event_count,
                 )
                 self._safe_call_in_ui(lambda: event_bus.sig_earnings_updated.emit())
-            except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            except ProcessTimeoutError as exc:
+                log_process_snapshot(
+                    "startup.global_earnings_calendar.end",
+                    logger=log,
+                    level="warning",
+                    extra={"status": "timeout"},
+                )
+                log.warning(
+                    f"[启动] 寡头财报日历静默刷新超时({GLOBAL_EARNINGS_CALENDAR_SYNC_TIMEOUT_SEC}s)，已沿用本地缓存: {exc}"
+                )
+            except (OSError, ProcessExecutionError, RuntimeError, TypeError, ValueError) as exc:
                 log_process_snapshot(
                     "startup.global_earnings_calendar.end",
                     logger=log,
