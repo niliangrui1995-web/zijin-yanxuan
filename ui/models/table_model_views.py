@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QMimeData, QModelIndex, QSortFilterProxyModel, Qt
 from PyQt6.QtGui import QColor, QPainter
-from PyQt6.QtWidgets import QApplication, QStyledItemDelegate, QStyleOptionViewItem
+from PyQt6.QtWidgets import QApplication, QStyledItemDelegate, QStyle, QStyleOptionViewItem
 
 from ui.components import SearchFilter
 from ui.models.table_cell_renderers import build_stock_cell_context, render_stock_cell
@@ -232,6 +232,14 @@ class StockItemDelegate(QStyledItemDelegate):
         self.initStyleOption(opt, index)
         widget = option.widget
         style = widget.style() if widget else QApplication.style()
+        if widget and widget.property("simpleCellPaint"):
+            opt.state &= ~QStyle.StateFlag.State_HasFocus
+            opt.state &= ~QStyle.StateFlag.State_FocusAtBorder
+            opt.state &= ~QStyle.StateFlag.State_KeyboardFocusChange
+            style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget)
+            painter.restore()
+            return
+
         ctx = build_stock_cell_context(
             painter=painter,
             option=option,

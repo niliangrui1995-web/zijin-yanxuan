@@ -245,6 +245,7 @@ def test_asian_market_table_suppresses_left_rails(monkeypatch):
     tab = asian_module.AsianMarketTab()
     try:
         assert tab.asian_table.property("suppressLeftRails") is True
+        assert tab.asian_table.property("simpleCellPaint") is True
     finally:
         tab.deleteLater()
 
@@ -675,6 +676,152 @@ def test_asian_market_load_local_cache_normalizes_stale_yfinance_pct(monkeypatch
         row = next(item for item in tab.row_data if item["代码"] == "3110.T")
         assert row["涨幅%"] == pytest.approx(round((26540.0 / 26720.0 - 1.0) * 100.0, 2))
         assert asian_module.GLOBAL_ASIAN_RT_CACHE["3110.T"]["previous_close"] == 26720.0
+    finally:
+        tab.deleteLater()
+
+
+def test_asian_market_load_local_cache_normalizes_stale_naver_pct(monkeypatch, tmp_path):
+    history_payload = {
+        "stocks": [
+            {
+                "name": "SK Hynix",
+                "ticker": "000660.KS",
+                "market": "韩国",
+                "track": "HBM与先进存储",
+                "currency": "KRW",
+                "klines": [
+                    {
+                        "date": "2026-06-04",
+                        "open": 2284000.0,
+                        "high": 2327000.0,
+                        "low": 2262000.0,
+                        "close": 2298000.0,
+                        "volume": 3941067.0,
+                    },
+                    {
+                        "date": "2026-06-05",
+                        "open": 2251000.0,
+                        "high": 2257000.0,
+                        "low": 2004000.0,
+                        "close": 2070000.0,
+                        "volume": 9041779.0,
+                    },
+                ],
+            }
+        ]
+    }
+    rt_payload = {
+        "000660.KS": {
+            "date": "2026-06-05",
+            "close": 2070000.0,
+            "open": 2142000.0,
+            "high": 2188000.0,
+            "low": 2070000.0,
+            "volume": 5358995.0,
+            "previous_close": 1842000.0,
+            "pct": 12.38,
+            "currency": "KRW",
+            "source": "naver_realtime",
+            "quote_quality": "last",
+        }
+    }
+    cache_file = tmp_path / "asian_klines_latest.json"
+    rt_cache_file = tmp_path / "asian_rt_latest.json"
+    cache_file.write_text(json.dumps(history_payload, ensure_ascii=False), encoding="utf-8")
+    rt_cache_file.write_text(json.dumps(rt_payload, ensure_ascii=False), encoding="utf-8")
+
+    monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
+    monkeypatch.setattr(asian_module, "JSON_CACHE", str(cache_file))
+    monkeypatch.setattr(asian_module, "RT_JSON_CACHE", str(rt_cache_file))
+    monkeypatch.setattr(asian_module, "GLOBAL_ASIAN_RT_CACHE", {})
+    _install_immediate_local_cache_runner(monkeypatch)
+    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+
+    tab = asian_module.AsianMarketTab()
+    try:
+        row = next(item for item in tab.row_data if item["代码"] == "000660.KS")
+        assert row["涨幅%"] == pytest.approx(round((2070000.0 / 2298000.0 - 1.0) * 100.0, 2))
+        assert asian_module.GLOBAL_ASIAN_RT_CACHE["000660.KS"]["previous_close"] == 2298000.0
+    finally:
+        tab.deleteLater()
+
+
+def test_asian_market_load_local_cache_prefers_hk_daily_close_over_delayed_quote(monkeypatch, tmp_path):
+    history_payload = {
+        "stocks": [
+            {
+                "name": "ASMPT",
+                "ticker": "0522.HK",
+                "market": "香港",
+                "track": "先进封装与混合键合",
+                "currency": "HKD",
+                "klines": [
+                    {
+                        "date": "2026-06-04",
+                        "open": 186.4,
+                        "high": 191.7,
+                        "low": 183.2,
+                        "close": 184.0,
+                        "volume": 2970687.0,
+                    },
+                    {
+                        "date": "2026-06-05",
+                        "open": 184.0,
+                        "high": 184.0,
+                        "low": 172.1,
+                        "close": 176.0,
+                        "volume": 4639221.0,
+                    },
+                ],
+            }
+        ]
+    }
+    rt_payload = {
+        "0522.HK": {
+            "date": "2026-06-05",
+            "close": 175.0,
+            "open": 184.0,
+            "high": 184.0,
+            "low": 172.1,
+            "volume": 435472.0,
+            "previous_close": 184.0,
+            "pct": -4.89,
+            "currency": "HKD",
+            "source": "tencent_hk",
+            "quote_quality": "free_delayed",
+        }
+    }
+    cache_file = tmp_path / "asian_klines_latest.json"
+    rt_cache_file = tmp_path / "asian_rt_latest.json"
+    cache_file.write_text(json.dumps(history_payload, ensure_ascii=False), encoding="utf-8")
+    rt_cache_file.write_text(json.dumps(rt_payload, ensure_ascii=False), encoding="utf-8")
+
+    monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
+    monkeypatch.setattr(asian_module, "JSON_CACHE", str(cache_file))
+    monkeypatch.setattr(asian_module, "RT_JSON_CACHE", str(rt_cache_file))
+    monkeypatch.setattr(asian_module, "GLOBAL_ASIAN_RT_CACHE", {})
+    _install_immediate_local_cache_runner(monkeypatch)
+    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+
+    tab = asian_module.AsianMarketTab()
+    try:
+        row = next(item for item in tab.row_data if item["代码"] == "0522.HK")
+        assert row["现价"] == "176.00"
+        assert row["涨幅%"] == pytest.approx(round((176.0 / 184.0 - 1.0) * 100.0, 2))
+        assert asian_module.GLOBAL_ASIAN_RT_CACHE["0522.HK"]["close"] == 176.0
+        assert asian_module.GLOBAL_ASIAN_RT_CACHE["0522.HK"]["previous_close"] == 184.0
     finally:
         tab.deleteLater()
 

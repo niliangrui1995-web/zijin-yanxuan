@@ -122,6 +122,37 @@ def test_fetch_jp_realtime_quote_parses_current_yahoo_japan_page_shape():
     assert quote["source"] == "yj_finance_page"
 
 
+def test_fetch_kr_realtime_quote_preserves_signed_falling_diff():
+    session = _FakeSession(
+        _FakeResponse(
+            data={
+                "datas": [
+                    {
+                        "localTradedAt": "2026-06-05T15:30:00+09:00",
+                        "closePriceRaw": "2070000",
+                        "compareToPreviousClosePriceRaw": "-228000",
+                        "fluctuationsRatioRaw": "-9.92",
+                        "compareToPreviousPrice": {"code": "5", "name": "FALLING"},
+                        "openPriceRaw": "2142000",
+                        "highPriceRaw": "2188000",
+                        "lowPriceRaw": "2070000",
+                        "accumulatedTradingVolumeRaw": "5358995",
+                        "currencyType": {"code": "KRW"},
+                    }
+                ]
+            }
+        )
+    )
+
+    quote = workers._fetch_kr_realtime_quote("000660.KS", session)
+
+    assert quote is not None
+    assert quote["date"] == "2026-06-05"
+    assert quote["close"] == 2070000.0
+    assert quote["previous_close"] == 2298000.0
+    assert quote["source"] == "naver_realtime"
+
+
 def test_fetch_jp_realtime_quote_retries_with_plain_requests_after_session_error(monkeypatch):
     session = _FakeSession(_FakeResponse(text="temporarily unavailable", status_code=500))
     monkeypatch.setattr(

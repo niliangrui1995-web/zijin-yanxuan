@@ -372,8 +372,14 @@ def _fetch_kr_realtime_quote(code: str, http_session) -> dict | None:
     direction_code = str((info.get("compareToPreviousPrice") or {}).get("code") or "").strip()
     prev_close = None
     if diff_value is not None:
-        sign = -1.0 if direction_code in {"4", "5"} or (ratio is not None and ratio < 0) else 1.0
-        prev_close = close_price - sign * diff_value
+        signed_diff = diff_value
+        if ratio is not None and ratio != 0:
+            signed_diff = abs(diff_value) if ratio > 0 else -abs(diff_value)
+        elif direction_code in {"4", "5"}:
+            signed_diff = -abs(diff_value)
+        elif direction_code:
+            signed_diff = abs(diff_value)
+        prev_close = close_price - signed_diff
     if prev_close is None and ratio is not None and abs(1.0 + ratio / 100.0) > 1e-9:
         prev_close = close_price / (1.0 + ratio / 100.0)
 

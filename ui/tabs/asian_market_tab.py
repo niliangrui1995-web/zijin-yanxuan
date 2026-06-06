@@ -102,10 +102,23 @@ def _resolve_cached_rt_previous_close(info: dict, data_points: list[dict]) -> fl
 def _normalize_cached_rt_entry(info: dict, data_points: list[dict]) -> dict:
     normalized = dict(info or {})
     source = str(normalized.get("source") or "").strip().lower()
-    if source != "yfinance":
+    if source not in {"yfinance", "naver_realtime", "tencent_hk"}:
         return normalized
 
     close_value = _safe_float(normalized.get("close"))
+    if source == "tencent_hk" and data_points:
+        rt_date = str(normalized.get("date") or "").strip()
+        history_date = str(data_points[-1].get("date") or "").strip()
+        history_close = _safe_float(data_points[-1].get("close"))
+        if history_date and history_close > 0 and (not rt_date or rt_date <= history_date):
+            close_value = history_close
+            normalized["date"] = history_date
+            normalized["close"] = history_close
+            for key in ("open", "high", "low", "volume"):
+                history_value = _safe_float(data_points[-1].get(key))
+                if history_value > 0 or key == "volume":
+                    normalized[key] = history_value
+
     prev_close = _resolve_cached_rt_previous_close(normalized, data_points)
     if prev_close is None or prev_close <= 0:
         return normalized
@@ -113,6 +126,11 @@ def _normalize_cached_rt_entry(info: dict, data_points: list[dict]) -> dict:
     normalized["previous_close"] = prev_close
     if close_value > 0:
         normalized["pct"] = _round_pct(((close_value / prev_close) - 1.0) * 100.0)
+        for days_ago in (5, 10, 20):
+            if len(data_points) >= days_ago + 1:
+                past_close = _safe_float(data_points[-(days_ago + 1)].get("close"))
+                if past_close > 0:
+                    normalized[f"pct_{days_ago}"] = _round_pct(((close_value / past_close) - 1.0) * 100.0)
     return normalized
 
 
@@ -788,6 +806,7 @@ class AsianMarketTab(BaseStockTab):
 
         self.asian_table = VCPTableView(default_row_height=30)
         self.asian_table.setProperty("suppressLeftRails", True)
+        self.asian_table.setProperty("simpleCellPaint", True)
         self.asian_table.set_ambient_repaint_enabled(False)
         self.table_state = TableStateWrapper(self.asian_table, empty_title="暂无亚洲数据", loading_title="加载中...")
         layout.addWidget(self.table_state)
