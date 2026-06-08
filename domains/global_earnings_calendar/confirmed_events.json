@@ -521,6 +521,24 @@
       "original_timezone": "America/New_York",
       "call_time_source_url": "https://investor.ciena.com/events-and-presentations/event-details/2026/Ciena-Fiscal-Q2-2026-Financial-Results-Call/default.aspx",
       "call_time_source_type": "official_ir_event"
+    },
+    {
+      "company": "Oracle",
+      "ticker": "ORCL",
+      "sector": "云巨头/算力租赁/数据基础设施",
+      "report_date": "2026-06-10",
+      "fiscal_period": "May/2026",
+      "time_label": "After market close / official webcast",
+      "beijing_time": "2026-06-11 05:00",
+      "status": "confirmed",
+      "source": "confirmed",
+      "priority": "strategic_giant",
+      "conference_url": "https://investor.oracle.com/events-and-presentations/event-details/2026/Q4-FY26-Earnings/default.aspx",
+      "market": "US",
+      "original_call_time_text": "June 10, 2026 04:00 PM CT",
+      "original_timezone": "America/Chicago",
+      "call_time_source_url": "https://investor.oracle.com/events-and-presentations/event-details/2026/Q4-FY26-Earnings/default.aspx",
+      "call_time_source_type": "official_ir_event"
     }
   ]
 }
