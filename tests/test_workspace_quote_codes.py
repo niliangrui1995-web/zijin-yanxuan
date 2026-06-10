@@ -429,6 +429,42 @@ def test_watchlist_radar_skips_scan_cache_fallback_on_ui_thread(monkeypatch):
     assert rps_bundle is None
 
 
+def test_watchlist_radar_can_use_source_cache_without_scan_fallback(monkeypatch):
+    import core.data_store as data_store_module
+
+    def fail_datastore():
+        raise AssertionError("watchlist radar should not block on scan cache")
+
+    monkeypatch.setattr(data_store_module, "DataStore", fail_datastore)
+    monkeypatch.setattr(
+        StockContextService,
+        "_load_ai_chain_cache_rows",
+        lambda self: [{"代码": "300750", "细分板块": "液冷", "备注": "液冷主线"}],
+    )
+    workspace = SimpleNamespace(
+        engine=None,
+        tab_specs=lambda: [{"key": "scan", "group": "info"}, {"key": "ai_industry_chain", "group": "info"}],
+        get_loaded_tab=lambda key: None,
+        get_tab=lambda key: (_ for _ in ()).throw(AssertionError("lazy tab should not load")),
+        iter_tabs=lambda: [],
+    )
+
+    remark_data, na_subsector_data, block_data, earn_data, lhb_data, rps_bundle = (
+        ClassicWorkspace.collect_watchlist_radar_data(
+            workspace,
+            include_source_cache_fallback=True,
+            target_codes={"300750"},
+        )
+    )
+
+    assert remark_data == {"300750": "液冷主线"}
+    assert na_subsector_data == {"300750": "液冷"}
+    assert block_data == {}
+    assert earn_data == {}
+    assert lhb_data == {}
+    assert rps_bundle is None
+
+
 def test_workspace_collects_lhb_context_from_pool_cache_without_loading_lazy_tab(monkeypatch):
     import core.lhb_pool_manager as lhb_pool_module
 
