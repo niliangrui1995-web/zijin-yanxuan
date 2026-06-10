@@ -167,6 +167,32 @@ class KLineWindowManager:
             reason=reason,
         )
 
+    def _notify_webengine_preparing(self, main_window, code: str, name: str) -> None:
+        message = "K线图组件正在准备，请稍后再打开"
+        try:
+            from ui.components.toast_widget import show_toast
+
+            show_toast(message, "info", main_window, duration=2200)
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.debug(f"[K线管理] WebEngine 准备中提示失败: {exc}")
+        try:
+            status_bar = main_window.statusBar() if main_window is not None else None
+            if status_bar is not None:
+                status_bar.showMessage(message, 3000)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+        record_metric(
+            "kline_webengine_preparing",
+            1,
+            unit="count",
+            tags={"code": str(code or "").strip()},
+        )
+        emit_structured_log(
+            "kline.webengine_preparing",
+            code=str(code or "").strip(),
+            name=str(name or "").strip(),
+        )
+
     def _notify_kline_module_unavailable(self, main_window, code: str, name: str, error: Exception) -> None:
         reason = str(error or "unknown")
         message = "K线窗口模块加载失败，请重启程序后再试"
@@ -365,10 +391,12 @@ class KLineWindowManager:
             current_idx: 当前索引
         """
         started_at = time.perf_counter()
-        preflight_running = getattr(self, "_webengine_available", None) is None and getattr(
-            self, "_webengine_preflight_started", False
-        )
-        if not preflight_running and not self._ensure_webengine_available():
+        webengine_available = getattr(self, "_webengine_available", None)
+        if webengine_available is None:
+            self._start_webengine_preflight_async()
+            self._notify_webengine_preparing(main_window, code, name)
+            return None
+        if not webengine_available:
             self._notify_webengine_unavailable(main_window, code, name)
             return None
 

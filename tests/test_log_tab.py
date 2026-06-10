@@ -33,6 +33,35 @@ def test_log_tab_skips_hidden_flush_and_recovers_from_history():
         tab.deleteLater()
 
 
+def test_log_tab_flushes_visible_logs_in_bounded_batches():
+    app = QApplication.instance()
+    tab = LogTab()
+    try:
+        tab._log_flush_batch_max = 2
+        tab.show()
+        app.processEvents()
+
+        tab._on_log_msg("info", "first\n")
+        tab._on_log_msg("info", "second\n")
+        tab._on_log_msg("info", "third\n")
+
+        tab._flush_log_buffer()
+
+        visible_text = tab.log_text.toPlainText()
+        assert "first" in visible_text
+        assert "second" in visible_text
+        assert "third" not in visible_text
+        assert len(tab._log_buffer) == 1
+
+        tab._flush_log_buffer()
+
+        assert "third" in tab.log_text.toPlainText()
+        assert tab._log_buffer == []
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
 def test_log_tab_level_filter_supports_multi_select():
     tab = LogTab()
     try:

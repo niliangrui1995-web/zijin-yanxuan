@@ -148,6 +148,7 @@ class ClassicWorkspace(QWidget):
     BACKGROUND_PREWARM_DELAY_MS = 350
     BACKGROUND_PREWARM_INTERVAL_MS = 260
     CONTEXT_PREWARM_PRIORITY = ("ai_industry_chain", "na_daily")
+    BACKGROUND_PREWARM_KEYS = frozenset()
     RESTORE_LAST_TAB_DELAY_MS = 750
 
     def __init__(
@@ -527,17 +528,20 @@ class ClassicWorkspace(QWidget):
         self._background_prewarm_started = True
         self.prime_stock_context_snapshots()
 
+        prewarm_keys = set(self.BACKGROUND_PREWARM_KEYS)
         unloaded_keys = [
             str(spec.get("key") or "").strip()
             for spec in self._tab_specs
-            if not spec.get("loaded") and str(spec.get("key") or "").strip()
+            if not spec.get("loaded")
+            and str(spec.get("key") or "").strip()
+            and str(spec.get("key") or "").strip() in prewarm_keys
         ]
-        pending_spec = self._spec_for_key_or_index(self._pending_restore_index)
-        pending_key = str((pending_spec or {}).get("key") or "").strip()
         current_spec = self._spec_for_key_or_index(self.tabs.currentIndex())
         current_key = str((current_spec or {}).get("key") or "").strip()
-        lead_key = pending_key or current_key
-        if lead_key in unloaded_keys:
+        lead_key = current_key
+        if lead_key and lead_key not in prewarm_keys:
+            unloaded_keys.insert(0, lead_key)
+        elif lead_key in unloaded_keys:
             unloaded_keys.remove(lead_key)
             unloaded_keys.insert(0, lead_key)
         priority_insert_at = 1 if lead_key and unloaded_keys[:1] == [lead_key] else 0

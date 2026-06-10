@@ -269,15 +269,34 @@ class LogTab(QWidget):
 
         cursor = self.log_text.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
+        formats = {}
+        pending_level = None
+        pending_parts = []
+
+        def _flush_pending():
+            if not pending_parts:
+                return
+            text_format = formats.get(pending_level)
+            if text_format is None:
+                text_format = QTextCharFormat()
+                text_format.setForeground(self._log_level_color(pending_level))
+                formats[pending_level] = text_format
+            cursor.insertText("".join(pending_parts), text_format)
+            pending_parts.clear()
+
         for level, text in entries:
             payload = str(text or "")
             if not payload:
                 continue
             if not payload.endswith("\n"):
                 payload += "\n"
-            text_format = QTextCharFormat()
-            text_format.setForeground(self._log_level_color(level))
-            cursor.insertText(payload, text_format)
+            normalized_level = self._normalize_level(level)
+            if pending_level is not None and normalized_level != pending_level:
+                _flush_pending()
+            pending_level = normalized_level
+            pending_parts.append(payload)
+
+        _flush_pending()
 
         self.log_text.setTextCursor(cursor)
         self.log_text.ensureCursorVisible()
@@ -364,6 +383,7 @@ class LogTab(QWidget):
 
         self._log_buffer = []
         self._log_buffer_max = 3000
+        self._log_flush_batch_max = 160
         self._log_flush_timer = QTimer(self)
         self._log_flush_timer.timeout.connect(self._flush_log_buffer)
         self._log_flush_timer.start(200)
@@ -417,8 +437,11 @@ class LogTab(QWidget):
             self._refresh_from_history_pending = True
             return
 
-        filtered_entries = self._filtered_entries(self._log_buffer)
-        self._log_buffer.clear()
+        batch_size = max(1, int(getattr(self, "_log_flush_batch_max", 160) or 160))
+        pending_entries = self._log_buffer[:batch_size]
+        del self._log_buffer[: len(pending_entries)]
+
+        filtered_entries = self._filtered_entries(pending_entries)
 
         if filtered_entries:
             self._append_log_entries(filtered_entries, clear_existing=False)

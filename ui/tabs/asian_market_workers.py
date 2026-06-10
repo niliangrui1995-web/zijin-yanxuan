@@ -43,7 +43,9 @@ GLOBAL_ASIAN_RT_CACHE: dict[str, dict] = {}
 _ASIAN_MARKET_CODES = ("TW", "HK", "T", "KS")
 _PE_REFRESH_INTERVAL_SEC = 12 * 60 * 60
 _YF_FETCH_MAX_WORKERS = 2
-_FETCH_UPDATES_TIMEOUT_SEC = 80
+_FETCH_UPDATES_TIMEOUT_SEC = 45
+_FETCH_TIMEOUT_MARKET_BACKOFF_SEC = 5 * 60
+_OPTIONAL_NETWORK_MIN_REMAINING_SEC = 25
 
 _USE_CF_PROXY = False
 _EMPTY_NUMERIC_MARKERS = {"", "-", "--", "---", "—", "－", "None", "null"}
@@ -87,6 +89,21 @@ def _asian_quote_fetch_priority(code: str) -> int:
         "TWO": 2,
         "T": 3,
     }.get(suffix, 4)
+
+
+def _asian_market_suffix(code: str) -> str:
+    return str(code or "").strip().upper().split(".")[-1]
+
+
+def _seconds_until_monotonic(deadline: float | None) -> float | None:
+    if deadline is None:
+        return None
+    return float(deadline) - time.monotonic()
+
+
+def _has_optional_network_budget(deadline: float | None) -> bool:
+    remaining = _seconds_until_monotonic(deadline)
+    return remaining is None or remaining >= _OPTIONAL_NETWORK_MIN_REMAINING_SEC
 
 
 def _to_float(value) -> float | None:
@@ -787,6 +804,8 @@ def _fetch_asian_pe_fallback(code: str, http_session) -> tuple[float | None, str
         if suffix == "KS":
             return _fetch_kr_naver_pe(normalized_code, http_session)
         if suffix == "T":
+            if get_yf_rate_limit_status()["active"]:
+                return _fetch_jp_kabutan_pe(normalized_code.split(".")[0])
             return _fetch_jp_yahoo_pe(normalized_code, http_session)
     except (
         AttributeError,
@@ -807,6 +826,7 @@ def fetch_asian_realtime_quote(
     *,
     use_cf_proxy: bool | None = None,
     yf_session=None,
+    allow_yfinance_fallback: bool = True,
 ):
     normalized_code = str(code or "").strip().upper()
     if not normalized_code or "." not in normalized_code:
@@ -840,6 +860,10 @@ def fetch_asian_realtime_quote(
 
     if quote:
         return quote
+
+    if not allow_yfinance_fallback:
+        log.debug("[AsianTab] Skip optional yfinance realtime fallback %s: low time budget", normalized_code)
+        return None
 
     rate_limit_status = get_yf_rate_limit_status()
     if rate_limit_status["active"]:
@@ -891,6 +915,8 @@ class AsianMarketWorker(QThread):
         self._cycle_done = threading.Event()
         self._cycle_done.set()
         self._last_status = ""
+        self._market_backoff_until: dict[str, float] = {}
+        self._fetch_deadline_monotonic: float | None = None
 
     def stop(self):
         self._is_running = False
@@ -946,7 +972,31 @@ class AsianMarketWorker(QThread):
             return False
         raise exc
 
-    def _fetch_yahoo_enrichment(self, code: str, yf_session):
+    def _prune_market_backoff(self, now_ts: float | None = None) -> None:
+        now = time.time() if now_ts is None else float(now_ts)
+        self._market_backoff_until = {
+            market: until_ts
+            for market, until_ts in self._market_backoff_until.items()
+            if float(until_ts or 0.0) > now
+        }
+
+    def _mark_market_backoff(self, market: str, *, now_ts: float | None = None) -> None:
+        normalized_market = str(market or "").strip().upper()
+        if not normalized_market:
+            return
+        now = time.time() if now_ts is None else float(now_ts)
+        self._market_backoff_until[normalized_market] = now + _FETCH_TIMEOUT_MARKET_BACKOFF_SEC
+
+    def _is_market_backoff_active(self, code: str, *, now_ts: float | None = None) -> bool:
+        market = _asian_market_suffix(code)
+        if not market:
+            return False
+        now = time.time() if now_ts is None else float(now_ts)
+        return float(self._market_backoff_until.get(market, 0.0) or 0.0) > now
+
+    def _fetch_yahoo_enrichment(self, code: str, yf_session, *, allow_network: bool = True):
+        if not allow_network:
+            return {}, None, None
         if get_yf_rate_limit_status()["active"]:
             return {}, None, None
 
@@ -981,12 +1031,15 @@ class AsianMarketWorker(QThread):
         pe_value,
         pe_source: str,
         pe_updated_at: float,
+        allow_optional_network: bool = True,
     ):
         if (time.time() - pe_updated_at) < _PE_REFRESH_INTERVAL_SEC:
             return pe_value, pe_source, pe_updated_at
 
         market = MarketCalendar.normalize_market(MarketCalendar.infer_market(code))
         if MarketCalendar.is_quote_refresh_time(market):
+            return pe_value, pe_source, pe_updated_at
+        if not allow_optional_network:
             return pe_value, pe_source, pe_updated_at
 
         yf_status = get_yf_rate_limit_status()
@@ -1015,9 +1068,18 @@ class AsianMarketWorker(QThread):
         return pe_value, pe_source, pe_updated_at
 
     def _fetch_single_code(self, code: str, yf_session, info_session):
+        deadline = getattr(self, "_fetch_deadline_monotonic", None)
+        remaining = _seconds_until_monotonic(deadline)
+        if remaining is not None and remaining <= 0:
+            return code, None
+
         realtime_quote = None
         try:
-            realtime_quote = fetch_asian_realtime_quote(code, yf_session=yf_session)
+            realtime_quote = fetch_asian_realtime_quote(
+                code,
+                yf_session=yf_session,
+                allow_yfinance_fallback=_has_optional_network_budget(deadline),
+            )
         except Exception as exc:
             self._handle_optional_yahoo_error(code, exc, "单票实时回退")
 
@@ -1025,8 +1087,12 @@ class AsianMarketWorker(QThread):
         df = (realtime_quote or {}).get("df_today")
         ticker = None
         quote_source = str((realtime_quote or {}).get("source") or "").strip().lower()
-        if not realtime_quote or quote_source == "yfinance":
-            fast_info, history_df, ticker = self._fetch_yahoo_enrichment(code, yf_session)
+        if _has_optional_network_budget(deadline) and (not realtime_quote or quote_source == "yfinance"):
+            fast_info, history_df, ticker = self._fetch_yahoo_enrichment(
+                code,
+                yf_session,
+                allow_network=_has_optional_network_budget(deadline),
+            )
             if history_df is not None:
                 df = history_df
 
@@ -1093,6 +1159,7 @@ class AsianMarketWorker(QThread):
             pe_value=pe_value,
             pe_source=pe_source,
             pe_updated_at=pe_updated_at,
+            allow_optional_network=_has_optional_network_budget(deadline),
         )
 
         payload = {
@@ -1129,15 +1196,27 @@ class AsianMarketWorker(QThread):
         raw_codes = list(dict.fromkeys(str(code).strip() for code in self.codes if str(code).strip()))
         if not raw_codes:
             return updates
+        now_ts = time.time()
+        self._prune_market_backoff(now_ts)
+        skipped_markets = sorted({_asian_market_suffix(code) for code in raw_codes if self._is_market_backoff_active(code, now_ts=now_ts)})
+        eligible_codes = [code for code in raw_codes if not self._is_market_backoff_active(code, now_ts=now_ts)]
+        if skipped_markets:
+            log.info("[AsianTab] Skip markets in short backoff: %s", ",".join(skipped_markets))
+        if not eligible_codes:
+            return updates
         codes = [
             code
             for _idx, code in sorted(
-                enumerate(raw_codes),
+                enumerate(eligible_codes),
                 key=lambda item: (_asian_quote_fetch_priority(item[1]), item[0]),
             )
         ]
 
         max_workers = max(1, min(_YF_FETCH_MAX_WORKERS, len(codes)))
+        deadline = time.monotonic() + _FETCH_UPDATES_TIMEOUT_SEC
+        previous_deadline = getattr(self, "_fetch_deadline_monotonic", None)
+        self._fetch_deadline_monotonic = deadline
+        timed_out = False
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
         futures = {executor.submit(self._fetch_single_code, code, yf_session, info_session): code for code in codes}
         try:
@@ -1175,15 +1254,24 @@ class AsianMarketWorker(QThread):
                         continue
                     raise
         except concurrent.futures.TimeoutError:
+            timed_out = True
+            unfinished_markets = sorted(
+                {_asian_market_suffix(code) for future, code in futures.items() if not future.done()}
+            )
+            for market in unfinished_markets:
+                self._mark_market_backoff(market)
+            if unfinished_markets:
+                log.warning("[AsianTab] Timeout degraded markets: %s", ",".join(unfinished_markets))
             log.warning(
-                "[AsianTab] 本轮亚洲报价抓取达到 %s 秒上限，等待在途请求收尾",
+                "[AsianTab] 本轮亚洲报价抓取达到 %s 秒上限，已取消未完成请求并启用短暂市场降级",
                 _FETCH_UPDATES_TIMEOUT_SEC,
             )
         finally:
             for future in futures:
                 if not future.done():
                     future.cancel()
-            executor.shutdown(wait=True, cancel_futures=True)
+            executor.shutdown(wait=not timed_out, cancel_futures=True)
+            self._fetch_deadline_monotonic = previous_deadline
 
         return updates
 

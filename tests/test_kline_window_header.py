@@ -904,24 +904,9 @@ def test_kline_manager_blocks_open_when_webengine_preflight_fails(monkeypatch):
 
 
 def test_kline_manager_does_not_block_when_webengine_preflight_is_running(monkeypatch):
-    notified = []
+    unavailable = []
+    preparing = []
     ensure_calls = []
-
-    class _Chart:
-        def __init__(self, **kwargs):
-            self._visible = True
-
-        def show(self):
-            self._visible = True
-
-        def raise_(self):
-            return None
-
-        def activateWindow(self):
-            return None
-
-        def isVisible(self):
-            return self._visible
 
     manager = KLineWindowManager()
     manager._charts = []
@@ -934,9 +919,13 @@ def test_kline_manager_does_not_block_when_webengine_preflight_is_running(monkey
     monkeypatch.setattr(
         manager,
         "_notify_webengine_unavailable",
-        lambda main_window, code, name: notified.append((code, name, manager._webengine_failure)),
+        lambda main_window, code, name: unavailable.append((code, name, manager._webengine_failure)),
     )
-    monkeypatch.setattr(kline_module, "KLineChartWindow", _Chart)
+    monkeypatch.setattr(
+        manager,
+        "_notify_webengine_preparing",
+        lambda main_window, code, name: preparing.append((code, name)),
+    )
 
     try:
         chart = manager.open_chart(
@@ -949,9 +938,60 @@ def test_kline_manager_does_not_block_when_webengine_preflight_is_running(monkey
             current_idx=0,
         )
 
-        assert chart is manager._charts[-1]
+        assert chart is None
+        assert manager._charts == []
         assert ensure_calls == []
-        assert notified == []
+        assert unavailable == []
+        assert preparing == [("000001", "平安银行")]
+    finally:
+        manager._charts = []
+        manager._prewarm_view = None
+        manager._prewarm_started = False
+        manager._prewarm_cancelled = False
+        manager._prewarm_expire_timer = None
+        manager._webengine_available = None
+        manager._webengine_failure = ""
+        manager._webengine_preflight_started = False
+
+
+def test_kline_manager_starts_async_preflight_when_opening_unknown_webengine(monkeypatch):
+    started = []
+    preparing = []
+
+    manager = KLineWindowManager()
+    manager._charts = []
+    manager._prewarm_view = None
+    manager._prewarm_started = False
+    manager._webengine_available = None
+    manager._webengine_failure = ""
+    manager._webengine_preflight_started = False
+    monkeypatch.setattr(
+        manager,
+        "_ensure_webengine_available",
+        lambda: (_ for _ in ()).throw(AssertionError("open_chart should not block on preflight")),
+    )
+    monkeypatch.setattr(manager, "_start_webengine_preflight_async", lambda: started.append(True) or True)
+    monkeypatch.setattr(
+        manager,
+        "_notify_webengine_preparing",
+        lambda main_window, code, name: preparing.append((code, name)),
+    )
+
+    try:
+        chart = manager.open_chart(
+            main_window=None,
+            code="000001",
+            name="平安银行",
+            data_provider=_DummyProvider(),
+            vcp_data={},
+            code_list=[],
+            current_idx=0,
+        )
+
+        assert chart is None
+        assert manager._charts == []
+        assert started == [True]
+        assert preparing == [("000001", "平安银行")]
     finally:
         manager._charts = []
         manager._prewarm_view = None

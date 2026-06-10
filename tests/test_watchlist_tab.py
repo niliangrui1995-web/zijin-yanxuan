@@ -379,8 +379,9 @@ def test_watchlist_lineage_and_signature_skip_unchanged_render(monkeypatch):
 
     tab = watchlist_module.WatchlistTab(_DummyProvider(), startup_tasks_enabled=False)
     update_calls = []
+    quote_refresh_calls = []
     original_update_data = tab.model.update_data
-    monkeypatch.setattr(tab, "_refresh_quotes_from_store_or_live", lambda **_kwargs: None)
+    monkeypatch.setattr(tab, "_refresh_quotes_from_store_or_live", lambda **kwargs: quote_refresh_calls.append(kwargs))
     monkeypatch.setattr(tab, "_request_vcp_calc", lambda *args, **kwargs: None)
 
     def _spy_update_data(rows):
@@ -396,6 +397,7 @@ def test_watchlist_lineage_and_signature_skip_unchanged_render(monkeypatch):
         lineage = tab.get_data_lineage()
 
         assert update_calls == [1]
+        assert len(quote_refresh_calls) == 1
         assert lineage["key"] == "watchlist"
         assert lineage["provider"] == "watchlist_vm/global_store"
         assert lineage["triggered_network"] is False

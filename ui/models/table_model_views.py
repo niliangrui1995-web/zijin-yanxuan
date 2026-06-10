@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QMimeData, QModelIndex, QSortFilterProxyModel, Qt
 from PyQt6.QtGui import QColor, QPainter
-from PyQt6.QtWidgets import QApplication, QStyledItemDelegate, QStyle, QStyleOptionViewItem
+from PyQt6.QtWidgets import QApplication, QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 from ui.components import SearchFilter
 from ui.models.table_cell_renderers import build_stock_cell_context, render_stock_cell

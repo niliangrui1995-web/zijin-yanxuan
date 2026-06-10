@@ -42,11 +42,39 @@ def _process_events(rounds: int = 4):
             app.processEvents()
 
 
-def test_main_window_keeps_data_prewarm_but_disables_kline_prewarm_by_default():
+def test_main_window_keeps_data_prewarm_and_kline_preflight_by_default():
     signature = inspect.signature(MainWindowQT)
 
     assert signature.parameters["background_prewarm"].default is True
-    assert signature.parameters["kline_prewarm_enabled"].default is False
+    assert signature.parameters["kline_prewarm_enabled"].default is True
+
+
+def test_main_window_schedules_default_kline_preflight(monkeypatch, qt_application):
+    task_manager = _FakeTaskManager()
+    prewarm_calls = []
+    monkeypatch.setattr("ui.main_window_qt.create_data_provider", lambda *, offline=True: _DummyProvider())
+    monkeypatch.setattr("ui.main_window_qt.create_scan_engine", lambda: object())
+    monkeypatch.setattr("ui.main_window_qt.task_manager", task_manager)
+    monkeypatch.setattr(
+        "ui.main_window_qt.kline_manager.prewarm",
+        lambda **kwargs: prewarm_calls.append(kwargs) or True,
+    )
+
+    window = MainWindowQT(
+        startup_enabled=False,
+        background_prewarm=False,
+        central_quotes_enabled=False,
+        restore_last_tab_enabled=False,
+    )
+    try:
+        _process_events()
+
+        assert prewarm_calls == [{"delay_ms": 2500}]
+    finally:
+        if not window._is_closing:
+            window.close()
+            _process_events()
+        window.deleteLater()
 
 
 def test_apply_theme_suppresses_toast_before_main_window_visible(monkeypatch, qt_application):

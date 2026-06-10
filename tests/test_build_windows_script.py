@@ -55,9 +55,10 @@ def test_dev_shortcut_uses_silent_launcher():
     assert 'Arguments = (\'"{0}"\' -f $RepoRoot)' in script
 
 
-def test_silent_launcher_prefers_base_pythonw_to_avoid_venv_redirector_parent():
+def test_silent_launcher_uses_project_venv_pythonw():
     source = (Path(__file__).resolve().parents[1] / "scripts" / "launch_windows_silent.cs").read_text(
         encoding="utf-8",
     )
 
-    assert "File.Exists(basePythonw) ? basePythonw : venvPythonw" in source
+    assert "var pythonw = venvPythonw;" in source
+    assert "File.Exists(basePythonw) ? basePythonw : venvPythonw" not in source

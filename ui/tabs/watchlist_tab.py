@@ -363,10 +363,11 @@ class WatchlistTab(BaseStockTab):
 
         result = self._describe_watchlist_rows(final_list)
         self._last_watchlist_result = result
-        if result.signature != self._last_watchlist_signature:
+        rows_changed = result.signature != self._last_watchlist_signature
+        if rows_changed:
             self.model.update_data(result.rows)
             self._last_watchlist_signature = result.signature
-        self._refresh_quotes_from_store_or_live(quote_task_id=task_registry.quote_refresh("watchlist").task_id)
+            self._refresh_quotes_from_store_or_live(quote_task_id=task_registry.quote_refresh("watchlist").task_id)
         self._update_status_summary()
 
     def _can_fetch_live_quotes_now(self) -> bool:

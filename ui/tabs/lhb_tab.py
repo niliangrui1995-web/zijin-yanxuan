@@ -699,10 +699,12 @@ class LhbTab(BaseStockTab):
     def _display_pool(self, pool: list[dict], *, emit_event: bool = True):
         """将池数据渲染到表格"""
         row_data = LhbPoolManager.sort_pool_rows_for_display([self._format_pool_row(rec) for rec in pool])
+        row_signature = self._describe_lhb_rows(row_data).signature
+        rows_changed = row_signature != self._last_lhb_signature
 
-        self._clear_proxy_sort_for_default_lhb_order()
-        self.model.update_data(row_data)
-        self._refresh_lhb_lineage(row_data)
+        if rows_changed:
+            self._clear_proxy_sort_for_default_lhb_order()
+            self.model.update_data([dict(row) for row in row_data])
 
         cached_days = len(self._get_pool_manager().get_cached_dates())
         self._set_pool_status(
@@ -718,7 +720,9 @@ class LhbTab(BaseStockTab):
                 self.table_state.show_empty("暂无龙虎榜数据")
 
         # 触发全局通知，让关注池 Tab 能扫描到龙虎榜数据
-        if emit_event:
+        self._refresh_lhb_lineage(row_data)
+
+        if rows_changed and emit_event:
             previous_handling = self._handling_lhb_pool_update
             self._handling_lhb_pool_update = True
             try:
@@ -726,10 +730,11 @@ class LhbTab(BaseStockTab):
             finally:
                 self._handling_lhb_pool_update = previous_handling
 
-        self.refresh_table_quotes_and_market_caps(
-            quote_task_id=task_registry.quote_refresh("lhb").task_id,
-            async_local=True,
-        )
+        if rows_changed:
+            self.refresh_table_quotes_and_market_caps(
+                quote_task_id=task_registry.quote_refresh("lhb").task_id,
+                async_local=True,
+            )
 
     # ================================================================
     # 后台回填缺失天数

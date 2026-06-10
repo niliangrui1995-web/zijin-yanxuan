@@ -49,6 +49,11 @@ def test_cf_proxy_default_disabled_and_toggleable():
         workers.set_cf_proxy_enabled(original)
 
 
+def test_fetch_updates_timeout_budget_fails_fast_before_legacy_80s_limit():
+    assert workers._FETCH_UPDATES_TIMEOUT_SEC <= 45
+    assert workers._OPTIONAL_NETWORK_MIN_REMAINING_SEC >= 25
+
+
 def test_fetch_asian_realtime_quote_skips_yfinance_fallback_during_cooldown(monkeypatch):
     monkeypatch.setattr(workers, "_fetch_tw_realtime_quote", lambda code, session: None)
     monkeypatch.setattr(
@@ -74,6 +79,29 @@ def test_fetch_asian_realtime_quote_skips_yfinance_fallback_during_cooldown(monk
 
     assert quote is None
     assert calls["yf"] == 0
+
+
+def test_fetch_asian_realtime_quote_skips_yfinance_fallback_when_optional_network_disabled(monkeypatch):
+    monkeypatch.setattr(workers, "_fetch_tw_realtime_quote", lambda code, session: None)
+    monkeypatch.setattr(
+        workers,
+        "get_yf_rate_limit_status",
+        lambda: {
+            "active": False,
+            "remaining_sec": 0.0,
+            "reason": "",
+            "until_ts": 0.0,
+        },
+    )
+    monkeypatch.setattr(
+        workers,
+        "_fetch_yfinance_realtime_quote",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("optional fallback should wait")),
+    )
+
+    quote = workers.fetch_asian_realtime_quote("2330.TW", yf_session=object(), allow_yfinance_fallback=False)
+
+    assert quote is None
 
 
 def test_fetch_asian_realtime_quote_uses_tencent_for_hk(monkeypatch):
@@ -193,7 +221,7 @@ def test_fetch_single_code_returns_none_when_yahoo_rate_limited(monkeypatch):
         },
     )
     monkeypatch.setattr(workers.yf, "Ticker", _Ticker)
-    monkeypatch.setattr(workers, "fetch_asian_realtime_quote", lambda code, yf_session=None: None)
+    monkeypatch.setattr(workers, "fetch_asian_realtime_quote", lambda code, yf_session=None, **kwargs: None)
     monkeypatch.setattr(workers, "is_yf_rate_limit_error", lambda exc: isinstance(exc, YFRateLimitError))
     monkeypatch.setattr(
         workers,
@@ -222,7 +250,7 @@ def test_fetch_single_code_uses_exchange_quote_during_yahoo_cooldown(monkeypatch
     monkeypatch.setattr(
         workers,
         "fetch_asian_realtime_quote",
-        lambda code, yf_session=None: {
+        lambda code, yf_session=None, **kwargs: {
             "date": "2026-04-23",
             "close": 2120.0,
             "open": 2090.0,
@@ -275,7 +303,7 @@ def test_fetch_single_code_keeps_exchange_quote_when_pe_rate_limited(monkeypatch
     monkeypatch.setattr(
         workers,
         "fetch_asian_realtime_quote",
-        lambda code, yf_session=None: {
+        lambda code, yf_session=None, **kwargs: {
             "date": "2026-04-23",
             "close": 1240000.0,
             "open": 1220000.0,
@@ -353,6 +381,71 @@ def test_fetch_updates_prioritizes_direct_exchange_sources(monkeypatch):
     worker._fetch_updates()
 
     assert calls[:3] == ["0522.HK", "000660.KS", "3711.TW"]
+
+
+def test_fetch_updates_skips_markets_in_short_backoff(monkeypatch):
+    monkeypatch.setattr(workers, "build_yf_session", lambda *args, **kwargs: object())
+    monkeypatch.setattr(workers, "_YF_FETCH_MAX_WORKERS", 1)
+    calls = []
+    worker = workers.AsianMarketWorker(["5201.T", "0522.HK"])
+    worker._market_backoff_until["T"] = workers.time.time() + 60
+
+    def _fake_fetch_single_code(code, yf_session, info_session):
+        calls.append(code)
+        return code, {"date": "2026-04-28", "close": 1.0, "previous_close": 1.0}
+
+    monkeypatch.setattr(worker, "_fetch_single_code", _fake_fetch_single_code)
+
+    updates = worker._fetch_updates()
+
+    assert calls == ["0522.HK"]
+    assert list(updates) == ["0522.HK"]
+
+
+def test_fetch_single_code_skips_optional_network_when_deadline_is_close(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        workers,
+        "fetch_asian_realtime_quote",
+        lambda code, yf_session=None, **kwargs: calls.append(kwargs) or {
+            "date": "2026-04-23",
+            "close": 2120.0,
+            "open": 2090.0,
+            "high": 2125.0,
+            "low": 2085.0,
+            "volume": 12345.0,
+            "previous_close": 2050.0,
+            "currency": "TWD",
+            "source": "twse_mis",
+            "quote_quality": "last",
+        },
+    )
+    monkeypatch.setattr(
+        workers,
+        "_fetch_asian_pe_fallback",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("PE fallback should wait")),
+    )
+    monkeypatch.setattr(
+        workers.MarketCalendar,
+        "is_quote_refresh_time",
+        classmethod(lambda cls, market="CN": False),
+    )
+    monkeypatch.setattr(workers, "GLOBAL_ASIAN_RT_CACHE", {})
+
+    worker = workers.AsianMarketWorker(["2330.TW"])
+    worker._fetch_deadline_monotonic = workers.time.monotonic() + 1
+    monkeypatch.setattr(
+        worker,
+        "_fetch_yahoo_enrichment",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("Yahoo enrichment should wait")),
+    )
+
+    code, payload = worker._fetch_single_code("2330.TW", object(), object())
+
+    assert code == "2330.TW"
+    assert payload is not None
+    assert payload["close"] == 2120.0
+    assert calls[0]["allow_yfinance_fallback"] is False
 
 
 def test_pe_refresh_does_not_block_during_quote_time(monkeypatch):
@@ -471,7 +564,7 @@ def test_fetch_single_code_prefers_resolved_previous_close_for_pct(monkeypatch):
             return history
 
     monkeypatch.setattr(workers.yf, "Ticker", _Ticker)
-    monkeypatch.setattr(workers, "fetch_asian_realtime_quote", lambda code, yf_session=None: None)
+    monkeypatch.setattr(workers, "fetch_asian_realtime_quote", lambda code, yf_session=None, **kwargs: None)
     monkeypatch.setattr(
         workers,
         "get_yf_rate_limit_status",
@@ -540,7 +633,17 @@ def test_kr_naver_pe_fallback_parses_per_element():
     assert "main.naver" in session.urls[0]
 
 
-def test_jp_yahoo_pe_fallback_parses_per_data_item():
+def test_jp_yahoo_pe_fallback_parses_per_data_item(monkeypatch):
+    monkeypatch.setattr(
+        workers,
+        "get_yf_rate_limit_status",
+        lambda: {
+            "active": False,
+            "remaining_sec": 0.0,
+            "reason": "",
+            "until_ts": 0.0,
+        },
+    )
     session = _FakeSession(
         _FakeResponse(
             text=(
@@ -555,6 +658,29 @@ def test_jp_yahoo_pe_fallback_parses_per_data_item():
     assert pe == 22.20
     assert source == "yahoo_jp_per"
     assert "finance.yahoo.co.jp" in session.urls[0]
+
+
+def test_jp_pe_fallback_uses_kabutan_during_yahoo_cooldown(monkeypatch):
+    monkeypatch.setattr(
+        workers,
+        "get_yf_rate_limit_status",
+        lambda: {
+            "active": True,
+            "remaining_sec": 180.0,
+            "reason": "Too Many Requests",
+            "until_ts": 999.0,
+        },
+    )
+    monkeypatch.setattr(
+        workers,
+        "_fetch_jp_yahoo_pe",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("Yahoo PE should wait")),
+    )
+    monkeypatch.setattr(workers, "_fetch_jp_kabutan_pe", lambda symbol: (24.3, "kabutan_per"))
+
+    pe, source = workers._fetch_asian_pe_fallback("6113.T", object())
+
+    assert (pe, source) == (24.3, "kabutan_per")
 
 
 def test_jp_pe_fallback_uses_kabutan_when_yahoo_page_errors(monkeypatch):
@@ -612,7 +738,7 @@ def test_fetch_single_code_uses_market_pe_fallback_when_yahoo_info_empty(monkeyp
     monkeypatch.setattr(
         workers,
         "fetch_asian_realtime_quote",
-        lambda code, yf_session=None: {
+        lambda code, yf_session=None, **kwargs: {
             "date": "2026-04-23",
             "close": 2080.0,
             "open": 2070.0,

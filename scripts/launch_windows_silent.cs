@@ -16,10 +16,7 @@ internal static class Program
             var venvDir = Path.Combine(repoRoot, ".venv");
             var baseHome = ReadVenvHome(Path.Combine(venvDir, "pyvenv.cfg"));
             var venvPythonw = Path.Combine(venvDir, "Scripts", "pythonw.exe");
-            var basePythonw = !string.IsNullOrWhiteSpace(baseHome)
-                ? Path.Combine(baseHome, "pythonw.exe")
-                : "";
-            var pythonw = File.Exists(basePythonw) ? basePythonw : venvPythonw;
+            var pythonw = venvPythonw;
             if (string.IsNullOrWhiteSpace(pythonw) || !File.Exists(pythonw))
             {
                 throw new FileNotFoundException("pythonw.exe not found", venvPythonw);

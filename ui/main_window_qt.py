@@ -92,7 +92,7 @@ class MainWindowQT(QMainWindow):
         startup_enabled: bool = True,
         auto_refresh_enabled: bool | None = None,
         background_prewarm: bool = True,
-        kline_prewarm_enabled: bool = False,
+        kline_prewarm_enabled: bool = True,
         central_quotes_enabled: bool = True,
         restore_last_tab_enabled: bool = True,
     ):

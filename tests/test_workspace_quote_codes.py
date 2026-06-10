@@ -1152,25 +1152,10 @@ def test_workspace_background_prewarm_loads_lazy_tabs_without_manual_click(monke
 
         workspace._start_background_tab_prewarm()
 
-        assert constructed[0] == "fund_holdings"
-        assert constructed.index("ai_industry_chain") < constructed.index("na_daily")
-        assert primed.index("ai_industry_chain") < primed.index("na_daily")
-        assert set(ctor_kwargs) == {
-            "watchlist",
-            "asian_market",
-            "na_daily",
-            "stock_candidates",
-            "ai_industry_chain",
-            "lhb",
-            "rt_monitor",
-            "scan",
-            "foreign_block",
-            "earnings",
-            "fund_holdings",
-            "system_log",
-        }
+        assert constructed == ["watchlist"]
+        assert primed == ["watchlist"]
+        assert set(ctor_kwargs) == {"watchlist"}
         assert snapshot_primes == [{}]
-        assert "fund_holdings" in primed
     finally:
         workspace.shutdown()
         workspace.deleteLater()
@@ -1200,20 +1185,7 @@ def test_workspace_background_prewarm_creates_current_tab_first_without_restore(
         workspace._start_background_tab_prewarm()
 
         assert constructed[0] == "WatchlistTab"
-        assert set(constructed) == {
-            "WatchlistTab",
-            "LhbTab",
-            "AsianMarketTab",
-            "NADailyTab",
-            "StockCandidateTab",
-            "AIIndustryChainTab",
-            "RtMonitorTab",
-            "ScanTab",
-            "ForeignBlockTradeTab",
-            "EarningsTab",
-            "FundHoldingsTab",
-            "LogTab",
-        }
+        assert constructed == ["WatchlistTab"]
     finally:
         workspace.shutdown()
         workspace.deleteLater()

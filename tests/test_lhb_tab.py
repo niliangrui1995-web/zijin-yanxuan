@@ -304,6 +304,32 @@ def test_lhb_display_pool_emits_update_without_self_reload(monkeypatch):
         tab.deleteLater()
 
 
+def test_lhb_display_pool_skips_duplicate_event_and_quote_refresh(monkeypatch):
+    quote_calls = []
+    monkeypatch.setattr(
+        LhbTab,
+        "refresh_table_quotes_and_market_caps",
+        lambda self, *args, **kwargs: quote_calls.append(kwargs),
+        raising=False,
+    )
+
+    tab = LhbTab(object(), autoload_pool=False)
+    tab.pool_manager = SimpleNamespace(get_cached_dates=lambda: ["20260420"])
+    spy = QSignalSpy(lhb_tab_module.event_bus.sig_lhb_pool_updated)
+    try:
+        tab._pool_bootstrap_started = True
+        pool = [{"code": "300750", "name": "CATL"}]
+
+        tab._display_pool(pool)
+        tab._display_pool(pool)
+
+        assert len(spy) == 1
+        assert len(quote_calls) == 1
+        assert len(tab.model.row_data) == 1
+    finally:
+        tab.deleteLater()
+
+
 def test_lhb_refresh_after_ai_chain_update_reloads_started_pool(monkeypatch):
     tab = LhbTab(object(), autoload_pool=False)
     calls = []
