@@ -900,6 +900,92 @@ def test_asian_market_load_local_cache_keeps_history_when_rt_cache_is_zero(monke
         tab.deleteLater()
 
 
+def test_asian_market_load_local_cache_recomputes_short_pct_for_direct_quote_sources(monkeypatch, tmp_path):
+    def stock_payload(name, ticker, market, currency, close_base):
+        start_date = dt.date(2026, 5, 1)
+        klines = []
+        for offset in range(22):
+            close = close_base + offset
+            klines.append(
+                {
+                    "date": (start_date + dt.timedelta(days=offset)).isoformat(),
+                    "open": close - 0.5,
+                    "high": close + 1.0,
+                    "low": close - 1.0,
+                    "close": close,
+                    "volume": 100000.0 + offset,
+                }
+            )
+        return {
+            "name": name,
+            "ticker": ticker,
+            "market": market,
+            "track": "高频PCB与覆铜板材料",
+            "currency": currency,
+            "klines": klines,
+        }
+
+    history_payload = {
+        "stocks": [
+            stock_payload("Nittobo", "3110.T", "日本", "JPY", 100.0),
+            stock_payload("TSMC", "2330.TW", "台湾", "TWD", 200.0),
+        ]
+    }
+    rt_payload = {
+        "3110.T": {
+            "date": "2026-05-22",
+            "close": 121.0,
+            "open": 120.5,
+            "high": 122.0,
+            "low": 120.0,
+            "volume": 100121.0,
+            "previous_close": 120.0,
+            "pct": 0.0,
+            "pct_5": 0.0,
+            "pct_10": 0.0,
+            "pct_20": 0.0,
+            "currency": "JPY",
+            "source": "yj_finance_page",
+            "quote_quality": "last",
+        },
+        "2330.TW": {
+            "date": "2026-05-22",
+            "close": 221.0,
+            "open": 220.5,
+            "high": 222.0,
+            "low": 220.0,
+            "volume": 200121.0,
+            "previous_close": 220.0,
+            "pct": 0.0,
+            "pct_5": 0.0,
+            "pct_10": 0.0,
+            "pct_20": 0.0,
+            "currency": "TWD",
+            "source": "twse_mis",
+            "quote_quality": "last",
+        },
+    }
+    cache_file = tmp_path / "asian_klines_latest.json"
+    rt_cache_file = tmp_path / "asian_rt_latest.json"
+    cache_file.write_text(json.dumps(history_payload, ensure_ascii=False), encoding="utf-8")
+    rt_cache_file.write_text(json.dumps(rt_payload, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(asian_module, "filter_asian_tickers", lambda: {"Nittobo": "3110.T", "TSMC": "2330.TW"})
+
+    payload = asian_module.build_asian_market_local_cache_payload(
+        json_cache=str(cache_file),
+        rt_json_cache=str(rt_cache_file),
+        existing_rt_cache={},
+    )
+
+    rows = {row["代码"]: row for row in payload["rows"]}
+    assert rows["3110.T"]["5日涨跌%"] == pytest.approx(round((121.0 / 116.0 - 1.0) * 100.0, 2))
+    assert rows["3110.T"]["10日涨跌%"] == pytest.approx(round((121.0 / 111.0 - 1.0) * 100.0, 2))
+    assert rows["3110.T"]["20日涨跌%"] == pytest.approx(round((121.0 / 101.0 - 1.0) * 100.0, 2))
+    assert rows["2330.TW"]["5日涨跌%"] == pytest.approx(round((221.0 / 216.0 - 1.0) * 100.0, 2))
+    assert rows["2330.TW"]["10日涨跌%"] == pytest.approx(round((221.0 / 211.0 - 1.0) * 100.0, 2))
+    assert rows["2330.TW"]["20日涨跌%"] == pytest.approx(round((221.0 / 201.0 - 1.0) * 100.0, 2))
+
+
 def test_asian_market_status_rows_refresh_without_quote_tick(monkeypatch):
     monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
     monkeypatch.setattr(

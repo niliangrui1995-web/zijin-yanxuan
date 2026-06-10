@@ -102,8 +102,6 @@ def _resolve_cached_rt_previous_close(info: dict, data_points: list[dict]) -> fl
 def _normalize_cached_rt_entry(info: dict, data_points: list[dict]) -> dict:
     normalized = dict(info or {})
     source = str(normalized.get("source") or "").strip().lower()
-    if source not in {"yfinance", "naver_realtime", "tencent_hk"}:
-        return normalized
 
     close_value = _safe_float(normalized.get("close"))
     if source == "tencent_hk" and data_points:
