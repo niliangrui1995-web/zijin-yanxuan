@@ -33,10 +33,8 @@ from app.services.ui_fund_holdings_service import (
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
 from core.ai_industry_chain_pool import (
-    filter_rows_to_ai_chain_codes,
     load_ai_industry_chain_context_map,
     load_ai_industry_chain_stock_codes,
-    normalize_ai_chain_code,
 )
 from ui.components import (
     MultiSelectFilterButton,
@@ -44,17 +42,28 @@ from ui.components import (
     VCPTableView,
     format_multi_select_summary,
 )
-from ui.components.stock_context_menu import build_stock_context_menu
 from ui.models.table_models import StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_refresh import load_cached_finance_snapshot
 from ui.tabs.base_stock_tab import BaseStockTab
+from ui.tabs.fund_holdings_filter_menu import build_change_filter_menu, build_quarter_filter_menu
 from ui.tabs.fund_holdings_filter_proxy import FundHoldingsFilterProxyModel
 from ui.tabs.fund_holdings_filter_state import (
     build_current_filter_summary,
+    extract_capital_attribute_filter_options,
+    extract_subject_filter_options,
     format_change_filter_button_text,
     format_quarter_filter_button_text,
     quarter_scope_loaded,
     resolve_quarter_query_scope,
+)
+from ui.tabs.fund_holdings_payload import (
+    build_ai_chain_context_text,
+    build_fund_holdings_view_rows,
+    filter_rows_to_stock_universe,
+    load_ai_chain_context_map_safely,
+    load_fund_holdings_view_payload,
+    query_change_rows_for_scope,
+    resolve_query_quarters,
 )
 from ui.tabs.fund_holdings_rules import (
     FUND_CHANGE_TYPE_OPTIONS,
@@ -66,7 +75,6 @@ from ui.tabs.fund_holdings_rules import (
     is_ai_related_concept,
     normalize_ai_concept_display,
 )
-from ui.tabs.fund_holdings_subjects import shorten_subject_name
 from ui.tabs.fund_holdings_view_state import (
     FundHoldingsViewState,
     quarter_mode_from_filter,
@@ -113,6 +121,7 @@ class FundHoldingsTab(BaseStockTab):
         self._filter_menu_updating = False
         self._quarter_actions: dict[str, QAction] = {}
         self._change_actions: dict[str, QAction] = {}
+        self._change_menu_built = False
         self._concept_sector_cache: dict[str, str] = {}
         self._ai_chain_context_map: dict[str, str] | None = None
         self._fund_holdings_lineage_service = TabDataLineageService(
@@ -242,7 +251,8 @@ class FundHoldingsTab(BaseStockTab):
         self.btn_change.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.menu_change = QMenu(self.btn_change)
         self.btn_change.setMenu(self.menu_change)
-        self._build_change_menu()
+        self.menu_change.aboutToShow.connect(self._ensure_change_menu_built)
+        self._refresh_change_button_text()
         self._refresh_subject_button_text()
         self._refresh_capital_attribute_button_text()
 
@@ -332,10 +342,7 @@ class FundHoldingsTab(BaseStockTab):
 
     @classmethod
     def _load_ai_chain_context_map(cls) -> dict[str, str]:
-        try:
-            return dict(cls._chain_context_provider() or {})
-        except (FileNotFoundError, ImportError, OSError, RuntimeError, TypeError, ValueError):
-            return {}
+        return load_ai_chain_context_map_safely(cls._chain_context_provider)
 
     @classmethod
     def _build_ai_chain_context_text(
@@ -344,17 +351,12 @@ class FundHoldingsTab(BaseStockTab):
         context_map: dict[str, str],
         concept_sector_cache: dict[str, str],
     ) -> str:
-        code = normalize_ai_chain_code(stock_code)
-        if not code:
-            return cls._DISPLAY_PLACEHOLDER
-
-        cached = concept_sector_cache.get(code)
-        if cached is not None:
-            return cached
-
-        context_text = str((context_map or {}).get(code) or "").strip() or cls._DISPLAY_PLACEHOLDER
-        concept_sector_cache[code] = context_text
-        return context_text
+        return build_ai_chain_context_text(
+            stock_code,
+            context_map,
+            concept_sector_cache,
+            placeholder=cls._DISPLAY_PLACEHOLDER,
+        )
 
     @classmethod
     def _resolve_query_quarters(
@@ -364,37 +366,22 @@ class FundHoldingsTab(BaseStockTab):
         quarter_scope: str,
         quarter_keys=None,
     ) -> set[str] | None:
-        scope = str(quarter_scope or cls._QUERY_SCOPE_LATEST).strip().lower()
-        if scope == cls._QUERY_SCOPE_ALL:
-            return None
-        if scope == cls._QUERY_SCOPE_SELECTED:
-            return {
-                str(quarter_key or "").strip() for quarter_key in (quarter_keys or []) if str(quarter_key or "").strip()
-            }
-        return {
-            str(quarter_key or "").strip()
-            for quarter_key in (latest_quarter_map or {}).values()
-            if str(quarter_key or "").strip()
-        }
+        return resolve_query_quarters(
+            latest_quarter_map,
+            quarter_scope=quarter_scope,
+            quarter_keys=quarter_keys,
+            latest_scope=cls._QUERY_SCOPE_LATEST,
+            all_scope=cls._QUERY_SCOPE_ALL,
+            selected_scope=cls._QUERY_SCOPE_SELECTED,
+        )
 
     @classmethod
     def _query_change_rows_for_scope(cls, quarter_keys: set[str] | None) -> list[dict]:
-        try:
-            rows = fund_holdings_store.query_change_rows(quarter_keys=quarter_keys)
-        except TypeError:
-            rows = fund_holdings_store.query_change_rows()
-            if quarter_keys is None:
-                return cls._filter_rows_to_stock_universe(rows)
-            rows = [row for row in rows or [] if str(row.get("quarter_key") or "").strip() in quarter_keys]
-        return cls._filter_rows_to_stock_universe(rows)
+        return query_change_rows_for_scope(quarter_keys, stock_universe_provider=cls._stock_universe_provider)
 
     @classmethod
     def _filter_rows_to_stock_universe(cls, rows: list[dict]) -> list[dict]:
-        try:
-            stock_codes = cls._stock_universe_provider() or set()
-            return filter_rows_to_ai_chain_codes(rows, code_keys=("stock_code", "代码", "股票代码"), stock_codes=stock_codes)
-        except (FileNotFoundError, RuntimeError, OSError, TypeError, ValueError):
-            return []
+        return filter_rows_to_stock_universe(rows, cls._stock_universe_provider)
 
     @classmethod
     def _load_view_payload(
@@ -404,70 +391,16 @@ class FundHoldingsTab(BaseStockTab):
         quarter_scope: str = _QUERY_SCOPE_LATEST,
         quarter_keys=None,
     ) -> dict:
-        latest_quarter_map = fund_holdings_store.get_latest_quarter_map()
-        latest_sync_map = fund_holdings_store.get_latest_sync_map()
-        normalized_scope = str(quarter_scope or cls._QUERY_SCOPE_LATEST).strip().lower()
-        query_quarters = cls._resolve_query_quarters(
-            latest_quarter_map,
-            quarter_scope=normalized_scope,
+        return load_fund_holdings_view_payload(
+            quarter_scope=quarter_scope,
             quarter_keys=quarter_keys,
+            stock_universe_provider=cls._stock_universe_provider,
+            chain_context_provider=cls._chain_context_provider,
+            capital_attribute_labels=cls._CAPITAL_ATTRIBUTE_LABELS,
+            latest_scope=cls._QUERY_SCOPE_LATEST,
+            all_scope=cls._QUERY_SCOPE_ALL,
+            selected_scope=cls._QUERY_SCOPE_SELECTED,
         )
-        change_rows = cls._query_change_rows_for_scope(query_quarters)
-        concept_sector_cache: dict[str, str] = {}
-        chain_context_map = cls._load_ai_chain_context_map()
-        view_rows = []
-        for row in change_rows or []:
-            stock_code = str(row.get("stock_code") or "").strip()
-            subject_code = str(row.get("subject_code") or "").strip()
-            quarter_key = str(row.get("quarter_key") or "").strip()
-            change_type = str(row.get("change_type") or "").strip()
-            capital_attribute = str(row.get("capital_attribute") or "").strip()
-            subject_name = str(row.get("subject_name") or "").strip()
-            if subject_code == cls._SUBJECT_CODE_QFII and not capital_attribute:
-                capital_attribute = QFII_CAPITAL_ATTRIBUTE_UNMARKED
-            capital_attribute_text = cls._capital_attribute_label(capital_attribute)
-            has_curr = change_type != "退出"
-            has_prev = change_type != "新进"
-
-            view_rows.append(
-                {
-                    "代码": stock_code,
-                    "名称": str(row.get("stock_name") or "").strip(),
-                    "市价": cls._DISPLAY_PLACEHOLDER,
-                    "涨幅%": cls._DISPLAY_PLACEHOLDER,
-                    "市值": cls._DISPLAY_PLACEHOLDER,
-                    "主体": shorten_subject_name(subject_name),
-                    "主体原名": subject_name,
-                    "资金属性": capital_attribute_text,
-                    "主体代码": subject_code,
-                    "季度": quarter_key,
-                    "变化类型": change_type,
-                    "本期占比": cls._format_pct(row.get("curr_ratio_pct"), show=has_curr),
-                    "本期持股": cls._format_amount(row.get("curr_hold_num_shares"), divisor=10000.0, show=has_curr),
-                    "上期持股": cls._format_amount(row.get("prev_hold_num_shares"), divisor=10000.0, show=has_prev),
-                    "持股变化": cls._format_amount(
-                        row.get("delta_hold_num_shares"),
-                        divisor=10000.0,
-                        show=has_curr or has_prev,
-                        signed=True,
-                    ),
-                    "概念板块": cls._build_ai_chain_context_text(
-                        stock_code,
-                        chain_context_map,
-                        concept_sector_cache,
-                    ),
-                    "_capital_attribute_value": capital_attribute,
-                    "_is_latest_subject_quarter": quarter_key == latest_quarter_map.get(subject_code),
-                }
-            )
-        return {
-            "latest_quarter_map": latest_quarter_map,
-            "latest_sync_map": latest_sync_map,
-            "concept_sector_cache": concept_sector_cache,
-            "view_rows": view_rows,
-            "loaded_quarter_scope": normalized_scope,
-            "loaded_quarter_keys": sorted(query_quarters or []),
-        }
 
     def _apply_view_payload(self, payload: dict):
         with ui_stall_span(
@@ -586,51 +519,40 @@ class FundHoldingsTab(BaseStockTab):
             task_id=self._build_workspace_task_id(f"load_{scope}_{id(self)}"),
         )
 
+    def _ensure_change_menu_built(self) -> None:
+        if self._change_menu_built and self._change_actions:
+            return
+        self._build_change_menu()
+
     def _build_change_menu(self):
-        self.menu_change.clear()
-        self._change_actions.clear()
-
-        act_all = QAction("全部变化", self)
-        act_all.setCheckable(True)
-        act_all.toggled.connect(self._on_change_selection_toggled)
-        self._change_actions[self._CHANGE_FILTER_ALL] = act_all
-        self.menu_change.addAction(act_all)
-        self.menu_change.addSeparator()
-
-        for label in self._CHANGE_TYPE_OPTIONS:
-            action = QAction(label, self)
-            action.setCheckable(True)
-            action.toggled.connect(self._on_change_selection_toggled)
-            self._change_actions[label] = action
-            self.menu_change.addAction(action)
-
-        self._set_change_filter_values(set(), apply=False)
+        self._change_actions = build_change_filter_menu(
+            self.menu_change,
+            self,
+            all_key=self._CHANGE_FILTER_ALL,
+            options=self._CHANGE_TYPE_OPTIONS,
+            toggled_callback=self._on_change_selection_toggled,
+        )
+        self._change_menu_built = True
+        self._filter_menu_updating = True
+        try:
+            self._change_actions[self._CHANGE_FILTER_ALL].setChecked(True)
+        finally:
+            self._filter_menu_updating = False
+        self._refresh_change_button_text()
 
     def _build_quarter_menu(self, quarters: list[str]):
-        self.menu_quarter.clear()
-        self._quarter_actions.clear()
-
-        for key, label in (
-            (self._QUARTER_FILTER_LATEST, "最新季度"),
-            (self._QUARTER_FILTER_ALL, "全部季度"),
-        ):
-            action = QAction(label, self)
-            action.setCheckable(True)
-            action.toggled.connect(self._on_quarter_selection_toggled)
-            self._quarter_actions[key] = action
-            self.menu_quarter.addAction(action)
-
-        if quarters:
-            self.menu_quarter.addSeparator()
-
-        for quarter in quarters:
-            action = QAction(quarter, self)
-            action.setCheckable(True)
-            action.toggled.connect(self._on_quarter_selection_toggled)
-            self._quarter_actions[quarter] = action
-            self.menu_quarter.addAction(action)
+        self._quarter_actions = build_quarter_filter_menu(
+            self.menu_quarter,
+            self,
+            latest_key=self._QUARTER_FILTER_LATEST,
+            all_key=self._QUARTER_FILTER_ALL,
+            quarters=quarters,
+            toggled_callback=self._on_quarter_selection_toggled,
+        )
 
     def _selected_change_types(self) -> set[str]:
+        if not self._change_actions:
+            return set()
         if (
             self._change_actions.get(self._CHANGE_FILTER_ALL, None)
             and self._change_actions[self._CHANGE_FILTER_ALL].isChecked()
@@ -698,6 +620,7 @@ class FundHoldingsTab(BaseStockTab):
         return True
 
     def _set_change_filter_values(self, values: set[str] | list[str], *, apply: bool = True):
+        self._ensure_change_menu_built()
         selected = {
             str(value or "").strip()
             for value in (values or [])
@@ -1200,13 +1123,7 @@ class FundHoldingsTab(BaseStockTab):
         )
 
         with suppress(RuntimeError):
-            subject_names = list(
-                dict.fromkeys(
-                    str(row.get("主体") or "").strip()
-                    for row in (self.model.row_data or [])
-                    if str(row.get("主体") or "").strip()
-                )
-            )
+            subject_names = extract_subject_filter_options(self.model.row_data or [])
             valid_subjects = set(subject_names)
             self.cmb_subject.set_options(subject_names, preserve_selection=False)
             self.cmb_subject.set_selected_values(
@@ -1215,14 +1132,10 @@ class FundHoldingsTab(BaseStockTab):
             )
             self._refresh_subject_button_text()
 
-            capital_attributes = [
-                capital_attribute
-                for capital_attribute in self._CAPITAL_ATTRIBUTE_OPTIONS
-                if any(
-                    str(row.get("_capital_attribute_value") or "").strip() == capital_attribute
-                    for row in (self.model.row_data or [])
-                )
-            ]
+            capital_attributes = extract_capital_attribute_filter_options(
+                self.model.row_data or [],
+                self._CAPITAL_ATTRIBUTE_OPTIONS,
+            )
             valid_capital_attributes = set(capital_attributes)
             self.cmb_capital_attribute.set_options(
                 [
@@ -1271,22 +1184,15 @@ class FundHoldingsTab(BaseStockTab):
         self._update_status_summary()
 
     def _get_concept_sector_text(self, stock_code: str) -> str:
-        code = normalize_ai_chain_code(stock_code)
-        if not code:
-            return self._DISPLAY_PLACEHOLDER
-
-        cached = self._concept_sector_cache.get(code)
-        if cached is not None:
-            return cached
-
         if self._ai_chain_context_map is None:
             self._ai_chain_context_map = self._load_ai_chain_context_map()
 
-        context_text = (
-            str((self._ai_chain_context_map or {}).get(code) or "").strip() or self._DISPLAY_PLACEHOLDER
+        return build_ai_chain_context_text(
+            stock_code,
+            self._ai_chain_context_map,
+            self._concept_sector_cache,
+            placeholder=self._DISPLAY_PLACEHOLDER,
         )
-        self._concept_sector_cache[code] = context_text
-        return context_text
 
     @classmethod
     def _is_ai_related_concept(cls, concept_name: str) -> bool:
@@ -1301,47 +1207,17 @@ class FundHoldingsTab(BaseStockTab):
         return filter_ai_related_concepts(concepts)
 
     def _build_view_rows(self, change_rows: list[dict]) -> list[dict]:
-        rows: list[dict] = []
-        for row in change_rows or []:
-            stock_code = str(row.get("stock_code") or "").strip()
-            subject_code = str(row.get("subject_code") or "").strip()
-            quarter_key = str(row.get("quarter_key") or "").strip()
-            change_type = str(row.get("change_type") or "").strip()
-            capital_attribute = str(row.get("capital_attribute") or "").strip()
-            subject_name = str(row.get("subject_name") or "").strip()
-            if subject_code == self._SUBJECT_CODE_QFII and not capital_attribute:
-                capital_attribute = QFII_CAPITAL_ATTRIBUTE_UNMARKED
-            capital_attribute_text = self._capital_attribute_label(capital_attribute)
-            has_curr = change_type != "退出"
-            has_prev = change_type != "新进"
-
-            curr_ratio = self._format_pct(row.get("curr_ratio_pct"), show=has_curr)
-
-            rows.append(
-                {
-                    "代码": stock_code,
-                    "名称": str(row.get("stock_name") or "").strip(),
-                    "市价": self._DISPLAY_PLACEHOLDER,
-                    "涨幅%": self._DISPLAY_PLACEHOLDER,
-                    "市值": self._DISPLAY_PLACEHOLDER,
-                    "主体": shorten_subject_name(subject_name),
-                    "主体原名": subject_name,
-                    "资金属性": capital_attribute_text,
-                    "主体代码": subject_code,
-                    "季度": quarter_key,
-                    "变化类型": change_type,
-                    "本期占比": curr_ratio,
-                    "本期持股": self._format_amount(row.get("curr_hold_num_shares"), divisor=10000.0, show=has_curr),
-                    "上期持股": self._format_amount(row.get("prev_hold_num_shares"), divisor=10000.0, show=has_prev),
-                    "持股变化": self._format_amount(
-                        row.get("delta_hold_num_shares"), divisor=10000.0, show=has_curr or has_prev, signed=True
-                    ),
-                    "概念板块": self._get_concept_sector_text(stock_code),
-                    "_capital_attribute_value": capital_attribute,
-                    "_is_latest_subject_quarter": quarter_key == self._latest_quarter_map.get(subject_code),
-                }
-            )
-        return rows
+        if self._ai_chain_context_map is None:
+            self._ai_chain_context_map = self._load_ai_chain_context_map()
+        return build_fund_holdings_view_rows(
+            change_rows,
+            latest_quarter_map=self._latest_quarter_map,
+            chain_context_map=self._ai_chain_context_map,
+            concept_sector_cache=self._concept_sector_cache,
+            capital_attribute_labels=self._CAPITAL_ATTRIBUTE_LABELS,
+            placeholder=self._DISPLAY_PLACEHOLDER,
+            subject_code_qfii=self._SUBJECT_CODE_QFII,
+        )
 
     @staticmethod
     def _load_cached_finance_snapshot(codes) -> dict[str, dict]:
@@ -1468,6 +1344,8 @@ class FundHoldingsTab(BaseStockTab):
             return
         code = str(row.get("代码") or "").strip()
         if len(code) == 6 and code.isdigit():
+            from ui.components.stock_context_menu import build_stock_context_menu
+
             build_stock_context_menu(
                 self,
                 code,

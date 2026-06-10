@@ -6,6 +6,7 @@ import threading
 import pandas as pd
 
 from core.market_calendar import MarketCalendar
+from vcp import data_provider_quotes, data_provider_realtime_mixin
 from vcp.data_provider import TdxDataProvider
 
 
@@ -151,7 +152,7 @@ def test_fetch_realtime_quotes_batch_uses_eastmoney_live_quotes_without_tdx_pool
     monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", lambda: True)
     monkeypatch.setattr(MarketCalendar, "get_latest_trade_date", lambda market="CN": dt.date(2026, 4, 15))
     monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
-    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
+    monkeypatch.setattr(data_provider_quotes, "urlopen_https", _fake_urlopen)
 
     result = provider.fetch_realtime_quotes_batch(["000001", "600519"])
 
@@ -196,7 +197,7 @@ def test_request_tencent_quote_batch_parses_realtime_payload(monkeypatch):
         seen_urls.append(request.full_url)
         return _FakeTextResponse(_tencent_line())
 
-    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
+    monkeypatch.setattr(data_provider_quotes, "urlopen_https", _fake_urlopen)
 
     result = provider._request_tencent_quote_batch(["600519"], "2026-04-15")
 
@@ -291,7 +292,7 @@ def test_fetch_realtime_quotes_batch_retries_backup_eastmoney_host(monkeypatch):
     monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", lambda: True)
     monkeypatch.setattr(MarketCalendar, "get_latest_trade_date", lambda market="CN": dt.date(2026, 4, 15))
     monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
-    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
+    monkeypatch.setattr(data_provider_quotes, "urlopen_https", _fake_urlopen)
 
     result = provider.fetch_realtime_quotes_batch(["000001"])
 
@@ -327,7 +328,8 @@ def test_test_network_uses_eastmoney_http(monkeypatch):
         )
 
     monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
-    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
+    monkeypatch.setattr(data_provider_realtime_mixin, "urlopen_https", _fake_urlopen)
+    monkeypatch.setattr(data_provider_quotes, "urlopen_https", _fake_urlopen)
     monkeypatch.setattr(
         "socket.socket", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not use socket"))
     )
@@ -365,7 +367,8 @@ def test_test_network_records_probe_detail(monkeypatch):
         )
 
     monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
-    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
+    monkeypatch.setattr(data_provider_realtime_mixin, "urlopen_https", _fake_urlopen)
+    monkeypatch.setattr(data_provider_quotes, "urlopen_https", _fake_urlopen)
 
     assert provider.test_network(timeout=3) is True
     assert provider.get_last_network_probe()["ok"] is True
@@ -405,7 +408,8 @@ def test_test_network_accepts_tencent_when_primary_quote_sources_fail(monkeypatc
         raise AssertionError(url)
 
     monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
-    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
+    monkeypatch.setattr(data_provider_realtime_mixin, "urlopen_https", _fake_urlopen)
+    monkeypatch.setattr(data_provider_quotes, "urlopen_https", _fake_urlopen)
 
     assert provider.test_network(timeout=3) is True
     probe = provider.get_last_network_probe()

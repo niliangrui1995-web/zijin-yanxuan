@@ -1266,6 +1266,56 @@ def test_workspace_restores_pending_rt_cache_after_rt_monitor_load(monkeypatch):
         workspace.deleteLater()
 
 
+def test_workspace_debounces_table_copy_hook_install(monkeypatch):
+    scheduled = []
+
+    class _Host:
+        def __init__(self):
+            self.install_calls = 0
+
+        def install_workspace_table_copy_hooks(self):
+            self.install_calls += 1
+
+    def _resolve_tab_class(_class_name, _module_name):
+        class _Tab(QWidget):
+            def __init__(self, *args, **kwargs):
+                super().__init__()
+
+        return _Tab
+
+    def fake_single_shot(delay, callback):
+        scheduled.append((delay, callback))
+
+    host = _Host()
+    monkeypatch.setattr(classic_workspace_module, "_resolve_tab_class", _resolve_tab_class)
+    monkeypatch.setattr(classic_workspace_module.QTimer, "singleShot", fake_single_shot)
+
+    workspace = classic_workspace_module.ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        host=host,
+        background_prewarm=False,
+    )
+    try:
+        workspace.ensure_tab_loaded("lhb")
+        workspace.ensure_tab_loaded("scan")
+
+        hook_callbacks = [
+            callback
+            for delay, callback in scheduled
+            if delay == workspace.COPY_HOOK_REFRESH_DELAY_MS
+        ]
+        assert len(hook_callbacks) == 1
+        assert host.install_calls == 0
+
+        hook_callbacks[0]()
+
+        assert host.install_calls == 1
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
 def test_workspace_auto_refresh_does_not_load_daily_tabs_without_manual_click(monkeypatch):
     ctor_kwargs = {}
     constructed = []

@@ -113,6 +113,20 @@ def test_earnings_tab_defers_scheduler_creation_until_runtime(monkeypatch, earni
         tab.deleteLater()
 
 
+def test_earnings_tab_constructor_does_not_resolve_scheduler_service(monkeypatch, earnings_qt):
+    monkeypatch.setattr(
+        earnings_qt.module,
+        "_resolve_earnings_refresh_service_class",
+        lambda: (_ for _ in ()).throw(AssertionError("scheduler service should be resolved on runtime start")),
+    )
+
+    tab = earnings_qt.EarningsTab()
+    try:
+        assert tab.scheduler is None
+    finally:
+        tab.deleteLater()
+
+
 def test_earnings_report_period_and_right_columns_use_muted_text(earnings_qt):
     tab = earnings_qt.EarningsTab()
     try:

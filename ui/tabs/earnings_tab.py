@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from datetime import datetime
+from typing import TYPE_CHECKING, cast
 
-import pandas as pd
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot
 from PyQt6.QtWidgets import QDialog, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
@@ -10,13 +10,40 @@ from app.services.ui_event_service import ui_signals
 from core.logger import get_logger
 from ui.components import MultiSelectFilterButton, TableStateWrapper, VCPTableView, format_multi_select_summary
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
-from ui.services.earnings_refresh_service import EarningsRefreshService
 from ui.tabs.base_stock_tab import BaseStockTab
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 log = get_logger(__name__)
 EARNINGS_DISPLAY_TRADE_DAYS = 30
 EARNINGS_TYPE_OPTIONS = ("预告", "快报", "财报")
-EarningsScheduler = EarningsRefreshService
+EarningsRefreshService = None
+_EARNINGS_REFRESH_SERVICE_CLASS = None
+
+
+def _pandas_module():
+    import pandas as pd
+
+    return pd
+
+
+def _resolve_earnings_refresh_service_class():
+    global EarningsRefreshService, _EARNINGS_REFRESH_SERVICE_CLASS
+
+    if _EARNINGS_REFRESH_SERVICE_CLASS is None:
+        from ui.services.earnings_refresh_service import EarningsRefreshService as service_class
+
+        _EARNINGS_REFRESH_SERVICE_CLASS = service_class
+        EarningsRefreshService = service_class
+    return _EARNINGS_REFRESH_SERVICE_CLASS
+
+
+def _default_earnings_scheduler(parent=None):
+    return _resolve_earnings_refresh_service_class()(parent=parent)
+
+
+EarningsScheduler = _default_earnings_scheduler
 
 
 class EarningsTab(BaseStockTab):
@@ -51,10 +78,15 @@ class EarningsTab(BaseStockTab):
             except RuntimeError:
                 host = None
             service = getattr(host, "earnings_refresh_service", None)
-            if isinstance(service, EarningsRefreshService):
+            scheduler_factory = EarningsScheduler
+            if scheduler_factory is _default_earnings_scheduler:
+                service_class = _resolve_earnings_refresh_service_class()
+            else:
+                service_class = None
+            if isinstance(service_class, type) and isinstance(service, service_class):
                 self.scheduler = service
             else:
-                self.scheduler = EarningsScheduler(parent=self)
+                self.scheduler = scheduler_factory(parent=self)
             parent_getter = getattr(self.scheduler, "parent", None)
             self._owns_earnings_service = callable(parent_getter) and parent_getter() is self
             self.scheduler.sig_new_surprises_found.connect(self._on_new_data_found)
@@ -292,7 +324,7 @@ class EarningsTab(BaseStockTab):
     @classmethod
     def _filter_out_st_dataframe(cls, df: "pd.DataFrame") -> "pd.DataFrame":
         if df is None or df.empty:
-            return df if df is not None else pd.DataFrame()
+            return df if df is not None else _pandas_module().DataFrame()
 
         name_col = None
         for candidate in ("股票名称", "股票简称", "名称"):
@@ -568,7 +600,7 @@ class EarningsTab(BaseStockTab):
         cached_records = get_cached_records()
         self.row_data = []
         self.model.update_data([], hydrate_latest_quotes=False)
-        self._on_new_data_found(cached_records, "warm_cache")
+        self._on_new_data_found(cast("pd.DataFrame", cached_records), "warm_cache")
         self.refresh_table_from_latest_snapshot(current_model=self.model, async_local=True)
         return True
 

@@ -20,7 +20,7 @@ from ui.components.main_window_shell import apply_chrome_theme
 from ui.components.shared_title_bar import DraggableTitleBar
 from ui.components.tooltip_popup import hide_floating_tooltip
 from ui.components.trade_calendar import OligarchEarningsCalendarPanel, TradeCalendarWidget
-from ui.styles.global_qss import generate_global_qss
+from ui.styles.global_qss import generate_global_qss, invalidate_global_qss_cache
 from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens
 
@@ -33,6 +33,7 @@ def apply_table_density(main_window, mode: str, persist: bool = True):
     if mode not in ("紧凑", "舒适"):
         mode = "舒适"
     invalidate_table_token_cache(mode)
+    invalidate_global_qss_cache()
 
     if persist:
         app_config.table_density = mode
@@ -175,6 +176,7 @@ def apply_theme(main_window, *, notify: bool = True):
     from ui.models.table_model_helpers import invalidate_table_token_cache
 
     invalidate_table_token_cache()
+    invalidate_global_qss_cache()
     qss = generate_global_qss()
     main_window.setStyleSheet(qss)
 

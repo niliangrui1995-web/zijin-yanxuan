@@ -17,6 +17,21 @@ def normalize_settings_values(value) -> list[str]:
     return [text] if text else []
 
 
+def extract_subject_filter_options(rows: Iterable[dict]) -> list[str]:
+    return list(
+        dict.fromkeys(
+            subject
+            for row in rows
+            if (subject := str(row.get("主体") or "").strip())
+        )
+    )
+
+
+def extract_capital_attribute_filter_options(rows: Iterable[dict], options: Iterable[str]) -> list[str]:
+    row_values = {str(row.get("_capital_attribute_value") or "").strip() for row in rows}
+    return [option for option in options if option in row_values]
+
+
 def format_change_filter_button_text(selected: Iterable[str], options: Iterable[str]) -> tuple[str, str]:
     option_list = list(options)
     option_rank = {label: index for index, label in enumerate(option_list)}

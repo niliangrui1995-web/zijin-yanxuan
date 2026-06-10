@@ -25,7 +25,6 @@ from app.services.ui_task_service import (
     windows_no_window_kwargs,
 )
 from app.services.ui_task_service import background_job_runner as task_manager
-from core.ai_industry_chain_pool import filter_rows_to_ai_chain_codes
 from core.exceptions import CacheIOError, DataFormatError
 from core.json_cache import load_json_file, save_json_file
 from core.task_errors import UserFacingTaskError
@@ -114,6 +113,8 @@ _BLOCK_TRADE_CALENDAR_TIMEOUT = 10
 _BLOCK_TRADE_MAX_RETRIES = 2
 _BLOCK_TRADE_TOTAL_TIMEOUT = 45
 F5_AUTO_ONLINE_REFRESH_DELAY_MS = 3000
+LOCAL_CACHE_LOAD_DELAY_MS = 650
+filter_rows_to_ai_chain_codes = None
 _BLOCK_TRADE_TIMEOUT_USER_MESSAGE = (
     "抓取超时：45秒内未拿到完整结果。通常是当前网络较慢，"
     "或 VPN/代理影响了国内数据源；可稍后重试，必要时临时关闭 VPN 后再刷新。"
@@ -141,6 +142,15 @@ elif mode == "block_trade":
     else:
         print(df.to_json(orient="records", force_ascii=False, date_format="iso"))
 """
+
+
+def _resolve_filter_rows_to_ai_chain_codes():
+    global filter_rows_to_ai_chain_codes
+    if filter_rows_to_ai_chain_codes is None:
+        from core.ai_industry_chain_pool import filter_rows_to_ai_chain_codes as filter_func
+
+        filter_rows_to_ai_chain_codes = filter_func
+    return filter_rows_to_ai_chain_codes
 
 
 def _run_domestic_akshare(mode: str, *args, timeout: int = 15):
@@ -241,7 +251,7 @@ def determine_foreign_block_direction(buyer, seller):
 
 def filter_foreign_block_rows_to_ai_chain(row_data: list[dict]) -> list[dict]:
     try:
-        return filter_rows_to_ai_chain_codes(row_data, code_keys=("代码", "证券代码"))
+        return _resolve_filter_rows_to_ai_chain_codes()(row_data, code_keys=("代码", "证券代码"))
     except (FileNotFoundError, RuntimeError, OSError, ValueError) as exc:
         log.warning(f"[外资大宗] AI产业链股票池不可用，已按空股票池处理: {exc}")
         return []
@@ -342,7 +352,7 @@ class ForeignBlockTradeTab(BaseStockTab):
 
         self.days_to_fetch = 30  # 默认拉取最近30个交易日
         self._init_ui()
-        QTimer.singleShot(50, self._load_local_cache)
+        QTimer.singleShot(LOCAL_CACHE_LOAD_DELAY_MS, self._load_local_cache)
 
         # 大宗交易页只消费 F5/本地快照，不加入盘中实时行情轮询。
         event_bus.sig_cache_reload_completed.connect(self._on_cache_reload_completed)

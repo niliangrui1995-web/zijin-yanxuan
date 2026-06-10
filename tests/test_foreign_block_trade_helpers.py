@@ -383,6 +383,22 @@ def test_block_trade_delete_later_has_no_auto_timers(monkeypatch):
             tab.deleteLater()
 
 
+def test_block_trade_delays_initial_local_cache_load(monkeypatch):
+    scheduled = []
+    monkeypatch.setattr(
+        foreign_module.QTimer,
+        "singleShot",
+        lambda delay, callback: scheduled.append((delay, callback)),
+    )
+
+    tab = ForeignBlockTradeTab(object())
+    try:
+        assert scheduled
+        assert (foreign_module.LOCAL_CACHE_LOAD_DELAY_MS, tab._load_local_cache) in scheduled
+    finally:
+        tab.deleteLater()
+
+
 def test_should_trigger_auto_refresh_only_after_20_on_trade_day():
     now = datetime.datetime(2026, 4, 20, 20, 5, 0)
     before_20 = datetime.datetime(2026, 4, 20, 19, 59, 0)

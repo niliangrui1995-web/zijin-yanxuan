@@ -93,13 +93,8 @@ class _ValidatingRedirectHandler(urllib.request.HTTPRedirectHandler):
 def urlopen_https(request, *args, allowed_hosts: Collection[str] | str | None = None, **kwargs):
     ensure_https_request(request, allowed_hosts=allowed_hosts)
     opener = urllib.request.build_opener(_ValidatingRedirectHandler(allowed_hosts))
-    previous_opener = urllib.request._opener
-    try:
-        urllib.request.install_opener(opener)
-        # URL scheme is validated above.
-        return urllib.request.urlopen(request, *args, **kwargs)  # nosec B310
-    finally:
-        urllib.request.install_opener(previous_opener)
+    # URL scheme is validated above; redirects are validated by the local opener handler.
+    return opener.open(request, *args, **kwargs)
 
 
 def _response_redirect_location(response) -> str | None:

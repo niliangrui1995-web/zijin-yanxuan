@@ -2,7 +2,7 @@ import urllib.request
 
 import pytest
 
-from infra.http_safety import DEFAULT_REQUESTS_USER_AGENT, ensure_https_request, requests_get_https
+from infra.http_safety import DEFAULT_REQUESTS_USER_AGENT, ensure_https_request, requests_get_https, urlopen_https
 
 
 def test_ensure_https_request_accepts_https_request_object():
@@ -118,3 +118,55 @@ def test_requests_get_https_rejects_unsafe_redirect_target():
         requests_get_https("https://example.com/data", session=DummySession())
 
     assert redirect.closed is True
+
+
+def test_urlopen_https_uses_local_opener_without_installing_global_opener(monkeypatch):
+    calls = []
+    response = object()
+
+    class DummyOpener:
+        def open(self, request, *args, **kwargs):
+            calls.append((request, args, kwargs))
+            return response
+
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_handlers: DummyOpener())
+    monkeypatch.setattr(
+        urllib.request,
+        "install_opener",
+        lambda _opener: (_ for _ in ()).throw(AssertionError("global opener must not be modified")),
+    )
+
+    request = urllib.request.Request("https://example.com/data")
+    assert urlopen_https(request, timeout=3) is response
+    assert calls == [(request, (), {"timeout": 3})]
+
+
+def test_urlopen_https_rejects_unsafe_redirect_target(monkeypatch):
+    class DummyOpener:
+        def __init__(self, redirect_handler):
+            self._redirect_handler = redirect_handler
+
+        def open(self, request, *args, **kwargs):
+            request = urllib.request.Request(request) if isinstance(request, str) else request
+            self._redirect_handler.redirect_request(
+                request,
+                None,
+                302,
+                "Found",
+                {},
+                "https://127.0.0.1/private",
+            )
+            raise AssertionError("unsafe redirect should fail before opener returns")
+
+    def build_opener(redirect_handler):
+        return DummyOpener(redirect_handler)
+
+    monkeypatch.setattr(urllib.request, "build_opener", build_opener)
+    monkeypatch.setattr(
+        urllib.request,
+        "install_opener",
+        lambda _opener: (_ for _ in ()).throw(AssertionError("global opener must not be modified")),
+    )
+
+    with pytest.raises(ValueError, match="private or local HTTPS hosts"):
+        urlopen_https("https://example.com/data")

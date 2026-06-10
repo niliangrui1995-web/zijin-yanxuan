@@ -9,6 +9,21 @@ from __future__ import annotations
 
 from ui.theme import theme_manager
 
+_UI_TOKEN_CACHE_MAX_SIZE = 16
+_UI_TOKEN_CACHE: dict[tuple[int, str, tuple[tuple[str, str], ...]], dict] = {}
+
+
+def _theme_cache_signature(theme: dict) -> tuple[tuple[str, str], ...]:
+    return tuple(sorted((str(key), repr(value)) for key, value in theme.items()))
+
+
+def _ui_token_cache_key(theme: dict, density: str) -> tuple[int, str, tuple[tuple[str, str], ...]]:
+    return (id(theme), density, _theme_cache_signature(theme))
+
+
+def invalidate_ui_token_cache() -> None:
+    _UI_TOKEN_CACHE.clear()
+
 
 def _normalize_density(density: str | None = None) -> str:
     from app.services.ui_config_service import app_config
@@ -225,6 +240,11 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
 
     theme = theme or theme_manager.current_theme
     mode = _normalize_density(density)
+    cache_key = _ui_token_cache_key(theme, mode)
+    cached = _UI_TOKEN_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
     compact = mode == "紧凑"
     is_dark = _is_dark_theme(theme)
 
@@ -377,7 +397,7 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "accent": theme["TEXT_ON_ACCENT"],
     }
 
-    return {
+    tokens = {
         "theme": theme,
         "density": mode,
         "is_dark": is_dark,
@@ -400,8 +420,15 @@ def build_ui_tokens(theme: dict | None = None, density: str | None = None) -> di
         "text": text,
         "state": _build_state_tones(theme, is_dark=is_dark),
     }
+    if len(_UI_TOKEN_CACHE) >= _UI_TOKEN_CACHE_MAX_SIZE and cache_key not in _UI_TOKEN_CACHE:
+        _UI_TOKEN_CACHE.clear()
+    _UI_TOKEN_CACHE[cache_key] = tokens
+    return tokens
 
 
 def get_state_tone(tone: str, theme: dict | None = None, density: str | None = None) -> dict:
     tokens = build_ui_tokens(theme, density)
     return tokens["state"].get(tone, tokens["state"]["neutral"])
+
+
+theme_manager.sig_theme_changed.connect(lambda _theme_name: invalidate_ui_token_cache())

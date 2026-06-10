@@ -854,6 +854,40 @@ def test_fund_holdings_tab_defers_initial_load_when_autoload_disabled(monkeypatc
         tab.deleteLater()
 
 
+def test_fund_holdings_tab_defers_change_menu_until_needed(monkeypatch):
+    _setup_store(monkeypatch, [])
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
+    try:
+        assert tab._change_actions == {}
+        assert tab.btn_change.text() == "变化：全部"
+
+        tab._ensure_change_menu_built()
+
+        assert tab._change_actions[tab._CHANGE_FILTER_ALL].isChecked()
+        assert all(label in tab._change_actions for label in tab._CHANGE_TYPE_OPTIONS)
+        assert tab._selected_change_types() == set()
+    finally:
+        tab.deleteLater()
+
+
+def test_fund_holdings_tab_change_filter_builds_menu_lazily(monkeypatch):
+    _setup_store(monkeypatch, [])
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
+    try:
+        assert tab._change_actions == {}
+
+        tab._set_change_filter_values({"新进", "持平"}, apply=False)
+
+        assert tab._selected_change_types() == {"新进", "持平"}
+        assert tab._change_actions["新进"].isChecked()
+        assert tab._change_actions["持平"].isChecked()
+        assert not tab._change_actions[tab._CHANGE_FILTER_ALL].isChecked()
+    finally:
+        tab.deleteLater()
+
+
 def test_fund_holdings_tab_prime_background_load_starts_deferred_load(monkeypatch):
     _setup_store(monkeypatch, [])
     scheduled = []

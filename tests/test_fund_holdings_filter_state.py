@@ -1,5 +1,7 @@
 from ui.tabs.fund_holdings_filter_state import (
     build_current_filter_summary,
+    extract_capital_attribute_filter_options,
+    extract_subject_filter_options,
     format_change_filter_button_text,
     format_quarter_filter_button_text,
     normalize_settings_values,
@@ -35,6 +37,21 @@ def test_fund_holdings_filter_state_normalizes_settings_values():
     assert normalize_settings_values("  QFII  ") == ["QFII"]
     assert normalize_settings_values([" QFII ", "", "瑞远"]) == ["QFII", "瑞远"]
     assert normalize_settings_values(202604) == ["202604"]
+
+
+def test_fund_holdings_filter_state_extracts_filter_options_from_rows():
+    rows = [
+        {"主体": " QFII ", "_capital_attribute_value": "client"},
+        {"主体": "瑞远", "_capital_attribute_value": "self_owned"},
+        {"主体": "QFII", "_capital_attribute_value": "client"},
+        {"主体": "", "_capital_attribute_value": "unknown"},
+    ]
+
+    assert extract_subject_filter_options(rows) == ["QFII", "瑞远"]
+    assert extract_capital_attribute_filter_options(
+        rows,
+        ("unmarked", "self_owned", "client"),
+    ) == ["self_owned", "client"]
 
 
 def test_fund_holdings_filter_state_resolves_quarter_scope():

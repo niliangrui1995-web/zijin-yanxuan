@@ -5,9 +5,9 @@ from PyQt6.QtWidgets import QApplication
 
 from ui.components import VCPTableView
 from ui.models.table_models import StockTableModel
-from ui.styles.global_qss import generate_global_qss
+from ui.styles.global_qss import generate_global_qss, invalidate_global_qss_cache
 from ui.theme import DEFAULT_THEME_NAME, THEME_YAOHEI, THEME_YUEBAI, theme_manager
-from ui.theme_tokens import build_ui_tokens, get_state_tone
+from ui.theme_tokens import build_ui_tokens, get_state_tone, invalidate_ui_token_cache
 
 
 def _hex_to_rgb(color: str) -> tuple[float, float, float]:
@@ -48,6 +48,48 @@ def test_build_ui_tokens_compact_density_tightens_metrics():
     assert comfort["table"]["header_min_height"] == 30
     assert compact["table"]["cell_padding_y"] < comfort["table"]["cell_padding_y"]
     assert compact["table"]["row_height_delta"] == comfort["table"]["row_height_delta"]
+
+
+def test_build_ui_tokens_reuses_cached_tokens_until_invalidated():
+    invalidate_ui_token_cache()
+    first = build_ui_tokens(THEME_YUEBAI, density="紧凑")
+    second = build_ui_tokens(THEME_YUEBAI, density="紧凑")
+
+    assert second is first
+
+    invalidate_ui_token_cache()
+    assert build_ui_tokens(THEME_YUEBAI, density="紧凑") is not first
+
+
+def test_build_ui_tokens_cache_tracks_theme_content_changes():
+    theme = dict(THEME_YUEBAI)
+    invalidate_ui_token_cache()
+    first = build_ui_tokens(theme, density="紧凑")
+
+    theme["BG_CARD"] = "#FAFAFA"
+    second = build_ui_tokens(theme, density="紧凑")
+
+    assert second is not first
+    assert second["surface"]["panel"] == "#FAFAFA"
+
+
+def test_global_qss_reuses_cached_stylesheet_until_invalidated():
+    invalidate_global_qss_cache()
+    first = generate_global_qss(THEME_YUEBAI, density="紧凑")
+    second = generate_global_qss(THEME_YUEBAI, density="紧凑")
+
+    assert second is first
+
+    invalidate_global_qss_cache()
+    refreshed = generate_global_qss(THEME_YUEBAI, density="紧凑")
+    assert refreshed == first
+    assert refreshed is not first
+
+
+def test_global_qss_is_not_generated_at_import_for_compatibility():
+    from ui.styles import global_qss
+
+    assert global_qss.GLOBAL_QSS == ""
 
 
 def test_theme_tokens_expose_state_tones_for_terminal_statuses():

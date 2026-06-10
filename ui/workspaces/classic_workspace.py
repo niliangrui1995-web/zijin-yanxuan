@@ -150,6 +150,7 @@ class ClassicWorkspace(QWidget):
     CONTEXT_PREWARM_PRIORITY = ("ai_industry_chain", "na_daily")
     BACKGROUND_PREWARM_KEYS = frozenset()
     RESTORE_LAST_TAB_DELAY_MS = 750
+    COPY_HOOK_REFRESH_DELAY_MS = 240
 
     def __init__(
         self,
@@ -324,6 +325,7 @@ class ClassicWorkspace(QWidget):
         self._background_prewarm_started = False
         self._pending_restore_index: int | None = None
         self._restore_last_tab_timer: QTimer | None = None
+        self._copy_hook_refresh_queued = False
         self._workspace_event_bus = None
         self._workspace_events_connected = False
         self._workspace_icon_tokens = build_ui_tokens()["icon"]
@@ -464,7 +466,9 @@ class ClassicWorkspace(QWidget):
         self._tabs_by_key[key] = widget
         setattr(self, spec["attr"], widget)
         self._lazy_loading_keys.discard(key)
-        QTimer.singleShot(0, widget.ensurePolished)
+        ensure_polished = getattr(widget, "ensurePolished", None)
+        if callable(ensure_polished):
+            QTimer.singleShot(0, ensure_polished)
         QTimer.singleShot(250, lambda widget=widget: setattr(widget, "_workspace_load_reason", ""))
         self._notify_tab_loaded(key, widget)
         if self.tabs.currentWidget() is widget:
@@ -585,11 +589,25 @@ class ClassicWorkspace(QWidget):
                 log.warning(f"[Workspace] prime tab runtime failed {widget.__class__.__name__}.{method_name}: {exc}")
             return
 
-    def _notify_tab_loaded(self, _key: str, _widget) -> None:
+    def _schedule_workspace_table_copy_hooks(self) -> None:
         host = self.host or self.window()
         install_hooks = getattr(host, "install_workspace_table_copy_hooks", None)
-        if callable(install_hooks):
-            QTimer.singleShot(0, install_hooks)
+        if not callable(install_hooks) or self._copy_hook_refresh_queued:
+            return
+        self._copy_hook_refresh_queued = True
+
+        def _install_hooks() -> None:
+            self._copy_hook_refresh_queued = False
+            try:
+                install_hooks()
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                log.warning(f"[Workspace] table copy hook install failed: {exc}")
+
+        QTimer.singleShot(self.COPY_HOOK_REFRESH_DELAY_MS, _install_hooks)
+
+    def _notify_tab_loaded(self, _key: str, _widget) -> None:
+        self._schedule_workspace_table_copy_hooks()
+        host = self.host or self.window()
         if str(_key or "").strip() == "rt_monitor":
             restore_rt_cache = getattr(host, "restore_pending_rt_cache", None)
             if callable(restore_rt_cache):
