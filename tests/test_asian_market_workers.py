@@ -37,18 +37,6 @@ def _jp_current_page_html():
     """
 
 
-def test_cf_proxy_default_disabled_and_toggleable():
-    original = workers.is_cf_proxy_enabled()
-    try:
-        assert workers._USE_CF_PROXY is False
-        workers.set_cf_proxy_enabled(True)
-        assert workers.is_cf_proxy_enabled() is True
-        workers.set_cf_proxy_enabled(False)
-        assert workers.is_cf_proxy_enabled() is False
-    finally:
-        workers.set_cf_proxy_enabled(original)
-
-
 def test_fetch_updates_timeout_budget_fails_fast_before_legacy_80s_limit():
     assert workers._FETCH_UPDATES_TIMEOUT_SEC <= 45
     assert workers._OPTIONAL_NETWORK_MIN_REMAINING_SEC >= 25

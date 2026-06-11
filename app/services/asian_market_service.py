@@ -5,8 +5,8 @@ from vcp.fetchers import asian_kline_fetcher as asian_fetcher_module
 from vcp.fetchers import yf_session as yf_session_module
 
 
-def build_yf_session(use_cf_proxy: bool = False):
-    return yf_session_module.build_yf_session(use_cf_proxy)
+def build_yf_session():
+    return yf_session_module.build_yf_session()
 
 
 def get_yf_rate_limit_status():
@@ -27,12 +27,9 @@ def fetch_single_kline(
     name: str,
     ticker: str,
     period: str = "1y",
-    use_cf_proxy: bool | None = None,
     session=None,
 ):
     kwargs = {"period": period}
-    if use_cf_proxy is not None:
-        kwargs["use_cf_proxy"] = use_cf_proxy
     if session is not None:
         kwargs["session"] = session
     return asian_fetcher_module.fetch_single_kline(name, ticker, **kwargs)
@@ -51,7 +48,6 @@ def sync_asian_kline_cache(
     single_ticker: str | None = None,
     max_workers: int = 6,
     period: str = "1y",
-    use_cf_proxy: bool = False,
     output_dir: str | None = None,
 ):
     return asian_fetcher_module.sync_asian_kline_cache(
@@ -59,7 +55,6 @@ def sync_asian_kline_cache(
         single_ticker=single_ticker,
         max_workers=max_workers,
         period=period,
-        use_cf_proxy=use_cf_proxy,
         output_dir=output_dir,
     )
 

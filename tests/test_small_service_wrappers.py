@@ -25,7 +25,7 @@ def test_asian_market_service_delegates_to_fetcher_and_rate_limit_modules(monkey
     monkeypatch.setattr(
         asian_market_service.yf_session_module,
         "build_yf_session",
-        lambda use_cf_proxy=False: calls.append(("session", use_cf_proxy)) or "session",
+        lambda: calls.append(("session",)) or "session",
     )
     monkeypatch.setattr(
         asian_market_service.yf_session_module,
@@ -63,12 +63,12 @@ def test_asian_market_service_delegates_to_fetcher_and_rate_limit_modules(monkey
         lambda **kwargs: calls.append(("sync", kwargs)) or {"ok": True},
     )
 
-    assert asian_market_service.build_yf_session(use_cf_proxy=True) == "session"
+    assert asian_market_service.build_yf_session() == "session"
     assert asian_market_service.get_yf_rate_limit_status() == {"limited": False}
     assert asian_market_service.is_yf_rate_limit_error(RuntimeError("x")) is True
     assert asian_market_service.mark_yf_rate_limited("err") == "marked"
     assert asian_market_service.mark_yf_rate_limited("err", cooldown_sec=30) == "marked"
-    assert asian_market_service.fetch_single_kline("Hang Seng", "^HSI", use_cf_proxy=False, session="s") == {
+    assert asian_market_service.fetch_single_kline("Hang Seng", "^HSI", session="s") == {
         "ticker": "^HSI"
     }
     assert asian_market_service.filter_asian_tickers("HK") == {"HSI": "Hong Kong"}

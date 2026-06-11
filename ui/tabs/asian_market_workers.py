@@ -47,20 +47,10 @@ _FETCH_UPDATES_TIMEOUT_SEC = 45
 _FETCH_TIMEOUT_MARKET_BACKOFF_SEC = 5 * 60
 _OPTIONAL_NETWORK_MIN_REMAINING_SEC = 25
 
-_USE_CF_PROXY = False
 _EMPTY_NUMERIC_MARKERS = {"", "-", "--", "---", "—", "－", "None", "null"}
 _NUMERIC_TOKEN_RE = re.compile(r"-?\d+(?:\.\d+)?")
 _DEFAULT_HTTP_HEADERS = ASIAN_MARKET_HTTP_HEADERS
 _HTTP_TIMEOUT_SEC = ASIAN_MARKET_HTTP_TIMEOUT_SEC
-
-
-def is_cf_proxy_enabled() -> bool:
-    return _USE_CF_PROXY
-
-
-def set_cf_proxy_enabled(enabled: bool) -> None:
-    global _USE_CF_PROXY
-    _USE_CF_PROXY = bool(enabled)
 
 
 def infer_asian_markets(codes) -> list[str]:
@@ -824,7 +814,6 @@ def _fetch_asian_pe_fallback(code: str, http_session) -> tuple[float | None, str
 def fetch_asian_realtime_quote(
     code: str,
     *,
-    use_cf_proxy: bool | None = None,
     yf_session=None,
     allow_yfinance_fallback: bool = True,
 ):
@@ -832,7 +821,7 @@ def fetch_asian_realtime_quote(
     if not normalized_code or "." not in normalized_code:
         return None
 
-    session = yf_session or build_yf_session(is_cf_proxy_enabled() if use_cf_proxy is None else use_cf_proxy)
+    session = yf_session or build_yf_session()
     suffix = normalized_code.split(".")[-1]
 
     try:
@@ -1191,8 +1180,8 @@ class AsianMarketWorker(QThread):
 
     def _fetch_updates(self) -> dict:
         updates = {}
-        yf_session = build_yf_session(is_cf_proxy_enabled())
-        info_session = build_yf_session(False) if is_cf_proxy_enabled() else yf_session
+        yf_session = build_yf_session()
+        info_session = yf_session
         raw_codes = list(dict.fromkeys(str(code).strip() for code in self.codes if str(code).strip()))
         if not raw_codes:
             return updates
@@ -1359,7 +1348,6 @@ class AsianCacheFetcherThread(QThread):
             success, message, _report = sync_asian_kline_cache(
                 max_workers=3,
                 period="1y",
-                use_cf_proxy=is_cf_proxy_enabled(),
             )
             self.result_success = bool(success)
             self.result_message = str(message or "")

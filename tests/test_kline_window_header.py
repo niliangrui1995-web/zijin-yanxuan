@@ -1285,11 +1285,10 @@ def test_kline_load_asian_chart_fetches_realtime_quote_when_history_is_stale(mon
     )
     monkeypatch.setattr(asian_module, "JSON_CACHE", str(cache_file))
     monkeypatch.setattr(asian_module, "GLOBAL_ASIAN_RT_CACHE", {})
-    monkeypatch.setattr(asian_workers_module, "is_cf_proxy_enabled", lambda: True)
     monkeypatch.setattr(
         asian_workers_module,
         "fetch_asian_realtime_quote",
-        lambda code, use_cf_proxy=True, yf_session=None: {
+        lambda code, **kwargs: {
             "date": "2026-04-20",
             "open": 2030.0,
             "high": 2055.0,

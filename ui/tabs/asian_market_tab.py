@@ -12,7 +12,7 @@ from app.services.ui_event_service import ui_signals
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
 from core.logger import get_logger
-from ui.components import TableStateWrapper, ToggleSwitch, VCPTableView
+from ui.components import TableStateWrapper, VCPTableView
 from ui.components.thread_shutdown import request_thread_shutdown
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.services.asian_market_runtime_service import AsianMarketRuntimeService
@@ -61,8 +61,6 @@ from ui.tabs.asian_market_workers import (
     RT_JSON_CACHE,
     AsianMarketWorker,
     is_asian_quote_refresh_time,
-    is_cf_proxy_enabled,
-    set_cf_proxy_enabled,
 )
 from ui.tabs.base_stock_tab import BaseStockTab
 
@@ -786,18 +784,13 @@ class AsianMarketTab(BaseStockTab):
         self.search_box.setPlaceholderText("筛选代码或名称...")
         self.search_box.setFixedWidth(180)
         self.search_box.textChanged.connect(self._on_search_text_changed)
-        self.chk_cf_proxy = ToggleSwitch("优先使用稳定海外线路")
-        self.chk_cf_proxy.setToolTip("开启后优先使用稳定海外出口访问报价源；关闭后使用当前系统网络环境。")
-        self.chk_cf_proxy.setObjectName("successStatus")
-        self.chk_cf_proxy.setChecked(is_cf_proxy_enabled())
-        self.chk_cf_proxy.toggled.connect(self._on_cf_proxy_toggled)
 
         self.btn_refresh = QPushButton("刷新")
         self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_refresh.setToolTip("刷新亚洲市场报价，并重新检查本地缓存状态。")
         self.btn_refresh.clicked.connect(self._on_manual_refresh)
 
-        filter_widgets = [self.search_box, self.chk_cf_proxy]
+        filter_widgets = [self.search_box]
         action_widgets = [self.btn_refresh]
         toolbar = self.build_tab_toolbar("亚洲寡头核心资产监控", self.lbl_status, filter_widgets, action_widgets)
         layout.addWidget(toolbar)
@@ -879,12 +872,6 @@ class AsianMarketTab(BaseStockTab):
             from ui.components.stock_context_menu import build_stock_context_menu
 
             build_stock_context_menu(self, code, name)
-
-    def _on_cf_proxy_toggled(self, checked):
-        set_cf_proxy_enabled(checked)
-        if hasattr(self, "lbl_status"):
-            mode_text = "已启用稳定海外线路" if checked else "已切换为当前系统网络"
-            self._set_asian_status(mode_text, "下次刷新生效", self._format_last_success_segment())
 
     def _on_search_text_changed(self, text):
         self.set_proxy_filter_text(self.proxy_model, text)

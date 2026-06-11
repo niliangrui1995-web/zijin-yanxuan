@@ -698,7 +698,7 @@ class KLineChartWindow(QWidget):
     def _load_asian_chart(self):
         """加载亚洲市场（yfinance 缓存）的 K 线数据"""
         from ui.tabs.asian_market_tab import GLOBAL_ASIAN_RT_CACHE, JSON_CACHE
-        from ui.tabs.asian_market_workers import fetch_asian_realtime_quote, is_cf_proxy_enabled
+        from ui.tabs.asian_market_workers import fetch_asian_realtime_quote
 
         df = None
         target_stock = load_cached_asian_stock(JSON_CACHE, self.code)
@@ -731,7 +731,7 @@ class KLineChartWindow(QWidget):
                     last_date = None
                 if last_date is None or last_date < latest_trade_date:
                     try:
-                        quote = fetch_asian_realtime_quote(self.code, use_cf_proxy=is_cf_proxy_enabled())
+                        quote = fetch_asian_realtime_quote(self.code)
                     except Exception as exc:
                         if is_yf_rate_limit_error(exc):
                             remaining_sec = mark_yf_rate_limited(exc)

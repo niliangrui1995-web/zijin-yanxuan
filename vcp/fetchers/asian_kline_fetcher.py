@@ -832,7 +832,6 @@ def fetch_single_kline(
     name: str,
     ticker: str,
     period: str = "1y",
-    use_cf_proxy: bool = False,
     session=None,
 ) -> dict | None:
     """拉取单只标的的 K 线数据。
@@ -862,7 +861,7 @@ def fetch_single_kline(
 
     try:
         ticker = str(ticker or "").strip().upper()
-        http_session = session or build_yf_session(use_cf_proxy)
+        http_session = session or build_yf_session()
         start_date, end_date, target_rows = _resolve_period_window(period)
         raw_rows, source = _fetch_market_history_rows(
             ticker,
@@ -918,7 +917,6 @@ def fetch_all_asian_klines(
     single_ticker: str | None = None,
     max_workers: int = 6,
     period: str = "1y",
-    use_cf_proxy: bool = False,
 ) -> list[dict]:
     """并发拉取亚洲寡头 K 线数据。
 
@@ -950,7 +948,7 @@ def fetch_all_asian_klines(
 
     results = []
     failed = []
-    yf_session = build_yf_session(use_cf_proxy)
+    yf_session = build_yf_session()
 
     for name, ticker in tickers.items():
         if get_yf_rate_limit_status()["active"]:
@@ -962,7 +960,6 @@ def fetch_all_asian_klines(
                 name,
                 ticker,
                 period=period,
-                use_cf_proxy=use_cf_proxy,
                 session=yf_session,
             )
             if data:
@@ -997,7 +994,6 @@ def sync_asian_kline_cache(
     single_ticker: str | None = None,
     max_workers: int = 6,
     period: str = "1y",
-    use_cf_proxy: bool = False,
     output_dir: str | None = None,
 ) -> tuple[bool, str, dict]:
     """严格同步亚洲 K 线缓存。
@@ -1032,7 +1028,6 @@ def sync_asian_kline_cache(
         single_ticker=single_ticker,
         max_workers=max_workers,
         period=period,
-        use_cf_proxy=use_cf_proxy,
     )
     if not data:
         try:
@@ -1081,7 +1076,7 @@ def sync_asian_kline_cache(
 
     if missing:
         logging.warning(f"⚠️ 全量抓取缺失 {len(missing)} 只，开始单票补抓: {missing}")
-        rescue_session = build_yf_session(use_cf_proxy)
+        rescue_session = build_yf_session()
         for ticker in list(missing):
             name = ticker_to_name.get(ticker, ticker)
             try:
@@ -1092,7 +1087,6 @@ def sync_asian_kline_cache(
                     name,
                     ticker,
                     period=period,
-                    use_cf_proxy=use_cf_proxy,
                     session=rescue_session,
                 )
                 if one:

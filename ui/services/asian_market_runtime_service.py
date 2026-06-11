@@ -18,7 +18,6 @@ from ui.tabs.asian_market_workers import (
     RT_JSON_CACHE,
     AsianMarketWorker,
     is_asian_quote_refresh_time,
-    is_cf_proxy_enabled,
 )
 
 log = get_logger(__name__)
@@ -379,7 +378,6 @@ class AsianMarketRuntimeService(QObject):
         success, message, report = sync_asian_kline_cache(
             max_workers=3,
             period="1y",
-            use_cf_proxy=is_cf_proxy_enabled(),
         )
         result = {
             "job_key": "asian_market_cache_sync",

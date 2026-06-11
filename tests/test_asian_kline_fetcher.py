@@ -12,7 +12,7 @@ def _load_fetcher_module(monkeypatch):
     fake_industry.OLIGARCH_DICT = {}
     fake_industry.VANGUARD_TICKERS = {}
     fake_session = types.ModuleType("vcp.fetchers.yf_session")
-    fake_session.build_yf_session = lambda use_cf_proxy=True: object()
+    fake_session.build_yf_session = lambda: object()
     fake_session.get_yf_rate_limit_status = lambda: {
         "active": False,
         "remaining_sec": 0.0,
@@ -31,7 +31,7 @@ def _load_fetcher_module(monkeypatch):
 
 def test_fetcher_imports_without_external_industry_dict(monkeypatch):
     fake_session = types.ModuleType("vcp.fetchers.yf_session")
-    fake_session.build_yf_session = lambda use_cf_proxy=True: object()
+    fake_session.build_yf_session = lambda: object()
     fake_session.get_yf_rate_limit_status = lambda: {
         "active": False,
         "remaining_sec": 0.0,
@@ -454,7 +454,7 @@ def test_sync_asian_kline_cache_refuses_partial_overwrite(monkeypatch):
             }
         ],
     )
-    monkeypatch.setattr(fetcher, "build_yf_session", lambda use_cf_proxy=True: object())
+    monkeypatch.setattr(fetcher, "build_yf_session", lambda: object())
     monkeypatch.setattr(fetcher, "fetch_single_kline", lambda *args, **kwargs: None)
     monkeypatch.setattr(fetcher, "_load_cached_row_map", lambda output_dir=None: {})
 
@@ -498,7 +498,7 @@ def test_sync_asian_kline_cache_reuses_previous_snapshot_before_write(monkeypatc
             }
         ],
     )
-    monkeypatch.setattr(fetcher, "build_yf_session", lambda use_cf_proxy=True: object())
+    monkeypatch.setattr(fetcher, "build_yf_session", lambda: object())
     monkeypatch.setattr(fetcher, "fetch_single_kline", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         fetcher,
@@ -569,7 +569,7 @@ def test_sync_asian_kline_cache_rescues_stale_symbol_before_write(monkeypatch):
             },
         ],
     )
-    monkeypatch.setattr(fetcher, "build_yf_session", lambda use_cf_proxy=True: object())
+    monkeypatch.setattr(fetcher, "build_yf_session", lambda: object())
     monkeypatch.setattr(
         fetcher,
         "fetch_single_kline",
@@ -632,7 +632,7 @@ def test_sync_asian_kline_cache_rejects_stale_old_cache_reuse(monkeypatch):
             }
         ],
     )
-    monkeypatch.setattr(fetcher, "build_yf_session", lambda use_cf_proxy=True: object())
+    monkeypatch.setattr(fetcher, "build_yf_session", lambda: object())
     monkeypatch.setattr(fetcher, "fetch_single_kline", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         fetcher,

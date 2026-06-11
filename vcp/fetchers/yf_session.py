@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""yfinance 会话辅助工具。
-
-将 Yahoo Finance 的域名改写限制在自定义 curl_cffi Session 内部，
-避免通过 monkey patch 改写全局 requests / curl_cffi 行为。
-"""
+"""yfinance 会话辅助工具。"""
 
 from __future__ import annotations
 
@@ -12,7 +8,6 @@ import shutil
 import tempfile
 import threading
 import time
-from urllib.parse import urlsplit, urlunsplit
 
 import certifi
 from curl_cffi import requests as curl_requests
@@ -27,33 +22,10 @@ except (ImportError, ModuleNotFoundError):  # pragma: no cover - defensive fallb
         pass
 
 
-YF_HIJACK_DOMAINS = ("query1.finance.yahoo.com", "query2.finance.yahoo.com")
-YF_HIJACK_TO = "yf.niliangrui.cloud"
 _DEFAULT_YF_RATE_LIMIT_COOLDOWN_SEC = 15 * 60
 _YF_RATE_LIMIT_LOCK = threading.Lock()
 _YF_RATE_LIMIT_UNTIL_TS = 0.0
 _YF_RATE_LIMIT_REASON = ""
-
-
-def rewrite_yfinance_url(url: str) -> str:
-    """仅改写 yfinance 访问的核心 Yahoo API 域名。"""
-    if not isinstance(url, str):
-        return url
-    try:
-        parts = urlsplit(url)
-    except ValueError:
-        return url
-    if parts.hostname not in YF_HIJACK_DOMAINS:
-        return url
-    port = f":{parts.port}" if parts.port else ""
-    return urlunsplit((parts.scheme, f"{YF_HIJACK_TO}{port}", parts.path, parts.query, parts.fragment))
-
-
-class CfTunnelSession(curl_requests.Session):
-    """只在当前 Session 内部做 URL 改写，不影响进程内其它网络请求。"""
-
-    def request(self, method, url, *args, **kwargs):
-        return super().request(method, rewrite_yfinance_url(url), *args, **kwargs)
 
 
 def _is_ascii_path(path: str) -> bool:
@@ -136,9 +108,8 @@ def get_yf_rate_limit_status() -> dict[str, float | str | bool]:
     }
 
 
-def build_yf_session(use_cf_proxy: bool = False):
+def build_yf_session():
     """构建 yfinance 可接受的 curl_cffi Session。"""
-    session_cls = CfTunnelSession if use_cf_proxy else curl_requests.Session
-    session = session_cls(impersonate="chrome")
+    session = curl_requests.Session(impersonate="chrome")
     session.verify = resolve_curl_cffi_verify_path()
     return session
