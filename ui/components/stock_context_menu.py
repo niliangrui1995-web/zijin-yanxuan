@@ -191,6 +191,7 @@ def build_stock_context_menu(
     show_watchlist_toggle: bool = True,
     show_export: bool = False,
     export_callback=None,
+    extra_actions=None,
     vcp_data: dict = None,
 ):
     """构建标准化的股票右键菜单并执行
@@ -202,6 +203,7 @@ def build_stock_context_menu(
         show_watchlist_toggle: 是否显示关注池切换选项
         show_export: 是否显示导出选项
         export_callback: 导出回调(仅 show_export=True 时有效)
+        extra_actions: 调用方追加的菜单动作 [(文本, 回调)]
         vcp_data: VCP 策略数据(加入关注池时附带)
 
     返回:
@@ -218,6 +220,11 @@ def build_stock_context_menu(
     open_security_detail = getattr(workspace, "open_security_detail", None)
     act_detail = menu.addAction("查看股票全景") if callable(open_security_detail) else None
     act_copy = menu.addAction("复制代码")
+    extra_action_pairs = []
+    for label, callback in extra_actions or []:
+        label = str(label or "").strip()
+        if label and callable(callback):
+            extra_action_pairs.append((menu.addAction(label), callback))
     menu.addSeparator()
 
     # --- 关注池操作 ---
@@ -269,6 +276,12 @@ def build_stock_context_menu(
 
     elif action == act_copy:
         QApplication.clipboard().setText(code)
+
+    elif extra_action_pairs and any(action == extra_action for extra_action, _callback in extra_action_pairs):
+        for extra_action, callback in extra_action_pairs:
+            if action == extra_action:
+                callback()
+                break
 
     elif action == act_watchlist and show_watchlist_toggle:
         # 清理名称中的星标前缀

@@ -66,6 +66,7 @@ from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
 _ASIAN_MARKET_LOCAL_CACHE_TASK = task_registry.workspace("asian_market_local_cache")
+ASIAN_PINNED_CODES_SETTINGS_KEY = "pinned_codes_v1"
 
 
 def _safe_float(value) -> float:
@@ -77,6 +78,73 @@ def _safe_float(value) -> float:
 
 def _round_pct(value) -> float:
     return round(_safe_float(value), 2)
+
+
+def _normalize_asian_pinned_codes(value) -> list[str]:
+    if isinstance(value, str):
+        raw_items = value.replace(";", ",").replace("|", ",").split(",")
+    elif isinstance(value, (list, tuple, set)):
+        raw_items = value
+    elif value is None:
+        raw_items = []
+    else:
+        raw_items = [value]
+
+    codes = []
+    for item in raw_items:
+        code = str(item or "").strip()
+        if code and code not in codes:
+            codes.append(code)
+    return codes
+
+
+def _order_asian_rows_by_pinned_codes(rows, pinned_codes) -> list[dict]:
+    row_list = [row for row in rows or [] if isinstance(row, dict)]
+    pinned_order = {code: idx for idx, code in enumerate(_normalize_asian_pinned_codes(pinned_codes))}
+
+    def _sort_key(indexed_row):
+        index, row = indexed_row
+        code = str(row.get("代码", "") or "").strip()
+        if code in pinned_order:
+            return 0, pinned_order[code], index
+        return 1, index, index
+
+    return [row for _index, row in sorted(enumerate(row_list), key=_sort_key)]
+
+
+class AsianPinnedSortFilterProxyModel(RtSortFilterProxyModel):
+    def __init__(self, parent=None, pinned_codes_getter=None):
+        super().__init__(parent)
+        self._pinned_codes_getter = pinned_codes_getter
+
+    def _pinned_rank(self, source_index):
+        if not source_index.isValid() or not callable(self._pinned_codes_getter):
+            return None
+
+        model = self.sourceModel()
+        rows = getattr(model, "row_data", []) or []
+        row = source_index.row()
+        if row < 0 or row >= len(rows):
+            return None
+
+        code = str(rows[row].get("代码", "") or "").strip()
+        pinned_order = {
+            pinned_code: index for index, pinned_code in enumerate(_normalize_asian_pinned_codes(self._pinned_codes_getter()))
+        }
+        return pinned_order.get(code)
+
+    def lessThan(self, left, right):
+        left_rank = self._pinned_rank(left)
+        right_rank = self._pinned_rank(right)
+        if left_rank is not None or right_rank is not None:
+            descending = self.sortOrder() == Qt.SortOrder.DescendingOrder
+            if left_rank is None:
+                return descending
+            if right_rank is None:
+                return not descending
+            if left_rank != right_rank:
+                return left_rank > right_rank if descending else left_rank < right_rank
+        return super().lessThan(left, right)
 
 
 def _resolve_cached_rt_previous_close(info: dict, data_points: list[dict]) -> float | None:
@@ -367,6 +435,7 @@ class AsianMarketTab(BaseStockTab):
         self._last_health_signature = None
         self._runtime_started = False
         self.row_data = []
+        self._pinned_asian_codes = self._load_pinned_asian_codes()
         self.cache_thread = None
         self._asian_market_service = self._resolve_asian_market_service()
         self._owns_asian_market_service = self._asian_market_service.parent() is self
@@ -490,6 +559,57 @@ class AsianMarketTab(BaseStockTab):
 
     def _has_saved_asian_header_state(self, settings_key: str) -> bool:
         return self._settings_section().contains(settings_key)
+
+    def _load_pinned_asian_codes(self) -> list[str]:
+        try:
+            settings = self._settings_section()
+            return _normalize_asian_pinned_codes(settings.value(ASIAN_PINNED_CODES_SETTINGS_KEY, []))
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return []
+
+    def _save_pinned_asian_codes(self) -> None:
+        try:
+            settings = self._settings_section()
+            settings.setValue(ASIAN_PINNED_CODES_SETTINGS_KEY, list(self._pinned_asian_codes))
+            sync = getattr(settings, "sync", None)
+            if callable(sync):
+                sync()
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            log.debug(f"[亚洲页] 保存置顶标的失败: {exc}")
+
+    def _ordered_asian_rows(self) -> list[dict]:
+        return _order_asian_rows_by_pinned_codes(self.row_data, self._pinned_asian_codes)
+
+    def _is_asian_code_pinned(self, code: str) -> bool:
+        normalized = _normalize_asian_pinned_codes([code])
+        return bool(normalized and normalized[0] in self._pinned_asian_codes)
+
+    def _pin_asian_code_to_top(self, code: str) -> None:
+        normalized = _normalize_asian_pinned_codes([code])
+        if not normalized:
+            return
+
+        target = normalized[0]
+        self._pinned_asian_codes = [target] + [item for item in self._pinned_asian_codes if item != target]
+        self._save_pinned_asian_codes()
+        self.update_table_ui()
+        self._set_asian_status("已置顶", f"{target} 已移到亚洲页顶部", freshness=self._status_freshness)
+
+    def _unpin_asian_code(self, code: str) -> None:
+        normalized = _normalize_asian_pinned_codes([code])
+        if not normalized:
+            return
+
+        target = normalized[0]
+        self._pinned_asian_codes = [item for item in self._pinned_asian_codes if item != target]
+        self._save_pinned_asian_codes()
+        self.update_table_ui()
+        self._set_asian_status("已取消置顶", f"{target} 恢复亚洲页默认顺序", freshness=self._status_freshness)
+
+    def _build_asian_pin_action(self, code: str):
+        if self._is_asian_code_pinned(code):
+            return "取消亚洲页置顶", lambda code=code: self._unpin_asian_code(code)
+        return "亚洲页置顶", lambda code=code: self._pin_asian_code_to_top(code)
 
     def _fit_asian_columns_to_viewport(self):
         if not hasattr(self, "asian_table"):
@@ -821,7 +941,10 @@ class AsianMarketTab(BaseStockTab):
         self.model = StockTableModel(self.header_labels)
         self.model.set_plain_style_headers(["状态"])
         self.model.set_plain_background_headers(["涨幅%"])
-        self.proxy_model = RtSortFilterProxyModel(self.asian_table)
+        self.proxy_model = AsianPinnedSortFilterProxyModel(
+            self.asian_table,
+            pinned_codes_getter=lambda: self._pinned_asian_codes,
+        )
         self.proxy_model.setSourceModel(self.model)
         self.asian_table.setModel(self.proxy_model)
 
@@ -871,7 +994,7 @@ class AsianMarketTab(BaseStockTab):
         if code and name:
             from ui.components.stock_context_menu import build_stock_context_menu
 
-            build_stock_context_menu(self, code, name)
+            build_stock_context_menu(self, code, name, extra_actions=[self._build_asian_pin_action(code)])
 
     def _on_search_text_changed(self, text):
         self.set_proxy_filter_text(self.proxy_model, text)
@@ -916,7 +1039,7 @@ class AsianMarketTab(BaseStockTab):
                 log.warning(f"[亚洲页] 同步 worker 股票池失败: {e}")
 
     def update_table_ui(self):
-        self.model.update_data(self.row_data)
+        self.model.update_data(self._ordered_asian_rows())
         if hasattr(self, "table_state"):
             if self.row_data:
                 self.table_state.show_table()

@@ -293,3 +293,44 @@ def test_open_codex_project_thread_warns_when_codex_scheme_is_missing(monkeypatc
 
     assert not stock_context_menu.open_codex_project_thread(project_path=tmp_path)
     assert "没有注册 codex:// 深链接" in warnings[0]
+
+
+def test_stock_context_menu_runs_extra_action(monkeypatch):
+    triggered = []
+
+    class FakeAction:
+        def __init__(self, text):
+            self.text = text
+
+    class FakeMenu:
+        def __init__(self, _parent):
+            self.actions = []
+
+        def setStyleSheet(self, _style):
+            return None
+
+        def addAction(self, text):
+            action = FakeAction(text)
+            self.actions.append(action)
+            return action
+
+        def addSeparator(self):
+            self.actions.append(None)
+
+        def exec(self, _pos):
+            return next(action for action in self.actions if getattr(action, "text", "") == "亚洲页置顶")
+
+    monkeypatch.setattr(stock_context_menu, "QMenu", FakeMenu)
+    monkeypatch.setattr(stock_context_menu, "install_menu_fade", lambda _menu: None)
+    monkeypatch.setattr(stock_context_menu, "generate_context_menu_qss", lambda: "")
+    monkeypatch.setattr(stock_context_menu.QCursor, "pos", staticmethod(lambda: None))
+
+    stock_context_menu.build_stock_context_menu(
+        None,
+        "2330.TW",
+        "TSMC",
+        show_watchlist_toggle=False,
+        extra_actions=[("亚洲页置顶", lambda: triggered.append("pin"))],
+    )
+
+    assert triggered == ["pin"]

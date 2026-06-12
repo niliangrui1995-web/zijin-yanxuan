@@ -64,6 +64,24 @@ class _CacheThreadStub:
         return self._running
 
 
+class _SettingsStub:
+    def __init__(self, values=None):
+        self.values = dict(values or {})
+        self.synced = False
+
+    def value(self, key, default=None, type=None):
+        return self.values.get(key, default)
+
+    def setValue(self, key, value):
+        self.values[key] = value
+
+    def contains(self, key):
+        return key in self.values
+
+    def sync(self):
+        self.synced = True
+
+
 @pytest.fixture(autouse=True)
 def _disable_saved_asian_header_state(monkeypatch):
     monkeypatch.setattr(
@@ -88,6 +106,30 @@ def _install_immediate_local_cache_runner(monkeypatch):
             return str(task_id)
 
     monkeypatch.setattr(asian_module, "task_manager", FakeTaskRunner())
+
+
+def _build_asian_tab_for_view_tests(monkeypatch, settings=None):
+    settings = settings or _SettingsStub()
+    monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "_load_local_cache",
+        lambda self: setattr(self, "row_data", []),
+    )
+    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "_settings_section",
+        lambda self: settings,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+    return asian_module.AsianMarketTab(), settings
 
 
 def test_infer_asian_markets_normalizes_from_code_suffixes():
@@ -315,6 +357,75 @@ def test_asian_market_toolbar_keeps_search_and_refresh(monkeypatch):
         assert tab.search_box.property("inToolbar") is True
         assert tab.btn_refresh.property("inToolbar") is True
         assert tab.asian_table.property("ambientPulse") is False
+    finally:
+        tab.deleteLater()
+
+
+def test_asian_market_orders_pinned_codes_before_unpinned_rows(monkeypatch):
+    tab, _settings = _build_asian_tab_for_view_tests(
+        monkeypatch,
+        _SettingsStub({asian_module.ASIAN_PINNED_CODES_SETTINGS_KEY: ["0522.HK", "2330.TW"]}),
+    )
+    try:
+        tab.row_data = [
+            {"代码": "8035.T", "名称": "Tokyo Electron"},
+            {"代码": "2330.TW", "名称": "TSMC"},
+            {"代码": "0522.HK", "名称": "ASMPT"},
+        ]
+
+        tab.update_table_ui()
+
+        assert [row["代码"] for row in tab.model.row_data] == ["0522.HK", "2330.TW", "8035.T"]
+        assert [row["代码"] for row in tab.row_data] == ["8035.T", "2330.TW", "0522.HK"]
+    finally:
+        tab.deleteLater()
+
+
+def test_asian_market_pin_and_unpin_persist_and_refresh_table(monkeypatch):
+    tab, settings = _build_asian_tab_for_view_tests(monkeypatch)
+    try:
+        tab.row_data = [
+            {"代码": "8035.T", "名称": "Tokyo Electron"},
+            {"代码": "2330.TW", "名称": "TSMC"},
+            {"代码": "0522.HK", "名称": "ASMPT"},
+        ]
+        tab.update_table_ui()
+
+        tab._pin_asian_code_to_top("2330.TW")
+
+        assert settings.values[asian_module.ASIAN_PINNED_CODES_SETTINGS_KEY] == ["2330.TW"]
+        assert settings.synced is True
+        assert [row["代码"] for row in tab.model.row_data] == ["2330.TW", "8035.T", "0522.HK"]
+        assert tab._build_asian_pin_action("2330.TW")[0] == "取消亚洲页置顶"
+
+        tab._unpin_asian_code("2330.TW")
+
+        assert settings.values[asian_module.ASIAN_PINNED_CODES_SETTINGS_KEY] == []
+        assert [row["代码"] for row in tab.model.row_data] == ["8035.T", "2330.TW", "0522.HK"]
+        assert tab._build_asian_pin_action("2330.TW")[0] == "亚洲页置顶"
+    finally:
+        tab.deleteLater()
+
+
+@pytest.mark.parametrize("sort_order", [Qt.SortOrder.AscendingOrder, Qt.SortOrder.DescendingOrder])
+def test_asian_market_pin_stays_first_when_table_is_sorted(monkeypatch, sort_order):
+    tab, _settings = _build_asian_tab_for_view_tests(monkeypatch)
+    try:
+        tab.row_data = [
+            {"代码": "8035.T", "名称": "Tokyo Electron"},
+            {"代码": "2330.TW", "名称": "TSMC"},
+            {"代码": "0522.HK", "名称": "ASMPT"},
+        ]
+        tab.update_table_ui()
+        code_col = tab.model.headers.index("代码")
+        tab.asian_table.sortByColumn(code_col, sort_order)
+        QApplication.processEvents()
+
+        tab._pin_asian_code_to_top("2330.TW")
+        QApplication.processEvents()
+
+        first_source = tab.proxy_model.mapToSource(tab.proxy_model.index(0, code_col))
+        assert tab.model.row_data[first_source.row()]["代码"] == "2330.TW"
     finally:
         tab.deleteLater()
 
