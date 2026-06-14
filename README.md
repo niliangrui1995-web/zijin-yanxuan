@@ -2,7 +2,9 @@
 
 Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatility Contraction Pattern）扫描、盘中监控、关注池联动和多市场辅助观察构建。
 
-当前代码基于本地通达信日线数据运行，盘中实时行情通过东方财富 HTTP 链路获取，并在必要时回退到新浪批量报价；海外和亚洲辅助页面使用独立数据抓取链路。
+最后校验：2026-06-14（按当前源码、`docs/technical-architecture.md` 和 `docs/module-owners.md` 重新核对）。
+
+当前代码基于本地通达信日线数据和 Parquet/SQLite 本地仓库运行，盘中实时行情通过东方财富 HTTP 链路获取，并在必要时回退到新浪、腾讯批量报价；海外、亚洲、龙虎榜、大宗交易、业绩和基金持仓页面各自维护独立抓取、清洗、缓存和展示链路。
 
 > 注意
 >
@@ -71,9 +73,9 @@ Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatil
 - 拼音辅助：`pypinyin`
 - 桌面/系统联动：`pywin32`、`pyautogui`、`codex://` 深链接
 - A 股本地数据：通达信 `vipdoc` 日线文件
-- A 股实时行情：东方财富 HTTP，异常时回退新浪批量报价
+- A 股实时行情：东方财富 HTTP，异常时回退新浪、腾讯批量报价
 - 财务/股本补充：东方财富接口
-- 海外/亚洲辅助数据：AkShare、yfinance、requests、`curl_cffi`
+- 海外/亚洲辅助数据：AkShare、yfinance、Yahoo Japan、TWSE/TPEX、Naver、腾讯港股、requests、`curl_cffi`
 - 任务调度：`infra/tasks/task_scheduler.py` + `core/background_job_runner.py`
 - 服务开关：`infra/features/service_toggle_registry.py`
 - HTTP 与子进程边界：`infra/http_safety.py` + `infra/tasks/process_runner.py`
@@ -359,24 +361,46 @@ Windows 环境下可以在标题栏的系统菜单中勾选 `开机自启动`。
 
 ## 数据源与运行模式
 
-### A 股主链路
+当前项目的数据链路遵循“先获取原始数据，再本地加工，最后进入 Tab 展示”的顺序。外部接口只负责取数；去重、字段标准化、口径合并、缓存、降级提示和跨 Tab 信号汇总都在本地完成。
 
-- 历史 K 线：本地通达信 `vipdoc`
-- 盘中实时 quote：东方财富 HTTP
-- 异常回退：新浪批量报价
-- 股本/财务补充：东方财富 finance 数据
+东方财富妙想 skill 目前没有接入紫金研选的主数据链路。当前 Tab 的真实来源仍是下面这些本地文件、公开接口、AkShare 封装和项目内缓存。
+
+### A 股行情与基础数据
+
+| 能力 | 主来源 | 本地处理与缓存 | 主要代码 |
+| --- | --- | --- | --- |
+| 历史 K 线 | 本地通达信 `vipdoc` 日线文件 | 优先读取内存和 Parquet/SQLite 仓库，缺失时回退 `vipdoc`，F5 后写回仓库 manifest | `infra/market_data/tdx_data_provider.py`、`infra/market_data/market_data_warehouse.py`、`vcp/data_provider_local.py` |
+| 盘中实时报价 | 东方财富 `push2.eastmoney.com/api/qt/ulist/get` | 按中央报价站 30 秒轮询，运行时去重、冷却、单飞行任务；东方财富失败后回退新浪 `hq.sinajs.cn`，再回退腾讯 `qt.gtimg.cn` | `ui/workers/central_quotes_worker.py`、`vcp/data_provider_quotes.py`、`vcp/data_provider_realtime.py` |
+| 股本/市值补充 | 本地通达信股本快照优先，东方财富 `push2` 补充 | 用于表格市值动态重算和缺失 `_zongguben` 补齐，带磁盘缓存 | `app/services/central_quote_polling_service.py`、`vcp/engine_external.py`、`ui/tabs/base_stock_refresh.py` |
+| 十大流通股东/机构股东 | 东方财富 F10 `PC_HSF10/ShareholderResearch/PageAjax` | 本地识别机构关键字，结果缓存 90 天 | `vcp/engine_external.py` |
+| 交易日历 | AkShare 新浪交易日历、本地市场日历规则 | 统一判断报价刷新窗口、F5 日期、Tab 数据日期 | `domains/market_calendar/calendar_service.py`、`core/market_calendar.py` |
+
+### A 股情报源 Tab
+
+| Tab | 原始数据来源 | 本地加工逻辑 | 主要代码 |
+| --- | --- | --- | --- |
+| 龙虎榜 | AkShare 东方财富龙虎榜封装：`stock_lhb_detail_em`、`stock_lhb_jgmmtj_em`、`stock_lhb_hyyyb_em`、`stock_lhb_stock_detail_em` | 按日期取每日原始榜单，合并多上榜原因，匹配机构、外资/知名席位，计算净买额和 30 日滚动关注池 | `ui/workers/lhb_worker.py`、`ui/tabs/lhb_tab.py` |
+| 大宗交易 | AkShare 东方财富大宗交易：`stock_dzjy_mrmx`；交易日历用 `tool_trade_date_hist_sina` | 子进程隔离 AkShare 抓取，按外资席位关键字过滤，聚合对倒/买入/卖出方向，写入本地 JSON 缓存 | `ui/tabs/foreign_block_trade_tab.py` |
+| 业绩预告/快报/财报 | AkShare 东方财富：`stock_yjyg_em`、`stock_yjkb_em`、`stock_yjbb_em`；同花顺利润表接口补充单季度口径 | 按公告日期过滤候选，去重，估算单季度环比，必要时用快报净利润回填，写入 SQLite 状态 | `domains/earnings/engine.py`、`ui/tabs/earnings_tab.py` |
+| 基金持仓/QFII | 东方财富数据中心 `datacenter-web.eastmoney.com/api/data/v1/get`；东方财富基金档案 `FundArchivesDatas.aspx` | 同步 QFII 和睿远成长价值混合A，规范季度、主体、资金属性，生成快照和变动缓存，落到 SQLite | `domains/fund_holdings/sync.py`、`domains/fund_holdings/store.py`、`ui/tabs/fund_holdings_tab.py` |
+| AI 产业链 | 本地产业链股票池、上下文映射和行业字典 | 作为跨 Tab 股票池和概念上下文来源，供大宗、基金、综合候选和个股上下文过滤/展示 | `core/ai_industry_chain_pool.py`、`ui/tabs/ai_industry_chain_tab.py` |
+| 北美战报 | 兄弟项目“每日战报”的本地输出文件 | 读取最近战报产物并回填标的、细分板块、催化描述，再挂接实时/海外辅助行情 | `ui/services/na_daily_service.py`、`ui/tabs/na_daily_tab.py` |
+| 综合候选 | VCP 扫描、关注池、龙虎榜、大宗、业绩、基金持仓、AI 产业链、北美战报等本地信号 | 汇总成候选池和个股上下文，不直接抓新数据源 | `ui/tabs/stock_candidate_tab.py`、`ui/workspaces/stock_context_service.py` |
 
 ### 海外 / 亚洲辅助链路
 
-- 亚洲市场历史与缓存：`vcp/fetchers/asian_kline_fetcher.py`
-- 亚洲市场盘中辅助行情：`ui/tabs/asian_market_workers.py`
-- 北美 / 海外辅助数据：AkShare、yfinance
-- 全球寡头财报日历：Alpha Vantage、Nasdaq、Company IR、Yahoo Finance、DART/KIND/MOPS/TDnet/JPX 等来源按可用性合并
+| 能力 | 原始数据来源 | 本地处理与缓存 | 主要代码 |
+| --- | --- | --- | --- |
+| 亚洲寡头历史 K 线 | 台湾 TWSE/TPEX、韩国 Naver、日本 Yahoo Japan、港股腾讯，必要时 yfinance 回退 | 从“每日战报”行业字典和本地覆盖表生成亚洲标的池，抓取约 250 日 OHLCV，写入 `data/Cache/asian_klines_latest.json` | `vcp/fetchers/asian_kline_fetcher.py`、`vcp/fetchers/asian_kline_cache.py` |
+| 亚洲寡头盘中行情 | 台湾 TWSE MIS、韩国 Naver、港股腾讯、日本 Yahoo Japan，必要时 yfinance 回退 | 维护 `GLOBAL_ASIAN_RT_CACHE` 和 `asian_rt_latest.json`，对 Yahoo/yfinance 限流做冷却和降级提示 | `ui/tabs/asian_market_workers.py`、`app/services/asian_market_service.py` |
+| 亚洲估值补充 | TWSE/TPEX 本益比、Naver PER、Yahoo Japan/Kabutan PER | 12 小时刷新一次，失败时沿用缓存 | `ui/tabs/asian_market_workers.py` |
+| 全球寡头财报日历 | Company IR、JPX、TDnet、DART、KIND、MOPS、SEC 6-K、Nasdaq、Alpha Vantage、Yahoo Finance | 官方源优先，Yahoo Finance 标记为估算/冲突候选；结果合并到 SQLite/JSON 缓存并叠加到交易日历 | `domains/global_earnings_calendar/service.py`、`domains/global_earnings_calendar/providers/*` |
 
 补充说明：
 
-- 亚洲页在盘后缓存同步失败但旧缓存完整可用时，会继续沿用本地缓存并在页内明确提示缓存状态
-- 外资大宗、业绩异动、VCP 扫描等页共用统一页头和工具栏基线，README 中描述的页面行为以当前 UI 为准
+- 亚洲页在盘后缓存同步失败但旧缓存完整可用时，会继续沿用本地缓存并在页内明确提示缓存状态。
+- 外部源抓取失败时，Tab 应优先展示“缓存数据 / 刷新失败 / 离线”等页面级状态，而不是把底层异常直接暴露给用户。
+- 外资大宗、业绩异动、VCP 扫描等页共用统一页头和工具栏基线，README 中描述的页面行为以当前 UI 为准。
 
 ### 启动模式
 
@@ -391,6 +415,26 @@ Windows 环境下可以在标题栏的系统菜单中勾选 `开机自启动`。
 - 无网也能打开本地缓存
 - 联网能力恢复后尽量无感切换
 
+### 服务开关与环境变量
+
+运行期开关集中在 `infra/features/service_toggle_registry.py`，可以用 `VCP_TOGGLE_...` 环境变量临时覆盖。常用开关如下：
+
+| 开关 key | 环境变量 | 默认 | 作用 |
+| --- | --- | --- | --- |
+| `central_quotes_service` | `VCP_TOGGLE_CENTRAL_QUOTES_SERVICE` | 开 | 中央 A 股实时报价轮询 |
+| `silent_asian_sync` | `VCP_TOGGLE_SILENT_ASIAN_SYNC` | 开 | 启动后静默同步亚洲 K 线缓存 |
+| `daily_global_earnings_calendar_sync` | `VCP_TOGGLE_DAILY_GLOBAL_EARNINGS_CALENDAR_SYNC` | 开 | 运行期间定时刷新全球寡头财报日历 |
+| `workspace_auto_rt_monitor` | `VCP_TOGGLE_WORKSPACE_AUTO_RT_MONITOR` | 开 | 满足交易时段和数据条件时自动启动盘中监控 |
+| `startup_history_cache_load` | `VCP_TOGGLE_STARTUP_HISTORY_CACHE_LOAD` | 开 | 启动时预加载本地历史行情缓存 |
+
+其他重要环境变量：
+
+- `ALPHAVANTAGE_API_KEY` / `ALPHA_VANTAGE_API_KEY`：全球财报日历的 Alpha Vantage 数据源。
+- `OPENDART_API_KEY` / `DART_API_KEY`：韩国 DART 披露数据源。
+- `SEC_USER_AGENT`：SEC EDGAR 请求头，默认使用项目内通用标识。
+- `VCP_HUNTER_SETTINGS_ORGANIZATION` / `VCP_HUNTER_SETTINGS_APPLICATION`：覆盖 QSettings 命名空间，测试或多实例隔离时使用。
+- `VCP_KLINE_WEBENGINE_PREFLIGHT` / `VCP_KLINE_HIDDEN_PREWARM`：K 线 WebEngine 预检与隐藏预热相关诊断开关。
+
 ## 数据与缓存目录
 
 运行过程中会在 `data/` 下生成或维护这些内容：
@@ -401,12 +445,19 @@ Windows 环境下可以在标题栏的系统菜单中勾选 `开机自启动`。
   - 亚洲市场缓存
   - 财务/股本缓存
   - 全球寡头财报日历缓存
+- `data/Cache/parquet/market_data.parquet`
+  - 全市场历史日线明细，配合 SQLite manifest 使用
 - `data/vcp_hunter.db`
-  - 市场节假日缓存等 SQLite 数据
+  - `kv_store`
+  - `market_data_manifest`
+  - 基金持仓原始表、快照表和变动缓存
+  - 市场节假日、全球财报日历等 SQLite 数据
 - `data/logs/`
   - 按天滚动的应用日志
 - `data/crash_report.log`
   - `faulthandler` 写入的底层崩溃日志
+- `tmp/runtime_health_*`、`tmp/perf_*`
+  - 运行时健康、长稳、性能预算和 WebEngine 探针报告
 
 这些文件属于运行时产物，不应作为业务源码理解。
 
@@ -418,6 +469,12 @@ Windows 环境下可以在标题栏的系统菜单中勾选 `开机自启动`。
 
 ```powershell
 python -m pip install -r requirements-dev.txt
+```
+
+Windows Python 3.14 的已验证依赖组合可以使用约束文件安装：
+
+```powershell
+python -m pip install -r requirements-dev.txt -c constraints-py314-windows.txt
 ```
 
 ### 运行测试
@@ -528,6 +585,11 @@ python scripts/capture_ui_audit_screenshots.py --offscreen --strict
 - 需要跨 Tab 汇总或导航的能力，优先扩展 `ui/workspaces/tab_capabilities.py` 和 `WorkspaceFacade`
 - 涉及市场时间判断时，统一走 `MarketCalendar`
 - 涉及外部 HTTP 或子进程调用时，沿用 `infra/http_safety.py` 与 `infra/tasks/process_runner.py` 的边界约束
+- 新增外部数据源时，先在 `domains/` 或 `infra/` 建立“原始抓取 -> 规范化 -> 缓存/持久化”的独立链路，再让 Tab 读取本地结果
+- 新数据页尽量实现 `get_data_lineage()`，至少说明来源、缓存、是否联网、是否降级、更新时间和行数
+- 新的可选后台能力先注册到 `service_toggle_registry`，不要把布尔开关散落在 UI 或启动编排器里
+- 大规模明细优先落 Parquet；索引、manifest、状态和变动缓存落 SQLite；不要把全市场日线明细塞进 SQLite
+- `core/`、`vcp/`、`earnings/` 主要是兼容门面，新真实实现优先进入 `app/`、`domains/` 或 `infra/`
 - 修改中文文档、QSS 或脚本后，至少运行一次 `python scripts/check_utf8.py ...`
 
 ## 已知边界
@@ -536,6 +598,7 @@ python scripts/capture_ui_audit_screenshots.py --offscreen --strict
 - 核心能力建立在本地通达信数据目录存在的前提上
 - 海外/亚洲页面的数据质量和稳定性受外部源影响
 - 全球寡头财报日历会优先合并已确认事件和可用公开源；无外部密钥时部分事件只能作为估算或待确认
+- 东方财富妙想 skill 当前不是本项目的主数据接口；如后续接入，应作为补充查询层或人工验证层单独标注血缘
 - Codex 投研跳转依赖本机已注册 `codex://` 深链接，并默认打开 `D:\vcp_hunter\产业链投研`
 - 某些旧文件注释中可能仍存在历史术语，但 README 已以当前代码为准
 
