@@ -111,12 +111,12 @@ _kline_cache: dict = {}
 _BLOCK_TRADE_CHUNK_TIMEOUT = 15
 _BLOCK_TRADE_CALENDAR_TIMEOUT = 10
 _BLOCK_TRADE_MAX_RETRIES = 2
-_BLOCK_TRADE_TOTAL_TIMEOUT = 45
+_BLOCK_TRADE_TOTAL_TIMEOUT = 90
 F5_AUTO_ONLINE_REFRESH_DELAY_MS = 3000
 LOCAL_CACHE_LOAD_DELAY_MS = 650
 filter_rows_to_ai_chain_codes = None
 _BLOCK_TRADE_TIMEOUT_USER_MESSAGE = (
-    "抓取超时：45秒内未拿到完整结果。通常是当前网络较慢，"
+    f"抓取超时：{_BLOCK_TRADE_TOTAL_TIMEOUT}秒内未拿到完整结果。通常是当前网络较慢，"
     "或 VPN/代理影响了国内数据源；可稍后重试，必要时临时关闭 VPN 后再刷新。"
 )
 _AKSHARE_FETCH_SNIPPET = r"""
@@ -177,7 +177,7 @@ def _raise_block_trade_timeout(stage: str, detail: str = ""):
     extra = f"（{detail}）" if detail else ""
     raise UserFacingTaskError(
         _BLOCK_TRADE_TIMEOUT_USER_MESSAGE,
-        f"大宗交易抓取超时：{stage}{extra}，45秒内未完成全部请求，可能是国内数据源响应慢或网络代理影响。",
+        f"大宗交易抓取超时：{stage}{extra}，{_BLOCK_TRADE_TOTAL_TIMEOUT}秒内未完成全部请求，可能是国内数据源响应慢或网络代理影响。",
     )
 
 

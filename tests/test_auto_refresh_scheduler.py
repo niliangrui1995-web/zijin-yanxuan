@@ -1,5 +1,6 @@
 import datetime
 
+import pandas as pd
 from PyQt6.QtTest import QSignalSpy
 
 from app.services.ui_config_service import app_config
@@ -415,6 +416,79 @@ def test_auto_refresh_task_service_writes_foreign_block_cache(monkeypatch):
     assert saved == [([{"代码": "300750", "交易日期": "20260420"}], 30, "20260420")]
     assert result["records"] == 1
     assert result["latest_trade_date"] == "20260420"
+
+
+def test_auto_refresh_task_service_saves_partial_foreign_block_cache(monkeypatch):
+    saved = []
+    monkeypatch.setattr(
+        "ui.services.auto_refresh_tasks._fetch_foreign_block_records",
+        lambda *, days_to_fetch: {
+            "records": [{"raw": 1}],
+            "timeout_chunks": ["20260428-20260513"],
+            "failed_chunks": [],
+        },
+    )
+    monkeypatch.setattr(
+        "ui.services.auto_refresh_tasks._build_foreign_block_rows",
+        lambda records: [{"代码": "300750", "交易日期": "20260611"}],
+    )
+    monkeypatch.setattr(
+        "ui.services.auto_refresh_tasks._latest_foreign_block_trade_date",
+        lambda rows: "20260611",
+    )
+    monkeypatch.setattr(
+        "ui.services.auto_refresh_tasks._save_foreign_block_cache",
+        lambda rows, *, days_to_fetch, latest_trade_date: saved.append((rows, days_to_fetch, latest_trade_date)),
+    )
+
+    result = AutoRefreshTaskService().run_foreign_block_daily("20260611")
+
+    assert saved == [([{"代码": "300750", "交易日期": "20260611"}], 30, "20260611")]
+    assert result["status"] == "partial"
+    assert result["timeout_chunks"] == ["20260428-20260513"]
+    assert result["latest_trade_date"] == "20260611"
+
+
+def test_auto_refresh_foreign_block_fetches_latest_chunk_first(monkeypatch):
+    calls = []
+
+    class FixedDatetime(datetime.datetime):
+        @classmethod
+        def now(cls):
+            return cls(2026, 6, 11, 20, 0)
+
+    class FakeBlockModule:
+        _BLOCK_TRADE_TOTAL_TIMEOUT = 90
+        _BLOCK_TRADE_CALENDAR_TIMEOUT = 10
+        _BLOCK_TRADE_CHUNK_TIMEOUT = 15
+        _BLOCK_TRADE_MAX_RETRIES = 1
+        FOREIGN_KEYWORDS = ["高盛"]
+        ProcessTimeoutError = TimeoutError
+
+        @staticmethod
+        def _run_domestic_akshare(mode, *args, timeout=15):
+            if mode == "calendar":
+                return pd.date_range("2026-04-01", "2026-06-11").strftime("%Y-%m-%d").tolist()
+            calls.append(args)
+            return [
+                {
+                    "交易日期": args[1],
+                    "买方营业部": "高盛上海营业部",
+                    "卖方营业部": "普通营业部",
+                }
+            ]
+
+        @staticmethod
+        def _raise_block_trade_timeout(stage, detail=""):
+            raise AssertionError((stage, detail))
+
+    monkeypatch.setattr(auto_refresh_task_module.datetime, "datetime", FixedDatetime)
+    monkeypatch.setattr(auto_refresh_task_module, "_foreign_block_module", lambda: FakeBlockModule)
+
+    payload = auto_refresh_task_module._fetch_foreign_block_records(days_to_fetch=30)
+
+    assert calls[0] == ("20260529", "20260611")
+    assert payload["records"][0]["交易日期"] == "20260611"
 
 
 def test_auto_refresh_foreign_block_rows_filter_to_ai_chain_pool(monkeypatch):

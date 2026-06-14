@@ -7,6 +7,9 @@ on:
   schedule:
     - cron: "0 20 * * 0"
 
+env:
+  PYTHONIOENCODING: utf-8
+
 jobs:
   python314-audit-smoke:
     runs-on: ubuntu-latest
@@ -17,6 +20,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
+      - name: Install Qt runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -33,6 +40,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
+      - name: Install Qt runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -141,6 +152,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
+      - name: Install Qt runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip

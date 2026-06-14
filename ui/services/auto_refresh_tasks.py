@@ -92,21 +92,39 @@ class AutoRefreshTaskService:
         row_data = _build_foreign_block_rows(payload.get("records", []))
         timeout_chunks = list(payload.get("timeout_chunks") or [])
         failed_chunks = list(payload.get("failed_chunks") or [])
+        latest_trade_date = _latest_foreign_block_trade_date(row_data)
+        if row_data:
+            _save_foreign_block_cache(
+                row_data,
+                days_to_fetch=days_to_fetch,
+                latest_trade_date=latest_trade_date,
+            )
         if timeout_chunks or failed_chunks:
+            if row_data:
+                log.warning(
+                    "[外资大宗] 自动刷新结果不完整，已先保存可用结果: "
+                    f"timeout={timeout_chunks}, failed={failed_chunks}"
+                )
+                return {
+                    "job_key": "foreign_block_daily",
+                    "trade_date": str(trade_date or "").strip(),
+                    "records": len(row_data),
+                    "latest_trade_date": latest_trade_date,
+                    "status": "partial",
+                    "timeout_chunks": timeout_chunks,
+                    "failed_chunks": failed_chunks,
+                }
             raise UserFacingTaskError(
                 "外资大宗自动刷新未完成，保留后续重试机会。",
                 f"foreign block auto refresh incomplete: timeout={timeout_chunks}, failed={failed_chunks}",
             )
-        _save_foreign_block_cache(
-            row_data,
-            days_to_fetch=days_to_fetch,
-            latest_trade_date=_latest_foreign_block_trade_date(row_data),
-        )
+        if not row_data:
+            _save_foreign_block_cache(row_data, days_to_fetch=days_to_fetch, latest_trade_date=latest_trade_date)
         return {
             "job_key": "foreign_block_daily",
             "trade_date": str(trade_date or "").strip(),
             "records": len(row_data),
-            "latest_trade_date": _latest_foreign_block_trade_date(row_data),
+            "latest_trade_date": latest_trade_date,
         }
 
     def run_fund_holdings_daily(self, trade_date: str) -> dict:
@@ -204,22 +222,32 @@ def _fetch_foreign_block_records(*, days_to_fetch: int) -> dict:
     failed_chunks = []
     finished_chunks = 0
     chunk_days = 15
+    chunk_windows = []
     cursor = start_dt
     while cursor < end_dt:
-        if time.monotonic() >= deadline:
-            block_module._raise_block_trade_timeout("总耗时超限")
-
         chunk_end = min(cursor + datetime.timedelta(days=chunk_days), end_dt)
+        chunk_windows.append((cursor, chunk_end))
+        cursor = chunk_end + datetime.timedelta(days=1)
+
+    chunk_windows = list(reversed(chunk_windows))
+    for chunk_index, (cursor, chunk_end) in enumerate(chunk_windows):
         start_text = cursor.strftime("%Y%m%d")
         end_text = chunk_end.strftime("%Y%m%d")
         chunk_key = f"{start_text}-{end_text}"
         chunk_done = False
         chunk_timed_out = False
 
+        if time.monotonic() >= deadline:
+            timeout_chunks.extend(
+                f"{start.strftime('%Y%m%d')}-{end.strftime('%Y%m%d')}" for start, end in chunk_windows[chunk_index:]
+            )
+            break
+
         for attempt in range(block_module._BLOCK_TRADE_MAX_RETRIES):
             remaining = int(deadline - time.monotonic())
             if remaining <= 0:
-                block_module._raise_block_trade_timeout("分段抓取", chunk_key)
+                chunk_timed_out = True
+                break
             try:
                 records = block_module._run_domestic_akshare(
                     "block_trade",
@@ -235,8 +263,9 @@ def _fetch_foreign_block_records(*, days_to_fetch: int) -> dict:
                 chunk_done = True
                 finished_chunks += 1
                 break
-            except TimeoutError:
+            except block_module.ProcessTimeoutError:
                 chunk_timed_out = True
+                log.warning(f"[外资大宗] {chunk_key} 请求超时")
                 if attempt < block_module._BLOCK_TRADE_MAX_RETRIES - 1:
                     time.sleep(1)
             except Exception as exc:
@@ -245,14 +274,16 @@ def _fetch_foreign_block_records(*, days_to_fetch: int) -> dict:
                     time.sleep(1)
 
         if not chunk_done:
-            if time.monotonic() >= deadline:
-                block_module._raise_block_trade_timeout("分段重试后仍未完成", chunk_key)
             if chunk_timed_out:
                 timeout_chunks.append(chunk_key)
             else:
                 failed_chunks.append(chunk_key)
-
-        cursor = chunk_end + datetime.timedelta(days=1)
+            if time.monotonic() >= deadline:
+                timeout_chunks.extend(
+                    f"{start.strftime('%Y%m%d')}-{end.strftime('%Y%m%d')}"
+                    for start, end in chunk_windows[chunk_index + 1 :]
+                )
+                break
 
     if not results and failed_chunks and finished_chunks == 0:
         raise UserFacingTaskError(

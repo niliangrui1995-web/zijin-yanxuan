@@ -343,7 +343,7 @@ def _fetch_realtime_quote_sources(
     failure_reasons = []
     new_fetch = {}
     cache_hits = len(result)
-    fatal_failure_reason = None
+    disconnect_failure_reason_logged = None
     eastmoney_available = time.time() >= float(provider._rt_eastmoney_cooldown_until or 0.0)
     request_stats["triggered_network"] = True
 
@@ -405,14 +405,16 @@ def _fetch_realtime_quote_sources(
         if failures and not batch_fully_covered:
             batch_failures += len(failures)
             failure_reasons.extend(failures)
-            if not quotes and fatal_failure_reason is None:
-                fatal_failure_reason = next(
+            if not quotes and disconnect_failure_reason_logged is None:
+                disconnect_failure_reason_logged = next(
                     (reason for reason in failures if is_disconnect_like_error(reason)),
                     None,
                 )
-                if fatal_failure_reason:
-                    log.warning(f"[实时行情] 检测到断连型失败，停止本轮后续批次: {fatal_failure_reason}")
-                    break
+                if disconnect_failure_reason_logged:
+                    log.warning(
+                        "[实时行情] 检测到断连型失败，本批次转兜底，"
+                        f"后续批次继续尝试备用源: {disconnect_failure_reason_logged}"
+                    )
         if batch_pause_sec > 0 and (start + batch_size) < len(dedup_codes):
             time.sleep(batch_pause_sec)
 
