@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -236,10 +237,25 @@ def _display_command(command: Iterable[str]) -> str:
     return " ".join(str(part) for part in command)
 
 
+def _configure_stdout() -> None:
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except AttributeError, OSError, ValueError:
+        return
+
+
+def _audit_subprocess_env() -> dict[str, str]:
+    child_env = dict(os.environ)
+    child_env["PYTHONIOENCODING"] = "utf-8"
+    child_env["PYTHONUTF8"] = "1"
+    return child_env
+
+
 def run_audit_commands(commands: list[AuditCommand]) -> int:
+    child_env = _audit_subprocess_env()
     for item in commands:
         print(f"[audit] {item.label}: {_display_command(item.command)}", flush=True)
-        completed = subprocess.run(item.command, cwd=REPO_ROOT)  # noqa: S603
+        completed = subprocess.run(item.command, cwd=REPO_ROOT, env=child_env)  # noqa: S603
         if completed.returncode != 0:
             print(f"[audit] failed: {item.label} ({completed.returncode})", flush=True)
             return int(completed.returncode)
@@ -304,6 +320,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _configure_stdout()
     args = _parse_args(argv or sys.argv[1:])
     commands = build_audit_commands(args)
     if args.list:

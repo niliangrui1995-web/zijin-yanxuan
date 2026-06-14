@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -129,7 +130,15 @@ def scan_text_issues(text: str) -> list[str]:
     return issues
 
 
+def _configure_stdout() -> None:
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except AttributeError, OSError, ValueError:
+        return
+
+
 def main(argv: list[str] | None = None) -> int:
+    _configure_stdout()
     parser = argparse.ArgumentParser(description="Scan source files for UTF-8 and text corruption issues.")
     parser.add_argument("paths", nargs="*", help="Optional files or directories to scan, relative to repo root.")
     args = parser.parse_args(argv)
