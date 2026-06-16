@@ -561,6 +561,28 @@ def test_split_retry_does_not_expand_disconnect_failures(monkeypatch):
     assert failures == ["Remote end closed connection without response"]
 
 
+def test_split_retry_does_not_expand_eastmoney_edge_failures(monkeypatch):
+    provider = _make_provider()
+    seen_batches = []
+
+    def _fake_request(codes, inferred_trade_date):
+        del inferred_trade_date
+        seen_batches.append(tuple(codes))
+        raise RuntimeError("HTTP Error 502: Bad Gateway")
+
+    monkeypatch.setattr(provider, "_request_eastmoney_quote_batch", _fake_request)
+
+    quotes, failures = provider._fetch_eastmoney_quotes_with_split_retry(
+        ["000001", "000002", "000003", "000004", "000005", "000006"],
+        "2026-04-15",
+        5,
+    )
+
+    assert quotes == {}
+    assert seen_batches == [("000001", "000002", "000003", "000004", "000005", "000006")]
+    assert failures == ["HTTP Error 502: Bad Gateway"]
+
+
 def test_fetch_realtime_quotes_batch_switches_remaining_batches_to_sina_after_disconnect(monkeypatch):
     provider = _make_provider()
     provider._rt_quote_batch_size = 2
@@ -617,6 +639,57 @@ def test_fetch_realtime_quotes_batch_switches_remaining_batches_to_sina_after_di
     assert set(result) == {"000001", "000002", "000003", "000004"}
     assert seen_batches == [("000001", "000002")]
     assert sleep_calls == [0.25]
+    assert all(result[code]["source"] == "sina" for code in result)
+    assert provider._rt_eastmoney_cooldown_until > 0.0
+
+
+def test_fetch_realtime_quotes_batch_switches_remaining_batches_to_sina_after_eastmoney_502(monkeypatch):
+    provider = _make_provider()
+    provider._rt_quote_batch_size = 2
+    provider._rt_quote_batch_pause_sec = 0.0
+    eastmoney_seen = []
+    sina_seen = []
+
+    def _fake_fetch(batch, inferred_trade_date, min_batch_size):
+        del inferred_trade_date, min_batch_size
+        eastmoney_seen.append(tuple(batch))
+        return {}, ["HTTP Error 502: Bad Gateway"]
+
+    def _fake_sina(codes, inferred_trade_date):
+        sina_seen.append(tuple(codes))
+        return {
+            code: {
+                "open": 10.0,
+                "high": 10.1,
+                "low": 9.9,
+                "close": 10.0,
+                "volume": 1.0,
+                "amount": 2.0,
+                "last_close": 9.8,
+                "change": 0.2,
+                "pct": 2.04,
+                "date": inferred_trade_date,
+                "source": "sina",
+            }
+            for code in codes
+        }
+
+    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", lambda: True)
+    monkeypatch.setattr(MarketCalendar, "get_latest_trade_date", lambda market="CN": dt.date(2026, 4, 15))
+    monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
+    monkeypatch.setattr(provider, "_fetch_eastmoney_quotes_with_split_retry", _fake_fetch)
+    monkeypatch.setattr(provider, "_request_sina_quote_batch", _fake_sina)
+    monkeypatch.setattr(
+        provider,
+        "_request_tencent_quote_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("should not use Tencent when Sina covers")),
+    )
+
+    result = provider.fetch_realtime_quotes_batch(["000001", "000002", "000003", "000004"])
+
+    assert set(result) == {"000001", "000002", "000003", "000004"}
+    assert eastmoney_seen == [("000001", "000002")]
+    assert sina_seen == [("000001", "000002"), ("000003", "000004")]
     assert all(result[code]["source"] == "sina" for code in result)
     assert provider._rt_eastmoney_cooldown_until > 0.0
 

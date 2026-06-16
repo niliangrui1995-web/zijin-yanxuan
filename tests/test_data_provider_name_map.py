@@ -35,6 +35,13 @@ class _Provider(TdxDataProviderHistoryMixin):
         return {"000002": {"name": "Vanke"}}
 
 
+class _VipdocProvider(TdxDataProviderHistoryMixin):
+    def __init__(self):
+        self.code2name = {}
+        self._offline = True
+        self.tdx_vipdoc = None
+
+
 def test_ensure_code_name_map_with_targets_avoids_full_vipdoc_scan(monkeypatch):
     store = _Store()
     monkeypatch.setattr("core.data_store.DataStore", lambda: store)
@@ -66,3 +73,14 @@ def test_load_cached_code_name_map_avoids_vipdoc_and_local_master_scan(monkeypat
     assert result["600519"] == "600519"
     assert result["603196"] == "璞源材料"
     assert provider.code2name == result
+
+
+def test_get_codes_from_vipdoc_without_local_path_returns_cached_names(monkeypatch):
+    store = _Store()
+    monkeypatch.setattr("core.data_store.DataStore", lambda: store)
+    provider = _VipdocProvider()
+
+    result = provider._get_codes_from_vipdoc()
+
+    assert result["000001"] == "Ping An"
+    assert result["000002"] == "000002"

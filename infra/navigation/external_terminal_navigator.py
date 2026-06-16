@@ -61,6 +61,11 @@ class ExternalTerminalNavigator:
             event_bus.sig_system_log.emit("error", f"[跳转兜底] 打开网页行情失败: {exc}")
 
     @staticmethod
+    def _enum_windows_proc_type(ctypes_module):
+        callback_factory = getattr(ctypes_module, "WINFUNCTYPE", ctypes_module.CFUNCTYPE)
+        return callback_factory(ctypes_module.c_bool, ctypes_module.wintypes.HWND, ctypes_module.wintypes.LPARAM)
+
+    @staticmethod
     def _activate_window(user32, hwnd) -> None:
         import win32gui
 
@@ -170,7 +175,7 @@ class ExternalTerminalNavigator:
                 self._open_quote_web_fallback(code, "未找到通达信")
                 return
 
-            enum_windows_proc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+            enum_windows_proc = self._enum_windows_proc_type(ctypes)
             user32 = ctypes.windll.user32
 
             def find_tdx_window():
@@ -235,7 +240,7 @@ class ExternalTerminalNavigator:
         try:
             import ctypes
 
-            enum_windows_proc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+            enum_windows_proc = self._enum_windows_proc_type(ctypes)
             user32 = ctypes.windll.user32
 
             def find_em_window():

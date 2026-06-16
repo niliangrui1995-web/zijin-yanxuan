@@ -1093,7 +1093,7 @@ class _FakeUser32:
 def _install_fake_external_nav_ctypes(monkeypatch, user32):
     import ctypes
 
-    monkeypatch.setattr(ctypes, "WINFUNCTYPE", lambda *_types: (lambda fn: fn))
+    monkeypatch.setattr(ctypes, "WINFUNCTYPE", lambda *_types: (lambda fn: fn), raising=False)
     monkeypatch.setattr(ctypes, "create_unicode_buffer", lambda _size: _FakeWinBuffer())
     monkeypatch.setattr(ctypes, "windll", SimpleNamespace(user32=user32), raising=False)
 
@@ -1117,7 +1117,12 @@ def test_external_terminal_navigator_tdx_missing_path_and_exception_fallbacks(mo
     import ctypes
 
     monkeypatch.setattr("infra.navigation.external_terminal_navigator.os.path.exists", lambda _path: True)
-    monkeypatch.setattr(ctypes, "WINFUNCTYPE", lambda *_types: (_ for _ in ()).throw(RuntimeError("ctypes broken")))
+    monkeypatch.setattr(
+        ctypes,
+        "WINFUNCTYPE",
+        lambda *_types: (_ for _ in ()).throw(RuntimeError("ctypes broken")),
+        raising=False,
+    )
 
     navigator._launch_tdx_impl("000001")
 
@@ -1268,7 +1273,12 @@ def test_external_terminal_navigator_eastmoney_input_failure_and_exception(monke
 
     import ctypes
 
-    monkeypatch.setattr(ctypes, "WINFUNCTYPE", lambda *_types: (_ for _ in ()).throw(RuntimeError("ctypes broken")))
+    monkeypatch.setattr(
+        ctypes,
+        "WINFUNCTYPE",
+        lambda *_types: (_ for _ in ()).throw(RuntimeError("ctypes broken")),
+        raising=False,
+    )
 
     navigator._launch_eastmoney_impl("600000")
 

@@ -47,6 +47,13 @@ def is_disconnect_like_error(exc_or_text) -> bool:
         "badstatusline",
         "10053",
         "10054",
+        "http error 502",
+        "bad gateway",
+        "decryption_failed_or_bad_record_mac",
+        "bad record mac",
+        "handshake operation timed out",
+        "read operation timed out",
+        "timed out",
     )
     return any(keyword in normalized for keyword in keywords)
 

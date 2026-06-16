@@ -123,6 +123,7 @@ ASIAN_LOCAL_TICKER_OVERRIDES = {
 
 # Why: 亚洲页允许补充少量本地维护的赛道归属，避免上游产业字典尚未同步时出现“未知赛道”。
 ASIAN_LOCAL_TRACK_OVERRIDES = {
+    "2330.TW": "\u5148\u8fdb\u5236\u7a0b\u4ee3\u5de5",
     "6274.TWO": "高频PCB与覆铜板材料",
     "8035.T": "前道晶圆设备与量测",
     "4063.T": "关键晶圆材料与特种工艺",

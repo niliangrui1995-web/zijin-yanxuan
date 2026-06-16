@@ -122,6 +122,7 @@ def test_find_track_uses_local_track_override_for_tuc(monkeypatch):
     monkeypatch.setattr(fetcher, "VANGUARD_TICKERS", {}, raising=False)
     monkeypatch.setattr(fetcher, "OLIGARCH_DICT", {}, raising=False)
 
+    assert fetcher._find_track("2330.TW") == "\u5148\u8fdb\u5236\u7a0b\u4ee3\u5de5"
     assert fetcher._find_track("6274.TWO") == "高频PCB与覆铜板材料"
     assert fetcher._find_track("8035.T") == "前道晶圆设备与量测"
 

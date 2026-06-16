@@ -320,6 +320,28 @@ def test_mops_provider_parses_earnings_conference_material_information():
     assert "spoke_date=20260327" in events[0].conference_url
 
 
+def test_mops_provider_stops_after_transport_failure_without_raising():
+    class FailingSession:
+        def __init__(self):
+            self.calls = []
+
+        def get(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+            raise RuntimeError("connect timeout")
+
+    session = FailingSession()
+    provider = MopsEarningsDisclosureProvider(session=session)
+    universe = {
+        "2330.TW": OligarchCompany("TSMC", "2330.TW", "foundry", "super_giant", "TW"),
+        "3008.TW": OligarchCompany("Largan", "3008.TW", "optics", "normal", "TW"),
+    }
+
+    events = provider.fetch(universe, today=dt.date(2026, 4, 1), lookahead_days=30)
+
+    assert events == []
+    assert len(session.calls) == 1
+
+
 def test_sec_6k_provider_parses_financial_results_filing():
     payload = {
         "filings": {
@@ -953,7 +975,7 @@ def test_refresh_events_preserves_cached_provider_events_when_network_fails(tmp_
     assert store.saved is None
 
 
-def test_refresh_events_merges_cached_sources_that_were_not_refreshed():
+def test_refresh_events_merges_cached_tickers_that_were_not_refreshed():
     class MemoryStore:
         def __init__(self):
             self.data = {
@@ -965,6 +987,14 @@ def test_refresh_events_merges_cached_sources_that_were_not_refreshed():
                             "OLD",
                             "legacy",
                             "2026-05-11",
+                            source="Nasdaq",
+                            market="US",
+                        ).to_dict(),
+                        EarningsCalendarEvent(
+                            "Applied Materials",
+                            "AMAT",
+                            "legacy",
+                            "2026-05-13",
                             source="Nasdaq",
                             market="US",
                         ).to_dict(),
@@ -1027,9 +1057,10 @@ def test_refresh_events_merges_cached_sources_that_were_not_refreshed():
     assert store.saved == "global_earnings_calendar"
     assert [(event.ticker, event.source) for event in events] == [
         ("2449.TW", "Yahoo Finance"),
+        ("OLD", "Nasdaq"),
         ("AMAT", "Nasdaq"),
     ]
-    assert "OLD" not in {event.ticker for event in events}
+    assert next(event for event in events if event.ticker == "AMAT").report_date == "2026-05-14"
 
 
 def test_filter_window_clamps_negative_lookahead_to_today():

@@ -242,13 +242,16 @@ class TdxDataProviderHistoryMixin:
             DataStore().load_json("vcp_code_names") or {},
             persist=True,
         )
+        tdx_vipdoc = getattr(self, "tdx_vipdoc", "") or ""
+        if not tdx_vipdoc:
+            return name_map
 
         # --- 曾用名/新名 人工热修复映射册 ---
         # 防止因 pytdx 证券列表缓存不及时或本地 JSON 始终未刷新导致的名称滞后
         MANUAL_NAME_ALIASES = {"603196": "璞源材料"}
 
         for sub, prefix in [("sh/lday", "sh"), ("sz/lday", "sz")]:
-            lday_dir = os.path.join(self.tdx_vipdoc, sub.replace("/", os.sep))
+            lday_dir = os.path.join(tdx_vipdoc, sub.replace("/", os.sep))
             if not os.path.isdir(lday_dir):
                 continue
             for fname in os.listdir(lday_dir):

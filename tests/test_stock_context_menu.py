@@ -126,7 +126,7 @@ def test_open_codex_project_thread_uses_codex_url_opener(monkeypatch, tmp_path):
     assert parsed.scheme == "codex"
     assert parsed.netloc == "new"
     assert parsed.path == ""
-    assert query["path"][0].replace("/", "\\") == str(tmp_path)
+    assert query["path"] == [str(tmp_path)]
     assert query["prompt"] == ["stock code: 300308"]
 
 
@@ -143,7 +143,7 @@ def test_open_codex_project_thread_supplies_default_prompt(monkeypatch, tmp_path
 
     assert stock_context_menu.open_codex_project_thread(project_path=tmp_path)
     query = parse_qs(urlparse(opened_urls[0]).query)
-    assert query["path"][0].replace("/", "\\") == str(tmp_path)
+    assert query["path"] == [str(tmp_path)]
     assert query["prompt"] == [CODEX_CURRENT_STOCK_PROMPT]
 
 
@@ -163,7 +163,7 @@ def test_open_codex_project_thread_opens_codex_launcher_on_windows(monkeypatch, 
     )
     query = parse_qs(urlparse(opened_urls[0]).query)
     assert opened_urls[0].startswith("codex://")
-    assert query["path"][0].replace("/", "\\") == str(tmp_path)
+    assert query["path"] == [str(tmp_path)]
     assert query["prompt"] == ["stock code: 300308"]
 
 
@@ -180,7 +180,7 @@ def test_open_codex_project_thread_passes_prompt_deeplink_to_windows_launcher(mo
 
     assert stock_context_menu.open_codex_project_thread(project_path=tmp_path, prompt="stock code: 300308")
     query = parse_qs(urlparse(opened_urls[0]).query)
-    assert query["path"][0].replace("/", "\\") == str(tmp_path)
+    assert query["path"] == [str(tmp_path)]
     assert query["prompt"] == ["stock code: 300308"]
 
 

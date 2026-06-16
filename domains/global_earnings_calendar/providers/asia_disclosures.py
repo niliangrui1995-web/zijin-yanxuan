@@ -11,6 +11,7 @@ from urllib.parse import urljoin
 
 import requests
 
+from core.logger import get_logger
 from domains.global_earnings_calendar.constants import DEFAULT_LOOKAHEAD_DAYS
 from domains.global_earnings_calendar.event_ops import (
     DART_SOURCE,
@@ -44,6 +45,8 @@ from domains.global_earnings_calendar.rules import (
     text_has_any as _text_has_any,
 )
 from infra.http_safety import ensure_https_request, requests_get_https, requests_post_https
+
+log = get_logger(__name__)
 
 _JP_EARNINGS_KEYWORDS = (
     "\u6c7a\u7b97\u77ed\u4fe1",
@@ -652,21 +655,25 @@ class MopsEarningsDisclosureProvider:
         events: list[EarningsCalendarEvent] = []
         for company in tw_companies:
             typek = "otc" if company.ticker.endswith(".TWO") else "sii"
-            response = self._get(
-                self.base_url,
-                params={
-                    "TYPEK": typek,
-                    "co_id": _local_code_from_ticker(company.ticker),
-                    "year": str(today.year),
-                    "month": "all",
-                    "step": "0",
-                    "query": "co",
-                    "colorchg": "1",
-                },
-                headers={"User-Agent": "Mozilla/5.0"},
-                timeout=self.timeout,
-            )
-            _raise_for_status(response)
+            try:
+                response = self._get(
+                    self.base_url,
+                    params={
+                        "TYPEK": typek,
+                        "co_id": _local_code_from_ticker(company.ticker),
+                        "year": str(today.year),
+                        "month": "all",
+                        "step": "0",
+                        "query": "co",
+                        "colorchg": "1",
+                    },
+                    headers={"User-Agent": "Mozilla/5.0"},
+                    timeout=self.timeout,
+                )
+                _raise_for_status(response)
+            except (requests.RequestException, OSError, RuntimeError, TypeError, ValueError) as exc:
+                log.debug(f"[global earnings calendar] MOPS stop after {company.ticker}: {exc}")
+                break
             events.extend(
                 self.parse_html(
                     _response_text(response, encoding="big5"),

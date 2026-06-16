@@ -421,7 +421,6 @@ class GlobalEarningsCalendarService:
             lookahead_days=lookahead_days,
         )
         network_events: list[EarningsCalendarEvent] = []
-        refreshed_sources: set[str] = set()
 
         provider_calls = tuple(self.official_providers) + (
             ("Nasdaq", self.nasdaq_provider),
@@ -434,15 +433,18 @@ class GlobalEarningsCalendarService:
             except (ImportError, requests.RequestException, OSError, RuntimeError, TypeError, ValueError) as exc:
                 log.warning(f"[global earnings calendar] {provider_name} refresh failed: {exc}")
                 continue
-            network_events.extend(provider_events)
-            refreshed_sources.update(
-                str(event.source or provider_name or "").strip() for event in provider_events if event is not None
-            )
+            network_events.extend(event for event in provider_events if event is not None)
 
         network_events = self._filter_window(network_events, today=today, lookahead_days=lookahead_days)
         if network_events:
+            refreshed_event_keys = {
+                (str(event.ticker or "").strip().upper(), str(event.source or "").strip()) for event in network_events
+            }
             cached_fallback_events = [
-                event for event in cached_events if str(event.source or "").strip() not in refreshed_sources
+                event
+                for event in cached_events
+                if (str(event.ticker or "").strip().upper(), str(event.source or "").strip())
+                not in refreshed_event_keys
             ]
             filtered = merge_events(confirmed_events + cached_fallback_events + network_events)
             self._save_events(filtered, "provider")
