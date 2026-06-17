@@ -49,6 +49,7 @@ def sync_asian_kline_cache(
     max_workers: int = 6,
     period: str = "1y",
     output_dir: str | None = None,
+    time_budget_sec: float | int | None = None,
 ):
     return asian_fetcher_module.sync_asian_kline_cache(
         market_filter=market_filter,
@@ -56,6 +57,7 @@ def sync_asian_kline_cache(
         max_workers=max_workers,
         period=period,
         output_dir=output_dir,
+        time_budget_sec=time_budget_sec,
     )
 
 

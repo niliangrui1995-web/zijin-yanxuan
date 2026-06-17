@@ -1191,6 +1191,7 @@ def test_workspace_background_prewarm_loads_lazy_tabs_without_manual_click(monke
         assert constructed == ["watchlist"]
         assert primed == ["watchlist"]
         assert set(ctor_kwargs) == {"watchlist"}
+        assert ctor_kwargs["watchlist"]["startup_indicator_refresh_enabled"] is False
         assert snapshot_primes == [{}]
     finally:
         workspace.shutdown()

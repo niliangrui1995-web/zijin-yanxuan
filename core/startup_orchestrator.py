@@ -28,7 +28,8 @@ from infra.tasks import (
 )
 
 log = get_logger(__name__)
-ASIAN_DATA_SYNC_TIMEOUT_SEC = 120
+ASIAN_DATA_SYNC_TIME_BUDGET_SEC = 20
+ASIAN_DATA_SYNC_TIMEOUT_SEC = 30
 DEFERRED_LOAD_TASK_ID = STARTUP_DEFERRED_LOAD.task_id
 ASIAN_DATA_SYNC_TASK_ID = STARTUP_ASIAN_DATA_SYNC.task_id
 SMART_STARTUP_TASK_ID = STARTUP_SMART.task_id
@@ -502,7 +503,13 @@ class StartupOrchestrator:
                 try:
                     run_python_module(
                         "vcp.fetchers.asian_kline_fetcher",
-                        ["--strict-sync", "--output-dir", output_dir],
+                        [
+                            "--strict-sync",
+                            "--output-dir",
+                            output_dir,
+                            "--time-budget-sec",
+                            str(ASIAN_DATA_SYNC_TIME_BUDGET_SEC),
+                        ],
                         check=True,
                         cwd=project_root,
                         capture_output=True,

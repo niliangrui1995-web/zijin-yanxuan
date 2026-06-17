@@ -36,11 +36,19 @@ class WatchlistTab(BaseStockTab):
     通过 EventBus 与外部通信，不直接依赖 MainWindowQT。
     """
 
-    def __init__(self, data_provider, parent=None, *, startup_tasks_enabled: bool = True):
+    def __init__(
+        self,
+        data_provider,
+        parent=None,
+        *,
+        startup_tasks_enabled: bool = True,
+        startup_indicator_refresh_enabled: bool = True,
+    ):
         super().__init__(data_provider=data_provider, parent=parent)
         self._watchlist_last_update = ""
         self._closing = False
         self._startup_tasks_enabled = bool(startup_tasks_enabled)
+        self._startup_indicator_refresh_enabled = bool(startup_indicator_refresh_enabled)
         self._delayed_special_timer = None
         self._watchlist_lineage_service = TabDataLineageService(
             key="watchlist",
@@ -79,12 +87,16 @@ class WatchlistTab(BaseStockTab):
 
         # 先立即回填一次，避免启动期 UI 忙时定时器延后导致“关注池长期空白”。
         if self._startup_tasks_enabled:
-            self._load_special_data()
+            if self._startup_indicator_refresh_enabled:
+                self._load_special_data()
+            else:
+                self._load_special_data(refresh_indicators=False)
             # 再做一次延迟回填，兜住启动后缓存/名称映射后到位的场景。
-            self._delayed_special_timer = QTimer(self)
-            self._delayed_special_timer.setSingleShot(True)
-            self._delayed_special_timer.timeout.connect(self._load_special_data)
-            self._delayed_special_timer.start(3500)
+            if self._startup_indicator_refresh_enabled:
+                self._delayed_special_timer = QTimer(self)
+                self._delayed_special_timer.setSingleShot(True)
+                self._delayed_special_timer.timeout.connect(self._load_special_data)
+                self._delayed_special_timer.start(3500)
 
     # ================================================================
     # UI 构建
@@ -272,7 +284,7 @@ class WatchlistTab(BaseStockTab):
     # ================================================================
     # 数据加载
     # ================================================================
-    def _load_special_data(self):
+    def _load_special_data(self, *, refresh_indicators: bool = True):
         """加载关注池数据：统一走 ViewModel/SQLite。"""
         if self._closing:
             return
@@ -287,7 +299,8 @@ class WatchlistTab(BaseStockTab):
         # 为什么不依赖 CACHE_LOADED 事件：因为存在时序竞态——
         # 缓存可能在 3.5s 延迟前就加载完了，那时 model.row_data 还是空的
         # 引入 _request_vcp_calc 防抖 500ms 重复合并
-        self._request_vcp_calc()
+        if refresh_indicators:
+            self._request_vcp_calc()
 
     def _render_table(self, all_codes, data_dict, old_pool):
         """渲染关注池表格"""
@@ -931,9 +944,17 @@ class WatchlistTab(BaseStockTab):
             log.debug(f"[关注池] 写入 {len(payload)} 条附加指标")
             self._apply_vcp_indicators_ui(payload)
 
-    def _request_vcp_calc(self, delay_ms: int = 500):
+    def _is_background_prewarm_indicator_blocked(self) -> bool:
+        return (
+            not self._startup_indicator_refresh_enabled
+            and bool(getattr(self, "_workspace_noninteractive_loaded", False))
+        )
+
+    def _request_vcp_calc(self, delay_ms: int = 500, *, allow_noninteractive: bool = False):
         """请求计算 VCP 附加指标，带有防抖功能，防止启动时多次触发"""
         if self._closing:
+            return
+        if not allow_noninteractive and self._is_background_prewarm_indicator_blocked():
             return
         if not hasattr(self, "_vcp_calc_timer"):
             self._vcp_calc_timer = QTimer(self)
@@ -950,7 +971,7 @@ class WatchlistTab(BaseStockTab):
         self._refresh_quotes_from_store_or_live(
             quote_task_id=task_registry.quote_refresh("smart_startup_watchlist").task_id
         )
-        self._request_vcp_calc(delay_ms=0)
+        self._request_vcp_calc(delay_ms=0, allow_noninteractive=True)
 
     def refresh_watchlist_names(self, code2name: dict[str, str]) -> bool:
         if not self.model:

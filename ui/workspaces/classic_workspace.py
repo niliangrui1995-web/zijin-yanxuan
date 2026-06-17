@@ -337,9 +337,10 @@ class ClassicWorkspace(QWidget):
             QTimer.singleShot(self.BACKGROUND_PREWARM_DELAY_MS, self._start_background_tab_prewarm)
 
     def _tab_factory(self, class_name: str, module_name: str, *args, **kwargs):
-        def _create():
+        def _create(**runtime_kwargs):
             tab_class = _resolve_tab_class(class_name, module_name)
-            return tab_class(*args, **kwargs)
+            call_kwargs = {**kwargs, **runtime_kwargs}
+            return tab_class(*args, **call_kwargs)
 
         return _create
 
@@ -364,11 +365,14 @@ class ClassicWorkspace(QWidget):
                 spec["title"],
             )
 
-    def _create_real_tab(self, spec: dict):
+    def _create_real_tab(self, spec: dict, reason: str = "user"):
         factory = spec.get("factory")
         if not callable(factory):
             raise TypeError(f"missing tab factory: {spec.get('key')}")
-        return factory()
+        runtime_kwargs = {}
+        if str(spec.get("key") or "").strip() == "watchlist" and str(reason or "").strip() == "background_prewarm":
+            runtime_kwargs["startup_indicator_refresh_enabled"] = False
+        return factory(**runtime_kwargs)
 
     def _create_placeholder_tab(self, spec: dict) -> LazyTabPlaceholder:
         key = str(spec.get("key") or "").strip()
@@ -414,7 +418,7 @@ class ClassicWorkspace(QWidget):
             placeholder.set_loading()
 
         try:
-            widget = self._create_real_tab(spec)
+            widget = self._create_real_tab(spec, reason=reason)
         except Exception as exc:
             self._lazy_loading_keys.discard(key)
             if isinstance(placeholder, LazyTabPlaceholder):

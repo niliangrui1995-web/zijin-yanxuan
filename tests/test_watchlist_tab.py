@@ -21,6 +21,63 @@ class _DummyProvider:
         return False
 
 
+def test_watchlist_startup_can_skip_indicator_refresh(monkeypatch):
+    calc_calls = []
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
+    monkeypatch.setattr(
+        watchlist_module.watchlist_vm,
+        "get_watchlist_data",
+        lambda: {"600519": {"名称": "贵州茅台"}},
+    )
+    monkeypatch.setattr(
+        watchlist_module.WatchlistTab,
+        "_request_vcp_calc",
+        lambda self, *args, **kwargs: calc_calls.append((args, kwargs)),
+    )
+
+    tab = watchlist_module.WatchlistTab(
+        _DummyProvider(),
+        startup_indicator_refresh_enabled=False,
+    )
+    try:
+        assert calc_calls == []
+        assert tab._delayed_special_timer is None
+        assert tab.model.row_data
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_watchlist_background_prewarm_blocks_auto_indicator_recalc(monkeypatch):
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)
+    monkeypatch.setattr(
+        watchlist_module.WatchlistTab,
+        "_refresh_quotes_from_store_or_live",
+        lambda self, *args, **kwargs: None,
+    )
+
+    tab = watchlist_module.WatchlistTab(
+        _DummyProvider(),
+        startup_tasks_enabled=False,
+        startup_indicator_refresh_enabled=False,
+    )
+    try:
+        tab._workspace_noninteractive_loaded = True
+
+        tab._request_vcp_calc(delay_ms=0)
+        assert not hasattr(tab, "_vcp_calc_timer")
+
+        tab.model.update_data([{"代码": "600519"}])
+        tab.prime_startup_state()
+
+        assert hasattr(tab, "_vcp_calc_timer")
+        assert tab._vcp_calc_timer.isActive() is True
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
 def test_watchlist_source_column_is_hidden_from_display_model():
     tab = watchlist_module.WatchlistTab(_DummyProvider())
     try:

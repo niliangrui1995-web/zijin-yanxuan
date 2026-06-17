@@ -156,6 +156,28 @@ _JP_HISTORY_PAGE_SIZE = 20
 _KR_HISTORY_PAGE_SIZE = 20
 
 
+def _deadline_from_time_budget(time_budget_sec: float | int | None) -> float | None:
+    if time_budget_sec is None:
+        return None
+    try:
+        budget = float(time_budget_sec)
+    except (TypeError, ValueError):
+        return None
+    if budget <= 0:
+        return time.monotonic()
+    return time.monotonic() + budget
+
+
+def _deadline_exceeded(deadline: float | None) -> bool:
+    return deadline is not None and time.monotonic() >= deadline
+
+
+def _remaining_time_budget(deadline: float | None) -> float | None:
+    if deadline is None:
+        return None
+    return max(0.0, deadline - time.monotonic())
+
+
 def _ensure_industry_mappings_loaded() -> None:
     global OLIGARCH_DICT, VANGUARD_TICKERS
 
@@ -918,6 +940,7 @@ def fetch_all_asian_klines(
     single_ticker: str | None = None,
     max_workers: int = 6,
     period: str = "1y",
+    time_budget_sec: float | int | None = None,
 ) -> list[dict]:
     """并发拉取亚洲寡头 K 线数据。
 
@@ -950,8 +973,16 @@ def fetch_all_asian_klines(
     results = []
     failed = []
     yf_session = build_yf_session()
+    deadline = _deadline_from_time_budget(time_budget_sec)
 
     for name, ticker in tickers.items():
+        if _deadline_exceeded(deadline):
+            logging.warning(
+                "Asian kline fetch time budget exhausted; stop early after %s/%s",
+                len(results),
+                len(tickers),
+            )
+            break
         if get_yf_rate_limit_status()["active"]:
             logging.warning("⚠️ Yahoo Finance 已进入冷却，提前结束本轮亚洲 K 线抓取")
             break
@@ -996,6 +1027,7 @@ def sync_asian_kline_cache(
     max_workers: int = 6,
     period: str = "1y",
     output_dir: str | None = None,
+    time_budget_sec: float | int | None = None,
 ) -> tuple[bool, str, dict]:
     """严格同步亚洲 K 线缓存。
 
@@ -1023,13 +1055,54 @@ def sync_asian_kline_cache(
     ticker_to_name = {ticker: name for name, ticker in target_map.items()}
     target_tickers = set(target_map.values())
     output_dir = _resolve_cache_output_dir(output_dir)
+    deadline = _deadline_from_time_budget(time_budget_sec)
 
     data = fetch_all_asian_klines(
         market_filter=market_filter,
         single_ticker=single_ticker,
         max_workers=max_workers,
         period=period,
+        time_budget_sec=_remaining_time_budget(deadline),
     )
+    if _deadline_exceeded(deadline):
+        try:
+            old_map = _load_cached_row_map(output_dir)
+        except (FileNotFoundError, PermissionError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            logging.warning("Asian kline cache preserve failed after time budget: %s", exc)
+            old_map = {}
+
+        preserved = sorted(target_tickers & set(old_map.keys()))
+        missing = sorted(target_tickers - set(old_map.keys()))
+        if preserved and not missing:
+            message = "Asian kline sync time budget exhausted; kept existing cache"
+            return (
+                True,
+                message,
+                {
+                    "target_count": len(target_tickers),
+                    "written_count": len(preserved),
+                    "single_recovered": [],
+                    "reused": preserved,
+                    "missing": [],
+                    "cache_preserved": True,
+                    "time_budget_exhausted": True,
+                },
+            )
+
+        message = "Asian kline sync time budget exhausted before cache was complete"
+        return (
+            False,
+            message,
+            {
+                "target_count": len(target_tickers),
+                "written_count": 0,
+                "single_recovered": [],
+                "reused": preserved,
+                "missing": missing or sorted(target_tickers),
+                "cache_preserved": False,
+                "time_budget_exhausted": True,
+            },
+        )
     if not data:
         try:
             old_map = _load_cached_row_map(output_dir)
@@ -1079,6 +1152,9 @@ def sync_asian_kline_cache(
         logging.warning(f"⚠️ 全量抓取缺失 {len(missing)} 只，开始单票补抓: {missing}")
         rescue_session = build_yf_session()
         for ticker in list(missing):
+            if _deadline_exceeded(deadline):
+                logging.warning("Asian kline sync time budget exhausted; stop single-symbol rescue")
+                break
             name = ticker_to_name.get(ticker, ticker)
             try:
                 if get_yf_rate_limit_status()["active"]:
@@ -1194,6 +1270,12 @@ def main():
         help="输出目录（默认：亚洲寡头行情/data/）",
     )
     parser.add_argument(
+        "--time-budget-sec",
+        type=float,
+        default=None,
+        help="Optional wall-clock budget for best-effort background sync",
+    )
+    parser.add_argument(
         "--strict-sync",
         action="store_true",
         help="严格同步模式：缺票时拒绝覆盖 latest 缓存",
@@ -1221,6 +1303,7 @@ def main():
             max_workers=args.workers,
             period=args.period,
             output_dir=args.output_dir,
+            time_budget_sec=args.time_budget_sec,
         )
         if success:
             logging.info(message)
@@ -1233,6 +1316,7 @@ def main():
         single_ticker=args.ticker,
         max_workers=args.workers,
         period=args.period,
+        time_budget_sec=args.time_budget_sec,
     )
 
     if data:

@@ -11,6 +11,7 @@ import core.startup_orchestrator as startup_module
 from core.event_bus import event_bus
 from core.startup_orchestrator import (
     ASIAN_DATA_SYNC_TASK_ID,
+    ASIAN_DATA_SYNC_TIME_BUDGET_SEC,
     ASIAN_DATA_SYNC_TIMEOUT_SEC,
     AUTO_RT_MONITOR_NETWORK_TASK_ID,
     DEFERRED_LOAD_TASK_ID,
@@ -225,6 +226,10 @@ def test_startup_orchestrator_asian_sync_uses_process_runner(monkeypatch):
     assert run_calls[0]["module_name"] == "vcp.fetchers.asian_kline_fetcher"
     assert run_calls[0]["module_args"][:2] == ["--strict-sync", "--output-dir"]
     assert run_calls[0]["module_args"][2]
+    assert run_calls[0]["module_args"][3:] == [
+        "--time-budget-sec",
+        str(ASIAN_DATA_SYNC_TIME_BUDGET_SEC),
+    ]
     assert run_calls[0]["kwargs"]["timeout"] == ASIAN_DATA_SYNC_TIMEOUT_SEC
     assert Path(run_calls[0]["kwargs"]["cwd"]).name == Path(__file__).resolve().parents[1].name
     assert run_calls[0]["kwargs"]["capture_output"] is True

@@ -721,6 +721,83 @@ def test_sync_asian_kline_cache_keeps_existing_snapshot_when_full_fetch_is_empty
     assert saved_payloads == []
 
 
+def test_fetch_all_asian_klines_stops_before_fetch_when_time_budget_exhausted(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    monkeypatch.setattr(
+        fetcher,
+        "filter_asian_tickers",
+        lambda market_filter=None: {
+            "TSMC": "2330.TW",
+            "ASE": "3711.TW",
+        },
+    )
+
+    fetch_calls = []
+    monkeypatch.setattr(
+        fetcher,
+        "fetch_single_kline",
+        lambda *args, **kwargs: fetch_calls.append((args, kwargs)) or None,
+    )
+
+    rows = fetcher.fetch_all_asian_klines(time_budget_sec=0)
+
+    assert rows == []
+    assert fetch_calls == []
+
+
+def test_sync_asian_kline_cache_preserves_snapshot_when_time_budget_exhausted(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    monkeypatch.setattr(
+        fetcher,
+        "filter_asian_tickers",
+        lambda market_filter=None: {
+            "TSMC": "2330.TW",
+            "ASE": "3711.TW",
+        },
+    )
+    monkeypatch.setattr(
+        fetcher,
+        "_load_cached_row_map",
+        lambda output_dir=None: {
+            "2330.TW": {
+                "name": "TSMC",
+                "ticker": "2330.TW",
+                "market": "cache",
+                "track": "cache",
+                "currency": "TWD",
+                "kline_count": 1,
+                "klines": [{"date": "2026-04-16", "close": 888}],
+            },
+            "3711.TW": {
+                "name": "ASE",
+                "ticker": "3711.TW",
+                "market": "cache",
+                "track": "cache",
+                "currency": "TWD",
+                "kline_count": 1,
+                "klines": [{"date": "2026-04-16", "close": 101}],
+            },
+        },
+    )
+
+    saved_payloads = []
+    monkeypatch.setattr(
+        fetcher,
+        "save_kline_data",
+        lambda data, output_dir=None: saved_payloads.append((data, output_dir)) or "ignored.json",
+    )
+
+    success, message, report = fetcher.sync_asian_kline_cache(output_dir="cache-dir", time_budget_sec=0)
+
+    assert success is True
+    assert message == "Asian kline sync time budget exhausted; kept existing cache"
+    assert report["time_budget_exhausted"] is True
+    assert report["cache_preserved"] is True
+    assert report["reused"] == ["2330.TW", "3711.TW"]
+    assert report["missing"] == []
+    assert saved_payloads == []
+
+
 def test_fetch_single_kline_returns_none_when_yahoo_rate_limited(monkeypatch):
     fetcher = _load_fetcher_module(monkeypatch)
     monkeypatch.setattr(
