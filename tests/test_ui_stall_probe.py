@@ -50,11 +50,43 @@ def test_ui_stall_probe_does_not_keep_fast_span_context(monkeypatch, qt_applicat
     monkeypatch.setattr(probe, "_record_stall", lambda event, elapsed_ms, **kwargs: recorded.append((event, kwargs)))
 
     probe.record_span(75, {"method": "Slow.method", "tab": "watchlist"})
-    assert probe.current_context()["method"] == "Slow.method"
+    assert "method" not in probe.current_context()
 
     probe.record_span(1, {"method": "Fast.method", "tab": "watchlist"})
     assert "method" not in probe.current_context()
     assert recorded
+    probe.deleteLater()
+
+
+def test_ui_stall_probe_consumes_slow_span_context_once(monkeypatch, qt_application):
+    records = []
+    probe = UiStallProbe(
+        timer_interval_ms=5,
+        thresholds=StallThresholds(warn_ms=1, critical_ms=10),
+        context_provider=lambda: {"tab": "system_log"},
+        auto_start=False,
+    )
+    monkeypatch.setattr(probe, "_record_stall", lambda *args, **kwargs: records.append((args, kwargs)))
+
+    probe.record_span(
+        125,
+        {"method": "ClassicWorkspace.ensure_tab_loaded", "tab": "scan", "signal": "f5_auto_scan"},
+    )
+    assert "method" not in probe.current_context()
+
+    probe._last_tick = probe_module.time.perf_counter() - 0.2
+    probe._last_event_loop_record_at = 0
+    probe._poll_event_loop()
+
+    assert records[-1][1]["context"]["method"] == "ClassicWorkspace.ensure_tab_loaded"
+    assert records[-1][1]["context"]["signal"] == "f5_auto_scan"
+
+    probe._last_tick = probe_module.time.perf_counter() - 0.2
+    probe._last_event_loop_record_at = 0
+    probe._poll_event_loop()
+
+    assert "method" not in records[-1][1]["context"]
+    assert records[-1][1]["context"]["tab"] == "system_log"
     probe.deleteLater()
 
 

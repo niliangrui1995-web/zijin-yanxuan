@@ -1093,9 +1093,22 @@ class _FakeUser32:
 def _install_fake_external_nav_ctypes(monkeypatch, user32):
     import ctypes
 
+    monkeypatch.delattr(ctypes, "wintypes", raising=False)
     monkeypatch.setattr(ctypes, "WINFUNCTYPE", lambda *_types: (lambda fn: fn), raising=False)
     monkeypatch.setattr(ctypes, "create_unicode_buffer", lambda _size: _FakeWinBuffer())
     monkeypatch.setattr(ctypes, "windll", SimpleNamespace(user32=user32), raising=False)
+
+
+def test_external_terminal_navigator_lazily_loads_wintypes(monkeypatch):
+    import ctypes
+
+    monkeypatch.delattr(ctypes, "wintypes", raising=False)
+    monkeypatch.setattr(ctypes, "WINFUNCTYPE", lambda *_types: (lambda fn: fn), raising=False)
+
+    enum_windows_proc = ExternalTerminalNavigator._enum_windows_proc_type(ctypes)
+
+    assert enum_windows_proc(lambda _hwnd, _arg: True)(1, 0) is True
+    assert not ExternalTerminalNavigator._null_hwnd(ctypes)
 
 
 def test_external_terminal_navigator_tdx_missing_path_and_exception_fallbacks(monkeypatch):

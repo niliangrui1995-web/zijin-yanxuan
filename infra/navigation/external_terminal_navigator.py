@@ -61,9 +61,23 @@ class ExternalTerminalNavigator:
             event_bus.sig_system_log.emit("error", f"[跳转兜底] 打开网页行情失败: {exc}")
 
     @staticmethod
-    def _enum_windows_proc_type(ctypes_module):
+    def _wintypes_module(ctypes_module):
+        wintypes_module = getattr(ctypes_module, "wintypes", None)
+        if wintypes_module is None:
+            import ctypes.wintypes as wintypes_module
+
+            setattr(ctypes_module, "wintypes", wintypes_module)
+        return wintypes_module
+
+    @classmethod
+    def _enum_windows_proc_type(cls, ctypes_module):
+        wintypes_module = cls._wintypes_module(ctypes_module)
         callback_factory = getattr(ctypes_module, "WINFUNCTYPE", ctypes_module.CFUNCTYPE)
-        return callback_factory(ctypes_module.c_bool, ctypes_module.wintypes.HWND, ctypes_module.wintypes.LPARAM)
+        return callback_factory(ctypes_module.c_bool, wintypes_module.HWND, wintypes_module.LPARAM)
+
+    @classmethod
+    def _null_hwnd(cls, ctypes_module):
+        return cls._wintypes_module(ctypes_module).HWND(0)
 
     @staticmethod
     def _activate_window(user32, hwnd) -> None:
@@ -179,7 +193,7 @@ class ExternalTerminalNavigator:
             user32 = ctypes.windll.user32
 
             def find_tdx_window():
-                found_hwnd = ctypes.wintypes.HWND(0)
+                found_hwnd = self._null_hwnd(ctypes)
 
                 def callback(hwnd, _):
                     nonlocal found_hwnd
@@ -244,7 +258,7 @@ class ExternalTerminalNavigator:
             user32 = ctypes.windll.user32
 
             def find_em_window():
-                found_hwnd = ctypes.wintypes.HWND(0)
+                found_hwnd = self._null_hwnd(ctypes)
 
                 def callback(hwnd, _):
                     nonlocal found_hwnd

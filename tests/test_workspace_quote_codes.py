@@ -1044,7 +1044,7 @@ def test_workspace_refreshes_information_sources_after_f5():
     }
 
 
-def test_workspace_refreshes_information_sources_after_f5_autoloads_scan():
+def test_workspace_refreshes_information_sources_after_f5_skips_unloaded_scan():
     calls = []
     scan_tab = SimpleNamespace(refresh_data_after_f5=lambda: calls.append("scan") or True)
     workspace = SimpleNamespace(
@@ -1055,8 +1055,8 @@ def test_workspace_refreshes_information_sources_after_f5_autoloads_scan():
 
     results = ClassicWorkspace.refresh_information_sources_after_f5(workspace)
 
-    assert calls == [("ensure", "scan", "f5_auto_scan"), "scan"]
-    assert results == {"scan": True}
+    assert calls == []
+    assert results == {}
 
 
 def test_workspace_refreshes_information_sources_after_f5_skips_noninteractive_tabs():

@@ -396,13 +396,13 @@ def test_asian_market_pin_and_unpin_persist_and_refresh_table(monkeypatch):
         assert settings.values[asian_module.ASIAN_PINNED_CODES_SETTINGS_KEY] == ["2330.TW"]
         assert settings.synced is True
         assert [row["代码"] for row in tab.model.row_data] == ["2330.TW", "8035.T", "0522.HK"]
-        assert tab._build_asian_pin_action("2330.TW")[0] == "取消亚洲页置顶"
+        assert tab._build_asian_pin_action("2330.TW")[0] == "取消置顶"
 
         tab._unpin_asian_code("2330.TW")
 
         assert settings.values[asian_module.ASIAN_PINNED_CODES_SETTINGS_KEY] == []
         assert [row["代码"] for row in tab.model.row_data] == ["8035.T", "2330.TW", "0522.HK"]
-        assert tab._build_asian_pin_action("2330.TW")[0] == "亚洲页置顶"
+        assert tab._build_asian_pin_action("2330.TW")[0] == "置顶"
     finally:
         tab.deleteLater()
 

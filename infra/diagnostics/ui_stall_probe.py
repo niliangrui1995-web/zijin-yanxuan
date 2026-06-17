@@ -94,7 +94,12 @@ class UiStallProbe(QObject):
                 provider_context = {"context_error": exc.__class__.__name__}
         stack = _UI_SPAN_STACK.get()
         span_context = stack[-1] if stack else {}
-        return _merge_context(provider_context, self._last_span_context, span_context)
+        return _merge_context(provider_context, span_context)
+
+    def _event_loop_context(self) -> dict[str, str]:
+        last_span_context = self._last_span_context
+        self._last_span_context = {}
+        return _merge_context(last_span_context, self.current_context())
 
     def record_span(self, elapsed_ms: float, context: dict | None) -> None:
         if elapsed_ms < self.thresholds.warn_ms:
@@ -128,16 +133,18 @@ class UiStallProbe(QObject):
         self._last_tick = now
         late_ms = max(0.0, gap_ms - self.timer_interval_ms)
         if late_ms < self.thresholds.warn_ms:
+            self._last_span_context = {}
             return
 
         # Avoid flooding logs after one long busy stretch.
         if now - self._last_event_loop_record_at < 0.2:
+            self._last_span_context = {}
             return
         self._last_event_loop_record_at = now
         self._record_stall(
             "ui.stall.event_loop",
             late_ms,
-            context=self.current_context(),
+            context=self._event_loop_context(),
             metric_name="ui_event_loop_stall_ms",
             extra={"event_loop_gap_ms": round(gap_ms, 3)},
         )

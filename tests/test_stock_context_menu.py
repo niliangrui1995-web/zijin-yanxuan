@@ -318,7 +318,7 @@ def test_stock_context_menu_runs_extra_action(monkeypatch):
             self.actions.append(None)
 
         def exec(self, _pos):
-            return next(action for action in self.actions if getattr(action, "text", "") == "亚洲页置顶")
+            return next(action for action in self.actions if getattr(action, "text", "") == "置顶")
 
     monkeypatch.setattr(stock_context_menu, "QMenu", FakeMenu)
     monkeypatch.setattr(stock_context_menu, "install_menu_fade", lambda _menu: None)
@@ -330,7 +330,7 @@ def test_stock_context_menu_runs_extra_action(monkeypatch):
         "2330.TW",
         "TSMC",
         show_watchlist_toggle=False,
-        extra_actions=[("亚洲页置顶", lambda: triggered.append("pin"))],
+        extra_actions=[("置顶", lambda: triggered.append("pin"))],
     )
 
     assert triggered == ["pin"]

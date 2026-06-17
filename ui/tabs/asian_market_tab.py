@@ -593,7 +593,7 @@ class AsianMarketTab(BaseStockTab):
         self._pinned_asian_codes = [target] + [item for item in self._pinned_asian_codes if item != target]
         self._save_pinned_asian_codes()
         self.update_table_ui()
-        self._set_asian_status("已置顶", f"{target} 已移到亚洲页顶部", freshness=self._status_freshness)
+        self._set_asian_status("已置顶", f"{target} 已移到顶部", freshness=self._status_freshness)
 
     def _unpin_asian_code(self, code: str) -> None:
         normalized = _normalize_asian_pinned_codes([code])
@@ -604,12 +604,12 @@ class AsianMarketTab(BaseStockTab):
         self._pinned_asian_codes = [item for item in self._pinned_asian_codes if item != target]
         self._save_pinned_asian_codes()
         self.update_table_ui()
-        self._set_asian_status("已取消置顶", f"{target} 恢复亚洲页默认顺序", freshness=self._status_freshness)
+        self._set_asian_status("已取消置顶", f"{target} 恢复默认顺序", freshness=self._status_freshness)
 
     def _build_asian_pin_action(self, code: str):
         if self._is_asian_code_pinned(code):
-            return "取消亚洲页置顶", lambda code=code: self._unpin_asian_code(code)
-        return "亚洲页置顶", lambda code=code: self._pin_asian_code_to_top(code)
+            return "取消置顶", lambda code=code: self._unpin_asian_code(code)
+        return "置顶", lambda code=code: self._pin_asian_code_to_top(code)
 
     def _fit_asian_columns_to_viewport(self):
         if not hasattr(self, "asian_table"):
