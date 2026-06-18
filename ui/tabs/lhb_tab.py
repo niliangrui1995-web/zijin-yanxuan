@@ -195,13 +195,20 @@ class LhbTab(BaseStockTab):
             or record.get("code")
         )
 
-    def _get_ai_chain_context_text(self, stock_code: str) -> str:
+    @classmethod
+    def _context_text_for_code(cls, stock_code: str, context_map: dict[str, str] | None) -> str:
         code = normalize_ai_chain_code(stock_code)
         if not code:
-            return self._DISPLAY_PLACEHOLDER
+            return cls._DISPLAY_PLACEHOLDER
+        return str((context_map or {}).get(code) or "").strip() or cls._DISPLAY_PLACEHOLDER
+
+    def _get_ai_chain_context_map(self) -> dict[str, str]:
         if self._ai_chain_context_map is None:
             self._ai_chain_context_map = self._load_ai_chain_context_map()
-        return str((self._ai_chain_context_map or {}).get(code) or "").strip() or self._DISPLAY_PLACEHOLDER
+        return self._ai_chain_context_map or {}
+
+    def _get_ai_chain_context_text(self, stock_code: str) -> str:
+        return self._context_text_for_code(stock_code, self._get_ai_chain_context_map())
 
     @staticmethod
     def _ensure_log_line(message: str) -> str:
@@ -490,6 +497,8 @@ class LhbTab(BaseStockTab):
             pool_manager = LhbPoolManager()
             pool_manager.prune(trade_dates)
             pool = pool_manager.compute_pool(data_provider=self.data_provider, engine=self._get_engine())
+            ai_chain_context_map = self._load_ai_chain_context_map()
+            row_data = self._build_pool_display_rows(pool, ai_chain_context_map)
             validation_ref_date = max(trade_dates)
             pending_validation = pool_manager.get_dates_pending_validation(trade_dates, validation_ref_date)
             missing = pool_manager.get_missing_dates(trade_dates)
@@ -497,6 +506,8 @@ class LhbTab(BaseStockTab):
                 "status": "ok",
                 "pool_manager": pool_manager,
                 "pool": pool,
+                "row_data": row_data,
+                "ai_chain_context_map": ai_chain_context_map,
                 "missing": missing,
                 "pending_validation": pending_validation,
                 "validation_ref_date": validation_ref_date,
@@ -518,10 +529,14 @@ class LhbTab(BaseStockTab):
             pool_manager = payload.get("pool_manager")
             if pool_manager is not None:
                 self.pool_manager = pool_manager
+            ai_chain_context_map = payload.get("ai_chain_context_map")
+            if isinstance(ai_chain_context_map, dict):
+                self._ai_chain_context_map = ai_chain_context_map
 
             pool = list(payload.get("pool") or [])
+            row_data = list(payload.get("row_data") or [])
             if pool:
-                self._display_pool(pool, emit_event=emit_event)
+                self._display_pool(pool, emit_event=emit_event, row_data=row_data)
 
             missing = list(payload.get("missing") or [])
             pending_validation = list(payload.get("pending_validation") or [])
@@ -640,18 +655,28 @@ class LhbTab(BaseStockTab):
         message = f"[龙虎榜池] {today_str} 今日探针异常，手动刷新沿用参考交易日 {ref_trade_date.strftime('%Y%m%d')}"
         return MarketCalendar.get_recent_trade_dates(n, ref_date=ref_trade_date), message, "warn"
 
-    def _format_pool_row(self, rec: dict) -> dict:
+    @classmethod
+    def _format_pool_row_with_context(cls, rec: dict, context_map: dict[str, str] | None) -> dict:
         row_dict = dict(rec or {})
         original_reason = str(row_dict.pop("上榜原因", "") or "").strip()
         if original_reason:
             row_dict["_原始上榜原因"] = original_reason
-        row_dict[self.AI_CHAIN_CONTEXT_COLUMN] = self._get_ai_chain_context_text(self._record_stock_code(row_dict))
+        row_dict[cls.AI_CHAIN_CONTEXT_COLUMN] = cls._context_text_for_code(cls._record_stock_code(row_dict), context_map)
         # "最近上榜" 格式化：yyyyMMdd -> MM-dd 更紧凑，同时保留原始日期给关注池汇总使用
         raw_date = str(row_dict.get("最近上榜", ""))
         if len(raw_date) == 8:
             row_dict["_最近上榜_raw"] = raw_date
             row_dict["最近上榜"] = f"{raw_date[4:6]}-{raw_date[6:8]}"
         return row_dict
+
+    @classmethod
+    def _build_pool_display_rows(cls, pool: list[dict], context_map: dict[str, str] | None) -> list[dict]:
+        return LhbPoolManager.sort_pool_rows_for_display(
+            [cls._format_pool_row_with_context(rec, context_map) for rec in pool]
+        )
+
+    def _format_pool_row(self, rec: dict) -> dict:
+        return self._format_pool_row_with_context(rec, self._get_ai_chain_context_map())
 
     def _is_default_lhb_sort_active(self) -> bool:
         try:
@@ -696,9 +721,12 @@ class LhbTab(BaseStockTab):
             return []
         return [self._format_pool_row(rec) for rec in pool]
 
-    def _display_pool(self, pool: list[dict], *, emit_event: bool = True):
+    def _display_pool(self, pool: list[dict], *, emit_event: bool = True, row_data: list[dict] | None = None):
         """将池数据渲染到表格"""
-        row_data = LhbPoolManager.sort_pool_rows_for_display([self._format_pool_row(rec) for rec in pool])
+        if row_data is None:
+            row_data = self._build_pool_display_rows(pool, self._get_ai_chain_context_map())
+        else:
+            row_data = [dict(row) for row in row_data]
         row_signature = self._describe_lhb_rows(row_data).signature
         rows_changed = row_signature != self._last_lhb_signature
 
@@ -811,6 +839,7 @@ class LhbTab(BaseStockTab):
             fetched_results: dict[str, dict] = {}
             validated_results: dict[str, dict] = {}
             step = 0
+            pool_manager = LhbPoolManager()
 
             for date_str in missing_sorted:
                 step += 1
@@ -836,7 +865,7 @@ class LhbTab(BaseStockTab):
 
             for date_str in validation_sorted:
                 step += 1
-                cached_count = self._get_pool_manager().get_cached_record_count(date_str)
+                cached_count = pool_manager.get_cached_record_count(date_str)
                 try:
                     probe_payload = probe_lhb_detail_count_for_date(date_str, return_meta=True)
                     if self._should_refresh_after_probe(cached_count, probe_payload):
@@ -893,7 +922,33 @@ class LhbTab(BaseStockTab):
                 if step < total:
                     time.sleep(0.8)
 
-            return {"fetched": fetched_results, "validated": validated_results}
+            for date_str, payload in fetched_results.items():
+                records = payload.get("records", []) if isinstance(payload, dict) else []
+                meta = payload.get("meta") if isinstance(payload, dict) else None
+                pool_manager.add_day(date_str, records, meta=meta)
+
+            for date_str, payload in validated_results.items():
+                if not isinstance(payload, dict):
+                    continue
+                pool_manager.mark_day_probe(
+                    date_str,
+                    source_count=payload.get("count", 0),
+                    validation_ref_date=validation_ref_date,
+                    status=payload.get("status", "ok"),
+                )
+
+            pool_manager.save()
+            pool = pool_manager.compute_pool(data_provider=self.data_provider, engine=self._get_engine())
+            ai_chain_context_map = self._load_ai_chain_context_map()
+            row_data = self._build_pool_display_rows(pool, ai_chain_context_map)
+            return {
+                "fetched": fetched_results,
+                "validated": validated_results,
+                "pool_manager": pool_manager,
+                "pool": pool,
+                "row_data": row_data,
+                "ai_chain_context_map": ai_chain_context_map,
+            }
 
         def _on_backfill_done(results: dict):
             self._backfill_in_progress = False
@@ -910,25 +965,16 @@ class LhbTab(BaseStockTab):
                 event_bus.sig_system_log.emit("error", self._ensure_log_line("[龙虎榜池] 同步任务未产出有效结果"))
                 return
 
-            for date_str, payload in fetched_results.items():
-                records = payload.get("records", []) if isinstance(payload, dict) else []
-                meta = payload.get("meta") if isinstance(payload, dict) else None
-                self._get_pool_manager().add_day(date_str, records, meta=meta)
+            pool_manager = results.get("pool_manager")
+            if pool_manager is not None:
+                self.pool_manager = pool_manager
+            ai_chain_context_map = results.get("ai_chain_context_map")
+            if isinstance(ai_chain_context_map, dict):
+                self._ai_chain_context_map = ai_chain_context_map
 
-            for date_str, payload in validated_results.items():
-                if not isinstance(payload, dict):
-                    continue
-                self._get_pool_manager().mark_day_probe(
-                    date_str,
-                    source_count=payload.get("count", 0),
-                    validation_ref_date=validation_ref_date,
-                    status=payload.get("status", "ok"),
-                )
-
-            self._get_pool_manager().save()
-
-            pool = self._get_pool_manager().compute_pool(data_provider=self.data_provider, engine=self._get_engine())
-            self._display_pool(pool)
+            pool = list(results.get("pool") or [])
+            row_data = list(results.get("row_data") or [])
+            self._display_pool(pool, row_data=row_data)
             event_bus.sig_system_log.emit(
                 "info",
                 self._ensure_log_line(

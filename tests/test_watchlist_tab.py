@@ -666,7 +666,11 @@ def test_watchlist_gather_radar_data_requests_source_cache_fallback(monkeypatch)
         result = tab._gather_radar_data(["300750"])
 
         assert result[1] == {"300750": "液冷"}
-        assert captured == {"include_source_cache_fallback": True, "target_codes": ["300750"]}
+        assert captured == {
+            "include_source_cache_fallback": True,
+            "target_codes": ["300750"],
+            "allow_lhb_cache_compute": False,
+        }
     finally:
         tab.deleteLater()
 

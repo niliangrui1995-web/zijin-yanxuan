@@ -753,11 +753,13 @@ class ClassicWorkspace(QWidget):
         include_cache_fallback: bool = False,
         include_source_cache_fallback: bool | None = None,
         target_codes=None,
+        allow_lhb_cache_compute: bool = True,
     ) -> tuple[dict, dict, dict, dict, dict, dict | None]:
         return _resolve_workspace_facade(self).collect_watchlist_radar_data(
             include_cache_fallback=include_cache_fallback,
             include_source_cache_fallback=include_source_cache_fallback,
             target_codes=target_codes,
+            allow_lhb_cache_compute=allow_lhb_cache_compute,
         )
 
     def collect_stock_signals(self) -> list[StockSignal]:

@@ -555,6 +555,37 @@ def test_stock_context_service_reuses_lhb_fallback_cache_for_same_signature(monk
     assert second[0][stock_context_module.KEY_CODE] == "300750"
 
 
+def test_watchlist_radar_schedules_lhb_snapshot_instead_of_blocking_cache_compute(monkeypatch):
+    scheduled = []
+    monkeypatch.setattr(
+        StockContextService,
+        "_load_lhb_pool_rows",
+        lambda self: (_ for _ in ()).throw(AssertionError("LHB cache compute should stay off the UI collect path")),
+    )
+    monkeypatch.setattr(StockContextService, "_lhb_pool_cache_signature", lambda self: ("cache", 1, 2))
+    monkeypatch.setattr(
+        StockContextService,
+        "refresh_async_snapshots",
+        lambda self, *, force=False: scheduled.append(force) or True,
+    )
+    workspace = SimpleNamespace(
+        engine=None,
+        tab_specs=lambda: [{"key": "lhb", "group": "info"}],
+        get_loaded_tab=lambda key: None,
+        get_tab=lambda key: (_ for _ in ()).throw(AssertionError("lazy tab should not load")),
+        iter_tabs=lambda: [],
+    )
+
+    *_, lhb_data, _ = ClassicWorkspace.collect_watchlist_radar_data(
+        workspace,
+        include_source_cache_fallback=True,
+        allow_lhb_cache_compute=False,
+    )
+
+    assert lhb_data == {}
+    assert scheduled == [False]
+
+
 def test_workspace_collects_fund_holding_context_from_snapshot_without_open_tab(monkeypatch):
     monkeypatch.setattr(
         StockContextService,

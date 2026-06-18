@@ -86,6 +86,7 @@ class StockContextService:
         self._lhb_rows_lock = threading.RLock()
         self._lhb_rows_snapshot: list[dict] = []
         self._lhb_rows_signature: tuple[str, int, int] | None = None
+        self._lhb_rows_loading = False
 
     @staticmethod
     def _safe_float(value, default: float = 0.0) -> float:
@@ -360,6 +361,16 @@ class StockContextService:
                 self._lhb_rows_snapshot = [dict(row) for row in rows]
                 self._lhb_rows_signature = signature
         return rows
+
+    def _cached_lhb_pool_rows(self) -> list[dict]:
+        signature = self._lhb_pool_cache_signature()
+        with self._lhb_rows_lock:
+            if signature is not None and signature == self._lhb_rows_signature:
+                return [dict(row) for row in self._lhb_rows_snapshot]
+            loading = self._lhb_rows_loading
+        if not loading:
+            self.refresh_async_snapshots()
+        return []
 
     def refresh_watchlist_names(self, code2name: dict[str, str]) -> bool:
         watchlist_tab = self._get_tab("watchlist")
@@ -817,13 +828,6 @@ class StockContextService:
         return self._format_fund_holding_store_rows(latest_quarter_map, change_rows)
 
     def refresh_async_snapshots(self, *, force: bool = False) -> bool:
-        with self._fund_rows_lock:
-            if self._fund_rows_loading:
-                return True
-            if self._fund_rows_loaded and not force:
-                return False
-            self._fund_rows_loading = True
-
         try:
             from app.services.ui_event_service import domain_events
             from app.services.ui_task_service import (
@@ -831,28 +835,71 @@ class StockContextService:
                 task_registry,
             )
         except (ImportError, RuntimeError):
-            with self._fund_rows_lock:
-                self._fund_rows_loading = False
             return False
 
-        def _on_success(rows):
-            with self._fund_rows_lock:
-                self._fund_rows_snapshot = [dict(row) for row in (rows or [])]
-                self._fund_rows_loaded = True
-                self._fund_rows_loading = False
-            domain_events.sig_stock_context_snapshot_updated.emit()
+        scheduled = False
+        already_running = False
 
-        def _on_error(_message: str):
-            with self._fund_rows_lock:
-                self._fund_rows_loading = False
+        with self._fund_rows_lock:
+            already_running = already_running or self._fund_rows_loading
+            start_fund = not self._fund_rows_loading and (force or not self._fund_rows_loaded)
+            if start_fund:
+                self._fund_rows_loading = True
 
-        background_job_runner.run_in_background(
-            self._load_fund_holding_rows_snapshot,
-            on_success=_on_success,
-            on_error=_on_error,
-            task_id=task_registry.workspace("stock_context_fund_rows_snapshot"),
-        )
-        return True
+        if start_fund:
+            scheduled = True
+
+            def _on_fund_success(rows):
+                with self._fund_rows_lock:
+                    self._fund_rows_snapshot = [dict(row) for row in (rows or [])]
+                    self._fund_rows_loaded = True
+                    self._fund_rows_loading = False
+                domain_events.sig_stock_context_snapshot_updated.emit()
+
+            def _on_fund_error(_message: str):
+                with self._fund_rows_lock:
+                    self._fund_rows_loading = False
+
+            background_job_runner.run_in_background(
+                self._load_fund_holding_rows_snapshot,
+                on_success=_on_fund_success,
+                on_error=_on_fund_error,
+                task_id=task_registry.workspace("stock_context_fund_rows_snapshot"),
+            )
+
+        lhb_signature = self._lhb_pool_cache_signature()
+        with self._lhb_rows_lock:
+            already_running = already_running or self._lhb_rows_loading
+            start_lhb = (
+                lhb_signature is not None
+                and not self._lhb_rows_loading
+                and (force or lhb_signature != self._lhb_rows_signature)
+            )
+            if start_lhb:
+                self._lhb_rows_loading = True
+
+        if start_lhb:
+            scheduled = True
+
+            def _on_lhb_success(rows, signature=lhb_signature):
+                with self._lhb_rows_lock:
+                    self._lhb_rows_snapshot = [dict(row) for row in (rows or [])]
+                    self._lhb_rows_signature = signature
+                    self._lhb_rows_loading = False
+                domain_events.sig_stock_context_snapshot_updated.emit()
+
+            def _on_lhb_error(_message: str):
+                with self._lhb_rows_lock:
+                    self._lhb_rows_loading = False
+
+            background_job_runner.run_in_background(
+                self._load_lhb_pool_rows,
+                on_success=_on_lhb_success,
+                on_error=_on_lhb_error,
+                task_id=task_registry.workspace("stock_context_lhb_rows_snapshot"),
+            )
+
+        return scheduled or already_running
 
     def _cached_fund_holding_rows(self) -> list[dict]:
         with self._fund_rows_lock:
@@ -899,7 +946,12 @@ class StockContextService:
         subject_key = str(row.get(KEY_SUBJECT_CODE, "") or row.get(KEY_SUBJECT, "") or "__all__").strip()
         return quarter == latest_by_subject.get(subject_key)
 
-    def _iter_lhb_signals(self, *, include_cache_fallback: bool = True) -> list[StockSignal]:
+    def _iter_lhb_signals(
+        self,
+        *,
+        include_cache_fallback: bool = True,
+        allow_cache_compute: bool = True,
+    ) -> list[StockSignal]:
         signals: list[StockSignal] = []
         seen_codes: set[str] = set()
         lhb_tab = self._get_tab("lhb")
@@ -908,7 +960,7 @@ class StockContextService:
         rows = self._get_rows(lhb_tab)
         is_lhb_loading = bool(lhb_tab is not None and getattr(lhb_tab, "_pool_load_in_progress", False))
         if not rows and include_cache_fallback and not is_lhb_loading:
-            rows = self._load_lhb_pool_rows()
+            rows = self._load_lhb_pool_rows() if allow_cache_compute else self._cached_lhb_pool_rows()
         for row_idx, row in enumerate(rows):
             code = str(row.get(KEY_CODE, "")).strip()
             if not code or code in seen_codes:
@@ -966,6 +1018,7 @@ class StockContextService:
         *,
         include_cache_fallback: bool = True,
         include_source_cache_fallback: bool | None = None,
+        allow_lhb_cache_compute: bool = True,
     ) -> list[StockSignal]:
         direct_keys = self._direct_signal_tab_keys()
         signals = self._iter_direct_stock_signals()
@@ -986,7 +1039,12 @@ class StockContextService:
         if "fund_holdings" not in direct_keys:
             signals.extend(self._iter_fund_holdings_signals())
         if "lhb" not in direct_keys:
-            signals.extend(self._iter_lhb_signals(include_cache_fallback=source_cache_fallback))
+            signals.extend(
+                self._iter_lhb_signals(
+                    include_cache_fallback=source_cache_fallback,
+                    allow_cache_compute=allow_lhb_cache_compute,
+                )
+            )
 
         return [signal for signal in signals if signal.normalized_code()]
 
@@ -1002,6 +1060,7 @@ class StockContextService:
         include_cache_fallback: bool = False,
         include_source_cache_fallback: bool | None = None,
         target_codes=None,
+        allow_lhb_cache_compute: bool = True,
     ) -> tuple[dict, dict, dict, dict, dict, dict | None]:
         workspace = self._workspace
         engine = getattr(workspace, "engine", None)
@@ -1010,6 +1069,7 @@ class StockContextService:
         signals = self.iter_stock_signals(
             include_cache_fallback=include_cache_fallback,
             include_source_cache_fallback=include_source_cache_fallback,
+            allow_lhb_cache_compute=allow_lhb_cache_compute,
         )
         remark_data, na_subsector_data, block_data, earn_data, lhb_data = {}, {}, {}, {}, {}
         target_code_set = self._normalize_target_codes(target_codes)

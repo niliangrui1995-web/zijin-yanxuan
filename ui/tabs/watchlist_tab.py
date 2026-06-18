@@ -626,6 +626,7 @@ class WatchlistTab(BaseStockTab):
             return workspace.collect_watchlist_radar_data(
                 include_source_cache_fallback=True,
                 target_codes=codes,
+                allow_lhb_cache_compute=False,
             )
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
             log.warning(f"[关注池] 提取工作区雷达数据异常: {e}")

@@ -15,7 +15,6 @@ core/lhb_pool_manager.py
 """
 
 import copy
-import gc
 import json
 import os
 import threading
@@ -589,8 +588,5 @@ class LhbPoolManager:
         result = self.sort_pool_rows_for_display(result)
 
         log.debug(f"[龙虎榜池] 池计算完成: {len(self._data)} 天数据中，{len(qualifying_codes)} 只标的入池")
-
-        # 挂机防漏：计算核心完成深层循环后，显式扫地出门，回收计算期产生的海量瞬态字典和列表残余
-        gc.collect()
 
         return result
