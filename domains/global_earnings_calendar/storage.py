@@ -28,7 +28,7 @@ class ConfirmedEarningsEventsProvider:
         try:
             payload = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
-            log.warning(f"[global earnings calendar] confirmed events unavailable: {exc}")
+            log.warning(f"[global earnings calendar] confirmed events unavailable at {self.path}: {exc}")
             return []
 
         rows = payload.get("events") if isinstance(payload, Mapping) else payload
@@ -94,6 +94,16 @@ class ConfirmedEarningsEventsProvider:
                 json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
+            try:
+                json.loads(temp_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                try:
+                    temp_path.unlink()
+                except OSError:
+                    pass
+                raise ConfirmedEventWriteError(f"confirmed_json_write_validation_failed: {exc}") from exc
             temp_path.replace(self.path)
+        except ConfirmedEventWriteError:
+            raise
         except OSError as exc:
             raise ConfirmedEventWriteError(f"confirmed_json_write_failed: {exc}") from exc

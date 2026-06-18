@@ -151,6 +151,39 @@ def test_confirmed_events_provider_handles_read_and_write_failures(monkeypatch, 
         ConfirmedEarningsEventsProvider(path).upsert(EarningsCalendarEvent("Alpha", "ALP", "sector", "2026-05-01"))
 
 
+def test_confirmed_events_provider_logs_unavailable_path(monkeypatch, tmp_path):
+    path = tmp_path / "confirmed.json"
+    path.write_text("{bad json", encoding="utf-8")
+    warnings = []
+    monkeypatch.setattr("domains.global_earnings_calendar.storage.log.warning", warnings.append)
+
+    assert ConfirmedEarningsEventsProvider(path).fetch({}) == []
+
+    assert warnings
+    assert str(path) in warnings[0]
+
+
+def test_confirmed_events_provider_validates_temp_json_before_replace(monkeypatch, tmp_path):
+    path = tmp_path / "confirmed.json"
+    path.write_text('{"events":[]}', encoding="utf-8")
+    real_write_text = Path.write_text
+
+    def corrupt_temp_json(self, text, *args, **kwargs):
+        if self.name.endswith(".tmp"):
+            return real_write_text(self, "{bad json", encoding=kwargs.get("encoding", "utf-8"))
+        return real_write_text(self, text, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", corrupt_temp_json)
+
+    with pytest.raises(ConfirmedEventWriteError, match="confirmed_json_write_validation_failed"):
+        ConfirmedEarningsEventsProvider(path).upsert(
+            EarningsCalendarEvent("Alpha", "ALP", "sector", "2026-05-01")
+        )
+
+    assert json.loads(path.read_text(encoding="utf-8")) == {"events": []}
+    assert not path.with_name("confirmed.json.tmp").exists()
+
+
 def test_earnings_calendar_models_cover_invalid_and_yfinance_status_paths():
     assert EarningsCalendarEvent.from_dict(None) is None
 
