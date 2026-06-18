@@ -8,6 +8,7 @@ from core.logger import get_logger
 from ui.components.frame_task_scheduler import FrameTaskScheduler
 from ui.workspaces.tab_capabilities import (
     AIIndustryChainUpdateCapability,
+    PostF5DataRefreshCapability,
     SnapshotRefreshCapability,
     TableCollectionCapability,
 )
@@ -51,7 +52,9 @@ class WorkspaceTableService:
         return None
 
     @staticmethod
-    def _uses_cache_reload_refresh(tab) -> bool:
+    def _uses_independent_f5_refresh(tab) -> bool:
+        if isinstance(tab, PostF5DataRefreshCapability):
+            return True
         return any(
             callable(getattr(tab, method_name, None))
             for method_name in (
@@ -73,7 +76,7 @@ class WorkspaceTableService:
                     item[0],
                 ),
             )
-            if not skip_cache_reload_tabs or not self._uses_cache_reload_refresh(tab)
+            if not skip_cache_reload_tabs or not self._uses_independent_f5_refresh(tab)
         ]
 
     @staticmethod

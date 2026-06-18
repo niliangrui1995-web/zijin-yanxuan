@@ -390,6 +390,16 @@ def test_fetch_updates_skips_markets_in_short_backoff(monkeypatch):
     assert list(updates) == ["0522.HK"]
 
 
+def test_timeout_market_backoff_survives_next_short_retry_window(monkeypatch):
+    now_ts = 1_000.0
+    monkeypatch.setattr(workers.time, "time", lambda: now_ts)
+    worker = workers.AsianMarketWorker(["5201.T"])
+
+    worker._mark_market_backoff("T")
+
+    assert worker._is_market_backoff_active("5201.T", now_ts=now_ts + 10 * 60)
+
+
 def test_fetch_single_code_skips_optional_network_when_deadline_is_close(monkeypatch):
     calls = []
     monkeypatch.setattr(
@@ -459,6 +469,39 @@ def test_pe_refresh_does_not_block_during_quote_time(monkeypatch):
     )
 
     assert (pe, source, updated_at) == (28.0, "cached", 0.0)
+
+
+def test_pe_refresh_records_failed_optional_fallback_attempt(monkeypatch):
+    monkeypatch.setattr(workers.time, "time", lambda: 50_000.0)
+    monkeypatch.setattr(
+        workers.MarketCalendar,
+        "is_quote_refresh_time",
+        classmethod(lambda cls, market="CN": False),
+    )
+    monkeypatch.setattr(
+        workers,
+        "get_yf_rate_limit_status",
+        lambda: {
+            "active": True,
+            "remaining_sec": 180.0,
+            "reason": "Too Many Requests",
+            "until_ts": 999.0,
+        },
+    )
+    monkeypatch.setattr(workers, "_fetch_asian_pe_fallback", lambda *args, **kwargs: (None, ""))
+
+    worker = workers.AsianMarketWorker(["2330.TW"])
+    pe, source, updated_at = worker._refresh_pe_if_needed(
+        "2330.TW",
+        ticker=None,
+        info_session=object(),
+        pe_value=None,
+        pe_source="",
+        pe_updated_at=0.0,
+    )
+
+    assert (pe, source) == (None, "")
+    assert updated_at == 50_000.0
 
 
 def test_fetch_asian_realtime_quote_uses_regular_market_previous_close_for_yfinance_fallback(monkeypatch):

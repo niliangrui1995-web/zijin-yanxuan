@@ -44,7 +44,7 @@ _ASIAN_MARKET_CODES = ("TW", "HK", "T", "KS")
 _PE_REFRESH_INTERVAL_SEC = 12 * 60 * 60
 _YF_FETCH_MAX_WORKERS = 2
 _FETCH_UPDATES_TIMEOUT_SEC = 45
-_FETCH_TIMEOUT_MARKET_BACKOFF_SEC = 5 * 60
+_FETCH_TIMEOUT_MARKET_BACKOFF_SEC = 30 * 60
 _OPTIONAL_NETWORK_MIN_REMAINING_SEC = 25
 
 _EMPTY_NUMERIC_MARKERS = {"", "-", "--", "---", "—", "－", "None", "null"}
@@ -1022,7 +1022,8 @@ class AsianMarketWorker(QThread):
         pe_updated_at: float,
         allow_optional_network: bool = True,
     ):
-        if (time.time() - pe_updated_at) < _PE_REFRESH_INTERVAL_SEC:
+        now_ts = time.time()
+        if (now_ts - pe_updated_at) < _PE_REFRESH_INTERVAL_SEC:
             return pe_value, pe_source, pe_updated_at
 
         market = MarketCalendar.normalize_market(MarketCalendar.infer_market(code))
@@ -1054,7 +1055,7 @@ class AsianMarketWorker(QThread):
         if fallback_pe is not None:
             return fallback_pe, fallback_source, time.time()
 
-        return pe_value, pe_source, pe_updated_at
+        return pe_value, pe_source, time.time()
 
     def _fetch_single_code(self, code: str, yf_session, info_session):
         deadline = getattr(self, "_fetch_deadline_monotonic", None)

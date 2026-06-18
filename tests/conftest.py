@@ -28,6 +28,7 @@ os.environ.setdefault("VCP_HUNTER_SETTINGS_APPLICATION", "MainTest")
 _QT_APPLICATION = None
 _QT_SETTINGS_CONFIGURED = False
 _QT_SETTINGS_ROOT = None
+_TEST_LOG_ROOT = None
 
 _QT_APPLICATION_IMPORT_PREFIXES = (
     "ui.components",
@@ -171,6 +172,29 @@ def _qsettings_test_root():
 
 
 _qsettings_test_root()
+
+
+def _pytest_log_root():
+    global _TEST_LOG_ROOT
+
+    if _TEST_LOG_ROOT is not None:
+        return _TEST_LOG_ROOT
+
+    configured = os.environ.get("VCP_HUNTER_TEST_LOG_DIR")
+    if configured:
+        root = Path(configured).resolve()
+        root.mkdir(parents=True, exist_ok=True)
+    else:
+        root = Path(tempfile.mkdtemp(prefix="vcp_hunter_logs_")).resolve()
+        os.environ["VCP_HUNTER_TEST_LOG_DIR"] = str(root)
+        atexit.register(shutil.rmtree, root, ignore_errors=True)
+
+    os.environ["VCP_HUNTER_LOG_DIR"] = str(root)
+    _TEST_LOG_ROOT = root
+    return root
+
+
+_pytest_log_root()
 
 
 def _configure_qt_test_environment():

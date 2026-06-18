@@ -130,6 +130,13 @@ def _clean_old_logs(log_dir: str, max_age_days: int = 7):
         _safe_stderr_write(f"[logger] clean old logs failed: {e}\n")
 
 
+def _resolve_log_dir() -> str:
+    configured = os.environ.get("VCP_HUNTER_LOG_DIR", "").strip()
+    if configured:
+        return os.path.abspath(os.path.expanduser(configured))
+    return os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "logs")
+
+
 def _build_shared_handlers() -> list[logging.Handler]:
     global _shared_handlers
     if _shared_handlers is not None:
@@ -153,7 +160,7 @@ def _build_shared_handlers() -> list[logging.Handler]:
     eb_handler.setFormatter(console_fmt)
     handlers.append(eb_handler)
 
-    log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "logs")
+    log_dir = _resolve_log_dir()
     try:
         os.makedirs(log_dir, exist_ok=True)
         _clean_old_logs(log_dir, max_age_days=7)

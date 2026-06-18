@@ -946,6 +946,42 @@ def test_workspace_scheduled_f5_can_skip_cache_reload_driven_tabs():
     assert calls == ["watchlist"]
 
 
+def test_workspace_scheduled_f5_skips_post_f5_data_refresh_tabs():
+    app = QApplication.instance() or QApplication([])
+    calls = []
+
+    class PostF5Tab:
+        def refresh_table_from_latest_snapshot(self):
+            calls.append("post_f5_snapshot")
+
+        def refresh_data_after_f5(self):
+            calls.append("post_f5_data")
+            return True
+
+    tabs = {
+        "watchlist": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("watchlist")),
+        "ai_industry_chain": PostF5Tab(),
+    }
+    workspace = _make_workspace(tabs=tabs)
+    workspace.iter_refreshable_tabs = lambda: ClassicWorkspace.iter_refreshable_tabs(workspace)
+
+    assert (
+        ClassicWorkspace.refresh_all_tabs_after_f5_scheduled(
+            workspace,
+            interval_ms=0,
+            skip_cache_reload_tabs=True,
+        )
+        is True
+    )
+
+    for _ in range(10):
+        app.processEvents()
+        if getattr(workspace, "_f5_refresh_scheduler", None) is None:
+            break
+
+    assert calls == ["watchlist"]
+
+
 def test_workspace_refreshes_ai_chain_dependent_tabs_after_update():
     calls = []
     tabs = {
