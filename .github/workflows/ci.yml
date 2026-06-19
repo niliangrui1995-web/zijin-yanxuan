@@ -29,7 +29,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-dev.txt
       - name: Project audit command contract
-        run: python scripts/project_audit.py --quick --skip-webengine-preflight
+        run: python scripts/project_audit.py --quick --skip-webengine-preflight --skip-ruff
 
   test:
     runs-on: ubuntu-latest
@@ -54,12 +54,17 @@ jobs:
             scripts/check_utf8.py \
             tests/test_architecture_boundaries.py \
             tests/test_app_config.py \
+            tests/test_asian_market_tab.py \
+            tests/test_asian_market_workers.py \
             tests/test_workspace_quote_codes.py \
             tests/test_kline_open_service.py \
             app/services/kline_open_service.py \
             core/app_config.py \
             infra/settings \
+            ui/services/asian_market_runtime_service.py \
             ui/main_window_qt.py \
+            ui/tabs/asian_market_tab.py \
+            ui/tabs/asian_market_workers.py \
             ui/workspaces/classic_workspace.py \
             ui/workspaces/workspace_facade.py \
             ui/workspaces/quote_universe_service.py

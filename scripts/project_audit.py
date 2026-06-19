@@ -140,6 +140,8 @@ def build_audit_commands(args: argparse.Namespace) -> list[AuditCommand]:
             [python, "scripts/http_safety_audit.py", "--output", HTTP_SAFETY_AUDIT_OUTPUT],
         ),
     ]
+    if args.skip_ruff:
+        commands = [command for command in commands if command.label != "ruff"]
 
     if args.extended_ruff:
         commands.append(
@@ -270,6 +272,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--python", type=Path, default=None, help="Python executable to use for child checks.")
     parser.add_argument("--quick", action="store_true", help="Skip full pytest and WebEngine preflight.")
     parser.add_argument("--list", action="store_true", help="Print planned commands without running them.")
+    parser.add_argument("--skip-ruff", action="store_true", help="Skip the Ruff style/lint gate.")
     parser.add_argument("--skip-full-pytest", action="store_true")
     parser.add_argument("--skip-runtime-self-check", action="store_true")
     parser.add_argument("--skip-webengine-preflight", action="store_true")

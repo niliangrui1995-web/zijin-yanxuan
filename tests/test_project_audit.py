@@ -2,6 +2,15 @@ from pathlib import Path
 
 from scripts import project_audit
 
+CI_WORKFLOW = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
+ASIAN_MARKET_RUFF_TARGETS = (
+    "tests/test_asian_market_tab.py",
+    "tests/test_asian_market_workers.py",
+    "ui/services/asian_market_runtime_service.py",
+    "ui/tabs/asian_market_tab.py",
+    "ui/tabs/asian_market_workers.py",
+)
+
 
 def _labels(argv):
     args = project_audit._parse_args(argv)
@@ -33,6 +42,30 @@ def test_project_audit_full_gate_includes_required_checks():
     assert "dependency-audit" not in labels
     assert "type-check" not in labels
     assert "coverage-report" not in labels
+
+
+def test_project_audit_can_skip_ruff_for_ci_audit_smoke():
+    labels = _labels(["--quick", "--skip-ruff"])
+
+    assert "ruff" not in labels
+    assert labels == [
+        "utf8",
+        "git-diff-check",
+        "compileall",
+        "pip-check",
+        "architecture-boundaries",
+        "complexity-hotspots",
+        "http-safety-audit",
+        "runtime-self-check",
+    ]
+
+
+def test_ci_routes_asian_market_style_checks_to_regular_ruff_guardrail():
+    workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "python scripts/project_audit.py --quick --skip-webengine-preflight --skip-ruff" in workflow
+    for target in ASIAN_MARKET_RUFF_TARGETS:
+        assert target in workflow
 
 
 def test_project_audit_quick_gate_skips_full_pytest_and_webengine_preflight():
