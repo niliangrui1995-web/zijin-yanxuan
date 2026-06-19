@@ -131,8 +131,8 @@ class AsianPinnedSortFilterProxyModel(RtSortFilterProxyModel):
         super().__init__(parent)
         self._pinned_codes_getter = pinned_codes_getter
 
-    def _pinned_rank(self, source_index):
-        if not source_index.isValid() or not callable(self._pinned_codes_getter):
+    def _source_row(self, source_index):
+        if not source_index.isValid():
             return None
 
         model = self.sourceModel()
@@ -140,8 +140,29 @@ class AsianPinnedSortFilterProxyModel(RtSortFilterProxyModel):
         row = source_index.row()
         if row < 0 or row >= len(rows):
             return None
+        return rows[row]
 
-        code = str(rows[row].get("代码", "") or "").strip()
+    def _should_group_closed_rows(self) -> bool:
+        model = self.sourceModel()
+        rows = getattr(model, "row_data", []) or []
+        return any(_asian_row_is_trading(row) for row in rows) and any(_asian_row_is_closed(row) for row in rows)
+
+    def _closed_rank(self, source_index) -> int:
+        if not self._should_group_closed_rows():
+            return 0
+
+        row = self._source_row(source_index)
+        return 1 if isinstance(row, dict) and _asian_row_is_closed(row) else 0
+
+    def _pinned_rank(self, source_index):
+        if not callable(self._pinned_codes_getter):
+            return None
+
+        row = self._source_row(source_index)
+        if not isinstance(row, dict):
+            return None
+
+        code = str(row.get("代码", "") or "").strip()
         pinned_order = {
             pinned_code: index for index, pinned_code in enumerate(_normalize_asian_pinned_codes(self._pinned_codes_getter()))
         }
@@ -158,6 +179,11 @@ class AsianPinnedSortFilterProxyModel(RtSortFilterProxyModel):
                 return not descending
             if left_rank != right_rank:
                 return left_rank > right_rank if descending else left_rank < right_rank
+        left_closed_rank = self._closed_rank(left)
+        right_closed_rank = self._closed_rank(right)
+        if left_closed_rank != right_closed_rank:
+            descending = self.sortOrder() == Qt.SortOrder.DescendingOrder
+            return left_closed_rank > right_closed_rank if descending else left_closed_rank < right_closed_rank
         return super().lessThan(left, right)
 
 

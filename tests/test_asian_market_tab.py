@@ -414,6 +414,32 @@ def test_asian_market_keeps_default_order_when_all_rows_closed(monkeypatch):
         tab.deleteLater()
 
 
+def test_asian_market_keeps_closed_rows_below_when_pct_column_sorted(monkeypatch):
+    tab, _settings = _build_asian_tab_for_view_tests(monkeypatch)
+    try:
+        tab.row_data = [
+            {"代码": "5801.T", "名称": "Furukawa", "涨幅%": 15.1, "状态": "🔴 休市"},
+            {"代码": "009150.KS", "名称": "Samsung E-M", "涨幅%": 8.18, "状态": "🟢 交易中"},
+            {"代码": "0522.HK", "名称": "ASMPT", "涨幅%": 3.73, "状态": "🟡 午间休市"},
+            {"代码": "000660.KS", "名称": "SK Hynix", "涨幅%": 6.11, "状态": "🟢 交易中"},
+            {"代码": "2449.TW", "名称": "KYEC", "涨幅%": 9.98, "状态": "🔴 休市"},
+        ]
+        tab.update_table_ui()
+
+        code_col = tab.model.headers.index("代码")
+        pct_col = tab.model.headers.index("涨幅%")
+        tab.asian_table.sortByColumn(pct_col, Qt.SortOrder.DescendingOrder)
+        QApplication.processEvents()
+
+        visible_codes = [
+            tab.model.row_data[tab.proxy_model.mapToSource(tab.proxy_model.index(row, code_col)).row()]["代码"]
+            for row in range(tab.proxy_model.rowCount())
+        ]
+        assert visible_codes == ["009150.KS", "000660.KS", "0522.HK", "5801.T", "2449.TW"]
+    finally:
+        tab.deleteLater()
+
+
 def test_asian_market_pin_and_unpin_persist_and_refresh_table(monkeypatch):
     tab, settings = _build_asian_tab_for_view_tests(monkeypatch)
     try:
