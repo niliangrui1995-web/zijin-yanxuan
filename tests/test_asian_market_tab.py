@@ -108,6 +108,14 @@ def _install_immediate_local_cache_runner(monkeypatch):
     monkeypatch.setattr(asian_module, "task_manager", FakeTaskRunner())
 
 
+def _freeze_cn_now(monkeypatch, value: dt.datetime):
+    monkeypatch.setattr(
+        asian_module.MarketCalendar,
+        "now",
+        classmethod(lambda cls, market="CN": value),
+    )
+
+
 def _build_asian_tab_for_view_tests(monkeypatch, settings=None):
     settings = settings or _SettingsStub()
     monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
@@ -425,7 +433,7 @@ def test_asian_market_pin_stays_first_when_table_is_sorted(monkeypatch, sort_ord
         QApplication.processEvents()
 
         first_source = tab.proxy_model.mapToSource(tab.proxy_model.index(0, code_col))
-        assert tab.model.row_data[first_source.row()]["代码"] == "2330.TW"
+        assert tab.model.row_data[first_source.row()][tab.header_labels[0]] == "2330.TW"
     finally:
         tab.deleteLater()
 
@@ -448,23 +456,9 @@ def test_asian_market_rt_update_does_not_start_flash_repaint_timer(monkeypatch):
 
     tab = asian_module.AsianMarketTab()
     try:
-        tab.row_data = [
-            {
-                "代码": "2330.TW",
-                "名称": "TSMC",
-                "现价": "--",
-                "涨幅%": 0.0,
-                "PE": "--",
-                "市场": "台湾",
-                "状态": "",
-                "赛道": "半导体",
-                "角色定位": "龙头",
-                "货币": "TWD",
-                "5日涨跌%": 0.0,
-                "10日涨跌%": 0.0,
-                "20日涨跌%": 0.0,
-            }
-        ]
+        code_key = tab.header_labels[0]
+        price_key = tab.header_labels[2]
+        tab.row_data = [{code_key: "2330.TW", "PE": "--"}]
         tab.model.update_data(tab.row_data)
         tab.asian_table._flash_repaint_timer.stop()
 
@@ -482,11 +476,62 @@ def test_asian_market_rt_update_does_not_start_flash_repaint_timer(monkeypatch):
             }
         )
 
-        assert tab.model.row_data[0]["现价"] == "123.45"
+        assert tab.model.row_data[0][price_key] == "123.45"
         assert tab.asian_table._flash_repaint_timer.isActive() is False
     finally:
         tab.deleteLater()
 
+
+def test_asian_market_rt_update_hidden_tab_defers_table_signal(monkeypatch):
+    monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "_load_local_cache",
+        lambda self: setattr(self, "row_data", []),
+    )
+    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "_save_rt_cache",
+        lambda self: (_ for _ in ()).throw(AssertionError("tab should not persist runtime cache")),
+    )
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+
+    tab = asian_module.AsianMarketTab()
+    try:
+        code_key = tab.header_labels[0]
+        price_key = tab.header_labels[2]
+        tab.row_data = [{code_key: "2330.TW", "PE": "--"}]
+        tab.model.update_data(tab.row_data)
+        changed_ranges = []
+        tab.model.dataChanged.connect(
+            lambda top_left, bottom_right, roles: changed_ranges.append((top_left, bottom_right, roles))
+        )
+
+        tab._on_rt_update(
+            {
+                "2330.TW": {
+                    "close": 123.45,
+                    "pct": 1.2,
+                    "pe": 22.5,
+                    "pct_5": 2.0,
+                    "pct_10": 3.0,
+                    "pct_20": 4.0,
+                    "currency": "TWD",
+                }
+            }
+        )
+
+        assert tab.model.row_data[0][price_key] == "123.45"
+        assert tab._pending_hidden_rt_update is True
+        assert changed_ranges == []
+    finally:
+        tab.deleteLater()
 
 def test_asian_market_status_column_uses_plain_style(monkeypatch):
     monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
@@ -717,7 +762,94 @@ def test_asian_market_save_rt_cache_creates_missing_parent_dir(monkeypatch, tmp_
     assert payload["2330.TW"]["source"] == "unit-test"
 
 
+def test_asian_market_load_local_cache_zeroes_stale_daily_pct_after_7_cn(monkeypatch, tmp_path):
+    _freeze_cn_now(monkeypatch, dt.datetime(2026, 6, 19, 7, 1))
+    history_payload = {
+        "stocks": [
+            {
+                "name": "TSMC",
+                "ticker": "2330.TW",
+                "market": "台湾",
+                "track": "先进制程",
+                "currency": "TWD",
+                "klines": [
+                    {"date": "2026-06-17", "open": 98.0, "high": 101.0, "low": 97.0, "close": 100.0, "volume": 1000.0},
+                    {"date": "2026-06-18", "open": 101.0, "high": 112.0, "low": 100.0, "close": 110.0, "volume": 2000.0},
+                ],
+            }
+        ]
+    }
+    rt_payload = {
+        "2330.TW": {
+            "date": "2026-06-18",
+            "close": 110.0,
+            "previous_close": 100.0,
+            "pct": 10.0,
+            "currency": "TWD",
+            "source": "twse_mis",
+            "quote_quality": "last",
+        }
+    }
+    cache_file = tmp_path / "asian_klines_latest.json"
+    rt_cache_file = tmp_path / "asian_rt_latest.json"
+    cache_file.write_text(json.dumps(history_payload, ensure_ascii=False), encoding="utf-8")
+    rt_cache_file.write_text(json.dumps(rt_payload, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(asian_module, "filter_asian_tickers", lambda: {"TSMC": "2330.TW"})
+
+    payload = asian_module.build_asian_market_local_cache_payload(
+        json_cache=str(cache_file),
+        rt_json_cache=str(rt_cache_file),
+        existing_rt_cache={},
+    )
+
+    row = next(item for item in payload["rows"] if item["代码"] == "2330.TW")
+    assert row["涨幅%"] == 0.0
+    assert payload["rt_updates"]["2330.TW"]["pct"] == pytest.approx(10.0)
+
+
+def test_asian_market_daily_pct_display_keeps_current_quote_after_7_cn():
+    display_pct = asian_module._daily_pct_for_display(
+        {"date": "2026-06-19", "pct": 2.345},
+        now_cn=dt.datetime(2026, 6, 19, 7, 1),
+    )
+
+    assert display_pct == 2.35
+
+
+def test_asian_market_minute_refresh_zeroes_existing_stale_daily_pct(monkeypatch):
+    _freeze_cn_now(monkeypatch, dt.datetime(2026, 6, 19, 7, 0))
+    tab, _settings = _build_asian_tab_for_view_tests(monkeypatch)
+    try:
+        tab.row_data = [
+            {
+                "代码": "2330.TW",
+                "名称": "TSMC",
+                "现价": "110.00",
+                "涨幅%": 10.0,
+                "PE": "--",
+                "市场": "台湾",
+                "状态": "",
+                "赛道": "先进制程",
+                "角色定位": "龙头",
+                "货币": "TWD",
+                "5日涨跌%": 1.0,
+                "10日涨跌%": 2.0,
+                "20日涨跌%": 3.0,
+                asian_module._ASIAN_QUOTE_DATE_KEY: "2026-06-18",
+                asian_module._ASIAN_DAILY_PCT_KEY: 10.0,
+            }
+        ]
+        tab.model.update_data(tab.row_data)
+
+        tab._refresh_daily_pct_display()
+
+        assert tab.model.row_data[0]["涨幅%"] == 0.0
+    finally:
+        tab.deleteLater()
+
+
 def test_asian_market_load_local_cache_normalizes_stale_yfinance_pct(monkeypatch, tmp_path):
+    _freeze_cn_now(monkeypatch, dt.datetime(2026, 4, 21, 15, 0))
     history_payload = {
         "stocks": [
             {
@@ -790,6 +922,7 @@ def test_asian_market_load_local_cache_normalizes_stale_yfinance_pct(monkeypatch
 
 
 def test_asian_market_load_local_cache_normalizes_stale_naver_pct(monkeypatch, tmp_path):
+    _freeze_cn_now(monkeypatch, dt.datetime(2026, 6, 5, 15, 0))
     history_payload = {
         "stocks": [
             {
@@ -862,6 +995,7 @@ def test_asian_market_load_local_cache_normalizes_stale_naver_pct(monkeypatch, t
 
 
 def test_asian_market_load_local_cache_prefers_hk_daily_close_over_delayed_quote(monkeypatch, tmp_path):
+    _freeze_cn_now(monkeypatch, dt.datetime(2026, 6, 5, 15, 0))
     history_payload = {
         "stocks": [
             {
@@ -936,6 +1070,7 @@ def test_asian_market_load_local_cache_prefers_hk_daily_close_over_delayed_quote
 
 
 def test_asian_market_load_local_cache_keeps_history_when_rt_cache_is_zero(monkeypatch, tmp_path):
+    _freeze_cn_now(monkeypatch, dt.datetime(2026, 5, 1, 15, 0))
     history_payload = {
         "stocks": [
             {
@@ -1010,6 +1145,8 @@ def test_asian_market_load_local_cache_keeps_history_when_rt_cache_is_zero(monke
 
 
 def test_asian_market_load_local_cache_recomputes_short_pct_for_direct_quote_sources(monkeypatch, tmp_path):
+    _freeze_cn_now(monkeypatch, dt.datetime(2026, 5, 22, 15, 0))
+
     def stock_payload(name, ticker, market, currency, close_base):
         start_date = dt.date(2026, 5, 1)
         klines = []

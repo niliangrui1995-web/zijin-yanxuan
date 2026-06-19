@@ -216,7 +216,6 @@ class AsianMarketRuntimeService(QObject):
             return
         self._last_success_at = dt.datetime.now()
         self._last_error = ""
-        self._save_rt_cache()
         self.sig_rt_update.emit(dict(updates or {}))
         self._set_runtime_state(self._runtime_state or "running", f"updates={len(updates or {})}")
 

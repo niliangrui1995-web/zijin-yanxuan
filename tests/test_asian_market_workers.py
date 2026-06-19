@@ -400,6 +400,42 @@ def test_timeout_market_backoff_survives_next_short_retry_window(monkeypatch):
     assert worker._is_market_backoff_active("5201.T", now_ts=now_ts + 10 * 60)
 
 
+def test_timeout_cycle_backoff_stops_next_auto_poll(monkeypatch):
+    now_ts = 1_000.0
+    monkeypatch.setattr(workers.time, "time", lambda: now_ts)
+    monkeypatch.setattr(workers, "is_asian_quote_refresh_time", lambda codes: True)
+    monkeypatch.setattr(
+        workers,
+        "get_yf_rate_limit_status",
+        lambda: {
+            "active": False,
+            "remaining_sec": 0.0,
+            "reason": "",
+            "until_ts": 0.0,
+        },
+    )
+    worker = workers.AsianMarketWorker(["0522.HK", "5201.T"])
+    sleep_calls = []
+
+    worker._mark_timeout_backoff(now_ts=now_ts)
+    monkeypatch.setattr(
+        worker,
+        "_fetch_updates",
+        lambda: (_ for _ in ()).throw(AssertionError("cycle backoff should skip fetch")),
+    )
+
+    def _sleep(seconds):
+        sleep_calls.append(seconds)
+        worker._is_running = False
+        return False
+
+    monkeypatch.setattr(worker, "_sleep_with_break", _sleep)
+
+    worker.run()
+
+    assert sleep_calls == [30.0]
+
+
 def test_fetch_single_code_skips_optional_network_when_deadline_is_close(monkeypatch):
     calls = []
     monkeypatch.setattr(

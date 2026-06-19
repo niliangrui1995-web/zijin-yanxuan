@@ -45,6 +45,7 @@ _PE_REFRESH_INTERVAL_SEC = 12 * 60 * 60
 _YF_FETCH_MAX_WORKERS = 2
 _FETCH_UPDATES_TIMEOUT_SEC = 45
 _FETCH_TIMEOUT_MARKET_BACKOFF_SEC = 30 * 60
+_FETCH_TIMEOUT_CYCLE_BACKOFF_SEC = 30 * 60
 _OPTIONAL_NETWORK_MIN_REMAINING_SEC = 25
 
 _EMPTY_NUMERIC_MARKERS = {"", "-", "--", "---", "—", "－", "None", "null"}
@@ -127,6 +128,42 @@ def _normalize_pe_value(value) -> float | None:
 def _pe_result(value, source: str) -> tuple[float | None, str]:
     pe_value = _normalize_pe_value(value)
     return (pe_value, source) if pe_value is not None else (None, "")
+
+
+def _round_pct(value) -> float:
+    return round(_to_float(value) or 0.0, 2)
+
+
+def save_global_asian_rt_cache() -> None:
+    try:
+        cache_friendly = {}
+        for key, value in GLOBAL_ASIAN_RT_CACHE.items():
+            cache_friendly[key] = {
+                "date": value.get("date", ""),
+                "close": value.get("close", 0.0),
+                "open": value.get("open", 0.0),
+                "high": value.get("high", 0.0),
+                "low": value.get("low", 0.0),
+                "volume": value.get("volume", 0.0),
+                "previous_close": value.get("previous_close", 0.0),
+                "pct": _round_pct(value.get("pct", 0.0)),
+                "pe": value.get("pe"),
+                "pe_source": value.get("pe_source", ""),
+                "pe_updated_at": value.get("pe_updated_at", 0.0),
+                "pct_5": _round_pct(value.get("pct_5", 0.0)),
+                "pct_10": _round_pct(value.get("pct_10", 0.0)),
+                "pct_20": _round_pct(value.get("pct_20", 0.0)),
+                "currency": value.get("currency", ""),
+                "source": value.get("source", ""),
+                "quote_quality": value.get("quote_quality", ""),
+            }
+        cache_dir = os.path.dirname(RT_JSON_CACHE)
+        if cache_dir:
+            os.makedirs(cache_dir, exist_ok=True)
+        with open(RT_JSON_CACHE, "w", encoding="utf-8") as file_obj:
+            json.dump(cache_friendly, file_obj, ensure_ascii=False)
+    except (PermissionError, OSError, TypeError, ValueError) as exc:
+        log.error(f"[AsianTab] persist RT cache failed: {exc}")
 
 
 def _strip_html_text(value) -> str:
@@ -905,7 +942,9 @@ class AsianMarketWorker(QThread):
         self._cycle_done.set()
         self._last_status = ""
         self._market_backoff_until: dict[str, float] = {}
+        self._timeout_backoff_until = 0.0
         self._fetch_deadline_monotonic: float | None = None
+        self._last_fetch_timed_out = False
 
     def stop(self):
         self._is_running = False
@@ -975,6 +1014,24 @@ class AsianMarketWorker(QThread):
             return
         now = time.time() if now_ts is None else float(now_ts)
         self._market_backoff_until[normalized_market] = now + _FETCH_TIMEOUT_MARKET_BACKOFF_SEC
+
+    def _mark_timeout_backoff(self, *, now_ts: float | None = None) -> None:
+        now = time.time() if now_ts is None else float(now_ts)
+        self._timeout_backoff_until = max(
+            float(self._timeout_backoff_until or 0.0),
+            now + _FETCH_TIMEOUT_CYCLE_BACKOFF_SEC,
+        )
+
+    def _timeout_backoff_remaining(self, *, now_ts: float | None = None) -> float:
+        now = time.time() if now_ts is None else float(now_ts)
+        remaining = float(self._timeout_backoff_until or 0.0) - now
+        if remaining <= 0:
+            self._timeout_backoff_until = 0.0
+            return 0.0
+        return remaining
+
+    def _clear_timeout_backoff(self) -> None:
+        self._timeout_backoff_until = 0.0
 
     def _is_market_backoff_active(self, code: str, *, now_ts: float | None = None) -> bool:
         market = _asian_market_suffix(code)
@@ -1206,6 +1263,7 @@ class AsianMarketWorker(QThread):
         deadline = time.monotonic() + _FETCH_UPDATES_TIMEOUT_SEC
         previous_deadline = getattr(self, "_fetch_deadline_monotonic", None)
         self._fetch_deadline_monotonic = deadline
+        self._last_fetch_timed_out = False
         timed_out = False
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
         futures = {executor.submit(self._fetch_single_code, code, yf_session, info_session): code for code in codes}
@@ -1245,11 +1303,13 @@ class AsianMarketWorker(QThread):
                     raise
         except concurrent.futures.TimeoutError:
             timed_out = True
+            self._last_fetch_timed_out = True
             unfinished_markets = sorted(
                 {_asian_market_suffix(code) for future, code in futures.items() if not future.done()}
             )
             for market in unfinished_markets:
                 self._mark_market_backoff(market)
+            self._mark_timeout_backoff()
             if unfinished_markets:
                 log.warning("[AsianTab] Timeout degraded markets: %s", ",".join(unfinished_markets))
             log.warning(
@@ -1291,12 +1351,26 @@ class AsianMarketWorker(QThread):
             else:
                 self._last_status = ""
 
+            if not manual_refresh:
+                timeout_backoff_remaining = self._timeout_backoff_remaining()
+                if timeout_backoff_remaining > 0:
+                    self._emit_status_once(
+                        "亚洲市场后台刷新已短暂降级，约 "
+                        f"{_format_cooldown_eta(timeout_backoff_remaining)} 后重试"
+                    )
+                    if not self._sleep_with_break(min(30.0, timeout_backoff_remaining)):
+                        return
+                    continue
+
             self._cycle_done.clear()
             try:
                 now = MarketCalendar.now("CN")
                 self.progress.emit(f"[{now.strftime('%H:%M:%S')}] 正在拉取亚洲市场最新报价...")
                 updates = self._fetch_updates()
+                if manual_refresh and updates and not getattr(self, "_last_fetch_timed_out", False):
+                    self._clear_timeout_backoff()
                 if self._is_running and updates:
+                    save_global_asian_rt_cache()
                     self.result_ready.emit(updates)
                     message = (
                         f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 亚洲市场报价更新完成，获取 {len(updates)} 只"

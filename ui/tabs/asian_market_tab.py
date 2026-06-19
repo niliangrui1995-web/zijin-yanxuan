@@ -7,6 +7,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from app.services.asian_market_service import filter_asian_tickers, find_asian_track
+from app.services.ui_market_calendar_service import MarketCalendar
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
 from app.services.ui_task_service import background_job_runner as task_manager
@@ -14,6 +15,7 @@ from app.services.ui_task_service import task_registry
 from core.logger import get_logger
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.thread_shutdown import request_thread_shutdown
+from ui.models.table_model_helpers import _emit_model_row_ranges
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
 from ui.services.asian_market_runtime_service import AsianMarketRuntimeService
 from ui.tabs.asian_market_meta import (
@@ -67,6 +69,9 @@ from ui.tabs.base_stock_tab import BaseStockTab
 log = get_logger(__name__)
 _ASIAN_MARKET_LOCAL_CACHE_TASK = task_registry.workspace("asian_market_local_cache")
 ASIAN_PINNED_CODES_SETTINGS_KEY = "pinned_codes_v1"
+ASIAN_DAILY_PCT_RESET_HOUR_CN = 7
+_ASIAN_QUOTE_DATE_KEY = "_asian_quote_date"
+_ASIAN_DAILY_PCT_KEY = "_asian_daily_pct"
 
 
 def _safe_float(value) -> float:
@@ -78,6 +83,45 @@ def _safe_float(value) -> float:
 
 def _round_pct(value) -> float:
     return round(_safe_float(value), 2)
+
+
+def _parse_asian_quote_date(value) -> datetime.date | None:
+    if isinstance(value, datetime.datetime):
+        return value.date()
+    if isinstance(value, datetime.date):
+        return value
+
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
+def _should_zero_stale_daily_pct(quote_date, *, now_cn: datetime.datetime | None = None) -> bool:
+    quote_day = _parse_asian_quote_date(quote_date)
+    if quote_day is None:
+        return False
+
+    now_cn = now_cn or MarketCalendar.now("CN")
+    if now_cn.hour < ASIAN_DAILY_PCT_RESET_HOUR_CN:
+        return False
+    return quote_day < now_cn.date()
+
+
+def _daily_pct_for_display(info: dict | None, *, fallback=0.0, now_cn: datetime.datetime | None = None) -> float:
+    payload = info or {}
+    if _should_zero_stale_daily_pct(payload.get("date"), now_cn=now_cn):
+        return 0.0
+    return _round_pct(payload.get("pct", fallback))
+
+
+def _remember_daily_pct_source(row: dict, info: dict | None) -> None:
+    payload = info or {}
+    row[_ASIAN_QUOTE_DATE_KEY] = payload.get("date")
+    row[_ASIAN_DAILY_PCT_KEY] = _round_pct(payload.get("pct", row.get("涨幅%", 0.0)))
 
 
 def _normalize_asian_pinned_codes(value) -> list[str]:
@@ -295,6 +339,7 @@ def build_asian_market_local_cache_payload(
                     "quote_quality": "",
                     "df_today": None,
                 }
+                display_pct_val = _daily_pct_for_display(history_quote, fallback=pct_val)
                 existing_rt = existing_rt_cache.get(code)
                 if not existing_rt or (_safe_float(existing_rt.get("close")) <= 0 and close_val > 0):
                     rt_updates[code] = history_quote
@@ -308,7 +353,7 @@ def build_asian_market_local_cache_payload(
                         "代码": code,
                         "名称": display_name,
                         "现价": _format_asian_close(float(close_val) if close_val else 0.0),
-                        "涨幅%": pct_val,
+                        "涨幅%": display_pct_val,
                         "PE": "--",
                         "市场": format_market_display(market_code, code),
                         "状态": get_market_status(code.split(".")[-1] if "." in code else ""),
@@ -318,6 +363,8 @@ def build_asian_market_local_cache_payload(
                         "5日涨跌%": pct_5,
                         "10日涨跌%": pct_10,
                         "20日涨跌%": pct_20,
+                        _ASIAN_QUOTE_DATE_KEY: history_quote["date"],
+                        _ASIAN_DAILY_PCT_KEY: _round_pct(pct_val),
                     }
                 )
 
@@ -355,6 +402,8 @@ def build_asian_market_local_cache_payload(
                             "5日涨跌%": 0.0,
                             "10日涨跌%": 0.0,
                             "20日涨跌%": 0.0,
+                            _ASIAN_QUOTE_DATE_KEY: None,
+                            _ASIAN_DAILY_PCT_KEY: 0.0,
                         }
                     )
 
@@ -389,11 +438,12 @@ def build_asian_market_local_cache_payload(
                 if close_number <= 0 and history_points_by_code.get(code):
                     continue
                 row_dict["现价"] = _format_asian_close(close_number)
-                row_dict["涨幅%"] = _round_pct(info.get("pct", 0.0))
+                row_dict["涨幅%"] = _daily_pct_for_display(info)
                 row_dict["PE"] = info.get("pe") if info.get("pe") is not None else "--"
                 row_dict["5日涨跌%"] = _round_pct(info.get("pct_5", 0.0))
                 row_dict["10日涨跌%"] = _round_pct(info.get("pct_10", 0.0))
                 row_dict["20日涨跌%"] = _round_pct(info.get("pct_20", 0.0))
+                _remember_daily_pct_source(row_dict, info)
                 if info.get("currency"):
                     row_dict["货币"] = info["currency"]
 
@@ -434,6 +484,7 @@ class AsianMarketTab(BaseStockTab):
         self._last_health_log_at = 0.0
         self._last_health_signature = None
         self._runtime_started = False
+        self._pending_hidden_rt_update = False
         self.row_data = []
         self._pinned_asian_codes = self._load_pinned_asian_codes()
         self.cache_thread = None
@@ -777,6 +828,9 @@ class AsianMarketTab(BaseStockTab):
         super().showEvent(event)
         if self._should_start_runtime_on_show():
             self._ensure_runtime_started()
+        if getattr(self, "_pending_hidden_rt_update", False):
+            self._pending_hidden_rt_update = False
+            self.update_table_ui()
         self._schedule_fit_columns()
 
     def resizeEvent(self, event):
@@ -884,8 +938,48 @@ class AsianMarketTab(BaseStockTab):
     def _on_minute_tick(self):
         return asian_on_minute_tick(self)
 
+    def _refresh_daily_pct_display(self):
+        rows = list(getattr(self.model, "row_data", []) or [])
+        if not rows:
+            return
+
+        try:
+            pct_col = self.model.headers.index("涨幅%")
+        except ValueError:
+            return
+
+        now_cn = MarketCalendar.now("CN")
+        changed_rows = []
+        for row_idx, row_dict in enumerate(rows):
+            if not isinstance(row_dict, dict):
+                continue
+
+            code = str(row_dict.get("代码", "") or "").strip()
+            cached_info = GLOBAL_ASIAN_RT_CACHE.get(code, {}) if code else {}
+            info = {
+                "date": row_dict.get(_ASIAN_QUOTE_DATE_KEY),
+                "pct": row_dict.get(_ASIAN_DAILY_PCT_KEY, row_dict.get("涨幅%", 0.0)),
+            }
+            if cached_info:
+                info["date"] = cached_info.get("date", info["date"])
+                info["pct"] = cached_info.get("pct", info["pct"])
+                _remember_daily_pct_source(row_dict, info)
+
+            display_pct = _daily_pct_for_display(info, now_cn=now_cn)
+            if row_dict.get("涨幅%") != display_pct:
+                row_dict["涨幅%"] = display_pct
+                changed_rows.append(row_idx)
+
+        for row_idx in changed_rows:
+            self.model.dataChanged.emit(
+                self.model.index(row_idx, pct_col),
+                self.model.index(row_idx, pct_col),
+            )
+
     def _refresh_market_status_rows(self):
-        return asian_refresh_market_status_rows(self, get_market_status)
+        result = asian_refresh_market_status_rows(self, get_market_status)
+        self._refresh_daily_pct_display()
+        return result
 
     def _on_auto_cache_finished(self, success, msg):
         return asian_on_auto_cache_finished(self, success, msg)
@@ -1172,6 +1266,7 @@ class AsianMarketTab(BaseStockTab):
             Qt.ItemDataRole.UserRole + 5,
         ]
 
+        changed_rows = []
         for row_idx, row_dict in enumerate(self.model.row_data):
             code = row_dict.get("代码")
             if code not in updates:
@@ -1187,22 +1282,35 @@ class AsianMarketTab(BaseStockTab):
                 if 0 < close_number < 10
                 else (f"{close_number:.2f}" if close_number > 0 else "--")
             )
-            row_dict["涨幅%"] = _round_pct(info.get("pct", 0.0))
+            row_dict["涨幅%"] = _daily_pct_for_display(info)
             row_dict["PE"] = info.get("pe") if info.get("pe") is not None else "--"
             row_dict["5日涨跌%"] = _round_pct(info.get("pct_5", 0.0))
             row_dict["10日涨跌%"] = _round_pct(info.get("pct_10", 0.0))
             row_dict["20日涨跌%"] = _round_pct(info.get("pct_20", 0.0))
             row_dict["货币"] = info.get("currency", row_dict.get("货币", "---"))
+            _remember_daily_pct_source(row_dict, info)
 
-            self.model.dataChanged.emit(
-                self.model.index(row_idx, 0),
-                self.model.index(row_idx, len(self.model._headers) - 1),
-                update_roles,
-            )
+            changed_rows.append(row_idx)
 
         self._last_asian_success_at = datetime.datetime.now()
-        self._save_rt_cache()
         self._last_asian_error = ""
+        if not changed_rows:
+            return
+
+        if not self.isVisible():
+            self._pending_hidden_rt_update = True
+            return
+
+        clear_sort_cache = getattr(self.model, "_clear_sort_value_cache_for_rows", None)
+        if callable(clear_sort_cache):
+            clear_sort_cache(changed_rows)
+        _emit_model_row_ranges(
+            self.model,
+            changed_rows,
+            0,
+            len(self.model._headers) - 1,
+            update_roles,
+        )
         self._set_asian_status(
             "最新数据已同步",
             self._status_metric("覆盖 ", len(updates), "只"),
