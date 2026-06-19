@@ -7,7 +7,6 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from app.services.asian_market_service import filter_asian_tickers, find_asian_track
-from app.services.ui_market_calendar_service import MarketCalendar
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
 from app.services.ui_task_service import background_job_runner as task_manager
@@ -69,9 +68,6 @@ from ui.tabs.base_stock_tab import BaseStockTab
 log = get_logger(__name__)
 _ASIAN_MARKET_LOCAL_CACHE_TASK = task_registry.workspace("asian_market_local_cache")
 ASIAN_PINNED_CODES_SETTINGS_KEY = "pinned_codes_v1"
-ASIAN_DAILY_PCT_RESET_HOUR_CN = 7
-_ASIAN_QUOTE_DATE_KEY = "_asian_quote_date"
-_ASIAN_DAILY_PCT_KEY = "_asian_daily_pct"
 
 
 def _safe_float(value) -> float:
@@ -83,45 +79,6 @@ def _safe_float(value) -> float:
 
 def _round_pct(value) -> float:
     return round(_safe_float(value), 2)
-
-
-def _parse_asian_quote_date(value) -> datetime.date | None:
-    if isinstance(value, datetime.datetime):
-        return value.date()
-    if isinstance(value, datetime.date):
-        return value
-
-    text = str(value or "").strip()
-    if not text:
-        return None
-    try:
-        return datetime.date.fromisoformat(text[:10])
-    except ValueError:
-        return None
-
-
-def _should_zero_stale_daily_pct(quote_date, *, now_cn: datetime.datetime | None = None) -> bool:
-    quote_day = _parse_asian_quote_date(quote_date)
-    if quote_day is None:
-        return False
-
-    now_cn = now_cn or MarketCalendar.now("CN")
-    if now_cn.hour < ASIAN_DAILY_PCT_RESET_HOUR_CN:
-        return False
-    return quote_day < now_cn.date()
-
-
-def _daily_pct_for_display(info: dict | None, *, fallback=0.0, now_cn: datetime.datetime | None = None) -> float:
-    payload = info or {}
-    if _should_zero_stale_daily_pct(payload.get("date"), now_cn=now_cn):
-        return 0.0
-    return _round_pct(payload.get("pct", fallback))
-
-
-def _remember_daily_pct_source(row: dict, info: dict | None) -> None:
-    payload = info or {}
-    row[_ASIAN_QUOTE_DATE_KEY] = payload.get("date")
-    row[_ASIAN_DAILY_PCT_KEY] = _round_pct(payload.get("pct", row.get("涨幅%", 0.0)))
 
 
 def _normalize_asian_pinned_codes(value) -> list[str]:
@@ -142,16 +99,29 @@ def _normalize_asian_pinned_codes(value) -> list[str]:
     return codes
 
 
+def _asian_row_is_trading(row: dict) -> bool:
+    return "交易中" in str(row.get("状态", "") or "")
+
+
+def _asian_row_is_closed(row: dict) -> bool:
+    status = str(row.get("状态", "") or "")
+    return "休市" in status and "午间休市" not in status
+
+
 def _order_asian_rows_by_pinned_codes(rows, pinned_codes) -> list[dict]:
     row_list = [row for row in rows or [] if isinstance(row, dict)]
     pinned_order = {code: idx for idx, code in enumerate(_normalize_asian_pinned_codes(pinned_codes))}
+    apply_closed_bottom = any(_asian_row_is_trading(row) for row in row_list) and any(
+        _asian_row_is_closed(row) for row in row_list
+    )
 
     def _sort_key(indexed_row):
         index, row = indexed_row
         code = str(row.get("代码", "") or "").strip()
         if code in pinned_order:
             return 0, pinned_order[code], index
-        return 1, index, index
+        closed_rank = 1 if apply_closed_bottom and _asian_row_is_closed(row) else 0
+        return 1, closed_rank, index
 
     return [row for _index, row in sorted(enumerate(row_list), key=_sort_key)]
 
@@ -339,7 +309,6 @@ def build_asian_market_local_cache_payload(
                     "quote_quality": "",
                     "df_today": None,
                 }
-                display_pct_val = _daily_pct_for_display(history_quote, fallback=pct_val)
                 existing_rt = existing_rt_cache.get(code)
                 if not existing_rt or (_safe_float(existing_rt.get("close")) <= 0 and close_val > 0):
                     rt_updates[code] = history_quote
@@ -353,7 +322,7 @@ def build_asian_market_local_cache_payload(
                         "代码": code,
                         "名称": display_name,
                         "现价": _format_asian_close(float(close_val) if close_val else 0.0),
-                        "涨幅%": display_pct_val,
+                        "涨幅%": pct_val,
                         "PE": "--",
                         "市场": format_market_display(market_code, code),
                         "状态": get_market_status(code.split(".")[-1] if "." in code else ""),
@@ -363,8 +332,6 @@ def build_asian_market_local_cache_payload(
                         "5日涨跌%": pct_5,
                         "10日涨跌%": pct_10,
                         "20日涨跌%": pct_20,
-                        _ASIAN_QUOTE_DATE_KEY: history_quote["date"],
-                        _ASIAN_DAILY_PCT_KEY: _round_pct(pct_val),
                     }
                 )
 
@@ -402,8 +369,6 @@ def build_asian_market_local_cache_payload(
                             "5日涨跌%": 0.0,
                             "10日涨跌%": 0.0,
                             "20日涨跌%": 0.0,
-                            _ASIAN_QUOTE_DATE_KEY: None,
-                            _ASIAN_DAILY_PCT_KEY: 0.0,
                         }
                     )
 
@@ -438,12 +403,11 @@ def build_asian_market_local_cache_payload(
                 if close_number <= 0 and history_points_by_code.get(code):
                     continue
                 row_dict["现价"] = _format_asian_close(close_number)
-                row_dict["涨幅%"] = _daily_pct_for_display(info)
+                row_dict["涨幅%"] = _round_pct(info.get("pct", 0.0))
                 row_dict["PE"] = info.get("pe") if info.get("pe") is not None else "--"
                 row_dict["5日涨跌%"] = _round_pct(info.get("pct_5", 0.0))
                 row_dict["10日涨跌%"] = _round_pct(info.get("pct_10", 0.0))
                 row_dict["20日涨跌%"] = _round_pct(info.get("pct_20", 0.0))
-                _remember_daily_pct_source(row_dict, info)
                 if info.get("currency"):
                     row_dict["货币"] = info["currency"]
 
@@ -938,47 +902,21 @@ class AsianMarketTab(BaseStockTab):
     def _on_minute_tick(self):
         return asian_on_minute_tick(self)
 
-    def _refresh_daily_pct_display(self):
-        rows = list(getattr(self.model, "row_data", []) or [])
-        if not rows:
+    def _refresh_asian_row_order(self):
+        current_rows = list(getattr(self.model, "row_data", []) or [])
+        if not current_rows:
             return
 
-        try:
-            pct_col = self.model.headers.index("涨幅%")
-        except ValueError:
-            return
-
-        now_cn = MarketCalendar.now("CN")
-        changed_rows = []
-        for row_idx, row_dict in enumerate(rows):
-            if not isinstance(row_dict, dict):
-                continue
-
-            code = str(row_dict.get("代码", "") or "").strip()
-            cached_info = GLOBAL_ASIAN_RT_CACHE.get(code, {}) if code else {}
-            info = {
-                "date": row_dict.get(_ASIAN_QUOTE_DATE_KEY),
-                "pct": row_dict.get(_ASIAN_DAILY_PCT_KEY, row_dict.get("涨幅%", 0.0)),
-            }
-            if cached_info:
-                info["date"] = cached_info.get("date", info["date"])
-                info["pct"] = cached_info.get("pct", info["pct"])
-                _remember_daily_pct_source(row_dict, info)
-
-            display_pct = _daily_pct_for_display(info, now_cn=now_cn)
-            if row_dict.get("涨幅%") != display_pct:
-                row_dict["涨幅%"] = display_pct
-                changed_rows.append(row_idx)
-
-        for row_idx in changed_rows:
-            self.model.dataChanged.emit(
-                self.model.index(row_idx, pct_col),
-                self.model.index(row_idx, pct_col),
-            )
+        ordered_rows = _order_asian_rows_by_pinned_codes(current_rows, self._pinned_asian_codes)
+        self.row_data = ordered_rows
+        current_codes = [str(row.get("代码", "") or "").strip() for row in current_rows if isinstance(row, dict)]
+        ordered_codes = [str(row.get("代码", "") or "").strip() for row in ordered_rows if isinstance(row, dict)]
+        if current_codes != ordered_codes:
+            self.model.update_data(ordered_rows)
 
     def _refresh_market_status_rows(self):
         result = asian_refresh_market_status_rows(self, get_market_status)
-        self._refresh_daily_pct_display()
+        self._refresh_asian_row_order()
         return result
 
     def _on_auto_cache_finished(self, success, msg):
@@ -1282,13 +1220,12 @@ class AsianMarketTab(BaseStockTab):
                 if 0 < close_number < 10
                 else (f"{close_number:.2f}" if close_number > 0 else "--")
             )
-            row_dict["涨幅%"] = _daily_pct_for_display(info)
+            row_dict["涨幅%"] = _round_pct(info.get("pct", 0.0))
             row_dict["PE"] = info.get("pe") if info.get("pe") is not None else "--"
             row_dict["5日涨跌%"] = _round_pct(info.get("pct_5", 0.0))
             row_dict["10日涨跌%"] = _round_pct(info.get("pct_10", 0.0))
             row_dict["20日涨跌%"] = _round_pct(info.get("pct_20", 0.0))
             row_dict["货币"] = info.get("currency", row_dict.get("货币", "---"))
-            _remember_daily_pct_source(row_dict, info)
 
             changed_rows.append(row_idx)
 
@@ -1318,6 +1255,7 @@ class AsianMarketTab(BaseStockTab):
         )
         if hasattr(self, "table_state"):
             self.table_state.show_table()
+        self._refresh_asian_row_order()
 
         if self._asian_runtime_state == "manual_refresh_once":
             if self._is_quote_refresh_open():
