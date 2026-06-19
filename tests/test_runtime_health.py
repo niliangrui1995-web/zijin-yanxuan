@@ -91,7 +91,11 @@ def _fake_main_window():
     )
 
 
-def test_collect_runtime_health_includes_core_sections(qt_application):
+def test_collect_runtime_health_includes_core_sections(qt_application, monkeypatch):
+    from core.background_job_runner import background_job_runner
+
+    monkeypatch.setattr(background_job_runner, "_resolve_manager", lambda: SimpleNamespace(active_workers={}))
+
     report = collect_runtime_health(_fake_main_window())
 
     assert report["report_type"] == "runtime_health"
