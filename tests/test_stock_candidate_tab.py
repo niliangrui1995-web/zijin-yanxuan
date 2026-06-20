@@ -323,6 +323,30 @@ def test_stock_candidate_auto_refreshes_when_source_tabs_update(monkeypatch):
         tab.close()
 
 
+def test_stock_candidate_earnings_update_primes_context_snapshot(monkeypatch):
+    monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+    primes = []
+
+    class _Workspace(QWidget):
+        def collect_stock_context(self):
+            return {}
+
+        def prime_stock_context_snapshots(self):
+            primes.append("prime")
+            return True
+
+    workspace = _Workspace()
+    tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
+    try:
+        event_bus.sig_earnings_updated.emit()
+
+        assert primes == ["prime"]
+        assert tab._auto_refresh_timer.isActive()
+    finally:
+        tab.close()
+        workspace.deleteLater()
+
+
 def test_stock_candidate_noninteractive_load_ignores_source_update(monkeypatch):
     monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
     tab = StockCandidateTab(data_provider=SimpleNamespace())
@@ -550,6 +574,50 @@ def test_stock_candidate_refresh_exposes_service_lineage(monkeypatch):
         assert lineage["signal_count"] == 2
         assert lineage["source_tabs"] == ["na_daily", "scan"]
         assert lineage["provider_fault_tolerance"]["recent_cache_hit_count"] == 1
+    finally:
+        tab.close()
+        workspace.deleteLater()
+
+
+def test_stock_candidate_refresh_collects_context_without_lhb_compute(monkeypatch):
+    monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+    calls = []
+
+    class _Workspace(QWidget):
+        def collect_stock_context(self, **kwargs):
+            calls.append(dict(kwargs))
+            return {
+                "300750": [
+                    StockSignal(
+                        code="300750",
+                        source_tab="na_daily",
+                        signal_type="catalyst",
+                        summary="anchor",
+                    ),
+                    StockSignal(
+                        code="300750",
+                        source_tab="lhb",
+                        signal_type="lhb",
+                        summary="lhb",
+                    ),
+                ]
+            }
+
+        @staticmethod
+        def tab_specs():
+            return [
+                {"key": "na_daily", "title": "na"},
+                {"key": "lhb", "title": "lhb"},
+            ]
+
+    workspace = _Workspace()
+    tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
+    tab.refresh_table_from_latest_snapshot = lambda *_args, **_kwargs: None
+    try:
+        tab.refresh_candidates()
+
+        assert calls == [{"allow_lhb_cache_compute": False}]
+        assert tab.get_data_lineage()["row_count"] == 1
     finally:
         tab.close()
         workspace.deleteLater()

@@ -211,8 +211,18 @@ class WorkspaceFacade:
     def collect_stock_signals(self) -> list[StockSignal]:
         return self._stock_context_service.iter_stock_signals()
 
-    def collect_stock_context(self) -> dict[str, list[StockSignal]]:
-        return self._stock_context_service.collect_signals_by_code()
+    def collect_stock_context(
+        self,
+        *,
+        include_cache_fallback: bool = True,
+        include_source_cache_fallback: bool | None = None,
+        allow_lhb_cache_compute: bool = True,
+    ) -> dict[str, list[StockSignal]]:
+        return self._stock_context_service.collect_signals_by_code(
+            include_cache_fallback=include_cache_fallback,
+            include_source_cache_fallback=include_source_cache_fallback,
+            allow_lhb_cache_compute=allow_lhb_cache_compute,
+        )
 
     def prime_stock_context_snapshots(self, *, force: bool = False) -> bool:
         return bool(self._stock_context_service.refresh_async_snapshots(force=force))

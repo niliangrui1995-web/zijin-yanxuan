@@ -1048,9 +1048,19 @@ class StockContextService:
 
         return [signal for signal in signals if signal.normalized_code()]
 
-    def collect_signals_by_code(self) -> dict[str, list[StockSignal]]:
+    def collect_signals_by_code(
+        self,
+        *,
+        include_cache_fallback: bool = True,
+        include_source_cache_fallback: bool | None = None,
+        allow_lhb_cache_compute: bool = True,
+    ) -> dict[str, list[StockSignal]]:
         signals_by_code: dict[str, list[StockSignal]] = defaultdict(list)
-        for signal in self.iter_stock_signals():
+        for signal in self.iter_stock_signals(
+            include_cache_fallback=include_cache_fallback,
+            include_source_cache_fallback=include_source_cache_fallback,
+            allow_lhb_cache_compute=allow_lhb_cache_compute,
+        ):
             signals_by_code[signal.normalized_code()].append(signal)
         return dict(signals_by_code)
 

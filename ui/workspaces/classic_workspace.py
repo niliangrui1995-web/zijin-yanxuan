@@ -765,8 +765,18 @@ class ClassicWorkspace(QWidget):
     def collect_stock_signals(self) -> list[StockSignal]:
         return _resolve_workspace_facade(self).collect_stock_signals()
 
-    def collect_stock_context(self) -> dict[str, list[StockSignal]]:
-        return _resolve_workspace_facade(self).collect_stock_context()
+    def collect_stock_context(
+        self,
+        *,
+        include_cache_fallback: bool = True,
+        include_source_cache_fallback: bool | None = None,
+        allow_lhb_cache_compute: bool = True,
+    ) -> dict[str, list[StockSignal]]:
+        return _resolve_workspace_facade(self).collect_stock_context(
+            include_cache_fallback=include_cache_fallback,
+            include_source_cache_fallback=include_source_cache_fallback,
+            allow_lhb_cache_compute=allow_lhb_cache_compute,
+        )
 
     def prime_stock_context_snapshots(self, *, force: bool = False) -> bool:
         return _resolve_workspace_facade(self).prime_stock_context_snapshots(force=force)

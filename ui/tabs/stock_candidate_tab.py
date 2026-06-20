@@ -82,9 +82,16 @@ class StockCandidateTab(BaseStockTab):
     def prime_background_load(self) -> None:
         workspace = self._workspace()
         self._prime_anchor_source_tabs(workspace)
+        self._prime_stock_context_snapshots(workspace)
+
+    @staticmethod
+    def _prime_stock_context_snapshots(workspace) -> None:
         prime_snapshots = getattr(workspace, "prime_stock_context_snapshots", None)
         if callable(prime_snapshots):
-            prime_snapshots()
+            try:
+                prime_snapshots()
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                pass
 
     def _prime_anchor_source_tabs(self, workspace) -> None:
         if workspace is None:
@@ -130,8 +137,9 @@ class StockCandidateTab(BaseStockTab):
             method()
             return
 
-    def _connect_auto_refresh_events(self) -> None:
-        for signal in (
+    @staticmethod
+    def _auto_refresh_signals():
+        return (
             event_bus.sig_cache_reload_completed,
             event_bus.sig_na_daily_updated,
             event_bus.sig_ai_industry_chain_updated,
@@ -142,12 +150,30 @@ class StockCandidateTab(BaseStockTab):
             event_bus.sig_fund_holdings_updated,
             event_bus.sig_stock_context_snapshot_updated,
             event_bus.sig_watchlist_changed,
-        ):
+        )
+
+    def _connect_auto_refresh_events(self) -> None:
+        for signal in self._auto_refresh_signals():
             signal.connect(self._schedule_context_refresh)
+
+    def _cleanup_runtime_state(self):
+        timer = getattr(self, "_auto_refresh_timer", None)
+        if timer is not None:
+            try:
+                timer.stop()
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                pass
+        for signal in self._auto_refresh_signals():
+            try:
+                signal.disconnect(self._schedule_context_refresh)
+            except (TypeError, RuntimeError):
+                pass
+        super()._cleanup_runtime_state()
 
     def _schedule_context_refresh(self, *_args) -> None:
         if getattr(self, "_workspace_noninteractive_loaded", False):
             return
+        self._prime_stock_context_snapshots(self._workspace())
         self._status_primary = "等待综合候选自动刷新"
         self._status_freshness = "数据源已更新"
         self._refresh_status()
@@ -221,7 +247,12 @@ class StockCandidateTab(BaseStockTab):
     def _read_stock_context(self):
         workspace = self._workspace()
         context_reader = getattr(workspace, "collect_stock_context", None)
-        return context_reader() if callable(context_reader) else {}
+        if not callable(context_reader):
+            return {}
+        try:
+            return context_reader(allow_lhb_cache_compute=False)
+        except TypeError:
+            return context_reader()
 
     def _read_provider_status(self) -> dict:
         provider = getattr(self, "data_provider", None)
