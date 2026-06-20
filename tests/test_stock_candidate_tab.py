@@ -586,20 +586,22 @@ def test_stock_candidate_refresh_skips_model_update_when_rows_unchanged(monkeypa
 
     workspace = _Workspace()
     tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
-    tab.refresh_table_from_latest_snapshot = lambda *_args, **_kwargs: None
+    refresh_calls = []
+    tab.refresh_table_from_latest_snapshot = lambda *_args, **_kwargs: refresh_calls.append(True)
     update_calls = []
     original_update_data = tab.model.update_data
 
-    def _spy_update_data(rows):
-        update_calls.append(len(rows))
-        original_update_data(rows)
+    def _spy_update_data(rows, **kwargs):
+        update_calls.append((len(rows), dict(kwargs)))
+        original_update_data(rows, **kwargs)
 
     tab.model.update_data = _spy_update_data
     try:
         tab.refresh_candidates()
         tab.refresh_candidates()
 
-        assert update_calls == [1]
+        assert update_calls == [(1, {"hydrate_latest_quotes": False})]
+        assert refresh_calls == [True]
     finally:
         tab.close()
         workspace.deleteLater()

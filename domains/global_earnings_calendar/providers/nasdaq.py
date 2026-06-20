@@ -36,6 +36,7 @@ class NasdaqEarningsCalendarProvider:
         self.base_url = base_url
         self.timeout = timeout
         self.max_workers = max(1, int(max_workers or 1))
+        self.last_degradation: dict[str, object] | None = None
 
     def fetch(
         self,
@@ -46,12 +47,14 @@ class NasdaqEarningsCalendarProvider:
         **_kwargs,
     ) -> list[EarningsCalendarEvent]:
         today = today or dt.date.today()
+        self.last_degradation = None
         us_symbols = {ticker for ticker, company in universe.items() if company.market == "US"}
         if not us_symbols:
             return []
 
         days = [today + dt.timedelta(days=offset) for offset in range(max(0, int(lookahead_days)) + 1)]
         events: list[EarningsCalendarEvent] = []
+        failed_days: dict[str, str] = {}
         with futures.ThreadPoolExecutor(max_workers=min(self.max_workers, len(days))) as executor:
             future_map = {executor.submit(self._fetch_day, day, universe, us_symbols): day for day in days}
             for future in futures.as_completed(future_map):
@@ -59,8 +62,30 @@ class NasdaqEarningsCalendarProvider:
                 try:
                     events.extend(future.result())
                 except (requests.RequestException, OSError, RuntimeError, TypeError, ValueError) as exc:
+                    failed_days[day.isoformat()] = str(exc)
                     log.debug(f"[global earnings calendar] Nasdaq skip {day}: {exc}")
-        return sorted_events(events)
+        sorted_result = sorted_events(events)
+        if failed_days:
+            requested_days = [day.isoformat() for day in days]
+            failed_day_values = sorted(failed_days)
+            all_days_failed = len(failed_day_values) == len(days)
+            self.last_degradation = {
+                "provider": "Nasdaq",
+                "reason": "day_fetch_failed",
+                "failed_days": failed_day_values,
+                "failed_count": len(failed_day_values),
+                "requested_days": requested_days,
+                "requested_count": len(requested_days),
+                "returned_events": len(sorted_result),
+                "all_days_failed": all_days_failed,
+                "sample_error": failed_days[failed_day_values[0]],
+            }
+            if all_days_failed:
+                log.warning(
+                    "[global earnings calendar] Nasdaq degraded: all %s requested days failed; cached snapshot should be reused",
+                    len(requested_days),
+                )
+        return sorted_result
 
     def _fetch_day(
         self,

@@ -245,6 +245,45 @@ def test_oligarch_earnings_panel_reloads_cached_events_from_service():
         panel.deleteLater()
 
 
+def test_oligarch_earnings_panel_shows_degraded_cache_status():
+    future_report_date = (dt.date.today() + dt.timedelta(days=1)).isoformat()
+
+    class _FakeService:
+        universe = {"AMAT": object()}
+
+        def load_cache_status(self):
+            return {
+                "status": "degraded",
+                "providers": ["Nasdaq"],
+                "failed_days": ["2026-06-19", "2026-06-26"],
+                "stale_cache_reused": True,
+                "reused_event_count": 2,
+            }
+
+    panel = OligarchEarningsCalendarPanel(
+        events=[
+            EarningsCalendarEvent(
+                "Applied Materials",
+                "AMAT",
+                "Semiconductor equipment",
+                future_report_date,
+                source="Nasdaq",
+                market="US",
+            )
+        ],
+        service=_FakeService(),
+    )
+    try:
+        status_text = panel.status_label.text()
+
+        assert "\u964d\u7ea7" in status_text
+        assert "\u65e7\u5feb\u7167" in status_text
+        assert "Nasdaq" in status_text
+        assert "2026-06-19~2026-06-26" in status_text
+    finally:
+        panel.deleteLater()
+
+
 def test_oligarch_earnings_panel_detaches_running_refresh_worker_on_delete(qt_application):
     started = threading.Event()
     release = threading.Event()

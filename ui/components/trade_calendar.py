@@ -430,6 +430,7 @@ class OligarchEarningsCalendarPanel(QFrame):
         self._filter_mode = "30d"
         self._selected_date = ""
         self._refresh_worker = None
+        self._cache_status = self._load_cache_status()
         self.setObjectName("oligarchEarningsPanel")
         self._init_ui()
         self._apply_theme()
@@ -500,6 +501,16 @@ class OligarchEarningsCalendarPanel(QFrame):
         self.status_label.setObjectName("earningsPanelStatus")
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
+
+    def _load_cache_status(self) -> dict[str, object]:
+        loader = getattr(self._service, "load_cache_status", None)
+        if not callable(loader):
+            return {}
+        try:
+            status = loader()
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return {}
+        return dict(status) if hasattr(status, "items") else {}
 
     def _apply_theme(self) -> None:
         if self._closing:
@@ -664,6 +675,7 @@ class OligarchEarningsCalendarPanel(QFrame):
         if self._closing:
             return
         self._events = list(events or [])
+        self._cache_status = self._load_cache_status()
         self._rebuild_cards()
         self.eventsChanged.emit(list(self._events))
 
@@ -805,6 +817,40 @@ class OligarchEarningsCalendarPanel(QFrame):
         return source_text
 
     @staticmethod
+    def _format_cache_status(status: dict[str, object]) -> str:
+        if str(status.get("status", "") or "").strip() != "degraded":
+            return ""
+        raw_providers = status.get("providers")
+        providers = []
+        if isinstance(raw_providers, (list, tuple, set)):
+            providers = [str(provider or "").strip() for provider in raw_providers if str(provider or "").strip()]
+        provider_text = " + ".join(providers) or "\u4e0a\u6e38"
+
+        raw_days = status.get("failed_days")
+        days = []
+        if isinstance(raw_days, (list, tuple, set)):
+            days = sorted({str(day or "").strip()[:10] for day in raw_days if str(day or "").strip()})
+        day_text = ""
+        if len(days) == 1:
+            day_text = f"\uff5c{days[0]}"
+        elif len(days) > 1:
+            day_text = f"\uff5c{days[0]}~{days[-1]}"
+
+        try:
+            reused_count = int(status.get("reused_event_count", 0) or 0)
+        except (TypeError, ValueError):
+            reused_count = 0
+        if reused_count:
+            return (
+                f"\u964d\u7ea7: {provider_text}\u62c9\u53d6\u5931\u8d25\uff0c"
+                f"\u5df2\u4fdd\u7559\u65e7\u5feb\u7167 {reused_count} \u6761{day_text}"
+            )
+        return (
+            f"\u964d\u7ea7: {provider_text}\u62c9\u53d6\u5931\u8d25\uff0c"
+            f"\u5df2\u4fdd\u7559\u53ef\u7528\u65e7\u5feb\u7167{day_text}"
+        )
+
+    @staticmethod
     def _format_group_title(day: str) -> str:
         try:
             date_value = _dt.date.fromisoformat(day[:10])
@@ -936,6 +982,9 @@ class OligarchEarningsCalendarPanel(QFrame):
         source_parts.append(f"\u663e\u793a {len(events)}/{len(self._events)}")
         if events:
             source_parts.append(f"\u7cbe\u786e\u65f6\u95f4 {exact_count}/{len(events)}")
+        cache_status_text = self._format_cache_status(self._cache_status)
+        if cache_status_text:
+            source_parts.append(cache_status_text)
         self.status_label.setText("\uff5c".join(source_parts))
 
     def refresh_from_service(self) -> None:

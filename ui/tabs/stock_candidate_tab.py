@@ -5,6 +5,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from app.services.stock_candidates_service import StockCandidatesDataService
+from app.services.ui_diagnostics_service import ui_stall_span
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
 from ui.components import TableStateWrapper, VCPTableView
@@ -436,13 +437,15 @@ class StockCandidateTab(BaseStockTab):
         return rows
 
     def refresh_candidates(self):
-        result = self._candidate_service.load()
-        self._last_candidate_result = result
-        rows = result.rows
-        if result.signature != self._last_candidate_signature:
-            self.model.update_data(rows)
-            self._last_candidate_signature = result.signature
-        self.refresh_table_from_latest_snapshot(self.model)
+        with ui_stall_span("StockCandidateTab.refresh_candidates", tab="stock_candidates", signal="context_refresh"):
+            result = self._candidate_service.load()
+            self._last_candidate_result = result
+            rows = result.rows
+            rows_changed = result.signature != self._last_candidate_signature
+            if rows_changed:
+                self.model.update_data(rows, hydrate_latest_quotes=False)
+                self._last_candidate_signature = result.signature
+                self.refresh_table_from_latest_snapshot(self.model)
         if rows:
             self.table_state.show_table()
             self._status_primary = "综合候选已刷新"

@@ -230,8 +230,16 @@ class GlobalEarningsCalendarService:
             self._data_store = data_store
         return self._data_store
 
-    def _load_cached_events(self) -> list[EarningsCalendarEvent]:
+    def _load_cache_payload(self) -> Mapping:
         payload = self.data_store.load_json(CACHE_KEY, default={}) or {}
+        return payload if isinstance(payload, Mapping) else {}
+
+    def load_cache_status(self) -> dict[str, object]:
+        state = self._load_cache_payload().get("cache_state")
+        return dict(state) if isinstance(state, Mapping) else {}
+
+    def _load_cached_events(self) -> list[EarningsCalendarEvent]:
+        payload = self._load_cache_payload()
         rows = payload.get("events") if isinstance(payload, Mapping) else None
         events = [event for event in (EarningsCalendarEvent.from_dict(row) for row in rows or []) if event is not None]
         return sorted_events(
@@ -270,15 +278,28 @@ class GlobalEarningsCalendarService:
             log.warning(f"[global earnings calendar] confirmed provider failed: {exc}")
             return []
 
-    def _save_events(self, events: list[EarningsCalendarEvent], source: str) -> None:
-        self.data_store.save_json(
-            CACHE_KEY,
-            {
-                "source": source,
-                "updated_at": dt.datetime.now().isoformat(timespec="seconds"),
-                "events": [event.to_dict() for event in sorted_events(events)],
-            },
-        )
+    def _save_events(
+        self,
+        events: list[EarningsCalendarEvent],
+        source: str,
+        *,
+        cache_state: Mapping[str, object] | None = None,
+    ) -> None:
+        payload = {
+            "source": source,
+            "updated_at": dt.datetime.now().isoformat(timespec="seconds"),
+            "events": [event.to_dict() for event in sorted_events(events)],
+        }
+        if cache_state:
+            payload["cache_state"] = dict(cache_state)
+        self.data_store.save_json(CACHE_KEY, payload)
+
+    def _save_cache_state(self, cache_state: Mapping[str, object]) -> None:
+        payload = dict(self._load_cache_payload())
+        payload["source"] = str(payload.get("source") or "stale_cache")
+        payload["updated_at"] = dt.datetime.now().isoformat(timespec="seconds")
+        payload["cache_state"] = dict(cache_state)
+        self.data_store.save_json(CACHE_KEY, payload)
 
     def sync_unverified_yfinance_cache(self) -> int:
         payload = self.data_store.load_json(CACHE_KEY, default={}) or {}
@@ -380,6 +401,45 @@ class GlobalEarningsCalendarService:
                 filtered.append(event)
         return sorted_events(filtered)
 
+    @staticmethod
+    def _degraded_source_failed_days(degradations: list[dict[str, object]]) -> dict[str, set[str]]:
+        failed_days_by_source: dict[str, set[str]] = {}
+        for degradation in degradations:
+            source = str(degradation.get("provider", "") or "").strip()
+            raw_days = degradation.get("failed_days")
+            if not source or not isinstance(raw_days, (list, tuple, set)):
+                continue
+            days = {str(day or "").strip()[:10] for day in raw_days if str(day or "").strip()}
+            if days:
+                failed_days_by_source.setdefault(source, set()).update(days)
+        return failed_days_by_source
+
+    @staticmethod
+    def _degraded_cache_state(
+        degradations: list[dict[str, object]],
+        *,
+        reused_event_count: int,
+    ) -> dict[str, object]:
+        providers = sorted({str(item.get("provider", "") or "").strip() for item in degradations if item})
+        failed_days = sorted(
+            {
+                str(day or "").strip()[:10]
+                for item in degradations
+                for day in (item.get("failed_days") if isinstance(item.get("failed_days"), (list, tuple, set)) else [])
+                if str(day or "").strip()
+            }
+        )
+        return {
+            "status": "degraded",
+            "reason": "provider_fetch_degraded",
+            "degraded_at": dt.datetime.now().isoformat(timespec="seconds"),
+            "providers": [provider for provider in providers if provider],
+            "failed_days": failed_days,
+            "stale_cache_reused": reused_event_count > 0,
+            "reused_event_count": max(0, int(reused_event_count or 0)),
+            "details": [dict(item) for item in degradations],
+        }
+
     def load_events(
         self,
         *,
@@ -421,6 +481,7 @@ class GlobalEarningsCalendarService:
             lookahead_days=lookahead_days,
         )
         network_events: list[EarningsCalendarEvent] = []
+        provider_degradations: list[dict[str, object]] = []
 
         provider_calls = tuple(self.official_providers) + (
             ("Nasdaq", self.nasdaq_provider),
@@ -433,21 +494,46 @@ class GlobalEarningsCalendarService:
             except (ImportError, requests.RequestException, OSError, RuntimeError, TypeError, ValueError) as exc:
                 log.warning(f"[global earnings calendar] {provider_name} refresh failed: {exc}")
                 continue
+            degradation = getattr(provider, "last_degradation", None)
+            if isinstance(degradation, Mapping):
+                provider_degradations.append(dict(degradation))
             network_events.extend(event for event in provider_events if event is not None)
 
         network_events = self._filter_window(network_events, today=today, lookahead_days=lookahead_days)
+        failed_days_by_source = self._degraded_source_failed_days(provider_degradations)
         if network_events:
             refreshed_event_keys = {
                 (str(event.ticker or "").strip().upper(), str(event.source or "").strip()) for event in network_events
             }
-            cached_fallback_events = [
-                event
-                for event in cached_events
-                if (str(event.ticker or "").strip().upper(), str(event.source or "").strip())
-                not in refreshed_event_keys
-            ]
+            cached_fallback_events = []
+            stale_cache_reused = 0
+            for event in cached_events:
+                source = str(event.source or "").strip()
+                failed_days = failed_days_by_source.get(source, set())
+                if failed_days and event_calendar_date(event)[:10] in failed_days:
+                    cached_fallback_events.append(event)
+                    stale_cache_reused += 1
+                    continue
+                key = (str(event.ticker or "").strip().upper(), source)
+                if key not in refreshed_event_keys:
+                    cached_fallback_events.append(event)
             filtered = merge_events(confirmed_events + cached_fallback_events + network_events)
-            self._save_events(filtered, "provider")
+            cache_state = (
+                self._degraded_cache_state(provider_degradations, reused_event_count=stale_cache_reused)
+                if provider_degradations
+                else None
+            )
+            self._save_events(filtered, "provider", cache_state=cache_state)
             return filtered
 
-        return merge_events(confirmed_events + cached_events)
+        filtered = merge_events(confirmed_events + cached_events)
+        if provider_degradations:
+            cache_state = self._degraded_cache_state(
+                provider_degradations,
+                reused_event_count=len(cached_events),
+            )
+            if filtered:
+                self._save_events(filtered, "stale_cache", cache_state=cache_state)
+            else:
+                self._save_cache_state(cache_state)
+        return filtered

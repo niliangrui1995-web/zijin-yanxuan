@@ -975,6 +975,179 @@ def test_refresh_events_preserves_cached_provider_events_when_network_fails(tmp_
     assert store.saved is None
 
 
+def test_refresh_events_marks_degraded_nasdaq_week_and_reuses_cached_snapshot():
+    class MemoryStore:
+        def __init__(self):
+            self.saved = None
+            self.data = {
+                "global_earnings_calendar": {
+                    "source": "provider",
+                    "events": [
+                        EarningsCalendarEvent(
+                            "Applied Materials",
+                            "AMAT",
+                            "Semiconductor equipment",
+                            "2026-06-26",
+                            source="Nasdaq",
+                            market="US",
+                        ).to_dict()
+                    ],
+                }
+            }
+
+        def load_json(self, key, default=None):
+            return json.loads(json.dumps(self.data.get(key, default), ensure_ascii=False))
+
+        def save_json(self, key, data):
+            self.saved = key
+            self.data[key] = json.loads(json.dumps(data, ensure_ascii=False))
+
+    class DegradedNasdaqProvider:
+        def __init__(self):
+            self.last_degradation = None
+
+        def fetch(self, *_args, today, lookahead_days, **_kwargs):
+            failed_days = [
+                (today + dt.timedelta(days=offset)).isoformat()
+                for offset in range(int(lookahead_days) + 1)
+            ]
+            self.last_degradation = {
+                "provider": "Nasdaq",
+                "reason": "day_fetch_failed",
+                "failed_days": failed_days,
+                "failed_count": len(failed_days),
+                "requested_days": failed_days,
+                "requested_count": len(failed_days),
+                "returned_events": 0,
+                "all_days_failed": True,
+                "sample_error": "read timeout",
+            }
+            return []
+
+    class EmptyProvider:
+        def fetch(self, *_args, **_kwargs):
+            return []
+
+    store = MemoryStore()
+    service = GlobalEarningsCalendarService(
+        data_store=store,
+        universe={"AMAT": OligarchCompany("Applied Materials", "AMAT", "Semiconductor equipment", "normal", "US")},
+        confirmed_provider=ConfirmedEarningsEventsProvider("missing.json"),
+        nasdaq_provider=DegradedNasdaqProvider(),
+        provider=EmptyProvider(),
+        yfinance_provider=EmptyProvider(),
+        official_providers=[],
+    )
+
+    events = service.refresh_events(today=dt.date(2026, 6, 19), lookahead_days=7)
+
+    assert [(event.ticker, event.report_date, event.source) for event in events] == [
+        ("AMAT", "2026-06-26", "Nasdaq")
+    ]
+    assert store.saved == "global_earnings_calendar"
+    payload = store.data["global_earnings_calendar"]
+    assert payload["source"] == "stale_cache"
+    assert payload["cache_state"]["status"] == "degraded"
+    assert payload["cache_state"]["providers"] == ["Nasdaq"]
+    assert payload["cache_state"]["failed_days"] == [
+        "2026-06-19",
+        "2026-06-20",
+        "2026-06-21",
+        "2026-06-22",
+        "2026-06-23",
+        "2026-06-24",
+        "2026-06-25",
+        "2026-06-26",
+    ]
+    assert payload["cache_state"]["stale_cache_reused"] is True
+    assert payload["cache_state"]["reused_event_count"] == 1
+    assert service.load_cache_status()["status"] == "degraded"
+
+
+def test_refresh_events_keeps_failed_day_cache_when_same_nasdaq_ticker_refreshes_later():
+    class MemoryStore:
+        def __init__(self):
+            self.saved = None
+            self.data = {
+                "global_earnings_calendar": {
+                    "source": "provider",
+                    "events": [
+                        EarningsCalendarEvent(
+                            "Applied Materials",
+                            "AMAT",
+                            "Semiconductor equipment",
+                            "2026-06-20",
+                            source="Nasdaq",
+                            market="US",
+                        ).to_dict()
+                    ],
+                }
+            }
+
+        def load_json(self, key, default=None):
+            return json.loads(json.dumps(self.data.get(key, default), ensure_ascii=False))
+
+        def save_json(self, key, data):
+            self.saved = key
+            self.data[key] = json.loads(json.dumps(data, ensure_ascii=False))
+
+    class PartiallyDegradedNasdaqProvider:
+        def __init__(self):
+            self.last_degradation = None
+
+        def fetch(self, universe, **_kwargs):
+            self.last_degradation = {
+                "provider": "Nasdaq",
+                "reason": "day_fetch_failed",
+                "failed_days": ["2026-06-20"],
+                "failed_count": 1,
+                "requested_days": ["2026-06-20", "2026-06-23"],
+                "requested_count": 2,
+                "returned_events": 1,
+                "all_days_failed": False,
+                "sample_error": "read timeout",
+            }
+            company = universe["AMAT"]
+            return [
+                EarningsCalendarEvent(
+                    company.company,
+                    company.ticker,
+                    company.sector,
+                    "2026-06-23",
+                    source="Nasdaq",
+                    market=company.market,
+                )
+            ]
+
+    class EmptyProvider:
+        def fetch(self, *_args, **_kwargs):
+            return []
+
+    store = MemoryStore()
+    service = GlobalEarningsCalendarService(
+        data_store=store,
+        universe={"AMAT": OligarchCompany("Applied Materials", "AMAT", "Semiconductor equipment", "normal", "US")},
+        confirmed_provider=ConfirmedEarningsEventsProvider("missing.json"),
+        nasdaq_provider=PartiallyDegradedNasdaqProvider(),
+        provider=EmptyProvider(),
+        yfinance_provider=EmptyProvider(),
+        official_providers=[],
+    )
+
+    events = service.refresh_events(today=dt.date(2026, 6, 19), lookahead_days=7)
+
+    assert [(event.ticker, event.report_date, event.source) for event in events] == [
+        ("AMAT", "2026-06-20", "Nasdaq"),
+        ("AMAT", "2026-06-23", "Nasdaq"),
+    ]
+    assert store.saved == "global_earnings_calendar"
+    payload = store.data["global_earnings_calendar"]
+    assert payload["source"] == "provider"
+    assert payload["cache_state"]["status"] == "degraded"
+    assert payload["cache_state"]["failed_days"] == ["2026-06-20"]
+    assert payload["cache_state"]["reused_event_count"] == 1
+
+
 def test_refresh_events_merges_cached_tickers_that_were_not_refreshed():
     class MemoryStore:
         def __init__(self):

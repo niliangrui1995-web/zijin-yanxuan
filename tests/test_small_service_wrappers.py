@@ -325,13 +325,25 @@ def test_alpha_vantage_provider_fetch_and_parse_edges():
 def test_nasdaq_provider_fetch_and_parse_edges(monkeypatch):
     provider = NasdaqEarningsCalendarProvider(max_workers=1)
     assert provider.fetch({"TSM": OligarchCompany("TSMC", "TSM", "AI", "strategic", "TW")}) == []
+    assert provider.last_degradation is None
 
     monkeypatch.setattr(
         provider,
         "_fetch_day",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(provider.session.RequestException("network failed")),
     )
-    assert provider.fetch({"NVDA": OligarchCompany("Nvidia", "NVDA", "AI", "strategic", "US")}, lookahead_days=0) == []
+    assert (
+        provider.fetch(
+            {"NVDA": OligarchCompany("Nvidia", "NVDA", "AI", "strategic", "US")},
+            today=dt.date(2026, 5, 1),
+            lookahead_days=0,
+        )
+        == []
+    )
+    assert provider.last_degradation is not None
+    assert provider.last_degradation["provider"] == "Nasdaq"
+    assert provider.last_degradation["failed_days"] == ["2026-05-01"]
+    assert provider.last_degradation["all_days_failed"] is True
 
     events = provider._parse_payload(
         {"data": {"rows": [None, {"symbol": "MISS"}, {"symbol": "NVDA", "time": "time-during-market"}]}},
