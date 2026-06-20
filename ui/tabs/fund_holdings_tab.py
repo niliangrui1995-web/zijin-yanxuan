@@ -484,8 +484,11 @@ class FundHoldingsTab(BaseStockTab):
         quarter_scope: str | None = None,
         quarter_keys=None,
     ):
-        scope = str(quarter_scope or self._QUERY_SCOPE_LATEST).strip().lower()
-        keys = set(quarter_keys or [])
+        if quarter_scope is None:
+            scope, keys = self._current_quarter_query_scope()
+        else:
+            scope = str(quarter_scope or self._QUERY_SCOPE_LATEST).strip().lower()
+            keys = set(quarter_keys or [])
 
         def _load_bg():
             return self._load_view_payload(
@@ -1261,7 +1264,7 @@ class FundHoldingsTab(BaseStockTab):
             return
         if self._sync_active:
             return
-        self._reload_from_db()
+        self._reload_from_db_async()
 
     def _update_status_summary(self):
         rows = list(getattr(self.model, "row_data", []) or [])

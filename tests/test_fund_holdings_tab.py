@@ -219,6 +219,84 @@ def _visible_codes(tab):
     return codes
 
 
+def test_fund_holdings_update_event_reloads_current_scope_async(monkeypatch, qt_application):
+    rows = [
+        _build_change_row(
+            subject_code="QFII",
+            subject_name="QFII",
+            quarter_key="2025Q3",
+            compare_quarter_key="2025Q2",
+            change_type="增持",
+            stock_code="000001",
+            stock_name="平安银行",
+        ),
+        _build_change_row(
+            subject_code="QFII",
+            subject_name="QFII",
+            quarter_key="2025Q4",
+            compare_quarter_key="2025Q3",
+            change_type="增持",
+            stock_code="000002",
+            stock_name="万科A",
+        ),
+    ]
+    _setup_store(monkeypatch, rows)
+    query_calls = []
+
+    def _query_change_rows(*, quarter_keys=None):
+        query_calls.append(None if quarter_keys is None else set(quarter_keys))
+        if quarter_keys is None:
+            return sorted(rows, key=lambda row: str(row.get("quarter_key") or ""), reverse=True)
+        selected = {str(quarter_key or "").strip() for quarter_key in quarter_keys}
+        return [row for row in rows if str(row.get("quarter_key") or "").strip() in selected]
+
+    def _run_in_background(fn, *args, on_success=None, on_error=None, task_id=None, **kwargs):
+        submitted_tasks.append(task_id)
+        if on_success is not None:
+            on_success(fn())
+        return task_id
+
+    def _fail_sync_reload(self, *args, **kwargs):
+        raise AssertionError("fund holdings update event must not reload synchronously")
+
+    submitted_tasks = []
+    monkeypatch.setattr(fund_holdings_module.fund_holdings_store, "query_change_rows", _query_change_rows)
+    monkeypatch.setattr(
+        fund_holdings_module.task_manager,
+        "run_in_background",
+        _run_in_background,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "_reload_from_db",
+        _fail_sync_reload,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        fund_holdings_module.QTimer,
+        "singleShot",
+        staticmethod(lambda _delay, callback: callback()),
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
+    try:
+        tab._initial_load_started = True
+        tab._view_state_restored = True
+        tab._build_quarter_menu(["2025Q4", "2025Q3"])
+        tab._set_quarter_filter_state(all_quarters=True, apply=False)
+
+        tab._on_fund_holdings_updated()
+        qt_application.processEvents()
+        qt_application.processEvents()
+
+        assert submitted_tasks
+        assert query_calls == [None]
+        assert [str(row.get("代码") or "").strip() for row in tab.model.row_data] == ["000002", "000001"]
+    finally:
+        tab.deleteLater()
+
+
 def test_fund_holdings_tab_reload_uses_f5_quote_cache_only(monkeypatch):
     _setup_store(
         monkeypatch,

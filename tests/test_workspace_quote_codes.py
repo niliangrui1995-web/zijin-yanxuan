@@ -1241,7 +1241,7 @@ def test_workspace_defers_heavy_tab_autoload(monkeypatch):
         workspace.deleteLater()
 
 
-def test_workspace_background_prewarm_loads_lazy_tabs_without_manual_click(monkeypatch):
+def test_workspace_background_prewarm_primes_context_without_forcing_current_tab(monkeypatch):
     ctor_kwargs = {}
     constructed = []
     primed = []
@@ -1282,17 +1282,68 @@ def test_workspace_background_prewarm_loads_lazy_tabs_without_manual_click(monke
 
         workspace._start_background_tab_prewarm()
 
-        assert constructed == ["watchlist"]
-        assert primed == ["watchlist"]
-        assert set(ctor_kwargs) == {"watchlist"}
-        assert ctor_kwargs["watchlist"]["startup_indicator_refresh_enabled"] is False
+        assert constructed == []
+        assert primed == []
+        assert ctor_kwargs == {}
         assert snapshot_primes == [{}]
     finally:
         workspace.shutdown()
         workspace.deleteLater()
 
 
-def test_workspace_background_prewarm_creates_current_tab_first_without_restore(monkeypatch):
+def test_workspace_background_prewarm_can_preload_whitelisted_current_tab(monkeypatch):
+    ctor_kwargs = {}
+    constructed = []
+    primed = []
+
+    def _make_tab(name):
+        class _Tab(QWidget):
+            def __init__(self, *args, **kwargs):
+                super().__init__()
+                ctor_kwargs[name] = dict(kwargs)
+                constructed.append(name)
+
+            def prime_background_load(self):
+                primed.append(name)
+
+        return _Tab
+
+    monkeypatch.setattr(
+        classic_workspace_module.ClassicWorkspace,
+        "BACKGROUND_PREWARM_KEYS",
+        frozenset({"watchlist"}),
+    )
+    monkeypatch.setattr(classic_workspace_module, "WatchlistTab", _make_tab("watchlist"))
+    monkeypatch.setattr(classic_workspace_module, "AsianMarketTab", _make_tab("asian_market"))
+    monkeypatch.setattr(classic_workspace_module, "NADailyTab", _make_tab("na_daily"))
+    monkeypatch.setattr(classic_workspace_module, "AIIndustryChainTab", _make_tab("ai_industry_chain"))
+    monkeypatch.setattr(classic_workspace_module, "RtMonitorTab", _make_tab("rt_monitor"))
+    monkeypatch.setattr(classic_workspace_module, "ScanTab", _make_tab("scan"))
+    monkeypatch.setattr(classic_workspace_module, "StockCandidateTab", _make_tab("stock_candidates"))
+    monkeypatch.setattr(classic_workspace_module, "LhbTab", _make_tab("lhb"))
+    monkeypatch.setattr(classic_workspace_module, "ForeignBlockTradeTab", _make_tab("foreign_block"))
+    monkeypatch.setattr(classic_workspace_module, "EarningsTab", _make_tab("earnings"))
+    monkeypatch.setattr(classic_workspace_module, "FundHoldingsTab", _make_tab("fund_holdings"))
+    monkeypatch.setattr(classic_workspace_module, "LogTab", _make_tab("system_log"))
+
+    workspace = classic_workspace_module.ClassicWorkspace(data_provider=object(), engine=object())
+    try:
+        workspace.schedule_restore_last_tab(10, delay_ms=999_999)
+        workspace.prime_stock_context_snapshots = lambda **kwargs: True
+        monkeypatch.setattr(classic_workspace_module.QTimer, "singleShot", lambda _delay, callback: callback())
+
+        workspace._start_background_tab_prewarm()
+
+        assert constructed == ["watchlist"]
+        assert primed == ["watchlist"]
+        assert set(ctor_kwargs) == {"watchlist"}
+        assert ctor_kwargs["watchlist"]["startup_indicator_refresh_enabled"] is False
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_workspace_background_prewarm_creates_whitelisted_current_tab_first_without_restore(monkeypatch):
     constructed = []
 
     def _resolve_tab_class(class_name, _module_name):
@@ -1307,6 +1358,11 @@ def test_workspace_background_prewarm_creates_current_tab_first_without_restore(
         return _Tab
 
     monkeypatch.setattr(classic_workspace_module, "_resolve_tab_class", _resolve_tab_class)
+    monkeypatch.setattr(
+        classic_workspace_module.ClassicWorkspace,
+        "BACKGROUND_PREWARM_KEYS",
+        frozenset({"watchlist"}),
+    )
 
     workspace = classic_workspace_module.ClassicWorkspace(data_provider=object(), engine=object())
     try:

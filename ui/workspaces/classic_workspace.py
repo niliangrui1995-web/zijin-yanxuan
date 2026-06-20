@@ -546,10 +546,8 @@ class ClassicWorkspace(QWidget):
         ]
         current_spec = self._spec_for_key_or_index(self.tabs.currentIndex())
         current_key = str((current_spec or {}).get("key") or "").strip()
-        lead_key = current_key
-        if lead_key and lead_key not in prewarm_keys:
-            unloaded_keys.insert(0, lead_key)
-        elif lead_key in unloaded_keys:
+        lead_key = current_key if current_key in prewarm_keys else ""
+        if lead_key in unloaded_keys:
             unloaded_keys.remove(lead_key)
             unloaded_keys.insert(0, lead_key)
         priority_insert_at = 1 if lead_key and unloaded_keys[:1] == [lead_key] else 0
