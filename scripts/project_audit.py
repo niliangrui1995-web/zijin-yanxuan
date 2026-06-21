@@ -48,6 +48,16 @@ TYPE_CHECK_TARGETS = (
     "infra/tasks/process_runner.py",
 )
 
+UI_STALL_SMOKE_TESTS = (
+    "tests/test_workspace_quote_codes.py::test_workspace_collect_stock_context_schedules_lhb_snapshot_without_blocking",
+    "tests/test_workspace_quote_codes.py::test_workspace_fund_holding_context_schedules_snapshot_without_blocking",
+    "tests/test_workspace_quote_codes.py::test_workspace_background_prewarm_primes_context_without_forcing_current_tab",
+    "tests/test_workspace_quote_codes.py::test_workspace_background_prewarm_can_preload_whitelisted_current_tab",
+    "tests/test_workspace_quote_codes.py::test_workspace_background_prewarm_creates_whitelisted_current_tab_first_without_restore",
+    "tests/test_stock_candidate_tab.py::test_stock_candidate_refresh_collects_context_without_lhb_compute",
+    "tests/test_fund_holdings_tab.py::test_fund_holdings_update_event_reloads_current_scope_async",
+)
+
 EXTENDED_RUFF_SELECT = (
     "B006",
     "B011",
@@ -132,6 +142,10 @@ def build_audit_commands(args: argparse.Namespace) -> list[AuditCommand]:
             [python, "-m", "pytest", "-q", "tests/test_architecture_boundaries.py"],
         ),
         AuditCommand(
+            "ui-stall-smoke",
+            [python, "-m", "pytest", "-q", *UI_STALL_SMOKE_TESTS],
+        ),
+        AuditCommand(
             "complexity-hotspots",
             [python, "scripts/complexity_hotspot_audit.py", "--output", COMPLEXITY_HOTSPOT_AUDIT_OUTPUT],
         ),
@@ -158,6 +172,9 @@ def build_audit_commands(args: argparse.Namespace) -> list[AuditCommand]:
                 ],
             )
         )
+
+    if not args.quick:
+        commands = [command for command in commands if command.label != "ui-stall-smoke"]
 
     if not args.quick and not args.skip_full_pytest:
         commands.append(AuditCommand("full-pytest", [python, "-m", "pytest", "-q"]))

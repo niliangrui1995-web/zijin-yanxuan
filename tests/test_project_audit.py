@@ -39,6 +39,7 @@ def test_project_audit_full_gate_includes_required_checks():
     ]
     assert "runtime-health-short" not in labels
     assert "ui-stall-budget" not in labels
+    assert "ui-stall-smoke" not in labels
     assert "dependency-audit" not in labels
     assert "type-check" not in labels
     assert "coverage-report" not in labels
@@ -54,6 +55,7 @@ def test_project_audit_can_skip_ruff_for_ci_audit_smoke():
         "compileall",
         "pip-check",
         "architecture-boundaries",
+        "ui-stall-smoke",
         "complexity-hotspots",
         "http-safety-audit",
         "runtime-self-check",
@@ -85,6 +87,17 @@ def test_project_audit_quick_gate_skips_full_pytest_and_webengine_preflight():
         "--output",
         project_audit.COMPLEXITY_HOTSPOT_AUDIT_OUTPUT,
     ]
+    ui_stall_smoke = next(command for command in commands if command.label == "ui-stall-smoke")
+    assert ui_stall_smoke.command == [
+        project_audit._python(args),
+        "-m",
+        "pytest",
+        "-q",
+        *project_audit.UI_STALL_SMOKE_TESTS,
+    ]
+    assert any("background_prewarm" in target for target in project_audit.UI_STALL_SMOKE_TESTS)
+    assert any("stock_candidate" in target for target in project_audit.UI_STALL_SMOKE_TESTS)
+    assert any("fund_holdings" in target for target in project_audit.UI_STALL_SMOKE_TESTS)
     assert "runtime-health-short" not in labels
     assert "ui-stall-budget" not in labels
     assert "dependency-audit" not in labels
@@ -250,6 +263,7 @@ def test_project_audit_list_includes_http_safety_audit_by_default(capsys):
 
     output = capsys.readouterr().out
     assert result == 0
+    assert "ui-stall-smoke: python -m pytest -q tests/test_workspace_quote_codes.py" in output
     assert "complexity-hotspots: python scripts/complexity_hotspot_audit.py" in output
     assert f"--output {project_audit.COMPLEXITY_HOTSPOT_AUDIT_OUTPUT}" in output
     assert "http-safety-audit: python scripts/http_safety_audit.py" in output
