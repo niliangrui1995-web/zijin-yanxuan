@@ -22,6 +22,9 @@ from infra.http_safety import DEFAULT_REQUESTS_USER_AGENT
 def test_asian_market_service_delegates_to_fetcher_and_rate_limit_modules(monkeypatch):
     calls = []
 
+    assert asian_market_service.yf_session_module.__name__ == "infra.market_data.yfinance_session"
+    assert asian_market_service.asian_fetcher_module.__name__ == "infra.market_data.asian_kline_provider"
+
     monkeypatch.setattr(
         asian_market_service.yf_session_module,
         "build_yf_session",
@@ -54,7 +57,7 @@ def test_asian_market_service_delegates_to_fetcher_and_rate_limit_modules(monkey
     )
     monkeypatch.setattr(
         asian_market_service.asian_fetcher_module,
-        "_find_track",
+        "find_asian_track",
         lambda ticker: calls.append(("track", ticker)) or "HK",
     )
     monkeypatch.setattr(

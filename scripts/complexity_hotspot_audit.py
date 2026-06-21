@@ -11,11 +11,52 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 HOTSPOT_BUDGETS = {
+    "core/lhb_pool_manager.py": {
+        "LhbPoolManager.compute_pool": 180,
+    },
+    "core/rps_precomputer.py": {
+        "RPSPrecomputer.run_f5_pipeline": 175,
+    },
+    "core/startup_orchestrator.py": {
+        "StartupOrchestrator.deferred_data_load": 190,
+    },
+    "domains/scan/breakout_monitor_service.py": {
+        "BreakoutMonitorService.precompute_ready_pool": 175,
+    },
+    "scripts/perf_budget_check.py": {
+        "_parse_args": 194,
+    },
+    "ui/kline_window_header.py": {
+        "apply_qt_theme": 199,
+    },
+    "ui/kline_window_qt.py": {
+        "KLineChartWindow.__init__": 246,
+    },
     "ui/kline_chart_payload.py": {
         "build_kline_html": 35,
     },
+    "ui/styles/global_qss.py": {
+        "generate_global_qss": 240,
+    },
+    "ui/styles/global_qss_sections.py": {
+        "build_button_qss": 161,
+        "build_dialog_log_scrollbar_qss": 174,
+        "build_toolbar_status_qss": 175,
+    },
+    "ui/tabs/asian_market_tab.py": {
+        "build_asian_market_local_cache_payload": 183,
+    },
+    "ui/tabs/lhb_tab.py": {
+        "LhbTab._start_backfill": 232,
+    },
+    "ui/theme_tokens.py": {
+        "build_ui_tokens": 192,
+    },
     "ui/workers/rt_scan_worker.py": {
         "RtScanWorker._run_one_round": 30,
+    },
+    "ui/workers/lhb_worker.py": {
+        "fetch_lhb_data_for_date": 193,
     },
     "ui/workers/scan_worker.py": {
         "ScanWorker.run": 70,
@@ -25,6 +66,12 @@ HOTSPOT_BUDGETS = {
         "ScanWorker._scan_candidate_for_day": 55,
         "ScanWorker._enrich_market_caps": 35,
         "ScanWorker._enrich_hot_sectors": 25,
+    },
+    "ui/workspaces/classic_workspace.py": {
+        "ClassicWorkspace.__init__": 183,
+    },
+    "vcp/fetchers/asian_kline_fetcher.py": {
+        "sync_asian_kline_cache": 220,
     },
 }
 

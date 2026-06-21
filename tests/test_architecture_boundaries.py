@@ -398,6 +398,23 @@ def test_non_vcp_layers_do_not_import_vcp_constants_directly():
     assert not violations, "Non-VCP layers imported vcp.constants directly:\n" + "\n".join(violations)
 
 
+def test_vcp_fetcher_imports_are_centralized_behind_market_data_adapters():
+    violations = []
+    allowed_paths = {
+        "infra/market_data/asian_kline_provider.py",
+        "infra/market_data/yfinance_session.py",
+    }
+    for root in ("app", "domains", "infra", "ui"):
+        violations.extend(
+            _find_prefix_violations(
+                REPO_ROOT / root,
+                {"vcp.fetchers"},
+                allowed_paths=allowed_paths,
+            )
+        )
+    assert not violations, "vcp.fetchers imports must go through infra.market_data adapters:\n" + "\n".join(violations)
+
+
 def test_app_domain_infra_broad_exceptions_stay_allowlisted():
     broad_handlers: list[str] = []
     for root in BROAD_EXCEPTION_SCAN_ROOTS:

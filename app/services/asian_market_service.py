@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from vcp.fetchers import asian_kline_fetcher as asian_fetcher_module
-from vcp.fetchers import yf_session as yf_session_module
+from infra.market_data import asian_kline_provider as asian_fetcher_module
+from infra.market_data import yfinance_session as yf_session_module
 
 
 def build_yf_session():
@@ -29,10 +29,7 @@ def fetch_single_kline(
     period: str = "1y",
     session=None,
 ):
-    kwargs = {"period": period}
-    if session is not None:
-        kwargs["session"] = session
-    return asian_fetcher_module.fetch_single_kline(name, ticker, **kwargs)
+    return asian_fetcher_module.fetch_single_kline(name, ticker, period=period, session=session)
 
 
 def filter_asian_tickers(market_filter: str | None = None) -> dict[str, str]:
@@ -40,7 +37,7 @@ def filter_asian_tickers(market_filter: str | None = None) -> dict[str, str]:
 
 
 def find_asian_track(ticker: str) -> str:
-    return asian_fetcher_module._find_track(ticker)
+    return asian_fetcher_module.find_asian_track(ticker)
 
 
 def sync_asian_kline_cache(

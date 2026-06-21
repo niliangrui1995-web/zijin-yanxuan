@@ -276,8 +276,11 @@ def test_project_audit_list_includes_type_check_when_requested(capsys):
     output = capsys.readouterr().out
     assert result == 0
     assert "type-check: python -m pyright" in output
+    assert "app/services/asian_market_service.py" in output
     assert "app/services/http_client_service.py" in output
+    assert "domains/quotes/snapshot.py" in output
     assert "domains/runtime/fault_tolerance.py" in output
+    assert "infra/market_data/asian_kline_provider.py" in output
     assert "infra/tasks/process_runner.py" in output
 
 

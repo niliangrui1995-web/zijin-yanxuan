@@ -65,7 +65,7 @@ class YFinanceEarningsCalendarProvider:
         import yfinance as yf
 
         try:
-            from vcp.fetchers.yf_session import build_yf_session
+            from infra.market_data.yfinance_session import build_yf_session
 
             session = build_yf_session()
         except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
