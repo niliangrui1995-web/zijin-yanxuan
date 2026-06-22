@@ -199,7 +199,7 @@ class WorkspaceFacade:
         include_cache_fallback: bool = False,
         include_source_cache_fallback: bool | None = None,
         target_codes=None,
-        allow_lhb_cache_compute: bool = True,
+        allow_lhb_cache_compute: bool = False,
     ) -> tuple[dict, dict, dict, dict, dict, dict | None]:
         return self._stock_context_service.collect_watchlist_radar_data(
             include_cache_fallback=include_cache_fallback,
@@ -216,7 +216,7 @@ class WorkspaceFacade:
         *,
         include_cache_fallback: bool = True,
         include_source_cache_fallback: bool | None = None,
-        allow_lhb_cache_compute: bool = True,
+        allow_lhb_cache_compute: bool = False,
     ) -> dict[str, list[StockSignal]]:
         return self._stock_context_service.collect_signals_by_code(
             include_cache_fallback=include_cache_fallback,

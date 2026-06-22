@@ -222,7 +222,7 @@ def test_rt_monitor_manual_stop_expires_on_next_trade_day(monkeypatch):
     tab = RtMonitorTab(DummyDataProvider(), DummyEngine())
     try:
         service = tab._rt_monitor_service
-        service.data_provider.cache_data = {"000001": object()}
+        service.data_provider.cache_data = {f"{idx:06d}": object() for idx in range(120)}
         service.data_provider.is_online = lambda: True
         monkeypatch.setattr(service, "is_running", lambda: False)
         monkeypatch.setattr(service, "_start_worker", lambda: auto_calls.append(True))

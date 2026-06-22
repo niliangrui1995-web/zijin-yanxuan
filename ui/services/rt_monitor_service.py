@@ -35,6 +35,7 @@ class RtMonitorService(QObject):
         self._rt_stop_requested = False
         self._rt_worker = None
         self._latest_results = []
+        self._last_auto_start_skip_reason = ""
 
     @property
     def latest_results(self) -> list:
@@ -70,6 +71,38 @@ class RtMonitorService(QObject):
         interval_map = {"30秒": 30, "1分钟": 60, "3分钟": 180, "5分钟": 300}
         return interval_map.get(interval_text, 30)
 
+    def _precomputed_rps_ready(self) -> bool:
+        get_precomputed_rps = getattr(self.engine, "get_precomputed_rps", None)
+        if not callable(get_precomputed_rps):
+            return True
+        try:
+            bundle = get_precomputed_rps()
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            return False
+        if not isinstance(bundle, dict):
+            return False
+        return bundle.get("rps120") is not None and bundle.get("rps250") is not None
+
+    def _auto_start_readiness(self) -> tuple[bool, str, str, str]:
+        cache_data = getattr(self.data_provider, "cache_data", None) or {}
+        try:
+            cache_count = len(cache_data)
+        except TypeError:
+            cache_count = 0
+        if cache_count < 100:
+            return False, "cache_not_ready", "等待历史缓存预热", "缓存预热完成后会自动启动"
+        if not self._precomputed_rps_ready():
+            return False, "rps_not_ready", "等待预计算 RPS", "RPS 预热完成后会自动启动"
+        return True, "", "", ""
+
+    def _skip_auto_start(self, reason: str, detail: str, next_step: str) -> bool:
+        reason = str(reason or "not_ready").strip()
+        if self._last_auto_start_skip_reason != reason:
+            log.info(f"[盘中监控] 自动启动等待: {detail}")
+            self._last_auto_start_skip_reason = reason
+        self._emit_status("idle", detail, next_step, running=False, touch=False)
+        return False
+
     @staticmethod
     def _manual_stop_reference_date() -> str:
         try:
@@ -98,9 +131,15 @@ class RtMonitorService(QObject):
         if auto and self._manual_stop_requested and not self._clear_expired_manual_stop():
             self._emit_status("idle", "今日已手动停止", "下一交易日会自动启动", running=False, touch=False)
             return False
+        if auto:
+            ready, reason, detail, next_step = self._auto_start_readiness()
+            if not ready:
+                return self._skip_auto_start(reason, detail, next_step)
+            self._last_auto_start_skip_reason = ""
         if not auto:
             self._manual_stop_requested = False
             self._manual_stop_trade_date = ""
+            self._last_auto_start_skip_reason = ""
         self._rt_stop_requested = False
 
         if not getattr(self.data_provider, "cache_data", None):
@@ -169,6 +208,10 @@ class RtMonitorService(QObject):
         is_active = MarketCalendar.is_market_active("CN")
         is_running = self.is_running()
         if is_active and not is_running and not self._manual_stop_requested and not self._rt_stop_requested:
+            ready, reason, detail, next_step = self._auto_start_readiness()
+            if not ready:
+                self._skip_auto_start(reason, detail, next_step)
+                return "skipped"
             log.info("[盘中监控] 交易时段到达，触发自动启动")
             return "started" if self.start(auto=True) else "skipped"
         if not is_active and is_running and not self._rt_stop_requested:

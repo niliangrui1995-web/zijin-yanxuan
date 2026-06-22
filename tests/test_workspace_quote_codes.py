@@ -465,27 +465,19 @@ def test_watchlist_radar_can_use_source_cache_without_scan_fallback(monkeypatch)
     assert rps_bundle is None
 
 
-def test_workspace_collects_lhb_context_from_pool_cache_without_loading_lazy_tab(monkeypatch):
-    import core.lhb_pool_manager as lhb_pool_module
-
-    captured = {}
-
-    class _FakePoolManager:
-        def compute_pool(self, *, data_provider=None, engine=None):
-            captured["data_provider"] = data_provider
-            captured["engine"] = engine
-            return [
-                {
-                    stock_context_module.KEY_CODE: "300750",
-                    stock_context_module.KEY_NAME: "sample",
-                    stock_context_module.KEY_LAST_LISTED: "20260430",
-                    stock_context_module.KEY_NET_WAN: 1200,
-                    stock_context_module.KEY_INST_WAN: 800,
-                    stock_context_module.KEY_FOREIGN_WAN: 50,
-                }
-            ]
-
-    monkeypatch.setattr(lhb_pool_module, "LhbPoolManager", _FakePoolManager)
+def test_workspace_collect_stock_context_schedules_lhb_snapshot_by_default(monkeypatch):
+    scheduled = []
+    monkeypatch.setattr(
+        StockContextService,
+        "_load_lhb_pool_rows",
+        lambda self: (_ for _ in ()).throw(AssertionError("default stock context should not compute LHB pool inline")),
+    )
+    monkeypatch.setattr(StockContextService, "_lhb_pool_cache_signature", lambda self: ("cache", 1, 2))
+    monkeypatch.setattr(
+        StockContextService,
+        "refresh_async_snapshots",
+        lambda self, *, force=False: scheduled.append(force) or True,
+    )
     workspace = SimpleNamespace(
         data_provider="provider",
         engine="engine",
@@ -497,7 +489,35 @@ def test_workspace_collects_lhb_context_from_pool_cache_without_loading_lazy_tab
 
     context = ClassicWorkspace.collect_stock_context(workspace)
 
-    assert captured == {"data_provider": None, "engine": "engine"}
+    assert context == {}
+    assert scheduled == [False]
+
+
+def test_workspace_collect_stock_context_uses_ready_lhb_snapshot_by_default():
+    workspace = SimpleNamespace(
+        engine="engine",
+        tab_specs=lambda: [{"key": "lhb", "group": "info"}],
+        get_loaded_tab=lambda key: None,
+        get_tab=lambda key: (_ for _ in ()).throw(AssertionError("lazy tab should not load")),
+        iter_tabs=lambda: [],
+    )
+    service = StockContextService(workspace)
+    service._lhb_rows_signature = ("cache", 1, 2)
+    service._lhb_rows_snapshot = [
+        {
+            stock_context_module.KEY_CODE: "300750",
+            stock_context_module.KEY_NAME: "sample",
+            stock_context_module.KEY_LAST_LISTED_RAW: "20260430",
+            stock_context_module.KEY_NET_WAN: 1200,
+            stock_context_module.KEY_INST_WAN: 800,
+            stock_context_module.KEY_FOREIGN_WAN: 50,
+        }
+    ]
+    service._lhb_pool_cache_signature = lambda: ("cache", 1, 2)
+    workspace._workspace_facade = SimpleNamespace(collect_stock_context=service.collect_signals_by_code)
+
+    context = ClassicWorkspace.collect_stock_context(workspace)
+
     signals = context["300750"]
     assert [(signal.source_tab, signal.signal_type) for signal in signals] == [("lhb", "lhb")]
     assert signals[0].numeric_value == 1200

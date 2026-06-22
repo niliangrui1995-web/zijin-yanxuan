@@ -709,17 +709,11 @@ class LhbTab(BaseStockTab):
         self._sort_model_for_default_lhb_order()
 
     def get_watchlist_radar_rows(self) -> list[dict]:
-        """给关注池读取龙虎榜信号；未打开本 tab 时也只读本地池缓存，不触发整页加载。"""
+        """给关注池读取已展示的龙虎榜信号；冷缓存由工作区快照后台预热。"""
         rows = self.get_row_data()
         if rows:
-            return rows
-
-        try:
-            pool = self._get_pool_manager().compute_pool(data_provider=None, engine=self._get_engine())
-        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
-            log.debug(f"[龙虎榜池] 关注池读取本地池缓存失败: {exc}")
-            return []
-        return [self._format_pool_row(rec) for rec in pool]
+            return [dict(row) for row in rows]
+        return []
 
     def _display_pool(self, pool: list[dict], *, emit_event: bool = True, row_data: list[dict] | None = None):
         """将池数据渲染到表格"""

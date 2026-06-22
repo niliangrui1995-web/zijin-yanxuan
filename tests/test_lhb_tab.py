@@ -520,37 +520,35 @@ def test_lhb_pool_bootstrap_schedules_background_task(monkeypatch):
         tab.deleteLater()
 
 
-def test_lhb_watchlist_radar_rows_reads_cache_without_bootstrap(monkeypatch):
+def test_lhb_watchlist_radar_rows_stays_on_display_snapshot_without_bootstrap(monkeypatch):
     monkeypatch.setattr(
         LhbTab,
         "_load_and_display_pool",
         lambda self: (_ for _ in ()).throw(AssertionError("should not load full tab")),
         raising=False,
     )
-    monkeypatch.setattr(LhbTab, "_get_engine", staticmethod(lambda: None), raising=False)
 
     tab = LhbTab(object(), autoload_pool=False)
-    calls = []
     tab.pool_manager = SimpleNamespace(
         compute_pool=lambda data_provider=None, engine=None: (
-            calls.append((data_provider, engine))
-            or [
-                {
-                    "代码": "300750",
-                    "名称": "宁德时代",
-                    "最近上榜": "20260420",
-                    "上榜净买额(万)": 1200,
-                    "机构净买(万)": 800,
-                    "外资净买(万)": -150,
-                }
-            ]
+            (_ for _ in ()).throw(AssertionError("watchlist radar should not compute LHB pool inline"))
         )
     )
 
     try:
+        assert tab.get_watchlist_radar_rows() == []
+        tab.model.update_data(
+            [
+                {
+                    "代码": "300750",
+                    "名称": "宁德时代",
+                    "最近上榜": "04-20",
+                    "_最近上榜_raw": "20260420",
+                }
+            ]
+        )
         rows = tab.get_watchlist_radar_rows()
 
-        assert calls == [(None, None)]
         assert rows[0]["代码"] == "300750"
         assert rows[0]["最近上榜"] == "04-20"
         assert rows[0]["_最近上榜_raw"] == "20260420"

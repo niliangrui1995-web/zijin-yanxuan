@@ -1018,7 +1018,7 @@ class StockContextService:
         *,
         include_cache_fallback: bool = True,
         include_source_cache_fallback: bool | None = None,
-        allow_lhb_cache_compute: bool = True,
+        allow_lhb_cache_compute: bool = False,
     ) -> list[StockSignal]:
         direct_keys = self._direct_signal_tab_keys()
         signals = self._iter_direct_stock_signals()
@@ -1053,7 +1053,7 @@ class StockContextService:
         *,
         include_cache_fallback: bool = True,
         include_source_cache_fallback: bool | None = None,
-        allow_lhb_cache_compute: bool = True,
+        allow_lhb_cache_compute: bool = False,
     ) -> dict[str, list[StockSignal]]:
         signals_by_code: dict[str, list[StockSignal]] = defaultdict(list)
         for signal in self.iter_stock_signals(
@@ -1070,7 +1070,7 @@ class StockContextService:
         include_cache_fallback: bool = False,
         include_source_cache_fallback: bool | None = None,
         target_codes=None,
-        allow_lhb_cache_compute: bool = True,
+        allow_lhb_cache_compute: bool = False,
     ) -> tuple[dict, dict, dict, dict, dict, dict | None]:
         workspace = self._workspace
         engine = getattr(workspace, "engine", None)

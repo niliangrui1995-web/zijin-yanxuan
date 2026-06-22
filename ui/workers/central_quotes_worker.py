@@ -60,6 +60,7 @@ class CentralQuotesService(QObject):
         self._heartbeat_every_ticks = max(1, _A_SHARE_HEARTBEAT_INTERVAL_SEC * 1000 // _A_SHARE_POLL_INTERVAL_MS)
         self._last_heartbeat_signature = None
         self._last_heartbeat_logged_at = 0.0
+        self._last_quote_refreshable: bool | None = None
         self._post_cache_reload_quiet_until = 0.0
         self._post_cache_reload_signature: tuple[str, ...] = ()
         self._poller = CentralQuotePoller(
@@ -154,7 +155,67 @@ class CentralQuotesService(QObject):
 
         return total_threads, pytdx_threads
 
-    def _run_maintenance(self, active_codes_count: int | None = None):
+    def _timer_is_active(self) -> bool:
+        try:
+            return bool(self._timer.isActive())
+        except RuntimeError:
+            return False
+
+    def _ensure_timer_running(self) -> bool:
+        if self._closed:
+            return False
+        if self._timer_is_active():
+            return True
+        self._timer.start(_A_SHARE_POLL_INTERVAL_MS)
+        log.warning("[报价站] 轮询调度器意外停止，已重新启动")
+        return True
+
+    def _observe_quote_window(self, quote_refreshable: bool) -> None:
+        quote_refreshable = bool(quote_refreshable)
+        previous = self._last_quote_refreshable
+        self._last_quote_refreshable = quote_refreshable
+        if previous is None:
+            if not quote_refreshable:
+                log.info("[报价站] 非报价时段，实时拉取暂停；30秒调度保留，下一交易时段自动轮询")
+            return
+        if previous == quote_refreshable:
+            return
+        if quote_refreshable:
+            log.info("[报价站] 报价窗口恢复，自动拉起实时轮询")
+        else:
+            log.info("[报价站] 非报价时段，实时拉取暂停；30秒调度保留，下一交易时段自动轮询")
+
+    def _heartbeat_runtime_status(
+        self,
+        *,
+        quote_refreshable: bool,
+        runtime_stats: dict,
+        cooldown_left: int,
+    ) -> tuple[str, str, bool]:
+        timer_active = self._timer_is_active()
+        if self._closed:
+            return "closed", "服务已关闭", timer_active
+        if not timer_active:
+            return "degraded_scheduler_inactive", "调度器未运行，需恢复后才能自动轮询", timer_active
+        if not quote_refreshable:
+            return "paused_market_closed", "下个交易时段自动轮询", timer_active
+        try:
+            inflight = int(runtime_stats.get("inflight") or 0)
+        except (TypeError, ValueError):
+            inflight = 0
+        if self._is_fetching or inflight > 0:
+            return "fetching", "等待当前抓取完成", timer_active
+        if cooldown_left > 0 or self._circuit_breaker_cooldown > 0:
+            return "cooldown", "冷却结束后自动重试", timer_active
+        return "ready", "30秒调度轮询", timer_active
+
+    def _market_status_text(self) -> str:
+        try:
+            return str(MarketCalendar.get_market_status("CN") or "").strip() or "-"
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            return "unknown"
+
+    def _run_maintenance(self, active_codes_count: int | None = None, *, quote_refreshable: bool | None = None):
         stats = self._poller.compact_runtime_caches()
 
         total_threads, pytdx_threads = self._collect_thread_health()
@@ -169,6 +230,14 @@ class CentralQuotesService(QObject):
         last_success_text = time.strftime("%H:%M:%S", time.localtime(last_success_at)) if last_success_at > 0 else "-"
         cooldown_until = float(runtime_stats.get("cooldown_until") or 0)
         cooldown_left = max(0, int(cooldown_until - time.time()))
+        if quote_refreshable is None:
+            quote_refreshable = MarketCalendar.is_quote_refresh_time()
+        runtime_state, next_step, timer_active = self._heartbeat_runtime_status(
+            quote_refreshable=bool(quote_refreshable),
+            runtime_stats=runtime_stats,
+            cooldown_left=cooldown_left,
+        )
+        market_status = self._market_status_text()
         now_ts = time.time()
         heartbeat_signature = (
             active_codes_count if active_codes_count is not None else "-",
@@ -180,10 +249,14 @@ class CentralQuotesService(QObject):
             runtime_stats.get("reconnect_count", 0),
             cooldown_left,
             runtime_stats.get("worker_alive", False),
+            market_status,
+            runtime_state,
+            next_step,
+            timer_active,
             total_threads,
             pytdx_threads,
         )
-        should_log = MarketCalendar.is_quote_refresh_time()
+        should_log = bool(quote_refreshable)
         if not should_log:
             signature_changed = heartbeat_signature != self._last_heartbeat_signature
             interval_reached = (now_ts - self._last_heartbeat_logged_at) >= 1800
@@ -203,6 +276,10 @@ class CentralQuotesService(QObject):
             f"重连={runtime_stats.get('reconnect_count', 0)} "
             f"冷却剩余={cooldown_left}s "
             f"工作线程存活={runtime_stats.get('worker_alive', False)} "
+            f"市场={market_status} "
+            f"状态={runtime_state} "
+            f"下一步={next_step} "
+            f"调度器存活={timer_active} "
             f"总线程={total_threads} "
             f"pytdx线程={pytdx_threads}"
         )
@@ -237,13 +314,15 @@ class CentralQuotesService(QObject):
         if self._closed:
             return
 
+        self._ensure_timer_running()
         self._tick_count += 1
         quote_refreshable = MarketCalendar.is_quote_refresh_time()
+        self._observe_quote_window(quote_refreshable)
         if quote_refreshable:
             self._off_market_snapshot_emitted = False
 
         codes = self._get_all_active_codes()
-        self._run_maintenance(active_codes_count=len(codes) if codes else 0)
+        self._run_maintenance(active_codes_count=len(codes) if codes else 0, quote_refreshable=quote_refreshable)
         if not codes:
             return
 
