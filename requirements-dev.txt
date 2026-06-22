@@ -6,3 +6,4 @@ pytest-cov>=7.0.0
 pyright>=1.1.407
 ruff==0.15.15
 pip-audit>=2.10.0
+msgpack>=1.2.1

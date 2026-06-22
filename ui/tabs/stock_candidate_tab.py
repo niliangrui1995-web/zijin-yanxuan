@@ -8,6 +8,8 @@ from app.services.stock_candidates_service import StockCandidatesDataService
 from app.services.ui_diagnostics_service import ui_stall_span
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
+from app.services.ui_task_service import background_job_runner as task_manager
+from app.services.ui_task_service import task_registry
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.stock_detail_dialog import signal_source_label
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
@@ -18,6 +20,7 @@ from ui.workspaces.stock_signal import StockSignal
 class StockCandidateTab(BaseStockTab):
     HEADER_STATE_KEY = "header_state_stock_candidates_v2"
     AUTO_REFRESH_DEBOUNCE_MS = 500
+    REFRESH_TASK_ID = "stock_candidates_context_refresh"
     REQUIRED_SOURCE_TABS = frozenset({"ai_industry_chain", "na_daily"})
     ANCHOR_SOURCE_GROUP = "ai_na_anchor"
     COLUMNS = [
@@ -46,6 +49,8 @@ class StockCandidateTab(BaseStockTab):
         self._last_candidate_result = None
         self._last_candidate_signature = ""
         self._context_refresh_pending = False
+        self._candidate_refresh_running = False
+        self._candidate_refresh_pending = False
         self._init_ui()
         self.subscribe_global_quotes(self.model)
         self._auto_refresh_timer = QTimer(self)
@@ -395,15 +400,35 @@ class StockCandidateTab(BaseStockTab):
             count += 1
         return count
 
-    def _build_candidate_rows(self, context: dict[str, list[StockSignal]]) -> list[dict]:
-        rows = []
+    def _tab_titles(self) -> dict[str, str]:
         workspace = self._workspace()
-        tab_titles = {}
-        if workspace is not None and hasattr(workspace, "tab_specs"):
-            tab_titles = {
-                str(spec.get("key") or "").strip(): str(spec.get("title") or "").strip()
-                for spec in workspace.tab_specs()
-            }
+        if workspace is None or not hasattr(workspace, "tab_specs"):
+            return {}
+        return {
+            str(spec.get("key") or "").strip(): str(spec.get("title") or "").strip()
+            for spec in workspace.tab_specs()
+        }
+
+    def _build_candidate_rows(
+        self,
+        context: dict[str, list[StockSignal]],
+        tab_titles: dict[str, str] | None = None,
+    ) -> list[dict]:
+        rows = []
+        if tab_titles is None:
+            read_tab_titles = getattr(self, "_tab_titles", None)
+            if callable(read_tab_titles):
+                tab_titles = read_tab_titles()
+            else:
+                workspace_reader = getattr(self, "_workspace", None)
+                workspace = workspace_reader() if callable(workspace_reader) else None
+                if workspace is not None and hasattr(workspace, "tab_specs"):
+                    tab_titles = {
+                        str(spec.get("key") or "").strip(): str(spec.get("title") or "").strip()
+                        for spec in workspace.tab_specs()
+                    }
+                else:
+                    tab_titles = {}
 
         for code, signals in sorted((context or {}).items()):
             clean_signals = [signal for signal in signals or [] if isinstance(signal, StockSignal)]
@@ -491,14 +516,58 @@ class StockCandidateTab(BaseStockTab):
 
     def refresh_candidates(self):
         with ui_stall_span("StockCandidateTab.refresh_candidates", tab="stock_candidates", signal="context_refresh"):
-            result = self._candidate_service.load()
-            self._last_candidate_result = result
-            rows = result.rows
-            rows_changed = result.signature != self._last_candidate_signature
-            if rows_changed:
-                self.model.update_data(rows, hydrate_latest_quotes=False)
-                self._last_candidate_signature = result.signature
-                self.refresh_table_from_latest_snapshot(self.model)
+            self._start_candidate_refresh_async()
+
+    def _start_candidate_refresh_async(self) -> None:
+        if self._candidate_refresh_running:
+            self._candidate_refresh_pending = True
+            return
+        self._candidate_refresh_running = True
+        self._candidate_refresh_pending = False
+        tab_titles = self._tab_titles()
+
+        def _load_bg():
+            return StockCandidatesDataService(
+                context_reader=self._read_stock_context,
+                row_builder=lambda context: self._build_candidate_rows(context, tab_titles=tab_titles),
+                provider_status_reader=self._read_provider_status,
+            ).load()
+
+        task_manager.run_in_background(
+            _load_bg,
+            on_success=self._on_candidate_refresh_success,
+            on_error=self._on_candidate_refresh_error,
+            task_id=task_registry.workspace(self.REFRESH_TASK_ID),
+        )
+
+    def _on_candidate_refresh_success(self, result) -> None:
+        self._candidate_refresh_running = False
+        if getattr(self, "_runtime_cleanup_done", False):
+            return
+        self._apply_candidate_result(result)
+        if self._candidate_refresh_pending:
+            self._candidate_refresh_pending = False
+            QTimer.singleShot(0, self.refresh_candidates)
+
+    def _on_candidate_refresh_error(self, message: str) -> None:
+        self._candidate_refresh_running = False
+        if getattr(self, "_runtime_cleanup_done", False):
+            return
+        self._status_primary = "综合候选加载失败"
+        self._status_freshness = str(message or "").strip() or "后台刷新异常"
+        self._refresh_status()
+        if self._candidate_refresh_pending:
+            self._candidate_refresh_pending = False
+            QTimer.singleShot(0, self.refresh_candidates)
+
+    def _apply_candidate_result(self, result) -> None:
+        self._last_candidate_result = result
+        rows = result.rows
+        rows_changed = result.signature != self._last_candidate_signature
+        if rows_changed:
+            self.model.update_data(rows, hydrate_latest_quotes=False)
+            self._last_candidate_signature = result.signature
+            self.refresh_table_from_latest_snapshot(self.model)
         if rows:
             self.table_state.show_table()
             self._status_primary = "综合候选已刷新"

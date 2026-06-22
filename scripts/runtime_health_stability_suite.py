@@ -56,6 +56,7 @@ SOAK_MODE_MINUTES = {
     "soak30": 30,
     "soak60": 60,
 }
+POST_TAB_IDLE_TIMEOUT_MS = 5000
 
 
 def _process_events(app: QApplication, rounds: int = 1, sleep_ms: int = 0) -> None:
@@ -81,6 +82,40 @@ def _wait_until(app: QApplication, predicate, *, timeout_ms: int, step_ms: int =
         time.sleep(max(1, int(step_ms)) / 1000.0)
     _process_events(app, rounds=2)
     return bool(predicate())
+
+
+def _active_background_task_count() -> int:
+    try:
+        return int(getattr(task_manager, "active_count", 0) or 0)
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return 0
+
+
+def _wait_for_background_tasks_idle(
+    app: QApplication,
+    *,
+    timeout_ms: int,
+    step_ms: int = 50,
+) -> dict:
+    before = _active_background_task_count()
+    if int(timeout_ms) <= 0:
+        return {"status": "skipped", "timeout_ms": int(timeout_ms), "active_before": before, "active_after": before}
+    idle = _wait_until(app, lambda: _active_background_task_count() == 0, timeout_ms=timeout_ms, step_ms=step_ms)
+    after = _active_background_task_count()
+    return {
+        "status": "ok" if idle else "timeout",
+        "timeout_ms": int(timeout_ms),
+        "active_before": before,
+        "active_after": after,
+    }
+
+
+def _reset_ui_stall_snapshot() -> bool:
+    stall_probe = get_ui_stall_probe()
+    if stall_probe is None:
+        return False
+    stall_probe.reset_stall_snapshot()
+    return True
 
 
 def _tab_specs(workspace) -> list[dict]:
@@ -525,6 +560,7 @@ def run_suite(args: argparse.Namespace) -> dict:
             "sample_every_seconds": int(args.sample_every_seconds),
             "startup_settle_ms": int(args.startup_settle_ms),
             "cycle_settle_ms": int(args.cycle_settle_ms),
+            "post_tab_idle_timeout_ms": int(args.post_tab_idle_timeout_ms),
             "tab_cycles": int(args.tab_cycles),
             "f5_cycles": int(args.f5_cycles),
             "quote_cycles": int(args.quote_cycles),
@@ -553,9 +589,7 @@ def run_suite(args: argparse.Namespace) -> dict:
             export_each_sample=not args.no_export_samples,
             sample_output_dir=args.sample_output_dir,
         )
-        stall_probe = get_ui_stall_probe()
-        if stall_probe is not None:
-            stall_probe.reset_stall_snapshot()
+        _reset_ui_stall_snapshot()
 
         for second in range(max(0, int(args.idle_seconds))):
             _settle(app, 1000)
@@ -584,6 +618,12 @@ def run_suite(args: argparse.Namespace) -> dict:
             export_each_sample=not args.no_export_samples,
             sample_output_dir=args.sample_output_dir,
         )
+        report["post_tab_idle"] = _wait_for_background_tasks_idle(
+            app,
+            timeout_ms=args.post_tab_idle_timeout_ms,
+        )
+        _settle(app, args.cycle_settle_ms)
+        _reset_ui_stall_snapshot()
 
         report["f5_cycle"] = _cycle_f5(window, app, cycles=args.f5_cycles, settle_ms=args.cycle_settle_ms)
         _sample(
@@ -658,6 +698,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--central-quotes-enabled", action="store_true")
     parser.add_argument("--startup-settle-ms", type=int, default=300)
     parser.add_argument("--cycle-settle-ms", type=int, default=120)
+    parser.add_argument("--post-tab-idle-timeout-ms", type=int, default=POST_TAB_IDLE_TIMEOUT_MS)
     parser.add_argument("--sample-every-seconds", type=int, default=5)
     parser.add_argument("--idle-seconds", type=int, default=None)
     parser.add_argument("--idle-minutes", type=float, default=None)

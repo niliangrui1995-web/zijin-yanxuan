@@ -6,9 +6,26 @@ from PyQt6.QtGui import QColor, QShowEvent
 from PyQt6.QtWidgets import QHeaderView, QWidget
 
 from app.services.ui_event_service import domain_events as event_bus
+from ui.tabs import stock_candidate_tab as stock_candidate_module
 from ui.tabs.stock_candidate_tab import StockCandidateTab
 from ui.theme import theme_manager
 from ui.workspaces.stock_signal import StockSignal
+
+
+def _run_candidate_refreshes_inline(monkeypatch, submitted=None):
+    def _run_in_background(fn, *args, on_success=None, on_error=None, task_id=None, **kwargs):
+        if submitted is not None:
+            submitted.append(task_id)
+        if on_success is not None:
+            on_success(fn())
+        return task_id
+
+    monkeypatch.setattr(
+        stock_candidate_module.task_manager,
+        "run_in_background",
+        _run_in_background,
+        raising=False,
+    )
 
 
 def test_stock_candidate_rows_keep_multi_source_names_and_rank_score():
@@ -544,8 +561,122 @@ def test_stock_candidate_table_uses_fresh_context_column_layout(monkeypatch):
         tab.close()
 
 
+def test_stock_candidate_refresh_defers_candidate_load_to_background(monkeypatch):
+    monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+    jobs = []
+
+    class _Workspace(QWidget):
+        def __init__(self):
+            super().__init__()
+            self.collect_calls = 0
+
+        def collect_stock_context(self, **kwargs):
+            self.collect_calls += 1
+            return {
+                "300750": [
+                    StockSignal(
+                        code="300750",
+                        source_tab="na_daily",
+                        signal_type="catalyst",
+                        summary="anchor",
+                    ),
+                    StockSignal(
+                        code="300750",
+                        source_tab="scan",
+                        signal_type="vcp_scan",
+                        summary="scan",
+                    ),
+                ]
+            }
+
+        @staticmethod
+        def tab_specs():
+            return [
+                {"key": "na_daily", "title": "na"},
+                {"key": "scan", "title": "scan"},
+            ]
+
+    def _capture_run_in_background(fn, *args, on_success=None, on_error=None, task_id=None, **kwargs):
+        jobs.append((fn, on_success, on_error, task_id))
+        return task_id
+
+    monkeypatch.setattr(
+        stock_candidate_module.task_manager,
+        "run_in_background",
+        _capture_run_in_background,
+        raising=False,
+    )
+
+    workspace = _Workspace()
+    tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
+    tab.refresh_table_from_latest_snapshot = lambda *_args, **_kwargs: None
+    try:
+        tab.refresh_candidates()
+
+        assert len(jobs) == 1
+        assert str(jobs[0][3]) == StockCandidateTab.REFRESH_TASK_ID
+        assert workspace.collect_calls == 0
+        assert tab.model.row_data == []
+
+        result = jobs[0][0]()
+        assert workspace.collect_calls == 1
+        jobs[0][1](result)
+
+        assert tab._candidate_refresh_running is False
+        assert len(tab.model.row_data) == 1
+    finally:
+        tab.close()
+        workspace.deleteLater()
+
+
+def test_stock_candidate_refresh_queues_followup_while_background_running(monkeypatch):
+    scheduled = []
+    jobs = []
+    monkeypatch.setattr(
+        "ui.tabs.stock_candidate_tab.QTimer.singleShot",
+        lambda delay, callback: scheduled.append((delay, callback)),
+    )
+
+    class _Workspace(QWidget):
+        def collect_stock_context(self, **kwargs):
+            return {}
+
+        @staticmethod
+        def tab_specs():
+            return []
+
+    def _capture_run_in_background(fn, *args, on_success=None, on_error=None, task_id=None, **kwargs):
+        jobs.append((fn, on_success, on_error, task_id))
+        return task_id
+
+    monkeypatch.setattr(
+        stock_candidate_module.task_manager,
+        "run_in_background",
+        _capture_run_in_background,
+        raising=False,
+    )
+
+    workspace = _Workspace()
+    tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
+    try:
+        tab.refresh_candidates()
+        tab.refresh_candidates()
+
+        assert len(jobs) == 1
+        assert tab._candidate_refresh_pending is True
+
+        jobs[0][1](jobs[0][0]())
+
+        assert tab._candidate_refresh_pending is False
+        assert scheduled[-1][0] == 0
+    finally:
+        tab.close()
+        workspace.deleteLater()
+
+
 def test_stock_candidate_refresh_exposes_service_lineage(monkeypatch):
     monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+    _run_candidate_refreshes_inline(monkeypatch)
 
     class _Provider:
         _rt_eastmoney_cooldown_until = 0.0
@@ -614,6 +745,7 @@ def test_stock_candidate_refresh_exposes_service_lineage(monkeypatch):
 
 def test_stock_candidate_refresh_collects_context_without_lhb_compute(monkeypatch):
     monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+    _run_candidate_refreshes_inline(monkeypatch)
     calls = []
 
     class _Workspace(QWidget):
@@ -658,6 +790,7 @@ def test_stock_candidate_refresh_collects_context_without_lhb_compute(monkeypatc
 
 def test_stock_candidate_refresh_skips_model_update_when_rows_unchanged(monkeypatch):
     monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+    _run_candidate_refreshes_inline(monkeypatch)
 
     class _Workspace(QWidget):
         def collect_stock_context(self):

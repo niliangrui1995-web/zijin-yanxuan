@@ -1181,6 +1181,18 @@ def test_fund_holdings_refresh_after_f5_schedules_auto_sync(monkeypatch):
     )
     monkeypatch.setattr(
         fund_holdings_module.FundHoldingsTab,
+        "_apply_latest_quotes_from_store",
+        lambda self: calls.append("store"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "_update_status_summary",
+        lambda self: calls.append("status"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
         "_run_sync_action",
         lambda self, label, runner: calls.append(("sync", label, runner)),
         raising=False,
@@ -1194,14 +1206,62 @@ def test_fund_holdings_refresh_after_f5_schedules_auto_sync(monkeypatch):
     tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
     try:
         assert tab.refresh_data_after_f5() is True
-        assert calls == [("snapshot", tab.model, True)]
-        assert scheduled[0][0] == tab._F5_AUTO_SYNC_DELAY_MS
+        assert calls == []
+        assert scheduled[0][0] == 0
+        assert scheduled[1][0] == tab._F5_AUTO_SYNC_DELAY_MS
 
-        assert scheduled[0][1]() is True
-        assert calls == [
-            ("snapshot", tab.model, True),
-            ("sync", "F5后自动更新", fund_holdings_module.fund_holdings_sync_service.sync_latest_all),
-        ]
+        scheduled[0][1]()
+        assert calls == [("snapshot", tab.model, True), "store", "status"]
+
+        assert scheduled[1][1]() is True
+        assert calls[:3] == [("snapshot", tab.model, True), "store", "status"]
+        assert calls[3][0] == "sync"
+        assert calls[3][2] == fund_holdings_module.fund_holdings_sync_service.sync_latest_all
+    finally:
+        tab.deleteLater()
+
+
+def test_fund_holdings_cache_reload_refresh_is_deferred_and_coalesced(monkeypatch):
+    _setup_store(monkeypatch, [])
+    calls = []
+    scheduled = []
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "refresh_table_from_latest_snapshot",
+        lambda self, current_model=None, *, async_local=True: calls.append(("snapshot", current_model, async_local)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "_apply_latest_quotes_from_store",
+        lambda self: calls.append("store"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "_update_status_summary",
+        lambda self: calls.append("status"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        fund_holdings_module.QTimer,
+        "singleShot",
+        lambda delay, callback: scheduled.append((delay, callback)),
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
+    try:
+        tab._on_cache_reload_completed()
+        tab._on_cache_reload_completed()
+
+        assert calls == []
+        assert len(scheduled) == 1
+        assert scheduled[0][0] == 0
+
+        scheduled[0][1]()
+
+        assert calls == [("snapshot", tab.model, True), "store", "status"]
+        assert tab._cache_reload_refresh_pending is False
     finally:
         tab.deleteLater()
 

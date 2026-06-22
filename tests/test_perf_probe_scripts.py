@@ -1,4 +1,5 @@
 from scripts import perf_round5_probe
+from scripts import runtime_health_stability_suite as runtime_suite
 from scripts.perf_round5_probe import (
     _effective_probe_tabs,
     _loaded_info_source_keys,
@@ -13,6 +14,7 @@ from scripts.runtime_health_stability_suite import (
     _build_startup_lazy_budget,
     _cycle_tabs,
     _parse_args,
+    _wait_for_background_tasks_idle,
 )
 from scripts.soak_leak_probe import _trend
 
@@ -215,7 +217,42 @@ def test_runtime_health_suite_supports_explicit_soak_minutes():
 
     assert args.idle_seconds == 30
     assert args.kline_cycles == 1
+    assert args.post_tab_idle_timeout_ms == runtime_suite.POST_TAB_IDLE_TIMEOUT_MS
     assert str(args.sample_output_dir).endswith("runtime_health_samples")
+
+
+def test_runtime_health_suite_allows_post_tab_idle_timeout_override():
+    args = _parse_args(["--mode", "short", "--post-tab-idle-timeout-ms", "1200"])
+
+    assert args.post_tab_idle_timeout_ms == 1200
+
+
+def test_runtime_health_waits_for_background_tasks_to_idle(monkeypatch):
+    class _App:
+        def __init__(self):
+            self.process_events_count = 0
+
+        def processEvents(self):
+            self.process_events_count += 1
+
+    class _TaskManager:
+        def __init__(self):
+            self.values = [2, 1, 0, 0]
+
+        @property
+        def active_count(self):
+            if len(self.values) > 1:
+                return self.values.pop(0)
+            return self.values[0]
+
+    app = _App()
+    monkeypatch.setattr(runtime_suite, "task_manager", _TaskManager())
+    monkeypatch.setattr(runtime_suite.time, "sleep", lambda _seconds: None)
+
+    result = _wait_for_background_tasks_idle(app, timeout_ms=100, step_ms=1)
+
+    assert result == {"status": "ok", "timeout_ms": 100, "active_before": 2, "active_after": 0}
+    assert app.process_events_count > 0
 
 
 def test_runtime_health_suite_soak60_defaults_to_one_hour():

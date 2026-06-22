@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import time
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -47,6 +48,8 @@ class AsianMarketRuntimeService(QObject):
         self._codes: list[str] = []
         self._last_success_at: dt.datetime | None = None
         self._last_error = ""
+        self._auto_refresh_deferred_until = 0.0
+        self._auto_refresh_defer_reason = ""
 
     @property
     def runtime_state(self) -> str:
@@ -99,6 +102,37 @@ class AsianMarketRuntimeService(QObject):
         except RuntimeError:
             return False
 
+    def _auto_refresh_defer_remaining(self) -> float:
+        remaining = float(self._auto_refresh_deferred_until or 0.0) - time.time()
+        if remaining <= 0:
+            self._auto_refresh_deferred_until = 0.0
+            self._auto_refresh_defer_reason = ""
+            return 0.0
+        return remaining
+
+    def defer_auto_refresh(self, seconds: float, reason: str = "") -> None:
+        duration = max(0.0, float(seconds or 0.0))
+        if duration <= 0:
+            return
+        self._auto_refresh_deferred_until = max(
+            float(self._auto_refresh_deferred_until or 0.0),
+            time.time() + duration,
+        )
+        self._auto_refresh_defer_reason = str(reason or "").strip()
+        worker = self._worker
+        if worker is not None:
+            try:
+                defer_worker = getattr(worker, "defer_auto_refresh", None)
+                if callable(defer_worker):
+                    defer_worker(duration, self._auto_refresh_defer_reason)
+            except RuntimeError:
+                self._worker = None
+        self._set_runtime_state("deferred", self._auto_refresh_defer_reason)
+
+    def clear_auto_refresh_defer(self) -> None:
+        self._auto_refresh_deferred_until = 0.0
+        self._auto_refresh_defer_reason = ""
+
     def _set_runtime_state(self, state: str, message: str = "") -> None:
         self._runtime_state = str(state or "idle").strip()
         self.sig_runtime_state_changed.emit(
@@ -128,6 +162,7 @@ class AsianMarketRuntimeService(QObject):
         return worker
 
     def resume_auto_refresh(self) -> None:
+        self.clear_auto_refresh_defer()
         worker = self._ensure_worker()
         try:
             worker.resume_auto_refresh()
@@ -160,6 +195,18 @@ class AsianMarketRuntimeService(QObject):
     def sync_runtime_state(self) -> str:
         codes = self.target_codes()
         quote_open = is_asian_quote_refresh_time(codes)
+        defer_remaining = self._auto_refresh_defer_remaining()
+        if quote_open and defer_remaining > 0:
+            worker = self._worker
+            if worker is not None:
+                try:
+                    defer_worker = getattr(worker, "defer_auto_refresh", None)
+                    if callable(defer_worker):
+                        defer_worker(defer_remaining, self._auto_refresh_defer_reason)
+                except RuntimeError:
+                    self._worker = None
+            self._set_runtime_state("deferred", self._auto_refresh_defer_reason)
+            return "deferred"
         if quote_open:
             worker = self._ensure_worker()
             try:

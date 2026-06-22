@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 
 import pandas as pd
+from PyQt6.QtTest import QSignalSpy
 from yfinance.exceptions import YFRateLimitError
 
+from ui.services import asian_market_runtime_service as runtime_service
 from ui.tabs import asian_market_workers as workers
 
 
@@ -434,6 +436,123 @@ def test_timeout_cycle_backoff_stops_next_auto_poll(monkeypatch):
     worker.run()
 
     assert sleep_calls == [30.0]
+
+
+def test_timeout_auto_cycle_persists_cache_without_emitting_ui_update(monkeypatch):
+    monkeypatch.setattr(workers, "is_asian_quote_refresh_time", lambda codes: True)
+    monkeypatch.setattr(
+        workers,
+        "get_yf_rate_limit_status",
+        lambda: {
+            "active": False,
+            "remaining_sec": 0.0,
+            "reason": "",
+            "until_ts": 0.0,
+        },
+    )
+    saved = []
+    monkeypatch.setattr(workers, "save_global_asian_rt_cache", lambda: saved.append(True))
+    worker = workers.AsianMarketWorker(["0522.HK"])
+    result_spy = QSignalSpy(worker.result_ready)
+    progress_spy = QSignalSpy(worker.progress)
+
+    def _fetch_updates():
+        worker._last_fetch_timed_out = True
+        return {"0522.HK": {"close": 169.3}}
+
+    def _sleep(_seconds):
+        worker._is_running = False
+        return False
+
+    monkeypatch.setattr(worker, "_fetch_updates", _fetch_updates)
+    monkeypatch.setattr(worker, "_sleep_with_break", _sleep)
+
+    worker.run()
+
+    assert saved == [True]
+    assert len(result_spy) == 0
+    assert any("deferred UI repaint" in args[0] for args in progress_spy)
+
+
+def test_timeout_manual_cycle_still_emits_ui_update(monkeypatch):
+    monkeypatch.setattr(workers, "is_asian_quote_refresh_time", lambda codes: True)
+    monkeypatch.setattr(
+        workers,
+        "get_yf_rate_limit_status",
+        lambda: {
+            "active": False,
+            "remaining_sec": 0.0,
+            "reason": "",
+            "until_ts": 0.0,
+        },
+    )
+    monkeypatch.setattr(workers, "save_global_asian_rt_cache", lambda: None)
+    worker = workers.AsianMarketWorker(["0522.HK"])
+    worker._manual_refresh_requested = True
+    result_spy = QSignalSpy(worker.result_ready)
+
+    def _fetch_updates():
+        worker._last_fetch_timed_out = True
+        return {"0522.HK": {"close": 169.3}}
+
+    def _sleep(_seconds):
+        worker._is_running = False
+        return False
+
+    monkeypatch.setattr(worker, "_fetch_updates", _fetch_updates)
+    monkeypatch.setattr(worker, "_sleep_with_break", _sleep)
+
+    worker.run()
+
+    assert len(result_spy) == 1
+    assert result_spy[0][0]["0522.HK"]["close"] == 169.3
+
+
+class _RuntimeSignal:
+    def connect(self, _callback):
+        return None
+
+
+class _RuntimeWorker:
+    def __init__(self, codes):
+        self.codes = list(codes)
+        self.progress = _RuntimeSignal()
+        self.result_ready = _RuntimeSignal()
+        self.finished = _RuntimeSignal()
+        self.calls = []
+        self.running = False
+
+    def resume_auto_refresh(self):
+        self.calls.append("resume")
+
+    def defer_auto_refresh(self, seconds, reason=""):
+        self.calls.append(("defer", seconds, reason))
+
+    def isRunning(self):
+        return self.running
+
+    def start(self):
+        self.running = True
+        self.calls.append("start")
+
+
+def test_runtime_service_defer_prevents_auto_worker_start(monkeypatch):
+    created = []
+    monkeypatch.setattr(runtime_service, "is_asian_quote_refresh_time", lambda codes: True)
+    service = runtime_service.AsianMarketRuntimeService(
+        worker_factory=lambda codes: created.append(_RuntimeWorker(codes)) or created[-1]
+    )
+    service.set_target_codes(["0522.HK"])
+
+    service.defer_auto_refresh(60, "startup_asian_sync")
+
+    assert service.sync_runtime_state() == "deferred"
+    assert created == []
+
+    service.clear_auto_refresh_defer()
+
+    assert service.sync_runtime_state() == "started"
+    assert created[0].calls == ["resume", "start"]
 
 
 def test_fetch_single_code_skips_optional_network_when_deadline_is_close(monkeypatch):

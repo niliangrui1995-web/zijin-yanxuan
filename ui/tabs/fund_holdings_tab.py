@@ -140,6 +140,7 @@ class FundHoldingsTab(BaseStockTab):
         self._settings = self._create_settings()
         self._pending_daily_auto_sync_date = ""
         self._pending_f5_auto_sync = False
+        self._cache_reload_refresh_pending = False
         self._restoring_view_state = False
         self._view_state_restored = False
         self._view_state_save_timer = QTimer(self)
@@ -1060,7 +1061,7 @@ class FundHoldingsTab(BaseStockTab):
         return self.run_auto_sync_after_f5()
 
     def refresh_data_after_f5(self) -> bool:
-        self.refresh_table_from_latest_snapshot(current_model=self.model, async_local=True)
+        self._schedule_cache_reload_refresh()
         return self.schedule_auto_sync_after_f5()
 
     def refresh_data_after_ai_industry_chain_update(self) -> bool:
@@ -1254,8 +1255,28 @@ class FundHoldingsTab(BaseStockTab):
     def _on_cache_reload_completed(self):
         if getattr(self, "_runtime_cleanup_done", False):
             return
-        self._apply_latest_quotes_from_store()
-        self._update_status_summary()
+        self._schedule_cache_reload_refresh()
+
+    def _schedule_cache_reload_refresh(self) -> None:
+        if getattr(self, "_runtime_cleanup_done", False):
+            return
+        if self._cache_reload_refresh_pending:
+            return
+        self._cache_reload_refresh_pending = True
+        QTimer.singleShot(0, self._run_cache_reload_refresh)
+
+    def _run_cache_reload_refresh(self) -> None:
+        self._cache_reload_refresh_pending = False
+        if getattr(self, "_runtime_cleanup_done", False):
+            return
+        with ui_stall_span(
+            "FundHoldingsTab._run_cache_reload_refresh",
+            tab="fund_holdings",
+            signal="cache_reload",
+        ):
+            self.refresh_table_from_latest_snapshot(current_model=self.model, async_local=True)
+            self._apply_latest_quotes_from_store()
+            self._update_status_summary()
 
     def _on_fund_holdings_updated(self):
         if getattr(self, "_runtime_cleanup_done", False):

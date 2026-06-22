@@ -1015,12 +1015,21 @@ class AsianMarketWorker(QThread):
         now = time.time() if now_ts is None else float(now_ts)
         self._market_backoff_until[normalized_market] = now + _FETCH_TIMEOUT_MARKET_BACKOFF_SEC
 
-    def _mark_timeout_backoff(self, *, now_ts: float | None = None) -> None:
+    def _mark_timeout_backoff(self, *, now_ts: float | None = None, duration_sec: float | None = None) -> None:
         now = time.time() if now_ts is None else float(now_ts)
+        duration = float(duration_sec or _FETCH_TIMEOUT_CYCLE_BACKOFF_SEC)
         self._timeout_backoff_until = max(
             float(self._timeout_backoff_until or 0.0),
-            now + _FETCH_TIMEOUT_CYCLE_BACKOFF_SEC,
+            now + duration,
         )
+
+    def defer_auto_refresh(self, seconds: float, reason: str = "") -> None:
+        duration = max(0.0, float(seconds or 0.0))
+        if duration <= 0:
+            return
+        self._mark_timeout_backoff(duration_sec=duration)
+        if reason:
+            log.info("[AsianTab] Auto refresh deferred for %.0fs: %s", duration, reason)
 
     def _timeout_backoff_remaining(self, *, now_ts: float | None = None) -> float:
         now = time.time() if now_ts is None else float(now_ts)
@@ -1265,11 +1274,13 @@ class AsianMarketWorker(QThread):
         self._fetch_deadline_monotonic = deadline
         self._last_fetch_timed_out = False
         timed_out = False
+        cancelled = False
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
         futures = {executor.submit(self._fetch_single_code, code, yf_session, info_session): code for code in codes}
         try:
             for future in concurrent.futures.as_completed(futures, timeout=_FETCH_UPDATES_TIMEOUT_SEC):
                 if not self._is_running:
+                    cancelled = True
                     break
                 code = futures[future]
                 try:
@@ -1320,7 +1331,7 @@ class AsianMarketWorker(QThread):
             for future in futures:
                 if not future.done():
                     future.cancel()
-            executor.shutdown(wait=not timed_out, cancel_futures=True)
+            executor.shutdown(wait=not (timed_out or cancelled or not self._is_running), cancel_futures=True)
             self._fetch_deadline_monotonic = previous_deadline
 
         return updates
@@ -1371,10 +1382,17 @@ class AsianMarketWorker(QThread):
                     self._clear_timeout_backoff()
                 if self._is_running and updates:
                     save_global_asian_rt_cache()
-                    self.result_ready.emit(updates)
+                    defer_ui_update = getattr(self, "_last_fetch_timed_out", False) and not manual_refresh
+                    if not defer_ui_update:
+                        self.result_ready.emit(updates)
                     message = (
                         f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 亚洲市场报价更新完成，获取 {len(updates)} 只"
                     )
+                    if defer_ui_update:
+                        message = (
+                            f"[{datetime.datetime.now().strftime('%H:%M:%S')}] "
+                            f"Asian market quote refresh timed out; cached {len(updates)} updates and deferred UI repaint"
+                        )
                     self.progress.emit(message)
                     log.info(f"[AsianTab] {message}")
             except Exception as exc:

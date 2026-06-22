@@ -30,6 +30,8 @@ from infra.tasks import (
 log = get_logger(__name__)
 ASIAN_DATA_SYNC_TIME_BUDGET_SEC = 20
 ASIAN_DATA_SYNC_TIMEOUT_SEC = 30
+ASIAN_DATA_SYNC_RUNTIME_DEFER_SEC = ASIAN_DATA_SYNC_TIMEOUT_SEC + 15
+ASIAN_DATA_SYNC_TIMEOUT_RUNTIME_BACKOFF_SEC = 10 * 60
 DEFERRED_LOAD_TASK_ID = STARTUP_DEFERRED_LOAD.task_id
 ASIAN_DATA_SYNC_TASK_ID = STARTUP_ASIAN_DATA_SYNC.task_id
 SMART_STARTUP_TASK_ID = STARTUP_SMART.task_id
@@ -146,6 +148,10 @@ class StartupHostAdapter:
     def engine(self):
         return getattr(self._main_window, "engine", None)
 
+    @property
+    def asian_market_service(self):
+        return getattr(self._main_window, "asian_market_service", None)
+
     def is_closing(self) -> bool:
         return bool(getattr(self._main_window, "_is_closing", False))
 
@@ -240,6 +246,21 @@ class StartupHostAdapter:
         workspace = self.workspace
         callback = getattr(workspace, "auto_start_rt_monitor", None)
         return bool(callback()) if callable(callback) else False
+
+    def defer_asian_market_auto_refresh(self, seconds: float, reason: str = "") -> None:
+        service = self.asian_market_service
+        callback = getattr(service, "defer_auto_refresh", None)
+        if callable(callback):
+            callback(seconds, reason)
+
+    def resume_asian_market_auto_refresh(self) -> None:
+        service = self.asian_market_service
+        clear_defer = getattr(service, "clear_auto_refresh_defer", None)
+        if callable(clear_defer):
+            clear_defer()
+        sync_runtime_state = getattr(service, "sync_runtime_state", None)
+        if callable(sync_runtime_state):
+            sync_runtime_state()
 
 
 class StartupOrchestrator:
@@ -369,6 +390,17 @@ class StartupOrchestrator:
         )
         return current_map
 
+    @staticmethod
+    def _asian_data_sync_paths() -> tuple[str, str, str, str]:
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        output_dir = os.path.join(project_root, "data", "Cache")
+        json_cache = os.path.join(output_dir, "asian_klines_latest.json")
+        module_entry = os.path.join(project_root, "vcp", "fetchers", "asian_kline_fetcher.py")
+        return project_root, output_dir, json_cache, module_entry
+
+    def _defer_asian_market_auto_refresh(self, seconds: float, reason: str) -> None:
+        self._safe_call_in_ui(lambda: self.host.defer_asian_market_auto_refresh(seconds, reason))
+
     def deferred_data_load(self):
         """延迟恢复历史缓存、实时缓存和 RPS 缓存。"""
 
@@ -474,15 +506,7 @@ class StartupOrchestrator:
             if not self._alive():
                 return
 
-            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            output_dir = os.path.join(project_root, "data", "Cache")
-            json_cache = os.path.join(output_dir, "asian_klines_latest.json")
-            module_entry = os.path.join(
-                project_root,
-                "vcp",
-                "fetchers",
-                "asian_kline_fetcher.py",
-            )
+            project_root, output_dir, json_cache, module_entry = self._asian_data_sync_paths()
 
             needs_update = False
             if not os.path.exists(json_cache):
@@ -499,6 +523,7 @@ class StartupOrchestrator:
 
             if needs_update and os.path.exists(module_entry):
                 log_process_snapshot("startup.asian_sync.begin", logger=log)
+                self._defer_asian_market_auto_refresh(ASIAN_DATA_SYNC_RUNTIME_DEFER_SEC, "startup_asian_sync")
                 log.info("[启动] 亚洲市场 JSON 非最新，后台静默增量同步中...")
                 try:
                     run_python_module(
@@ -523,6 +548,7 @@ class StartupOrchestrator:
                     if not self._alive():
                         return
                     self._safe_call_in_ui(lambda: event_bus.sig_asian_klines_ready.emit())
+                    self._safe_call_in_ui(self.host.resume_asian_market_auto_refresh)
                     elapsed_ms = (time.perf_counter() - started_at) * 1000.0
                     record_metric("startup_asian_sync_ms", elapsed_ms, unit="ms")
                     log_process_snapshot(
@@ -536,6 +562,10 @@ class StartupOrchestrator:
                         output_dir=output_dir,
                     )
                 except ProcessTimeoutError:
+                    self._defer_asian_market_auto_refresh(
+                        ASIAN_DATA_SYNC_TIMEOUT_RUNTIME_BACKOFF_SEC,
+                        "startup_asian_sync_timeout",
+                    )
                     log_process_snapshot(
                         "startup.asian_sync.end",
                         logger=log,

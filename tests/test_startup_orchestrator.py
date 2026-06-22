@@ -10,8 +10,10 @@ from PyQt6.QtTest import QSignalSpy
 import core.startup_orchestrator as startup_module
 from core.event_bus import event_bus
 from core.startup_orchestrator import (
+    ASIAN_DATA_SYNC_RUNTIME_DEFER_SEC,
     ASIAN_DATA_SYNC_TASK_ID,
     ASIAN_DATA_SYNC_TIME_BUDGET_SEC,
+    ASIAN_DATA_SYNC_TIMEOUT_RUNTIME_BACKOFF_SEC,
     ASIAN_DATA_SYNC_TIMEOUT_SEC,
     AUTO_RT_MONITOR_NETWORK_TASK_ID,
     DEFERRED_LOAD_TASK_ID,
@@ -42,6 +44,21 @@ class _DummyCacheManager:
         return None
 
 
+class _DummyAsianMarketService:
+    def __init__(self):
+        self.calls = []
+
+    def defer_auto_refresh(self, seconds, reason=""):
+        self.calls.append(("defer", seconds, reason))
+
+    def clear_auto_refresh_defer(self):
+        self.calls.append(("clear",))
+
+    def sync_runtime_state(self):
+        self.calls.append(("sync",))
+        return "running"
+
+
 class _DummyDataProvider:
     def __init__(self):
         self.cache_data = {}
@@ -70,6 +87,7 @@ class _DummyMainWindow(QObject):
         self.data_provider = _DummyDataProvider()
         self.cache_manager = _DummyCacheManager()
         self.engine = object()
+        self.asian_market_service = _DummyAsianMarketService()
         self.table_rt = object()
         self.lbl_status = _DummyLabel()
         self.lbl_code_count = _DummyLabel()
@@ -196,7 +214,8 @@ def test_startup_host_adapter_loads_rt_cache_when_table_model_exists():
 
 def test_startup_orchestrator_asian_sync_uses_process_runner(monkeypatch):
     runner = _InlineJobRunner()
-    orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=runner)
+    mw = _DummyMainWindow()
+    orchestrator = StartupOrchestrator(mw, job_runner=runner)
     run_calls = []
 
     def fake_exists(path):
@@ -235,6 +254,38 @@ def test_startup_orchestrator_asian_sync_uses_process_runner(monkeypatch):
     assert run_calls[0]["kwargs"]["capture_output"] is True
     assert run_calls[0]["kwargs"]["text"] is True
     assert run_calls[0]["kwargs"]["no_window"] is True
+    assert mw.asian_market_service.calls == [
+        ("defer", ASIAN_DATA_SYNC_RUNTIME_DEFER_SEC, "startup_asian_sync"),
+        ("clear",),
+        ("sync",),
+    ]
+
+
+def test_startup_orchestrator_asian_sync_timeout_extends_runtime_backoff(monkeypatch):
+    mw = _DummyMainWindow()
+    orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
+
+    def fake_exists(path):
+        path = str(path)
+        if path.endswith("asian_klines_latest.json"):
+            return False
+        if path.endswith("asian_kline_fetcher.py"):
+            return True
+        return True
+
+    def fake_run_python_module(*_args, **_kwargs):
+        raise startup_module.ProcessTimeoutError(cmd="python", timeout=ASIAN_DATA_SYNC_TIMEOUT_SEC)
+
+    monkeypatch.setattr("core.startup_orchestrator.os.path.exists", fake_exists)
+    monkeypatch.setattr("core.startup_orchestrator.run_python_module", fake_run_python_module)
+    monkeypatch.setattr("core.startup_orchestrator.log_process_snapshot", lambda *_args, **_kwargs: None)
+
+    orchestrator.deferred_data_load()
+
+    assert mw.asian_market_service.calls == [
+        ("defer", ASIAN_DATA_SYNC_RUNTIME_DEFER_SEC, "startup_asian_sync"),
+        ("defer", ASIAN_DATA_SYNC_TIMEOUT_RUNTIME_BACKOFF_SEC, "startup_asian_sync_timeout"),
+    ]
 
 
 def test_startup_orchestrator_deferred_load_emits_cache_bootstrap_ready(monkeypatch):
