@@ -43,14 +43,19 @@ class WatchlistTab(BaseStockTab):
         *,
         startup_tasks_enabled: bool = True,
         startup_indicator_refresh_enabled: bool = True,
+        startup_indicator_refresh_delay_ms: int = 500,
+        startup_followup_refresh_enabled: bool = True,
     ):
         super().__init__(data_provider=data_provider, parent=parent)
         self._watchlist_last_update = ""
         self._closing = False
         self._startup_tasks_enabled = bool(startup_tasks_enabled)
         self._startup_indicator_refresh_enabled = bool(startup_indicator_refresh_enabled)
+        self._startup_indicator_refresh_delay_ms = self._coerce_delay_ms(startup_indicator_refresh_delay_ms, 500)
+        self._startup_followup_refresh_enabled = bool(startup_followup_refresh_enabled)
         self._delayed_special_timer = None
         self._pending_vcp_calc = False
+        self._vcp_calc_allow_noninteractive = False
         self._watchlist_lineage_service = TabDataLineageService(
             key="watchlist",
             source="watchlist_vm + local_quote_snapshot",
@@ -89,11 +94,14 @@ class WatchlistTab(BaseStockTab):
         # 先立即回填一次，避免启动期 UI 忙时定时器延后导致“关注池长期空白”。
         if self._startup_tasks_enabled:
             if self._startup_indicator_refresh_enabled:
-                self._load_special_data()
+                if self._startup_indicator_refresh_delay_ms == 500:
+                    self._load_special_data()
+                else:
+                    self._load_special_data(indicator_delay_ms=self._startup_indicator_refresh_delay_ms)
             else:
                 self._load_special_data(refresh_indicators=False)
             # 再做一次延迟回填，兜住启动后缓存/名称映射后到位的场景。
-            if self._startup_indicator_refresh_enabled:
+            if self._startup_indicator_refresh_enabled and self._startup_followup_refresh_enabled:
                 self._delayed_special_timer = QTimer(self)
                 self._delayed_special_timer.setSingleShot(True)
                 self._delayed_special_timer.timeout.connect(self._load_special_data)
@@ -102,6 +110,13 @@ class WatchlistTab(BaseStockTab):
     # ================================================================
     # UI 构建
     # ================================================================
+    @staticmethod
+    def _coerce_delay_ms(value, default: int) -> int:
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            return max(0, int(default))
+
     def showEvent(self, event):  # noqa: N802 - Qt API naming
         super().showEvent(event)
         if self._pending_vcp_calc and self._should_start_interactive_runtime_on_show():
@@ -298,7 +313,7 @@ class WatchlistTab(BaseStockTab):
     # ================================================================
     # 数据加载
     # ================================================================
-    def _load_special_data(self, *, refresh_indicators: bool = True):
+    def _load_special_data(self, *, refresh_indicators: bool = True, indicator_delay_ms: int | None = None):
         """加载关注池数据：统一走 ViewModel/SQLite。"""
         if self._closing:
             return
@@ -314,7 +329,10 @@ class WatchlistTab(BaseStockTab):
         # 缓存可能在 3.5s 延迟前就加载完了，那时 model.row_data 还是空的
         # 引入 _request_vcp_calc 防抖 500ms 重复合并
         if refresh_indicators:
-            self._request_vcp_calc()
+            if indicator_delay_ms is None:
+                self._request_vcp_calc()
+            else:
+                self._request_vcp_calc(delay_ms=indicator_delay_ms)
 
     def _render_table(self, all_codes, data_dict, old_pool):
         """渲染关注池表格"""
@@ -806,9 +824,26 @@ class WatchlistTab(BaseStockTab):
 
             self.model.update_data(updated_rows, hydrate_latest_quotes=False)
 
-        self._persist_watchlist_metrics(results)
+        self._schedule_watchlist_metrics_persist(results)
         self._touch_watchlist_update()
         self._update_status_summary()
+
+    def _schedule_watchlist_metrics_persist(self, results: dict):
+        if self._closing or not results:
+            return
+        payload = {
+            str(code).strip(): dict(data or {})
+            for code, data in dict(results or {}).items()
+            if str(code or "").strip()
+        }
+        if not payload:
+            return
+        task_manager.run_in_background(
+            self._persist_watchlist_metrics,
+            payload,
+            on_error=lambda e: log.error(f"[watchlist] metrics persist failed: {e}"),
+            task_id=task_registry.workspace("watchlist_vcp_persist").task_id,
+        )
 
     def _persist_watchlist_metrics(self, results: dict):
         if not results:
@@ -960,7 +995,7 @@ class WatchlistTab(BaseStockTab):
             self._pending_vcp_calc = True
             return
         if payload:
-            log.debug(f"[关注池] 写入 {len(payload)} 条附加指标")
+            log.debug(f"[watchlist] apply {len(payload)} metric rows")
             self._apply_vcp_indicators_ui(payload)
 
     def _is_background_prewarm_indicator_blocked(self) -> bool:
@@ -980,6 +1015,9 @@ class WatchlistTab(BaseStockTab):
             self._pending_vcp_calc = True
             return
         self._pending_vcp_calc = False
+        self._vcp_calc_allow_noninteractive = bool(
+            getattr(self, "_vcp_calc_allow_noninteractive", False) or allow_noninteractive
+        )
         if not hasattr(self, "_vcp_calc_timer"):
             self._vcp_calc_timer = QTimer(self)
             self._vcp_calc_timer.setSingleShot(True)
@@ -1018,6 +1056,11 @@ class WatchlistTab(BaseStockTab):
     def _do_vcp_calc(self):
         """实际计算"""
         if self._closing:
+            return
+        allow_noninteractive = bool(getattr(self, "_vcp_calc_allow_noninteractive", False))
+        self._vcp_calc_allow_noninteractive = False
+        if not allow_noninteractive and not self._is_current_workspace_tab():
+            self._pending_vcp_calc = True
             return
         if self.model and self.model.row_data:
             codes_with_rows = [(idx, str(r.get("代码"))) for idx, r in enumerate(self.model.row_data) if r.get("代码")]

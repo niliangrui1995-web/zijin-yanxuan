@@ -151,6 +151,7 @@ class ClassicWorkspace(QWidget):
     BACKGROUND_PREWARM_KEYS = frozenset()
     RESTORE_LAST_TAB_DELAY_MS = 750
     COPY_HOOK_REFRESH_DELAY_MS = 240
+    WATCHLIST_TAB_SWITCH_INDICATOR_DELAY_MS = 1800
 
     def __init__(
         self,
@@ -370,8 +371,13 @@ class ClassicWorkspace(QWidget):
         if not callable(factory):
             raise TypeError(f"missing tab factory: {spec.get('key')}")
         runtime_kwargs = {}
-        if str(spec.get("key") or "").strip() == "watchlist" and str(reason or "").strip() == "background_prewarm":
+        key = str(spec.get("key") or "").strip()
+        reason_text = str(reason or "").strip()
+        if key == "watchlist" and reason_text == "background_prewarm":
             runtime_kwargs["startup_indicator_refresh_enabled"] = False
+        elif key == "watchlist" and reason_text == "tab_switch":
+            runtime_kwargs["startup_indicator_refresh_delay_ms"] = self.WATCHLIST_TAB_SWITCH_INDICATOR_DELAY_MS
+            runtime_kwargs["startup_followup_refresh_enabled"] = False
         return factory(**runtime_kwargs)
 
     def _create_placeholder_tab(self, spec: dict) -> LazyTabPlaceholder:

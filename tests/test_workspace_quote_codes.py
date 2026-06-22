@@ -1241,6 +1241,47 @@ def test_workspace_defers_heavy_tab_autoload(monkeypatch):
         workspace.deleteLater()
 
 
+def test_workspace_delays_watchlist_indicator_refresh_on_tab_switch(monkeypatch):
+    ctor_kwargs = {}
+
+    def _make_tab(name):
+        class _Tab(QWidget):
+            def __init__(self, *args, **kwargs):
+                super().__init__()
+                ctor_kwargs[name] = dict(kwargs)
+
+        return _Tab
+
+    monkeypatch.setattr(classic_workspace_module, "WatchlistTab", _make_tab("watchlist"))
+    monkeypatch.setattr(classic_workspace_module, "AsianMarketTab", _make_tab("asian_market"))
+    monkeypatch.setattr(classic_workspace_module, "NADailyTab", _make_tab("na_daily"))
+    monkeypatch.setattr(classic_workspace_module, "AIIndustryChainTab", _make_tab("ai_industry_chain"))
+    monkeypatch.setattr(classic_workspace_module, "RtMonitorTab", _make_tab("rt_monitor"))
+    monkeypatch.setattr(classic_workspace_module, "ScanTab", _make_tab("scan"))
+    monkeypatch.setattr(classic_workspace_module, "StockCandidateTab", _make_tab("stock_candidates"))
+    monkeypatch.setattr(classic_workspace_module, "LhbTab", _make_tab("lhb"))
+    monkeypatch.setattr(classic_workspace_module, "ForeignBlockTradeTab", _make_tab("foreign_block"))
+    monkeypatch.setattr(classic_workspace_module, "EarningsTab", _make_tab("earnings"))
+    monkeypatch.setattr(classic_workspace_module, "FundHoldingsTab", _make_tab("fund_holdings"))
+    monkeypatch.setattr(classic_workspace_module, "LogTab", _make_tab("system_log"))
+
+    workspace = classic_workspace_module.ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+    )
+    try:
+        workspace.ensure_tab_loaded("watchlist", reason="tab_switch")
+
+        assert ctor_kwargs["watchlist"]["startup_indicator_refresh_delay_ms"] == (
+            classic_workspace_module.ClassicWorkspace.WATCHLIST_TAB_SWITCH_INDICATOR_DELAY_MS
+        )
+        assert ctor_kwargs["watchlist"]["startup_followup_refresh_enabled"] is False
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
 def test_workspace_background_prewarm_primes_context_without_forcing_current_tab(monkeypatch):
     ctor_kwargs = {}
     constructed = []

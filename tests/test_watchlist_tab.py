@@ -21,6 +21,18 @@ class _DummyProvider:
         return False
 
 
+def _run_background_inline(calls=None):
+    def _run(fn, *args, on_success=None, on_error=None, task_id=None, **kwargs):
+        if calls is not None:
+            calls.append({"fn": fn, "args": args, "kwargs": kwargs, "task_id": task_id})
+        result = fn(*args, **kwargs)
+        if on_success is not None:
+            on_success(result)
+        return task_id or "inline"
+
+    return _run
+
+
 def test_watchlist_startup_can_skip_indicator_refresh(monkeypatch):
     calc_calls = []
     monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
@@ -41,6 +53,34 @@ def test_watchlist_startup_can_skip_indicator_refresh(monkeypatch):
     )
     try:
         assert calc_calls == []
+        assert tab._delayed_special_timer is None
+        assert tab.model.row_data
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_watchlist_startup_can_delay_indicator_refresh_and_skip_followup(monkeypatch):
+    calc_calls = []
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
+    monkeypatch.setattr(
+        watchlist_module.watchlist_vm,
+        "get_watchlist_data",
+        lambda: {"600519": {"名称": "贵州茅台"}},
+    )
+    monkeypatch.setattr(
+        watchlist_module.WatchlistTab,
+        "_request_vcp_calc",
+        lambda self, *args, **kwargs: calc_calls.append((args, kwargs)),
+    )
+
+    tab = watchlist_module.WatchlistTab(
+        _DummyProvider(),
+        startup_indicator_refresh_delay_ms=1800,
+        startup_followup_refresh_enabled=False,
+    )
+    try:
+        assert calc_calls == [((), {"delay_ms": 1800})]
         assert tab._delayed_special_timer is None
         assert tab.model.row_data
     finally:
@@ -165,7 +205,9 @@ def test_watchlist_lhb_column_displays_buy_point_rocket(monkeypatch):
         captured["payload"] = payload
         return True
 
+    persist_calls = []
     monkeypatch.setattr(watchlist_vm, "bulk_patch_entries", _fake_bulk_patch_entries)
+    monkeypatch.setattr(watchlist_module.task_manager, "run_in_background", _run_background_inline(persist_calls))
 
     tab = watchlist_module.WatchlistTab(_DummyProvider())
     try:
@@ -243,6 +285,7 @@ def test_watchlist_lhb_note_stays_blank_when_no_buy_point(monkeypatch):
         return True
 
     monkeypatch.setattr(watchlist_vm, "bulk_patch_entries", _fake_bulk_patch_entries)
+    monkeypatch.setattr(watchlist_module.task_manager, "run_in_background", _run_background_inline())
 
     tab = watchlist_module.WatchlistTab(_DummyProvider())
     try:
@@ -728,7 +771,9 @@ def test_watchlist_clears_stale_special_columns_when_current_round_has_no_signal
         captured["remove_keys"] = list(remove_keys or [])
         return True
 
+    persist_calls = []
     monkeypatch.setattr(watchlist_vm, "bulk_patch_entries", _fake_bulk_patch_entries)
+    monkeypatch.setattr(watchlist_module.task_manager, "run_in_background", _run_background_inline(persist_calls))
 
     tab = watchlist_module.WatchlistTab(_DummyProvider())
     try:
@@ -791,6 +836,7 @@ def test_watchlist_clears_stale_special_columns_when_current_round_has_no_signal
         assert captured["payload"]["600519"]["龙虎榜"] == ""
         assert captured["payload"]["600519"]["龙虎榜日期"] == ""
         assert captured["payload"]["600519"]["龙虎榜净额(万)"] == ""
+        assert persist_calls[0]["task_id"] == "watchlist_vcp_persist"
     finally:
         tab.deleteLater()
 
@@ -806,6 +852,15 @@ def test_watchlist_indicator_apply_batches_model_update(monkeypatch):
     )
     monkeypatch.setattr(watchlist_module.QTimer, "singleShot", staticmethod(lambda *_args, **_kwargs: None))
     monkeypatch.setattr(watchlist_vm, "bulk_patch_entries", lambda *_args, **_kwargs: True)
+    persist_calls = []
+    monkeypatch.setattr(
+        watchlist_module.task_manager,
+        "run_in_background",
+        lambda fn, *args, on_success=None, on_error=None, task_id=None, **kwargs: persist_calls.append(
+            {"fn": fn, "args": args, "kwargs": kwargs, "task_id": task_id}
+        )
+        or (task_id or "queued"),
+    )
 
     tab = watchlist_module.WatchlistTab(_DummyProvider())
     try:
@@ -857,6 +912,61 @@ def test_watchlist_indicator_apply_batches_model_update(monkeypatch):
         assert tab.model.row_data[0]["摘要"] == "AI链备注"
         assert tab.model.row_data[0]["备注"] == ""
         assert tab.model.row_data[1]["细分板块"] == "银行"
+        assert persist_calls[0]["task_id"] == "watchlist_vcp_persist"
+    finally:
+        tab.deleteLater()
+
+
+def test_watchlist_indicator_apply_queues_persist_without_sync_write(monkeypatch):
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)
+    monkeypatch.setattr(
+        watchlist_module.WatchlistTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+    monkeypatch.setattr(watchlist_module.QTimer, "singleShot", staticmethod(lambda *_args, **_kwargs: None))
+    direct_writes = []
+    queued = []
+    monkeypatch.setattr(watchlist_vm, "bulk_patch_entries", lambda *args, **kwargs: direct_writes.append((args, kwargs)))
+    monkeypatch.setattr(
+        watchlist_module.task_manager,
+        "run_in_background",
+        lambda fn, *args, on_success=None, on_error=None, task_id=None, **kwargs: queued.append(
+            {"fn": fn, "args": args, "kwargs": kwargs, "task_id": task_id}
+        )
+        or (task_id or "queued"),
+    )
+
+    tab = watchlist_module.WatchlistTab(_DummyProvider())
+    try:
+        tab.model.update_data(
+            [
+                {
+                    "代码": "600519",
+                    "名称": "贵州茅台",
+                    "来源": "手动",
+                    "现价": "--",
+                    "涨幅%": "--",
+                    "市值": "--",
+                    "RPS强度": "",
+                    "细分板块": "",
+                    "摘要": "",
+                    "备注": "",
+                    "业绩异动": "",
+                    "大宗交易": "",
+                    "龙虎榜": "",
+                }
+            ]
+        )
+
+        tab._apply_vcp_indicators_ui({"600519": {"rps": "95", "subsector": "白酒"}})
+
+        assert direct_writes == []
+        assert queued[0]["fn"] == tab._persist_watchlist_metrics
+        assert queued[0]["task_id"] == "watchlist_vcp_persist"
+        assert queued[0]["args"][0]["600519"]["rps"] == "95"
     finally:
         tab.deleteLater()
 
@@ -879,6 +989,7 @@ def test_watchlist_writes_earnings_report_label_to_column(monkeypatch):
         return True
 
     monkeypatch.setattr(watchlist_vm, "bulk_patch_entries", _fake_bulk_patch_entries)
+    monkeypatch.setattr(watchlist_module.task_manager, "run_in_background", _run_background_inline())
 
     tab = watchlist_module.WatchlistTab(_DummyProvider())
     try:

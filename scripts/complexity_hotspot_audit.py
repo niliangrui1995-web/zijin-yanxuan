@@ -18,7 +18,7 @@ HOTSPOT_BUDGETS = {
         "RPSPrecomputer.run_f5_pipeline": 175,
     },
     "core/startup_orchestrator.py": {
-        "StartupOrchestrator.deferred_data_load": 190,
+        "StartupOrchestrator.deferred_data_load": 188,
     },
     "domains/scan/breakout_monitor_service.py": {
         "BreakoutMonitorService.precompute_ready_pool": 175,
