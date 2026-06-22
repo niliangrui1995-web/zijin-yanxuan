@@ -425,17 +425,30 @@ class AsianMarketRuntimeService(QObject):
             max_workers=3,
             period="1y",
         )
+        records = 0
+        if isinstance(report, dict):
+            try:
+                records = int(report.get("written_count") or len(report.get("rows") or []) or 0)
+            except (TypeError, ValueError):
+                records = 0
+
         result = {
             "job_key": "asian_market_cache_sync",
-            "status": "success" if success else "failed",
+            "status": "success" if success else "degraded",
             "message": str(message or ""),
-            "records": len((report or {}).get("rows") or []) if isinstance(report, dict) else 0,
+            "records": records,
             **staleness,
         }
+        if isinstance(report, dict):
+            result["sync_report"] = report
+            result["missing"] = list(report.get("missing") or [])
         if success:
             self._last_success_at = dt.datetime.now()
+            self._last_error = ""
             if emit_event:
                 event_bus.sig_asian_klines_ready.emit()
             return result
         self._last_error = str(message or "asian cache sync failed")
-        raise RuntimeError(self._last_error)
+        result["error"] = self._last_error
+        log.warning("[亚洲市场] K 线缓存同步降级: %s", self._last_error)
+        return result

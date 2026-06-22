@@ -28,6 +28,7 @@ class AutoRefreshJob:
 class AutoRefreshScheduler(QObject):
     CHECK_INTERVAL_MS = 30_000
     RETRY_BACKOFF_SECONDS = 5 * 60
+    RETRYABLE_RESULT_STATUSES = {"failed", "degraded"}
     EARNINGS_ROUTINE_TIMES = ((8, 30), (12, 0), (17, 0), (19, 0), (21, 0), (23, 0))
 
     DAILY_JOBS = (
@@ -195,8 +196,23 @@ class AutoRefreshScheduler(QObject):
         def _on_success(result):
             self._running_jobs.discard(state_key)
             result_status = ""
+            result_error = ""
             if isinstance(result, dict):
                 result_status = str(result.get("status") or "").strip()
+                result_error = str(result.get("error") or result.get("message") or "").strip()
+            if result_status in self.RETRYABLE_RESULT_STATUSES:
+                result_error = result_error or self._success_message(status_job_key, result)
+                self._set_error(state_key, result_error)
+                self._emit_status(
+                    status_job_key,
+                    result_status,
+                    trade_date,
+                    message=result_status,
+                    started_at=started_at.isoformat(timespec="seconds"),
+                    finished_at=self._clock().isoformat(timespec="seconds"),
+                    error=result_error,
+                )
+                return
             if mark_success_date and (skipped_is_success or result_status != "skipped"):
                 self._set_last_success_date(state_key, trade_date)
             self._emit_status(

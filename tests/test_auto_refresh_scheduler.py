@@ -48,6 +48,7 @@ class _TaskService:
     def __init__(self):
         self.calls = []
         self.fail = False
+        self.asian_cache_result = {"records": 0, "status": "skipped", "message": "cache fresh"}
 
     def run_lhb_daily(self, trade_date):
         self.calls.append(("lhb_daily", trade_date))
@@ -77,7 +78,7 @@ class _TaskService:
 
     def run_asian_market_cache_sync(self, trade_date):
         self.calls.append(("asian_market_cache_sync", trade_date))
-        return {"records": 0, "status": "skipped", "message": "cache fresh"}
+        return dict(self.asian_cache_result)
 
     def run_earnings_startup_gap_fill(self, trade_date):
         self.calls.append(("earnings_startup_gap_fill", trade_date))
@@ -305,6 +306,41 @@ def test_auto_refresh_scheduler_triggers_asian_cache_sync_after_close(monkeypatc
 
     assert ("asian_market_cache_sync", "20260420") in tasks.calls
     assert [call[0] for call in tasks.calls].count("asian_market_cache_sync") == 1
+
+
+def test_auto_refresh_scheduler_degraded_asian_cache_uses_retry_backoff(monkeypatch):
+    _reset_scheduler_settings()
+    now = [datetime.datetime(2026, 4, 20, 16, 30)]
+    tasks = _TaskService()
+    tasks.asian_cache_result = {
+        "status": "degraded",
+        "message": "亚洲 K 线缓存同步失败，仍缺失 1 只(2308.TW)，未覆盖现有缓存",
+        "error": "亚洲 K 线缓存同步失败，仍缺失 1 只(2308.TW)，未覆盖现有缓存",
+    }
+    status_spy = QSignalSpy(event_bus.sig_auto_refresh_status_changed)
+    scheduler = _scheduler(now, task_service=tasks, extended_jobs=True)
+    scheduler.DAILY_JOBS = ()
+    monkeypatch.setattr(
+        "ui.services.auto_refresh_scheduler.MarketCalendar.is_market_active",
+        classmethod(lambda cls, market="CN": False),
+    )
+    monkeypatch.setattr(
+        "ui.services.auto_refresh_scheduler.MarketCalendar.is_trade_day",
+        classmethod(lambda cls, day, market="CN": True),
+    )
+
+    scheduler.tick()
+    scheduler.tick()
+    now[0] = datetime.datetime(2026, 4, 20, 16, 36)
+    scheduler.tick()
+
+    assert [call[0] for call in tasks.calls].count("asian_market_cache_sync") == 2
+    assert any(
+        args[0]["job_key"] == "asian_market_cache_sync"
+        and args[0]["status"] == "degraded"
+        and "2308.TW" in args[0]["error"]
+        for args in status_spy
+    )
 
 
 def test_auto_refresh_scheduler_runs_latest_earnings_routine_once(monkeypatch):

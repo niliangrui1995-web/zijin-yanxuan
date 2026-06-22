@@ -555,6 +555,40 @@ def test_runtime_service_defer_prevents_auto_worker_start(monkeypatch):
     assert created[0].calls == ["resume", "start"]
 
 
+def test_runtime_cache_sync_degrades_without_raising(monkeypatch):
+    message = "亚洲 K 线缓存同步失败，仍缺失 1 只(2308.TW)，未覆盖现有缓存"
+    service = runtime_service.AsianMarketRuntimeService()
+    monkeypatch.setattr(
+        service,
+        "cache_staleness",
+        lambda: {
+            "stale": True,
+            "cache_latest_trade_date": "2026-06-19",
+            "expected_latest_trade_date": "2026-06-22",
+        },
+    )
+    monkeypatch.setattr(
+        runtime_service,
+        "sync_asian_kline_cache",
+        lambda **kwargs: (
+            False,
+            message,
+            {
+                "target_count": 51,
+                "written_count": 0,
+                "missing": ["2308.TW"],
+            },
+        ),
+    )
+
+    result = service.run_cache_sync_if_stale(emit_event=False)
+
+    assert result["status"] == "degraded"
+    assert result["error"] == message
+    assert result["missing"] == ["2308.TW"]
+    assert service.last_error == message
+
+
 def test_fetch_single_code_skips_optional_network_when_deadline_is_close(monkeypatch):
     calls = []
     monkeypatch.setattr(
