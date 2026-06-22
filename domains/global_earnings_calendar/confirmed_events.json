@@ -539,6 +539,24 @@
       "original_timezone": "America/Chicago",
       "call_time_source_url": "https://investor.oracle.com/events-and-presentations/event-details/2026/Q4-FY26-Earnings/default.aspx",
       "call_time_source_type": "official_ir_event"
+    },
+    {
+      "company": "Micron",
+      "ticker": "MU",
+      "sector": "HBM与先进存储",
+      "report_date": "2026-06-24",
+      "fiscal_period": "May/2026",
+      "time_label": "official earnings conference call",
+      "beijing_time": "2026-06-25 04:30",
+      "status": "confirmed",
+      "source": "confirmed",
+      "priority": "strategic_giant",
+      "conference_url": "https://investors.micron.com/events/event-details/microns-third-quarter-2026-financial-call",
+      "market": "US",
+      "original_call_time_text": "June 24, 2026 at 4:30 PM EDT (2:30 p.m. Mountain time)",
+      "original_timezone": "America/New_York",
+      "call_time_source_url": "https://investors.micron.com/events/event-details/microns-third-quarter-2026-financial-call",
+      "call_time_source_type": "official_ir_event"
     }
   ]
 }
