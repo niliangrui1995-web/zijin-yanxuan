@@ -157,12 +157,32 @@ def _snapshot_to_line(snapshot: dict[str, Any]) -> str:
     return " | ".join(parts)
 
 
+def _append_watchdog_line(project_root: str, message: str) -> str:
+    root = os.path.abspath(project_root or "")
+    if not root:
+        return ""
+
+    log_dir = os.path.join(root, "data", "logs")
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+        report_path = os.path.join(log_dir, f"watchdog_{datetime.now().strftime('%Y%m%d')}.log")
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        safe_message = str(message).replace("\r", "\\r").replace("\n", "\\n")
+        with open(report_path, "a", encoding="utf-8") as file_obj:
+            file_obj.write(f"{timestamp} {safe_message}\n")
+        return report_path
+    except OSError:
+        return ""
+
+
 def log_process_snapshot(
     label: str,
     *,
     logger=None,
     level: str = "info",
     extra: dict[str, Any] | None = None,
+    project_root: str | None = None,
+    direct_watchdog: bool = False,
 ) -> dict[str, Any]:
     snapshot = collect_process_snapshot()
     parts = [f"[watchdog] {label}", _snapshot_to_line(snapshot)]
@@ -173,7 +193,10 @@ def log_process_snapshot(
 
     target_logger = logger or _log
     writer = getattr(target_logger, str(level or "info").lower(), None) or target_logger.info
-    writer(" | ".join(parts))
+    line = " | ".join(parts)
+    writer(line)
+    if direct_watchdog and project_root:
+        _append_watchdog_line(project_root, line)
     return snapshot
 
 
@@ -251,7 +274,12 @@ class ProcessWatchdog:
         )
         self._thread.start()
         self._running = True
-        log_process_snapshot("watchdog.started", logger=self._logger)
+        log_process_snapshot(
+            "watchdog.started",
+            logger=self._logger,
+            project_root=self._project_root,
+            direct_watchdog=True,
+        )
 
     def stop(self) -> None:
         if not self._running:
@@ -265,7 +293,12 @@ class ProcessWatchdog:
         if self._thread is not None and self._thread.is_alive():
             self._thread.join(timeout=min(2.0, self._poll_interval_sec + 0.5))
         self._thread = None
-        log_process_snapshot("watchdog.stopped", logger=self._logger)
+        log_process_snapshot(
+            "watchdog.stopped",
+            logger=self._logger,
+            project_root=self._project_root,
+            direct_watchdog=True,
+        )
 
     def pulse(self, reason: str = "qtimer") -> None:
         now = time.monotonic()

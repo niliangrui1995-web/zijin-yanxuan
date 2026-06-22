@@ -2,7 +2,7 @@
 from types import SimpleNamespace
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QShowEvent
 from PyQt6.QtWidgets import QHeaderView, QWidget
 
 from app.services.ui_event_service import domain_events as event_bus
@@ -341,6 +341,39 @@ def test_stock_candidate_earnings_update_primes_context_snapshot(monkeypatch):
         event_bus.sig_earnings_updated.emit()
 
         assert primes == ["prime"]
+        assert tab._auto_refresh_timer.isActive()
+    finally:
+        tab.close()
+        workspace.deleteLater()
+
+
+def test_stock_candidate_hidden_context_update_defers_refresh_until_visible(monkeypatch):
+    monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+    primes = []
+    current = {"value": False}
+
+    class _Workspace(QWidget):
+        def collect_stock_context(self):
+            return {}
+
+        def prime_stock_context_snapshots(self):
+            primes.append("prime")
+            return True
+
+    workspace = _Workspace()
+    tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
+    tab._is_current_workspace_tab = lambda: current["value"]
+    try:
+        event_bus.sig_earnings_updated.emit()
+
+        assert primes == ["prime"]
+        assert tab._context_refresh_pending is True
+        assert not tab._auto_refresh_timer.isActive()
+
+        current["value"] = True
+        tab.showEvent(QShowEvent())
+
+        assert tab._context_refresh_pending is False
         assert tab._auto_refresh_timer.isActive()
     finally:
         tab.close()

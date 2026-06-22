@@ -50,6 +50,7 @@ class WatchlistTab(BaseStockTab):
         self._startup_tasks_enabled = bool(startup_tasks_enabled)
         self._startup_indicator_refresh_enabled = bool(startup_indicator_refresh_enabled)
         self._delayed_special_timer = None
+        self._pending_vcp_calc = False
         self._watchlist_lineage_service = TabDataLineageService(
             key="watchlist",
             source="watchlist_vm + local_quote_snapshot",
@@ -101,6 +102,19 @@ class WatchlistTab(BaseStockTab):
     # ================================================================
     # UI 构建
     # ================================================================
+    def showEvent(self, event):  # noqa: N802 - Qt API naming
+        super().showEvent(event)
+        if self._pending_vcp_calc and self._should_start_interactive_runtime_on_show():
+            self._pending_vcp_calc = False
+            self._request_vcp_calc(delay_ms=0, allow_noninteractive=True)
+
+    def hideEvent(self, event):  # noqa: N802 - Qt API naming
+        super().hideEvent(event)
+        timer = getattr(self, "_vcp_calc_timer", None)
+        if timer is not None and timer.isActive():
+            timer.stop()
+            self._pending_vcp_calc = True
+
     def _init_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -838,6 +852,7 @@ class WatchlistTab(BaseStockTab):
 
     def shutdown(self):
         self._closing = True
+        self._pending_vcp_calc = False
         for timer_name in ("_delayed_special_timer", "_vcp_calc_timer", "_debounce_timer"):
             timer = getattr(self, timer_name, None)
             if timer is None:
@@ -941,6 +956,9 @@ class WatchlistTab(BaseStockTab):
     def _on_vcp_watchlist_ready(self, payload: object):
         if self._closing:
             return
+        if not self._is_current_workspace_tab():
+            self._pending_vcp_calc = True
+            return
         if payload:
             log.debug(f"[关注池] 写入 {len(payload)} 条附加指标")
             self._apply_vcp_indicators_ui(payload)
@@ -956,7 +974,12 @@ class WatchlistTab(BaseStockTab):
         if self._closing:
             return
         if not allow_noninteractive and self._is_background_prewarm_indicator_blocked():
+            self._pending_vcp_calc = True
             return
+        if not allow_noninteractive and not self._is_current_workspace_tab():
+            self._pending_vcp_calc = True
+            return
+        self._pending_vcp_calc = False
         if not hasattr(self, "_vcp_calc_timer"):
             self._vcp_calc_timer = QTimer(self)
             self._vcp_calc_timer.setSingleShot(True)

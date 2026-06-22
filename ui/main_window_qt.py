@@ -128,7 +128,12 @@ class MainWindowQT(QMainWindow):
             logger=log,
         )
         self._process_watchdog.start(self)
-        log_process_snapshot("main_window.init.begin", logger=log)
+        log_process_snapshot(
+            "main_window.init.begin",
+            logger=log,
+            project_root=self._project_root,
+            direct_watchdog=True,
+        )
 
         # 拖拽相关状态
         self._drag_pos = None
@@ -226,7 +231,12 @@ class MainWindowQT(QMainWindow):
         else:
             log.info("[startup] auto refresh scheduler disabled for controlled window construction")
         self._update_last_f5_time()
-        log_process_snapshot("main_window.init.ready", logger=log)
+        log_process_snapshot(
+            "main_window.init.ready",
+            logger=log,
+            project_root=self._project_root,
+            direct_watchdog=True,
+        )
 
     def _init_central_broadcaster(self):
         if not self._central_quotes_enabled:

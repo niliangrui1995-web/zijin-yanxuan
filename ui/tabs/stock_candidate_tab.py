@@ -45,6 +45,7 @@ class StockCandidateTab(BaseStockTab):
         )
         self._last_candidate_result = None
         self._last_candidate_signature = ""
+        self._context_refresh_pending = False
         self._init_ui()
         self.subscribe_global_quotes(self.model)
         self._auto_refresh_timer = QTimer(self)
@@ -77,7 +78,17 @@ class StockCandidateTab(BaseStockTab):
     def showEvent(self, event):  # noqa: N802 - Qt API naming
         super().showEvent(event)
         if self._should_start_runtime_on_show():
-            self._ensure_runtime_started()
+            if self._context_refresh_pending:
+                self._queue_context_refresh()
+            else:
+                self._ensure_runtime_started()
+
+    def hideEvent(self, event):  # noqa: N802 - Qt API naming
+        super().hideEvent(event)
+        timer = getattr(self, "_auto_refresh_timer", None)
+        if timer is not None and timer.isActive():
+            timer.stop()
+            self._context_refresh_pending = True
 
     def prime_background_load(self) -> None:
         workspace = self._workspace()
@@ -157,6 +168,7 @@ class StockCandidateTab(BaseStockTab):
             signal.connect(self._schedule_context_refresh)
 
     def _cleanup_runtime_state(self):
+        self._context_refresh_pending = False
         timer = getattr(self, "_auto_refresh_timer", None)
         if timer is not None:
             try:
@@ -172,11 +184,21 @@ class StockCandidateTab(BaseStockTab):
 
     def _schedule_context_refresh(self, *_args) -> None:
         if getattr(self, "_workspace_noninteractive_loaded", False):
+            self._context_refresh_pending = True
+            self._prime_stock_context_snapshots(self._workspace())
             return
         self._prime_stock_context_snapshots(self._workspace())
+        if not self._is_current_workspace_tab():
+            self._context_refresh_pending = True
+            return
+        self._context_refresh_pending = False
         self._status_primary = "等待综合候选自动刷新"
         self._status_freshness = "数据源已更新"
         self._refresh_status()
+        self._auto_refresh_timer.start(self.AUTO_REFRESH_DEBOUNCE_MS)
+
+    def _queue_context_refresh(self) -> None:
+        self._context_refresh_pending = False
         self._auto_refresh_timer.start(self.AUTO_REFRESH_DEBOUNCE_MS)
 
     def _init_ui(self):

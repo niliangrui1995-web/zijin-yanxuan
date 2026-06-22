@@ -4,6 +4,7 @@ import sys
 import traceback
 
 from core.runtime_env import (
+    append_bootstrap_event,
     configure_qt_webengine_runtime,
     log_runtime_env_report,
     relaunch_into_project_venv_if_needed,
@@ -17,27 +18,48 @@ from core.single_instance import (
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
-if is_single_instance_running() or is_entry_script_process_running(__file__):
+append_bootstrap_event(
+    PROJECT_ROOT,
+    "process.start",
+    extra={
+        "executable": sys.executable,
+        "script": __file__,
+        "argv0": sys.argv[0] if sys.argv else "",
+    },
+)
+
+if is_single_instance_running():
+    append_bootstrap_event(PROJECT_ROOT, "process.exit", extra={"reason": "single_instance_running"})
+    sys.exit(0)
+
+if is_entry_script_process_running(__file__):
+    append_bootstrap_event(PROJECT_ROOT, "process.exit", extra={"reason": "entry_script_running"})
     sys.exit(0)
 
 # Prefer the project-local interpreter before importing Qt or other native modules.
 relaunch_into_project_venv_if_needed(PROJECT_ROOT, script_path=__file__)
+append_bootstrap_event(PROJECT_ROOT, "runtime_env.ready", extra={"executable": sys.executable})
 
 SINGLE_INSTANCE_LOCK = acquire_single_instance_lock()
 if SINGLE_INSTANCE_LOCK.already_running:
+    append_bootstrap_event(PROJECT_ROOT, "process.exit", extra={"reason": "single_instance_lock_exists"})
     sys.exit(0)
+append_bootstrap_event(PROJECT_ROOT, "single_instance.lock.acquired")
 
 CRASH_LOG_DIR = os.path.join(PROJECT_ROOT, "data")
 os.makedirs(CRASH_LOG_DIR, exist_ok=True)
 CRASH_LOG_PATH = os.path.join(CRASH_LOG_DIR, "crash_report.log")
 CRASH_LOG_FILE = open(CRASH_LOG_PATH, "a", encoding="utf-8")
 faulthandler.enable(file=CRASH_LOG_FILE, all_threads=True)
+append_bootstrap_event(PROJECT_ROOT, "crash_log.ready", extra={"path": CRASH_LOG_PATH})
 
 
 def main():
+    append_bootstrap_event(PROJECT_ROOT, "qt_main.enter")
     os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
     configure_qt_webengine_runtime()
     set_windows_app_user_model_id()
+    append_bootstrap_event(PROJECT_ROOT, "qt_runtime.configured")
 
     from PyQt6.QtWidgets import QApplication, QMessageBox
 
@@ -81,6 +103,7 @@ def main():
     from ui.theme import theme_manager
 
     app = QApplication(sys.argv)
+    append_bootstrap_event(PROJECT_ROOT, "qapplication.created")
     log_runtime_env_report(PROJECT_ROOT)
     app.setStyleSheet(generate_global_qss(theme_manager.current_theme))
 
@@ -103,7 +126,9 @@ def main():
 
     splash.set_progress(50, "恢复主工作台界面...")
 
+    append_bootstrap_event(PROJECT_ROOT, "main_window.construct.begin")
     window = MainWindowQT(splash=splash)
+    append_bootstrap_event(PROJECT_ROOT, "main_window.construct.ready")
 
     splash.set_progress(95, "准备进入主工作台...")
     window.show()
@@ -112,9 +137,15 @@ def main():
     splash.deleteLater()
 
     try:
+        append_bootstrap_event(PROJECT_ROOT, "qt_event_loop.enter")
         exit_code = app.exec()
     finally:
         SINGLE_INSTANCE_LOCK.release()
+        append_bootstrap_event(
+            PROJECT_ROOT,
+            "qt_event_loop.exit",
+            extra={"exit_code": locals().get("exit_code", "unknown")},
+        )
     sys.exit(exit_code)
 
 

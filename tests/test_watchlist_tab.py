@@ -3,7 +3,7 @@ from copy import deepcopy
 from types import SimpleNamespace
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QShowEvent
 from PyQt6.QtTest import QSignalSpy
 from PyQt6.QtWidgets import QPushButton
 
@@ -71,6 +71,41 @@ def test_watchlist_background_prewarm_blocks_auto_indicator_recalc(monkeypatch):
         tab.model.update_data([{"代码": "600519"}])
         tab.prime_startup_state()
 
+        assert hasattr(tab, "_vcp_calc_timer")
+        assert tab._vcp_calc_timer.isActive() is True
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_watchlist_hidden_context_update_defers_indicator_recalc(monkeypatch):
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)
+    monkeypatch.setattr(
+        watchlist_module.WatchlistTab,
+        "_refresh_quotes_from_store_or_live",
+        lambda self, *args, **kwargs: None,
+    )
+
+    current = {"value": False}
+    applied = []
+    tab = watchlist_module.WatchlistTab(_DummyProvider(), startup_tasks_enabled=False)
+    tab._is_current_workspace_tab = lambda: current["value"]
+    tab._apply_vcp_indicators_ui = lambda payload: applied.append(payload)
+    try:
+        watchlist_module.event_bus.sig_stock_context_snapshot_updated.emit()
+
+        assert tab._pending_vcp_calc is True
+        assert not hasattr(tab, "_vcp_calc_timer")
+
+        tab._on_vcp_watchlist_ready({"600519": {"rps": "95"}})
+        assert applied == []
+        assert tab._pending_vcp_calc is True
+
+        current["value"] = True
+        tab.showEvent(QShowEvent())
+
+        assert tab._pending_vcp_calc is False
         assert hasattr(tab, "_vcp_calc_timer")
         assert tab._vcp_calc_timer.isActive() is True
     finally:

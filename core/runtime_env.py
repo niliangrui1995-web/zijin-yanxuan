@@ -10,10 +10,6 @@ import sys
 from datetime import datetime
 from importlib import metadata
 
-from core.logger import get_logger
-
-log = get_logger(__name__)
-
 _WINDOWS_RUNTIME_MODULES = (
     ("PyQt6.QtWebEngineWidgets", "PyQt6-WebEngine"),
     ("akshare", "akshare"),
@@ -27,6 +23,12 @@ QTWEBENGINE_RUNTIME_FLAGS = (
     "--disable-extensions",
     "--disable-background-networking",
 )
+
+
+def _runtime_log():
+    from core.logger import get_logger
+
+    return get_logger(__name__)
 
 
 def _merge_chromium_flags(current: str, required: tuple[str, ...] = QTWEBENGINE_RUNTIME_FLAGS) -> str:
@@ -181,20 +183,40 @@ def should_relaunch_into_project_venv(
     return False
 
 
-def _append_bootstrap_log(project_root: str, message: str) -> None:
+def _format_bootstrap_value(value) -> str:
+    text = str(value)
+    return text.replace("\r", "\\r").replace("\n", "\\n")
+
+
+def append_bootstrap_event(
+    project_root: str,
+    event: str,
+    *,
+    extra: dict[str, object] | None = None,
+) -> str:
     root = os.path.abspath(project_root or "")
     if not root:
-        return
+        return ""
 
     log_dir = os.path.join(root, "data", "logs")
     try:
         os.makedirs(log_dir, exist_ok=True)
         log_path = os.path.join(log_dir, f"bootstrap_{datetime.now().strftime('%Y%m%d')}.log")
+        parts = [f"[bootstrap] {_format_bootstrap_value(event)}", f"pid={os.getpid()}"]
+        for key, value in sorted((extra or {}).items()):
+            if value is None or value == "":
+                continue
+            parts.append(f"{key}={_format_bootstrap_value(value)}")
         with open(log_path, "a", encoding="utf-8") as file_obj:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            file_obj.write(f"{timestamp} {message}\n")
+            file_obj.write(f"{timestamp} {' | '.join(parts)}\n")
+        return log_path
     except OSError:
-        return
+        return ""
+
+
+def _append_bootstrap_log(project_root: str, message: str) -> None:
+    append_bootstrap_event(project_root, message)
 
 
 def relaunch_into_project_venv_if_needed(
@@ -236,9 +258,14 @@ def relaunch_into_project_venv_if_needed(
     child_env["VCP_ALREADY_RELAUNCHED"] = "1"
 
     child_argv = [target_python, target_script, *argv_list[1:]]
-    _append_bootstrap_log(
+    append_bootstrap_event(
         project_root,
-        f"[runtime_env] relaunch {current_executable} -> {target_python}",
+        "runtime_env.relaunch",
+        extra={
+            "from": current_executable,
+            "to": target_python,
+            "script": target_script,
+        },
     )
     execve(target_python, child_argv, child_env)
     return True
@@ -296,9 +323,10 @@ def log_runtime_env_report(project_root: str) -> list[str]:
     """Log the current runtime environment issues without stopping startup."""
 
     issues = collect_runtime_env_issues(project_root)
+    logger = _runtime_log()
     if issues:
         for issue in issues:
-            log.warning(f"[runtime_env] {issue}")
+            logger.warning(f"[runtime_env] {issue}")
     else:
-        log.info(f"[runtime_env] ok ({sys.executable})")
+        logger.info(f"[runtime_env] ok ({sys.executable})")
     return issues

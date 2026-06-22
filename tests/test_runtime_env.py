@@ -1,7 +1,12 @@
+import os
+import subprocess
+import sys
+from pathlib import Path
 from unittest.mock import patch
 
 from core.runtime_env import (
     WINDOWS_APP_USER_MODEL_ID,
+    append_bootstrap_event,
     collect_runtime_env_issues,
     configure_qt_webengine_runtime,
     relaunch_into_project_venv_if_needed,
@@ -9,6 +14,43 @@ from core.runtime_env import (
     set_windows_app_user_model_id,
     should_relaunch_into_project_venv,
 )
+
+
+def test_append_bootstrap_event_writes_early_process_evidence(tmp_path):
+    log_path = append_bootstrap_event(
+        str(tmp_path),
+        "process.start",
+        extra={
+            "reason": "unit\nnewline",
+            "empty": "",
+            "none": None,
+        },
+    )
+
+    assert log_path
+    log_text = Path(log_path).read_text(encoding="utf-8")
+    assert "[bootstrap] process.start" in log_text
+    assert "pid=" in log_text
+    assert "reason=unit\\nnewline" in log_text
+    assert "empty=" not in log_text
+    assert "none=" not in log_text
+
+
+def test_import_runtime_env_does_not_create_main_log(tmp_path):
+    env = dict(os.environ)
+    env["VCP_HUNTER_LOG_DIR"] = str(tmp_path / "logs")
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import core.runtime_env"],
+        capture_output=True,
+        env=env,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not list((tmp_path / "logs").glob("vcp_*.log"))
 
 
 def test_collect_runtime_env_issues_detects_project_venv_drift(tmp_path):
