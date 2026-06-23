@@ -6,6 +6,7 @@ import os
 import sys
 import threading
 from datetime import datetime
+from contextlib import AbstractContextManager
 from typing import Optional
 
 # 防止日志处理器自身异常把 UI/终端刷爆（例如控制台编码不支持 emoji）。
@@ -15,6 +16,86 @@ logging.raiseExceptions = False
 _logger_cache: dict[str, logging.Logger] = {}
 _shared_handlers: Optional[list[logging.Handler]] = None
 _logger_lock = threading.Lock()
+_system_log_backpressure_lock = threading.Lock()
+_system_log_backpressure_stack: list["_SystemLogBackpressure"] = []
+
+
+class _SystemLogBackpressure(AbstractContextManager):
+    _DIAGNOSTIC_MARKERS = (
+        "ui.stall.",
+        "ui_event_loop_stall_ms",
+        "ui_method_stall_ms",
+    )
+
+    def __init__(self, label: str, *, allowed_info_loggers: tuple[str, ...] = ()):
+        self.label = str(label or "background")
+        self.allowed_info_loggers = tuple(allowed_info_loggers or ())
+        self.suppressed_info = 0
+        self.suppressed_diagnostics = 0
+
+    def __enter__(self):
+        with _system_log_backpressure_lock:
+            _system_log_backpressure_stack.append(self)
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        with _system_log_backpressure_lock:
+            if _system_log_backpressure_stack and _system_log_backpressure_stack[-1] is self:
+                _system_log_backpressure_stack.pop()
+            else:
+                try:
+                    _system_log_backpressure_stack.remove(self)
+                except ValueError:
+                    pass
+        self.emit_summary()
+        return False
+
+    def should_suppress(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        if self._is_diagnostic_record(record, message):
+            self.suppressed_diagnostics += 1
+            return True
+        if record.levelno >= logging.WARNING:
+            return False
+        if record.name in self.allowed_info_loggers:
+            return False
+        self.suppressed_info += 1
+        return True
+
+    def emit_summary(self) -> None:
+        suppressed = self.suppressed_info + self.suppressed_diagnostics
+        if suppressed <= 0:
+            return
+        details = []
+        if self.suppressed_info:
+            details.append(f"后台明细 {self.suppressed_info} 条")
+        if self.suppressed_diagnostics:
+            details.append(f"UI诊断 {self.suppressed_diagnostics} 条")
+        text = f"[{self.label}] 系统日志页已合并显示：{', '.join(details)}；完整明细仍保留在文件日志"
+        try:
+            from domains.runtime import domain_events as event_bus
+
+            event_bus.sig_system_log.emit("info", text + "\n")
+        except (ImportError, RuntimeError, AttributeError):
+            pass
+
+    @classmethod
+    def _is_diagnostic_record(cls, record: logging.LogRecord, message: str) -> bool:
+        if record.name == "infra.diagnostics.ui_stall_probe":
+            return True
+        payload = str(message or "").lower()
+        return any(marker in payload for marker in cls._DIAGNOSTIC_MARKERS)
+
+
+def system_log_backpressure(label: str, *, allowed_info_loggers: tuple[str, ...] = ()):
+    return _SystemLogBackpressure(label, allowed_info_loggers=allowed_info_loggers)
+
+
+def _active_system_log_backpressure() -> _SystemLogBackpressure | None:
+    with _system_log_backpressure_lock:
+        if not _system_log_backpressure_stack:
+            return None
+        return _system_log_backpressure_stack[-1]
 
 
 def _unwrap_stream(stream):
@@ -101,6 +182,9 @@ class EventBusHandler(logging.Handler):
 
     def emit(self, record):
         try:
+            backpressure = _active_system_log_backpressure()
+            if backpressure is not None and backpressure.should_suppress(record):
+                return
             msg = self.format(record)
             level = record.levelname.lower()
             if level == "warning":

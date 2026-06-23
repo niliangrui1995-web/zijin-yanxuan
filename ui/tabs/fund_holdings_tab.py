@@ -618,6 +618,7 @@ class FundHoldingsTab(BaseStockTab):
                 "Loading fund holding quarters...",
                 "Reading the selected local quarter scope",
             )
+        if async_load or scope == self._QUERY_SCOPE_LATEST:
             self._reload_from_db_async(quarter_scope=scope, quarter_keys=quarter_keys)
         else:
             self._reload_from_db(quarter_scope=scope, quarter_keys=quarter_keys)
@@ -986,7 +987,7 @@ class FundHoldingsTab(BaseStockTab):
         if getattr(self, "_runtime_cleanup_done", False):
             return
         self._set_sync_active(False)
-        self._reload_from_db()
+        self._reload_from_db_async()
         message = str((result or {}).get("message") or label).strip()
         total, visible = self._current_visible_row_counts()
         self.lbl_status.setText(
@@ -1006,7 +1007,7 @@ class FundHoldingsTab(BaseStockTab):
         if getattr(self, "_runtime_cleanup_done", False):
             return
         self._set_sync_active(False)
-        self._reload_from_db()
+        self._reload_from_db_async()
         message = str(error_message or "更新失败").strip()
         total, visible = self._current_visible_row_counts()
         self.lbl_status.setText(
@@ -1071,7 +1072,7 @@ class FundHoldingsTab(BaseStockTab):
         self._ai_chain_context_map = None
         if not self._initial_load_started:
             return False
-        self._reload_from_db()
+        self._reload_from_db_async()
         return True
 
     def run_full_sync(self) -> bool:

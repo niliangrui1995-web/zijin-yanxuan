@@ -9,6 +9,7 @@ import pandas as pd
 import polars as pl
 import pytest
 
+import core.rps_precomputer as rps_precomputer_module
 import infra.market_data.market_data_warehouse as warehouse_module
 from core.rps_precomputer import RPSPrecomputer
 from infra.market_data.market_data_warehouse import (
@@ -461,3 +462,84 @@ def test_f5_stage1_uses_provider_cache_loader_before_vipdoc_reread(monkeypatch):
     assert provider.code2name == {"000001": "Ping An Bank"}
     assert any("local warehouse cache" in message for message in messages)
     assert done and done[0][0] == 2001
+
+
+def test_f5_stage1_progress_updates_status_under_system_log_backpressure(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    import core.cache_policy as cache_policy
+
+    monkeypatch.setattr(cache_policy, "cleanup_stale_caches", lambda _project_root: None)
+    monkeypatch.setitem(
+        sys.modules,
+        "vcp.polars_engine",
+        SimpleNamespace(save_cache_parquet=lambda _cache_data, _today_str: True),
+    )
+
+    guard_calls = []
+
+    class _Guard:
+        def __enter__(self):
+            guard_calls.append(("enter",))
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            guard_calls.append(("exit",))
+            return False
+
+    def _fake_backpressure(label, *, allowed_info_loggers=()):
+        guard_calls.append((label, allowed_info_loggers))
+        return _Guard()
+
+    monkeypatch.setattr(rps_precomputer_module, "system_log_backpressure", _fake_backpressure)
+
+    class _Provider:
+        def __init__(self):
+            self.cache_data = {}
+            self.cache_lock = threading.Lock()
+            self.code2name = {}
+            self.tdx_vipdoc = ""
+
+        @staticmethod
+        def _load_local_gbbq(force=False):
+            return None
+
+        @staticmethod
+        def load_cache_from_disk():
+            return ""
+
+        @staticmethod
+        def _get_codes_from_vipdoc():
+            return {f"{idx:06d}": f"Stock {idx}" for idx in range(2000)}
+
+        @staticmethod
+        def is_online():
+            return False
+
+        @staticmethod
+        def set_online_mode(_online):
+            return None
+
+        def sync_market_data(self, codes, force_refresh=False, progress_callback=None):
+            if progress_callback:
+                progress_callback(1000, len(codes), "ETA 1 min")
+            self.cache_data = {code: object() for code in codes}
+
+    provider = _Provider()
+    messages = []
+    done = []
+
+    RPSPrecomputer.run_f5_pipeline(
+        provider,
+        engine=object(),
+        cancelled_checker=lambda: True,
+        set_status_callback=messages.append,
+        done_callback=lambda count, elapsed: done.append((count, elapsed)),
+    )
+
+    assert ("F5", ("core.rps_precomputer",)) in guard_calls
+    assert ("enter",) in guard_calls
+    assert ("exit",) in guard_calls
+    assert any("1000/2000 ETA 1 min" in message for message in messages)
+    assert done and done[0][0] == 2000

@@ -114,6 +114,34 @@ def test_log_tab_hides_ui_stall_diagnostics_by_default():
         tab.deleteLater()
 
 
+def test_log_tab_keeps_hidden_diagnostics_out_of_visible_flush_queue():
+    app = QApplication.instance()
+    tab = LogTab()
+    try:
+        tab.show()
+        app.processEvents()
+
+        tab._on_log_msg("warn", "[event] ui.stall.event_loop | tab=system_log\n")
+
+        assert tab._log_buffer == []
+        assert len(tab._log_history) == 1
+        assert tab._log_status_refresh_pending is True
+
+        tab._flush_log_buffer()
+
+        assert tab.log_text.toPlainText() == ""
+        assert tab._hidden_diagnostic_count() == 1
+        assert tab._log_status_refresh_pending is False
+
+        tab.search_box.setText("ui.stall")
+        tab._on_log_msg("warn", "[event] ui.stall.event_loop | tab=system_log\n")
+
+        assert len(tab._log_buffer) == 1
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
 def test_log_tab_renders_task_status_updates():
     app = QApplication.instance()
     tab = LogTab()

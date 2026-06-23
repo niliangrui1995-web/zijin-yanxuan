@@ -157,6 +157,7 @@ class LogTab(QWidget):
     def _clear_logs(self):
         self._log_buffer.clear()
         self._log_history.clear()
+        self._log_status_refresh_pending = False
         self.log_text.clear()
         self._refresh_status_summary(0)
 
@@ -384,6 +385,7 @@ class LogTab(QWidget):
         self._log_buffer = []
         self._log_buffer_max = 3000
         self._log_flush_batch_max = 160
+        self._log_status_refresh_pending = False
         self._log_flush_timer = QTimer(self)
         self._log_flush_timer.timeout.connect(self._flush_log_buffer)
         self._log_flush_timer.start(200)
@@ -412,7 +414,12 @@ class LogTab(QWidget):
         self._restore_log_redirect()
 
     def _on_log_msg(self, level, text):
-        self._log_buffer.append((level, text))
+        selected_levels = self.level_filter.selected_values() if hasattr(self, "level_filter") else set()
+        search_text = self.search_box.text().strip().lower() if hasattr(self, "search_box") else ""
+        if self._entry_visible(level, text, selected_levels, search_text):
+            self._log_buffer.append((level, text))
+        else:
+            self._log_status_refresh_pending = True
         self._log_history.append((level, text))
         if len(self._log_history) > self._log_buffer_max:
             overflow = len(self._log_history) - self._log_buffer_max
@@ -424,16 +431,24 @@ class LogTab(QWidget):
     def _apply_log_filter(self):
         self._refresh_level_filter_button_text()
         self._log_buffer.clear()
+        self._log_status_refresh_pending = False
         filtered_entries = self._filtered_entries()
         self._append_log_entries(filtered_entries, clear_existing=True)
         self._refresh_status_summary(len(filtered_entries))
 
     def _flush_log_buffer(self):
         if not self._log_buffer:
+            if self._log_status_refresh_pending:
+                if not self.isVisible():
+                    self._refresh_from_history_pending = True
+                    return
+                self._log_status_refresh_pending = False
+                self._refresh_status_summary()
             return
 
         if not self.isVisible():
             self._log_buffer.clear()
+            self._log_status_refresh_pending = False
             self._refresh_from_history_pending = True
             return
 
@@ -445,4 +460,5 @@ class LogTab(QWidget):
 
         if filtered_entries:
             self._append_log_entries(filtered_entries, clear_existing=False)
+        self._log_status_refresh_pending = False
         self._refresh_status_summary()

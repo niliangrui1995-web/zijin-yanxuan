@@ -1271,8 +1271,8 @@ def test_fund_holdings_refresh_after_ai_chain_update_reloads_loaded_view(monkeyp
     calls = []
     monkeypatch.setattr(
         fund_holdings_module.FundHoldingsTab,
-        "_reload_from_db",
-        lambda self: calls.append("reload"),
+        "_reload_from_db_async",
+        lambda self: calls.append("reload_async"),
         raising=False,
     )
 
@@ -1286,7 +1286,7 @@ def test_fund_holdings_refresh_after_ai_chain_update_reloads_loaded_view(monkeyp
 
         assert tab._concept_sector_cache == {}
         assert tab._ai_chain_context_map is None
-        assert calls == ["reload"]
+        assert calls == ["reload_async"]
     finally:
         tab.deleteLater()
 
@@ -1306,6 +1306,131 @@ def test_fund_holdings_tab_emits_updated_after_sync_success(monkeypatch):
         tab._run_sync_action("测试同步", fund_holdings_module.fund_holdings_sync_service.sync_latest_all)
 
         assert len(spy) == 1
+    finally:
+        tab.deleteLater()
+
+
+def test_fund_holdings_sync_success_reloads_latest_view_async(monkeypatch):
+    _setup_store(monkeypatch, [])
+    calls = []
+
+    def _fail_sync_reload(self, *args, **kwargs):
+        raise AssertionError("latest fund holdings reload must stay off the UI thread")
+
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "_reload_from_db",
+        _fail_sync_reload,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "_reload_from_db_async",
+        lambda self: calls.append("async"),
+        raising=False,
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
+    try:
+        tab._handle_sync_success({"message": "done"}, "test sync")
+
+        assert calls == ["async"]
+    finally:
+        tab.deleteLater()
+
+
+def test_fund_holdings_sync_error_reloads_latest_view_async(monkeypatch):
+    _setup_store(monkeypatch, [])
+    calls = []
+
+    def _fail_sync_reload(self, *args, **kwargs):
+        raise AssertionError("latest fund holdings reload must stay off the UI thread")
+
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "_reload_from_db",
+        _fail_sync_reload,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "_reload_from_db_async",
+        lambda self: calls.append("async"),
+        raising=False,
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
+    try:
+        tab._handle_sync_error("failed", "test sync", lambda: None)
+
+        assert calls == ["async"]
+    finally:
+        tab.deleteLater()
+
+
+def test_fund_holdings_ai_chain_update_reloads_latest_view_async(monkeypatch):
+    _setup_store(monkeypatch, [])
+    calls = []
+
+    def _fail_sync_reload(self, *args, **kwargs):
+        raise AssertionError("latest fund holdings reload must stay off the UI thread")
+
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "_reload_from_db",
+        _fail_sync_reload,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "_reload_from_db_async",
+        lambda self: calls.append("async"),
+        raising=False,
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
+    try:
+        tab._initial_load_started = True
+        tab._concept_sector_cache["300750"] = "old"
+        tab._ai_chain_context_map = {"300750": "old"}
+
+        assert tab.refresh_data_after_ai_industry_chain_update() is True
+
+        assert calls == ["async"]
+    finally:
+        tab.deleteLater()
+
+
+def test_fund_holdings_latest_scope_backfill_uses_async_load(monkeypatch):
+    _setup_store(monkeypatch, [])
+    calls = []
+
+    def _fail_sync_reload(self, *args, **kwargs):
+        raise AssertionError("latest scope backfill must stay off the UI thread")
+
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "_reload_from_db",
+        _fail_sync_reload,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        fund_holdings_module.FundHoldingsTab,
+        "_reload_from_db_async",
+        lambda self, **kwargs: calls.append(kwargs),
+        raising=False,
+    )
+
+    tab = fund_holdings_module.FundHoldingsTab(_DummyProvider(), autoload=False)
+    try:
+        tab._build_quarter_menu(["2025Q4"])
+        tab._set_quarter_filter_state(latest_only=True, apply=False)
+        tab._loaded_quarter_scope = ""
+        tab._loaded_quarter_keys = set()
+
+        assert tab._ensure_current_quarter_scope_loaded(async_load=False) is True
+
+        assert calls == [{"quarter_scope": "latest", "quarter_keys": set()}]
     finally:
         tab.deleteLater()
 
