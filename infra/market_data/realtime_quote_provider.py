@@ -124,6 +124,12 @@ class RealtimeQuoteProvider:
             runtime = provider._rt_runtime
 
         runtime_stats = runtime.snapshot() if runtime is not None else {}
+        owner_thread_alive = bool(
+            runtime_stats.get(
+                "owner_thread_alive",
+                runtime_stats.get("worker_alive", runtime.is_alive() if runtime is not None else False),
+            )
+        )
         return {
             "inflight": int(runtime_stats.get("inflight") or 0),
             "last_success_at": max(
@@ -134,7 +140,8 @@ class RealtimeQuoteProvider:
             "reconnect_count": int(getattr(provider, "_rt_runtime_reconnect_archived", 0) or 0)
             + int(runtime_stats.get("reconnect_count") or 0),
             "cooldown_until": float(getattr(provider, "_rt_runtime_cooldown_until", 0) or 0),
-            "worker_alive": bool(runtime_stats.get("worker_alive")),
+            "worker_alive": owner_thread_alive,
+            "owner_thread_alive": owner_thread_alive,
             "last_error": getattr(provider, "_rt_runtime_last_error", ""),
         }
 

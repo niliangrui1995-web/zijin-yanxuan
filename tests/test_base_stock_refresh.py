@@ -19,6 +19,11 @@ class _DummyOwner:
         self.after_cap_calls += 1
 
 
+def _reset_cache_snapshot_apply_queue(refresh_module):
+    refresh_module.CacheSnapshotApplyQueue._scheduled = False
+    refresh_module.CacheSnapshotApplyQueue._pending = {}
+
+
 def test_market_cap_batcher_merges_overlapping_tab_requests(monkeypatch):
     from core.task_manager import task_manager
     from ui.tabs import base_stock_refresh as refresh_module
@@ -269,6 +274,72 @@ def test_refresh_table_from_latest_snapshot_skips_async_local_prime_when_hidden(
     assert ("async", None) not in calls
     assert ("sync", None) not in calls
     assert ("snapshot", {"000001": {"close": 10.0}}) in calls
+
+
+def test_refresh_table_from_latest_snapshot_defers_visible_async_snapshots_by_tab(monkeypatch):
+    from ui.tabs import base_stock_refresh as refresh_module
+
+    _reset_cache_snapshot_apply_queue(refresh_module)
+    scheduled = []
+    calls = []
+
+    class DummyOwner:
+        def __init__(self, name, code):
+            self.name = name
+            self.code = code
+            self.model = SimpleNamespace(row_data=[{"代码": code}])
+
+        def isVisible(self):
+            return True
+
+        def _resolve_active_quote_model(self):
+            return self.model
+
+        def _apply_quote_snapshot(self, payload):
+            calls.append((self.name, dict(payload or {})))
+
+    monkeypatch.setattr(
+        refresh_module.QCoreApplication,
+        "instance",
+        staticmethod(lambda: SimpleNamespace(closingDown=lambda: False)),
+    )
+    monkeypatch.setattr(
+        refresh_module.QTimer,
+        "singleShot",
+        staticmethod(lambda ms, callback: scheduled.append((ms, callback))),
+    )
+    monkeypatch.setattr(refresh_module, "collect_table_codes", lambda owner, _model=None: [owner.code])
+    monkeypatch.setattr(refresh_module, "prime_local_quote_snapshot_async", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        "core.global_store.global_store.get_latest_quotes",
+        lambda: {
+            "000001": {"close": 10.0},
+            "000002": {"close": 11.0},
+        },
+    )
+
+    try:
+        owner_fund = DummyOwner("fund", "000001")
+        owner_foreign = DummyOwner("foreign", "000002")
+        refresh_module.refresh_table_from_latest_snapshot(owner_fund, async_local=True)
+        refresh_module.refresh_table_from_latest_snapshot(owner_foreign, async_local=True)
+
+        assert calls == []
+        assert len(scheduled) == 1
+
+        _, first_callback = scheduled.pop(0)
+        first_callback()
+        assert calls == [("fund", {"000001": {"close": 10.0}})]
+        assert len(scheduled) == 1
+
+        _, second_callback = scheduled.pop(0)
+        second_callback()
+        assert calls == [
+            ("fund", {"000001": {"close": 10.0}}),
+            ("foreign", {"000002": {"close": 11.0}}),
+        ]
+    finally:
+        _reset_cache_snapshot_apply_queue(refresh_module)
 
 
 def test_refresh_table_from_latest_snapshot_keeps_sync_local_prime_when_hidden(monkeypatch):

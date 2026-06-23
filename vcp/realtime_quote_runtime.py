@@ -33,12 +33,14 @@ class RealtimeQuoteRuntime:
 
     def snapshot(self) -> dict:
         with self._lock:
+            owner_thread_alive = self._thread.is_alive()
             return {
                 "inflight": self._inflight,
                 "last_success_at": self._last_success_at,
                 "consecutive_failures": self._consecutive_failures,
                 "reconnect_count": self._reconnect_count,
-                "worker_alive": self._thread.is_alive(),
+                "worker_alive": owner_thread_alive,
+                "owner_thread_alive": owner_thread_alive,
                 "server": self._server,
             }
 

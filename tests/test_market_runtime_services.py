@@ -587,6 +587,9 @@ def test_realtime_quote_provider_failures_cooldown_and_stats(monkeypatch):
     service.register_success()
     assert provider._rt_runtime_consecutive_failures == 0
     assert provider._rt_runtime_last_error == ""
+    stats = service.get_runtime_stats()
+    assert stats["worker_alive"] is True
+    assert stats["owner_thread_alive"] is True
 
     assert service.protect_against_thread_anomaly(6, threshold=5) is True
     assert provider._rt_runtime_cooldown_until > 0
@@ -594,6 +597,7 @@ def test_realtime_quote_provider_failures_cooldown_and_stats(monkeypatch):
     provider._rt_runtime = None
     stats = service.get_runtime_stats()
     assert stats["cooldown_until"] == provider._rt_runtime_cooldown_until
+    assert stats["owner_thread_alive"] is False
     assert stats["last_error"]
 
 

@@ -235,11 +235,112 @@ def test_central_quotes_service_heartbeat_marks_market_closed_pause(monkeypatch)
 
         heartbeat = next(message for message in messages if "[报价站] 心跳" in message)
         assert "实时缓存=0" in heartbeat
-        assert "工作线程存活=False" in heartbeat
+        assert "工作线程存活" not in heartbeat
         assert "市场=盘后" in heartbeat
         assert "状态=paused_market_closed" in heartbeat
+        assert "活跃依据=market_closed" in heartbeat
         assert "下一步=下个交易时段自动轮询" in heartbeat
         assert "调度器存活=True" in heartbeat
+        assert "底层owner线程存活=False" in heartbeat
+    finally:
+        service.shutdown()
+        service.deleteLater()
+        main_window.deleteLater()
+
+
+def test_central_quotes_service_heartbeat_marks_active_when_success_recent_despite_owner_stopped(monkeypatch):
+    _ = QApplication.instance() or QApplication([])
+    main_window = QWidget()
+
+    from ui.workers import central_quotes_worker as worker_module
+
+    now = 1_800_000_000.0
+
+    class DummyProvider:
+        def compact_runtime_caches(self):
+            return {
+                "rt_quote_cache_size": 173,
+                "history_symbol_count": 5162,
+                "rt_runtime": {
+                    "inflight": 0,
+                    "last_success_at": now - 18,
+                    "consecutive_failures": 0,
+                    "reconnect_count": 0,
+                    "cooldown_until": 0,
+                    "worker_alive": False,
+                },
+            }
+
+        def protect_against_thread_anomaly(self, _count):
+            return False
+
+    messages = []
+    service = CentralQuotesService(main_window, DummyProvider(), code_supplier=lambda: {"000001"})
+    monkeypatch.setattr(worker_module.time, "time", lambda: now)
+    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", staticmethod(lambda *args, **kwargs: True))
+    monkeypatch.setattr(MarketCalendar, "get_market_status", classmethod(lambda cls, market="CN": "交易中"))
+    monkeypatch.setattr(service, "_collect_thread_health", lambda: (5, 0))
+    monkeypatch.setattr(worker_module.log, "info", lambda message: messages.append(str(message)))
+
+    try:
+        service._tick_count = service._heartbeat_every_ticks
+        service._run_maintenance(active_codes_count=172, quote_refreshable=True)
+
+        heartbeat = next(message for message in messages if "[报价站] 心跳" in message)
+        assert "实时缓存=173" in heartbeat
+        assert "市场=交易中" in heartbeat
+        assert "状态=active_refreshing" in heartbeat
+        assert "活跃依据=recent_success" in heartbeat
+        assert "下一步=持续30秒调度轮询" in heartbeat
+        assert "底层owner线程存活=False" in heartbeat
+        assert "工作线程存活" not in heartbeat
+    finally:
+        service.shutdown()
+        service.deleteLater()
+        main_window.deleteLater()
+
+
+def test_central_quotes_service_heartbeat_marks_provider_errors_as_degraded(monkeypatch):
+    _ = QApplication.instance() or QApplication([])
+    main_window = QWidget()
+
+    from ui.workers import central_quotes_worker as worker_module
+
+    class DummyProvider:
+        def compact_runtime_caches(self):
+            return {
+                "rt_quote_cache_size": 0,
+                "history_symbol_count": 5162,
+                "rt_runtime": {
+                    "inflight": 0,
+                    "last_success_at": 0,
+                    "consecutive_failures": 2,
+                    "reconnect_count": 1,
+                    "cooldown_until": 0,
+                    "worker_alive": False,
+                    "last_error": "network down",
+                },
+            }
+
+        def protect_against_thread_anomaly(self, _count):
+            return False
+
+    messages = []
+    service = CentralQuotesService(main_window, DummyProvider(), code_supplier=lambda: {"000001"})
+    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", staticmethod(lambda *args, **kwargs: True))
+    monkeypatch.setattr(MarketCalendar, "get_market_status", classmethod(lambda cls, market="CN": "交易中"))
+    monkeypatch.setattr(service, "_collect_thread_health", lambda: (5, 0))
+    monkeypatch.setattr(worker_module.log, "info", lambda message: messages.append(str(message)))
+
+    try:
+        service._tick_count = service._heartbeat_every_ticks
+        service._run_maintenance(active_codes_count=172, quote_refreshable=True)
+
+        heartbeat = next(message for message in messages if "[报价站] 心跳" in message)
+        assert "状态=degraded_provider_errors" in heartbeat
+        assert "活跃依据=provider_errors" in heartbeat
+        assert "下一步=等待下一轮重试或进入冷却" in heartbeat
+        assert "底层owner线程存活=False" in heartbeat
     finally:
         service.shutdown()
         service.deleteLater()

@@ -2,6 +2,7 @@
 # ui/tabs/watchlist_tab.py
 # 关注池独立组件 — 从 WatchlistMixin 解耦重构为完全自治的 QWidget
 import os
+import time
 from datetime import datetime
 
 from PyQt6.QtCore import Qt, QTimer
@@ -30,6 +31,8 @@ log = get_logger(__name__)
 
 
 class WatchlistTab(BaseStockTab):
+    CONTEXT_REFRESH_MIN_INTERVAL_MS = 60_000
+
     """
     关注池 独立 Tab 组件 (Controller + View)
     全权负责关注池的增删查改、实时报价、AI诊断结果展示。
@@ -55,6 +58,8 @@ class WatchlistTab(BaseStockTab):
         self._startup_followup_refresh_enabled = bool(startup_followup_refresh_enabled)
         self._delayed_special_timer = None
         self._pending_vcp_calc = False
+        self._deferred_vcp_payload = None
+        self._last_vcp_calc_started_at = 0.0
         self._vcp_calc_allow_noninteractive = False
         self._watchlist_lineage_service = TabDataLineageService(
             key="watchlist",
@@ -119,6 +124,10 @@ class WatchlistTab(BaseStockTab):
 
     def showEvent(self, event):  # noqa: N802 - Qt API naming
         super().showEvent(event)
+        if self._deferred_vcp_payload and self._is_active_workspace_tab_for_vcp():
+            payload = self._deferred_vcp_payload
+            self._deferred_vcp_payload = None
+            QTimer.singleShot(0, lambda payload=payload: self._apply_deferred_vcp_payload(payload))
         if self._pending_vcp_calc and self._should_start_interactive_runtime_on_show():
             self._pending_vcp_calc = False
             self._request_vcp_calc(delay_ms=0, allow_noninteractive=True)
@@ -683,6 +692,8 @@ class WatchlistTab(BaseStockTab):
             log.debug(f"[关注池] 开始计算 {len(codes_with_rows)} 只标的附加指标")
 
             # 1. 尝试从引擎获取RPS
+            if radar_data_tuple is None:
+                radar_data_tuple = self._gather_radar_data([code for _, code in codes_with_rows])
             rps_bundle = radar_data_tuple[5] if radar_data_tuple and len(radar_data_tuple) > 5 else None
 
             if not rps_bundle:
@@ -974,7 +985,7 @@ class WatchlistTab(BaseStockTab):
         """统一事件消费： F5缓存完成 or 业绩数据更新"""
         # F5 缓存完成后作为第二次刷新机会（此时 earnings/大宗交易/美股等可能已有数据）
         # 合并启动后期的重复触发
-        self._request_vcp_calc()
+        self._request_vcp_calc(min_interval_ms=self.CONTEXT_REFRESH_MIN_INTERVAL_MS)
 
     def _on_na_daily_updated(self):
         """美股日报最近5份内容刷新后，同步关注池的细分板块缓存。"""
@@ -991,12 +1002,20 @@ class WatchlistTab(BaseStockTab):
     def _on_vcp_watchlist_ready(self, payload: object):
         if self._closing:
             return
-        if not self._is_current_workspace_tab():
-            self._pending_vcp_calc = True
+        if not self._is_active_workspace_tab_for_vcp():
+            self._deferred_vcp_payload = dict(payload or {}) if payload else None
             return
         if payload:
             log.debug(f"[watchlist] apply {len(payload)} metric rows")
             self._apply_vcp_indicators_ui(payload)
+
+    def _apply_deferred_vcp_payload(self, payload: object):
+        if self._closing or not payload:
+            return
+        if not self._is_active_workspace_tab_for_vcp():
+            self._deferred_vcp_payload = dict(payload or {})
+            return
+        self._apply_vcp_indicators_ui(payload)
 
     def _is_background_prewarm_indicator_blocked(self) -> bool:
         return (
@@ -1004,14 +1023,28 @@ class WatchlistTab(BaseStockTab):
             and bool(getattr(self, "_workspace_noninteractive_loaded", False))
         )
 
-    def _request_vcp_calc(self, delay_ms: int = 500, *, allow_noninteractive: bool = False):
+    def _is_active_workspace_tab_for_vcp(self) -> bool:
+        if not self._is_current_workspace_tab():
+            return False
+        try:
+            return bool(self.isVisible())
+        except RuntimeError:
+            return False
+
+    def _request_vcp_calc(
+        self,
+        delay_ms: int = 500,
+        *,
+        allow_noninteractive: bool = False,
+        min_interval_ms: int | None = None,
+    ):
         """请求计算 VCP 附加指标，带有防抖功能，防止启动时多次触发"""
         if self._closing:
             return
         if not allow_noninteractive and self._is_background_prewarm_indicator_blocked():
             self._pending_vcp_calc = True
             return
-        if not allow_noninteractive and not self._is_current_workspace_tab():
+        if not allow_noninteractive and not self._is_active_workspace_tab_for_vcp():
             self._pending_vcp_calc = True
             return
         self._pending_vcp_calc = False
@@ -1022,7 +1055,12 @@ class WatchlistTab(BaseStockTab):
             self._vcp_calc_timer = QTimer(self)
             self._vcp_calc_timer.setSingleShot(True)
             self._vcp_calc_timer.timeout.connect(self._do_vcp_calc)
-        self._vcp_calc_timer.start(max(0, int(delay_ms)))
+        next_delay_ms = max(0, int(delay_ms))
+        if min_interval_ms is not None and not allow_noninteractive:
+            elapsed_ms = max(0.0, (time.monotonic() - float(self._last_vcp_calc_started_at or 0.0)) * 1000.0)
+            remaining_ms = int(max(0.0, float(min_interval_ms) - elapsed_ms))
+            next_delay_ms = max(next_delay_ms, remaining_ms)
+        self._vcp_calc_timer.start(next_delay_ms)
 
     def prime_startup_state(self):
         """工作区联动：启动后主动补一次关注池行情与附加指标。"""
@@ -1059,17 +1097,16 @@ class WatchlistTab(BaseStockTab):
             return
         allow_noninteractive = bool(getattr(self, "_vcp_calc_allow_noninteractive", False))
         self._vcp_calc_allow_noninteractive = False
-        if not allow_noninteractive and not self._is_current_workspace_tab():
+        if not allow_noninteractive and not self._is_active_workspace_tab_for_vcp():
             self._pending_vcp_calc = True
             return
         if self.model and self.model.row_data:
             codes_with_rows = [(idx, str(r.get("代码"))) for idx, r in enumerate(self.model.row_data) if r.get("代码")]
             if codes_with_rows:
-                radar_data_tuple = self._gather_radar_data([code for _, code in codes_with_rows])
+                self._last_vcp_calc_started_at = time.monotonic()
                 task_manager.run_in_background(
                     self._refresh_vcp_indicators,
                     codes_with_rows,
-                    radar_data_tuple,
                     on_error=lambda e: log.error(f"[关注池] 附加指标后台计算异常: {e}"),
                     task_id=task_registry.workspace("watchlist_vcp_refresh").task_id,
                 )

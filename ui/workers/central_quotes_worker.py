@@ -22,6 +22,7 @@ _A_SHARE_POLL_INTERVAL_MS = 30000
 _A_SHARE_FAILURE_COOLDOWN_SEC = 300
 _A_SHARE_HEARTBEAT_INTERVAL_SEC = 60
 _POST_CACHE_RELOAD_DEDUP_WINDOW_SEC = 32.0
+_RECENT_SUCCESS_GRACE_SEC = max(120, _A_SHARE_HEARTBEAT_INTERVAL_SEC * 2)
 
 
 class CentralQuotesService(QObject):
@@ -191,23 +192,36 @@ class CentralQuotesService(QObject):
         quote_refreshable: bool,
         runtime_stats: dict,
         cooldown_left: int,
-    ) -> tuple[str, str, bool]:
+        realtime_cache_size: int,
+        last_success_age: float | None,
+    ) -> tuple[str, str, bool, str]:
         timer_active = self._timer_is_active()
         if self._closed:
-            return "closed", "服务已关闭", timer_active
+            return "closed", "服务已关闭", timer_active, "service_closed"
         if not timer_active:
-            return "degraded_scheduler_inactive", "调度器未运行，需恢复后才能自动轮询", timer_active
+            return "degraded_scheduler_inactive", "调度器未运行，需恢复后才能自动轮询", timer_active, "scheduler_inactive"
         if not quote_refreshable:
-            return "paused_market_closed", "下个交易时段自动轮询", timer_active
+            return "paused_market_closed", "下个交易时段自动轮询", timer_active, "market_closed"
         try:
             inflight = int(runtime_stats.get("inflight") or 0)
         except (TypeError, ValueError):
             inflight = 0
+        try:
+            consecutive_failures = int(runtime_stats.get("consecutive_failures") or 0)
+        except (TypeError, ValueError):
+            consecutive_failures = 0
+        last_error = str(runtime_stats.get("last_error") or "").strip()
         if self._is_fetching or inflight > 0:
-            return "fetching", "等待当前抓取完成", timer_active
+            return "fetching", "等待当前抓取完成", timer_active, "inflight"
         if cooldown_left > 0 or self._circuit_breaker_cooldown > 0:
-            return "cooldown", "冷却结束后自动重试", timer_active
-        return "ready", "30秒调度轮询", timer_active
+            return "cooldown", "冷却结束后自动重试", timer_active, "cooldown"
+        if consecutive_failures > 0 or last_error:
+            return "degraded_provider_errors", "等待下一轮重试或进入冷却", timer_active, "provider_errors"
+        if last_success_age is not None and last_success_age <= _RECENT_SUCCESS_GRACE_SEC:
+            return "active_refreshing", "持续30秒调度轮询", timer_active, "recent_success"
+        if realtime_cache_size > 0:
+            return "ready_with_cache", "等待下一轮刷新推进", timer_active, "cache_present"
+        return "waiting_first_refresh", "等待首轮实时刷新", timer_active, "no_success_yet"
 
     def _market_status_text(self) -> str:
         try:
@@ -229,30 +243,38 @@ class CentralQuotesService(QObject):
         last_success_at = float(runtime_stats.get("last_success_at") or 0)
         last_success_text = time.strftime("%H:%M:%S", time.localtime(last_success_at)) if last_success_at > 0 else "-"
         cooldown_until = float(runtime_stats.get("cooldown_until") or 0)
-        cooldown_left = max(0, int(cooldown_until - time.time()))
+        now_ts = time.time()
+        cooldown_left = max(0, int(cooldown_until - now_ts))
         if quote_refreshable is None:
             quote_refreshable = MarketCalendar.is_quote_refresh_time()
-        runtime_state, next_step, timer_active = self._heartbeat_runtime_status(
+        rt_quote_cache_size = stats.get("rt_quote_cache_size", 0) if isinstance(stats, dict) else 0
+        last_success_age = max(0.0, now_ts - last_success_at) if last_success_at > 0 else None
+        owner_thread_alive = bool(
+            runtime_stats.get("owner_thread_alive", runtime_stats.get("worker_alive", False))
+        )
+        runtime_state, next_step, timer_active, activity_basis = self._heartbeat_runtime_status(
             quote_refreshable=bool(quote_refreshable),
             runtime_stats=runtime_stats,
             cooldown_left=cooldown_left,
+            realtime_cache_size=int(rt_quote_cache_size or 0),
+            last_success_age=last_success_age,
         )
         market_status = self._market_status_text()
-        now_ts = time.time()
         heartbeat_signature = (
             active_codes_count if active_codes_count is not None else "-",
-            stats.get("rt_quote_cache_size", 0) if isinstance(stats, dict) else 0,
+            rt_quote_cache_size,
             stats.get("history_symbol_count", 0) if isinstance(stats, dict) else 0,
             runtime_stats.get("inflight", 0),
             last_success_text,
             runtime_stats.get("consecutive_failures", 0),
             runtime_stats.get("reconnect_count", 0),
             cooldown_left,
-            runtime_stats.get("worker_alive", False),
             market_status,
             runtime_state,
+            activity_basis,
             next_step,
             timer_active,
+            owner_thread_alive,
             total_threads,
             pytdx_threads,
         )
@@ -268,18 +290,19 @@ class CentralQuotesService(QObject):
         log.info(
             "[报价站] 心跳 "
             f"标的={active_codes_count if active_codes_count is not None else '-'} "
-            f"实时缓存={stats.get('rt_quote_cache_size', 0) if isinstance(stats, dict) else 0} "
+            f"实时缓存={rt_quote_cache_size} "
             f"历史缓存={stats.get('history_symbol_count', 0) if isinstance(stats, dict) else 0} "
             f"飞行中={runtime_stats.get('inflight', 0)} "
             f"上次成功={last_success_text} "
             f"连败={runtime_stats.get('consecutive_failures', 0)} "
             f"重连={runtime_stats.get('reconnect_count', 0)} "
             f"冷却剩余={cooldown_left}s "
-            f"工作线程存活={runtime_stats.get('worker_alive', False)} "
             f"市场={market_status} "
             f"状态={runtime_state} "
+            f"活跃依据={activity_basis} "
             f"下一步={next_step} "
             f"调度器存活={timer_active} "
+            f"底层owner线程存活={owner_thread_alive} "
             f"总线程={total_threads} "
             f"pytdx线程={pytdx_threads}"
         )

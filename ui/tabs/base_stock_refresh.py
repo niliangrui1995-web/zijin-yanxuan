@@ -395,6 +395,84 @@ def _invoke_after_market_caps_updated(owner) -> None:
             pass
 
 
+def _should_defer_cache_snapshot_apply(owner, *, async_local: bool) -> bool:
+    if not async_local or not _is_owner_runtime_active(owner):
+        return False
+
+    is_visible = getattr(owner, "isVisible", None)
+    if not callable(is_visible):
+        return False
+    try:
+        if not is_visible():
+            return False
+    except (RuntimeError, TypeError):
+        return False
+
+    app = QCoreApplication.instance()
+    if app is None or app.closingDown():
+        return False
+    return True
+
+
+class CacheSnapshotApplyQueue:
+    """Apply visible cache snapshot hits one tab per event-loop turn."""
+
+    _scheduled = False
+    _pending: dict[int, tuple[weakref.ReferenceType, dict]] = {}
+
+    @classmethod
+    def enqueue(cls, owner, payload: dict, *, async_local: bool) -> bool:
+        if not payload or not _should_defer_cache_snapshot_apply(owner, async_local=async_local):
+            return False
+
+        owner_id = id(owner)
+        owner_ref, merged_payload = cls._pending.get(owner_id, (weakref.ref(owner), {}))
+        merged_payload = dict(merged_payload or {})
+        for code, quote in dict(payload or {}).items():
+            merged_payload[code] = dict(quote or {})
+        cls._pending[owner_id] = (owner_ref, merged_payload)
+        cls._schedule()
+        return True
+
+    @classmethod
+    def _schedule(cls) -> None:
+        if cls._scheduled:
+            return
+
+        app = QCoreApplication.instance()
+        if app is None or app.closingDown():
+            cls._pending.clear()
+            return
+
+        cls._scheduled = True
+        QTimer.singleShot(0, cls.flush_one)
+
+    @classmethod
+    def flush_one(cls) -> None:
+        cls._scheduled = False
+        if not cls._pending:
+            return
+
+        app = QCoreApplication.instance()
+        if app is None or app.closingDown():
+            cls._pending.clear()
+            return
+
+        owner_id = next(iter(cls._pending))
+        owner_ref, payload = cls._pending.pop(owner_id)
+        owner = owner_ref()
+        if _should_defer_cache_snapshot_apply(owner, async_local=True):
+            with ui_stall_span(
+                "BaseStockRefresh.apply_cache_snapshot",
+                tab=owner.__class__.__name__,
+                signal="cache_snapshot",
+            ):
+                owner._apply_quote_snapshot(payload)
+
+        if cls._pending:
+            cls._schedule()
+
+
 class MarketCapRefreshBatcher:
     """跨 Tab 合并缺失股本请求，避免重复 IO。"""
 
@@ -672,7 +750,8 @@ def _refresh_table_from_latest_snapshot_impl(owner, current_model=None, *, async
 
     quote_subset = {code: dict(snapshot[code]) for code in codes if code in snapshot}
     if quote_subset:
-        owner._apply_quote_snapshot(quote_subset)
+        if not CacheSnapshotApplyQueue.enqueue(owner, quote_subset, async_local=async_local):
+            owner._apply_quote_snapshot(quote_subset)
 
 
 def subscribe_global_quotes(owner, current_model=None) -> None:

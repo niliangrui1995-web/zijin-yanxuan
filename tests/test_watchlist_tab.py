@@ -153,6 +153,79 @@ def test_watchlist_hidden_context_update_defers_indicator_recalc(monkeypatch):
         tab.deleteLater()
 
 
+def test_watchlist_context_updates_are_throttled_intraday(monkeypatch):
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)
+    monkeypatch.setattr(
+        watchlist_module.WatchlistTab,
+        "_refresh_quotes_from_store_or_live",
+        lambda self, *args, **kwargs: None,
+    )
+
+    now = {"value": 100.0}
+    monkeypatch.setattr(watchlist_module.time, "monotonic", lambda: now["value"])
+    task_calls = []
+    monkeypatch.setattr(
+        watchlist_module.task_manager,
+        "run_in_background",
+        lambda fn, *args, **kwargs: task_calls.append({"fn": fn, "args": args, "kwargs": kwargs}),
+    )
+
+    tab = watchlist_module.WatchlistTab(_DummyProvider(), startup_tasks_enabled=False)
+    tab._is_active_workspace_tab_for_vcp = lambda: True
+    try:
+        tab.model.update_data([{"\u4ee3\u7801": "600519"}])
+
+        tab._request_vcp_calc(delay_ms=0)
+        tab._do_vcp_calc()
+
+        assert task_calls
+        assert tab._last_vcp_calc_started_at == 100.0
+
+        now["value"] = 120.0
+        tab._on_cache_or_earnings_updated()
+
+        assert tab._vcp_calc_timer.interval() == 40_000
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_watchlist_vcp_calc_gathers_radar_data_inside_background_task(monkeypatch):
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)
+    monkeypatch.setattr(
+        watchlist_module.WatchlistTab,
+        "_refresh_quotes_from_store_or_live",
+        lambda self, *args, **kwargs: None,
+    )
+
+    queued = []
+
+    def _queue_background(fn, *args, **kwargs):
+        queued.append({"fn": fn, "args": args, "kwargs": kwargs})
+        return kwargs.get("task_id")
+
+    monkeypatch.setattr(watchlist_module.task_manager, "run_in_background", _queue_background)
+
+    tab = watchlist_module.WatchlistTab(_DummyProvider(), startup_tasks_enabled=False)
+    tab._is_active_workspace_tab_for_vcp = lambda: True
+    gather_calls = []
+    tab._gather_radar_data = lambda codes: gather_calls.append(list(codes)) or ({}, {}, {}, {}, {}, {})
+    try:
+        tab.model.update_data([{"\u4ee3\u7801": "600519"}])
+
+        tab._do_vcp_calc()
+
+        assert gather_calls == []
+        assert queued[0]["fn"] == tab._refresh_vcp_indicators
+        queued[0]["fn"](*queued[0]["args"])
+        assert gather_calls == [["600519"]]
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
 def test_watchlist_source_column_is_hidden_from_display_model():
     tab = watchlist_module.WatchlistTab(_DummyProvider())
     try:
@@ -631,6 +704,7 @@ def test_watchlist_shutdown_stops_timers_and_disconnects_runtime_signals(monkeyp
     )
 
     tab = watchlist_module.WatchlistTab(_DummyProvider())
+    tab._is_active_workspace_tab_for_vcp = lambda: True
     try:
         tab._request_vcp_calc(delay_ms=1000)
         assert tab._delayed_special_timer.isActive() is True
