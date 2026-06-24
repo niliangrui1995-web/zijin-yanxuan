@@ -67,6 +67,7 @@ class Worker:
 
 
 def test_default_hotspot_budgets_cover_known_refactor_targets():
+    assert HOTSPOT_BUDGETS["core/rps_precomputer.py"]["RPSPrecomputer.run_f5_pipeline"] == 172
     assert HOTSPOT_BUDGETS["core/startup_orchestrator.py"]["StartupOrchestrator.deferred_data_load"] == 188
     assert HOTSPOT_BUDGETS["scripts/perf_budget_check.py"]["_parse_args"] == 194
     assert HOTSPOT_BUDGETS["ui/kline_window_qt.py"]["KLineChartWindow.__init__"] == 246

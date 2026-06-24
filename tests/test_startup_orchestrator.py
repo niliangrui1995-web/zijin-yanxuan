@@ -662,7 +662,7 @@ def test_global_earnings_refresh_subprocess_uses_hidden_timeout(monkeypatch):
 
     monkeypatch.setattr(startup_module, "run_python_module", fake_run_python_module)
 
-    assert startup_module._run_global_earnings_calendar_refresh_subprocess() == 7
+    assert startup_module._run_global_earnings_calendar_refresh_subprocess() == {"status": "success", "events": 7}
     assert captured["module_name"] == "domains.global_earnings_calendar.refresh_cache"
     assert captured["module_args"] is None
     assert captured["kwargs"]["no_window"] is True
@@ -670,6 +670,25 @@ def test_global_earnings_refresh_subprocess_uses_hidden_timeout(monkeypatch):
     assert captured["kwargs"]["text"] is True
     assert captured["kwargs"]["check"] is True
     assert captured["kwargs"]["timeout"] == GLOBAL_EARNINGS_CALENDAR_SYNC_TIMEOUT_SEC
+
+
+def test_global_earnings_refresh_subprocess_parses_degraded_status(monkeypatch):
+    def fake_run_python_module(module_name, module_args=None, **kwargs):
+        return types.SimpleNamespace(
+            stdout=(
+                "log line\n"
+                '{"status":"degraded","events":82,"providers":["MOPS"],"reused_event_count":3}\n'
+            )
+        )
+
+    monkeypatch.setattr(startup_module, "run_python_module", fake_run_python_module)
+
+    assert startup_module._run_global_earnings_calendar_refresh_subprocess() == {
+        "status": "degraded",
+        "events": 82,
+        "providers": ["MOPS"],
+        "reused_event_count": 3,
+    }
 
 
 def test_startup_orchestrator_leaves_auto_rt_retry_to_global_scheduler():
@@ -716,6 +735,32 @@ def test_startup_orchestrator_global_earnings_sync_emits_update_event(monkeypatc
 
     orchestrator.refresh_global_earnings_calendar()
 
+    assert len(spy) == 1
+
+
+def test_startup_orchestrator_global_earnings_sync_marks_degraded_result(monkeypatch):
+    snapshots = []
+
+    monkeypatch.setattr(
+        "core.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
+        lambda: {"status": "degraded", "events": 82, "providers": ["MOPS"], "reused_event_count": 3},
+    )
+    monkeypatch.setattr(
+        "core.startup_orchestrator.log_process_snapshot",
+        lambda name, **kwargs: snapshots.append((name, kwargs)),
+    )
+
+    orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
+    spy = QSignalSpy(event_bus.sig_earnings_updated)
+
+    orchestrator.refresh_global_earnings_calendar()
+
+    end_snapshots = [item for item in snapshots if item[0] == "startup.global_earnings_calendar.end"]
+    assert end_snapshots
+    assert end_snapshots[-1][1]["extra"]["status"] == "degraded"
+    assert end_snapshots[-1][1]["extra"]["events"] == 82
+    assert end_snapshots[-1][1]["extra"]["providers"] == "MOPS"
+    assert end_snapshots[-1][1]["extra"]["reused_event_count"] == 3
     assert len(spy) == 1
 
 

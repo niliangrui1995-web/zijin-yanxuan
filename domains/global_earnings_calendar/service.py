@@ -415,6 +415,19 @@ class GlobalEarningsCalendarService:
         return failed_days_by_source
 
     @staticmethod
+    def _degraded_source_failed_tickers(degradations: list[dict[str, object]]) -> dict[str, set[str]]:
+        failed_tickers_by_source: dict[str, set[str]] = {}
+        for degradation in degradations:
+            source = str(degradation.get("provider", "") or "").strip()
+            raw_tickers = degradation.get("failed_tickers")
+            if not source or not isinstance(raw_tickers, (list, tuple, set)):
+                continue
+            tickers = {str(ticker or "").strip().upper() for ticker in raw_tickers if str(ticker or "").strip()}
+            if tickers:
+                failed_tickers_by_source.setdefault(source, set()).update(tickers)
+        return failed_tickers_by_source
+
+    @staticmethod
     def _degraded_cache_state(
         degradations: list[dict[str, object]],
         *,
@@ -429,12 +442,23 @@ class GlobalEarningsCalendarService:
                 if str(day or "").strip()
             }
         )
+        failed_tickers = sorted(
+            {
+                str(ticker or "").strip().upper()
+                for item in degradations
+                for ticker in (
+                    item.get("failed_tickers") if isinstance(item.get("failed_tickers"), (list, tuple, set)) else []
+                )
+                if str(ticker or "").strip()
+            }
+        )
         return {
             "status": "degraded",
             "reason": "provider_fetch_degraded",
             "degraded_at": dt.datetime.now().isoformat(timespec="seconds"),
             "providers": [provider for provider in providers if provider],
             "failed_days": failed_days,
+            "failed_tickers": failed_tickers,
             "stale_cache_reused": reused_event_count > 0,
             "reused_event_count": max(0, int(reused_event_count or 0)),
             "details": [dict(item) for item in degradations],
@@ -501,6 +525,7 @@ class GlobalEarningsCalendarService:
 
         network_events = self._filter_window(network_events, today=today, lookahead_days=lookahead_days)
         failed_days_by_source = self._degraded_source_failed_days(provider_degradations)
+        failed_tickers_by_source = self._degraded_source_failed_tickers(provider_degradations)
         if network_events:
             refreshed_event_keys = {
                 (str(event.ticker or "").strip().upper(), str(event.source or "").strip()) for event in network_events
@@ -509,12 +534,18 @@ class GlobalEarningsCalendarService:
             stale_cache_reused = 0
             for event in cached_events:
                 source = str(event.source or "").strip()
+                ticker = str(event.ticker or "").strip().upper()
+                failed_tickers = failed_tickers_by_source.get(source, set())
+                if failed_tickers and ticker in failed_tickers:
+                    cached_fallback_events.append(event)
+                    stale_cache_reused += 1
+                    continue
                 failed_days = failed_days_by_source.get(source, set())
                 if failed_days and event_calendar_date(event)[:10] in failed_days:
                     cached_fallback_events.append(event)
                     stale_cache_reused += 1
                     continue
-                key = (str(event.ticker or "").strip().upper(), source)
+                key = (ticker, source)
                 if key not in refreshed_event_keys:
                     cached_fallback_events.append(event)
             filtered = merge_events(confirmed_events + cached_fallback_events + network_events)

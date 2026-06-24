@@ -426,7 +426,7 @@ class DartEarningsDisclosureProvider:
             events.extend(self.parse_payload(payload, universe, kr_codes))
             try:
                 total_page = int(payload.get("total_page") or 1)
-            except TypeError, ValueError, AttributeError:
+            except (TypeError, ValueError, AttributeError):
                 total_page = 1
             if page_no >= total_page:
                 break
@@ -623,6 +623,7 @@ class MopsEarningsDisclosureProvider:
         self.session = session or self._default_session()
         self.base_url = base_url
         self.timeout = timeout
+        self.last_degradation: dict[str, object] | None = None
 
     @staticmethod
     def _default_session():
@@ -649,11 +650,12 @@ class MopsEarningsDisclosureProvider:
         **_kwargs,
     ) -> list[EarningsCalendarEvent]:
         today = today or dt.date.today()
+        self.last_degradation = None
         tw_companies = [company for company in universe.values() if company.market == "TW"]
         if not tw_companies:
             return []
         events: list[EarningsCalendarEvent] = []
-        for company in tw_companies:
+        for index, company in enumerate(tw_companies):
             typek = "otc" if company.ticker.endswith(".TWO") else "sii"
             try:
                 response = self._get(
@@ -673,6 +675,19 @@ class MopsEarningsDisclosureProvider:
                 _raise_for_status(response)
             except (requests.RequestException, OSError, RuntimeError, TypeError, ValueError) as exc:
                 log.debug(f"[global earnings calendar] MOPS stop after {company.ticker}: {exc}")
+                failed_companies = tw_companies[index:]
+                self.last_degradation = {
+                    "provider": MOPS_SOURCE,
+                    "reason": "ticker_fetch_stopped",
+                    "failed_tickers": [item.ticker for item in failed_companies],
+                    "failed_count": len(failed_companies),
+                    "requested_tickers": [item.ticker for item in tw_companies],
+                    "requested_count": len(tw_companies),
+                    "returned_events": len(sorted_events(events)),
+                    "all_tickers_failed": index == 0,
+                    "stop_after_ticker": company.ticker,
+                    "sample_error": str(exc),
+                }
                 break
             events.extend(
                 self.parse_html(

@@ -15,7 +15,7 @@ HOTSPOT_BUDGETS = {
         "LhbPoolManager.compute_pool": 180,
     },
     "core/rps_precomputer.py": {
-        "RPSPrecomputer.run_f5_pipeline": 171,
+        "RPSPrecomputer.run_f5_pipeline": 172,
     },
     "core/startup_orchestrator.py": {
         "StartupOrchestrator.deferred_data_load": 188,

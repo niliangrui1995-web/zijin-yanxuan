@@ -1148,6 +1148,96 @@ def test_refresh_events_keeps_failed_day_cache_when_same_nasdaq_ticker_refreshes
     assert payload["cache_state"]["reused_event_count"] == 1
 
 
+def test_refresh_events_marks_degraded_mops_partial_stop_and_reuses_failed_ticker_cache():
+    class MemoryStore:
+        def __init__(self):
+            self.saved = None
+            self.data = {
+                "global_earnings_calendar": {
+                    "source": "provider",
+                    "events": [
+                        EarningsCalendarEvent(
+                            "ASE",
+                            "3711.TW",
+                            "advanced packaging",
+                            "2026-06-30",
+                            source="MOPS",
+                            market="TW",
+                        ).to_dict()
+                    ],
+                }
+            }
+
+        def load_json(self, key, default=None):
+            return json.loads(json.dumps(self.data.get(key, default), ensure_ascii=False))
+
+        def save_json(self, key, data):
+            self.saved = key
+            self.data[key] = json.loads(json.dumps(data, ensure_ascii=False))
+
+    class PartiallyStoppedMopsProvider:
+        def __init__(self):
+            self.last_degradation = None
+
+        def fetch(self, universe, **_kwargs):
+            self.last_degradation = {
+                "provider": "MOPS",
+                "reason": "ticker_fetch_stopped",
+                "failed_tickers": ["3711.TW"],
+                "failed_count": 1,
+                "requested_tickers": ["2330.TW", "3711.TW"],
+                "requested_count": 2,
+                "returned_events": 1,
+                "all_tickers_failed": False,
+                "stop_after_ticker": "3711.TW",
+                "sample_error": "TLS connect error: invalid library",
+            }
+            company = universe["2330.TW"]
+            return [
+                EarningsCalendarEvent(
+                    company.company,
+                    company.ticker,
+                    company.sector,
+                    "2026-06-27",
+                    source="MOPS",
+                    market=company.market,
+                )
+            ]
+
+    class EmptyProvider:
+        def fetch(self, *_args, **_kwargs):
+            return []
+
+    store = MemoryStore()
+    service = GlobalEarningsCalendarService(
+        data_store=store,
+        universe={
+            "2330.TW": OligarchCompany("TSMC", "2330.TW", "foundry", "super_giant", "TW"),
+            "3711.TW": OligarchCompany("ASE", "3711.TW", "advanced packaging", "normal", "TW"),
+        },
+        confirmed_provider=ConfirmedEarningsEventsProvider("missing.json"),
+        nasdaq_provider=EmptyProvider(),
+        provider=EmptyProvider(),
+        yfinance_provider=EmptyProvider(),
+        official_providers=[("MOPS", PartiallyStoppedMopsProvider())],
+    )
+
+    events = service.refresh_events(today=dt.date(2026, 6, 25), lookahead_days=10)
+
+    assert [(event.ticker, event.report_date, event.source) for event in events] == [
+        ("2330.TW", "2026-06-27", "MOPS"),
+        ("3711.TW", "2026-06-30", "MOPS"),
+    ]
+    assert store.saved == "global_earnings_calendar"
+    payload = store.data["global_earnings_calendar"]
+    assert payload["source"] == "provider"
+    assert payload["cache_state"]["status"] == "degraded"
+    assert payload["cache_state"]["providers"] == ["MOPS"]
+    assert payload["cache_state"]["failed_tickers"] == ["3711.TW"]
+    assert payload["cache_state"]["reused_event_count"] == 1
+    assert payload["cache_state"]["stale_cache_reused"] is True
+
+
 def test_refresh_events_merges_cached_tickers_that_were_not_refreshed():
     class MemoryStore:
         def __init__(self):

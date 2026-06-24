@@ -836,18 +836,27 @@ class OligarchEarningsCalendarPanel(QFrame):
         elif len(days) > 1:
             day_text = f"\uff5c{days[0]}~{days[-1]}"
 
+        raw_tickers = status.get("failed_tickers")
+        tickers = []
+        if isinstance(raw_tickers, (list, tuple, set)):
+            tickers = sorted({str(ticker or "").strip().upper() for ticker in raw_tickers if str(ticker or "").strip()})
+        ticker_text = ""
+        if tickers and not day_text:
+            ticker_text = f"\uff5c{tickers[0]}" if len(tickers) == 1 else f"\uff5c{tickers[0]}\u7b49{len(tickers)}\u4e2aTicker"
+
         try:
             reused_count = int(status.get("reused_event_count", 0) or 0)
         except (TypeError, ValueError):
             reused_count = 0
+        detail_text = day_text or ticker_text
         if reused_count:
             return (
                 f"\u964d\u7ea7: {provider_text}\u62c9\u53d6\u5931\u8d25\uff0c"
-                f"\u5df2\u4fdd\u7559\u65e7\u5feb\u7167 {reused_count} \u6761{day_text}"
+                f"\u5df2\u4fdd\u7559\u65e7\u5feb\u7167 {reused_count} \u6761{detail_text}"
             )
         return (
             f"\u964d\u7ea7: {provider_text}\u62c9\u53d6\u5931\u8d25\uff0c"
-            f"\u5df2\u4fdd\u7559\u53ef\u7528\u65e7\u5feb\u7167{day_text}"
+            f"\u5df2\u4fdd\u7559\u53ef\u7528\u65e7\u5feb\u7167{detail_text}"
         )
 
     @staticmethod

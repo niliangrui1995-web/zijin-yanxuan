@@ -284,6 +284,45 @@ def test_oligarch_earnings_panel_shows_degraded_cache_status():
         panel.deleteLater()
 
 
+def test_oligarch_earnings_panel_shows_degraded_ticker_cache_status():
+    future_report_date = (dt.date.today() + dt.timedelta(days=1)).isoformat()
+
+    class _FakeService:
+        universe = {"3711.TW": object()}
+
+        def load_cache_status(self):
+            return {
+                "status": "degraded",
+                "providers": ["MOPS"],
+                "failed_tickers": ["3711.TW"],
+                "stale_cache_reused": True,
+                "reused_event_count": 1,
+            }
+
+    panel = OligarchEarningsCalendarPanel(
+        events=[
+            EarningsCalendarEvent(
+                "ASE",
+                "3711.TW",
+                "Advanced packaging",
+                future_report_date,
+                source="MOPS",
+                market="TW",
+            )
+        ],
+        service=_FakeService(),
+    )
+    try:
+        status_text = panel.status_label.text()
+
+        assert "\u964d\u7ea7" in status_text
+        assert "MOPS" in status_text
+        assert "3711.TW" in status_text
+        assert "\u65e7\u5feb\u7167 1 \u6761" in status_text
+    finally:
+        panel.deleteLater()
+
+
 def test_oligarch_earnings_panel_detaches_running_refresh_worker_on_delete(qt_application):
     started = threading.Event()
     release = threading.Event()

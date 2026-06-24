@@ -71,20 +71,26 @@ def _format_subprocess_failure(exc: Exception) -> tuple[str, str]:
     return message, message
 
 
-def _parse_global_earnings_calendar_refresh_stdout(stdout: str | bytes | None) -> int:
+def _parse_global_earnings_calendar_refresh_stdout(stdout: str | bytes | None) -> dict[str, object]:
     text = stdout.decode("utf-8", errors="replace") if isinstance(stdout, bytes) else str(stdout or "")
     for line in reversed(text.splitlines()):
         line = line.strip()
         if not line.startswith("{"):
             continue
         payload = json.loads(line)
-        if not isinstance(payload, dict) or payload.get("status") != "success":
+        if not isinstance(payload, dict):
             continue
-        return max(0, int(payload.get("events") or 0))
+        status = str(payload.get("status", "") or "").strip()
+        if status not in {"success", "degraded"}:
+            continue
+        result = dict(payload)
+        result["status"] = status
+        result["events"] = max(0, int(result.get("events") or 0))
+        return result
     raise ValueError("global earnings calendar refresh result missing")
 
 
-def _run_global_earnings_calendar_refresh_subprocess() -> int:
+def _run_global_earnings_calendar_refresh_subprocess() -> dict[str, object]:
     completed = run_python_module(
         "domains.global_earnings_calendar.refresh_cache",
         no_window=True,
@@ -94,6 +100,15 @@ def _run_global_earnings_calendar_refresh_subprocess() -> int:
         timeout=GLOBAL_EARNINGS_CALENDAR_SYNC_TIMEOUT_SEC,
     )
     return _parse_global_earnings_calendar_refresh_stdout(getattr(completed, "stdout", ""))
+
+
+def _coerce_global_earnings_calendar_refresh_result(result) -> dict[str, object]:
+    if isinstance(result, dict):
+        coerced = dict(result)
+        coerced["status"] = str(coerced.get("status", "") or "success").strip()
+        coerced["events"] = max(0, int(coerced.get("events") or 0))
+        return coerced
+    return {"status": "success", "events": max(0, int(result or 0))}
 
 
 def _normalize_a_share_codes(codes) -> list[str]:
@@ -608,26 +623,60 @@ class StartupOrchestrator:
                 return
             log_process_snapshot("startup.global_earnings_calendar.begin", logger=log)
             try:
-                event_count = _run_global_earnings_calendar_refresh_subprocess()
+                refresh_result = _coerce_global_earnings_calendar_refresh_result(
+                    _run_global_earnings_calendar_refresh_subprocess()
+                )
+                event_count = int(refresh_result.get("events") or 0)
+                refresh_status = str(refresh_result.get("status", "") or "success").strip()
                 if not self._alive():
                     return
                 elapsed_ms = (time.perf_counter() - started_at) * 1000.0
-                log.info(f"[启动] 寡头财报日历静默刷新完成: {event_count} 条")
+                raw_providers = refresh_result.get("providers")
+                providers = (
+                    [str(provider or "").strip() for provider in raw_providers if str(provider or "").strip()]
+                    if isinstance(raw_providers, (list, tuple, set))
+                    else []
+                )
+                provider_text = " + ".join(providers)
+                try:
+                    reused_event_count = max(0, int(refresh_result.get("reused_event_count", 0) or 0))
+                except (TypeError, ValueError):
+                    reused_event_count = 0
+                if refresh_status == "degraded":
+                    detail = f"{provider_text} 拉取异常" if provider_text else "上游拉取异常"
+                    if reused_event_count:
+                        detail = f"{detail}，已沿用旧快照 {reused_event_count} 条"
+                    else:
+                        detail = f"{detail}，已沿用可用旧快照"
+                    log.warning(f"[启动] 寡头财报日历静默刷新降级: {event_count} 条（{detail}）")
+                else:
+                    log.info(f"[启动] 寡头财报日历静默刷新完成: {event_count} 条")
                 record_metric(
                     "startup_global_earnings_calendar_sync_ms",
                     elapsed_ms,
                     unit="ms",
-                    tags={"events": str(event_count)},
+                    tags={"events": str(event_count), "status": refresh_status},
                 )
+                snapshot_extra = {
+                    "elapsed_ms": int(round(elapsed_ms)),
+                    "events": event_count,
+                    "status": refresh_status,
+                }
+                if providers:
+                    snapshot_extra["providers"] = provider_text
+                if reused_event_count:
+                    snapshot_extra["reused_event_count"] = reused_event_count
                 log_process_snapshot(
                     "startup.global_earnings_calendar.end",
                     logger=log,
-                    extra={"elapsed_ms": int(round(elapsed_ms)), "events": event_count, "status": "success"},
+                    level="warning" if refresh_status == "degraded" else "info",
+                    extra=snapshot_extra,
                 )
                 emit_structured_log(
                     "startup.global_earnings_calendar.completed",
                     elapsed_ms=round(elapsed_ms, 3),
                     events=event_count,
+                    status=refresh_status,
                 )
                 self._safe_call_in_ui(lambda: event_bus.sig_earnings_updated.emit())
             except ProcessTimeoutError as exc:

@@ -251,3 +251,42 @@ def test_mops_session_get_fetch_and_parse_edges(monkeypatch):
     )
 
     assert MopsEarningsDisclosureProvider._default_session() is asia_module.requests
+
+
+def test_mops_fetch_records_partial_stop_degradation():
+    html = """
+    <table>
+      <tr><td>2026/06/01</td><td>18:00</td><td>financial report</td></tr>
+    </table>
+    """
+
+    class _BreakingSession:
+        def __init__(self):
+            self.calls = 0
+
+        def get(self, url, **kwargs):
+            self.calls += 1
+            if self.calls == 2:
+                raise RuntimeError("TLS connect error: invalid library")
+            return _Response(text=html)
+
+    provider = MopsEarningsDisclosureProvider(session=_BreakingSession(), base_url="https://mops/query")
+    events = provider.fetch(
+        {
+            "2330.TW": _company("TSMC", "2330.TW", "TW"),
+            "3711.TW": _company("ASE", "3711.TW", "TW"),
+            "2454.TW": _company("MediaTek", "2454.TW", "TW"),
+        },
+        today=dt.date(2026, 6, 1),
+        lookahead_days=30,
+    )
+
+    assert [(event.ticker, event.source) for event in events] == [("2330.TW", "MOPS")]
+    assert provider.last_degradation is not None
+    assert provider.last_degradation["provider"] == "MOPS"
+    assert provider.last_degradation["reason"] == "ticker_fetch_stopped"
+    assert provider.last_degradation["stop_after_ticker"] == "3711.TW"
+    assert provider.last_degradation["failed_tickers"] == ["3711.TW", "2454.TW"]
+    assert provider.last_degradation["returned_events"] == 1
+    assert provider.last_degradation["all_tickers_failed"] is False
+    assert "invalid library" in provider.last_degradation["sample_error"]
