@@ -93,6 +93,7 @@ def test_central_quotes_service_skips_timer_duplicate_after_cache_reload(monkeyp
     service = CentralQuotesService(main_window, provider, code_supplier=lambda: {"000001", "600519"})
 
     monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", staticmethod(lambda *args, **kwargs: True))
+    monkeypatch.setattr(MarketCalendar, "get_market_status", classmethod(lambda cls, market="CN": "交易中"))
     monkeypatch.setattr(
         worker_module.task_manager,
         "run_in_background",
@@ -241,7 +242,7 @@ def test_central_quotes_service_heartbeat_marks_market_closed_pause(monkeypatch)
         assert "活跃依据=market_closed" in heartbeat
         assert "下一步=下个交易时段自动轮询" in heartbeat
         assert "调度器存活=True" in heartbeat
-        assert "底层owner线程存活=False" in heartbeat
+        assert "底层owner线程=未使用(HTTP行情)" in heartbeat
     finally:
         service.shutdown()
         service.deleteLater()
@@ -292,7 +293,7 @@ def test_central_quotes_service_heartbeat_marks_active_when_success_recent_despi
         assert "状态=active_refreshing" in heartbeat
         assert "活跃依据=recent_success" in heartbeat
         assert "下一步=持续30秒调度轮询" in heartbeat
-        assert "底层owner线程存活=False" in heartbeat
+        assert "底层owner线程=未使用(HTTP行情)" in heartbeat
         assert "工作线程存活" not in heartbeat
     finally:
         service.shutdown()
@@ -340,7 +341,7 @@ def test_central_quotes_service_heartbeat_marks_provider_errors_as_degraded(monk
         assert "状态=degraded_provider_errors" in heartbeat
         assert "活跃依据=provider_errors" in heartbeat
         assert "下一步=等待下一轮重试或进入冷却" in heartbeat
-        assert "底层owner线程存活=False" in heartbeat
+        assert "底层owner线程=未使用(HTTP行情)" in heartbeat
     finally:
         service.shutdown()
         service.deleteLater()
@@ -413,6 +414,138 @@ def test_central_quotes_service_auto_polls_when_quote_window_reopens(monkeypatch
         assert any("报价窗口恢复，自动拉起实时轮询" in message for message in messages)
     finally:
         global_store.reset_runtime_state()
+        service.shutdown()
+        service.deleteLater()
+        main_window.deleteLater()
+
+
+def test_central_quotes_service_limits_opening_auction_cold_fetch(monkeypatch):
+    _ = QApplication.instance() or QApplication([])
+    main_window = QWidget()
+
+    from ui.workers import central_quotes_worker as worker_module
+
+    codes = {f"0000{idx:02d}" for idx in range(1, 8)}
+
+    class DummyProvider:
+        def __init__(self):
+            self.calls = []
+            self._rt_api_call_timeout_sec = 1.0
+            self._rt_quote_batch_size = 20
+
+        def fetch_realtime_quotes_batch(self, fetch_codes):
+            ordered = tuple(sorted(fetch_codes))
+            self.calls.append(ordered)
+            return {
+                code: {"close": 10.0, "last_close": 9.8, "source": "eastmoney"}
+                for code in ordered
+            }
+
+        def is_online(self):
+            return True
+
+        def compact_runtime_caches(self):
+            return {
+                "rt_quote_cache_size": 0,
+                "history_symbol_count": 5163,
+                "rt_runtime": {
+                    "inflight": 0,
+                    "last_success_at": 0,
+                    "consecutive_failures": 0,
+                    "reconnect_count": 0,
+                    "cooldown_until": 0,
+                    "worker_alive": False,
+                },
+            }
+
+        def get_realtime_runtime_stats(self):
+            return {"worker_alive": False}
+
+        def protect_against_thread_anomaly(self, _count):
+            return False
+
+    provider = DummyProvider()
+    service = CentralQuotesService(main_window, provider, code_supplier=lambda: codes)
+    messages = []
+
+    def _run_immediately(fn, on_success=None, on_error=None, task_id=None):
+        del on_error, task_id
+        if on_success is not None:
+            on_success(fn())
+
+    monkeypatch.setattr(worker_module, "_OPENING_WARMUP_FETCH_LIMIT", 3)
+    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", staticmethod(lambda *args, **kwargs: True))
+    monkeypatch.setattr(MarketCalendar, "get_market_status", classmethod(lambda cls, market="CN": "开盘集合竞价"))
+    monkeypatch.setattr(worker_module.task_manager, "run_in_background", _run_immediately)
+    monkeypatch.setattr(worker_module.log, "info", lambda message: messages.append(str(message)))
+    global_store.reset_runtime_state()
+
+    try:
+        service._trigger_fetch()
+        service._trigger_fetch()
+        service._trigger_fetch()
+
+        assert provider.calls == [
+            ("000001", "000002", "000003"),
+            ("000004", "000005", "000006"),
+            ("000001", "000002", "000007"),
+        ]
+        assert any("开盘集合竞价冷启动限流，本轮联网 3/7 只" in message for message in messages)
+        assert not any(len(call) == len(codes) for call in provider.calls)
+    finally:
+        global_store.reset_runtime_state()
+        service.shutdown()
+        service.deleteLater()
+        main_window.deleteLater()
+
+
+def test_central_quotes_service_heartbeat_marks_opening_warmup_without_dead_thread(monkeypatch):
+    _ = QApplication.instance() or QApplication([])
+    main_window = QWidget()
+
+    from ui.workers import central_quotes_worker as worker_module
+
+    class DummyProvider:
+        def compact_runtime_caches(self):
+            return {
+                "rt_quote_cache_size": 0,
+                "history_symbol_count": 5163,
+                "rt_runtime": {
+                    "inflight": 0,
+                    "last_success_at": 0,
+                    "consecutive_failures": 0,
+                    "reconnect_count": 0,
+                    "cooldown_until": 0,
+                    "worker_alive": False,
+                },
+            }
+
+        def protect_against_thread_anomaly(self, _count):
+            return False
+
+    messages = []
+    service = CentralQuotesService(main_window, DummyProvider(), code_supplier=lambda: {"000001"})
+    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", staticmethod(lambda *args, **kwargs: True))
+    monkeypatch.setattr(MarketCalendar, "get_market_status", classmethod(lambda cls, market="CN": "开盘集合竞价"))
+    monkeypatch.setattr(service, "_collect_thread_health", lambda: (5, 0))
+    monkeypatch.setattr(worker_module.log, "info", lambda message: messages.append(str(message)))
+
+    try:
+        service._tick_count = service._heartbeat_every_ticks
+        service._run_maintenance(
+            active_codes_count=180,
+            quote_refreshable=True,
+            market_status="开盘集合竞价",
+        )
+
+        heartbeat = next(message for message in messages if "[报价站] 心跳" in message)
+        assert "实时缓存=首轮预热中(0)" in heartbeat
+        assert "状态=opening_warmup" in heartbeat
+        assert "活跃依据=opening_warmup" in heartbeat
+        assert "下一步=集合竞价限量预热，连续竞价后全量轮询" in heartbeat
+        assert "底层owner线程=未使用(HTTP行情)" in heartbeat
+        assert "工作线程存活" not in heartbeat
+    finally:
         service.shutdown()
         service.deleteLater()
         main_window.deleteLater()

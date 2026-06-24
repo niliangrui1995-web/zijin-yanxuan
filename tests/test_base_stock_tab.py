@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+from types import SimpleNamespace
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QStandardItemModel
 from PyQt6.QtTest import QSignalSpy, QTest
@@ -615,6 +617,23 @@ def test_prime_visible_local_quote_snapshot_skips_noninteractive_probe(monkeypat
         assert tab.calls == [("model", True)]
     finally:
         tab.deleteLater()
+
+
+def test_current_workspace_tab_uses_window_workspace_tabs(qt_application):
+    host = QWidget()
+    current_widget = QWidget(host)
+    tab = BaseStockTab(parent=host)
+    host._workspace = SimpleNamespace(tabs=SimpleNamespace(currentWidget=lambda: current_widget))
+
+    try:
+        assert tab._is_current_workspace_tab() is False
+
+        host._workspace = SimpleNamespace(tabs=SimpleNamespace(currentWidget=lambda: tab))
+        assert tab._is_current_workspace_tab() is True
+    finally:
+        tab.deleteLater()
+        current_widget.deleteLater()
+        host.deleteLater()
 
 
 def test_show_event_reenables_snapshot_prime_after_background_prewarm(monkeypatch, qt_application):

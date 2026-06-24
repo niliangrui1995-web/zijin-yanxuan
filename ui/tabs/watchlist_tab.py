@@ -59,7 +59,9 @@ class WatchlistTab(BaseStockTab):
         self._delayed_special_timer = None
         self._pending_vcp_calc = False
         self._deferred_vcp_payload = None
+        self._deferred_vcp_signature = ()
         self._last_vcp_calc_started_at = 0.0
+        self._last_vcp_payload_signature = ()
         self._vcp_calc_allow_noninteractive = False
         self._watchlist_lineage_service = TabDataLineageService(
             key="watchlist",
@@ -122,11 +124,37 @@ class WatchlistTab(BaseStockTab):
         except (TypeError, ValueError):
             return max(0, int(default))
 
+    @classmethod
+    def _vcp_payload_signature(cls, payload: object) -> tuple:
+        if not isinstance(payload, dict) or not payload:
+            return ()
+
+        items = []
+        for raw_code, raw_data in payload.items():
+            code = str(raw_code or "").strip()
+            if not code:
+                continue
+            data = raw_data if isinstance(raw_data, dict) else {"value": raw_data}
+            values = tuple(
+                sorted((str(key), cls._stable_metric_value(value)) for key, value in dict(data or {}).items())
+            )
+            items.append((code, values))
+        return tuple(sorted(items))
+
+    @classmethod
+    def _stable_metric_value(cls, value: object):
+        if isinstance(value, dict):
+            return tuple(sorted((str(key), cls._stable_metric_value(item)) for key, item in value.items()))
+        if isinstance(value, (list, tuple)):
+            return tuple(cls._stable_metric_value(item) for item in value)
+        return str(value)
+
     def showEvent(self, event):  # noqa: N802 - Qt API naming
         super().showEvent(event)
         if self._deferred_vcp_payload and self._is_active_workspace_tab_for_vcp():
             payload = self._deferred_vcp_payload
             self._deferred_vcp_payload = None
+            self._deferred_vcp_signature = ()
             QTimer.singleShot(0, lambda payload=payload: self._apply_deferred_vcp_payload(payload))
         if self._pending_vcp_calc and self._should_start_interactive_runtime_on_show():
             self._pending_vcp_calc = False
@@ -776,7 +804,11 @@ class WatchlistTab(BaseStockTab):
         """主线程：将 VCP 指标更新到 Model（按股票代码匹配，不再按行号，防止排序/拖拽后错位）"""
         if not results:
             return
+        payload_signature = self._vcp_payload_signature(results)
+        if payload_signature and payload_signature == self._last_vcp_payload_signature:
+            return
 
+        rows_changed = False
         with ui_stall_span(
             "WatchlistTab._apply_vcp_indicators_ui",
             tab="watchlist",
@@ -784,6 +816,8 @@ class WatchlistTab(BaseStockTab):
         ):
             # 构建 code -> row_idx 的当前映射（实时安全）
             current_rows = list(getattr(self.model, "row_data", []) or [])
+            if not current_rows:
+                return
             updated_rows = [dict(row_dict) for row_dict in current_rows]
             code_to_row = {}
             for idx, row_dict in enumerate(current_rows):
@@ -833,9 +867,14 @@ class WatchlistTab(BaseStockTab):
                 row_dict["来源标签"] = source_tags
                 row_dict["来源"] = watchlist_vm.format_source_tags(source_tags)
 
-            self.model.update_data(updated_rows, hydrate_latest_quotes=False)
+            rows_changed = updated_rows != current_rows
+            if rows_changed:
+                self.model.update_data(updated_rows, hydrate_latest_quotes=False)
 
-        self._schedule_watchlist_metrics_persist(results)
+        if payload_signature:
+            self._last_vcp_payload_signature = payload_signature
+        if rows_changed:
+            self._schedule_watchlist_metrics_persist(results)
         self._touch_watchlist_update()
         self._update_status_summary()
 
@@ -989,7 +1028,7 @@ class WatchlistTab(BaseStockTab):
 
     def _on_na_daily_updated(self):
         """美股日报最近5份内容刷新后，同步关注池的细分板块缓存。"""
-        self._request_vcp_calc()
+        self._request_vcp_calc(min_interval_ms=self.CONTEXT_REFRESH_MIN_INTERVAL_MS)
 
     def _on_ai_industry_chain_updated(self):
         """AI产业链刷新后，同步关注池的细分板块和备注来源。"""
@@ -1002,19 +1041,29 @@ class WatchlistTab(BaseStockTab):
     def _on_vcp_watchlist_ready(self, payload: object):
         if self._closing:
             return
-        if not self._is_active_workspace_tab_for_vcp():
-            self._deferred_vcp_payload = dict(payload or {}) if payload else None
+        payload_dict = dict(payload or {}) if isinstance(payload, dict) else {}
+        if not payload_dict:
             return
-        if payload:
-            log.debug(f"[watchlist] apply {len(payload)} metric rows")
-            self._apply_vcp_indicators_ui(payload)
+        payload_signature = self._vcp_payload_signature(payload_dict)
+        if payload_signature and payload_signature == self._last_vcp_payload_signature:
+            return
+        if not self._is_active_workspace_tab_for_vcp():
+            if payload_signature and payload_signature == self._deferred_vcp_signature:
+                return
+            self._deferred_vcp_payload = payload_dict
+            self._deferred_vcp_signature = payload_signature
+            return
+        log.debug(f"[watchlist] apply {len(payload_dict)} metric rows")
+        self._apply_vcp_indicators_ui(payload_dict)
 
     def _apply_deferred_vcp_payload(self, payload: object):
         if self._closing or not payload:
             return
         if not self._is_active_workspace_tab_for_vcp():
             self._deferred_vcp_payload = dict(payload or {})
+            self._deferred_vcp_signature = self._vcp_payload_signature(self._deferred_vcp_payload)
             return
+        self._deferred_vcp_signature = ()
         self._apply_vcp_indicators_ui(payload)
 
     def _is_background_prewarm_indicator_blocked(self) -> bool:

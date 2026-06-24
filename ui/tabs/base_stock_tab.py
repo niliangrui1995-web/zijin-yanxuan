@@ -158,15 +158,41 @@ class BaseStockTab(QWidget):
         event_bus.sig_app_closing.connect(self._flush_header_persistence)
 
     def _is_current_workspace_tab(self) -> bool:
+        checked: set[int] = set()
+
+        def _check_owner(owner) -> bool | None:
+            if owner is None:
+                return None
+            owner_id = id(owner)
+            if owner_id in checked:
+                return None
+            checked.add(owner_id)
+
+            for container in (owner, getattr(owner, "_workspace", None)):
+                tabs = getattr(container, "tabs", None)
+                current_widget = getattr(tabs, "currentWidget", None)
+                if not callable(current_widget):
+                    continue
+                try:
+                    return current_widget() is self
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    return True
+            return None
+
         parent = self.parent()
-        tabs = getattr(parent, "tabs", None)
-        current_widget = getattr(tabs, "currentWidget", None)
-        if not callable(current_widget):
-            return True
+        while parent is not None:
+            result = _check_owner(parent)
+            if result is not None:
+                return result
+            parent = parent.parent()
+
         try:
-            return current_widget() is self
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            return True
+            result = _check_owner(self.window())
+        except RuntimeError:
+            result = None
+        if result is not None:
+            return result
+        return True
 
     def _should_start_interactive_runtime_on_show(self) -> bool:
         is_current = self._is_current_workspace_tab()

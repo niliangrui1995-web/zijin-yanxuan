@@ -86,6 +86,7 @@ def test_central_quotes_service_treats_tencent_as_live_source(monkeypatch):
         lambda codes: [],
     )
     monkeypatch.setattr(central_quotes_worker.MarketCalendar, "is_quote_refresh_time", lambda: True)
+    monkeypatch.setattr(central_quotes_worker.MarketCalendar, "get_market_status", lambda market="CN": "交易中")
     monkeypatch.setattr(central_quotes_worker.task_manager, "run_in_background", _run_immediately)
     monkeypatch.setattr(
         service,

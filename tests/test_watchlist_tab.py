@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QShowEvent
 from PyQt6.QtTest import QSignalSpy
-from PyQt6.QtWidgets import QPushButton
+from PyQt6.QtWidgets import QPushButton, QWidget
 
 from core.event_bus import event_bus
 from ui.tabs import watchlist_tab as watchlist_module
@@ -189,6 +189,48 @@ def test_watchlist_context_updates_are_throttled_intraday(monkeypatch):
     finally:
         tab.shutdown()
         tab.deleteLater()
+
+
+def test_watchlist_na_daily_update_uses_intraday_throttle(monkeypatch):
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)
+    calls = []
+    monkeypatch.setattr(
+        watchlist_module.WatchlistTab,
+        "_request_vcp_calc",
+        lambda self, *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    tab = watchlist_module.WatchlistTab(_DummyProvider(), startup_tasks_enabled=False)
+    try:
+        tab._on_na_daily_updated()
+
+        assert calls == [((), {"min_interval_ms": watchlist_module.WatchlistTab.CONTEXT_REFRESH_MIN_INTERVAL_MS})]
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_watchlist_na_daily_update_defers_when_workspace_tab_hidden(monkeypatch, qt_application):
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)
+
+    host = QWidget()
+    current_widget = QWidget(host)
+    host._workspace = SimpleNamespace(tabs=SimpleNamespace(currentWidget=lambda: current_widget))
+    tab = watchlist_module.WatchlistTab(_DummyProvider(), parent=host, startup_tasks_enabled=False)
+    try:
+        tab.model.update_data([{"代码": "600519"}])
+
+        tab._on_na_daily_updated()
+
+        assert tab._pending_vcp_calc is True
+        assert not hasattr(tab, "_vcp_calc_timer")
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+        current_widget.deleteLater()
+        host.deleteLater()
 
 
 def test_watchlist_vcp_calc_gathers_radar_data_inside_background_task(monkeypatch):
@@ -1041,6 +1083,58 @@ def test_watchlist_indicator_apply_queues_persist_without_sync_write(monkeypatch
         assert queued[0]["fn"] == tab._persist_watchlist_metrics
         assert queued[0]["task_id"] == "watchlist_vcp_persist"
         assert queued[0]["args"][0]["600519"]["rps"] == "95"
+    finally:
+        tab.deleteLater()
+
+
+def test_watchlist_indicator_apply_skips_redundant_payload_persist(monkeypatch):
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)
+    monkeypatch.setattr(
+        watchlist_module.WatchlistTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+    monkeypatch.setattr(watchlist_module.QTimer, "singleShot", staticmethod(lambda *_args, **_kwargs: None))
+    queued = []
+    monkeypatch.setattr(
+        watchlist_module.task_manager,
+        "run_in_background",
+        lambda fn, *args, on_success=None, on_error=None, task_id=None, **kwargs: queued.append(
+            {"fn": fn, "args": args, "kwargs": kwargs, "task_id": task_id}
+        )
+        or (task_id or "queued"),
+    )
+
+    tab = watchlist_module.WatchlistTab(_DummyProvider())
+    try:
+        tab.model.update_data(
+            [
+                {
+                    "代码": "600519",
+                    "名称": "贵州茅台",
+                    "来源": "手动",
+                    "现价": "--",
+                    "涨幅%": "--",
+                    "市值": "--",
+                    "RPS强度": "",
+                    "细分板块": "",
+                    "摘要": "",
+                    "备注": "",
+                    "业绩异动": "",
+                    "大宗交易": "",
+                    "龙虎榜": "",
+                }
+            ]
+        )
+        payload = {"600519": {"rps": "95", "subsector": "白酒", "remark": "AI链备注"}}
+
+        tab._apply_vcp_indicators_ui(payload)
+        tab._apply_vcp_indicators_ui(payload)
+
+        assert len(queued) == 1
+        assert queued[0]["task_id"] == "watchlist_vcp_persist"
     finally:
         tab.deleteLater()
 

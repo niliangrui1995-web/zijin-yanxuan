@@ -41,6 +41,10 @@ def _rps_bundle():
     return {"rps120": {}, "rps250": {}}
 
 
+def _market_status(status="交易中"):
+    return classmethod(lambda cls, market="CN": status)
+
+
 def test_rt_monitor_auto_start_waits_for_startup_cache_without_loading_disk(monkeypatch, qt_application):
     provider = _Provider(cache_data={})
     service = RtMonitorService(provider, _Engine(_rps_bundle()))
@@ -69,12 +73,40 @@ def test_rt_monitor_auto_start_runs_after_cache_and_rps_are_ready(monkeypatch, q
     provider = _Provider(cache_data=_cache())
     service = RtMonitorService(provider, _Engine(_rps_bundle()))
     started = []
+    monkeypatch.setattr(
+        "ui.services.rt_monitor_service.MarketCalendar.get_market_status",
+        _market_status("交易中"),
+    )
     monkeypatch.setattr(service, "_start_worker", lambda: started.append(True))
 
     assert service.start(auto=True) is True
 
     assert provider.load_calls == 0
     assert started == [True]
+
+
+def test_rt_monitor_auto_start_waits_for_continuous_auction_boundary(monkeypatch, qt_application):
+    provider = _Provider(cache_data=_cache())
+    service = RtMonitorService(provider, _Engine(_rps_bundle()))
+    started = []
+    statuses = []
+    monkeypatch.setattr(
+        "ui.services.rt_monitor_service.MarketCalendar.is_market_active",
+        classmethod(lambda cls, market="CN": True),
+    )
+    monkeypatch.setattr(
+        "ui.services.rt_monitor_service.MarketCalendar.get_market_status",
+        _market_status("开盘集合竞价"),
+    )
+    monkeypatch.setattr(service, "_start_worker", lambda: started.append(True))
+    service.sig_status_changed.connect(lambda payload: statuses.append(payload))
+
+    assert service.sync_to_market_state() == "skipped"
+
+    assert provider.load_calls == 0
+    assert started == []
+    assert statuses[-1]["detail"] == "等待连续竞价(开盘集合竞价)"
+    assert statuses[-1]["next_step"] == "09:30 后会自动启动"
 
 
 def test_auto_refresh_scheduler_start_does_not_boot_rt_monitor_before_prewarm(monkeypatch, qt_application):

@@ -217,6 +217,11 @@ def test_rt_monitor_manual_stop_expires_on_next_trade_day(monkeypatch):
         "is_market_active",
         classmethod(lambda cls, market="CN": True),
     )
+    monkeypatch.setattr(
+        MarketCalendar,
+        "get_market_status",
+        classmethod(lambda cls, market="CN": "交易中"),
+    )
     auto_calls = []
 
     tab = RtMonitorTab(DummyDataProvider(), DummyEngine())

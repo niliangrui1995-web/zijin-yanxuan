@@ -23,6 +23,8 @@ _A_SHARE_FAILURE_COOLDOWN_SEC = 300
 _A_SHARE_HEARTBEAT_INTERVAL_SEC = 60
 _POST_CACHE_RELOAD_DEDUP_WINDOW_SEC = 32.0
 _RECENT_SUCCESS_GRACE_SEC = max(120, _A_SHARE_HEARTBEAT_INTERVAL_SEC * 2)
+_OPENING_WARMUP_STATUSES = frozenset({"开盘集合竞价", "开市前时段"})
+_OPENING_WARMUP_FETCH_LIMIT = 40
 
 
 class CentralQuotesService(QObject):
@@ -49,8 +51,11 @@ class CentralQuotesService(QObject):
         self._is_fetching = False
         self._fetch_start_time = 0.0
         self._fetch_warned_slow = False
+        self._fetch_codes_count = 0
         self._fetch_generation = 0
         self._off_market_snapshot_emitted = False
+        self._opening_warmup_signature: tuple[str, ...] = ()
+        self._opening_warmup_cursor = 0
 
         self._consecutive_failures = 0
         self._circuit_breaker_cooldown = 0
@@ -190,6 +195,7 @@ class CentralQuotesService(QObject):
         self,
         *,
         quote_refreshable: bool,
+        market_status: str,
         runtime_stats: dict,
         cooldown_left: int,
         realtime_cache_size: int,
@@ -202,6 +208,7 @@ class CentralQuotesService(QObject):
             return "degraded_scheduler_inactive", "调度器未运行，需恢复后才能自动轮询", timer_active, "scheduler_inactive"
         if not quote_refreshable:
             return "paused_market_closed", "下个交易时段自动轮询", timer_active, "market_closed"
+        opening_warmup = str(market_status or "").strip() in _OPENING_WARMUP_STATUSES
         try:
             inflight = int(runtime_stats.get("inflight") or 0)
         except (TypeError, ValueError):
@@ -212,16 +219,38 @@ class CentralQuotesService(QObject):
             consecutive_failures = 0
         last_error = str(runtime_stats.get("last_error") or "").strip()
         if self._is_fetching or inflight > 0:
+            if opening_warmup:
+                return "opening_warmup_fetching", "集合竞价限量预热中", timer_active, "opening_warmup"
             return "fetching", "等待当前抓取完成", timer_active, "inflight"
         if cooldown_left > 0 or self._circuit_breaker_cooldown > 0:
             return "cooldown", "冷却结束后自动重试", timer_active, "cooldown"
         if consecutive_failures > 0 or last_error:
             return "degraded_provider_errors", "等待下一轮重试或进入冷却", timer_active, "provider_errors"
+        if opening_warmup:
+            return "opening_warmup", "集合竞价限量预热，连续竞价后全量轮询", timer_active, "opening_warmup"
         if last_success_age is not None and last_success_age <= _RECENT_SUCCESS_GRACE_SEC:
             return "active_refreshing", "持续30秒调度轮询", timer_active, "recent_success"
         if realtime_cache_size > 0:
             return "ready_with_cache", "等待下一轮刷新推进", timer_active, "cache_present"
         return "waiting_first_refresh", "等待首轮实时刷新", timer_active, "no_success_yet"
+
+    @staticmethod
+    def _rt_cache_status_text(cache_size: int, runtime_state: str) -> str:
+        if int(cache_size or 0) > 0:
+            return str(int(cache_size or 0))
+        if runtime_state in {"opening_warmup", "opening_warmup_fetching"}:
+            return "首轮预热中(0)"
+        if runtime_state in {"fetching", "waiting_first_refresh"}:
+            return "首轮待写入(0)"
+        return "0"
+
+    @staticmethod
+    def _owner_thread_status_text(runtime_stats: dict, owner_thread_alive: bool) -> str:
+        if owner_thread_alive:
+            return "存活"
+        if bool(runtime_stats.get("owner_thread_applicable")):
+            return "已停止"
+        return "未使用(HTTP行情)"
 
     def _market_status_text(self) -> str:
         try:
@@ -229,7 +258,39 @@ class CentralQuotesService(QObject):
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
             return "unknown"
 
-    def _run_maintenance(self, active_codes_count: int | None = None, *, quote_refreshable: bool | None = None):
+    def _opening_warmup_codes(self, codes: set[str], *, market_status: str) -> set[str]:
+        if str(market_status or "").strip() not in _OPENING_WARMUP_STATUSES:
+            self._opening_warmup_signature = ()
+            self._opening_warmup_cursor = 0
+            return codes
+
+        limit = max(1, int(_OPENING_WARMUP_FETCH_LIMIT or 1))
+        ordered = tuple(sorted(codes))
+        if len(ordered) <= limit:
+            return codes
+        if ordered != self._opening_warmup_signature:
+            self._opening_warmup_signature = ordered
+            self._opening_warmup_cursor = 0
+
+        start = self._opening_warmup_cursor % len(ordered)
+        end = start + limit
+        selected = list(ordered[start:end])
+        if end > len(ordered):
+            selected.extend(ordered[: end - len(ordered)])
+        self._opening_warmup_cursor = end % len(ordered)
+        log.info(
+            f"[报价站] {market_status}冷启动限流，本轮联网 {len(selected)}/{len(ordered)} 只；"
+            "连续竞价后恢复全量轮询"
+        )
+        return set(selected)
+
+    def _run_maintenance(
+        self,
+        active_codes_count: int | None = None,
+        *,
+        quote_refreshable: bool | None = None,
+        market_status: str | None = None,
+    ):
         stats = self._poller.compact_runtime_caches()
 
         total_threads, pytdx_threads = self._collect_thread_health()
@@ -252,14 +313,17 @@ class CentralQuotesService(QObject):
         owner_thread_alive = bool(
             runtime_stats.get("owner_thread_alive", runtime_stats.get("worker_alive", False))
         )
+        market_status = str(market_status or self._market_status_text()).strip() or "-"
         runtime_state, next_step, timer_active, activity_basis = self._heartbeat_runtime_status(
             quote_refreshable=bool(quote_refreshable),
+            market_status=market_status,
             runtime_stats=runtime_stats,
             cooldown_left=cooldown_left,
             realtime_cache_size=int(rt_quote_cache_size or 0),
             last_success_age=last_success_age,
         )
-        market_status = self._market_status_text()
+        rt_cache_text = self._rt_cache_status_text(int(rt_quote_cache_size or 0), runtime_state)
+        owner_thread_text = self._owner_thread_status_text(runtime_stats, owner_thread_alive)
         heartbeat_signature = (
             active_codes_count if active_codes_count is not None else "-",
             rt_quote_cache_size,
@@ -274,7 +338,7 @@ class CentralQuotesService(QObject):
             activity_basis,
             next_step,
             timer_active,
-            owner_thread_alive,
+            owner_thread_text,
             total_threads,
             pytdx_threads,
         )
@@ -290,7 +354,7 @@ class CentralQuotesService(QObject):
         log.info(
             "[报价站] 心跳 "
             f"标的={active_codes_count if active_codes_count is not None else '-'} "
-            f"实时缓存={rt_quote_cache_size} "
+            f"实时缓存={rt_cache_text} "
             f"历史缓存={stats.get('history_symbol_count', 0) if isinstance(stats, dict) else 0} "
             f"飞行中={runtime_stats.get('inflight', 0)} "
             f"上次成功={last_success_text} "
@@ -302,7 +366,7 @@ class CentralQuotesService(QObject):
             f"活跃依据={activity_basis} "
             f"下一步={next_step} "
             f"调度器存活={timer_active} "
-            f"底层owner线程存活={owner_thread_alive} "
+            f"底层owner线程={owner_thread_text} "
             f"总线程={total_threads} "
             f"pytdx线程={pytdx_threads}"
         )
@@ -340,26 +404,18 @@ class CentralQuotesService(QObject):
         self._ensure_timer_running()
         self._tick_count += 1
         quote_refreshable = MarketCalendar.is_quote_refresh_time()
+        market_status = self._market_status_text()
         self._observe_quote_window(quote_refreshable)
         if quote_refreshable:
             self._off_market_snapshot_emitted = False
 
         codes = self._get_all_active_codes()
-        self._run_maintenance(active_codes_count=len(codes) if codes else 0, quote_refreshable=quote_refreshable)
+        self._run_maintenance(
+            active_codes_count=len(codes) if codes else 0,
+            quote_refreshable=quote_refreshable,
+            market_status=market_status,
+        )
         if not codes:
-            return
-
-        code_signature = tuple(sorted(codes))
-        now = time.time()
-        if reason == "cache_reload":
-            self._post_cache_reload_signature = code_signature
-            self._post_cache_reload_quiet_until = now + _POST_CACHE_RELOAD_DEDUP_WINDOW_SEC
-        elif (
-            self._post_cache_reload_signature
-            and code_signature == self._post_cache_reload_signature
-            and now < self._post_cache_reload_quiet_until
-        ):
-            log.debug(f"[报价站] F5后窗口内跳过重复行情轮询: reason={reason} codes={len(codes)}")
             return
 
         if not quote_refreshable:
@@ -372,7 +428,8 @@ class CentralQuotesService(QObject):
         if self._is_fetching:
             batch_timeout_sec = float(getattr(self.data_provider, "_rt_api_call_timeout_sec", 8.0) or 8.0)
             batch_size = int(getattr(self.data_provider, "_rt_quote_batch_size", 20) or 20)
-            expected_batches = max(1, (len(codes) + batch_size - 1) // batch_size)
+            codes_count = int(self._fetch_codes_count or len(codes) or 0)
+            expected_batches = max(1, (codes_count + batch_size - 1) // batch_size)
             slow_threshold = max(20.0, expected_batches * batch_timeout_sec + 4.0)
             if (
                 not self._fetch_warned_slow
@@ -384,6 +441,20 @@ class CentralQuotesService(QObject):
                     f"[报价站] 单次抓取耗时过长({time.time() - self._fetch_start_time:.1f}s)，"
                     "继续等待当前单飞行任务结束"
                 )
+            return
+
+        codes = self._opening_warmup_codes(codes, market_status=market_status)
+        code_signature = tuple(sorted(codes))
+        now = time.time()
+        if reason == "cache_reload":
+            self._post_cache_reload_signature = code_signature
+            self._post_cache_reload_quiet_until = now + _POST_CACHE_RELOAD_DEDUP_WINDOW_SEC
+        elif (
+            self._post_cache_reload_signature
+            and code_signature == self._post_cache_reload_signature
+            and now < self._post_cache_reload_quiet_until
+        ):
+            log.debug(f"[报价站] F5后窗口内跳过重复行情轮询: reason={reason} codes={len(codes)}")
             return
 
         if self._circuit_breaker_cooldown > 0:
@@ -400,6 +471,7 @@ class CentralQuotesService(QObject):
         self._is_fetching = True
         self._fetch_start_time = time.time()
         self._fetch_warned_slow = False
+        self._fetch_codes_count = len(codes)
         self._fetch_generation += 1
         fetch_token = self._fetch_generation
 
@@ -414,6 +486,7 @@ class CentralQuotesService(QObject):
             self._is_fetching = False
             self._fetch_start_time = 0.0
             self._fetch_warned_slow = False
+            self._fetch_codes_count = 0
             if self._closed:
                 return
 
@@ -470,6 +543,7 @@ class CentralQuotesService(QObject):
             self._is_fetching = False
             self._fetch_start_time = 0.0
             self._fetch_warned_slow = False
+            self._fetch_codes_count = 0
             if self._closed:
                 return
 

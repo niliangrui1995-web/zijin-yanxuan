@@ -17,6 +17,8 @@ from ui.workers.rt_scan_worker import RtScanWorker
 
 log = get_logger(__name__)
 
+_OPENING_AUTO_START_DEFER_STATUSES = frozenset({"开盘集合竞价", "开市前时段"})
+
 
 class RtMonitorService(QObject):
     sig_results_ready = pyqtSignal(object)
@@ -84,6 +86,12 @@ class RtMonitorService(QObject):
         return bundle.get("rps120") is not None and bundle.get("rps250") is not None
 
     def _auto_start_readiness(self) -> tuple[bool, str, str, str]:
+        try:
+            market_status = str(MarketCalendar.get_market_status("CN") or "").strip()
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            market_status = ""
+        if market_status in _OPENING_AUTO_START_DEFER_STATUSES:
+            return False, "opening_auction", f"等待连续竞价({market_status})", "09:30 后会自动启动"
         cache_data = getattr(self.data_provider, "cache_data", None) or {}
         try:
             cache_count = len(cache_data)
