@@ -543,3 +543,46 @@ def test_f5_stage1_progress_updates_status_under_system_log_backpressure(monkeyp
     assert ("exit",) in guard_calls
     assert any("1000/2000 ETA 1 min" in message for message in messages)
     assert done and done[0][0] == 2000
+
+
+def test_f5_stage1_progress_throttles_dense_status_updates():
+    messages = []
+    progress_state = {}
+
+    for done in (1, 50, 199):
+        rps_precomputer_module._handle_stage1_progress(
+            done,
+            2000,
+            "ETA 1 min",
+            messages.append,
+            progress_state,
+        )
+
+    assert messages == []
+
+    rps_precomputer_module._handle_stage1_progress(
+        200,
+        2000,
+        "ETA 1 min",
+        messages.append,
+        progress_state,
+    )
+    rps_precomputer_module._handle_stage1_progress(
+        201,
+        2000,
+        "ETA 1 min",
+        messages.append,
+        progress_state,
+    )
+    rps_precomputer_module._handle_stage1_progress(
+        1000,
+        2000,
+        "ETA 1 min",
+        messages.append,
+        progress_state,
+    )
+
+    assert [message for message in messages if "ETA 1 min" in message] == [
+        "[F5] 阶段1/3: 重读本地数据 200/2000 ETA 1 min",
+        "[F5] 阶段1/3: 重读本地数据 1000/2000 ETA 1 min",
+    ]

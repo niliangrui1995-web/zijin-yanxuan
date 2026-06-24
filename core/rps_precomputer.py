@@ -31,8 +31,17 @@ def _emit_status(set_status_callback, msg: str) -> None:
         set_status_callback(msg)
 
 
-def _handle_stage1_progress(done: int, total: int, eta: str, set_status_callback) -> None:
+def _handle_stage1_progress(done: int, total: int, eta: str, set_status_callback, progress_state=None) -> None:
     if total <= 0:
+        return
+    should_emit = done == total or done % 1000 == 0
+    if progress_state is not None:
+        bucket = int((done / float(total)) * 10)
+        last_bucket = int(progress_state.get("last_bucket", -1))
+        if bucket > last_bucket and bucket > 0:
+            progress_state["last_bucket"] = bucket
+            should_emit = True
+    if not should_emit:
         return
     suffix = f" {eta}" if eta else ""
     msg = f"[F5] 阶段1/3: 重读本地数据 {done}/{total}{suffix}"
@@ -96,6 +105,7 @@ class RPSPrecomputer:
 
                 # --- 阶段1: 重读日线 ---
                 today_str = datetime.date.today().strftime("%Y%m%d")
+                stage1_progress_state = {}
                 skip_stage1 = False
                 try:
                     cached_date = data_provider.load_cache_from_disk()
@@ -123,7 +133,7 @@ class RPSPrecomputer:
                                 codes_dict,
                                 force_refresh=True,
                                 progress_callback=lambda done, total, eta: _handle_stage1_progress(
-                                    done, total, eta, set_status_callback
+                                    done, total, eta, set_status_callback, stage1_progress_state
                                 ),
                             )
                             data_provider.code2name = codes_dict

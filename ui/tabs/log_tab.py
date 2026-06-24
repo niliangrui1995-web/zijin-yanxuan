@@ -33,6 +33,7 @@ class LogTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._log_history = []
+        self._visible_log_count = 0
         self._refresh_from_history_pending = False
         self._init_ui()
         self._setup_log_redirect()
@@ -157,6 +158,7 @@ class LogTab(QWidget):
     def _clear_logs(self):
         self._log_buffer.clear()
         self._log_history.clear()
+        self._visible_log_count = 0
         self._log_status_refresh_pending = False
         self.log_text.clear()
         self._refresh_status_summary(0)
@@ -178,7 +180,7 @@ class LogTab(QWidget):
         self.lbl_status.setText(" | ".join([primary, *segments]))
 
     def _count_visible_logs(self) -> int:
-        return len(self._filtered_entries())
+        return int(getattr(self, "_visible_log_count", 0) or 0)
 
     @staticmethod
     def _normalize_level(level) -> str:
@@ -261,9 +263,10 @@ class LogTab(QWidget):
             return QColor(theme["COLOR_SUCCESS"])
         return QColor(theme["TEXT_PRIMARY"])
 
-    def _append_log_entries(self, entries, *, clear_existing: bool):
+    def _append_log_entries(self, entries, *, clear_existing: bool, auto_scroll: bool = True):
         if clear_existing:
             self.log_text.clear()
+            self._visible_log_count = 0
 
         if not entries:
             return
@@ -273,6 +276,7 @@ class LogTab(QWidget):
         formats = {}
         pending_level = None
         pending_parts = []
+        appended_count = 0
 
         def _flush_pending():
             if not pending_parts:
@@ -291,6 +295,7 @@ class LogTab(QWidget):
                 continue
             if not payload.endswith("\n"):
                 payload += "\n"
+            appended_count += 1
             normalized_level = self._normalize_level(level)
             if pending_level is not None and normalized_level != pending_level:
                 _flush_pending()
@@ -300,7 +305,11 @@ class LogTab(QWidget):
         _flush_pending()
 
         self.log_text.setTextCursor(cursor)
-        self.log_text.ensureCursorVisible()
+        max_blocks = self.log_text.document().maximumBlockCount()
+        next_count = int(getattr(self, "_visible_log_count", 0) or 0) + appended_count
+        self._visible_log_count = min(next_count, max_blocks) if max_blocks > 0 else next_count
+        if auto_scroll:
+            self.log_text.ensureCursorVisible()
 
     def _setup_log_redirect(self):
         """将当前进程的 stdout/stderr 重定向，统一往 event_bus 发送。"""
@@ -384,7 +393,7 @@ class LogTab(QWidget):
 
         self._log_buffer = []
         self._log_buffer_max = 3000
-        self._log_flush_batch_max = 160
+        self._log_flush_batch_max = 48
         self._log_status_refresh_pending = False
         self._log_flush_timer = QTimer(self)
         self._log_flush_timer.timeout.connect(self._flush_log_buffer)
@@ -434,7 +443,7 @@ class LogTab(QWidget):
         self._log_status_refresh_pending = False
         filtered_entries = self._filtered_entries()
         self._append_log_entries(filtered_entries, clear_existing=True)
-        self._refresh_status_summary(len(filtered_entries))
+        self._refresh_status_summary(self._visible_log_count)
 
     def _flush_log_buffer(self):
         if not self._log_buffer:
@@ -459,6 +468,10 @@ class LogTab(QWidget):
         filtered_entries = self._filtered_entries(pending_entries)
 
         if filtered_entries:
-            self._append_log_entries(filtered_entries, clear_existing=False)
+            self._append_log_entries(
+                filtered_entries,
+                clear_existing=False,
+                auto_scroll=not self._log_buffer,
+            )
         self._log_status_refresh_pending = False
-        self._refresh_status_summary()
+        self._refresh_status_summary(self._visible_log_count)

@@ -5,6 +5,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from contextlib import AbstractContextManager
 from datetime import datetime
 from typing import Optional
@@ -26,12 +27,16 @@ class _SystemLogBackpressure(AbstractContextManager):
         "ui_event_loop_stall_ms",
         "ui_method_stall_ms",
     )
+    _ALLOWED_INFO_MIN_INTERVAL_SEC = 3.0
 
     def __init__(self, label: str, *, allowed_info_loggers: tuple[str, ...] = ()):
         self.label = str(label or "background")
         self.allowed_info_loggers = tuple(allowed_info_loggers or ())
         self.suppressed_info = 0
+        self.suppressed_allowed_info = 0
         self.suppressed_diagnostics = 0
+        self._allowed_info_emitted = 0
+        self._last_allowed_info_at = 0.0
 
     def __enter__(self):
         with _system_log_backpressure_lock:
@@ -58,17 +63,22 @@ class _SystemLogBackpressure(AbstractContextManager):
         if record.levelno >= logging.WARNING:
             return False
         if record.name in self.allowed_info_loggers:
-            return False
+            if self._should_show_allowed_info(message):
+                return False
+            self.suppressed_allowed_info += 1
+            return True
         self.suppressed_info += 1
         return True
 
     def emit_summary(self) -> None:
-        suppressed = self.suppressed_info + self.suppressed_diagnostics
+        suppressed = self.suppressed_info + self.suppressed_allowed_info + self.suppressed_diagnostics
         if suppressed <= 0:
             return
         details = []
         if self.suppressed_info:
             details.append(f"后台明细 {self.suppressed_info} 条")
+        if self.suppressed_allowed_info:
+            details.append(f"前台进度 {self.suppressed_allowed_info} 条")
         if self.suppressed_diagnostics:
             details.append(f"UI诊断 {self.suppressed_diagnostics} 条")
         text = f"[{self.label}] 系统日志页已合并显示：{', '.join(details)}；完整明细仍保留在文件日志"
@@ -85,6 +95,21 @@ class _SystemLogBackpressure(AbstractContextManager):
             return True
         payload = str(message or "").lower()
         return any(marker in payload for marker in cls._DIAGNOSTIC_MARKERS)
+
+    def _should_show_allowed_info(self, message: str) -> bool:
+        text = str(message or "").strip()
+        if not text or set(text) <= {"="}:
+            return False
+        now = time.monotonic()
+        if self._allowed_info_emitted == 0:
+            self._allowed_info_emitted += 1
+            self._last_allowed_info_at = now
+            return True
+        if now - self._last_allowed_info_at >= self._ALLOWED_INFO_MIN_INTERVAL_SEC:
+            self._allowed_info_emitted += 1
+            self._last_allowed_info_at = now
+            return True
+        return False
 
 
 def system_log_backpressure(label: str, *, allowed_info_loggers: tuple[str, ...] = ()):

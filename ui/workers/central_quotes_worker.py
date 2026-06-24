@@ -25,6 +25,7 @@ _POST_CACHE_RELOAD_DEDUP_WINDOW_SEC = 32.0
 _RECENT_SUCCESS_GRACE_SEC = max(120, _A_SHARE_HEARTBEAT_INTERVAL_SEC * 2)
 _OPENING_WARMUP_STATUSES = frozenset({"开盘集合竞价", "开市前时段"})
 _OPENING_WARMUP_FETCH_LIMIT = 40
+_FALLBACK_PRESSURE_FETCH_LIMIT = 60
 
 
 class CentralQuotesService(QObject):
@@ -56,6 +57,9 @@ class CentralQuotesService(QObject):
         self._off_market_snapshot_emitted = False
         self._opening_warmup_signature: tuple[str, ...] = ()
         self._opening_warmup_cursor = 0
+        self._fallback_pressure_signature: tuple[str, ...] = ()
+        self._fallback_pressure_cursor = 0
+        self._last_fallback_pressure_log_at = 0.0
 
         self._consecutive_failures = 0
         self._circuit_breaker_cooldown = 0
@@ -284,6 +288,63 @@ class CentralQuotesService(QObject):
         )
         return set(selected)
 
+    def _quote_fallback_cooldown_left(self, provider_stats: dict | None = None, *, now: float | None = None) -> int:
+        now = time.time() if now is None else float(now)
+        cooldown_candidates = []
+        if isinstance(provider_stats, dict):
+            cooldown_candidates.append(provider_stats.get("quote_cooldown_until"))
+        cooldown_candidates.append(getattr(self.data_provider, "_rt_eastmoney_cooldown_until", 0.0))
+
+        cooldown_until = 0.0
+        for value in cooldown_candidates:
+            try:
+                cooldown_until = max(cooldown_until, float(value or 0.0))
+            except (TypeError, ValueError):
+                continue
+        return max(0, int(cooldown_until - now))
+
+    def _fallback_pressure_codes(
+        self,
+        codes: set[str],
+        *,
+        provider_stats: dict | None = None,
+        market_status: str,
+    ) -> set[str]:
+        if str(market_status or "").strip() in _OPENING_WARMUP_STATUSES:
+            self._fallback_pressure_signature = ()
+            self._fallback_pressure_cursor = 0
+            return codes
+
+        cooldown_left = self._quote_fallback_cooldown_left(provider_stats)
+        if cooldown_left <= 0:
+            self._fallback_pressure_signature = ()
+            self._fallback_pressure_cursor = 0
+            return codes
+
+        ordered = tuple(sorted(codes))
+        limit = max(1, int(_FALLBACK_PRESSURE_FETCH_LIMIT or 1))
+        if len(ordered) <= limit:
+            return codes
+        if ordered != self._fallback_pressure_signature:
+            self._fallback_pressure_signature = ordered
+            self._fallback_pressure_cursor = 0
+
+        start = self._fallback_pressure_cursor % len(ordered)
+        end = start + limit
+        selected = list(ordered[start:end])
+        if end > len(ordered):
+            selected.extend(ordered[: end - len(ordered)])
+        self._fallback_pressure_cursor = end % len(ordered)
+
+        now = time.time()
+        if (now - self._last_fallback_pressure_log_at) >= _A_SHARE_POLL_INTERVAL_MS / 1000:
+            self._last_fallback_pressure_log_at = now
+            log.info(
+                f"[报价站] 东方财富回退冷却中，自动轮询限量 {len(selected)}/{len(ordered)} 只；"
+                f"剩余冷却约 {cooldown_left}s，滚动覆盖以避开盘中扫描重活叠加"
+            )
+        return set(selected)
+
     def _run_maintenance(
         self,
         active_codes_count: int | None = None,
@@ -444,6 +505,12 @@ class CentralQuotesService(QObject):
             return
 
         codes = self._opening_warmup_codes(codes, market_status=market_status)
+        provider_stats = self._poller.get_runtime_stats()
+        if time.time() < float(provider_stats.get("cooldown_until") or 0):
+            self._circuit_breaker_cooldown = max(self._circuit_breaker_cooldown, self._COOLDOWN_TICKS)
+            return
+
+        codes = self._fallback_pressure_codes(codes, provider_stats=provider_stats, market_status=market_status)
         code_signature = tuple(sorted(codes))
         now = time.time()
         if reason == "cache_reload":
@@ -461,11 +528,6 @@ class CentralQuotesService(QObject):
             self._circuit_breaker_cooldown -= 1
             if self._circuit_breaker_cooldown == 0:
                 log.info("[报价站] 冷却结束，恢复轮询")
-            return
-
-        provider_stats = self._poller.get_runtime_stats()
-        if time.time() < float(provider_stats.get("cooldown_until") or 0):
-            self._circuit_breaker_cooldown = max(self._circuit_breaker_cooldown, self._COOLDOWN_TICKS)
             return
 
         self._is_fetching = True

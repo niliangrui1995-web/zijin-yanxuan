@@ -22,6 +22,11 @@ from core.sector_rps_helper import enrich_hot_sector_rows, load_sector_rps_snaps
 
 log = get_logger(__name__)
 
+_QUOTE_PRESSURE_DEFER_SEC = 75.0
+_QUOTE_PRESSURE_MIN_PENDING = 100
+_QUOTE_PRESSURE_MIN_ELAPSED_MS = 20000.0
+_QUOTE_FALLBACK_LAYER_TOKENS = ("sina", "tencent", "fallback", "offline", "stale")
+
 
 class RtScanWorker(QThread):
     """盘中监控核心工作线程:
@@ -54,6 +59,8 @@ class RtScanWorker(QThread):
         self._sector_rps = None  # 板块 RPS 字典(首轮计算后缓存)
         self._cap_cache = {}  # 市值缓存 {code: '71亿'} 跨轮复用
         self._zbg_cache = {}  # 总股本缓存 {code: zongguben}，用于按最新现价动态重算市值
+        self._pool_rebuild_pending = False
+        self._last_pool_rebuild_defer_log_at = 0.0
 
     def stop(self):
         self._is_running = False
@@ -97,6 +104,7 @@ class RtScanWorker(QThread):
         self._cap_cache = {}
         self._zbg_cache = {}
         self._seen_signals = set()
+        self._pool_rebuild_pending = False
         _gc.collect()
         log.info("[监控] 线程结束，已释放全部缓存")
 
@@ -226,10 +234,98 @@ class RtScanWorker(QThread):
         if added or removed:
             log.info(f"[待突破池] 刷新: +{len(added)} 新增 / -{len(removed)} 剔除 (形态恶化)")
 
+    @staticmethod
+    def _stats_int(stats: dict, key: str) -> int:
+        try:
+            return int(stats.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _stats_float(stats: dict, key: str) -> float:
+        try:
+            return float(stats.get(key) or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @staticmethod
+    def _stats_time(value) -> float:
+        if isinstance(value, (int, float)):
+            return float(value or 0.0)
+        text = str(value or "").strip()
+        if not text:
+            return 0.0
+        try:
+            return datetime.datetime.strptime(text[:19], "%Y-%m-%dT%H:%M:%S").timestamp()
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _eastmoney_quote_cooldown_left(self, now: float) -> int:
+        try:
+            cooldown_until = float(getattr(self.data_provider, "_rt_eastmoney_cooldown_until", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            cooldown_until = 0.0
+        return max(0, int(cooldown_until - now))
+
+    def _recent_quote_fallback_pressure(self, now: float) -> tuple[bool, str]:
+        stats_getter = getattr(self.data_provider, "get_quote_request_stats", None)
+        if not callable(stats_getter):
+            return False, ""
+        try:
+            stats = stats_getter() or {}
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return False, ""
+        if not isinstance(stats, dict):
+            return False, ""
+
+        requested = self._stats_int(stats, "recent_requested_count")
+        pending = self._stats_int(stats, "recent_pending_count")
+        cache_hits = self._stats_int(stats, "recent_cache_hit_count")
+        elapsed_ms = self._stats_float(stats, "recent_elapsed_ms")
+        status = str(stats.get("recent_status") or "").lower()
+        source_layers = [
+            str(layer or "").strip().lower()
+            for layer in (stats.get("recent_source_layers") or [])
+            if str(layer or "").strip()
+        ]
+        ended_at = self._stats_time(stats.get("recent_ended_at_ts") or stats.get("recent_ended_at"))
+        cooldown_left = self._eastmoney_quote_cooldown_left(now)
+        recent_enough = (ended_at > 0 and 0 <= now - ended_at <= _QUOTE_PRESSURE_DEFER_SEC) or cooldown_left > 0
+        fallback_or_degraded = cooldown_left > 0 or "fallback" in status or "partial" in status or any(
+            any(token in layer for token in _QUOTE_FALLBACK_LAYER_TOKENS) for layer in source_layers
+        )
+        heavy_network = (
+            pending >= _QUOTE_PRESSURE_MIN_PENDING
+            or (requested >= _QUOTE_PRESSURE_MIN_PENDING and cache_hits <= max(1, requested // 10))
+            or (elapsed_ms >= _QUOTE_PRESSURE_MIN_ELAPSED_MS and pending >= 40)
+        )
+        if not (recent_enough and fallback_or_degraded and heavy_network):
+            return False, ""
+
+        layer_text = "/".join(source_layers) if source_layers else status or "fallback"
+        return True, f"报价回退压力 pending={pending}/{requested} cache={cache_hits} elapsed={elapsed_ms:.0f}ms source={layer_text}"
+
     def _refresh_ready_pool_if_needed(self, time_module) -> None:
-        need_rebuild = self._ready_pool is None or self._scan_count % self._pool_refresh_interval == 1
+        need_rebuild = (
+            self._ready_pool is None
+            or self._pool_rebuild_pending
+            or self._scan_count % self._pool_refresh_interval == 1
+        )
         if not need_rebuild:
             return
+
+        if self._ready_pool is not None:
+            now = time_module.time()
+            should_defer, reason = self._recent_quote_fallback_pressure(now)
+            if should_defer:
+                self._pool_rebuild_pending = True
+                if (now - self._last_pool_rebuild_defer_log_at) >= _QUOTE_PRESSURE_DEFER_SEC:
+                    self._last_pool_rebuild_defer_log_at = now
+                    log.info(
+                        f"[待突破池] 第{self._scan_count}轮重建延后: {reason}; "
+                        f"继续使用现有池 {len(self._ready_pool)} 只，下轮再尝试"
+                    )
+                return
 
         label = "首轮构建" if self._ready_pool is None else f"第{self._scan_count}轮刷新"
         self.progress.emit(f"{label}待突破池...")
@@ -246,6 +342,7 @@ class RtScanWorker(QThread):
         self._sync_ready_pool_frames()
         self._log_ready_pool_delta(new_pool)
         self._ready_pool = new_pool
+        self._pool_rebuild_pending = False
         log.info(f"[待突破池] {label}: {len(self._ready_pool)} 只 ({time_module.time() - t0:.1f}s)")
 
     @staticmethod

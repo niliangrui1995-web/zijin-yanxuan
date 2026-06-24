@@ -52,11 +52,32 @@ def test_log_tab_flushes_visible_logs_in_bounded_batches():
         assert "second" in visible_text
         assert "third" not in visible_text
         assert len(tab._log_buffer) == 1
+        assert tab._visible_log_count == 2
 
         tab._flush_log_buffer()
 
         assert "third" in tab.log_text.toPlainText()
         assert tab._log_buffer == []
+        assert tab._visible_log_count == 3
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_log_tab_status_summary_uses_rendered_count_without_refiltering(monkeypatch):
+    tab = LogTab()
+    try:
+        tab._visible_log_count = 7
+        tab._log_history = [("info", f"line {idx}") for idx in range(20)]
+
+        def _fail_filter(*_args, **_kwargs):
+            raise AssertionError("status refresh should not refilter full history")
+
+        monkeypatch.setattr(tab, "_filtered_entries", _fail_filter)
+
+        tab._refresh_status_summary()
+
+        assert "7" in tab.lbl_status.text()
     finally:
         tab.shutdown()
         tab.deleteLater()
