@@ -5,8 +5,8 @@ import logging
 import os
 import sys
 import threading
-from datetime import datetime
 from contextlib import AbstractContextManager
+from datetime import datetime
 from typing import Optional
 
 # 防止日志处理器自身异常把 UI/终端刷爆（例如控制台编码不支持 emoji）。
