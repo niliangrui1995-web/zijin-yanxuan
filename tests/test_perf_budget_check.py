@@ -407,6 +407,40 @@ def test_runtime_health_budget_accepts_structured_suite_report():
     assert check_runtime_health_budget(report) == []
 
 
+def test_runtime_health_budget_accepts_controlled_probe_skipped_tabs():
+    fund_lineage = {
+        "key": "fund_holdings",
+        "title": "基金持仓",
+        "source": "fund_holdings_store",
+        "cache_refs": ["data/fund_holdings.db"],
+        "triggered_network": False,
+        "fallback_or_degraded": False,
+        "loaded": False,
+    }
+    report = {
+        "startup_ready_ms": 900.0,
+        "mode": {"tabs": ["fund_holdings"]},
+        "tab_cycle": {
+            "tabs": [
+                {
+                    "cycle": 1,
+                    "key": "fund_holdings",
+                    "status": "skipped_controlled_probe",
+                    "elapsed_ms": 0.0,
+                },
+            ]
+        },
+        "runtime_health_samples": [
+            _runtime_health_sample(
+                data_lineage=[fund_lineage],
+                ui_stalls={"installed": True, "critical_count": 0, "max_elapsed_ms": 0.0},
+            ),
+        ],
+    }
+
+    assert check_runtime_health_budget(report) == []
+
+
 def test_runtime_health_budget_rejects_slow_startup_ready():
     report = {
         "startup_ready_ms": 1900.0,

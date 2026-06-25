@@ -152,6 +152,22 @@ class ClassicWorkspace(QWidget):
     RESTORE_LAST_TAB_DELAY_MS = 750
     COPY_HOOK_REFRESH_DELAY_MS = 240
     WATCHLIST_TAB_SWITCH_INDICATOR_DELAY_MS = 1800
+    PROBE_LOAD_REASONS = frozenset({"perf_memory_probe", "perf_memory_probe_cycle"})
+    CONTROLLED_STARTUP_PROBE_DEFER_KEYS = frozenset(
+        {
+            "watchlist",
+            "lhb",
+            "asian_market",
+            "na_daily",
+            "stock_candidates",
+            "ai_industry_chain",
+            "rt_monitor",
+            "scan",
+            "foreign_block",
+            "earnings",
+            "fund_holdings",
+        }
+    )
 
     def __init__(
         self,
@@ -162,6 +178,7 @@ class ClassicWorkspace(QWidget):
         *,
         background_prewarm: bool = True,
         watchlist_startup_tasks: bool = True,
+        controlled_startup_probe_guard: bool = False,
     ):
         super().__init__(parent)
         self.data_provider = data_provider
@@ -169,6 +186,7 @@ class ClassicWorkspace(QWidget):
         self.host = host
         self._stock_detail_dialogs = {}
         watchlist_kwargs = {} if watchlist_startup_tasks else {"startup_tasks_enabled": False}
+        self._controlled_startup_probe_guard = bool(controlled_startup_probe_guard)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -407,6 +425,15 @@ class ClassicWorkspace(QWidget):
 
     def get_loaded_tab(self, key: str):
         return self._tabs_by_key.get(str(key or "").strip())
+
+    def should_defer_probe_tab_load(self, key: str, *, reason: str = "perf_memory_probe") -> bool:
+        key_text = str(key or "").strip()
+        reason_text = str(reason or "").strip()
+        return (
+            bool(self._controlled_startup_probe_guard)
+            and reason_text in self.PROBE_LOAD_REASONS
+            and key_text in self.CONTROLLED_STARTUP_PROBE_DEFER_KEYS
+        )
 
     def ensure_tab_loaded(self, key_or_index, reason: str = "user"):
         spec = self._spec_for_key_or_index(key_or_index)

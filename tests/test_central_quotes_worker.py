@@ -574,6 +574,88 @@ def test_central_quotes_service_limits_fallback_cooldown_full_fetch(monkeypatch)
         main_window.deleteLater()
 
 
+def test_central_quotes_service_limits_recent_fallback_pressure_after_cooldown(monkeypatch):
+    _ = QApplication.instance() or QApplication([])
+    main_window = QWidget()
+
+    from ui.workers import central_quotes_worker as worker_module
+
+    now = 1_800_000_000.0
+    codes = {f"{idx:06d}" for idx in range(1, 8)}
+
+    class DummyProvider:
+        def __init__(self):
+            self.calls = []
+            self._rt_api_call_timeout_sec = 1.0
+            self._rt_quote_batch_size = 20
+            self._rt_eastmoney_cooldown_until = now - 1
+
+        def fetch_realtime_quotes_batch(self, fetch_codes):
+            ordered = tuple(sorted(fetch_codes))
+            self.calls.append(ordered)
+            return {
+                code: {"close": 10.0, "last_close": 9.8, "source": "sina"}
+                for code in ordered
+            }
+
+        def is_online(self):
+            return True
+
+        def compact_runtime_caches(self):
+            return {
+                "rt_quote_cache_size": 170,
+                "history_symbol_count": 5163,
+                "rt_runtime": {"worker_alive": False},
+            }
+
+        def get_realtime_runtime_stats(self):
+            return {"worker_alive": False}
+
+        def get_quote_request_stats(self):
+            return {
+                "recent_requested_count": 170,
+                "recent_pending_count": 170,
+                "recent_cache_hit_count": 0,
+                "recent_elapsed_ms": 45189.0,
+                "recent_source_layers": ["sina", "network_throttled_fallback_pressure"],
+                "recent_status": "network_partial_with_fallback",
+                "recent_ended_at_ts": now - 20,
+            }
+
+        def protect_against_thread_anomaly(self, _count):
+            return False
+
+    provider = DummyProvider()
+    service = CentralQuotesService(main_window, provider, code_supplier=lambda: codes)
+
+    def _run_immediately(fn, on_success=None, on_error=None, task_id=None):
+        del on_error, task_id
+        if on_success is not None:
+            on_success(fn())
+
+    monkeypatch.setattr(worker_module, "_FALLBACK_PRESSURE_FETCH_LIMIT", 3)
+    monkeypatch.setattr(worker_module.time, "time", lambda: now)
+    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", staticmethod(lambda *args, **kwargs: True))
+    monkeypatch.setattr(MarketCalendar, "get_market_status", classmethod(lambda cls, market="CN": "trading"))
+    monkeypatch.setattr(worker_module.task_manager, "run_in_background", _run_immediately)
+    global_store.reset_runtime_state()
+
+    try:
+        service._trigger_fetch()
+        service._trigger_fetch()
+
+        assert provider.calls == [
+            ("000001", "000002", "000003"),
+            ("000004", "000005", "000006"),
+        ]
+        assert not any(len(call) == len(codes) for call in provider.calls)
+    finally:
+        global_store.reset_runtime_state()
+        service.shutdown()
+        service.deleteLater()
+        main_window.deleteLater()
+
+
 def test_central_quotes_service_heartbeat_marks_opening_warmup_without_dead_thread(monkeypatch):
     _ = QApplication.instance() or QApplication([])
     main_window = QWidget()

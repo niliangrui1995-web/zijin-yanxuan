@@ -1354,6 +1354,37 @@ def test_workspace_keeps_foreign_block_autoload_for_interactive_entry(monkeypatc
         workspace.deleteLater()
 
 
+def test_workspace_defers_heavy_probe_loads_during_controlled_startup():
+    workspace = classic_workspace_module.ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+        controlled_startup_probe_guard=True,
+    )
+    try:
+        assert workspace.should_defer_probe_tab_load("watchlist", reason="perf_memory_probe") is True
+        assert workspace.should_defer_probe_tab_load("lhb", reason="perf_memory_probe") is True
+        assert workspace.should_defer_probe_tab_load("fund_holdings", reason="perf_memory_probe") is True
+        assert workspace.should_defer_probe_tab_load("fund_holdings", reason="tab_switch") is False
+        assert workspace.should_defer_probe_tab_load("system_log", reason="perf_memory_probe") is False
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_workspace_allows_probe_loads_without_controlled_startup_guard():
+    workspace = classic_workspace_module.ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+    )
+    try:
+        assert workspace.should_defer_probe_tab_load("fund_holdings", reason="perf_memory_probe") is False
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
 def test_workspace_background_prewarm_primes_context_without_forcing_current_tab(monkeypatch):
     ctor_kwargs = {}
     constructed = []

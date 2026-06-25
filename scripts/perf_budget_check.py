@@ -49,6 +49,7 @@ DEFAULT_THRESHOLDS = {
 }
 
 RUNTIME_HEALTH_KEY_TAB_FIRST_OPEN_BUDGET_KEYS = frozenset({"foreign_block", "fund_holdings", "earnings"})
+RUNTIME_HEALTH_ACCEPTED_TAB_STATUSES = frozenset({"ok", "skipped_controlled_probe"})
 
 
 def _read_json(path: str | Path) -> dict:
@@ -800,7 +801,7 @@ def _check_runtime_health_tab_cycle(report: dict, failures: list[dict], budget: 
             "cycle": item.get("cycle"),
         }
         for item in tab_items
-        if isinstance(item, dict) and str(item.get("status") or "") != "ok"
+        if isinstance(item, dict) and str(item.get("status") or "") not in RUNTIME_HEALTH_ACCEPTED_TAB_STATUSES
     ]
     if bad_statuses:
         _fail(

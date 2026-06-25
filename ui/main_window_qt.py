@@ -95,6 +95,7 @@ class MainWindowQT(QMainWindow):
         kline_prewarm_enabled: bool = True,
         central_quotes_enabled: bool = True,
         restore_last_tab_enabled: bool = True,
+        controlled_startup_probe_guard: bool | None = None,
     ):
         super().__init__()
         self._project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -107,6 +108,11 @@ class MainWindowQT(QMainWindow):
         self._kline_prewarm_enabled = bool(kline_prewarm_enabled)
         self._central_quotes_enabled = bool(central_quotes_enabled)
         self._restore_last_tab_enabled = bool(restore_last_tab_enabled)
+        self._controlled_startup_probe_guard = (
+            not self._startup_enabled
+            if controlled_startup_probe_guard is None
+            else bool(controlled_startup_probe_guard)
+        )
         self._rt_cache_restore_pending = False
         self._native_taskbar_fix_applied = False
         self._app_cursor_filter_installed = False
@@ -369,6 +375,7 @@ class MainWindowQT(QMainWindow):
                 parent=parent if parent is not None else self.tabs_wrapper,
                 background_prewarm=self._workspace_background_prewarm,
                 watchlist_startup_tasks=self._startup_enabled,
+                controlled_startup_probe_guard=self._controlled_startup_probe_guard,
             )
 
     def mark_rt_cache_restore_pending(self) -> bool:

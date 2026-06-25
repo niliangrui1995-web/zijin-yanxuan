@@ -9,6 +9,9 @@ from vcp.realtime_quote_batch import (
     split_quote_cache_hits,
 )
 
+FALLBACK_PRESSURE_FETCH_LIMIT = 60
+FALLBACK_PRESSURE_MIN_PENDING = 100
+
 
 def summarize_probe_error(exc: Exception) -> str:
     text = str(exc or "").strip() or exc.__class__.__name__
@@ -90,6 +93,9 @@ def _new_quote_request_stats(normalized_codes: list[str], *, raw_codes: list[str
         "batch_count": 0,
         "recent_codes_count": 0,
         "triggered_network": False,
+        "network_attempted_count": 0,
+        "network_throttled": False,
+        "network_throttle_reason": "",
         "source_layers": [],
         "batches": [],
         "status": "started",
@@ -121,6 +127,26 @@ def _add_quote_source(stats: dict, source: str) -> None:
     if source_text not in layers:
         layers.append(source_text)
     stats["source_layers"] = layers
+
+
+def _fallback_pressure_fetch_limit(provider, pending_count: int) -> int:
+    pending_count = int(pending_count or 0)
+    if pending_count < FALLBACK_PRESSURE_MIN_PENDING:
+        return 0
+    try:
+        limit = int(
+            getattr(
+                provider,
+                "_rt_fallback_pressure_fetch_limit",
+                FALLBACK_PRESSURE_FETCH_LIMIT,
+            )
+            or 0
+        )
+    except (TypeError, ValueError):
+        limit = FALLBACK_PRESSURE_FETCH_LIMIT
+    if limit <= 0 or pending_count <= limit:
+        return 0
+    return max(1, limit)
 
 
 def fetch_eastmoney_quotes_with_split_retry(
@@ -352,7 +378,19 @@ def _fetch_realtime_quote_sources(
     cache_hits = len(result)
     disconnect_failure_reason_logged = None
     eastmoney_available = time.time() >= float(provider._rt_eastmoney_cooldown_until or 0.0)
+    pressure_fetch_limit = _fallback_pressure_fetch_limit(provider, len(dedup_codes))
+    network_codes = list(dedup_codes)
     request_stats["triggered_network"] = True
+
+    if pressure_fetch_limit and not eastmoney_available:
+        network_codes = dedup_codes[:pressure_fetch_limit]
+        request_stats["network_throttled"] = True
+        request_stats["network_throttle_reason"] = "eastmoney_cooldown"
+        _add_quote_source(request_stats, "network_throttled_fallback_pressure")
+        log.info(
+            "[实时行情] 东方财富回退冷却中，本轮联网限量 "
+            f"{len(network_codes)}/{len(dedup_codes)} 只；剩余标的使用缓存/离线兜底"
+        )
 
     pressure_log_due = should_log_pressure(
         total_codes=len(normalized_codes),
@@ -369,8 +407,8 @@ def _fetch_realtime_quote_sources(
             f"batch={batch_size} dedup={dedup_window:.1f}s"
         )
 
-    for start in range(0, len(dedup_codes), batch_size):
-        batch = dedup_codes[start : start + batch_size]
+    for start in range(0, len(network_codes), batch_size):
+        batch = network_codes[start : start + batch_size]
         batch_record = {
             "index": int(start // batch_size) + 1,
             "codes_count": len(batch),
@@ -385,6 +423,7 @@ def _fetch_realtime_quote_sources(
             "status": "started",
         }
         request_stats["batches"].append(batch_record)
+        request_stats["network_attempted_count"] = int(request_stats.get("network_attempted_count") or 0) + len(batch)
 
         quotes, failures, eastmoney_available, used_sina_fallback, used_tencent_fallback = (
             _fetch_realtime_quote_batch_sources(
@@ -424,6 +463,23 @@ def _fetch_realtime_quote_sources(
                     )
         if batch_pause_sec > 0 and (start + batch_size) < len(dedup_codes):
             time.sleep(batch_pause_sec)
+
+        fallback_pressure_active = (not eastmoney_available) or used_sina_fallback or used_tencent_fallback
+        attempted_count = int(request_stats.get("network_attempted_count") or 0)
+        if (
+            pressure_fetch_limit
+            and fallback_pressure_active
+            and attempted_count >= pressure_fetch_limit
+            and attempted_count < len(dedup_codes)
+        ):
+            request_stats["network_throttled"] = True
+            request_stats["network_throttle_reason"] = "fallback_pressure"
+            _add_quote_source(request_stats, "network_throttled_fallback_pressure")
+            log.info(
+                "[实时行情] 外部报价源回退压力中，本轮提前停止后续联网 "
+                f"{attempted_count}/{len(dedup_codes)} 只；剩余标的使用缓存/离线兜底"
+            )
+            break
 
     request_stats["batch_count"] = len(request_stats.get("batches") or [])
     request_stats["recent_codes_count"] = (
@@ -492,7 +548,9 @@ def _finalize_realtime_quote_stats(
     missing_codes: list[str],
 ) -> None:
     final_status = "network_ok"
-    if batch_failures and new_fetch:
+    if request_stats.get("network_throttled"):
+        final_status = "network_partial_with_fallback"
+    elif batch_failures and new_fetch:
         final_status = "network_partial_with_fallback"
     elif batch_failures:
         final_status = "network_failed_offline_fallback" if missing_codes else "network_failed"

@@ -1,5 +1,5 @@
 from scripts import perf_round5_probe
-from scripts import runtime_health_stability_suite as runtime_suite
+from scripts import perf_memory_probe, runtime_health_stability_suite as runtime_suite
 from scripts.perf_round5_probe import (
     _effective_probe_tabs,
     _loaded_info_source_keys,
@@ -380,3 +380,84 @@ def test_runtime_health_tab_cycle_marks_lazy_loads_as_perf_probe():
         ("setCurrentIndex", 0),
     ]
     assert loaded["foreign_block"]._workspace_noninteractive_loaded is True
+
+
+def test_runtime_health_tab_cycle_skips_controlled_probe_tabs():
+    calls = []
+    loaded = {}
+
+    class _App:
+        def processEvents(self):
+            return None
+
+    class _Tabs:
+        def setCurrentIndex(self, index):
+            calls.append(("setCurrentIndex", index))
+
+    class _Workspace:
+        tabs = _Tabs()
+
+        def tab_specs(self):
+            return [{"key": "fund_holdings"}, {"key": "watchlist"}]
+
+        def get_loaded_tab(self, key):
+            return loaded.get(key)
+
+        def should_defer_probe_tab_load(self, key, *, reason="perf_memory_probe"):
+            return key == "fund_holdings" and reason == "perf_memory_probe"
+
+        def ensure_tab_loaded(self, key, reason="user"):
+            loaded[key] = object()
+            calls.append(("ensure_tab_loaded", key, reason))
+            return loaded[key]
+
+    result = _cycle_tabs(
+        type("Window", (), {"_workspace": _Workspace()})(),
+        _App(),
+        ("fund_holdings", "watchlist"),
+        cycles=1,
+        settle_ms=0,
+    )
+
+    assert result["tabs"][0]["status"] == "skipped_controlled_probe"
+    assert result["tabs"][0]["key"] == "fund_holdings"
+    assert ("ensure_tab_loaded", "fund_holdings", "perf_memory_probe") not in calls
+    assert ("setCurrentIndex", 0) not in calls
+    assert ("ensure_tab_loaded", "watchlist", "perf_memory_probe") in calls
+
+
+def test_perf_memory_probe_load_tabs_skips_controlled_probe_tabs(monkeypatch):
+    calls = []
+
+    class _App:
+        def processEvents(self):
+            return None
+
+    class _Workspace:
+        def tab_specs(self):
+            return [{"key": "watchlist"}, {"key": "fund_holdings"}]
+
+        def ensure_tab_loaded(self, key, reason="user"):
+            calls.append(("ensure_tab_loaded", key, reason))
+
+        def should_defer_probe_tab_load(self, key, *, reason="perf_memory_probe"):
+            return key == "fund_holdings" and reason == "perf_memory_probe"
+
+    monkeypatch.setattr(
+        perf_memory_probe,
+        "collect_process_snapshot",
+        lambda label="": {
+            "label": label,
+            "main": {"rss_mb": 100.0, "private_mb": 200.0, "vms_mb": 300.0},
+        },
+    )
+
+    result = perf_memory_probe._load_workspace_tabs(
+        type("Window", (), {"_workspace": _Workspace()})(),
+        _App(),
+    )
+
+    assert calls == [("ensure_tab_loaded", "watchlist", "perf_memory_probe")]
+    assert result[0]["result"] == {"key": "watchlist"}
+    assert result[1]["status"] == "skipped_controlled_probe"
+    assert result[1]["result"]["key"] == "fund_holdings"

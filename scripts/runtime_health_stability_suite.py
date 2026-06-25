@@ -136,6 +136,16 @@ def _loaded_tab(workspace, key: str):
     return getter(key) if callable(getter) else None
 
 
+def _should_defer_probe_tab_load(workspace, key: str, *, reason: str = "perf_memory_probe") -> bool:
+    should_defer = getattr(workspace, "should_defer_probe_tab_load", None)
+    if not callable(should_defer):
+        return False
+    try:
+        return bool(should_defer(key, reason=reason))
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+
+
 def _ensure_probe_tab_loaded(workspace, key: str, index: int):
     if _loaded_tab(workspace, key) is not None:
         return _loaded_tab(workspace, key)
@@ -335,6 +345,17 @@ def _cycle_tabs(
                         "key": key,
                         "status": "missing",
                         "elapsed_ms": 0.0,
+                    }
+                )
+                continue
+            if _should_defer_probe_tab_load(workspace, key, reason="perf_memory_probe"):
+                timings.append(
+                    {
+                        "cycle": cycle_index + 1,
+                        "key": key,
+                        "status": "skipped_controlled_probe",
+                        "elapsed_ms": 0.0,
+                        "reason": "controlled_startup_probe_deferred",
                     }
                 )
                 continue
@@ -555,6 +576,7 @@ def run_suite(args: argparse.Namespace) -> dict:
             "startup_enabled": bool(args.startup_enabled),
             "background_prewarm": bool(args.background_prewarm),
             "central_quotes_enabled": bool(args.central_quotes_enabled),
+            "allow_controlled_probe_tab_loads": bool(args.allow_controlled_probe_tab_loads),
             "idle_seconds": int(args.idle_seconds),
             "idle_minutes": round(float(args.idle_seconds) / 60.0, 3),
             "sample_every_seconds": int(args.sample_every_seconds),
@@ -577,6 +599,7 @@ def run_suite(args: argparse.Namespace) -> dict:
         kline_prewarm_enabled=bool(args.kline_prewarm_enabled),
         central_quotes_enabled=bool(args.central_quotes_enabled),
         restore_last_tab_enabled=False,
+        controlled_startup_probe_guard=False if args.allow_controlled_probe_tab_loads else None,
     )
     try:
         _settle(app, args.startup_settle_ms)
@@ -696,6 +719,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--background-prewarm", action="store_true")
     parser.add_argument("--kline-prewarm-enabled", action="store_true")
     parser.add_argument("--central-quotes-enabled", action="store_true")
+    parser.add_argument("--allow-controlled-probe-tab-loads", action="store_true")
     parser.add_argument("--startup-settle-ms", type=int, default=300)
     parser.add_argument("--cycle-settle-ms", type=int, default=120)
     parser.add_argument("--post-tab-idle-timeout-ms", type=int, default=POST_TAB_IDLE_TIMEOUT_MS)

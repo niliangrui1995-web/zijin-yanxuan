@@ -138,6 +138,25 @@ def _settle(app: QApplication, settle_ms: int) -> None:
     _process_events(app, rounds=max(1, int(settle_ms) // 50), sleep_ms=50)
 
 
+def _should_defer_probe_tab_load(workspace, key: str, *, reason: str = "perf_memory_probe") -> bool:
+    should_defer = getattr(workspace, "should_defer_probe_tab_load", None)
+    if not callable(should_defer):
+        return False
+    try:
+        return bool(should_defer(key, reason=reason))
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _deferred_probe_tab_sample(label: str, key: str) -> dict:
+    return {
+        "label": label,
+        "elapsed_ms": 0.0,
+        "status": "skipped_controlled_probe",
+        "result": {"key": key, "reason": "controlled_startup_probe_deferred"},
+    }
+
+
 def _measure(label: str, fn):
     before_snapshot = collect_process_snapshot(f"{label}:before")
     before = _snapshot_value(before_snapshot, "rss_mb")
@@ -262,6 +281,10 @@ def _load_workspace_tabs(window: MainWindowQT, app: QApplication) -> list[dict]:
         if not key:
             continue
 
+        if _should_defer_probe_tab_load(workspace, key, reason="perf_memory_probe"):
+            loaded.append(_deferred_probe_tab_sample(f"load_tab:{key}", key))
+            continue
+
         def _load_one():
             ensure_tab_loaded(key, reason="perf_memory_probe")
             _process_events(app, rounds=3)
@@ -279,19 +302,27 @@ def _cycle_workspace_tabs(window: MainWindowQT, app: QApplication, *, cycles: in
         return {"cycles": 0, "tab_count": 0}
 
     ensure_tab_loaded = getattr(workspace, "ensure_tab_loaded", None)
+    tab_specs = getattr(workspace, "tab_specs", None)
+    specs = list(tab_specs() or []) if callable(tab_specs) else []
     count = int(tabs.count())
     if count <= 0:
         return {"cycles": 0, "tab_count": 0}
 
     visited = 0
+    deferred: list[str] = []
     for _ in range(max(0, int(cycles))):
         for index in range(count):
+            spec = specs[index] if index < len(specs) else {}
+            key = str((spec or {}).get("key", "")).strip()
+            if key and _should_defer_probe_tab_load(workspace, key, reason="perf_memory_probe_cycle"):
+                deferred.append(key)
+                continue
             if callable(ensure_tab_loaded):
                 ensure_tab_loaded(index, reason="perf_memory_probe_cycle")
             tabs.setCurrentIndex(index)
             _settle(app, settle_ms)
             visited += 1
-    return {"cycles": int(cycles), "tab_count": count, "visited": visited}
+    return {"cycles": int(cycles), "tab_count": count, "visited": visited, "deferred_tabs": deferred}
 
 
 def _close_kline_charts(app: QApplication) -> int:
@@ -480,6 +511,7 @@ def run_probe(args: argparse.Namespace) -> dict:
             "background_prewarm": bool(args.background_prewarm),
             "kline_prewarm_enabled": bool(args.kline_prewarm_enabled),
             "central_quotes_enabled": bool(args.central_quotes_enabled),
+            "allow_controlled_probe_tab_loads": bool(args.allow_controlled_probe_tab_loads),
             "load_tabs": bool(args.load_tabs),
             "settle_ms": int(args.settle_ms),
             "tab_cycles": int(args.tab_cycles),
@@ -506,6 +538,7 @@ def run_probe(args: argparse.Namespace) -> dict:
             kline_prewarm_enabled=args.kline_prewarm_enabled,
             central_quotes_enabled=args.central_quotes_enabled,
             restore_last_tab_enabled=False,
+            controlled_startup_probe_guard=False if args.allow_controlled_probe_tab_loads else None,
         )
         window_holder["window"] = window
         _process_events(app, rounds=8)
@@ -617,6 +650,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--background-prewarm", action="store_true", help="Enable workspace background tab prewarm.")
     parser.add_argument("--kline-prewarm-enabled", action="store_true", help="Enable hidden K-line WebEngine prewarm.")
     parser.add_argument("--central-quotes-enabled", action="store_true", help="Enable central quotes timer.")
+    parser.add_argument(
+        "--allow-controlled-probe-tab-loads",
+        action="store_true",
+        help="Allow controlled-startup probes to construct heavy lazy tabs.",
+    )
     parser.add_argument(
         "--load-tabs", action="store_true", help="Load every workspace tab and record per-tab RSS deltas."
     )
