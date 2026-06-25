@@ -198,6 +198,12 @@ def test_project_audit_adds_type_check_only_when_requested():
     type_check = next(command for command in commands if command.label == "type-check")
 
     assert type_check.command == ["python", "-m", "pyright", *project_audit.TYPE_CHECK_TARGETS]
+    assert "app/services" in project_audit.TYPE_CHECK_TARGETS
+    assert "domains/quotes" in project_audit.TYPE_CHECK_TARGETS
+    assert "domains/runtime" in project_audit.TYPE_CHECK_TARGETS
+    assert "infra/market_data" in project_audit.TYPE_CHECK_TARGETS
+    assert "infra/tasks" in project_audit.TYPE_CHECK_TARGETS
+    assert "ui" not in project_audit.TYPE_CHECK_TARGETS
 
 
 def test_project_audit_adds_observation_only_coverage_report_when_requested():
@@ -276,12 +282,11 @@ def test_project_audit_list_includes_type_check_when_requested(capsys):
     output = capsys.readouterr().out
     assert result == 0
     assert "type-check: python -m pyright" in output
-    assert "app/services/asian_market_service.py" in output
-    assert "app/services/http_client_service.py" in output
-    assert "domains/quotes/snapshot.py" in output
-    assert "domains/runtime/fault_tolerance.py" in output
-    assert "infra/market_data/asian_kline_provider.py" in output
-    assert "infra/tasks/process_runner.py" in output
+    assert "app/services" in output
+    assert "domains/quotes" in output
+    assert "domains/runtime" in output
+    assert "infra/market_data" in output
+    assert "infra/tasks" in output
 
 
 def test_project_audit_list_includes_coverage_report_when_requested(capsys):

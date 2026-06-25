@@ -41,20 +41,13 @@ DEPENDENCY_AUDIT_OUTPUT = "tmp/dependency_audit.json"
 HTTP_SAFETY_AUDIT_OUTPUT = "tmp/http_safety_audit.json"
 COVERAGE_REPORT_OUTPUT = "tmp/coverage.json"
 TYPE_CHECK_TARGETS = (
-    "app/services/asian_market_service.py",
-    "app/services/http_client_service.py",
-    "app/services/ui_diagnostics_service.py",
-    "domains/quotes/dispatcher.py",
-    "domains/quotes/snapshot.py",
-    "domains/quotes/tdx_name_map.py",
-    "domains/runtime/fault_tolerance.py",
+    "app/services",
+    "domains/quotes",
+    "domains/runtime",
     "infra/features/service_toggle_registry.py",
     "infra/http_safety.py",
-    "infra/market_data/asian_kline_provider.py",
-    "infra/market_data/provider_ports.py",
-    "infra/market_data/yfinance_session.py",
-    "infra/tasks/typed_task_registry.py",
-    "infra/tasks/process_runner.py",
+    "infra/market_data",
+    "infra/tasks",
 )
 
 UI_STALL_SMOKE_TESTS = (

@@ -378,6 +378,8 @@ class ClassicWorkspace(QWidget):
         elif key == "watchlist" and reason_text == "tab_switch":
             runtime_kwargs["startup_indicator_refresh_delay_ms"] = self.WATCHLIST_TAB_SWITCH_INDICATOR_DELAY_MS
             runtime_kwargs["startup_followup_refresh_enabled"] = False
+        elif key == "foreign_block" and reason_text not in {"placeholder_action", "tab_switch", "user"}:
+            runtime_kwargs["autoload"] = False
         return factory(**runtime_kwargs)
 
     def _create_placeholder_tab(self, spec: dict) -> LazyTabPlaceholder:

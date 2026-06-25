@@ -22,6 +22,8 @@
 .\.venv\Scripts\python.exe scripts\project_audit.py --quick --list
 ```
 
+本地审计统一使用仓库内 `.\.venv\Scripts\python.exe`。如果直接用系统 `python` 运行同一命令时提示缺少 Ruff、Pyright、`pip-audit` 或其他审计工具，先按解释器选择错误处理，不计为代码门禁失败。
+
 快速审计并显式追加短运行健康预算闸门：
 
 ```powershell

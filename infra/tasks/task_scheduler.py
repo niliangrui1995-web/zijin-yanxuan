@@ -109,7 +109,7 @@ class GlobalTaskManager(QObject):
         self._lock = threading.RLock()
         self._shutting_down = False
 
-    def submit_task(self, worker: QRunnable, task_id: str = None) -> str:
+    def submit_task(self, worker: QRunnable, task_id: str | None = None) -> str:
         """提交 QRunnable Worker"""
         with self._lock:
             if self._shutting_down:
@@ -126,7 +126,7 @@ class GlobalTaskManager(QObject):
             self.thread_pool.start(worker)
             return task_id
 
-    def run_in_background(self, fn, *args, on_success=None, on_error=None, task_id: str = None, **kwargs) -> str:
+    def run_in_background(self, fn, *args, on_success=None, on_error=None, task_id: str | None = None, **kwargs) -> str:
         """便捷方法：后台执行函数，结果通过 Qt 信号安全回传主线程
 
         参数:

@@ -333,7 +333,7 @@ def build_foreign_block_local_cache_payload(cache_file: str = _BLOCK_TRADE_CACHE
 
 
 class ForeignBlockTradeTab(BaseStockTab):
-    def __init__(self, data_provider, parent=None):
+    def __init__(self, data_provider, parent=None, *, autoload: bool = True):
         super().__init__(data_provider=data_provider, parent=parent)
         self._cap_cache = {}
         self._is_loading = False
@@ -349,10 +349,12 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._pending_f5_online_refresh = False
         self._local_cache_loading = False
         self._local_cache_pending_emit_event: bool | None = None
+        self._initial_local_cache_load_started = False
 
         self.days_to_fetch = 30  # 默认拉取最近30个交易日
         self._init_ui()
-        QTimer.singleShot(LOCAL_CACHE_LOAD_DELAY_MS, self._load_local_cache)
+        if autoload:
+            self._schedule_initial_local_cache_load()
 
         # 大宗交易页只消费 F5/本地快照，不加入盘中实时行情轮询。
         event_bus.sig_cache_reload_completed.connect(self._on_cache_reload_completed)
@@ -360,9 +362,24 @@ class ForeignBlockTradeTab(BaseStockTab):
 
     def showEvent(self, event):
         super().showEvent(event)
+        if self._should_start_runtime_on_show():
+            self._schedule_initial_local_cache_load()
 
     def hideEvent(self, event):
         super().hideEvent(event)
+
+    def _should_start_runtime_on_show(self) -> bool:
+        return BaseStockTab._should_start_interactive_runtime_on_show(self)
+
+    def _schedule_initial_local_cache_load(self) -> bool:
+        if self._initial_local_cache_load_started:
+            return False
+        self._initial_local_cache_load_started = True
+        QTimer.singleShot(LOCAL_CACHE_LOAD_DELAY_MS, self._load_local_cache)
+        return True
+
+    def prime_background_load(self) -> bool:
+        return self._schedule_initial_local_cache_load()
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -595,6 +612,7 @@ class ForeignBlockTradeTab(BaseStockTab):
             return False
 
     def _load_local_cache(self, *, emit_event: bool = True):
+        self._initial_local_cache_load_started = True
         if getattr(self, "_local_cache_loading", False):
             self._local_cache_pending_emit_event = bool(emit_event)
             return

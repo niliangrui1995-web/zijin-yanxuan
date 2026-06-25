@@ -84,7 +84,7 @@ def _frame_to_polars(code: str, frame):
         return None
     if isinstance(frame, pd.DataFrame):
         temp = frame.reset_index()
-        first_col = temp.columns[0]
+        first_col = str(temp.columns[0])
         if first_col != "datetime" and "datetime" not in temp.columns:
             temp = temp.rename(columns={first_col: "datetime"})
         temp["_code"] = str(code)

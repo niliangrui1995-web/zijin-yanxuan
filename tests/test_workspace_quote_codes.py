@@ -1302,6 +1302,58 @@ def test_workspace_delays_watchlist_indicator_refresh_on_tab_switch(monkeypatch)
         workspace.deleteLater()
 
 
+def test_workspace_disables_foreign_block_autoload_for_noninteractive_probe(monkeypatch):
+    ctor_kwargs = {}
+
+    class _ForeignBlockTab(QWidget):
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+            ctor_kwargs["foreign_block"] = dict(kwargs)
+
+    monkeypatch.setattr(classic_workspace_module, "ForeignBlockTradeTab", _ForeignBlockTab)
+
+    workspace = classic_workspace_module.ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+    )
+    try:
+        widget = workspace.ensure_tab_loaded("foreign_block", reason="perf_memory_probe")
+
+        assert widget is workspace.get_loaded_tab("foreign_block")
+        assert ctor_kwargs["foreign_block"]["autoload"] is False
+        assert getattr(widget, "_workspace_noninteractive_loaded") is True
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_workspace_keeps_foreign_block_autoload_for_interactive_entry(monkeypatch):
+    ctor_kwargs = {}
+
+    class _ForeignBlockTab(QWidget):
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+            ctor_kwargs["foreign_block"] = dict(kwargs)
+
+    monkeypatch.setattr(classic_workspace_module, "ForeignBlockTradeTab", _ForeignBlockTab)
+
+    workspace = classic_workspace_module.ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+    )
+    try:
+        widget = workspace.ensure_tab_loaded("foreign_block", reason="tab_switch")
+
+        assert widget is workspace.get_loaded_tab("foreign_block")
+        assert "autoload" not in ctor_kwargs["foreign_block"]
+        assert getattr(widget, "_workspace_noninteractive_loaded") is False
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
 def test_workspace_background_prewarm_primes_context_without_forcing_current_tab(monkeypatch):
     ctor_kwargs = {}
     constructed = []

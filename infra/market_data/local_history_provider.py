@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import datetime
+
 import pandas as pd
 
 from core.logger import get_logger
@@ -73,7 +75,9 @@ class LocalHistoryProvider:
             return existing_df
         if not force_sync and provider._is_after_1500_today() and existing_df is not None and len(existing_df) > 0:
             try:
-                if pd.Timestamp(existing_df.index.max()).date() >= MarketCalendar.today("CN"):
+                latest_ts = pd.Timestamp(existing_df.index.max())
+                latest_date = latest_ts.date() if not pd.isna(latest_ts) else None
+                if isinstance(latest_date, datetime.date) and latest_date >= MarketCalendar.today("CN"):
                     return existing_df
             except (TypeError, ValueError) as exc:
                 self._log.debug(f"[K线 {code}] 缓存日期检查异常: {exc}")

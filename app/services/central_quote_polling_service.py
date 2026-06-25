@@ -85,7 +85,8 @@ class CentralQuotePoller:
         stats_getter = getattr(self.data_provider, "get_realtime_runtime_stats", None)
         if callable(stats_getter):
             try:
-                return stats_getter() or {}
+                stats = stats_getter() or {}
+                return stats if isinstance(stats, dict) else {}
             except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
                 log.debug(f"[报价站] 读取运行态统计失败: {exc}")
         return {}
@@ -94,7 +95,8 @@ class CentralQuotePoller:
         compact = getattr(self.data_provider, "compact_runtime_caches", None)
         if callable(compact):
             try:
-                return compact() or {}
+                stats = compact() or {}
+                return stats if isinstance(stats, dict) else {}
             except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
                 log.debug(f"[报价站] 运行时缓存清理失败: {exc}")
         return {}

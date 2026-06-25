@@ -3,6 +3,20 @@
 from __future__ import annotations
 
 from importlib import import_module
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from domains.quotes.dispatcher import has_valid_quote, normalize_quote_payload, publish_rt_quotes
+    from domains.quotes.snapshot import (
+        build_finance_quote_payload,
+        coerce_number,
+        enrich_quotes_with_finance,
+        get_missing_a_share_finance_codes,
+        is_a_share_code,
+        merge_quote_entry,
+        merge_quote_snapshot_inplace,
+        resolve_quote_metrics,
+    )
 
 __all__ = [
     "build_finance_quote_payload",

@@ -9,7 +9,7 @@ SCAN_SOURCE_KEY = "scan"
 WATCHLIST_SOURCE_KEY = "watchlist"
 
 
-def _get_signal_value(signal, key: str, default=""):
+def _get_signal_value(signal, key: str, default: object = ""):
     if isinstance(signal, dict):
         return signal.get(key, default)
     return getattr(signal, key, default)
@@ -142,7 +142,8 @@ def _current_vcp_data(
 def _workspace_scan_results(workspace) -> list[dict]:
     get_scan_results = getattr(workspace, "get_scan_results", None)
     if callable(get_scan_results):
-        return list(get_scan_results() or [])
+        scan_results = get_scan_results() or []
+        return list(scan_results) if isinstance(scan_results, (list, tuple)) else []
     return []
 
 
