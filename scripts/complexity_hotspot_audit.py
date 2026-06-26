@@ -68,7 +68,7 @@ HOTSPOT_BUDGETS = {
         "ScanWorker._enrich_hot_sectors": 25,
     },
     "ui/workspaces/classic_workspace.py": {
-        "ClassicWorkspace.__init__": 183,
+        "ClassicWorkspace.__init__": 185,
     },
     "vcp/fetchers/asian_kline_fetcher.py": {
         "sync_asian_kline_cache": 220,

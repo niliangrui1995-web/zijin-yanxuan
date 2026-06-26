@@ -1,5 +1,5 @@
-from scripts import perf_round5_probe
-from scripts import perf_memory_probe, runtime_health_stability_suite as runtime_suite
+from scripts import perf_memory_probe, perf_round5_probe
+from scripts import runtime_health_stability_suite as runtime_suite
 from scripts.perf_round5_probe import (
     _effective_probe_tabs,
     _loaded_info_source_keys,

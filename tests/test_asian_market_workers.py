@@ -18,6 +18,11 @@ class _FakeResponse:
         return self._data
 
 
+class _BadJsonResponse(_FakeResponse):
+    def json(self):
+        raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+
 class _FakeSession:
     def __init__(self, response):
         self.response = response
@@ -92,6 +97,32 @@ def test_fetch_asian_realtime_quote_skips_yfinance_fallback_when_optional_networ
     quote = workers.fetch_asian_realtime_quote("2330.TW", yf_session=object(), allow_yfinance_fallback=False)
 
     assert quote is None
+
+
+def test_fetch_asian_realtime_quote_bad_direct_payload_skips_yfinance_fallback(monkeypatch):
+    session = _FakeSession(_BadJsonResponse(text=""))
+    monkeypatch.setattr(
+        workers,
+        "get_yf_rate_limit_status",
+        lambda: {
+            "active": False,
+            "remaining_sec": 0.0,
+            "reason": "",
+            "until_ts": 0.0,
+        },
+    )
+    monkeypatch.setattr(
+        workers,
+        "_fetch_yfinance_realtime_quote",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("bad direct payload should not fall back")),
+    )
+
+    quote = workers.fetch_asian_realtime_quote("3017.TW", yf_session=session)
+
+    assert quote is None
+    assert session.urls == [
+        "https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_3017.tw&json=1&delay=0"
+    ]
 
 
 def test_fetch_asian_realtime_quote_uses_tencent_for_hk(monkeypatch):
@@ -392,6 +423,50 @@ def test_fetch_updates_skips_markets_in_short_backoff(monkeypatch):
     assert list(updates) == ["0522.HK"]
 
 
+def test_fetch_updates_skips_only_codes_in_source_payload_backoff(monkeypatch):
+    monkeypatch.setattr(workers, "build_yf_session", lambda *args, **kwargs: object())
+    monkeypatch.setattr(workers, "_YF_FETCH_MAX_WORKERS", 1)
+    now_ts = 1_000.0
+    monkeypatch.setattr(workers.time, "time", lambda: now_ts)
+    calls = []
+    worker = workers.AsianMarketWorker(["3017.TW", "3711.TW", "0522.HK"])
+    worker._mark_code_backoff("3017.TW", now_ts=now_ts)
+
+    def _fake_fetch_single_code(code, yf_session, info_session):
+        calls.append(code)
+        return code, {"date": "2026-06-26", "close": 1.0, "previous_close": 1.0}
+
+    monkeypatch.setattr(worker, "_fetch_single_code", _fake_fetch_single_code)
+
+    updates = worker._fetch_updates()
+
+    assert calls == ["0522.HK", "3711.TW"]
+    assert list(updates) == ["0522.HK", "3711.TW"]
+
+
+def test_fetch_single_code_bad_direct_payload_marks_code_backoff(monkeypatch):
+    worker = workers.AsianMarketWorker(["3017.TW"])
+    monkeypatch.setattr(
+        workers,
+        "fetch_asian_realtime_quote",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            workers.AsianRealtimePayloadError("twse_mis returned empty body")
+        ),
+    )
+    monkeypatch.setattr(
+        worker,
+        "_fetch_yahoo_enrichment",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("bad direct payload should stop this ticket")),
+    )
+
+    code, payload = worker._fetch_single_code("3017.TW", object(), object())
+
+    assert code == "3017.TW"
+    assert payload is None
+    assert worker._is_code_backoff_active("3017.TW")
+    assert worker._source_payload_degraded() is True
+
+
 def test_timeout_market_backoff_survives_next_short_retry_window(monkeypatch):
     now_ts = 1_000.0
     monkeypatch.setattr(workers.time, "time", lambda: now_ts)
@@ -472,6 +547,42 @@ def test_timeout_auto_cycle_persists_cache_without_emitting_ui_update(monkeypatc
     assert saved == [True]
     assert len(result_spy) == 0
     assert any("deferred UI repaint" in args[0] for args in progress_spy)
+
+
+def test_source_payload_degraded_auto_cycle_persists_cache_without_emitting_ui_update(monkeypatch):
+    monkeypatch.setattr(workers, "is_asian_quote_refresh_time", lambda codes: True)
+    monkeypatch.setattr(
+        workers,
+        "get_yf_rate_limit_status",
+        lambda: {
+            "active": False,
+            "remaining_sec": 0.0,
+            "reason": "",
+            "until_ts": 0.0,
+        },
+    )
+    saved = []
+    monkeypatch.setattr(workers, "save_global_asian_rt_cache", lambda: saved.append(True))
+    worker = workers.AsianMarketWorker(["3711.TW", "0522.HK"])
+    result_spy = QSignalSpy(worker.result_ready)
+    progress_spy = QSignalSpy(worker.progress)
+
+    def _fetch_updates():
+        worker._mark_source_payload_degraded()
+        return {"0522.HK": {"close": 169.3}}
+
+    def _sleep(_seconds):
+        worker._is_running = False
+        return False
+
+    monkeypatch.setattr(worker, "_fetch_updates", _fetch_updates)
+    monkeypatch.setattr(worker, "_sleep_with_break", _sleep)
+
+    worker.run()
+
+    assert saved == [True]
+    assert len(result_spy) == 0
+    assert any("source payload degraded" in args[0] and "deferred UI repaint" in args[0] for args in progress_spy)
 
 
 def test_timeout_manual_cycle_still_emits_ui_update(monkeypatch):

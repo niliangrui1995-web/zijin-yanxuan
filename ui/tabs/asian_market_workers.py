@@ -47,11 +47,16 @@ _FETCH_UPDATES_TIMEOUT_SEC = 45
 _FETCH_TIMEOUT_MARKET_BACKOFF_SEC = 30 * 60
 _FETCH_TIMEOUT_CYCLE_BACKOFF_SEC = 30 * 60
 _OPTIONAL_NETWORK_MIN_REMAINING_SEC = 25
+_SOURCE_PAYLOAD_CODE_BACKOFF_SEC = 10 * 60
 
 _EMPTY_NUMERIC_MARKERS = {"", "-", "--", "---", "—", "－", "None", "null"}
 _NUMERIC_TOKEN_RE = re.compile(r"-?\d+(?:\.\d+)?")
 _DEFAULT_HTTP_HEADERS = ASIAN_MARKET_HTTP_HEADERS
 _HTTP_TIMEOUT_SEC = ASIAN_MARKET_HTTP_TIMEOUT_SEC
+
+
+class AsianRealtimePayloadError(ValueError):
+    """Raised when a direct Asian realtime source returns an unusable payload."""
 
 
 def infer_asian_markets(codes) -> list[str]:
@@ -324,6 +329,33 @@ def _format_cooldown_eta(seconds: float) -> str:
     return f"{remaining} 秒"
 
 
+def _response_body_is_blank(response) -> bool:
+    raw_content = getattr(response, "content", None)
+    if raw_content is not None:
+        try:
+            return len(raw_content) <= 0
+        except TypeError:
+            pass
+
+    raw_text = getattr(response, "text", None)
+    if raw_text is not None:
+        return not str(raw_text or "").strip()
+
+    return False
+
+
+def _load_realtime_json(response, *, source: str) -> dict:
+    try:
+        payload = response.json()
+    except (ValueError, json.JSONDecodeError) as exc:
+        payload_state = "empty body" if _response_body_is_blank(response) else "bad JSON"
+        raise AsianRealtimePayloadError(f"{source} returned {payload_state}: {exc}") from exc
+    if not isinstance(payload, dict):
+        payload_type = "empty" if payload is None else type(payload).__name__
+        raise AsianRealtimePayloadError(f"{source} returned unexpected JSON payload: {payload_type}")
+    return payload
+
+
 def _pick_twse_price(info: dict, prev_close: float | None) -> tuple[float | None, str]:
     for key, quality in (("z", "last"), ("pz", "match")):
         price = _to_float(info.get(key))
@@ -361,7 +393,7 @@ def _fetch_tw_realtime_quote(code: str, http_session) -> dict | None:
         headers={**_DEFAULT_HTTP_HEADERS, "Referer": "https://mis.twse.com.tw/"},
         timeout=15,
     )
-    data = response.json()
+    data = _load_realtime_json(response, source="twse_mis")
     info = (data.get("msgArray") or [{}])[0]
     if not info:
         return None
@@ -402,7 +434,7 @@ def _fetch_kr_realtime_quote(code: str, http_session) -> dict | None:
         headers={**_DEFAULT_HTTP_HEADERS, "Referer": "https://finance.naver.com/"},
         timeout=15,
     )
-    data = response.json()
+    data = _load_realtime_json(response, source="naver_realtime")
     info = (data.get("datas") or [{}])[0]
     if not info:
         return None
@@ -853,6 +885,7 @@ def fetch_asian_realtime_quote(
     *,
     yf_session=None,
     allow_yfinance_fallback: bool = True,
+    raise_on_source_payload_error: bool = False,
 ):
     normalized_code = str(code or "").strip().upper()
     if not normalized_code or "." not in normalized_code:
@@ -872,6 +905,11 @@ def fetch_asian_realtime_quote(
             quote = _fetch_jp_realtime_quote(normalized_code, session)
         else:
             quote = None
+    except AsianRealtimePayloadError as exc:
+        if raise_on_source_payload_error:
+            raise
+        log.debug(f"[AsianTab] 替代实时源载荷不可用 {normalized_code}: {exc}")
+        return None
     except (
         AttributeError,
         KeyError,
@@ -942,9 +980,12 @@ class AsianMarketWorker(QThread):
         self._cycle_done.set()
         self._last_status = ""
         self._market_backoff_until: dict[str, float] = {}
+        self._code_backoff_until: dict[str, float] = {}
+        self._backoff_lock = threading.Lock()
         self._timeout_backoff_until = 0.0
         self._fetch_deadline_monotonic: float | None = None
         self._last_fetch_timed_out = False
+        self._last_fetch_source_degraded = False
 
     def stop(self):
         self._is_running = False
@@ -1008,12 +1049,29 @@ class AsianMarketWorker(QThread):
             if float(until_ts or 0.0) > now
         }
 
+    def _prune_code_backoff(self, now_ts: float | None = None) -> None:
+        now = time.time() if now_ts is None else float(now_ts)
+        with self._backoff_lock:
+            self._code_backoff_until = {
+                code: until_ts
+                for code, until_ts in self._code_backoff_until.items()
+                if float(until_ts or 0.0) > now
+            }
+
     def _mark_market_backoff(self, market: str, *, now_ts: float | None = None) -> None:
         normalized_market = str(market or "").strip().upper()
         if not normalized_market:
             return
         now = time.time() if now_ts is None else float(now_ts)
         self._market_backoff_until[normalized_market] = now + _FETCH_TIMEOUT_MARKET_BACKOFF_SEC
+
+    def _mark_code_backoff(self, code: str, *, now_ts: float | None = None) -> None:
+        normalized_code = str(code or "").strip().upper()
+        if not normalized_code:
+            return
+        now = time.time() if now_ts is None else float(now_ts)
+        with self._backoff_lock:
+            self._code_backoff_until[normalized_code] = now + _SOURCE_PAYLOAD_CODE_BACKOFF_SEC
 
     def _mark_timeout_backoff(self, *, now_ts: float | None = None, duration_sec: float | None = None) -> None:
         now = time.time() if now_ts is None else float(now_ts)
@@ -1048,6 +1106,22 @@ class AsianMarketWorker(QThread):
             return False
         now = time.time() if now_ts is None else float(now_ts)
         return float(self._market_backoff_until.get(market, 0.0) or 0.0) > now
+
+    def _is_code_backoff_active(self, code: str, *, now_ts: float | None = None) -> bool:
+        normalized_code = str(code or "").strip().upper()
+        if not normalized_code:
+            return False
+        now = time.time() if now_ts is None else float(now_ts)
+        with self._backoff_lock:
+            return float(self._code_backoff_until.get(normalized_code, 0.0) or 0.0) > now
+
+    def _mark_source_payload_degraded(self) -> None:
+        with self._backoff_lock:
+            self._last_fetch_source_degraded = True
+
+    def _source_payload_degraded(self) -> bool:
+        with self._backoff_lock:
+            return bool(self._last_fetch_source_degraded)
 
     def _fetch_yahoo_enrichment(self, code: str, yf_session, *, allow_network: bool = True):
         if not allow_network:
@@ -1135,7 +1209,18 @@ class AsianMarketWorker(QThread):
                 code,
                 yf_session=yf_session,
                 allow_yfinance_fallback=_has_optional_network_budget(deadline),
+                raise_on_source_payload_error=True,
             )
+        except AsianRealtimePayloadError as exc:
+            self._mark_code_backoff(code)
+            self._mark_source_payload_degraded()
+            log.debug(
+                "[AsianTab] 替代实时源不可解析 %s: %s，已跳过单票回退并短退避 %s",
+                code,
+                exc,
+                _format_cooldown_eta(_SOURCE_PAYLOAD_CODE_BACKOFF_SEC),
+            )
+            return code, None
         except Exception as exc:
             self._handle_optional_yahoo_error(code, exc, "单票实时回退")
 
@@ -1254,10 +1339,21 @@ class AsianMarketWorker(QThread):
             return updates
         now_ts = time.time()
         self._prune_market_backoff(now_ts)
-        skipped_markets = sorted({_asian_market_suffix(code) for code in raw_codes if self._is_market_backoff_active(code, now_ts=now_ts)})
-        eligible_codes = [code for code in raw_codes if not self._is_market_backoff_active(code, now_ts=now_ts)]
+        self._prune_code_backoff(now_ts)
+        skipped_markets = sorted(
+            {_asian_market_suffix(code) for code in raw_codes if self._is_market_backoff_active(code, now_ts=now_ts)}
+        )
+        skipped_codes = sorted({code for code in raw_codes if self._is_code_backoff_active(code, now_ts=now_ts)})
+        eligible_codes = [
+            code
+            for code in raw_codes
+            if not self._is_market_backoff_active(code, now_ts=now_ts)
+            and not self._is_code_backoff_active(code, now_ts=now_ts)
+        ]
         if skipped_markets:
             log.info("[AsianTab] Skip markets in short backoff: %s", ",".join(skipped_markets))
+        if skipped_codes:
+            log.debug("[AsianTab] Skip codes in source-payload backoff: %s", ",".join(skipped_codes))
         if not eligible_codes:
             return updates
         codes = [
@@ -1273,6 +1369,8 @@ class AsianMarketWorker(QThread):
         previous_deadline = getattr(self, "_fetch_deadline_monotonic", None)
         self._fetch_deadline_monotonic = deadline
         self._last_fetch_timed_out = False
+        with self._backoff_lock:
+            self._last_fetch_source_degraded = False
         timed_out = False
         cancelled = False
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
@@ -1382,16 +1480,24 @@ class AsianMarketWorker(QThread):
                     self._clear_timeout_backoff()
                 if self._is_running and updates:
                     save_global_asian_rt_cache()
-                    defer_ui_update = getattr(self, "_last_fetch_timed_out", False) and not manual_refresh
+                    source_payload_degraded = self._source_payload_degraded()
+                    defer_ui_update = (
+                        getattr(self, "_last_fetch_timed_out", False) or source_payload_degraded
+                    ) and not manual_refresh
                     if not defer_ui_update:
                         self.result_ready.emit(updates)
                     message = (
                         f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 亚洲市场报价更新完成，获取 {len(updates)} 只"
                     )
                     if defer_ui_update:
+                        reason = (
+                            "source payload degraded"
+                            if source_payload_degraded and not getattr(self, "_last_fetch_timed_out", False)
+                            else "timed out"
+                        )
                         message = (
                             f"[{datetime.datetime.now().strftime('%H:%M:%S')}] "
-                            f"Asian market quote refresh timed out; cached {len(updates)} updates and deferred UI repaint"
+                            f"Asian market quote refresh {reason}; cached {len(updates)} updates and deferred UI repaint"
                         )
                     self.progress.emit(message)
                     log.info(f"[AsianTab] {message}")
