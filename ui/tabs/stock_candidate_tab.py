@@ -51,6 +51,7 @@ class StockCandidateTab(BaseStockTab):
         self._context_refresh_pending = False
         self._candidate_refresh_running = False
         self._candidate_refresh_pending = False
+        self._auto_refresh_connections = []
         self._init_ui()
         self.subscribe_global_quotes(self.model)
         self._auto_refresh_timer = QTimer(self)
@@ -101,11 +102,22 @@ class StockCandidateTab(BaseStockTab):
         self._prime_stock_context_snapshots(workspace)
 
     @staticmethod
-    def _prime_stock_context_snapshots(workspace) -> None:
+    def _prime_stock_context_snapshots(
+        workspace,
+        *,
+        force: bool = False,
+        include_fund: bool = True,
+        include_lhb: bool = True,
+    ) -> None:
         prime_snapshots = getattr(workspace, "prime_stock_context_snapshots", None)
         if callable(prime_snapshots):
             try:
-                prime_snapshots()
+                prime_snapshots(force=force, include_fund=include_fund, include_lhb=include_lhb)
+            except TypeError:
+                try:
+                    prime_snapshots()
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    pass
             except (AttributeError, RuntimeError, TypeError, ValueError):
                 pass
 
@@ -168,9 +180,32 @@ class StockCandidateTab(BaseStockTab):
             event_bus.sig_watchlist_changed,
         )
 
+    @staticmethod
+    def _auto_refresh_signal_specs():
+        return (
+            (event_bus.sig_cache_reload_completed, {"include_lhb": False}),
+            (event_bus.sig_na_daily_updated, {"include_lhb": False}),
+            (event_bus.sig_ai_industry_chain_updated, {"include_lhb": False}),
+            (event_bus.sig_block_trade_updated, {"include_lhb": False}),
+            (event_bus.sig_earnings_updated, {"include_lhb": False}),
+            (event_bus.sig_lhb_pool_updated, {"include_fund": False, "include_lhb": True}),
+            (event_bus.sig_scan_updated, {"include_lhb": False}),
+            (event_bus.sig_fund_holdings_updated, {"force_snapshots": True, "include_lhb": False}),
+            (
+                event_bus.sig_stock_context_snapshot_updated,
+                {"prime_snapshots": False, "include_fund": False, "include_lhb": False},
+            ),
+            (event_bus.sig_watchlist_changed, {"include_lhb": False}),
+        )
+
     def _connect_auto_refresh_events(self) -> None:
-        for signal in self._auto_refresh_signals():
-            signal.connect(self._schedule_context_refresh)
+        self._auto_refresh_connections = []
+        for signal, options in self._auto_refresh_signal_specs():
+            def _slot(*args, _options=dict(options)):
+                self._schedule_context_refresh(*args, **_options)
+
+            signal.connect(_slot)
+            self._auto_refresh_connections.append((signal, _slot))
 
     def _cleanup_runtime_state(self):
         self._context_refresh_pending = False
@@ -180,20 +215,34 @@ class StockCandidateTab(BaseStockTab):
                 timer.stop()
             except (AttributeError, RuntimeError, TypeError, ValueError):
                 pass
-        for signal in self._auto_refresh_signals():
+        for signal, slot in list(getattr(self, "_auto_refresh_connections", []) or []):
             try:
-                signal.disconnect(self._schedule_context_refresh)
+                signal.disconnect(slot)
             except (TypeError, RuntimeError):
                 pass
+        self._auto_refresh_connections = []
         super()._cleanup_runtime_state()
 
-    def _schedule_context_refresh(self, *_args) -> None:
+    def _schedule_context_refresh(
+        self,
+        *_args,
+        prime_snapshots: bool = True,
+        force_snapshots: bool = False,
+        include_fund: bool = True,
+        include_lhb: bool = True,
+    ) -> None:
+        is_current = self._is_current_workspace_tab()
+        if prime_snapshots:
+            self._prime_stock_context_snapshots(
+                self._workspace(),
+                force=force_snapshots,
+                include_fund=include_fund,
+                include_lhb=include_lhb and is_current,
+            )
         if getattr(self, "_workspace_noninteractive_loaded", False):
             self._context_refresh_pending = True
-            self._prime_stock_context_snapshots(self._workspace())
             return
-        self._prime_stock_context_snapshots(self._workspace())
-        if not self._is_current_workspace_tab():
+        if not is_current:
             self._context_refresh_pending = True
             return
         self._context_refresh_pending = False

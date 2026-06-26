@@ -224,5 +224,17 @@ class WorkspaceFacade:
             allow_lhb_cache_compute=allow_lhb_cache_compute,
         )
 
-    def prime_stock_context_snapshots(self, *, force: bool = False) -> bool:
-        return bool(self._stock_context_service.refresh_async_snapshots(force=force))
+    def prime_stock_context_snapshots(
+        self,
+        *,
+        force: bool = False,
+        include_fund: bool = True,
+        include_lhb: bool = True,
+    ) -> bool:
+        return bool(
+            self._stock_context_service.refresh_async_snapshots(
+                force=force,
+                include_fund=include_fund,
+                include_lhb=include_lhb,
+            )
+        )

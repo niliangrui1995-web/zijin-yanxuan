@@ -560,10 +560,10 @@ class ClassicWorkspace(QWidget):
 
     def _on_ai_industry_chain_source_updated(self, *_args) -> None:
         _resolve_workspace_facade(self).refresh_tabs_after_ai_industry_chain_update()
-        self.prime_stock_context_snapshots(force=True)
+        self.prime_stock_context_snapshots(force=True, include_lhb=False)
 
     def _on_fund_holdings_source_updated(self, *_args) -> None:
-        self.prime_stock_context_snapshots(force=True)
+        self.prime_stock_context_snapshots(force=True, include_lhb=False)
 
     def _start_background_tab_prewarm(self) -> None:
         if self._background_prewarm_started:
@@ -811,8 +811,18 @@ class ClassicWorkspace(QWidget):
             allow_lhb_cache_compute=allow_lhb_cache_compute,
         )
 
-    def prime_stock_context_snapshots(self, *, force: bool = False) -> bool:
-        return _resolve_workspace_facade(self).prime_stock_context_snapshots(force=force)
+    def prime_stock_context_snapshots(
+        self,
+        *,
+        force: bool = False,
+        include_fund: bool = True,
+        include_lhb: bool = True,
+    ) -> bool:
+        return _resolve_workspace_facade(self).prime_stock_context_snapshots(
+            force=force,
+            include_fund=include_fund,
+            include_lhb=include_lhb,
+        )
 
     def open_security_detail(self, code: str, context=None):
         code_text = str(code or "").strip()

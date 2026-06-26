@@ -75,6 +75,7 @@ class LhbTab(BaseStockTab):
         self._last_lhb_signature = ""
         self._ai_chain_context_map: dict[str, str] | None = None
         self._handling_lhb_pool_update = False
+        self._pending_pool_refresh = False
         self._pool_retry_timer = QTimer(self)
         self._pool_retry_timer.setSingleShot(True)
         self._pool_retry_timer.timeout.connect(self._load_and_display_pool)
@@ -99,7 +100,12 @@ class LhbTab(BaseStockTab):
     def showEvent(self, event):
         super().showEvent(event)
         if self._should_start_pool_on_show():
-            self._ensure_pool_bootstrap_started()
+            if self._pending_pool_refresh and self._pool_bootstrap_started:
+                self._pending_pool_refresh = False
+                self._load_and_display_pool(emit_event=False)
+            else:
+                self._pending_pool_refresh = False
+                self._ensure_pool_bootstrap_started()
 
     def hideEvent(self, event):
         super().hideEvent(event)
@@ -134,6 +140,13 @@ class LhbTab(BaseStockTab):
         if self._handling_lhb_pool_update:
             return
         if not self._pool_bootstrap_started:
+            return
+        try:
+            is_visible = bool(self.isVisible())
+        except RuntimeError:
+            is_visible = False
+        if not is_visible or not self._is_current_workspace_tab():
+            self._pending_pool_refresh = True
             return
         self._handling_lhb_pool_update = True
         try:

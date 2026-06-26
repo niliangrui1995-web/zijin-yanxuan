@@ -827,7 +827,13 @@ class StockContextService:
             return []
         return self._format_fund_holding_store_rows(latest_quarter_map, change_rows)
 
-    def refresh_async_snapshots(self, *, force: bool = False) -> bool:
+    def refresh_async_snapshots(
+        self,
+        *,
+        force: bool = False,
+        include_fund: bool = True,
+        include_lhb: bool = True,
+    ) -> bool:
         try:
             from app.services.ui_event_service import domain_events
             from app.services.ui_task_service import (
@@ -842,7 +848,7 @@ class StockContextService:
 
         with self._fund_rows_lock:
             already_running = already_running or self._fund_rows_loading
-            start_fund = not self._fund_rows_loading and (force or not self._fund_rows_loaded)
+            start_fund = include_fund and not self._fund_rows_loading and (force or not self._fund_rows_loaded)
             if start_fund:
                 self._fund_rows_loading = True
 
@@ -867,7 +873,7 @@ class StockContextService:
                 task_id=task_registry.workspace("stock_context_fund_rows_snapshot"),
             )
 
-        lhb_signature = self._lhb_pool_cache_signature()
+        lhb_signature = self._lhb_pool_cache_signature() if include_lhb else None
         with self._lhb_rows_lock:
             already_running = already_running or self._lhb_rows_loading
             start_lhb = (

@@ -112,6 +112,70 @@ class _SystemLogBackpressure(AbstractContextManager):
         return False
 
 
+class _UiDiagnosticFrontendGate:
+    _MIN_INTERVAL_SEC = 5.0
+    _FIELD_LABELS = (
+        ("elapsed_ms", "耗时"),
+        ("event_loop_gap_ms", "间隔"),
+        ("severity", "级别"),
+        ("tab", "前台"),
+        ("method", "方法"),
+        ("signal", "信号"),
+    )
+
+    def __init__(self, *, min_interval_sec: float | None = None):
+        self.min_interval_sec = (
+            self._MIN_INTERVAL_SEC if min_interval_sec is None else max(0.0, float(min_interval_sec))
+        )
+        self._lock = threading.Lock()
+        self._last_emit_at = 0.0
+        self._suppressed = 0
+
+    def frontend_message(self, record: logging.LogRecord) -> str | None:
+        message = record.getMessage()
+        if record.levelno >= logging.ERROR or not _SystemLogBackpressure._is_diagnostic_record(record, message):
+            return None
+
+        now = time.monotonic()
+        with self._lock:
+            if self._last_emit_at > 0 and now - self._last_emit_at < self.min_interval_sec:
+                self._suppressed += 1
+                return ""
+            suppressed = self._suppressed
+            self._suppressed = 0
+            self._last_emit_at = now
+
+        return self._format_summary(message, suppressed=suppressed)
+
+    @classmethod
+    def _format_summary(cls, message: str, *, suppressed: int) -> str:
+        fields = []
+        for key, label in cls._FIELD_LABELS:
+            value = cls._extract_field(message, key)
+            if value:
+                fields.append(f"{label}={value}")
+
+        prefix = "[UI诊断] 高频卡顿诊断"
+        if suppressed > 0:
+            prefix = f"[UI诊断] 已合并 {suppressed} 条高频卡顿诊断，最新"
+        detail = " | ".join(fields)
+        if detail:
+            return f"{prefix} | {detail} | 完整明细见文件日志"
+        return f"{prefix} | 完整明细见文件日志"
+
+    @staticmethod
+    def _extract_field(message: str, key: str) -> str:
+        prefix = f"{key}="
+        for part in str(message or "").split("|"):
+            text = part.strip()
+            if text.startswith(prefix):
+                return text[len(prefix) :].strip()
+        return ""
+
+
+_ui_diagnostic_frontend_gate = _UiDiagnosticFrontendGate()
+
+
 def system_log_backpressure(label: str, *, allowed_info_loggers: tuple[str, ...] = ()):
     return _SystemLogBackpressure(label, allowed_info_loggers=allowed_info_loggers)
 
@@ -210,7 +274,10 @@ class EventBusHandler(logging.Handler):
             backpressure = _active_system_log_backpressure()
             if backpressure is not None and backpressure.should_suppress(record):
                 return
-            msg = self.format(record)
+            frontend_msg = _ui_diagnostic_frontend_gate.frontend_message(record)
+            if frontend_msg == "":
+                return
+            msg = frontend_msg if frontend_msg is not None else self.format(record)
             level = record.levelname.lower()
             if level == "warning":
                 level = "warn"

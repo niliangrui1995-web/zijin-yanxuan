@@ -3,6 +3,7 @@ import datetime as dt
 from types import SimpleNamespace
 
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QShowEvent
 from PyQt6.QtTest import QSignalSpy
 
 import ui.tabs.lhb_tab as lhb_tab_module
@@ -153,6 +154,40 @@ def test_lhb_can_defer_pool_bootstrap_until_first_show(monkeypatch):
         assert calls == []
         tab._ensure_pool_bootstrap_started()
         assert calls == ["load"]
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_pool_update_hidden_tab_defers_background_reload(monkeypatch):
+    monkeypatch.setattr(
+        lhb_tab_module.task_manager,
+        "run_in_background",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("hidden tab should not submit reload")),
+    )
+    tab = LhbTab(object(), autoload_pool=False)
+    tab._pool_bootstrap_started = True
+    tab._is_current_workspace_tab = lambda: False
+    try:
+        tab._on_lhb_pool_updated()
+
+        assert tab._pending_pool_refresh is True
+        assert tab._pool_load_in_progress is False
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_show_event_consumes_pending_pool_refresh(monkeypatch):
+    tab = LhbTab(object(), autoload_pool=False)
+    loads = []
+    tab._pool_bootstrap_started = True
+    tab._pending_pool_refresh = True
+    tab._is_current_workspace_tab = lambda: True
+    tab._load_and_display_pool = lambda **kwargs: loads.append(dict(kwargs))
+    try:
+        tab.showEvent(QShowEvent())
+
+        assert tab._pending_pool_refresh is False
+        assert loads == [{"emit_event": False}]
     finally:
         tab.deleteLater()
 

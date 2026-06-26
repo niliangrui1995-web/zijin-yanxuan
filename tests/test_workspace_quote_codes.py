@@ -633,6 +633,31 @@ def test_workspace_collect_stock_context_schedules_lhb_snapshot_without_blocking
     assert scheduled == [False]
 
 
+def test_stock_context_snapshot_refresh_can_skip_lhb_cache_compute(monkeypatch):
+    monkeypatch.setattr(
+        StockContextService,
+        "_load_lhb_pool_rows",
+        lambda self: (_ for _ in ()).throw(AssertionError("LHB snapshot should be skipped")),
+    )
+    workspace = SimpleNamespace(engine=None)
+    service = StockContextService(workspace)
+    service._fund_rows_loaded = True
+    monkeypatch.setattr(service, "_lhb_pool_cache_signature", lambda: ("cache", 1, 2))
+
+    assert service.refresh_async_snapshots(include_lhb=False) is False
+
+
+def test_workspace_fund_holding_update_primes_only_fund_snapshot():
+    calls = []
+    workspace = SimpleNamespace(
+        prime_stock_context_snapshots=lambda **kwargs: calls.append(dict(kwargs)) or True,
+    )
+
+    ClassicWorkspace._on_fund_holdings_source_updated(workspace)
+
+    assert calls == [{"force": True, "include_lhb": False}]
+
+
 def test_workspace_collects_fund_holding_context_from_snapshot_without_open_tab(monkeypatch):
     monkeypatch.setattr(
         StockContextService,
