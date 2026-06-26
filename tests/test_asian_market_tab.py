@@ -1385,3 +1385,80 @@ def test_asian_worker_pause_message_does_not_override_active_cache_sync():
     asian_module.AsianMarketTab._on_worker_progress(tab, "亚洲市场后台刷新已暂停，等待缓存同步完成")
 
     assert tab.status_calls == []
+
+
+@pytest.mark.parametrize(
+    ("message", "expected_primary", "expected_freshness"),
+    [
+        (
+            "[15:41:16] Asian market quote refresh timed out; cached 26 updates and deferred UI repaint",
+            "刷新超时降级",
+            "超时降级",
+        ),
+        (
+            "[15:41:16] Asian market quote refresh source payload degraded; cached 8 updates and deferred UI repaint",
+            "替代源降级",
+            "替代源降级",
+        ),
+    ],
+)
+def test_asian_worker_deferred_repaint_message_marks_cache_degraded(message, expected_primary, expected_freshness):
+    class _TableState:
+        def __init__(self):
+            self.calls = []
+
+        def show_table(self):
+            self.calls.append("show_table")
+
+    class _DummyTab:
+        def __init__(self):
+            self.row_data = [{"代码": "0522.HK"}]
+            self.runtime_state = None
+            self.status_calls = []
+            self.table_state = _TableState()
+
+        def _set_runtime_state(self, state):
+            self.runtime_state = state
+
+        def _set_asian_status(self, primary, *segments, freshness="", next_step=""):
+            self.status_calls.append((primary, segments, freshness, next_step))
+
+    tab = _DummyTab()
+
+    asian_module.AsianMarketTab._on_worker_progress(tab, message)
+
+    primary, segments, freshness, next_step = tab.status_calls[-1]
+    assert asian_runtime.runtime_state_text("degraded") == "降级"
+    assert tab.runtime_state == "degraded"
+    assert primary == expected_primary
+    assert freshness == expected_freshness
+    assert next_step == "等待短暂退避后自动重试"
+    assert "当前表格沿用可用缓存" in segments
+    assert any("已缓存" in segment and "只部分更新" in segment for segment in segments)
+    assert tab.table_state.calls == ["show_table"]
+
+
+def test_asian_worker_short_degrade_message_keeps_cache_status():
+    class _DummyTab:
+        def __init__(self):
+            self.row_data = [{"代码": "0522.HK"}]
+            self.runtime_state = None
+            self.status_calls = []
+
+        def _set_runtime_state(self, state):
+            self.runtime_state = state
+
+        def _set_asian_status(self, primary, *segments, freshness="", next_step=""):
+            self.status_calls.append((primary, segments, freshness, next_step))
+
+    tab = _DummyTab()
+
+    asian_module.AsianMarketTab._on_worker_progress(tab, "亚洲市场后台刷新已短暂降级，约 30 分钟 后重试")
+
+    assert tab.runtime_state == "degraded"
+    assert tab.status_calls[-1] == (
+        "刷新短暂降级",
+        ("亚洲市场后台刷新已短暂降级，约 30 分钟 后重试", "当前表格沿用可用缓存"),
+        "超时降级",
+        "等待自动重试",
+    )

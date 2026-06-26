@@ -2,6 +2,7 @@
 import datetime
 import json
 import os
+import re
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
@@ -68,6 +69,7 @@ from ui.tabs.base_stock_tab import BaseStockTab
 log = get_logger(__name__)
 _ASIAN_MARKET_LOCAL_CACHE_TASK = task_registry.workspace("asian_market_local_cache")
 ASIAN_PINNED_CODES_SETTINGS_KEY = "pinned_codes_v1"
+_DEFERRED_REPAINT_COUNT_RE = re.compile(r"cached\s+(\d+)\s+updates", re.IGNORECASE)
 
 
 def _safe_float(value) -> float:
@@ -79,6 +81,29 @@ def _safe_float(value) -> float:
 
 def _round_pct(value) -> float:
     return round(_safe_float(value), 2)
+
+
+def _parse_deferred_repaint_message(message: str) -> tuple[str, str, str, str] | None:
+    text = str(message or "").strip()
+    lower_text = text.lower()
+    if "deferred ui repaint" not in lower_text or "cached" not in lower_text:
+        return None
+
+    match = _DEFERRED_REPAINT_COUNT_RE.search(text)
+    cached_segment = f"已缓存 {match.group(1)} 只部分更新" if match else "已缓存部分更新"
+    if "source payload degraded" in lower_text:
+        return (
+            "替代源降级",
+            "替代实时源返回异常，本轮未强制刷新表格",
+            cached_segment,
+            "替代源降级",
+        )
+    return (
+        "刷新超时降级",
+        "本轮达到时间预算，未强制刷新表格",
+        cached_segment,
+        "超时降级",
+    )
 
 
 def _normalize_asian_pinned_codes(value) -> list[str]:
@@ -749,6 +774,47 @@ class AsianMarketTab(BaseStockTab):
     def _on_worker_progress(self, message: str):
         text = str(message or "").strip()
         if not text:
+            return
+
+        deferred_repaint = _parse_deferred_repaint_message(text)
+        if deferred_repaint is not None:
+            primary, reason_segment, cached_segment, freshness = deferred_repaint
+            cache_hint = "当前表格沿用可用缓存" if getattr(self, "row_data", None) else "当前没有可展示缓存"
+            self._set_runtime_state("degraded")
+            self._set_asian_status(
+                primary,
+                reason_segment,
+                cached_segment,
+                cache_hint,
+                freshness=freshness,
+                next_step="等待短暂退避后自动重试",
+            )
+            if hasattr(self, "table_state"):
+                if self.row_data:
+                    self.table_state.show_table()
+                else:
+                    self.table_state.show_error(
+                        "亚洲报价刷新降级",
+                        reason_segment,
+                        meta="当前没有可展示的本地缓存。",
+                        action_text="立即重试",
+                        action_callback=self._on_manual_refresh,
+                    )
+            return
+
+        lower_text = text.lower()
+        if "后台刷新已短暂降级" in text or "low time budget" in lower_text or "timeout degraded markets" in lower_text:
+            cache_hint = "当前表格沿用可用缓存" if getattr(self, "row_data", None) else "当前没有可展示缓存"
+            self._set_runtime_state("degraded")
+            self._set_asian_status(
+                "刷新短暂降级",
+                text,
+                cache_hint,
+                freshness="超时降级",
+                next_step="等待自动重试",
+            )
+            if hasattr(self, "table_state") and getattr(self, "row_data", None):
+                self.table_state.show_table()
             return
 
         if "等待缓存同步完成" in text:

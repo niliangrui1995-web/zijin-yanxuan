@@ -16,6 +16,13 @@ from core.runtime_paths import PROJECT_ROOT, RPS_CACHE_FILE, SECTOR_RPS_CACHE_FI
 log = get_logger(__name__)
 
 
+def _should_emit_ui_status(msg: str) -> bool:
+    text = str(msg or "").strip()
+    if not text:
+        return False
+    return set(text) != {"="}
+
+
 def _get_memory_usage_mb() -> float:
     """获取当前进程内存占用(MB)。psutil 是可选依赖，没装则返回 -1"""
     try:
@@ -27,7 +34,7 @@ def _get_memory_usage_mb() -> float:
 
 
 def _emit_status(set_status_callback, msg: str) -> None:
-    if set_status_callback:
+    if set_status_callback and _should_emit_ui_status(msg):
         set_status_callback(msg)
 
 

@@ -13,6 +13,9 @@ def test_central_quote_poller_builds_enriched_payload_with_finance_gap():
         def get_realtime_runtime_stats(self):
             return {"consecutive_failures": 0}
 
+        def get_quote_request_stats(self):
+            return {"recent_requested_count": 1, "recent_status": "network_ok"}
+
     poller = CentralQuotePoller(
         DummyProvider(),
         missing_finance_codes=lambda codes: sorted(codes),
@@ -23,6 +26,7 @@ def test_central_quote_poller_builds_enriched_payload_with_finance_gap():
 
     assert payload["finance_data"]["000001"]["zongguben"] == 1_000_000_000
     assert payload["provider_stats"] == {"consecutive_failures": 0}
+    assert payload["quote_request_stats"] == {"recent_requested_count": 1, "recent_status": "network_ok"}
     assert payload["quotes"]["000001"]["market_cap"] == 10_500_000_000
 
 

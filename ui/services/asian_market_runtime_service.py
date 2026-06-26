@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import re
 import time
 
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -22,6 +23,7 @@ from ui.tabs.asian_market_workers import (
 )
 
 log = get_logger(__name__)
+_DEFERRED_REPAINT_COUNT_RE = re.compile(r"cached\s+(\d+)\s+updates", re.IGNORECASE)
 
 
 def _safe_float(value) -> float:
@@ -33,6 +35,24 @@ def _safe_float(value) -> float:
 
 def _round_pct(value) -> float:
     return round(_safe_float(value), 2)
+
+
+def _runtime_degraded_progress_message(message: str) -> str:
+    text = str(message or "").strip()
+    if not text:
+        return ""
+
+    lower_text = text.lower()
+    if "deferred ui repaint" in lower_text and "cached" in lower_text:
+        match = _DEFERRED_REPAINT_COUNT_RE.search(text)
+        cached_segment = f"已缓存 {match.group(1)} 只部分更新" if match else "已缓存部分更新"
+        reason = "替代源降级" if "source payload degraded" in lower_text else "超时降级"
+        return f"{reason}，{cached_segment}，当前界面沿用现有表格"
+
+    if "短暂降级" in text or "low time budget" in lower_text or "timeout degraded markets" in lower_text:
+        return text
+
+    return ""
 
 
 class AsianMarketRuntimeService(QObject):
@@ -156,7 +176,7 @@ class AsianMarketRuntimeService(QObject):
 
         worker = self._worker_factory(self.target_codes())
         self._worker = worker
-        worker.progress.connect(self.sig_progress.emit)
+        worker.progress.connect(self._on_worker_progress)
         worker.result_ready.connect(self._on_rt_update)
         worker.finished.connect(self._on_worker_finished)
         return worker
@@ -257,6 +277,20 @@ class AsianMarketRuntimeService(QObject):
         self._worker = None
         if self._runtime_state != "manual_refresh_once":
             self._set_runtime_state("idle")
+
+    def _on_worker_progress(self, message: str) -> None:
+        text = str(message or "").strip()
+        if not text:
+            return
+
+        degraded_message = _runtime_degraded_progress_message(text)
+        if degraded_message:
+            self._last_error = ""
+            self._set_runtime_state("degraded", degraded_message)
+        elif "正在拉取亚洲市场最新报价" in text and self._runtime_state in {"degraded", "deferred"}:
+            self._set_runtime_state("running")
+
+        self.sig_progress.emit(text)
 
     def _on_rt_update(self, updates: dict) -> None:
         if not updates:

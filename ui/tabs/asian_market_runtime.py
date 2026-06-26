@@ -28,6 +28,8 @@ def runtime_state_text(state: str) -> str:
         "running": "运行",
         "paused_for_cache_sync": "暂停",
         "manual_refresh_once": "手动单次",
+        "deferred": "延后",
+        "degraded": "降级",
     }
     return mapping.get(state, state)
 

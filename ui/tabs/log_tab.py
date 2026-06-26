@@ -34,7 +34,15 @@ class LogTab(QWidget):
         super().__init__(parent)
         self._log_history = []
         self._visible_log_count = 0
+        self._hidden_diagnostic_count_cache = 0
+        self._hidden_diagnostic_cache_len = 0
         self._refresh_from_history_pending = False
+        self._history_refresh_scheduled = False
+        self._history_rebuild_entries = []
+        self._history_refresh_token = 0
+        self._history_refresh_batch_max = 96
+        self._history_refresh_delay_ms = 250
+        self._history_refresh_interval_ms = 25
         self._init_ui()
         self._setup_log_redirect()
         event_bus.sig_system_log.connect(self._on_log_msg, type=Qt.ConnectionType.QueuedConnection)
@@ -150,8 +158,7 @@ class LogTab(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         if self._refresh_from_history_pending:
-            self._refresh_from_history_pending = False
-            self._apply_log_filter()
+            self._schedule_history_refresh()
         else:
             self._refresh_status_summary()
 
@@ -159,7 +166,12 @@ class LogTab(QWidget):
         self._log_buffer.clear()
         self._log_history.clear()
         self._visible_log_count = 0
+        self._hidden_diagnostic_count_cache = 0
+        self._hidden_diagnostic_cache_len = 0
         self._log_status_refresh_pending = False
+        self._history_rebuild_entries.clear()
+        self._history_refresh_scheduled = False
+        self._history_refresh_token += 1
         self.log_text.clear()
         self._refresh_status_summary(0)
 
@@ -200,10 +212,27 @@ class LogTab(QWidget):
             return 0
 
         selected_levels = self.level_filter.selected_values() if hasattr(self, "level_filter") else set()
+        history = getattr(self, "_log_history", []) or []
+        if not selected_levels and self._hidden_diagnostic_cache_len == len(history):
+            return int(getattr(self, "_hidden_diagnostic_count_cache", 0) or 0)
+
+        count = self._compute_hidden_diagnostic_count(history, selected_levels)
+        if not selected_levels:
+            self._hidden_diagnostic_count_cache = count
+            self._hidden_diagnostic_cache_len = len(history)
+        return count
+
+    @classmethod
+    def _is_hidden_diagnostic_entry(cls, level, text) -> bool:
+        normalized = cls._normalize_level(level)
+        return normalized != "error" and cls._is_diagnostic_log(text)
+
+    @classmethod
+    def _compute_hidden_diagnostic_count(cls, entries, selected_levels: set[str]) -> int:
         count = 0
-        for level, text in getattr(self, "_log_history", []) or []:
-            normalized = self._normalize_level(level)
-            if normalized == "error" or not self._is_diagnostic_log(text):
+        for level, text in entries or []:
+            normalized = cls._normalize_level(level)
+            if normalized == "error" or not cls._is_diagnostic_log(text):
                 continue
             if selected_levels and normalized not in selected_levels:
                 continue
@@ -429,15 +458,32 @@ class LogTab(QWidget):
             self._log_buffer.append((level, text))
         else:
             self._log_status_refresh_pending = True
+        cache_in_sync = self._hidden_diagnostic_cache_len == len(self._log_history)
         self._log_history.append((level, text))
+        if cache_in_sync:
+            if self._is_hidden_diagnostic_entry(level, text):
+                self._hidden_diagnostic_count_cache += 1
+            self._hidden_diagnostic_cache_len += 1
+        else:
+            self._hidden_diagnostic_cache_len = -1
         if len(self._log_history) > self._log_buffer_max:
             overflow = len(self._log_history) - self._log_buffer_max
+            removed_entries = self._log_history[:overflow]
             del self._log_history[:overflow]
+            if cache_in_sync:
+                removed_hidden = self._compute_hidden_diagnostic_count(removed_entries, set())
+                self._hidden_diagnostic_count_cache = max(0, self._hidden_diagnostic_count_cache - removed_hidden)
+                self._hidden_diagnostic_cache_len = len(self._log_history)
+            else:
+                self._hidden_diagnostic_cache_len = -1
         if len(self._log_buffer) > self._log_buffer_max:
             overflow = len(self._log_buffer) - self._log_buffer_max
             del self._log_buffer[:overflow]
 
     def _apply_log_filter(self):
+        self._history_rebuild_entries.clear()
+        self._history_refresh_scheduled = False
+        self._history_refresh_token += 1
         self._refresh_level_filter_button_text()
         self._log_buffer.clear()
         self._log_status_refresh_pending = False
@@ -445,7 +491,61 @@ class LogTab(QWidget):
         self._append_log_entries(filtered_entries, clear_existing=True)
         self._refresh_status_summary(self._visible_log_count)
 
+    def _schedule_history_refresh(self, delay_ms: int | None = None):
+        if self._history_refresh_scheduled:
+            return
+        self._history_refresh_scheduled = True
+        self._history_refresh_token += 1
+        token = self._history_refresh_token
+        delay = self._history_refresh_delay_ms if delay_ms is None else delay_ms
+        QTimer.singleShot(max(0, int(delay)), lambda token=token: self._start_history_refresh(token))
+
+    def _start_history_refresh(self, token: int | None = None):
+        if token is not None and token != self._history_refresh_token:
+            return
+        self._history_refresh_scheduled = False
+        if not self.isVisible():
+            self._refresh_from_history_pending = True
+            return
+
+        self._refresh_from_history_pending = False
+        self._refresh_level_filter_button_text()
+        self._log_buffer.clear()
+        self._log_status_refresh_pending = False
+        self.log_text.clear()
+        self._visible_log_count = 0
+        self._history_rebuild_entries = list(self._filtered_entries())
+        if not self._history_rebuild_entries:
+            self._refresh_status_summary(0)
+            return
+        self._drain_history_refresh()
+
+    def _drain_history_refresh(self):
+        if not self.isVisible():
+            self._history_rebuild_entries.clear()
+            self._refresh_from_history_pending = True
+            return
+
+        batch_size = max(1, int(getattr(self, "_history_refresh_batch_max", 96) or 96))
+        pending_entries = self._history_rebuild_entries[:batch_size]
+        del self._history_rebuild_entries[: len(pending_entries)]
+        self._append_log_entries(
+            pending_entries,
+            clear_existing=False,
+            auto_scroll=not self._history_rebuild_entries and not self._log_buffer,
+        )
+        if self._history_rebuild_entries:
+            QTimer.singleShot(max(0, int(self._history_refresh_interval_ms)), self._drain_history_refresh)
+            return
+
+        self._refresh_status_summary(self._visible_log_count)
+        if self._log_buffer:
+            QTimer.singleShot(0, self._flush_log_buffer)
+
     def _flush_log_buffer(self):
+        if self._history_refresh_scheduled or self._history_rebuild_entries:
+            return
+
         if not self._log_buffer:
             if self._log_status_refresh_pending:
                 if not self.isVisible():

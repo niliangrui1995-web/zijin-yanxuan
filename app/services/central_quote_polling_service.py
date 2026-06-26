@@ -66,6 +66,7 @@ class CentralQuotePoller:
 
     def fetch_payload(self, codes: set[str]) -> dict:
         quotes = self.data_provider.fetch_realtime_quotes_batch(list(codes))
+        quote_request_stats = self.get_quote_request_stats()
         finance_data = {}
 
         finance_codes = self.missing_finance_codes(codes)
@@ -79,6 +80,7 @@ class CentralQuotePoller:
             "quotes": self._quote_enricher(quotes, finance_data),
             "finance_data": finance_data,
             "provider_stats": self.get_runtime_stats(),
+            "quote_request_stats": quote_request_stats,
         }
 
     def get_runtime_stats(self) -> dict:
@@ -89,6 +91,16 @@ class CentralQuotePoller:
                 return stats if isinstance(stats, dict) else {}
             except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
                 log.debug(f"[报价站] 读取运行态统计失败: {exc}")
+        return {}
+
+    def get_quote_request_stats(self) -> dict:
+        stats_getter = getattr(self.data_provider, "get_quote_request_stats", None)
+        if callable(stats_getter):
+            try:
+                stats = stats_getter() or {}
+                return stats if isinstance(stats, dict) else {}
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                log.debug(f"[报价站] 读取报价请求统计失败: {exc}")
         return {}
 
     def compact_runtime_caches(self) -> dict:

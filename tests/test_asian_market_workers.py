@@ -666,6 +666,21 @@ def test_runtime_service_defer_prevents_auto_worker_start(monkeypatch):
     assert created[0].calls == ["resume", "start"]
 
 
+def test_runtime_service_marks_deferred_repaint_progress_degraded():
+    service = runtime_service.AsianMarketRuntimeService()
+    state_spy = QSignalSpy(service.sig_runtime_state_changed)
+    progress_spy = QSignalSpy(service.sig_progress)
+
+    service._on_worker_progress(
+        "[15:41:16] Asian market quote refresh timed out; cached 26 updates and deferred UI repaint"
+    )
+
+    assert service.runtime_state == "degraded"
+    assert progress_spy[0][0].endswith("deferred UI repaint")
+    assert state_spy[-1][0]["state"] == "degraded"
+    assert "已缓存 26 只部分更新" in state_spy[-1][0]["message"]
+
+
 def test_runtime_cache_sync_degrades_without_raising(monkeypatch):
     message = "亚洲 K 线缓存同步失败，仍缺失 1 只(2308.TW)，未覆盖现有缓存"
     service = runtime_service.AsianMarketRuntimeService()

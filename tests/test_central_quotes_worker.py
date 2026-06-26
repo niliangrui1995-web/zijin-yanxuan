@@ -656,6 +656,148 @@ def test_central_quotes_service_limits_recent_fallback_pressure_after_cooldown(m
         main_window.deleteLater()
 
 
+def test_central_quotes_service_uses_own_pressure_stats_when_scan_recent_overwrites_provider(monkeypatch):
+    _ = QApplication.instance() or QApplication([])
+    main_window = QWidget()
+
+    from ui.workers import central_quotes_worker as worker_module
+
+    now = 1_800_000_000.0
+    codes = {f"{idx:06d}" for idx in range(1, 8)}
+    scan_recent_stats = {
+        "recent_requested_count": 38,
+        "recent_pending_count": 1,
+        "recent_cache_hit_count": 37,
+        "recent_elapsed_ms": 320.0,
+        "recent_source_layers": ["runtime_cache"],
+        "recent_status": "network_ok",
+        "recent_ended_at_ts": now - 5,
+    }
+    central_pressure_stats = {
+        "recent_requested_count": 168,
+        "recent_pending_count": 168,
+        "recent_cache_hit_count": 0,
+        "recent_elapsed_ms": 11559.0,
+        "recent_source_layers": ["sina"],
+        "recent_status": "network_ok",
+        "recent_ended_at_ts": now - 20,
+    }
+
+    class DummyProvider:
+        def __init__(self):
+            self.calls = []
+            self._rt_api_call_timeout_sec = 1.0
+            self._rt_quote_batch_size = 20
+            self._rt_eastmoney_cooldown_until = now - 1
+
+        def fetch_realtime_quotes_batch(self, fetch_codes):
+            ordered = tuple(sorted(fetch_codes))
+            self.calls.append(ordered)
+            return {
+                code: {"close": 10.0, "last_close": 9.8, "source": "sina"}
+                for code in ordered
+            }
+
+        def is_online(self):
+            return True
+
+        def compact_runtime_caches(self):
+            return {
+                "rt_quote_cache_size": 169,
+                "history_symbol_count": 5163,
+                "rt_runtime": {"worker_alive": False},
+            }
+
+        def get_realtime_runtime_stats(self):
+            return {"worker_alive": False}
+
+        def get_quote_request_stats(self):
+            return scan_recent_stats
+
+        def protect_against_thread_anomaly(self, _count):
+            return False
+
+    provider = DummyProvider()
+    service = CentralQuotesService(main_window, provider, code_supplier=lambda: codes)
+    service._last_central_quote_request_stats = central_pressure_stats
+
+    def _run_immediately(fn, on_success=None, on_error=None, task_id=None):
+        del on_error, task_id
+        if on_success is not None:
+            on_success(fn())
+
+    monkeypatch.setattr(worker_module, "_FALLBACK_PRESSURE_FETCH_LIMIT", 3)
+    monkeypatch.setattr(worker_module.time, "time", lambda: now)
+    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", staticmethod(lambda *args, **kwargs: True))
+    monkeypatch.setattr(MarketCalendar, "get_market_status", classmethod(lambda cls, market="CN": "收盘集合竞价"))
+    monkeypatch.setattr(worker_module.task_manager, "run_in_background", _run_immediately)
+    global_store.reset_runtime_state()
+
+    try:
+        service._trigger_fetch()
+
+        assert provider.calls == [("000001", "000002", "000003")]
+    finally:
+        global_store.reset_runtime_state()
+        service.shutdown()
+        service.deleteLater()
+        main_window.deleteLater()
+
+
+def test_central_quotes_service_heartbeat_counts_eastmoney_quote_cooldown(monkeypatch):
+    _ = QApplication.instance() or QApplication([])
+    main_window = QWidget()
+
+    from ui.workers import central_quotes_worker as worker_module
+
+    now = 1_800_000_000.0
+
+    class DummyProvider:
+        _rt_eastmoney_cooldown_until = now + 90
+
+        def compact_runtime_caches(self):
+            return {
+                "rt_quote_cache_size": 169,
+                "history_symbol_count": 5163,
+                "rt_runtime": {
+                    "inflight": 0,
+                    "last_success_at": now - 20,
+                    "consecutive_failures": 0,
+                    "reconnect_count": 0,
+                    "cooldown_until": 0,
+                    "worker_alive": False,
+                },
+            }
+
+        def protect_against_thread_anomaly(self, _count):
+            return False
+
+    messages = []
+    service = CentralQuotesService(main_window, DummyProvider(), code_supplier=lambda: {"000001"})
+    monkeypatch.setattr(worker_module.time, "time", lambda: now)
+    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", staticmethod(lambda *args, **kwargs: True))
+    monkeypatch.setattr(MarketCalendar, "get_market_status", classmethod(lambda cls, market="CN": "收盘集合竞价"))
+    monkeypatch.setattr(service, "_collect_thread_health", lambda: (5, 0))
+    monkeypatch.setattr(worker_module.log, "info", lambda message: messages.append(str(message)))
+
+    try:
+        service._tick_count = service._heartbeat_every_ticks
+        service._run_maintenance(
+            active_codes_count=168,
+            quote_refreshable=True,
+            market_status="收盘集合竞价",
+        )
+
+        heartbeat = next(message for message in messages if "[报价站] 心跳" in message)
+        assert "冷却剩余=90s" in heartbeat
+        assert "状态=cooldown" in heartbeat
+        assert "市场=收盘集合竞价" in heartbeat
+    finally:
+        service.shutdown()
+        service.deleteLater()
+        main_window.deleteLater()
+
+
 def test_central_quotes_service_heartbeat_marks_opening_warmup_without_dead_thread(monkeypatch):
     _ = QApplication.instance() or QApplication([])
     main_window = QWidget()

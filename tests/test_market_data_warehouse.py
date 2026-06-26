@@ -545,6 +545,16 @@ def test_f5_stage1_progress_updates_status_under_system_log_backpressure(monkeyp
     assert done and done[0][0] == 2000
 
 
+def test_f5_ui_status_skips_separator_noise():
+    messages = []
+
+    rps_precomputer_module._emit_status(messages.append, "\n" + "=" * 60)
+    rps_precomputer_module._emit_status(messages.append, "[F5] 盘后一键预计算 -- 开始")
+    rps_precomputer_module._emit_status(messages.append, "=" * 60)
+
+    assert messages == ["[F5] 盘后一键预计算 -- 开始"]
+
+
 def test_f5_stage1_progress_throttles_dense_status_updates():
     messages = []
     progress_state = {}

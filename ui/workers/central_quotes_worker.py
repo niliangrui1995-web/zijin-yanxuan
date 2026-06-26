@@ -64,6 +64,7 @@ class CentralQuotesService(QObject):
         self._fallback_pressure_signature: tuple[str, ...] = ()
         self._fallback_pressure_cursor = 0
         self._last_fallback_pressure_log_at = 0.0
+        self._last_central_quote_request_stats: dict = {}
 
         self._consecutive_failures = 0
         self._circuit_breaker_cooldown = 0
@@ -328,12 +329,16 @@ class CentralQuotesService(QObject):
             return {}
         return stats if isinstance(stats, dict) else {}
 
-    def _recent_quote_fallback_pressure(self, *, now: float | None = None) -> tuple[bool, str]:
-        stats = self._get_quote_request_stats()
-        if not stats:
+    def _quote_stats_fallback_pressure(
+        self,
+        stats: dict,
+        *,
+        now: float,
+        label: str,
+    ) -> tuple[bool, str]:
+        if not isinstance(stats, dict) or not stats:
             return False, ""
 
-        now = time.time() if now is None else float(now)
         requested = self._stats_int(stats, "recent_requested_count")
         pending = self._stats_int(stats, "recent_pending_count")
         cache_hits = self._stats_int(stats, "recent_cache_hit_count")
@@ -358,7 +363,19 @@ class CentralQuotesService(QObject):
             return False, ""
 
         layer_text = "/".join(source_layers) if source_layers else status or "fallback"
-        return True, f"recent fallback pressure pending={pending}/{requested} cache={cache_hits} source={layer_text}"
+        return True, f"{label} fallback pressure pending={pending}/{requested} cache={cache_hits} source={layer_text}"
+
+    def _recent_quote_fallback_pressure(self, *, now: float | None = None) -> tuple[bool, str]:
+        now = time.time() if now is None else float(now)
+        candidates = (
+            ("central", self._last_central_quote_request_stats),
+            ("provider", self._get_quote_request_stats()),
+        )
+        for label, stats in candidates:
+            pressure, reason = self._quote_stats_fallback_pressure(stats, now=now, label=label)
+            if pressure:
+                return True, reason
+        return False, ""
 
     def _quote_fallback_cooldown_left(self, provider_stats: dict | None = None, *, now: float | None = None) -> int:
         now = time.time() if now is None else float(now)
@@ -439,9 +456,12 @@ class CentralQuotesService(QObject):
         runtime_stats = stats.get("rt_runtime", {}) if isinstance(stats, dict) else {}
         last_success_at = float(runtime_stats.get("last_success_at") or 0)
         last_success_text = time.strftime("%H:%M:%S", time.localtime(last_success_at)) if last_success_at > 0 else "-"
-        cooldown_until = float(runtime_stats.get("cooldown_until") or 0)
         now_ts = time.time()
-        cooldown_left = max(0, int(cooldown_until - now_ts))
+        runtime_cooldown_until = float(runtime_stats.get("cooldown_until") or 0)
+        cooldown_left = max(
+            max(0, int(runtime_cooldown_until - now_ts)),
+            self._quote_fallback_cooldown_left(runtime_stats, now=now_ts),
+        )
         if quote_refreshable is None:
             quote_refreshable = MarketCalendar.is_quote_refresh_time()
         rt_quote_cache_size = stats.get("rt_quote_cache_size", 0) if isinstance(stats, dict) else 0
@@ -630,6 +650,10 @@ class CentralQuotesService(QObject):
             payload = payload or {}
             quotes = payload.get("quotes") or {}
             provider_stats = payload.get("provider_stats") or {}
+            quote_request_stats = payload.get("quote_request_stats") or {}
+            self._last_central_quote_request_stats = (
+                dict(quote_request_stats) if isinstance(quote_request_stats, dict) else {}
+            )
             cooldown_until = float(provider_stats.get("cooldown_until") or 0)
             has_valid = any(float(quote.get("close", 0) or 0) > 0 for quote in quotes.values())
             has_live_source = any(

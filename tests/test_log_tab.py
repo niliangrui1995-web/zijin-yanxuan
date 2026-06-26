@@ -10,6 +10,8 @@ def test_log_tab_skips_hidden_flush_and_recovers_from_history():
     app = QApplication.instance()
     tab = LogTab()
     try:
+        tab._history_refresh_delay_ms = 0
+        tab._history_refresh_interval_ms = 0
         tab._on_log_msg("info", "hello world\n")
         tab._flush_log_buffer()
 
@@ -17,6 +19,7 @@ def test_log_tab_skips_hidden_flush_and_recovers_from_history():
         assert tab._refresh_from_history_pending is True
 
         tab.show()
+        app.processEvents()
         app.processEvents()
 
         assert "hello world" in tab.log_text.toPlainText()
@@ -78,6 +81,75 @@ def test_log_tab_status_summary_uses_rendered_count_without_refiltering(monkeypa
         tab._refresh_status_summary()
 
         assert "7" in tab.lbl_status.text()
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_log_tab_show_rebuilds_history_in_bounded_batches():
+    app = QApplication.instance()
+    tab = LogTab()
+    try:
+        tab._history_refresh_delay_ms = 0
+        tab._history_refresh_interval_ms = 0
+        tab._history_refresh_batch_max = 2
+        tab._log_history = [
+            ("info", "first\n"),
+            ("info", "second\n"),
+            ("info", "third\n"),
+        ]
+        tab._refresh_from_history_pending = True
+
+        tab.show()
+        app.processEvents()
+
+        visible_text = tab.log_text.toPlainText()
+        assert "first" in visible_text
+        assert "second" in visible_text
+        assert "third" not in visible_text
+        assert tab._history_rebuild_entries
+
+        app.processEvents()
+
+        assert "third" in tab.log_text.toPlainText()
+        assert tab._history_rebuild_entries == []
+        assert tab._visible_log_count == 3
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_log_tab_ignores_stale_deferred_history_refresh():
+    tab = LogTab()
+    try:
+        tab._log_history = [("info", "old\n")]
+        tab._refresh_from_history_pending = True
+        tab._schedule_history_refresh(delay_ms=100)
+        stale_token = tab._history_refresh_token
+
+        tab._history_refresh_token += 1
+        tab._log_history = [("info", "new\n")]
+        tab._start_history_refresh(stale_token)
+
+        assert tab.log_text.toPlainText() == ""
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_log_tab_hidden_diagnostic_count_uses_cache(monkeypatch):
+    tab = LogTab()
+    try:
+        tab._on_log_msg("warn", "[event] ui.stall.event_loop | tab=system_log\n")
+        tab._on_log_msg("info", "normal\n")
+
+        monkeypatch.setattr(
+            LogTab,
+            "_is_diagnostic_log",
+            classmethod(lambda cls, text: (_ for _ in ()).throw(AssertionError("should use cache"))),
+        )
+
+        assert tab._hidden_diagnostic_count() == 1
     finally:
         tab.shutdown()
         tab.deleteLater()
