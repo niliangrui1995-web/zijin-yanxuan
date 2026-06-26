@@ -83,6 +83,11 @@ class BackgroundJobRunner:
         return None
 
     @property
+    def is_shutting_down(self) -> bool:
+        manager = self._resolve_manager()
+        return bool(getattr(manager, "is_shutting_down", False))
+
+    @property
     def active_count(self) -> int:
         manager = self._resolve_manager()
         return int(getattr(manager, "active_count", 0) or 0)

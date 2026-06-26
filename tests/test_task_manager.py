@@ -43,6 +43,7 @@ def test_task_manager_dedupes_same_task_id():
 def test_task_manager_rejects_new_tasks_during_shutdown():
     task_manager.cancel_all()
     task_manager._shutting_down = True
+    assert task_manager.is_shutting_down is True
 
     calls = []
 
@@ -57,6 +58,7 @@ def test_task_manager_rejects_new_tasks_during_shutdown():
     assert task_manager.active_count == 0
 
     task_manager._shutting_down = False
+    assert task_manager.is_shutting_down is False
 
 
 def test_task_manager_user_facing_error_uses_clean_message():

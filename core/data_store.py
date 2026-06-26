@@ -104,18 +104,20 @@ class DataStore:
         """将任意 Python 对象序列化为 JSON 存入 kv_store"""
         json_str = json.dumps(data, ensure_ascii=False, default=str)
         with self._lock:
-            self._conn.execute(
+            conn = self._require_open_connection()
+            conn.execute(
                 """INSERT INTO kv_store (key, value, updated_at)
                    VALUES (?, ?, CURRENT_TIMESTAMP)
                    ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at""",
                 (key, json_str),
             )
-            self._conn.commit()
+            conn.commit()
 
     def load_json(self, key: str, default=None):
         """从 kv_store 读取并反序列化 JSON，不存在则返回 default"""
         with self._lock:
-            cursor = self._conn.execute("SELECT value FROM kv_store WHERE key = ?", (key,))
+            conn = self._require_open_connection()
+            cursor = conn.execute("SELECT value FROM kv_store WHERE key = ?", (key,))
             row = cursor.fetchone()
         if row is None:
             return default
@@ -128,8 +130,9 @@ class DataStore:
     def delete_key(self, key: str) -> None:
         """删除指定 key"""
         with self._lock:
-            self._conn.execute("DELETE FROM kv_store WHERE key = ?", (key,))
-            self._conn.commit()
+            conn = self._require_open_connection()
+            conn.execute("DELETE FROM kv_store WHERE key = ?", (key,))
+            conn.commit()
 
     # ========== 通用 SQL 助手 ==========
 
@@ -137,12 +140,13 @@ class DataStore:
     def transaction(self):
         """提供一个带锁事务上下文，适合批量写入或多表更新。"""
         with self._lock:
-            cursor = self._conn.cursor()
+            conn = self._require_open_connection()
+            cursor = conn.cursor()
             try:
                 yield cursor
-                self._conn.commit()
+                conn.commit()
             except Exception:
-                self._conn.rollback()
+                conn.rollback()
                 raise
             finally:
                 cursor.close()
@@ -165,20 +169,23 @@ class DataStore:
     def execute_script(self, sql_script: str) -> None:
         """执行多条建表/迁移脚本。"""
         with self._lock:
-            self._conn.executescript(sql_script)
-            self._conn.commit()
+            conn = self._require_open_connection()
+            conn.executescript(sql_script)
+            conn.commit()
 
     def fetch_all(self, sql: str, params=()):
         """查询多行，统一返回 dict 列表。"""
         with self._lock:
-            cursor = self._conn.execute(sql, params)
+            conn = self._require_open_connection()
+            cursor = conn.execute(sql, params)
             rows = cursor.fetchall()
         return [dict(row) for row in rows]
 
     def fetch_one(self, sql: str, params=(), default=None):
         """查询单行，统一返回 dict。"""
         with self._lock:
-            cursor = self._conn.execute(sql, params)
+            conn = self._require_open_connection()
+            cursor = conn.execute(sql, params)
             row = cursor.fetchone()
         if row is None:
             return default
@@ -203,18 +210,29 @@ class DataStore:
 
     # ========== 生命周期 ==========
 
-    def close(self):
-        """应用退出时调用，确保数据落盘"""
+    @property
+    def is_closed(self) -> bool:
+        return bool(getattr(self, "_closed", False) or getattr(self, "_conn", None) is None)
+
+    def _require_open_connection(self):
         conn = getattr(self, "_conn", None)
         if getattr(self, "_closed", False) or conn is None:
-            return
-        try:
-            conn.close()
-        except sqlite3.Error as _e:
-            log.debug(f"[DataStore] SQLite 关闭异常: {_e}")
-        finally:
-            self._closed = True
-            self._conn = None
+            raise sqlite3.ProgrammingError("DataStore connection is closed")
+        return conn
+
+    def close(self):
+        """应用退出时调用，确保数据落盘"""
+        with self._lock:
+            conn = getattr(self, "_conn", None)
+            if getattr(self, "_closed", False) or conn is None:
+                return
+            try:
+                conn.close()
+            except sqlite3.Error as _e:
+                log.debug(f"[DataStore] SQLite 关闭异常: {_e}")
+            finally:
+                self._closed = True
+                self._conn = None
         log.info("[DataStore] SQLite 连接已关闭")
 
     def __del__(self):

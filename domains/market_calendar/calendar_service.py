@@ -486,6 +486,22 @@ class MarketCalendar:
             return
         cls._trade_dates_loading = True
 
+        def _task_runner_is_shutting_down() -> bool:
+            return bool(getattr(task_manager, "is_shutting_down", False))
+
+        def _save_trade_dates(cleaned: set[str]) -> None:
+            if _task_runner_is_shutting_down():
+                return
+            from infra.storage import DataStore
+
+            store = DataStore()
+            if bool(getattr(store, "is_closed", False)):
+                return
+            try:
+                store.save_json("trade_dates", {"month": cur_month, "dates": sorted(cleaned)})
+            except (OSError, sqlite3.Error) as e:
+                log.debug(f"[交易日历][I/O] trade_dates persist skipped: {e}")
+
         def _bg_fetch_calendar() -> set[str]:
             import akshare as ak
 
@@ -493,15 +509,13 @@ class MarketCalendar:
             if "trade_date" not in df.columns:
                 raise DataFormatError("akshare trade_date column missing")
             dates = [str(d)[:10] for d in df["trade_date"]]
-            cleaned = cls._normalize_holiday_days(dates)
-            from infra.storage import DataStore
-
-            DataStore().save_json("trade_dates", {"month": cur_month, "dates": sorted(cleaned)})
-            return cleaned
+            return cls._normalize_holiday_days(dates)
 
         def _on_success(dates: Any) -> None:
             cls._trade_dates_loading = False
-            cls._trade_dates = cls._normalize_holiday_days(dates)
+            cleaned = cls._normalize_holiday_days(dates)
+            cls._trade_dates = cleaned
+            _save_trade_dates(cleaned)
 
         def _on_error(error_message: str) -> None:
             cls._trade_dates_loading = False

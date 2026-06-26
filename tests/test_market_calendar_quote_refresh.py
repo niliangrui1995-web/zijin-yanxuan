@@ -283,6 +283,62 @@ def test_schedule_trade_dates_refresh_runs_success_and_error(monkeypatch):
     assert MarketCalendar._trade_dates_loading is False
 
 
+def test_schedule_trade_dates_refresh_skips_persist_after_store_close(monkeypatch):
+    class _ClosedDataStore:
+        is_closed = True
+
+        def save_json(self, key, payload):
+            raise AssertionError("closed store should not be written")
+
+    def fake_run_in_background(fn, *, on_success, on_error, task_id):
+        on_success(fn())
+
+    monkeypatch.setattr(MarketCalendar, "_trade_dates_loading", False, raising=False)
+    monkeypatch.setattr(MarketCalendar, "_trade_dates", None, raising=False)
+    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace(tool_trade_date_hist_sina=lambda: pd.DataFrame({"trade_date": ["2026-04-20"]})))
+    monkeypatch.setattr("infra.storage.DataStore", _ClosedDataStore)
+    monkeypatch.setattr(
+        "domains.market_calendar.calendar_service.task_manager",
+        SimpleNamespace(run_in_background=fake_run_in_background),
+    )
+    monkeypatch.setattr(
+        "domains.market_calendar.calendar_service.task_registry",
+        SimpleNamespace(startup=lambda task_id: SimpleNamespace(task_id=task_id)),
+    )
+
+    MarketCalendar._schedule_trade_dates_refresh("2026-04")
+
+    assert MarketCalendar._trade_dates_loading is False
+    assert MarketCalendar._trade_dates == {"2026-04-20"}
+
+
+def test_schedule_trade_dates_refresh_skips_persist_during_shutdown(monkeypatch):
+    class _DataStore:
+        def save_json(self, key, payload):
+            raise AssertionError("shutdown should skip persistence")
+
+    def fake_run_in_background(fn, *, on_success, on_error, task_id):
+        on_success(fn())
+
+    monkeypatch.setattr(MarketCalendar, "_trade_dates_loading", False, raising=False)
+    monkeypatch.setattr(MarketCalendar, "_trade_dates", None, raising=False)
+    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace(tool_trade_date_hist_sina=lambda: pd.DataFrame({"trade_date": ["2026-04-20"]})))
+    monkeypatch.setattr("infra.storage.DataStore", _DataStore)
+    monkeypatch.setattr(
+        "domains.market_calendar.calendar_service.task_manager",
+        SimpleNamespace(is_shutting_down=True, run_in_background=fake_run_in_background),
+    )
+    monkeypatch.setattr(
+        "domains.market_calendar.calendar_service.task_registry",
+        SimpleNamespace(startup=lambda task_id: SimpleNamespace(task_id=task_id)),
+    )
+
+    MarketCalendar._schedule_trade_dates_refresh("2026-04")
+
+    assert MarketCalendar._trade_dates_loading is False
+    assert MarketCalendar._trade_dates == {"2026-04-20"}
+
+
 def test_schedule_trade_dates_refresh_short_circuits_and_handles_bad_payload(monkeypatch):
     calls = []
     monkeypatch.setattr(MarketCalendar, "_trade_dates_loading", True, raising=False)

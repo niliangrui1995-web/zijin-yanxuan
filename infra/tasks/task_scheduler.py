@@ -220,6 +220,11 @@ class GlobalTaskManager(QObject):
             self._shutting_down = True
         self.cancel_all()
 
+    @property
+    def is_shutting_down(self) -> bool:
+        with self._lock:
+            return self._shutting_down
+
     def is_active_task(self, task_id: str) -> bool:
         with self._lock:
             return task_id in self.active_workers
