@@ -68,7 +68,33 @@ def test_load_local_gbbq_for_code_reads_only_requested_code(tmp_path):
     assert result["000001"].iloc[0]["datetime"] == 20240101
 
 
-def test_load_local_gbbq_for_code_falls_back_to_full_load_when_cache_is_stale(tmp_path, monkeypatch):
+def test_load_local_gbbq_for_code_keeps_existing_cache_when_cache_is_stale(tmp_path, monkeypatch):
+    vipdoc, cache_file, legacy_file = _write_gbbq_fixture(tmp_path)
+    tdx_root = tmp_path / "tdx"
+    gbbq_path = tdx_root / "T0002" / "hq_cache" / "gbbq"
+    payload = json.loads(cache_file.read_text(encoding="utf-8"))
+    payload["mtime"] = os.path.getmtime(gbbq_path) - 1000
+    cache_file.write_text(json.dumps(payload), encoding="utf-8")
+    existing_frame = pd.DataFrame([{"code": "600000", "datetime": 20240102, "category": 1}])
+
+    def fake_full_load(*_args, **_kwargs):
+        raise AssertionError("single-code stale cache must not rebuild gbbq synchronously")
+
+    monkeypatch.setattr(data_provider_local, "load_local_gbbq", fake_full_load)
+
+    result = load_local_gbbq_for_code(
+        str(vipdoc),
+        str(cache_file),
+        str(legacy_file),
+        {"600000": existing_frame},
+        "000001",
+    )
+
+    assert sorted(result) == ["600000"]
+    assert result["600000"] is existing_frame
+
+
+def test_load_local_gbbq_for_code_can_explicitly_rebuild_when_cache_is_stale(tmp_path, monkeypatch):
     vipdoc, cache_file, legacy_file = _write_gbbq_fixture(tmp_path)
     tdx_root = tmp_path / "tdx"
     gbbq_path = tdx_root / "T0002" / "hq_cache" / "gbbq"
@@ -98,6 +124,7 @@ def test_load_local_gbbq_for_code_falls_back_to_full_load_when_cache_is_stale(tm
         str(legacy_file),
         {},
         "000001",
+        fallback_to_full_load=True,
     )
 
     assert sorted(result) == ["000001"]

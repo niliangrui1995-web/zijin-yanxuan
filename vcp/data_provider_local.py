@@ -23,6 +23,8 @@ _BASE_DBF_LOCK = threading.RLock()
 _BASE_DBF_PATH: str | None = None
 _BASE_DBF_SIGNATURE: tuple[int, int] | None = None
 _BASE_DBF_CAPITALS: dict[str, dict] | None = None
+_GBBQ_CACHE_MTIME_RE = re.compile(r'"mtime"\s*:\s*([0-9]+(?:\.[0-9]+)?)')
+_GBBQ_CACHE_MTIME_TAIL_BYTES = 64 * 1024
 
 
 def serialize_gbbq_cache(data_map: dict) -> dict:
@@ -68,12 +70,36 @@ def _find_json_array_end(payload: str, start: int) -> int:
     raise ValueError("gbbq code cache array is incomplete")
 
 
+def _read_gbbq_cache_mtime(gbbq_cache_file: str) -> float | None:
+    try:
+        size = os.path.getsize(gbbq_cache_file)
+        with open(gbbq_cache_file, "rb") as handle:
+            if size > _GBBQ_CACHE_MTIME_TAIL_BYTES:
+                handle.seek(-_GBBQ_CACHE_MTIME_TAIL_BYTES, os.SEEK_END)
+            tail = handle.read().decode("utf-8", errors="ignore")
+    except (OSError, TypeError, ValueError):
+        return None
+
+    matches = _GBBQ_CACHE_MTIME_RE.findall(tail)
+    if not matches:
+        return None
+    try:
+        return float(matches[-1])
+    except (TypeError, ValueError):
+        return None
+
+
 def _load_gbbq_cache_rows_for_code(gbbq_cache_file: str, code: str, expected_mtime: float | None) -> list[dict]:
+    cached_mtime = _read_gbbq_cache_mtime(gbbq_cache_file) if expected_mtime is not None else None
+    if expected_mtime is not None:
+        if cached_mtime is not None and cached_mtime != float(expected_mtime):
+            raise ValueError("gbbq cache mtime mismatch")
+
     with open(gbbq_cache_file, "r", encoding="utf-8") as handle:
         payload = handle.read()
 
-    if expected_mtime is not None:
-        match = re.search(r'"mtime"\s*:\s*([0-9]+(?:\.[0-9]+)?)', payload)
+    if expected_mtime is not None and cached_mtime is None:
+        match = _GBBQ_CACHE_MTIME_RE.search(payload)
         if match and float(match.group(1)) != float(expected_mtime):
             raise ValueError("gbbq cache mtime mismatch")
 
@@ -273,6 +299,7 @@ def load_local_gbbq_for_code(
     code: str,
     *,
     force: bool = False,
+    fallback_to_full_load: bool = False,
 ) -> dict:
     """Load one stock's gbbq rows from the JSON cache without materializing all codes."""
 
@@ -298,6 +325,9 @@ def load_local_gbbq_for_code(
     if not os.path.exists(gbbq_path):
         return current
     if not os.path.exists(gbbq_cache_file):
+        if not fallback_to_full_load:
+            _log.debug(f"[缓存] gbbq 单代码缓存不存在，保留现有缓存: {code_text}")
+            return current
         return load_local_gbbq(
             tdx_vipdoc,
             gbbq_cache_file,
@@ -314,6 +344,9 @@ def load_local_gbbq_for_code(
         )
         remove_cache_file(legacy_gbbq_cache_file)
     except (CacheIOError, json.JSONDecodeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        if not fallback_to_full_load:
+            _log.debug(f"[缓存] gbbq 单代码缓存不可用，保留现有缓存并延后全量重建: {code_text} {exc}")
+            return current
         _log.debug(f"[缓存] gbbq 单代码缓存读取失败，将回退全量加载: {code_text} {exc}")
         return load_local_gbbq(
             tdx_vipdoc,
