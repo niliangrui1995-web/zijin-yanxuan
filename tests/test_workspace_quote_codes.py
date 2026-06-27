@@ -1322,6 +1322,25 @@ def test_workspace_delays_watchlist_indicator_refresh_on_tab_switch(monkeypatch)
             classic_workspace_module.ClassicWorkspace.WATCHLIST_TAB_SWITCH_INDICATOR_DELAY_MS
         )
         assert ctor_kwargs["watchlist"]["startup_followup_refresh_enabled"] is False
+
+        workspace.ensure_tab_loaded("lhb", reason="tab_switch")
+        workspace.ensure_tab_loaded("scan", reason="tab_switch")
+        workspace.ensure_tab_loaded("ai_industry_chain", reason="tab_switch")
+        workspace.ensure_tab_loaded("foreign_block", reason="tab_switch")
+        workspace.ensure_tab_loaded("fund_holdings", reason="tab_switch")
+        workspace.ensure_tab_loaded("asian_market", reason="tab_switch")
+        workspace.ensure_tab_loaded("na_daily", reason="tab_switch")
+        workspace.ensure_tab_loaded("stock_candidates", reason="tab_switch")
+
+        delay = classic_workspace_module.ClassicWorkspace.FIRST_VISIBLE_TAB_WORK_DELAY_MS
+        assert ctor_kwargs["lhb"]["initial_load_delay_ms"] == delay
+        assert ctor_kwargs["fund_holdings"]["initial_load_delay_ms"] == delay
+        assert ctor_kwargs["scan"]["initial_cache_load_delay_ms"] == delay
+        assert ctor_kwargs["foreign_block"]["initial_cache_load_delay_ms"] == delay
+        assert ctor_kwargs["asian_market"]["local_cache_delay_ms"] == delay
+        assert ctor_kwargs["ai_industry_chain"]["runtime_start_delay_ms"] == delay
+        assert ctor_kwargs["na_daily"]["runtime_start_delay_ms"] == delay
+        assert ctor_kwargs["stock_candidates"]["runtime_start_delay_ms"] == delay
     finally:
         workspace.shutdown()
         workspace.deleteLater()

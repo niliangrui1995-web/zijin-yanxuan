@@ -45,9 +45,20 @@ class AIIndustryChainTab(BaseStockTab):
         20: "20日涨幅",
     }
 
-    def __init__(self, data_provider, parent=None, workbook_path: str | Path | None = None):
+    def __init__(
+        self,
+        data_provider,
+        parent=None,
+        workbook_path: str | Path | None = None,
+        *,
+        runtime_start_delay_ms: int = 350,
+    ):
         super().__init__(data_provider=data_provider, parent=parent)
         self.workbook_path = Path(workbook_path) if workbook_path is not None else AI_CHAIN_FILE
+        try:
+            self._runtime_start_delay_ms = max(0, int(runtime_start_delay_ms))
+        except (TypeError, ValueError):
+            self._runtime_start_delay_ms = 350
         self._chain_codes: set[str] = set()
         self._status_primary = "等待AI产业链"
         self._status_segments: list[str] = []
@@ -63,7 +74,7 @@ class AIIndustryChainTab(BaseStockTab):
         if self._runtime_started:
             return
         self._runtime_started = True
-        QTimer.singleShot(350, self._load_chain_data)
+        QTimer.singleShot(self._runtime_start_delay_ms, self._load_chain_data)
 
     def prime_background_load(self):
         if self._runtime_started or self._background_prime_done:

@@ -88,6 +88,36 @@ def test_watchlist_startup_can_delay_indicator_refresh_and_skip_followup(monkeyp
         tab.deleteLater()
 
 
+def test_watchlist_prime_startup_state_respects_indicator_delay(monkeypatch):
+    calc_calls = []
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
+    monkeypatch.setattr(
+        watchlist_module.WatchlistTab,
+        "_refresh_quotes_from_store_or_live",
+        lambda self, *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        watchlist_module.WatchlistTab,
+        "_request_vcp_calc",
+        lambda self, *args, **kwargs: calc_calls.append((args, kwargs)),
+    )
+
+    tab = watchlist_module.WatchlistTab(
+        _DummyProvider(),
+        startup_tasks_enabled=False,
+        startup_indicator_refresh_delay_ms=1800,
+    )
+    try:
+        tab.model.update_data([{"\u4ee3\u7801": "600519"}])
+
+        tab.prime_startup_state()
+
+        assert calc_calls == [((), {"delay_ms": 1800, "allow_noninteractive": True})]
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
 def test_watchlist_background_prewarm_blocks_auto_indicator_recalc(monkeypatch):
     monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
     monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)

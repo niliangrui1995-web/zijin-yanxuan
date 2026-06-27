@@ -107,8 +107,19 @@ class FundHoldingsTab(BaseStockTab):
     _VIEW_STATE_PREFIX = "fund_holdings_view_state_v2"
     _stock_universe_provider = staticmethod(load_ai_industry_chain_stock_codes)
     _chain_context_provider = staticmethod(load_ai_industry_chain_context_map)
-    def __init__(self, data_provider, parent=None, autoload: bool = True):
+
+    def __init__(
+        self,
+        data_provider,
+        parent=None,
+        autoload: bool = True,
+        initial_load_delay_ms: int = 0,
+    ):
         super().__init__(data_provider=data_provider, parent=parent)
+        try:
+            self._initial_load_delay_ms = max(0, int(initial_load_delay_ms))
+        except (TypeError, ValueError):
+            self._initial_load_delay_ms = 0
         self._autoload = bool(autoload)
         self._initial_load_started = False
         self._initial_load_task_id = self._build_workspace_task_id(f"initial_load_{id(self)}")
@@ -339,7 +350,10 @@ class FundHoldingsTab(BaseStockTab):
             return
         self._initial_load_started = True
         self._set_initial_loading_state("正在加载基金持仓数据...", "首次进入时后台构建持仓视图")
-        self._reload_from_db_async()
+        if self._initial_load_delay_ms > 0:
+            QTimer.singleShot(self._initial_load_delay_ms, self._reload_from_db_async)
+        else:
+            self._reload_from_db_async()
 
     @classmethod
     def _load_ai_chain_context_map(cls) -> dict[str, str]:

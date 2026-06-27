@@ -62,6 +62,19 @@ class SmoothTabWidget(QTabWidget):
     def setSlowSnapshotSkipInterval(self, interval_ms: int) -> None:  # noqa: N802 - Qt API naming
         self._slow_snapshot_skip_ms = max(0, int(interval_ms or 0))
 
+    def suspendTransitionsFor(self, interval_ms: int) -> None:  # noqa: N802 - Qt API naming
+        try:
+            interval = max(0, int(interval_ms or 0))
+        except (TypeError, ValueError):
+            interval = 0
+        if interval <= 0:
+            return
+        self._pending_transition = None
+        self._transition_suspended_until = max(
+            self._transition_suspended_until,
+            time.perf_counter() + (interval / 1000.0),
+        )
+
     def addTab(self, widget, *args):  # noqa: N802 - Qt API naming
         index = super().addTab(widget, *args)
         QTimer.singleShot(0, widget.ensurePolished)

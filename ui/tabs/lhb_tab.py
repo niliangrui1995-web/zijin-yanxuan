@@ -44,9 +44,19 @@ class LhbTab(BaseStockTab):
     _DISPLAY_PLACEHOLDER = "--"
     _chain_context_provider = staticmethod(load_ai_industry_chain_context_map)
 
-    def __init__(self, data_provider, parent=None, autoload_pool: bool = True):
+    def __init__(
+        self,
+        data_provider,
+        parent=None,
+        autoload_pool: bool = True,
+        initial_load_delay_ms: int = 0,
+    ):
         super().__init__(data_provider=data_provider, parent=parent)
 
+        try:
+            self._initial_load_delay_ms = max(0, int(initial_load_delay_ms))
+        except (TypeError, ValueError):
+            self._initial_load_delay_ms = 0
         self._autoload_pool = bool(autoload_pool)
         self._pool_bootstrap_started = False
         self._pool_load_in_progress = False
@@ -111,7 +121,7 @@ class LhbTab(BaseStockTab):
         super().hideEvent(event)
 
     def prime_background_load(self):
-        self._ensure_pool_bootstrap_started()
+        self._ensure_pool_bootstrap_started(delay_ms=0)
 
     def on_workspace_tab_activated(self) -> None:
         self._ensure_pool_bootstrap_started()
@@ -130,11 +140,20 @@ class LhbTab(BaseStockTab):
     def _should_start_pool_on_show(self) -> bool:
         return BaseStockTab._should_start_interactive_runtime_on_show(self)
 
-    def _ensure_pool_bootstrap_started(self):
+    def _ensure_pool_bootstrap_started(self, *, delay_ms: int | None = None):
         if self._pool_bootstrap_started:
             return
         self._pool_bootstrap_started = True
-        self._load_and_display_pool()
+        if delay_ms is None:
+            delay_ms = self._initial_load_delay_ms
+        try:
+            delay = max(0, int(delay_ms))
+        except (TypeError, ValueError):
+            delay = 0
+        if delay > 0:
+            QTimer.singleShot(delay, self._load_and_display_pool)
+        else:
+            self._load_and_display_pool()
 
     def _on_lhb_pool_updated(self) -> None:
         if self._handling_lhb_pool_update:

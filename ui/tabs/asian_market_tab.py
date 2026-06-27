@@ -482,8 +482,12 @@ def build_asian_market_local_cache_payload(
 class AsianMarketTab(BaseStockTab):
     """亚洲寡头行情面板"""
 
-    def __init__(self, data_provider=None, parent=None):
+    def __init__(self, data_provider=None, parent=None, *, local_cache_delay_ms: int = 0):
         super().__init__(data_provider, parent)
+        try:
+            self._local_cache_delay_ms = max(0, int(local_cache_delay_ms))
+        except (TypeError, ValueError):
+            self._local_cache_delay_ms = 0
         self._asian_runtime_state = "running"
         self._is_fetching_cache = False
         self._pending_auto_cache_sync = False
@@ -508,7 +512,10 @@ class AsianMarketTab(BaseStockTab):
         self._init_ui()
 
         # 1. 冷开机瞬间加载本地 JSON (asian_klines_latest.json)
-        self._load_local_cache()
+        if self._local_cache_delay_ms > 0:
+            QTimer.singleShot(self._local_cache_delay_ms, self._load_local_cache)
+        else:
+            self._load_local_cache()
 
         # 后台轮询由全局 AsianMarketRuntimeService 接管，Tab 只渲染缓存和服务事件。
 

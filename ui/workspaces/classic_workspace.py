@@ -151,7 +151,9 @@ class ClassicWorkspace(QWidget):
     BACKGROUND_PREWARM_KEYS = frozenset()
     RESTORE_LAST_TAB_DELAY_MS = 750
     COPY_HOOK_REFRESH_DELAY_MS = 240
-    WATCHLIST_TAB_SWITCH_INDICATOR_DELAY_MS = 1800
+    STARTUP_TRANSITION_SUSPEND_MS = 60_000
+    FIRST_VISIBLE_TAB_WORK_DELAY_MS = 1800
+    WATCHLIST_TAB_SWITCH_INDICATOR_DELAY_MS = FIRST_VISIBLE_TAB_WORK_DELAY_MS
     PROBE_LOAD_REASONS = frozenset({"perf_memory_probe", "perf_memory_probe_cycle"})
     CONTROLLED_STARTUP_PROBE_DEFER_KEYS = frozenset(
         {
@@ -195,6 +197,7 @@ class ClassicWorkspace(QWidget):
         self.tabs = SmoothTabWidget(self)
         self.tabs.setDocumentMode(True)
         self.tabs.setTransitionEnabled(True)
+        self.tabs.suspendTransitionsFor(self.STARTUP_TRANSITION_SUSPEND_MS)
         layout.addWidget(self.tabs, 1)
 
         self._tab_specs = [
@@ -391,11 +394,20 @@ class ClassicWorkspace(QWidget):
         runtime_kwargs = {}
         key = str(spec.get("key") or "").strip()
         reason_text = str(reason or "").strip()
+        first_visible_load = reason_text in {"placeholder_action", "tab_switch", "user"}
         if key == "watchlist" and reason_text == "background_prewarm":
             runtime_kwargs["startup_indicator_refresh_enabled"] = False
-        elif key == "watchlist" and reason_text == "tab_switch":
+        elif key == "watchlist" and first_visible_load:
             runtime_kwargs["startup_indicator_refresh_delay_ms"] = self.WATCHLIST_TAB_SWITCH_INDICATOR_DELAY_MS
             runtime_kwargs["startup_followup_refresh_enabled"] = False
+        elif first_visible_load and key in {"lhb", "fund_holdings"}:
+            runtime_kwargs["initial_load_delay_ms"] = self.FIRST_VISIBLE_TAB_WORK_DELAY_MS
+        elif first_visible_load and key in {"scan", "foreign_block"}:
+            runtime_kwargs["initial_cache_load_delay_ms"] = self.FIRST_VISIBLE_TAB_WORK_DELAY_MS
+        elif first_visible_load and key in {"asian_market"}:
+            runtime_kwargs["local_cache_delay_ms"] = self.FIRST_VISIBLE_TAB_WORK_DELAY_MS
+        elif first_visible_load and key in {"ai_industry_chain", "na_daily", "stock_candidates"}:
+            runtime_kwargs["runtime_start_delay_ms"] = self.FIRST_VISIBLE_TAB_WORK_DELAY_MS
         elif key == "foreign_block" and reason_text not in {"placeholder_action", "tab_switch", "user"}:
             runtime_kwargs["autoload"] = False
         return factory(**runtime_kwargs)

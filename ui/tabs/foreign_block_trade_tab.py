@@ -333,8 +333,19 @@ def build_foreign_block_local_cache_payload(cache_file: str = _BLOCK_TRADE_CACHE
 
 
 class ForeignBlockTradeTab(BaseStockTab):
-    def __init__(self, data_provider, parent=None, *, autoload: bool = True):
+    def __init__(
+        self,
+        data_provider,
+        parent=None,
+        *,
+        autoload: bool = True,
+        initial_cache_load_delay_ms: int = LOCAL_CACHE_LOAD_DELAY_MS,
+    ):
         super().__init__(data_provider=data_provider, parent=parent)
+        try:
+            self._initial_cache_load_delay_ms = max(0, int(initial_cache_load_delay_ms))
+        except (TypeError, ValueError):
+            self._initial_cache_load_delay_ms = LOCAL_CACHE_LOAD_DELAY_MS
         self._cap_cache = {}
         self._is_loading = False
         self._block_trade_codes = []
@@ -375,7 +386,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         if self._initial_local_cache_load_started:
             return False
         self._initial_local_cache_load_started = True
-        QTimer.singleShot(LOCAL_CACHE_LOAD_DELAY_MS, self._load_local_cache)
+        QTimer.singleShot(self._initial_cache_load_delay_ms, self._load_local_cache)
         return True
 
     def prime_background_load(self) -> bool:

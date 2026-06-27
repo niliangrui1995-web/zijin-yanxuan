@@ -44,9 +44,13 @@ class ScanTab(BaseStockTab):
     AUTO_F5_INCREMENTAL_SCAN_DATE_KEY = "last_auto_incremental_after_f5_date"
     F5_AUTO_INCREMENTAL_DELAY_MS = 1500
 
-    def __init__(self, data_provider, engine, parent=None):
+    def __init__(self, data_provider, engine, parent=None, *, initial_cache_load_delay_ms: int = 300):
         super().__init__(data_provider=data_provider, parent=parent)
         self.engine = engine
+        try:
+            self._initial_cache_load_delay_ms = max(0, int(initial_cache_load_delay_ms))
+        except (TypeError, ValueError):
+            self._initial_cache_load_delay_ms = 300
         self._current_results = []
         self.worker = None
         self._scan_cancel_requested = False
@@ -73,7 +77,7 @@ class ScanTab(BaseStockTab):
         self._init_ui()
 
         # 启动时自动加载上次缓存的扫描结果
-        QTimer.singleShot(300, self._load_scan_cache)
+        QTimer.singleShot(self._initial_cache_load_delay_ms, self._load_scan_cache)
 
         # 情报源只消费 F5/本地快照，不加入盘中实时行情轮询。
         event_bus.sig_cache_reload_completed.connect(self._on_cache_reload_completed)

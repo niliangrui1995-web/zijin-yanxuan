@@ -24,8 +24,12 @@ _NA_DAILY_REFRESH_TASK = task_registry.workspace("na_daily_refresh")
 
 
 class NADailyTab(BaseStockTab):
-    def __init__(self, data_provider, parent=None):
+    def __init__(self, data_provider, parent=None, *, runtime_start_delay_ms: int = 350):
         super().__init__(data_provider=data_provider, parent=parent)
+        try:
+            self._runtime_start_delay_ms = max(0, int(runtime_start_delay_ms))
+        except (TypeError, ValueError):
+            self._runtime_start_delay_ms = 350
         self._na_daily_codes = set()
         self._last_report_signature = ()
         self._status_primary = "等待北美战报"
@@ -55,7 +59,7 @@ class NADailyTab(BaseStockTab):
         if self._runtime_started:
             return
         self._runtime_started = True
-        QTimer.singleShot(350, self._load_na_daily_report)
+        QTimer.singleShot(self._runtime_start_delay_ms, self._load_na_daily_report)
 
     def prime_background_load(self):
         if self._runtime_started or self._background_prime_done:

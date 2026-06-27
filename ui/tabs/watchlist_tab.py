@@ -158,7 +158,10 @@ class WatchlistTab(BaseStockTab):
             QTimer.singleShot(0, lambda payload=payload: self._apply_deferred_vcp_payload(payload))
         if self._pending_vcp_calc and self._should_start_interactive_runtime_on_show():
             self._pending_vcp_calc = False
-            self._request_vcp_calc(delay_ms=0, allow_noninteractive=True)
+            self._request_vcp_calc(
+                delay_ms=self._startup_indicator_refresh_delay_ms,
+                allow_noninteractive=True,
+            )
 
     def hideEvent(self, event):  # noqa: N802 - Qt API naming
         super().hideEvent(event)
@@ -1120,7 +1123,10 @@ class WatchlistTab(BaseStockTab):
         self._refresh_quotes_from_store_or_live(
             quote_task_id=task_registry.quote_refresh("smart_startup_watchlist").task_id
         )
-        self._request_vcp_calc(delay_ms=0, allow_noninteractive=True)
+        self._request_vcp_calc(
+            delay_ms=self._startup_indicator_refresh_delay_ms,
+            allow_noninteractive=True,
+        )
 
     def refresh_watchlist_names(self, code2name: dict[str, str]) -> bool:
         if not self.model:

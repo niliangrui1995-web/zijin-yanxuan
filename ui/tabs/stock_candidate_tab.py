@@ -37,8 +37,12 @@ class StockCandidateTab(BaseStockTab):
         "最近时间",
     ]
 
-    def __init__(self, data_provider, parent=None):
+    def __init__(self, data_provider, parent=None, *, runtime_start_delay_ms: int = 350):
         super().__init__(data_provider=data_provider, parent=parent)
+        try:
+            self._runtime_start_delay_ms = max(0, int(runtime_start_delay_ms))
+        except (TypeError, ValueError):
+            self._runtime_start_delay_ms = 350
         self._status_primary = "等待综合候选"
         self._status_freshness = "待刷新"
         self._candidate_service = StockCandidatesDataService(
@@ -65,7 +69,7 @@ class StockCandidateTab(BaseStockTab):
         if self._initial_refresh_started:
             return
         self._initial_refresh_started = True
-        QTimer.singleShot(350, self.refresh_candidates)
+        QTimer.singleShot(self._runtime_start_delay_ms, self.refresh_candidates)
 
     def _is_current_workspace_tab(self) -> bool:
         parent = self.parent()
