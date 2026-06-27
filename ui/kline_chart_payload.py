@@ -24,6 +24,10 @@ from ui.theme_tokens import build_ui_tokens
 KEY_CODE = "\u4ee3\u7801"
 KEY_NAME = "\u540d\u79f0"
 KEY_TRIGGER_DATE = "\u89e6\u53d1\u65e5\u671f"
+KEY_REVEAL_DATE = "\u63ed\u6653\u65e5"
+KEY_DISCOVERED_AT = "\u53d1\u73b0\u65f6\u95f4"
+KEY_EARNINGS_MARK_DATE = "\u4e1a\u7ee9\u65e5"
+KEY_EARNINGS_TEXT = "\u4e1a\u7ee9\u5f02\u52a8"
 SCAN_SOURCE_KEY = "scan"
 
 _KLINE_SCRIPT_DIR = Path(__file__).resolve().parent / "assets" / "kline"
@@ -225,6 +229,9 @@ def build_kline_theme_colors() -> dict:
         "vcp_area_border": t.get("KLINE_VCP_AREA_BORDER", t["KLINE_VCP_LINE_SOFT"]),
         "vcp_guide": t["KLINE_VCP_GUIDE"],
         "vcp_breakout_bg": t["KLINE_VCP_BREAKOUT_BG"],
+        "earnings_marker": t.get("KLINE_EARNINGS_MARKER", t.get("COLOR_WARNING", t["KLINE_VCP_STAR"])),
+        "earnings_marker_bg": t.get("KLINE_EARNINGS_MARKER_BG", t.get("ACCENT_SUBTLE", "rgba(49, 95, 134, 0.10)")),
+        "earnings_marker_border": t.get("KLINE_EARNINGS_MARKER_BORDER", t.get("ACCENT_BORDER", t["KLINE_VCP_LINE"])),
         "ma_ribbon_up": t.get("KLINE_MA_RIBBON_UP", "rgba(242, 54, 69, 0.08)"),
         "ma_ribbon_down": t.get("KLINE_MA_RIBBON_DOWN", "rgba(8, 153, 129, 0.08)"),
         "volume_dry": t.get("KLINE_VOLUME_DRY", "rgba(126, 142, 160, 0.22)"),
@@ -562,6 +569,51 @@ def _find_date_idx(value, date_to_idx: dict) -> int:
     return -1
 
 
+def _event_date_key(value) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    head = text[:10].replace("/", "-").replace(".", "-")
+    compact = head.replace("-", "")
+    if len(compact) >= 8 and compact[:8].isdigit():
+        return compact[:8]
+    fallback = text[:8]
+    if len(fallback) == 8 and fallback.isdigit():
+        return fallback
+    try:
+        timestamp = pd.to_datetime(text, errors="coerce")
+    except (TypeError, ValueError):
+        return ""
+    if pd.isna(timestamp):
+        return ""
+    return timestamp.strftime("%Y%m%d")
+
+
+def _event_date_text(value) -> str:
+    key = _event_date_key(value)
+    if not key:
+        return ""
+    return f"{key[:4]}-{key[4:6]}-{key[6:8]}"
+
+
+def _find_last_visible_date_idx_on_or_before(value, dates: list) -> int:
+    target_key = _event_date_key(value)
+    if not target_key:
+        return -1
+
+    keyed_dates = [(_event_date_key(date), idx) for idx, date in enumerate(dates)]
+    keyed_dates = [(key, idx) for key, idx in keyed_dates if key]
+    if not keyed_dates or target_key < keyed_dates[0][0]:
+        return -1
+
+    marker_idx = -1
+    for key, idx in keyed_dates:
+        if key > target_key:
+            break
+        marker_idx = idx
+    return marker_idx
+
+
 def _vcp_peak_dates(payload: dict) -> list:
     peak_dates = _pick_payload_value(payload, "_peak_dates", "peak_dates", default=[]) or []
     if isinstance(peak_dates, str):
@@ -574,6 +626,11 @@ def _vcp_peak_dates(payload: dict) -> list:
 def _store_vcp_markers(data: dict, markers: list) -> None:
     if markers:
         data["vcpMarkers"] = markers
+
+
+def _store_earnings_markers(data: dict, markers: list) -> None:
+    if markers:
+        data["earningsMarkers"] = markers
 
 
 def _build_vcp_markers(data: dict, trigger_idx: int, theme: dict) -> list:
@@ -609,6 +666,83 @@ def _build_vcp_markers(data: dict, trigger_idx: int, theme: dict) -> list:
                 "fontSize": 10,
                 "fontWeight": 700,
             },
+        }
+    ]
+
+
+def _earnings_summary_text(payload: dict) -> str:
+    summary = _pick_payload_value(payload, KEY_EARNINGS_TEXT, "earnings", default="")
+    if summary:
+        return str(summary)
+
+    qoq = _pick_payload_value(payload, "\u73af\u6bd4%", "qoq_pct", default="")
+    if qoq in (None, ""):
+        return ""
+    try:
+        qoq_text = f"{float(qoq):.2f}".rstrip("0").rstrip(".")
+    except (TypeError, ValueError):
+        qoq_text = str(qoq)
+    return f"\u73af\u6bd4 {qoq_text}%"
+
+
+def _earnings_change_text(payload: dict, *keys) -> str:
+    value = _pick_payload_value(payload, *keys, default="")
+    if value in (None, ""):
+        return ""
+    text = str(value).strip().replace(",", "")
+    if not text:
+        return ""
+    try:
+        number = float(text.replace("%", "").replace("+", ""))
+    except (TypeError, ValueError):
+        return text
+    sign = "+" if number > 0 else ""
+    formatted = f"{sign}{number:.2f}".rstrip("0").rstrip(".")
+    return f"{formatted}%"
+
+
+def _build_earnings_markers(data: dict, dates: list, payload: dict | None) -> list:
+    source = payload or {}
+    mark_date = _pick_payload_value(
+        source,
+        KEY_EARNINGS_MARK_DATE,
+        KEY_REVEAL_DATE,
+        "\u516c\u544a\u65e5\u671f",
+        KEY_TRIGGER_DATE,
+        "\u6e90\u516c\u544a\u65e5\u671f",
+        KEY_DISCOVERED_AT,
+        "discovered_at",
+        default="",
+    )
+    marker_idx = _find_last_visible_date_idx_on_or_before(mark_date, dates)
+    if marker_idx == -1:
+        return []
+
+    kline = data["klines"][marker_idx]
+    lows = [float(item[2]) for item in data["klines"] if item and len(item) > 3 and item[2] is not None]
+    highs = [float(item[3]) for item in data["klines"] if item and len(item) > 3 and item[3] is not None]
+    if not lows or not highs:
+        return []
+
+    low = float(kline[2])
+    price_span = max(max(highs) - min(lows), abs(low) * 0.02, 0.01)
+    marker_y = max(0.01, low - price_span * 0.03)
+    summary = _earnings_summary_text(source)
+    qoq_text = _earnings_change_text(source, "\u73af\u6bd4%", "qoq_pct", "\u73af\u6bd4\u589e\u901f_\u767e\u5206\u6bd4")
+    yoy_text = _earnings_change_text(source, "\u540c\u6bd4%", "yoy_pct", "\u540c\u6bd4\u589e\u901f_\u767e\u5206\u6bd4")
+    event_date = _event_date_text(mark_date)
+    marker_date = dates[marker_idx]
+    return [
+        {
+            "coord": [marker_idx, round(marker_y, 4)],
+            "label": "\u4e1a\u7ee9\u65e5",
+            "sourceDate": event_date,
+            "date": marker_date,
+            "summary": summary,
+            "qoqText": qoq_text,
+            "yoyText": yoy_text,
+            "symbolSize": 11,
+            "symbolOffset": [0, 8],
         }
     ]
 
@@ -870,6 +1004,11 @@ def inject_vcp_overlays(data: dict, dates: list, vcp_data: dict | None) -> None:
     _store_vcp_markers(data, markers)
 
 
+def inject_earnings_markers(data: dict, dates: list, vcp_data: dict | None) -> None:
+    markers = _build_earnings_markers(data, dates, vcp_data)
+    _store_earnings_markers(data, markers)
+
+
 def build_kline_echarts_payload(df: pd.DataFrame, *, code: str, name: str, vcp_data: dict | None) -> dict:
     theme = theme_manager.current_theme
     up_color = theme["KLINE_UP_COLOR"]
@@ -896,9 +1035,11 @@ def build_kline_echarts_payload(df: pd.DataFrame, *, code: str, name: str, vcp_d
         "vcpMarkers": None,
         "vcpLines": None,
         "vcpArea": None,
+        "earningsMarkers": None,
     }
 
     if vcp_data:
         inject_vcp_overlays(result, dates, vcp_data)
+        inject_earnings_markers(result, dates, vcp_data)
 
     return result

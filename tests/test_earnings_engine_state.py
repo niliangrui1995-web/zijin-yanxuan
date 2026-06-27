@@ -796,6 +796,11 @@ def test_fetch_daily_surprises_accepts_next_trade_day_financial_report_on_today_
     )
     monkeypatch.setattr(
         engine_module.MarketCalendar,
+        "now",
+        classmethod(lambda cls, market="CN": pd.Timestamp("2026-04-16 08:31:02").to_pydatetime()),
+    )
+    monkeypatch.setattr(
+        engine_module.MarketCalendar,
         "get_recent_trade_dates",
         classmethod(lambda cls, n=20, ref_date=None: ["20260417", "20260416", "20260415"]),
     )
@@ -827,6 +832,8 @@ def test_fetch_daily_surprises_accepts_next_trade_day_financial_report_on_today_
     assert row["股票代码"] == "300308"
     assert row["公告日期"] == "2026-04-16"
     assert row["源公告日期"] == "2026-04-17"
+    assert row["揭晓日"] == "2026-04-16"
+    assert row["发现时间"] == "2026-04-16T08:31:02"
     assert "SHOCK_300308_20260331_财报" in engine.seen_fingerprints
 
 

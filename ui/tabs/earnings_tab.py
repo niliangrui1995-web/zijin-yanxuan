@@ -474,6 +474,16 @@ class EarningsTab(BaseStockTab):
             pct = float(row.get("环比增速_百分比", 0.0))
             cur_profit = float(row.get("单季净利润_新增", 0.0))
             last_profit = float(row.get("单季净利润_上期", 0.0))
+            reveal_date = str(
+                row.get("揭晓日")
+                or row.get("公告日期", "")
+                or row.get("源公告日期", "")
+            ).strip()
+            discovered_at = str(
+                row.get("发现时间")
+                or row.get("discovered_at")
+                or ""
+            ).strip()
 
             row_obj = {
                 "代码": code,
@@ -489,7 +499,8 @@ class EarningsTab(BaseStockTab):
                 "_raw_profit": float(row.get("单季净利润_新增", 0.0)),  # 用于计算PE的隐含原始数值
                 "报告期": str(row.get("报告期", "")),
                 "类型": str(row.get("数据类型", "")),
-                "揭晓日": str(row.get("公告日期", "")),
+                "揭晓日": reveal_date,
+                "发现时间": discovered_at,
                 "基调": str(row.get("基调", "")),
                 "所属行业与概念": str(row.get("所属行业与概念", "")),
             }

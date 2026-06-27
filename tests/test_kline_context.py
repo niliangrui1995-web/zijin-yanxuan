@@ -261,6 +261,9 @@ def test_kline_theme_colors_include_vcp_overlay_tokens():
     assert colors["vcp_area"]
     assert colors["vcp_guide"]
     assert colors["vcp_breakout_bg"]
+    assert colors["earnings_marker"]
+    assert colors["earnings_marker_bg"]
+    assert colors["earnings_marker_border"]
     assert colors["scrollbar_handle"]
     assert colors["scrollbar_handle_hover"]
 
@@ -413,6 +416,135 @@ def test_build_kline_echarts_payload_skips_vcp_overlay_for_generic_event_date():
     assert payload["vcpArea"] is None
 
 
+def test_build_kline_echarts_payload_marks_earnings_reveal_day_below_daily_kline():
+    df = pd.DataFrame(
+        {
+            "open": [10.0, 10.5, 11.0],
+            "high": [10.8, 11.2, 11.8],
+            "low": [9.9, 10.2, 10.7],
+            "close": [10.6, 11.0, 11.6],
+            "volume": [10000, 12000, 15000],
+        },
+        index=pd.to_datetime(["2026-06-26", "2026-06-29", "2026-06-30"]),
+    )
+
+    payload = build_kline_echarts_payload(
+        df,
+        code="300604",
+        name="长川科技",
+        vcp_data={
+            "揭晓日": "2026-06-28T08:31:02",
+            "发现时间": "2026-06-28T08:31:02",
+            "业绩异动": "一季度 57.69%",
+            "环比%": 57.69,
+            "同比%": 86.3,
+            "公告日期": "2026-06-20",
+        },
+    )
+
+    marker = payload["earningsMarkers"][0]
+    assert marker["coord"][0] == 0
+    assert marker["coord"][1] < payload["klines"][0][2]
+    assert marker["date"] == "2026-06-26"
+    assert marker["sourceDate"] == "2026-06-28"
+    assert marker["label"] == "业绩日"
+    assert marker["summary"] == "一季度 57.69%"
+    assert marker["qoqText"] == "+57.69%"
+    assert marker["yoyText"] == "+86.3%"
+    assert payload["vcpMarkers"] is None
+
+
+def test_build_kline_echarts_payload_uses_reveal_date_over_capture_time():
+    df = pd.DataFrame(
+        {
+            "open": [10.0, 10.5, 11.0],
+            "high": [10.8, 11.2, 11.8],
+            "low": [9.9, 10.2, 10.7],
+            "close": [10.6, 11.0, 11.6],
+            "volume": [10000, 12000, 15000],
+        },
+        index=pd.to_datetime(["2026-06-26", "2026-06-29", "2026-06-30"]),
+    )
+
+    payload = build_kline_echarts_payload(
+        df,
+        code="300604",
+        name="长川科技",
+        vcp_data={
+            "揭晓日": "2026-06-28",
+            "发现时间": "2026-06-30T08:31:02",
+            "公告日期": "2026-06-30",
+            "业绩异动": "一季度 57.69%",
+        },
+    )
+
+    marker = payload["earningsMarkers"][0]
+    assert marker["coord"][0] == 0
+    assert marker["date"] == "2026-06-26"
+    assert marker["sourceDate"] == "2026-06-28"
+
+
+def test_build_kline_echarts_payload_places_missing_reveal_day_on_previous_visible_kline():
+    df = pd.DataFrame(
+        {
+            "open": [10.0, 10.5, 11.0],
+            "high": [10.8, 11.2, 11.8],
+            "low": [9.9, 10.2, 10.7],
+            "close": [10.6, 11.0, 11.6],
+            "volume": [10000, 12000, 15000],
+        },
+        index=pd.to_datetime(["2026-06-22", "2026-06-24", "2026-06-25"]),
+    )
+
+    payload = build_kline_echarts_payload(
+        df,
+        code="300604",
+        name="长川科技",
+        vcp_data={
+            "揭晓日": "2026-06-23",
+            "发现时间": "2026-06-27T00:32:21",
+            "业绩异动": "预告 78.46%",
+            "环比%": 78.46,
+            "同比%": 86.3,
+        },
+    )
+
+    marker = payload["earningsMarkers"][0]
+    assert marker["coord"][0] == 0
+    assert marker["date"] == "2026-06-22"
+    assert marker["sourceDate"] == "2026-06-23"
+    assert marker["qoqText"] == "+78.46%"
+    assert marker["yoyText"] == "+86.3%"
+
+
+def test_build_kline_echarts_payload_clamps_future_earnings_reveal_day_to_latest_visible_kline():
+    df = pd.DataFrame(
+        {
+            "open": [10.0, 10.5, 11.0],
+            "high": [10.8, 11.2, 11.8],
+            "low": [9.9, 10.2, 10.7],
+            "close": [10.6, 11.0, 11.6],
+            "volume": [10000, 12000, 15000],
+        },
+        index=pd.to_datetime(["2026-06-24", "2026-06-25", "2026-06-26"]),
+    )
+
+    payload = build_kline_echarts_payload(
+        df,
+        code="300604",
+        name="长川科技",
+        vcp_data={
+            "发现时间": "2026-06-27T08:31:02",
+            "业绩异动": "一季度 57.69%",
+        },
+    )
+
+    marker = payload["earningsMarkers"][0]
+    assert marker["coord"][0] == 2
+    assert marker["date"] == "2026-06-26"
+    assert marker["sourceDate"] == "2026-06-27"
+
+
 def test_kline_market_state_uses_calendar_active_flag(monkeypatch):
     monkeypatch.setattr(payload_module.MarketCalendar, "infer_market", lambda code: "CN")
     monkeypatch.setattr(payload_module.MarketCalendar, "get_market_status", lambda market: "LIVE")
@@ -547,10 +679,20 @@ def test_build_kline_html_hides_echarts_tooltip_panel():
     assert "pctEl.style.color = trendColor;" in html
     assert "splitLine: { show: false }" in html
     assert "function buildVcpMarkerData()" in html
+    assert "function buildEarningsMarkerData()" in html
     assert "const category = rawData.dates[idx];" in html
     assert "value: [category, y]" in html
     assert "id: 'vcpBreakout'" in html
     assert "type: 'effectScatter'" in html
+    assert "id: 'earningsDay'" in html
+    assert "name: '业绩日'" in html
+    assert "themeState.earnings_marker" in html
+    assert "silent: false" in html
+    assert "环比：" in html
+    assert "同比：" in html
+    assert "qoqText" in html
+    assert "yoyText" in html
+    assert "function _escapeHtml(value)" in html
     assert "animation: false" in html
     assert "animationDuration: 150" not in html
     assert "animationEasing" not in html

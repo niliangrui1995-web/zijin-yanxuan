@@ -11,6 +11,9 @@ KEY_RPS_STRENGTH = "RPS\u5f3a\u5ea6"
 KEY_TRIGGER_DATE = "\u89e6\u53d1\u65e5\u671f"
 KEY_RANGE_HIGH = "\u533a\u95f4\u6700\u9ad8\u4ef7"
 KEY_RANGE_LOW = "\u533a\u95f4\u6700\u4f4e\u70b9"
+KEY_DISCOVERED_AT = "\u53d1\u73b0\u65f6\u95f4"
+KEY_EARNINGS_MARK_DATE = "\u4e1a\u7ee9\u65e5"
+KEY_EARNINGS_TEXT = "\u4e1a\u7ee9\u5f02\u52a8"
 
 
 def test_build_kline_open_request_does_not_merge_scan_context_into_non_scan_row():
@@ -192,6 +195,50 @@ def test_build_kline_open_request_uses_workspace_stock_context_scan_signal_for_w
     assert request["vcp_data"][KEY_RANGE_LOW] == 65.6
     assert request["vcp_data"]["_peak_dates"] == ["20251127", "20260123", "20260226", "20260410"]
     assert request["vcp_data"]["_vcp_overlay_allowed"] is True
+
+
+def test_build_kline_open_request_merges_workspace_earnings_signal_for_any_tab():
+    earnings_signal = StockSignal(
+        code="300604",
+        name="长川科技",
+        source_tab="earnings",
+        signal_type="earnings",
+        summary="一季度 57.69%",
+        observed_at="2026-06-27T08:31:02",
+        payload={
+            KEY_CODE: "300604",
+            KEY_NAME: "长川科技",
+            KEY_DISCOVERED_AT: "2026-06-27T08:31:02",
+            KEY_EARNINGS_TEXT: "一季度 57.69%",
+            "qoq_pct": 57.69,
+            "公告日期": "2026-06-20",
+        },
+    )
+    workspace = SimpleNamespace(
+        get_scan_results=lambda: [],
+        collect_stock_context=lambda: {"300604": [earnings_signal]},
+    )
+
+    request = build_kline_open_request(
+        code="300604",
+        code_name_map={"300604": "长川科技"},
+        code_list=[
+            {
+                KEY_CODE: "300604",
+                KEY_NAME: "长川科技",
+                KEY_SOURCE_LABEL: ["watchlist"],
+            }
+        ],
+        current_idx=0,
+        workspace=workspace,
+        source_tab_index=1,
+        source_tab_key="watchlist",
+    )
+
+    assert request["vcp_data"][KEY_DISCOVERED_AT] == "2026-06-27T08:31:02"
+    assert request["vcp_data"][KEY_EARNINGS_MARK_DATE] == "2026-06-20"
+    assert request["vcp_data"][KEY_EARNINGS_TEXT] == "一季度 57.69%"
+    assert request["vcp_data"]["公告日期"] == "2026-06-20"
 
 
 def test_build_kline_open_request_uses_embedded_scan_signal_from_candidate_row():

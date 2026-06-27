@@ -25,8 +25,13 @@ KEY_SELL_BRANCH = "\u5356\u65b9\u8425\u4e1a\u90e8"
 KEY_AMOUNT_WAN = "\u6210\u4ea4\u91d1\u989d(\u4e07\u5143)"
 KEY_QOQ_PCT = "\u73af\u6bd4%"
 KEY_REPORT_PERIOD = "\u62a5\u544a\u671f"
+KEY_REPORT_TYPE = "\u7c7b\u578b"
 KEY_REPORT_NAME = "\u8d22\u62a5\u540d\u79f0"
 KEY_REPORT_TITLE = "\u62a5\u544a\u540d\u79f0"
+KEY_REVEAL_DATE = "\u63ed\u6653\u65e5"
+KEY_DISCOVERED_AT = "\u53d1\u73b0\u65f6\u95f4"
+KEY_EARNINGS_MARK_DATE = "\u4e1a\u7ee9\u65e5"
+KEY_EARNINGS_TEXT = "\u4e1a\u7ee9\u5f02\u52a8"
 KEY_LAST_LISTED_RAW = "_\u6700\u8fd1\u4e0a\u699c_raw"
 KEY_LAST_LISTED = "\u6700\u8fd1\u4e0a\u699c"
 KEY_NET_WAN = "\u4e0a\u699c\u51c0\u4e70\u989d(\u4e07)"
@@ -52,6 +57,7 @@ RAW_STOCK_SHORT_NAME = "\u80a1\u7968\u7b80\u79f0"
 RAW_QOQ_PCT = "\u73af\u6bd4\u589e\u901f_\u767e\u5206\u6bd4"
 RAW_DISCLOSURE_DATE = "\u516c\u544a\u65e5\u671f"
 RAW_DATA_TYPE = "\u6570\u636e\u7c7b\u578b"
+RAW_DISCOVERED_AT = KEY_DISCOVERED_AT
 
 TEXT_BUY = "\u4e70\u5165"
 TEXT_SELL = "\u5356\u51fa"
@@ -284,28 +290,123 @@ class StockContextService:
         except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
             return []
 
-    def _load_earnings_cache_rows(self) -> list[dict]:
+    @staticmethod
+    def _normalize_earnings_code(row: dict) -> str:
+        code = str(row.get(KEY_CODE) or row.get(RAW_STOCK_CODE) or "").strip()
+        if code.isdigit() and len(code) <= 6:
+            code = code.zfill(6)
+        return code
+
+    @staticmethod
+    def _earnings_state_updated_at(store) -> str:
+        fetch_one = getattr(store, "fetch_one", None)
+        if not callable(fetch_one):
+            return ""
+        try:
+            row = fetch_one("SELECT updated_at FROM kv_store WHERE key = ?", ("earnings_state",), default={}) or {}
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError, sqlite3.Error):
+            return ""
+        return str(row.get("updated_at") or "").strip() if isinstance(row, dict) else ""
+
+    def _load_earnings_state_payload(self) -> tuple[dict, str]:
         try:
             from core.data_store import data_store
 
             payload = data_store.load_earnings_state() or {}
+            state_updated_at = self._earnings_state_updated_at(data_store)
         except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError, sqlite3.Error):
-            return []
+            return {}, ""
         if not isinstance(payload, dict):
+            return {}, state_updated_at
+        return payload, state_updated_at
+
+    @staticmethod
+    def _earnings_report_type(row: dict) -> str:
+        return str(row.get(RAW_DATA_TYPE) or row.get(KEY_REPORT_TYPE) or row.get(KEY_REPORT_TITLE) or "").strip()
+
+    @staticmethod
+    def _earnings_discovered_at(row: dict, fallback: str = "") -> str:
+        return str(row.get(KEY_DISCOVERED_AT) or row.get("discovered_at") or fallback or "").strip()
+
+    @staticmethod
+    def _earnings_reveal_date(row: dict) -> str:
+        return str(
+            row.get(KEY_REVEAL_DATE)
+            or row.get(KEY_EARNINGS_MARK_DATE)
+            or row.get(RAW_DISCLOSURE_DATE)
+            or row.get(KEY_TRIGGER_DATE)
+            or row.get("\u6e90\u516c\u544a\u65e5\u671f")
+            or ""
+        ).strip()
+
+    @classmethod
+    def _earnings_capture_time(cls, row: dict, fallback: str = "") -> str:
+        return str(
+            row.get(KEY_DISCOVERED_AT)
+            or row.get("discovered_at")
+            or fallback
+            or ""
+        ).strip()
+
+    def _earnings_discovery_lookup(self) -> dict[tuple[str, str, str], str]:
+        payload, state_updated_at = self._load_earnings_state_payload()
+        records = self._coerce_cache_rows(payload.get("records", [])) if payload else []
+        lookup: dict[tuple[str, str, str], str] = {}
+        for row in records:
+            code = self._normalize_earnings_code(row)
+            if not code:
+                continue
+            discovered_at = self._earnings_discovered_at(row, state_updated_at)
+            if not discovered_at:
+                continue
+            report_period = str(row.get(KEY_REPORT_PERIOD, "") or "").strip()
+            report_type = self._earnings_report_type(row)
+            lookup[(code, report_period, report_type)] = discovered_at
+            if report_period:
+                lookup[(code, report_period, "")] = discovered_at
+            lookup[(code, "", "")] = discovered_at
+        return lookup
+
+    @staticmethod
+    def _earnings_lookup_discovery(
+        lookup: dict[tuple[str, str, str], str],
+        *,
+        code: str,
+        report_period: str,
+        report_type: str,
+    ) -> str:
+        return (
+            lookup.get((code, report_period, report_type))
+            or lookup.get((code, report_period, ""))
+            or lookup.get((code, "", ""))
+            or ""
+        )
+
+    def _load_earnings_cache_rows(self) -> list[dict]:
+        payload, state_updated_at = self._load_earnings_state_payload()
+        if not payload:
             return []
 
         rows: list[dict] = []
         for raw_row in self._coerce_cache_rows(payload.get("records", [])):
             if raw_row.get(KEY_CODE):
-                rows.append(raw_row)
+                row = dict(raw_row)
+                capture_time = self._earnings_capture_time(row, state_updated_at)
+                reveal_date = self._earnings_reveal_date(row)
+                if capture_time:
+                    row[KEY_DISCOVERED_AT] = capture_time
+                if reveal_date:
+                    row[KEY_REVEAL_DATE] = reveal_date
+                rows.append(row)
                 continue
 
-            code = str(raw_row.get(RAW_STOCK_CODE) or raw_row.get(KEY_CODE) or "").strip()
-            if code.isdigit() and len(code) <= 6:
-                code = code.zfill(6)
+            code = self._normalize_earnings_code(raw_row)
             if not code:
                 continue
 
+            report_type = str(raw_row.get(RAW_DATA_TYPE, raw_row.get(KEY_REPORT_TITLE, "")) or "").strip()
+            capture_time = self._earnings_capture_time(raw_row, state_updated_at)
+            reveal_date = self._earnings_reveal_date(raw_row)
             rows.append(
                 {
                     **raw_row,
@@ -315,7 +416,10 @@ class StockContextService:
                     ).strip(),
                     KEY_QOQ_PCT: raw_row.get(RAW_QOQ_PCT, raw_row.get(KEY_QOQ_PCT, "")),
                     KEY_REPORT_PERIOD: str(raw_row.get(KEY_REPORT_PERIOD, "") or "").strip(),
-                    KEY_REPORT_TITLE: str(raw_row.get(RAW_DATA_TYPE, raw_row.get(KEY_REPORT_TITLE, "")) or "").strip(),
+                    KEY_REPORT_TYPE: report_type,
+                    KEY_REPORT_TITLE: report_type,
+                    KEY_REVEAL_DATE: reveal_date,
+                    KEY_DISCOVERED_AT: capture_time,
                     KEY_TRIGGER_DATE: str(raw_row.get(RAW_DISCLOSURE_DATE, "") or "").strip(),
                 }
             )
@@ -651,6 +755,7 @@ class StockContextService:
         rows = self._get_rows(earnings_tab)
         if not rows and include_cache_fallback:
             rows = self._load_earnings_cache_rows()
+        discovery_lookup = self._earnings_discovery_lookup() if rows else {}
         for row_idx, row in enumerate(rows):
             code = str(row.get(KEY_CODE, "")).strip()
             if not code:
@@ -665,6 +770,27 @@ class StockContextService:
             qoq_display = f"{qoq_value:.2f}".rstrip("0").rstrip(".")
             report_label = self._earnings_report_label(row)
             summary = f"{report_label} {qoq_display}%" if report_label else f"{qoq_display}%"
+            report_period = str(row.get(KEY_REPORT_PERIOD, "") or "").strip()
+            report_type = self._earnings_report_type(row)
+            discovered_at = self._earnings_discovered_at(row) or self._earnings_lookup_discovery(
+                discovery_lookup,
+                code=code,
+                report_period=report_period,
+                report_type=report_type,
+            )
+            reveal_date = self._earnings_reveal_date(row) or discovered_at
+            payload = {
+                **dict(row),
+                "qoq_pct": qoq_value,
+                KEY_EARNINGS_TEXT: summary,
+            }
+            if report_type:
+                payload.setdefault(KEY_REPORT_TYPE, report_type)
+            if reveal_date:
+                payload.setdefault(KEY_REVEAL_DATE, reveal_date)
+                payload[KEY_EARNINGS_MARK_DATE] = reveal_date
+            if discovered_at:
+                payload[KEY_DISCOVERED_AT] = discovered_at
             signals.append(
                 StockSignal(
                     code=code,
@@ -674,11 +800,9 @@ class StockContextService:
                     signal_type=SIGNAL_EARNINGS,
                     summary=summary,
                     numeric_value=qoq_value,
+                    observed_at=discovered_at or reveal_date,
                     row_ref=row_idx,
-                    payload={
-                        **dict(row),
-                        "qoq_pct": qoq_value,
-                    },
+                    payload=payload,
                 )
             )
         return signals

@@ -8,6 +8,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QGraphicsDropShadowEffect
 
+from app.services.kline_open_service import merge_workspace_earnings_context
 from app.services.ui_market_calendar_service import MarketCalendar
 from app.services.ui_watchlist_service import watchlist_vm
 from core.logger import get_logger
@@ -230,13 +231,20 @@ def resolve_vcp_context(window, code: str, name: str, item_data: dict | None = N
     else:
         scan_results = []
 
-    return resolve_kline_vcp_context(
+    resolved = resolve_kline_vcp_context(
         code=code,
         name=name,
         item_data=item_data,
         watchlist_entry=watchlist_entry,
         scan_results=scan_results,
     )
+    if workspace is not None:
+        merge_workspace_earnings_context(
+            vcp_data=resolved,
+            code_text=str(code or "").strip(),
+            workspace=workspace,
+        )
+    return resolved
 
 
 def apply_qt_theme(window) -> None:

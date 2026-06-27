@@ -217,6 +217,79 @@
                         }
                     },
                     {
+                        id: 'earningsDay',
+                        name: '业绩日',
+                        type: 'scatter',
+                        coordinateSystem: 'cartesian2d',
+                        xAxisIndex: 0,
+                        yAxisIndex: 0,
+                        data: buildEarningsMarkerData(),
+                        symbol: 'triangle',
+                        silent: false,
+                        clip: false,
+                        z: 13,
+                        animation: false,
+                        animationDuration: 0,
+                        animationDurationUpdate: 0,
+                        emphasis: { disabled: true },
+                        tooltip: {
+                            show: true,
+                            showContent: true,
+                            trigger: 'item',
+                            confine: true,
+                            backgroundColor: themeState.tooltip_bg,
+                            borderColor: themeState.earnings_marker_border,
+                            borderWidth: 1,
+                            padding: [8, 10],
+                            textStyle: {
+                                color: themeState.tooltip_text,
+                                fontFamily: themeState.mono_font_family,
+                                fontSize: 12,
+                                lineHeight: 18
+                            },
+                            formatter: function (params) {
+                                const data = params.data || {};
+                                const dateText = _escapeHtml(data.sourceDate || data.markerDate || '');
+                                const summary = _escapeHtml(data.summary || '');
+                                const qoqText = _escapeHtml(data.qoqText || '-');
+                                const yoyText = _escapeHtml(data.yoyText || '-');
+                                const summaryHtml = summary
+                                    ? '<div style="margin-top:4px; color:' + themeState.axis_label + ';">' + summary + '</div>'
+                                    : '';
+                                return ''
+                                    + '<div style="min-width:150px;">'
+                                    + '<div style="font-weight:700; color:' + themeState.earnings_marker + ';">业绩日 ' + dateText + '</div>'
+                                    + '<div style="margin-top:6px;">环比：<span style="font-weight:700;">' + qoqText + '</span></div>'
+                                    + '<div>同比：<span style="font-weight:700;">' + yoyText + '</span></div>'
+                                    + summaryHtml
+                                    + '</div>';
+                            }
+                        },
+                        itemStyle: {
+                            color: themeState.earnings_marker,
+                            borderColor: themeState.bg_canvas,
+                            borderWidth: 1,
+                            shadowBlur: 10,
+                            shadowColor: themeState.earnings_marker
+                        },
+                        label: {
+                            show: true,
+                            formatter: function (params) {
+                                return (params.data && params.data.labelText) || '业绩日';
+                            },
+                            position: 'bottom',
+                            distance: 4,
+                            padding: [2, 6],
+                            borderRadius: 6,
+                            backgroundColor: themeState.earnings_marker_bg,
+                            borderColor: themeState.earnings_marker_border,
+                            borderWidth: 1,
+                            color: themeState.earnings_marker,
+                            fontSize: 10,
+                            fontWeight: 700
+                        }
+                    },
+                    {
                         id: 'pointerClose',
                         name: 'Pointer Close',
                         type: 'scatter',

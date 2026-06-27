@@ -181,6 +181,11 @@ class AutoRefreshTaskService:
         result["routine_time"] = str(routine_time or "").strip()
         return result
 
+    def run_earnings_email_digest(self, trade_date: str) -> dict:
+        result = self._get_earnings_service().run_email_digest()
+        result["trade_date"] = str(trade_date or "").strip()
+        return result
+
 
 def _filter_lhb_rows_to_ai_chain(row_data: list[dict]) -> list[dict]:
     try:

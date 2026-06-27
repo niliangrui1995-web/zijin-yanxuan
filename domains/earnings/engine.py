@@ -651,6 +651,26 @@ class EarningsEngine:
             return None
         return self._build_fingerprint(code, report_date, data_type)
 
+    @staticmethod
+    def _record_capture_time(record: dict, fallback: str = "") -> str:
+        return str(record.get("发现时间") or record.get("discovered_at") or fallback or "").strip()
+
+    @staticmethod
+    def _record_reveal_date(record: dict) -> str:
+        return str(record.get("揭晓日") or record.get("公告日期") or record.get("源公告日期") or "").strip()
+
+    @classmethod
+    def _normalize_record_dates(cls, record: dict, fallback_capture_time: str = "") -> bool:
+        capture_time = cls._record_capture_time(record, fallback_capture_time)
+        reveal_date = cls._record_reveal_date(record)
+        old_discovered_at = record.get("发现时间")
+        old_reveal_date = record.get("揭晓日")
+        if capture_time:
+            record["发现时间"] = capture_time
+        if reveal_date:
+            record["揭晓日"] = reveal_date
+        return old_discovered_at != record.get("发现时间") or old_reveal_date != record.get("揭晓日")
+
     def _prune_retryable_seen_fingerprints(self) -> bool:
         """
         清理可重试的旧预告指纹：
@@ -686,6 +706,12 @@ class EarningsEngine:
         from core.data_store import data_store
 
         data = data_store.load_earnings_state()
+        state_updated_at = ""
+        try:
+            row = data_store.fetch_one("SELECT updated_at FROM kv_store WHERE key = ?", ("earnings_state",), default={})
+            state_updated_at = str((row or {}).get("updated_at") or "").strip()
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            state_updated_at = ""
 
         # 向下兼容：首次启动如果 SQLite 无数据但旧 JSON 存在，自动迁入
         if not data and os.path.exists(self.cache_file):
@@ -715,6 +741,7 @@ class EarningsEngine:
 
             # 清理过期数据保障性能（只保留距离今天内 N 天的数据）
             valid_records = []
+            cache_changed = False
             today_dt = MarketCalendar.now("CN")
             for r in all_records:
                 # 强力清真过滤：剔除最新单季扣非利润为负或为 0，环比增速不足 30%，或同比为负的垃圾股
@@ -727,16 +754,17 @@ class EarningsEngine:
                 if float(r.get("同比增速_百分比", -1.0)) <= 0:
                     continue
 
-                r_date = r.get("公告日期", "")
+                r_date = self._normalize_publish_date(self._record_reveal_date(r)) or r.get("公告日期", "")
                 try:
                     r_dt = datetime.strptime(r_date, "%Y-%m-%d")
                     if (today_dt - r_dt).days <= self.keep_days:
+                        cache_changed = self._normalize_record_dates(r, state_updated_at) or cache_changed
                         valid_records.append(r)
                 except (ValueError, TypeError):
                     pass
 
             self.local_records = valid_records
-            cache_changed = self._prune_retryable_seen_fingerprints()
+            cache_changed = self._prune_retryable_seen_fingerprints() or cache_changed
             if cache_changed:
                 self._save_cache()
             logger.info(
@@ -834,10 +862,12 @@ class EarningsEngine:
         """从长线账本中读取出所有还在存续期内的好股"""
         records = self._filter_records_to_stock_universe(self.local_records)
         if records:
+            for record in records:
+                self._normalize_record_dates(record, str(record.get("公告日期", "") or ""))
             # 读取时补齐动态的本地盘后基因
             self._inject_sectors(records)
             df = pd.DataFrame(records).sort_values(
-                by=["公告日期", "环比增速_百分比"], ascending=[False, False]
+                by=["揭晓日", "环比增速_百分比"], ascending=[False, False]
             )
             return df
         return pd.DataFrame()
@@ -1104,6 +1134,9 @@ class EarningsEngine:
                     # 三重硬门槛：① 单季利润为正 ② 环比>=30% ③ 同比为正（扣非同比增长）
                     if self._surprise_result_passes_threshold(result):
                         cand.update(result)
+                        capture_time = MarketCalendar.now("CN").isoformat(timespec="seconds")
+                        cand["揭晓日"] = str(cand.get("公告日期") or cand.get("源公告日期") or "").strip()
+                        cand["发现时间"] = capture_time
                         valid_records.append(cand)
                         self.local_records.append(cand)
                         self.seen_fingerprints.add(fingerprint)
@@ -1156,7 +1189,7 @@ class EarningsEngine:
             # === 补齐 AI 产业链细分板块与备注 ===
             self._inject_sectors(valid_records)
 
-            return pd.DataFrame(valid_records).sort_values(by=["公告日期", "环比增速_百分比"], ascending=[False, False])
+            return pd.DataFrame(valid_records).sort_values(by=["揭晓日", "环比增速_百分比"], ascending=[False, False])
         return pd.DataFrame()
 
     def compute_single_quarter_qoq(

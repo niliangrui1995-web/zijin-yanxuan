@@ -8,6 +8,15 @@
 
         const VCP_STAR_SYMBOL = 'path://M0 -13 L3 -3 L13 0 L3 3 L0 13 L-3 3 L-13 0 L-3 -3 Z';
 
+        function _escapeHtml(value) {
+            return String(value === undefined || value === null ? '' : value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
         function _maLineStyle(key, baseWidth, baseOpacity, defaultType) {
             const styleMap = rawData.maStyles || {};
             const style = styleMap[key] || {};
@@ -201,6 +210,26 @@
                     symbolOffset: item.symbolOffset || [0, -10],
                     itemStyle: item.itemStyle,
                     label: item.label
+                };
+            }).filter(Boolean);
+        }
+
+        function buildEarningsMarkerData() {
+            return (rawData.earningsMarkers || []).map((item) => {
+                const idx = Math.round(Number(item.coord && item.coord[0]));
+                const y = Number(item.coord && item.coord[1]);
+                const category = rawData.dates[idx];
+                if (!category || !Number.isFinite(y)) return null;
+                return {
+                    value: [category, y],
+                    labelText: item.label || '业绩日',
+                    sourceDate: item.sourceDate || '',
+                    markerDate: item.date || category,
+                    summary: item.summary || '',
+                    qoqText: item.qoqText || '',
+                    yoyText: item.yoyText || '',
+                    symbolSize: item.symbolSize || 11,
+                    symbolOffset: item.symbolOffset || [0, 8]
                 };
             }).filter(Boolean);
         }

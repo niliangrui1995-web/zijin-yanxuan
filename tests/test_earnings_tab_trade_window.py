@@ -474,6 +474,40 @@ def test_earnings_refresh_after_ai_chain_update_replays_filtered_cache():
     assert calls[3] == ("snapshot", tab.model, True)
 
 
+def test_earnings_tab_preserves_discovery_time_from_engine_frame(monkeypatch, earnings_qt):
+    tab = earnings_qt.EarningsTab()
+    try:
+        monkeypatch.setattr(tab, "_apply_display_trade_window", lambda force_refresh=False: True)
+        monkeypatch.setattr(tab, "_set_window_status", lambda *args, **kwargs: None)
+        monkeypatch.setattr(tab, "_status_metric", lambda *args, **kwargs: "")
+        df = pd.DataFrame(
+            [
+                {
+                    "股票代码": "300604",
+                    "股票名称": "长川科技",
+                    "环比增速_百分比": 57.69,
+                    "同比增速_百分比": 88.8,
+                    "单季净利润_新增": 120000000.0,
+                    "单季净利润_上期": 76000000.0,
+                    "报告期": "2026-03-31",
+                    "数据类型": "财报",
+                    "公告日期": "2026-04-20",
+                    "发现时间": "2026-06-27T08:31:02",
+                    "基调": "高增",
+                    "所属行业与概念": "半导体设备",
+                }
+            ]
+        )
+
+        tab._on_new_data_found(df, "warm_cache")
+
+        assert tab.row_data[0]["代码"] == "300604"
+        assert tab.row_data[0]["揭晓日"] == "2026-04-20"
+        assert tab.row_data[0]["发现时间"] == "2026-06-27T08:31:02"
+    finally:
+        tab.deleteLater()
+
+
 def test_earnings_display_window_primes_local_snapshot_after_cache_render():
     EarningsTab = _earnings_tab_class()
     calls = []

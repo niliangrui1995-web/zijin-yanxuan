@@ -277,6 +277,8 @@ def test_workspace_earnings_context_signal_includes_report_label():
                         "名称": "中国巨石",
                         "环比%": 45.42,
                         "报告期": "2026-03-31",
+                        "公告日期": "2026-04-17",
+                        "发现时间": "2026-04-20T08:31:02",
                     },
                     {
                         "代码": "603186",
@@ -293,6 +295,9 @@ def test_workspace_earnings_context_signal_includes_report_label():
 
     assert [signal.summary for signal in context["600176"]] == ["一季度 45.42%"]
     assert [signal.summary for signal in context["603186"]] == ["年报 81.67%"]
+    assert context["600176"][0].observed_at == "2026-04-20T08:31:02"
+    assert context["600176"][0].payload["发现时间"] == "2026-04-20T08:31:02"
+    assert context["600176"][0].payload["业绩日"] == "2026-04-17"
 
 
 def test_workspace_collects_scan_and_fund_holding_context_signals(monkeypatch):

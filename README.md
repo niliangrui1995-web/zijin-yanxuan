@@ -432,6 +432,9 @@ Windows 环境下可以在标题栏的系统菜单中勾选 `开机自启动`。
 - `ALPHAVANTAGE_API_KEY` / `ALPHA_VANTAGE_API_KEY`：全球财报日历的 Alpha Vantage 数据源。
 - `OPENDART_API_KEY` / `DART_API_KEY`：韩国 DART 披露数据源。
 - `SEC_USER_AGENT`：SEC EDGAR 请求头，默认使用项目内通用标识。
+- `EMAIL_ADDRESS` / `EMAIL_PASSWORD` / `RECEIVER_EMAIL`：业绩异动 9:00 邮件摘要会优先复用 `..\每日战报\每日战报\.env` 中的 SMTP 配置；多个收件人用英文逗号分隔。
+- `VCP_EARNINGS_EMAIL_ADDRESS` / `VCP_EARNINGS_EMAIL_PASSWORD` / `VCP_EARNINGS_RECEIVER_EMAIL`：业绩异动邮件专用覆盖项，存在时优先于通用邮件配置。
+- `VCP_EARNINGS_EMAIL_ENV_FILE`：额外指定业绩异动邮件配置文件路径。
 - `VCP_HUNTER_SETTINGS_ORGANIZATION` / `VCP_HUNTER_SETTINGS_APPLICATION`：覆盖 QSettings 命名空间，测试或多实例隔离时使用。
 - `VCP_KLINE_WEBENGINE_PREFLIGHT` / `VCP_KLINE_HIDDEN_PREWARM`：K 线 WebEngine 预检与隐藏预热相关诊断开关。
 
