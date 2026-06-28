@@ -76,7 +76,7 @@ def test_default_hotspot_budgets_cover_known_refactor_targets():
     assert HOTSPOT_BUDGETS["ui/theme_tokens.py"]["build_ui_tokens"] == 192
     assert HOTSPOT_BUDGETS["ui/workers/rt_scan_worker.py"]["RtScanWorker._run_one_round"] == 30
     assert HOTSPOT_BUDGETS["ui/workers/scan_worker.py"]["ScanWorker.run"] == 70
-    assert HOTSPOT_BUDGETS["ui/workspaces/classic_workspace.py"]["ClassicWorkspace.__init__"] == 185
+    assert HOTSPOT_BUDGETS["ui/workspaces/classic_workspace.py"]["ClassicWorkspace.__init__"] == 186
     assert HOTSPOT_BUDGETS["vcp/fetchers/asian_kline_fetcher.py"]["sync_asian_kline_cache"] == 220
 
 

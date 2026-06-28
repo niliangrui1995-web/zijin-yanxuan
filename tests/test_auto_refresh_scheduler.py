@@ -49,12 +49,6 @@ class _TaskService:
         self.calls = []
         self.fail = False
         self.asian_cache_result = {"records": 0, "status": "skipped", "message": "cache fresh"}
-        self.earnings_email_digest_result = {
-            "status": "skipped",
-            "reason": "no_recent_records",
-            "records": 0,
-            "email_sent": False,
-        }
 
     def run_lhb_daily(self, trade_date):
         self.calls.append(("lhb_daily", trade_date))
@@ -93,10 +87,6 @@ class _TaskService:
     def run_earnings_routine(self, trade_date, *, routine_time):
         self.calls.append(("earnings_routine", trade_date, routine_time))
         return {"records": 1}
-
-    def run_earnings_email_digest(self, trade_date):
-        self.calls.append(("earnings_email_digest", trade_date))
-        return dict(self.earnings_email_digest_result)
 
 
 def _reset_scheduler_settings():
@@ -375,69 +365,6 @@ def test_auto_refresh_scheduler_runs_latest_earnings_routine_once(monkeypatch):
 
     assert ("earnings_routine", "20260420", "08:30") in tasks.calls
     assert [call[0] for call in tasks.calls].count("earnings_routine") == 1
-
-
-def test_auto_refresh_scheduler_runs_earnings_email_digest_once_after_0900(monkeypatch):
-    _reset_scheduler_settings()
-    now = [datetime.datetime(2026, 4, 20, 9, 0)]
-    tasks = _TaskService()
-    status_spy = QSignalSpy(event_bus.sig_auto_refresh_status_changed)
-    scheduler = _scheduler(now, task_service=tasks, extended_jobs=True)
-    scheduler.DAILY_JOBS = ()
-    scheduler._set_last_success_date("earnings_startup_gap_fill", "20260420")
-    scheduler._set_last_success_date("earnings_routine_0830", "20260420")
-    monkeypatch.setattr(
-        "ui.services.auto_refresh_scheduler.MarketCalendar.is_market_active",
-        classmethod(lambda cls, market="CN": False),
-    )
-    monkeypatch.setattr(
-        "ui.services.auto_refresh_scheduler.MarketCalendar.is_trade_day",
-        classmethod(lambda cls, day, market="CN": True),
-    )
-
-    scheduler.tick()
-    scheduler.tick()
-
-    assert tasks.calls == [
-        ("asian_market_runtime", "sync"),
-        ("earnings_email_digest", "20260420"),
-        ("asian_market_runtime", "sync"),
-    ]
-    assert any(
-        args[0]["job_key"] == "earnings_email_digest"
-        and args[0]["status"] == "success"
-        and args[0]["message"] == "records=0; reason=no_recent_records"
-        for args in status_spy
-    )
-
-
-def test_auto_refresh_scheduler_blocks_0900_email_without_fresh_0830_scan(monkeypatch):
-    _reset_scheduler_settings()
-    now = [datetime.datetime(2026, 4, 20, 9, 0)]
-    tasks = _TaskService()
-    status_spy = QSignalSpy(event_bus.sig_auto_refresh_status_changed)
-    scheduler = _scheduler(now, task_service=tasks, extended_jobs=True)
-    scheduler.DAILY_JOBS = ()
-    scheduler.EARNINGS_ROUTINE_TIMES = ()
-    scheduler._set_last_success_date("earnings_startup_gap_fill", "20260420")
-    monkeypatch.setattr(
-        "ui.services.auto_refresh_scheduler.MarketCalendar.is_market_active",
-        classmethod(lambda cls, market="CN": False),
-    )
-    monkeypatch.setattr(
-        "ui.services.auto_refresh_scheduler.MarketCalendar.is_trade_day",
-        classmethod(lambda cls, day, market="CN": True),
-    )
-
-    scheduler.tick()
-
-    assert ("earnings_email_digest", "20260420") not in tasks.calls
-    assert any(
-        args[0]["job_key"] == "earnings_email_digest"
-        and args[0]["status"] == "degraded"
-        and "08:30" in args[0]["error"]
-        for args in status_spy
-    )
 
 
 def test_auto_refresh_task_service_runs_fund_holdings_sync(monkeypatch):

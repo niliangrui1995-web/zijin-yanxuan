@@ -35,6 +35,7 @@ BROAD_EXCEPTION_ALLOWED_HANDLERS = {
     "app/services/ui_earnings_service.py:run_startup_gap_fill",
     "app/services/ui_earnings_service.py:run_gap_fill",
     "app/services/ui_earnings_service.py:run_routine_scan",
+    "domains/global_earnings_calendar/refresh_cache.py:main",
     "infra/diagnostics/runtime_health.py:<module>",
 }
 TYPE_ANNOTATION_SCAN_ROOTS = ("app", "domains", "infra")

@@ -8,7 +8,6 @@ from dataclasses import dataclass
 import pandas as pd
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from app.services.ui_earnings_email_service import send_recent_earnings_email_digest
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
@@ -133,19 +132,6 @@ class EarningsRefreshService(QObject):
         except Exception as exc:
             self._emit_failure("routine", exc)
             raise
-
-    def run_email_digest(self) -> dict:
-        scan_result = getattr(self.engine, "last_scan_result", {}) or {}
-        if str(scan_result.get("status") or "").strip() == "degraded":
-            return {
-                "job_key": "earnings_email_digest",
-                "status": "degraded",
-                "reason": "earnings_scan_degraded",
-                "error": str(scan_result.get("error") or "earnings scan degraded").strip(),
-                "records": 0,
-                "email_sent": False,
-            }
-        return send_recent_earnings_email_digest(self.engine.local_records)
 
     def force_manual_scan(self, date_list: list[str]) -> bool:
         if self.active_workers:
