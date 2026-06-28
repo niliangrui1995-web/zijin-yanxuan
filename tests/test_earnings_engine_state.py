@@ -345,6 +345,57 @@ def test_safe_ak_fetch_reuses_pool_cache_and_ths_stale_cache(monkeypatch):
         engine_module._THS_FINANCIAL_BENEFIT_CACHE.update(original_ths_cache)
 
 
+def test_safe_ak_fetch_stops_retry_when_pool_error_burns_budget(monkeypatch):
+    calls = []
+    monotonic_values = iter([1000.0, 1065.0])
+
+    def slow_broken_fetch(date=None):
+        calls.append(date)
+        raise RuntimeError("Response ended prematurely")
+
+    monkeypatch.setattr(engine_module.time, "monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(engine_module.time, "sleep", lambda _seconds: (_ for _ in ()).throw(AssertionError("no sleep")))
+
+    with pytest.raises(engine_module.EarningsUpstreamDegraded) as exc_info:
+        engine_module.safe_ak_fetch(slow_broken_fetch, date="20251231", max_elapsed_sec=60)
+
+    assert calls == ["20251231"]
+    assert exc_info.value.param_str == "20251231"
+    assert "Response ended prematurely" in str(exc_info.value)
+
+
+def test_fetch_daily_surprises_degrades_and_skips_remaining_formal_report_pools(monkeypatch):
+    engine = _build_engine()
+    calls = []
+
+    def fake_safe_fetch(fetch_func, *args, **kwargs):
+        name = fetch_func.__name__
+        report_date = kwargs.get("date")
+        calls.append((name, report_date, kwargs.get("max_elapsed_sec")))
+        if name == "stock_yjbb_em" and report_date == "20251231":
+            raise engine_module.EarningsUpstreamDegraded(
+                "【正式财报池】",
+                "20251231",
+                65.0,
+                RuntimeError("Response ended prematurely"),
+            )
+        return pd.DataFrame()
+
+    monkeypatch.setattr(engine_module, "current_active_report_dates", lambda: ["20251231", "20260331"])
+    monkeypatch.setattr(engine_module, "safe_ak_fetch", fake_safe_fetch)
+    monkeypatch.setattr(engine, "_save_cache", lambda: None)
+
+    result = engine.fetch_daily_surprises(target_publish_date="2026-04-16")
+
+    assert result.empty
+    assert ("stock_yjbb_em", "20260331", engine_module.EARNINGS_FORMAL_REPORT_RETRY_BUDGET_SECONDS) not in calls
+    assert ("stock_yjkb_em", "20251231", None) in calls
+    assert ("stock_yjkb_em", "20260331", None) in calls
+    assert engine.last_scan_result["status"] == "degraded"
+    assert engine.last_sync_date == "2026-04-15"
+    assert "Response ended prematurely" in engine.last_scan_result["error"]
+
+
 def test_inject_sectors_uses_ai_industry_chain_context(monkeypatch):
     engine = _build_engine()
     monkeypatch.setattr(
@@ -369,26 +420,31 @@ def test_earnings_date_filters_and_candidate_builders(monkeypatch):
 
     assert EarningsEngine._normalize_publish_date("2026-04-16 19:30:00") == "2026-04-16"
     assert EarningsEngine._normalize_publish_date(None) == ""
-    assert EarningsEngine._next_trade_date("bad-date") is None
-
-    trade_days = {pd.Timestamp("2026-04-18").date()}
-    monkeypatch.setattr(engine_module.MarketCalendar, "is_trade_day", classmethod(lambda cls, day, market="CN": day in trade_days))
-    assert EarningsEngine._next_trade_date("2026-04-16") == "2026-04-18"
+    assert EarningsEngine._next_calendar_date("bad-date") is None
+    assert EarningsEngine._next_calendar_date("2026-04-16") == "2026-04-17"
 
     monkeypatch.setattr(
         engine_module.MarketCalendar,
         "today",
         classmethod(lambda cls, market="CN": pd.Timestamp("2026-04-16").date()),
     )
-    monkeypatch.setattr(EarningsEngine, "_next_trade_date", classmethod(lambda cls, trade_date: "2026-04-17"))
     assert EarningsEngine._resolve_allowed_publish_dates("2026-04-16", "财报") == {"2026-04-16", "2026-04-17"}
-    assert EarningsEngine._resolve_allowed_publish_dates("2026-04-15", "财报") == {"2026-04-15"}
-    assert EarningsEngine._resolve_allowed_publish_dates("2026-04-16", "预告") == {"2026-04-16"}
+    assert EarningsEngine._resolve_allowed_publish_dates("2026-04-15", "财报") == {"2026-04-15", "2026-04-16"}
+    assert EarningsEngine._resolve_allowed_publish_dates("2026-04-16", "预告") == {"2026-04-16", "2026-04-17"}
 
     df = pd.DataFrame({"公告日期": ["2026-04-16 19:00:00", "2026-04-18"], "股票代码": ["000001", "000002"]})
     filtered = EarningsEngine._filter_candidates_by_publish_date(df, "公告日期", "2026-04-16", "预告")
     assert filtered["股票代码"].tolist() == ["000001"]
     assert EarningsEngine._filter_candidates_by_publish_date(df, "missing", "2026-04-16", "预告").empty
+
+    guidance_df = pd.DataFrame({"公告日期": ["2026-04-17"], "股票代码": ["000003"]})
+    guidance_filtered = EarningsEngine._filter_candidates_by_publish_date(
+        guidance_df,
+        "公告日期",
+        "2026-04-16",
+        "预告",
+    )
+    assert guidance_filtered["股票代码"].tolist() == ["000003"]
 
     assert EarningsEngine._resolve_guidance_est_profit({"预测数值": 12.0, "预测指标": "扣非净利润"}) == (12.0, "扣非净利润")
     fallback_profit, fallback_metric = EarningsEngine._resolve_guidance_est_profit(
@@ -837,7 +893,7 @@ def test_fetch_daily_surprises_accepts_next_trade_day_financial_report_on_today_
     assert "SHOCK_300308_20260331_财报" in engine.seen_fingerprints
 
 
-def test_fetch_daily_surprises_does_not_accept_next_trade_day_financial_report_on_backfill(monkeypatch):
+def test_fetch_daily_surprises_does_not_accept_two_days_later_financial_report_on_backfill(monkeypatch):
     engine = _build_engine()
 
     candidate_df = pd.DataFrame(

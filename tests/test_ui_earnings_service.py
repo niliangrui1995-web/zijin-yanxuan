@@ -167,6 +167,30 @@ def test_earnings_refresh_routine_scan_success_and_failure(qt_application):
     assert failures == [("routine", "provider timeout")]
 
 
+def test_earnings_refresh_routine_and_email_surface_degraded_scan(qt_application):
+    class DegradedEngine(_FakeEarningsEngine):
+        def fetch_daily_surprises(self, *, target_publish_date=None):
+            self.last_scan_result = {
+                "status": "degraded",
+                "error": "【正式财报池】(20251231): Response ended prematurely",
+            }
+            return pd.DataFrame()
+
+    service = EarningsRefreshService(engine=DegradedEngine(), job_runner=_FakeJobRunner())
+    emitted = []
+    service.sig_new_surprises_found.connect(lambda frame, mode: emitted.append((len(frame), mode)))
+
+    routine_result = service.run_routine_scan(reason="scheduled:08:30")
+    email_result = service.run_email_digest()
+
+    assert routine_result["status"] == "degraded"
+    assert routine_result["error"] == "【正式财报池】(20251231): Response ended prematurely"
+    assert emitted == [(0, "routine")]
+    assert email_result["status"] == "degraded"
+    assert email_result["reason"] == "earnings_scan_degraded"
+    assert email_result["email_sent"] is False
+
+
 def test_earnings_refresh_background_entrypoints_run_and_emit(qt_application):
     runner = _FakeJobRunner(active=False)
     engine = _FakeEarningsEngine(cached=None, daily=pd.DataFrame([{"code": "000001"}]))

@@ -31,6 +31,7 @@ class AutoRefreshScheduler(QObject):
     RETRYABLE_RESULT_STATUSES = {"failed", "degraded"}
     EARNINGS_ROUTINE_TIMES = ((8, 30), (12, 0), (17, 0), (19, 0), (21, 0), (23, 0))
     EARNINGS_EMAIL_DIGEST_TIME = (9, 0)
+    EARNINGS_EMAIL_REQUIRED_ROUTINE_TIME = (8, 30)
 
     DAILY_JOBS = (
         AutoRefreshJob("lhb_daily", 20, 0, True),
@@ -379,6 +380,17 @@ class AutoRefreshScheduler(QObject):
             self._emit_status("earnings_email_digest", "skipped", trade_date, message="earnings job already running")
             return False
         if not self._can_submit(state_key, now):
+            return False
+        required_hour, required_minute = self.EARNINGS_EMAIL_REQUIRED_ROUTINE_TIME
+        required_key = f"earnings_routine_{required_hour:02d}{required_minute:02d}"
+        if self._last_success_date(required_key) != trade_date:
+            self._emit_status(
+                "earnings_email_digest",
+                "degraded",
+                trade_date,
+                message="waiting for fresh earnings scan",
+                error=f"{required_hour:02d}:{required_minute:02d} earnings routine not successful",
+            )
             return False
         self._submit_job(
             "earnings_email_digest",

@@ -52,6 +52,7 @@ from infra.http_safety import requests_get_https
 
 logger = get_logger()
 EARNINGS_QOQ_MIN_PCT = 30.0
+EARNINGS_FORMAL_REPORT_RETRY_BUDGET_SECONDS = 60.0
 
 _POOL_CACHE = {}
 _THS_FINANCIAL_BENEFIT_CACHE = {}
@@ -93,6 +94,25 @@ class _SingleQuarterMetrics:
     last_single: float
     yoy_base_single: float
     last_single_basis: str
+
+
+class EarningsUpstreamDegraded(RuntimeError):
+    def __init__(self, func_cn: str, param_str: str, elapsed_sec: float, original_error: Exception):
+        self.func_cn = str(func_cn or "").strip()
+        self.param_str = str(param_str or "").strip()
+        self.elapsed_sec = float(elapsed_sec or 0.0)
+        self.original_error = original_error
+        super().__init__(
+            f"{self.func_cn}({self.param_str}) upstream degraded after {self.elapsed_sec:.1f}s: {original_error}"
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "pool": self.func_cn,
+            "report_date": self.param_str,
+            "elapsed_sec": round(self.elapsed_sec, 3),
+            "error": str(self.original_error or "").strip(),
+        }
 
 try:
     from akshare.stock_fundamental.stock_finance_ths import headers as _AKSHARE_THS_HEADERS
@@ -486,10 +506,11 @@ def _fetch_stock_financial_benefit_ths(symbol: str, indicator: str = "按报告�
     return _set_cached_ths_financial_benefit(symbol, indicator, temp_df)
 
 
-def safe_ak_fetch(fetch_func, *args, **kwargs):
+def safe_ak_fetch(fetch_func, *args, max_elapsed_sec: float | None = None, **kwargs):
     """带退避的强力护甲 + 大白话进度解说"""
     retries = 3
     delay = 2.0
+    started_at = time.monotonic()
 
     # 翻译文言文函数名
     fname = fetch_func.__name__
@@ -541,6 +562,15 @@ def safe_ak_fetch(fetch_func, *args, **kwargs):
                     logger.info(f"[业绩引擎] {func_cn} ({param_str}) 暂无数据，跳过")
                 return pd.DataFrame()
 
+            elapsed_sec = time.monotonic() - started_at
+            if max_elapsed_sec is not None and elapsed_sec >= float(max_elapsed_sec):
+                if not is_ths_financial:
+                    logger.warning(
+                        f"[业绩引擎] ⚠️ {func_cn} ({param_str}) 已耗时 {elapsed_sec:.0f}s，"
+                        "停止本池重试并保留后续自动重试机会"
+                    )
+                raise EarningsUpstreamDegraded(func_cn, param_str, elapsed_sec, e) from e
+
             if i == retries - 1:
                 if fetch_func is ak.stock_financial_benefit_ths:
                     indicator = kwargs.get("indicator", "按报告期")
@@ -556,6 +586,14 @@ def safe_ak_fetch(fetch_func, *args, **kwargs):
                         return stale_df
                 logger.error(f"[业绩引擎] ❌ {func_cn} ({param_str}) 重试 {retries} 次后仍失败: {e}")
                 raise e
+
+            if max_elapsed_sec is not None and elapsed_sec + delay >= float(max_elapsed_sec):
+                if not is_ths_financial:
+                    logger.warning(
+                        f"[业绩引擎] ⚠️ {func_cn} ({param_str}) 本轮重试预算不足，"
+                        "停止本池重试并保留后续自动重试机会"
+                    )
+                raise EarningsUpstreamDegraded(func_cn, param_str, elapsed_sec, e) from e
 
             logger.warning(f"[业绩引擎] ⚠️ {func_cn} 请求失败({e})，{delay:.0f}s 后第 {i + 2} 次重试")
             time.sleep(delay)
@@ -588,6 +626,7 @@ class EarningsEngine:
         self.seen_fingerprints = set()
         self.local_records = []
         self.last_sync_date = MarketCalendar.today("CN").strftime("%Y-%m-%d")
+        self.last_scan_result: dict[str, object] = {}
         self._quick_report_profit_cache = {}
         self._load_cache()
 
@@ -600,32 +639,23 @@ class EarningsEngine:
         raw_text = str(raw_value or "").strip()
         return raw_text[:10] if raw_text else ""
 
-    @classmethod
-    def _next_trade_date(cls, trade_date: str) -> str | None:
+    @staticmethod
+    def _next_calendar_date(publish_date: str) -> str | None:
         try:
-            cursor = datetime.strptime(trade_date, "%Y-%m-%d").date()
+            cursor = datetime.strptime(publish_date, "%Y-%m-%d").date()
         except ValueError:
             return None
-
-        for _ in range(10):
-            cursor += timedelta(days=1)
-            if MarketCalendar.is_trade_day(cursor, "CN"):
-                return cursor.strftime("%Y-%m-%d")
-        return None
+        return (cursor + timedelta(days=1)).strftime("%Y-%m-%d")
 
     @classmethod
     def _resolve_allowed_publish_dates(cls, target_publish_date: str, data_type: str) -> set[str]:
         allowed_dates = {target_publish_date}
-        if data_type not in {"财报", "快报"}:
+        if data_type not in {"预告", "财报", "快报"}:
             return allowed_dates
 
-        today_str = MarketCalendar.today("CN").strftime("%Y-%m-%d")
-        if target_publish_date != today_str:
-            return allowed_dates
-
-        next_trade_date = cls._next_trade_date(target_publish_date)
-        if next_trade_date:
-            allowed_dates.add(next_trade_date)
+        next_calendar_date = cls._next_calendar_date(target_publish_date)
+        if next_calendar_date:
+            allowed_dates.add(next_calendar_date)
         return allowed_dates
 
     @classmethod
@@ -975,8 +1005,9 @@ class EarningsEngine:
         date_col: str,
         data_type: str,
         tone: str,
+        max_fetch_elapsed_sec: float | None = None,
     ) -> list[dict]:
-        df_report = safe_ak_fetch(fetch_func, date=report_date)
+        df_report = safe_ak_fetch(fetch_func, date=report_date, max_elapsed_sec=max_fetch_elapsed_sec)
         if df_report.empty or date_col not in df_report.columns:
             return []
 
@@ -1004,9 +1035,10 @@ class EarningsEngine:
         self,
         report_dates: list[str],
         target_publish_date: str,
-    ) -> tuple[list[dict], bool]:
+    ) -> tuple[list[dict], bool, list[dict[str, object]]]:
         all_candidates = []
         has_critical_error = False
+        degradations: list[dict[str, object]] = []
 
         for report_date in report_dates:
             try:
@@ -1015,21 +1047,34 @@ class EarningsEngine:
                 logger.error(f"[业绩引擎] 业绩预告({report_date})拉取失败: {e}")
                 has_critical_error = True
 
+        formal_report_pool_degraded = False
         for report_date in report_dates:
-            try:
-                all_candidates.extend(
-                    self._collect_report_candidates(
-                        report_date,
-                        target_publish_date,
-                        fetch_func=ak.stock_yjbb_em,
-                        date_col="最新公告日期",
-                        data_type="财报",
-                        tone="正式出炉",
-                    )
-                )
-            except _AKSHARE_FETCH_ERRORS as e:
-                logger.error(f"[业绩引擎] 财报({report_date})拉取失败: {e}")
+            if formal_report_pool_degraded:
                 has_critical_error = True
+                logger.warning(
+                    f"[业绩引擎] ⚠️ 【正式财报池】 ({report_date}) 本轮已降级，跳过并等待下次例行扫描重试"
+                )
+            else:
+                try:
+                    all_candidates.extend(
+                        self._collect_report_candidates(
+                            report_date,
+                            target_publish_date,
+                            fetch_func=ak.stock_yjbb_em,
+                            date_col="最新公告日期",
+                            data_type="财报",
+                            tone="正式出炉",
+                            max_fetch_elapsed_sec=EARNINGS_FORMAL_REPORT_RETRY_BUDGET_SECONDS,
+                        )
+                    )
+                except EarningsUpstreamDegraded as e:
+                    logger.warning(f"[业绩引擎] ⚠️ 财报({report_date})本轮降级: {e}")
+                    degradations.append(e.to_dict())
+                    has_critical_error = True
+                    formal_report_pool_degraded = True
+                except _AKSHARE_FETCH_ERRORS as e:
+                    logger.error(f"[业绩引擎] 财报({report_date})拉取失败: {e}")
+                    has_critical_error = True
 
             try:
                 all_candidates.extend(
@@ -1046,7 +1091,7 @@ class EarningsEngine:
                 logger.error(f"[业绩引擎] 业绩快报({report_date})拉取失败: {e}")
                 has_critical_error = True
 
-        return all_candidates, has_critical_error
+        return all_candidates, has_critical_error, degradations
 
     def _pending_surprise_candidates(
         self,
@@ -1150,6 +1195,12 @@ class EarningsEngine:
         if target_publish_date is None:
             target_publish_date = MarketCalendar.today("CN").strftime("%Y-%m-%d")
 
+        started_at = MarketCalendar.now("CN").isoformat(timespec="seconds")
+        self.last_scan_result = {
+            "status": "running",
+            "target_publish_date": target_publish_date,
+            "started_at": started_at,
+        }
         logger.info(f"[业绩引擎] 扫描目标日期: {target_publish_date}")
 
         sync_date_advanced = False
@@ -1158,7 +1209,7 @@ class EarningsEngine:
             should_advance_sync_date = True
 
         report_dates = current_active_report_dates()
-        all_candidates, has_critical_error = self._collect_daily_surprise_candidates(
+        all_candidates, has_critical_error, degradations = self._collect_daily_surprise_candidates(
             report_dates,
             target_publish_date,
         )
@@ -1184,6 +1235,24 @@ class EarningsEngine:
 
         if new_found_flag or sync_date_advanced:
             self._save_cache()
+
+        status = "degraded" if has_critical_error else "success"
+        error_text = ""
+        if degradations:
+            error_text = "; ".join(
+                f"{item.get('pool')}({item.get('report_date')}): {item.get('error')}" for item in degradations
+            )
+        elif has_critical_error:
+            error_text = "provider_fetch_failed"
+        self.last_scan_result = {
+            "status": status,
+            "target_publish_date": target_publish_date,
+            "started_at": started_at,
+            "finished_at": MarketCalendar.now("CN").isoformat(timespec="seconds"),
+            "records": int(len(valid_records)),
+            "degradations": degradations,
+            "error": error_text,
+        }
 
         if valid_records:
             # === 补齐 AI 产业链细分板块与备注 ===

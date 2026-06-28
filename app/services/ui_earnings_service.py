@@ -116,11 +116,17 @@ class EarningsRefreshService(QObject):
             if df is None:
                 df = pd.DataFrame()
             self._emit_success(df, "routine")
-            return {
+            scan_result = getattr(self.engine, "last_scan_result", {}) or {}
+            status = str(scan_result.get("status") or "").strip()
+            result = {
                 "job_key": "earnings_routine",
                 "records": int(len(df)),
                 "reason": str(reason or "").strip(),
             }
+            if status == "degraded":
+                result["status"] = "degraded"
+                result["error"] = str(scan_result.get("error") or "earnings scan degraded").strip()
+            return result
 
         try:
             return self._with_active("routine", _run)
@@ -129,6 +135,16 @@ class EarningsRefreshService(QObject):
             raise
 
     def run_email_digest(self) -> dict:
+        scan_result = getattr(self.engine, "last_scan_result", {}) or {}
+        if str(scan_result.get("status") or "").strip() == "degraded":
+            return {
+                "job_key": "earnings_email_digest",
+                "status": "degraded",
+                "reason": "earnings_scan_degraded",
+                "error": str(scan_result.get("error") or "earnings scan degraded").strip(),
+                "records": 0,
+                "email_sent": False,
+            }
         return send_recent_earnings_email_digest(self.engine.local_records)
 
     def force_manual_scan(self, date_list: list[str]) -> bool:

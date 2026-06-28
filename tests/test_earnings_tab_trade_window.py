@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QShowEvent
 
 from ui.theme import theme_manager
 
@@ -264,6 +264,41 @@ def test_earnings_runtime_start_is_queued_once(monkeypatch, earnings_qt):
 
     assert calls == ["start"]
     assert tab._runtime_start_queued is False
+
+
+def test_earnings_initial_visible_work_can_be_delayed(monkeypatch, earnings_qt):
+    queued = []
+    prime_calls = []
+    monkeypatch.setattr(
+        earnings_qt.BaseStockTab,
+        "_prime_visible_local_quote_snapshot",
+        lambda self, current_model=None: prime_calls.append(current_model) or True,
+    )
+
+    tab = earnings_qt.EarningsTab(runtime_start_delay_ms=1800)
+    monkeypatch.setattr(earnings_qt.module.QTimer, "singleShot", lambda delay, callback: queued.append((delay, callback)))
+    tab._is_current_workspace_tab = lambda: True
+    tab.isVisible = lambda: True
+    tab.row_data = [{"代码": "300750", "市值": "100亿", "_raw_profit": 1_000_000}]
+    try:
+        tab.showEvent(QShowEvent())
+
+        assert prime_calls == []
+        assert len(queued) == 1
+        assert queued[0][0] == 1800
+        assert tab.scheduler is None
+        assert tab._runtime_start_queued is False
+        assert tab._recalc_pe_timer.isActive() is False
+
+        queued.pop(0)[1]()
+
+        assert prime_calls == [tab.model]
+        assert len(queued) == 1
+        assert queued[0][0] == 0
+        assert tab._runtime_start_queued is True
+        assert tab._recalc_pe_timer.isActive() is True
+    finally:
+        tab.deleteLater()
 
 
 def test_earnings_queued_runtime_start_skips_stale_tab(earnings_qt):

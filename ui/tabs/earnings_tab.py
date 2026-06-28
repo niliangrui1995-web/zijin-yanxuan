@@ -49,10 +49,16 @@ EarningsScheduler = _default_earnings_scheduler
 class EarningsTab(BaseStockTab):
     """业绩断层与预告高增监控面板"""
 
-    def __init__(self, data_provider=None, parent=None):
+    def __init__(self, data_provider=None, parent=None, *, runtime_start_delay_ms: int = 0):
         super().__init__(data_provider, parent)
         self.row_data = []
         self._manual_fetch_range: tuple[str, str] | None = None
+        try:
+            self._runtime_start_delay_ms = max(0, int(runtime_start_delay_ms))
+        except (TypeError, ValueError):
+            self._runtime_start_delay_ms = 0
+        self._initial_visible_work_pending = False
+        self._initial_visible_work_done = self._runtime_start_delay_ms <= 0
         self._init_ui()
         self._recalc_pe_timer = QTimer(self)
         self._recalc_pe_timer.setSingleShot(True)
@@ -114,6 +120,37 @@ class EarningsTab(BaseStockTab):
         if self._patrol_started or getattr(self, "_runtime_cleanup_done", False) or not self._is_current_workspace_tab():
             return
         self._ensure_runtime_started()
+
+    def _should_delay_initial_visible_work(self) -> bool:
+        return (
+            self._runtime_start_delay_ms > 0
+            and not self._initial_visible_work_done
+            and not getattr(self, "_runtime_cleanup_done", False)
+        )
+
+    def _schedule_initial_visible_work(self) -> None:
+        if self._initial_visible_work_pending or not self._should_delay_initial_visible_work():
+            return
+        self._initial_visible_work_pending = True
+        QTimer.singleShot(self._runtime_start_delay_ms, self._run_initial_visible_work)
+
+    def _run_initial_visible_work(self) -> None:
+        self._initial_visible_work_pending = False
+        if getattr(self, "_runtime_cleanup_done", False):
+            return
+        if not self._is_current_workspace_tab() or not self.isVisible():
+            return
+        self._initial_visible_work_done = True
+        BaseStockTab._prime_visible_local_quote_snapshot(self, current_model=self.model)
+        if self._should_start_runtime_on_show():
+            self._queue_runtime_start()
+        if self.row_data:
+            self._recalc_pe_timer.start(0)
+
+    def _prime_visible_local_quote_snapshot(self, current_model=None) -> bool:
+        if self._should_delay_initial_visible_work():
+            return False
+        return BaseStockTab._prime_visible_local_quote_snapshot(self, current_model=current_model)
 
     def _start_scheduler_patrol(self) -> None:
         return None
@@ -620,6 +657,9 @@ class EarningsTab(BaseStockTab):
         self._recalc_pe_ttm()
 
     def _on_cache_reload_completed(self):
+        if self._should_delay_initial_visible_work():
+            self._schedule_initial_visible_work()
+            return
         self._apply_latest_quotes_from_store()
 
     def _is_current_workspace_tab(self) -> bool:
@@ -673,6 +713,9 @@ class EarningsTab(BaseStockTab):
     def showEvent(self, event):
         """隐藏页首次打开时，父类会补现价/市值快照，这里紧跟着补算 PE。"""
         super().showEvent(event)
+        if self._should_delay_initial_visible_work():
+            self._schedule_initial_visible_work()
+            return
         if self._should_start_runtime_on_show():
             self._queue_runtime_start()
         if self.row_data:

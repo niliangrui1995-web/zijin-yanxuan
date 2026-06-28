@@ -406,7 +406,7 @@ class ClassicWorkspace(QWidget):
             runtime_kwargs["initial_cache_load_delay_ms"] = self.FIRST_VISIBLE_TAB_WORK_DELAY_MS
         elif first_visible_load and key in {"asian_market"}:
             runtime_kwargs["local_cache_delay_ms"] = self.FIRST_VISIBLE_TAB_WORK_DELAY_MS
-        elif first_visible_load and key in {"ai_industry_chain", "na_daily", "stock_candidates"}:
+        elif first_visible_load and key in {"ai_industry_chain", "na_daily", "stock_candidates", "earnings"}:
             runtime_kwargs["runtime_start_delay_ms"] = self.FIRST_VISIBLE_TAB_WORK_DELAY_MS
         elif key == "foreign_block" and reason_text not in {"placeholder_action", "tab_switch", "user"}:
             runtime_kwargs["autoload"] = False
