@@ -19,6 +19,7 @@ from core.startup_orchestrator import (
     DEFERRED_LOAD_TASK_ID,
     GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_HOUR,
     GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_MINUTE,
+    GLOBAL_EARNINGS_CALENDAR_SYNC_RETRY_DELAY_MS,
     GLOBAL_EARNINGS_CALENDAR_SYNC_TASK_ID,
     GLOBAL_EARNINGS_CALENDAR_SYNC_TIMEOUT_SEC,
     SMART_STARTUP_TASK_ID,
@@ -762,6 +763,69 @@ def test_startup_orchestrator_global_earnings_sync_marks_degraded_result(monkeyp
     assert end_snapshots[-1][1]["extra"]["providers"] == "MOPS"
     assert end_snapshots[-1][1]["extra"]["reused_event_count"] == 3
     assert len(spy) == 1
+
+
+def test_startup_orchestrator_global_earnings_retryable_degraded_rearms_soon(monkeypatch):
+    monkeypatch.setattr(
+        "core.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
+        lambda: {
+            "status": "degraded",
+            "events": 82,
+            "reason": "refresh_exception",
+            "retryable": True,
+            "reused_event_count": 82,
+        },
+    )
+
+    orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
+    try:
+        orchestrator.refresh_global_earnings_calendar()
+
+        assert orchestrator._global_earnings_calendar_daily_timer.isActive() is True
+        assert orchestrator._global_earnings_calendar_daily_timer.interval() == GLOBAL_EARNINGS_CALENDAR_SYNC_RETRY_DELAY_MS
+    finally:
+        orchestrator.shutdown()
+
+
+def test_startup_orchestrator_global_earnings_failure_logs_detail_and_retries(monkeypatch):
+    records = {"warning": [], "debug": []}
+
+    class _FakeLog:
+        def warning(self, message):
+            records["warning"].append(message)
+
+        def debug(self, message):
+            records["debug"].append(message)
+
+        def info(self, _message):
+            return None
+
+        def error(self, _message):
+            return None
+
+    def fake_refresh():
+        raise subprocess.CalledProcessError(
+            returncode=1,
+            cmd=["python", "-m", "domains.global_earnings_calendar.refresh_cache"],
+            stderr="sqlite busy\nretry later",
+        )
+
+    monkeypatch.setattr("core.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess", fake_refresh)
+    monkeypatch.setattr("core.startup_orchestrator.log", _FakeLog())
+    monkeypatch.setattr("core.startup_orchestrator.log_process_snapshot", lambda *_args, **_kwargs: None)
+
+    orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
+    spy = QSignalSpy(event_bus.sig_earnings_updated)
+    try:
+        orchestrator.refresh_global_earnings_calendar()
+
+        assert any("sqlite busy" in message for message in records["warning"])
+        assert any("retry later" in message for message in records["debug"])
+        assert orchestrator._global_earnings_calendar_daily_timer.isActive() is True
+        assert orchestrator._global_earnings_calendar_daily_timer.interval() == GLOBAL_EARNINGS_CALENDAR_SYNC_RETRY_DELAY_MS
+        assert len(spy) == 1
+    finally:
+        orchestrator.shutdown()
 
 
 def test_startup_orchestrator_daily_earnings_timer_refreshes_and_rearms(monkeypatch):

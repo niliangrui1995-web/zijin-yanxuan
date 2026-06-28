@@ -41,6 +41,8 @@ class LhbTab(BaseStockTab):
     """龙虎榜 30 日关注池 Tab"""
 
     AI_CHAIN_CONTEXT_COLUMN = "AI细分板块/备注"
+    QUOTE_APPLY_DEBOUNCE_MS = 80
+    QUOTE_SORT_DEBOUNCE_MS = 120
     _DISPLAY_PLACEHOLDER = "--"
     _chain_context_provider = staticmethod(load_ai_industry_chain_context_map)
 
@@ -89,6 +91,14 @@ class LhbTab(BaseStockTab):
         self._pool_retry_timer = QTimer(self)
         self._pool_retry_timer.setSingleShot(True)
         self._pool_retry_timer.timeout.connect(self._load_and_display_pool)
+        self._pending_quote_snapshot: dict = {}
+        self._applying_pending_quote_snapshot = False
+        self._quote_apply_timer = QTimer(self)
+        self._quote_apply_timer.setSingleShot(True)
+        self._quote_apply_timer.timeout.connect(self._flush_pending_quote_snapshot)
+        self._quote_sort_timer = QTimer(self)
+        self._quote_sort_timer.setSingleShot(True)
+        self._quote_sort_timer.timeout.connect(self._sort_model_for_default_lhb_order)
 
         self._init_ui()
         if self._autoload_pool:
@@ -733,12 +743,53 @@ class LhbTab(BaseStockTab):
         sorted_order = [row.get("代码") for row in sorted_rows]
         if sorted_order == current_order:
             return
-        self.model.update_data(sorted_rows)
+        self.model.update_data(sorted_rows, hydrate_latest_quotes=False)
         self._refresh_lhb_lineage(sorted_rows)
 
-    def _apply_quote_snapshot(self, quotes: dict | None):
+    def _should_defer_visible_quote_snapshot(self, quotes: dict | None) -> bool:
+        if not quotes or self._applying_pending_quote_snapshot:
+            return False
+        if getattr(self, "_runtime_cleanup_done", False):
+            return False
+        try:
+            return self.isVisible() and self._is_current_workspace_tab()
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return False
+
+    def _queue_visible_quote_snapshot(self, quotes: dict) -> None:
+        self._pending_quote_snapshot.update(dict(quotes or {}))
+        self._quote_apply_timer.start(self.QUOTE_APPLY_DEBOUNCE_MS)
+
+    def _flush_pending_quote_snapshot(self) -> None:
+        quotes = dict(self._pending_quote_snapshot)
+        self._pending_quote_snapshot.clear()
+        if not quotes:
+            return
+        self._applying_pending_quote_snapshot = True
+        try:
+            self._apply_quote_snapshot_now(quotes, defer_sort=True)
+        finally:
+            self._applying_pending_quote_snapshot = False
+
+    def _schedule_default_lhb_quote_sort(self) -> None:
+        if not self._is_default_lhb_sort_active():
+            return
+        if not getattr(self.model, "row_data", None):
+            return
+        self._quote_sort_timer.start(self.QUOTE_SORT_DEBOUNCE_MS)
+
+    def _apply_quote_snapshot_now(self, quotes: dict | None, *, defer_sort: bool = False) -> None:
         super()._apply_quote_snapshot(quotes)
-        self._sort_model_for_default_lhb_order()
+        if defer_sort:
+            self._schedule_default_lhb_quote_sort()
+        else:
+            self._sort_model_for_default_lhb_order()
+
+    def _apply_quote_snapshot(self, quotes: dict | None):
+        if self._should_defer_visible_quote_snapshot(quotes):
+            self._queue_visible_quote_snapshot(quotes)
+            return
+        self._apply_quote_snapshot_now(quotes)
 
     def get_watchlist_radar_rows(self) -> list[dict]:
         """给关注池读取已展示的龙虎榜信号；冷缓存由工作区快照后台预热。"""
@@ -758,7 +809,7 @@ class LhbTab(BaseStockTab):
 
         if rows_changed:
             self._clear_proxy_sort_for_default_lhb_order()
-            self.model.update_data([dict(row) for row in row_data])
+            self.model.update_data([dict(row) for row in row_data], hydrate_latest_quotes=False)
 
         cached_days = len(self._get_pool_manager().get_cached_dates())
         self._set_pool_status(
@@ -1061,6 +1112,12 @@ class LhbTab(BaseStockTab):
         retry_timer = getattr(self, "_pool_retry_timer", None)
         if retry_timer is not None:
             retry_timer.stop()
+        quote_apply_timer = getattr(self, "_quote_apply_timer", None)
+        if quote_apply_timer is not None:
+            quote_apply_timer.stop()
+        quote_sort_timer = getattr(self, "_quote_sort_timer", None)
+        if quote_sort_timer is not None:
+            quote_sort_timer.stop()
         try:
             event_bus.sig_cache_bootstrap_ready.disconnect(self._on_cache_bootstrap_ready)
         except (TypeError, RuntimeError):

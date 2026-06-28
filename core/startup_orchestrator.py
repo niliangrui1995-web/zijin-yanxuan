@@ -40,6 +40,7 @@ GLOBAL_EARNINGS_CALENDAR_SYNC_TASK_ID = task_registry.startup(
     description="Global oligarch earnings calendar silent sync",
 ).task_id
 GLOBAL_EARNINGS_CALENDAR_SYNC_TIMEOUT_SEC = 90
+GLOBAL_EARNINGS_CALENDAR_SYNC_RETRY_DELAY_MS = 15 * 60 * 1000
 GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_HOUR = 2
 GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_MINUTE = 0
 AUTO_RT_MONITOR_NETWORK_TASK_ID = task_registry.network(
@@ -315,6 +316,13 @@ class StartupOrchestrator:
         if self._closed:
             return
         self._global_earnings_calendar_daily_timer.start(ms_until_next_global_earnings_calendar_daily_refresh())
+
+    def _schedule_global_earnings_calendar_retry(self, reason: str):
+        if self._closed or not service_toggle_registry.is_enabled("daily_global_earnings_calendar_sync"):
+            return
+        self._global_earnings_calendar_daily_timer.start(GLOBAL_EARNINGS_CALENDAR_SYNC_RETRY_DELAY_MS)
+        retry_seconds = GLOBAL_EARNINGS_CALENDAR_SYNC_RETRY_DELAY_MS // 1000
+        log.warning(f"[startup] global earnings calendar retry scheduled in {retry_seconds}s: {reason}")
 
     def _run_daily_global_earnings_calendar_refresh(self):
         self.refresh_global_earnings_calendar()
@@ -642,6 +650,9 @@ class StartupOrchestrator:
                     reused_event_count = max(0, int(refresh_result.get("reused_event_count", 0) or 0))
                 except (TypeError, ValueError):
                     reused_event_count = 0
+                retryable = refresh_result.get("retryable") is True or str(
+                    refresh_result.get("retryable") or ""
+                ).strip().lower() in {"1", "true", "yes"}
                 if refresh_status == "degraded":
                     detail = f"{provider_text} 拉取异常" if provider_text else "上游拉取异常"
                     if reused_event_count:
@@ -666,6 +677,8 @@ class StartupOrchestrator:
                     snapshot_extra["providers"] = provider_text
                 if reused_event_count:
                     snapshot_extra["reused_event_count"] = reused_event_count
+                if retryable:
+                    snapshot_extra["retryable"] = True
                 log_process_snapshot(
                     "startup.global_earnings_calendar.end",
                     logger=log,
@@ -679,6 +692,10 @@ class StartupOrchestrator:
                     status=refresh_status,
                 )
                 self._safe_call_in_ui(lambda: event_bus.sig_earnings_updated.emit())
+                if refresh_status == "degraded" and retryable:
+                    self._safe_call_in_ui(
+                        lambda: self._schedule_global_earnings_calendar_retry("refresh_degraded_retryable")
+                    )
             except ProcessTimeoutError as exc:
                 log_process_snapshot(
                     "startup.global_earnings_calendar.end",
@@ -689,6 +706,8 @@ class StartupOrchestrator:
                 log.warning(
                     f"[启动] 寡头财报日历静默刷新超时({GLOBAL_EARNINGS_CALENDAR_SYNC_TIMEOUT_SEC}s)，已沿用本地缓存: {exc}"
                 )
+                self._safe_call_in_ui(lambda: event_bus.sig_earnings_updated.emit())
+                self._safe_call_in_ui(lambda: self._schedule_global_earnings_calendar_retry("refresh_timeout"))
             except (OSError, ProcessExecutionError, RuntimeError, TypeError, ValueError) as exc:
                 log_process_snapshot(
                     "startup.global_earnings_calendar.end",
@@ -696,7 +715,12 @@ class StartupOrchestrator:
                     level="warning",
                     extra={"status": "failed"},
                 )
-                log.warning(f"[启动] 寡头财报日历静默刷新失败，已沿用本地缓存: {exc}")
+                summary, raw_detail = _format_subprocess_failure(exc)
+                log.warning(f"[启动] 寡头财报日历静默刷新失败，已沿用本地缓存（{summary}）")
+                if raw_detail:
+                    log.debug(f"[启动] 寡头财报日历静默刷新原始输出: {raw_detail}")
+                self._safe_call_in_ui(lambda: event_bus.sig_earnings_updated.emit())
+                self._safe_call_in_ui(lambda: self._schedule_global_earnings_calendar_retry("refresh_failed"))
 
             finally:
                 self._global_earnings_calendar_sync_running = False

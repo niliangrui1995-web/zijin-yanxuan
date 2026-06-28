@@ -464,6 +464,35 @@ class GlobalEarningsCalendarService:
             "details": [dict(item) for item in degradations],
         }
 
+    def mark_refresh_failed(self, error: object, *, reason: str = "refresh_exception") -> dict[str, object]:
+        cached_events = self._load_cached_events()
+        error_text = str(error or "").strip()
+        if len(error_text) > 500:
+            error_text = error_text[:497] + "..."
+        cache_state = {
+            "status": "degraded",
+            "reason": str(reason or "refresh_exception").strip() or "refresh_exception",
+            "degraded_at": dt.datetime.now().isoformat(timespec="seconds"),
+            "providers": [],
+            "failed_days": [],
+            "failed_tickers": [],
+            "stale_cache_reused": bool(cached_events),
+            "reused_event_count": len(cached_events),
+            "retryable": True,
+            "error": error_text,
+            "details": [
+                {
+                    "reason": str(reason or "refresh_exception").strip() or "refresh_exception",
+                    "sample_error": error_text,
+                }
+            ],
+        }
+        if cached_events:
+            self._save_events(cached_events, "stale_cache", cache_state=cache_state)
+        else:
+            self._save_cache_state(cache_state)
+        return cache_state
+
     def load_events(
         self,
         *,

@@ -4,11 +4,12 @@ from types import SimpleNamespace
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QShowEvent
-from PyQt6.QtTest import QSignalSpy
+from PyQt6.QtTest import QSignalSpy, QTest
 
 import ui.tabs.lhb_tab as lhb_tab_module
 import ui.workers.lhb_worker as lhb_worker_module
 from core.market_calendar import MarketCalendar
+from ui.tabs.base_stock_tab import BaseStockTab
 from ui.tabs.lhb_tab import LhbTab
 
 
@@ -361,6 +362,67 @@ def test_lhb_display_pool_skips_duplicate_event_and_quote_refresh(monkeypatch):
         assert len(spy) == 1
         assert len(quote_calls) == 1
         assert len(tab.model.row_data) == 1
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_display_pool_leaves_quote_hydration_to_refresh_path(monkeypatch):
+    monkeypatch.setattr(
+        LhbTab,
+        "refresh_table_quotes_and_market_caps",
+        lambda self, *args, **kwargs: None,
+        raising=False,
+    )
+
+    tab = LhbTab(object(), autoload_pool=False)
+    tab.pool_manager = SimpleNamespace(get_cached_dates=lambda: ["20260420"])
+    update_kwargs = []
+    original_update_data = tab.model.update_data
+
+    def capture_update_data(rows, **kwargs):
+        update_kwargs.append(dict(kwargs))
+        return original_update_data(rows, **kwargs)
+
+    monkeypatch.setattr(tab.model, "update_data", capture_update_data)
+    try:
+        tab._display_pool([{"code": "300750", "name": "CATL"}])
+
+        assert update_kwargs[0]["hydrate_latest_quotes"] is False
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_visible_quote_snapshot_is_coalesced_before_apply(monkeypatch, qt_application):
+    applied = []
+
+    def capture_apply(self, quotes):
+        applied.append(dict(quotes or {}))
+
+    monkeypatch.setattr(BaseStockTab, "_apply_quote_snapshot", capture_apply)
+
+    tab = LhbTab(object(), autoload_pool=False)
+    tab._is_current_workspace_tab = lambda: True
+    tab.isVisible = lambda: True
+    try:
+        tab._apply_quote_snapshot({"000001": {"close": 10.0}})
+        tab._apply_quote_snapshot(
+            {
+                "000002": {"close": 20.0},
+                "000001": {"close": 11.0},
+            }
+        )
+
+        assert applied == []
+
+        QTest.qWait(LhbTab.QUOTE_APPLY_DEBOUNCE_MS + 30)
+        qt_application.processEvents()
+
+        assert applied == [
+            {
+                "000001": {"close": 11.0},
+                "000002": {"close": 20.0},
+            }
+        ]
     finally:
         tab.deleteLater()
 

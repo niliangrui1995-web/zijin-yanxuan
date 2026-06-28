@@ -1064,6 +1064,52 @@ def test_refresh_events_marks_degraded_nasdaq_week_and_reuses_cached_snapshot():
     assert service.load_cache_status()["status"] == "degraded"
 
 
+def test_mark_refresh_failed_preserves_cached_snapshot_and_sets_retryable_state():
+    class MemoryStore:
+        def __init__(self):
+            self.data = {
+                "global_earnings_calendar": {
+                    "source": "provider",
+                    "events": [
+                        EarningsCalendarEvent(
+                            "Applied Materials",
+                            "AMAT",
+                            "Semiconductor equipment",
+                            "2026-06-26",
+                            source="Nasdaq",
+                            market="US",
+                        ).to_dict()
+                    ],
+                }
+            }
+
+        def load_json(self, key, default=None):
+            return json.loads(json.dumps(self.data.get(key, default), ensure_ascii=False))
+
+        def save_json(self, key, data):
+            self.data[key] = json.loads(json.dumps(data, ensure_ascii=False))
+
+    store = MemoryStore()
+    service = GlobalEarningsCalendarService(
+        data_store=store,
+        universe={"AMAT": OligarchCompany("Applied Materials", "AMAT", "Semiconductor equipment", "normal", "US")},
+        confirmed_provider=ConfirmedEarningsEventsProvider("missing.json"),
+        official_providers=[],
+    )
+
+    state = service.mark_refresh_failed(RuntimeError("sqlite busy"))
+
+    payload = store.data["global_earnings_calendar"]
+    assert payload["source"] == "stale_cache"
+    assert [row["ticker"] for row in payload["events"]] == ["AMAT"]
+    assert state["status"] == "degraded"
+    assert state["reason"] == "refresh_exception"
+    assert state["retryable"] is True
+    assert state["stale_cache_reused"] is True
+    assert state["reused_event_count"] == 1
+    assert "sqlite busy" in state["error"]
+
+
 def test_refresh_events_keeps_failed_day_cache_when_same_nasdaq_ticker_refreshes_later():
     class MemoryStore:
         def __init__(self):
