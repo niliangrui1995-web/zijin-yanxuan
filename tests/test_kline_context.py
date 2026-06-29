@@ -264,6 +264,10 @@ def test_kline_theme_colors_include_vcp_overlay_tokens():
     assert colors["earnings_marker"]
     assert colors["earnings_marker_bg"]
     assert colors["earnings_marker_border"]
+    assert colors["trade_buy"]
+    assert colors["trade_sell"]
+    assert colors["trade_t"]
+    assert colors["trade_marker_border"]
     assert colors["scrollbar_handle"]
     assert colors["scrollbar_handle_hover"]
 
@@ -545,6 +549,75 @@ def test_build_kline_echarts_payload_clamps_future_earnings_reveal_day_to_latest
     assert marker["sourceDate"] == "2026-06-27"
 
 
+def test_build_kline_echarts_payload_marks_account_trade_points_and_t_days():
+    df = pd.DataFrame(
+        {
+            "open": [10.0, 10.5, 11.0],
+            "high": [10.8, 11.2, 11.8],
+            "low": [9.9, 10.2, 10.7],
+            "close": [10.6, 11.0, 11.6],
+            "volume": [10000, 12000, 15000],
+        },
+        index=pd.to_datetime(["2026-06-10", "2026-06-11", "2026-06-12"]),
+    )
+
+    payload = build_kline_echarts_payload(
+        df,
+        code="300000",
+        name="Test",
+        vcp_data={},
+        trade_records=[
+            {
+                "date": "20260610",
+                "name": "Test",
+                "quantity": 100,
+                "price": 10.2,
+                "amount": 1020,
+                "fee": 1,
+                "stampTax": 0,
+                "otherFee": 0,
+            },
+            {
+                "date": "2026-06-10",
+                "name": "Test",
+                "quantity": -100,
+                "price": 10.7,
+                "amount": 1070,
+                "fee": 1,
+                "stampTax": 1,
+                "otherFee": 0,
+            },
+            {
+                "date": "2026-06-11",
+                "name": "Test",
+                "quantity": 50,
+                "price": 10.9,
+                "amount": 545,
+                "fee": 1,
+                "stampTax": 0,
+                "otherFee": 0,
+            },
+            {"date": "2026-06-12", "name": "Test", "quantity": 0, "price": 0},
+        ],
+    )
+
+    markers = payload["tradeMarkers"]
+
+    assert [marker["label"] for marker in markers] == ["T", "T", "B"]
+    assert markers[0]["coord"] == [0, 9.9]
+    assert markers[1]["coord"] == [0, 10.8]
+    assert markers[0]["sideText"] == "买入"
+    assert markers[1]["sideText"] == "卖出"
+    assert markers[2]["quantity"] == 50
+    assert markers[0]["symbolSize"] == [13, 11]
+    assert markers[2]["symbolSize"] == [12, 11]
+    assert markers[0]["symbolOffset"] == [0, 13]
+    assert markers[1]["symbolOffset"] == [0, -13]
+    assert markers[2]["coord"] == [1, 10.2]
+    assert markers[2]["symbolOffset"] == [0, 12]
+    assert "cashAmount" not in markers[0]
+
+
 def test_kline_market_state_uses_calendar_active_flag(monkeypatch):
     monkeypatch.setattr(payload_module.MarketCalendar, "infer_market", lambda code: "CN")
     monkeypatch.setattr(payload_module.MarketCalendar, "get_market_status", lambda market: "LIVE")
@@ -680,11 +753,25 @@ def test_build_kline_html_hides_echarts_tooltip_panel():
     assert "splitLine: { show: false }" in html
     assert "function buildVcpMarkerData()" in html
     assert "function buildEarningsMarkerData()" in html
+    assert "function buildTradeMarkerData()" in html
     assert "const category = rawData.dates[idx];" in html
     assert "value: [category, y]" in html
     assert "id: 'vcpBreakout'" in html
     assert "type: 'effectScatter'" in html
     assert "id: 'earningsDay'" in html
+    assert "id: 'tradeMarkers'" in html
+    assert "themeState.trade_t" in html
+    assert "symbol: 'roundRect'" in html
+    assert "function _hideFloatingTooltip()" in html
+    assert "chart.dispatchAction({ type: 'hideTip' });" in html
+    assert "chart.on('mouseout', function (params)" in html
+    assert "seriesId === 'tradeMarkers'" in html
+    assert "enterable: false" in html
+    assert "alwaysShowContent: false" in html
+    assert "hideDelay: 0" in html
+    assert "data: buildTradeMarkerData(),\n                        symbol: 'roundRect'" in html
+    assert "fontSize: 9" in html
+    assert "cashAmount" not in html
     assert "name: '业绩日'" in html
     assert "themeState.earnings_marker" in html
     assert "silent: false" in html

@@ -310,6 +310,79 @@
                         }
                     },
                     {
+                        id: 'tradeMarkers',
+                        name: '交易点',
+                        type: 'scatter',
+                        coordinateSystem: 'cartesian2d',
+                        xAxisIndex: 0,
+                        yAxisIndex: 0,
+                        data: buildTradeMarkerData(),
+                        symbol: 'roundRect',
+                        silent: false,
+                        clip: false,
+                        z: 15,
+                        animation: false,
+                        animationDuration: 0,
+                        animationDurationUpdate: 0,
+                        tooltip: {
+                            show: true,
+                            showContent: true,
+                            trigger: 'item',
+                            confine: true,
+                            enterable: false,
+                            alwaysShowContent: false,
+                            hideDelay: 0,
+                            backgroundColor: themeState.tooltip_bg,
+                            borderColor: themeState.trade_marker_border,
+                            borderWidth: 1,
+                            padding: [9, 11],
+                            textStyle: {
+                                color: themeState.tooltip_text,
+                                fontFamily: themeState.mono_font_family,
+                                fontSize: 12,
+                                lineHeight: 18
+                            },
+                            formatter: function (params) {
+                                const data = params.data || {};
+                                const label = _escapeHtml(data.labelText || '');
+                                const dateText = _escapeHtml(data.tradeDate || '');
+                                const sideText = _escapeHtml(data.sideText || '');
+                                const titleColor = data.labelText === 'T'
+                                    ? themeState.trade_t
+                                    : (data.side === 'sell' ? themeState.trade_sell : themeState.trade_buy);
+                                return ''
+                                    + '<div style="min-width:188px;">'
+                                    + '<div style="font-weight:800; color:' + titleColor + ';">' + label + '点 · ' + sideText + ' · ' + dateText + '</div>'
+                                    + '<div style="margin-top:6px;">成交股数：<span style="font-weight:700;">' + _formatTradeNumber(data.quantity, 0) + '</span></div>'
+                                    + '<div>成交均价：<span style="font-weight:700;">' + _formatTradeNumber(data.price, 3) + '</span></div>'
+                                    + '<div>成交金额：<span style="font-weight:700;">' + _formatTradeNumber(data.amount, 2) + '</span></div>'
+                                    + '<div style="margin-top:4px; color:' + themeState.axis_label + ';">手续费 '
+                                    + _formatTradeNumber(data.fee, 2)
+                                    + ' / 印花税 ' + _formatTradeNumber(data.stampTax, 2)
+                                    + ' / 杂费 ' + _formatTradeNumber(data.otherFee, 2)
+                                    + '</div>'
+                                    + '</div>';
+                            }
+                        },
+                        itemStyle: {
+                            borderColor: themeState.bg_canvas,
+                            borderWidth: 0.8
+                        },
+                        label: {
+                            show: true,
+                            formatter: function (params) {
+                                return (params.data && params.data.labelText) || '';
+                            },
+                            position: 'inside',
+                            color: '#FFFFFF',
+                            fontSize: 9,
+                            fontWeight: 800
+                        },
+                        emphasis: {
+                            scale: 1.08
+                        }
+                    },
+                    {
                         id: 'ma10',
                         name: 'MA10',
                         type: 'line',

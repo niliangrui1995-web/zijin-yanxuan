@@ -17,6 +17,21 @@
                 .replace(/'/g, '&#39;');
         }
 
+        function _formatTradeNumber(value, digits) {
+            const num = Number(value);
+            if (!Number.isFinite(num)) return '-';
+            return num.toLocaleString('zh-CN', {
+                minimumFractionDigits: digits,
+                maximumFractionDigits: digits
+            });
+        }
+
+        function _tradeMarkerColor(item) {
+            if (item && item.label === 'T') return themeState.trade_t;
+            if (item && item.side === 'sell') return themeState.trade_sell;
+            return themeState.trade_buy;
+        }
+
         function _maLineStyle(key, baseWidth, baseOpacity, defaultType) {
             const styleMap = rawData.maStyles || {};
             const style = styleMap[key] || {};
@@ -230,6 +245,40 @@
                     yoyText: item.yoyText || '',
                     symbolSize: item.symbolSize || 11,
                     symbolOffset: item.symbolOffset || [0, 8]
+                };
+            }).filter(Boolean);
+        }
+
+        function buildTradeMarkerData() {
+            return (rawData.tradeMarkers || []).map((item) => {
+                const idx = Math.round(Number(item.coord && item.coord[0]));
+                const y = Number(item.coord && item.coord[1]);
+                const category = rawData.dates[idx];
+                if (!category || !Number.isFinite(y)) return null;
+                const color = _tradeMarkerColor(item);
+                return {
+                    value: [category, y],
+                    labelText: item.label || '',
+                    tradeDate: item.tradeDate || category,
+                    sideText: item.sideText || '',
+                    side: item.side || '',
+                    stockName: item.name || '',
+                    quantity: item.quantity,
+                    signedQuantity: item.signedQuantity,
+                    price: item.price,
+                    amount: item.amount,
+                    fee: item.fee,
+                    stampTax: item.stampTax,
+                    otherFee: item.otherFee,
+                    symbolSize: item.symbolSize || [12, 11],
+                    symbolOffset: item.symbolOffset || [0, 0],
+                    itemStyle: {
+                        color,
+                        borderColor: themeState.trade_marker_border || themeState.bg_canvas,
+                        borderWidth: 0.8,
+                        shadowBlur: item.label === 'T' ? 5 : 3,
+                        shadowColor: color
+                    }
                 };
             }).filter(Boolean);
         }

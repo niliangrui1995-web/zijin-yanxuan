@@ -58,6 +58,7 @@ from ui.kline_window_runtime import (
     refresh_last_bar,
 )
 from ui.theme import theme_manager
+from ui.trade_record_store import load_trade_records_for_security
 from ui.window_flags import enable_windows_native_shadow, enable_windows_system_backdrop
 
 # ECharts JS 本地路径（断网也能用）
@@ -797,11 +798,18 @@ class KLineChartWindow(QWidget):
                 self.df[col] = self.df[col].ffill().bfill()
 
         # 构建 ECharts 数据
+        try:
+            trade_records = load_trade_records_for_security(self.code, self.name)
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            self._log.debug(f"[K绾縘 {self.code} 浜ゆ槗璁板綍璇诲彇澶辫触: {exc}")
+            trade_records = []
+
         echarts_data = build_kline_echarts_payload(
             self.df,
             code=self.code,
             name=self.name,
             vcp_data=self.vcp_data,
+            trade_records=trade_records,
         )
         self._last_chart_payload_bytes = len(
             json.dumps(echarts_data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")

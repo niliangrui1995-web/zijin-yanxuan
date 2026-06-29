@@ -4,6 +4,7 @@
         let pendingPointerIdx = null;
         let lastToolbarIdx = -1;
         let toolbarFadeTimer = 0;
+        let hideTipFrame = 0;
 
         function _clamp(value, min, max) {
             return Math.min(max, Math.max(min, value));
@@ -31,6 +32,22 @@
                 dataZoomIndex: 0,
                 start: _clamp(range.start, 0, 100),
                 end: _clamp(range.end, 0, 100)
+            });
+        }
+
+        function _isTradeMarkerEvent(params) {
+            return params && params.componentType === 'series' && params.seriesId === 'tradeMarkers';
+        }
+
+        function _hideFloatingTooltip() {
+            if (hideTipFrame) return;
+            hideTipFrame = requestAnimationFrame(function () {
+                hideTipFrame = 0;
+                try {
+                    chart.dispatchAction({ type: 'hideTip' });
+                } catch (_err) {
+                    // ECharts may be tearing down while the QWebEngine page closes.
+                }
             });
         }
 
@@ -188,6 +205,19 @@
             }
         });
 
+        chart.on('mousemove', function (params) {
+            if (!_isTradeMarkerEvent(params)) {
+                _hideFloatingTooltip();
+            }
+        });
+
+        chart.on('mouseout', function (params) {
+            if (_isTradeMarkerEvent(params)) {
+                _hideFloatingTooltip();
+            }
+        });
+
         chart.on('globalout', function () {
             _clearPointerCloseMarker();
+            _hideFloatingTooltip();
         });
