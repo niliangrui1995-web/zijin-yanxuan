@@ -594,8 +594,42 @@ def test_kline_window_defers_initial_load_until_next_event_turn(monkeypatch):
     )
     try:
         assert load_calls == []
-        assert any(delay == 0 and callback == window._load_and_draw for delay, callback in scheduled)
+        assert any(
+            delay == kline_module.KLINE_INITIAL_LOAD_DELAY_MS and callback == window._load_and_draw
+            for delay, callback in scheduled
+        )
         assert window.info_lbl.text() == "正在准备图表..."
+    finally:
+        _dispose_kline_window(window)
+
+
+def test_kline_window_constructor_does_not_load_webengine_placeholder(monkeypatch):
+    scheduled = []
+    monkeypatch.setattr(kline_module, "QWebEngineView", _FakeWebEngineView)
+    monkeypatch.setattr(kline_module.QTimer, "singleShot", lambda delay, callback: scheduled.append((delay, callback)))
+    monkeypatch.setattr(kline_module.KLineChartWindow, "_load_and_draw", lambda self: None)
+    monkeypatch.setattr(
+        kline_module.KLineChartWindow,
+        "_check_fav_status",
+        lambda self: setattr(self, "is_fav", False),
+    )
+
+    window = kline_module.KLineChartWindow(
+        None,
+        "002851",
+        "麦格米特",
+        _DummyProvider(),
+        vcp_data={},
+        code_list=[{"代码": "002851", "名称": "麦格米特"}],
+        current_idx=0,
+    )
+    browser = _FakeWebEngineView.last_instance
+    try:
+        assert browser.html_calls == []
+        assert any(
+            delay == kline_module.KLINE_INITIAL_LOAD_DELAY_MS and callback == window._load_and_draw
+            for delay, callback in scheduled
+        )
     finally:
         _dispose_kline_window(window)
 
@@ -1089,6 +1123,87 @@ def test_kline_load_and_draw_appends_today_bar_during_lunch_break(monkeypatch):
         assert "df" in captured
         assert list(captured["df"].index.strftime("%Y-%m-%d")) == ["2026-04-13", "2026-04-14"]
         assert float(captured["df"].iloc[-1]["close"]) == 10.6
+    finally:
+        _dispose_kline_window(window)
+
+
+def test_kline_load_and_draw_defers_cached_render_to_background(monkeypatch):
+    original_load = kline_module.KLineChartWindow._load_and_draw
+
+    class _CachedProvider:
+        _offline = True
+
+        def __init__(self):
+            self.get_calls = 0
+            self.fresh_calls = 0
+
+        def _build_df(self):
+            dates = pd.date_range("2026-01-01", periods=80)
+            return pd.DataFrame(
+                {
+                    "open": [10.0] * len(dates),
+                    "high": [10.4] * len(dates),
+                    "low": [9.8] * len(dates),
+                    "close": [10.2] * len(dates),
+                    "volume": [1000.0] * len(dates),
+                },
+                index=dates,
+            )
+
+        def get_data(self, _code):
+            self.get_calls += 1
+            return self._build_df()
+
+        def get_data_fresh_for_chart(self, _code, force_sync=False):
+            self.fresh_calls += 1
+            return self._build_df()
+
+    monkeypatch.setattr(kline_module, "QWebEngineView", QWidget)
+    monkeypatch.setattr(kline_module.KLineChartWindow, "_load_and_draw", lambda self: None)
+    monkeypatch.setattr(
+        kline_module.KLineChartWindow,
+        "_check_fav_status",
+        lambda self: setattr(self, "is_fav", False),
+    )
+
+    provider = _CachedProvider()
+    window = kline_module.KLineChartWindow(
+        None,
+        "002851",
+        "麦格米特",
+        provider,
+        vcp_data={},
+        code_list=[{"代码": "002851", "名称": "麦格米特"}],
+        current_idx=0,
+    )
+    rendered = []
+    queued = []
+
+    def _capture_background(fn, *args, on_success=None, on_error=None, task_id=None, **kwargs):
+        queued.append((fn, on_success, task_id))
+        return task_id or "test-kline-deferred-cache"
+
+    monkeypatch.setattr(window, "_render_chart", lambda df, loading=False: rendered.append((df.copy(), loading)))
+    monkeypatch.setattr(window, "_set_status_message", lambda *args, **kwargs: None)
+    monkeypatch.setattr(window, "_get_cn_target_trade_date", lambda: dt.date(2026, 3, 21))
+    monkeypatch.setattr(task_manager, "run_in_background", _capture_background)
+
+    try:
+        original_load(window)
+
+        assert provider.get_calls == 0
+        assert provider.fresh_calls == 0
+        assert rendered == []
+        assert len(queued) == 1
+
+        result = queued[0][0]()
+        assert provider.get_calls == 1
+        assert provider.fresh_calls == 0
+        queued[0][1](result)
+
+        assert len(rendered) == 1
+        assert rendered[0][1] is False
+        assert len(rendered[0][0]) == 80
     finally:
         _dispose_kline_window(window)
 

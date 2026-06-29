@@ -156,11 +156,7 @@ def load_and_draw(window):
         window._load_asian_chart()
         return
 
-    local_df = window.data_provider.get_data(request_code)
-    if local_df is not None and len(local_df) >= 60:
-        window._render_chart(local_df, loading=True)
-    else:
-        window._set_status_message("正在同步完整日线数据...", tone="loading")
+    window._set_status_message("正在准备日线数据...", tone="loading")
 
     def _bg_fetch():
         if not _is_current_request():

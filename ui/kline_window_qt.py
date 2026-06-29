@@ -65,6 +65,7 @@ from ui.window_flags import enable_windows_native_shadow, enable_windows_system_
 _ECHARTS_JS_PATH = _os.path.join(
     _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "assets", "echarts.min.js"
 )
+KLINE_INITIAL_LOAD_DELAY_MS = 80
 
 
 def fetch_single_kline(*args, **kwargs):
@@ -318,8 +319,8 @@ class KLineChartWindow(QWidget):
         self._check_fav_status()
         self._refresh_header_context()
         QTimer.singleShot(0, self._refresh_header_context)
-        self._show_chart_placeholder()
-        QTimer.singleShot(0, self._load_and_draw)
+        self._set_status_message("正在准备图表...", tone="loading")
+        QTimer.singleShot(KLINE_INITIAL_LOAD_DELAY_MS, self._load_and_draw)
 
         # 监听全局主题切换 → 重新渲染 K 线图
         theme_manager.sig_theme_changed.connect(self._on_theme_changed)
