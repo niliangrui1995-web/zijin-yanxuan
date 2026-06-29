@@ -450,8 +450,11 @@ def test_earnings_local_snapshot_fills_market_fields_and_pe_without_realtime(mon
         tab.deleteLater()
 
 
-def test_earnings_refresh_after_f5_triggers_routine_scan():
-    EarningsTab = _earnings_tab_class()
+def test_earnings_refresh_after_f5_schedules_routine_scan(monkeypatch):
+    earnings_module = _earnings_module()
+    EarningsTab = earnings_module.EarningsTab
+    scheduled = []
+    monkeypatch.setattr(earnings_module.QTimer, "singleShot", lambda delay, callback: scheduled.append((delay, callback)))
 
     class DummyTab:
         model = object()
@@ -472,6 +475,10 @@ def test_earnings_refresh_after_f5_triggers_routine_scan():
     tab._ensure_scheduler = lambda: Scheduler()
 
     assert EarningsTab.refresh_data_after_f5(tab) is True
+    assert calls == ["quotes", ("window", True), ("snapshot", tab.model, True)]
+    assert scheduled[0][0] == EarningsTab.F5_ROUTINE_SCAN_DELAY_MS
+
+    assert scheduled[0][1]() is True
     assert calls == ["quotes", ("window", True), ("snapshot", tab.model, True), ("routine", "f5")]
 
 

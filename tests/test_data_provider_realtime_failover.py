@@ -2,6 +2,7 @@ import datetime as dt
 import http.client
 import json
 import threading
+import time
 
 import pandas as pd
 
@@ -698,7 +699,7 @@ def test_fetch_realtime_quotes_batch_throttles_large_request_after_midround_fall
     provider = _make_provider()
     provider._rt_quote_batch_size = 20
     provider._rt_quote_batch_pause_sec = 0.0
-    provider._rt_fallback_pressure_fetch_limit = 60
+    provider._rt_fallback_pressure_fetch_limit = 20
     codes = [f"{idx:06d}" for idx in range(1, 121)]
     eastmoney_seen = []
     sina_seen = []
@@ -757,20 +758,89 @@ def test_fetch_realtime_quotes_batch_throttles_large_request_after_midround_fall
 
     assert set(result) == set(codes)
     assert eastmoney_seen == [tuple(codes[:20])]
-    assert sina_seen == [
-        tuple(codes[:20]),
-        tuple(codes[20:40]),
-        tuple(codes[40:60]),
-    ]
-    assert all(result[code]["source"] == "sina" for code in codes[:60])
-    assert all(result[code]["source"] == "offline" for code in codes[60:])
+    assert sina_seen == [tuple(codes[:20])]
+    assert all(result[code]["source"] == "sina" for code in codes[:20])
+    assert all(result[code]["source"] == "offline" for code in codes[20:])
     stats = provider.get_quote_request_stats()
     assert stats["recent_pending_count"] == 120
-    assert stats["recent_network_attempted_count"] == 60
+    assert stats["recent_network_attempted_count"] == 20
     assert stats["recent_network_throttled"] is True
     assert stats["recent_network_throttle_reason"] == "fallback_pressure"
     assert stats["recent_status"] == "network_partial_with_fallback"
-    assert stats["recent_batch_count"] == 3
+    assert stats["recent_batch_count"] == 1
+    assert "network_throttled_fallback_pressure" in stats["recent_source_layers"]
+
+
+def test_fetch_realtime_quotes_batch_limits_medium_cooldown_fallback_to_first_batch(monkeypatch):
+    provider = _make_provider()
+    provider._rt_quote_batch_size = 20
+    provider._rt_quote_batch_pause_sec = 0.0
+    provider._rt_eastmoney_cooldown_until = time.time() + 120.0
+    codes = [f"{idx:06d}" for idx in range(1, 61)]
+    sina_seen = []
+
+    provider._build_offline_quotes = lambda missing_codes: {
+        code: {
+            "open": 9.8,
+            "high": 10.0,
+            "low": 9.7,
+            "close": 9.9,
+            "volume": 0.0,
+            "amount": 0.0,
+            "last_close": 9.8,
+            "date": "2026-04-15",
+            "source": "offline",
+        }
+        for code in missing_codes
+    }
+
+    def _fake_sina(batch, inferred_trade_date):
+        sina_seen.append(tuple(batch))
+        return {
+            code: {
+                "open": 10.0,
+                "high": 10.1,
+                "low": 9.9,
+                "close": 10.0,
+                "volume": 1.0,
+                "amount": 2.0,
+                "last_close": 9.8,
+                "change": 0.2,
+                "pct": 2.04,
+                "date": inferred_trade_date,
+                "source": "sina",
+            }
+            for code in batch
+        }
+
+    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", lambda: True)
+    monkeypatch.setattr(MarketCalendar, "get_latest_trade_date", lambda market="CN": dt.date(2026, 4, 15))
+    monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
+    monkeypatch.setattr(
+        provider,
+        "_fetch_eastmoney_quotes_with_split_retry",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("Eastmoney is cooling down")),
+    )
+    monkeypatch.setattr(provider, "_request_sina_quote_batch", _fake_sina)
+    monkeypatch.setattr(
+        provider,
+        "_request_tencent_quote_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("Sina covers throttled batch")),
+    )
+
+    result = provider.fetch_realtime_quotes_batch(codes)
+
+    assert set(result) == set(codes)
+    assert sina_seen == [tuple(codes[:20])]
+    assert all(result[code]["source"] == "sina" for code in codes[:20])
+    assert all(result[code]["source"] == "offline" for code in codes[20:])
+    stats = provider.get_quote_request_stats()
+    assert stats["recent_pending_count"] == 60
+    assert stats["recent_network_attempted_count"] == 20
+    assert stats["recent_network_throttled"] is True
+    assert stats["recent_network_throttle_reason"] == "fallback_pressure"
+    assert stats["recent_status"] == "network_partial_with_fallback"
+    assert stats["recent_batch_count"] == 1
     assert "network_throttled_fallback_pressure" in stats["recent_source_layers"]
 
 

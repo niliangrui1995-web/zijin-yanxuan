@@ -9,8 +9,8 @@ from vcp.realtime_quote_batch import (
     split_quote_cache_hits,
 )
 
-FALLBACK_PRESSURE_FETCH_LIMIT = 60
-FALLBACK_PRESSURE_MIN_PENDING = 100
+FALLBACK_PRESSURE_FETCH_LIMIT = 20
+FALLBACK_PRESSURE_MIN_PENDING = 40
 
 
 def summarize_probe_error(exc: Exception) -> str:
@@ -403,7 +403,7 @@ def _fetch_realtime_quote_sources(
         provider._rt_last_pressure_log_at = now
         log.info(
             f"[实时行情] 本轮总数={len(normalized_codes)} "
-            f"缓存命中={cache_hits} 实际联网={len(dedup_codes)} "
+            f"缓存命中={cache_hits} 待联网={len(dedup_codes)} "
             f"batch={batch_size} dedup={dedup_window:.1f}s"
         )
 

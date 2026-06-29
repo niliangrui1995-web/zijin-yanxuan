@@ -753,6 +753,19 @@ class ClassicWorkspace(QWidget):
     def refresh_information_sources_after_f5(self) -> dict[str, bool]:
         return _resolve_workspace_facade(self).refresh_information_sources_after_f5()
 
+    def refresh_information_sources_after_f5_scheduled(
+        self,
+        *,
+        on_finished=None,
+        interval_ms: int = 2500,
+        frame_budget_ms: int = 4,
+    ) -> bool:
+        return _resolve_workspace_facade(self).refresh_information_sources_after_f5_scheduled(
+            on_finished=on_finished,
+            interval_ms=interval_ms,
+            frame_budget_ms=frame_budget_ms,
+        )
+
     def select_scan_row(self, index: int) -> bool:
         return _resolve_workspace_facade(self).select_scan_row(index)
 

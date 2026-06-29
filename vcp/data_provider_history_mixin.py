@@ -444,6 +444,8 @@ class TdxDataProviderHistoryMixin:
             }
             for future in concurrent.futures.as_completed(future_to_code):
                 completed += 1
+                if completed % 50 == 0:
+                    time.sleep(0.001)
                 pct = 100 * (completed / float(total))
                 current_step = int(pct / 10) * 10
                 should_log = (completed == total) or (current_step > last_log_at)
@@ -495,11 +497,13 @@ class TdxDataProviderHistoryMixin:
         _log.info("[数据中台] 阶段3: 写入本地缓存(Parquet)...")
         # 主路径写 Parquet（体积更小、加载更快）
         parquet_saved = False
+        self._last_market_data_parquet_saved_date = ""
         try:
             from vcp.polars_engine import save_cache_parquet
 
             parquet_saved = bool(save_cache_parquet(self.cache_data, today))
             if parquet_saved:
+                self._last_market_data_parquet_saved_date = today
                 remove_cache_file(self.legacy_cache_file)
                 remove_cache_file(self.legacy_cache_file + ".corrupted")
                 remove_cache_file(self.legacy_fallback_cache_file)

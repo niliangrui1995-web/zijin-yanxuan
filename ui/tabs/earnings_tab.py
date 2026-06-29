@@ -49,6 +49,8 @@ EarningsScheduler = _default_earnings_scheduler
 class EarningsTab(BaseStockTab):
     """业绩断层与预告高增监控面板"""
 
+    F5_ROUTINE_SCAN_DELAY_MS = 12000
+
     def __init__(self, data_provider=None, parent=None, *, runtime_start_delay_ms: int = 0):
         super().__init__(data_provider, parent)
         self.row_data = []
@@ -74,6 +76,7 @@ class EarningsTab(BaseStockTab):
         # 延后到页面首次显示时再加载视图缓存；业务巡检由全局调度器负责。
         self._patrol_started = False
         self._runtime_start_queued = False
+        self._pending_f5_routine_scan = False
 
     def _ensure_scheduler(self):
         if self.scheduler is None:
@@ -626,15 +629,27 @@ class EarningsTab(BaseStockTab):
         """业绩异动不向中央报价站贡献代码，避免盘中触发联网补价。"""
         return set()
 
-    def refresh_data_after_f5(self) -> bool:
-        self._apply_latest_quotes_from_store()
-        self._apply_display_trade_window(force_refresh=True)
-        self.refresh_table_from_latest_snapshot(current_model=self.model, async_local=True)
+    def schedule_routine_scan_after_f5(self) -> bool:
+        if getattr(self, "_pending_f5_routine_scan", False):
+            return False
+        self._pending_f5_routine_scan = True
+        delay_ms = int(getattr(self, "F5_ROUTINE_SCAN_DELAY_MS", EarningsTab.F5_ROUTINE_SCAN_DELAY_MS))
+        QTimer.singleShot(delay_ms, lambda: EarningsTab._run_pending_routine_scan_after_f5(self))
+        return True
+
+    def _run_pending_routine_scan_after_f5(self) -> bool:
+        self._pending_f5_routine_scan = False
         scheduler = self._ensure_scheduler()
         trigger = getattr(scheduler, "trigger_routine_scan", None)
         if callable(trigger):
             return bool(trigger(reason="f5"))
         return False
+
+    def refresh_data_after_f5(self) -> bool:
+        self._apply_latest_quotes_from_store()
+        self._apply_display_trade_window(force_refresh=True)
+        self.refresh_table_from_latest_snapshot(current_model=self.model, async_local=True)
+        return EarningsTab.schedule_routine_scan_after_f5(self)
 
     def refresh_data_after_ai_industry_chain_update(self) -> bool:
         scheduler = self._ensure_scheduler()

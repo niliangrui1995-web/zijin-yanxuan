@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from PyQt6.QtCore import QObject, QTimer
+
 from core.logger import get_logger
+from ui.components.frame_task_scheduler import FrameTaskScheduler
 from ui.workspaces.quote_universe_service import INFO_SOURCE_GROUP, QuoteUniverseService
 from ui.workspaces.stock_context_service import StockContextService
 from ui.workspaces.stock_signal import StockSignal
@@ -93,11 +96,10 @@ class WorkspaceFacade:
     def refresh_tabs_after_ai_industry_chain_update(self) -> dict[str, bool]:
         return self._workspace_table_service.refresh_tabs_after_ai_industry_chain_update()
 
-    def refresh_information_sources_after_f5(self) -> dict[str, bool]:
-        """F5 完成后触发情报源自身的数据刷新，不只回灌行情快照。"""
+    def _iter_post_f5_information_source_tabs(self) -> list[tuple[str, PostF5DataRefreshCapability]]:
         tab_specs = getattr(self._workspace, "tab_specs", None)
         specs = list(tab_specs() or []) if callable(tab_specs) else []
-        results: dict[str, bool] = {}
+        tabs: list[tuple[str, PostF5DataRefreshCapability]] = []
         for spec in specs:
             if str(spec.get("group", "")).strip() != INFO_SOURCE_GROUP:
                 continue
@@ -109,12 +111,72 @@ class WorkspaceFacade:
                 continue
             if not isinstance(tab, PostF5DataRefreshCapability):
                 continue
-            try:
-                results[key] = bool(tab.refresh_data_after_f5())
-            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                results[key] = False
-                log.warning(f"[F5] {key} 情报源数据刷新失败: {exc}")
+            tabs.append((key, tab))
+        return tabs
+
+    @staticmethod
+    def _refresh_information_source_after_f5(key: str, tab: PostF5DataRefreshCapability) -> bool:
+        try:
+            return bool(tab.refresh_data_after_f5())
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.warning(f"[F5] {key} information source refresh failed: {exc}")
+            return False
+
+    def refresh_information_sources_after_f5(self) -> dict[str, bool]:
+        """F5 完成后触发情报源自身的数据刷新，不只回灌行情快照。"""
+        results: dict[str, bool] = {}
+        for key, tab in self._iter_post_f5_information_source_tabs():
+            results[key] = self._refresh_information_source_after_f5(key, tab)
         return results
+
+    def refresh_information_sources_after_f5_scheduled(
+        self,
+        *,
+        on_finished=None,
+        interval_ms: int = 2500,
+        frame_budget_ms: int = 4,
+    ) -> bool:
+        tabs = self._iter_post_f5_information_source_tabs()
+        if not tabs:
+            if callable(on_finished):
+                QTimer.singleShot(0, on_finished)
+            return False
+
+        existing = getattr(self._workspace, "_f5_information_source_scheduler", None)
+        if existing is not None and getattr(existing, "is_running", lambda: False)():
+            existing.cancel()
+
+        tasks = [
+            (
+                key,
+                lambda key=key, tab=tab: self._refresh_information_source_after_f5(key, tab),
+            )
+            for key, tab in tabs
+        ]
+        parent = self._workspace if isinstance(self._workspace, QObject) else None
+        scheduler = FrameTaskScheduler(
+            parent,
+            interval_ms=interval_ms,
+            frame_budget_ms=frame_budget_ms,
+            max_tasks_per_frame=1,
+        )
+        scheduler.taskFailed.connect(
+            lambda label, message: log.warning(f"[F5] {label} scheduled information source refresh failed: {message}")
+        )
+
+        def _cleanup():
+            if getattr(self._workspace, "_f5_information_source_scheduler", None) is scheduler:
+                setattr(self._workspace, "_f5_information_source_scheduler", None)
+            try:
+                if callable(on_finished):
+                    on_finished()
+            finally:
+                scheduler.deleteLater()
+
+        scheduler.finished.connect(_cleanup)
+        setattr(self._workspace, "_f5_information_source_scheduler", scheduler)
+        scheduler.start(tasks)
+        return True
 
     @staticmethod
     def _is_noninteractive_loaded_tab(tab) -> bool:

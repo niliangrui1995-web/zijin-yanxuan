@@ -85,7 +85,7 @@ from ui.tabs.fund_holdings_view_state import (
 
 
 class FundHoldingsTab(BaseStockTab):
-    _F5_AUTO_SYNC_DELAY_MS = 1500
+    _F5_AUTO_SYNC_DELAY_MS = 18000
     _SUBJECT_CODE_QFII = SUBJECT_QFII["subject_code"]
     _SUBJECT_CODE_RUIYUAN = SUBJECT_RUIYUAN["subject_code"]
     _QUARTER_FILTER_LATEST = "__LATEST__"

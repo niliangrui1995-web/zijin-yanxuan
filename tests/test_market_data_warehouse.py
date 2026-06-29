@@ -545,6 +545,70 @@ def test_f5_stage1_progress_updates_status_under_system_log_backpressure(monkeyp
     assert done and done[0][0] == 2000
 
 
+def test_f5_skips_duplicate_stage1_checkpoint_after_provider_save(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    import core.cache_policy as cache_policy
+
+    monkeypatch.setattr(cache_policy, "cleanup_stale_caches", lambda _project_root: None)
+
+    def _unexpected_checkpoint(_cache_data, _today_str):
+        raise AssertionError("provider already saved the stage1 cache")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "vcp.polars_engine",
+        SimpleNamespace(save_cache_parquet=_unexpected_checkpoint),
+    )
+
+    today = datetime.date.today().strftime("%Y%m%d")
+
+    class _Provider:
+        def __init__(self):
+            self.cache_data = {}
+            self.cache_lock = threading.Lock()
+            self.code2name = {}
+            self.tdx_vipdoc = ""
+            self._last_market_data_parquet_saved_date = ""
+
+        @staticmethod
+        def _load_local_gbbq(force=False):
+            return None
+
+        @staticmethod
+        def load_cache_from_disk():
+            return ""
+
+        @staticmethod
+        def _get_codes_from_vipdoc():
+            return {"000001": "Ping An Bank"}
+
+        @staticmethod
+        def is_online():
+            return False
+
+        @staticmethod
+        def set_online_mode(_online):
+            return None
+
+        def sync_market_data(self, codes, force_refresh=False, progress_callback=None):
+            self.cache_data = {code: object() for code in codes}
+            self._last_market_data_parquet_saved_date = today
+
+    done = []
+
+    RPSPrecomputer.run_f5_pipeline(
+        _Provider(),
+        engine=object(),
+        cancelled_checker=lambda: True,
+        set_status_callback=lambda _message: None,
+        done_callback=lambda count, elapsed: done.append((count, elapsed)),
+    )
+
+    assert done and done[0][0] == 1
+
+
 def test_f5_ui_status_skips_separator_noise():
     messages = []
 

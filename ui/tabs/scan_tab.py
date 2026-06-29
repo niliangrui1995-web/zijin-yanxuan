@@ -42,7 +42,7 @@ class ScanTab(BaseStockTab):
     """
 
     AUTO_F5_INCREMENTAL_SCAN_DATE_KEY = "last_auto_incremental_after_f5_date"
-    F5_AUTO_INCREMENTAL_DELAY_MS = 1500
+    F5_AUTO_INCREMENTAL_DELAY_MS = 8000
 
     def __init__(self, data_provider, engine, parent=None, *, initial_cache_load_delay_ms: int = 300):
         super().__init__(data_provider=data_provider, parent=parent)

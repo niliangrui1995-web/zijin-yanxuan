@@ -111,13 +111,26 @@ def finish_f5_reload(main_window, *, count, elapsed, event_bus):
     except (AttributeError, RuntimeError, TypeError) as exc:
         log.error(f"[F5] 广播缓存重载完成信号异常: {exc}")
 
+    scheduled_info_refresh_started = False
+    refresh_information_sources_after_f5_scheduled = getattr(
+        workspace,
+        "refresh_information_sources_after_f5_scheduled",
+        None,
+    )
+    if callable(refresh_information_sources_after_f5_scheduled):
+        try:
+            scheduled_info_refresh_started = bool(refresh_information_sources_after_f5_scheduled(interval_ms=2500))
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            scheduled_info_refresh_started = False
+            log.error(f"[F5] scheduled information source refresh failed: {exc}")
+
     refresh_information_sources_after_f5 = getattr(workspace, "refresh_information_sources_after_f5", None)
-    if callable(refresh_information_sources_after_f5):
+    if not scheduled_info_refresh_started and callable(refresh_information_sources_after_f5):
         try:
             refresh_information_sources_after_f5()
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             log.error(f"[F5] 情报源自动刷新异常: {exc}")
-    else:
+    elif not scheduled_info_refresh_started:
         auto_sync_after_f5 = getattr(workspace, "run_fund_holdings_auto_sync_after_f5", None)
         if callable(auto_sync_after_f5):
             try:

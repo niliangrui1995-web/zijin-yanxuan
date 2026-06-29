@@ -1188,6 +1188,34 @@ def test_workspace_refreshes_information_sources_after_f5():
     }
 
 
+def test_workspace_schedules_information_sources_after_f5():
+    app = QApplication.instance() or QApplication([])
+    calls = []
+    specs = [
+        {"key": "scan", "group": INFO_SOURCE_GROUP},
+        {"key": "earnings", "group": INFO_SOURCE_GROUP},
+        {"key": "fund_holdings", "group": INFO_SOURCE_GROUP},
+    ]
+    workspace = _make_workspace(
+        tabs={
+            "scan": SimpleNamespace(refresh_data_after_f5=lambda: calls.append("scan") or True),
+            "earnings": SimpleNamespace(refresh_data_after_f5=lambda: calls.append("earnings") or True),
+            "fund_holdings": SimpleNamespace(refresh_data_after_f5=lambda: calls.append("fund") or True),
+        }
+    )
+    workspace.tab_specs = lambda: list(specs)
+
+    assert ClassicWorkspace.refresh_information_sources_after_f5_scheduled(workspace, interval_ms=0) is True
+    assert calls == []
+
+    for _ in range(10):
+        app.processEvents()
+        if getattr(workspace, "_f5_information_source_scheduler", None) is None:
+            break
+
+    assert calls == ["scan", "earnings", "fund"]
+
+
 def test_workspace_refreshes_information_sources_after_f5_skips_unloaded_scan():
     calls = []
     scan_tab = SimpleNamespace(refresh_data_after_f5=lambda: calls.append("scan") or True)

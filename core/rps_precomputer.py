@@ -69,6 +69,11 @@ def _save_stage1_checkpoint(cache_data, today_str: str) -> None:
         log.warning(f"[F5] 断点存档失败(不影响后续): {e}")
 
 
+def _provider_saved_stage1_cache(data_provider, today_str: str) -> bool:
+    saved_date = str(getattr(data_provider, "_last_market_data_parquet_saved_date", "") or "").strip()
+    return bool(today_str and saved_date == today_str)
+
+
 class RPSPrecomputer:
     """封装原本在 MainWindow_DataCacheMixin 中的 _action_refresh 业务。"""
 
@@ -150,7 +155,10 @@ class RPSPrecomputer:
                         count = len(data_provider.cache_data)
                         _log_and_status(f"[F5] 阶段1/3 完成 -- 共加载 {count} 只标的")
 
-                        _save_stage1_checkpoint(data_provider.cache_data, today_str)
+                        if _provider_saved_stage1_cache(data_provider, today_str):
+                            log.info("[F5] stage1 checkpoint skipped; provider already saved today's cache")
+                        else:
+                            _save_stage1_checkpoint(data_provider.cache_data, today_str)
 
                     except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
                         log.error(f"[F5] ❌ 阶段1 重读本地数据异常: {e}", exc_info=True)
