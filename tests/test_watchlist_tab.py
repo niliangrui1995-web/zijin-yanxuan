@@ -178,6 +178,35 @@ def test_watchlist_hidden_context_update_defers_indicator_recalc(monkeypatch):
         assert tab._pending_vcp_calc is False
         assert hasattr(tab, "_vcp_calc_timer")
         assert tab._vcp_calc_timer.isActive() is True
+        assert tab._vcp_calc_timer.interval() == watchlist_module.WatchlistTab.POST_SHOW_VCP_CALC_DELAY_MS
+    finally:
+        tab.shutdown()
+        tab.deleteLater()
+
+
+def test_watchlist_ready_payload_queues_visible_apply(monkeypatch):
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)
+    now = {"value": 100.4}
+    monkeypatch.setattr(watchlist_module.time, "monotonic", lambda: now["value"])
+
+    applied = []
+    tab = watchlist_module.WatchlistTab(_DummyProvider(), startup_tasks_enabled=False)
+    tab._is_active_workspace_tab_for_vcp = lambda: True
+    tab._apply_vcp_indicators_ui = lambda payload: applied.append(payload)
+    tab._last_vcp_tab_shown_at = 100.0
+    try:
+        payload = {"600519": {"rps": "95"}}
+
+        tab._on_vcp_watchlist_ready(payload)
+
+        assert applied == []
+        assert tab._vcp_apply_timer.isActive() is True
+        assert tab._vcp_apply_timer.interval() >= 2000
+
+        tab._flush_pending_vcp_apply()
+
+        assert applied == [payload]
     finally:
         tab.shutdown()
         tab.deleteLater()

@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from vcp.data_provider_history_mixin import TdxDataProviderHistoryMixin
+from vcp.constants import MARKET_SYNC_WORKERS
+from vcp.data_provider_history_mixin import TdxDataProviderHistoryMixin, _resolve_market_sync_workers
 
 
 class _DummyProvider(TdxDataProviderHistoryMixin):
@@ -61,6 +62,13 @@ def test_get_data_prefers_existing_runtime_cache_without_local_reload():
 
     assert result is cached
     assert provider.fetch_calls == 0
+
+
+def test_resolve_market_sync_workers_clamps_explicit_f5_budget():
+    assert _resolve_market_sync_workers(offline=True, requested_max_workers=6) == 6
+    assert _resolve_market_sync_workers(offline=True, requested_max_workers=99) == 20
+    assert _resolve_market_sync_workers(offline=True, requested_max_workers=0) == 20
+    assert _resolve_market_sync_workers(offline=False, requested_max_workers=99) == MARKET_SYNC_WORKERS
 
 
 def _build_tnf_record(code: str, name: str) -> bytes:

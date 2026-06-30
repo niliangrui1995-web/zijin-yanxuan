@@ -91,6 +91,28 @@ def _asian_market_suffix(code: str) -> str:
     return str(code or "").strip().upper().split(".")[-1]
 
 
+def _asian_quote_market(code: str) -> str:
+    return MarketCalendar.normalize_market(MarketCalendar.infer_market(code))
+
+
+def _is_code_quote_refresh_time(code: str) -> bool:
+    market = _asian_quote_market(code)
+    if market not in _ASIAN_MARKET_CODES:
+        return True
+    return MarketCalendar.is_quote_refresh_time(market)
+
+
+def _filter_open_market_codes(codes) -> tuple[list[str], list[str]]:
+    open_codes: list[str] = []
+    closed_markets: set[str] = set()
+    for code in codes or []:
+        if _is_code_quote_refresh_time(code):
+            open_codes.append(code)
+            continue
+        closed_markets.add(_asian_quote_market(code))
+    return open_codes, sorted(closed_markets)
+
+
 def _seconds_until_monotonic(deadline: float | None) -> float | None:
     if deadline is None:
         return None
@@ -1330,13 +1352,20 @@ class AsianMarketWorker(QThread):
     def _normalize_pe(value):
         return _normalize_pe_value(value)
 
-    def _fetch_updates(self) -> dict:
+    def _fetch_updates(self, *, open_markets_only: bool = False) -> dict:
         updates = {}
         yf_session = build_yf_session()
         info_session = yf_session
         raw_codes = list(dict.fromkeys(str(code).strip() for code in self.codes if str(code).strip()))
         if not raw_codes:
             return updates
+        closed_markets: list[str] = []
+        if open_markets_only:
+            raw_codes, closed_markets = _filter_open_market_codes(raw_codes)
+            if closed_markets:
+                log.info("[AsianTab] Skip closed markets in auto refresh: %s", ",".join(closed_markets))
+            if not raw_codes:
+                return updates
         now_ts = time.time()
         self._prune_market_backoff(now_ts)
         self._prune_code_backoff(now_ts)
@@ -1475,7 +1504,7 @@ class AsianMarketWorker(QThread):
             try:
                 now = MarketCalendar.now("CN")
                 self.progress.emit(f"[{now.strftime('%H:%M:%S')}] 正在拉取亚洲市场最新报价...")
-                updates = self._fetch_updates()
+                updates = self._fetch_updates(open_markets_only=not manual_refresh)
                 if manual_refresh and updates and not getattr(self, "_last_fetch_timed_out", False):
                     self._clear_timeout_backoff()
                 if self._is_running and updates:

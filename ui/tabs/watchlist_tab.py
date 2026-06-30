@@ -32,6 +32,9 @@ log = get_logger(__name__)
 
 class WatchlistTab(BaseStockTab):
     CONTEXT_REFRESH_MIN_INTERVAL_MS = 60_000
+    POST_SHOW_VCP_CALC_DELAY_MS = 2_000
+    POST_SHOW_VCP_APPLY_SETTLE_MS = 2_500
+    FOREGROUND_VCP_APPLY_DELAY_MS = 150
 
     """
     关注池 独立 Tab 组件 (Controller + View)
@@ -60,6 +63,10 @@ class WatchlistTab(BaseStockTab):
         self._pending_vcp_calc = False
         self._deferred_vcp_payload = None
         self._deferred_vcp_signature = ()
+        self._pending_vcp_apply_payload = None
+        self._pending_vcp_apply_signature = ()
+        self._vcp_apply_timer = None
+        self._last_vcp_tab_shown_at = 0.0
         self._last_vcp_calc_started_at = 0.0
         self._last_vcp_payload_signature = ()
         self._vcp_calc_allow_noninteractive = False
@@ -151,15 +158,16 @@ class WatchlistTab(BaseStockTab):
 
     def showEvent(self, event):  # noqa: N802 - Qt API naming
         super().showEvent(event)
+        self._last_vcp_tab_shown_at = time.monotonic()
         if self._deferred_vcp_payload and self._is_active_workspace_tab_for_vcp():
             payload = self._deferred_vcp_payload
             self._deferred_vcp_payload = None
             self._deferred_vcp_signature = ()
-            QTimer.singleShot(0, lambda payload=payload: self._apply_deferred_vcp_payload(payload))
+            self._schedule_vcp_payload_apply(payload, delay_ms=self._vcp_apply_delay_ms())
         if self._pending_vcp_calc and self._should_start_interactive_runtime_on_show():
             self._pending_vcp_calc = False
             self._request_vcp_calc(
-                delay_ms=self._startup_indicator_refresh_delay_ms,
+                delay_ms=max(self._startup_indicator_refresh_delay_ms, self.POST_SHOW_VCP_CALC_DELAY_MS),
                 allow_noninteractive=True,
             )
 
@@ -169,6 +177,16 @@ class WatchlistTab(BaseStockTab):
         if timer is not None and timer.isActive():
             timer.stop()
             self._pending_vcp_calc = True
+        apply_timer = getattr(self, "_vcp_apply_timer", None)
+        if apply_timer is not None and apply_timer.isActive():
+            apply_timer.stop()
+            if self._pending_vcp_apply_payload:
+                self._defer_vcp_payload(
+                    self._pending_vcp_apply_payload,
+                    self._pending_vcp_apply_signature,
+                )
+            self._pending_vcp_apply_payload = None
+            self._pending_vcp_apply_signature = ()
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -941,7 +959,9 @@ class WatchlistTab(BaseStockTab):
     def shutdown(self):
         self._closing = True
         self._pending_vcp_calc = False
-        for timer_name in ("_delayed_special_timer", "_vcp_calc_timer", "_debounce_timer"):
+        self._pending_vcp_apply_payload = None
+        self._pending_vcp_apply_signature = ()
+        for timer_name in ("_delayed_special_timer", "_vcp_calc_timer", "_vcp_apply_timer", "_debounce_timer"):
             timer = getattr(self, timer_name, None)
             if timer is None:
                 continue
@@ -1056,17 +1076,71 @@ class WatchlistTab(BaseStockTab):
             self._deferred_vcp_payload = payload_dict
             self._deferred_vcp_signature = payload_signature
             return
-        log.debug(f"[watchlist] apply {len(payload_dict)} metric rows")
-        self._apply_vcp_indicators_ui(payload_dict)
+        self._schedule_vcp_payload_apply(payload_dict)
 
     def _apply_deferred_vcp_payload(self, payload: object):
         if self._closing or not payload:
             return
+        self._schedule_vcp_payload_apply(payload)
+
+    def _vcp_apply_delay_ms(self) -> int:
+        delay_ms = self.FOREGROUND_VCP_APPLY_DELAY_MS
+        shown_at = float(getattr(self, "_last_vcp_tab_shown_at", 0.0) or 0.0)
+        if shown_at > 0.0:
+            elapsed_ms = max(0.0, (time.monotonic() - shown_at) * 1000.0)
+            if elapsed_ms < self.POST_SHOW_VCP_APPLY_SETTLE_MS:
+                delay_ms = max(delay_ms, int(self.POST_SHOW_VCP_APPLY_SETTLE_MS - elapsed_ms))
+        return delay_ms
+
+    def _defer_vcp_payload(self, payload: dict, payload_signature: tuple | None = None) -> None:
+        payload_dict = dict(payload or {})
+        signature = payload_signature or self._vcp_payload_signature(payload_dict)
+        if signature and signature == self._deferred_vcp_signature:
+            return
+        self._deferred_vcp_payload = payload_dict
+        self._deferred_vcp_signature = signature
+
+    def _ensure_vcp_apply_timer(self) -> QTimer:
+        timer = getattr(self, "_vcp_apply_timer", None)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(self._flush_pending_vcp_apply)
+            self._vcp_apply_timer = timer
+        return timer
+
+    def _schedule_vcp_payload_apply(self, payload: object, *, delay_ms: int | None = None) -> None:
+        if self._closing:
+            return
+        payload_dict = dict(payload or {}) if isinstance(payload, dict) else {}
+        if not payload_dict:
+            return
+        payload_signature = self._vcp_payload_signature(payload_dict)
+        if payload_signature and payload_signature == self._last_vcp_payload_signature:
+            return
         if not self._is_active_workspace_tab_for_vcp():
-            self._deferred_vcp_payload = dict(payload or {})
-            self._deferred_vcp_signature = self._vcp_payload_signature(self._deferred_vcp_payload)
+            self._defer_vcp_payload(payload_dict, payload_signature)
+            return
+        if payload_signature and payload_signature == self._pending_vcp_apply_signature:
+            return
+
+        self._pending_vcp_apply_payload = payload_dict
+        self._pending_vcp_apply_signature = payload_signature
+        next_delay_ms = self._vcp_apply_delay_ms() if delay_ms is None else delay_ms
+        self._ensure_vcp_apply_timer().start(max(0, int(next_delay_ms)))
+
+    def _flush_pending_vcp_apply(self) -> None:
+        payload = self._pending_vcp_apply_payload
+        payload_signature = self._pending_vcp_apply_signature
+        self._pending_vcp_apply_payload = None
+        self._pending_vcp_apply_signature = ()
+        if self._closing or not payload:
+            return
+        if not self._is_active_workspace_tab_for_vcp():
+            self._defer_vcp_payload(payload, payload_signature)
             return
         self._deferred_vcp_signature = ()
+        log.debug(f"[watchlist] apply {len(payload)} metric rows")
         self._apply_vcp_indicators_ui(payload)
 
     def _is_background_prewarm_indicator_blocked(self) -> bool:

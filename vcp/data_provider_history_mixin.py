@@ -1,4 +1,5 @@
 import concurrent.futures
+import gc
 import os
 import random
 import time
@@ -24,6 +25,19 @@ from vcp.data_provider_cache import load_cache_from_disk
 from vcp.utils import ensure_pandas_dataframe
 
 _log = get_logger(__name__)
+
+
+def _resolve_market_sync_workers(*, offline: bool, requested_max_workers=None) -> int:
+    default_workers = 20 if offline else MARKET_SYNC_WORKERS
+    if requested_max_workers is None:
+        return default_workers
+    try:
+        requested = int(requested_max_workers)
+    except (TypeError, ValueError):
+        return default_workers
+    if requested <= 0:
+        return default_workers
+    return max(1, min(default_workers, requested))
 
 
 class TdxDataProviderHistoryMixin:
@@ -410,7 +424,7 @@ class TdxDataProviderHistoryMixin:
     def load_cache_from_disk(self):
         return load_cache_from_disk(self, logger=_log)
 
-    def sync_market_data(self, codes, force_refresh=False, progress_callback=None):
+    def sync_market_data(self, codes, force_refresh=False, progress_callback=None, *, max_workers=None):
         today = MarketCalendar.today("CN").strftime(DATE_FMT)
         if not self.cache_data:
             last_date = self.load_cache_from_disk()
@@ -425,7 +439,7 @@ class TdxDataProviderHistoryMixin:
 
         total = len(codes)
         # 为什么离线只用 20 线程？50 线程同时持有 DataFrame 内存峰值太高，容易触发 Windows OOM 闪退
-        workers = 20 if self._offline else MARKET_SYNC_WORKERS
+        workers = _resolve_market_sync_workers(offline=self._offline, requested_max_workers=max_workers)
         _log.info(
             f"\n[数据中台] 阶段1: 同步日线 -> 目标 {total} 只 | 线程数 {workers} | {'离线本地' if self._offline else ('强制覆盖' if force_refresh else '增量/缓存')}"
         )
@@ -476,6 +490,7 @@ class TdxDataProviderHistoryMixin:
                         self.cache_data[res_code] = res_df
                 else:
                     audit_log.setdefault(status_msg, []).append(res_code)
+        gc.collect()
         failed_count = sum(len(v) for v in audit_log.values())
         _log.error(
             f"\n[缓存] 阶段1完成：已同步 {len(self.cache_data)} 只标的 | 失败 {failed_count} | 耗时 {time.time() - start_time:.1f}s"

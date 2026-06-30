@@ -15,6 +15,9 @@ from core.runtime_paths import PROJECT_ROOT, RPS_CACHE_FILE, SECTOR_RPS_CACHE_FI
 
 log = get_logger(__name__)
 
+# F5 local reread is Pandas/PyArrow-heavy; keep it below the generic offline bulk budget.
+F5_LOCAL_REREAD_MAX_WORKERS = 6
+
 
 def _should_emit_ui_status(msg: str) -> bool:
     text = str(msg or "").strip()
@@ -144,6 +147,7 @@ class RPSPrecomputer:
                             data_provider.sync_market_data(
                                 codes_dict,
                                 force_refresh=True,
+                                max_workers=F5_LOCAL_REREAD_MAX_WORKERS,
                                 progress_callback=lambda done, total, eta: _handle_stage1_progress(
                                     done, total, eta, set_status_callback, stage1_progress_state
                                 ),

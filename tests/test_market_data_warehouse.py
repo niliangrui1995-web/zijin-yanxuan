@@ -521,7 +521,8 @@ def test_f5_stage1_progress_updates_status_under_system_log_backpressure(monkeyp
         def set_online_mode(_online):
             return None
 
-        def sync_market_data(self, codes, force_refresh=False, progress_callback=None):
+        def sync_market_data(self, codes, force_refresh=False, progress_callback=None, *, max_workers=None):
+            self.max_workers = max_workers
             if progress_callback:
                 progress_callback(1000, len(codes), "ETA 1 min")
             self.cache_data = {code: object() for code in codes}
@@ -541,6 +542,7 @@ def test_f5_stage1_progress_updates_status_under_system_log_backpressure(monkeyp
     assert ("F5", ("core.rps_precomputer",)) in guard_calls
     assert ("enter",) in guard_calls
     assert ("exit",) in guard_calls
+    assert provider.max_workers == rps_precomputer_module.F5_LOCAL_REREAD_MAX_WORKERS
     assert any("1000/2000 ETA 1 min" in message for message in messages)
     assert done and done[0][0] == 2000
 
@@ -592,7 +594,7 @@ def test_f5_skips_duplicate_stage1_checkpoint_after_provider_save(monkeypatch):
         def set_online_mode(_online):
             return None
 
-        def sync_market_data(self, codes, force_refresh=False, progress_callback=None):
+        def sync_market_data(self, codes, force_refresh=False, progress_callback=None, *, max_workers=None):
             self.cache_data = {code: object() for code in codes}
             self._last_market_data_parquet_saved_date = today
 

@@ -423,6 +423,29 @@ def test_fetch_updates_skips_markets_in_short_backoff(monkeypatch):
     assert list(updates) == ["0522.HK"]
 
 
+def test_auto_fetch_updates_skips_closed_markets_before_submitting(monkeypatch):
+    monkeypatch.setattr(workers, "build_yf_session", lambda *args, **kwargs: object())
+    monkeypatch.setattr(workers, "_YF_FETCH_MAX_WORKERS", 1)
+    monkeypatch.setattr(
+        workers.MarketCalendar,
+        "is_quote_refresh_time",
+        classmethod(lambda cls, market="CN": market == "HK"),
+    )
+    calls = []
+    worker = workers.AsianMarketWorker(["5201.T", "0522.HK", "000660.KS"])
+
+    def _fake_fetch_single_code(code, yf_session, info_session):
+        calls.append(code)
+        return code, {"date": "2026-04-28", "close": 1.0, "previous_close": 1.0}
+
+    monkeypatch.setattr(worker, "_fetch_single_code", _fake_fetch_single_code)
+
+    updates = worker._fetch_updates(open_markets_only=True)
+
+    assert calls == ["0522.HK"]
+    assert list(updates) == ["0522.HK"]
+
+
 def test_fetch_updates_skips_only_codes_in_source_payload_backoff(monkeypatch):
     monkeypatch.setattr(workers, "build_yf_session", lambda *args, **kwargs: object())
     monkeypatch.setattr(workers, "_YF_FETCH_MAX_WORKERS", 1)
@@ -513,6 +536,69 @@ def test_timeout_cycle_backoff_stops_next_auto_poll(monkeypatch):
     assert sleep_calls == [30.0]
 
 
+def test_run_filters_closed_markets_only_for_auto_cycles(monkeypatch):
+    monkeypatch.setattr(workers, "is_asian_quote_refresh_time", lambda codes: True)
+    monkeypatch.setattr(
+        workers,
+        "get_yf_rate_limit_status",
+        lambda: {
+            "active": False,
+            "remaining_sec": 0.0,
+            "reason": "",
+            "until_ts": 0.0,
+        },
+    )
+    worker = workers.AsianMarketWorker(["5201.T", "0522.HK"])
+    calls = []
+
+    def _fetch_updates(*, open_markets_only=False):
+        calls.append(open_markets_only)
+        return {}
+
+    def _sleep(_seconds):
+        worker._is_running = False
+        return False
+
+    monkeypatch.setattr(worker, "_fetch_updates", _fetch_updates)
+    monkeypatch.setattr(worker, "_sleep_with_break", _sleep)
+
+    worker.run()
+
+    assert calls == [True]
+
+
+def test_run_keeps_manual_refresh_full_universe(monkeypatch):
+    monkeypatch.setattr(workers, "is_asian_quote_refresh_time", lambda codes: True)
+    monkeypatch.setattr(
+        workers,
+        "get_yf_rate_limit_status",
+        lambda: {
+            "active": False,
+            "remaining_sec": 0.0,
+            "reason": "",
+            "until_ts": 0.0,
+        },
+    )
+    worker = workers.AsianMarketWorker(["5201.T", "0522.HK"])
+    worker._manual_refresh_requested = True
+    calls = []
+
+    def _fetch_updates(*, open_markets_only=False):
+        calls.append(open_markets_only)
+        return {}
+
+    def _sleep(_seconds):
+        worker._is_running = False
+        return False
+
+    monkeypatch.setattr(worker, "_fetch_updates", _fetch_updates)
+    monkeypatch.setattr(worker, "_sleep_with_break", _sleep)
+
+    worker.run()
+
+    assert calls == [False]
+
+
 def test_timeout_auto_cycle_persists_cache_without_emitting_ui_update(monkeypatch):
     monkeypatch.setattr(workers, "is_asian_quote_refresh_time", lambda codes: True)
     monkeypatch.setattr(
@@ -531,7 +617,7 @@ def test_timeout_auto_cycle_persists_cache_without_emitting_ui_update(monkeypatc
     result_spy = QSignalSpy(worker.result_ready)
     progress_spy = QSignalSpy(worker.progress)
 
-    def _fetch_updates():
+    def _fetch_updates(*, open_markets_only=False):
         worker._last_fetch_timed_out = True
         return {"0522.HK": {"close": 169.3}}
 
@@ -567,7 +653,7 @@ def test_source_payload_degraded_auto_cycle_persists_cache_without_emitting_ui_u
     result_spy = QSignalSpy(worker.result_ready)
     progress_spy = QSignalSpy(worker.progress)
 
-    def _fetch_updates():
+    def _fetch_updates(*, open_markets_only=False):
         worker._mark_source_payload_degraded()
         return {"0522.HK": {"close": 169.3}}
 
@@ -602,7 +688,7 @@ def test_timeout_manual_cycle_still_emits_ui_update(monkeypatch):
     worker._manual_refresh_requested = True
     result_spy = QSignalSpy(worker.result_ready)
 
-    def _fetch_updates():
+    def _fetch_updates(*, open_markets_only=False):
         worker._last_fetch_timed_out = True
         return {"0522.HK": {"close": 169.3}}
 
