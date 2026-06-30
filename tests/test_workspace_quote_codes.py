@@ -1508,7 +1508,7 @@ def test_workspace_background_prewarm_primes_context_without_forcing_current_tab
         assert constructed == []
         assert primed == []
         assert ctor_kwargs == {}
-        assert snapshot_primes == [{}]
+        assert snapshot_primes == [{"include_lhb": False}]
     finally:
         workspace.shutdown()
         workspace.deleteLater()

@@ -423,6 +423,32 @@ def test_stock_candidate_hidden_lhb_update_does_not_prime_lhb_snapshot(monkeypat
         workspace.deleteLater()
 
 
+def test_stock_candidate_current_lhb_update_does_not_reprime_lhb_snapshot(monkeypatch):
+    monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+    primes = []
+
+    class _Workspace(QWidget):
+        def collect_stock_context(self):
+            return {}
+
+        def prime_stock_context_snapshots(self, **kwargs):
+            primes.append(dict(kwargs))
+            return True
+
+    workspace = _Workspace()
+    tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
+    tab._is_current_workspace_tab = lambda: True
+    try:
+        event_bus.sig_lhb_pool_updated.emit()
+
+        assert primes == [{"force": False, "include_fund": False, "include_lhb": False}]
+        assert tab._context_refresh_pending is False
+        assert tab._auto_refresh_timer.isActive()
+    finally:
+        tab.close()
+        workspace.deleteLater()
+
+
 def test_stock_candidate_noninteractive_load_ignores_source_update(monkeypatch):
     monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
     tab = StockCandidateTab(data_provider=SimpleNamespace())

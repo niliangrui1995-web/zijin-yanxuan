@@ -192,7 +192,7 @@ class StockCandidateTab(BaseStockTab):
             (event_bus.sig_ai_industry_chain_updated, {"include_lhb": False}),
             (event_bus.sig_block_trade_updated, {"include_lhb": False}),
             (event_bus.sig_earnings_updated, {"include_lhb": False}),
-            (event_bus.sig_lhb_pool_updated, {"include_fund": False, "include_lhb": True}),
+            (event_bus.sig_lhb_pool_updated, {"include_fund": False, "include_lhb": False}),
             (event_bus.sig_scan_updated, {"include_lhb": False}),
             (event_bus.sig_fund_holdings_updated, {"force_snapshots": True, "include_lhb": False}),
             (

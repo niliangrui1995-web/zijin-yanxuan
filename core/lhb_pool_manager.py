@@ -410,6 +410,79 @@ class LhbPoolManager:
                 continue
         return count
 
+    @staticmethod
+    def _coerce_kline_frame(frame):
+        if frame is None or hasattr(frame, "empty"):
+            return frame
+
+        raw_columns = getattr(frame, "columns", [])
+        if raw_columns is None:
+            raw_columns = []
+        columns = [str(column) for column in list(raw_columns)]
+        if not columns or not hasattr(frame, "__getitem__"):
+            return frame
+
+        class _SeriesAdapter:
+            def __init__(self, values):
+                self._values = list(values)
+
+            @property
+            def iloc(self):
+                return self
+
+            def __getitem__(self, index):
+                return self._values[index]
+
+            def tail(self, count):
+                return _SeriesAdapter(self._values[-int(count) :])
+
+            def astype(self, target_type):
+                return _SeriesAdapter(target_type(value) for value in self._values)
+
+            def tolist(self):
+                return list(self._values)
+
+        class _FrameAdapter:
+            def __init__(self, source, column_names):
+                self._source = source
+                self.columns = column_names
+
+            @property
+            def empty(self):
+                is_empty = getattr(self._source, "is_empty", None)
+                if callable(is_empty):
+                    return bool(is_empty())
+                try:
+                    return len(self._source) == 0
+                except TypeError:
+                    return False
+
+            @property
+            def index(self):
+                if "date" in self.columns:
+                    return self["date"]
+                if "\u65e5\u671f" in self.columns:
+                    return self["\u65e5\u671f"]
+                return range(len(self))
+
+            def __len__(self):
+                return len(self._source)
+
+            def __getitem__(self, column):
+                series = self._source[column]
+                to_list = getattr(series, "to_list", None)
+                if callable(to_list):
+                    values = to_list()
+                else:
+                    tolist = getattr(series, "tolist", None)
+                    values = tolist() if callable(tolist) else list(series)
+                return _SeriesAdapter(values)
+
+            def get(self, column, default=None):
+                return self[column] if column in self.columns else default
+
+        return _FrameAdapter(frame, columns)
+
     def compute_pool(self, data_provider=None, engine=None) -> list[dict]:
         """从缓存的多日数据中计算关注池。
 
@@ -547,7 +620,7 @@ class LhbPoolManager:
                     # === 计算股价位置 & 静态买点 ===
                     if data_provider is not None:
                         try:
-                            df_k = data_provider.get_data(code)
+                            df_k = self._coerce_kline_frame(data_provider.get_data(code))
                             if df_k is not None and not df_k.empty and len(df_k) >= 20:
                                 # 处理日期列
                                 if "date" in df_k.columns:

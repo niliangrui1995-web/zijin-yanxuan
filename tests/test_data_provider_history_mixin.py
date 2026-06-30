@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from vcp.constants import MARKET_SYNC_WORKERS
+from core.runtime_paths import MARKET_SYNC_WORKERS
 from vcp.data_provider_history_mixin import TdxDataProviderHistoryMixin, _resolve_market_sync_workers
 
 

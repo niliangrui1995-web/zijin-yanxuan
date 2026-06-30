@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import pandas as pd
+import pytest
 
 import core.lhb_pool_manager as lhb_pool_module
 from core.lhb_pool_manager import LhbPoolManager
@@ -221,6 +222,43 @@ def test_lhb_buy_point_uses_local_kline_without_realtime_quote_fetch(monkeypatch
     assert [row["代码"] for row in pool] == ["000001"]
     assert pool[0]["买点"] == "触发"
     assert pool[0]["_history_20"] == [float(value) for value in range(1, 21)]
+
+
+def test_compute_pool_accepts_dataframe_like_kline_without_empty_attr(monkeypatch):
+    pl = pytest.importorskip("polars")
+    manager = _build_manager(monkeypatch)
+    monkeypatch.setattr(
+        LhbPoolManager,
+        "_stock_universe_provider",
+        staticmethod(lambda: {"300302"}),
+    )
+    manager._data = {
+        "20260415": [
+            {
+                "代码": "300302",
+                "名称": "同飞股份",
+                "上榜日期": "20260415",
+                "上榜净买额(万)": 7600,
+                "机构净买(万)": 1800,
+                "涨幅%": 2.0,
+            }
+        ]
+    }
+    kline = pl.DataFrame(
+        {
+            "date": pd.date_range("2026-03-01", periods=20, freq="D").strftime("%Y-%m-%d"),
+            "open": [*range(1, 20), 14],
+            "close": list(range(1, 21)),
+        }
+    )
+    assert not hasattr(kline, "empty")
+
+    pool = manager.compute_pool(data_provider=_DummyProvider({"300302": kline}))
+
+    assert [row["代码"] for row in pool] == ["300302"]
+    assert pool[0]["_history_20"] == [float(value) for value in range(1, 21)]
+    assert pool[0]["_history_date"] == "2026-03-20"
+    assert pool[0]["买点"] == "触发"
 
 
 def test_add_day_records_cache_meta(monkeypatch):

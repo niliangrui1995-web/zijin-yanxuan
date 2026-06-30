@@ -581,7 +581,7 @@ class ClassicWorkspace(QWidget):
         if self._background_prewarm_started:
             return
         self._background_prewarm_started = True
-        self.prime_stock_context_snapshots()
+        self.prime_stock_context_snapshots(include_lhb=False)
 
         prewarm_keys = set(self.BACKGROUND_PREWARM_KEYS)
         unloaded_keys = [
