@@ -43,6 +43,14 @@ class LhbTab(BaseStockTab):
     AI_CHAIN_CONTEXT_COLUMN = "AI细分板块/备注"
     QUOTE_APPLY_DEBOUNCE_MS = 80
     QUOTE_SORT_DEBOUNCE_MS = 120
+    OPENING_WARMUP_QUOTE_APPLY_CHUNK_SIZE = 20
+    OPENING_WARMUP_QUOTE_APPLY_CONTINUE_MS = 16
+    OPENING_WARMUP_STATUSES = frozenset(
+        {
+            "\u5f00\u76d8\u96c6\u5408\u7ade\u4ef7",
+            "\u5f00\u5e02\u524d\u65f6\u6bb5",
+        }
+    )
     _DISPLAY_PLACEHOLDER = "--"
     _chain_context_provider = staticmethod(load_ai_industry_chain_context_map)
 
@@ -746,6 +754,13 @@ class LhbTab(BaseStockTab):
         self.model.update_data(sorted_rows, hydrate_latest_quotes=False)
         self._refresh_lhb_lineage(sorted_rows)
 
+    def _is_opening_warmup_window(self) -> bool:
+        try:
+            status = MarketCalendar.get_market_status("CN")
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            return False
+        return str(status or "").strip() in self.OPENING_WARMUP_STATUSES
+
     def _should_defer_visible_quote_snapshot(self, quotes: dict | None) -> bool:
         if not quotes or self._applying_pending_quote_snapshot:
             return False
@@ -760,16 +775,30 @@ class LhbTab(BaseStockTab):
         self._pending_quote_snapshot.update(dict(quotes or {}))
         self._quote_apply_timer.start(self.QUOTE_APPLY_DEBOUNCE_MS)
 
+    def _quote_apply_chunk_size(self) -> int:
+        if not self._is_opening_warmup_window():
+            return max(1, len(self._pending_quote_snapshot) or 1)
+        try:
+            return max(1, int(self.OPENING_WARMUP_QUOTE_APPLY_CHUNK_SIZE))
+        except (TypeError, ValueError):
+            return 20
+
     def _flush_pending_quote_snapshot(self) -> None:
-        quotes = dict(self._pending_quote_snapshot)
-        self._pending_quote_snapshot.clear()
-        if not quotes:
+        pending_items = list(dict(self._pending_quote_snapshot).items())
+        if not pending_items:
+            self._pending_quote_snapshot.clear()
             return
+        chunk_size = self._quote_apply_chunk_size()
+        chunk = dict(pending_items[:chunk_size])
+        self._pending_quote_snapshot = dict(pending_items[chunk_size:])
+        has_more = bool(self._pending_quote_snapshot)
         self._applying_pending_quote_snapshot = True
         try:
-            self._apply_quote_snapshot_now(quotes, defer_sort=True)
+            self._apply_quote_snapshot_now(chunk, defer_sort=True, skip_sort=has_more)
         finally:
             self._applying_pending_quote_snapshot = False
+        if has_more:
+            self._quote_apply_timer.start(max(1, int(self.OPENING_WARMUP_QUOTE_APPLY_CONTINUE_MS)))
 
     def _schedule_default_lhb_quote_sort(self) -> None:
         if not self._is_default_lhb_sort_active():
@@ -778,8 +807,16 @@ class LhbTab(BaseStockTab):
             return
         self._quote_sort_timer.start(self.QUOTE_SORT_DEBOUNCE_MS)
 
-    def _apply_quote_snapshot_now(self, quotes: dict | None, *, defer_sort: bool = False) -> None:
+    def _apply_quote_snapshot_now(
+        self,
+        quotes: dict | None,
+        *,
+        defer_sort: bool = False,
+        skip_sort: bool = False,
+    ) -> None:
         super()._apply_quote_snapshot(quotes)
+        if skip_sort:
+            return
         if defer_sort:
             self._schedule_default_lhb_quote_sort()
         else:
@@ -836,10 +873,13 @@ class LhbTab(BaseStockTab):
                 self._handling_lhb_pool_update = previous_handling
 
         if rows_changed:
-            self.refresh_table_quotes_and_market_caps(
-                quote_task_id=task_registry.quote_refresh("lhb").task_id,
-                async_local=True,
-            )
+            if self._is_opening_warmup_window():
+                self.refresh_table_from_latest_snapshot(async_local=True)
+            else:
+                self.refresh_table_quotes_and_market_caps(
+                    quote_task_id=task_registry.quote_refresh("lhb").task_id,
+                    async_local=True,
+                )
 
     # ================================================================
     # 后台回填缺失天数

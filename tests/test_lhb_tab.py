@@ -427,6 +427,68 @@ def test_lhb_visible_quote_snapshot_is_coalesced_before_apply(monkeypatch, qt_ap
         tab.deleteLater()
 
 
+def test_lhb_opening_warmup_display_pool_uses_snapshot_only(monkeypatch):
+    quote_calls = []
+    snapshot_calls = []
+    monkeypatch.setattr(LhbTab, "_is_opening_warmup_window", lambda self: True)
+    monkeypatch.setattr(
+        LhbTab,
+        "refresh_table_quotes_and_market_caps",
+        lambda self, *args, **kwargs: quote_calls.append(kwargs),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        LhbTab,
+        "refresh_table_from_latest_snapshot",
+        lambda self, *args, **kwargs: snapshot_calls.append(kwargs),
+        raising=False,
+    )
+
+    tab = LhbTab(object(), autoload_pool=False)
+    tab.pool_manager = SimpleNamespace(get_cached_dates=lambda: ["20260420"])
+    try:
+        tab._display_pool([{"code": "300750", "name": "CATL"}])
+
+        assert quote_calls == []
+        assert snapshot_calls == [{"async_local": True}]
+        assert len(tab.model.row_data) == 1
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_opening_warmup_quote_snapshot_flushes_in_chunks(monkeypatch):
+    applied = []
+    sort_calls = []
+
+    def capture_apply(self, quotes):
+        applied.append(tuple(quotes or {}))
+
+    monkeypatch.setattr(BaseStockTab, "_apply_quote_snapshot", capture_apply)
+    monkeypatch.setattr(LhbTab, "_is_opening_warmup_window", lambda self: True)
+    monkeypatch.setattr(LhbTab, "OPENING_WARMUP_QUOTE_APPLY_CHUNK_SIZE", 2)
+    monkeypatch.setattr(LhbTab, "OPENING_WARMUP_QUOTE_APPLY_CONTINUE_MS", 1)
+    monkeypatch.setattr(LhbTab, "_schedule_default_lhb_quote_sort", lambda self: sort_calls.append("sort"))
+
+    tab = LhbTab(object(), autoload_pool=False)
+    tab._pending_quote_snapshot = {f"{idx:06d}": {"close": float(idx)} for idx in range(1, 6)}
+    try:
+        tab._flush_pending_quote_snapshot()
+        tab._quote_apply_timer.stop()
+        tab._flush_pending_quote_snapshot()
+        tab._quote_apply_timer.stop()
+        tab._flush_pending_quote_snapshot()
+
+        assert applied == [
+            ("000001", "000002"),
+            ("000003", "000004"),
+            ("000005",),
+        ]
+        assert tab._pending_quote_snapshot == {}
+        assert sort_calls == ["sort"]
+    finally:
+        tab.deleteLater()
+
+
 def test_lhb_refresh_after_ai_chain_update_reloads_started_pool(monkeypatch):
     tab = LhbTab(object(), autoload_pool=False)
     calls = []

@@ -15,6 +15,44 @@ def _is_relative_to(path: Path, parent: Path) -> bool:
     return True
 
 
+def _log_record(message: str) -> logging.LogRecord:
+    return logging.LogRecord("tests.logger_isolation", logging.INFO, __file__, 1, message, (), None)
+
+
+def test_daily_rotating_file_handler_switches_to_current_day_and_keeps_size_rollover(tmp_path):
+    current_time = {"value": datetime(2026, 6, 30, 23, 59, 59)}
+    handler = logger_module._DailyRotatingFileHandler(
+        str(tmp_path),
+        maxBytes=120,
+        backupCount=2,
+        encoding="utf-8",
+        date_provider=lambda: current_time["value"],
+    )
+
+    try:
+        handler.emit(_log_record("old day marker"))
+        handler.flush()
+
+        current_time["value"] = datetime(2026, 7, 2, 9, 20, 26)
+        handler.emit(_log_record("new day marker"))
+        handler.flush()
+
+        old_log = tmp_path / "vcp_20260630.log"
+        new_log = tmp_path / "vcp_20260702.log"
+        assert Path(handler.baseFilename).resolve() == new_log.resolve()
+        assert handler.encoding == "utf-8"
+        assert old_log.read_text(encoding="utf-8") == "old day marker\n"
+        assert "new day marker" in new_log.read_text(encoding="utf-8")
+
+        for index in range(8):
+            handler.emit(_log_record(f"same day rollover probe {index} " + "x" * 80))
+        handler.flush()
+
+        assert (tmp_path / "vcp_20260702.log.1").exists()
+    finally:
+        handler.close()
+
+
 def test_pytest_file_logging_uses_test_log_dir():
     marker = "pytest logger isolation probe"
     logger = get_logger("tests.logger_isolation")

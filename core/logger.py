@@ -8,6 +8,7 @@ import threading
 import time
 from contextlib import AbstractContextManager
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from typing import Optional
 
 # 防止日志处理器自身异常把 UI/终端刷爆（例如控制台编码不支持 emoji）。
@@ -19,6 +20,45 @@ _shared_handlers: Optional[list[logging.Handler]] = None
 _logger_lock = threading.Lock()
 _system_log_backpressure_lock = threading.Lock()
 _system_log_backpressure_stack: list["_SystemLogBackpressure"] = []
+
+
+class _DailyRotatingFileHandler(RotatingFileHandler):
+    def __init__(self, log_dir: str, *, date_provider=None, **kwargs):
+        self.log_dir = os.path.abspath(log_dir)
+        self._date_provider = date_provider or datetime.now
+        self._current_day = self._resolve_day()
+        super().__init__(self._log_file_for_day(self._current_day), **kwargs)
+
+    def emit(self, record):
+        try:
+            self._switch_to_current_day_if_needed()
+            super().emit(record)
+        except Exception:
+            self.handleError(record)
+
+    def _resolve_day(self) -> str:
+        value = self._date_provider()
+        if hasattr(value, "strftime"):
+            return value.strftime("%Y%m%d")
+        return str(value)
+
+    def _log_file_for_day(self, day: str) -> str:
+        return os.path.join(self.log_dir, f"vcp_{day}.log")
+
+    def _switch_to_current_day_if_needed(self) -> None:
+        day = self._resolve_day()
+        if day == self._current_day:
+            return
+
+        if self.stream:
+            self.stream.flush()
+            self.stream.close()
+            self.stream = None
+
+        self._current_day = day
+        self.baseFilename = os.path.abspath(self._log_file_for_day(day))
+        if not self.delay:
+            self.stream = self._open()
 
 
 class _SystemLogBackpressure(AbstractContextManager):
@@ -341,11 +381,8 @@ def _build_shared_handlers() -> list[logging.Handler]:
         os.makedirs(log_dir, exist_ok=True)
         _clean_old_logs(log_dir, max_age_days=7)
 
-        log_file = os.path.join(log_dir, f"vcp_{datetime.now().strftime('%Y%m%d')}.log")
-        from logging.handlers import RotatingFileHandler
-
-        file_handler = RotatingFileHandler(
-            log_file,
+        file_handler = _DailyRotatingFileHandler(
+            log_dir,
             maxBytes=1 * 1024 * 1024,
             backupCount=3,
             encoding="utf-8",
