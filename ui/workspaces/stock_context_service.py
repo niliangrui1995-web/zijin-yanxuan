@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 from collections import defaultdict
 from collections.abc import Iterable
 from pathlib import Path
@@ -58,6 +59,7 @@ RAW_QOQ_PCT = "\u73af\u6bd4\u589e\u901f_\u767e\u5206\u6bd4"
 RAW_DISCLOSURE_DATE = "\u516c\u544a\u65e5\u671f"
 RAW_DATA_TYPE = "\u6570\u636e\u7c7b\u578b"
 RAW_DISCOVERED_AT = KEY_DISCOVERED_AT
+POST_F5_CONTEXT_SNAPSHOT_DEFER_SECONDS = 5.0
 
 TEXT_BUY = "\u4e70\u5165"
 TEXT_SELL = "\u5356\u51fa"
@@ -93,6 +95,7 @@ class StockContextService:
         self._lhb_rows_snapshot: list[dict] = []
         self._lhb_rows_signature: tuple[str, int, int] | None = None
         self._lhb_rows_loading = False
+        self._post_f5_snapshot_defer_until = 0.0
 
     @staticmethod
     def _safe_float(value, default: float = 0.0) -> float:
@@ -475,6 +478,18 @@ class StockContextService:
         if not loading:
             self.refresh_async_snapshots()
         return []
+
+    def prepare_post_f5_refresh(self) -> None:
+        self._post_f5_snapshot_defer_until = max(
+            float(getattr(self, "_post_f5_snapshot_defer_until", 0.0) or 0.0),
+            time.monotonic() + POST_F5_CONTEXT_SNAPSHOT_DEFER_SECONDS,
+        )
+
+    def _should_defer_async_snapshots(self) -> bool:
+        try:
+            return time.monotonic() < float(getattr(self, "_post_f5_snapshot_defer_until", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return False
 
     def refresh_watchlist_names(self, code2name: dict[str, str]) -> bool:
         watchlist_tab = self._get_tab("watchlist")
@@ -958,6 +973,8 @@ class StockContextService:
         include_fund: bool = True,
         include_lhb: bool = True,
     ) -> bool:
+        if self._should_defer_async_snapshots():
+            return False
         try:
             from app.services.ui_event_service import domain_events
             from app.services.ui_task_service import (

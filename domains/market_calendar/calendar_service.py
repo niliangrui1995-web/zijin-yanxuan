@@ -133,7 +133,10 @@ class MarketCalendar:
     _asian_bootstrapped = False
     _coverage_check_year: int | None = None
     _refresh_inflight: set[tuple[str, int]] = set()
+    _holiday_unpublished_until: dict[tuple[str, int], datetime.datetime] = {}
     _holiday_table_ready = False
+    _TW_FUTURE_YEAR_REFRESH_MONTH = 10
+    _SOURCE_UNPUBLISHED_RETRY_DAYS = 30
 
     _TWSE_INCLUDE_KEYWORDS = (
         "\u653e\u5047",  # 放假
@@ -325,6 +328,22 @@ class MarketCalendar:
         return [year - 1, year, year + 1]
 
     @classmethod
+    def _should_skip_holiday_refresh(cls, market: str, year: int, now: datetime.datetime | None = None) -> bool:
+        canonical = cls.normalize_market(market)
+        target_year = int(year)
+        now = now or cls._get_market_now(canonical)
+        unpublished_until = cls._holiday_unpublished_until.get((canonical, target_year))
+        if unpublished_until is not None and now < unpublished_until:
+            return True
+        if (
+            canonical == "TW"
+            and target_year > now.year
+            and now.month < cls._TW_FUTURE_YEAR_REFRESH_MONTH
+        ):
+            return True
+        return False
+
+    @classmethod
     def _validate_asian_year_coverage(cls) -> None:
         marker = cls._get_market_now("TW").year
         if cls._coverage_check_year == marker:
@@ -332,10 +351,13 @@ class MarketCalendar:
         cls._coverage_check_year = marker
 
         for market in cls._ASIAN_MARKETS:
+            now = cls._get_market_now(market)
             required = set(cls._required_years(market))
             with cls._asian_lock:
                 existing = set(cls._asian_holidays.get(market, {}).keys())
-            missing = sorted(required - existing)
+            missing = sorted(
+                year for year in required - existing if not cls._should_skip_holiday_refresh(market, year, now)
+            )
             if not missing:
                 continue
             log.warning(f"[交易日历] {market} 节假日年份覆盖不足，缺失 {missing}，已启动后台补齐")
@@ -345,6 +367,7 @@ class MarketCalendar:
     def _retry_empty_future_years(cls) -> None:
         now = cls._get_market_now("TW")
         for market in cls._ASIAN_MARKETS:
+            market_now = cls._get_market_now(market)
             retry_years: list[int] = []
             with cls._asian_lock:
                 year_map = dict(cls._asian_holidays.get(market, {}))
@@ -352,6 +375,8 @@ class MarketCalendar:
                 if days:
                     continue
                 if year < now.year:
+                    continue
+                if cls._should_skip_holiday_refresh(market, year, market_now):
                     continue
                 updated_at = cls._asian_holiday_updated_at.get((market, year))
                 if updated_at is None:
@@ -372,7 +397,7 @@ class MarketCalendar:
         cls._bootstrap_asian_holidays()
         with cls._asian_lock:
             present = year in cls._asian_holidays.get(market, {})
-        if not present:
+        if not present and not cls._should_skip_holiday_refresh(market, year):
             cls._schedule_asian_holiday_refresh(market, [year])
 
     @classmethod
@@ -381,7 +406,8 @@ class MarketCalendar:
         if market not in cls._ASIAN_MARKETS:
             return
 
-        years = sorted({int(y) for y in years})
+        now = cls._get_market_now(market)
+        years = sorted({int(y) for y in years if not cls._should_skip_holiday_refresh(market, int(y), now)})
         if not years:
             return
 
@@ -395,25 +421,28 @@ class MarketCalendar:
         def _bg_fetch() -> dict[str, Any]:
             fetched: dict[int, set[str]] = {}
             transient_failed: list[int] = []
+            unpublished_years: list[int] = []
             for year in pending_years:
                 try:
                     fetched[year] = cls._fetch_public_holidays(market, year)
                 except BusinessRuleError as e:
                     log.warning(f"[交易日历][SOURCE] 亚洲节假日源不可用({market} {year}): {e}")
                     fetched[year] = set()
+                    unpublished_years.append(year)
                 except DataFormatError as e:
                     log.warning(f"[交易日历][FORMAT] 亚洲节假日数据异常({market} {year}): {e}")
                     fetched[year] = set()
                 except NetworkServiceError as e:
                     log.warning(f"[交易日历][NETWORK] 亚洲节假日拉取失败({market} {year}): {e}")
                     transient_failed.append(year)
-            return {"fetched": fetched, "transient_failed": transient_failed}
+            return {"fetched": fetched, "transient_failed": transient_failed, "unpublished_years": unpublished_years}
 
         def _on_success(result: Any) -> None:
             if not isinstance(result, dict):
                 result = {}
             fetched = result.get("fetched", {})
             transient_failed = set(result.get("transient_failed", []))
+            unpublished_years = {int(y) for y in result.get("unpublished_years", [])}
             now = cls.now(market)
 
             with cls._asian_lock:
@@ -426,6 +455,10 @@ class MarketCalendar:
                     normalized_days = cls._normalize_holiday_days(days)
                     bucket[y] = normalized_days
                     cls._asian_holiday_updated_at[(market, y)] = now
+                    if y in unpublished_years:
+                        cls._holiday_unpublished_until[(market, y)] = now + datetime.timedelta(
+                            days=cls._SOURCE_UNPUBLISHED_RETRY_DAYS
+                        )
                     try:
                         cls._save_holidays_to_store(market, y, normalized_days)
                     except CacheIOError as e:

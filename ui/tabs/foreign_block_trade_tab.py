@@ -9,6 +9,7 @@ import datetime
 import json
 import os
 import sys
+import time
 
 import pandas as pd
 from PyQt6.QtCore import Qt, QTimer
@@ -114,6 +115,7 @@ _BLOCK_TRADE_MAX_RETRIES = 2
 _BLOCK_TRADE_TOTAL_TIMEOUT = 90
 F5_AUTO_ONLINE_REFRESH_DELAY_MS = 24000
 LOCAL_CACHE_LOAD_DELAY_MS = 650
+POST_F5_LOCAL_CACHE_DEFER_MS = 5000
 filter_rows_to_ai_chain_codes = None
 _BLOCK_TRADE_TIMEOUT_USER_MESSAGE = (
     f"抓取超时：{_BLOCK_TRADE_TOTAL_TIMEOUT}秒内未拿到完整结果。通常是当前网络较慢，"
@@ -360,6 +362,9 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._pending_f5_online_refresh = False
         self._local_cache_loading = False
         self._local_cache_pending_emit_event: bool | None = None
+        self._post_f5_local_cache_defer_until = 0.0
+        self._post_f5_local_cache_pending = False
+        self._post_f5_local_cache_emit_event = False
         self._initial_local_cache_load_started = False
 
         self.days_to_fetch = 30  # 默认拉取最近30个交易日
@@ -623,6 +628,10 @@ class ForeignBlockTradeTab(BaseStockTab):
             return False
 
     def _load_local_cache(self, *, emit_event: bool = True):
+        defer_until = float(getattr(self, "_post_f5_local_cache_defer_until", 0.0) or 0.0)
+        if time.monotonic() < defer_until:
+            self._schedule_post_f5_local_cache_load(emit_event=emit_event)
+            return
         self._initial_local_cache_load_started = True
         if getattr(self, "_local_cache_loading", False):
             self._local_cache_pending_emit_event = bool(emit_event)
@@ -647,6 +656,32 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._local_cache_loading = False
         if pending_emit_event is not None:
             QTimer.singleShot(0, lambda: self._load_local_cache(emit_event=pending_emit_event))
+
+    def _schedule_post_f5_local_cache_load(self, *, emit_event: bool = True) -> bool:
+        self._post_f5_local_cache_emit_event = bool(
+            getattr(self, "_post_f5_local_cache_emit_event", False) or emit_event
+        )
+        if getattr(self, "_post_f5_local_cache_pending", False):
+            return False
+        self._post_f5_local_cache_pending = True
+        defer_until = float(getattr(self, "_post_f5_local_cache_defer_until", 0.0) or 0.0)
+        delay_ms = max(0, int((defer_until - time.monotonic()) * 1000))
+        QTimer.singleShot(delay_ms, self._run_post_f5_local_cache_load)
+        return True
+
+    def _run_post_f5_local_cache_load(self) -> bool:
+        defer_until = float(getattr(self, "_post_f5_local_cache_defer_until", 0.0) or 0.0)
+        if time.monotonic() < defer_until:
+            self._post_f5_local_cache_pending = False
+            return self._schedule_post_f5_local_cache_load(
+                emit_event=bool(getattr(self, "_post_f5_local_cache_emit_event", True))
+            )
+        self._post_f5_local_cache_pending = False
+        self._post_f5_local_cache_defer_until = 0.0
+        emit_event = bool(getattr(self, "_post_f5_local_cache_emit_event", True))
+        self._post_f5_local_cache_emit_event = False
+        self._load_local_cache(emit_event=emit_event)
+        return True
 
     def _apply_local_cache_payload(self, payload: dict):
         try:
@@ -963,8 +998,15 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._pending_f5_online_refresh = False
         return self.run_post_online_refresh()
 
+    def prepare_post_f5_refresh(self) -> None:
+        self._post_f5_local_cache_defer_until = max(
+            float(getattr(self, "_post_f5_local_cache_defer_until", 0.0) or 0.0),
+            time.monotonic() + POST_F5_LOCAL_CACHE_DEFER_MS / 1000.0,
+        )
+
     def refresh_data_after_f5(self) -> bool:
-        self._load_local_cache()
+        self.prepare_post_f5_refresh()
+        self._schedule_post_f5_local_cache_load()
         self.refresh_table_from_latest_snapshot(current_model=self.model, async_local=True)
         return self.schedule_post_online_refresh_after_f5()
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 import weakref
 
 try:
@@ -34,6 +35,7 @@ from app.services.ui_task_service import (
     task_id_of,
     task_registry,
 )
+from core.observability import record_metric
 
 _FINANCE_CACHE_LOCK = threading.RLock()
 _FINANCE_CACHE_PATH: str | None = None
@@ -399,14 +401,16 @@ def _should_defer_cache_snapshot_apply(owner, *, async_local: bool) -> bool:
     if not async_local or not _is_owner_runtime_active(owner):
         return False
 
-    is_visible = getattr(owner, "isVisible", None)
-    if not callable(is_visible):
-        return False
-    try:
-        if not is_visible():
+    is_f5_refresh = bool(getattr(owner, "_f5_cache_snapshot_apply", False))
+    if not is_f5_refresh:
+        is_visible = getattr(owner, "isVisible", None)
+        if not callable(is_visible):
             return False
-    except (RuntimeError, TypeError):
-        return False
+        try:
+            if not is_visible():
+                return False
+        except (RuntimeError, TypeError):
+            return False
 
     app = QCoreApplication.instance()
     if app is None or app.closingDown():
@@ -414,8 +418,173 @@ def _should_defer_cache_snapshot_apply(owner, *, async_local: bool) -> bool:
     return True
 
 
+_QUOTE_SNAPSHOT_APPLY_CHUNK_SIZE = 48
+_QUOTE_ROW_CODE_KEYS = ("\u4ee3\u7801", "浠ｇ爜", "code", "symbol")
+
+
+def _stable_signature_value(value):
+    if isinstance(value, dict):
+        return tuple(sorted((str(key), _stable_signature_value(item)) for key, item in value.items()))
+    if isinstance(value, (list, tuple)):
+        return tuple(_stable_signature_value(item) for item in value)
+    if isinstance(value, set):
+        return tuple(sorted(_stable_signature_value(item) for item in value))
+    if isinstance(value, (str, int, float, bool, type(None))):
+        return value
+    return repr(value)
+
+
+def _quote_code_candidates(owner, raw_code) -> list[str]:
+    raw = str(raw_code or "").strip()
+    candidates = []
+    if raw:
+        candidates.append(raw)
+        if raw.isdigit():
+            candidates.append(raw.zfill(6))
+
+    normalize_code = getattr(owner, "_normalize_quote_code", None)
+    if callable(normalize_code):
+        try:
+            normalized = str(normalize_code(raw_code) or "").strip()
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            normalized = ""
+        if normalized:
+            candidates.append(normalized)
+            if normalized.isdigit():
+                candidates.append(normalized.zfill(6))
+            else:
+                candidates.append(normalized.upper())
+    return list(dict.fromkeys(candidates))
+
+
+def _row_signature_by_code(owner, model, payload: dict) -> dict[str, tuple]:
+    row_data = getattr(model, "row_data", None) or []
+    headers = list(getattr(model, "headers", None) or getattr(model, "_headers", None) or [])
+    wanted_codes = set(payload or {})
+    signatures: dict[str, tuple] = {}
+
+    for row in row_data:
+        if not isinstance(row, dict):
+            continue
+        matched_code = ""
+        for key in _QUOTE_ROW_CODE_KEYS:
+            for code in _quote_code_candidates(owner, row.get(key, "")):
+                if code in wanted_codes:
+                    matched_code = code
+                    break
+            if matched_code:
+                break
+        if not matched_code or matched_code in signatures:
+            continue
+
+        display_values = tuple((header, _stable_signature_value(row.get(header))) for header in headers)
+        internal_values = (
+            ("_zongguben", _stable_signature_value(row.get("_zongguben"))),
+            ("_history_date", _stable_signature_value(row.get("_history_date"))),
+        )
+        signatures[matched_code] = display_values + internal_values
+        if len(signatures) == len(wanted_codes):
+            break
+
+    return signatures
+
+
+def _payload_signature_for_codes(owner, payload: dict) -> dict[str, tuple]:
+    model = getattr(owner, "_active_model_ref", None)
+    if model is None:
+        resolver = getattr(owner, "_resolve_active_quote_model", None)
+        model = resolver() if callable(resolver) else None
+    row_signatures = _row_signature_by_code(owner, model, payload) if model is not None else {}
+    signatures: dict[str, tuple] = {}
+    for code, quote in dict(payload or {}).items():
+        signatures[str(code)] = (
+            _stable_signature_value(dict(quote or {})),
+            row_signatures.get(str(code)),
+        )
+    return signatures
+
+
+def _filter_unchanged_cache_snapshot_payload(owner, payload: dict) -> dict:
+    signatures = _payload_signature_for_codes(owner, payload)
+    if not signatures:
+        return {}
+    payload_by_code = {str(code): dict(quote or {}) for code, quote in dict(payload or {}).items()}
+    previous = getattr(owner, "_cache_snapshot_applied_signatures", None)
+    if not isinstance(previous, dict):
+        return payload_by_code
+    return {code: payload_by_code[code] for code, signature in signatures.items() if previous.get(code) != signature}
+
+
+def _remember_cache_snapshot_payload(owner, payload: dict) -> None:
+    if not _is_owner_runtime_active(owner) or not payload:
+        return
+    signatures = _payload_signature_for_codes(owner, payload)
+    if not signatures:
+        return
+    previous = getattr(owner, "_cache_snapshot_applied_signatures", None)
+    if not isinstance(previous, dict):
+        previous = {}
+    previous.update(signatures)
+    owner._cache_snapshot_applied_signatures = previous
+
+
+def _extract_changed_rows(result) -> int | None:
+    if isinstance(result, dict):
+        try:
+            return int(result.get("changed_rows"))
+        except (TypeError, ValueError):
+            return None
+    try:
+        return int(result)
+    except (TypeError, ValueError):
+        return None
+
+
+def _cache_snapshot_apply_chunk_size() -> int:
+    try:
+        return max(1, int(os.environ.get("VCP_CACHE_SNAPSHOT_APPLY_CHUNK_SIZE", _QUOTE_SNAPSHOT_APPLY_CHUNK_SIZE)))
+    except (TypeError, ValueError):
+        return _QUOTE_SNAPSHOT_APPLY_CHUNK_SIZE
+
+
+def _split_payload_chunk(payload: dict, chunk_size: int) -> tuple[dict, dict]:
+    items = list(dict(payload or {}).items())
+    chunk = dict(items[:chunk_size])
+    remaining = dict(items[chunk_size:])
+    return chunk, remaining
+
+
+def _apply_cache_snapshot_payload(owner, payload: dict, *, signal: str) -> None:
+    filtered_payload = _filter_unchanged_cache_snapshot_payload(owner, payload)
+    if not filtered_payload:
+        return
+
+    started_at = time.perf_counter()
+    result = None
+    with ui_stall_span(
+        "BaseStockRefresh.apply_cache_snapshot_batch",
+        tab=owner.__class__.__name__,
+        signal=signal,
+    ):
+        result = owner._apply_quote_snapshot(filtered_payload)
+    elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+    changed_rows = _extract_changed_rows(result)
+    record_metric(
+        "cache_snapshot_apply_ms",
+        elapsed_ms,
+        unit="ms",
+        tags={
+            "tab": owner.__class__.__name__,
+            "codes": str(len(filtered_payload)),
+            "changed_rows": "" if changed_rows is None else str(changed_rows),
+            "signal": signal,
+        },
+    )
+    _remember_cache_snapshot_payload(owner, filtered_payload)
+
+
 class CacheSnapshotApplyQueue:
-    """Apply visible cache snapshot hits one tab per event-loop turn."""
+    """Apply cache snapshot hits by tab and small code batches across event-loop turns."""
 
     _scheduled = False
     _pending: dict[int, tuple[weakref.ReferenceType, dict]] = {}
@@ -462,12 +631,10 @@ class CacheSnapshotApplyQueue:
         owner_ref, payload = cls._pending.pop(owner_id)
         owner = owner_ref()
         if _should_defer_cache_snapshot_apply(owner, async_local=True):
-            with ui_stall_span(
-                "BaseStockRefresh.apply_cache_snapshot",
-                tab=owner.__class__.__name__,
-                signal="cache_snapshot",
-            ):
-                owner._apply_quote_snapshot(payload)
+            chunk, remaining = _split_payload_chunk(payload, _cache_snapshot_apply_chunk_size())
+            if remaining:
+                cls._pending[owner_id] = (owner_ref, remaining)
+            _apply_cache_snapshot_payload(owner, chunk, signal="cache_snapshot")
 
         if cls._pending:
             cls._schedule()
@@ -751,7 +918,11 @@ def _refresh_table_from_latest_snapshot_impl(owner, current_model=None, *, async
     quote_subset = {code: dict(snapshot[code]) for code in codes if code in snapshot}
     if quote_subset:
         if not CacheSnapshotApplyQueue.enqueue(owner, quote_subset, async_local=async_local):
-            owner._apply_quote_snapshot(quote_subset)
+            _apply_cache_snapshot_payload(
+                owner,
+                quote_subset,
+                signal="cache_snapshot" if async_local else "cache_snapshot_sync",
+            )
 
 
 def subscribe_global_quotes(owner, current_model=None) -> None:

@@ -153,6 +153,7 @@ class ClassicWorkspace(QWidget):
     COPY_HOOK_REFRESH_DELAY_MS = 240
     STARTUP_TRANSITION_SUSPEND_MS = 60_000
     FIRST_VISIBLE_TAB_WORK_DELAY_MS = 1800
+    LHB_FIRST_VISIBLE_POOL_DELAY_MS = 5000
     WATCHLIST_TAB_SWITCH_INDICATOR_DELAY_MS = FIRST_VISIBLE_TAB_WORK_DELAY_MS
     PROBE_LOAD_REASONS = frozenset({"perf_memory_probe", "perf_memory_probe_cycle"})
     CONTROLLED_STARTUP_PROBE_DEFER_KEYS = frozenset(
@@ -400,7 +401,9 @@ class ClassicWorkspace(QWidget):
         elif key == "watchlist" and first_visible_load:
             runtime_kwargs["startup_indicator_refresh_delay_ms"] = self.WATCHLIST_TAB_SWITCH_INDICATOR_DELAY_MS
             runtime_kwargs["startup_followup_refresh_enabled"] = False
-        elif first_visible_load and key in {"lhb", "fund_holdings"}:
+        elif first_visible_load and key == "lhb":
+            runtime_kwargs["initial_load_delay_ms"] = self.LHB_FIRST_VISIBLE_POOL_DELAY_MS
+        elif first_visible_load and key == "fund_holdings":
             runtime_kwargs["initial_load_delay_ms"] = self.FIRST_VISIBLE_TAB_WORK_DELAY_MS
         elif first_visible_load and key in {"scan", "foreign_block"}:
             runtime_kwargs["initial_cache_load_delay_ms"] = self.FIRST_VISIBLE_TAB_WORK_DELAY_MS

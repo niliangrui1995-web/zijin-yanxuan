@@ -35,6 +35,7 @@ from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, St
 from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
+POST_F5_POOL_BOOTSTRAP_DEFER_MS = 5000
 
 
 class LhbTab(BaseStockTab):
@@ -96,6 +97,10 @@ class LhbTab(BaseStockTab):
         self._ai_chain_context_map: dict[str, str] | None = None
         self._handling_lhb_pool_update = False
         self._pending_pool_refresh = False
+        self._pool_bootstrap_not_before = 0.0
+        self._post_f5_pool_defer_until = 0.0
+        self._post_f5_pool_pending = False
+        self._post_f5_pool_emit_event = False
         self._pool_retry_timer = QTimer(self)
         self._pool_retry_timer.setSingleShot(True)
         self._pool_retry_timer.timeout.connect(self._load_and_display_pool)
@@ -133,7 +138,7 @@ class LhbTab(BaseStockTab):
                 self._load_and_display_pool(emit_event=False)
             else:
                 self._pending_pool_refresh = False
-                self._ensure_pool_bootstrap_started()
+                self._ensure_pool_bootstrap_started(delay_ms=self._initial_load_delay_ms)
 
     def hideEvent(self, event):
         super().hideEvent(event)
@@ -142,7 +147,13 @@ class LhbTab(BaseStockTab):
         self._ensure_pool_bootstrap_started(delay_ms=0)
 
     def on_workspace_tab_activated(self) -> None:
-        self._ensure_pool_bootstrap_started()
+        self._ensure_pool_bootstrap_started(delay_ms=self._initial_load_delay_ms)
+
+    def prepare_post_f5_refresh(self) -> None:
+        self._post_f5_pool_defer_until = max(
+            float(getattr(self, "_post_f5_pool_defer_until", 0.0) or 0.0),
+            time.monotonic() + POST_F5_POOL_BOOTSTRAP_DEFER_MS / 1000.0,
+        )
 
     def _is_current_workspace_tab(self) -> bool:
         parent = self.parent()
@@ -169,8 +180,13 @@ class LhbTab(BaseStockTab):
         except (TypeError, ValueError):
             delay = 0
         if delay > 0:
+            self._pool_bootstrap_not_before = max(
+                float(getattr(self, "_pool_bootstrap_not_before", 0.0) or 0.0),
+                time.monotonic() + delay / 1000.0,
+            )
             QTimer.singleShot(delay, self._load_and_display_pool)
         else:
+            self._pool_bootstrap_not_before = 0.0
             self._load_and_display_pool()
 
     def _on_lhb_pool_updated(self) -> None:
@@ -528,6 +544,14 @@ class LhbTab(BaseStockTab):
 
     def _load_and_display_pool(self, *, emit_event: bool = True):
         """Schedule the cached pool computation off the UI thread."""
+        defer_until = max(
+            float(getattr(self, "_pool_bootstrap_not_before", 0.0) or 0.0),
+            float(getattr(self, "_post_f5_pool_defer_until", 0.0) or 0.0),
+        )
+        if time.monotonic() < defer_until:
+            self._schedule_post_f5_pool_load(emit_event=emit_event)
+            return
+        self._pool_bootstrap_not_before = 0.0
         if self._pool_load_in_progress:
             return
         task_id = task_registry.workspace("lhb_pool_bootstrap").task_id
@@ -621,6 +645,37 @@ class LhbTab(BaseStockTab):
             on_error=_on_pool_error,
             task_id=task_id,
         )
+
+    def _schedule_post_f5_pool_load(self, *, emit_event: bool = True) -> bool:
+        self._post_f5_pool_emit_event = bool(getattr(self, "_post_f5_pool_emit_event", False) or emit_event)
+        if getattr(self, "_post_f5_pool_pending", False):
+            return False
+        self._post_f5_pool_pending = True
+        defer_until = max(
+            float(getattr(self, "_pool_bootstrap_not_before", 0.0) or 0.0),
+            float(getattr(self, "_post_f5_pool_defer_until", 0.0) or 0.0),
+        )
+        delay_ms = max(0, int((defer_until - time.monotonic()) * 1000))
+        QTimer.singleShot(delay_ms, self._run_post_f5_pool_load)
+        return True
+
+    def _run_post_f5_pool_load(self) -> bool:
+        defer_until = max(
+            float(getattr(self, "_pool_bootstrap_not_before", 0.0) or 0.0),
+            float(getattr(self, "_post_f5_pool_defer_until", 0.0) or 0.0),
+        )
+        if time.monotonic() < defer_until:
+            self._post_f5_pool_pending = False
+            return self._schedule_post_f5_pool_load(
+                emit_event=bool(getattr(self, "_post_f5_pool_emit_event", True))
+            )
+        self._post_f5_pool_pending = False
+        self._pool_bootstrap_not_before = 0.0
+        self._post_f5_pool_defer_until = 0.0
+        emit_event = bool(getattr(self, "_post_f5_pool_emit_event", True))
+        self._post_f5_pool_emit_event = False
+        self._load_and_display_pool(emit_event=emit_event)
+        return True
 
     @staticmethod
     def _get_lhb_reference_trade_date():
@@ -813,20 +868,21 @@ class LhbTab(BaseStockTab):
         *,
         defer_sort: bool = False,
         skip_sort: bool = False,
-    ) -> None:
-        super()._apply_quote_snapshot(quotes)
+    ):
+        result = super()._apply_quote_snapshot(quotes)
         if skip_sort:
-            return
+            return result
         if defer_sort:
             self._schedule_default_lhb_quote_sort()
         else:
             self._sort_model_for_default_lhb_order()
+        return result
 
     def _apply_quote_snapshot(self, quotes: dict | None):
         if self._should_defer_visible_quote_snapshot(quotes):
             self._queue_visible_quote_snapshot(quotes)
-            return
-        self._apply_quote_snapshot_now(quotes)
+            return None
+        return self._apply_quote_snapshot_now(quotes)
 
     def get_watchlist_radar_rows(self) -> list[dict]:
         """给关注池读取已展示的龙虎榜信号；冷缓存由工作区快照后台预热。"""

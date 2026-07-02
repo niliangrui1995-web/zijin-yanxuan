@@ -6,11 +6,13 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QSignalSpy
 
 from core.global_store import global_store
+from core.observability import clear_metric_history, metric_history
 from ui.models.table_model_helpers import _flash_decay_alpha
 from ui.models.table_models import RtSortFilterProxyModel, StockTableModel
 
 
 def test_stock_table_model_update_quotes_batches_changed_rows():
+    clear_metric_history()
     model = StockTableModel(["代码", "名称", "现价", "涨幅%", "市值"])
     model.update_data(
         [
@@ -22,13 +24,14 @@ def test_stock_table_model_update_quotes_batches_changed_rows():
 
     spy = QSignalSpy(model.dataChanged)
 
-    model.update_quotes(
+    changed_rows = model.update_quotes(
         {
             "000001": {"close": 10.5, "last_close": 10.0},
             "000002": {"close": 21.0, "last_close": 20.0},
         }
     )
 
+    assert changed_rows == 2
     assert len(spy) == 1
 
     top_left = spy[0][0]
@@ -45,6 +48,11 @@ def test_stock_table_model_update_quotes_batches_changed_rows():
     cap_col = model.headers.index("市值")
     assert model.data(model.index(0, price_col), Qt.ItemDataRole.UserRole + 1)["diff"] > 0
     assert model.data(model.index(0, cap_col), Qt.ItemDataRole.UserRole + 1)["diff"] == 0
+    samples = metric_history("stock_table_update_quotes_ms")
+    assert samples
+    assert samples[-1].tags["payload_codes"] == "2"
+    assert samples[-1].tags["scanned_rows"] == "2"
+    assert samples[-1].tags["changed_rows"] == "2"
 
 
 def test_stock_table_model_sort_value_cache_invalidates_on_cell_update():

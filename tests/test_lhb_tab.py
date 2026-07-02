@@ -208,6 +208,28 @@ def test_lhb_workspace_activation_starts_deferred_pool_once(monkeypatch):
         tab.deleteLater()
 
 
+def test_lhb_workspace_activation_honors_initial_load_delay(monkeypatch):
+    calls = []
+    scheduled = []
+    monkeypatch.setattr(LhbTab, "_load_and_display_pool", lambda self: calls.append("load"), raising=False)
+    monkeypatch.setattr(
+        lhb_tab_module.QTimer,
+        "singleShot",
+        lambda delay, callback: scheduled.append((delay, callback)),
+    )
+
+    tab = LhbTab(object(), autoload_pool=False, initial_load_delay_ms=1800)
+    try:
+        scheduled.clear()
+        tab.on_workspace_tab_activated()
+
+        assert calls == []
+        assert scheduled == [(1800, tab._load_and_display_pool)]
+        assert tab._pool_bootstrap_started is True
+    finally:
+        tab.deleteLater()
+
+
 def test_lhb_deferred_status_does_not_read_pool_cache(monkeypatch):
     monkeypatch.setattr(
         lhb_tab_module,
@@ -675,6 +697,35 @@ def test_lhb_pool_bootstrap_schedules_background_task(monkeypatch):
         assert len(tasks) == 1
         assert "lhb_pool_bootstrap" in str(tasks[0][3])
         assert tab._pool_load_in_progress is True
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_pool_bootstrap_waits_during_post_f5_defer(monkeypatch):
+    scheduled = []
+    background_calls = []
+    monkeypatch.setattr(lhb_tab_module.time, "monotonic", lambda: 10.0)
+    monkeypatch.setattr(
+        lhb_tab_module.QTimer,
+        "singleShot",
+        lambda delay, callback: scheduled.append((delay, callback)),
+    )
+    monkeypatch.setattr(
+        lhb_tab_module.task_manager,
+        "run_in_background",
+        lambda *args, **kwargs: background_calls.append((args, kwargs)),
+    )
+
+    tab = LhbTab(object(), autoload_pool=False)
+    try:
+        scheduled.clear()
+        tab._post_f5_pool_defer_until = 15.0
+        tab._load_and_display_pool(emit_event=False)
+
+        assert background_calls == []
+        assert scheduled[0][0] == 5000
+        assert tab._post_f5_pool_pending is True
+        assert tab._post_f5_pool_emit_event is False
     finally:
         tab.deleteLater()
 

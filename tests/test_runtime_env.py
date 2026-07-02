@@ -283,3 +283,21 @@ def test_configure_qt_webengine_runtime_merges_flags_without_duplicates():
     assert "--disable-extensions" in flags
     assert "--disable-background-networking" in flags
     assert "--user-flag" in flags
+    assert result["OMP_NUM_THREADS"] == "2"
+    assert result["OPENBLAS_NUM_THREADS"] == "2"
+    assert result["MKL_NUM_THREADS"] == "2"
+    assert result["NUMEXPR_NUM_THREADS"] == "2"
+    assert result["NUMEXPR_MAX_THREADS"] == "2"
+
+
+def test_configure_qt_webengine_runtime_preserves_numeric_thread_override():
+    env = {
+        "VCP_NUMERIC_THREAD_COUNT": "4",
+        "OPENBLAS_NUM_THREADS": "3",
+    }
+
+    result = configure_qt_webengine_runtime(env)
+
+    assert result["OMP_NUM_THREADS"] == "4"
+    assert result["OPENBLAS_NUM_THREADS"] == "3"
+    assert result["MKL_NUM_THREADS"] == "4"

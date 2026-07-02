@@ -652,6 +652,15 @@ def test_stock_context_snapshot_refresh_can_skip_lhb_cache_compute(monkeypatch):
     assert service.refresh_async_snapshots(include_lhb=False) is False
 
 
+def test_stock_context_snapshot_refresh_defers_during_post_f5_window(monkeypatch):
+    monkeypatch.setattr(stock_context_module.time, "monotonic", lambda: 100.0)
+    workspace = SimpleNamespace(engine=None)
+    service = StockContextService(workspace)
+    service.prepare_post_f5_refresh()
+
+    assert service.refresh_async_snapshots(force=True) is False
+
+
 def test_workspace_fund_holding_update_primes_only_fund_snapshot():
     calls = []
     workspace = SimpleNamespace(
@@ -953,6 +962,20 @@ def test_workspace_refreshes_all_tabs_after_f5():
     ]
 
 
+def test_workspace_prepares_tabs_before_f5_snapshot_refresh():
+    calls = []
+    tab = SimpleNamespace(
+        prepare_post_f5_refresh=lambda: calls.append("prepare"),
+        refresh_table_from_latest_snapshot=lambda: calls.append("refresh"),
+    )
+    workspace = _make_workspace(tabs={"lhb": tab})
+    workspace.iter_refreshable_tabs = lambda: ClassicWorkspace.iter_refreshable_tabs(workspace)
+
+    ClassicWorkspace.refresh_all_tabs_after_f5(workspace)
+
+    assert calls == ["prepare", "refresh"]
+
+
 def test_workspace_schedules_refreshes_all_tabs_after_f5():
     app = QApplication.instance() or QApplication([])
     calls = []
@@ -1216,6 +1239,30 @@ def test_workspace_schedules_information_sources_after_f5():
     assert calls == ["scan", "earnings", "fund"]
 
 
+def test_workspace_prepares_information_sources_before_scheduled_f5_refresh():
+    app = QApplication.instance() or QApplication([])
+    calls = []
+    workspace = _make_workspace(
+        tabs={
+            "foreign_block": SimpleNamespace(
+                prepare_post_f5_refresh=lambda: calls.append("prepare"),
+                refresh_data_after_f5=lambda: calls.append("refresh") or True,
+            ),
+        }
+    )
+    workspace.tab_specs = lambda: [{"key": "foreign_block", "group": INFO_SOURCE_GROUP}]
+
+    assert ClassicWorkspace.refresh_information_sources_after_f5_scheduled(workspace, interval_ms=0) is True
+    assert calls == ["prepare"]
+
+    for _ in range(10):
+        app.processEvents()
+        if getattr(workspace, "_f5_information_source_scheduler", None) is None:
+            break
+
+    assert calls == ["prepare", "refresh"]
+
+
 def test_workspace_refreshes_information_sources_after_f5_skips_unloaded_scan():
     calls = []
     scan_tab = SimpleNamespace(refresh_data_after_f5=lambda: calls.append("scan") or True)
@@ -1367,7 +1414,9 @@ def test_workspace_delays_watchlist_indicator_refresh_on_tab_switch(monkeypatch)
         workspace.ensure_tab_loaded("earnings", reason="tab_switch")
 
         delay = classic_workspace_module.ClassicWorkspace.FIRST_VISIBLE_TAB_WORK_DELAY_MS
-        assert ctor_kwargs["lhb"]["initial_load_delay_ms"] == delay
+        assert ctor_kwargs["lhb"]["initial_load_delay_ms"] == (
+            classic_workspace_module.ClassicWorkspace.LHB_FIRST_VISIBLE_POOL_DELAY_MS
+        )
         assert ctor_kwargs["fund_holdings"]["initial_load_delay_ms"] == delay
         assert ctor_kwargs["scan"]["initial_cache_load_delay_ms"] == delay
         assert ctor_kwargs["foreign_block"]["initial_cache_load_delay_ms"] == delay

@@ -342,6 +342,111 @@ def test_refresh_table_from_latest_snapshot_defers_visible_async_snapshots_by_ta
         _reset_cache_snapshot_apply_queue(refresh_module)
 
 
+def test_cache_snapshot_apply_queue_slices_payload_by_batch(monkeypatch):
+    from ui.tabs import base_stock_refresh as refresh_module
+
+    _reset_cache_snapshot_apply_queue(refresh_module)
+    monkeypatch.setenv("VCP_CACHE_SNAPSHOT_APPLY_CHUNK_SIZE", "2")
+    scheduled = []
+    calls = []
+
+    class DummyOwner:
+        def __init__(self):
+            self.model = SimpleNamespace(
+                headers=["代码", "现价"],
+                row_data=[{"代码": f"{idx:06d}", "现价": "--"} for idx in range(1, 6)],
+            )
+
+        def _resolve_active_quote_model(self):
+            return self.model
+
+        def isVisible(self):
+            return True
+
+        def _apply_quote_snapshot(self, payload):
+            calls.append(tuple(payload))
+            for row in self.model.row_data:
+                quote = payload.get(row["代码"])
+                if quote:
+                    row["现价"] = f"{float(quote['close']):.2f}"
+            return {"changed_rows": len(payload)}
+
+    monkeypatch.setattr(
+        refresh_module.QCoreApplication,
+        "instance",
+        staticmethod(lambda: SimpleNamespace(closingDown=lambda: False)),
+    )
+    monkeypatch.setattr(
+        refresh_module.QTimer,
+        "singleShot",
+        staticmethod(lambda ms, callback: scheduled.append((ms, callback))),
+    )
+
+    try:
+        owner = DummyOwner()
+        payload = {f"{idx:06d}": {"close": float(idx)} for idx in range(1, 6)}
+
+        assert refresh_module.CacheSnapshotApplyQueue.enqueue(owner, payload, async_local=True) is True
+        while scheduled:
+            _, callback = scheduled.pop(0)
+            callback()
+
+        assert calls == [
+            ("000001", "000002"),
+            ("000003", "000004"),
+            ("000005",),
+        ]
+    finally:
+        _reset_cache_snapshot_apply_queue(refresh_module)
+
+
+def test_cache_snapshot_apply_queue_skips_unchanged_payload(monkeypatch):
+    from ui.tabs import base_stock_refresh as refresh_module
+
+    _reset_cache_snapshot_apply_queue(refresh_module)
+    scheduled = []
+    calls = []
+
+    class DummyOwner:
+        def __init__(self):
+            self.model = SimpleNamespace(headers=["代码", "现价"], row_data=[{"代码": "000001", "现价": "--"}])
+
+        def _resolve_active_quote_model(self):
+            return self.model
+
+        def isVisible(self):
+            return True
+
+        def _apply_quote_snapshot(self, payload):
+            calls.append(dict(payload))
+            self.model.row_data[0]["现价"] = f"{float(payload['000001']['close']):.2f}"
+            return {"changed_rows": 1}
+
+    monkeypatch.setattr(
+        refresh_module.QCoreApplication,
+        "instance",
+        staticmethod(lambda: SimpleNamespace(closingDown=lambda: False)),
+    )
+    monkeypatch.setattr(
+        refresh_module.QTimer,
+        "singleShot",
+        staticmethod(lambda ms, callback: scheduled.append((ms, callback))),
+    )
+
+    try:
+        owner = DummyOwner()
+        payload = {"000001": {"close": 10.0}}
+
+        assert refresh_module.CacheSnapshotApplyQueue.enqueue(owner, payload, async_local=True) is True
+        scheduled.pop(0)[1]()
+        assert refresh_module.CacheSnapshotApplyQueue.enqueue(owner, payload, async_local=True) is True
+        scheduled.pop(0)[1]()
+
+        assert calls == [{"000001": {"close": 10.0}}]
+    finally:
+        _reset_cache_snapshot_apply_queue(refresh_module)
+
+
 def test_refresh_table_from_latest_snapshot_keeps_sync_local_prime_when_hidden(monkeypatch):
     from ui.tabs import base_stock_refresh as refresh_module
 

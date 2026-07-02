@@ -23,6 +23,14 @@ QTWEBENGINE_RUNTIME_FLAGS = (
     "--disable-extensions",
     "--disable-background-networking",
 )
+NUMERIC_THREAD_ENV_KEYS = (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "NUMEXPR_MAX_THREADS",
+)
+DEFAULT_NUMERIC_THREAD_COUNT = "2"
 
 
 def _runtime_log():
@@ -45,8 +53,19 @@ def configure_qt_webengine_runtime(env: dict[str, str] | None = None) -> dict[st
     """Apply low-overhead QtWebEngine defaults before the first WebEngine import."""
 
     target = os.environ if env is None else env
+    configure_numeric_thread_runtime(target)
     target.setdefault("QT_OPENGL", "software")
     target["QTWEBENGINE_CHROMIUM_FLAGS"] = _merge_chromium_flags(target.get("QTWEBENGINE_CHROMIUM_FLAGS", ""))
+    return target
+
+
+def configure_numeric_thread_runtime(env: dict[str, str] | None = None) -> dict[str, str]:
+    target = os.environ if env is None else env
+    default_count = str(target.get("VCP_NUMERIC_THREAD_COUNT") or DEFAULT_NUMERIC_THREAD_COUNT).strip()
+    if not default_count:
+        default_count = DEFAULT_NUMERIC_THREAD_COUNT
+    for key in NUMERIC_THREAD_ENV_KEYS:
+        target.setdefault(key, default_count)
     return target
 
 

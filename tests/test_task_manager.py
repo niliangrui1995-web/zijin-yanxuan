@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from PyQt6.QtCore import QCoreApplication
 
 from core.task_manager import UserFacingTaskError, task_manager
-from infra.tasks.task_scheduler import BackgroundWorker
+from infra.tasks.task_scheduler import BackgroundWorker, _task_thread_pool_max_count
 
 
 def _pump_events_until(predicate, timeout=3.0):
@@ -17,6 +17,12 @@ def _pump_events_until(predicate, timeout=3.0):
             return True
         time.sleep(0.01)
     return predicate()
+
+
+def test_task_thread_pool_max_count_defaults_and_accepts_override():
+    assert _task_thread_pool_max_count({}) == 12
+    assert _task_thread_pool_max_count({"VCP_TASK_THREAD_POOL_MAX_THREADS": "5"}) == 5
+    assert _task_thread_pool_max_count({"VCP_TASK_THREAD_POOL_MAX_THREADS": "bad"}) == 12
 
 
 def test_task_manager_dedupes_same_task_id():

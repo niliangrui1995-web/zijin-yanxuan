@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import time
+
 from PyQt6.QtCore import QObject, QTimer
 
 from core.logger import get_logger
@@ -18,6 +20,8 @@ from ui.workspaces.workspace_navigation_service import WorkspaceNavigationServic
 from ui.workspaces.workspace_table_service import WorkspaceTableService
 
 log = get_logger(__name__)
+
+_POST_F5_INFO_REFRESH_COOLDOWN_SECONDS = 5.0
 
 
 class WorkspaceFacade:
@@ -78,6 +82,7 @@ class WorkspaceFacade:
         return self._workspace_table_service.iter_refreshable_tabs()
 
     def refresh_all_tabs_after_f5(self, *, skip_cache_reload_tabs: bool = False) -> None:
+        self._stock_context_service.prepare_post_f5_refresh()
         self._workspace_table_service.refresh_all_tabs_after_f5(skip_cache_reload_tabs=skip_cache_reload_tabs)
 
     def refresh_all_tabs_after_f5_scheduled(
@@ -87,6 +92,7 @@ class WorkspaceFacade:
         interval_ms: int = 0,
         skip_cache_reload_tabs: bool = False,
     ) -> bool:
+        self._stock_context_service.prepare_post_f5_refresh()
         return self._workspace_table_service.refresh_all_tabs_after_f5_scheduled(
             on_finished=on_finished,
             interval_ms=interval_ms,
@@ -122,10 +128,36 @@ class WorkspaceFacade:
             log.warning(f"[F5] {key} information source refresh failed: {exc}")
             return False
 
+    @staticmethod
+    def _prepare_information_source_after_f5(key: str, tab: PostF5DataRefreshCapability) -> None:
+        callback = getattr(tab, "prepare_post_f5_refresh", None)
+        if not callable(callback):
+            return
+        try:
+            callback()
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.warning(f"[F5] {key} information source prepare failed: {exc}")
+
+    def _is_post_f5_information_refresh_cooling_down(self) -> bool:
+        last_started = getattr(self._workspace, "_f5_information_source_last_started_at", 0.0)
+        try:
+            return time.monotonic() - float(last_started or 0.0) < _POST_F5_INFO_REFRESH_COOLDOWN_SECONDS
+        except (TypeError, ValueError):
+            return False
+
+    def _mark_post_f5_information_refresh_started(self) -> None:
+        setattr(self._workspace, "_f5_information_source_last_started_at", time.monotonic())
+
     def refresh_information_sources_after_f5(self) -> dict[str, bool]:
         """F5 完成后触发情报源自身的数据刷新，不只回灌行情快照。"""
+        if self._is_post_f5_information_refresh_cooling_down():
+            return {}
+        tabs = self._iter_post_f5_information_source_tabs()
+        for key, tab in tabs:
+            self._prepare_information_source_after_f5(key, tab)
+        self._mark_post_f5_information_refresh_started()
         results: dict[str, bool] = {}
-        for key, tab in self._iter_post_f5_information_source_tabs():
+        for key, tab in tabs:
             results[key] = self._refresh_information_source_after_f5(key, tab)
         return results
 
@@ -144,7 +176,11 @@ class WorkspaceFacade:
 
         existing = getattr(self._workspace, "_f5_information_source_scheduler", None)
         if existing is not None and getattr(existing, "is_running", lambda: False)():
-            existing.cancel()
+            return True
+        if self._is_post_f5_information_refresh_cooling_down():
+            if callable(on_finished):
+                QTimer.singleShot(0, on_finished)
+            return False
 
         tasks = [
             (
@@ -153,6 +189,8 @@ class WorkspaceFacade:
             )
             for key, tab in tabs
         ]
+        for key, tab in tabs:
+            self._prepare_information_source_after_f5(key, tab)
         parent = self._workspace if isinstance(self._workspace, QObject) else None
         scheduler = FrameTaskScheduler(
             parent,
@@ -175,6 +213,7 @@ class WorkspaceFacade:
 
         scheduler.finished.connect(_cleanup)
         setattr(self._workspace, "_f5_information_source_scheduler", scheduler)
+        self._mark_post_f5_information_refresh_started()
         scheduler.start(tasks)
         return True
 

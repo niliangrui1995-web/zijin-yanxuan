@@ -141,6 +141,7 @@ def test_validate_and_retry_empty_years_schedule_missing_future_cache(monkeypatc
     monkeypatch.setattr(MarketCalendar, "_coverage_check_year", None, raising=False)
     monkeypatch.setattr(MarketCalendar, "_asian_holidays", {"TW": {2026: set()}, "HK": {}, "T": {}, "KS": {}}, raising=False)
     monkeypatch.setattr(MarketCalendar, "_asian_holiday_updated_at", {("TW", 2026): now - datetime.timedelta(days=8)}, raising=False)
+    monkeypatch.setattr(MarketCalendar, "_holiday_unpublished_until", {}, raising=False)
     monkeypatch.setattr(MarketCalendar, "_get_market_now", classmethod(lambda cls, market="TW": now))
     monkeypatch.setattr(MarketCalendar, "_required_years", classmethod(lambda cls, market: [2025, 2026, 2027]))
     monkeypatch.setattr(MarketCalendar, "_schedule_asian_holiday_refresh", classmethod(lambda cls, market, years: scheduled.append((market, years))))
@@ -149,9 +150,19 @@ def test_validate_and_retry_empty_years_schedule_missing_future_cache(monkeypatc
     MarketCalendar._validate_asian_year_coverage()
     MarketCalendar._retry_empty_future_years()
 
-    assert ("TW", [2025, 2027]) in scheduled
+    assert ("TW", [2025]) in scheduled
     assert ("HK", [2025, 2026, 2027]) in scheduled
     assert ("TW", [2026]) in scheduled
+    assert ("TW", [2027]) not in scheduled
+
+
+def test_tw_future_year_holiday_refresh_waits_for_publish_season(monkeypatch):
+    april = datetime.datetime(2026, 4, 20, 9, 0)
+    october = datetime.datetime(2026, 10, 20, 9, 0)
+    monkeypatch.setattr(MarketCalendar, "_holiday_unpublished_until", {}, raising=False)
+
+    assert MarketCalendar._should_skip_holiday_refresh("TW", 2027, april) is True
+    assert MarketCalendar._should_skip_holiday_refresh("TW", 2027, october) is False
 
 
 def test_schedule_asian_holiday_refresh_updates_cache_and_clears_inflight(monkeypatch):
@@ -160,8 +171,13 @@ def test_schedule_asian_holiday_refresh_updates_cache_and_clears_inflight(monkey
     monkeypatch.setattr(MarketCalendar, "_asian_holiday_updated_at", {}, raising=False)
     monkeypatch.setattr(
         MarketCalendar,
+        "_get_market_now",
+        classmethod(lambda cls, market="TW": datetime.datetime(2026, 10, 20, 9, 0)),
+    )
+    monkeypatch.setattr(
+        MarketCalendar,
         "now",
-        classmethod(lambda cls, market="TW": datetime.datetime(2026, 4, 20, 9, 0)),
+        classmethod(lambda cls, market="TW": datetime.datetime(2026, 10, 20, 9, 0)),
     )
 
     def fake_fetch(market, year):
@@ -207,7 +223,13 @@ def test_schedule_asian_holiday_refresh_handles_source_and_format_failures(monke
     monkeypatch.setattr(MarketCalendar, "_refresh_inflight", set(), raising=False)
     monkeypatch.setattr(MarketCalendar, "_asian_holidays", {"TW": {}, "HK": {}, "T": {}, "KS": {}}, raising=False)
     monkeypatch.setattr(MarketCalendar, "_asian_holiday_updated_at", {}, raising=False)
-    monkeypatch.setattr(MarketCalendar, "now", classmethod(lambda cls, market="TW": datetime.datetime(2026, 4, 20, 9, 0)))
+    monkeypatch.setattr(MarketCalendar, "_holiday_unpublished_until", {}, raising=False)
+    monkeypatch.setattr(
+        MarketCalendar,
+        "_get_market_now",
+        classmethod(lambda cls, market="TW": datetime.datetime(2026, 10, 20, 9, 0)),
+    )
+    monkeypatch.setattr(MarketCalendar, "now", classmethod(lambda cls, market="TW": datetime.datetime(2026, 10, 20, 9, 0)))
     monkeypatch.setattr(MarketCalendar, "_save_holidays_to_store", classmethod(lambda cls, market, year, days: None))
 
     def fake_fetch(market, year):
@@ -229,6 +251,8 @@ def test_schedule_asian_holiday_refresh_handles_source_and_format_failures(monke
 
     assert MarketCalendar._asian_holidays["TW"] == {2026: set(), 2027: set()}
     assert MarketCalendar._refresh_inflight == set()
+    assert ("TW", 2026) in MarketCalendar._holiday_unpublished_until
+    assert ("TW", 2027) not in MarketCalendar._holiday_unpublished_until
 
 
 def test_schedule_asian_holiday_refresh_ignores_invalid_and_duplicate_requests(monkeypatch):

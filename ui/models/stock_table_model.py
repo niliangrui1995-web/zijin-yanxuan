@@ -6,6 +6,7 @@ from PyQt6.QtCore import QAbstractTableModel, QMimeData, QModelIndex, Qt, pyqtSi
 from PyQt6.QtGui import QColor
 
 from app.services.ui_quote_service import resolve_quote_metrics
+from core.observability import record_metric
 from core.buy_point import BUY_POINT_STYLE_TEXT, BUY_POINT_TEXT, calculate_buy_point_from_history
 from ui.models.table_model_helpers import (
     FLASH_DURATION_SECONDS,
@@ -456,12 +457,16 @@ class StockTableModel(QAbstractTableModel):
                 idx = self.index(row, col_idx)
                 self.dataChanged.emit(idx, idx, self._flash_roles())
 
-    def update_quotes(self, quotes: dict):
+    def update_quotes(self, quotes: dict) -> int:
+        started_at = time.perf_counter()
+        payload_codes = len(quotes or {})
+        scanned_rows = 0
         if not quotes or not self._data:
-            return
+            return 0
         _prune_flash_records(self._flash_records)
 
         changed_rows = []
+        changed_row_set = set()
         quote_cols = []
         for header in ("现价", "市价", "涨幅%", "涨幅", "市值"):
             if header in self._headers:
@@ -476,6 +481,7 @@ class StockTableModel(QAbstractTableModel):
             if not code or code not in quotes:
                 continue
 
+            scanned_rows += 1
             q = quotes[code]
             metrics = resolve_quote_metrics(item_dict, q)
             rt_close = float(metrics.get("rt_close", 0) or 0)
@@ -506,6 +512,7 @@ class StockTableModel(QAbstractTableModel):
 
             if row_changed:
                 changed_rows.append(row)
+                changed_row_set.add(row)
 
             if buy_point_col >= 0 and rt_close > 0:
                 history = item_dict.get("_history_20", [])
@@ -545,6 +552,7 @@ class StockTableModel(QAbstractTableModel):
 
                 if pos_str != item_dict.get("买点", ""):
                     self.set_cell_value(row, "买点", pos_str)
+                    changed_row_set.add(row)
 
         if start_col is not None and end_col is not None:
             _emit_model_row_ranges(
@@ -563,6 +571,20 @@ class StockTableModel(QAbstractTableModel):
                     Qt.ItemDataRole.UserRole + 5,
                 ],
             )
+        changed_row_count = len(changed_row_set)
+        elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+        record_metric(
+            "stock_table_update_quotes_ms",
+            elapsed_ms,
+            unit="ms",
+            tags={
+                "model": self.__class__.__name__,
+                "payload_codes": str(payload_codes),
+                "scanned_rows": str(scanned_rows),
+                "changed_rows": str(changed_row_count),
+            },
+        )
+        return changed_row_count
 
     def _display_value(self, row, key, raw_val, item_dict):
         if key == SERIAL_HEADER:

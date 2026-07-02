@@ -87,12 +87,30 @@ class WorkspaceTableService:
             signal="F5",
         ):
             try:
+                setattr(tab, "_f5_cache_snapshot_apply", True)
                 tab.refresh_table_from_latest_snapshot(async_local=True)
             except TypeError:
                 tab.refresh_table_from_latest_snapshot()
+            finally:
+                try:
+                    delattr(tab, "_f5_cache_snapshot_apply")
+                except (AttributeError, RuntimeError, TypeError):
+                    pass
+
+    @staticmethod
+    def _prepare_tab_for_f5(tab) -> None:
+        callback = getattr(tab, "prepare_post_f5_refresh", None)
+        if callable(callback):
+            callback()
 
     def refresh_all_tabs_after_f5(self, *, skip_cache_reload_tabs: bool = False) -> None:
-        for tab in self._ordered_refreshable_tabs(skip_cache_reload_tabs=skip_cache_reload_tabs):
+        tabs = self._ordered_refreshable_tabs(skip_cache_reload_tabs=skip_cache_reload_tabs)
+        for tab in tabs:
+            try:
+                self._prepare_tab_for_f5(tab)
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                log.warning(f"[F5] {tab.__class__.__name__} prepare refresh failed: {exc}")
+        for tab in tabs:
             try:
                 self._refresh_latest_snapshot_for_f5(tab)
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
@@ -113,6 +131,11 @@ class WorkspaceTableService:
 
                 QTimer.singleShot(0, on_finished)
             return False
+        for tab in tabs:
+            try:
+                self._prepare_tab_for_f5(tab)
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                log.warning(f"[F5] {tab.__class__.__name__} prepare refresh failed: {exc}")
 
         existing = getattr(self._workspace, "_f5_refresh_scheduler", None)
         if existing is not None and getattr(existing, "is_running", lambda: False)():

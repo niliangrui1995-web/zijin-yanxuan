@@ -483,19 +483,52 @@ def test_extract_cache_filter_options_and_save_gate():
     assert not ForeignBlockTradeTab._should_save_cache(["20260420-20260420"], [])
 
 
-def test_foreign_block_trade_refresh_after_f5_loads_cache_and_schedules_online_refresh():
+def test_foreign_block_trade_refresh_after_f5_defers_cache_and_schedules_online_refresh(monkeypatch):
     calls = []
+    monkeypatch.setattr(foreign_module.time, "monotonic", lambda: 100.0)
     tab = SimpleNamespace(
-        _load_local_cache=lambda: calls.append("local_cache"),
+        _schedule_post_f5_local_cache_load=lambda: calls.append("deferred_cache") or True,
         model=object(),
         refresh_table_from_latest_snapshot=(
             lambda current_model=None, *, async_local=True: calls.append(("snapshot", current_model, async_local))
         ),
         schedule_post_online_refresh_after_f5=lambda: calls.append("scheduled") or True,
     )
+    tab.prepare_post_f5_refresh = lambda: ForeignBlockTradeTab.prepare_post_f5_refresh(tab)
 
     assert ForeignBlockTradeTab.refresh_data_after_f5(tab) is True
-    assert calls == ["local_cache", ("snapshot", tab.model, True), "scheduled"]
+    assert calls == ["deferred_cache", ("snapshot", tab.model, True), "scheduled"]
+    assert tab._post_f5_local_cache_defer_until == 105.0
+
+
+def test_foreign_block_trade_local_cache_waits_during_post_f5_defer(monkeypatch):
+    scheduled = []
+    background_calls = []
+    monkeypatch.setattr(foreign_module.time, "monotonic", lambda: 10.0)
+    monkeypatch.setattr(
+        foreign_module.QTimer,
+        "singleShot",
+        lambda delay, callback: scheduled.append((delay, callback)),
+    )
+    monkeypatch.setattr(
+        foreign_module.task_manager,
+        "run_in_background",
+        lambda *args, **kwargs: background_calls.append((args, kwargs)),
+    )
+    tab = ForeignBlockTradeTab.__new__(ForeignBlockTradeTab)
+    tab._post_f5_local_cache_defer_until = 15.0
+    tab._post_f5_local_cache_pending = False
+    tab._post_f5_local_cache_emit_event = False
+    tab._local_cache_loading = False
+    tab._local_cache_pending_emit_event = None
+    tab._initial_local_cache_load_started = False
+
+    ForeignBlockTradeTab._load_local_cache(tab, emit_event=False)
+
+    assert background_calls == []
+    assert scheduled[0][0] == 5000
+    assert tab._post_f5_local_cache_pending is True
+    assert tab._post_f5_local_cache_emit_event is False
 
 
 def test_foreign_block_trade_f5_online_refresh_runs_after_delay(monkeypatch):

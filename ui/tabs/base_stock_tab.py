@@ -216,7 +216,7 @@ class BaseStockTab(QWidget):
         return resolve_active_quote_model(self)
 
     def _apply_quote_snapshot(self, quotes: dict | None):
-        apply_quote_snapshot(self, quotes)
+        return apply_quote_snapshot(self, quotes)
 
     def _publish_quote_payload(self, payload, *, source: str, require_valid: bool = False) -> dict:
         return publish_quote_payload(self, payload, source=source, require_valid=require_valid)

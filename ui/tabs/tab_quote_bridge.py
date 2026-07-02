@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import logging
+import time
+
+from core.observability import record_metric
 
 _CODE_KEY = "\u4ee3\u7801"
 
@@ -58,12 +61,44 @@ def _quote_subset_for_model(owner, model, quotes: dict) -> dict:
     return subset
 
 
-def apply_quote_snapshot(owner, quotes: dict | None) -> None:
+def apply_quote_snapshot(owner, quotes: dict | None) -> dict:
     model = resolve_active_quote_model(owner)
-    if model and hasattr(model, "update_quotes") and quotes:
-        quote_subset = _quote_subset_for_model(owner, model, quotes)
-        if quote_subset:
-            model.update_quotes(quote_subset)
+    stats = {
+        "payload_codes": len(quotes or {}),
+        "applied_codes": 0,
+        "changed_rows": 0,
+        "elapsed_ms": 0.0,
+    }
+    if not model or not hasattr(model, "update_quotes") or not quotes:
+        return stats
+
+    quote_subset = _quote_subset_for_model(owner, model, quotes)
+    if not quote_subset:
+        return stats
+
+    stats["applied_codes"] = len(quote_subset)
+    started_at = time.perf_counter()
+    changed_rows = model.update_quotes(quote_subset)
+    elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+    stats["elapsed_ms"] = elapsed_ms
+    if changed_rows is not None:
+        try:
+            stats["changed_rows"] = int(changed_rows)
+        except (TypeError, ValueError):
+            stats["changed_rows"] = 0
+    record_metric(
+        "quote_snapshot_apply_ms",
+        elapsed_ms,
+        unit="ms",
+        tags={
+            "tab": owner.__class__.__name__,
+            "model": model.__class__.__name__,
+            "payload_codes": str(stats["payload_codes"]),
+            "applied_codes": str(stats["applied_codes"]),
+            "changed_rows": str(stats["changed_rows"]),
+        },
+    )
+    return stats
 
 
 def resolve_quote_publisher(owner):

@@ -7,6 +7,7 @@
 - 自动异常捕获与日志
 """
 
+import os
 import threading
 import traceback
 import uuid
@@ -14,6 +15,17 @@ import uuid
 from PyQt6.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal, pyqtSlot
 
 from core.task_errors import UserFacingTaskError
+
+DEFAULT_TASK_THREAD_POOL_MAX = 12
+
+
+def _task_thread_pool_max_count(env: dict[str, str] | None = None) -> int:
+    source = os.environ if env is None else env
+    raw = str(source.get("VCP_TASK_THREAD_POOL_MAX_THREADS") or DEFAULT_TASK_THREAD_POOL_MAX).strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return DEFAULT_TASK_THREAD_POOL_MAX
 
 
 class _WorkerSignals(QObject):
@@ -103,7 +115,7 @@ class GlobalTaskManager(QObject):
         self._initialized = True
 
         self.thread_pool = QThreadPool.globalInstance()
-        self.thread_pool.setMaxThreadCount(max(self.thread_pool.maxThreadCount(), 8))
+        self.thread_pool.setMaxThreadCount(_task_thread_pool_max_count())
 
         self.active_workers: dict[str, BackgroundWorker] = {}
         self._lock = threading.RLock()
