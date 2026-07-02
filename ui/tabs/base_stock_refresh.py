@@ -397,11 +397,11 @@ def _invoke_after_market_caps_updated(owner) -> None:
             pass
 
 
-def _should_defer_cache_snapshot_apply(owner, *, async_local: bool) -> bool:
+def _should_defer_cache_snapshot_apply(owner, *, async_local: bool, force_apply: bool = False) -> bool:
     if not async_local or not _is_owner_runtime_active(owner):
         return False
 
-    is_f5_refresh = bool(getattr(owner, "_f5_cache_snapshot_apply", False))
+    is_f5_refresh = bool(force_apply or getattr(owner, "_f5_cache_snapshot_apply", False))
     if not is_f5_refresh:
         is_visible = getattr(owner, "isVisible", None)
         if not callable(is_visible):
@@ -587,19 +587,28 @@ class CacheSnapshotApplyQueue:
     """Apply cache snapshot hits by tab and small code batches across event-loop turns."""
 
     _scheduled = False
-    _pending: dict[int, tuple[weakref.ReferenceType, dict]] = {}
+    _pending: dict[int, tuple[weakref.ReferenceType, dict, bool]] = {}
 
     @classmethod
     def enqueue(cls, owner, payload: dict, *, async_local: bool) -> bool:
-        if not payload or not _should_defer_cache_snapshot_apply(owner, async_local=async_local):
+        force_apply = bool(getattr(owner, "_f5_cache_snapshot_apply", False))
+        if not payload or not _should_defer_cache_snapshot_apply(
+            owner,
+            async_local=async_local,
+            force_apply=force_apply,
+        ):
             return False
 
         owner_id = id(owner)
-        owner_ref, merged_payload = cls._pending.get(owner_id, (weakref.ref(owner), {}))
+        pending = cls._pending.get(owner_id)
+        if pending is None:
+            owner_ref, merged_payload, pending_force_apply = weakref.ref(owner), {}, False
+        else:
+            owner_ref, merged_payload, pending_force_apply = pending
         merged_payload = dict(merged_payload or {})
         for code, quote in dict(payload or {}).items():
             merged_payload[code] = dict(quote or {})
-        cls._pending[owner_id] = (owner_ref, merged_payload)
+        cls._pending[owner_id] = (owner_ref, merged_payload, bool(pending_force_apply or force_apply))
         cls._schedule()
         return True
 
@@ -628,12 +637,12 @@ class CacheSnapshotApplyQueue:
             return
 
         owner_id = next(iter(cls._pending))
-        owner_ref, payload = cls._pending.pop(owner_id)
+        owner_ref, payload, force_apply = cls._pending.pop(owner_id)
         owner = owner_ref()
-        if _should_defer_cache_snapshot_apply(owner, async_local=True):
+        if _should_defer_cache_snapshot_apply(owner, async_local=True, force_apply=force_apply):
             chunk, remaining = _split_payload_chunk(payload, _cache_snapshot_apply_chunk_size())
             if remaining:
-                cls._pending[owner_id] = (owner_ref, remaining)
+                cls._pending[owner_id] = (owner_ref, remaining, force_apply)
             _apply_cache_snapshot_payload(owner, chunk, signal="cache_snapshot")
 
         if cls._pending:

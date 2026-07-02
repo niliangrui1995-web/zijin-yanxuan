@@ -67,7 +67,12 @@ class Worker:
 
 
 def test_default_hotspot_budgets_cover_known_refactor_targets():
-    assert HOTSPOT_BUDGETS["core/rps_precomputer.py"]["RPSPrecomputer.run_f5_pipeline"] == 172
+    rps_functions = _collect_functions(REPO_ROOT / "core" / "rps_precomputer.py")
+    rps_node = rps_functions["RPSPrecomputer.run_f5_pipeline"]
+    rps_line_count = int(getattr(rps_node, "end_lineno", rps_node.lineno)) - int(rps_node.lineno) + 1
+
+    assert rps_line_count == 176
+    assert HOTSPOT_BUDGETS["core/rps_precomputer.py"]["RPSPrecomputer.run_f5_pipeline"] == 176
     assert HOTSPOT_BUDGETS["core/startup_orchestrator.py"]["StartupOrchestrator.deferred_data_load"] == 188
     assert HOTSPOT_BUDGETS["scripts/perf_budget_check.py"]["_parse_args"] == 194
     assert HOTSPOT_BUDGETS["ui/kline_window_qt.py"]["KLineChartWindow.__init__"] == 246

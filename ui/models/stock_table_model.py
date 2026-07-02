@@ -6,8 +6,8 @@ from PyQt6.QtCore import QAbstractTableModel, QMimeData, QModelIndex, Qt, pyqtSi
 from PyQt6.QtGui import QColor
 
 from app.services.ui_quote_service import resolve_quote_metrics
-from core.observability import record_metric
 from core.buy_point import BUY_POINT_STYLE_TEXT, BUY_POINT_TEXT, calculate_buy_point_from_history
+from core.observability import record_metric
 from ui.models.table_model_helpers import (
     FLASH_DURATION_SECONDS,
     SERIAL_HEADER,

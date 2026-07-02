@@ -400,6 +400,50 @@ def test_cache_snapshot_apply_queue_slices_payload_by_batch(monkeypatch):
         _reset_cache_snapshot_apply_queue(refresh_module)
 
 
+def test_cache_snapshot_apply_queue_keeps_f5_force_apply_after_flag_removed(monkeypatch):
+    from ui.tabs import base_stock_refresh as refresh_module
+
+    _reset_cache_snapshot_apply_queue(refresh_module)
+    scheduled = []
+    calls = []
+
+    class DummyOwner:
+        def __init__(self):
+            self._runtime_cleanup_done = False
+            self._f5_cache_snapshot_apply = True
+
+        def isVisible(self):
+            return False
+
+    monkeypatch.setattr(
+        refresh_module.QCoreApplication,
+        "instance",
+        staticmethod(lambda: SimpleNamespace(closingDown=lambda: False)),
+    )
+    monkeypatch.setattr(
+        refresh_module.QTimer,
+        "singleShot",
+        staticmethod(lambda ms, callback: scheduled.append((ms, callback))),
+    )
+    monkeypatch.setattr(
+        refresh_module,
+        "_apply_cache_snapshot_payload",
+        lambda owner, payload, *, signal: calls.append((dict(payload), signal)),
+    )
+
+    try:
+        owner = DummyOwner()
+        payload = {"000001": {"close": 10.0}}
+
+        assert refresh_module.CacheSnapshotApplyQueue.enqueue(owner, payload, async_local=True) is True
+        delattr(owner, "_f5_cache_snapshot_apply")
+        scheduled.pop(0)[1]()
+
+        assert calls == [(payload, "cache_snapshot")]
+    finally:
+        _reset_cache_snapshot_apply_queue(refresh_module)
+
+
 def test_cache_snapshot_apply_queue_skips_unchanged_payload(monkeypatch):
     from ui.tabs import base_stock_refresh as refresh_module
 
