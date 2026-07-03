@@ -222,6 +222,17 @@ class DummyGroupedWorkspace:
         }
 
 
+class ActivatingGroupedWorkspace(DummyGroupedWorkspace):
+    def __init__(self, tabs):
+        self.tabs = tabs
+        self.calls = []
+
+    def activate_tab(self, tab_index: int, *, reason: str = "user") -> bool:
+        self.calls.append((tab_index, reason))
+        self.tabs.setCurrentIndex(tab_index)
+        return True
+
+
 def test_shell_navigation_widget_restores_last_subtab_per_group():
     tabs = QTabWidget()
     nav = ShellNavigationWidget()
@@ -248,6 +259,30 @@ def test_shell_navigation_widget_restores_last_subtab_per_group():
 
         nav._switch_group("情报源")
         assert tabs.currentIndex() == 3
+    finally:
+        nav.deleteLater()
+        tabs.deleteLater()
+
+
+def test_shell_navigation_widget_marks_workspace_activation_reason():
+    tabs = QTabWidget()
+    nav = ShellNavigationWidget()
+    workspace = ActivatingGroupedWorkspace(tabs)
+    try:
+        tabs.addTab(QWidget(), "Scan")
+        tabs.addTab(QWidget(), "Watch")
+        tabs.addTab(QWidget(), "NA")
+        tabs.addTab(QWidget(), "Asia")
+
+        nav.bind_workspace(workspace, tabs)
+        _, second_group = list(DummyGroupedWorkspace.tab_indices_by_group())
+        nav._switch_group(second_group)
+
+        assert workspace.calls[-1] == (2, "shell_nav")
+
+        nav.tabbar.setCurrentIndex(1)
+
+        assert workspace.calls[-1] == (3, "shell_nav")
     finally:
         nav.deleteLater()
         tabs.deleteLater()

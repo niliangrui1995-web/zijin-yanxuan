@@ -640,7 +640,7 @@ class ShellNavigationWidget(QWidget):
             if self.tabbar.currentIndex() != visible_target:
                 self.tabbar.setCurrentIndex(visible_target)
             if self._tabs.currentIndex() != target_index:
-                self._tabs.setCurrentIndex(target_index)
+                self._activate_workspace_index(target_index, reason="shell_nav")
 
             button = self._group_buttons.get(group)
             if button is not None and not button.isChecked():
@@ -706,11 +706,21 @@ class ShellNavigationWidget(QWidget):
         self._remember_group_index(group, tab_index)
         self._switch_group(group, preferred_index=tab_index)
 
+    def _activate_workspace_index(self, tab_index: int, *, reason: str) -> None:
+        activate_tab = getattr(self._workspace, "activate_tab", None)
+        if callable(activate_tab):
+            try:
+                if activate_tab(tab_index, reason=reason):
+                    return
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                pass
+        self._tabs.setCurrentIndex(tab_index)
+
     def _on_tabbar_changed(self, visible_index: int) -> None:
         if self._syncing or self._tabs is None:
             return
         if 0 <= visible_index < len(self._visible_indices):
-            self._tabs.setCurrentIndex(self._visible_indices[visible_index])
+            self._activate_workspace_index(self._visible_indices[visible_index], reason="shell_nav")
 
     def _on_tabs_changed(self, tab_index: int) -> None:
         if self._syncing:

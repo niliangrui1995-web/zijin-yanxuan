@@ -39,6 +39,39 @@ def _make_quote_tab(codes):
     return SimpleNamespace(get_realtime_quote_codes=lambda: set(codes or set()))
 
 
+def _drain_qt_events(app) -> None:
+    app.processEvents()
+    loop = QEventLoop()
+    QTimer.singleShot(0, loop.quit)
+    loop.exec()
+    app.processEvents()
+
+
+def _patch_lightweight_workspace_tabs(monkeypatch, constructed, ctor_kwargs=None):
+    def _make_tab(name):
+        class _Tab(QWidget):
+            def __init__(self, *args, **kwargs):
+                super().__init__()
+                constructed.append(name)
+                if ctor_kwargs is not None:
+                    ctor_kwargs[name] = dict(kwargs)
+
+        return _Tab
+
+    monkeypatch.setattr(classic_workspace_module, "WatchlistTab", _make_tab("watchlist"))
+    monkeypatch.setattr(classic_workspace_module, "AsianMarketTab", _make_tab("asian_market"))
+    monkeypatch.setattr(classic_workspace_module, "NADailyTab", _make_tab("na_daily"))
+    monkeypatch.setattr(classic_workspace_module, "AIIndustryChainTab", _make_tab("ai_industry_chain"))
+    monkeypatch.setattr(classic_workspace_module, "RtMonitorTab", _make_tab("rt_monitor"))
+    monkeypatch.setattr(classic_workspace_module, "ScanTab", _make_tab("scan"))
+    monkeypatch.setattr(classic_workspace_module, "StockCandidateTab", _make_tab("stock_candidates"))
+    monkeypatch.setattr(classic_workspace_module, "LhbTab", _make_tab("lhb"))
+    monkeypatch.setattr(classic_workspace_module, "ForeignBlockTradeTab", _make_tab("foreign_block"))
+    monkeypatch.setattr(classic_workspace_module, "EarningsTab", _make_tab("earnings"))
+    monkeypatch.setattr(classic_workspace_module, "FundHoldingsTab", _make_tab("fund_holdings"))
+    monkeypatch.setattr(classic_workspace_module, "LogTab", _make_tab("system_log"))
+
+
 def test_workspace_collects_a_share_quote_codes_from_public_tab_apis():
     workspace = _make_workspace(
         tabs={
@@ -1425,6 +1458,69 @@ def test_workspace_delays_watchlist_indicator_refresh_on_tab_switch(monkeypatch)
         assert ctor_kwargs["na_daily"]["runtime_start_delay_ms"] == delay
         assert ctor_kwargs["stock_candidates"]["runtime_start_delay_ms"] == delay
         assert ctor_kwargs["earnings"]["runtime_start_delay_ms"] == delay
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_workspace_startup_guard_blocks_raw_tab_switch_sweep(monkeypatch, qt_application):
+    constructed = []
+    _patch_lightweight_workspace_tabs(monkeypatch, constructed)
+
+    workspace = classic_workspace_module.ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+    )
+    try:
+        tab_keys = [spec["key"] for spec in workspace.tab_specs()]
+        lhb_index = tab_keys.index("lhb")
+        ai_index = tab_keys.index("ai_industry_chain")
+
+        workspace.restore_last_tab(lhb_index)
+        _drain_qt_events(qt_application)
+
+        assert constructed == ["lhb"]
+        assert workspace.get_loaded_tab("lhb") is not None
+
+        workspace.tabs.setCurrentIndex(ai_index)
+        _drain_qt_events(qt_application)
+
+        assert constructed == ["lhb"]
+        assert workspace.get_loaded_tab("ai_industry_chain") is None
+        assert workspace.tabs.currentIndex() == lhb_index
+        assert "ai_industry_chain" in workspace._startup_suppressed_tab_switch_keys
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_workspace_shell_activation_bypasses_startup_raw_tab_switch_guard(monkeypatch, qt_application):
+    constructed = []
+    ctor_kwargs = {}
+    _patch_lightweight_workspace_tabs(monkeypatch, constructed, ctor_kwargs)
+
+    workspace = classic_workspace_module.ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+    )
+    try:
+        tab_keys = [spec["key"] for spec in workspace.tab_specs()]
+        lhb_index = tab_keys.index("lhb")
+        scan_index = tab_keys.index("scan")
+
+        workspace.restore_last_tab(lhb_index)
+        _drain_qt_events(qt_application)
+        workspace.activate_tab(scan_index, reason="shell_nav")
+        _drain_qt_events(qt_application)
+
+        assert constructed == ["lhb", "scan"]
+        assert workspace.get_loaded_tab("scan") is not None
+        assert ctor_kwargs["scan"]["initial_cache_load_delay_ms"] == (
+            classic_workspace_module.ClassicWorkspace.FIRST_VISIBLE_TAB_WORK_DELAY_MS
+        )
+        assert "scan" not in workspace._startup_suppressed_tab_switch_keys
     finally:
         workspace.shutdown()
         workspace.deleteLater()

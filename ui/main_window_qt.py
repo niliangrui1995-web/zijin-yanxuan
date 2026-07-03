@@ -342,6 +342,10 @@ class MainWindowQT(QMainWindow):
 
     def _activate_workspace_tab(self, tab_index: int):
         if self.tabs is not None and 0 <= int(tab_index) < self.tabs.count():
+            workspace = getattr(self, "_workspace", None)
+            activate_tab = getattr(workspace, "activate_tab", None)
+            if callable(activate_tab) and activate_tab(int(tab_index), reason="command"):
+                return
             self.tabs.setCurrentIndex(int(tab_index))
 
     def trigger_global_sync(self):

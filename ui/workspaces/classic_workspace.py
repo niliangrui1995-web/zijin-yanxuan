@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import time
 from importlib import import_module
 
 from PyQt6.QtCore import Qt, QTimer
@@ -152,9 +153,21 @@ class ClassicWorkspace(QWidget):
     RESTORE_LAST_TAB_DELAY_MS = 750
     COPY_HOOK_REFRESH_DELAY_MS = 240
     STARTUP_TRANSITION_SUSPEND_MS = 60_000
+    STARTUP_RAW_TAB_SWITCH_GUARD_MS = 60_000
     FIRST_VISIBLE_TAB_WORK_DELAY_MS = 1800
     LHB_FIRST_VISIBLE_POOL_DELAY_MS = 5000
     WATCHLIST_TAB_SWITCH_INDICATOR_DELAY_MS = FIRST_VISIBLE_TAB_WORK_DELAY_MS
+    INTERACTIVE_LOAD_REASONS = frozenset(
+        {
+            "placeholder_action",
+            "tab_switch",
+            "user",
+            "restore_last_tab",
+            "shell_nav",
+            "command",
+            "stock_signal_source",
+        }
+    )
     PROBE_LOAD_REASONS = frozenset({"perf_memory_probe", "perf_memory_probe_cycle"})
     CONTROLLED_STARTUP_PROBE_DEFER_KEYS = frozenset(
         {
@@ -190,6 +203,10 @@ class ClassicWorkspace(QWidget):
         self._stock_detail_dialogs = {}
         watchlist_kwargs = {} if watchlist_startup_tasks else {"startup_tasks_enabled": False}
         self._controlled_startup_probe_guard = bool(controlled_startup_probe_guard)
+        self._startup_guard_started_at = time.perf_counter()
+        self._startup_last_allowed_index = -1
+        self._startup_suppressed_tab_switch_keys: set[str] = set()
+        self._pending_tab_activation_reasons: dict[int, str] = {}
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -395,7 +412,7 @@ class ClassicWorkspace(QWidget):
         runtime_kwargs = {}
         key = str(spec.get("key") or "").strip()
         reason_text = str(reason or "").strip()
-        first_visible_load = reason_text in {"placeholder_action", "tab_switch", "user"}
+        first_visible_load = reason_text in self.INTERACTIVE_LOAD_REASONS
         if key == "watchlist" and reason_text == "background_prewarm":
             runtime_kwargs["startup_indicator_refresh_enabled"] = False
         elif key == "watchlist" and first_visible_load:
@@ -411,7 +428,7 @@ class ClassicWorkspace(QWidget):
             runtime_kwargs["local_cache_delay_ms"] = self.FIRST_VISIBLE_TAB_WORK_DELAY_MS
         elif first_visible_load and key in {"ai_industry_chain", "na_daily", "stock_candidates", "earnings"}:
             runtime_kwargs["runtime_start_delay_ms"] = self.FIRST_VISIBLE_TAB_WORK_DELAY_MS
-        elif key == "foreign_block" and reason_text not in {"placeholder_action", "tab_switch", "user"}:
+        elif key == "foreign_block" and reason_text not in self.INTERACTIVE_LOAD_REASONS:
             runtime_kwargs["autoload"] = False
         return factory(**runtime_kwargs)
 
@@ -487,7 +504,7 @@ class ClassicWorkspace(QWidget):
         setattr(
             widget,
             "_workspace_noninteractive_loaded",
-            load_reason not in {"placeholder_action", "tab_switch", "user"},
+            load_reason not in self.INTERACTIVE_LOAD_REASONS,
         )
         current_index = self.tabs.currentIndex()
         previous_blocked = self.tabs.blockSignals(True)
@@ -526,6 +543,7 @@ class ClassicWorkspace(QWidget):
         QTimer.singleShot(250, lambda widget=widget: setattr(widget, "_workspace_load_reason", ""))
         self._notify_tab_loaded(key, widget)
         if self.tabs.currentWidget() is widget:
+            self._startup_last_allowed_index = index
             self._notify_tab_activated(key, widget)
         return widget
 
@@ -535,18 +553,96 @@ class ClassicWorkspace(QWidget):
         with ui_stall_span("ClassicWorkspace._on_current_tab_changed", tab=key, signal="currentChanged"):
             if spec is None:
                 return
+            reason = self._take_tab_activation_reason(index)
             if spec.get("loaded"):
                 widget = spec.get("widget")
                 if widget is not None:
+                    self._startup_last_allowed_index = index
                     self._notify_tab_activated(key, widget)
                 return
             if not key or key in self._lazy_loading_keys:
                 return
-            self._lazy_loading_keys.add(key)
-            placeholder = spec.get("widget")
-            if isinstance(placeholder, LazyTabPlaceholder):
-                placeholder.set_loading()
-            QTimer.singleShot(0, lambda key=key: self.ensure_tab_loaded(key, reason="tab_switch"))
+            if self._should_suppress_startup_tab_switch(key, reason):
+                self._restore_startup_allowed_tab_after_suppressed_switch(key)
+                return
+            self._queue_lazy_tab_load(spec, key, reason=reason or "tab_switch", index=index)
+
+    def _take_tab_activation_reason(self, index: int) -> str:
+        return self._pending_tab_activation_reasons.pop(int(index), "tab_switch")
+
+    def _is_startup_raw_tab_switch_guard_active(self) -> bool:
+        return (time.perf_counter() - self._startup_guard_started_at) * 1000.0 < self.STARTUP_RAW_TAB_SWITCH_GUARD_MS
+
+    def _should_suppress_startup_tab_switch(self, key: str, reason: str) -> bool:
+        return (
+            bool(key)
+            and str(reason or "").strip() == "tab_switch"
+            and self._is_startup_raw_tab_switch_guard_active()
+        )
+
+    def _queue_lazy_tab_load(self, spec: dict, key: str, *, reason: str, index: int | None = None) -> bool:
+        if not key or key in self._lazy_loading_keys:
+            return False
+        self._lazy_loading_keys.add(key)
+        if isinstance(index, int) and 0 <= index < self.tabs.count():
+            self._startup_last_allowed_index = index
+        placeholder = spec.get("widget")
+        if isinstance(placeholder, LazyTabPlaceholder):
+            placeholder.set_loading()
+        QTimer.singleShot(0, lambda key=key, reason=reason: self.ensure_tab_loaded(key, reason=reason))
+        return True
+
+    def _restore_startup_allowed_tab_after_suppressed_switch(self, key: str) -> None:
+        restore_index = self._startup_last_allowed_index
+        if not (0 <= restore_index < self.tabs.count()):
+            return
+        if restore_index == self.tabs.currentIndex():
+            return
+        if key not in self._startup_suppressed_tab_switch_keys:
+            self._startup_suppressed_tab_switch_keys.add(key)
+            log.info(
+                "[Workspace] suppress startup raw tab switch key=%s restore_index=%s",
+                key,
+                restore_index,
+            )
+
+        def _restore() -> None:
+            if not (0 <= restore_index < self.tabs.count()):
+                return
+            if self.tabs.currentIndex() == restore_index:
+                return
+            self._pending_tab_activation_reasons[restore_index] = "startup_guard_restore"
+            self.tabs.setCurrentIndex(restore_index)
+
+        QTimer.singleShot(0, _restore)
+
+    def activate_tab(self, index: int, *, reason: str = "user") -> bool:
+        try:
+            target_index = int(index)
+        except (TypeError, ValueError):
+            return False
+        if not (0 <= target_index < self.tabs.count()):
+            return False
+
+        reason_text = str(reason or "").strip() or "user"
+        if self.tabs.currentIndex() == target_index:
+            spec = self._spec_for_key_or_index(target_index)
+            key = str((spec or {}).get("key") or "").strip()
+            self._pending_tab_activation_reasons.pop(target_index, None)
+            if spec is None or not key:
+                return True
+            if spec.get("loaded"):
+                widget = spec.get("widget")
+                if widget is not None:
+                    self._startup_last_allowed_index = target_index
+                    self._notify_tab_activated(key, widget)
+                return True
+            self._queue_lazy_tab_load(spec, key, reason=reason_text, index=target_index)
+            return True
+
+        self._pending_tab_activation_reasons[target_index] = reason_text
+        self.tabs.setCurrentIndex(target_index)
+        return True
 
     def _connect_workspace_events(self) -> None:
         try:
@@ -681,7 +777,7 @@ class ClassicWorkspace(QWidget):
 
     def restore_last_tab(self, index: int):
         if 0 <= index < self.tabs.count():
-            self.tabs.setCurrentIndex(index)
+            self.activate_tab(index, reason="restore_last_tab")
 
     def schedule_restore_last_tab(self, index: int, *, delay_ms: int | None = None) -> None:
         if not isinstance(index, int) or index < 0:
@@ -923,7 +1019,11 @@ class ClassicWorkspace(QWidget):
 
         source_index = ClassicWorkspace._tab_index_for_key(self, signal.source_tab)
         if source_index >= 0:
-            self.tabs.setCurrentIndex(source_index)
+            activate_tab = getattr(self, "activate_tab", None)
+            if callable(activate_tab):
+                activate_tab(source_index, reason="stock_signal_source")
+            else:
+                self.tabs.setCurrentIndex(source_index)
             tab = self.get_tab(signal.source_tab)
             select_code_row = getattr(tab, "select_code_row", None)
             if callable(select_code_row):

@@ -4,6 +4,7 @@ import subprocess
 import types
 from pathlib import Path
 
+import pytest
 from PyQt6.QtCore import QObject
 from PyQt6.QtTest import QSignalSpy
 
@@ -27,6 +28,15 @@ from core.startup_orchestrator import (
     StartupOrchestrator,
     ms_until_next_global_earnings_calendar_daily_refresh,
 )
+
+
+@pytest.fixture(autouse=True)
+def _stub_global_earnings_cache_probe(monkeypatch):
+    monkeypatch.setattr(
+        startup_module,
+        "_global_earnings_calendar_cache_snapshot",
+        lambda: {"status": "miss", "events": 0},
+    )
 
 
 class _DummyLabel:
@@ -652,6 +662,26 @@ def test_global_earnings_daily_refresh_delay_targets_next_0200():
     assert GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_MINUTE == 0
 
 
+def test_startup_orchestrator_global_earnings_reads_cache_before_network_refresh(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        startup_module,
+        "_global_earnings_calendar_cache_snapshot",
+        lambda: calls.append("cache") or {"status": "hit", "events": 3},
+    )
+    monkeypatch.setattr(
+        "core.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
+        lambda: calls.append("refresh") or {"status": "success", "events": 7},
+    )
+
+    orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
+
+    orchestrator.refresh_global_earnings_calendar()
+
+    assert calls == ["cache", "refresh"]
+
+
 def test_global_earnings_refresh_subprocess_uses_hidden_timeout(monkeypatch):
     captured = {}
 
@@ -756,7 +786,7 @@ def test_startup_orchestrator_global_earnings_sync_marks_degraded_result(monkeyp
 
     orchestrator.refresh_global_earnings_calendar()
 
-    end_snapshots = [item for item in snapshots if item[0] == "startup.global_earnings_calendar.end"]
+    end_snapshots = [item for item in snapshots if item[0] == "global_earnings_calendar.background_refresh.end"]
     assert end_snapshots
     assert end_snapshots[-1][1]["extra"]["status"] == "degraded"
     assert end_snapshots[-1][1]["extra"]["events"] == 82
@@ -828,6 +858,41 @@ def test_startup_orchestrator_global_earnings_failure_logs_detail_and_retries(mo
         orchestrator.shutdown()
 
 
+def test_startup_orchestrator_global_earnings_timeout_marks_degraded_cache_and_retries(monkeypatch):
+    marks = []
+
+    def fake_refresh():
+        raise startup_module.ProcessTimeoutError(
+            cmd=["python", "-m", "domains.global_earnings_calendar.refresh_cache"],
+            timeout=GLOBAL_EARNINGS_CALENDAR_SYNC_TIMEOUT_SEC,
+        )
+
+    def fake_mark(error, *, reason):
+        marks.append((reason, error.__class__.__name__))
+        return {
+            "status": "degraded",
+            "events": 5,
+            "retryable": True,
+            "reused_event_count": 5,
+            "reason": reason,
+        }
+
+    monkeypatch.setattr("core.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess", fake_refresh)
+    monkeypatch.setattr("core.startup_orchestrator._mark_global_earnings_calendar_refresh_degraded", fake_mark)
+
+    orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
+    spy = QSignalSpy(event_bus.sig_earnings_updated)
+    try:
+        orchestrator.refresh_global_earnings_calendar()
+
+        assert marks == [("refresh_timeout", "TimeoutExpired")]
+        assert orchestrator._global_earnings_calendar_daily_timer.isActive() is True
+        assert orchestrator._global_earnings_calendar_daily_timer.interval() == GLOBAL_EARNINGS_CALENDAR_SYNC_RETRY_DELAY_MS
+        assert len(spy) == 1
+    finally:
+        orchestrator.shutdown()
+
+
 def test_startup_orchestrator_daily_earnings_timer_refreshes_and_rearms(monkeypatch):
     calls = []
 
@@ -847,6 +912,34 @@ def test_startup_orchestrator_daily_earnings_timer_refreshes_and_rearms(monkeypa
         assert calls == ["refresh"]
         assert orchestrator._global_earnings_calendar_daily_timer.isActive() is True
         assert 0 < orchestrator._global_earnings_calendar_daily_timer.interval() <= 24 * 60 * 60 * 1000
+    finally:
+        orchestrator.shutdown()
+
+
+def test_startup_orchestrator_daily_earnings_timer_queues_background_refresh_and_rearms(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        "core.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
+        lambda: calls.append("refresh") or {"status": "success", "events": 1},
+    )
+
+    runner = _QueuedJobRunner()
+    orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=runner)
+
+    orchestrator._run_daily_global_earnings_calendar_refresh()
+    try:
+        assert calls == []
+        assert len(runner.jobs) == 1
+        assert orchestrator._global_earnings_calendar_daily_timer.isActive() is True
+        assert 0 < orchestrator._global_earnings_calendar_daily_timer.interval() <= 24 * 60 * 60 * 1000
+
+        task_id, job, _kwargs = runner.jobs[0]
+        assert task_id == GLOBAL_EARNINGS_CALENDAR_SYNC_TASK_ID
+
+        job()
+
+        assert calls == ["refresh"]
     finally:
         orchestrator.shutdown()
 
