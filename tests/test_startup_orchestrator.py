@@ -893,6 +893,73 @@ def test_startup_orchestrator_global_earnings_timeout_marks_degraded_cache_and_r
         orchestrator.shutdown()
 
 
+def test_startup_orchestrator_global_earnings_timeout_retry_backoff_resets_after_success(monkeypatch):
+    outcomes = ["timeout", "timeout", "success", "timeout"]
+    marks = []
+
+    def fake_refresh():
+        outcome = outcomes.pop(0)
+        if outcome == "timeout":
+            raise startup_module.ProcessTimeoutError(
+                cmd=["python", "-m", "domains.global_earnings_calendar.refresh_cache"],
+                timeout=GLOBAL_EARNINGS_CALENDAR_SYNC_TIMEOUT_SEC,
+            )
+        return {"status": "success", "events": 90}
+
+    def fake_mark(error, *, reason):
+        marks.append((reason, error.__class__.__name__))
+        return {
+            "status": "degraded",
+            "events": 89,
+            "retryable": True,
+            "reused_event_count": 89,
+            "reason": reason,
+        }
+
+    monkeypatch.setattr(
+        startup_module,
+        "_global_earnings_calendar_cache_snapshot",
+        lambda: {"status": "hit", "events": 89},
+    )
+    monkeypatch.setattr(startup_module, "_is_global_earnings_calendar_offpeak", lambda now=None: True)
+    monkeypatch.setattr(
+        "core.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess",
+        fake_refresh,
+    )
+    monkeypatch.setattr(
+        "core.startup_orchestrator._mark_global_earnings_calendar_refresh_degraded",
+        fake_mark,
+    )
+
+    orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
+    try:
+        orchestrator.refresh_global_earnings_calendar()
+        assert (
+            orchestrator._global_earnings_calendar_daily_timer.interval()
+            == GLOBAL_EARNINGS_CALENDAR_SYNC_RETRY_DELAY_MS
+        )
+
+        orchestrator.refresh_global_earnings_calendar()
+        assert (
+            orchestrator._global_earnings_calendar_daily_timer.interval()
+            == GLOBAL_EARNINGS_CALENDAR_SYNC_RETRY_DELAY_MS * 2
+        )
+
+        orchestrator.refresh_global_earnings_calendar()
+        orchestrator.refresh_global_earnings_calendar()
+        assert (
+            orchestrator._global_earnings_calendar_daily_timer.interval()
+            == GLOBAL_EARNINGS_CALENDAR_SYNC_RETRY_DELAY_MS
+        )
+        assert marks == [
+            ("refresh_timeout", "TimeoutExpired"),
+            ("refresh_timeout", "TimeoutExpired"),
+            ("refresh_timeout", "TimeoutExpired"),
+        ]
+    finally:
+        orchestrator.shutdown()
+
+
 def test_startup_orchestrator_daily_earnings_timer_refreshes_and_rearms(monkeypatch):
     calls = []
 

@@ -8,6 +8,7 @@ from app.services.stock_candidates_service import StockCandidatesDataService
 from app.services.ui_diagnostics_service import ui_stall_span
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
+from app.services.ui_market_calendar_service import MarketCalendar
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
 from ui.components import TableStateWrapper, VCPTableView
@@ -202,6 +203,13 @@ class StockCandidateTab(BaseStockTab):
             (event_bus.sig_watchlist_changed, {"include_lhb": False}),
         )
 
+    @staticmethod
+    def _allow_context_snapshot_refresh() -> bool:
+        try:
+            return bool(MarketCalendar.is_quote_refresh_time())
+        except (RuntimeError, TypeError, ValueError):
+            return True
+
     def _connect_auto_refresh_events(self) -> None:
         self._auto_refresh_connections = []
         for signal, options in self._auto_refresh_signal_specs():
@@ -236,7 +244,8 @@ class StockCandidateTab(BaseStockTab):
         include_lhb: bool = True,
     ) -> None:
         is_current = self._is_current_workspace_tab()
-        if prime_snapshots:
+        allow_snapshot_refresh = self._allow_context_snapshot_refresh()
+        if prime_snapshots and allow_snapshot_refresh:
             self._prime_stock_context_snapshots(
                 self._workspace(),
                 force=force_snapshots,
@@ -330,7 +339,10 @@ class StockCandidateTab(BaseStockTab):
         if not callable(context_reader):
             return {}
         try:
-            return context_reader(allow_lhb_cache_compute=False)
+            return context_reader(
+                allow_lhb_cache_compute=False,
+                allow_async_snapshot_refresh=self._allow_context_snapshot_refresh(),
+            )
         except TypeError:
             return context_reader()
 

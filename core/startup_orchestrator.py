@@ -41,8 +41,12 @@ GLOBAL_EARNINGS_CALENDAR_SYNC_TASK_ID = task_registry.network(
 ).task_id
 GLOBAL_EARNINGS_CALENDAR_SYNC_TIMEOUT_SEC = 30
 GLOBAL_EARNINGS_CALENDAR_SYNC_RETRY_DELAY_MS = 15 * 60 * 1000
+GLOBAL_EARNINGS_CALENDAR_SYNC_ACTIVE_MAX_RETRY_DELAY_MS = 60 * 60 * 1000
+GLOBAL_EARNINGS_CALENDAR_SYNC_OFFPEAK_MAX_RETRY_DELAY_MS = 4 * 60 * 60 * 1000
 GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_HOUR = 2
 GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_MINUTE = 0
+GLOBAL_EARNINGS_CALENDAR_OFFPEAK_START_MINUTE = 18 * 60
+GLOBAL_EARNINGS_CALENDAR_OFFPEAK_END_MINUTE = 8 * 60
 AUTO_RT_MONITOR_NETWORK_TASK_ID = task_registry.network(
     "auto_rt_network_probe",
     description="Connectivity probe for intraday monitor auto-start retry",
@@ -183,6 +187,33 @@ def ms_until_next_global_earnings_calendar_daily_refresh(now: datetime.datetime 
     if target <= now:
         target = target + datetime.timedelta(days=1)
     return max(1000, int((target - now).total_seconds() * 1000))
+
+
+def _is_global_earnings_calendar_offpeak(now: datetime.datetime | None = None) -> bool:
+    now = now or datetime.datetime.now()
+    minute_of_day = now.hour * 60 + now.minute
+    return (
+        now.weekday() >= 5
+        or minute_of_day < GLOBAL_EARNINGS_CALENDAR_OFFPEAK_END_MINUTE
+        or minute_of_day >= GLOBAL_EARNINGS_CALENDAR_OFFPEAK_START_MINUTE
+    )
+
+
+def _global_earnings_calendar_retry_delay_ms(
+    consecutive_failures: int,
+    *,
+    cache_events: int = 0,
+    now: datetime.datetime | None = None,
+) -> int:
+    failures = max(1, int(consecutive_failures or 1))
+    exponent = min(4, failures - 1)
+    delay_ms = GLOBAL_EARNINGS_CALENDAR_SYNC_RETRY_DELAY_MS * (2**exponent)
+    max_delay_ms = (
+        GLOBAL_EARNINGS_CALENDAR_SYNC_OFFPEAK_MAX_RETRY_DELAY_MS
+        if cache_events > 0 and _is_global_earnings_calendar_offpeak(now)
+        else GLOBAL_EARNINGS_CALENDAR_SYNC_ACTIVE_MAX_RETRY_DELAY_MS
+    )
+    return min(delay_ms, max_delay_ms)
 
 
 class StartupHostAdapter:
@@ -350,6 +381,7 @@ class StartupOrchestrator:
         self._auto_rt_timer = None
         self._auto_rt_network_probe_active = False
         self._global_earnings_calendar_sync_running = False
+        self._global_earnings_calendar_retry_failures = 0
         self._last_auto_rt_skip_reason = ""
 
     def schedule_startup(self):
@@ -368,12 +400,25 @@ class StartupOrchestrator:
             return
         self._global_earnings_calendar_daily_timer.start(ms_until_next_global_earnings_calendar_daily_refresh())
 
-    def _schedule_global_earnings_calendar_retry(self, reason: str):
+    def _schedule_global_earnings_calendar_retry(self, reason: str, *, cache_events: int = 0):
         if self._closed or not service_toggle_registry.is_enabled("daily_global_earnings_calendar_sync"):
             return
-        self._global_earnings_calendar_daily_timer.start(GLOBAL_EARNINGS_CALENDAR_SYNC_RETRY_DELAY_MS)
-        retry_seconds = GLOBAL_EARNINGS_CALENDAR_SYNC_RETRY_DELAY_MS // 1000
-        log.warning(f"[startup] global earnings calendar retry scheduled in {retry_seconds}s: {reason}")
+        try:
+            reused_events = max(0, int(cache_events or 0))
+        except (TypeError, ValueError):
+            reused_events = 0
+        self._global_earnings_calendar_retry_failures += 1
+        retry_ms = _global_earnings_calendar_retry_delay_ms(
+            self._global_earnings_calendar_retry_failures,
+            cache_events=reused_events,
+        )
+        self._global_earnings_calendar_daily_timer.start(retry_ms)
+        retry_seconds = retry_ms // 1000
+        log.warning(
+            "[startup] global earnings calendar retry scheduled in "
+            f"{retry_seconds}s: {reason} | failures={self._global_earnings_calendar_retry_failures} "
+            f"| cache_events={reused_events}"
+        )
 
     def _run_daily_global_earnings_calendar_refresh(self):
         self.refresh_global_earnings_calendar()
@@ -767,8 +812,13 @@ class StartupOrchestrator:
                 self._safe_call_in_ui(lambda: event_bus.sig_earnings_updated.emit())
                 if refresh_status == "degraded" and retryable:
                     self._safe_call_in_ui(
-                        lambda: self._schedule_global_earnings_calendar_retry("refresh_degraded_retryable")
+                        lambda: self._schedule_global_earnings_calendar_retry(
+                            "refresh_degraded_retryable",
+                            cache_events=reused_event_count or event_count,
+                        )
                     )
+                else:
+                    self._global_earnings_calendar_retry_failures = 0
             except ProcessTimeoutError as exc:
                 try:
                     degraded_result = _mark_global_earnings_calendar_refresh_degraded(
@@ -796,7 +846,12 @@ class StartupOrchestrator:
                     f"after {GLOBAL_EARNINGS_CALENDAR_SYNC_TIMEOUT_SEC}s; reused local cache: {exc}"
                 )
                 self._safe_call_in_ui(lambda: event_bus.sig_earnings_updated.emit())
-                self._safe_call_in_ui(lambda: self._schedule_global_earnings_calendar_retry("refresh_timeout"))
+                self._safe_call_in_ui(
+                    lambda: self._schedule_global_earnings_calendar_retry(
+                        "refresh_timeout",
+                        cache_events=degraded_events,
+                    )
+                )
             except (OSError, ProcessExecutionError, RuntimeError, TypeError, ValueError) as exc:
                 try:
                     degraded_result = _mark_global_earnings_calendar_refresh_degraded(
@@ -824,7 +879,12 @@ class StartupOrchestrator:
                 if raw_detail:
                     log.debug(f"[global earnings calendar] background refresh raw output: {raw_detail}")
                 self._safe_call_in_ui(lambda: event_bus.sig_earnings_updated.emit())
-                self._safe_call_in_ui(lambda: self._schedule_global_earnings_calendar_retry("refresh_failed"))
+                self._safe_call_in_ui(
+                    lambda: self._schedule_global_earnings_calendar_retry(
+                        "refresh_failed",
+                        cache_events=degraded_events,
+                    )
+                )
 
             finally:
                 self._global_earnings_calendar_sync_running = False

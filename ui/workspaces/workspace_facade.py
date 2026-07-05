@@ -318,11 +318,13 @@ class WorkspaceFacade:
         include_cache_fallback: bool = True,
         include_source_cache_fallback: bool | None = None,
         allow_lhb_cache_compute: bool = False,
+        allow_async_snapshot_refresh: bool = True,
     ) -> dict[str, list[StockSignal]]:
         return self._stock_context_service.collect_signals_by_code(
             include_cache_fallback=include_cache_fallback,
             include_source_cache_fallback=include_source_cache_fallback,
             allow_lhb_cache_compute=allow_lhb_cache_compute,
+            allow_async_snapshot_refresh=allow_async_snapshot_refresh,
         )
 
     def prime_stock_context_snapshots(

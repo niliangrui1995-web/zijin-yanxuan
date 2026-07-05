@@ -671,6 +671,40 @@ def test_workspace_collect_stock_context_schedules_lhb_snapshot_without_blocking
     assert scheduled == [False]
 
 
+def test_workspace_collect_stock_context_can_suppress_async_snapshot_refresh(monkeypatch):
+    scheduled = []
+    monkeypatch.setattr(
+        StockContextService,
+        "_load_lhb_pool_rows",
+        lambda self: (_ for _ in ()).throw(AssertionError("LHB cache compute should stay off stock context refresh")),
+    )
+    monkeypatch.setattr(StockContextService, "_lhb_pool_cache_signature", lambda self: ("cache", 1, 2))
+    monkeypatch.setattr(
+        StockContextService,
+        "refresh_async_snapshots",
+        lambda self, *, force=False: scheduled.append(force) or True,
+    )
+    workspace = SimpleNamespace(
+        engine=None,
+        tab_specs=lambda: [
+            {"key": "fund_holdings", "group": "info"},
+            {"key": "lhb", "group": "info"},
+        ],
+        get_loaded_tab=lambda key: None,
+        get_tab=lambda key: (_ for _ in ()).throw(AssertionError("lazy tab should not load")),
+        iter_tabs=lambda: [],
+    )
+
+    context = ClassicWorkspace.collect_stock_context(
+        workspace,
+        allow_lhb_cache_compute=False,
+        allow_async_snapshot_refresh=False,
+    )
+
+    assert context == {}
+    assert scheduled == []
+
+
 def test_stock_context_snapshot_refresh_can_skip_lhb_cache_compute(monkeypatch):
     monkeypatch.setattr(
         StockContextService,

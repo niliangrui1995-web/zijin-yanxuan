@@ -342,6 +342,7 @@ def test_stock_candidate_auto_refreshes_when_source_tabs_update(monkeypatch):
 
 def test_stock_candidate_earnings_update_primes_context_snapshot(monkeypatch):
     monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(stock_candidate_module.MarketCalendar, "is_quote_refresh_time", lambda: True)
     primes = []
 
     class _Workspace(QWidget):
@@ -366,6 +367,7 @@ def test_stock_candidate_earnings_update_primes_context_snapshot(monkeypatch):
 
 def test_stock_candidate_hidden_context_update_defers_refresh_until_visible(monkeypatch):
     monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(stock_candidate_module.MarketCalendar, "is_quote_refresh_time", lambda: True)
     primes = []
     current = {"value": False}
 
@@ -397,8 +399,36 @@ def test_stock_candidate_hidden_context_update_defers_refresh_until_visible(monk
         workspace.deleteLater()
 
 
+def test_stock_candidate_after_hours_hidden_update_skips_snapshot_prime(monkeypatch):
+    monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(stock_candidate_module.MarketCalendar, "is_quote_refresh_time", lambda: False)
+    primes = []
+
+    class _Workspace(QWidget):
+        def collect_stock_context(self):
+            return {}
+
+        def prime_stock_context_snapshots(self, **kwargs):
+            primes.append(dict(kwargs))
+            return True
+
+    workspace = _Workspace()
+    tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
+    tab._is_current_workspace_tab = lambda: False
+    try:
+        event_bus.sig_earnings_updated.emit()
+
+        assert primes == []
+        assert tab._context_refresh_pending is True
+        assert not tab._auto_refresh_timer.isActive()
+    finally:
+        tab.close()
+        workspace.deleteLater()
+
+
 def test_stock_candidate_hidden_lhb_update_does_not_prime_lhb_snapshot(monkeypatch):
     monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(stock_candidate_module.MarketCalendar, "is_quote_refresh_time", lambda: True)
     primes = []
 
     class _Workspace(QWidget):
@@ -425,6 +455,7 @@ def test_stock_candidate_hidden_lhb_update_does_not_prime_lhb_snapshot(monkeypat
 
 def test_stock_candidate_current_lhb_update_does_not_reprime_lhb_snapshot(monkeypatch):
     monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(stock_candidate_module.MarketCalendar, "is_quote_refresh_time", lambda: True)
     primes = []
 
     class _Workspace(QWidget):
@@ -797,6 +828,7 @@ def test_stock_candidate_refresh_exposes_service_lineage(monkeypatch):
 
 def test_stock_candidate_refresh_collects_context_without_lhb_compute(monkeypatch):
     monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(stock_candidate_module.MarketCalendar, "is_quote_refresh_time", lambda: True)
     _run_candidate_refreshes_inline(monkeypatch)
     calls = []
 
@@ -833,7 +865,63 @@ def test_stock_candidate_refresh_collects_context_without_lhb_compute(monkeypatc
     try:
         tab.refresh_candidates()
 
-        assert calls == [{"allow_lhb_cache_compute": False}]
+        assert calls == [
+            {
+                "allow_lhb_cache_compute": False,
+                "allow_async_snapshot_refresh": True,
+            }
+        ]
+        assert tab.get_data_lineage()["row_count"] == 1
+    finally:
+        tab.close()
+        workspace.deleteLater()
+
+
+def test_stock_candidate_after_hours_refresh_suppresses_snapshot_wakeup(monkeypatch):
+    monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(stock_candidate_module.MarketCalendar, "is_quote_refresh_time", lambda: False)
+    _run_candidate_refreshes_inline(monkeypatch)
+    calls = []
+
+    class _Workspace(QWidget):
+        def collect_stock_context(self, **kwargs):
+            calls.append(dict(kwargs))
+            return {
+                "300750": [
+                    StockSignal(
+                        code="300750",
+                        source_tab="na_daily",
+                        signal_type="catalyst",
+                        summary="anchor",
+                    ),
+                    StockSignal(
+                        code="300750",
+                        source_tab="scan",
+                        signal_type="vcp_scan",
+                        summary="scan",
+                    ),
+                ]
+            }
+
+        @staticmethod
+        def tab_specs():
+            return [
+                {"key": "na_daily", "title": "na"},
+                {"key": "scan", "title": "scan"},
+            ]
+
+    workspace = _Workspace()
+    tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
+    tab.refresh_table_from_latest_snapshot = lambda *_args, **_kwargs: None
+    try:
+        tab.refresh_candidates()
+
+        assert calls == [
+            {
+                "allow_lhb_cache_compute": False,
+                "allow_async_snapshot_refresh": False,
+            }
+        ]
         assert tab.get_data_lineage()["row_count"] == 1
     finally:
         tab.close()
