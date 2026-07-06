@@ -218,7 +218,27 @@ class ClassicWorkspace(QWidget):
         self.tabs.suspendTransitionsFor(self.STARTUP_TRANSITION_SUSPEND_MS)
         layout.addWidget(self.tabs, 1)
 
-        self._tab_specs = [
+        self._tab_specs = self._build_tab_specs(watchlist_kwargs)
+
+        self._tabs_by_key = {}
+        self._lazy_loading_keys: set[str] = set()
+        self._background_prewarm_queue: list[str] = []
+        self._background_prewarm_started = False
+        self._pending_restore_index: int | None = None
+        self._restore_last_tab_timer: QTimer | None = None
+        self._copy_hook_refresh_queued = False
+        self._workspace_event_bus = None
+        self._workspace_events_connected = False
+        self._workspace_icon_tokens = build_ui_tokens()["icon"]
+        self._mount_initial_tabs()
+        self._workspace_facade = WorkspaceFacade(self)
+        self.tabs.currentChanged.connect(self._on_current_tab_changed)
+        self._connect_workspace_events()
+        if background_prewarm:
+            QTimer.singleShot(self.BACKGROUND_PREWARM_DELAY_MS, self._start_background_tab_prewarm)
+
+    def _build_tab_specs(self, watchlist_kwargs: dict) -> list[dict]:
+        return [
             {
                 "key": "watchlist",
                 "title": "关注池",
@@ -358,23 +378,6 @@ class ClassicWorkspace(QWidget):
                 "loaded": False,
             },
         ]
-
-        self._tabs_by_key = {}
-        self._lazy_loading_keys: set[str] = set()
-        self._background_prewarm_queue: list[str] = []
-        self._background_prewarm_started = False
-        self._pending_restore_index: int | None = None
-        self._restore_last_tab_timer: QTimer | None = None
-        self._copy_hook_refresh_queued = False
-        self._workspace_event_bus = None
-        self._workspace_events_connected = False
-        self._workspace_icon_tokens = build_ui_tokens()["icon"]
-        self._mount_initial_tabs()
-        self._workspace_facade = WorkspaceFacade(self)
-        self.tabs.currentChanged.connect(self._on_current_tab_changed)
-        self._connect_workspace_events()
-        if background_prewarm:
-            QTimer.singleShot(self.BACKGROUND_PREWARM_DELAY_MS, self._start_background_tab_prewarm)
 
     def _tab_factory(self, class_name: str, module_name: str, *args, **kwargs):
         def _create(**runtime_kwargs):

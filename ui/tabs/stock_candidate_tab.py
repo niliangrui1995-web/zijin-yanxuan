@@ -213,11 +213,17 @@ class StockCandidateTab(BaseStockTab):
     def _connect_auto_refresh_events(self) -> None:
         self._auto_refresh_connections = []
         for signal, options in self._auto_refresh_signal_specs():
-            def _slot(*args, _options=dict(options)):
-                self._schedule_context_refresh(*args, **_options)
-
+            _slot = self._make_auto_refresh_slot(options)
             signal.connect(_slot)
             self._auto_refresh_connections.append((signal, _slot))
+
+    def _make_auto_refresh_slot(self, options: dict):
+        refresh_options = dict(options)
+
+        def _slot(*args):
+            self._schedule_context_refresh(*args, **refresh_options)
+
+        return _slot
 
     def _cleanup_runtime_state(self):
         self._context_refresh_pending = False

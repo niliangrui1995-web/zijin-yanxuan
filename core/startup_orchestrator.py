@@ -116,6 +116,19 @@ def _coerce_global_earnings_calendar_refresh_result(result) -> dict[str, object]
     return {"status": "success", "events": max(0, int(result or 0))}
 
 
+def _nonnegative_int(value, default: int = 0) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return default
+
+
+def _provider_names(raw_providers) -> list[str]:
+    if not isinstance(raw_providers, (list, tuple, set)):
+        return []
+    return [str(provider or "").strip() for provider in raw_providers if str(provider or "").strip()]
+
+
 def _truthy(value) -> bool:
     return value is True or str(value or "").strip().lower() in {"1", "true", "yes"}
 
@@ -720,180 +733,188 @@ class StartupOrchestrator:
 
         self._global_earnings_calendar_sync_running = True
 
-        def _refresh_bg():
-            started_at = time.perf_counter()
+        try:
+            self._job_runner.run(GLOBAL_EARNINGS_CALENDAR_SYNC_TASK_ID, self._refresh_global_earnings_calendar_bg)
+        except Exception:
+            self._global_earnings_calendar_sync_running = False
+            raise
+
+    def _refresh_global_earnings_calendar_bg(self):
+        started_at = time.perf_counter()
+        cache_events = 0
+        try:
             if not self._alive():
-                self._global_earnings_calendar_sync_running = False
                 return
-            cache_started_at = time.perf_counter()
-            cache_snapshot = _global_earnings_calendar_cache_snapshot()
-            cache_elapsed_ms = (time.perf_counter() - cache_started_at) * 1000.0
-            try:
-                cache_events = max(0, int(cache_snapshot.get("events", 0) or 0))
-            except (TypeError, ValueError):
-                cache_events = 0
-            cache_status = str(cache_snapshot.get("status", "") or "unknown").strip()
-            record_metric(
-                "global_earnings_calendar_cache_ready_ms",
-                cache_elapsed_ms,
-                unit="ms",
-                tags={"events": str(cache_events), "status": cache_status},
-            )
-            emit_structured_log(
-                "global_earnings_calendar.cache_ready",
-                elapsed_ms=round(cache_elapsed_ms, 3),
-                events=cache_events,
-                status=cache_status,
-            )
-            log_process_snapshot(
-                "global_earnings_calendar.background_refresh.begin",
-                logger=log,
-                extra={"cache_events": cache_events, "cache_status": cache_status},
-            )
+            cache_events = self._record_global_earnings_calendar_cache_ready()
             try:
                 refresh_result = _coerce_global_earnings_calendar_refresh_result(
                     _run_global_earnings_calendar_refresh_subprocess()
                 )
-                event_count = int(refresh_result.get("events") or 0)
-                refresh_status = str(refresh_result.get("status", "") or "success").strip()
-                if not self._alive():
-                    return
-                elapsed_ms = (time.perf_counter() - started_at) * 1000.0
-                raw_providers = refresh_result.get("providers")
-                providers = (
-                    [str(provider or "").strip() for provider in raw_providers if str(provider or "").strip()]
-                    if isinstance(raw_providers, (list, tuple, set))
-                    else []
-                )
-                provider_text = " + ".join(providers)
-                try:
-                    reused_event_count = max(0, int(refresh_result.get("reused_event_count", 0) or 0))
-                except (TypeError, ValueError):
-                    reused_event_count = 0
-                retryable = _truthy(refresh_result.get("retryable"))
-                if refresh_status == "degraded":
-                    detail = f"{provider_text} 拉取异常" if provider_text else "上游拉取异常"
-                    if reused_event_count:
-                        detail = f"{detail}，已沿用旧快照 {reused_event_count} 条"
-                    else:
-                        detail = f"{detail}，已沿用可用旧快照"
-                    log.warning(f"[global earnings calendar] background refresh degraded: {event_count} events ({detail})")
-                else:
-                    log.info(f"[global earnings calendar] background refresh completed: {event_count} events")
-                record_metric(
-                    "global_earnings_calendar_background_refresh_ms",
-                    elapsed_ms,
-                    unit="ms",
-                    tags={"events": str(event_count), "status": refresh_status},
-                )
-                snapshot_extra = {
-                    "elapsed_ms": int(round(elapsed_ms)),
-                    "events": event_count,
-                    "status": refresh_status,
-                }
-                if providers:
-                    snapshot_extra["providers"] = provider_text
-                if reused_event_count:
-                    snapshot_extra["reused_event_count"] = reused_event_count
-                if retryable:
-                    snapshot_extra["retryable"] = True
-                log_process_snapshot(
-                    "global_earnings_calendar.background_refresh.end",
-                    logger=log,
-                    level="warning" if refresh_status == "degraded" else "info",
-                    extra=snapshot_extra,
-                )
-                emit_structured_log(
-                    "global_earnings_calendar.background_refresh.completed",
-                    elapsed_ms=round(elapsed_ms, 3),
-                    events=event_count,
-                    status=refresh_status,
-                )
-                self._safe_call_in_ui(lambda: event_bus.sig_earnings_updated.emit())
-                if refresh_status == "degraded" and retryable:
-                    self._safe_call_in_ui(
-                        lambda: self._schedule_global_earnings_calendar_retry(
-                            "refresh_degraded_retryable",
-                            cache_events=reused_event_count or event_count,
-                        )
-                    )
-                else:
-                    self._global_earnings_calendar_retry_failures = 0
+                self._handle_global_earnings_calendar_refresh_success(refresh_result, started_at)
             except ProcessTimeoutError as exc:
-                try:
-                    degraded_result = _mark_global_earnings_calendar_refresh_degraded(
-                        exc,
-                        reason="refresh_timeout",
-                    )
-                    degraded_events = max(0, int(degraded_result.get("events") or 0))
-                except Exception as state_exc:  # noqa: BLE001 - keep timeout handling fail-open.
-                    degraded_events = cache_events
-                    log.warning(f"[global earnings calendar] failed to mark timeout degradation: {state_exc}")
-                log_process_snapshot(
-                    "global_earnings_calendar.background_refresh.end",
-                    logger=log,
-                    level="warning",
-                    extra={
-                        "status": "degraded",
-                        "reason": "refresh_timeout",
-                        "events": degraded_events,
-                        "reused_event_count": degraded_events,
-                        "retryable": True,
-                    },
-                )
-                log.warning(
-                    "[global earnings calendar] background refresh timed out "
-                    f"after {GLOBAL_EARNINGS_CALENDAR_SYNC_TIMEOUT_SEC}s; reused local cache: {exc}"
-                )
-                self._safe_call_in_ui(lambda: event_bus.sig_earnings_updated.emit())
-                self._safe_call_in_ui(
-                    lambda: self._schedule_global_earnings_calendar_retry(
-                        "refresh_timeout",
-                        cache_events=degraded_events,
-                    )
+                self._handle_global_earnings_calendar_refresh_error(
+                    exc,
+                    reason="refresh_timeout",
+                    cache_events=cache_events,
+                    timed_out=True,
                 )
             except (OSError, ProcessExecutionError, RuntimeError, TypeError, ValueError) as exc:
-                try:
-                    degraded_result = _mark_global_earnings_calendar_refresh_degraded(
-                        exc,
-                        reason="refresh_failed",
-                    )
-                    degraded_events = max(0, int(degraded_result.get("events") or 0))
-                except Exception as state_exc:  # noqa: BLE001 - keep failure handling fail-open.
-                    degraded_events = cache_events
-                    log.warning(f"[global earnings calendar] failed to mark refresh degradation: {state_exc}")
-                log_process_snapshot(
-                    "global_earnings_calendar.background_refresh.end",
-                    logger=log,
-                    level="warning",
-                    extra={
-                        "status": "degraded",
-                        "reason": "refresh_failed",
-                        "events": degraded_events,
-                        "reused_event_count": degraded_events,
-                        "retryable": True,
-                    },
+                self._handle_global_earnings_calendar_refresh_error(
+                    exc,
+                    reason="refresh_failed",
+                    cache_events=cache_events,
                 )
-                summary, raw_detail = _format_subprocess_failure(exc)
-                log.warning(f"[global earnings calendar] background refresh failed; reused local cache ({summary})")
-                if raw_detail:
-                    log.debug(f"[global earnings calendar] background refresh raw output: {raw_detail}")
-                self._safe_call_in_ui(lambda: event_bus.sig_earnings_updated.emit())
-                self._safe_call_in_ui(
-                    lambda: self._schedule_global_earnings_calendar_retry(
-                        "refresh_failed",
-                        cache_events=degraded_events,
-                    )
-                )
-
-            finally:
-                self._global_earnings_calendar_sync_running = False
-
-        try:
-            self._job_runner.run(GLOBAL_EARNINGS_CALENDAR_SYNC_TASK_ID, _refresh_bg)
-        except Exception:
+        finally:
             self._global_earnings_calendar_sync_running = False
-            raise
+
+    def _record_global_earnings_calendar_cache_ready(self) -> int:
+        cache_started_at = time.perf_counter()
+        cache_snapshot = _global_earnings_calendar_cache_snapshot()
+        cache_elapsed_ms = (time.perf_counter() - cache_started_at) * 1000.0
+        cache_events = _nonnegative_int(cache_snapshot.get("events", 0))
+        cache_status = str(cache_snapshot.get("status", "") or "unknown").strip()
+        record_metric(
+            "global_earnings_calendar_cache_ready_ms",
+            cache_elapsed_ms,
+            unit="ms",
+            tags={"events": str(cache_events), "status": cache_status},
+        )
+        emit_structured_log(
+            "global_earnings_calendar.cache_ready",
+            elapsed_ms=round(cache_elapsed_ms, 3),
+            events=cache_events,
+            status=cache_status,
+        )
+        log_process_snapshot(
+            "global_earnings_calendar.background_refresh.begin",
+            logger=log,
+            extra={"cache_events": cache_events, "cache_status": cache_status},
+        )
+        return cache_events
+
+    def _handle_global_earnings_calendar_refresh_success(self, refresh_result: dict[str, object], started_at: float):
+        event_count = _nonnegative_int(refresh_result.get("events"))
+        refresh_status = str(refresh_result.get("status", "") or "success").strip()
+        if not self._alive():
+            return
+        elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+        providers = _provider_names(refresh_result.get("providers"))
+        provider_text = " + ".join(providers)
+        reused_event_count = _nonnegative_int(refresh_result.get("reused_event_count", 0))
+        retryable = _truthy(refresh_result.get("retryable"))
+        if refresh_status == "degraded":
+            detail = f"{provider_text} 拉取异常" if provider_text else "上游拉取异常"
+            detail = f"{detail}，已沿用旧快照 {reused_event_count} 条" if reused_event_count else f"{detail}，已沿用可用旧快照"
+            log.warning(f"[global earnings calendar] background refresh degraded: {event_count} events ({detail})")
+        else:
+            log.info(f"[global earnings calendar] background refresh completed: {event_count} events")
+        record_metric(
+            "global_earnings_calendar_background_refresh_ms",
+            elapsed_ms,
+            unit="ms",
+            tags={"events": str(event_count), "status": refresh_status},
+        )
+        self._log_global_earnings_calendar_refresh_end(
+            elapsed_ms=elapsed_ms,
+            event_count=event_count,
+            status=refresh_status,
+            provider_text=provider_text,
+            reused_event_count=reused_event_count,
+            retryable=retryable,
+        )
+        self._safe_call_in_ui(lambda: event_bus.sig_earnings_updated.emit())
+        if refresh_status == "degraded" and retryable:
+            self._safe_call_in_ui(
+                lambda: self._schedule_global_earnings_calendar_retry(
+                    "refresh_degraded_retryable",
+                    cache_events=reused_event_count or event_count,
+                )
+            )
+        else:
+            self._global_earnings_calendar_retry_failures = 0
+
+    def _log_global_earnings_calendar_refresh_end(
+        self,
+        *,
+        elapsed_ms: float,
+        event_count: int,
+        status: str,
+        provider_text: str = "",
+        reused_event_count: int = 0,
+        retryable: bool = False,
+    ) -> None:
+        snapshot_extra = {
+            "elapsed_ms": int(round(elapsed_ms)),
+            "events": event_count,
+            "status": status,
+        }
+        if provider_text:
+            snapshot_extra["providers"] = provider_text
+        if reused_event_count:
+            snapshot_extra["reused_event_count"] = reused_event_count
+        if retryable:
+            snapshot_extra["retryable"] = True
+        log_process_snapshot(
+            "global_earnings_calendar.background_refresh.end",
+            logger=log,
+            level="warning" if status == "degraded" else "info",
+            extra=snapshot_extra,
+        )
+        emit_structured_log(
+            "global_earnings_calendar.background_refresh.completed",
+            elapsed_ms=round(elapsed_ms, 3),
+            events=event_count,
+            status=status,
+        )
+
+    def _handle_global_earnings_calendar_refresh_error(
+        self,
+        exc: Exception,
+        *,
+        reason: str,
+        cache_events: int,
+        timed_out: bool = False,
+    ) -> None:
+        degraded_events = self._mark_global_earnings_calendar_degraded_events(exc, reason, cache_events)
+        log_process_snapshot(
+            "global_earnings_calendar.background_refresh.end",
+            logger=log,
+            level="warning",
+            extra={
+                "status": "degraded",
+                "reason": reason,
+                "events": degraded_events,
+                "reused_event_count": degraded_events,
+                "retryable": True,
+            },
+        )
+        if timed_out:
+            log.warning(
+                "[global earnings calendar] background refresh timed out "
+                f"after {GLOBAL_EARNINGS_CALENDAR_SYNC_TIMEOUT_SEC}s; reused local cache: {exc}"
+            )
+        else:
+            summary, raw_detail = _format_subprocess_failure(exc)
+            log.warning(f"[global earnings calendar] background refresh failed; reused local cache ({summary})")
+            if raw_detail:
+                log.debug(f"[global earnings calendar] background refresh raw output: {raw_detail}")
+        self._safe_call_in_ui(lambda: event_bus.sig_earnings_updated.emit())
+        self._safe_call_in_ui(
+            lambda: self._schedule_global_earnings_calendar_retry(reason, cache_events=degraded_events)
+        )
+
+    def _mark_global_earnings_calendar_degraded_events(
+        self,
+        exc: Exception,
+        reason: str,
+        cache_events: int,
+    ) -> int:
+        try:
+            degraded_result = _mark_global_earnings_calendar_refresh_degraded(exc, reason=reason)
+            return _nonnegative_int(degraded_result.get("events"))
+        except Exception as state_exc:  # noqa: BLE001 - degradation state should never block fail-open reuse.
+            log.warning(f"[global earnings calendar] failed to mark {reason} degradation: {state_exc}")
+            return cache_events
 
     def smart_startup(self):
         """异步检测网络；可联机时切到在线模式并驱动后续刷新。"""

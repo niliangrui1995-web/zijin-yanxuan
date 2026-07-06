@@ -114,14 +114,15 @@ class GlobalTaskManager(QObject):
             return
         self._initialized = True
 
-        self.thread_pool = QThreadPool.globalInstance()
+        thread_pool = QThreadPool.globalInstance() or QThreadPool()
+        self.thread_pool = thread_pool
         self.thread_pool.setMaxThreadCount(_task_thread_pool_max_count())
 
         self.active_workers: dict[str, BackgroundWorker] = {}
         self._lock = threading.RLock()
         self._shutting_down = False
 
-    def submit_task(self, worker: QRunnable, task_id: str | None = None) -> str:
+    def submit_task(self, worker: BackgroundWorker, task_id: str | None = None) -> str:
         """提交 QRunnable Worker"""
         with self._lock:
             if self._shutting_down:
@@ -178,9 +179,11 @@ class GlobalTaskManager(QObject):
         from PyQt6.QtCore import Qt
 
         if on_success:
-            worker.signals.finished.connect(on_success, type=Qt.ConnectionType.QueuedConnection)
+            finished_connect = getattr(worker.signals.finished, "connect")
+            finished_connect(on_success, type=Qt.ConnectionType.QueuedConnection)
         if on_error:
-            worker.signals.error.connect(on_error, type=Qt.ConnectionType.QueuedConnection)
+            error_connect = getattr(worker.signals.error, "connect")
+            error_connect(on_error, type=Qt.ConnectionType.QueuedConnection)
 
         def _cleanup(_):
             with self._lock:

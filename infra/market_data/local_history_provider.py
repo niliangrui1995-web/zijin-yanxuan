@@ -54,11 +54,15 @@ class LocalHistoryProvider:
                         df = df.with_columns(
                             pl.col("datetime").str.strptime(pl.Datetime, "%Y-%m-%d %H:%M", strict=False).cast(pl.Date)
                         ).sort("datetime", descending=False)
-                    if hasattr(df, "to_pandas"):
-                        df = df.to_pandas()
-                    if "datetime" in df.columns:
-                        df = df.set_index("datetime")
-                    df = provider._apply_forward_adjustment(api, market, code, df)
+                    if pl is not None and isinstance(df, pl.DataFrame):
+                        pdf = df.to_pandas()
+                    elif isinstance(df, pd.DataFrame):
+                        pdf = df
+                    else:
+                        pdf = pd.DataFrame(df)
+                    if "datetime" in pdf.columns:
+                        pdf = pdf.set_index("datetime")
+                    df = provider._apply_forward_adjustment(api, market, code, pdf)
                     if "vol" in df.columns:
                         df = df.rename(columns={"vol": "volume"})
                     return df

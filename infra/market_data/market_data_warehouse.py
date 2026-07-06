@@ -17,10 +17,11 @@ from core.runtime_paths import CACHE_DIR
 from infra.market_data.warehouse_manifest import WarehouseManifest, WarehouseManifestRecord
 
 try:
-    from polars.exceptions import PolarsError
+    from polars.exceptions import PolarsError as _PolarsError
 except ImportError:  # pragma: no cover - exercised when optional dependency is absent
-    class PolarsError(Exception):
-        pass
+    _PolarsError = Exception
+
+PolarsError: type[BaseException] = _PolarsError
 
 log = get_logger(__name__)
 

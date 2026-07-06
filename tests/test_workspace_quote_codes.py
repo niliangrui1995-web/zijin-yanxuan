@@ -743,7 +743,7 @@ def test_workspace_collects_fund_holding_context_from_snapshot_without_open_tab(
     monkeypatch.setattr(
         StockContextService,
         "_cached_fund_holding_rows",
-        lambda self: [
+        lambda self, *, allow_async_refresh=True: [
             {
                 "代码": "300750",
                 "名称": "宁德时代",
@@ -759,10 +759,14 @@ def test_workspace_collects_fund_holding_context_from_snapshot_without_open_tab(
     )
     workspace = _make_workspace(tabs={})
     workspace.tab_specs = lambda: [{"key": "fund_holdings", "group": "情报源"}]
+    load_attempts = []
+    workspace.get_loaded_tab = lambda key: None
+    workspace.get_tab = lambda key: load_attempts.append(key) or None
 
     context = ClassicWorkspace.collect_stock_context(workspace)
 
     signals = context["300750"]
+    assert load_attempts == []
     assert {(signal.source_tab, signal.signal_type) for signal in signals} == {
         ("fund_holdings", "fund_holding"),
     }
