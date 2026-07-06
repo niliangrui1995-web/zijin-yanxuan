@@ -28,7 +28,9 @@ _OPENING_WARMUP_FETCH_LIMIT = 40
 _FALLBACK_PRESSURE_FETCH_LIMIT = 60
 _FALLBACK_PRESSURE_RECENT_SEC = 90.0
 _FALLBACK_PRESSURE_MIN_PENDING = 100
-_FALLBACK_PRESSURE_MIN_ELAPSED_MS = 20000.0
+_FALLBACK_PRESSURE_MIN_ELAPSED_MS = 10000.0
+_FALLBACK_PRESSURE_SKIP_CACHE_RATIO = 0.75
+_FALLBACK_PRESSURE_SKIP_LOG_INTERVAL_SEC = 30.0
 _FALLBACK_PRESSURE_SOURCE_TOKENS = ("sina", "tencent", "fallback", "offline", "stale")
 
 
@@ -64,6 +66,7 @@ class CentralQuotesService(QObject):
         self._fallback_pressure_signature: tuple[str, ...] = ()
         self._fallback_pressure_cursor = 0
         self._last_fallback_pressure_log_at = 0.0
+        self._last_fallback_pressure_skip_log_at = 0.0
         self._last_central_quote_request_stats: dict = {}
 
         self._consecutive_failures = 0
@@ -354,15 +357,22 @@ class CentralQuotesService(QObject):
         fallback_or_degraded = "fallback" in status or "partial" in status or any(
             any(token in layer for token in _FALLBACK_PRESSURE_SOURCE_TOKENS) for layer in source_layers
         )
+        slow_full_refresh = (
+            requested >= _FALLBACK_PRESSURE_MIN_PENDING
+            and elapsed_ms >= _FALLBACK_PRESSURE_MIN_ELAPSED_MS
+            and cache_hits <= max(1, requested // 2)
+        )
         heavy_network = (
             pending >= _FALLBACK_PRESSURE_MIN_PENDING
             or (requested >= _FALLBACK_PRESSURE_MIN_PENDING and cache_hits <= max(1, requested // 10))
             or (elapsed_ms >= _FALLBACK_PRESSURE_MIN_ELAPSED_MS and pending >= 40)
         )
-        if not (recent_enough and fallback_or_degraded and heavy_network):
+        if not (recent_enough and (fallback_or_degraded or slow_full_refresh) and heavy_network):
             return False, ""
 
         layer_text = "/".join(source_layers) if source_layers else status or "fallback"
+        if slow_full_refresh and not fallback_or_degraded:
+            layer_text = f"{layer_text}/slow_full_refresh"
         return True, f"{label} fallback pressure pending={pending}/{requested} cache={cache_hits} source={layer_text}"
 
     def _recent_quote_fallback_pressure(self, *, now: float | None = None) -> tuple[bool, str]:
@@ -437,6 +447,63 @@ class CentralQuotesService(QObject):
                 log.info(f"[报价站] 最近报价回退压力仍在，继续滚动限量: {pressure_reason}")
         return set(selected)
 
+    def _should_skip_fallback_pressure_fetch(
+        self,
+        codes: set[str],
+        *,
+        provider_stats: dict | None,
+        maintenance_stats: dict | None,
+        market_status: str,
+        reason: str,
+    ) -> bool:
+        if reason != "timer" or str(market_status or "").strip() in _OPENING_WARMUP_STATUSES:
+            return False
+
+        if not codes:
+            return False
+
+        now = time.time()
+        cooldown_left = self._quote_fallback_cooldown_left(provider_stats, now=now)
+        recent_pressure, pressure_reason = self._recent_quote_fallback_pressure(now=now)
+        if cooldown_left <= 0 and not recent_pressure:
+            return False
+
+        stats = maintenance_stats if isinstance(maintenance_stats, dict) else {}
+        runtime_stats = stats.get("rt_runtime", {}) if isinstance(stats.get("rt_runtime", {}), dict) else {}
+        try:
+            cache_size = int(stats.get("rt_quote_cache_size") or 0)
+        except (TypeError, ValueError):
+            cache_size = 0
+        min_cache_size = min(
+            len(codes),
+            max(1, int(len(codes) * _FALLBACK_PRESSURE_SKIP_CACHE_RATIO)),
+        )
+        if cache_size < min_cache_size:
+            return False
+
+        try:
+            last_success_at = float(
+                (provider_stats or {}).get("last_success_at")
+                or runtime_stats.get("last_success_at")
+                or 0.0
+            )
+        except (TypeError, ValueError):
+            last_success_at = 0.0
+        if last_success_at <= 0:
+            return False
+        last_success_age = now - last_success_at
+        if last_success_age < 0 or last_success_age > _RECENT_SUCCESS_GRACE_SEC:
+            return False
+
+        if (now - self._last_fallback_pressure_skip_log_at) >= _FALLBACK_PRESSURE_SKIP_LOG_INTERVAL_SEC:
+            self._last_fallback_pressure_skip_log_at = now
+            reason_text = pressure_reason or f"cooldown_left={cooldown_left}s"
+            log.info(
+                "[报价站] 报价回退压力中，跳过本轮自动联网；"
+                f"保留已有实时缓存 {cache_size}/{len(codes)} 只，避免与盘中扫描叠加: {reason_text}"
+            )
+        return True
+
     def _run_maintenance(
         self,
         active_codes_count: int | None = None,
@@ -445,15 +512,17 @@ class CentralQuotesService(QObject):
         market_status: str | None = None,
     ):
         stats = self._poller.compact_runtime_caches()
+        if not isinstance(stats, dict):
+            stats = {}
 
         total_threads, pytdx_threads = self._collect_thread_health()
         if self._poller.protect_against_thread_anomaly(pytdx_threads):
             self._circuit_breaker_cooldown = max(self._circuit_breaker_cooldown, self._COOLDOWN_TICKS)
 
         if self._tick_count % self._heartbeat_every_ticks != 0:
-            return
+            return stats
 
-        runtime_stats = stats.get("rt_runtime", {}) if isinstance(stats, dict) else {}
+        runtime_stats = stats.get("rt_runtime", {})
         last_success_at = float(runtime_stats.get("last_success_at") or 0)
         last_success_text = time.strftime("%H:%M:%S", time.localtime(last_success_at)) if last_success_at > 0 else "-"
         now_ts = time.time()
@@ -464,7 +533,7 @@ class CentralQuotesService(QObject):
         )
         if quote_refreshable is None:
             quote_refreshable = MarketCalendar.is_quote_refresh_time()
-        rt_quote_cache_size = stats.get("rt_quote_cache_size", 0) if isinstance(stats, dict) else 0
+        rt_quote_cache_size = stats.get("rt_quote_cache_size", 0)
         last_success_age = max(0.0, now_ts - last_success_at) if last_success_at > 0 else None
         owner_thread_alive = bool(
             runtime_stats.get("owner_thread_alive", runtime_stats.get("worker_alive", False))
@@ -483,7 +552,7 @@ class CentralQuotesService(QObject):
         heartbeat_signature = (
             active_codes_count if active_codes_count is not None else "-",
             rt_quote_cache_size,
-            stats.get("history_symbol_count", 0) if isinstance(stats, dict) else 0,
+            stats.get("history_symbol_count", 0),
             runtime_stats.get("inflight", 0),
             last_success_text,
             runtime_stats.get("consecutive_failures", 0),
@@ -505,13 +574,13 @@ class CentralQuotesService(QObject):
             should_log = signature_changed or interval_reached
 
         if not should_log:
-            return
+            return stats
 
         log.info(
             "[报价站] 心跳 "
             f"标的={active_codes_count if active_codes_count is not None else '-'} "
             f"实时缓存={rt_cache_text} "
-            f"历史缓存={stats.get('history_symbol_count', 0) if isinstance(stats, dict) else 0} "
+            f"历史缓存={stats.get('history_symbol_count', 0)} "
             f"飞行中={runtime_stats.get('inflight', 0)} "
             f"上次成功={last_success_text} "
             f"连败={runtime_stats.get('consecutive_failures', 0)} "
@@ -528,6 +597,7 @@ class CentralQuotesService(QObject):
         )
         self._last_heartbeat_signature = heartbeat_signature
         self._last_heartbeat_logged_at = now_ts
+        return stats
 
     def _emit_off_market_snapshot(self, codes: set[str]):
         if self._off_market_snapshot_emitted or not codes or self.data_provider is None:
@@ -566,11 +636,11 @@ class CentralQuotesService(QObject):
             self._off_market_snapshot_emitted = False
 
         codes = self._get_all_active_codes()
-        self._run_maintenance(
+        maintenance_stats = self._run_maintenance(
             active_codes_count=len(codes) if codes else 0,
             quote_refreshable=quote_refreshable,
             market_status=market_status,
-        )
+        ) or {}
         if not codes:
             return
 
@@ -603,6 +673,15 @@ class CentralQuotesService(QObject):
         provider_stats = self._poller.get_runtime_stats()
         if time.time() < float(provider_stats.get("cooldown_until") or 0):
             self._circuit_breaker_cooldown = max(self._circuit_breaker_cooldown, self._COOLDOWN_TICKS)
+            return
+
+        if self._should_skip_fallback_pressure_fetch(
+            codes,
+            provider_stats=provider_stats,
+            maintenance_stats=maintenance_stats,
+            market_status=market_status,
+            reason=reason,
+        ):
             return
 
         codes = self._fallback_pressure_codes(codes, provider_stats=provider_stats, market_status=market_status)

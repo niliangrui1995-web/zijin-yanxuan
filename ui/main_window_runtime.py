@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import gc
+import time
 
 from PyQt6.QtCore import QTimer
 
@@ -10,6 +11,9 @@ from core.global_store import global_store
 from core.logger import get_logger
 
 log = get_logger(__name__)
+
+F5_SYSTEM_LOG_NAV_SETTLE_MS = 10_000
+F5_SYSTEM_LOG_STALL_GRACE_MS = 12_000
 
 
 def workspace_tables(main_window):
@@ -35,8 +39,53 @@ def safe_run_post_online_refresh(main_window, task_manager):
         log.error(f"[智能启动] 联网后Tab刷新异常: {exc}")
 
 
+def _current_workspace_tab_key(main_window) -> str:
+    current_key = getattr(main_window, "_current_workspace_tab_key", None)
+    if not callable(current_key):
+        return ""
+    try:
+        return str(current_key() or "").strip()
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return ""
+
+
+def _system_log_shell_nav_grace_remaining_ms(main_window) -> int:
+    if _current_workspace_tab_key(main_window) != "system_log":
+        return 0
+    workspace = getattr(main_window, "_workspace", None)
+    last_nav_at = getattr(workspace, "_last_system_log_shell_nav_load_at", 0.0)
+    try:
+        elapsed_ms = (time.perf_counter() - float(last_nav_at or 0.0)) * 1000.0
+    except (TypeError, ValueError):
+        return 0
+    if elapsed_ms < 0 or elapsed_ms >= F5_SYSTEM_LOG_NAV_SETTLE_MS:
+        return 0
+    return int(F5_SYSTEM_LOG_NAV_SETTLE_MS - elapsed_ms)
+
+
+def _mark_f5_ui_stall_grace(main_window) -> None:
+    try:
+        deadline = time.perf_counter() + F5_SYSTEM_LOG_STALL_GRACE_MS / 1000.0
+    except (TypeError, ValueError):
+        return
+    current_deadline = getattr(main_window, "_f5_precompute_ui_grace_until", 0.0)
+    try:
+        deadline = max(deadline, float(current_deadline or 0.0))
+    except (TypeError, ValueError):
+        pass
+    setattr(main_window, "_f5_precompute_ui_grace_until", deadline)
+
+
+def _clear_f5_ui_stall_grace(main_window) -> None:
+    setattr(main_window, "_f5_precompute_ui_grace_until", 0.0)
+
+
 def start_f5_precompute(main_window, *, task_manager):
     from core.rps_precomputer import RPSPrecomputer
+
+    if getattr(main_window, "_f5_precompute_start_pending", False):
+        log.info("[F5] precompute start already pending")
+        return
 
     def _set_status_cb(message: str):
         main_window._call_in_ui(
@@ -48,18 +97,38 @@ def start_f5_precompute(main_window, *, task_manager):
         )
 
     def _done_cb(count, elapsed):
-        main_window._call_in_ui(lambda: main_window._on_f5_done(count, elapsed))
+        main_window._call_in_ui(
+            lambda: (
+                _clear_f5_ui_stall_grace(main_window),
+                main_window._on_f5_done(count, elapsed),
+            )
+        )
 
-    task_manager.run_in_background(
-        lambda: RPSPrecomputer.run_f5_pipeline(
-            data_provider=main_window.data_provider,
-            engine=main_window.engine,
-            cancelled_checker=lambda: getattr(main_window, "_f5_cancelled", False),
-            set_status_callback=_set_status_cb,
-            done_callback=_done_cb,
-        ),
-        task_id=WINDOW_F5_PRECOMPUTE,
-    )
+    def _submit_precompute():
+        setattr(main_window, "_f5_precompute_start_pending", False)
+        if getattr(main_window, "_f5_cancelled", False):
+            return
+        _mark_f5_ui_stall_grace(main_window)
+        task_manager.run_in_background(
+            lambda: RPSPrecomputer.run_f5_pipeline(
+                data_provider=main_window.data_provider,
+                engine=main_window.engine,
+                cancelled_checker=lambda: getattr(main_window, "_f5_cancelled", False),
+                set_status_callback=_set_status_cb,
+                done_callback=_done_cb,
+            ),
+            task_id=WINDOW_F5_PRECOMPUTE,
+        )
+
+    delay_ms = _system_log_shell_nav_grace_remaining_ms(main_window)
+    if delay_ms > 0:
+        setattr(main_window, "_f5_precompute_start_pending", True)
+        _mark_f5_ui_stall_grace(main_window)
+        log.info("[F5] defer precompute start %sms after system_log shell navigation", delay_ms)
+        QTimer.singleShot(delay_ms, _submit_precompute)
+        return
+
+    _submit_precompute()
 
 
 def finish_f5_reload(main_window, *, count, elapsed, event_bus):

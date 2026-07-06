@@ -1564,6 +1564,31 @@ def test_workspace_shell_activation_bypasses_startup_raw_tab_switch_guard(monkey
         workspace.deleteLater()
 
 
+def test_workspace_marks_system_log_shell_nav_load_for_f5_grace(monkeypatch, qt_application):
+    constructed = []
+    _patch_lightweight_workspace_tabs(monkeypatch, constructed)
+    monkeypatch.setattr(classic_workspace_module.time, "perf_counter", lambda: 321.5)
+
+    workspace = classic_workspace_module.ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+    )
+    try:
+        tab_keys = [spec["key"] for spec in workspace.tab_specs()]
+        system_log_index = tab_keys.index("system_log")
+
+        workspace.activate_tab(system_log_index, reason="shell_nav")
+        _drain_qt_events(qt_application)
+
+        assert constructed == ["system_log"]
+        assert workspace.get_loaded_tab("system_log") is not None
+        assert workspace._last_system_log_shell_nav_load_at == 321.5
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
 def test_workspace_disables_foreign_block_autoload_for_noninteractive_probe(monkeypatch):
     ctor_kwargs = {}
 

@@ -226,6 +226,7 @@ class ClassicWorkspace(QWidget):
         self._background_prewarm_started = False
         self._pending_restore_index: int | None = None
         self._restore_last_tab_timer: QTimer | None = None
+        self._last_system_log_shell_nav_load_at = 0.0
         self._copy_hook_refresh_queued = False
         self._workspace_event_bus = None
         self._workspace_events_connected = False
@@ -539,6 +540,8 @@ class ClassicWorkspace(QWidget):
         spec["loaded"] = True
         self._tabs_by_key[key] = widget
         setattr(self, spec["attr"], widget)
+        if key == "system_log" and load_reason == "shell_nav":
+            self._last_system_log_shell_nav_load_at = time.perf_counter()
         self._lazy_loading_keys.discard(key)
         ensure_polished = getattr(widget, "ensurePolished", None)
         if callable(ensure_polished):

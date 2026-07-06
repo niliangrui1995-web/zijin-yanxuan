@@ -149,6 +149,7 @@ class MainWindowQT(QMainWindow):
         self.startup_orchestrator = create_startup_orchestrator(self)
         self.cache_manager = CacheManager()
         self._f5_cancelled = False
+        self._f5_precompute_ui_grace_until = 0.0
         self._titlebar_sync_state = "idle"
         self._last_sync_freshness = ""
         self._command_palette = None
@@ -432,6 +433,12 @@ class MainWindowQT(QMainWindow):
         context = {"window": self.__class__.__name__}
         if tab_key:
             context["tab"] = tab_key
+        if tab_key == "system_log":
+            try:
+                if time.perf_counter() < float(getattr(self, "_f5_precompute_ui_grace_until", 0.0) or 0.0):
+                    context["background"] = "f5_precompute"
+            except (TypeError, ValueError):
+                pass
         tabs = getattr(self, "tabs", None)
         current_widget = None
         try:

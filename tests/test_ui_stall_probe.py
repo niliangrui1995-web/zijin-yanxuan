@@ -116,6 +116,63 @@ def test_ui_stall_probe_exposes_cumulative_stall_snapshot(monkeypatch, qt_applic
     probe.deleteLater()
 
 
+def test_ui_stall_probe_demotes_f5_background_system_log_event_loop(monkeypatch, qt_application):
+    logs = []
+    metrics = []
+    monkeypatch.setattr(probe_module, "emit_structured_log", lambda event, **kwargs: logs.append((event, kwargs)))
+    monkeypatch.setattr(
+        probe_module,
+        "record_metric",
+        lambda _metric, _value, **kwargs: metrics.append(kwargs),
+    )
+    probe = UiStallProbe(
+        thresholds=StallThresholds(warn_ms=50, critical_ms=100),
+        auto_start=False,
+    )
+
+    probe._record_stall(
+        "ui.stall.event_loop",
+        250,
+        context={"tab": "system_log", "background": "f5_precompute"},
+        metric_name="ui_event_loop_stall_ms",
+        extra={"event_loop_gap_ms": 275},
+    )
+
+    assert logs[0][0] == "ui.stall.event_loop"
+    assert logs[0][1]["level"] == "info"
+    assert logs[0][1]["severity"] == "warn"
+    assert logs[0][1]["demoted_from_severity"] == "critical"
+    assert metrics[0]["tags"]["severity"] == "warn"
+    snapshot = probe.stall_snapshot()
+    assert snapshot["event_loop_count"] == 1
+    assert snapshot["event_loop_critical_count"] == 0
+    assert snapshot["critical_count"] == 0
+    probe.deleteLater()
+
+
+def test_ui_stall_probe_keeps_foreground_system_log_event_loop_critical(monkeypatch, qt_application):
+    logs = []
+    monkeypatch.setattr(probe_module, "emit_structured_log", lambda event, **kwargs: logs.append((event, kwargs)))
+    monkeypatch.setattr(probe_module, "record_metric", lambda *args, **kwargs: None)
+    probe = UiStallProbe(
+        thresholds=StallThresholds(warn_ms=50, critical_ms=100),
+        auto_start=False,
+    )
+
+    probe._record_stall(
+        "ui.stall.event_loop",
+        250,
+        context={"tab": "system_log"},
+        metric_name="ui_event_loop_stall_ms",
+    )
+
+    assert logs[0][1]["level"] == "warning"
+    assert logs[0][1]["severity"] == "critical"
+    assert "demoted_from_severity" not in logs[0][1]
+    assert probe.stall_snapshot()["event_loop_critical_count"] == 1
+    probe.deleteLater()
+
+
 def test_ui_stall_probe_stop_and_context_provider_error(qt_application):
     probe = UiStallProbe(
         thresholds=StallThresholds(warn_ms=50, critical_ms=100),

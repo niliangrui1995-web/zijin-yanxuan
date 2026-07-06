@@ -2,7 +2,7 @@
 from types import SimpleNamespace
 
 from PyQt6.QtTest import QSignalSpy
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QWidget
 
 from core.event_bus import event_bus
 from ui.main_window_qt import MainWindowQT
@@ -14,6 +14,27 @@ class _DummyLabel:
 
     def setText(self, value):
         self.text = value
+
+
+def test_main_window_ui_stall_context_marks_f5_background_on_system_log(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    widget = QWidget()
+    dummy_window = SimpleNamespace(
+        _current_workspace_tab_key=lambda: "system_log",
+        _f5_precompute_ui_grace_until=105.0,
+        tabs=SimpleNamespace(currentWidget=lambda: widget),
+    )
+    monkeypatch.setattr("ui.main_window_qt.time.perf_counter", lambda: 100.0)
+
+    try:
+        context = MainWindowQT._ui_stall_context(dummy_window)
+
+        assert app is not None
+        assert context["tab"] == "system_log"
+        assert context["background"] == "f5_precompute"
+        assert context["widget"] == "QWidget"
+    finally:
+        widget.deleteLater()
 
 
 def test_main_window_f5_done_refreshes_snapshot_and_emits_cache_reload_completed(monkeypatch):

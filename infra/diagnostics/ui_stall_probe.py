@@ -159,14 +159,18 @@ class UiStallProbe(QObject):
         extra: dict | None = None,
     ) -> None:
         severity = "critical" if elapsed_ms >= self.thresholds.critical_ms else "warn"
+        context_fields = _merge_context(context)
+        severity, demoted_from = self._resolve_severity(event, severity, context_fields)
         self._record_stall_stats(event, elapsed_ms, severity)
         fields = {
             "elapsed_ms": round(float(elapsed_ms), 3),
             "threshold_ms": self.thresholds.critical_ms if severity == "critical" else self.thresholds.warn_ms,
             "severity": severity,
-            **_merge_context(context),
+            **context_fields,
             **(extra or {}),
         }
+        if demoted_from:
+            fields["demoted_from_severity"] = demoted_from
         emit_structured_log(
             event,
             logger=log,
@@ -195,6 +199,17 @@ class UiStallProbe(QObject):
             self._stall_counts["critical_count"] += 1
             self._stall_counts[f"{event_type}_critical_count"] += 1
         self._max_elapsed_ms = max(float(self._max_elapsed_ms), float(elapsed_ms))
+
+    @staticmethod
+    def _resolve_severity(event: str, severity: str, context: dict[str, str]) -> tuple[str, str]:
+        if (
+            event == "ui.stall.event_loop"
+            and severity == "critical"
+            and context.get("tab") == "system_log"
+            and context.get("background") == "f5_precompute"
+        ):
+            return "warn", "critical"
+        return severity, ""
 
 
 def install_ui_stall_probe(
