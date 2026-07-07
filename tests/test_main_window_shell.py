@@ -233,6 +233,23 @@ class ActivatingGroupedWorkspace(DummyGroupedWorkspace):
         return True
 
 
+class RebuildAwareWorkspace(DummyGroupedWorkspace):
+    def __init__(self):
+        self.prepared = []
+
+    def prepare_shell_group_rebuild_navigation(self, *, interval_ms: int = 0) -> None:
+        self.prepared.append(interval_ms)
+
+
+class TransitionAwareTabs(QTabWidget):
+    def __init__(self):
+        super().__init__()
+        self.suspended = []
+
+    def suspendTransitionsFor(self, interval_ms: int) -> None:  # noqa: N802 - Qt API naming
+        self.suspended.append(interval_ms)
+
+
 def test_shell_navigation_widget_restores_last_subtab_per_group():
     tabs = QTabWidget()
     nav = ShellNavigationWidget()
@@ -259,6 +276,28 @@ def test_shell_navigation_widget_restores_last_subtab_per_group():
 
         nav._switch_group("情报源")
         assert tabs.currentIndex() == 3
+    finally:
+        nav.deleteLater()
+        tabs.deleteLater()
+
+
+def test_shell_navigation_widget_quiets_workspace_during_group_rebuild():
+    tabs = TransitionAwareTabs()
+    nav = ShellNavigationWidget()
+    workspace = RebuildAwareWorkspace()
+    try:
+        tabs.addTab(QWidget(), "Scan")
+        tabs.addTab(QWidget(), "Watch")
+        tabs.addTab(QWidget(), "NA")
+        tabs.addTab(QWidget(), "Asia")
+
+        nav.bind_workspace(workspace, tabs)
+        _, second_group = list(DummyGroupedWorkspace.tab_indices_by_group())
+        nav._switch_group(second_group)
+
+        assert tabs.suspended[-1] == ShellNavigationWidget.GROUP_REBUILD_TRANSITION_SUSPEND_MS
+        assert workspace.prepared[-1] == ShellNavigationWidget.GROUP_REBUILD_TRANSITION_SUSPEND_MS
+        assert tabs.currentIndex() == 2
     finally:
         nav.deleteLater()
         tabs.deleteLater()

@@ -42,6 +42,7 @@ GLOBAL_EARNINGS_CALENDAR_SYNC_TASK_ID = task_registry.network(
 GLOBAL_EARNINGS_CALENDAR_SYNC_TIMEOUT_SEC = 30
 GLOBAL_EARNINGS_CALENDAR_SYNC_RETRY_DELAY_MS = 15 * 60 * 1000
 GLOBAL_EARNINGS_CALENDAR_SYNC_ACTIVE_MAX_RETRY_DELAY_MS = 60 * 60 * 1000
+GLOBAL_EARNINGS_CALENDAR_SYNC_OFFPEAK_STALE_CACHE_MIN_RETRY_DELAY_MS = 2 * 60 * 60 * 1000
 GLOBAL_EARNINGS_CALENDAR_SYNC_OFFPEAK_MAX_RETRY_DELAY_MS = 4 * 60 * 60 * 1000
 GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_HOUR = 2
 GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_MINUTE = 0
@@ -221,11 +222,14 @@ def _global_earnings_calendar_retry_delay_ms(
     failures = max(1, int(consecutive_failures or 1))
     exponent = min(4, failures - 1)
     delay_ms = GLOBAL_EARNINGS_CALENDAR_SYNC_RETRY_DELAY_MS * (2**exponent)
-    max_delay_ms = (
-        GLOBAL_EARNINGS_CALENDAR_SYNC_OFFPEAK_MAX_RETRY_DELAY_MS
-        if cache_events > 0 and _is_global_earnings_calendar_offpeak(now)
-        else GLOBAL_EARNINGS_CALENDAR_SYNC_ACTIVE_MAX_RETRY_DELAY_MS
-    )
+    if cache_events > 0 and _is_global_earnings_calendar_offpeak(now):
+        delay_ms = max(
+            delay_ms,
+            GLOBAL_EARNINGS_CALENDAR_SYNC_OFFPEAK_STALE_CACHE_MIN_RETRY_DELAY_MS,
+        )
+        max_delay_ms = GLOBAL_EARNINGS_CALENDAR_SYNC_OFFPEAK_MAX_RETRY_DELAY_MS
+    else:
+        max_delay_ms = GLOBAL_EARNINGS_CALENDAR_SYNC_ACTIVE_MAX_RETRY_DELAY_MS
     return min(delay_ms, max_delay_ms)
 
 

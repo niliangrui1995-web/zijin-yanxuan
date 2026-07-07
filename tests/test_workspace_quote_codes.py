@@ -1564,6 +1564,93 @@ def test_workspace_shell_activation_bypasses_startup_raw_tab_switch_guard(monkey
         workspace.deleteLater()
 
 
+def test_workspace_shell_group_rebuild_defers_lazy_load_without_changing_tab_delays(monkeypatch, qt_application):
+    constructed = []
+    ctor_kwargs = {}
+    _patch_lightweight_workspace_tabs(monkeypatch, constructed, ctor_kwargs)
+
+    workspace = classic_workspace_module.ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+    )
+    try:
+        tab_keys = [spec["key"] for spec in workspace.tab_specs()]
+        fund_index = tab_keys.index("fund_holdings")
+        scheduled = []
+        monkeypatch.setattr(
+            classic_workspace_module.QTimer,
+            "singleShot",
+            lambda delay, callback: scheduled.append((delay, callback)),
+        )
+
+        workspace.prepare_shell_group_rebuild_navigation(interval_ms=5000)
+        workspace.activate_tab(fund_index, reason="shell_nav")
+
+        assert constructed == []
+        assert scheduled[0][0] == classic_workspace_module.ClassicWorkspace.SHELL_GROUP_REBUILD_LOAD_DELAY_MS
+
+        scheduled.pop(0)[1]()
+
+        assert constructed == ["fund_holdings"]
+        assert ctor_kwargs["fund_holdings"]["initial_load_delay_ms"] == (
+            classic_workspace_module.ClassicWorkspace.FIRST_VISIBLE_TAB_WORK_DELAY_MS
+        )
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_workspace_shell_group_rebuild_delays_activation_callback_and_skips_stale_tab(
+    monkeypatch,
+    qt_application,
+):
+    activated = []
+
+    class _WatchlistTab(QWidget):
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+
+    class _LhbTab(QWidget):
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+
+        def on_workspace_tab_activated(self):
+            activated.append("lhb")
+
+    monkeypatch.setattr(classic_workspace_module, "WatchlistTab", _WatchlistTab)
+    monkeypatch.setattr(classic_workspace_module, "LhbTab", _LhbTab)
+
+    workspace = classic_workspace_module.ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+    )
+    try:
+        widget = workspace.ensure_tab_loaded("lhb", reason="background_prewarm")
+        lhb_index = next(index for index, spec in enumerate(workspace.tab_specs()) if spec.get("key") == "lhb")
+        scheduled = []
+        monkeypatch.setattr(
+            classic_workspace_module.QTimer,
+            "singleShot",
+            lambda delay, callback: scheduled.append((delay, callback)),
+        )
+
+        workspace.prepare_shell_group_rebuild_navigation(interval_ms=5000)
+        workspace.tabs.setCurrentIndex(lhb_index)
+
+        assert workspace.tabs.currentWidget() is widget
+        assert scheduled[0][0] == classic_workspace_module.ClassicWorkspace.SHELL_GROUP_REBUILD_ACTIVATION_DELAY_MS
+
+        workspace.tabs.setCurrentIndex(0)
+        scheduled[0][1]()
+
+        assert activated == []
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
 def test_workspace_marks_system_log_shell_nav_load_for_f5_grace(monkeypatch, qt_application):
     constructed = []
     _patch_lightweight_workspace_tabs(monkeypatch, constructed)

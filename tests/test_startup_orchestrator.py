@@ -20,6 +20,7 @@ from core.startup_orchestrator import (
     DEFERRED_LOAD_TASK_ID,
     GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_HOUR,
     GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_MINUTE,
+    GLOBAL_EARNINGS_CALENDAR_SYNC_OFFPEAK_STALE_CACHE_MIN_RETRY_DELAY_MS,
     GLOBAL_EARNINGS_CALENDAR_SYNC_RETRY_DELAY_MS,
     GLOBAL_EARNINGS_CALENDAR_SYNC_TASK_ID,
     GLOBAL_EARNINGS_CALENDAR_SYNC_TIMEOUT_SEC,
@@ -806,6 +807,7 @@ def test_startup_orchestrator_global_earnings_retryable_degraded_rearms_soon(mon
             "reused_event_count": 82,
         },
     )
+    monkeypatch.setattr(startup_module, "_is_global_earnings_calendar_offpeak", lambda now=None: False)
 
     orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
     try:
@@ -841,6 +843,7 @@ def test_startup_orchestrator_global_earnings_failure_logs_detail_and_retries(mo
         )
 
     monkeypatch.setattr("core.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess", fake_refresh)
+    monkeypatch.setattr(startup_module, "_is_global_earnings_calendar_offpeak", lambda now=None: False)
     monkeypatch.setattr("core.startup_orchestrator.log", _FakeLog())
     monkeypatch.setattr("core.startup_orchestrator.log_process_snapshot", lambda *_args, **_kwargs: None)
 
@@ -879,6 +882,7 @@ def test_startup_orchestrator_global_earnings_timeout_marks_degraded_cache_and_r
 
     monkeypatch.setattr("core.startup_orchestrator._run_global_earnings_calendar_refresh_subprocess", fake_refresh)
     monkeypatch.setattr("core.startup_orchestrator._mark_global_earnings_calendar_refresh_degraded", fake_mark)
+    monkeypatch.setattr(startup_module, "_is_global_earnings_calendar_offpeak", lambda now=None: False)
 
     orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
     spy = QSignalSpy(event_bus.sig_earnings_updated)
@@ -893,7 +897,7 @@ def test_startup_orchestrator_global_earnings_timeout_marks_degraded_cache_and_r
         orchestrator.shutdown()
 
 
-def test_startup_orchestrator_global_earnings_timeout_retry_backoff_resets_after_success(monkeypatch):
+def test_startup_orchestrator_global_earnings_timeout_offpeak_stale_cache_backoff_resets_after_success(monkeypatch):
     outcomes = ["timeout", "timeout", "success", "timeout"]
     marks = []
 
@@ -936,20 +940,20 @@ def test_startup_orchestrator_global_earnings_timeout_retry_backoff_resets_after
         orchestrator.refresh_global_earnings_calendar()
         assert (
             orchestrator._global_earnings_calendar_daily_timer.interval()
-            == GLOBAL_EARNINGS_CALENDAR_SYNC_RETRY_DELAY_MS
+            == GLOBAL_EARNINGS_CALENDAR_SYNC_OFFPEAK_STALE_CACHE_MIN_RETRY_DELAY_MS
         )
 
         orchestrator.refresh_global_earnings_calendar()
         assert (
             orchestrator._global_earnings_calendar_daily_timer.interval()
-            == GLOBAL_EARNINGS_CALENDAR_SYNC_RETRY_DELAY_MS * 2
+            == GLOBAL_EARNINGS_CALENDAR_SYNC_OFFPEAK_STALE_CACHE_MIN_RETRY_DELAY_MS
         )
 
         orchestrator.refresh_global_earnings_calendar()
         orchestrator.refresh_global_earnings_calendar()
         assert (
             orchestrator._global_earnings_calendar_daily_timer.interval()
-            == GLOBAL_EARNINGS_CALENDAR_SYNC_RETRY_DELAY_MS
+            == GLOBAL_EARNINGS_CALENDAR_SYNC_OFFPEAK_STALE_CACHE_MIN_RETRY_DELAY_MS
         )
         assert marks == [
             ("refresh_timeout", "TimeoutExpired"),

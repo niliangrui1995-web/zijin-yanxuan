@@ -156,6 +156,8 @@ class ClassicWorkspace(QWidget):
     STARTUP_RAW_TAB_SWITCH_GUARD_MS = 60_000
     FIRST_VISIBLE_TAB_WORK_DELAY_MS = 1800
     LHB_FIRST_VISIBLE_POOL_DELAY_MS = 5000
+    SHELL_GROUP_REBUILD_LOAD_DELAY_MS = 120
+    SHELL_GROUP_REBUILD_ACTIVATION_DELAY_MS = 250
     WATCHLIST_TAB_SWITCH_INDICATOR_DELAY_MS = FIRST_VISIBLE_TAB_WORK_DELAY_MS
     INTERACTIVE_LOAD_REASONS = frozenset(
         {
@@ -207,6 +209,7 @@ class ClassicWorkspace(QWidget):
         self._startup_last_allowed_index = -1
         self._startup_suppressed_tab_switch_keys: set[str] = set()
         self._pending_tab_activation_reasons: dict[int, str] = {}
+        self._shell_group_rebuild_quiet_until = 0.0
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -595,8 +598,36 @@ class ClassicWorkspace(QWidget):
         placeholder = spec.get("widget")
         if isinstance(placeholder, LazyTabPlaceholder):
             placeholder.set_loading()
-        QTimer.singleShot(0, lambda key=key, reason=reason: self.ensure_tab_loaded(key, reason=reason))
+        QTimer.singleShot(
+            self._lazy_tab_load_delay_ms(reason),
+            lambda key=key, reason=reason: self.ensure_tab_loaded(key, reason=reason),
+        )
         return True
+
+    def prepare_shell_group_rebuild_navigation(self, *, interval_ms: int = 0) -> None:
+        try:
+            interval = max(0, int(interval_ms or 0))
+        except (TypeError, ValueError):
+            interval = 0
+        if interval <= 0:
+            return
+        self._shell_group_rebuild_quiet_until = max(
+            float(getattr(self, "_shell_group_rebuild_quiet_until", 0.0) or 0.0),
+            time.perf_counter() + interval / 1000.0,
+        )
+
+    def _is_shell_group_rebuild_quiet_window(self) -> bool:
+        return time.perf_counter() < float(getattr(self, "_shell_group_rebuild_quiet_until", 0.0) or 0.0)
+
+    def _lazy_tab_load_delay_ms(self, reason: str) -> int:
+        if str(reason or "").strip() == "shell_nav" and self._is_shell_group_rebuild_quiet_window():
+            return self.SHELL_GROUP_REBUILD_LOAD_DELAY_MS
+        return 0
+
+    def _activation_callback_delay_ms(self) -> int:
+        if self._is_shell_group_rebuild_quiet_window():
+            return self.SHELL_GROUP_REBUILD_ACTIVATION_DELAY_MS
+        return 0
 
     def _restore_startup_allowed_tab_after_suppressed_switch(self, key: str) -> None:
         restore_index = self._startup_last_allowed_index
@@ -770,7 +801,17 @@ class ClassicWorkspace(QWidget):
     def _notify_tab_activated(self, _key: str, widget) -> None:
         callback = getattr(widget, "on_workspace_tab_activated", None)
         if callable(callback):
-            QTimer.singleShot(0, callback)
+            def _run_if_current(widget=widget, callback=callback) -> None:
+                current_widget = getattr(self.tabs, "currentWidget", None)
+                if callable(current_widget):
+                    try:
+                        if current_widget() is not widget:
+                            return
+                    except (AttributeError, RuntimeError, TypeError, ValueError):
+                        return
+                callback()
+
+            QTimer.singleShot(self._activation_callback_delay_ms(), _run_if_current)
 
     def tab_specs(self) -> list[dict]:
         return list(self._tab_specs)

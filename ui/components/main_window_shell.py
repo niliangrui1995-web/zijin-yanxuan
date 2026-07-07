@@ -496,6 +496,8 @@ class MainWindowStatusBar(QFrame):
 class ShellNavigationWidget(QWidget):
     """标题栏一级导航 + 二级标签导航。"""
 
+    GROUP_REBUILD_TRANSITION_SUSPEND_MS = 5_000
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -612,6 +614,8 @@ class ShellNavigationWidget(QWidget):
             or not self._tabbar_matches_indices(indices)
         )
         self._remember_group_index(group, target_index)
+        if needs_rebuild:
+            self._prepare_group_rebuild_navigation()
 
         self._syncing = True
         previous_signal_state = self.tabbar.blockSignals(True)
@@ -698,6 +702,22 @@ class ShellNavigationWidget(QWidget):
         if tab_index not in self._group_to_indices.get(group, []):
             return
         self._last_index_by_group[group] = tab_index
+
+    def _prepare_group_rebuild_navigation(self) -> None:
+        interval_ms = self.GROUP_REBUILD_TRANSITION_SUSPEND_MS
+        suspend_transitions = getattr(self._tabs, "suspendTransitionsFor", None)
+        if callable(suspend_transitions):
+            try:
+                suspend_transitions(interval_ms)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                pass
+
+        prepare_workspace = getattr(self._workspace, "prepare_shell_group_rebuild_navigation", None)
+        if callable(prepare_workspace):
+            try:
+                prepare_workspace(interval_ms=interval_ms)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                pass
 
     def sync_from_current_tab(self, tab_index: int) -> None:
         group = self._find_group_for_index(tab_index)
