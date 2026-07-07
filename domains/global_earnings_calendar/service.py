@@ -113,6 +113,8 @@ from domains.global_earnings_calendar.rules import (
 from domains.global_earnings_calendar.storage import ConfirmedEarningsEventsProvider
 
 log = get_logger(__name__)
+EXCLUDED_OLIGARCH_TICKERS = {"6594.T"}
+EXCLUDED_OLIGARCH_COMPANIES = {"Nidec"}
 
 
 def _ensure_industry_module_path() -> None:
@@ -155,6 +157,8 @@ def build_oligarch_universe(industry_module=None) -> dict[str, OligarchCompany]:
         if not ticker_text:
             continue
         company_text = str(company or "").strip()
+        if company_text in EXCLUDED_OLIGARCH_COMPANIES or ticker_text in EXCLUDED_OLIGARCH_TICKERS:
+            continue
         if company_text in super_giants:
             priority = "super_giant"
         elif company_text in strategic_giants:

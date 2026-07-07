@@ -77,6 +77,20 @@ def test_build_oligarch_universe_classifies_cross_market_suffixes():
     assert universe["8035.T"].market == "JP"
 
 
+def test_build_oligarch_universe_excludes_nidec():
+    module = SimpleNamespace(
+        OLIGARCH_DICT={"AI PCB设备与关键耗材": ["Nidec Advance Technology", "SCREEN Holdings"]},
+        VANGUARD_TICKERS={"Nidec": "6594.T", "SCREEN Holdings": "7735.T"},
+        SUPER_GIANTS=set(),
+        STRATEGIC_GIANTS=set(),
+    )
+
+    universe = build_oligarch_universe(module)
+
+    assert "6594.T" not in universe
+    assert universe["7735.T"].company == "SCREEN Holdings"
+
+
 def test_alpha_vantage_provider_filters_universe_and_sorts():
     csv_text = (
         "symbol,name,reportDate,fiscalDateEnding,estimate,currency\n"

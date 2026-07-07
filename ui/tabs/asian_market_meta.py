@@ -10,6 +10,7 @@ from core.logger import get_logger
 log = get_logger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _PIPELINE_INDUSTRY_DICT = _PROJECT_ROOT.parent / "每日战报" / "每日战报" / "industry_dict.py"
+_EXCLUDED_ASIAN_TICKERS = {"6594.T"}
 
 
 def get_role_mapping():
@@ -50,7 +51,6 @@ def get_role_mapping():
         "5201.T": "头部｜玻璃/CPO材料",
         "6981.T": "龙头｜MLCC被动元件",
         "7735.T": "头部｜PCB直接成像",
-        "6594.T": "头部｜PCB电测检测",
         "6113.T": "头部｜PCB激光钻孔",
         "6278.T": "龙头｜PCB精密微钻",
         "6925.T": "头部｜PCB曝光光源",
@@ -79,6 +79,8 @@ def get_role_mapping():
                     match = re.search(r"\"([A-Z0-9\.]+)\"", line)
                     if match:
                         code = match.group(1)
+                        if code in _EXCLUDED_ASIAN_TICKERS:
+                            continue
                         if code not in roles_mapping:
                             comment = line.split("#")[-1].strip()
                             role_match = re.search(r"[(（](.*?)[)）]", comment)
@@ -104,7 +106,6 @@ def get_ch_names_mapping() -> dict:
         "5201.T": "旭硝子",
         "6981.T": "村田制作所",
         "7735.T": "SCREEN",
-        "6594.T": "尼得科",
         "6113.T": "天田",
         "6278.T": "Union Tool",
         "6925.T": "牛尾电机",

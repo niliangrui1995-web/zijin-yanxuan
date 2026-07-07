@@ -110,7 +110,6 @@ ASIAN_LOCAL_TICKER_OVERRIDES = {
     "Shin-Etsu": "4063.T",
     "SUMCO": "3436.T",
     "SCREEN Holdings": "7735.T",
-    "Nidec": "6594.T",
     "AMADA": "6113.T",
     "Union Tool": "6278.T",
     "Ushio": "6925.T",
@@ -129,7 +128,6 @@ ASIAN_LOCAL_TRACK_OVERRIDES = {
     "4063.T": "关键晶圆材料与特种工艺",
     "3436.T": "关键晶圆材料与特种工艺",
     "7735.T": "AI PCB设备与关键耗材",
-    "6594.T": "AI PCB设备与关键耗材",
     "6113.T": "AI PCB设备与关键耗材",
     "6278.T": "AI PCB设备与关键耗材",
     "6925.T": "AI PCB设备与关键耗材",
@@ -140,6 +138,8 @@ ASIAN_LOCAL_TRACK_OVERRIDES = {
     "011790.KS": "IC载板与封装材料",
     "6981.T": "数据中心电力与配电",
 }
+ASIAN_EXCLUDED_TICKERS = {"6594.T"}
+ASIAN_EXCLUDED_COMPANIES = {"Nidec"}
 
 _ALNUM_RE = re.compile(r"[a-z0-9]+")
 _NUMERIC_TOKEN_RE = re.compile(r"[-+]?\d+(?:,\d{3})*(?:\.\d+)?")
@@ -200,7 +200,14 @@ def _get_asian_source_tickers() -> dict[str, str]:
     _ensure_industry_mappings_loaded()
     tickers = dict(VANGUARD_TICKERS)
     tickers.update(ASIAN_LOCAL_TICKER_OVERRIDES)
-    return tickers
+    excluded_companies = {name.lower() for name in ASIAN_EXCLUDED_COMPANIES}
+    excluded_tickers = {ticker.upper() for ticker in ASIAN_EXCLUDED_TICKERS}
+    return {
+        name: ticker
+        for name, ticker in tickers.items()
+        if str(name).strip().lower() not in excluded_companies
+        and str(ticker).strip().upper() not in excluded_tickers
+    }
 
 
 def _get_market_suffix(ticker: str) -> str | None:

@@ -91,7 +91,6 @@ def test_filter_asian_tickers_includes_ai_pcb_equipment_japan_names(monkeypatch)
     assert tickers["Shin-Etsu"] == "4063.T"
     assert tickers["SUMCO"] == "3436.T"
     assert tickers["SCREEN Holdings"] == "7735.T"
-    assert tickers["Nidec"] == "6594.T"
     assert tickers["AMADA"] == "6113.T"
     assert tickers["Union Tool"] == "6278.T"
     assert tickers["Ushio"] == "6925.T"
@@ -100,6 +99,24 @@ def test_filter_asian_tickers_includes_ai_pcb_equipment_japan_names(monkeypatch)
     assert tickers["Fujikura"] == "5803.T"
     assert tickers["SKC"] == "011790.KS"
     assert tickers["Murata"] == "6981.T"
+    assert "Nidec" not in tickers
+    assert "6594.T" not in tickers.values()
+
+
+def test_filter_asian_tickers_excludes_nidec_from_upstream_industry_dict(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    monkeypatch.setattr(
+        fetcher,
+        "VANGUARD_TICKERS",
+        {"Nidec": "6594.T", "SCREEN Holdings": "7735.T"},
+        raising=False,
+    )
+
+    tickers = fetcher.filter_asian_tickers()
+
+    assert tickers["SCREEN Holdings"] == "7735.T"
+    assert "Nidec" not in tickers
+    assert "6594.T" not in tickers.values()
 
 
 def test_find_track_works_with_local_tsmc_tw_override(monkeypatch):
@@ -147,7 +164,7 @@ def test_find_track_uses_local_track_override_for_ai_pcb_equipment(monkeypatch):
     monkeypatch.setattr(fetcher, "VANGUARD_TICKERS", {}, raising=False)
     monkeypatch.setattr(fetcher, "OLIGARCH_DICT", {}, raising=False)
 
-    for ticker in ["7735.T", "6594.T", "6113.T", "6278.T", "6925.T"]:
+    for ticker in ["7735.T", "6113.T", "6278.T", "6925.T"]:
         assert fetcher._find_track(ticker) == "AI PCB设备与关键耗材"
 
 
@@ -196,7 +213,6 @@ def test_asian_market_meta_labels_ai_pcb_equipment_names_and_roles():
     roles = get_role_mapping()
 
     assert names["7735.T"] == "SCREEN"
-    assert names["6594.T"] == "尼得科"
     assert names["6113.T"] == "天田"
     assert names["6278.T"] == "Union Tool"
     assert names["6925.T"] == "牛尾电机"
@@ -211,8 +227,8 @@ def test_asian_market_meta_labels_ai_pcb_equipment_names_and_roles():
     assert names["3324.TWO"] == "双鸿"
     assert names["3017.TW"] == "奇鋐"
     assert names["2316.TW"] == "楠梓电"
+    assert "6594.T" not in names
     assert roles["7735.T"] == "头部｜PCB直接成像"
-    assert roles["6594.T"] == "头部｜PCB电测检测"
     assert roles["6113.T"] == "头部｜PCB激光钻孔"
     assert roles["6278.T"] == "龙头｜PCB精密微钻"
     assert roles["6925.T"] == "头部｜PCB曝光光源"
@@ -228,6 +244,7 @@ def test_asian_market_meta_labels_ai_pcb_equipment_names_and_roles():
     assert roles["3324.TWO"] == "头部｜服务器散热模组"
     assert roles["3017.TW"] == "龙头｜服务器液冷模组"
     assert roles["2316.TW"] == "二线｜AI高速PCB弹性"
+    assert "6594.T" not in roles
 
 
 def test_asian_market_meta_roles_cover_asian_universe_with_rank_labels(monkeypatch):
