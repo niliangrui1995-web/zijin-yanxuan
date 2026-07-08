@@ -13,6 +13,18 @@ class _FakeQ2Date(real_date):
         return cls(2026, 5, 10)
 
 
+class _FakeQ3BeforeQ2DisclosureDate(real_date):
+    @classmethod
+    def today(cls):
+        return cls(2026, 7, 9)
+
+
+class _FakeQ3AfterQ2DisclosureDate(real_date):
+    @classmethod
+    def today(cls):
+        return cls(2026, 9, 1)
+
+
 class _FakeQ1Date(real_date):
     @classmethod
     def today(cls):
@@ -130,6 +142,86 @@ def test_sync_qfii_writes_only_available_payloads_with_meta(monkeypatch):
     assert set(available_payloads) == {"2025Q4"}
     assert len(available_payloads["2025Q4"]["snapshots"]) == 1
     assert meta["raw_counts"] == {"2025Q4": 1, "2025Q3": 0}
+
+
+def test_sync_qfii_auto_skips_and_clears_quarters_before_disclosure_deadline(monkeypatch):
+    payloads = {
+        "2026Q3": {
+            "quarter_key": "2026Q3",
+            "end_date": "2026-09-30",
+            "raw_rows": [],
+        },
+        "2026Q2": {
+            "quarter_key": "2026Q2",
+            "end_date": "2026-06-30",
+            "raw_rows": [
+                {
+                    "SECURITY_CODE": "000001",
+                    "SECURITY_NAME_ABBR": "Ping An",
+                    "HOLDER_NAME": "Holder A",
+                    "HOLD_NUM": 1000,
+                    "HOLDER_MARKET_CAP": 2000,
+                    "FREE_HOLDNUM_RATIO": 0.5,
+                    "HOLD_RATIO": 0.1,
+                    "UPDATE_DATE": "2026-07-03",
+                }
+            ],
+        },
+    }
+    monkeypatch.setattr(sync_module, "date", _FakeQ3BeforeQ2DisclosureDate)
+    monkeypatch.setattr(sync_module, "_candidate_qfii_payloads", lambda quarter_key=None: (payloads, "2026Q3"))
+    store = _RecordingStore()
+
+    result = sync_module.FundHoldingsSyncService(store=store).sync_qfii()
+
+    assert result["resolved_quarter_key"] == "2026Q3"
+    assert result["raw_count"] == 0
+    assert result["snapshot_count"] == 0
+    _subject, stored_payloads = store.qfii_calls[0][0][:2]
+    meta = store.qfii_calls[0][1]["payload_meta"]
+    assert set(stored_payloads) == {"2026Q2"}
+    assert stored_payloads["2026Q2"]["raw_rows"] == []
+    assert meta["available_quarters"] == []
+    assert meta["skipped_quarters"] == {"2026Q2": "2026-08-31"}
+    assert meta["raw_counts"] == {"2026Q3": 0, "2026Q2": 1}
+
+
+def test_sync_qfii_auto_keeps_quarter_after_disclosure_deadline(monkeypatch):
+    payloads = {
+        "2026Q3": {
+            "quarter_key": "2026Q3",
+            "end_date": "2026-09-30",
+            "raw_rows": [],
+        },
+        "2026Q2": {
+            "quarter_key": "2026Q2",
+            "end_date": "2026-06-30",
+            "raw_rows": [
+                {
+                    "SECURITY_CODE": "000001",
+                    "SECURITY_NAME_ABBR": "Ping An",
+                    "HOLDER_NAME": "Holder A",
+                    "HOLD_NUM": 1000,
+                    "HOLDER_MARKET_CAP": 2000,
+                    "FREE_HOLDNUM_RATIO": 0.5,
+                    "HOLD_RATIO": 0.1,
+                    "UPDATE_DATE": "2026-09-01",
+                }
+            ],
+        },
+    }
+    monkeypatch.setattr(sync_module, "date", _FakeQ3AfterQ2DisclosureDate)
+    monkeypatch.setattr(sync_module, "_candidate_qfii_payloads", lambda quarter_key=None: (payloads, "2026Q3"))
+    store = _RecordingStore()
+
+    sync_module.FundHoldingsSyncService(store=store).sync_qfii()
+
+    _subject, stored_payloads = store.qfii_calls[0][0][:2]
+    meta = store.qfii_calls[0][1]["payload_meta"]
+    assert set(stored_payloads) == {"2026Q2"}
+    assert len(stored_payloads["2026Q2"]["snapshots"]) == 1
+    assert meta["available_quarters"] == ["2026Q2"]
+    assert meta["skipped_quarters"] == {}
 
 
 def test_sync_ruiyuan_writes_snapshots_and_latest_all_combines_results(monkeypatch):

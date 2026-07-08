@@ -34,6 +34,11 @@ _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 _QFII_PAGE_SIZE = 500
 _QFII_MAX_PAGES = 20
 _QFII_MAX_ROWS = _QFII_PAGE_SIZE * _QFII_MAX_PAGES
+_QFII_DISCLOSURE_DEADLINE_BY_QUARTER = {
+    1: (4, 30),
+    2: (8, 31),
+    3: (10, 31),
+}
 
 _RUIYUAN_SECTION_RE = re.compile(
     r"(?P<header><h4 class='t'>.*?</h4>).*?(?P<table><table.*?</table>)",
@@ -252,6 +257,19 @@ def _empty_quarter_payload(quarter_key: str) -> dict:
     }
 
 
+def _qfii_quarter_disclosure_deadline(quarter_key: str) -> date:
+    year, quarter = quarter_parts(normalize_quarter_key(quarter_key))
+    if quarter == 4:
+        return date(year + 1, 4, 30)
+    month, day = _QFII_DISCLOSURE_DEADLINE_BY_QUARTER[quarter]
+    return date(year, month, day)
+
+
+def _qfii_quarter_disclosure_ready(quarter_key: str, as_of: date | None = None) -> bool:
+    check_date = as_of or date.today()
+    return check_date > _qfii_quarter_disclosure_deadline(quarter_key)
+
+
 def _candidate_qfii_payloads(target_quarter_key: str | None = None) -> tuple[dict[str, dict], str]:
     quarter_payloads: dict[str, dict] = {}
 
@@ -277,7 +295,18 @@ class FundHoldingsSyncService:
 
     def sync_qfii(self, quarter_key: str | None = None) -> dict:
         quarter_payloads, resolved_quarter = _candidate_qfii_payloads(quarter_key)
-        available_payloads = {key: value for key, value in quarter_payloads.items() if value.get("raw_rows")}
+        skipped_quarters: dict[str, str] = {}
+        available_payloads: dict[str, dict] = {}
+        quarter_payloads_to_store: dict[str, dict] = {}
+        for key, value in quarter_payloads.items():
+            if not value.get("raw_rows"):
+                continue
+            if not quarter_key and not _qfii_quarter_disclosure_ready(key):
+                skipped_quarters[key] = _qfii_quarter_disclosure_deadline(key).isoformat()
+                quarter_payloads_to_store[key] = _empty_quarter_payload(key)
+                continue
+            available_payloads[key] = value
+            quarter_payloads_to_store[key] = value
         for payload in available_payloads.values():
             payload["snapshots"] = build_qfii_snapshots(
                 payload["raw_rows"],
@@ -293,10 +322,13 @@ class FundHoldingsSyncService:
         )
         if not quarter_key:
             message += "（固定抓取当季与上一季度）"
+            if skipped_quarters:
+                skipped = "、".join(sorted(skipped_quarters, key=quarter_sort_value, reverse=True))
+                message += f"；已跳过未到完整披露窗口的季度：{skipped}"
 
         self._store.replace_qfii_quarters(
             SUBJECT_QFII,
-            available_payloads,
+            quarter_payloads_to_store,
             sync_scope="current" if not quarter_key else "specific",
             requested_quarter_key=quarter_key,
             resolved_quarter_key=resolved_quarter,
@@ -304,6 +336,7 @@ class FundHoldingsSyncService:
             payload_meta={
                 "checked_quarters": list(quarter_payloads.keys()),
                 "available_quarters": sorted(available_payloads.keys(), key=quarter_sort_value, reverse=True),
+                "skipped_quarters": skipped_quarters,
                 "raw_counts": {key: len(value.get("raw_rows") or []) for key, value in quarter_payloads.items()},
             },
         )
