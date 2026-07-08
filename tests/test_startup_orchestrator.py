@@ -12,6 +12,7 @@ import core.startup_orchestrator as startup_module
 from core.event_bus import event_bus
 from core.startup_orchestrator import (
     ASIAN_DATA_SYNC_RUNTIME_DEFER_SEC,
+    ASIAN_DATA_SYNC_START_DELAY_MS,
     ASIAN_DATA_SYNC_TASK_ID,
     ASIAN_DATA_SYNC_TIME_BUDGET_SEC,
     ASIAN_DATA_SYNC_TIMEOUT_RUNTIME_BACKOFF_SEC,
@@ -229,6 +230,7 @@ def test_startup_orchestrator_asian_sync_uses_process_runner(monkeypatch):
     mw = _DummyMainWindow()
     orchestrator = StartupOrchestrator(mw, job_runner=runner)
     run_calls = []
+    delayed = []
 
     def fake_exists(path):
         path = str(path)
@@ -250,8 +252,15 @@ def test_startup_orchestrator_asian_sync_uses_process_runner(monkeypatch):
 
     monkeypatch.setattr("core.startup_orchestrator.os.path.exists", fake_exists)
     monkeypatch.setattr("core.startup_orchestrator.run_python_module", fake_run_python_module)
+    monkeypatch.setattr(
+        "core.startup_orchestrator.QTimer.singleShot",
+        lambda delay, callback: delayed.append((delay, callback)),
+    )
 
     orchestrator.deferred_data_load()
+
+    assert delayed and delayed[0][0] == ASIAN_DATA_SYNC_START_DELAY_MS
+    delayed.pop(0)[1]()
 
     assert run_calls, "expected asian sync subprocess to run"
     assert run_calls[0]["module_name"] == "vcp.fetchers.asian_kline_fetcher"
@@ -276,6 +285,7 @@ def test_startup_orchestrator_asian_sync_uses_process_runner(monkeypatch):
 def test_startup_orchestrator_asian_sync_timeout_extends_runtime_backoff(monkeypatch):
     mw = _DummyMainWindow()
     orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
+    delayed = []
 
     def fake_exists(path):
         path = str(path)
@@ -291,8 +301,14 @@ def test_startup_orchestrator_asian_sync_timeout_extends_runtime_backoff(monkeyp
     monkeypatch.setattr("core.startup_orchestrator.os.path.exists", fake_exists)
     monkeypatch.setattr("core.startup_orchestrator.run_python_module", fake_run_python_module)
     monkeypatch.setattr("core.startup_orchestrator.log_process_snapshot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "core.startup_orchestrator.QTimer.singleShot",
+        lambda delay, callback: delayed.append((delay, callback)),
+    )
 
     orchestrator.deferred_data_load()
+    assert delayed and delayed[0][0] == ASIAN_DATA_SYNC_START_DELAY_MS
+    delayed.pop(0)[1]()
 
     assert mw.asian_market_service.calls == [
         ("defer", ASIAN_DATA_SYNC_RUNTIME_DEFER_SEC, "startup_asian_sync"),

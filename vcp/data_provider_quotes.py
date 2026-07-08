@@ -12,6 +12,40 @@ from infra.http_safety import urlopen_https
 log = get_logger(__name__)
 
 
+_EASTMONEY_EDGE_FAILURE_TOKENS = (
+    "remote end closed connection without response",
+    "connection aborted",
+    "connection reset",
+    "unexpected eof",
+    "badstatusline",
+    "10053",
+    "10054",
+    "http error 502",
+    "bad gateway",
+    "handshake operation timed out",
+    "read operation timed out",
+    "timed out",
+)
+
+
+def _is_eastmoney_edge_failure(exc_or_text) -> bool:
+    if isinstance(exc_or_text, BaseException):
+        text_parts = [str(exc_or_text or "").strip()]
+        reason = getattr(exc_or_text, "reason", None)
+        if reason:
+            text_parts.append(str(reason).strip())
+        if getattr(exc_or_text, "__cause__", None):
+            text_parts.append(str(exc_or_text.__cause__).strip())
+        if getattr(exc_or_text, "__context__", None):
+            text_parts.append(str(exc_or_text.__context__).strip())
+        text = " | ".join(part for part in text_parts if part)
+    else:
+        text = str(exc_or_text or "").strip()
+
+    normalized = " ".join(text.lower().split())
+    return bool(normalized) and any(token in normalized for token in _EASTMONEY_EDGE_FAILURE_TOKENS)
+
+
 def ensure_eastmoney_quote_state(provider) -> None:
     if not hasattr(provider, "_rt_eastmoney_cooldown_until"):
         provider._rt_eastmoney_cooldown_until = 0.0
@@ -183,7 +217,12 @@ def request_eastmoney_quote_batch(provider, codes, inferred_trade_date: str):
             return quotes
         except (AttributeError, json.JSONDecodeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
             last_error = exc
+            fast_fail_edge_error = bool(getattr(provider, "_rt_eastmoney_fast_fail_on_edge_error", False)) and (
+                _is_eastmoney_edge_failure(exc)
+            )
             log.debug(f"[实时报价] 东方财富主机 {host} 失败: {exc}")
+            if fast_fail_edge_error:
+                break
 
     if last_error is not None:
         raise last_error

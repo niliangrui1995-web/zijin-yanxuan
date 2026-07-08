@@ -28,6 +28,7 @@ log = get_logger(__name__)
 MAX_CHART_WINDOWS = 5
 PREWARM_VIEW_TTL_MS = 120_000
 WEBENGINE_PREFLIGHT_TIMEOUT_S = 8
+WEBENGINE_PREFLIGHT_STARTUP_DELAY_MS = 8000
 HIDDEN_PREWARM_ENV = "VCP_KLINE_HIDDEN_PREWARM"
 
 
@@ -82,7 +83,7 @@ class KLineWindowManager:
     def prewarm(
         self,
         *,
-        delay_ms: int = 2500,
+        delay_ms: int = WEBENGINE_PREFLIGHT_STARTUP_DELAY_MS,
         ttl_ms: int = PREWARM_VIEW_TTL_MS,
         hidden_view: bool | None = None,
     ) -> bool:

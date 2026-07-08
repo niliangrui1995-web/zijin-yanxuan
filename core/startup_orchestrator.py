@@ -30,6 +30,7 @@ from infra.tasks import (
 log = get_logger(__name__)
 ASIAN_DATA_SYNC_TIME_BUDGET_SEC = 20
 ASIAN_DATA_SYNC_TIMEOUT_SEC = 30
+ASIAN_DATA_SYNC_START_DELAY_MS = 8500
 ASIAN_DATA_SYNC_RUNTIME_DEFER_SEC = ASIAN_DATA_SYNC_TIMEOUT_SEC + 15
 ASIAN_DATA_SYNC_TIMEOUT_RUNTIME_BACKOFF_SEC = 10 * 60
 DEFERRED_LOAD_TASK_ID = STARTUP_DEFERRED_LOAD.task_id
@@ -537,6 +538,17 @@ class StartupOrchestrator:
     def _defer_asian_market_auto_refresh(self, seconds: float, reason: str) -> None:
         self._safe_call_in_ui(lambda: self.host.defer_asian_market_auto_refresh(seconds, reason))
 
+    def _schedule_startup_asian_sync(self, callback) -> None:
+        if ASIAN_DATA_SYNC_START_DELAY_MS <= 0:
+            self._job_runner.run(STARTUP_ASIAN_DATA_SYNC, callback)
+            return
+
+        def _run_if_alive() -> None:
+            if self._alive():
+                self._job_runner.run(STARTUP_ASIAN_DATA_SYNC, callback)
+
+        QTimer.singleShot(ASIAN_DATA_SYNC_START_DELAY_MS, _run_if_alive)
+
     def deferred_data_load(self):
         """延迟恢复历史缓存、实时缓存和 RPS 缓存。"""
 
@@ -722,7 +734,7 @@ class StartupOrchestrator:
                         log.debug(f"[启动] 亚洲市场静默同步原始输出: {raw_detail}")
 
         if service_toggle_registry.is_enabled("silent_asian_sync"):
-            self._job_runner.run(STARTUP_ASIAN_DATA_SYNC, _check_asian_data_bg)
+            self._schedule_startup_asian_sync(_check_asian_data_bg)
         else:
             log.info("[启动] silent_asian_sync toggle disabled, skip background sync")
 

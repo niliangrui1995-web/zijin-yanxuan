@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from contextlib import suppress
 
 from core.market_calendar import MarketCalendar
 from vcp.realtime_quote_batch import (
@@ -11,6 +12,13 @@ from vcp.realtime_quote_batch import (
 
 FALLBACK_PRESSURE_FETCH_LIMIT = 20
 FALLBACK_PRESSURE_MIN_PENDING = 40
+_EASTMONEY_FAST_FAIL_ATTR = "_rt_eastmoney_fast_fail_on_edge_error"
+_OPENING_WARMUP_STATUSES = frozenset(
+    (
+        "\u5f00\u76d8\u96c6\u5408\u7ade\u4ef7",
+        "\u5f00\u5e02\u524d\u65f6\u6bb5",
+    )
+)
 
 
 def summarize_probe_error(exc: Exception) -> str:
@@ -59,6 +67,14 @@ def is_disconnect_like_error(exc_or_text) -> bool:
         "timed out",
     )
     return any(keyword in normalized for keyword in keywords)
+
+
+def _is_opening_warmup_quote_window() -> bool:
+    try:
+        market_status = str(MarketCalendar.get_market_status("CN") or "").strip()
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+    return market_status in _OPENING_WARMUP_STATUSES
 
 
 def _duplicate_counts(codes: list[str]) -> dict[str, int]:
@@ -262,21 +278,35 @@ def _fetch_realtime_quote_batch_sources(
     inferred_trade_date: str,
     min_batch_size: int,
     eastmoney_available: bool,
+    fast_fail_eastmoney_edge_error: bool = False,
 ) -> tuple[dict, list[str], bool, bool, bool]:
     quotes = {}
     failures = []
     used_sina_fallback = False
     used_tencent_fallback = False
 
-    if eastmoney_available:
-        quotes, failures = provider._fetch_eastmoney_quotes_with_split_retry(
-            batch,
-            inferred_trade_date,
-            min_batch_size,
-        )
-        if failures and any(is_disconnect_like_error(reason) for reason in failures):
-            provider._enter_eastmoney_cooldown(failures[0])
-            eastmoney_available = False
+    fast_fail_sentinel = object()
+    previous_fast_fail = fast_fail_sentinel
+    if fast_fail_eastmoney_edge_error:
+        previous_fast_fail = getattr(provider, _EASTMONEY_FAST_FAIL_ATTR, fast_fail_sentinel)
+        setattr(provider, _EASTMONEY_FAST_FAIL_ATTR, True)
+    try:
+        if eastmoney_available:
+            quotes, failures = provider._fetch_eastmoney_quotes_with_split_retry(
+                batch,
+                inferred_trade_date,
+                min_batch_size,
+            )
+            if failures and any(is_disconnect_like_error(reason) for reason in failures):
+                provider._enter_eastmoney_cooldown(failures[0])
+                eastmoney_available = False
+    finally:
+        if fast_fail_eastmoney_edge_error:
+            if previous_fast_fail is fast_fail_sentinel:
+                with suppress(AttributeError):
+                    delattr(provider, _EASTMONEY_FAST_FAIL_ATTR)
+            else:
+                setattr(provider, _EASTMONEY_FAST_FAIL_ATTR, previous_fast_fail)
 
     if (not eastmoney_available) or failures or len(quotes) < len(batch):
         missing_batch = [code for code in batch if code not in quotes]
@@ -379,6 +409,7 @@ def _fetch_realtime_quote_sources(
     disconnect_failure_reason_logged = None
     eastmoney_available = time.time() >= float(provider._rt_eastmoney_cooldown_until or 0.0)
     pressure_fetch_limit = _fallback_pressure_fetch_limit(provider, len(dedup_codes))
+    opening_warmup_pressure = bool(pressure_fetch_limit and _is_opening_warmup_quote_window())
     network_codes = list(dedup_codes)
     request_stats["triggered_network"] = True
 
@@ -432,6 +463,7 @@ def _fetch_realtime_quote_sources(
                 inferred_trade_date=inferred_trade_date,
                 min_batch_size=min_batch_size,
                 eastmoney_available=eastmoney_available,
+                fast_fail_eastmoney_edge_error=opening_warmup_pressure,
             )
         )
 

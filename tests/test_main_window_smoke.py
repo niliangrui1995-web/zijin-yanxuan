@@ -4,6 +4,7 @@ import inspect
 
 from PyQt6.QtWidgets import QApplication, QWidget
 
+from ui.components.kline_window_manager import WEBENGINE_PREFLIGHT_STARTUP_DELAY_MS
 from ui.main_window_qt import MainWindowQT
 
 
@@ -69,7 +70,7 @@ def test_main_window_schedules_default_kline_preflight(monkeypatch, qt_applicati
     try:
         _process_events()
 
-        assert prewarm_calls == [{"delay_ms": 2500}]
+        assert prewarm_calls == [{"delay_ms": WEBENGINE_PREFLIGHT_STARTUP_DELAY_MS}]
     finally:
         if not window._is_closing:
             window.close()

@@ -2065,6 +2065,24 @@ def test_workspace_auto_refresh_does_not_load_daily_tabs_without_manual_click(mo
         workspace.deleteLater()
 
 
+def test_classic_workspace_default_restore_waits_past_first_paint_window(qt_application):
+    workspace = classic_workspace_module.ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+    )
+    try:
+        workspace.schedule_restore_last_tab(1)
+        timer = workspace._restore_last_tab_timer
+
+        assert timer is not None
+        assert timer.interval() == classic_workspace_module.ClassicWorkspace.RESTORE_LAST_TAB_DELAY_MS
+        assert timer.interval() == 2500
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
 def test_classic_workspace_pending_restore_timer_is_cancelled_on_shutdown(monkeypatch, qt_application):
     class _Tab(QWidget):
         def __init__(self, *args, **kwargs):

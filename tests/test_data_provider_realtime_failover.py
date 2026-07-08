@@ -3,6 +3,7 @@ import http.client
 import json
 import threading
 import time
+import urllib.error
 
 import pandas as pd
 
@@ -299,6 +300,84 @@ def test_fetch_realtime_quotes_batch_retries_backup_eastmoney_host(monkeypatch):
 
     assert seen_hosts == ["push2.eastmoney.com", "88.push2.eastmoney.com"]
     assert result["000001"]["close"] == 11.19
+
+
+def test_opening_warmup_pressure_fast_fails_eastmoney_backup_host(monkeypatch):
+    provider = _make_provider()
+    provider._rt_quote_batch_size = 20
+    provider._rt_quote_batch_pause_sec = 0.0
+    provider._rt_fallback_pressure_fetch_limit = 20
+    provider._rt_eastmoney_hosts = [
+        "push2.eastmoney.com",
+        "88.push2.eastmoney.com",
+    ]
+    codes = [f"{idx:06d}" for idx in range(1, 41)]
+    seen_hosts = []
+    sina_seen = []
+
+    provider._build_offline_quotes = lambda missing_codes: {
+        code: {
+            "open": 9.8,
+            "high": 10.0,
+            "low": 9.7,
+            "close": 9.9,
+            "volume": 0.0,
+            "amount": 0.0,
+            "last_close": 9.8,
+            "date": "2026-04-15",
+            "source": "offline",
+        }
+        for code in missing_codes
+    }
+
+    def _fake_urlopen(request, timeout=8):
+        del timeout
+        seen_hosts.append(request.full_url.split("/")[2])
+        raise urllib.error.HTTPError(request.full_url, 502, "Bad Gateway", hdrs=None, fp=None)
+
+    def _fake_sina(batch, inferred_trade_date):
+        sina_seen.append(tuple(batch))
+        return {
+            code: {
+                "open": 10.0,
+                "high": 10.1,
+                "low": 9.9,
+                "close": 10.0,
+                "volume": 1.0,
+                "amount": 2.0,
+                "last_close": 9.8,
+                "change": 0.2,
+                "pct": 2.04,
+                "date": inferred_trade_date,
+                "source": "sina",
+            }
+            for code in batch
+        }
+
+    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", lambda: True)
+    monkeypatch.setattr(MarketCalendar, "get_latest_trade_date", lambda market="CN": dt.date(2026, 4, 15))
+    monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
+    monkeypatch.setattr(MarketCalendar, "get_market_status", lambda market="CN": "\u5f00\u76d8\u96c6\u5408\u7ade\u4ef7")
+    monkeypatch.setattr(data_provider_quotes, "urlopen_https", _fake_urlopen)
+    monkeypatch.setattr(provider, "_request_sina_quote_batch", _fake_sina)
+    monkeypatch.setattr(
+        provider,
+        "_request_tencent_quote_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("Sina covers throttled batch")),
+    )
+
+    result = provider.fetch_realtime_quotes_batch(codes)
+
+    assert seen_hosts == ["push2.eastmoney.com"]
+    assert sina_seen == [tuple(codes[:20])]
+    assert all(result[code]["source"] == "sina" for code in codes[:20])
+    assert all(result[code]["source"] == "offline" for code in codes[20:])
+    assert not getattr(provider, "_rt_eastmoney_fast_fail_on_edge_error", False)
+    stats = provider.get_quote_request_stats()
+    assert stats["recent_network_attempted_count"] == 20
+    assert stats["recent_network_throttled"] is True
+    assert stats["recent_network_throttle_reason"] == "fallback_pressure"
+    assert stats["recent_status"] == "network_partial_with_fallback"
 
 
 def test_test_network_uses_eastmoney_http(monkeypatch):

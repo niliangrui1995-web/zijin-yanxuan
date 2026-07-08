@@ -30,7 +30,7 @@ from core.logger import get_logger
 from core.observability import emit_structured_log, record_metric
 from core.process_watchdog import ProcessWatchdog, log_process_snapshot
 from ui.components.command_palette import CommandPaletteDialog
-from ui.components.kline_window_manager import kline_manager
+from ui.components.kline_window_manager import WEBENGINE_PREFLIGHT_STARTUP_DELAY_MS, kline_manager
 from ui.components.message_box import show_themed_question
 from ui.components.tooltip_popup import hide_floating_tooltip, show_floating_tooltip
 from ui.components.vector_icons import set_button_svg_icon
@@ -506,7 +506,7 @@ class MainWindowQT(QMainWindow):
             elif self.tabs is not None and self.tabs.currentIndex() != 0:
                 self.tabs.setCurrentIndex(0)
             if self._kline_prewarm_enabled:
-                kline_manager.prewarm(delay_ms=2500)
+                kline_manager.prewarm(delay_ms=WEBENGINE_PREFLIGHT_STARTUP_DELAY_MS)
             self.install_workspace_table_copy_hooks()
             self.tabs.currentChanged.connect(self._remember_last_active_tab)
             self._rebind_workspace_chrome()
