@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Iterable
 
 from PyQt6.QtCore import QEasingCurve, QParallelAnimationGroup, QPropertyAnimation, QRect, Qt, QTimer
 from PyQt6.QtGui import QPixmap
@@ -36,6 +37,7 @@ class SmoothTabWidget(QTabWidget):
         self._slow_snapshot_skip_ms = 450
         self._transition_suspended_until = 0.0
         self._consecutive_slow_snapshots = 0
+        self._snapshot_transition_skip_pairs: set[tuple[str, str]] = set()
         self._pending_transition: tuple[QWidget, QPixmap, int] | None = None
         self._transition_overlay: QLabel | None = None
         self._transition_group: QParallelAnimationGroup | None = None
@@ -61,6 +63,19 @@ class SmoothTabWidget(QTabWidget):
 
     def setSlowSnapshotSkipInterval(self, interval_ms: int) -> None:  # noqa: N802 - Qt API naming
         self._slow_snapshot_skip_ms = max(0, int(interval_ms or 0))
+
+    def setSnapshotTransitionSkipPairs(self, pairs: Iterable[tuple[str, str]]) -> None:  # noqa: N802
+        normalized: set[tuple[str, str]] = set()
+        for pair in pairs or ():
+            try:
+                source, target = pair
+            except (TypeError, ValueError):
+                continue
+            source_key = str(source or "").strip()
+            target_key = str(target or "").strip()
+            if source_key and target_key:
+                normalized.add((source_key, target_key))
+        self._snapshot_transition_skip_pairs = normalized
 
     def suspendTransitionsFor(self, interval_ms: int) -> None:  # noqa: N802 - Qt API naming
         try:
@@ -125,6 +140,9 @@ class SmoothTabWidget(QTabWidget):
         if stack_host is None:
             return
 
+        if self._should_skip_snapshot_transition(old_widget, target_index):
+            return
+
         pixel_count = old_widget.width() * old_widget.height()
         if self._max_snapshot_pixels and pixel_count > self._max_snapshot_pixels:
             return
@@ -155,6 +173,35 @@ class SmoothTabWidget(QTabWidget):
         direction = 1 if target_index > old_index else -1
         self._pending_transition = (stack_host, pixmap, direction)
         self._last_transition_at = now
+
+    def _widget_transition_ids(self, widget: QWidget | None) -> set[str]:
+        if widget is None:
+            return set()
+        identifiers = {widget.__class__.__name__}
+        object_name = str(widget.objectName() or "").strip()
+        if object_name:
+            identifiers.add(object_name)
+        workspace_key = str(getattr(widget, "workspace_key", "") or "").strip()
+        if workspace_key:
+            identifiers.add(workspace_key)
+        return identifiers
+
+    def _should_skip_snapshot_transition(self, old_widget: QWidget, target_index: int) -> bool:
+        if not self._snapshot_transition_skip_pairs:
+            return False
+        target_widget = self.widget(target_index)
+        source_ids = self._widget_transition_ids(old_widget)
+        target_ids = self._widget_transition_ids(target_widget)
+        for source_id in source_ids:
+            for target_id in target_ids:
+                if (source_id, target_id) in self._snapshot_transition_skip_pairs:
+                    log.debug(
+                        "tab transition snapshot skipped source=%s target=%s",
+                        source_id,
+                        target_id,
+                    )
+                    return True
+        return False
 
     def _run_pending_transition(self, _index: int) -> None:
         pending = self._pending_transition

@@ -4,7 +4,7 @@ from __future__ import annotations
 import gc
 import time
 
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QThread, QTimer
 
 from app.services.ui_task_service import WINDOW_F5_PRECOMPUTE
 from core.global_store import global_store
@@ -14,6 +14,9 @@ log = get_logger(__name__)
 
 F5_SYSTEM_LOG_NAV_SETTLE_MS = 10_000
 F5_SYSTEM_LOG_STALL_GRACE_MS = 12_000
+F5_SYSTEM_LOG_FOREGROUND_RECHECK_MS = 2_500
+F5_BACKGROUND_TASK_PRIORITY = -1
+F5_BACKGROUND_THREAD_PRIORITY = QThread.Priority.LowestPriority
 
 
 def workspace_tables(main_window):
@@ -63,6 +66,10 @@ def _system_log_shell_nav_grace_remaining_ms(main_window) -> int:
     return int(F5_SYSTEM_LOG_NAV_SETTLE_MS - elapsed_ms)
 
 
+def _should_hold_f5_for_system_log_foreground(main_window, *, wait_for_system_log: bool) -> bool:
+    return bool(wait_for_system_log and _current_workspace_tab_key(main_window) == "system_log")
+
+
 def _mark_f5_ui_stall_grace(main_window) -> None:
     try:
         deadline = time.perf_counter() + F5_SYSTEM_LOG_STALL_GRACE_MS / 1000.0
@@ -104,10 +111,18 @@ def start_f5_precompute(main_window, *, task_manager):
             )
         )
 
+    wait_for_system_log = False
+
     def _submit_precompute():
-        setattr(main_window, "_f5_precompute_start_pending", False)
         if getattr(main_window, "_f5_cancelled", False):
+            setattr(main_window, "_f5_precompute_start_pending", False)
+            _clear_f5_ui_stall_grace(main_window)
             return
+        if _should_hold_f5_for_system_log_foreground(main_window, wait_for_system_log=wait_for_system_log):
+            log.info("[F5] hold precompute start while system_log remains foreground after shell navigation")
+            QTimer.singleShot(F5_SYSTEM_LOG_FOREGROUND_RECHECK_MS, _submit_precompute)
+            return
+        setattr(main_window, "_f5_precompute_start_pending", False)
         _mark_f5_ui_stall_grace(main_window)
         task_manager.run_in_background(
             lambda: RPSPrecomputer.run_f5_pipeline(
@@ -118,12 +133,14 @@ def start_f5_precompute(main_window, *, task_manager):
                 done_callback=_done_cb,
             ),
             task_id=WINDOW_F5_PRECOMPUTE,
+            task_priority=F5_BACKGROUND_TASK_PRIORITY,
+            thread_priority=F5_BACKGROUND_THREAD_PRIORITY,
         )
 
     delay_ms = _system_log_shell_nav_grace_remaining_ms(main_window)
     if delay_ms > 0:
+        wait_for_system_log = True
         setattr(main_window, "_f5_precompute_start_pending", True)
-        _mark_f5_ui_stall_grace(main_window)
         log.info("[F5] defer precompute start %sms after system_log shell navigation", delay_ms)
         QTimer.singleShot(delay_ms, _submit_precompute)
         return

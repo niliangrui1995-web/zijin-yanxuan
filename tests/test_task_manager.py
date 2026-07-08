@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from PyQt6.QtCore import QCoreApplication
 
+import infra.tasks.task_scheduler as task_scheduler_module
 from core.task_manager import UserFacingTaskError, task_manager
 from infra.tasks.task_scheduler import BackgroundWorker, _task_thread_pool_max_count
 
@@ -167,6 +168,40 @@ def test_background_worker_direct_run_covers_cancel_and_emit_failures():
     assert ("timeout", "slow") in calls
 
 
+def test_background_worker_temporarily_sets_thread_priority(monkeypatch):
+    calls = []
+
+    class _Thread:
+        def __init__(self):
+            self._priority = "normal"
+            self.set_calls = []
+
+        def priority(self):
+            return self._priority
+
+        def setPriority(self, priority):
+            self.set_calls.append(priority)
+            self._priority = priority
+
+    fake_thread = _Thread()
+    monkeypatch.setattr(
+        task_scheduler_module,
+        "QThread",
+        SimpleNamespace(currentThread=lambda: fake_thread),
+    )
+
+    worker = BackgroundWorker(lambda: "ok", thread_priority="low")
+    worker.signals = SimpleNamespace(
+        finished=SimpleNamespace(emit=lambda result: calls.append(("finished", result))),
+        error=SimpleNamespace(emit=lambda message: calls.append(("error", message))),
+    )
+
+    worker.run()
+
+    assert calls == [("finished", "ok")]
+    assert fake_thread.set_calls == ["low", "normal"]
+
+
 def test_task_manager_direct_submit_status_and_abandon_branches(monkeypatch):
     task_manager.cancel_all()
     task_manager._shutting_down = True
@@ -218,3 +253,26 @@ def test_task_manager_run_in_background_connects_callbacks_without_starting(monk
 
     assert tid == "connect_only"
     assert captured[0][1] == "connect_only"
+
+
+def test_task_manager_run_in_background_forwards_background_priority(monkeypatch):
+    task_manager.cancel_all()
+    task_manager._shutting_down = False
+    captured = []
+
+    def fake_submit(worker, tid, *, priority=None):
+        captured.append((worker, tid, priority))
+        return tid
+
+    monkeypatch.setattr(task_manager, "submit_task", fake_submit)
+
+    tid = task_manager.run_in_background(
+        lambda: "ok",
+        task_id="low_priority",
+        task_priority=-1,
+        thread_priority="low",
+    )
+
+    assert tid == "low_priority"
+    assert captured[0][1:] == ("low_priority", -1)
+    assert captured[0][0].thread_priority == "low"

@@ -159,6 +159,7 @@ class ClassicWorkspace(QWidget):
     SHELL_GROUP_REBUILD_LOAD_DELAY_MS = 120
     SHELL_GROUP_REBUILD_ACTIVATION_DELAY_MS = 250
     WATCHLIST_TAB_SWITCH_INDICATOR_DELAY_MS = FIRST_VISIBLE_TAB_WORK_DELAY_MS
+    SNAPSHOT_TRANSITION_SKIP_PAIRS = frozenset({("lhb", "asian_market")})
     INTERACTIVE_LOAD_REASONS = frozenset(
         {
             "placeholder_action",
@@ -218,6 +219,7 @@ class ClassicWorkspace(QWidget):
         self.tabs = SmoothTabWidget(self)
         self.tabs.setDocumentMode(True)
         self.tabs.setTransitionEnabled(True)
+        self.tabs.setSnapshotTransitionSkipPairs(self.SNAPSHOT_TRANSITION_SKIP_PAIRS)
         self.tabs.suspendTransitionsFor(self.STARTUP_TRANSITION_SUSPEND_MS)
         layout.addWidget(self.tabs, 1)
 
@@ -483,8 +485,14 @@ class ClassicWorkspace(QWidget):
         with ui_stall_span("ClassicWorkspace.ensure_tab_loaded", tab=key, signal=reason):
             return self._ensure_tab_loaded_impl(spec, key, reason)
 
+    def _mark_system_log_shell_nav(self, key: str, reason: str) -> None:
+        if key == "system_log" and str(reason or "").strip() == "shell_nav":
+            self._last_system_log_shell_nav_load_at = time.perf_counter()
+
     def _ensure_tab_loaded_impl(self, spec: dict, key: str, reason: str = "user"):
+        load_reason = str(reason or "")
         if spec.get("loaded"):
+            self._mark_system_log_shell_nav(key, load_reason)
             return spec.get("widget")
 
         placeholder = spec.get("widget")
@@ -505,7 +513,6 @@ class ClassicWorkspace(QWidget):
             self._lazy_loading_keys.discard(key)
             return widget
 
-        load_reason = str(reason or "")
         setattr(widget, "workspace_key", key)
         setattr(widget, "_workspace_load_reason", load_reason)
         setattr(
@@ -543,8 +550,7 @@ class ClassicWorkspace(QWidget):
         spec["loaded"] = True
         self._tabs_by_key[key] = widget
         setattr(self, spec["attr"], widget)
-        if key == "system_log" and load_reason == "shell_nav":
-            self._last_system_log_shell_nav_load_at = time.perf_counter()
+        self._mark_system_log_shell_nav(key, load_reason)
         self._lazy_loading_keys.discard(key)
         ensure_polished = getattr(widget, "ensurePolished", None)
         if callable(ensure_polished):
@@ -563,6 +569,7 @@ class ClassicWorkspace(QWidget):
             if spec is None:
                 return
             reason = self._take_tab_activation_reason(index)
+            self._mark_system_log_shell_nav(key, reason)
             if spec.get("loaded"):
                 widget = spec.get("widget")
                 if widget is not None:
@@ -669,6 +676,7 @@ class ClassicWorkspace(QWidget):
             if spec is None or not key:
                 return True
             if spec.get("loaded"):
+                self._mark_system_log_shell_nav(key, reason_text)
                 widget = spec.get("widget")
                 if widget is not None:
                     self._startup_last_allowed_index = target_index

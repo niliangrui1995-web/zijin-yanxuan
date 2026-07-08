@@ -235,11 +235,20 @@ def _normalize_cached_rt_entry(info: dict, data_points: list[dict]) -> dict:
     source = str(normalized.get("source") or "").strip().lower()
 
     close_value = _safe_float(normalized.get("close"))
-    if source == "tencent_hk" and data_points:
+    if data_points:
         rt_date = str(normalized.get("date") or "").strip()
         history_date = str(data_points[-1].get("date") or "").strip()
         history_close = _safe_float(data_points[-1].get("close"))
-        if history_date and history_close > 0 and (not rt_date or rt_date <= history_date):
+        prefer_history_quote = bool(
+            history_date
+            and history_close > 0
+            and (
+                not rt_date
+                or rt_date < history_date
+                or (source == "tencent_hk" and rt_date <= history_date)
+            )
+        )
+        if prefer_history_quote:
             close_value = history_close
             normalized["date"] = history_date
             normalized["close"] = history_close

@@ -12,7 +12,7 @@ import threading
 import traceback
 import uuid
 
-from PyQt6.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, QRunnable, QThread, QThreadPool, pyqtSignal, pyqtSlot
 
 from core.task_errors import UserFacingTaskError
 
@@ -39,11 +39,12 @@ class _WorkerSignals(QObject):
 class BackgroundWorker(QRunnable):
     """通用后台 Worker — 包装任意可调用对象"""
 
-    def __init__(self, fn, *args, **kwargs):
+    def __init__(self, fn, *args, thread_priority=None, **kwargs):
         super().__init__()
         self.fn = fn
         self.args = args
         self.kwargs = kwargs
+        self.thread_priority = thread_priority
         self.signals = _WorkerSignals()
         self._is_cancelled = False
         self.task_id = ""
@@ -53,11 +54,32 @@ class BackgroundWorker(QRunnable):
     def cancel(self):
         self._is_cancelled = True
 
+    def _apply_thread_priority(self):
+        if self.thread_priority is None:
+            return None, None
+        try:
+            thread = QThread.currentThread()
+            previous_priority = thread.priority()
+            thread.setPriority(self.thread_priority)
+            return thread, previous_priority
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return None, None
+
+    @staticmethod
+    def _restore_thread_priority(thread, previous_priority) -> None:
+        if thread is None or previous_priority is None:
+            return
+        try:
+            thread.setPriority(previous_priority)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+
     @pyqtSlot()
     def run(self):
         if self._is_cancelled:
             return
         task_label = self.task_id or getattr(self.fn, "__name__", "worker")
+        priority_thread, previous_priority = self._apply_thread_priority()
         try:
             result = self.fn(*self.args, **self.kwargs)
             if not self._is_cancelled:
@@ -91,6 +113,8 @@ class BackgroundWorker(QRunnable):
                 self.signals.error.emit(str(e))
             except RuntimeError:
                 pass  # 信号对象已被销毁，安全忽略
+        finally:
+            self._restore_thread_priority(priority_thread, previous_priority)
 
 
 class GlobalTaskManager(QObject):
@@ -122,7 +146,7 @@ class GlobalTaskManager(QObject):
         self._lock = threading.RLock()
         self._shutting_down = False
 
-    def submit_task(self, worker: BackgroundWorker, task_id: str | None = None) -> str:
+    def submit_task(self, worker: BackgroundWorker, task_id: str | None = None, *, priority: int | None = None) -> str:
         """提交 QRunnable Worker"""
         with self._lock:
             if self._shutting_down:
@@ -136,10 +160,23 @@ class GlobalTaskManager(QObject):
                 task_id = str(uuid.uuid4())[:8]
 
             self.active_workers[task_id] = worker
-            self.thread_pool.start(worker)
+            if priority is None:
+                self.thread_pool.start(worker)
+            else:
+                self.thread_pool.start(worker, int(priority))
             return task_id
 
-    def run_in_background(self, fn, *args, on_success=None, on_error=None, task_id: str | None = None, **kwargs) -> str:
+    def run_in_background(
+        self,
+        fn,
+        *args,
+        on_success=None,
+        on_error=None,
+        task_id: str | None = None,
+        task_priority: int | None = None,
+        thread_priority=None,
+        **kwargs,
+    ) -> str:
         """便捷方法：后台执行函数，结果通过 Qt 信号安全回传主线程
 
         参数:
@@ -152,7 +189,7 @@ class GlobalTaskManager(QObject):
         返回:
             task_id
         """
-        worker = BackgroundWorker(fn, *args, **kwargs)
+        worker = BackgroundWorker(fn, *args, thread_priority=thread_priority, **kwargs)
 
         # 完成后清理 active_workers
         tid = task_id or str(uuid.uuid4())[:8]
@@ -194,7 +231,9 @@ class GlobalTaskManager(QObject):
         worker.signals.finished.connect(_cleanup)
         worker.signals.error.connect(_cleanup)
 
-        return self.submit_task(worker, tid)
+        if task_priority is None:
+            return self.submit_task(worker, tid)
+        return self.submit_task(worker, tid, priority=task_priority)
 
     def cancel_all(self):
         """终极清退：停止所有排队和运行中的任务"""

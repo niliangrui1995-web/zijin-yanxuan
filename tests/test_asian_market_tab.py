@@ -1105,6 +1105,71 @@ def test_asian_market_load_local_cache_keeps_history_when_rt_cache_is_zero(monke
         tab.deleteLater()
 
 
+def test_asian_market_load_local_cache_prefers_newer_history_over_stale_rt_cache(monkeypatch, tmp_path):
+    history_payload = {
+        "stocks": [
+            {
+                "name": "Advantest",
+                "ticker": "6857.T",
+                "market": "日本",
+                "track": "半导体测试设备与探针卡",
+                "currency": "JPY",
+                "klines": [
+                    {
+                        "date": "2026-07-07",
+                        "open": 29200.0,
+                        "high": 30120.0,
+                        "low": 28625.0,
+                        "close": 28900.0,
+                        "volume": 7803900.0,
+                    },
+                    {
+                        "date": "2026-07-08",
+                        "open": 28600.0,
+                        "high": 28750.0,
+                        "low": 27280.0,
+                        "close": 27545.0,
+                        "volume": 8112000.0,
+                    },
+                ],
+            }
+        ]
+    }
+    rt_payload = {
+        "6857.T": {
+            "date": "2026-07-07",
+            "close": 28900.0,
+            "open": 29200.0,
+            "high": 30120.0,
+            "low": 28625.0,
+            "volume": 7803900.0,
+            "previous_close": 28900.0,
+            "pct": 0.0,
+            "currency": "JPY",
+            "source": "history_cache",
+            "quote_quality": "",
+        }
+    }
+    cache_file = tmp_path / "asian_klines_latest.json"
+    rt_cache_file = tmp_path / "asian_rt_latest.json"
+    cache_file.write_text(json.dumps(history_payload, ensure_ascii=False), encoding="utf-8")
+    rt_cache_file.write_text(json.dumps(rt_payload, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(asian_module, "filter_asian_tickers", lambda: {"Advantest": "6857.T"})
+
+    payload = asian_module.build_asian_market_local_cache_payload(
+        json_cache=str(cache_file),
+        rt_json_cache=str(rt_cache_file),
+        existing_rt_cache={},
+    )
+
+    row = payload["rows"][0]
+    assert row["现价"] == "27545.00"
+    assert row["涨幅%"] == pytest.approx(round((27545.0 / 28900.0 - 1.0) * 100.0, 2))
+    assert payload["rt_updates"]["6857.T"]["date"] == "2026-07-08"
+    assert payload["rt_updates"]["6857.T"]["close"] == 27545.0
+    assert payload["rt_updates"]["6857.T"]["previous_close"] == 28900.0
+
+
 def test_asian_market_load_local_cache_recomputes_short_pct_for_direct_quote_sources(monkeypatch, tmp_path):
     def stock_payload(name, ticker, market, currency, close_base):
         start_date = dt.date(2026, 5, 1)

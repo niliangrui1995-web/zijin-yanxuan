@@ -1432,6 +1432,7 @@ def test_workspace_defers_heavy_tab_autoload(monkeypatch):
         assert "autoload" not in ctor_kwargs["watchlist"]
         assert isinstance(workspace.tabs, SmoothTabWidget)
         assert workspace.tabs._transition_enabled is True
+        assert ("lhb", "asian_market") in workspace.tabs._snapshot_transition_skip_pairs
     finally:
         workspace.shutdown()
         workspace.deleteLater()
@@ -1654,7 +1655,8 @@ def test_workspace_shell_group_rebuild_delays_activation_callback_and_skips_stal
 def test_workspace_marks_system_log_shell_nav_load_for_f5_grace(monkeypatch, qt_application):
     constructed = []
     _patch_lightweight_workspace_tabs(monkeypatch, constructed)
-    monkeypatch.setattr(classic_workspace_module.time, "perf_counter", lambda: 321.5)
+    clock = {"now": 321.5}
+    monkeypatch.setattr(classic_workspace_module.time, "perf_counter", lambda: clock["now"])
 
     workspace = classic_workspace_module.ClassicWorkspace(
         data_provider=object(),
@@ -1671,6 +1673,11 @@ def test_workspace_marks_system_log_shell_nav_load_for_f5_grace(monkeypatch, qt_
         assert constructed == ["system_log"]
         assert workspace.get_loaded_tab("system_log") is not None
         assert workspace._last_system_log_shell_nav_load_at == 321.5
+
+        clock["now"] = 333.0
+        workspace.activate_tab(system_log_index, reason="shell_nav")
+
+        assert workspace._last_system_log_shell_nav_load_at == 333.0
     finally:
         workspace.shutdown()
         workspace.deleteLater()

@@ -16,7 +16,7 @@ from core.runtime_paths import PROJECT_ROOT, RPS_CACHE_FILE, SECTOR_RPS_CACHE_FI
 log = get_logger(__name__)
 
 # F5 local reread is Pandas/PyArrow-heavy; keep it below the generic offline bulk budget.
-F5_LOCAL_REREAD_MAX_WORKERS = 6
+F5_LOCAL_REREAD_MAX_WORKERS = 2
 
 
 def _should_emit_ui_status(msg: str) -> bool:

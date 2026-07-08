@@ -96,6 +96,38 @@ def test_smooth_tab_widget_suspended_transition_does_not_grab(monkeypatch):
         tabs.deleteLater()
 
 
+def test_smooth_tab_widget_configured_transition_pair_does_not_grab(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    tabs = SmoothTabWidget()
+    grabbed = []
+
+    class GrabWidget(QWidget):
+        def grab(self):
+            grabbed.append("grab")
+            return super().grab()
+
+    try:
+        source = GrabWidget()
+        source.workspace_key = "lhb"
+        target = QWidget()
+        target.workspace_key = "asian_market"
+        tabs.addTab(source, "LHB")
+        tabs.addTab(target, "Asian")
+        tabs.resize(240, 160)
+        tabs.setSnapshotTransitionSkipPairs({("lhb", "asian_market")})
+        tabs.show()
+        app.processEvents()
+
+        tabs.setCurrentIndex(1)
+
+        assert tabs.currentIndex() == 1
+        assert grabbed == []
+        assert tabs._pending_transition is None
+    finally:
+        tabs.close()
+        tabs.deleteLater()
+
+
 def test_smooth_tab_widget_suspends_animation_after_slow_snapshot():
     app = QApplication.instance() or QApplication([])
     tabs = SmoothTabWidget()
