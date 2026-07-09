@@ -511,6 +511,29 @@ def test_lhb_opening_warmup_quote_snapshot_flushes_in_chunks(monkeypatch):
         tab.deleteLater()
 
 
+def test_lhb_deferred_quote_snapshot_outside_opening_does_not_resort_pool(monkeypatch):
+    applied = []
+    sort_calls = []
+
+    def capture_apply(self, quotes):
+        applied.append(dict(quotes or {}))
+        return "applied"
+
+    monkeypatch.setattr(BaseStockTab, "_apply_quote_snapshot", capture_apply)
+    monkeypatch.setattr(LhbTab, "_is_opening_warmup_window", lambda self: False)
+    monkeypatch.setattr(LhbTab, "_sort_model_for_default_lhb_order", lambda self: sort_calls.append("sort"))
+
+    tab = LhbTab(object(), autoload_pool=False)
+    try:
+        assert tab._apply_quote_snapshot_now({"300750": {"close": 1.0}}, defer_sort=True) == "applied"
+
+        assert len(applied) == 1
+        assert sort_calls == []
+        assert not tab._quote_sort_timer.isActive()
+    finally:
+        tab.deleteLater()
+
+
 def test_lhb_refresh_after_ai_chain_update_reloads_started_pool(monkeypatch):
     tab = LhbTab(object(), autoload_pool=False)
     calls = []
@@ -697,6 +720,32 @@ def test_lhb_pool_bootstrap_schedules_background_task(monkeypatch):
         assert len(tasks) == 1
         assert "lhb_pool_bootstrap" in str(tasks[0][3])
         assert tab._pool_load_in_progress is True
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_pool_update_signal_debounces_visible_refresh(monkeypatch, qt_application):
+    calls = []
+    monkeypatch.setattr(lhb_tab_module, "LHB_POOL_UPDATE_DEBOUNCE_MS", 1)
+    monkeypatch.setattr(LhbTab, "_is_current_workspace_tab", lambda self: True)
+    monkeypatch.setattr(LhbTab, "isVisible", lambda self: True, raising=False)
+
+    tab = LhbTab(object(), autoload_pool=False)
+    monkeypatch.setattr(tab, "_load_and_display_pool", lambda emit_event=True: calls.append(emit_event))
+    try:
+        tab._pool_bootstrap_started = True
+
+        tab._on_lhb_pool_updated()
+        tab._on_lhb_pool_updated()
+        qt_application.processEvents()
+
+        assert calls == []
+
+        QTest.qWait(10)
+        qt_application.processEvents()
+
+        assert calls == [False]
+        assert tab._pending_pool_refresh is False
     finally:
         tab.deleteLater()
 

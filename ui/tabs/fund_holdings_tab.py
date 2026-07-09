@@ -86,6 +86,7 @@ from ui.tabs.fund_holdings_view_state import (
 
 class FundHoldingsTab(BaseStockTab):
     _F5_AUTO_SYNC_DELAY_MS = 18000
+    _QUOTE_SNAPSHOT_REFRESH_DELAY_MS = 120
     _SUBJECT_CODE_QFII = SUBJECT_QFII["subject_code"]
     _SUBJECT_CODE_RUIYUAN = SUBJECT_RUIYUAN["subject_code"]
     _QUARTER_FILTER_LATEST = "__LATEST__"
@@ -152,6 +153,8 @@ class FundHoldingsTab(BaseStockTab):
         self._pending_daily_auto_sync_date = ""
         self._pending_f5_auto_sync = False
         self._cache_reload_refresh_pending = False
+        self._quote_snapshot_refresh_pending = False
+        self._pending_quote_snapshot_model = None
         self._restoring_view_state = False
         self._view_state_restored = False
         self._view_state_save_timer = QTimer(self)
@@ -481,8 +484,7 @@ class FundHoldingsTab(BaseStockTab):
         if callable(ensure_scope_loaded) and ensure_scope_loaded(async_load=False):
             return True
         self._apply_filters()
-        self._apply_latest_quotes_from_store()
-        self._prime_visible_local_quote_snapshot(self.model)
+        self._schedule_visible_quote_snapshot_refresh(self.model)
         self._update_status_summary()
         lineage_updater = getattr(self, "_refresh_fund_holdings_lineage", None)
         if callable(lineage_updater):
@@ -1267,6 +1269,25 @@ class FundHoldingsTab(BaseStockTab):
     def _apply_latest_quotes_from_store(self):
         self._apply_quote_store_snapshot()
 
+    def _schedule_visible_quote_snapshot_refresh(self, current_model=None) -> bool:
+        if getattr(self, "_runtime_cleanup_done", False):
+            return False
+        if current_model is not None:
+            self._pending_quote_snapshot_model = current_model
+        if self._quote_snapshot_refresh_pending:
+            return True
+        self._quote_snapshot_refresh_pending = True
+        QTimer.singleShot(self._QUOTE_SNAPSHOT_REFRESH_DELAY_MS, self._run_visible_quote_snapshot_refresh)
+        return True
+
+    def _run_visible_quote_snapshot_refresh(self) -> bool:
+        self._quote_snapshot_refresh_pending = False
+        current_model = self._pending_quote_snapshot_model
+        self._pending_quote_snapshot_model = None
+        if getattr(self, "_runtime_cleanup_done", False):
+            return False
+        return self._prime_visible_local_quote_snapshot(current_model)
+
     def _on_cache_reload_completed(self):
         if getattr(self, "_runtime_cleanup_done", False):
             return
@@ -1278,7 +1299,7 @@ class FundHoldingsTab(BaseStockTab):
         if self._cache_reload_refresh_pending:
             return
         self._cache_reload_refresh_pending = True
-        QTimer.singleShot(0, self._run_cache_reload_refresh)
+        QTimer.singleShot(self._QUOTE_SNAPSHOT_REFRESH_DELAY_MS, self._run_cache_reload_refresh)
 
     def _run_cache_reload_refresh(self) -> None:
         self._cache_reload_refresh_pending = False
@@ -1290,7 +1311,6 @@ class FundHoldingsTab(BaseStockTab):
             signal="cache_reload",
         ):
             self.refresh_table_from_latest_snapshot(current_model=self.model, async_local=True)
-            self._apply_latest_quotes_from_store()
             self._update_status_summary()
 
     def _on_fund_holdings_updated(self):

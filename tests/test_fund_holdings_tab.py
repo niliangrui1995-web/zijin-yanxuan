@@ -322,6 +322,7 @@ def test_fund_holdings_tab_reload_uses_f5_quote_cache_only(monkeypatch):
     )
 
     refresh_calls = []
+    scheduled = []
 
     def _fake_refresh(self, current_model=None, force_quotes=False, quote_task_id=None):
         refresh_calls.append((current_model, force_quotes, quote_task_id))
@@ -332,10 +333,23 @@ def test_fund_holdings_tab_reload_uses_f5_quote_cache_only(monkeypatch):
         _fake_refresh,
         raising=False,
     )
+    monkeypatch.setattr(
+        fund_holdings_module.QTimer,
+        "singleShot",
+        lambda delay, callback: scheduled.append((delay, callback)),
+    )
 
     tab = fund_holdings_module.FundHoldingsTab(_DummyProvider())
     try:
         assert refresh_calls == []
+        assert tab.model.get_row_data(0)["市价"] == "--"
+        assert scheduled[0][0] == tab._QUOTE_SNAPSHOT_REFRESH_DELAY_MS
+
+        monkeypatch.setattr(tab, "isVisible", lambda: True)
+        while scheduled:
+            _delay, callback = scheduled.pop(0)
+            callback()
+
         assert tab.model.get_row_data(0)["市价"] == "10.50"
     finally:
         tab.deleteLater()
@@ -1007,7 +1021,7 @@ def test_fund_holdings_tab_applies_latest_quotes_without_realtime(monkeypatch):
         tab.deleteLater()
 
 
-def test_fund_holdings_apply_view_payload_primes_local_snapshot():
+def test_fund_holdings_apply_view_payload_schedules_local_snapshot_without_sync_store():
     calls = []
 
     class Model:
@@ -1032,10 +1046,10 @@ def test_fund_holdings_apply_view_payload_primes_local_snapshot():
             calls.append("apply_filters")
 
         def _apply_latest_quotes_from_store(self):
-            calls.append("store")
+            raise AssertionError("initial fund holdings load must not apply the full quote store synchronously")
 
-        def _prime_visible_local_quote_snapshot(self, current_model=None):
-            calls.append(("local", current_model))
+        def _schedule_visible_quote_snapshot_refresh(self, current_model=None):
+            calls.append(("scheduled_snapshot", current_model))
             return True
 
         def _update_status_summary(self):
@@ -1052,7 +1066,8 @@ def test_fund_holdings_apply_view_payload_primes_local_snapshot():
         },
     )
 
-    assert ("local", tab.model) in calls
+    assert ("scheduled_snapshot", tab.model) in calls
+    assert "store" not in calls
 
 
 def test_fund_holdings_apply_view_payload_defers_empty_state_until_finish(monkeypatch):
@@ -1181,12 +1196,6 @@ def test_fund_holdings_refresh_after_f5_schedules_auto_sync(monkeypatch):
     )
     monkeypatch.setattr(
         fund_holdings_module.FundHoldingsTab,
-        "_apply_latest_quotes_from_store",
-        lambda self: calls.append("store"),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        fund_holdings_module.FundHoldingsTab,
         "_update_status_summary",
         lambda self: calls.append("status"),
         raising=False,
@@ -1207,16 +1216,16 @@ def test_fund_holdings_refresh_after_f5_schedules_auto_sync(monkeypatch):
     try:
         assert tab.refresh_data_after_f5() is True
         assert calls == []
-        assert scheduled[0][0] == 0
+        assert scheduled[0][0] == tab._QUOTE_SNAPSHOT_REFRESH_DELAY_MS
         assert scheduled[1][0] == tab._F5_AUTO_SYNC_DELAY_MS
 
         scheduled[0][1]()
-        assert calls == [("snapshot", tab.model, True), "store", "status"]
+        assert calls == [("snapshot", tab.model, True), "status"]
 
         assert scheduled[1][1]() is True
-        assert calls[:3] == [("snapshot", tab.model, True), "store", "status"]
-        assert calls[3][0] == "sync"
-        assert calls[3][2] == fund_holdings_module.fund_holdings_sync_service.sync_latest_all
+        assert calls[:2] == [("snapshot", tab.model, True), "status"]
+        assert calls[2][0] == "sync"
+        assert calls[2][2] == fund_holdings_module.fund_holdings_sync_service.sync_latest_all
     finally:
         tab.deleteLater()
 
@@ -1229,12 +1238,6 @@ def test_fund_holdings_cache_reload_refresh_is_deferred_and_coalesced(monkeypatc
         fund_holdings_module.FundHoldingsTab,
         "refresh_table_from_latest_snapshot",
         lambda self, current_model=None, *, async_local=True: calls.append(("snapshot", current_model, async_local)),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        fund_holdings_module.FundHoldingsTab,
-        "_apply_latest_quotes_from_store",
-        lambda self: calls.append("store"),
         raising=False,
     )
     monkeypatch.setattr(
@@ -1256,11 +1259,11 @@ def test_fund_holdings_cache_reload_refresh_is_deferred_and_coalesced(monkeypatc
 
         assert calls == []
         assert len(scheduled) == 1
-        assert scheduled[0][0] == 0
+        assert scheduled[0][0] == tab._QUOTE_SNAPSHOT_REFRESH_DELAY_MS
 
         scheduled[0][1]()
 
-        assert calls == [("snapshot", tab.model, True), "store", "status"]
+        assert calls == [("snapshot", tab.model, True), "status"]
         assert tab._cache_reload_refresh_pending is False
     finally:
         tab.deleteLater()

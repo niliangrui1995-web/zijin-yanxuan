@@ -36,6 +36,7 @@ from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
 POST_F5_POOL_BOOTSTRAP_DEFER_MS = 5000
+LHB_POOL_UPDATE_DEBOUNCE_MS = 1200
 
 
 class LhbTab(BaseStockTab):
@@ -101,6 +102,9 @@ class LhbTab(BaseStockTab):
         self._post_f5_pool_defer_until = 0.0
         self._post_f5_pool_pending = False
         self._post_f5_pool_emit_event = False
+        self._pool_update_refresh_timer = QTimer(self)
+        self._pool_update_refresh_timer.setSingleShot(True)
+        self._pool_update_refresh_timer.timeout.connect(self._run_pending_pool_refresh)
         self._pool_retry_timer = QTimer(self)
         self._pool_retry_timer.setSingleShot(True)
         self._pool_retry_timer.timeout.connect(self._load_and_display_pool)
@@ -201,6 +205,34 @@ class LhbTab(BaseStockTab):
         if not is_visible or not self._is_current_workspace_tab():
             self._pending_pool_refresh = True
             return
+        self._schedule_pending_pool_refresh()
+
+    def _schedule_pending_pool_refresh(self, *, delay_ms: int | None = None) -> bool:
+        self._pending_pool_refresh = True
+        if getattr(self, "_pool_load_in_progress", False):
+            return False
+        timer = getattr(self, "_pool_update_refresh_timer", None)
+        if timer is None:
+            return self._run_pending_pool_refresh()
+        if timer.isActive():
+            return False
+        try:
+            delay = int(LHB_POOL_UPDATE_DEBOUNCE_MS if delay_ms is None else delay_ms)
+        except (TypeError, ValueError):
+            delay = LHB_POOL_UPDATE_DEBOUNCE_MS
+        timer.start(max(0, delay))
+        return True
+
+    def _run_pending_pool_refresh(self) -> bool:
+        if not getattr(self, "_pending_pool_refresh", False):
+            return False
+        try:
+            is_visible = bool(self.isVisible())
+        except RuntimeError:
+            is_visible = False
+        if not is_visible or not self._is_current_workspace_tab():
+            return False
+        self._pending_pool_refresh = False
         self._handling_lhb_pool_update = True
         try:
             self._load_and_display_pool(emit_event=False)
@@ -622,6 +654,9 @@ class LhbTab(BaseStockTab):
                 if hasattr(self, "table_state"):
                     self.table_state.show_empty("暂无龙虎榜数据")
 
+            if self._pending_pool_refresh:
+                self._schedule_pending_pool_refresh()
+
         def _on_pool_error(error_message: str):
             self._pool_load_in_progress = False
             self._pool_bootstrap_started = False
@@ -856,6 +891,8 @@ class LhbTab(BaseStockTab):
             self._quote_apply_timer.start(max(1, int(self.OPENING_WARMUP_QUOTE_APPLY_CONTINUE_MS)))
 
     def _schedule_default_lhb_quote_sort(self) -> None:
+        if not self._is_opening_warmup_window():
+            return
         if not self._is_default_lhb_sort_active():
             return
         if not getattr(self.model, "row_data", None):
@@ -1214,6 +1251,9 @@ class LhbTab(BaseStockTab):
         quote_sort_timer = getattr(self, "_quote_sort_timer", None)
         if quote_sort_timer is not None:
             quote_sort_timer.stop()
+        pool_update_timer = getattr(self, "_pool_update_refresh_timer", None)
+        if pool_update_timer is not None:
+            pool_update_timer.stop()
         try:
             event_bus.sig_cache_bootstrap_ready.disconnect(self._on_cache_bootstrap_ready)
         except (TypeError, RuntimeError):
