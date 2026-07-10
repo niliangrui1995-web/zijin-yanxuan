@@ -177,6 +177,10 @@ class TdxDataProviderRealtimeMixin:
             return dict(self.cache_data)
 
     def _build_offline_quotes(self, codes):
+        batch_reader = getattr(self, "get_data_batch", None)
+        if callable(batch_reader):
+            frames = batch_reader(codes) or {}
+            return build_offline_quotes(codes, frames.get)
         return build_offline_quotes(codes, self.get_data)
 
     def _ensure_eastmoney_quote_state(self):

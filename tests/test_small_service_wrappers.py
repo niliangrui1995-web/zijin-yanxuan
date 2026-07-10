@@ -3,6 +3,8 @@ from __future__ import annotations
 import datetime as dt
 import json
 import sys
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -130,6 +132,40 @@ def test_confirmed_events_provider_upsert_replaces_matching_identity(tmp_path):
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert [row["ticker"] for row in payload["events"]] == ["ALP", "BET"]
     assert payload["events"][0]["company"] == "Alpha New"
+
+
+def test_confirmed_events_provider_serializes_concurrent_upserts(monkeypatch, tmp_path):
+    path = tmp_path / "confirmed.json"
+    path.write_text('{"events": []}', encoding="utf-8")
+    real_read_text = Path.read_text
+    start = threading.Barrier(8)
+    errors = []
+
+    def delayed_read_text(self, *args, **kwargs):
+        text = real_read_text(self, *args, **kwargs)
+        if self == path:
+            time.sleep(0.03)
+        return text
+
+    def writer(index):
+        try:
+            start.wait(timeout=2)
+            ConfirmedEarningsEventsProvider(path).upsert(
+                EarningsCalendarEvent(f"Company {index}", f"T{index:02d}", "sector", "2026-05-01")
+            )
+        except Exception as exc:  # pragma: no cover - assertion below reports worker failures
+            errors.append(exc)
+
+    monkeypatch.setattr(Path, "read_text", delayed_read_text)
+    threads = [threading.Thread(target=writer, args=(index,)) for index in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert not errors
+    payload = json.loads(real_read_text(path, encoding="utf-8"))
+    assert {row["ticker"] for row in payload["events"]} == {f"T{index:02d}" for index in range(8)}
 
 
 def test_confirmed_events_provider_rejects_invalid_events_shape(tmp_path):

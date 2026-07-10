@@ -129,6 +129,12 @@ class WarehouseManifest:
 
                     CREATE INDEX IF NOT EXISTS idx_market_data_manifest_latest
                     ON market_data_manifest (dataset, updated_at DESC, trade_date DESC);
+
+                    CREATE TABLE IF NOT EXISTS market_data_manifest_active (
+                        dataset TEXT PRIMARY KEY,
+                        trade_date TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    );
                     """
                 )
 
@@ -159,19 +165,42 @@ class WarehouseManifest:
                     """,
                     payload,
                 )
+                conn.execute(
+                    """
+                    INSERT INTO market_data_manifest_active (dataset, trade_date, updated_at)
+                    VALUES (:dataset, :trade_date, :updated_at)
+                    ON CONFLICT(dataset) DO UPDATE SET
+                        trade_date=excluded.trade_date,
+                        updated_at=excluded.updated_at
+                    """,
+                    payload,
+                )
 
     def latest(self, dataset: str) -> WarehouseManifestRecord | None:
         with self._lock:
             with self._connection() as conn:
                 row = conn.execute(
                     """
-                    SELECT * FROM market_data_manifest
-                    WHERE dataset = ?
-                    ORDER BY updated_at DESC, trade_date DESC
+                    SELECT manifest.*
+                    FROM market_data_manifest_active AS active
+                    JOIN market_data_manifest AS manifest
+                      ON manifest.dataset = active.dataset
+                     AND manifest.trade_date = active.trade_date
+                    WHERE active.dataset = ?
                     LIMIT 1
                     """,
                     (dataset,),
                 ).fetchone()
+                if row is None:
+                    row = conn.execute(
+                        """
+                        SELECT * FROM market_data_manifest
+                        WHERE dataset = ?
+                        ORDER BY updated_at DESC, trade_date DESC
+                        LIMIT 1
+                        """,
+                        (dataset,),
+                    ).fetchone()
         return WarehouseManifestRecord.from_row(row) if row is not None else None
 
     def get(self, dataset: str, trade_date: str) -> WarehouseManifestRecord | None:

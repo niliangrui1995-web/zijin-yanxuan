@@ -698,69 +698,96 @@ class KLineChartWindow(QWidget):
             self._set_status_message("图表渲染失败，请重试", tone="error")
 
     def _load_asian_chart(self):
-        """加载亚洲市场（yfinance 缓存）的 K 线数据"""
+        """在后台读取亚洲市场缓存并按需补充最新报价。"""
         from ui.tabs.asian_market_tab import GLOBAL_ASIAN_RT_CACHE, JSON_CACHE
         from ui.tabs.asian_market_workers import fetch_asian_realtime_quote
 
-        df = None
-        target_stock = load_cached_asian_stock(JSON_CACHE, self.code)
-        if target_stock:
+        request_code = str(self.code or "").strip()
+        request_generation = int(getattr(self, "_render_generation", 0) or 0)
+        market = self._get_market()
+        latest_trade_date = MarketCalendar.get_latest_trade_date(market)
+        cached_quote = dict(GLOBAL_ASIAN_RT_CACHE.get(request_code) or {}) or None
+
+        def _is_current_request() -> bool:
+            return (
+                not getattr(self, "_closing", False)
+                and str(getattr(self, "code", "") or "").strip() == request_code
+                and int(getattr(self, "_render_generation", 0) or 0) == request_generation
+            )
+
+        def _bg_load():
+            target_stock = load_cached_asian_stock(JSON_CACHE, request_code)
+            quote = cached_quote
+            quote_error = None
+            fetched_quote = False
+            if target_stock and quote is None and latest_trade_date is not None:
+                trade_dates = []
+                for row in target_stock.get("klines", []) or []:
+                    try:
+                        trade_dates.append(pd.Timestamp(row.get("date")).date())
+                    except (AttributeError, TypeError, ValueError):
+                        continue
+                last_date = max(trade_dates, default=None)
+                if last_date is None or last_date < latest_trade_date:
+                    try:
+                        quote = fetch_asian_realtime_quote(request_code)
+                        fetched_quote = quote is not None
+                    except Exception as exc:
+                        quote_error = exc
+            return target_stock, quote, fetched_quote, quote_error
+
+        def _on_load_success(result):
+            if not _is_current_request() or result is None:
+                return
+            target_stock, quote, fetched_quote, quote_error = result
+            if target_stock is None:
+                schedule_asian_history_backfill(
+                    self,
+                    task_manager=background_job_runner,
+                    fetch_single_kline=fetch_single_kline,
+                )
+                return
+
+            if quote_error is not None:
+                exc = quote_error
+                if is_yf_rate_limit_error(exc):
+                    remaining_sec = mark_yf_rate_limited(exc)
+                    self._log.warning(
+                        f"[K线] {request_code} 盘后补足亚洲报价触发 Yahoo Finance 限流，冷却 {remaining_sec:.0f}s: {exc}"
+                    )
+                elif isinstance(exc, (AttributeError, ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError)):
+                    self._log.warning(f"[K线] {request_code} 盘后补足亚洲报价失败: {exc}")
+                else:
+                    raise exc
+
+            if fetched_quote and quote:
+                GLOBAL_ASIAN_RT_CACHE[request_code] = quote
+
             df = build_asian_history_df(
                 target_stock,
                 vcp_data=self.vcp_data,
                 refresh_header_context=self._refresh_header_context,
                 normalize_daily_df_index=self._normalize_daily_df_index,
             )
-
-        if df is None:
-            from app.services.ui_task_service import background_job_runner as task_manager
-
-            schedule_asian_history_backfill(
-                self,
-                task_manager=task_manager,
-                fetch_single_kline=fetch_single_kline,
-            )
-            return
-
-        if df is not None:
-            market = self._get_market()
-            quote = GLOBAL_ASIAN_RT_CACHE.get(self.code)
-            latest_trade_date = MarketCalendar.get_latest_trade_date(market)
-            if quote is None and latest_trade_date is not None and not df.empty:
-                try:
-                    last_date = pd.Timestamp(df.index[-1]).date()
-                except (IndexError, TypeError, ValueError):
-                    last_date = None
-                if last_date is None or last_date < latest_trade_date:
-                    try:
-                        quote = fetch_asian_realtime_quote(self.code)
-                    except Exception as exc:
-                        if is_yf_rate_limit_error(exc):
-                            remaining_sec = mark_yf_rate_limited(exc)
-                            self._log.warning(
-                                f"[K线] {self.code} 盘后补足亚洲报价触发 Yahoo Finance 限流，冷却 {remaining_sec:.0f}s: {exc}"
-                            )
-                        elif isinstance(
-                            exc,
-                            (AttributeError, ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError),
-                        ):
-                            self._log.warning(f"[K线] {self.code} 盘后补足亚洲报价失败: {exc}")
-                        else:
-                            raise
-                    if quote:
-                        GLOBAL_ASIAN_RT_CACHE[self.code] = quote
-
+            if df is None:
+                self._set_status_message("当前标的暂无历史日线数据", tone="warning")
+                return
             if quote is not None:
-                df = apply_asian_live_quote(
-                    df,
-                    quote,
-                    market=market,
-                )
-
-            # 统一交由 _render_chart() 去计算指标并生成完整 ECharts，此时必然包含最新日期
+                df = apply_asian_live_quote(df, quote, market=market)
             self._render_chart(df, loading=False)
-        else:
-            self._set_status_message("当前标的暂无历史日线数据", tone="warning")
+
+        def _on_load_error(error_message: str):
+            if _is_current_request():
+                self._set_status_message(f"亚洲日线缓存读取失败: {error_message}", tone="error")
+
+        background_job_runner.run_in_background(
+            _bg_load,
+            on_success=_on_load_success,
+            on_error=_on_load_error,
+            task_id=task_registry.transient_window(
+                f"kline_asian_cache_{request_code}_{request_generation}"
+            ),
+        )
 
     # ======================== 图表渲染 ========================
     def _render_chart(self, df, loading=False):
@@ -948,6 +975,21 @@ class KLineChartWindow(QWidget):
         self.btn_prev.setEnabled(self.current_idx > 0)
         self.btn_next.setEnabled(self.current_idx < len(self.code_list) - 1)
 
+    def _abandon_render_tasks(self, code: str, generation: int):
+        normalized_code = str(code or "").strip()
+        if not normalized_code:
+            return
+        for task_key in (
+            task_registry.transient_window(f"kline_{normalized_code}_{generation}"),
+            task_registry.transient_window(f"kline_rt_{normalized_code}_{generation}"),
+            task_registry.transient_window(f"kline_asian_cache_{normalized_code}_{generation}"),
+            task_registry.transient_window(f"kline_asian_{normalized_code}_{generation}"),
+        ):
+            try:
+                background_job_runner.abandon(task_key)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                pass
+
     def _switch_to_stock(self, new_idx):
         """切换到指定索引的股票"""
         self._switching = True
@@ -959,14 +1001,8 @@ class KLineChartWindow(QWidget):
             # 重置状态
             old_code = str(getattr(self, "code", "") or "").strip()
             if old_code:
-                for task_key in (
-                    task_registry.window(f"kline_{old_code}"),
-                    task_registry.window(f"kline_asian_{old_code}"),
-                ):
-                    try:
-                        background_job_runner.abandon(task_key)
-                    except (AttributeError, RuntimeError, TypeError, ValueError):
-                        pass
+                old_generation = int(getattr(self, "_render_generation", 0) or 0)
+                self._abandon_render_tasks(old_code, old_generation)
 
             item_data = self.code_list[new_idx]
             self.current_idx = new_idx
@@ -1011,14 +1047,8 @@ class KLineChartWindow(QWidget):
             self._rt_timer.stop()
             self._rt_timer = None
 
-        for task_key in (
-            task_registry.window(f"kline_{self.code}"),
-            task_registry.window(f"kline_asian_{self.code}"),
-        ):
-            try:
-                background_job_runner.abandon(task_key)
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                pass
+        current_generation = int(getattr(self, "_render_generation", 0) or 0)
+        self._abandon_render_tasks(self.code, current_generation)
 
         self.df = None
 

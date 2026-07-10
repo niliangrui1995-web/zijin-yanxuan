@@ -2,18 +2,56 @@
 from __future__ import annotations
 
 import datetime
+import json
 import time
 
-import pandas as pd
-
-from app.services.ui_fund_holdings_service import fund_holdings_sync_service
-from app.services.ui_market_calendar_service import MarketCalendar
-from core.ai_industry_chain_pool import filter_rows_to_ai_chain_codes
-from core.lhb_pool_manager import POOL_WINDOW, LhbPoolManager
 from core.logger import get_logger
 from core.task_errors import UserFacingTaskError
 
 log = get_logger(__name__)
+EARNINGS_REFRESH_PROCESS_TIMEOUT_SEC = 15 * 60
+
+
+def _parse_earnings_refresh_stdout(stdout: str | bytes | None, *, expected_job_key: str) -> dict:
+    text = stdout.decode("utf-8", errors="replace") if isinstance(stdout, bytes) else str(stdout or "")
+    for line in reversed(text.splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        payload = json.loads(line)
+        if not isinstance(payload, dict):
+            continue
+        status = str(payload.get("status") or "").strip()
+        job_key = str(payload.get("job_key") or "").strip()
+        if status not in {"success", "degraded"} or job_key != expected_job_key:
+            continue
+        return dict(payload)
+    raise ValueError(f"earnings refresh result missing for {expected_job_key}")
+
+
+def _run_earnings_refresh_subprocess(mode: str, *, routine_time: str = "") -> dict:
+    from app.services.ui_task_service import run_python_module
+
+    normalized_mode = str(mode or "").strip()
+    expected_job_key = "earnings_startup_gap_fill" if normalized_mode == "startup-gap-fill" else "earnings_routine"
+    module_args = [normalized_mode]
+    if normalized_mode == "routine" and str(routine_time or "").strip():
+        module_args.extend(["--routine-time", str(routine_time).strip()])
+    completed = run_python_module(
+        "domains.earnings.refresh_cache",
+        module_args,
+        no_window=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
+        timeout=EARNINGS_REFRESH_PROCESS_TIMEOUT_SEC,
+    )
+    return _parse_earnings_refresh_stdout(
+        getattr(completed, "stdout", ""),
+        expected_job_key=expected_job_key,
+    )
 
 
 class AutoRefreshTaskService:
@@ -31,6 +69,7 @@ class AutoRefreshTaskService:
         self.na_daily_service = na_daily_service
         self.asian_market_service = asian_market_service
         self.earnings_service = earnings_service
+        self._prepared_asian_target_codes: list[str] | None = None
 
     def _get_na_daily_service(self):
         if self.na_daily_service is None:
@@ -46,14 +85,9 @@ class AutoRefreshTaskService:
             self.asian_market_service = AsianMarketRuntimeService()
         return self.asian_market_service
 
-    def _get_earnings_service(self):
-        if self.earnings_service is None:
-            from ui.services.earnings_refresh_service import EarningsRefreshService
-
-            self.earnings_service = EarningsRefreshService()
-        return self.earnings_service
-
     def run_lhb_daily(self, trade_date: str) -> dict:
+        from app.services.ui_market_calendar_service import MarketCalendar
+        from core.lhb_pool_manager import POOL_WINDOW, LhbPoolManager
         from ui.workers.lhb_worker import fetch_lhb_pool_for_date
 
         date_text = str(trade_date or "").strip()
@@ -128,6 +162,8 @@ class AutoRefreshTaskService:
         }
 
     def run_fund_holdings_daily(self, trade_date: str) -> dict:
+        from app.services.ui_fund_holdings_service import fund_holdings_sync_service
+
         result = fund_holdings_sync_service.sync_latest_all()
         message = ""
         if isinstance(result, dict):
@@ -158,8 +194,40 @@ class AutoRefreshTaskService:
             "cache_file": result.get("cache_file", ""),
         }
 
-    def sync_asian_market_runtime(self) -> dict:
-        result = self._get_asian_market_service().sync_runtime_state()
+    def prepare_asian_market_runtime(self) -> dict:
+        if self._prepared_asian_target_codes is None:
+            try:
+                from ui.services.asian_market_runtime_service import filter_asian_tickers
+
+                target_map = filter_asian_tickers() or {}
+                target_codes = [str(code).strip() for code in target_map.values() if str(code).strip()]
+                if target_codes:
+                    self._prepared_asian_target_codes = target_codes
+            except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                log.warning(f"[亚洲市场] 后台准备目标池失败: {exc}")
+                target_codes = []
+        else:
+            target_codes = list(self._prepared_asian_target_codes)
+
+        from ui.services.asian_market_runtime_service import is_asian_quote_refresh_time
+
+        is_asian_quote_refresh_time(target_codes)
+        return {"target_codes": target_codes}
+
+    def sync_asian_market_runtime(self, prepared: dict | None = None) -> dict:
+        service = self._get_asian_market_service()
+        target_codes = list((prepared or {}).get("target_codes") or [])
+        worker_codes = list(getattr(getattr(service, "_worker", None), "codes", []) or [])
+        service_codes = list(getattr(service, "_codes", []) or [])
+        if target_codes and not worker_codes and not service_codes:
+            service.set_target_codes(target_codes)
+        elif prepared is not None and not target_codes and not worker_codes and not service_codes:
+            stopped = service.stop(auto=True)
+            return {
+                "job_key": "asian_market_runtime",
+                "status": "stopped" if stopped else "skipped",
+            }
+        result = service.sync_runtime_state()
         return {
             "job_key": "asian_market_runtime",
             "status": str(result or "skipped"),
@@ -171,12 +239,12 @@ class AutoRefreshTaskService:
         return result
 
     def run_earnings_startup_gap_fill(self, trade_date: str) -> dict:
-        result = self._get_earnings_service().run_startup_gap_fill()
+        result = _run_earnings_refresh_subprocess("startup-gap-fill")
         result["trade_date"] = str(trade_date or "").strip()
         return result
 
     def run_earnings_routine(self, trade_date: str, *, routine_time: str) -> dict:
-        result = self._get_earnings_service().run_routine_scan(reason=f"scheduled:{routine_time}")
+        result = _run_earnings_refresh_subprocess("routine", routine_time=routine_time)
         result["trade_date"] = str(trade_date or "").strip()
         result["routine_time"] = str(routine_time or "").strip()
         return result
@@ -184,9 +252,15 @@ class AutoRefreshTaskService:
 
 def _filter_lhb_rows_to_ai_chain(row_data: list[dict]) -> list[dict]:
     try:
+        from core.ai_industry_chain_pool import (
+            filter_rows_to_ai_chain_codes,
+            load_cached_ai_industry_chain_stock_codes,
+        )
+
         return filter_rows_to_ai_chain_codes(
             row_data,
             code_keys=("代码", "股票代码", "证券代码", "stock_code", "code"),
+            stock_codes=load_cached_ai_industry_chain_stock_codes(),
         )
     except (FileNotFoundError, RuntimeError, OSError, TypeError, ValueError) as exc:
         log.warning(f"[龙虎榜池] AI产业链股票池不可用，自动缓存按空股票池处理: {exc}")
@@ -194,6 +268,8 @@ def _filter_lhb_rows_to_ai_chain(row_data: list[dict]) -> list[dict]:
 
 
 def _fetch_foreign_block_records(*, days_to_fetch: int) -> dict:
+    import pandas as pd
+
     block_module = _foreign_block_module()
     end_dt = datetime.datetime.now()
     deadline = time.monotonic() + block_module._BLOCK_TRADE_TOTAL_TIMEOUT
@@ -299,6 +375,8 @@ def _fetch_foreign_block_records(*, days_to_fetch: int) -> dict:
 
 
 def _should_include_foreign_row(buyer, seller) -> bool:
+    import pandas as pd
+
     keywords = _foreign_block_module().FOREIGN_KEYWORDS
     buyer_text = str(buyer) if pd.notna(buyer) else ""
     seller_text = str(seller) if pd.notna(seller) else ""
@@ -306,6 +384,8 @@ def _should_include_foreign_row(buyer, seller) -> bool:
 
 
 def _determine_foreign_direction(buyer, seller) -> str:
+    import pandas as pd
+
     keywords = _foreign_block_module().FOREIGN_KEYWORDS
     buyer_text = str(buyer) if pd.notna(buyer) else ""
     seller_text = str(seller) if pd.notna(seller) else ""
@@ -323,6 +403,8 @@ def _determine_foreign_direction(buyer, seller) -> str:
 def _build_foreign_block_rows(records: list[dict]) -> list[dict]:
     if not records:
         return []
+
+    import pandas as pd
 
     df = pd.DataFrame(records)
     if "交易日期" in df.columns:
@@ -381,13 +463,24 @@ def _build_foreign_block_rows(records: list[dict]) -> list[dict]:
             }
         )
     try:
-        return filter_rows_to_ai_chain_codes(row_data, code_keys=("代码",))
+        from core.ai_industry_chain_pool import (
+            filter_rows_to_ai_chain_codes,
+            load_cached_ai_industry_chain_stock_codes,
+        )
+
+        return filter_rows_to_ai_chain_codes(
+            row_data,
+            code_keys=("代码",),
+            stock_codes=load_cached_ai_industry_chain_stock_codes(),
+        )
     except (FileNotFoundError, RuntimeError, OSError, ValueError) as exc:
         log.warning(f"[外资大宗] AI产业链股票池不可用，自动缓存按空股票池处理: {exc}")
         return []
 
 
 def _safe_float(value) -> float:
+    import pandas as pd
+
     try:
         if pd.isna(value):
             return 0.0

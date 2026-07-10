@@ -29,6 +29,7 @@ def test_central_quotes_service_uses_30s_a_share_polling():
 def test_central_quotes_service_refresh_after_cache_reload_re_emits_off_market_snapshot(monkeypatch):
     app = QApplication.instance() or QApplication([])
     main_window = QWidget()
+    from ui.workers import central_quotes_worker as worker_module
 
     class DummyProvider:
         def __init__(self):
@@ -43,11 +44,26 @@ def test_central_quotes_service_refresh_after_cache_reload_re_emits_off_market_s
     spy = QSignalSpy(event_bus.sig_rt_quotes)
 
     monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", classmethod(lambda cls, market="CN": False))
+    pending = []
+
+    def _capture_background(fn, on_success=None, on_error=None, task_id=None):
+        pending.append((fn, on_success, on_error, str(task_id)))
+        return task_id
+
+    monkeypatch.setattr(worker_module.task_manager, "run_in_background", _capture_background)
     global_store.reset_runtime_state()
     service._off_market_snapshot_emitted = True
 
     try:
         service.refresh_after_cache_reload()
+        assert provider.calls == []
+        snapshot_tasks = [
+            item for item in pending if item[3] == "central_quotes_off_market_snapshot_1"
+        ]
+        assert len(snapshot_tasks) == 1
+
+        fn, on_success, _on_error, _task_id = snapshot_tasks[0]
+        on_success(fn())
         app.processEvents()
 
         assert provider.calls == [["000001"]]
@@ -56,6 +72,56 @@ def test_central_quotes_service_refresh_after_cache_reload_re_emits_off_market_s
         assert spy[0][0]["000001"]["close"] == 12.3
     finally:
         global_store.reset_runtime_state()
+        service.shutdown()
+        service.deleteLater()
+        main_window.deleteLater()
+
+
+def test_central_quotes_service_off_market_retry_uses_new_generation_task_id(monkeypatch):
+    _ = QApplication.instance() or QApplication([])
+    main_window = QWidget()
+    from ui.workers import central_quotes_worker as worker_module
+
+    class DummyProvider:
+        def fetch_realtime_quotes_batch(self, codes):
+            return {code: {"close": 12.3, "last_close": 12.0} for code in codes}
+
+    service = CentralQuotesService(
+        main_window,
+        DummyProvider(),
+        code_supplier=lambda: {"000001"},
+    )
+    active_task_ids = set()
+    accepted = []
+
+    def _deduplicating_background(fn, on_success=None, on_error=None, task_id=None):
+        normalized_task_id = str(task_id)
+        if normalized_task_id in active_task_ids:
+            return task_id
+        active_task_ids.add(normalized_task_id)
+        accepted.append((fn, on_success, on_error, normalized_task_id))
+        return task_id
+
+    monkeypatch.setattr(worker_module.task_manager, "run_in_background", _deduplicating_background)
+
+    try:
+        service._emit_off_market_snapshot({"000001"})
+        assert accepted[0][3] == "central_quotes_off_market_snapshot_1"
+
+        # 模拟行情时段切换使首个仍在运行的请求失效，再次进入盘后后应能提交新任务。
+        service._off_market_snapshot_generation += 1
+        service._off_market_snapshot_fetching = False
+        service._emit_off_market_snapshot({"000001"})
+
+        assert [item[3] for item in accepted] == [
+            "central_quotes_off_market_snapshot_1",
+            "central_quotes_off_market_snapshot_3",
+        ]
+        _fn, on_success, _on_error, _task_id = accepted[-1]
+        on_success({"quotes": {"000001": {"close": 12.3, "last_close": 12.0}}})
+        assert service._off_market_snapshot_fetching is False
+        assert service._off_market_snapshot_emitted is True
+    finally:
         service.shutdown()
         service.deleteLater()
         main_window.deleteLater()

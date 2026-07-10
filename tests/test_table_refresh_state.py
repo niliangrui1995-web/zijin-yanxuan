@@ -200,6 +200,33 @@ def test_vcp_table_view_model_flash_role_starts_table_repaint_timer():
         table.deleteLater()
 
 
+def test_vcp_table_view_coalesced_flash_repaint_skips_hidden_table(qt_application):
+    table = VCPTableView()
+    source_model = StockTableModel(["代码", "名称", "现价"])
+    table.setModel(source_model)
+    table.set_coalesced_flash_repaint_enabled(True)
+    try:
+        source_model.update_data(_rows(1))
+        hidden_rows = _rows(1)
+        hidden_rows[0]["现价"] = "11.00"
+        source_model.update_data(hidden_rows)
+        assert table._flash_repaint_timer.isActive() is False
+
+        table.show()
+        _process_events(qt_application)
+        visible_rows = _rows(1)
+        visible_rows[0]["现价"] = "12.00"
+        source_model.update_data(visible_rows)
+
+        assert table._flash_repaint_timer.isSingleShot() is True
+        assert table._flash_repaint_timer.isActive() is True
+        table.hide()
+        _process_events(qt_application)
+        assert table._flash_repaint_timer.isActive() is False
+    finally:
+        table.deleteLater()
+
+
 def test_pulsing_dot_delete_later_stops_deferred_animation_start():
     dot = PulsingDot()
     try:

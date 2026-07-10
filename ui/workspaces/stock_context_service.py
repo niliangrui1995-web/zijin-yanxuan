@@ -287,9 +287,9 @@ class StockContextService:
 
     def _load_ai_chain_cache_rows(self) -> list[dict]:
         try:
-            from core.ai_industry_chain_pool import load_ai_industry_chain_rows
+            from core.ai_industry_chain_pool import load_cached_ai_industry_chain_rows
 
-            return self._coerce_cache_rows(load_ai_industry_chain_rows())
+            return self._coerce_cache_rows(load_cached_ai_industry_chain_rows())
         except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
             return []
 
@@ -848,9 +848,13 @@ class StockContextService:
         self,
         *,
         allow_async_snapshot_refresh: bool = True,
+        target_codes=None,
     ) -> list[StockSignal]:
         signals: list[StockSignal] = []
-        rows = self._fund_holding_rows(allow_async_snapshot_refresh=allow_async_snapshot_refresh)
+        rows = self._fund_holding_rows(
+            allow_async_snapshot_refresh=allow_async_snapshot_refresh,
+            target_codes=target_codes,
+        )
         latest_by_subject = self._latest_fund_holding_quarters(rows)
         for row_idx, row in enumerate(rows):
             code = str(row.get(KEY_CODE, "")).strip()
@@ -957,7 +961,7 @@ class StockContextService:
             )
         return view_rows
 
-    def _load_fund_holding_rows_snapshot(self) -> list[dict]:
+    def _load_fund_holding_rows_snapshot(self, *, stock_codes=None) -> list[dict]:
         try:
             from app.services.ui_fund_holdings_service import fund_holdings_store
         except (ImportError, RuntimeError):
@@ -965,7 +969,7 @@ class StockContextService:
 
         try:
             latest_quarter_map = dict(fund_holdings_store.get_latest_quarter_map() or {})
-            change_rows = list(fund_holdings_store.query_change_rows() or [])
+            change_rows = list(fund_holdings_store.query_change_rows(stock_codes=stock_codes) or [])
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
             return []
         return self._format_fund_holding_store_rows(latest_quarter_map, change_rows)
@@ -1063,9 +1067,21 @@ class StockContextService:
     def _query_fund_holding_store_rows(self) -> list[dict]:
         return self._load_fund_holding_rows_snapshot()
 
-    def _fund_holding_rows(self, *, allow_async_snapshot_refresh: bool = True) -> list[dict]:
+    def _fund_holding_rows(self, *, allow_async_snapshot_refresh: bool = True, target_codes=None) -> list[dict]:
         if not self._has_fund_holdings_tab():
             return []
+        target_code_set = self._normalize_target_codes(target_codes)
+        if target_codes is not None:
+            if not target_code_set:
+                return []
+            with self._fund_rows_lock:
+                if self._fund_rows_loaded:
+                    return [
+                        dict(row)
+                        for row in self._fund_rows_snapshot
+                        if str(row.get(KEY_CODE) or "").strip() in target_code_set
+                    ]
+            return self._load_fund_holding_rows_snapshot(stock_codes=target_code_set)
         rows = self._cached_fund_holding_rows(allow_async_refresh=allow_async_snapshot_refresh)
         if rows:
             return rows
@@ -1177,7 +1193,12 @@ class StockContextService:
         include_source_cache_fallback: bool | None = None,
         allow_lhb_cache_compute: bool = False,
         allow_async_snapshot_refresh: bool = True,
+        target_codes=None,
     ) -> list[StockSignal]:
+        target_code_set = self._normalize_target_codes(target_codes)
+        if target_codes is not None and not target_code_set:
+            return []
+        target_code_filter = target_code_set if target_codes is not None else None
         direct_keys = self._direct_signal_tab_keys()
         signals = self._iter_direct_stock_signals()
         source_cache_fallback = include_cache_fallback if include_source_cache_fallback is None else bool(
@@ -1198,6 +1219,7 @@ class StockContextService:
             signals.extend(
                 self._iter_fund_holdings_signals(
                     allow_async_snapshot_refresh=allow_async_snapshot_refresh,
+                    target_codes=target_code_filter,
                 )
             )
         if "lhb" not in direct_keys:
@@ -1209,7 +1231,10 @@ class StockContextService:
                 )
             )
 
-        return [signal for signal in signals if signal.normalized_code()]
+        normalized_signals = [signal for signal in signals if signal.normalized_code()]
+        if target_codes is not None:
+            return [signal for signal in normalized_signals if signal.normalized_code() in target_code_set]
+        return normalized_signals
 
     def collect_signals_by_code(
         self,
@@ -1241,16 +1266,18 @@ class StockContextService:
         engine = getattr(workspace, "engine", None)
         rps_bundle = engine.get_precomputed_rps() if hasattr(engine, "get_precomputed_rps") else None
 
+        target_code_set = self._normalize_target_codes(target_codes)
+        target_code_filter = target_code_set if target_codes is not None else None
         signals = self.iter_stock_signals(
             include_cache_fallback=include_cache_fallback,
             include_source_cache_fallback=include_source_cache_fallback,
             allow_lhb_cache_compute=allow_lhb_cache_compute,
+            target_codes=target_code_filter,
         )
         remark_data, na_subsector_data, block_data, earn_data, lhb_data = {}, {}, {}, {}, {}
-        target_code_set = self._normalize_target_codes(target_codes)
 
         def in_scope(code: str) -> bool:
-            return not target_code_set or code in target_code_set
+            return target_codes is None or code in target_code_set
 
         ai_subsector_data: dict[str, str] = {}
         na_subsector_fallback: dict[str, str] = {}

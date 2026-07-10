@@ -17,7 +17,6 @@ from core.startup_orchestrator import (
     ASIAN_DATA_SYNC_TIME_BUDGET_SEC,
     ASIAN_DATA_SYNC_TIMEOUT_RUNTIME_BACKOFF_SEC,
     ASIAN_DATA_SYNC_TIMEOUT_SEC,
-    AUTO_RT_MONITOR_NETWORK_TASK_ID,
     DEFERRED_LOAD_TASK_ID,
     GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_HOUR,
     GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_MINUTE,
@@ -50,9 +49,6 @@ class _DummyLabel:
 
 
 class _DummyCacheManager:
-    def load_rt_cache(self, *_args, **_kwargs):
-        return None
-
     def try_load_rps_from_disk(self, *_args, **_kwargs):
         return None
 
@@ -101,7 +97,6 @@ class _DummyMainWindow(QObject):
         self.cache_manager = _DummyCacheManager()
         self.engine = object()
         self.asian_market_service = _DummyAsianMarketService()
-        self.table_rt = object()
         self.lbl_status = _DummyLabel()
         self.lbl_code_count = _DummyLabel()
         self.titlebar_sync_states = []
@@ -109,7 +104,6 @@ class _DummyMainWindow(QObject):
         self._workspace = None
         self.network_updates = []
         self.online_done_count = 0
-        self.rt_cache_restore_pending = False
 
     def _call_in_ui(self, callback):
         callback()
@@ -122,28 +116,6 @@ class _DummyMainWindow(QObject):
 
     def _on_smart_startup_online_done(self):
         self.online_done_count += 1
-
-    def mark_rt_cache_restore_pending(self):
-        self.rt_cache_restore_pending = True
-
-
-class _ReadyRtModel:
-    headers = ["代码", "现价"]
-
-    def __init__(self):
-        self.rows = []
-
-    def update_data(self, rows):
-        self.rows = list(rows or [])
-
-
-class _ReadyRtTable:
-    def __init__(self):
-        self._model = _ReadyRtModel()
-
-    def model(self):
-        return self._model
-
 
 class _InlineJobRunner:
     def __init__(self):
@@ -195,34 +167,6 @@ def test_startup_host_adapter_exposes_narrow_main_window_boundary():
     assert mw.titlebar_sync_states == [("cache", "ok", "today")]
     assert mw.network_updates == [True]
     assert mw.online_done_count == 1
-
-
-def test_startup_host_adapter_defers_rt_cache_until_table_model_exists():
-    mw = _DummyMainWindow()
-    calls = []
-    mw.cache_manager.load_rt_cache = lambda *args, **kwargs: calls.append((args, kwargs)) or True
-    mw._workspace = types.SimpleNamespace(get_rt_table=lambda: None)
-    adapter = StartupHostAdapter(mw)
-
-    assert adapter.load_rt_cache() is False
-
-    assert calls == []
-    assert mw.rt_cache_restore_pending is True
-
-
-def test_startup_host_adapter_loads_rt_cache_when_table_model_exists():
-    mw = _DummyMainWindow()
-    table = _ReadyRtTable()
-    calls = []
-    mw.cache_manager.load_rt_cache = lambda *args, **kwargs: calls.append((args, kwargs)) or True
-    mw._workspace = types.SimpleNamespace(get_rt_table=lambda: table)
-    adapter = StartupHostAdapter(mw)
-
-    assert adapter.load_rt_cache() is True
-
-    assert len(calls) == 1
-    assert calls[0][0][0] is table
-    assert mw.rt_cache_restore_pending is False
 
 
 def test_startup_orchestrator_asian_sync_uses_process_runner(monkeypatch):
@@ -367,7 +311,7 @@ def test_startup_orchestrator_deferred_load_loads_history_cache_by_default(monke
 
 def test_startup_orchestrator_deferred_load_stops_after_window_close(monkeypatch):
     mw = _DummyMainWindow()
-    calls = {"rt_cache": 0, "rps": 0}
+    calls = {"rps": 0}
 
     def close_during_history_load():
         mw._is_closing = True
@@ -375,9 +319,6 @@ def test_startup_orchestrator_deferred_load_stops_after_window_close(monkeypatch
         return "20260508"
 
     class _CountingCacheManager:
-        def load_rt_cache(self, *_args, **_kwargs):
-            calls["rt_cache"] += 1
-
         def try_load_rps_from_disk(self, *_args, **_kwargs):
             calls["rps"] += 1
 
@@ -397,7 +338,7 @@ def test_startup_orchestrator_deferred_load_stops_after_window_close(monkeypatch
 
     orchestrator.deferred_data_load()
 
-    assert calls == {"rt_cache": 0, "rps": 0}
+    assert calls == {"rps": 0}
     assert "startup.deferred_load.cancelled" in labels
     assert "startup.deferred_load.end" not in labels
 
@@ -429,6 +370,7 @@ def test_startup_orchestrator_code_count_uses_lightweight_code_map_when_history_
 def test_startup_orchestrator_asian_sync_logs_succinct_failure_message(monkeypatch):
     orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
     records = {"warning": [], "debug": []}
+    scheduled_callbacks = []
 
     class _FakeLog:
         def warning(self, message):
@@ -462,8 +404,15 @@ def test_startup_orchestrator_asian_sync_logs_succinct_failure_message(monkeypat
     monkeypatch.setattr("core.startup_orchestrator.run_python_module", fake_run_python_module)
     monkeypatch.setattr("core.startup_orchestrator.log", _FakeLog())
     monkeypatch.setattr("core.startup_orchestrator.log_process_snapshot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        startup_module.QTimer,
+        "singleShot",
+        lambda delay_ms, callback: scheduled_callbacks.append((delay_ms, callback)),
+    )
 
     orchestrator.deferred_data_load()
+    assert [delay_ms for delay_ms, _callback in scheduled_callbacks] == [ASIAN_DATA_SYNC_START_DELAY_MS]
+    scheduled_callbacks[0][1]()
 
     assert len(records["warning"]) == 1
     assert "429" in records["warning"][0]
@@ -650,24 +599,6 @@ def test_startup_orchestrator_skips_asian_sync_when_toggle_disabled(monkeypatch)
     assert run_calls == []
 
 
-def test_startup_orchestrator_skips_auto_rt_monitor_when_toggle_disabled(monkeypatch):
-    orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
-    real_import = __import__
-
-    def fake_is_enabled(key, overrides=None):
-        return False if key == "workspace_auto_rt_monitor" else True
-
-    def guarded_import(name, *args, **kwargs):
-        if name == "core.market_calendar":
-            raise AssertionError("market calendar should not be imported when toggle is disabled")
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr("core.startup_orchestrator.service_toggle_registry.is_enabled", fake_is_enabled)
-    monkeypatch.setattr("builtins.__import__", guarded_import)
-
-    orchestrator.auto_start_rt_if_ready()
-
-
 def test_global_earnings_daily_refresh_delay_targets_next_0200():
     import datetime
 
@@ -739,12 +670,11 @@ def test_global_earnings_refresh_subprocess_parses_degraded_status(monkeypatch):
     }
 
 
-def test_startup_orchestrator_leaves_auto_rt_retry_to_global_scheduler():
+def test_startup_orchestrator_schedules_global_earnings_refresh_timer():
     orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=_InlineJobRunner())
 
     orchestrator.schedule_startup()
     try:
-        assert orchestrator._auto_rt_timer is None
         assert orchestrator._global_earnings_calendar_daily_timer.isActive() is True
         assert orchestrator._global_earnings_calendar_daily_timer.isSingleShot() is True
         assert 0 < orchestrator._global_earnings_calendar_daily_timer.interval() <= 24 * 60 * 60 * 1000
@@ -1079,117 +1009,6 @@ def test_startup_orchestrator_skips_global_earnings_sync_when_toggle_disabled(mo
     assert calls == []
 
 
-def test_startup_orchestrator_auto_starts_rt_when_ready(monkeypatch):
-    class _Workspace:
-        def __init__(self):
-            self.started = 0
-
-        def auto_start_rt_monitor(self):
-            self.started += 1
-            return True
-
-    mw = _DummyMainWindow()
-    mw.data_provider.cache_data = {f"{idx:06d}": object() for idx in range(120)}
-    mw.data_provider.is_online = lambda: True
-    mw._workspace = _Workspace()
-    orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
-    monkeypatch.setattr(
-        "core.market_calendar.MarketCalendar.is_market_active",
-        classmethod(lambda cls, market="CN": True),
-    )
-
-    orchestrator.auto_start_rt_if_ready()
-
-    assert mw._workspace.started == 1
-
-
-def test_startup_orchestrator_retries_network_before_auto_start(monkeypatch):
-    class _Provider(_DummyDataProvider):
-        def __init__(self):
-            super().__init__()
-            self.cache_data = {f"{idx:06d}": object() for idx in range(120)}
-            self.online = False
-            self.probes = 0
-
-        def is_online(self):
-            return self.online
-
-        def test_network(self, timeout=3):
-            self.probes += 1
-            return True
-
-        def set_online_mode(self, online):
-            self.online = bool(online)
-
-    class _Workspace:
-        def __init__(self):
-            self.started = 0
-
-        def auto_start_rt_monitor(self):
-            self.started += 1
-            return True
-
-    mw = _DummyMainWindow()
-    mw.data_provider = _Provider()
-    mw._workspace = _Workspace()
-    orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
-    monkeypatch.setattr(
-        "core.market_calendar.MarketCalendar.is_market_active",
-        classmethod(lambda cls, market="CN": True),
-    )
-
-    orchestrator.auto_start_rt_if_ready()
-
-    assert mw.data_provider.probes == 1
-    assert mw.data_provider.online is True
-    assert mw._workspace.started == 1
-
-
-def test_startup_orchestrator_auto_rt_probe_stops_after_window_close(monkeypatch):
-    class _Provider(_DummyDataProvider):
-        def __init__(self, owner):
-            super().__init__()
-            self.cache_data = {f"{idx:06d}": object() for idx in range(120)}
-            self.owner = owner
-            self.online = False
-            self.probes = 0
-
-        def is_online(self):
-            return self.online
-
-        def test_network(self, timeout=3):
-            self.probes += 1
-            self.owner._is_closing = True
-            return True
-
-        def set_online_mode(self, online):
-            self.online = bool(online)
-
-    class _Workspace:
-        def __init__(self):
-            self.started = 0
-
-        def auto_start_rt_monitor(self):
-            self.started += 1
-            return True
-
-    mw = _DummyMainWindow()
-    mw.data_provider = _Provider(mw)
-    mw._workspace = _Workspace()
-    orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
-    monkeypatch.setattr(
-        "core.market_calendar.MarketCalendar.is_market_active",
-        classmethod(lambda cls, market="CN": True),
-    )
-
-    orchestrator.auto_start_rt_if_ready()
-
-    assert mw.data_provider.probes == 1
-    assert mw.data_provider.online is False
-    assert mw._workspace.started == 0
-    assert orchestrator._auto_rt_network_probe_active is False
-
-
 def test_startup_orchestrator_shutdown_abandons_background_tasks():
     runner = _InlineJobRunner()
     orchestrator = StartupOrchestrator(_DummyMainWindow(), job_runner=runner)
@@ -1201,5 +1020,4 @@ def test_startup_orchestrator_shutdown_abandons_background_tasks():
         ASIAN_DATA_SYNC_TASK_ID,
         GLOBAL_EARNINGS_CALENDAR_SYNC_TASK_ID,
         SMART_STARTUP_TASK_ID,
-        AUTO_RT_MONITOR_NETWORK_TASK_ID,
     ]

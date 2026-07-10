@@ -257,11 +257,6 @@ def shutdown_main_window(main_window, *, event_bus, task_manager):
     if callable(auto_refresh_shutdown):
         _run("停止自动刷新调度器", auto_refresh_shutdown)
 
-    rt_monitor_service = getattr(main_window, "rt_monitor_service", None)
-    rt_service_shutdown = getattr(rt_monitor_service, "shutdown", None)
-    if callable(rt_service_shutdown):
-        _run("停止盘中监控服务", rt_service_shutdown)
-
     asian_market_service = getattr(main_window, "asian_market_service", None)
     asian_service_shutdown = getattr(asian_market_service, "shutdown", None)
     if callable(asian_service_shutdown):
@@ -281,12 +276,6 @@ def shutdown_main_window(main_window, *, event_bus, task_manager):
         _run("停止工作区", main_window._workspace.shutdown)
 
     _run("保存UI状态", main_window._save_ui_state)
-
-    workspace = getattr(main_window, "_workspace", None)
-    get_rt_table = getattr(workspace, "get_rt_table", None)
-    rt_table = get_rt_table() if callable(get_rt_table) else None
-    if rt_table is not None:
-        _run("保存盘中缓存", lambda: main_window.cache_manager.save_rt_cache(rt_table))
 
     _run("广播关闭信号", event_bus.sig_app_closing.emit)
     _run("重置全局快照状态", global_store.reset_runtime_state)

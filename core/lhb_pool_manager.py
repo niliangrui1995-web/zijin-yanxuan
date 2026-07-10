@@ -15,11 +15,16 @@ core/lhb_pool_manager.py
 """
 
 import copy
+import hashlib
 import json
 import os
+import sqlite3
+import tempfile
 import threading
+import uuid
+from contextlib import contextmanager
 
-from core.ai_industry_chain_pool import load_ai_industry_chain_stock_codes, normalize_ai_chain_code
+from core.ai_industry_chain_pool import load_cached_ai_industry_chain_stock_codes, normalize_ai_chain_code
 from core.buy_point import BUY_POINT_STYLE_TEXT, calculate_buy_point_from_history
 from core.logger import get_logger
 
@@ -29,12 +34,34 @@ log = get_logger(__name__)
 POOL_WINDOW = 30
 
 
+@contextmanager
+def _serialized_cache_write(cache_path: str):
+    """Use a tiny sidecar SQLite transaction as a cross-process write mutex."""
+    lock_dir = os.path.join(tempfile.gettempdir(), "vcp_hunter_write_locks")
+    os.makedirs(lock_dir, exist_ok=True)
+    lock_key = hashlib.sha256(os.path.basename(cache_path).encode("utf-8")).hexdigest()[:16]
+    lock_path = os.path.join(lock_dir, f"lhb-pool-{lock_key}.sqlite3")
+    connection = sqlite3.connect(lock_path, timeout=30, isolation_level=None)
+    try:
+        connection.execute("PRAGMA busy_timeout=30000")
+        connection.execute("BEGIN IMMEDIATE")
+        yield
+        connection.commit()
+    finally:
+        if connection.in_transaction:
+            try:
+                connection.rollback()
+            except sqlite3.Error:
+                pass
+        connection.close()
+
+
 class LhbPoolManager:
-    """龙虎榜关注池数据引擎 — 线程不安全，仅限主线程操作"""
+    """龙虎榜关注池数据引擎；写入按日期差量合并并跨实例串行化。"""
 
     _loaded_payload_lock = threading.RLock()
     _loaded_payload_cache: dict[str, tuple[tuple[int, int], dict]] = {}
-    _stock_universe_provider = staticmethod(load_ai_industry_chain_stock_codes)
+    _stock_universe_provider = staticmethod(load_cached_ai_industry_chain_stock_codes)
 
     def __init__(self):
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -44,6 +71,11 @@ class LhbPoolManager:
         self._data: dict[str, list[dict]] = {}  # date_str(yyyyMMdd) -> [records]
         self._day_meta: dict[str, dict] = {}  # date_str(yyyyMMdd) -> cache metadata
         self._last_auto_fetch_date: str = ""
+        self._state_lock = threading.RLock()
+        self._persisted_data: dict[str, list[dict]] = {}
+        self._persisted_day_meta: dict[str, dict] = {}
+        self._persisted_last_auto_fetch_date = ""
+        self._clear_requested = False
         self._load()
         self._migrate_old_cache()
 
@@ -99,6 +131,8 @@ class LhbPoolManager:
             self._day_meta = raw.get("day_meta", {})
             self._last_auto_fetch_date = raw.get("last_auto_fetch_date", "")
             self._repair_day_meta()
+            if os.path.abspath(cache_path) == os.path.abspath(self._cache_path):
+                self._remember_persisted_state()
             migrated_count = self._upgrade_legacy_foreign_display_cache()
             if migrated_count:
                 self.save()
@@ -107,6 +141,20 @@ class LhbPoolManager:
         except (FileNotFoundError, PermissionError, OSError, TypeError, ValueError, json.JSONDecodeError) as e:
             log.warning(f"[龙虎榜池] 缓存加载失败，将重建: {e}")
             self._data = {}
+
+    def _remember_persisted_state(self) -> None:
+        self._persisted_data = copy.deepcopy(self._data)
+        self._persisted_day_meta = copy.deepcopy(self._day_meta)
+        self._persisted_last_auto_fetch_date = self._last_auto_fetch_date
+        self._clear_requested = False
+
+    @staticmethod
+    def _read_uncached_payload(cache_path: str) -> dict:
+        if not os.path.exists(cache_path):
+            return {}
+        with open(cache_path, "r", encoding="utf-8") as stream:
+            payload = json.load(stream)
+        return payload if isinstance(payload, dict) else {}
 
     @staticmethod
     def _build_full_foreign_display_from_tooltip(tooltip: str) -> str:
@@ -233,19 +281,87 @@ class LhbPoolManager:
         self._day_meta = repaired_meta
 
     def save(self):
-        """落盘保存"""
+        """合并当前实例的日期级变更后原子落盘。"""
         try:
             os.makedirs(os.path.dirname(self._cache_path), exist_ok=True)
-            payload = {
-                "version": 2,
-                "last_auto_fetch_date": self._last_auto_fetch_date,
-                "daily_data": self._data,
-                "day_meta": self._day_meta,
-            }
-            with open(self._cache_path, "w", encoding="utf-8") as f:
-                json.dump(payload, f, ensure_ascii=False)
-            self._remember_json_payload(self._cache_path, payload)
-        except (PermissionError, OSError, TypeError, ValueError) as e:
+            with self._state_lock:
+                current_data = copy.deepcopy(self._data)
+                current_meta = copy.deepcopy(self._day_meta)
+                persisted_data = copy.deepcopy(self._persisted_data)
+                persisted_meta = copy.deepcopy(self._persisted_day_meta)
+                deleted_days = set(persisted_data).difference(current_data)
+                dirty_days = {
+                    day
+                    for day in set(current_data).union(persisted_data)
+                    if current_data.get(day) != persisted_data.get(day)
+                    or current_meta.get(day) != persisted_meta.get(day)
+                }
+                last_fetch_changed = self._last_auto_fetch_date != self._persisted_last_auto_fetch_date
+
+                with _serialized_cache_write(self._cache_path):
+                    try:
+                        cache_exists = os.path.exists(self._cache_path)
+                        latest = self._read_uncached_payload(self._cache_path)
+                    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                        log.warning(f"[龙虎榜池] 现有缓存不可读，将按当前实例状态重建: {exc}")
+                        cache_exists = False
+                        latest = {}
+
+                    if not cache_exists and persisted_data:
+                        latest = {
+                            "last_auto_fetch_date": self._persisted_last_auto_fetch_date,
+                            "daily_data": persisted_data,
+                            "day_meta": persisted_meta,
+                        }
+
+                    if self._clear_requested:
+                        merged_data: dict[str, list[dict]] = {}
+                        merged_meta: dict[str, dict] = {}
+                    else:
+                        stored_data = latest.get("daily_data", {})
+                        stored_meta = latest.get("day_meta", {})
+                        merged_data = copy.deepcopy(stored_data) if isinstance(stored_data, dict) else {}
+                        merged_meta = copy.deepcopy(stored_meta) if isinstance(stored_meta, dict) else {}
+                        for day in deleted_days:
+                            merged_data.pop(day, None)
+                            merged_meta.pop(day, None)
+                        for day in dirty_days:
+                            if day in current_data:
+                                merged_data[day] = copy.deepcopy(current_data[day])
+                                merged_meta[day] = copy.deepcopy(current_meta.get(day, {}))
+
+                    latest_last_fetch = str(latest.get("last_auto_fetch_date", "") or "")
+                    merged_last_fetch = (
+                        self._last_auto_fetch_date if self._clear_requested or last_fetch_changed else latest_last_fetch
+                    )
+                    payload = {
+                        "version": 2,
+                        "last_auto_fetch_date": merged_last_fetch,
+                        "daily_data": merged_data,
+                        "day_meta": merged_meta,
+                    }
+                    temp_path = f"{self._cache_path}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+                    try:
+                        with open(temp_path, "w", encoding="utf-8") as stream:
+                            json.dump(payload, stream, ensure_ascii=False)
+                            stream.flush()
+                            os.fsync(stream.fileno())
+                        with open(temp_path, "r", encoding="utf-8") as stream:
+                            json.load(stream)
+                        os.replace(temp_path, self._cache_path)
+                    finally:
+                        if os.path.exists(temp_path):
+                            try:
+                                os.remove(temp_path)
+                            except OSError:
+                                pass
+
+                self._data = merged_data
+                self._day_meta = merged_meta
+                self._last_auto_fetch_date = merged_last_fetch
+                self._remember_persisted_state()
+                self._remember_json_payload(self._cache_path, payload)
+        except (PermissionError, OSError, sqlite3.Error, TypeError, ValueError) as e:
             log.error(f"[龙虎榜池] 缓存保存失败: {e}")
 
     def _migrate_old_cache(self):
@@ -304,8 +420,9 @@ class LhbPoolManager:
     def add_day(self, date_str: str, records: list[dict], meta: dict | None = None):
         """写入某一天的龙虎榜数据"""
         safe_records = self._filter_records_to_stock_universe(records if isinstance(records, list) else [])
-        self._data[date_str] = safe_records
-        self._day_meta[date_str] = self._normalize_day_meta_item(meta, safe_records)
+        with self._state_lock:
+            self._data[date_str] = safe_records
+            self._day_meta[date_str] = self._normalize_day_meta_item(meta, safe_records)
         # 不在这里 save()，由调用方决定何时批量保存（减少 IO）
 
     def get_cached_dates(self) -> set[str]:
@@ -350,39 +467,45 @@ class LhbPoolManager:
 
     def mark_day_probe(self, date_str: str, source_count: int, validation_ref_date: str, status: str = "ok"):
         """记录某一天最新一次轻量校验结果。"""
-        if date_str not in self._data:
-            return
+        with self._state_lock:
+            if date_str not in self._data:
+                return
 
-        meta = self._normalize_day_meta_item(self._day_meta.get(date_str), self._data.get(date_str, []))
-        meta["source_count"] = self._to_int(source_count, meta["record_count"])
-        meta["last_probe_ref_date"] = str(validation_ref_date or "")
-        meta["probe_status"] = str(status or "ok")
-        self._day_meta[date_str] = meta
+            meta = self._normalize_day_meta_item(self._day_meta.get(date_str), self._data.get(date_str, []))
+            meta["source_count"] = self._to_int(source_count, meta["record_count"])
+            meta["last_probe_ref_date"] = str(validation_ref_date or "")
+            meta["probe_status"] = str(status or "ok")
+            self._day_meta[date_str] = meta
 
     def prune(self, valid_dates: list[str]):
         """裁剪掉不在 valid_dates 窗口内的历史数据"""
-        valid_set = set(valid_dates)
-        to_remove = [d for d in self._data if d not in valid_set]
-        if to_remove:
-            for d in to_remove:
-                del self._data[d]
-                self._day_meta.pop(d, None)
-            self.save()
-            log.info(f"[龙虎榜池] 裁剪了 {len(to_remove)} 天过期数据: {sorted(to_remove)}")
+        with self._state_lock:
+            valid_set = set(valid_dates)
+            to_remove = [d for d in self._data if d not in valid_set]
+            if to_remove:
+                for d in to_remove:
+                    del self._data[d]
+                    self._day_meta.pop(d, None)
+                self.save()
+                log.info(f"[龙虎榜池] 裁剪了 {len(to_remove)} 天过期数据: {sorted(to_remove)}")
 
     def clear_all(self):
         """清空全部缓存数据（手动全量刷新时使用）"""
-        self._data.clear()
-        self._day_meta.clear()
-        self.save()
+        with self._state_lock:
+            self._data.clear()
+            self._day_meta.clear()
+            self._clear_requested = True
+            self.save()
 
     @property
     def last_auto_fetch_date(self) -> str:
-        return self._last_auto_fetch_date
+        with self._state_lock:
+            return self._last_auto_fetch_date
 
     @last_auto_fetch_date.setter
     def last_auto_fetch_date(self, value: str):
-        self._last_auto_fetch_date = value
+        with self._state_lock:
+            self._last_auto_fetch_date = value
 
     # ================================================================
     # 池计算
@@ -483,6 +606,145 @@ class LhbPoolManager:
 
         return _FrameAdapter(frame, columns)
 
+    def _collect_qualifying_codes(
+        self,
+        data_snapshot: dict[str, list[dict]],
+        stock_universe_codes: set[str],
+    ) -> tuple[set[str], dict[str, int]]:
+        qualifying_codes: set[str] = set()
+        code_hit_count: dict[str, int] = {}
+
+        for records in data_snapshot.values():
+            for rec in records:
+                code = self._record_stock_code(rec)
+                name = rec.get("名称", "")
+                if not code or code not in stock_universe_codes:
+                    continue
+                if self._is_bse_code(code) or self._is_st_stock(name):
+                    continue
+
+                try:
+                    net_buy = float(rec.get("上榜净买额(万)", 0))
+                except (ValueError, TypeError):
+                    net_buy = 0.0
+                try:
+                    jg_net = float(rec.get("机构净买(万)", 0))
+                except (ValueError, TypeError):
+                    jg_net = 0.0
+
+                if net_buy > 0 and jg_net >= 0:
+                    qualifying_codes.add(code)
+                    code_hit_count[code] = code_hit_count.get(code, 0) + 1
+
+        return qualifying_codes, code_hit_count
+
+    def _filter_codes_by_rps250(self, qualifying_codes: set[str], data_provider, engine) -> set[str]:
+        if engine is None:
+            return qualifying_codes
+
+        rps_bundle = engine.get_precomputed_rps()
+        if rps_bundle is None:
+            return qualifying_codes
+
+        rps250_dict = rps_bundle.get("rps250", {})
+        if not rps250_dict:
+            return qualifying_codes
+
+        disqualify_missing_rps = True
+        eligible_count = self._count_rps250_eligible_symbols(data_provider)
+        minimum_coverage = max(1000, int(eligible_count * 0.5)) if eligible_count >= 500 else 0
+        if eligible_count >= 500 and len(rps250_dict) < minimum_coverage:
+            disqualify_missing_rps = False
+            log.warning(f"[龙虎榜池] RPS缓存覆盖不足({len(rps250_dict)}/{eligible_count})，本次缺失RPS不按次新剔除")
+
+        disqualified_rps: set[str] = set()
+        below_threshold_rps: set[str] = set()
+        for code in qualifying_codes:
+            rps_val = rps250_dict.get(code)
+            if rps_val is None:
+                if disqualify_missing_rps:
+                    disqualified_rps.add(code)
+                continue
+            if rps_val < 85:
+                disqualified_rps.add(code)
+                below_threshold_rps.add(code)
+
+        if not disqualified_rps:
+            return qualifying_codes
+
+        qualifying_codes -= disqualified_rps
+        if disqualify_missing_rps:
+            log.info(f"[龙虎榜池] 剔除次新及RPS250<85共 {len(disqualified_rps)} 只")
+        else:
+            log.info(f"[龙虎榜池] RPS缓存覆盖异常，当前仅剔除RPS250<85共 {len(below_threshold_rps)} 只")
+        return qualifying_codes
+
+    def _attach_price_history(self, record: dict, code: str, data_provider) -> None:
+        try:
+            df_k = self._coerce_kline_frame(data_provider.get_data(code))
+            if df_k is None or df_k.empty or len(df_k) < 20:
+                return
+
+            if "date" in df_k.columns:
+                last_date = str(df_k["date"].iloc[-1])[:10]
+            elif "日期" in df_k.columns:
+                last_date = str(df_k["日期"].iloc[-1])[:10]
+            else:
+                last_date = str(df_k.index[-1])[:10]
+
+            hist_list = df_k["close"].tail(20).astype(float).tolist()
+            record["_history_20"] = hist_list
+            record["_history_date"] = last_date
+
+            try:
+                open_column = "open" if "open" in df_k.columns else "close"
+                last_open = float(df_k[open_column].iloc[-1])
+            except (AttributeError, KeyError, IndexError, TypeError, ValueError):
+                last_open = hist_list[-1]
+
+            record["买点"] = calculate_buy_point_from_history(
+                history=hist_list,
+                open_price=last_open,
+                close_price=hist_list[-1],
+                style=BUY_POINT_STYLE_TEXT,
+            )
+        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
+            log.debug(f"[龙虎榜池] 计算 {code} 股价位置失败: {e}")
+
+    def _build_latest_pool_records(
+        self,
+        data_snapshot: dict[str, list[dict]],
+        qualifying_codes: set[str],
+        code_hit_count: dict[str, int],
+        data_provider,
+    ) -> dict[str, dict]:
+        latest_records: dict[str, dict] = {}
+
+        for date_str in sorted(data_snapshot.keys(), reverse=True):
+            for rec in data_snapshot[date_str]:
+                code = self._record_stock_code(rec)
+                if code not in qualifying_codes or code in latest_records:
+                    continue
+
+                try:
+                    net_buy = float(rec.get("上榜净买额(万)", 0))
+                    jg_net = float(rec.get("机构净买(万)", 0))
+                except (ValueError, TypeError):
+                    net_buy = jg_net = 0.0
+                if not (net_buy > 0 and jg_net >= 0):
+                    continue
+
+                record = dict(rec)
+                record["代码"] = code
+                record["买点"] = ""
+                record["上榜次数"] = code_hit_count.get(code, 1)
+                record["最近上榜"] = record.get("上榜日期", date_str)
+                if data_provider is not None:
+                    self._attach_price_history(record, code, data_provider)
+                latest_records[code] = record
+
+        return latest_records
+
     def compute_pool(self, data_provider=None, engine=None) -> list[dict]:
         """从缓存的多日数据中计算关注池。
 
@@ -501,165 +763,33 @@ class LhbPoolManager:
 
         返回：按 买点触发优先 → 买点组内涨幅%降序 → 非买点按最近上榜日降序 排列的列表
         """
-        if not self._data:
+        with self._state_lock:
+            data_snapshot = dict(self._data)
+        if not data_snapshot:
             return []
 
         stock_universe_codes = self._resolve_stock_universe_codes()
         if not stock_universe_codes:
             return []
 
-        # 第一轮扫描：找出所有满足条件的代码 + 计数
-        qualifying_codes: set[str] = set()
-        code_hit_count: dict[str, int] = {}
-
-        for date_str, records in self._data.items():
-            for rec in records:
-                code = self._record_stock_code(rec)
-                name = rec.get("名称", "")
-                if not code:
-                    continue
-                if code not in stock_universe_codes:
-                    continue
-
-                # 过滤①：剔除北交所（代码前缀 43/83/87）
-                if self._is_bse_code(code):
-                    continue
-
-                # 过滤②：剔除 ST 股
-                if self._is_st_stock(name):
-                    continue
-
-                net_buy = 0.0
-                jg_net = 0.0
-                try:
-                    net_buy = float(rec.get("上榜净买额(万)", 0))
-                except (ValueError, TypeError):
-                    pass
-                try:
-                    jg_net = float(rec.get("机构净买(万)", 0))
-                except (ValueError, TypeError):
-                    pass
-
-                # 过滤合集：
-                # 1. 榜单总净买入必须为正
-                # 2. 机构净买入必须非负
-                if net_buy > 0 and jg_net >= 0:
-                    qualifying_codes.add(code)
-                    code_hit_count[code] = code_hit_count.get(code, 0) + 1
-
+        qualifying_codes, code_hit_count = self._collect_qualifying_codes(data_snapshot, stock_universe_codes)
         if not qualifying_codes:
             return []
 
-        # 过滤③ & ④合并：要求 RPS250 >= 85，无此数据（如次新股）将被一并剔除
-        # 数据来源：VCPEngine 的 _precomputed_rps_bundle，每次 F5 后自动计算
-        # 如果 F5 还没跑过（rps_bundle 为空或系统刚启动），跳过此过滤
-        if engine is not None:
-            rps_bundle = engine.get_precomputed_rps()
-            if rps_bundle is not None:
-                rps250_dict = rps_bundle.get("rps250", {})
-                if rps250_dict:
-                    disqualify_missing_rps = True
-                    eligible_count = self._count_rps250_eligible_symbols(data_provider)
-                    minimum_coverage = max(1000, int(eligible_count * 0.5)) if eligible_count >= 500 else 0
-                    if eligible_count >= 500 and len(rps250_dict) < minimum_coverage:
-                        disqualify_missing_rps = False
-                        log.warning(
-                            f"[龙虎榜池] RPS缓存覆盖不足({len(rps250_dict)}/{eligible_count})，本次缺失RPS不按次新剔除"
-                        )
-
-                    disqualified_rps: set[str] = set()
-                    below_threshold_rps: set[str] = set()
-                    for code in qualifying_codes:
-                        rps_val = rps250_dict.get(code)
-                        # 【核心】如果 RPS 缓存覆盖正常，缺失 RPS 仍按次新/无效处理；
-                        # 若缓存覆盖明显异常，则只剔除明确 RPS250 < 85 的标的，避免误杀。
-                        if rps_val is None:
-                            if disqualify_missing_rps:
-                                disqualified_rps.add(code)
-                            continue
-                        if rps_val < 85:
-                            disqualified_rps.add(code)
-                            below_threshold_rps.add(code)
-                    if disqualified_rps:
-                        qualifying_codes -= disqualified_rps
-                        if disqualify_missing_rps:
-                            log.info(f"[龙虎榜池] 剔除次新及RPS250<85共 {len(disqualified_rps)} 只")
-                        else:
-                            log.info(f"[龙虎榜池] RPS缓存覆盖异常，当前仅剔除RPS250<85共 {len(below_threshold_rps)} 只")
-
+        qualifying_codes = self._filter_codes_by_rps250(qualifying_codes, data_provider, engine)
         if not qualifying_codes:
             return []
 
-        # 第二轮扫描：对每个合格股票，取最近一次上榜数据用于展示
-        # 入池资格已由第一轮扫描保证（至少有一天榜单净买为正且机构净买非负），这里只管展示最新的
-        sorted_dates = sorted(self._data.keys(), reverse=True)
-        latest_records: dict[str, dict] = {}
-
-        for date_str in sorted_dates:
-            for rec in self._data[date_str]:
-                code = self._record_stock_code(rec)
-                if code in qualifying_codes and code not in latest_records:
-                    # 获取该条记录的核心净买数据
-                    try:
-                        net_buy = float(rec.get("上榜净买额(万)", 0))
-                        jg_net = float(rec.get("机构净买(万)", 0))
-                    except (ValueError, TypeError):
-                        net_buy = jg_net = 0.0
-
-                    # 【核心需求】：最后 5 列数据，必须显示【最近一次符合筛选条件的数据】
-                    # 当前口径：上榜净买额 > 0 且 机构净买 >= 0，外资不设门槛
-                    if not (net_buy > 0 and jg_net >= 0):
-                        continue
-
-                    record = dict(rec)
-                    record["代码"] = code
-                    record["买点"] = ""
-                    record["上榜次数"] = code_hit_count.get(code, 1)
-                    record["最近上榜"] = record.get("上榜日期", date_str)
-
-                    # === 计算股价位置 & 静态买点 ===
-                    if data_provider is not None:
-                        try:
-                            df_k = self._coerce_kline_frame(data_provider.get_data(code))
-                            if df_k is not None and not df_k.empty and len(df_k) >= 20:
-                                # 处理日期列
-                                if "date" in df_k.columns:
-                                    last_date = str(df_k["date"].iloc[-1])[:10]
-                                elif "日期" in df_k.columns:
-                                    last_date = str(df_k["日期"].iloc[-1])[:10]
-                                else:
-                                    last_date = str(df_k.index[-1])[:10]
-
-                                # 核心终极技：不再传任何玄学求和，直接传最干净的最后 20 根收盘价数组
-                                # 一切留给 UI 渲染层去根据“当前时间”动态推导
-                                hist_list = df_k["close"].tail(20).astype(float).tolist()
-
-                                record["_history_20"] = hist_list
-                                record["_history_date"] = last_date
-
-                                # 静态回显 (用于在没有实时行情推送的初始化瞬间，把位置显示出来)
-                                # 提取开盘价（兼容盘后首次点开不跳动行情时的静态推断）
-                                try:
-                                    last_open = float(df_k.get("open", df_k["close"]).iloc[-1])
-                                except (AttributeError, KeyError, IndexError, TypeError, ValueError):
-                                    last_open = hist_list[-1]
-
-                                last_close = hist_list[-1]
-                                record["买点"] = calculate_buy_point_from_history(
-                                    history=hist_list,
-                                    open_price=last_open,
-                                    close_price=last_close,
-                                    style=BUY_POINT_STYLE_TEXT,
-                                )
-                        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
-                            log.debug(f"[龙虎榜池] 计算 {code} 股价位置失败: {e}")
-
-                    latest_records[code] = record
-
+        latest_records = self._build_latest_pool_records(
+            data_snapshot,
+            qualifying_codes,
+            code_hit_count,
+            data_provider,
+        )
         # 排序：优先展示买点触发，买点组内按涨跌幅倒序；非买点仍按最近上榜日由近到远。
         result = list(latest_records.values())
         result = self.sort_pool_rows_for_display(result)
 
-        log.debug(f"[龙虎榜池] 池计算完成: {len(self._data)} 天数据中，{len(qualifying_codes)} 只标的入池")
+        log.debug(f"[龙虎榜池] 池计算完成: {len(data_snapshot)} 天数据中，{len(qualifying_codes)} 只标的入池")
 
         return result

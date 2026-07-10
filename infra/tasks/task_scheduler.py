@@ -34,6 +34,7 @@ class _WorkerSignals(QObject):
     finished = pyqtSignal(object)  # 成功: 传回结果
     error = pyqtSignal(str)  # 失败: 传回错误信息
     progress = pyqtSignal(int, str)  # 进度: pct, msg
+    terminated = pyqtSignal()  # 任意终态（成功、失败或取消）
 
 
 class BackgroundWorker(QRunnable):
@@ -59,6 +60,8 @@ class BackgroundWorker(QRunnable):
             return None, None
         try:
             thread = QThread.currentThread()
+            if thread is None:
+                return None, None
             previous_priority = thread.priority()
             thread.setPriority(self.thread_priority)
             return thread, previous_priority
@@ -76,11 +79,13 @@ class BackgroundWorker(QRunnable):
 
     @pyqtSlot()
     def run(self):
-        if self._is_cancelled:
-            return
         task_label = self.task_id or getattr(self.fn, "__name__", "worker")
-        priority_thread, previous_priority = self._apply_thread_priority()
+        priority_thread = None
+        previous_priority = None
         try:
+            if self._is_cancelled:
+                return
+            priority_thread, previous_priority = self._apply_thread_priority()
             result = self.fn(*self.args, **self.kwargs)
             if not self._is_cancelled:
                 try:
@@ -103,7 +108,7 @@ class BackgroundWorker(QRunnable):
                 self.signals.error.emit(str(e))
             except RuntimeError:
                 pass
-        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
+        except Exception as e:
             tb = traceback.format_exc()
             from core.logger import get_logger
 
@@ -115,6 +120,10 @@ class BackgroundWorker(QRunnable):
                 pass  # 信号对象已被销毁，安全忽略
         finally:
             self._restore_thread_priority(priority_thread, previous_priority)
+            try:
+                self.signals.terminated.emit()
+            except (AttributeError, RuntimeError):
+                pass
 
 
 class GlobalTaskManager(QObject):
@@ -222,7 +231,7 @@ class GlobalTaskManager(QObject):
             error_connect = getattr(worker.signals.error, "connect")
             error_connect(on_error, type=Qt.ConnectionType.QueuedConnection)
 
-        def _cleanup(_):
+        def _cleanup(_=None):
             with self._lock:
                 current = self.active_workers.get(tid)
                 if current is worker:
@@ -230,6 +239,7 @@ class GlobalTaskManager(QObject):
 
         worker.signals.finished.connect(_cleanup)
         worker.signals.error.connect(_cleanup)
+        worker.signals.terminated.connect(_cleanup)
 
         if task_priority is None:
             return self.submit_task(worker, tid)

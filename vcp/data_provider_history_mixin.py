@@ -1,4 +1,5 @@
 import concurrent.futures
+import datetime as dt
 import gc
 import os
 import random
@@ -38,6 +39,69 @@ def _resolve_market_sync_workers(*, offline: bool, requested_max_workers=None) -
     if requested <= 0:
         return default_workers
     return max(1, min(default_workers, requested))
+
+
+def _normalize_trade_date(value) -> str:
+    if value is None:
+        return ""
+    try:
+        timestamp = pd.Timestamp(value)
+    except (TypeError, ValueError):
+        return ""
+    if pd.isna(timestamp):
+        return ""
+    return timestamp.strftime(DATE_FMT)
+
+
+def _cached_frame_trade_date(frame) -> str:
+    if frame is None:
+        return ""
+    try:
+        if isinstance(frame, pd.DataFrame):
+            if frame.empty:
+                return ""
+            date_column = next((name for name in ("datetime", "date", "trade_date") if name in frame.columns), None)
+            raw_date = frame[date_column].max() if date_column else frame.index.max()
+        else:
+            if getattr(frame, "height", 0) <= 0:
+                return ""
+            columns = tuple(getattr(frame, "columns", ()) or ())
+            date_column = next((name for name in ("datetime", "date", "trade_date") if name in columns), None)
+            if not date_column:
+                return ""
+            get_column = getattr(frame, "get_column", None)
+            series = get_column(date_column) if callable(get_column) else frame[date_column]
+            raw_date = series.max()
+    except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
+        return ""
+    return _normalize_trade_date(raw_date)
+
+
+def _requested_cache_has_coverage(cache_data, requested_codes) -> bool:
+    cache = cache_data or {}
+    for code in requested_codes:
+        frame = cache.get(code)
+        if frame is None:
+            return False
+        if isinstance(frame, pd.DataFrame):
+            if frame.empty:
+                return False
+        elif getattr(frame, "height", 0) <= 0:
+            return False
+    return True
+
+
+def _requested_cached_trade_date(cache_data, requested_codes) -> str:
+    """Return the oldest cached date only when every requested code is covered."""
+    oldest_date = ""
+    cache = cache_data or {}
+    for code in requested_codes:
+        cached_date = _cached_frame_trade_date(cache.get(code))
+        if not cached_date:
+            return ""
+        if not oldest_date or cached_date < oldest_date:
+            oldest_date = cached_date
+    return oldest_date
 
 
 class TdxDataProviderHistoryMixin:
@@ -422,22 +486,45 @@ class TdxDataProviderHistoryMixin:
             return code, None, "底层结构异常/长期停牌"
 
     def load_cache_from_disk(self):
-        return load_cache_from_disk(self, logger=_log)
+        trade_date = load_cache_from_disk(self, logger=_log)
+        snapshot_trade_date = _normalize_trade_date(trade_date)
+        self._market_data_snapshot_trade_date = snapshot_trade_date if self.cache_data else ""
+        return trade_date
 
     def sync_market_data(self, codes, force_refresh=False, progress_callback=None, *, max_workers=None):
-        today = MarketCalendar.today("CN").strftime(DATE_FMT)
+        requested_codes = tuple(dict.fromkeys(codes)) if codes is not None else ()
+        if not requested_codes:
+            return True
+        today_date = MarketCalendar.today("CN")
+        today = today_date.strftime(DATE_FMT)
+        latest_trade_date = MarketCalendar.get_latest_trade_date("CN", ref_date=today_date).strftime(DATE_FMT)
         if not self.cache_data:
-            last_date = self.load_cache_from_disk()
-        else:
-            last_date = today if self.cache_data else ""
+            self.load_cache_from_disk()
 
-        if last_date == today and not force_refresh:
-            return True
-        if not force_refresh and self._is_before_930_today() and self._is_trading_day() and last_date:
-            _log.info(f"[缓存] 最近一次更新早于 09:30（{last_date}），继续沿用上一交易日快照")
-            return True
+        snapshot_trade_date = _normalize_trade_date(getattr(self, "_market_data_snapshot_trade_date", ""))
+        snapshot_is_fresh = snapshot_trade_date == latest_trade_date and _requested_cache_has_coverage(
+            self.cache_data,
+            requested_codes,
+        )
+        last_date = (
+            latest_trade_date
+            if snapshot_is_fresh
+            else _requested_cached_trade_date(self.cache_data, requested_codes)
+        )
 
-        total = len(codes)
+        if last_date == latest_trade_date and not force_refresh:
+            return True
+        if not force_refresh and self._is_before_930_today() and self._is_trading_day():
+            previous_trade_date = MarketCalendar.get_latest_trade_date(
+                "CN",
+                ref_date=today_date - dt.timedelta(days=1),
+            ).strftime(DATE_FMT)
+            if last_date == previous_trade_date:
+                _log.info(f"[缓存] 09:30 前继续沿用上一交易日快照（{last_date}）")
+                return True
+
+        self._market_data_snapshot_trade_date = ""
+        total = len(requested_codes)
         # 为什么离线只用 20 线程？50 线程同时持有 DataFrame 内存峰值太高，容易触发 Windows OOM 闪退
         workers = _resolve_market_sync_workers(offline=self._offline, requested_max_workers=max_workers)
         _log.info(
@@ -454,7 +541,7 @@ class TdxDataProviderHistoryMixin:
                 executor.submit(
                     self._worker_fetch, code, force_refresh, self.cache_data.get(code) if not force_refresh else None
                 ): code
-                for code in codes
+                for code in requested_codes
             }
             for future in concurrent.futures.as_completed(future_to_code):
                 completed += 1
@@ -519,6 +606,7 @@ class TdxDataProviderHistoryMixin:
             parquet_saved = bool(save_cache_parquet(self.cache_data, today))
             if parquet_saved:
                 self._last_market_data_parquet_saved_date = today
+                self._market_data_snapshot_trade_date = today
                 remove_cache_file(self.legacy_cache_file)
                 remove_cache_file(self.legacy_cache_file + ".corrupted")
                 remove_cache_file(self.legacy_fallback_cache_file)
@@ -623,6 +711,66 @@ class TdxDataProviderHistoryMixin:
         except (AttributeError, RuntimeError, TypeError, ValueError):
             pass
         return None
+
+    def get_data_batch(self, codes):
+        requested_codes = tuple(
+            dict.fromkeys(str(code or "").strip() for code in (codes or []) if str(code or "").strip())
+        )
+        if not requested_codes:
+            return {}
+
+        result: dict[str, pd.DataFrame] = {}
+        missing_codes: list[str] = []
+        with self.cache_lock:
+            for code in requested_codes:
+                frame = self.cache_data.get(code)
+                if frame is None:
+                    missing_codes.append(code)
+                    continue
+                normalized = ensure_pandas_dataframe(frame)
+                if not isinstance(normalized, pd.DataFrame) or normalized.empty:
+                    missing_codes.append(code)
+                    continue
+                if normalized is not frame:
+                    self.cache_data[code] = normalized
+                result[code] = normalized
+
+        warehouse_result = None
+        if missing_codes:
+            warehouse_getter = getattr(self, "_get_market_data_warehouse", None)
+            warehouse = warehouse_getter() if callable(warehouse_getter) else getattr(self, "market_data_warehouse", None)
+            read_symbols = getattr(warehouse, "read_symbols", None)
+            if callable(read_symbols):
+                try:
+                    warehouse_result = read_symbols(missing_codes)
+                except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                    warehouse_result = None
+
+        if warehouse_result is not None:
+            try:
+                self._last_market_data_source_status = warehouse_result.status.to_dict()
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                pass
+            if warehouse_result.status.ok and isinstance(warehouse_result.data, dict):
+                for code, frame in warehouse_result.data.items():
+                    normalized = ensure_pandas_dataframe(frame)
+                    if not isinstance(normalized, pd.DataFrame) or normalized.empty:
+                        continue
+                    with self.cache_lock:
+                        cached = self.cache_data.setdefault(code, normalized)
+                    result[code] = ensure_pandas_dataframe(cached)
+
+        for code in requested_codes:
+            if code in result:
+                continue
+            local_df = self._fetch_from_local_tdx(code) if getattr(self, "tdx_vipdoc", None) else None
+            if local_df is None or len(local_df) <= 0:
+                continue
+            with self.cache_lock:
+                cached = self.cache_data.setdefault(code, local_df)
+            result[code] = ensure_pandas_dataframe(cached)
+
+        return result
 
     def get_data_fresh_for_chart(self, code, force_sync=False):
         """按需委托给本地历史服务做图表补全。"""

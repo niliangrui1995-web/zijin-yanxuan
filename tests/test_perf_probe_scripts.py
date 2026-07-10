@@ -4,7 +4,6 @@ from scripts.perf_round5_probe import (
     _effective_probe_tabs,
     _loaded_info_source_keys,
     disable_information_source_refresh_after_f5,
-    disable_rt_monitor_auto_start,
     summarize_background_tasks,
     summarize_quote_calls,
 )
@@ -130,33 +129,6 @@ def test_round5_background_summary_flags_info_source_tail():
     assert summary["information_source_task_count"] == 1
     assert summary["new_active_task_ids_final"] == ["foreign_block_trade"]
     assert summary["active_earnings_worker_count_final"] == 1
-
-
-def test_round5_probe_can_isolate_rt_monitor_auto_start():
-    class _RtService:
-        def __init__(self):
-            self.stopped = False
-            self._manual_stop_requested = False
-            self._manual_stop_trade_date = ""
-
-        def stop(self, auto=False):
-            self.stopped = True
-
-        @staticmethod
-        def _manual_stop_reference_date():
-            return "2026-05-12"
-
-    service = _RtService()
-
-    class _Workspace:
-        host = type("Host", (), {"rt_monitor_service": service})()
-
-    result = disable_rt_monitor_auto_start(_Workspace())
-
-    assert result == {"disabled": True, "reason": "probe_isolation_service"}
-    assert service.stopped is True
-    assert service._manual_stop_requested is True
-    assert service._manual_stop_trade_date == "2026-05-12"
 
 
 def test_round5_probe_filters_info_source_tabs_when_isolated():

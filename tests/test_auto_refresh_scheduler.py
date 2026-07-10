@@ -1,4 +1,7 @@
 import datetime
+import subprocess
+import sys
+from pathlib import Path
 
 import pandas as pd
 from PyQt6.QtTest import QSignalSpy
@@ -72,8 +75,12 @@ class _TaskService:
         self.calls.append(("na_daily_incremental", trade_date))
         return {"records": 4, "status": "success"}
 
-    def sync_asian_market_runtime(self):
-        self.calls.append(("asian_market_runtime", "sync"))
+    def prepare_asian_market_runtime(self):
+        self.calls.append(("asian_market_runtime", "prepare"))
+        return {"target_codes": ["2330.TW"]}
+
+    def sync_asian_market_runtime(self, prepared=None):
+        self.calls.append(("asian_market_runtime", "sync", tuple((prepared or {}).get("target_codes") or [])))
         return {"status": "started"}
 
     def run_asian_market_cache_sync(self, trade_date):
@@ -237,6 +244,170 @@ def test_auto_refresh_scheduler_uses_30_second_global_timer():
     assert AutoRefreshScheduler.CHECK_INTERVAL_MS == 30_000
 
 
+def test_auto_refresh_service_shell_imports_stay_lightweight():
+    project_root = Path(__file__).resolve().parents[1]
+    command = r"""
+import sys
+
+import ui.services.auto_refresh_scheduler
+
+if "ui.services.auto_refresh_tasks" in sys.modules:
+    raise SystemExit("scheduler imported auto_refresh_tasks eagerly")
+
+import ui.services.auto_refresh_tasks
+
+blocked_prefixes = (
+    "akshare",
+    "app.services.asian_market_service",
+    "app.services.ui_fund_holdings_service",
+    "core.lhb_pool_manager",
+    "domains.fund_holdings.store",
+    "numpy",
+    "openpyxl",
+    "pandas",
+    "ui.services.asian_market_runtime_service",
+    "ui.services.earnings_refresh_service",
+    "ui.tabs.asian_market_workers",
+    "vcp.fetchers.asian_kline_fetcher",
+    "yfinance",
+)
+loaded = sorted(
+    name
+    for name in sys.modules
+    if any(name == prefix or name.startswith(f"{prefix}.") for prefix in blocked_prefixes)
+)
+if loaded:
+    raise SystemExit("unexpected heavy imports: " + ", ".join(loaded))
+"""
+
+    completed = subprocess.run(
+        [sys.executable, "-c", command],
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+def test_auto_refresh_asian_prepare_warms_worker_before_gui_callback():
+    project_root = Path(__file__).resolve().parents[1]
+    command = r"""
+import datetime
+import sys
+
+from PyQt6.QtCore import QCoreApplication
+
+from ui.services import asian_market_runtime_service as runtime_service
+from ui.services.auto_refresh_scheduler import AutoRefreshScheduler
+from ui.services.auto_refresh_tasks import AutoRefreshTaskService
+
+worker_module_name = "ui.tabs.asian_market_workers"
+if worker_module_name in sys.modules:
+    raise SystemExit("worker module was imported before prepare")
+
+runtime_service.filter_asian_tickers = lambda: {"TSMC": "2330.TW"}
+
+
+class ProbeService:
+    def __init__(self):
+        self._worker = None
+        self._codes = []
+        self.worker_module_before_sync = None
+
+    def set_target_codes(self, codes):
+        self._codes = list(codes or [])
+
+    def sync_runtime_state(self):
+        self.worker_module_before_sync = sys.modules.get(worker_module_name)
+        if self.worker_module_before_sync is None:
+            raise AssertionError("GUI callback cold-imported worker module")
+        runtime_service.is_asian_quote_refresh_time(self._codes)
+        if sys.modules.get(worker_module_name) is not self.worker_module_before_sync:
+            raise AssertionError("GUI callback replaced worker module")
+        return "running"
+
+
+class QueuedRunner:
+    def __init__(self):
+        self.jobs = []
+
+    def is_active_task(self, _task_id):
+        return False
+
+    def run_in_background(self, fn, *, on_success=None, on_error=None, task_id=None):
+        self.jobs.append((task_id, fn, on_success, on_error))
+        return task_id
+
+
+app = QCoreApplication.instance() or QCoreApplication([])
+probe = ProbeService()
+runner = QueuedRunner()
+task_service = AutoRefreshTaskService(asian_market_service=probe)
+scheduler = AutoRefreshScheduler(
+    task_service=task_service,
+    job_runner=runner,
+    clock=lambda: datetime.datetime(2026, 4, 20, 1, 0),
+)
+scheduler._maybe_submit_asian_market_runtime(datetime.datetime(2026, 4, 20, 1, 0))
+_, run_fn, on_success, _ = runner.jobs[0]
+prepared = run_fn()
+prepared_worker_module = sys.modules.get(worker_module_name)
+if prepared_worker_module is None:
+    raise SystemExit("prepare did not warm worker module")
+on_success(prepared)
+if probe.worker_module_before_sync is not prepared_worker_module:
+    raise SystemExit("GUI callback did not reuse warmed worker module")
+"""
+
+    completed = subprocess.run(
+        [sys.executable, "-c", command],
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+def test_auto_refresh_scheduler_queues_asian_runtime_before_touching_service(monkeypatch):
+    _reset_scheduler_settings()
+    now = [datetime.datetime(2026, 4, 20, 1, 0)]
+    runner = _QueuedRunner()
+    tasks = _TaskService()
+    status_spy = QSignalSpy(event_bus.sig_auto_refresh_status_changed)
+    scheduler = _scheduler(now, runner=runner, task_service=tasks, extended_jobs=True)
+    scheduler.DAILY_JOBS = ()
+    monkeypatch.setattr(
+        "ui.services.auto_refresh_scheduler.MarketCalendar.is_market_active",
+        classmethod(lambda cls, market="CN": False),
+    )
+
+    scheduler.tick()
+    scheduler.tick()
+
+    assert tasks.calls == []
+    asian_jobs = [job for job in runner.jobs if job[0] == "auto_refresh_asian_market_runtime"]
+    assert len(asian_jobs) == 1
+
+    _, run_fn, on_success, _on_error = asian_jobs[0]
+    prepared = run_fn()
+    assert tasks.calls == [("asian_market_runtime", "prepare")]
+
+    on_success(prepared)
+    assert tasks.calls[-1] == ("asian_market_runtime", "sync", ("2330.TW",))
+    assert any(
+        args[0]["job_key"] == "asian_market_runtime"
+        and args[0]["status"] == "success"
+        and args[0]["message"] == "started"
+        for args in status_spy
+    )
+
+
 def test_auto_refresh_scheduler_triggers_na_daily_full_after_0925(monkeypatch):
     _reset_scheduler_settings()
     now = [datetime.datetime(2026, 4, 20, 9, 24)]
@@ -370,7 +541,7 @@ def test_auto_refresh_scheduler_runs_latest_earnings_routine_once(monkeypatch):
 def test_auto_refresh_task_service_runs_fund_holdings_sync(monkeypatch):
     calls = []
     monkeypatch.setattr(
-        "ui.services.auto_refresh_tasks.fund_holdings_sync_service.sync_latest_all",
+        "app.services.ui_fund_holdings_service.fund_holdings_sync_service.sync_latest_all",
         lambda: calls.append("sync") or {"message": "done"},
     )
 
@@ -379,6 +550,48 @@ def test_auto_refresh_task_service_runs_fund_holdings_sync(monkeypatch):
     assert calls == ["sync"]
     assert result["trade_date"] == "20260420"
     assert result["message"] == "done"
+
+
+def test_auto_refresh_task_service_runs_earnings_refresh_in_subprocess(monkeypatch):
+    calls = []
+
+    def fake_refresh(mode, *, routine_time=""):
+        calls.append((mode, routine_time))
+        return {"status": "success", "job_key": f"earnings_{mode}", "records": 3}
+
+    monkeypatch.setattr(auto_refresh_task_module, "_run_earnings_refresh_subprocess", fake_refresh)
+    service = AutoRefreshTaskService(earnings_service=object())
+
+    startup = service.run_earnings_startup_gap_fill("20260420")
+    routine = service.run_earnings_routine("20260420", routine_time="08:30")
+
+    assert calls == [("startup-gap-fill", ""), ("routine", "08:30")]
+    assert startup["trade_date"] == "20260420"
+    assert routine["trade_date"] == "20260420"
+    assert routine["routine_time"] == "08:30"
+
+
+def test_earnings_refresh_subprocess_uses_hidden_module_runner(monkeypatch):
+    calls = []
+
+    def fake_run(module_name, module_args=None, **kwargs):
+        calls.append((module_name, list(module_args or []), kwargs))
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout='worker log\n{"status":"success","job_key":"earnings_routine","records":2}\n',
+            stderr="",
+        )
+
+    monkeypatch.setattr("app.services.ui_task_service.run_python_module", fake_run)
+
+    result = auto_refresh_task_module._run_earnings_refresh_subprocess("routine", routine_time="08:30")
+
+    assert result == {"status": "success", "job_key": "earnings_routine", "records": 2}
+    assert calls[0][0] == "domains.earnings.refresh_cache"
+    assert calls[0][1] == ["routine", "--routine-time", "08:30"]
+    assert calls[0][2]["no_window"] is True
+    assert calls[0][2]["check"] is True
 
 
 def test_auto_refresh_task_service_writes_lhb_pool_cache(monkeypatch):
@@ -406,14 +619,10 @@ def test_auto_refresh_task_service_writes_lhb_pool_cache(monkeypatch):
             "status": "ok",
         },
     )
+    monkeypatch.setattr("core.ai_industry_chain_pool.load_cached_ai_industry_chain_stock_codes", lambda: {"300308"})
+    monkeypatch.setattr("core.lhb_pool_manager.LhbPoolManager", FakePoolManager)
     monkeypatch.setattr(
-        auto_refresh_task_module,
-        "filter_rows_to_ai_chain_codes",
-        lambda rows, **kwargs: [row for row in rows if row.get("code") == "300308"],
-    )
-    monkeypatch.setattr("ui.services.auto_refresh_tasks.LhbPoolManager", FakePoolManager)
-    monkeypatch.setattr(
-        "ui.services.auto_refresh_tasks.MarketCalendar.get_recent_trade_dates",
+        "app.services.ui_market_calendar_service.MarketCalendar.get_recent_trade_dates",
         classmethod(lambda cls, n, ref_date=None: ["20260420"]),
     )
 
@@ -528,11 +737,7 @@ def test_auto_refresh_foreign_block_fetches_latest_chunk_first(monkeypatch):
 
 
 def test_auto_refresh_foreign_block_rows_filter_to_ai_chain_pool(monkeypatch):
-    monkeypatch.setattr(
-        auto_refresh_task_module,
-        "filter_rows_to_ai_chain_codes",
-        lambda rows, **kwargs: [row for row in rows if row.get("代码") == "300308"],
-    )
+    monkeypatch.setattr("core.ai_industry_chain_pool.load_cached_ai_industry_chain_stock_codes", lambda: {"300308"})
 
     rows = auto_refresh_task_module._build_foreign_block_rows(
         [

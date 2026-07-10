@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 
+from PyQt6.QtCore import QEvent, QObject
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from ui.components.kline_window_manager import WEBENGINE_PREFLIGHT_STARTUP_DELAY_MS
@@ -121,8 +122,10 @@ def test_main_window_builds_and_closes_with_controlled_background_services(monke
         assert window.lbl_code_count.text() == "标的池: 1 只"
         assert window.startup_orchestrator._deferred_timer.isActive() is False
         assert window.startup_orchestrator._smart_timer.isActive() is False
-        assert window.startup_orchestrator._auto_rt_timer is None
-        assert window.auto_refresh_scheduler._timer.isActive() is False
+        assert window.auto_refresh_scheduler is None
+        assert window.na_daily_service is None
+        assert window.asian_market_service is None
+        assert window.earnings_refresh_service is None
         assert window.central_quotes_svc is None
         assert window._workspace._restore_last_tab_timer is None
         assert window._process_watchdog.running is True
@@ -133,6 +136,75 @@ def test_main_window_builds_and_closes_with_controlled_background_services(monke
         assert window._is_closing is True
         assert window._process_watchdog.running is False
         assert task_manager.shutdown_calls == 1
+    finally:
+        if not window._is_closing:
+            window.close()
+            _process_events()
+        window.deleteLater()
+
+
+def test_main_window_starts_lightweight_runtime_once_after_real_paint(monkeypatch, qt_application):
+    calls = []
+    task_manager = _FakeTaskManager()
+
+    class _StartupOrchestrator:
+        def schedule_startup(self):
+            calls.append("startup_scheduled")
+
+        def shutdown(self):
+            calls.append("startup_shutdown")
+
+    class _AutoRefreshScheduler:
+        def start(self):
+            calls.append("auto_refresh_started")
+
+        def shutdown(self):
+            calls.append("auto_refresh_shutdown")
+
+    class _PaintProbe(QObject):
+        def eventFilter(self, watched, event):
+            if watched is window and event.type() == QEvent.Type.Paint:
+                calls.append("paint")
+            return False
+
+    def initialize_auto_refresh_services(window):
+        calls.append("services_initialized")
+        window.auto_refresh_scheduler = _AutoRefreshScheduler()
+
+    monkeypatch.setattr("ui.main_window_qt.create_data_provider", lambda *, offline=True: _DummyProvider())
+    monkeypatch.setattr("ui.main_window_qt.create_scan_engine", lambda: object())
+    monkeypatch.setattr("ui.main_window_qt.create_startup_orchestrator", lambda _window: _StartupOrchestrator())
+    monkeypatch.setattr("ui.main_window_qt.task_manager", task_manager)
+    monkeypatch.setattr(MainWindowQT, "_initialize_auto_refresh_services", initialize_auto_refresh_services)
+    monkeypatch.setattr("ui.main_window_qt.apply_windows_frameless_taskbar_fix", lambda _window: None)
+    monkeypatch.setattr("ui.main_window_qt.enable_windows_native_shadow", lambda _window: None)
+    monkeypatch.setattr("ui.main_window_qt.enable_windows_system_backdrop", lambda *_args, **_kwargs: None)
+
+    window = MainWindowQT(
+        startup_enabled=True,
+        background_prewarm=False,
+        kline_prewarm_enabled=False,
+        central_quotes_enabled=False,
+        restore_last_tab_enabled=False,
+    )
+    probe = _PaintProbe(window)
+    window.installEventFilter(probe)
+    try:
+        _process_events()
+        assert window._first_paint_recorded is False
+        assert window.auto_refresh_scheduler is None
+        assert "startup_scheduled" not in calls
+
+        window.show()
+        _process_events(8)
+        window.update()
+        _process_events(4)
+
+        assert calls.count("paint") >= 1
+        assert calls.count("services_initialized") == 1
+        assert calls.count("startup_scheduled") == 1
+        assert calls.count("auto_refresh_started") == 1
+        assert calls.index("paint") < calls.index("services_initialized")
     finally:
         if not window._is_closing:
             window.close()

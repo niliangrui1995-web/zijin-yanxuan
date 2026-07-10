@@ -47,6 +47,37 @@ def test_refresh_cache_main_prints_degraded_summary(monkeypatch, capsys):
     }
 
 
+def test_refresh_cache_main_returns_failure_for_all_provider_failure(monkeypatch, capsys):
+    class FakeService:
+        def refresh_events(self):
+            return [{"symbol": "NVDA"}]
+
+        def load_cache_status(self):
+            return {
+                "status": "failed",
+                "reason": "all_providers_failed",
+                "providers": ["Nasdaq", "Yahoo Finance"],
+                "retryable": True,
+                "all_providers_failed": True,
+                "reused_event_count": 1,
+            }
+
+    monkeypatch.setattr(refresh_cache, "GlobalEarningsCalendarService", FakeService)
+
+    assert refresh_cache.main() == 1
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload == {
+        "status": "failed",
+        "events": 1,
+        "providers": ["Nasdaq", "Yahoo Finance"],
+        "reason": "all_providers_failed",
+        "retryable": True,
+        "reused_event_count": 1,
+        "all_providers_failed": True,
+    }
+
+
 def test_refresh_cache_main_marks_exception_as_retryable_degraded(monkeypatch, capsys):
     marked = []
 

@@ -229,6 +229,134 @@ class SectorManager:
             return []
         return list(dict.fromkeys(self.code_to_sectors.get(code, [])))
 
+    @staticmethod
+    def _normalize_rps_target_date(target_date):
+        if isinstance(target_date, str):
+            return _datetime.strptime(target_date, "%Y%m%d").date()
+        if hasattr(target_date, "date") and callable(getattr(target_date, "date")):
+            return target_date.date()
+        return target_date
+
+    @staticmethod
+    def _locate_polars_close(df, target_dt, pl):
+        if "close" not in df.columns or "datetime" not in df.columns:
+            return None
+
+        dates_col = df["datetime"].cast(pl.Date)
+        valid_indices = [index for index, is_valid in enumerate((dates_col <= target_dt).to_list()) if is_valid]
+        if not valid_indices:
+            return None
+        loc = valid_indices[-1]
+        return loc, float(df["close"][loc])
+
+    @staticmethod
+    def _locate_pandas_close(df, target_dt, pd):
+        if "close" not in df.columns:
+            return None
+
+        target_ts = pd.Timestamp(target_dt)
+        if target_ts in df.index:
+            loc = df.index.get_loc(target_ts)
+        else:
+            valid = df.index[df.index <= target_ts]
+            if len(valid) == 0:
+                return None
+            loc = df.index.get_loc(valid[-1])
+
+        if isinstance(loc, slice):
+            loc = loc.stop - 1 if loc.stop else loc.start
+        elif isinstance(loc, np.ndarray):
+            loc = int(np.flatnonzero(loc)[-1]) if loc.dtype == bool else int(loc[-1])
+        else:
+            loc = int(loc)
+        return loc, float(df.iloc[loc]["close"])
+
+    @staticmethod
+    def _period_returns(df, loc: int, curr_close: float, periods, *, is_polars: bool) -> dict[int, float]:
+        if curr_close <= 0:
+            return {}
+
+        returns = {}
+        close_values = df["close"]
+        for period in periods:
+            prev_loc = loc - period
+            if prev_loc < 0:
+                continue
+            prev_close = float(close_values[prev_loc] if is_polars else close_values.iloc[prev_loc])
+            if prev_close > 0:
+                returns[period] = (curr_close - prev_close) / prev_close
+        return returns
+
+    @staticmethod
+    def _store_code_return_aliases(stock_returns: dict, code: str, returns: dict[int, float]) -> None:
+        stock_returns[code] = returns
+        bare = code.replace("sh", "").replace("sz", "")
+        if bare == code:
+            prefix = "sh" if code.startswith(("6", "9")) else "sz"
+            stock_returns[f"{prefix}{code}"] = returns
+        else:
+            stock_returns[bare] = returns
+
+    def _compute_stock_returns(self, all_data, target_dt, periods) -> dict[str, dict[int, float]]:
+        try:
+            import polars as pl
+        except ImportError:
+            pl = None
+        import pandas as pd
+
+        max_lookback = max(periods) + 5
+        stock_returns: dict[str, dict[int, float]] = {}
+        for code, df in all_data.items():
+            if df is None or len(df) < max_lookback:
+                continue
+            try:
+                is_polars = pl is not None and isinstance(df, pl.DataFrame)
+                located = (
+                    self._locate_polars_close(df, target_dt, pl)
+                    if is_polars
+                    else self._locate_pandas_close(df, target_dt, pd)
+                )
+                if located is None:
+                    continue
+                loc, curr_close = located
+                returns = self._period_returns(df, loc, curr_close, periods, is_polars=is_polars)
+            except (AttributeError, IndexError, KeyError, RuntimeError, TypeError, ValueError) as exc:
+                _log.debug(f"[板块管理] 计算 {code} 涨幅时异常: {exc}")
+                continue
+            if returns:
+                self._store_code_return_aliases(stock_returns, str(code), returns)
+        return stock_returns
+
+    def _aggregate_sector_medians(self, stock_returns, periods) -> dict[str, dict[int, float]]:
+        sector_returns = {}
+        for sector_name, members in self.sector_to_codes.items():
+            period_values = defaultdict(list)
+            for code in members:
+                for period, value in stock_returns.get(code, {}).items():
+                    period_values[period].append(value)
+
+            medians = {
+                period: float(np.median(period_values[period]))
+                for period in periods
+                if len(period_values.get(period, [])) >= 3
+            }
+            if medians:
+                sector_returns[sector_name] = medians
+        return sector_returns
+
+    @staticmethod
+    def _rank_sector_returns(sector_returns, periods) -> dict[str, dict[int, float]]:
+        sector_rps = defaultdict(dict)
+        for period in periods:
+            items = sorted(
+                ((name, returns[period]) for name, returns in sector_returns.items() if period in returns),
+                key=lambda item: item[1],
+            )
+            total = len(items)
+            for rank, (name, _) in enumerate(items, start=1):
+                sector_rps[name][period] = round(rank / total * 100, 1)
+        return dict(sector_rps)
+
     # ---------- 板块 RPS 计算 ----------
     def build_sector_rps(self, all_data, target_date, periods=None):
         """计算所有板块在给定日期的 RPS
@@ -255,118 +383,11 @@ class SectorManager:
             pass  # polars 未安装
         except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
             _log.error(f"[板块管理] Polars 板块 RPS 计算失败，回退 numpy: {e}")
-        # ---- numpy 原始路径（fallback）----
-        if isinstance(target_date, str):
-            target_dt = _datetime.strptime(target_date, "%Y%m%d").date()
-        elif hasattr(target_date, "date") and callable(getattr(target_date, "date")):
-            target_dt = target_date.date()
-        else:
-            target_dt = target_date
-        max_lookback = max(periods) + 5  # 多留几天余量
 
-        # 1. 计算每只股票在各周期的涨幅
-        stock_returns = {}  # {代码: {周期: 涨幅}}
-        for code, df in all_data.items():
-            if df is None or len(df) < max_lookback:
-                continue
-            try:
-                import polars as pl
-
-                # 兼容 Polars 和 Pandas 输入
-                if isinstance(df, pl.DataFrame):
-                    if "close" not in df.columns or "datetime" not in df.columns:
-                        continue
-                    dates_col = df["datetime"].cast(pl.Date)
-                    mask_list = (dates_col <= pl.lit(target_dt)).to_list()
-                    valid_indices = [i for i, v in enumerate(mask_list) if v]
-                    if not valid_indices:
-                        continue
-                    loc = valid_indices[-1]
-                    curr_close = float(df["close"][loc])
-                else:
-                    # Pandas fallback（向下兼容旧缓存等极端情况）
-                    import pandas as pd
-
-                    _target_ts = pd.to_datetime(target_date)
-                    if _target_ts in df.index:
-                        loc = df.index.get_loc(_target_ts)
-                    else:
-                        valid = df.index[df.index <= _target_ts]
-                        if len(valid) == 0:
-                            continue
-                        loc = df.index.get_loc(valid[-1])
-                    if isinstance(loc, slice):
-                        loc = loc.stop - 1 if loc.stop else loc.start
-                    elif isinstance(loc, np.ndarray):
-                        loc = int(loc[-1])
-                    else:
-                        loc = int(loc)
-                    curr_close = float(df.iloc[loc]["close"])
-            except (AttributeError, IndexError, KeyError, RuntimeError, TypeError, ValueError) as _e:
-                _log.debug(f"[板块管理] 计算 {code} 涨幅时异常: {_e}")
-                continue
-
-            if curr_close <= 0:
-                continue
-
-            ret = {}
-            for p in periods:
-                prev_loc = loc - p
-                if prev_loc < 0:
-                    continue
-                if isinstance(df, pl.DataFrame):
-                    prev_close = float(df["close"][prev_loc])
-                else:
-                    prev_close = float(df.iloc[prev_loc]["close"])
-                if prev_close > 0:
-                    ret[p] = (curr_close - prev_close) / prev_close
-            if ret:
-                stock_returns[code] = ret
-                # 兼容格式：all_data key 可能是纯数字(600000)，
-                # 而 sector_to_codes 成员是 sh600000/sz000001
-                # 同时存两种格式确保匹配
-                bare = code.replace("sh", "").replace("sz", "")
-                if bare == code:
-                    # code 是纯数字，补上 sh/sz 前缀
-                    prefix = "sh" if code.startswith(("6", "9")) else "sz"
-                    stock_returns[f"{prefix}{code}"] = ret
-                else:
-                    # code 已有前缀，补上纯数字版
-                    stock_returns[bare] = ret
-
-        # 2. 计算每个板块的平均涨幅
-        sector_returns = {}  # {板块名: {周期: 平均涨幅}}
-        for sector_name, members in self.sector_to_codes.items():
-            period_sums = defaultdict(list)
-            for code in members:
-                if code in stock_returns:
-                    for p, r in stock_returns[code].items():
-                        period_sums[p].append(r)
-            if not period_sums:
-                continue
-            avg_ret = {}
-            for p in periods:
-                vals = period_sums.get(p, [])
-                if len(vals) >= 3:  # 至少3只成分股有数据才计算
-                    avg_ret[p] = float(np.median(vals))  # 用中位数更稳健
-            if avg_ret:
-                sector_returns[sector_name] = avg_ret
-
-        # 3. 对每个周期，按涨幅排名得到 RPS (0~100)
-        sector_rps = defaultdict(dict)
-        for p in periods:
-            # 收集所有板块在该周期的涨幅
-            items = [(name, ret.get(p)) for name, ret in sector_returns.items() if p in ret]
-            if not items:
-                continue
-            items.sort(key=lambda x: x[1])
-            n = len(items)
-            for rank, (name, _) in enumerate(items):
-                # RPS = 排名百分位 * 100
-                rps_val = round((rank + 1) / n * 100, 1)
-                sector_rps[name][p] = rps_val
-
-        return dict(sector_rps)
+        target_dt = self._normalize_rps_target_date(target_date)
+        stock_returns = self._compute_stock_returns(all_data, target_dt, periods)
+        sector_returns = self._aggregate_sector_medians(stock_returns, periods)
+        return self._rank_sector_returns(sector_returns, periods)
 
     # ---------- 板块 RPS 约束检查 ----------
     def check_sector_rps(self, code, sector_rps_dict, threshold=70):

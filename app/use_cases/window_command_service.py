@@ -47,17 +47,6 @@ class WindowCommandService:
                 }
             )
 
-        if workspace is not None and hasattr(workspace, "toggle_rt_monitor"):
-            running = bool(getattr(workspace, "is_rt_monitor_running", lambda: False)())
-            commands.append(
-                {
-                    "title": "停止盘中监控" if running else "开始盘中监控",
-                    "subtitle": "切换盘中监控运行状态",
-                    "keywords": ["盘中监控", "开始", "停止", "监控"],
-                    "handler": workspace.toggle_rt_monitor,
-                }
-            )
-
         if workspace is not None:
             if hasattr(workspace, "run_incremental_scan"):
                 commands.append(

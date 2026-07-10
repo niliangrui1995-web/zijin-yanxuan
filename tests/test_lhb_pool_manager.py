@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
+import json
+import threading
+
 import pandas as pd
 import pytest
 
 import core.lhb_pool_manager as lhb_pool_module
+from core.ai_industry_chain_pool import load_cached_ai_industry_chain_stock_codes
 from core.lhb_pool_manager import LhbPoolManager
 
 
@@ -21,6 +25,10 @@ class _DummyEngine:
 
     def get_precomputed_rps(self):
         return self._bundle
+
+
+def test_lhb_pool_manager_defaults_to_cache_only_ai_chain_provider():
+    assert LhbPoolManager._stock_universe_provider is load_cached_ai_industry_chain_stock_codes
 
 
 def _build_manager(monkeypatch):
@@ -49,6 +57,33 @@ def _make_kline(rows: int, closes: list[float], last_open: float | None = None):
             "close": closes,
         }
     )
+
+
+def test_lhb_pool_manager_merges_concurrent_stale_writers(monkeypatch, tmp_path):
+    cache_path = tmp_path / "lhb_pool_30d.json"
+    first = _build_manager(monkeypatch)
+    second = _build_manager(monkeypatch)
+    for manager in (first, second):
+        manager._cache_path = str(cache_path)
+        manager._legacy_pool_cache_path = str(tmp_path / "lhb_pool_20d.json")
+        manager._old_cache_path = str(tmp_path / "lhb_cache.json")
+
+    first.add_day("20260508", [{"代码": "000001", "名称": "Alpha"}])
+    second.add_day("20260511", [{"代码": "000002", "名称": "Beta"}])
+    start = threading.Barrier(2)
+
+    def save(manager):
+        start.wait(timeout=2)
+        manager.save()
+
+    threads = [threading.Thread(target=save, args=(manager,)) for manager in (first, second)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert set(payload["daily_data"]) == {"20260508", "20260511"}
 
 
 def test_compute_pool_allows_negative_foreign_net_if_core_conditions_match(monkeypatch):
@@ -259,6 +294,47 @@ def test_compute_pool_accepts_dataframe_like_kline_without_empty_attr(monkeypatc
     assert pool[0]["_history_20"] == [float(value) for value in range(1, 21)]
     assert pool[0]["_history_date"] == "2026-03-20"
     assert pool[0]["买点"] == "触发"
+
+
+def test_compute_pool_uses_stable_snapshot_during_kline_enrichment(monkeypatch):
+    manager = _build_manager(monkeypatch)
+    manager._data = {
+        "20260502": [
+            {
+                "代码": "000001",
+                "名称": "快照一",
+                "上榜日期": "20260502",
+                "上榜净买额(万)": 100,
+                "机构净买(万)": 0,
+            }
+        ],
+        "20260501": [
+            {
+                "代码": "000002",
+                "名称": "快照二",
+                "上榜日期": "20260501",
+                "上榜净买额(万)": 200,
+                "机构净买(万)": 0,
+            }
+        ],
+    }
+
+    class _MutatingProvider:
+        cache_data = {}
+
+        def __init__(self):
+            self.calls = 0
+
+        def get_data(self, _code):
+            self.calls += 1
+            if self.calls == 1:
+                with manager._state_lock:
+                    manager._data.clear()
+            return None
+
+    pool = manager.compute_pool(data_provider=_MutatingProvider())
+
+    assert [row["代码"] for row in pool] == ["000001", "000002"]
 
 
 def test_add_day_records_cache_meta(monkeypatch):

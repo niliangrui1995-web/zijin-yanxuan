@@ -55,6 +55,31 @@ def test_stock_table_model_update_quotes_batches_changed_rows():
     assert samples[-1].tags["changed_rows"] == "2"
 
 
+def test_stock_table_model_coalesces_sparse_non_flash_updates():
+    model = StockTableModel(["代码", "名称", "现价", "RPS强度"])
+    model.set_sparse_update_coalescing(True)
+    model.update_data(
+        [
+            {"代码": f"00000{idx}", "名称": str(idx), "现价": "10.00", "RPS强度": ""}
+            for idx in range(1, 6)
+        ],
+        hydrate_latest_quotes=False,
+    )
+    spy = QSignalSpy(model.dataChanged)
+    updated = [dict(row) for row in model.row_data]
+    for row_idx in (0, 2, 4):
+        updated[row_idx]["RPS强度"] = "95"
+
+    model.update_data(updated, hydrate_latest_quotes=False)
+
+    assert len(spy) == 1
+    assert spy[0][0].row() == 0
+    assert spy[0][1].row() == 4
+    roles = {int(getattr(role, "value", role)) for role in spy[0][2]}
+    assert int(Qt.ItemDataRole.UserRole) + 1 not in roles
+    assert model._flash_records == {}
+
+
 def test_stock_table_model_sort_value_cache_invalidates_on_cell_update():
     model = StockTableModel(["代码", "名称", "市值"])
     model.update_data(

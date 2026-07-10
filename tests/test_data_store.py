@@ -11,6 +11,32 @@ tests/test_data_store.py — DataStore SQLite 存储层测试
 
 import os
 import tempfile
+from pathlib import Path
+
+
+def test_pytest_session_default_database_is_outside_project_data():
+    from core.data_store import data_store
+
+    configured = Path(os.environ["VCP_HUNTER_DB_PATH"]).resolve()
+    production = Path(__file__).resolve().parents[1] / "data" / "vcp_hunter.db"
+
+    assert configured != production.resolve()
+    assert Path(data_store._db_path).resolve() == configured
+
+
+def test_default_data_store_path_honors_test_environment(monkeypatch, tmp_path):
+    from core.data_store import DataStore
+
+    db_path = tmp_path / "isolated" / "test.db"
+    monkeypatch.setenv("VCP_HUNTER_DB_PATH", str(db_path))
+    monkeypatch.setattr(DataStore, "_instance", None)
+
+    store = DataStore()
+    try:
+        assert store._db_path == str(db_path.resolve())
+    finally:
+        store.close()
+        DataStore._instance = None
 
 
 class TestDataStore:

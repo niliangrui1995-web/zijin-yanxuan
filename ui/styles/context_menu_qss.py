@@ -4,7 +4,7 @@ ui/styles/context_menu_qss.py
 右键菜单的统一 QSS 样式 — 支持主题切换
 
 为什么要集中管理？
-MainWindow / ScanTab / RtMonitorTab / WatchlistTab 四处右键菜单
+MainWindow / ScanTab / WatchlistTab 三处右键菜单
 原先各自硬编码了完全相同的 QSS 字符串，改一处容易漏另三处。
 """
 

@@ -17,7 +17,6 @@ class DomainEventBus(QObject):
     sig_app_closing = pyqtSignal()
 
     sig_rt_quotes = pyqtSignal(object)
-    sig_rt_quotes_refreshed = pyqtSignal(object)
     sig_vcp_watchlist_ready = pyqtSignal(object)
 
     sig_cache_bootstrap_ready = pyqtSignal()

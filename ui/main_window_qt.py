@@ -14,32 +14,16 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from app.bootstrap import ApplicationBootstrap
-from app.services.kline_open_service import build_kline_open_request
 from app.services.runtime_constants import APP_VERSION, RPS_CACHE_FILE
-from app.services.runtime_services import create_data_provider, create_startup_orchestrator
-from app.services.scan_runtime_service import create_scan_engine
-from app.services.ui_config_service import app_config
 from app.services.ui_diagnostics_service import install_ui_stall_probe, ui_stall_span
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signal_hub
 from app.services.ui_task_service import background_job_runner as task_manager
-from app.use_cases import WindowCommandService
-from core.cache_manager import CacheManager
 from core.logger import get_logger
-from core.observability import emit_structured_log, record_metric
-from core.process_watchdog import ProcessWatchdog, log_process_snapshot
-from ui.components.command_palette import CommandPaletteDialog
 from ui.components.kline_window_manager import WEBENGINE_PREFLIGHT_STARTUP_DELAY_MS, kline_manager
-from ui.components.message_box import show_themed_question
 from ui.components.tooltip_popup import hide_floating_tooltip, show_floating_tooltip
 from ui.components.vector_icons import set_button_svg_icon
 from ui.main_window_tables import install_table_copy_hooks
-from ui.services.asian_market_runtime_service import AsianMarketRuntimeService
-from ui.services.auto_refresh_scheduler import AutoRefreshScheduler
-from ui.services.earnings_refresh_service import EarningsRefreshService
-from ui.services.na_daily_service import NADailyRefreshService
-from ui.services.rt_monitor_service import RtMonitorService
 from ui.shell import (
     DraggableTitleBar,
     MainWindowStatusBar,
@@ -54,14 +38,31 @@ from ui.window_flags import (
     enable_windows_native_shadow,
     enable_windows_system_backdrop,
 )
-from ui.workers.central_quotes_worker import CentralQuotesService
-from ui.workspaces import ClassicWorkspace
 
 # 核心引擎与数据层
 
 log = get_logger(__name__)
 
 __all__ = ["DraggableTitleBar", "MainWindowQT"]
+
+
+def create_data_provider(*, offline: bool = True):
+    """Defer the market-data stack while preserving the main-window test seam."""
+    from app.services.runtime_services import create_data_provider as factory
+
+    return factory(offline=offline)
+
+
+def create_startup_orchestrator(main_window, job_runner=None):
+    from app.services.runtime_services import create_startup_orchestrator as factory
+
+    return factory(main_window, job_runner=job_runner)
+
+
+def create_scan_engine():
+    from app.services.scan_runtime_service import create_scan_engine as factory
+
+    return factory()
 
 
 class MainWindowQT(QMainWindow):
@@ -100,7 +101,19 @@ class MainWindowQT(QMainWindow):
         super().__init__()
         self._project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self._launch_started_at = time.perf_counter()
+
+        from app.bootstrap import ApplicationBootstrap
+        from app.services.ui_config_service import app_config
+        from app.use_cases import WindowCommandService
+        from core.cache_manager import CacheManager
+        from core.process_watchdog import ProcessWatchdog, log_process_snapshot
+
         self._first_paint_recorded = False
+        self._post_paint_runtime_started = False
+        self._post_paint_runtime_timer = QTimer(self)
+        self._post_paint_runtime_timer.setSingleShot(True)
+        self._post_paint_runtime_timer.setInterval(0)
+        self._post_paint_runtime_timer.timeout.connect(self._start_post_paint_runtime)
         self._is_closing = False
         self._startup_enabled = bool(startup_enabled)
         self._auto_refresh_enabled = self._startup_enabled if auto_refresh_enabled is None else bool(auto_refresh_enabled)
@@ -113,7 +126,6 @@ class MainWindowQT(QMainWindow):
             if controlled_startup_probe_guard is None
             else bool(controlled_startup_probe_guard)
         )
-        self._rt_cache_restore_pending = False
         self._native_taskbar_fix_applied = False
         self._app_cursor_filter_installed = False
         self._splash = splash
@@ -154,7 +166,8 @@ class MainWindowQT(QMainWindow):
         self._last_sync_freshness = ""
         self._command_palette = None
         self._runtime_health_dialog = None
-        self._settings = app_config.section("window", legacy_scope="MainWindowQT")
+        self._app_config = app_config
+        self._settings = self._app_config.section("window", legacy_scope="MainWindowQT")
         self._workspace = None
         self.tabs = None
         self._ui_stall_probe = install_ui_stall_probe(
@@ -168,19 +181,10 @@ class MainWindowQT(QMainWindow):
         self._splash_update(60, "正在构建主界面模块...")
         self.data_provider = create_data_provider(offline=True)
         self.engine = create_scan_engine()
-        self.rt_monitor_service = RtMonitorService(self.data_provider, self.engine, parent=self)
-        self.na_daily_service = NADailyRefreshService(parent=self)
-        self.asian_market_service = AsianMarketRuntimeService(parent=self)
-        self.earnings_refresh_service = EarningsRefreshService(parent=self)
-        self.auto_refresh_scheduler = AutoRefreshScheduler(
-            data_provider=self.data_provider,
-            engine=self.engine,
-            rt_monitor_service=self.rt_monitor_service,
-            na_daily_service=self.na_daily_service,
-            asian_market_service=self.asian_market_service,
-            earnings_service=self.earnings_refresh_service,
-            parent=self,
-        )
+        self.na_daily_service = None
+        self.asian_market_service = None
+        self.earnings_refresh_service = None
+        self.auto_refresh_scheduler = None
 
         # 全局样式（动态生成，支持主题切换）
         from ui.styles.global_qss import generate_global_qss
@@ -227,15 +231,11 @@ class MainWindowQT(QMainWindow):
         self._restore_ui_state()
 
         self._splash_update(90, "正在加载数据...")
-        if self._startup_enabled:
-            self.startup_orchestrator.schedule_startup()
-        else:
+        if not self._startup_enabled:
             log.info("[startup] startup timers disabled for controlled window construction")
 
         self._init_central_broadcaster()
-        if self._auto_refresh_enabled:
-            self.auto_refresh_scheduler.start()
-        else:
+        if not self._auto_refresh_enabled:
             log.info("[startup] auto refresh scheduler disabled for controlled window construction")
         self._update_last_f5_time()
         log_process_snapshot(
@@ -245,19 +245,68 @@ class MainWindowQT(QMainWindow):
             direct_watchdog=True,
         )
 
+    def _initialize_auto_refresh_services(self) -> None:
+        if not self._auto_refresh_enabled or self.auto_refresh_scheduler is not None:
+            return
+
+        from ui.services.asian_market_runtime_service import AsianMarketRuntimeService
+        from ui.services.auto_refresh_scheduler import AutoRefreshScheduler
+        from ui.services.earnings_refresh_service import EarningsRefreshService
+        from ui.services.na_daily_service import NADailyRefreshService
+
+        self.na_daily_service = NADailyRefreshService(parent=self)
+        self.asian_market_service = AsianMarketRuntimeService(parent=self)
+        self.earnings_refresh_service = EarningsRefreshService(parent=self)
+        self.auto_refresh_scheduler = AutoRefreshScheduler(
+            data_provider=self.data_provider,
+            engine=self.engine,
+            na_daily_service=self.na_daily_service,
+            asian_market_service=self.asian_market_service,
+            earnings_service=self.earnings_refresh_service,
+            parent=self,
+        )
+
+    def _schedule_post_paint_runtime(self) -> None:
+        if self._is_closing or self._post_paint_runtime_started:
+            return
+        if not self._post_paint_runtime_timer.isActive():
+            self._post_paint_runtime_timer.start()
+
+    @pyqtSlot()
+    def _start_post_paint_runtime(self) -> None:
+        if self._is_closing or self._post_paint_runtime_started:
+            return
+        self._post_paint_runtime_started = True
+        started_at = time.perf_counter()
+        succeeded = False
+        try:
+            if self._auto_refresh_enabled:
+                self._initialize_auto_refresh_services()
+            if self._startup_enabled:
+                self.startup_orchestrator.schedule_startup()
+            scheduler = self.auto_refresh_scheduler
+            if scheduler is not None:
+                scheduler.start()
+            succeeded = True
+        except Exception:
+            log.exception("[startup] post-paint runtime initialization failed")
+        finally:
+            from core.observability import emit_structured_log, record_metric
+
+            elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+            record_metric("main_window_post_paint_runtime_ms", elapsed_ms, unit="ms")
+            emit_structured_log(
+                "main_window.post_paint_runtime",
+                elapsed_ms=round(elapsed_ms, 3),
+                succeeded=succeeded,
+            )
+
     def _init_central_broadcaster(self):
         if not self._central_quotes_enabled:
             self.central_quotes_svc = None
             log.info("[UI] central quotes disabled for controlled window construction")
             return
         self._bootstrap.install_central_quotes()
-
-    def auto_start_rt_monitor(self) -> bool:
-        service = getattr(self, "rt_monitor_service", None)
-        start = getattr(service, "start", None)
-        if callable(start):
-            return bool(start(auto=True))
-        return False
 
     def _refresh_code_count_label_from_provider(self) -> int:
         provider = getattr(self, "data_provider", None)
@@ -372,6 +421,8 @@ class MainWindowQT(QMainWindow):
         theme_manager.switch_theme(theme_name)
 
     def create_workspace(self, parent=None):
+        from ui.workspaces import ClassicWorkspace
+
         with ui_stall_span("MainWindowQT.create_workspace", tab=self._current_workspace_tab_key()):
             return ClassicWorkspace(
                 self.data_provider,
@@ -382,32 +433,6 @@ class MainWindowQT(QMainWindow):
                 watchlist_startup_tasks=self._startup_enabled,
                 controlled_startup_probe_guard=self._controlled_startup_probe_guard,
             )
-
-    def mark_rt_cache_restore_pending(self) -> bool:
-        if self._rt_cache_restore_pending:
-            return False
-        self._rt_cache_restore_pending = True
-        return True
-
-    def restore_pending_rt_cache(self) -> bool:
-        if not getattr(self, "_rt_cache_restore_pending", False):
-            return False
-
-        workspace = getattr(self, "_workspace", None)
-        get_rt_table = getattr(workspace, "get_rt_table", None)
-        rt_table = get_rt_table() if callable(get_rt_table) else None
-
-        from core.cache_manager import rt_cache_restore_target_available
-
-        if not rt_cache_restore_target_available(rt_table):
-            return False
-
-        cache_manager = getattr(self, "cache_manager", None)
-        if cache_manager is None:
-            return False
-
-        self._rt_cache_restore_pending = False
-        return bool(cache_manager.load_rt_cache(rt_table, self._set_status_text))
 
     def _set_status_text(self, text: str) -> None:
         label = getattr(self, "lbl_status", None)
@@ -500,9 +525,9 @@ class MainWindowQT(QMainWindow):
             if self._restore_last_tab_enabled:
                 schedule_restore = getattr(workspace, "schedule_restore_last_tab", None)
                 if callable(schedule_restore):
-                    schedule_restore(app_config.last_active_tab)
+                    schedule_restore(self._app_config.last_active_tab)
                 else:
-                    workspace.restore_last_tab(app_config.last_active_tab)
+                    workspace.restore_last_tab(self._app_config.last_active_tab)
             elif self.tabs is not None and self.tabs.currentIndex() != 0:
                 self.tabs.setCurrentIndex(0)
             if self._kline_prewarm_enabled:
@@ -549,6 +574,8 @@ class MainWindowQT(QMainWindow):
         return workspace
 
     def create_central_quotes_service(self, *, code_supplier=None):
+        from ui.workers.central_quotes_worker import CentralQuotesService
+
         return CentralQuotesService(
             self,
             self.data_provider,
@@ -566,6 +593,8 @@ class MainWindowQT(QMainWindow):
 
     def _open_command_palette(self):
         if self._command_palette is None:
+            from ui.components.command_palette import CommandPaletteDialog
+
             self._command_palette = CommandPaletteDialog(parent=self)
             self._command_palette.set_dynamic_provider(self._build_stock_command_entries)
         self._command_palette.set_commands(self._build_command_palette_entries())
@@ -747,7 +776,6 @@ class MainWindowQT(QMainWindow):
         self._tabs_wrapper_layout.setContentsMargins(0, 0, 0, 0)
         self._tabs_wrapper_layout.setSpacing(0)
 
-        event_bus.sig_rt_quotes_refreshed.connect(self._on_rt_quotes_refreshed)
         event_bus.sig_rt_quotes.connect(self._on_rt_quotes_pulse)
         ui_signal_hub.sig_task_progress.connect(self._on_task_progress)
         ui_signal_hub.sig_show_kline.connect(self._on_show_kline)
@@ -768,7 +796,7 @@ class MainWindowQT(QMainWindow):
     # 统一由 BaseStockTab 基类提供，避免双份代码维护噩梦
 
     def _remember_last_active_tab(self, index: int):
-        app_config.last_active_tab = index
+        self._app_config.last_active_tab = index
 
     def _workspace_tables(self):
         return self.iter_workspace_tables()
@@ -868,9 +896,16 @@ class MainWindowQT(QMainWindow):
             enable_windows_system_backdrop(self, backdrop="mica", dark=bool(build_ui_tokens()["is_dark"]))
         if hasattr(self, "_process_watchdog"):
             self._process_watchdog.pulse("showEvent")
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
         if self._first_paint_recorded:
             return
+        if not self.isVisible() or event.region().isEmpty():
+            return
         self._first_paint_recorded = True
+        from core.observability import emit_structured_log, record_metric
+
         elapsed_ms = (time.perf_counter() - self._launch_started_at) * 1000.0
         record_metric("main_window_first_paint_ms", elapsed_ms, unit="ms")
         emit_structured_log(
@@ -878,10 +913,13 @@ class MainWindowQT(QMainWindow):
             elapsed_ms=round(elapsed_ms, 3),
             workspace_mode=str(getattr(getattr(self, "_workspace", None), "mode", "unknown")),
         )
+        self._schedule_post_paint_runtime()
 
     def closeEvent(self, event):
         """应用关闭：广播信号让各组件自行保存，然后清理资源"""
         from ui.main_window_runtime import shutdown_main_window
+
+        self._post_paint_runtime_timer.stop()
 
         if self._app_cursor_filter_installed:
             app = QApplication.instance()
@@ -949,6 +987,8 @@ class MainWindowQT(QMainWindow):
         """F5 盘后预计算界面触发层"""
         from PyQt6.QtWidgets import QMessageBox
 
+        from ui.components.message_box import show_themed_question
+
         reply = show_themed_question(
             self,
             "盘后一键预计算",
@@ -956,7 +996,7 @@ class MainWindowQT(QMainWindow):
             "① 从通达信本地日线(vipdoc)重新读取数据\n"
             "② 预计算全市场RPS排名(120日/250日)\n"
             "③ 预计算板块RPS排名\n"
-            "④ 保存缓存供次日盘中监控使用\n\n"
+            "④ 保存缓存供后续扫描与复盘使用\n\n"
             "请确保已在通达信中完成【盘后数据下载】.\n是否执行?",
             yes_text="执行",
             no_text="取消",
@@ -993,19 +1033,6 @@ class MainWindowQT(QMainWindow):
         if callable(pulse):
             pulse()
 
-    @pyqtSlot(object)
-    def _on_rt_quotes_refreshed(self, payload: object):
-        """响应盘中监控刷新完成"""
-        try:
-            count = len(payload) if payload else 0
-            if hasattr(self, "lbl_status"):
-                self.lbl_status.setText(f"实时报价已刷新 ({count} 条)")
-            if self.data_provider.cache_data and hasattr(self, "lbl_code_count"):
-                total = len(self.data_provider.cache_data)
-                self.lbl_code_count.setText(f"标的池: {total}")
-        except (AttributeError, RuntimeError, TypeError, ValueError) as e:
-            log.error(f"[EventBus] _on_rt_quotes_refreshed 异常: {e}")
-
     @pyqtSlot(str, int, str)
     def _on_task_progress(self, module: str, pct: int, msg: str):
         """处理扫描进度更新"""
@@ -1028,6 +1055,8 @@ class MainWindowQT(QMainWindow):
 
     def _on_show_kline_with_list(self, code: str, code_list: list, current_idx: int):
         """响应带列表上下文的 K 线图请求 — 委托给 KLineWindowManager (#1)"""
+        from app.services.kline_open_service import build_kline_open_request
+
         workspace = getattr(self, "_workspace", None)
         source_tab_index = self.tabs.currentIndex() if self.tabs is not None else -1
         source_tab_key = ""

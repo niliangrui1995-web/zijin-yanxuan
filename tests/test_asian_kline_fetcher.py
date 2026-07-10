@@ -268,8 +268,13 @@ def test_asian_market_meta_roles_cover_asian_universe_with_rank_labels(monkeypat
     assert unlabeled_roles == []
 
 
-def test_fetch_single_kline_routes_to_market_specific_history_source(monkeypatch):
+def test_fetch_single_kline_routes_to_primary_sources_while_yahoo_is_cooling_down(monkeypatch):
     fetcher = _load_fetcher_module(monkeypatch)
+    monkeypatch.setattr(
+        fetcher,
+        "get_yf_rate_limit_status",
+        lambda: {"active": True, "remaining_sec": 30.0, "cooldown_until": 30.0, "last_error": "rate limited"},
+    )
     monkeypatch.setattr(
         fetcher,
         "_resolve_period_window",
@@ -316,6 +321,11 @@ def test_fetch_single_kline_routes_to_market_specific_history_source(monkeypatch
         "_fetch_hk_history_tencent",
         lambda *args, **kwargs: route_hits.append("HK") or _make_rows(500.0),
     )
+    monkeypatch.setattr(
+        fetcher,
+        "_fetch_yfinance_history_rows",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("Yahoo fallback should not run")),
+    )
 
     cases = [
         ("TSMC", "2330.TW", "TWD", "twse_stock_day"),
@@ -335,6 +345,30 @@ def test_fetch_single_kline_routes_to_market_specific_history_source(monkeypatch
         assert payload["klines"][0]["date"] == "2026-04-17"
 
     assert route_hits == ["TW", "TWO", "KS", "T", "HK"]
+
+
+def test_primary_source_rate_limit_does_not_start_yahoo_cooldown(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    monkeypatch.setattr(
+        fetcher,
+        "_resolve_period_window",
+        lambda period: (fetcher.date(2025, 4, 1), fetcher.date(2026, 4, 20), 260),
+    )
+    monkeypatch.setattr(
+        fetcher,
+        "_fetch_market_history_rows",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("HTTP 429 from Tencent")),
+    )
+    monkeypatch.setattr(fetcher, "is_yf_rate_limit_error", lambda exc: "429" in str(exc))
+    marks = []
+    monkeypatch.setattr(
+        fetcher,
+        "mark_yf_rate_limited",
+        lambda exc=None, cooldown_sec=None: marks.append(str(exc)) or 30.0,
+    )
+
+    assert fetcher.fetch_single_kline("ASMPT", "0522.HK", period="1y", session=object()) is None
+    assert marks == []
 
 
 def test_twse_history_uses_default_tls_verification(monkeypatch):
@@ -557,6 +591,11 @@ def test_sync_asian_kline_cache_rescues_stale_symbol_before_write(monkeypatch):
     fetcher = _load_fetcher_module(monkeypatch)
     monkeypatch.setattr(
         fetcher,
+        "get_yf_rate_limit_status",
+        lambda: {"active": True, "remaining_sec": 30.0, "cooldown_until": 30.0, "last_error": "rate limited"},
+    )
+    monkeypatch.setattr(
+        fetcher,
         "filter_asian_tickers",
         lambda market_filter=None: {
             "TSMC": "2330.TW",
@@ -762,6 +801,36 @@ def test_fetch_all_asian_klines_stops_before_fetch_when_time_budget_exhausted(mo
     assert fetch_calls == []
 
 
+def test_fetch_all_asian_klines_does_not_stop_primary_sources_during_yahoo_cooldown(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+    monkeypatch.setattr(
+        fetcher,
+        "filter_asian_tickers",
+        lambda market_filter=None: {
+            "Samsung": "005930.KS",
+            "ASMPT": "0522.HK",
+        },
+    )
+    monkeypatch.setattr(
+        fetcher,
+        "get_yf_rate_limit_status",
+        lambda: {"active": True, "remaining_sec": 30.0, "cooldown_until": 30.0, "last_error": "rate limited"},
+    )
+    monkeypatch.setattr(fetcher.time, "sleep", lambda _seconds: None)
+    fetch_calls = []
+
+    def _fetch(name, ticker, **_kwargs):
+        fetch_calls.append(ticker)
+        return {"name": name, "ticker": ticker, "market": "primary", "kline_count": 1, "klines": []}
+
+    monkeypatch.setattr(fetcher, "fetch_single_kline", _fetch)
+
+    rows = fetcher.fetch_all_asian_klines()
+
+    assert fetch_calls == ["005930.KS", "0522.HK"]
+    assert [row["ticker"] for row in rows] == ["0522.HK", "005930.KS"]
+
+
 def test_sync_asian_kline_cache_preserves_snapshot_when_time_budget_exhausted(monkeypatch):
     fetcher = _load_fetcher_module(monkeypatch)
     monkeypatch.setattr(
@@ -815,19 +884,45 @@ def test_sync_asian_kline_cache_preserves_snapshot_when_time_budget_exhausted(mo
     assert saved_payloads == []
 
 
-def test_fetch_single_kline_returns_none_when_yahoo_rate_limited(monkeypatch):
+def test_yfinance_fallback_skips_request_during_yahoo_cooldown(monkeypatch):
     fetcher = _load_fetcher_module(monkeypatch)
     monkeypatch.setattr(
         fetcher,
-        "_resolve_period_window",
-        lambda period: (fetcher.date(2025, 4, 1), fetcher.date(2026, 4, 20), 260),
+        "get_yf_rate_limit_status",
+        lambda: {"active": True, "remaining_sec": 30.0, "cooldown_until": 30.0, "last_error": "rate limited"},
+    )
+    ticker_calls = []
+    fake_yfinance = types.SimpleNamespace(
+        Ticker=lambda *args, **kwargs: ticker_calls.append((args, kwargs))
+        or (_ for _ in ()).throw(AssertionError("should not create Yahoo ticker"))
+    )
+    monkeypatch.setitem(sys.modules, "yfinance", fake_yfinance)
+
+    rows = fetcher._fetch_yfinance_history_rows(
+        "2330.TW",
+        object(),
+        start_date=fetcher.date(2025, 4, 1),
+        end_date=fetcher.date(2026, 4, 20),
     )
 
-    def _raise_rate_limit(*args, **kwargs):
-        raise YFRateLimitError()
+    assert rows == []
+    assert ticker_calls == []
+
+
+def test_yfinance_fallback_marks_only_its_own_rate_limit(monkeypatch):
+    fetcher = _load_fetcher_module(monkeypatch)
+
+    class _Ticker:
+        def history(self, **_kwargs):
+            raise YFRateLimitError()
 
     marks = []
-    monkeypatch.setattr(fetcher, "_fetch_market_history_rows", _raise_rate_limit)
+    monkeypatch.setitem(sys.modules, "yfinance", types.SimpleNamespace(Ticker=lambda *args, **kwargs: _Ticker()))
+    monkeypatch.setattr(
+        fetcher,
+        "get_yf_rate_limit_status",
+        lambda: {"active": False, "remaining_sec": 0.0, "cooldown_until": 0.0, "last_error": ""},
+    )
     monkeypatch.setattr(fetcher, "is_yf_rate_limit_error", lambda exc: isinstance(exc, YFRateLimitError))
     monkeypatch.setattr(
         fetcher,
@@ -835,7 +930,12 @@ def test_fetch_single_kline_returns_none_when_yahoo_rate_limited(monkeypatch):
         lambda exc=None, cooldown_sec=None: marks.append(str(exc)) or 30.0,
     )
 
-    payload = fetcher.fetch_single_kline("TSMC", "2330.TW", period="1y", session=object())
+    rows = fetcher._fetch_yfinance_history_rows(
+        "2330.TW",
+        object(),
+        start_date=fetcher.date(2025, 4, 1),
+        end_date=fetcher.date(2026, 4, 20),
+    )
 
-    assert payload is None
+    assert rows == []
     assert marks == ["Too Many Requests. Rate limited. Try after a while."]

@@ -652,14 +652,43 @@ class FundHoldingsStore:
         placeholders = ", ".join("?" for _ in quarter_keys)
         return f" AND {column_name} IN ({placeholders})", tuple(sorted(quarter_keys))
 
-    def _query_cached_change_rows(self, quarter_keys=None) -> list[dict]:
+    @staticmethod
+    def _normalize_stock_code_filter(stock_codes) -> set[str] | None:
+        if stock_codes is None:
+            return None
+        normalized: set[str] = set()
+        for stock_code in stock_codes or []:
+            code = str(stock_code or "").strip()
+            if code.isdigit() and len(code) <= 6:
+                code = code.zfill(6)
+            if code and is_mainland_security_code(code):
+                normalized.add(code)
+        return normalized
+
+    @staticmethod
+    def _stock_filter_clause(column_name: str, stock_codes: set[str]) -> tuple[str, tuple[str, ...]]:
+        if not stock_codes:
+            return "", ()
+        if column_name != "stock_code":
+            raise ValueError(f"unsupported stock filter column: {column_name}")
+        placeholders = ", ".join("?" for _ in stock_codes)
+        return f" AND {column_name} IN ({placeholders})", tuple(sorted(stock_codes))
+
+    def _query_cached_change_rows(self, quarter_keys=None, stock_codes=None) -> list[dict]:
         normalized_quarters = self._normalize_quarter_filter(quarter_keys)
         if normalized_quarters is not None and not normalized_quarters:
+            return []
+        normalized_codes = self._normalize_stock_code_filter(stock_codes)
+        if normalized_codes is not None and not normalized_codes:
             return []
         quarter_clause = ""
         quarter_params: tuple[str, ...] = ()
         if normalized_quarters is not None:
             quarter_clause, quarter_params = self._quarter_filter_clause("quarter_key", normalized_quarters)
+        stock_clause = ""
+        stock_params: tuple[str, ...] = ()
+        if normalized_codes is not None:
+            stock_clause, stock_params = self._stock_filter_clause("stock_code", normalized_codes)
         query = """
                 SELECT
                     subject_code, subject_name, subject_type, quarter_key, compare_quarter_key, end_date,
@@ -676,6 +705,8 @@ class FundHoldingsStore:
                 """
         if quarter_clause:
             query += quarter_clause
+        if stock_clause:
+            query += stock_clause
         query += """
                 ORDER BY sort_quarter DESC, sort_value DESC, stock_code ASC
                 """
@@ -683,12 +714,12 @@ class FundHoldingsStore:
             dict(row)
             for row in self._store.fetch_all(
                 query,
-                (SUBJECT_QFII["subject_code"], *quarter_params),
+                (SUBJECT_QFII["subject_code"], *quarter_params, *stock_params),
             )
             if is_mainland_security_code(row["stock_code"])
         ]
 
-    def _query_qfii_holder_change_rows(self, quarter_keys=None) -> list[dict]:
+    def _query_qfii_holder_change_rows(self, quarter_keys=None, *, stock_codes=None) -> list[dict]:
         target_quarters = self._normalize_quarter_filter(quarter_keys)
         query_quarters = None
         if target_quarters is not None:
@@ -697,10 +728,17 @@ class FundHoldingsStore:
             query_quarters = set(target_quarters)
             for quarter_key in target_quarters:
                 query_quarters.add(previous_natural_quarter(quarter_key))
+        normalized_codes = self._normalize_stock_code_filter(stock_codes)
+        if normalized_codes is not None and not normalized_codes:
+            return []
         quarter_clause = ""
         quarter_params: tuple[str, ...] = ()
         if query_quarters is not None:
             quarter_clause, quarter_params = self._quarter_filter_clause("quarter_key", query_quarters)
+        stock_clause = ""
+        stock_params: tuple[str, ...] = ()
+        if normalized_codes is not None:
+            stock_clause, stock_params = self._stock_filter_clause("stock_code", normalized_codes)
         query = """
                 SELECT
                     subject_code, quarter_key, end_date, stock_code, stock_name, holder_name, holder_rank,
@@ -711,6 +749,8 @@ class FundHoldingsStore:
                 """
         if quarter_clause:
             query += quarter_clause
+        if stock_clause:
+            query += stock_clause
         query += """
                 ORDER BY quarter_key DESC, stock_code ASC, holder_rank ASC, holder_name ASC
                 """
@@ -718,7 +758,7 @@ class FundHoldingsStore:
             dict(row)
             for row in self._store.fetch_all(
                 query,
-                (SUBJECT_QFII["subject_code"], *quarter_params),
+                (SUBJECT_QFII["subject_code"], *quarter_params, *stock_params),
             )
             if is_mainland_security_code(row["stock_code"])
         ]
@@ -769,11 +809,19 @@ class FundHoldingsStore:
             ),
         )
 
-    def query_change_rows(self, quarter_keys=None) -> list[dict]:
+    def query_change_rows(self, quarter_keys=None, *, stock_codes=None) -> list[dict]:
         normalized_quarters = self._normalize_quarter_filter(quarter_keys)
-        if normalized_quarters is not None:
-            rows = self._query_cached_change_rows(normalized_quarters)
-            rows.extend(self._query_qfii_holder_change_rows(normalized_quarters))
+        normalized_codes = self._normalize_stock_code_filter(stock_codes)
+        if normalized_codes is not None and not normalized_codes:
+            return []
+        if normalized_quarters is not None or normalized_codes is not None:
+            rows = self._query_cached_change_rows(normalized_quarters, normalized_codes)
+            rows.extend(
+                self._query_qfii_holder_change_rows(
+                    normalized_quarters,
+                    stock_codes=normalized_codes,
+                )
+            )
             return [dict(row) for row in self._sort_change_rows(rows)]
 
         signature = self._query_change_rows_signature()

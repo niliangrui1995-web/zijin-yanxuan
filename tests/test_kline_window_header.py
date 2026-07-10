@@ -145,6 +145,7 @@ def test_kline_close_stops_webengine_view_without_manual_delete(monkeypatch):
     monkeypatch.setattr(kline_module, "background_job_runner", _Runner())
     browser.html_calls.clear()
     browser.url_calls.clear()
+    window._render_generation = 7
 
     try:
         window.close()
@@ -158,8 +159,39 @@ def test_kline_close_stops_webengine_view_without_manual_delete(monkeypatch):
         assert page.deleted is False
         assert browser.html_calls == []
         assert browser.url_calls == []
-        assert "kline_000001" in abandoned
-        assert "kline_asian_000001" in abandoned
+        assert set(abandoned) == {
+            "kline_000001_7",
+            "kline_rt_000001_7",
+            "kline_asian_cache_000001_7",
+            "kline_asian_000001_7",
+        }
+    finally:
+        _dispose_kline_window(window)
+
+
+def test_kline_switch_abandons_all_tasks_for_old_code_and_generation(monkeypatch):
+    window = _build_fake_webengine_kline(monkeypatch)
+    abandoned = []
+
+    class _Runner:
+        def abandon(self, task_key):
+            abandoned.append(str(task_key))
+            return True
+
+    monkeypatch.setattr(kline_module, "background_job_runner", _Runner())
+    window.code_list.append({"代码": "000002", "名称": "万科A"})
+    window._render_generation = 5
+
+    try:
+        window._switch_to_stock(1)
+
+        assert window.code == "000002"
+        assert set(abandoned) == {
+            "kline_000001_5",
+            "kline_rt_000001_5",
+            "kline_asian_cache_000001_5",
+            "kline_asian_000001_5",
+        }
     finally:
         _dispose_kline_window(window)
 
@@ -1417,6 +1449,20 @@ def test_kline_load_asian_chart_fetches_realtime_quote_when_history_is_stale(mon
         "get_latest_trade_date",
         classmethod(lambda cls, market="CN", ref_date=None: dt.date(2026, 4, 20)),
     )
+
+    def _run_inline(fn, *args, on_success=None, on_error=None, task_id=None, **kwargs):
+        try:
+            result = fn(*args, **kwargs)
+            if on_success:
+                on_success(result)
+        except (AttributeError, KeyError, RuntimeError, TypeError, ValueError) as exc:
+            if on_error:
+                on_error(str(exc))
+            else:
+                raise exc
+        return task_id or "test-kline-asian-realtime"
+
+    monkeypatch.setattr(task_manager, "run_in_background", _run_inline)
 
     window = kline_module.KLineChartWindow(
         None,

@@ -8,8 +8,6 @@ import sys
 from pathlib import Path
 from typing import Mapping
 
-import requests
-
 from core.logger import get_logger
 from domains.global_earnings_calendar.constants import (
     CACHE_KEY,
@@ -432,10 +430,26 @@ class GlobalEarningsCalendarService:
         return failed_tickers_by_source
 
     @staticmethod
+    def _provider_degradation_is_total(degradation: Mapping[str, object]) -> bool:
+        for key in ("all_failed", "all_days_failed", "all_tickers_failed"):
+            value = degradation.get(key)
+            if value is True or str(value or "").strip().lower() in {"1", "true", "yes"}:
+                return True
+        try:
+            requested_count = max(0, int(degradation.get("requested_count", 0) or 0))
+            failed_count = max(0, int(degradation.get("failed_count", 0) or 0))
+            returned_events = max(0, int(degradation.get("returned_events", 0) or 0))
+        except (TypeError, ValueError):
+            return False
+        return requested_count > 0 and failed_count >= requested_count and returned_events == 0
+
+    @staticmethod
     def _degraded_cache_state(
         degradations: list[dict[str, object]],
         *,
         reused_event_count: int,
+        provider_attempted_count: int,
+        provider_total_failure_count: int,
     ) -> dict[str, object]:
         providers = sorted({str(item.get("provider", "") or "").strip() for item in degradations if item})
         failed_days = sorted(
@@ -456,15 +470,20 @@ class GlobalEarningsCalendarService:
                 if str(ticker or "").strip()
             }
         )
+        all_providers_failed = provider_attempted_count > 0 and provider_total_failure_count >= provider_attempted_count
         return {
-            "status": "degraded",
-            "reason": "provider_fetch_degraded",
+            "status": "failed" if all_providers_failed else "degraded",
+            "reason": "all_providers_failed" if all_providers_failed else "provider_fetch_degraded",
             "degraded_at": dt.datetime.now().isoformat(timespec="seconds"),
             "providers": [provider for provider in providers if provider],
             "failed_days": failed_days,
             "failed_tickers": failed_tickers,
             "stale_cache_reused": reused_event_count > 0,
             "reused_event_count": max(0, int(reused_event_count or 0)),
+            "retryable": True,
+            "all_providers_failed": all_providers_failed,
+            "provider_attempted_count": max(0, int(provider_attempted_count or 0)),
+            "provider_total_failure_count": max(0, int(provider_total_failure_count or 0)),
             "details": [dict(item) for item in degradations],
         }
 
@@ -539,21 +558,39 @@ class GlobalEarningsCalendarService:
         )
         network_events: list[EarningsCalendarEvent] = []
         provider_degradations: list[dict[str, object]] = []
+        provider_total_failure_count = 0
 
         provider_calls = tuple(self.official_providers) + (
             ("Nasdaq", self.nasdaq_provider),
             ("Alpha Vantage", self.provider),
             ("Yahoo Finance", self.yfinance_provider),
         )
+        provider_attempted_count = len(provider_calls)
         for provider_name, provider in provider_calls:
             try:
                 provider_events = list(provider.fetch(self.universe, today=today, lookahead_days=lookahead_days) or [])
-            except (ImportError, requests.RequestException, OSError, RuntimeError, TypeError, ValueError) as exc:
+            except Exception as exc:  # noqa: BLE001 - isolate independent upstream providers and record each outcome.
                 log.warning(f"[global earnings calendar] {provider_name} refresh failed: {exc}")
+                error_text = " | ".join(part.strip() for part in str(exc).splitlines() if part.strip())
+                provider_degradations.append(
+                    {
+                        "provider": provider_name,
+                        "reason": "provider_fetch_failed",
+                        "sample_error": error_text[:500],
+                        "all_failed": True,
+                        "retryable": True,
+                    }
+                )
+                provider_total_failure_count += 1
                 continue
             degradation = getattr(provider, "last_degradation", None)
             if isinstance(degradation, Mapping):
-                provider_degradations.append(dict(degradation))
+                degradation_detail = dict(degradation)
+                if not str(degradation_detail.get("provider", "") or "").strip():
+                    degradation_detail["provider"] = provider_name
+                provider_degradations.append(degradation_detail)
+                if self._provider_degradation_is_total(degradation_detail):
+                    provider_total_failure_count += 1
             network_events.extend(event for event in provider_events if event is not None)
 
         network_events = self._filter_window(network_events, today=today, lookahead_days=lookahead_days)
@@ -583,7 +620,12 @@ class GlobalEarningsCalendarService:
                     cached_fallback_events.append(event)
             filtered = merge_events(confirmed_events + cached_fallback_events + network_events)
             cache_state = (
-                self._degraded_cache_state(provider_degradations, reused_event_count=stale_cache_reused)
+                self._degraded_cache_state(
+                    provider_degradations,
+                    reused_event_count=stale_cache_reused,
+                    provider_attempted_count=provider_attempted_count,
+                    provider_total_failure_count=provider_total_failure_count,
+                )
                 if provider_degradations
                 else None
             )
@@ -595,6 +637,8 @@ class GlobalEarningsCalendarService:
             cache_state = self._degraded_cache_state(
                 provider_degradations,
                 reused_event_count=len(cached_events),
+                provider_attempted_count=provider_attempted_count,
+                provider_total_failure_count=provider_total_failure_count,
             )
             if filtered:
                 self._save_events(filtered, "stale_cache", cache_state=cache_state)

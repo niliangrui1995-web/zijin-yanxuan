@@ -1,7 +1,13 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import sqlite3
+import tempfile
+import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Mapping
 
@@ -16,6 +22,28 @@ from domains.global_earnings_calendar.models import (
 )
 
 log = get_logger(__name__)
+
+
+@contextmanager
+def _serialized_json_write(path: Path):
+    """Serialize cross-thread/process JSON read-modify-write cycles via SQLite."""
+    lock_dir = Path(tempfile.gettempdir()) / "vcp_hunter_write_locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_key = hashlib.sha256(path.name.encode("utf-8")).hexdigest()[:16]
+    lock_path = lock_dir / f"confirmed-events-{lock_key}.sqlite3"
+    connection = sqlite3.connect(str(lock_path), timeout=30, isolation_level=None)
+    try:
+        connection.execute("PRAGMA busy_timeout=30000")
+        connection.execute("BEGIN IMMEDIATE")
+        yield
+        connection.commit()
+    finally:
+        if connection.in_transaction:
+            try:
+                connection.rollback()
+            except sqlite3.Error:
+                pass
+        connection.close()
 
 
 class ConfirmedEarningsEventsProvider:
@@ -63,32 +91,30 @@ class ConfirmedEarningsEventsProvider:
             )
         return sorted_events(events)
 
-    def upsert(self, event: EarningsCalendarEvent) -> None:
-        rows: list[dict] = []
-        if self.path.is_file():
-            try:
-                payload = json.loads(self.path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
-                raise ConfirmedEventWriteError(f"confirmed_json_read_failed: {exc}") from exc
-            raw_rows = payload.get("events") if isinstance(payload, Mapping) else payload
-            if not isinstance(raw_rows, list):
-                raise ConfirmedEventWriteError("confirmed_json_events_not_list")
-            rows = [dict(row) for row in raw_rows if isinstance(row, Mapping)]
+    def _load_rows_for_update(self) -> list[dict]:
+        if not self.path.is_file():
+            return []
+        try:
+            stored_payload = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise ConfirmedEventWriteError(f"confirmed_json_read_failed: {exc}") from exc
+        raw_rows = stored_payload.get("events") if isinstance(stored_payload, Mapping) else stored_payload
+        if not isinstance(raw_rows, list):
+            raise ConfirmedEventWriteError("confirmed_json_events_not_list")
+        return [dict(row) for row in raw_rows if isinstance(row, Mapping)]
 
+    @staticmethod
+    def _merge_event(rows: list[dict], event: EarningsCalendarEvent) -> None:
         event_payload = event.to_dict()
-        updated = False
         for idx, row in enumerate(rows):
             existing = EarningsCalendarEvent.from_dict(row)
             if existing is not None and _events_match_identity(existing, event):
                 rows[idx] = event_payload
-                updated = True
-                break
-        if not updated:
-            rows.append(event_payload)
+                return
+        rows.append(event_payload)
 
-        payload = {"events": rows}
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self.path.with_name(f"{self.path.name}.tmp")
+    def _replace_payload(self, payload: dict) -> None:
+        temp_path = self.path.with_name(f"{self.path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
         try:
             temp_path.write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
@@ -97,13 +123,23 @@ class ConfirmedEarningsEventsProvider:
             try:
                 json.loads(temp_path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                raise ConfirmedEventWriteError(f"confirmed_json_write_validation_failed: {exc}") from exc
+            temp_path.replace(self.path)
+        finally:
+            if temp_path.exists():
                 try:
                     temp_path.unlink()
                 except OSError:
                     pass
-                raise ConfirmedEventWriteError(f"confirmed_json_write_validation_failed: {exc}") from exc
-            temp_path.replace(self.path)
+
+    def upsert(self, event: EarningsCalendarEvent) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with _serialized_json_write(self.path):
+                rows = self._load_rows_for_update()
+                self._merge_event(rows, event)
+                self._replace_payload({"events": rows})
         except ConfirmedEventWriteError:
             raise
-        except OSError as exc:
+        except (OSError, sqlite3.Error) as exc:
             raise ConfirmedEventWriteError(f"confirmed_json_write_failed: {exc}") from exc

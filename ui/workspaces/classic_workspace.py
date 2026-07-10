@@ -24,7 +24,6 @@ NADailyTab = None
 StockCandidateTab = None
 AIIndustryChainTab = None
 LhbTab = None
-RtMonitorTab = None
 ScanTab = None
 ForeignBlockTradeTab = None
 EarningsTab = None
@@ -180,7 +179,6 @@ class ClassicWorkspace(QWidget):
             "na_daily",
             "stock_candidates",
             "ai_industry_chain",
-            "rt_monitor",
             "scan",
             "foreign_block",
             "earnings",
@@ -313,18 +311,6 @@ class ClassicWorkspace(QWidget):
                 "attr": "tab_ai_industry_chain",
                 "factory": self._tab_factory(
                     "AIIndustryChainTab", "ui.tabs.ai_industry_chain_tab", self.data_provider, self
-                ),
-                "widget": None,
-                "loaded": False,
-            },
-            {
-                "key": "rt_monitor",
-                "title": "盘中监控",
-                "group": "主工作台",
-                "group_order": 50,
-                "attr": "tab_rt",
-                "factory": self._tab_factory(
-                    "RtMonitorTab", "ui.tabs.rt_monitor_tab", self.data_provider, self.engine, self
                 ),
                 "widget": None,
                 "loaded": False,
@@ -800,11 +786,6 @@ class ClassicWorkspace(QWidget):
 
     def _notify_tab_loaded(self, _key: str, _widget) -> None:
         self._schedule_workspace_table_copy_hooks()
-        host = self.host or self.window()
-        if str(_key or "").strip() == "rt_monitor":
-            restore_rt_cache = getattr(host, "restore_pending_rt_cache", None)
-            if callable(restore_rt_cache):
-                QTimer.singleShot(0, restore_rt_cache)
 
     def _notify_tab_activated(self, _key: str, widget) -> None:
         callback = getattr(widget, "on_workspace_tab_activated", None)
@@ -876,9 +857,6 @@ class ClassicWorkspace(QWidget):
     def get_scan_results(self) -> list[dict]:
         return _resolve_workspace_facade(self).get_scan_results()
 
-    def get_rt_table(self):
-        return _resolve_workspace_facade(self).get_rt_table()
-
     def iter_tables(self) -> list:
         return _resolve_workspace_facade(self).iter_tables()
 
@@ -923,12 +901,6 @@ class ClassicWorkspace(QWidget):
     def select_scan_row(self, index: int) -> bool:
         return _resolve_workspace_facade(self).select_scan_row(index)
 
-    def is_rt_monitor_running(self) -> bool:
-        return _resolve_workspace_facade(self).is_rt_monitor_running()
-
-    def toggle_rt_monitor(self) -> bool:
-        return _resolve_workspace_facade(self).toggle_rt_monitor()
-
     def run_incremental_scan(self) -> bool:
         return _resolve_workspace_facade(self).run_incremental_scan()
 
@@ -955,9 +927,6 @@ class ClassicWorkspace(QWidget):
 
     def run_post_online_refresh(self, task_manager) -> None:
         _resolve_workspace_facade(self).run_post_online_refresh(task_manager)
-
-    def auto_start_rt_monitor(self) -> bool:
-        return _resolve_workspace_facade(self).auto_start_rt_monitor()
 
     def collect_watchlist_radar_data(
         self,

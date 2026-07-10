@@ -3,7 +3,7 @@
 # 紫金研选 统一缓存淘汰策略
 #
 # 为什么需要这个: 缓存文件散落在 data/Cache/ 和 data/parquet/ 下，
-# 有的设了过期(rt_monitor_*.json 10天)，有的永远不清理(rps/parquet)。
+# 有的设了短期过期，有的长期保留(rps/parquet)。
 # 时间一长磁盘会越来越大。这里统一定义过期规则和清理逻辑。
 # ================================================================================
 import glob
@@ -17,18 +17,6 @@ log = get_logger(__name__)
 
 # 缓存策略配置：每个条目定义 pattern(匹配规则) 和 max_age_days(过期天数)
 CACHE_POLICIES = [
-    {
-        "name": "盘中监控缓存",
-        "directory": "data/Cache",
-        "pattern": "rt_monitor_*.json",
-        "max_age_days": 10,
-    },
-    {
-        "name": "旧版盘中监控缓存",
-        "directory": "data/Cache",
-        "pattern": "rt_monitor_*.pkl",
-        "max_age_days": 1,
-    },
     {
         "name": "RPS 预计算缓存",
         "directory": "data/Cache",

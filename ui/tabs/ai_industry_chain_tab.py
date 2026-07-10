@@ -14,8 +14,8 @@ from core.ai_industry_chain_pool import (
     AI_CHAIN_FILE,
     PLACEHOLDER,
     cell_text,
-    load_ai_industry_chain_rows,
     normalize_ai_chain_code,
+    refresh_ai_industry_chain_rows,
 )
 from core.logger import get_logger
 from ui.components import TableStateWrapper, VCPTableView
@@ -200,7 +200,7 @@ class AIIndustryChainTab(BaseStockTab):
         return normalize_ai_chain_code(value)
 
     def _read_workbook_rows(self) -> list[dict]:
-        return load_ai_industry_chain_rows(self.workbook_path)
+        return refresh_ai_industry_chain_rows(self.workbook_path)
 
     def get_realtime_quote_codes(self, current_model=None) -> set[str]:
         """情报源 tab 不向中央报价站贡献代码，避免盘中触发联网补价。"""

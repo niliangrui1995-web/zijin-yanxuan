@@ -10,6 +10,8 @@ from core.ai_industry_chain_pool import (
     load_ai_industry_chain_context_map,
     load_ai_industry_chain_rows,
     load_ai_industry_chain_stock_codes,
+    load_cached_ai_industry_chain_rows,
+    refresh_ai_industry_chain_rows,
 )
 
 
@@ -69,10 +71,14 @@ def test_ai_industry_chain_context_map_uses_segment_and_remark(tmp_path):
 
 def test_ai_industry_chain_default_stock_code_cache_reuses_matching_signature(monkeypatch, tmp_path):
     workbook_path = tmp_path / "AI产业链.xlsx"
+    rows_cache = tmp_path / "ai_industry_chain_rows.json"
     codes_cache = tmp_path / "ai_industry_chain_stock_codes.json"
+    context_cache = tmp_path / "ai_industry_chain_context_map.json"
     _write_workbook(workbook_path)
     monkeypatch.setattr(ai_pool_module, "AI_CHAIN_FILE", workbook_path)
+    monkeypatch.setattr(ai_pool_module, "AI_CHAIN_ROWS_CACHE_FILE", rows_cache)
     monkeypatch.setattr(ai_pool_module, "AI_CHAIN_CODES_CACHE_FILE", codes_cache)
+    monkeypatch.setattr(ai_pool_module, "AI_CHAIN_CONTEXT_CACHE_FILE", context_cache)
 
     assert ai_pool_module.load_ai_industry_chain_stock_codes() == {"300308", "002384"}
 
@@ -86,9 +92,13 @@ def test_ai_industry_chain_default_stock_code_cache_reuses_matching_signature(mo
 
 def test_ai_industry_chain_default_context_cache_reuses_matching_signature(monkeypatch, tmp_path):
     workbook_path = tmp_path / "AI产业链.xlsx"
+    rows_cache = tmp_path / "ai_industry_chain_rows.json"
+    codes_cache = tmp_path / "ai_industry_chain_stock_codes.json"
     context_cache = tmp_path / "ai_industry_chain_context_map.json"
     _write_workbook(workbook_path)
     monkeypatch.setattr(ai_pool_module, "AI_CHAIN_FILE", workbook_path)
+    monkeypatch.setattr(ai_pool_module, "AI_CHAIN_ROWS_CACHE_FILE", rows_cache)
+    monkeypatch.setattr(ai_pool_module, "AI_CHAIN_CODES_CACHE_FILE", codes_cache)
     monkeypatch.setattr(ai_pool_module, "AI_CHAIN_CONTEXT_CACHE_FILE", context_cache)
 
     context_map = ai_pool_module.load_ai_industry_chain_context_map()
@@ -100,3 +110,41 @@ def test_ai_industry_chain_default_context_cache_reuses_matching_signature(monke
     monkeypatch.setattr(ai_pool_module, "load_ai_industry_chain_rows", fail_rows)
 
     assert ai_pool_module.load_ai_industry_chain_context_map()["300308"] == "光模块 | 800G"
+
+
+def test_ai_industry_chain_rows_cache_reuses_matching_signature(monkeypatch, tmp_path):
+    workbook_path = tmp_path / "AI产业链.xlsx"
+    rows_cache = tmp_path / "ai_industry_chain_rows.json"
+    codes_cache = tmp_path / "ai_industry_chain_stock_codes.json"
+    context_cache = tmp_path / "ai_industry_chain_context_map.json"
+    _write_workbook(workbook_path)
+    monkeypatch.setattr(ai_pool_module, "AI_CHAIN_FILE", workbook_path)
+    monkeypatch.setattr(ai_pool_module, "AI_CHAIN_ROWS_CACHE_FILE", rows_cache)
+    monkeypatch.setattr(ai_pool_module, "AI_CHAIN_CODES_CACHE_FILE", codes_cache)
+    monkeypatch.setattr(ai_pool_module, "AI_CHAIN_CONTEXT_CACHE_FILE", context_cache)
+
+    refreshed = refresh_ai_industry_chain_rows()
+    assert [row["代码"] for row in refreshed] == ["300308", "002384"]
+
+    monkeypatch.setattr(
+        ai_pool_module,
+        "load_ai_industry_chain_rows",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("cache hit must not read workbook")),
+    )
+
+    cached = load_cached_ai_industry_chain_rows()
+    assert [row["代码"] for row in cached] == ["300308", "002384"]
+
+
+def test_ai_industry_chain_cache_only_miss_never_reads_workbook(monkeypatch, tmp_path):
+    workbook_path = tmp_path / "AI产业链.xlsx"
+    _write_workbook(workbook_path)
+    monkeypatch.setattr(ai_pool_module, "AI_CHAIN_FILE", workbook_path)
+    monkeypatch.setattr(ai_pool_module, "AI_CHAIN_ROWS_CACHE_FILE", tmp_path / "missing_rows_cache.json")
+    monkeypatch.setattr(
+        ai_pool_module,
+        "load_ai_industry_chain_rows",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("cache-only path must not read workbook")),
+    )
+
+    assert load_cached_ai_industry_chain_rows() == []

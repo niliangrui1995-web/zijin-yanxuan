@@ -69,6 +69,7 @@ class VCPTableView(QTableView):
         self._restoring_refresh_state = False
         self._bound_refresh_model = None
         self._flash_repaint_until = 0.0
+        self._coalesced_flash_repaint = False
         self._closing = False
         self._flash_repaint_timer = QTimer(self)
         self._flash_repaint_timer.setInterval(60)
@@ -428,16 +429,47 @@ class VCPTableView(QTableView):
             role_values = {int(getattr(role, "value", role)) for role in roles}
             if flash_role not in role_values:
                 return
+        if not self._model_has_active_flash_records():
+            return
         self.schedule_flash_repaint_until(time.time() + FLASH_DURATION_SECONDS)
 
+    def _model_has_active_flash_records(self) -> bool:
+        model = self.model()
+        visited: set[int] = set()
+        while model is not None and id(model) not in visited:
+            visited.add(id(model))
+            flash_records = getattr(model, "_flash_records", None)
+            if isinstance(flash_records, dict) and any(bool(cells) for cells in flash_records.values()):
+                return True
+            source_model = getattr(model, "sourceModel", None)
+            model = source_model() if callable(source_model) else None
+        return False
+
+    def set_coalesced_flash_repaint_enabled(self, enabled: bool) -> None:
+        self._coalesced_flash_repaint = bool(enabled)
+        self._flash_repaint_timer.stop()
+        self._flash_repaint_timer.setSingleShot(self._coalesced_flash_repaint)
+        interval_ms = max(1, int(FLASH_DURATION_SECONDS * 1000)) if self._coalesced_flash_repaint else 60
+        self._flash_repaint_timer.setInterval(interval_ms)
+
     def schedule_flash_repaint_until(self, active_until: float) -> None:
+        if self._coalesced_flash_repaint and not self.isVisible():
+            return
         self._flash_repaint_until = max(self._flash_repaint_until, float(active_until))
-        if not self._flash_repaint_timer.isActive():
+        if self._coalesced_flash_repaint:
+            remaining_ms = max(1, int((self._flash_repaint_until - time.time()) * 1000))
+            self._flash_repaint_timer.start(remaining_ms)
+        elif not self._flash_repaint_timer.isActive():
             self._flash_repaint_timer.start()
 
     def _tick_flash_repaint(self) -> None:
         if self._closing:
             self._flash_repaint_timer.stop()
+            return
+        if self._coalesced_flash_repaint:
+            self._flash_repaint_timer.stop()
+            self._flash_repaint_until = 0.0
+            self.viewport().update()
             return
         if time.time() >= self._flash_repaint_until:
             self._flash_repaint_timer.stop()
@@ -455,6 +487,9 @@ class VCPTableView(QTableView):
 
     def hideEvent(self, event):
         self._ambient_repaint_timer.stop()
+        if self._coalesced_flash_repaint:
+            self._flash_repaint_timer.stop()
+            self._flash_repaint_until = 0.0
         super().hideEvent(event)
 
     def set_ambient_repaint_enabled(self, enabled: bool) -> None:

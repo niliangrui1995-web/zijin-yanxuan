@@ -1,5 +1,5 @@
 # ui/workers.py - 后台工作线程
-# 从 main_window_qt.py 拆分出来的 ScanWorker 和 RtScanWorker
+# 从 main_window_qt.py 拆分出来的 ScanWorker
 import gc
 
 import pandas as pd
@@ -248,15 +248,15 @@ class ScanWorker(QThread):
 
             log.info(f"[区间扫描] RPS筛选完成 ({_time.time() - rps_started_at:.1f}s)，命中 {len(all_results)} 只")
 
-            # ---- 二级过滤:与盘中监控对齐的机构+市值筛选 ----
+            # ---- 二级过滤:机构+市值筛选 ----
             self._enrich_market_caps(all_results)
 
-            # 因用户要求区间扫描需全面、不漏票，此处取消剔除市值<40亿的盘中监控硬过滤机制
+            # 因区间扫描需全面、不漏票，此处不按市值<40亿做硬过滤
             # 让区间扫描忠于技术形态，展示所有满足 VCP 的股票。
             # 市值计算仍保留，仅为了在界面展示数值（但不剔除）。
 
             # 由于用户要求加快扫描速度，机构过滤对于初始区间扫描过于耗时（需排队查网页），故此处剔除机构筛选逻辑。
-            # 如果需要看机构，可以在盘中监控或关注池中再进行查看。
+            # 如果需要看机构，可以在关注池中继续查看。
 
             # 按评分倒序
             if all_results:

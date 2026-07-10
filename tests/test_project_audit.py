@@ -33,6 +33,7 @@ def test_project_audit_full_gate_includes_required_checks():
         "pip-check",
         "architecture-boundaries",
         "complexity-hotspots",
+        "cold-import-budget",
         "http-safety-audit",
         "full-pytest",
         "runtime-self-check",
@@ -57,6 +58,7 @@ def test_project_audit_can_skip_ruff_for_ci_audit_smoke():
         "architecture-boundaries",
         "ui-stall-smoke",
         "complexity-hotspots",
+        "cold-import-budget",
         "http-safety-audit",
         "runtime-self-check",
     ]
@@ -68,6 +70,15 @@ def test_ci_routes_asian_market_style_checks_to_regular_ruff_guardrail():
     assert "python scripts/project_audit.py --quick --skip-webengine-preflight --skip-ruff" in workflow
     for target in ASIAN_MARKET_RUFF_TARGETS:
         assert target in workflow
+
+
+def test_regular_ci_runs_gradual_pyright_and_explicit_root_entry_checks():
+    workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "python scripts/project_audit.py --quick --skip-webengine-preflight --type-check" in workflow
+    assert "ruff check vcp_hunter_qt.pyw" in workflow
+    assert "python -m py_compile vcp_hunter_qt.pyw" in workflow
+    assert "vcp_hunter_qt.pyw" in project_audit.PYTHON_TARGETS
 
 
 def test_project_audit_quick_gate_skips_full_pytest_and_webengine_preflight():
@@ -86,6 +97,13 @@ def test_project_audit_quick_gate_skips_full_pytest_and_webengine_preflight():
         "scripts/complexity_hotspot_audit.py",
         "--output",
         project_audit.COMPLEXITY_HOTSPOT_AUDIT_OUTPUT,
+    ]
+    cold_import = next(command for command in commands if command.label == "cold-import-budget")
+    assert cold_import.command == [
+        project_audit._python(args),
+        "scripts/cold_import_budget.py",
+        "--output",
+        project_audit.COLD_IMPORT_BUDGET_OUTPUT,
     ]
     ui_stall_smoke = next(command for command in commands if command.label == "ui-stall-smoke")
     assert ui_stall_smoke.command == [
@@ -197,7 +215,7 @@ def test_project_audit_adds_type_check_only_when_requested():
 
     type_check = next(command for command in commands if command.label == "type-check")
 
-    assert type_check.command == ["python", "-m", "pyright", *project_audit.TYPE_CHECK_TARGETS]
+    assert type_check.command == ["python", "-m", "pyright", "--warnings", *project_audit.TYPE_CHECK_TARGETS]
     assert "app/services" in project_audit.TYPE_CHECK_TARGETS
     assert "domains/quotes" in project_audit.TYPE_CHECK_TARGETS
     assert "domains/runtime" in project_audit.TYPE_CHECK_TARGETS
@@ -272,6 +290,8 @@ def test_project_audit_list_includes_http_safety_audit_by_default(capsys):
     assert "ui-stall-smoke: python -m pytest -q tests/test_workspace_quote_codes.py" in output
     assert "complexity-hotspots: python scripts/complexity_hotspot_audit.py" in output
     assert f"--output {project_audit.COMPLEXITY_HOTSPOT_AUDIT_OUTPUT}" in output
+    assert "cold-import-budget: python scripts/cold_import_budget.py" in output
+    assert f"--output {project_audit.COLD_IMPORT_BUDGET_OUTPUT}" in output
     assert "http-safety-audit: python scripts/http_safety_audit.py" in output
     assert f"--output {project_audit.HTTP_SAFETY_AUDIT_OUTPUT}" in output
 
@@ -281,7 +301,7 @@ def test_project_audit_list_includes_type_check_when_requested(capsys):
 
     output = capsys.readouterr().out
     assert result == 0
-    assert "type-check: python -m pyright" in output
+    assert "type-check: python -m pyright --warnings" in output
     assert "app/services" in output
     assert "domains/quotes" in output
     assert "domains/runtime" in output

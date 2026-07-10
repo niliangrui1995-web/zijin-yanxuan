@@ -557,8 +557,13 @@ def _sync_serial_values(rows):
             item[SERIAL_HEADER] = idx
 
 
-def _emit_model_row_ranges(model, changed_rows, start_col: int, end_col: int, roles):
+def _emit_model_row_ranges(model, changed_rows, start_col: int, end_col: int, roles, *, coalesce: bool = False):
     if not changed_rows:
+        return
+
+    changed_rows = sorted(set(changed_rows))
+    if coalesce:
+        model.dataChanged.emit(model.index(changed_rows[0], start_col), model.index(changed_rows[-1], end_col), roles)
         return
 
     start_row = prev_row = changed_rows[0]

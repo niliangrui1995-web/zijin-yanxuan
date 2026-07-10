@@ -73,11 +73,11 @@ class WatchlistViewModel:
     def _save_data(self):
         """安全地将内存中的数据刷入 SQLite（原子写入）"""
         try:
-            with self._lock:
-                save_data = deepcopy(self._cache)
             from core.data_store import DataStore
 
-            DataStore().save_json("watchlist_special", save_data)
+            with self._lock:
+                save_data = deepcopy(self._cache)
+                DataStore().save_json("watchlist_special", save_data)
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError, sqlite3.Error) as e:
             log.error(f"[WatchlistVM] 写入关注池失败: {e}")
 

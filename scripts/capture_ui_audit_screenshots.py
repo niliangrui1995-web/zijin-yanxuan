@@ -131,13 +131,14 @@ class _NoopStartupOrchestrator:
 def _disable_noisy_startup_paths() -> None:
     import ui.main_window_qt as main_window_qt
     import ui.workspaces.classic_workspace as classic_workspace
+    from app.bootstrap import ApplicationBootstrap
     from app.services.ui_market_calendar_service import MarketCalendar
     from domains.earnings.scheduler import EarningsScheduler
     from ui.tabs.asian_market_tab import AsianMarketTab
 
     main_window_qt.create_startup_orchestrator = lambda _parent: _NoopStartupOrchestrator()
     main_window_qt.kline_manager.prewarm = lambda *args, **kwargs: None
-    main_window_qt.ApplicationBootstrap.install_central_quotes = lambda self: None
+    ApplicationBootstrap.install_central_quotes = lambda self: None
     classic_workspace.ClassicWorkspace.BACKGROUND_PREWARM_DELAY_MS = 60_000_000
     classic_workspace.ClassicWorkspace._start_background_tab_prewarm = lambda self: None
     AsianMarketTab._ensure_runtime_started = lambda self: None

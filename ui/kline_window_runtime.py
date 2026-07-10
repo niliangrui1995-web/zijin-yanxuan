@@ -156,15 +156,15 @@ def load_and_draw(window):
         window._load_asian_chart()
         return
 
+    data_provider = window.data_provider
+    request_logger = window._log
+    target_trade_date = window._get_cn_target_trade_date()
     window._set_status_message("正在准备日线数据...", tone="loading")
 
     def _bg_fetch():
-        if not _is_current_request():
-            return None
         quote_to_apply = None
-        target_trade_date = window._get_cn_target_trade_date()
 
-        normalized_local_df = normalize_daily_df_index(window.data_provider.get_data(request_code), logger=window._log)
+        normalized_local_df = normalize_daily_df_index(data_provider.get_data(request_code), logger=request_logger)
         last_local_date = None
         if normalized_local_df is not None and not normalized_local_df.empty:
             last_local_date = pd.Timestamp(normalized_local_df.index[-1]).date()
@@ -173,18 +173,15 @@ def load_and_draw(window):
 
         if need_sync:
             try:
-                fresh_df = window.data_provider.get_data_fresh_for_chart(request_code, force_sync=True)
+                fresh_df = data_provider.get_data_fresh_for_chart(request_code, force_sync=True)
             except TypeError:
-                fresh_df = window.data_provider.get_data_fresh_for_chart(request_code)
-            fresh_df = normalize_daily_df_index(fresh_df, logger=window._log)
+                fresh_df = data_provider.get_data_fresh_for_chart(request_code)
+            fresh_df = normalize_daily_df_index(fresh_df, logger=request_logger)
         else:
             fresh_df = normalized_local_df
 
-        if not _is_current_request():
-            return None
-
         if (
-            not getattr(window.data_provider, "_offline", False)
+            not getattr(data_provider, "_offline", False)
             and target_trade_date is not None
             and MarketCalendar.is_quote_refresh_time("CN")
         ):
@@ -195,9 +192,9 @@ def load_and_draw(window):
             already_has_latest = last_dt is not None and last_dt >= target_trade_date
             if not already_has_latest:
                 try:
-                    quotes = window.data_provider.fetch_realtime_quotes_batch([request_code])
+                    quotes = data_provider.fetch_realtime_quotes_batch([request_code])
                 except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                    window._log.warning(f"[K线] {window.code} 实时行情合并失败: {exc}")
+                    request_logger.warning(f"[K线] {request_code} 实时行情合并失败: {exc}")
                 else:
                     quote_to_apply = quotes.get(request_code) if quotes else None
 
@@ -231,7 +228,7 @@ def load_and_draw(window):
     task_manager.run_in_background(
         _bg_fetch,
         on_success=_on_fetch_success,
-        task_id=task_registry.window(f"kline_{request_code}").task_id,
+        task_id=task_registry.transient_window(f"kline_{request_code}_{request_generation}"),
     )
 
 
@@ -246,33 +243,64 @@ def poll_rt_update(window):
             window._log.debug(f"[K线] {window.code} 已收盘，停止实时刷新")
         return
 
-    try:
-        if market != "CN":
-            quote = window._build_asian_rt_quote()
-            if quote is None and get_yf_rate_limit_status()["active"]:
-                return
-            if quote is None:
-                from ui.tabs.asian_market_workers import fetch_asian_realtime_quote
+    request_code = str(getattr(window, "code", "") or "").strip()
+    request_generation = int(getattr(window, "_render_generation", 0) or 0)
+    data_provider = window.data_provider
 
-                quote = fetch_asian_realtime_quote(window.code)
-            if quote is not None:
-                refresh_last_bar(window, quote)
+    def _is_current_request() -> bool:
+        return (
+            not getattr(window, "_closing", False)
+            and str(getattr(window, "code", "") or "").strip() == request_code
+            and int(getattr(window, "_render_generation", 0) or 0) == request_generation
+        )
+
+    if market != "CN":
+        quote = window._build_asian_rt_quote()
+        if quote is not None:
+            refresh_last_bar(window, quote)
+            return
+        if get_yf_rate_limit_status()["active"]:
             return
 
-        quotes = window.data_provider.fetch_realtime_quotes_batch([window.code])
-        if quotes and window.code in quotes:
-            refresh_last_bar(window, quotes[window.code])
-    except Exception as exc:
+    def _bg_fetch():
+        try:
+            if market != "CN":
+                from ui.tabs.asian_market_workers import fetch_asian_realtime_quote
+
+                return fetch_asian_realtime_quote(request_code)
+            quotes = data_provider.fetch_realtime_quotes_batch([request_code])
+            return quotes.get(request_code) if quotes else None
+        except Exception as exc:
+            return exc
+
+    def _on_fetch_success(result):
+        if not _is_current_request() or result is None:
+            return
+        if isinstance(result, Exception):
+            _handle_rt_error(result)
+            return
+        try:
+            refresh_last_bar(window, result)
+        except RuntimeError:
+            return
+
+    def _handle_rt_error(exc: Exception) -> None:
         if is_yf_rate_limit_error(exc):
             remaining_sec = mark_yf_rate_limited(exc)
             window._log.warning(
-                f"[K线] {window.code} 实时刷新遇到 Yahoo Finance 限流，冷却 {remaining_sec:.0f}s: {exc}"
+                f"[K线] {request_code} 实时刷新遇到 Yahoo Finance 限流，冷却 {remaining_sec:.0f}s: {exc}"
             )
             return
         if isinstance(exc, (AttributeError, ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError)):
-            window._log.warning(f"[K线] {window.code} 实时刷新异常: {exc}")
+            window._log.warning(f"[K线] {request_code} 实时刷新异常: {exc}")
             return
         raise
+
+    task_manager.run_in_background(
+        _bg_fetch,
+        on_success=_on_fetch_success,
+        task_id=task_registry.transient_window(f"kline_rt_{request_code}_{request_generation}"),
+    )
 
 
 def refresh_last_bar(window, quote):

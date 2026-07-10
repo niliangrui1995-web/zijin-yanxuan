@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 
 from vcp.data_provider_local import apply_forward_adjustment, build_offline_quotes, load_local_tdx_capital_snapshot
+from vcp.data_provider_realtime_mixin import TdxDataProviderRealtimeMixin
 
 
 def test_apply_forward_adjustment_handles_integer_volume_columns():
@@ -76,6 +77,35 @@ def test_build_offline_quotes_handles_non_pandas_dataframe():
     assert quotes["000001"]["close"] == pytest.approx(10.6)
     assert quotes["000001"]["last_close"] == pytest.approx(10.2)
     assert quotes["000001"]["date"] == "2026-04-10"
+
+
+def test_realtime_mixin_builds_offline_quotes_from_one_batch_history_read():
+    first = pd.DataFrame(
+        {
+            "open": [10.0, 10.3],
+            "high": [10.4, 10.8],
+            "low": [9.9, 10.1],
+            "close": [10.2, 10.6],
+            "volume": [1000, 1500],
+            "amount": [10_000.0, 15_500.0],
+        },
+        index=pd.to_datetime(["2026-04-09", "2026-04-10"]),
+    )
+    second = first * 2
+    batch_calls = []
+
+    provider = TdxDataProviderRealtimeMixin()
+    provider.get_data_batch = lambda codes: batch_calls.append(tuple(codes)) or {
+        "000001": first,
+        "600000": second,
+    }
+    provider.get_data = lambda _code: (_ for _ in ()).throw(AssertionError("per-symbol history read is forbidden"))
+
+    quotes = provider._build_offline_quotes(["000001", "600000"])
+
+    assert batch_calls == [("000001", "600000")]
+    assert quotes["000001"]["close"] == pytest.approx(10.6)
+    assert quotes["600000"]["close"] == pytest.approx(21.2)
 
 
 def test_load_local_tdx_capital_snapshot_reads_base_dbf(tmp_path):

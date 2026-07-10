@@ -18,7 +18,6 @@ class GlobalEventBus:
         self.sig_network_status_changed = domain_events.sig_network_status_changed
         self.sig_app_closing = domain_events.sig_app_closing
         self.sig_rt_quotes = domain_events.sig_rt_quotes
-        self.sig_rt_quotes_refreshed = domain_events.sig_rt_quotes_refreshed
         self.sig_vcp_watchlist_ready = domain_events.sig_vcp_watchlist_ready
         self.sig_cache_bootstrap_ready = domain_events.sig_cache_bootstrap_ready
         self.sig_cache_reload_completed = domain_events.sig_cache_reload_completed

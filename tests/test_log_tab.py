@@ -243,13 +243,13 @@ def test_log_tab_renders_task_status_updates():
         app.processEvents()
 
         ui_signal_hub.sig_task_progress.emit("scan", 35, "running")
-        ui_signal_hub.sig_task_progress.emit("rt_monitor", 100, "done")
+        ui_signal_hub.sig_task_progress.emit("quotes", 100, "done")
         app.processEvents()
 
         details = tab.task_status_panel.details_edit.toPlainText()
         assert "scan" in details
         assert "running" in details
-        assert "rt_monitor" in details
+        assert "quotes" in details
         assert "done" in details
     finally:
         tab.shutdown()

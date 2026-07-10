@@ -60,7 +60,7 @@ class BreakoutMonitorService:
 
         for idx_code, (code, df) in enumerate(all_data.items()):
             if cancelled_checker and cancelled_checker():
-                raise InterruptedError("盘中监控已停止")
+                raise InterruptedError("实时突破检查已停止")
 
             if idx_code % 20 == 0:
                 _time.sleep(0.001)
@@ -146,7 +146,7 @@ class BreakoutMonitorService:
 
         if ready_pool:
             if cancelled_checker and cancelled_checker():
-                raise InterruptedError("盘中监控已停止")
+                raise InterruptedError("实时突破检查已停止")
             try:
                 inst_results = batch_check_institution(list(ready_pool.keys()))
                 inst_count = 0
@@ -167,7 +167,7 @@ class BreakoutMonitorService:
 
         if ready_pool:
             if cancelled_checker and cancelled_checker():
-                raise InterruptedError("盘中监控已停止")
+                raise InterruptedError("实时突破检查已停止")
             try:
                 close_prices = {}
                 for code in ready_pool:

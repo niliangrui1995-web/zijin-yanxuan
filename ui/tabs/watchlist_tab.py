@@ -250,10 +250,12 @@ class WatchlistTab(BaseStockTab):
             "备注",
         ]
         self.model = StockTableModel(headers)
+        self.model.set_sparse_update_coalescing(True)
         self.model.set_muted_text_headers(["RPS强度", "细分板块", "摘要", "备注"])
         self.proxy_model = RtSortFilterProxyModel(self.table_sp)
         self.proxy_model.setSourceModel(self.model)
         self.table_sp.setModel(self.proxy_model)
+        self.table_sp.set_coalesced_flash_repaint_enabled(True)
 
         self.delegate = StockItemDelegate(self.table_sp)
         self.table_sp.setItemDelegate(self.delegate)
@@ -722,6 +724,21 @@ class WatchlistTab(BaseStockTab):
             log.warning(f"[关注池] 提取工作区雷达数据异常: {e}")
             return {}, {}, {}, {}, {}, None
 
+    def _run_coalesced_model_update(self, callback):
+        proxy = getattr(self, "proxy_model", None)
+        dynamic_sorting = bool(proxy is not None and proxy.dynamicSortFilter())
+        if dynamic_sorting:
+            proxy.setDynamicSortFilter(False)
+        try:
+            return callback()
+        finally:
+            if dynamic_sorting:
+                proxy.setDynamicSortFilter(True)
+
+    def _apply_quote_snapshot(self, quotes: dict | None):
+        apply_snapshot = super()._apply_quote_snapshot
+        return self._run_coalesced_model_update(lambda: apply_snapshot(quotes))
+
     def _on_watchlist_changed(self, action: str, _code: str):
         """外部请求关注池变更时，防抖 300ms 后再重新加载（防止快速增删导致任务堆积）"""
         if not hasattr(self, "_debounce_timer"):
@@ -890,7 +907,9 @@ class WatchlistTab(BaseStockTab):
 
             rows_changed = updated_rows != current_rows
             if rows_changed:
-                self.model.update_data(updated_rows, hydrate_latest_quotes=False)
+                self._run_coalesced_model_update(
+                    lambda: self.model.update_data(updated_rows, hydrate_latest_quotes=False)
+                )
 
         if payload_signature:
             self._last_vcp_payload_signature = payload_signature

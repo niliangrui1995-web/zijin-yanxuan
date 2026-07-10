@@ -74,6 +74,24 @@ class TypedTaskRegistry:
     def window(self, task_id: str, *, description: str = "") -> TaskKey:
         return self.register(task_id, category=TaskCategory.WINDOW, description=description)
 
+    def transient_quotes(self, task_id: str, *, description: str = "") -> TaskKey:
+        return self._transient(task_id, category=TaskCategory.QUOTES, description=description)
+
+    def transient_window(self, task_id: str, *, description: str = "") -> TaskKey:
+        return self._transient(task_id, category=TaskCategory.WINDOW, description=description)
+
+    @staticmethod
+    def _transient(task_id: str, *, category: TaskCategory, description: str = "") -> TaskKey:
+        """Build a typed key for generation-scoped work without retaining it globally."""
+        normalized = str(task_id or "").strip()
+        if not normalized:
+            raise ValueError("task_id must not be blank")
+        return TaskKey(
+            task_id=normalized,
+            category=category,
+            description=str(description or "").strip(),
+        )
+
     def workspace(self, task_id: str, *, description: str = "") -> TaskKey:
         return self.register(task_id, category=TaskCategory.WORKSPACE, description=description)
 

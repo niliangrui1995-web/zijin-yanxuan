@@ -35,8 +35,11 @@ BROAD_EXCEPTION_ALLOWED_HANDLERS = {
     "app/services/ui_earnings_service.py:run_startup_gap_fill",
     "app/services/ui_earnings_service.py:run_gap_fill",
     "app/services/ui_earnings_service.py:run_routine_scan",
+    "domains/earnings/refresh_cache.py:main",
     "domains/global_earnings_calendar/refresh_cache.py:main",
+    "domains/global_earnings_calendar/service.py:refresh_events",
     "infra/diagnostics/runtime_health.py:<module>",
+    "infra/tasks/task_scheduler.py:run",
 }
 TYPE_ANNOTATION_SCAN_ROOTS = ("app", "domains", "infra")
 MIN_RETURN_ANNOTATION_RATIO = 0.75
@@ -612,7 +615,6 @@ def test_selected_ui_modules_do_not_import_vcp_engine_directly():
         "ui/tabs/lhb_tab.py",
         "ui/tabs/scan_tab.py",
         "ui/workers/central_quotes_worker.py",
-        "ui/workers/rt_scan_worker.py",
         "ui/workers/scan_worker.py",
     ]
     violations: list[str] = []
@@ -737,7 +739,6 @@ def test_workspace_facade_and_services_do_not_reach_into_tab_private_state():
             ".table_scan",
             "FOREIGN_KEYWORDS",
             "_auto_refresh_realtime(",
-            "_toggle_rt_monitor(",
             "find_scan_result(",
             "workspace.tab_",
         },

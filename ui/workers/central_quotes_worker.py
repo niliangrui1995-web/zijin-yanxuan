@@ -10,8 +10,10 @@ from PyQt6.QtCore import QObject, QTimer, pyqtSlot
 from app.services.central_quote_polling_service import CentralQuotePoller
 from app.services.ui_market_calendar_service import MarketCalendar
 from app.services.ui_quote_service import publish_rt_quotes
-from app.services.ui_task_service import CENTRAL_QUOTES_POLL
-from app.services.ui_task_service import background_job_runner as task_manager
+from app.services.ui_task_service import CENTRAL_QUOTES_POLL, task_registry
+from app.services.ui_task_service import (
+    background_job_runner as task_manager,
+)
 from core.global_store import global_store
 from core.logger import get_logger
 from core.observability import emit_structured_log, record_metric
@@ -61,6 +63,8 @@ class CentralQuotesService(QObject):
         self._fetch_codes_count = 0
         self._fetch_generation = 0
         self._off_market_snapshot_emitted = False
+        self._off_market_snapshot_fetching = False
+        self._off_market_snapshot_generation = 0
         self._opening_warmup_signature: tuple[str, ...] = ()
         self._opening_warmup_cursor = 0
         self._fallback_pressure_signature: tuple[str, ...] = ()
@@ -600,24 +604,54 @@ class CentralQuotesService(QObject):
         return stats
 
     def _emit_off_market_snapshot(self, codes: set[str]):
-        if self._off_market_snapshot_emitted or not codes or self.data_provider is None:
+        if (
+            self._off_market_snapshot_emitted
+            or self._off_market_snapshot_fetching
+            or not codes
+            or self.data_provider is None
+        ):
             return
 
-        try:
-            payload = self._fetch_quote_payload(codes)
+        request_codes = set(codes)
+        self._off_market_snapshot_fetching = True
+        self._off_market_snapshot_generation += 1
+        request_generation = self._off_market_snapshot_generation
+
+        def _bg_fetch():
+            return self._fetch_quote_payload(request_codes)
+
+        def _on_result(payload):
+            if request_generation != self._off_market_snapshot_generation:
+                return
+            self._off_market_snapshot_fetching = False
+            if self._closed:
+                return
+            payload = payload or {}
             quotes = payload.get("quotes") or {}
-        except (AttributeError, ConnectionError, OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
-            log.warning(f"[报价站] 盘后离线快照构建失败: {exc}")
-            return
+            self._off_market_snapshot_emitted = True
+            has_valid = any(float(quote.get("close", 0) or 0) > 0 for quote in quotes.values())
+            if has_valid:
+                self.publish_external_quotes(
+                    quotes,
+                    source="central_quotes.off_market",
+                    require_valid=True,
+                )
 
-        self._off_market_snapshot_emitted = True
-        has_valid = any(float(quote.get("close", 0) or 0) > 0 for quote in quotes.values())
-        if has_valid:
-            self.publish_external_quotes(
-                quotes,
-                source="central_quotes.off_market",
-                require_valid=True,
-            )
+        def _on_error(error_message: str):
+            if request_generation != self._off_market_snapshot_generation:
+                return
+            self._off_market_snapshot_fetching = False
+            if not self._closed:
+                log.warning(f"[报价站] 盘后离线快照构建失败: {error_message}")
+
+        task_manager.run_in_background(
+            _bg_fetch,
+            on_success=_on_result,
+            on_error=_on_error,
+            task_id=task_registry.transient_quotes(
+                f"central_quotes_off_market_snapshot_{request_generation}"
+            ),
+        )
 
     @pyqtSlot()
     def _trigger_fetch(self):
@@ -634,6 +668,9 @@ class CentralQuotesService(QObject):
         self._observe_quote_window(quote_refreshable)
         if quote_refreshable:
             self._off_market_snapshot_emitted = False
+            if self._off_market_snapshot_fetching:
+                self._off_market_snapshot_generation += 1
+                self._off_market_snapshot_fetching = False
 
         codes = self._get_all_active_codes()
         maintenance_stats = self._run_maintenance(
@@ -801,3 +838,5 @@ class CentralQuotesService(QObject):
         self._closed = True
         self._timer.stop()
         self._fetch_generation += 1
+        self._off_market_snapshot_generation += 1
+        self._off_market_snapshot_fetching = False

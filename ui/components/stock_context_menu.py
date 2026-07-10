@@ -4,7 +4,7 @@ ui/components/stock_context_menu.py
 股票右键菜单工厂 — 统一四处重复的右键菜单逻辑 (#2)
 
 为什么要统一？
-原先 MainWindow / ScanTab / RtMonitorTab / WatchlistTab 各写了一份
+原先 MainWindow / ScanTab / WatchlistTab 各写了一份
 几乎一模一样的右键菜单，新增菜单项要改 4 处。
 现在用工厂模式，各 Tab 只需 3 行代码调用。
 """

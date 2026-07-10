@@ -116,3 +116,8 @@ def test_typed_task_registry_validation_and_quote_refresh_helpers():
     assert registry.quote_refresh("watchlist").task_id == "watchlist_quotes"
     assert registry.quote_refresh("central_quotes").task_id == "central_quotes"
     assert registry.quotes("quote_job").category is TaskCategory.QUOTES
+
+    transient = registry.transient_window("generation_1")
+    assert transient.category is TaskCategory.WINDOW
+    assert registry.window("generation_1") is not transient
+    assert registry.transient_quotes("generation_2").category is TaskCategory.QUOTES

@@ -25,9 +25,10 @@ def _normalize_error(error: object, limit: int = 500) -> str:
 
 
 def _attach_degraded_cache_status(summary: dict[str, object], cache_status: dict[str, object]) -> None:
-    if str(cache_status.get("status", "") or "").strip() != "degraded":
+    status = str(cache_status.get("status", "") or "").strip()
+    if status not in {"degraded", "failed"}:
         return
-    summary["status"] = "degraded"
+    summary["status"] = status
     for key in ("providers", "failed_days", "failed_tickers"):
         value = cache_status.get(key)
         if isinstance(value, (list, tuple, set)):
@@ -38,6 +39,15 @@ def _attach_degraded_cache_status(summary: dict[str, object], cache_status: dict
             summary[key] = value
     if bool(cache_status.get("retryable")):
         summary["retryable"] = True
+    if bool(cache_status.get("all_providers_failed")):
+        summary["all_providers_failed"] = True
+    for key in ("provider_attempted_count", "provider_total_failure_count"):
+        if key not in cache_status:
+            continue
+        try:
+            summary[key] = max(0, int(cache_status.get(key, 0) or 0))
+        except (TypeError, ValueError):
+            summary[key] = 0
     try:
         summary["reused_event_count"] = max(0, int(cache_status.get("reused_event_count", 0) or 0))
     except (TypeError, ValueError):
@@ -46,12 +56,15 @@ def _attach_degraded_cache_status(summary: dict[str, object], cache_status: dict
 
 def main() -> int:
     service = None
+    return_code = 0
     try:
         service = GlobalEarningsCalendarService()
         events = service.refresh_events()
         cache_status = service.load_cache_status()
         summary: dict[str, object] = {"status": "success", "events": _event_count(events)}
         _attach_degraded_cache_status(summary, cache_status)
+        if summary.get("status") == "failed":
+            return_code = 1
     except Exception as exc:  # noqa: BLE001 - CLI boundary converts refresh failures to a degraded cache state.
         log.exception("[global earnings calendar] refresh cache failed; reusing local cache")
         events = []
@@ -77,7 +90,7 @@ def main() -> int:
         summary["error"] = _normalize_error(exc)
         summary["retryable"] = True
     print(json.dumps(summary, ensure_ascii=False))
-    return 0
+    return return_code
 
 
 if __name__ == "__main__":

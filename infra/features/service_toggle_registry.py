@@ -97,11 +97,6 @@ service_toggle_registry.register(
     description="Daily fixed-time background global oligarch earnings calendar sync while the app is running.",
 )
 service_toggle_registry.register(
-    "workspace_auto_rt_monitor",
-    enabled_by_default=True,
-    description="Auto-start intraday monitor when market session and data conditions are met.",
-)
-service_toggle_registry.register(
     "startup_history_cache_load",
     enabled_by_default=True,
     description="Preload the full local market-history cache during startup instead of loading it on demand.",

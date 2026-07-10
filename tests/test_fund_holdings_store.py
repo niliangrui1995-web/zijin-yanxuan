@@ -2,6 +2,7 @@
 import os
 import tempfile
 
+import domains.fund_holdings.store as fund_store_module
 from core.data_store import DataStore
 from core.fund_holdings_compare import SUBJECT_QFII, SUBJECT_RUIYUAN, build_qfii_snapshots, build_ruiyuan_snapshots
 from core.fund_holdings_store import FundHoldingsStore
@@ -61,6 +62,71 @@ def test_fund_holdings_store_query_change_rows_uses_signature_cache(monkeypatch)
         repo.invalidate_change_rows_cache()
         repo.query_change_rows()
         assert calls == {"cache": 2, "qfii": 2}
+    finally:
+        store.close()
+        os.remove(db_path)
+
+
+def test_qfii_stock_code_filter_runs_before_holder_name_normalization(monkeypatch):
+    store, db_path = _make_store()
+    repo = FundHoldingsStore(store=store)
+    try:
+        rows = []
+        for quarter_key, end_date in (("2025Q3", "2025-09-30"), ("2025Q4", "2025-12-31")):
+            for stock_code, stock_name, holder_name in (
+                ("000001", "Ping An Bank", "Target Holder"),
+                ("300750", "CATL", "Unrelated Holder"),
+            ):
+                rows.append(
+                    (
+                        SUBJECT_QFII["subject_code"],
+                        quarter_key,
+                        end_date,
+                        stock_code,
+                        stock_name,
+                        holder_name,
+                        1,
+                        1000.0,
+                        10_000.0,
+                        0.1,
+                        0.5,
+                        "2026-04-18",
+                        "QFII",
+                        "QFII",
+                        "increase",
+                        "{}",
+                        "2026-04-18 12:00:00",
+                    )
+                )
+        store.executemany(
+            """
+            INSERT INTO fh_raw_qfii(
+                subject_code, quarter_key, end_date, stock_code, stock_name, holder_name,
+                holder_rank, hold_num_shares, hold_market_value_cny, hold_ratio_pct,
+                free_hold_ratio_pct, update_date, holder_type, holder_newtype, change_text,
+                raw_json, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+
+        normalized_batches = []
+
+        def _capture_rows(raw_rows, _subject):
+            normalized_batches.append(list(raw_rows))
+            return []
+
+        monkeypatch.setattr(fund_store_module, "build_qfii_holder_change_rows", _capture_rows)
+
+        result = repo._query_qfii_holder_change_rows(
+            {"2025Q4"},
+            stock_codes={"000001"},
+        )
+
+        assert result == []
+        assert len(normalized_batches) == 1
+        assert {row["stock_code"] for row in normalized_batches[0]} == {"000001"}
+        assert {row["quarter_key"] for row in normalized_batches[0]} == {"2025Q3", "2025Q4"}
     finally:
         store.close()
         os.remove(db_path)

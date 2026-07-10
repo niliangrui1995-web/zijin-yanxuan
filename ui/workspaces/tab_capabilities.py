@@ -59,11 +59,5 @@ class ScanResultsCapability(Protocol):
 
 
 @runtime_checkable
-class RtMonitorControlCapability(Protocol):
-    def is_rt_running(self) -> bool: ...
-    def toggle_rt_monitor(self, auto: bool = False) -> bool: ...
-
-
-@runtime_checkable
 class ForeignKeywordCapability(Protocol):
     def get_foreign_keywords(self) -> list[str]: ...

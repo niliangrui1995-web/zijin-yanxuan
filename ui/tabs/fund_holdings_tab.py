@@ -33,8 +33,8 @@ from app.services.ui_fund_holdings_service import (
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
 from core.ai_industry_chain_pool import (
-    load_ai_industry_chain_context_map,
-    load_ai_industry_chain_stock_codes,
+    load_cached_ai_industry_chain_context_map,
+    load_cached_ai_industry_chain_stock_codes,
 )
 from ui.components import (
     MultiSelectFilterButton,
@@ -106,8 +106,8 @@ class FundHoldingsTab(BaseStockTab):
         QFII_CAPITAL_ATTRIBUTE_UNMARKED: _DISPLAY_PLACEHOLDER,
     }
     _VIEW_STATE_PREFIX = "fund_holdings_view_state_v2"
-    _stock_universe_provider = staticmethod(load_ai_industry_chain_stock_codes)
-    _chain_context_provider = staticmethod(load_ai_industry_chain_context_map)
+    _stock_universe_provider = staticmethod(load_cached_ai_industry_chain_stock_codes)
+    _chain_context_provider = staticmethod(load_cached_ai_industry_chain_context_map)
 
     def __init__(
         self,

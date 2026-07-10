@@ -1,5 +1,3 @@
-import gc
-
 import akshare as ak
 import pandas as pd
 
@@ -301,6 +299,158 @@ def _load_lhb_detail_frame(date_str: str) -> tuple[pd.DataFrame, str, str]:
         return pd.DataFrame(), "error", message
 
 
+def _load_jg_lookups(date_str: str) -> tuple[dict[tuple[str, str], list[dict]], dict[str, list[dict]]]:
+    try:
+        df_jg = ak.stock_lhb_jgmmtj_em(start_date=date_str, end_date=date_str)
+    except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        log.warning(f"[龙虎榜抓取] 机构买卖详情抓取失败: {exc}")
+        df_jg = pd.DataFrame()
+
+    jg_reason_dict: dict[tuple[str, str], list[dict]] = {}
+    jg_candidates: dict[str, list[dict]] = {}
+    if df_jg is None or df_jg.empty:
+        return jg_reason_dict, jg_candidates
+
+    for _, row in df_jg.iterrows():
+        code = str(row.get("代码", "")).zfill(6)
+        reason_key = _normalize_reason_key(row.get("上榜原因", ""))
+        jg_info = _build_jg_info(row)
+        jg_info["_上榜原因_key"] = reason_key
+        jg_info["_上榜原因_tokens"] = {part.strip() for part in reason_key.split("|") if part.strip()}
+        jg_info["_收盘价"] = float(row.get("收盘价", 0) if pd.notna(row.get("收盘价")) else 0)
+        jg_info["_涨跌幅"] = float(row.get("涨跌幅", 0) if pd.notna(row.get("涨跌幅")) else 0)
+        jg_candidates.setdefault(code, []).append(jg_info)
+        if reason_key:
+            jg_reason_dict.setdefault((code, reason_key), []).append(jg_info)
+    return jg_reason_dict, jg_candidates
+
+
+def _load_foreign_presence(date_str: str) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    try:
+        df_yyb = ak.stock_lhb_hyyyb_em(start_date=date_str, end_date=date_str)
+    except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        log.warning(f"[龙虎榜抓取] 活跃营业部抓取失败: {exc}")
+        df_yyb = pd.DataFrame()
+
+    foreign_buys: dict[str, set[str]] = {}
+    foreign_sells: dict[str, set[str]] = {}
+    if df_yyb is None or df_yyb.empty:
+        return foreign_buys, foreign_sells
+
+    for _, row in df_yyb.iterrows():
+        branch = _match_foreign_keyword(row.get("营业部名称", ""))
+        if not branch:
+            continue
+        for stock_name in str(row.get("买入股票", "")).split():
+            if stock_name.strip():
+                foreign_buys.setdefault(stock_name.strip(), set()).add(branch)
+        for stock_name in str(row.get("卖出股票", "")).split():
+            if stock_name.strip():
+                foreign_sells.setdefault(stock_name.strip(), set()).add(branch)
+    return foreign_buys, foreign_sells
+
+
+def _load_stock_foreign_details(code: str, date_str: str) -> pd.DataFrame:
+    frames = []
+    for flag in ("买入", "卖出"):
+        try:
+            detail = ak.stock_lhb_stock_detail_em(symbol=code, date=date_str, flag=flag)
+        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
+            continue
+        if detail is not None and not detail.empty:
+            frames.append(detail)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def _foreign_details_for_reason(
+    code: str,
+    date_str: str,
+    reason: str,
+    detail_cache: dict[str, pd.DataFrame],
+    aggregate_cache: dict[tuple[str, str], dict[str, float]],
+) -> dict[str, float]:
+    cache_key = (code, _normalize_reason_key(reason))
+    if cache_key in aggregate_cache:
+        return aggregate_cache[cache_key]
+    if code not in detail_cache:
+        detail_cache[code] = _load_stock_foreign_details(code, date_str)
+    aggregate_cache[cache_key] = _collect_foreign_branch_details(detail_cache[code], reason)
+    return aggregate_cache[cache_key]
+
+
+def _row_float(row: pd.Series, column: str) -> float:
+    value = row.get(column, 0)
+    return float(value if pd.notna(value) else 0)
+
+
+def _build_lhb_record(
+    row: pd.Series,
+    *,
+    date_str: str,
+    strict_filter: bool,
+    jg_reason_dict: dict[tuple[str, str], list[dict]],
+    jg_candidates: dict[str, list[dict]],
+    foreign_buys: dict[str, set[str]],
+    foreign_sells: dict[str, set[str]],
+    foreign_detail_cache: dict[str, pd.DataFrame],
+    foreign_aggregate_cache: dict[tuple[str, str], dict[str, float]],
+) -> dict | None:
+    code = str(row.get("代码", "")).zfill(6)
+    name = str(row.get("名称", ""))
+    net_buy = _row_float(row, "龙虎榜净买额")
+    close_p = _row_float(row, "收盘价")
+    pct = _row_float(row, "涨跌幅")
+    turnover = _row_float(row, "换手率")
+    market_cap = _row_float(row, "流通市值")
+    reason = str(row.get("上榜原因", ""))
+
+    jg_info = _resolve_jg_info(
+        code=code,
+        reason=reason,
+        close_p=close_p,
+        pct=pct,
+        jg_reason_dict=jg_reason_dict,
+        jg_candidates=jg_candidates,
+    )
+    has_jg = jg_info["买方机构数"] > 0 or jg_info["卖方机构数"] > 0
+    has_foreign = bool(foreign_buys.get(name) or foreign_sells.get(name))
+    if strict_filter and not ((has_jg or has_foreign) and pct > 0):
+        return None
+
+    branch_details = {}
+    foreign_net_sum = 0.0
+    if has_foreign:
+        branch_details = _foreign_details_for_reason(
+            code,
+            date_str,
+            reason,
+            foreign_detail_cache,
+            foreign_aggregate_cache,
+        )
+        if not foreign_detail_cache[code].empty:
+            foreign_net_sum = sum(branch_details.values())
+    has_any_net_buy = (has_jg and jg_info["机构买入净额"] > 0) or (has_foreign and foreign_net_sum > 0)
+    if strict_filter and not has_any_net_buy:
+        return None
+
+    foreign_str, foreign_tooltip = _build_foreign_display(branch_details)
+    return {
+        "代码": code,
+        "名称": name,
+        "现价": round(close_p, 2),
+        "涨幅%": round(pct, 2),
+        "市值": round(market_cap / 100000000.0, 2) if market_cap > 0 else "--",
+        "上榜日期": date_str,
+        "上榜净买额(万)": round(net_buy / 10000.0, 2),
+        "机构净买(万)": round(jg_info["机构买入净额"] / 10000.0, 2),
+        "外资净买(万)": round(foreign_net_sum, 2),
+        "外资净买入": foreign_str,
+        "_外资净买入_tooltip": foreign_tooltip,
+        "换手率%": round(turnover, 2),
+        "上榜原因": reason,
+    }
+
+
 def fetch_lhb_data_for_date(
     date_str: str,
     strict_filter: bool = True,
@@ -317,178 +467,29 @@ def fetch_lhb_data_for_date(
             return {"records": [], "count": 0, "status": detail_status, "message": detail_message}
         return []
 
-    # 2. 抓取机构买卖追踪
-    df_jg = pd.DataFrame()
-    try:
-        df_jg = ak.stock_lhb_jgmmtj_em(start_date=date_str, end_date=date_str)
-    except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
-        log.warning(f"[龙虎榜抓取] 机构买卖详情抓取失败: {e}")
-
-    # 构建机构速查字典
-    jg_reason_dict: dict[tuple[str, str], list[dict]] = {}
-    jg_candidates: dict[str, list[dict]] = {}
-    if not df_jg.empty:
-        for _, row in df_jg.iterrows():
-            code = str(row.get("代码", "")).zfill(6)
-            reason_key = _normalize_reason_key(row.get("上榜原因", ""))
-            jg_info = _build_jg_info(row)
-            jg_info["_上榜原因_key"] = reason_key
-            jg_info["_上榜原因_tokens"] = {part.strip() for part in reason_key.split("|") if part.strip()}
-            jg_info["_收盘价"] = float(row.get("收盘价", 0) if pd.notna(row.get("收盘价")) else 0)
-            jg_info["_涨跌幅"] = float(row.get("涨跌幅", 0) if pd.notna(row.get("涨跌幅")) else 0)
-            jg_candidates.setdefault(code, []).append(jg_info)
-            if reason_key:
-                jg_reason_dict.setdefault((code, reason_key), []).append(jg_info)
-
-    # 3. 抓取活跃营业部，拦截外资痕迹
-    df_yyb = pd.DataFrame()
-    try:
-        df_yyb = ak.stock_lhb_hyyyb_em(start_date=date_str, end_date=date_str)
-    except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
-        log.warning(f"[龙虎榜抓取] 活跃营业部抓取失败: {e}")
-
-    foreign_buys = {}  # code -> [席位...]
-    foreign_sells = {}  # code -> [席位...]
-
-    if not df_yyb.empty:
-        for _, row in df_yyb.iterrows():
-            branch_name = str(row.get("营业部名称", ""))
-
-            # --- 简写外资营业部名称 ---
-            matched_kw = None
-            for kw in FOREIGN_KEYWORDS:
-                if kw in branch_name:
-                    matched_kw = kw
-                    break
-
-            if not matched_kw:
-                continue
-
-            short_branch = matched_kw
-
-            # 解析该外资席位买入了哪些股票
-            buy_stocks_str = str(row.get("买入股票", ""))
-            sell_stocks_str = str(row.get("卖出股票", ""))
-
-            for s_name in buy_stocks_str.split():
-                if not s_name.strip():
-                    continue
-                foreign_buys.setdefault(s_name.strip(), set()).add(short_branch)
-
-            for s_name in sell_stocks_str.split():
-                if not s_name.strip():
-                    continue
-                foreign_sells.setdefault(s_name.strip(), set()).add(short_branch)
-
-    # 4. 缝合主表
+    jg_reason_dict, jg_candidates = _load_jg_lookups(date_str)
+    foreign_buys, foreign_sells = _load_foreign_presence(date_str)
     foreign_detail_cache: dict[str, pd.DataFrame] = {}
+    foreign_aggregate_cache: dict[tuple[str, str], dict[str, float]] = {}
     results = []
     for _, row in df_detail.iterrows():
-        code = str(row.get("代码", "")).zfill(6)
-        name = str(row.get("名称", ""))
-
-        # 提取基本字段
-        net_buy = float(row.get("龙虎榜净买额", 0) if pd.notna(row.get("龙虎榜净买额")) else 0)
-        close_p = float(row.get("收盘价", 0) if pd.notna(row.get("收盘价")) else 0)
-        pct = float(row.get("涨跌幅", 0) if pd.notna(row.get("涨跌幅")) else 0)
-        turnover = float(row.get("换手率", 0) if pd.notna(row.get("换手率")) else 0)
-        mk_cap = float(row.get("流通市值", 0) if pd.notna(row.get("流通市值")) else 0)
-        reason = str(row.get("上榜原因", ""))
-
-        # 关联机构数据
-        jg_info = _resolve_jg_info(
-            code=code,
-            reason=reason,
-            close_p=close_p,
-            pct=pct,
+        record = _build_lhb_record(
+            row,
+            date_str=date_str,
+            strict_filter=strict_filter,
             jg_reason_dict=jg_reason_dict,
             jg_candidates=jg_candidates,
+            foreign_buys=foreign_buys,
+            foreign_sells=foreign_sells,
+            foreign_detail_cache=foreign_detail_cache,
+            foreign_aggregate_cache=foreign_aggregate_cache,
         )
-        has_jg = (jg_info["买方机构数"] > 0) or (jg_info["卖方机构数"] > 0)
-
-        # 关联外资数据 (通过简称匹配)
-        f_buys = list(foreign_buys.get(name, set()))
-        f_sells = list(foreign_sells.get(name, set()))
-        has_foreign = (len(f_buys) > 0) or (len(f_sells) > 0)
-
-        # 核心过滤条件: 只有 (机构参与 或 外资参与) 并且 (涨跌幅 > 0) 才抓取显示
-        if strict_filter:
-            if not ((has_jg or has_foreign) and (pct > 0)):
-                continue
-
-        # 此时确认我们需要这只股票，为了计算精准的外资净买额，再单独拉取双边明细
-        branch_details_map = {}  # 记录 kw -> net_amount(万)
-        foreign_net_sum = 0.0
-
-        if has_foreign:
-            if code not in foreign_detail_cache:
-                dfs = []
-                try:
-                    df_buy = ak.stock_lhb_stock_detail_em(symbol=code, date=date_str, flag="买入")
-                    if df_buy is not None and not df_buy.empty:
-                        dfs.append(df_buy)
-                except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
-                    pass
-
-                try:
-                    df_sell = ak.stock_lhb_stock_detail_em(symbol=code, date=date_str, flag="卖出")
-                    if df_sell is not None and not df_sell.empty:
-                        dfs.append(df_sell)
-                except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
-                    pass
-
-                foreign_detail_cache[code] = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
-
-            detail_df = foreign_detail_cache.get(code, pd.DataFrame())
-            if not detail_df.empty:
-                branch_details_map = _collect_foreign_branch_details(detail_df, reason)
-                foreign_net_sum = sum(branch_details_map.values())
-            else:
-                # 降级保底：API完全拉不出买卖明细，无法计算净额，归零并标注失败
-                foreign_net_sum = 0.0
-
-        # ================= 深度过滤 =================
-        # 至少有一方净买入(>0)的情况下才抓取
-        has_any_net_buy = False
-        if has_jg and (jg_info["机构买入净额"] > 0):
-            has_any_net_buy = True
-        if has_foreign and (foreign_net_sum > 0):
-            has_any_net_buy = True
-
-        if strict_filter:
-            if not has_any_net_buy:
-                continue
-
-        foreign_str, foreign_tooltip = _build_foreign_display(branch_details_map)
-
-        # 构造给前端的平铺字典字段
-        record = {
-            "代码": code,
-            "名称": name,
-            "现价": round(close_p, 2),
-            "涨幅%": round(pct, 2),
-            "市值": round(mk_cap / 100000000.0, 2) if mk_cap > 0 else "--",
-            "上榜日期": date_str,
-            "上榜净买额(万)": round(net_buy / 10000.0, 2),
-            "机构净买(万)": round(jg_info["机构买入净额"] / 10000.0, 2),
-            "外资净买(万)": round(foreign_net_sum, 2),
-            "外资净买入": foreign_str,
-            "_外资净买入_tooltip": foreign_tooltip,
-            "换手率%": round(turnover, 2),
-            "上榜原因": reason,
-        }
-        results.append(record)
+        if record is not None:
+            results.append(record)
 
     message = f"[龙虎榜抓取] {date_str} 成功拉取 {len(results)} 条数据"
     if emit_success_log:
         log.info(message)
-
-    # 挂机防漏：显式销毁 Pandas 大体积 DataFrame 对象并强制回收内存
-    try:
-        del df_detail, df_jg, df_yyb
-    except (NameError, UnboundLocalError):
-        pass
-    gc.collect()
 
     if return_meta:
         return {"records": results, "count": len(results), "status": "ok", "message": message}

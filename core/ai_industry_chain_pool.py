@@ -11,6 +11,7 @@ from typing import Iterable
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _PROJECT_PARENT = Path(__file__).resolve().parents[2]
 AI_CHAIN_FILE = _PROJECT_PARENT / "产业链投研" / "AI产业链.xlsx"
+AI_CHAIN_ROWS_CACHE_FILE = _PROJECT_ROOT / "data" / "Cache" / "ai_industry_chain_rows.json"
 AI_CHAIN_CODES_CACHE_FILE = _PROJECT_ROOT / "data" / "Cache" / "ai_industry_chain_stock_codes.json"
 AI_CHAIN_CONTEXT_CACHE_FILE = _PROJECT_ROOT / "data" / "Cache" / "ai_industry_chain_context_map.json"
 PLACEHOLDER = "--"
@@ -21,8 +22,11 @@ def _cache_source_path(workbook_path: str | Path | None) -> Path:
     return Path(workbook_path) if workbook_path is not None else AI_CHAIN_FILE
 
 
-def _uses_default_workbook(workbook_path: str | Path | None) -> bool:
-    return workbook_path is None
+def _is_default_cache_source(path: Path) -> bool:
+    try:
+        return path.resolve() == Path(AI_CHAIN_FILE).resolve()
+    except OSError:
+        return path == Path(AI_CHAIN_FILE)
 
 
 def _source_signature(path: Path) -> dict:
@@ -135,16 +139,35 @@ def load_ai_industry_chain_rows(workbook_path: str | Path | None = None) -> list
     return result
 
 
+def load_cached_ai_industry_chain_rows(workbook_path: str | Path | None = None) -> list[dict]:
+    path = _cache_source_path(workbook_path)
+    if not _is_default_cache_source(path) or not path.exists():
+        return []
+    cached = _read_signature_cache(AI_CHAIN_ROWS_CACHE_FILE, path, "rows")
+    if not isinstance(cached, list):
+        return []
+    return [dict(row) for row in cached if isinstance(row, dict)]
+
+
+def load_cached_ai_industry_chain_stock_codes(workbook_path: str | Path | None = None) -> set[str]:
+    path = _cache_source_path(workbook_path)
+    if not _is_default_cache_source(path) or not path.exists():
+        return set()
+    cached = _read_signature_cache(AI_CHAIN_CODES_CACHE_FILE, path, "stock_codes")
+    if not isinstance(cached, list):
+        return set()
+    return {normalize_ai_chain_code(code) for code in cached if normalize_ai_chain_code(code)}
+
+
 def load_ai_industry_chain_stock_codes(workbook_path: str | Path | None = None) -> set[str]:
     path = _cache_source_path(workbook_path)
-    if _uses_default_workbook(workbook_path) and path.exists():
-        cached = _read_signature_cache(AI_CHAIN_CODES_CACHE_FILE, path, "stock_codes")
-        if isinstance(cached, list):
-            return {normalize_ai_chain_code(code) for code in cached if normalize_ai_chain_code(code)}
+    if _is_default_cache_source(path):
+        cached = load_cached_ai_industry_chain_stock_codes(workbook_path)
+        if cached:
+            return cached
 
-    stock_codes = {row["代码"] for row in load_ai_industry_chain_rows(workbook_path) if row.get("代码")}
-    if _uses_default_workbook(workbook_path):
-        _write_signature_cache(AI_CHAIN_CODES_CACHE_FILE, path, "stock_codes", sorted(stock_codes))
+    rows = refresh_ai_industry_chain_rows(workbook_path)
+    stock_codes = {row["代码"] for row in rows if row.get("代码")}
     return stock_codes
 
 
@@ -160,19 +183,9 @@ def format_ai_industry_chain_context(row: dict | None, *, placeholder: str = PLA
     return " | ".join(parts) if parts else placeholder
 
 
-def load_ai_industry_chain_context_map(workbook_path: str | Path | None = None) -> dict[str, str]:
-    path = _cache_source_path(workbook_path)
-    if _uses_default_workbook(workbook_path) and path.exists():
-        cached = _read_signature_cache(AI_CHAIN_CONTEXT_CACHE_FILE, path, "context_map")
-        if isinstance(cached, dict):
-            return {
-                normalize_ai_chain_code(code): str(text)
-                for code, text in cached.items()
-                if normalize_ai_chain_code(code) and str(text or "").strip()
-            }
-
+def _build_ai_industry_chain_context_map(rows: Iterable[dict]) -> dict[str, str]:
     grouped: dict[str, list[str]] = {}
-    for row in load_ai_industry_chain_rows(workbook_path):
+    for row in rows:
         code = row.get("代码")
         text = format_ai_industry_chain_context(row)
         if not code or text == PLACEHOLDER:
@@ -180,10 +193,42 @@ def load_ai_industry_chain_context_map(workbook_path: str | Path | None = None) 
         bucket = grouped.setdefault(code, [])
         if text not in bucket:
             bucket.append(text)
-    context_map = {code: "；".join(values) for code, values in grouped.items()}
-    if _uses_default_workbook(workbook_path):
+    return {code: "；".join(values) for code, values in grouped.items()}
+
+
+def load_cached_ai_industry_chain_context_map(workbook_path: str | Path | None = None) -> dict[str, str]:
+    path = _cache_source_path(workbook_path)
+    if not _is_default_cache_source(path) or not path.exists():
+        return {}
+    cached = _read_signature_cache(AI_CHAIN_CONTEXT_CACHE_FILE, path, "context_map")
+    if not isinstance(cached, dict):
+        return {}
+    return {
+        normalize_ai_chain_code(code): str(text)
+        for code, text in cached.items()
+        if normalize_ai_chain_code(code) and str(text or "").strip()
+    }
+
+
+def refresh_ai_industry_chain_rows(workbook_path: str | Path | None = None) -> list[dict]:
+    path = _cache_source_path(workbook_path)
+    rows = load_ai_industry_chain_rows(path)
+    if _is_default_cache_source(path):
+        stock_codes = sorted({row["代码"] for row in rows if row.get("代码")})
+        context_map = _build_ai_industry_chain_context_map(rows)
+        _write_signature_cache(AI_CHAIN_ROWS_CACHE_FILE, path, "rows", rows)
+        _write_signature_cache(AI_CHAIN_CODES_CACHE_FILE, path, "stock_codes", stock_codes)
         _write_signature_cache(AI_CHAIN_CONTEXT_CACHE_FILE, path, "context_map", context_map)
-    return context_map
+    return rows
+
+
+def load_ai_industry_chain_context_map(workbook_path: str | Path | None = None) -> dict[str, str]:
+    path = _cache_source_path(workbook_path)
+    if _is_default_cache_source(path):
+        cached = load_cached_ai_industry_chain_context_map(workbook_path)
+        if cached:
+            return cached
+    return _build_ai_industry_chain_context_map(refresh_ai_industry_chain_rows(workbook_path))
 
 
 def normalize_stock_code_from_row(row: dict, code_keys: Iterable[str]) -> str:

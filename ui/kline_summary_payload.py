@@ -187,31 +187,6 @@ def _build_scan_summary_cards(payload: dict) -> list[dict]:
     ]
 
 
-def _build_rt_monitor_summary_cards(payload: dict) -> list[dict]:
-    return [
-        {
-            "title": "盘中状态",
-            "rows": [
-                _summary_row("涨幅", _summary_pick_pct(payload, "涨幅%", "涨幅")),
-                _summary_row("时间", _summary_pick(payload, "时间")),
-            ],
-        },
-        {
-            "title": "策略信号",
-            "rows": [
-                _summary_row("评分", _summary_pick(payload, "评分")),
-                _summary_option_row(
-                    payload,
-                    [
-                        ("突破状态", ("突破状态",)),
-                        ("热点板块", ("热点板块", "热门板块")),
-                    ],
-                ),
-            ],
-        },
-    ]
-
-
 def _build_watchlist_summary_cards(payload: dict) -> list[dict]:
     source_text = _summary_pick(payload, "来源", default="")
     if not source_text:
@@ -441,7 +416,6 @@ def build_kline_summary_cards(vcp_data: dict | None, is_fav: bool = False) -> li
 
     builders = {
         "scan": _build_scan_summary_cards,
-        "rt_monitor": _build_rt_monitor_summary_cards,
         "watchlist": _build_watchlist_summary_cards,
         "lhb": _build_lhb_summary_cards,
         "foreign_block": _build_foreign_block_summary_cards,

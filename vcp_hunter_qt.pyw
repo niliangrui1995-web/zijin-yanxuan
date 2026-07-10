@@ -49,7 +49,7 @@ append_bootstrap_event(PROJECT_ROOT, "single_instance.lock.acquired")
 CRASH_LOG_DIR = os.path.join(PROJECT_ROOT, "data")
 os.makedirs(CRASH_LOG_DIR, exist_ok=True)
 CRASH_LOG_PATH = os.path.join(CRASH_LOG_DIR, "crash_report.log")
-CRASH_LOG_FILE = open(CRASH_LOG_PATH, "a", encoding="utf-8")
+CRASH_LOG_FILE = open(CRASH_LOG_PATH, "a", encoding="utf-8")  # noqa: SIM115 - faulthandler owns it for process life.
 faulthandler.enable(file=CRASH_LOG_FILE, all_threads=True)
 append_bootstrap_event(PROJECT_ROOT, "crash_log.ready", extra={"path": CRASH_LOG_PATH})
 
@@ -61,7 +61,14 @@ def main():
     set_windows_app_user_model_id()
     append_bootstrap_event(PROJECT_ROOT, "qt_runtime.configured")
 
+    from PyQt6.QtCore import QCoreApplication, Qt
+
+    QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
+
     from PyQt6.QtWidgets import QApplication, QMessageBox
+
+    app = QApplication(sys.argv)
+    append_bootstrap_event(PROJECT_ROOT, "qapplication.created")
 
     def ui_exception_hook(exc_type, exc_value, exc_traceback):
         if issubclass(exc_type, KeyboardInterrupt):
@@ -102,8 +109,6 @@ def main():
     from ui.styles.global_qss import generate_global_qss
     from ui.theme import theme_manager
 
-    app = QApplication(sys.argv)
-    append_bootstrap_event(PROJECT_ROOT, "qapplication.created")
     log_runtime_env_report(PROJECT_ROOT)
     app.setStyleSheet(generate_global_qss(theme_manager.current_theme))
 

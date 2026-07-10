@@ -17,7 +17,7 @@
 | 行情快照 | `domains/quotes/`、`core/global_store.py` | quote payload 标准化、深合并、市值补齐、全局快照存储和广播 | `publish_rt_quotes`、`GlobalStore` |
 | 实时行情抓取 | `ui/workers/central_quotes_worker.py`、`infra/market_data/realtime_quote_provider.py` | 中央轮询、单飞行任务、失败冷却、provider 运行态保护 | `CentralQuotesService`、`RealtimeQuoteProvider` |
 | 本地行情数据 | `infra/market_data/`、`vcp/data_provider.py`、`vcp/polars_engine.py` | Parquet/SQLite-first 仓库、SQLite manifest、通达信历史数据生产/fallback、复权、名称映射、运行时缓存 | `TdxDataProvider`、`MarketDataWarehouse`、`WarehouseManifest` |
-| VCP/RPS 扫描 | `domains/scan/`、`app/services/scan_engine_facade.py` | 指标计算、RPS、VCP 条件、待突破池、盘中快速判断 | `VCPEngine`、`IndicatorService`、`BreakoutMonitorService` |
+| VCP/RPS 扫描 | `domains/scan/`、`app/services/scan_engine_facade.py` | 指标计算、RPS、VCP 条件、待突破池、实时突破判断 | `VCPEngine`、`IndicatorService`、`BreakoutMonitorService` |
 | 业绩异动 | `domains/earnings/`、`ui/tabs/earnings_tab.py` | 业绩数据扫描、去重、调度和页面展示 | `EarningsScheduler`、`EarningsTab` |
 | 基金持仓 | `domains/fund_holdings/`、`ui/tabs/fund_holdings_tab.py` | 基金/QFII 持仓同步、存储、对比、信号输出 | `fund_holdings_store`、`fund_holdings_sync_service` |
 | 关注池 | `domains/watchlist/`、`ui/tabs/watchlist_tab.py` | 自选池状态、来源标签、关注池雷达展示 | `watchlist_vm`、`WatchlistTab` |

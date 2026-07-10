@@ -9,21 +9,42 @@ import time
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from app.services.asian_market_service import filter_asian_tickers, sync_asian_kline_cache
+from app.services.runtime_constants import CACHE_DIR
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_market_calendar_service import MarketCalendar
 from core.logger import get_logger
 from ui.components.thread_shutdown import request_thread_shutdown
-from ui.tabs.asian_market_workers import (
-    GLOBAL_ASIAN_RT_CACHE,
-    JSON_CACHE,
-    RT_JSON_CACHE,
-    AsianMarketWorker,
-    is_asian_quote_refresh_time,
-)
 
 log = get_logger(__name__)
 _DEFERRED_REPAINT_COUNT_RE = re.compile(r"cached\s+(\d+)\s+updates", re.IGNORECASE)
+JSON_CACHE = os.path.join(CACHE_DIR, "asian_klines_latest.json")
+RT_JSON_CACHE = os.path.join(CACHE_DIR, "asian_rt_latest.json")
+
+
+def filter_asian_tickers(market_filter: str | None = None) -> dict[str, str]:
+    from app.services.asian_market_service import filter_asian_tickers as _filter_asian_tickers
+
+    return _filter_asian_tickers(market_filter)
+
+
+def sync_asian_kline_cache(**kwargs):
+    from app.services.asian_market_service import sync_asian_kline_cache as _sync_asian_kline_cache
+
+    return _sync_asian_kline_cache(**kwargs)
+
+
+def _asian_market_workers_module():
+    from ui.tabs import asian_market_workers
+
+    return asian_market_workers
+
+
+def _create_asian_market_worker(codes):
+    return _asian_market_workers_module().AsianMarketWorker(codes)
+
+
+def is_asian_quote_refresh_time(codes) -> bool:
+    return bool(_asian_market_workers_module().is_asian_quote_refresh_time(codes))
 
 
 def _safe_float(value) -> float:
@@ -62,7 +83,7 @@ class AsianMarketRuntimeService(QObject):
 
     def __init__(self, parent=None, *, worker_factory=None):
         super().__init__(parent)
-        self._worker_factory = worker_factory or AsianMarketWorker
+        self._worker_factory = worker_factory or _create_asian_market_worker
         self._worker = None
         self._runtime_state = "idle"
         self._codes: list[str] = []
@@ -304,7 +325,7 @@ class AsianMarketRuntimeService(QObject):
     def _save_rt_cache() -> None:
         try:
             cache_friendly = {}
-            for key, value in GLOBAL_ASIAN_RT_CACHE.items():
+            for key, value in _asian_market_workers_module().GLOBAL_ASIAN_RT_CACHE.items():
                 cache_friendly[key] = {
                     "date": value.get("date", ""),
                     "close": value.get("close", 0.0),

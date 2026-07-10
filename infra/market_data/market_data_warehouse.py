@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import os
+import shutil
 import threading
+import time
 import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -28,6 +30,7 @@ log = get_logger(__name__)
 MARKET_DATASET = "cn_daily_bars"
 MARKET_DATA_SCHEMA_VERSION = 3
 MARKET_DATA_SOURCE_VERSION = "vcp_daily_parquet_v3"
+GENERATION_RETENTION_SECONDS = 7 * 24 * 60 * 60
 REQUIRED_MARKET_COLUMNS = frozenset({"_code", "datetime", "open", "high", "low", "close"})
 
 
@@ -67,6 +70,20 @@ def _atomic_parquet_write(df, final_path: Path, compression: str = "zstd") -> No
     tmp_path = final_path.with_name(f"{final_path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     try:
         df.write_parquet(str(tmp_path), compression=compression)
+        os.replace(str(tmp_path), str(final_path))
+    finally:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+
+
+def _atomic_file_copy(source_path: Path, final_path: Path) -> None:
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = final_path.with_name(f"{final_path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    try:
+        shutil.copyfile(source_path, tmp_path)
         os.replace(str(tmp_path), str(final_path))
     finally:
         if tmp_path.exists():
@@ -121,6 +138,25 @@ class MarketDataWarehouse:
     @property
     def meta_path(self) -> Path:
         return self.parquet_dir / "meta.parquet"
+
+    def _new_generation_path(self, trade_date: str) -> Path:
+        date_key = "".join(char for char in str(trade_date or "") if char.isalnum()) or "unknown"
+        return self.parquet_dir / "generations" / f"market_data.{date_key}.{uuid.uuid4().hex}.parquet"
+
+    def _cleanup_stale_generations(self, active_path: Path, *, previous_path: Path | None = None) -> None:
+        protected = {active_path}
+        if previous_path is not None:
+            protected.add(previous_path)
+        cutoff = time.time() - GENERATION_RETENTION_SECONDS
+        generation_dir = self.parquet_dir / "generations"
+        for candidate in generation_dir.glob("market_data.*.parquet"):
+            if candidate in protected:
+                continue
+            try:
+                if candidate.stat().st_mtime < cutoff:
+                    candidate.unlink()
+            except OSError as exc:
+                log.debug("[warehouse] stale generation cleanup skipped for %s: %s", candidate, exc)
 
     def is_available(self) -> bool:
         return self.current_status(validate_parquet=True).ok
@@ -353,6 +389,91 @@ class MarketDataWarehouse:
                 ),
             )
 
+    def read_symbols(self, codes) -> WarehouseReadResult:
+        code_texts = tuple(
+            dict.fromkeys(str(code or "").strip() for code in (codes or []) if str(code or "").strip())
+        )
+        if not code_texts:
+            return WarehouseReadResult(
+                {},
+                WarehouseStatus(
+                    ok=True,
+                    dataset=self.dataset,
+                    parquet_path=str(self.parquet_path),
+                    data_status="ok",
+                    active_layer="parquet_sqlite_warehouse",
+                ),
+            )
+
+        status = self.current_status(validate_parquet=False)
+        if not status.ok:
+            return WarehouseReadResult(None, status)
+
+        try:
+            import polars as pl
+
+            with self._lock:
+                part = (
+                    pl.scan_parquet(str(Path(status.parquet_path or self.parquet_path)))
+                    .filter(pl.col("_code").cast(pl.Utf8).is_in(list(code_texts)))
+                    .collect()
+                )
+            missing_columns = sorted(REQUIRED_MARKET_COLUMNS.difference(part.columns))
+            if missing_columns:
+                return WarehouseReadResult(
+                    None,
+                    WarehouseStatus(
+                        **{
+                            **status.to_dict(),
+                            "ok": False,
+                            "data_status": "schema_incompatible",
+                            "error": f"missing columns: {', '.join(missing_columns)}",
+                            "active_layer": "warehouse_unavailable",
+                            "fallback_reason": "schema_incompatible",
+                        }
+                    ),
+                )
+
+            frames: dict[str, pd.DataFrame] = {}
+            if part.height > 0:
+                frame = part.to_pandas()
+                frame["_code"] = frame["_code"].astype(str)
+                frame["datetime"] = pd.to_datetime(frame["datetime"], errors="coerce")
+                frame = frame.dropna(subset=["datetime"])
+                for code, code_frame in frame.groupby("_code", sort=False):
+                    frames[str(code)] = code_frame.drop(columns=["_code"]).set_index("datetime").copy()
+
+            row_count = sum(len(frame) for frame in frames.values())
+            return WarehouseReadResult(
+                frames,
+                WarehouseStatus(
+                    **{
+                        **status.to_dict(),
+                        "ok": True,
+                        "data_status": "ok",
+                        "error": "",
+                        "symbol_count": len(frames),
+                        "row_count": row_count,
+                        "active_layer": "parquet_sqlite_warehouse",
+                        "fallback_reason": "",
+                    }
+                ),
+            )
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError, PolarsError) as exc:
+            return WarehouseReadResult(
+                None,
+                WarehouseStatus(
+                    **{
+                        **status.to_dict(),
+                        "ok": False,
+                        "data_status": "parquet_unreadable",
+                        "error": str(exc),
+                        "active_layer": "warehouse_unavailable",
+                        "fallback_reason": "parquet_unreadable",
+                    }
+                ),
+            )
+
     def read_symbol(self, code: str) -> WarehouseReadResult:
         code_text = str(code or "").strip()
         status = self.current_status(validate_parquet=False)
@@ -474,25 +595,114 @@ class MarketDataWarehouse:
                 fallback_reason="empty_dataset",
             )
 
-        with self._lock:
-            data = pl.concat(frames, how="vertical_relaxed")
-            actual_symbol_count = int(data["_code"].n_unique()) if "_code" in data.columns else 0
-            _atomic_parquet_write(data, self.parquet_path, compression="zstd")
-            meta = pl.DataFrame(
-                {
-                    "date": [str(trade_date or "")],
-                    "n_stocks": [actual_symbol_count],
-                    "version": [MARKET_DATA_SCHEMA_VERSION],
-                }
-            )
-            _atomic_parquet_write(meta, self.meta_path, compression="zstd")
-
-        return self.register_existing_parquet(
-            trade_date=str(trade_date or ""),
+        data = pl.concat(frames, how="vertical_relaxed")
+        return self.write_polars_dataset(
+            data,
+            trade_date,
             source=source,
             source_version=source_version,
-            row_count=int(data.height),
+        )
+
+    def write_polars_dataset(
+        self,
+        data,
+        trade_date: str,
+        *,
+        source: str = "vipdoc",
+        source_version: str = MARKET_DATA_SOURCE_VERSION,
+    ) -> WarehouseStatus:
+        """Publish one already-normalized Polars snapshot through the manifest pointer."""
+        try:
+            import polars as pl
+        except ImportError as exc:
+            return WarehouseStatus(
+                ok=False,
+                dataset=self.dataset,
+                trade_date=str(trade_date or ""),
+                parquet_path=str(self.parquet_path),
+                data_status="dependency_missing",
+                error=str(exc),
+                active_layer="warehouse_unavailable",
+                fallback_reason="dependency_missing",
+            )
+
+        if data is None or int(getattr(data, "height", 0) or 0) <= 0:
+            return WarehouseStatus(
+                ok=False,
+                dataset=self.dataset,
+                trade_date=str(trade_date or ""),
+                parquet_path=str(self.parquet_path),
+                data_status="empty_dataset",
+                error="no market frames to write",
+                active_layer="warehouse_unavailable",
+                fallback_reason="empty_dataset",
+            )
+
+        missing_columns = sorted(REQUIRED_MARKET_COLUMNS.difference(getattr(data, "columns", ())))
+        if missing_columns:
+            return WarehouseStatus(
+                ok=False,
+                dataset=self.dataset,
+                trade_date=str(trade_date or ""),
+                parquet_path=str(self.parquet_path),
+                data_status="schema_incompatible",
+                error=f"missing columns: {', '.join(missing_columns)}",
+                active_layer="warehouse_unavailable",
+                fallback_reason="schema_incompatible",
+            )
+
+        actual_symbol_count = int(data["_code"].n_unique()) if "_code" in data.columns else 0
+        generation_path = self._new_generation_path(str(trade_date or ""))
+        with self._lock:
+            _atomic_parquet_write(data, generation_path, compression="zstd")
+
+        record = WarehouseManifestRecord.build(
+            dataset=self.dataset,
+            trade_date=str(trade_date or ""),
+            schema_version=MARKET_DATA_SCHEMA_VERSION,
+            source=source,
+            source_version=source_version,
+            parquet_path=str(generation_path),
             symbol_count=actual_symbol_count,
+            row_count=int(data.height),
+            data_status="ok",
+        )
+        previous_record = self.manifest.latest(self.dataset)
+        published = False
+        try:
+            self.manifest.upsert(record)
+            published = True
+        finally:
+            if not published:
+                try:
+                    generation_path.unlink()
+                except OSError:
+                    pass
+
+        # Keep the historical fixed filenames as best-effort compatibility mirrors.
+        # Warehouse readers only follow the immutable generation recorded above.
+        try:
+            with self._lock:
+                _atomic_file_copy(generation_path, self.parquet_path)
+                meta = pl.DataFrame(
+                    {
+                        "date": [str(trade_date or "")],
+                        "n_stocks": [actual_symbol_count],
+                        "version": [MARKET_DATA_SCHEMA_VERSION],
+                    }
+                )
+                _atomic_parquet_write(meta, self.meta_path, compression="zstd")
+        except (OSError, RuntimeError, TypeError, ValueError, PolarsError) as exc:
+            log.warning("[warehouse] legacy parquet mirror update failed: %s", exc)
+
+        previous_path = Path(previous_record.parquet_path) if previous_record and previous_record.parquet_path else None
+        self._cleanup_stale_generations(generation_path, previous_path=previous_path)
+
+        return WarehouseStatus(
+            **{
+                **self._status_from_record(record, ok=True).to_dict(),
+                "active_layer": "parquet_sqlite_warehouse",
+            }
         )
 
     def register_existing_parquet(
@@ -504,28 +714,35 @@ class MarketDataWarehouse:
         row_count: int | None = None,
         symbol_count: int | None = None,
     ) -> WarehouseStatus:
-        parquet_path = self.parquet_path
-        if not parquet_path.exists():
+        legacy_path = self.parquet_path
+        if not legacy_path.exists():
             return WarehouseStatus(
                 ok=False,
                 dataset=self.dataset,
                 trade_date=str(trade_date or ""),
-                parquet_path=str(parquet_path),
+                parquet_path=str(legacy_path),
                 data_status="missing_parquet",
-                error=f"parquet file is missing: {parquet_path}",
+                error=f"parquet file is missing: {legacy_path}",
                 active_layer="warehouse_unavailable",
                 fallback_reason="missing_parquet",
             )
         if not trade_date:
             trade_date = self._read_meta_trade_date()
+        generation_path = self._new_generation_path(str(trade_date or ""))
         try:
-            inspected = self._inspect_parquet(parquet_path)
+            with self._lock:
+                _atomic_file_copy(legacy_path, generation_path)
+            inspected = self._inspect_parquet(generation_path)
         except (OSError, RuntimeError, TypeError, ValueError, PolarsError) as exc:
+            try:
+                generation_path.unlink()
+            except OSError:
+                pass
             return WarehouseStatus(
                 ok=False,
                 dataset=self.dataset,
                 trade_date=str(trade_date or ""),
-                parquet_path=str(parquet_path),
+                parquet_path=str(legacy_path),
                 data_status="parquet_unreadable",
                 error=str(exc),
                 active_layer="warehouse_unavailable",
@@ -533,11 +750,15 @@ class MarketDataWarehouse:
             )
         missing_columns = sorted(REQUIRED_MARKET_COLUMNS.difference(inspected["columns"]))
         if missing_columns:
+            try:
+                generation_path.unlink()
+            except OSError:
+                pass
             return WarehouseStatus(
                 ok=False,
                 dataset=self.dataset,
                 trade_date=str(trade_date or ""),
-                parquet_path=str(parquet_path),
+                parquet_path=str(legacy_path),
                 data_status="schema_incompatible",
                 error=f"missing columns: {', '.join(missing_columns)}",
                 active_layer="warehouse_unavailable",
@@ -552,12 +773,24 @@ class MarketDataWarehouse:
             schema_version=MARKET_DATA_SCHEMA_VERSION,
             source=source,
             source_version=source_version,
-            parquet_path=str(parquet_path),
+            parquet_path=str(generation_path),
             symbol_count=actual_symbols,
             row_count=actual_rows,
             data_status="ok",
         )
-        self.manifest.upsert(record)
+        previous_record = self.manifest.latest(self.dataset)
+        published = False
+        try:
+            self.manifest.upsert(record)
+            published = True
+        finally:
+            if not published:
+                try:
+                    generation_path.unlink()
+                except OSError:
+                    pass
+        previous_path = Path(previous_record.parquet_path) if previous_record and previous_record.parquet_path else None
+        self._cleanup_stale_generations(generation_path, previous_path=previous_path)
         return WarehouseStatus(
             ok=True,
             dataset=self.dataset,

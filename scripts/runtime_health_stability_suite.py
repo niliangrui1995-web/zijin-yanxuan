@@ -43,7 +43,6 @@ DEFAULT_TABS = (
     "stock_candidates",
     "ai_industry_chain",
     "lhb",
-    "rt_monitor",
     "scan",
     "foreign_block",
     "earnings",

@@ -6,6 +6,7 @@ from __future__ import annotations
 import concurrent.futures
 import datetime
 import html as html_lib
+import importlib
 import json
 import os
 import re
@@ -13,16 +14,8 @@ import threading
 import time
 
 import requests
-import yfinance as yf
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from app.services.asian_market_service import (
-    build_yf_session,
-    get_yf_rate_limit_status,
-    is_yf_rate_limit_error,
-    mark_yf_rate_limited,
-    sync_asian_kline_cache,
-)
 from app.services.runtime_constants import CACHE_DIR
 from app.services.ui_market_calendar_service import MarketCalendar
 from core.logger import get_logger
@@ -53,6 +46,55 @@ _EMPTY_NUMERIC_MARKERS = {"", "-", "--", "---", "—", "－", "None", "null"}
 _NUMERIC_TOKEN_RE = re.compile(r"-?\d+(?:\.\d+)?")
 _DEFAULT_HTTP_HEADERS = ASIAN_MARKET_HTTP_HEADERS
 _HTTP_TIMEOUT_SEC = ASIAN_MARKET_HTTP_TIMEOUT_SEC
+
+
+class _LazyYFinanceModule:
+    """Keep yfinance outside module import and Qt worker construction."""
+
+    def __init__(self):
+        self._module = None
+
+    def __getattr__(self, name: str):
+        module = self._module
+        if module is None:
+            module = importlib.import_module("yfinance")
+            self._module = module
+        return getattr(module, name)
+
+
+yf = _LazyYFinanceModule()
+
+
+def build_yf_session():
+    from app.services.asian_market_service import build_yf_session as _build_yf_session
+
+    return _build_yf_session()
+
+
+def get_yf_rate_limit_status():
+    from app.services.asian_market_service import get_yf_rate_limit_status as _get_yf_rate_limit_status
+
+    return _get_yf_rate_limit_status()
+
+
+def is_yf_rate_limit_error(exc):
+    from app.services.asian_market_service import is_yf_rate_limit_error as _is_yf_rate_limit_error
+
+    return _is_yf_rate_limit_error(exc)
+
+
+def mark_yf_rate_limited(exc=None, cooldown_sec=None):
+    from app.services.asian_market_service import mark_yf_rate_limited as _mark_yf_rate_limited
+
+    if cooldown_sec is None:
+        return _mark_yf_rate_limited(exc)
+    return _mark_yf_rate_limited(exc, cooldown_sec=cooldown_sec)
+
+
+def sync_asian_kline_cache(*args, **kwargs):
+    from app.services.asian_market_service import sync_asian_kline_cache as _sync_asian_kline_cache
+
+    return _sync_asian_kline_cache(*args, **kwargs)
 
 
 class AsianRealtimePayloadError(ValueError):

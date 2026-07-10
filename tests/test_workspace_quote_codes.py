@@ -62,7 +62,6 @@ def _patch_lightweight_workspace_tabs(monkeypatch, constructed, ctor_kwargs=None
     monkeypatch.setattr(classic_workspace_module, "AsianMarketTab", _make_tab("asian_market"))
     monkeypatch.setattr(classic_workspace_module, "NADailyTab", _make_tab("na_daily"))
     monkeypatch.setattr(classic_workspace_module, "AIIndustryChainTab", _make_tab("ai_industry_chain"))
-    monkeypatch.setattr(classic_workspace_module, "RtMonitorTab", _make_tab("rt_monitor"))
     monkeypatch.setattr(classic_workspace_module, "ScanTab", _make_tab("scan"))
     monkeypatch.setattr(classic_workspace_module, "StockCandidateTab", _make_tab("stock_candidates"))
     monkeypatch.setattr(classic_workspace_module, "LhbTab", _make_tab("lhb"))
@@ -76,7 +75,6 @@ def test_workspace_collects_a_share_quote_codes_from_public_tab_apis():
     workspace = _make_workspace(
         tabs={
             "scan": _make_quote_tab({"000001"}),
-            "rt_monitor": _make_quote_tab({"600000"}),
             "watchlist": _make_quote_tab({"000001", "300001"}),
             "asian_market": _make_quote_tab({"600519"}),
             "stock_candidates": _make_quote_tab({"300750"}),
@@ -109,7 +107,6 @@ def test_workspace_quote_universe_skips_information_source_group_and_non_a_share
         {"key": "stock_candidates", "group": "主工作台"},
         {"key": "ai_industry_chain", "group": "情报源"},
         {"key": "lhb", "group": "主工作台"},
-        {"key": "rt_monitor", "group": "主工作台"},
         {"key": "scan", "group": "情报源"},
         {"key": "foreign_block", "group": "情报源"},
         {"key": "earnings", "group": "情报源"},
@@ -122,7 +119,6 @@ def test_workspace_quote_universe_skips_information_source_group_and_non_a_share
             "stock_candidates": _make_quote_tab({"300750"}),
             "ai_industry_chain": _make_quote_tab({"688498"}),
             "lhb": _make_quote_tab({"601318"}),
-            "rt_monitor": _make_quote_tab({"002415"}),
             "scan": _make_quote_tab({"000002"}),
             "foreign_block": _make_quote_tab({"600000"}),
             "earnings": _make_quote_tab({"300001"}),
@@ -133,7 +129,7 @@ def test_workspace_quote_universe_skips_information_source_group_and_non_a_share
 
     codes = ClassicWorkspace.get_realtime_quote_codes(workspace)
 
-    assert codes == {"000001", "300750", "601318", "002415"}
+    assert codes == {"000001", "300750", "601318"}
 
 
 def test_workspace_quote_universe_does_not_instantiate_lazy_tabs():
@@ -145,7 +141,6 @@ def test_workspace_quote_universe_does_not_instantiate_lazy_tabs():
         tab_specs=lambda: [
             {"key": "watchlist", "group": "主工作台"},
             {"key": "lhb", "group": "主工作台"},
-            {"key": "rt_monitor", "group": "主工作台"},
         ],
         get_loaded_tab=lambda key: loaded_tabs.get(key),
         get_tab=lambda key: get_tab_calls.append(key) or _make_quote_tab({key}),
@@ -465,6 +460,87 @@ def test_watchlist_radar_skips_scan_cache_fallback_on_ui_thread(monkeypatch):
     assert earn_data == {}
     assert lhb_data == {}
     assert rps_bundle is None
+
+
+def test_watchlist_radar_passes_target_codes_into_signal_collection(monkeypatch):
+    workspace = SimpleNamespace(
+        engine=None,
+        tab_specs=lambda: [],
+        get_loaded_tab=lambda _key: None,
+        iter_tabs=lambda: [],
+    )
+    service = StockContextService(workspace)
+    calls = []
+    monkeypatch.setattr(service, "iter_stock_signals", lambda **kwargs: calls.append(kwargs) or [])
+
+    service.collect_watchlist_radar_data(target_codes=["000001", "600000", "000001"])
+
+    assert calls == [
+        {
+            "include_cache_fallback": False,
+            "include_source_cache_fallback": None,
+            "allow_lhb_cache_compute": False,
+            "target_codes": {"000001", "600000"},
+        }
+    ]
+
+
+def test_stock_context_explicit_empty_target_codes_skip_signal_sources(monkeypatch):
+    workspace = SimpleNamespace(
+        engine=None,
+        tab_specs=lambda: [],
+        get_loaded_tab=lambda _key: None,
+        iter_tabs=lambda: [],
+    )
+    service = StockContextService(workspace)
+    monkeypatch.setattr(
+        service,
+        "_iter_direct_stock_signals",
+        lambda: (_ for _ in ()).throw(AssertionError("empty watchlist must not scan signal sources")),
+    )
+
+    assert service.iter_stock_signals(target_codes=[]) == []
+
+
+def test_watchlist_radar_preserves_none_as_unfiltered_target(monkeypatch):
+    workspace = SimpleNamespace(
+        engine=None,
+        tab_specs=lambda: [],
+        get_loaded_tab=lambda _key: None,
+        iter_tabs=lambda: [],
+    )
+    service = StockContextService(workspace)
+    calls = []
+    monkeypatch.setattr(service, "iter_stock_signals", lambda **kwargs: calls.append(kwargs) or [])
+
+    service.collect_watchlist_radar_data(target_codes=None)
+
+    assert calls[0]["target_codes"] is None
+
+
+def test_stock_context_ai_chain_fallback_is_cache_only(monkeypatch):
+    import core.ai_industry_chain_pool as ai_pool_module
+
+    monkeypatch.setattr(
+        ai_pool_module,
+        "load_cached_ai_industry_chain_rows",
+        lambda: [{stock_context_module.KEY_CODE: "300308", stock_context_module.KEY_SUBSECTOR: "optics"}],
+    )
+    monkeypatch.setattr(
+        ai_pool_module,
+        "load_ai_industry_chain_rows",
+        lambda: (_ for _ in ()).throw(AssertionError("Watchlist fallback must not open workbook")),
+    )
+    workspace = SimpleNamespace(
+        engine=None,
+        tab_specs=lambda: [],
+        get_loaded_tab=lambda _key: None,
+        iter_tabs=lambda: [],
+    )
+
+    rows = StockContextService(workspace)._load_ai_chain_cache_rows()
+
+    assert rows == [{stock_context_module.KEY_CODE: "300308", stock_context_module.KEY_SUBSECTOR: "optics"}]
 
 
 def test_watchlist_radar_can_use_source_cache_without_scan_fallback(monkeypatch):
@@ -1007,7 +1083,6 @@ def test_workspace_refreshes_all_tabs_after_f5():
         "na_daily": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("na_daily")),
         "ai_industry_chain": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("ai_chain")),
         "asian_market": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("asian")),
-        "rt_monitor": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("rt")),
         "foreign_block": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("foreign")),
         "fund_holdings": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("fund")),
         "earnings": SimpleNamespace(refresh_table_from_latest_snapshot=lambda: calls.append("earnings")),
@@ -1025,7 +1100,6 @@ def test_workspace_refreshes_all_tabs_after_f5():
         "na_daily",
         "ai_chain",
         "asian",
-        "rt",
         "foreign",
         "fund",
         "earnings",
@@ -1397,7 +1471,6 @@ def test_workspace_defers_heavy_tab_autoload(monkeypatch):
     monkeypatch.setattr(classic_workspace_module, "AsianMarketTab", _make_tab("asian_market"))
     monkeypatch.setattr(classic_workspace_module, "NADailyTab", _make_tab("na_daily"))
     monkeypatch.setattr(classic_workspace_module, "AIIndustryChainTab", _make_tab("ai_industry_chain"))
-    monkeypatch.setattr(classic_workspace_module, "RtMonitorTab", _make_tab("rt_monitor"))
     monkeypatch.setattr(classic_workspace_module, "ScanTab", _make_tab("scan"))
     monkeypatch.setattr(classic_workspace_module, "StockCandidateTab", _make_tab("stock_candidates"))
     monkeypatch.setattr(classic_workspace_module, "LhbTab", _make_tab("lhb"))
@@ -1425,7 +1498,7 @@ def test_workspace_defers_heavy_tab_autoload(monkeypatch):
         assert groups["stock_candidates"] == "主工作台"
         assert groups["scan"] == "情报源"
         assert tab_keys.index("watchlist") < tab_keys.index("lhb") < tab_keys.index("asian_market")
-        assert tab_keys.index("na_daily") < tab_keys.index("stock_candidates") < tab_keys.index("rt_monitor")
+        assert tab_keys.index("na_daily") < tab_keys.index("stock_candidates")
         info_keys = [tab_keys[index] for index in workspace.tab_indices_by_group()["情报源"]]
         assert info_keys == ["scan", "ai_industry_chain", "foreign_block", "earnings", "fund_holdings"]
         assert "autoload_pool" not in ctor_kwargs["watchlist"]
@@ -1453,7 +1526,6 @@ def test_workspace_delays_watchlist_indicator_refresh_on_tab_switch(monkeypatch)
     monkeypatch.setattr(classic_workspace_module, "AsianMarketTab", _make_tab("asian_market"))
     monkeypatch.setattr(classic_workspace_module, "NADailyTab", _make_tab("na_daily"))
     monkeypatch.setattr(classic_workspace_module, "AIIndustryChainTab", _make_tab("ai_industry_chain"))
-    monkeypatch.setattr(classic_workspace_module, "RtMonitorTab", _make_tab("rt_monitor"))
     monkeypatch.setattr(classic_workspace_module, "ScanTab", _make_tab("scan"))
     monkeypatch.setattr(classic_workspace_module, "StockCandidateTab", _make_tab("stock_candidates"))
     monkeypatch.setattr(classic_workspace_module, "LhbTab", _make_tab("lhb"))
@@ -1787,7 +1859,6 @@ def test_workspace_background_prewarm_primes_context_without_forcing_current_tab
     monkeypatch.setattr(classic_workspace_module, "AsianMarketTab", _make_tab("asian_market"))
     monkeypatch.setattr(classic_workspace_module, "NADailyTab", _make_tab("na_daily"))
     monkeypatch.setattr(classic_workspace_module, "AIIndustryChainTab", _make_tab("ai_industry_chain"))
-    monkeypatch.setattr(classic_workspace_module, "RtMonitorTab", _make_tab("rt_monitor"))
     monkeypatch.setattr(classic_workspace_module, "ScanTab", _make_tab("scan"))
     monkeypatch.setattr(classic_workspace_module, "StockCandidateTab", _make_tab("stock_candidates"))
     monkeypatch.setattr(classic_workspace_module, "LhbTab", _make_tab("lhb"))
@@ -1842,7 +1913,6 @@ def test_workspace_background_prewarm_can_preload_whitelisted_current_tab(monkey
     monkeypatch.setattr(classic_workspace_module, "AsianMarketTab", _make_tab("asian_market"))
     monkeypatch.setattr(classic_workspace_module, "NADailyTab", _make_tab("na_daily"))
     monkeypatch.setattr(classic_workspace_module, "AIIndustryChainTab", _make_tab("ai_industry_chain"))
-    monkeypatch.setattr(classic_workspace_module, "RtMonitorTab", _make_tab("rt_monitor"))
     monkeypatch.setattr(classic_workspace_module, "ScanTab", _make_tab("scan"))
     monkeypatch.setattr(classic_workspace_module, "StockCandidateTab", _make_tab("stock_candidates"))
     monkeypatch.setattr(classic_workspace_module, "LhbTab", _make_tab("lhb"))
@@ -1941,43 +2011,6 @@ def test_workspace_activates_loaded_lazy_tab_on_selection(monkeypatch):
         workspace.deleteLater()
 
 
-def test_workspace_restores_pending_rt_cache_after_rt_monitor_load(monkeypatch):
-    restore_calls = []
-
-    class _Host:
-        def install_workspace_table_copy_hooks(self):
-            pass
-
-        def restore_pending_rt_cache(self):
-            restore_calls.append("restore")
-
-    def _resolve_tab_class(_class_name, _module_name):
-        class _Tab(QWidget):
-            def __init__(self, *args, **kwargs):
-                super().__init__()
-
-        return _Tab
-
-    monkeypatch.setattr(classic_workspace_module, "_resolve_tab_class", _resolve_tab_class)
-    monkeypatch.setattr(classic_workspace_module.QTimer, "singleShot", lambda _delay, callback: callback())
-
-    workspace = classic_workspace_module.ClassicWorkspace(
-        data_provider=object(),
-        engine=object(),
-        host=_Host(),
-        background_prewarm=False,
-    )
-    try:
-        assert restore_calls == []
-
-        workspace.ensure_tab_loaded("rt_monitor")
-
-        assert restore_calls == ["restore"]
-    finally:
-        workspace.shutdown()
-        workspace.deleteLater()
-
-
 def test_workspace_debounces_table_copy_hook_install(monkeypatch):
     scheduled = []
 
@@ -2045,7 +2078,6 @@ def test_workspace_auto_refresh_does_not_load_daily_tabs_without_manual_click(mo
     monkeypatch.setattr(classic_workspace_module, "AsianMarketTab", _make_tab("asian_market"))
     monkeypatch.setattr(classic_workspace_module, "NADailyTab", _make_tab("na_daily"))
     monkeypatch.setattr(classic_workspace_module, "AIIndustryChainTab", _make_tab("ai_industry_chain"))
-    monkeypatch.setattr(classic_workspace_module, "RtMonitorTab", _make_tab("rt_monitor"))
     monkeypatch.setattr(classic_workspace_module, "ScanTab", _make_tab("scan"))
     monkeypatch.setattr(classic_workspace_module, "StockCandidateTab", _make_tab("stock_candidates"))
     monkeypatch.setattr(classic_workspace_module, "LhbTab", _make_tab("lhb"))
@@ -2063,7 +2095,6 @@ def test_workspace_auto_refresh_does_not_load_daily_tabs_without_manual_click(mo
         assert constructed == []
         assert not hasattr(workspace, "_start_daily_auto_tab_bootstrap")
         assert workspace.get_loaded_tab("watchlist") is None
-        assert workspace.get_loaded_tab("rt_monitor") is None
         assert workspace.get_loaded_tab("lhb") is None
         assert workspace.get_loaded_tab("foreign_block") is None
         assert workspace.get_loaded_tab("fund_holdings") is None

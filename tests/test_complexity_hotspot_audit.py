@@ -1,10 +1,16 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from scripts.complexity_hotspot_audit import HOTSPOT_BUDGETS, REPO_ROOT, _collect_functions, build_report, scan_hotspots
-
-LARGE_FUNCTION_LINE_THRESHOLD = 170
-HOTSPOT_SCAN_ROOTS = ("app", "core", "domains", "infra", "scripts", "ui", "vcp")
+from scripts.complexity_hotspot_audit import (
+    HOTSPOT_BUDGETS,
+    MCCABE_COMPLEXITY_BUDGETS,
+    REPO_ROOT,
+    _collect_functions,
+    build_report,
+    scan_hotspots,
+    scan_large_function_budget_coverage,
+    scan_mccabe_complexity_budgets,
+)
 
 
 def _write(path, text: str) -> None:
@@ -73,30 +79,39 @@ def test_default_hotspot_budgets_cover_known_refactor_targets():
 
     assert rps_line_count == 176
     assert HOTSPOT_BUDGETS["core/rps_precomputer.py"]["RPSPrecomputer.run_f5_pipeline"] == 176
-    assert HOTSPOT_BUDGETS["core/startup_orchestrator.py"]["StartupOrchestrator.deferred_data_load"] == 188
+    assert HOTSPOT_BUDGETS["core/startup_orchestrator.py"]["StartupOrchestrator.deferred_data_load"] == 187
     assert HOTSPOT_BUDGETS["scripts/perf_budget_check.py"]["_parse_args"] == 194
     assert HOTSPOT_BUDGETS["ui/kline_window_qt.py"]["KLineChartWindow.__init__"] == 246
     assert HOTSPOT_BUDGETS["ui/kline_chart_payload.py"]["build_kline_html"] == 35
     assert HOTSPOT_BUDGETS["ui/tabs/asian_market_tab.py"]["build_asian_market_local_cache_payload"] == 183
     assert HOTSPOT_BUDGETS["ui/theme_tokens.py"]["build_ui_tokens"] == 192
-    assert HOTSPOT_BUDGETS["ui/workers/rt_scan_worker.py"]["RtScanWorker._run_one_round"] == 30
+    assert HOTSPOT_BUDGETS["ui/workers/central_quotes_worker.py"]["CentralQuotesService._trigger_fetch_for_reason"] == 176
     assert HOTSPOT_BUDGETS["ui/workers/scan_worker.py"]["ScanWorker.run"] == 70
     assert HOTSPOT_BUDGETS["ui/workspaces/classic_workspace.py"]["ClassicWorkspace.__init__"] == 186
-    assert HOTSPOT_BUDGETS["vcp/fetchers/asian_kline_fetcher.py"]["sync_asian_kline_cache"] == 220
+    assert HOTSPOT_BUDGETS["vcp/fetchers/asian_kline_fetcher.py"]["sync_asian_kline_cache"] == 216
 
 
 def test_default_hotspot_budgets_cover_current_large_functions():
-    missing_or_stale: list[str] = []
-    for root_name in HOTSPOT_SCAN_ROOTS:
-        for path in sorted((REPO_ROOT / root_name).rglob("*.py")):
-            repo_path = path.relative_to(REPO_ROOT).as_posix()
-            budgeted_functions = HOTSPOT_BUDGETS.get(repo_path, {})
-            for qualname, node in _collect_functions(path).items():
-                end_line = int(getattr(node, "end_lineno", node.lineno))
-                line_count = end_line - int(node.lineno) + 1
-                if line_count < LARGE_FUNCTION_LINE_THRESHOLD:
-                    continue
-                if budgeted_functions.get(qualname) != line_count:
-                    missing_or_stale.append(f"{repo_path}:{qualname}:{line_count}")
+    assert scan_large_function_budget_coverage() == []
 
-    assert not missing_or_stale, "Large functions must have exact hotspot budgets:\n" + "\n".join(missing_or_stale)
+
+def test_mccabe_budget_rejects_unbudgeted_complexity_over_25(tmp_path):
+    body = ["def heavy(value):"]
+    for index in range(26):
+        body.extend((f"    if value == {index}:", "        value += 1"))
+    body.append("    return value")
+    _write(tmp_path / "app" / "worker.py", "\n".join(body))
+
+    findings = scan_mccabe_complexity_budgets(tmp_path, {})
+
+    assert len(findings) == 1
+    assert findings[0].qualname == "heavy"
+    assert findings[0].complexity > 25
+    assert findings[0].reason == "unbudgeted_complexity_over_25"
+    exact_budget = {"app/worker.py": {"heavy": findings[0].complexity}}
+    assert scan_mccabe_complexity_budgets(tmp_path, exact_budget) == []
+
+
+def test_default_mccabe_budgets_cover_current_complexity_over_25():
+    assert scan_mccabe_complexity_budgets() == []
+    assert len(MCCABE_COMPLEXITY_BUDGETS) == 4

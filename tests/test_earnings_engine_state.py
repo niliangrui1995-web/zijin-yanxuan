@@ -396,13 +396,9 @@ def test_fetch_daily_surprises_degrades_and_skips_remaining_formal_report_pools(
     assert "Response ended prematurely" in engine.last_scan_result["error"]
 
 
-def test_inject_sectors_uses_ai_industry_chain_context(monkeypatch):
+def test_inject_sectors_uses_ai_industry_chain_context():
     engine = _build_engine()
-    monkeypatch.setattr(
-        engine_module,
-        "load_ai_industry_chain_context_map",
-        lambda: {"300308": "光模块 | 800G"},
-    )
+    engine.stock_context_provider = lambda: {"300308": "光模块 | 800G"}
     records = [
         {"股票代码": "300308", "股票名称": "中际旭创"},
         {"股票代码": "600000", "股票名称": "浦发银行"},
@@ -413,6 +409,32 @@ def test_inject_sectors_uses_ai_industry_chain_context(monkeypatch):
     assert result is records
     assert records[0]["所属行业与概念"] == "光模块 | 800G"
     assert records[1]["所属行业与概念"] == "--"
+
+
+def test_earnings_engine_defaults_to_cache_only_ai_chain_providers(monkeypatch, tmp_path):
+    monkeypatch.setattr(EarningsEngine, "_load_cache", lambda self: None)
+
+    engine = EarningsEngine(cache_file=str(tmp_path / "earnings_state.json"))
+
+    assert engine.stock_universe_provider is engine_module.load_cached_ai_industry_chain_stock_codes
+    assert engine.stock_context_provider is engine_module.load_cached_ai_industry_chain_context_map
+
+
+def test_cached_record_rows_preserve_sorting_without_dataframe_conversion():
+    engine = _build_engine()
+    engine.stock_universe_provider = None
+    engine.stock_context_provider = lambda: {"000001": "算力"}
+    engine.local_records = [
+        {"股票代码": "000002", "揭晓日": "2026-04-15", "环比增速_百分比": 80},
+        {"股票代码": "000001", "揭晓日": "2026-04-16", "环比增速_百分比": 50},
+    ]
+
+    rows = engine.get_cached_record_rows()
+
+    assert [row["股票代码"] for row in rows] == ["000001", "000002"]
+    assert rows[0]["所属行业与概念"] == "算力"
+    assert rows[1]["所属行业与概念"] == "--"
+    assert rows[0] is not engine.local_records[1]
 
 
 def test_earnings_date_filters_and_candidate_builders(monkeypatch):

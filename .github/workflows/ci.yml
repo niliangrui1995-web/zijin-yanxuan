@@ -76,6 +76,10 @@ jobs:
             ui/workspaces/workspace_facade.py \
             ui/workspaces/quote_universe_service.py
           ruff format --check scripts/check_utf8.py
+      - name: Root entrypoint guardrail
+        run: |
+          ruff check vcp_hunter_qt.pyw
+          python -m py_compile vcp_hunter_qt.pyw
       - name: UTF-8 guardrail
         run: python scripts/check_utf8.py
       - name: Architecture regression suite
@@ -133,7 +137,7 @@ jobs:
       - name: Full regression suite
         run: python -m pytest -q
       - name: Project audit command contract
-        run: python scripts/project_audit.py --quick --skip-webengine-preflight
+        run: python scripts/project_audit.py --quick --skip-webengine-preflight --type-check
 
   windows-smoke:
     runs-on: windows-latest

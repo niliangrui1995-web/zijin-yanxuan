@@ -37,6 +37,20 @@ def test_qdarkstyle_is_removed_from_startup_packaging_and_docs():
     assert "generate_global_qss" in (repo / "vcp_hunter_qt.pyw").read_text(encoding="utf-8")
 
 
+def test_qapplication_is_created_before_ui_modules_are_imported():
+    repo_root = Path(__file__).resolve().parents[1]
+    source = (repo_root / "vcp_hunter_qt.pyw").read_text(encoding="utf-8")
+
+    share_contexts_set = source.index(
+        "QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)"
+    )
+    app_created = source.index("app = QApplication(sys.argv)")
+    assert share_contexts_set < app_created
+    assert app_created < source.index("from PyQt6.QtWebEngineWidgets import QWebEngineView")
+    assert app_created < source.index("from ui.styles.global_qss import generate_global_qss")
+    assert app_created < source.index("from ui.theme import theme_manager")
+
+
 def test_runtime_requirements_target_python314_scipy():
     requirements = (Path(__file__).resolve().parents[1] / "requirements.txt").read_text(encoding="utf-8")
 

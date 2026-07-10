@@ -4,6 +4,8 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import re
+import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -11,14 +13,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 HOTSPOT_BUDGETS = {
-    "core/lhb_pool_manager.py": {
-        "LhbPoolManager.compute_pool": 180,
-    },
     "core/rps_precomputer.py": {
         "RPSPrecomputer.run_f5_pipeline": 176,
     },
     "core/startup_orchestrator.py": {
-        "StartupOrchestrator.deferred_data_load": 188,
+        "StartupOrchestrator.deferred_data_load": 187,
     },
     "domains/scan/breakout_monitor_service.py": {
         "BreakoutMonitorService.precompute_ready_pool": 175,
@@ -52,11 +51,8 @@ HOTSPOT_BUDGETS = {
     "ui/theme_tokens.py": {
         "build_ui_tokens": 192,
     },
-    "ui/workers/rt_scan_worker.py": {
-        "RtScanWorker._run_one_round": 30,
-    },
-    "ui/workers/lhb_worker.py": {
-        "fetch_lhb_data_for_date": 193,
+    "ui/workers/central_quotes_worker.py": {
+        "CentralQuotesService._trigger_fetch_for_reason": 176,
     },
     "ui/workers/scan_worker.py": {
         "ScanWorker.run": 70,
@@ -71,7 +67,25 @@ HOTSPOT_BUDGETS = {
         "ClassicWorkspace.__init__": 186,
     },
     "vcp/fetchers/asian_kline_fetcher.py": {
-        "sync_asian_kline_cache": 220,
+        "sync_asian_kline_cache": 216,
+    },
+}
+
+LARGE_FUNCTION_LINE_THRESHOLD = 170
+HOTSPOT_SCAN_ROOTS = ("app", "core", "domains", "infra", "scripts", "ui", "vcp")
+MCCABE_COMPLEXITY_THRESHOLD = 25
+MCCABE_COMPLEXITY_BUDGETS = {
+    "core/startup_orchestrator.py": {
+        "StartupOrchestrator.deferred_data_load": 26,
+    },
+    "domains/scan/breakout_monitor_service.py": {
+        "BreakoutMonitorService.precompute_ready_pool": 33,
+    },
+    "ui/tabs/lhb_tab.py": {
+        "LhbTab._start_backfill": 28,
+    },
+    "vcp/fetchers/asian_kline_fetcher.py": {
+        "sync_asian_kline_cache": 26,
     },
 }
 
@@ -84,6 +98,16 @@ class HotspotFinding:
     budget: int
     start_line: int
     end_line: int
+
+
+@dataclass(frozen=True)
+class ComplexityFinding:
+    path: str
+    qualname: str
+    complexity: int
+    budget: int
+    start_line: int
+    reason: str
 
 
 class _FunctionCollector(ast.NodeVisitor):
@@ -125,7 +149,7 @@ def scan_hotspots(root: Path = REPO_ROOT, budgets: dict[str, dict[str, int]] = H
     findings: list[HotspotFinding] = []
     for repo_path, function_budgets in budgets.items():
         path = root / repo_path
-        functions = _collect_functions(path)
+        functions = _collect_functions(path) if path.exists() else {}
         for qualname, budget in function_budgets.items():
             node = functions.get(qualname)
             if node is None:
@@ -156,13 +180,158 @@ def scan_hotspots(root: Path = REPO_ROOT, budgets: dict[str, dict[str, int]] = H
     return findings
 
 
-def build_report(findings: list[HotspotFinding]) -> dict:
+def scan_large_function_budget_coverage(
+    root: Path = REPO_ROOT,
+    budgets: dict[str, dict[str, int]] = HOTSPOT_BUDGETS,
+) -> list[HotspotFinding]:
+    findings: list[HotspotFinding] = []
+    for root_name in HOTSPOT_SCAN_ROOTS:
+        scan_root = root / root_name
+        if not scan_root.exists():
+            continue
+        for path in sorted(scan_root.rglob("*.py")):
+            repo_path = _to_repo_path(path, root)
+            function_budgets = budgets.get(repo_path, {})
+            for qualname, node in _collect_functions(path).items():
+                end_line = int(getattr(node, "end_lineno", node.lineno))
+                line_count = end_line - int(node.lineno) + 1
+                if line_count < LARGE_FUNCTION_LINE_THRESHOLD:
+                    continue
+                budget = int(function_budgets.get(qualname, 0) or 0)
+                if budget == line_count:
+                    continue
+                findings.append(
+                    HotspotFinding(
+                        path=repo_path,
+                        qualname=qualname,
+                        line_count=line_count,
+                        budget=budget,
+                        start_line=int(node.lineno),
+                        end_line=end_line,
+                    )
+                )
+    return findings
+
+
+def _ruff_complexities(root: Path) -> list[tuple[str, str, int, int]]:
+    targets = [root_name for root_name in HOTSPOT_SCAN_ROOTS if (root / root_name).exists()]
+    if not targets:
+        return []
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ruff",
+            "check",
+            *targets,
+            "--select",
+            "C901",
+            "--output-format",
+            "json",
+            "--exit-zero",
+            "--no-cache",
+        ],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    if completed.returncode != 0:
+        detail = str(completed.stderr or completed.stdout or "").strip()
+        raise RuntimeError(f"Ruff C901 scan failed: {detail}")
+    payload = json.loads(completed.stdout or "[]")
+    function_cache: dict[str, dict[int, str]] = {}
+    rows: list[tuple[str, str, int, int]] = []
+    for item in payload:
+        message = str(item.get("message", "") or "")
+        matched = re.search(r"`([^`]+)` is too complex \((\d+) > \d+\)", message)
+        if matched is None:
+            continue
+        complexity = int(matched.group(2))
+        if complexity <= MCCABE_COMPLEXITY_THRESHOLD:
+            continue
+        path = Path(str(item.get("filename", "") or ""))
+        if not path.is_absolute():
+            path = root / path
+        try:
+            repo_path = _to_repo_path(path, root)
+        except ValueError:
+            continue
+        start_line = int((item.get("location") or {}).get("row") or 0)
+        line_map = function_cache.get(repo_path)
+        if line_map is None:
+            line_map = {int(node.lineno): qualname for qualname, node in _collect_functions(path).items()}
+            function_cache[repo_path] = line_map
+        qualname = line_map.get(start_line, matched.group(1))
+        rows.append((repo_path, qualname, complexity, start_line))
+    return rows
+
+
+def scan_mccabe_complexity_budgets(
+    root: Path = REPO_ROOT,
+    budgets: dict[str, dict[str, int]] = MCCABE_COMPLEXITY_BUDGETS,
+) -> list[ComplexityFinding]:
+    actual = {(path, qualname): (complexity, start_line) for path, qualname, complexity, start_line in _ruff_complexities(root)}
+    findings: list[ComplexityFinding] = []
+    for (repo_path, qualname), (complexity, start_line) in sorted(actual.items()):
+        budget = int(budgets.get(repo_path, {}).get(qualname, 0) or 0)
+        if budget == complexity:
+            continue
+        if budget <= 0:
+            reason = "unbudgeted_complexity_over_25"
+        elif complexity > budget:
+            reason = "complexity_budget_exceeded"
+        else:
+            reason = "complexity_budget_must_decrease"
+        findings.append(
+            ComplexityFinding(
+                path=repo_path,
+                qualname=qualname,
+                complexity=complexity,
+                budget=budget,
+                start_line=start_line,
+                reason=reason,
+            )
+        )
+
+    for repo_path, function_budgets in budgets.items():
+        for qualname, budget in function_budgets.items():
+            if (repo_path, qualname) in actual:
+                continue
+            findings.append(
+                ComplexityFinding(
+                    path=repo_path,
+                    qualname=qualname,
+                    complexity=0,
+                    budget=int(budget),
+                    start_line=0,
+                    reason="stale_complexity_budget",
+                )
+            )
+    return findings
+
+
+def _merge_line_findings(*finding_groups: list[HotspotFinding]) -> list[HotspotFinding]:
+    merged = {}
+    for finding in (finding for group in finding_groups for finding in group):
+        merged[(finding.path, finding.qualname)] = finding
+    return [merged[key] for key in sorted(merged)]
+
+
+def build_report(
+    findings: list[HotspotFinding],
+    complexity_findings: list[ComplexityFinding] | None = None,
+) -> dict:
+    complexity_findings = list(complexity_findings or [])
     return {
-        "status": "fail" if findings else "ok",
-        "policy": "known complexity hotspots must stay within their line-count budgets",
+        "status": "fail" if findings or complexity_findings else "ok",
+        "policy": "large functions and McCabe complexity over 25 use exact ratcheting budgets",
         "budgets": HOTSPOT_BUDGETS,
-        "finding_count": len(findings),
+        "mccabe_complexity_budgets": MCCABE_COMPLEXITY_BUDGETS,
+        "finding_count": len(findings) + len(complexity_findings),
         "findings": [asdict(finding) for finding in findings],
+        "complexity_findings": [asdict(finding) for finding in complexity_findings],
     }
 
 
@@ -175,7 +344,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv or sys.argv[1:])
-    report = build_report(scan_hotspots(args.root))
+    line_findings = _merge_line_findings(
+        scan_hotspots(args.root),
+        scan_large_function_budget_coverage(args.root),
+    )
+    report = build_report(
+        line_findings,
+        scan_mccabe_complexity_budgets(args.root),
+    )
     text = json.dumps(report, ensure_ascii=False, indent=2)
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)

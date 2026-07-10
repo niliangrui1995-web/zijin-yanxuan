@@ -1,56 +1,95 @@
+from __future__ import annotations
+
+import importlib
+import json
 import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from functools import lru_cache
+from threading import Lock
 
-import akshare as ak
-import numpy as np
-import pandas as pd
 import requests
 
-# 🌟 彻底封堵 tqdm 乱码进度条的“核弹级”补丁 🌟
-# 因为 akshare 在多线程后台调用时会锁定真实的底层终端，简单的截断 stdout 没用。
-# 我们直接在内存里“黑”掉 tqdm 进度条的底层核心构造函数。
-try:
-    import tqdm
-
-    from core.logger import get_logger
-
-    _hijack_logger = get_logger()
-
-    _original_tqdm_init = tqdm.tqdm.__init__
-    _original_tqdm_update = tqdm.tqdm.update
-
-    def _silent_tqdm_init(self, *args, **kwargs):
-        kwargs["disable"] = True  # 依然拔掉终端里的乱码输出线
-        _original_tqdm_init(self, *args, **kwargs)
-        self._my_n = 0
-
-    def _my_tqdm_update(self, n=1):
-        _original_tqdm_update(self, n)
-        self._my_n += n
-        total = getattr(self, "total", None) or "?"
-        # 逢 5 倍数或者最后一页，向 UI 广播一声心跳
-        if self._my_n % 5 == 0 or self._my_n == total:
-            _hijack_logger.info(f"[业绩引擎] 分页抓取中 {self._my_n}/{total}")
-
-    tqdm.tqdm.__init__ = _silent_tqdm_init
-    tqdm.tqdm.update = _my_tqdm_update
-except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as _e:
-    import logging as _logging
-
-    _logging.getLogger(__name__).debug(f"[tqdm补丁] tqdm 劫持失败（非致命）: {_e}")
-
-# akshare/pandas/numpy 已在文件顶部 import，此处不再重复
-import json
-
-from core.ai_industry_chain_pool import load_ai_industry_chain_context_map, normalize_ai_chain_code
+from core.ai_industry_chain_pool import (
+    load_cached_ai_industry_chain_context_map,
+    load_cached_ai_industry_chain_stock_codes,
+    normalize_ai_chain_code,
+)
 from core.logger import get_logger
 from domains.market_calendar import MarketCalendar
 from infra.http_safety import requests_get_https
 
 logger = get_logger()
+
+
+class _LazyModule:
+    """Load a heavy optional dependency on first attribute access."""
+
+    def __init__(self, module_name: str, *, before_load=None):
+        self._module_name = module_name
+        self._before_load = before_load
+        self._module = None
+        self._lock = Lock()
+
+    def _load(self):
+        if self._module is None:
+            with self._lock:
+                if self._module is None:
+                    if self._before_load is not None:
+                        self._before_load()
+                    self._module = importlib.import_module(self._module_name)
+        return self._module
+
+    def __getattr__(self, name: str):
+        return getattr(self._load(), name)
+
+
+_TQDM_PATCH_LOCK = Lock()
+_TQDM_PATCHED = False
+
+
+def _install_silent_tqdm() -> None:
+    """Install the AkShare progress hook only when AkShare is actually used."""
+    global _TQDM_PATCHED
+
+    if _TQDM_PATCHED:
+        return
+    with _TQDM_PATCH_LOCK:
+        if _TQDM_PATCHED:
+            return
+        try:
+            tqdm_module = importlib.import_module("tqdm")
+            tqdm_class = tqdm_module.tqdm
+            if not getattr(tqdm_class, "_vcp_earnings_silent", False):
+                original_init = tqdm_class.__init__
+                original_update = tqdm_class.update
+
+                def _silent_tqdm_init(self, *args, **kwargs):
+                    kwargs["disable"] = True
+                    original_init(self, *args, **kwargs)
+                    self._my_n = 0
+
+                def _my_tqdm_update(self, n=1):
+                    original_update(self, n)
+                    self._my_n += n
+                    total = getattr(self, "total", None) or "?"
+                    if self._my_n % 5 == 0 or self._my_n == total:
+                        logger.info(f"[业绩引擎] 分页抓取中 {self._my_n}/{total}")
+
+                tqdm_class.__init__ = _silent_tqdm_init
+                tqdm_class.update = _my_tqdm_update
+                tqdm_class._vcp_earnings_silent = True
+        except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug(f"[tqdm补丁] tqdm 劫持失败（非致命）: {exc}")
+        _TQDM_PATCHED = True
+
+
+ak = _LazyModule("akshare", before_load=_install_silent_tqdm)
+np = _LazyModule("numpy")
+pd = _LazyModule("pandas")
+
 EARNINGS_QOQ_MIN_PCT = 30.0
 EARNINGS_FORMAL_REPORT_RETRY_BUDGET_SECONDS = 60.0
 
@@ -114,16 +153,21 @@ class EarningsUpstreamDegraded(RuntimeError):
             "error": str(self.original_error or "").strip(),
         }
 
-try:
-    from akshare.stock_fundamental.stock_finance_ths import headers as _AKSHARE_THS_HEADERS
-except (AttributeError, ImportError):
-    _AKSHARE_THS_HEADERS = {
+@lru_cache(maxsize=1)
+def _akshare_ths_headers() -> dict[str, str]:
+    _install_silent_tqdm()
+    try:
+        module = importlib.import_module("akshare.stock_fundamental.stock_finance_ths")
+        headers = getattr(module, "headers")
+        return dict(headers)
+    except (AttributeError, ImportError):
+        return {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/114.0.0.0 Safari/537.36"
         )
-    }
+        }
 
 
 def _parse_amount(value):
@@ -420,7 +464,7 @@ def _fetch_stock_financial_benefit_ths(symbol: str, indicator: str = "按报告�
 
     symbol = str(symbol).zfill(6)
     url = f"https://basic.10jqka.com.cn/api/stock/finance/{symbol}_benefit.json"
-    headers = dict(_AKSHARE_THS_HEADERS)
+    headers = _akshare_ths_headers()
     headers.setdefault("Accept", "application/json, text/plain, */*")
     headers.setdefault("Referer", f"https://basic.10jqka.com.cn/new/{symbol}/finance.html")
 
@@ -615,7 +659,13 @@ def current_active_report_dates() -> list:
 
 
 class EarningsEngine:
-    def __init__(self, cache_file="data/earnings_state.json", keep_days=30, stock_universe_provider=None):
+    def __init__(
+        self,
+        cache_file="data/earnings_state.json",
+        keep_days=30,
+        stock_universe_provider=load_cached_ai_industry_chain_stock_codes,
+        stock_context_provider=load_cached_ai_industry_chain_context_map,
+    ):
         if not os.path.isabs(cache_file):
             root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             cache_file = os.path.join(root_dir, cache_file)
@@ -623,6 +673,7 @@ class EarningsEngine:
         self.cache_file = cache_file
         self.keep_days = keep_days
         self.stock_universe_provider = stock_universe_provider
+        self.stock_context_provider = stock_context_provider
         self.seen_fingerprints = set()
         self.local_records = []
         self.last_sync_date = MarketCalendar.today("CN").strftime("%Y-%m-%d")
@@ -855,8 +906,9 @@ class EarningsEngine:
     def _inject_sectors(self, records: list) -> list:
         if not records:
             return records
+        provider = getattr(self, "stock_context_provider", load_cached_ai_industry_chain_context_map)
         try:
-            context_map = load_ai_industry_chain_context_map()
+            context_map = dict(provider() or {}) if callable(provider) else {}
         except (FileNotFoundError, ImportError, OSError, RuntimeError, TypeError, ValueError) as e:
             logger.error(f"[业绩引擎] AI产业链细分板块数据加载失败: {e}")
             context_map = {}
@@ -888,18 +940,30 @@ class EarningsEngine:
             return list(records or [])
         return [record for record in (records or []) if self._record_stock_code(record) in allowed_codes]
 
+    def get_cached_record_rows(self) -> list[dict]:
+        """Return cached rows without importing the dataframe stack."""
+        records = self._filter_records_to_stock_universe(self.local_records)
+        if not records:
+            return []
+
+        for record in records:
+            self._normalize_record_dates(record, str(record.get("公告日期", "") or ""))
+        self._inject_sectors(records)
+
+        def _sort_key(record: dict) -> tuple[str, float]:
+            try:
+                qoq = float(record.get("环比增速_百分比", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                qoq = 0.0
+            return str(record.get("揭晓日", "") or ""), qoq
+
+        return sorted((dict(record) for record in records), key=_sort_key, reverse=True)
+
     def get_cached_records(self) -> pd.DataFrame:
         """从长线账本中读取出所有还在存续期内的好股"""
-        records = self._filter_records_to_stock_universe(self.local_records)
+        records = self.get_cached_record_rows()
         if records:
-            for record in records:
-                self._normalize_record_dates(record, str(record.get("公告日期", "") or ""))
-            # 读取时补齐动态的本地盘后基因
-            self._inject_sectors(records)
-            df = pd.DataFrame(records).sort_values(
-                by=["揭晓日", "环比增速_百分比"], ascending=[False, False]
-            )
-            return df
+            return pd.DataFrame(records)
         return pd.DataFrame()
 
     @staticmethod

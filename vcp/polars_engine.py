@@ -125,12 +125,13 @@ def _numpy_rank_pct_axis1(matrix: np.ndarray) -> np.ndarray:
 
 def _to_pldf(df) -> pl.DataFrame | None:
     """将 Polars 或 Pandas DataFrame 统一转为 pl.DataFrame，防御式兼容"""
-    import pandas as pd
-
     if df is None:
         return None
     if isinstance(df, pl.DataFrame):
         return df
+
+    import pandas as pd
+
     if isinstance(df, pd.DataFrame):
         temp = df.reset_index() if df.index.name == "datetime" else df
         return pl.from_pandas(temp)
@@ -455,46 +456,31 @@ def save_cache_parquet(cache_data: dict, date_str: str) -> bool:
     if not frames:
         return False
 
-    parquet_path = os.path.join(_PARQUET_CACHE_DIR, "market_data.parquet")
-    meta_path = os.path.join(_PARQUET_CACHE_DIR, "meta.parquet")
-
     # 使用 Polars 高效垂直拼接
     pl_df = pl.concat(frames, how="vertical_relaxed")
     del frames
     _gc.collect()
 
-    row_count = int(pl_df.height)
-    symbol_count = int(pl_df["_code"].n_unique()) if "_code" in pl_df.columns else len(cache_data)
-    with _PARQUET_CACHE_LOCK:
-        _atomic_parquet_write(pl_df, parquet_path, compression="zstd")
-        meta = pl.DataFrame(
-            {
-                "date": [date_str],
-                "n_stocks": [symbol_count],
-                "version": [3],
-            }
-        )
-        _atomic_parquet_write(meta, meta_path, compression="zstd")
-
     try:
         from infra.market_data.market_data_warehouse import get_default_market_data_warehouse
 
-        status = get_default_market_data_warehouse().register_existing_parquet(
-            trade_date=date_str,
+        status = get_default_market_data_warehouse().write_polars_dataset(
+            pl_df,
+            date_str,
             source="vipdoc",
             source_version="vcp.polars_engine.save_cache_parquet:v3",
-            row_count=row_count,
-            symbol_count=symbol_count,
         )
         if not status.ok:
-            _log.warning(f"[warehouse] manifest update skipped: {status.data_status} {status.error}")
+            _log.error(f"[warehouse] snapshot publish failed: {status.data_status} {status.error}")
+            return False
     except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
-        _log.warning(f"[warehouse] manifest update failed: {exc}")
+        _log.error(f"[warehouse] snapshot publish failed: {exc}")
+        return False
     del pl_df
     _gc.collect()
 
     elapsed = time.time() - t0
-    file_mb = os.path.getsize(parquet_path) / 1024 / 1024
+    file_mb = os.path.getsize(status.parquet_path) / 1024 / 1024
     _log.info(f"[加速引擎] Parquet 缓存已保存(纯Polars): {len(cache_data)} 只 | {file_mb:.1f}MB | 耗时 {elapsed:.2f}s")
     return True
 
@@ -587,14 +573,13 @@ def build_sector_rps_pl(
 
             # 找到 target_date 对应的位置
             dates_col = pldf["datetime"].cast(pl.Date)
-            # 找 <= target_dt 的最后一行
-            mask = dates_col <= target_dt
-            valid_indices = [i for i, v in enumerate(mask.to_list()) if v]
+            valid_indices = [index for index, is_valid in enumerate((dates_col <= target_dt).to_list()) if is_valid]
             if not valid_indices:
                 continue
             loc = valid_indices[-1]
 
-            curr_close = float(pldf["close"][loc])
+            close_col = pldf["close"]
+            curr_close = float(close_col[loc])
             if curr_close <= 0:
                 continue
 
@@ -602,7 +587,7 @@ def build_sector_rps_pl(
                 prev_loc = loc - p
                 if prev_loc < 0:
                     continue
-                prev_close = float(pldf["close"][prev_loc])
+                prev_close = float(close_col[prev_loc])
                 if prev_close > 0:
                     ret = (curr_close - prev_close) / prev_close
                     records.append((code, p, ret))

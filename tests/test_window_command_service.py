@@ -8,7 +8,6 @@ from app.use_cases.window_command_service import WindowCommandService
 class _Workspace:
     def __init__(self):
         self.calls = []
-        self.running = False
 
     def tab_specs(self):
         return [
@@ -16,12 +15,6 @@ class _Workspace:
             {"title": "", "group": "Ignored"},
             {"title": "Beta", "group": ""},
         ]
-
-    def is_rt_monitor_running(self):
-        return self.running
-
-    def toggle_rt_monitor(self):
-        self.calls.append(("monitor",))
 
     def run_incremental_scan(self):
         self.calls.append(("incremental",))
@@ -80,7 +73,6 @@ def test_window_command_service_builds_workspace_and_theme_commands():
 
     assert window.calls == [("sync",), ("tab", 0), ("theme", "Dark")]
     assert window._workspace.calls == [("incremental",)]
-    assert any(command["handler"] == window._workspace.toggle_rt_monitor for command in commands)
 
 
 def test_window_command_service_stock_commands_filter_sort_and_open_chart():

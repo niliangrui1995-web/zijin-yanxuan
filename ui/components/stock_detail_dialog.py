@@ -36,7 +36,6 @@ SOURCE_LABELS = {
     "fund_holdings": "基金持仓",
     "scan": "VCP扫描",
     "watchlist": "关注池",
-    "rt_monitor": "盘中监控",
 }
 
 SIGNAL_LABELS = {

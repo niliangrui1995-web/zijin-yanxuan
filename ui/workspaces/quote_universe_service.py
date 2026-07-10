@@ -7,7 +7,6 @@ INFO_SOURCE_GROUP = "情报源"
 NON_A_SHARE_REALTIME_TAB_KEYS = frozenset({"asian_market"})
 DEFAULT_REALTIME_TAB_KEYS = (
     "scan",
-    "rt_monitor",
     "watchlist",
     "stock_candidates",
     "foreign_block",

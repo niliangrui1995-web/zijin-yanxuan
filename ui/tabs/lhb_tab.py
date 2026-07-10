@@ -27,7 +27,7 @@ from app.services.ui_event_service import ui_signals
 from app.services.ui_market_calendar_service import MarketCalendar
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
-from core.ai_industry_chain_pool import load_ai_industry_chain_context_map, normalize_ai_chain_code
+from core.ai_industry_chain_pool import load_cached_ai_industry_chain_context_map, normalize_ai_chain_code
 from core.lhb_pool_manager import POOL_WINDOW, LhbPoolManager
 from core.logger import get_logger
 from ui.components import TableStateWrapper, VCPTableView
@@ -54,7 +54,7 @@ class LhbTab(BaseStockTab):
         }
     )
     _DISPLAY_PLACEHOLDER = "--"
-    _chain_context_provider = staticmethod(load_ai_industry_chain_context_map)
+    _chain_context_provider = staticmethod(load_cached_ai_industry_chain_context_map)
 
     def __init__(
         self,

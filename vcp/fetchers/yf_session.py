@@ -12,16 +12,6 @@ import time
 import certifi
 from curl_cffi import requests as curl_requests
 
-try:
-    from yfinance.exceptions import YFRateLimitError
-except (ImportError, ModuleNotFoundError):  # pragma: no cover - defensive fallback
-
-    class YFRateLimitError(Exception):
-        """Fallback placeholder when yfinance exceptions are unavailable."""
-
-        pass
-
-
 _DEFAULT_YF_RATE_LIMIT_COOLDOWN_SEC = 15 * 60
 _YF_RATE_LIMIT_LOCK = threading.Lock()
 _YF_RATE_LIMIT_UNTIL_TS = 0.0
@@ -54,7 +44,7 @@ def is_yf_rate_limit_error(exc: BaseException | None) -> bool:
     """统一识别 Yahoo Finance / yfinance 的限流异常。"""
     if exc is None:
         return False
-    if isinstance(exc, YFRateLimitError):
+    if any(base.__name__ == "YFRateLimitError" for base in type(exc).__mro__):
         return True
     error_text = str(exc or "")
     return (

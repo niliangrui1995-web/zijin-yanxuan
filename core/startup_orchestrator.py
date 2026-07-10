@@ -11,7 +11,6 @@ import time
 from PyQt6.QtCore import QTimer
 
 from core.background_job_runner import background_job_runner
-from core.cache_manager import rt_cache_restore_target_available
 from core.logger import get_logger
 from core.observability import emit_structured_log, record_metric
 from core.process_watchdog import log_process_snapshot
@@ -49,12 +48,6 @@ GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_HOUR = 2
 GLOBAL_EARNINGS_CALENDAR_DAILY_REFRESH_MINUTE = 0
 GLOBAL_EARNINGS_CALENDAR_OFFPEAK_START_MINUTE = 18 * 60
 GLOBAL_EARNINGS_CALENDAR_OFFPEAK_END_MINUTE = 8 * 60
-AUTO_RT_MONITOR_NETWORK_TASK_ID = task_registry.network(
-    "auto_rt_network_probe",
-    description="Connectivity probe for intraday monitor auto-start retry",
-).task_id
-
-
 def _normalize_log_detail(text: str, limit: int = 120) -> str:
     raw = str(text or "").strip()
     if not raw:
@@ -300,36 +293,6 @@ class StartupHostAdapter:
         if callable(callback):
             callback(*args)
 
-    def get_rt_table(self):
-        workspace = self.workspace
-        getter = getattr(workspace, "get_rt_table", None)
-        return getter() if callable(getter) else None
-
-    def mark_rt_cache_restore_pending(self) -> bool:
-        callback = getattr(self._main_window, "mark_rt_cache_restore_pending", None)
-        if callable(callback):
-            return bool(callback())
-        try:
-            if bool(getattr(self._main_window, "_rt_cache_restore_pending", False)):
-                return False
-            setattr(self._main_window, "_rt_cache_restore_pending", True)
-            return True
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            return False
-
-    def load_rt_cache(self) -> bool:
-        cache_manager = self.cache_manager
-        if cache_manager is None:
-            return False
-
-        table = self.get_rt_table()
-        if not rt_cache_restore_target_available(table):
-            if self.mark_rt_cache_restore_pending():
-                log.info("[RT cache] rt_monitor table not ready; restore deferred until tab loads")
-            return False
-
-        return bool(cache_manager.load_rt_cache(table, self.set_status_text))
-
     def try_load_rps_from_disk(self, set_status_callback) -> None:
         cache_manager = self.cache_manager
         if cache_manager is not None:
@@ -354,14 +317,6 @@ class StartupHostAdapter:
         callback = getattr(workspace, "refresh_watchlist_names", None)
         if callable(callback):
             callback(code2name)
-
-    def auto_start_rt_monitor(self) -> bool:
-        callback = getattr(self._main_window, "auto_start_rt_monitor", None)
-        if callable(callback):
-            return bool(callback())
-        workspace = self.workspace
-        callback = getattr(workspace, "auto_start_rt_monitor", None)
-        return bool(callback()) if callable(callback) else False
 
     def defer_asian_market_auto_refresh(self, seconds: float, reason: str = "") -> None:
         service = self.asian_market_service
@@ -396,11 +351,8 @@ class StartupOrchestrator:
         self._global_earnings_calendar_daily_timer = QTimer(timer_parent)
         self._global_earnings_calendar_daily_timer.setSingleShot(True)
         self._global_earnings_calendar_daily_timer.timeout.connect(self._run_daily_global_earnings_calendar_refresh)
-        self._auto_rt_timer = None
-        self._auto_rt_network_probe_active = False
         self._global_earnings_calendar_sync_running = False
         self._global_earnings_calendar_retry_failures = 0
-        self._last_auto_rt_skip_reason = ""
 
     def schedule_startup(self):
         if self._closed:
@@ -411,7 +363,6 @@ class StartupOrchestrator:
             self._schedule_next_global_earnings_calendar_daily_refresh()
         else:
             log.info("[startup] daily_global_earnings_calendar_sync toggle disabled, skip earnings calendar daily sync")
-        log.info("[startup] workspace_auto_rt_monitor retry timer is owned by AutoRefreshScheduler")
 
     def _schedule_next_global_earnings_calendar_daily_refresh(self):
         if self._closed:
@@ -448,14 +399,11 @@ class StartupOrchestrator:
         self._deferred_timer.stop()
         self._smart_timer.stop()
         self._global_earnings_calendar_daily_timer.stop()
-        if self._auto_rt_timer is not None:
-            self._auto_rt_timer.stop()
         for task_id in (
             DEFERRED_LOAD_TASK_ID,
             ASIAN_DATA_SYNC_TASK_ID,
             GLOBAL_EARNINGS_CALENDAR_SYNC_TASK_ID,
             SMART_STARTUP_TASK_ID,
-            AUTO_RT_MONITOR_NETWORK_TASK_ID,
         ):
             self._job_runner.abandon(task_id)
 
@@ -550,7 +498,7 @@ class StartupOrchestrator:
         QTimer.singleShot(ASIAN_DATA_SYNC_START_DELAY_MS, _run_if_alive)
 
     def deferred_data_load(self):
-        """延迟恢复历史缓存、实时缓存和 RPS 缓存。"""
+        """延迟恢复历史缓存和 RPS 缓存。"""
 
         def _is_display_a_share_code(raw_code) -> bool:
             code = str(raw_code or "").strip()
@@ -583,7 +531,7 @@ class StartupOrchestrator:
                 if provider is not None:
                     cache_date = provider.load_cache_from_disk()
             else:
-                log.info("[启动] 已跳过全量历史缓存预载，历史K线将在扫描/盘中监控/K线窗口按需加载")
+                log.info("[启动] 已跳过全量历史缓存预载，历史K线将在扫描/K线窗口按需加载")
                 self._safe_call_in_ui(_refresh_code_count_label_from_provider)
             if not self._alive():
                 log_process_snapshot(
@@ -607,12 +555,11 @@ class StartupOrchestrator:
                     )
                 )
 
-            self._safe_call_in_ui(self.host.load_rt_cache)
             if not self._alive():
                 log_process_snapshot(
                     "startup.deferred_load.cancelled",
                     logger=log,
-                    extra={"stage": "rt_cache"},
+                    extra={"stage": "history_cache_ui"},
                 )
                 return
 
@@ -962,7 +909,6 @@ class StartupOrchestrator:
 
                     self._safe_call_in_ui(lambda: self.host.update_network_ui(True))
                     self._safe_call_in_ui(self.host.on_smart_startup_online_done)
-                    self._safe_call_in_ui(self.auto_start_rt_if_ready)
                 else:
                     log.info("[智能启动] 网络不可用，保持离线模式")
                 elapsed_ms = (time.perf_counter() - started_at) * 1000.0
@@ -992,99 +938,3 @@ class StartupOrchestrator:
                 log.error(f"[智能启动] 网络检测异常: {exc}")
 
         self._job_runner.run(STARTUP_SMART, _check_and_go_online)
-
-    def _log_auto_rt_skip(self, reason: str, message: str) -> None:
-        if self._last_auto_rt_skip_reason == reason:
-            return
-        self._last_auto_rt_skip_reason = reason
-        log.info(message)
-
-    def _provider_is_online(self) -> bool:
-        provider = self.host.data_provider
-        is_online = getattr(provider, "is_online", None)
-        if callable(is_online):
-            return bool(is_online())
-        return True
-
-    def _probe_network_for_auto_rt(self) -> None:
-        if self._auto_rt_network_probe_active or not self._alive():
-            return
-
-        provider = self.host.data_provider
-        test_network = getattr(provider, "test_network", None)
-        set_online_mode = getattr(provider, "set_online_mode", None)
-        if not callable(test_network) or not callable(set_online_mode):
-            self._log_auto_rt_skip(
-                "auto_rt_offline_no_probe",
-                "[盘中监控] 自动启动等待联网，当前数据源不支持后台探测",
-            )
-            return
-
-        self._auto_rt_network_probe_active = True
-
-        def _probe():
-            ok = bool(test_network(timeout=3))
-            if not self._alive():
-                return False
-            if ok:
-                set_online_mode(True)
-            return ok
-
-        def _on_probe_result(ok):
-            self._auto_rt_network_probe_active = False
-            if not self._alive():
-                return
-            if not ok:
-                self._log_auto_rt_skip("auto_rt_offline", "[盘中监控] 自动启动等待网络可用")
-                return
-            self._last_auto_rt_skip_reason = ""
-            self._safe_call_in_ui(lambda: self.host.update_network_ui(True))
-            self._safe_call_in_ui(self.host.on_smart_startup_online_done)
-            self._safe_call_in_ui(self.auto_start_rt_if_ready)
-
-        def _on_probe_error(msg):
-            self._auto_rt_network_probe_active = False
-            self._log_auto_rt_skip(
-                "auto_rt_offline_error",
-                f"[盘中监控] 自动启动联网探测异常: {_normalize_log_detail(msg)}",
-            )
-
-        self._job_runner.run(
-            AUTO_RT_MONITOR_NETWORK_TASK_ID,
-            _probe,
-            on_success=_on_probe_result,
-            on_error=_on_probe_error,
-        )
-
-    def auto_start_rt_if_ready(self):
-        """按条件自动开启盘中监控；由启动完成和全局重试定时器共同驱动。"""
-        try:
-            if not self._alive():
-                return
-            if not service_toggle_registry.is_enabled("workspace_auto_rt_monitor"):
-                self._log_auto_rt_skip(
-                    "auto_rt_toggle_disabled",
-                    "[盘中监控] workspace_auto_rt_monitor toggle disabled",
-                )
-                return
-
-            from core.market_calendar import MarketCalendar
-
-            if not MarketCalendar.is_market_active():
-                self._log_auto_rt_skip("auto_rt_inactive", "[盘中监控] 非交易活跃时段，跳过自动监控")
-                return
-            provider = self.host.data_provider
-            cache_data = getattr(provider, "cache_data", None) or {}
-            if not cache_data or len(cache_data) < 100:
-                self._log_auto_rt_skip("auto_rt_cache_missing", "[盘中监控] 数据不足，等待缓存就绪后自动重试")
-                return
-            if not self._provider_is_online():
-                self._log_auto_rt_skip("auto_rt_offline", "[盘中监控] 自动启动等待网络可用")
-                self._probe_network_for_auto_rt()
-                return
-
-            if self.host.auto_start_rt_monitor():
-                self._last_auto_rt_skip_reason = ""
-                log.info("[智能启动] 盘中监控已自动启动")
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-            log.error(f"[智能启动] 自动监控启动异常: {exc}")

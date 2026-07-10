@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import builtins
 import datetime
+import os
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import polars as pl
@@ -103,6 +105,116 @@ def test_warehouse_write_then_read_full_market_and_single_symbol(tmp_path):
     assert validation.symbol_count == 2
 
 
+def test_warehouse_read_symbols_scans_once_and_returns_only_requested_hits(tmp_path, monkeypatch):
+    warehouse = _warehouse(tmp_path)
+    warehouse.write_market_dataset(
+        {
+            "000001": _sample_frame([10.0, 10.5]),
+            "300750": _sample_frame([20.0, 20.5]),
+            "600000": _sample_frame([30.0, 30.5]),
+        },
+        "20260511",
+        source="vipdoc",
+    )
+
+    import polars as pl
+
+    real_scan_parquet = pl.scan_parquet
+    scan_calls = []
+
+    def _counting_scan(*args, **kwargs):
+        scan_calls.append(args[0])
+        return real_scan_parquet(*args, **kwargs)
+
+    monkeypatch.setattr(pl, "scan_parquet", _counting_scan)
+
+    result = warehouse.read_symbols(["000001", "600000", "999999", "000001"])
+
+    assert result.status.ok is True
+    assert result.status.symbol_count == 2
+    assert set(result.data) == {"000001", "600000"}
+    assert list(result.data["000001"]["close"]) == [10.2, 10.7]
+    assert list(result.data["600000"]["close"]) == [30.2, 30.7]
+    assert len(scan_calls) == 1
+
+
+def test_legacy_save_entry_publishes_the_built_snapshot_through_warehouse(tmp_path, monkeypatch):
+    from vcp import polars_engine
+
+    generation_path = tmp_path / "market_data.generation.parquet"
+    calls = []
+
+    class CapturingWarehouse:
+        def write_polars_dataset(self, data, trade_date, *, source, source_version):
+            calls.append((data.clone(), trade_date, source, source_version))
+            data.write_parquet(generation_path)
+            return SimpleNamespace(ok=True, parquet_path=str(generation_path), data_status="ok", error="")
+
+    monkeypatch.setattr(polars_engine, "_PARQUET_CACHE_DIR", str(tmp_path / "legacy-mirror"))
+    monkeypatch.setattr(warehouse_module, "get_default_market_data_warehouse", lambda: CapturingWarehouse())
+
+    assert polars_engine.save_cache_parquet({"000001": _sample_frame([10.0])}, "20260511") is True
+    assert len(calls) == 1
+    published, trade_date, source, source_version = calls[0]
+    assert trade_date == "20260511"
+    assert source == "vipdoc"
+    assert source_version == "vcp.polars_engine.save_cache_parquet:v3"
+    assert published["_code"].to_list() == ["000001"]
+
+
+def test_warehouse_keeps_previous_generation_visible_until_manifest_publish(tmp_path, monkeypatch):
+    warehouse = _warehouse(tmp_path)
+    initial = warehouse.write_market_dataset({"000001": _sample_frame([10.0])}, "20260508")
+    before_publish = threading.Event()
+    allow_publish = threading.Event()
+    real_upsert = warehouse.manifest.upsert
+    write_results = []
+
+    def blocking_upsert(record):
+        if record.trade_date == "20260511":
+            before_publish.set()
+            assert allow_publish.wait(timeout=3)
+        return real_upsert(record)
+
+    monkeypatch.setattr(warehouse.manifest, "upsert", blocking_upsert)
+    writer = threading.Thread(
+        target=lambda: write_results.append(
+            warehouse.write_market_dataset({"000001": _sample_frame([20.0])}, "20260511")
+        )
+    )
+    writer.start()
+    assert before_publish.wait(timeout=3)
+
+    try:
+        during_publish = warehouse.read_full_market()
+        assert during_publish.status.trade_date == "20260508"
+        assert list(during_publish.data["000001"]["close"]) == [10.2]
+    finally:
+        allow_publish.set()
+        writer.join(timeout=3)
+
+    assert write_results and write_results[0].ok is True
+    after_publish = warehouse.read_full_market()
+    assert after_publish.status.trade_date == "20260511"
+    assert list(after_publish.data["000001"]["close"]) == [20.2]
+    assert Path(initial.parquet_path) != Path(after_publish.status.parquet_path)
+
+
+def test_warehouse_rejects_invalid_generation_before_changing_active_pointer(tmp_path):
+    warehouse = _warehouse(tmp_path)
+    warehouse.write_market_dataset({"000001": _sample_frame([10.0])}, "20260508")
+    invalid = _sample_frame([20.0]).drop(columns=["close"])
+
+    rejected = warehouse.write_market_dataset({"000001": invalid}, "20260511")
+    current = warehouse.read_full_market()
+
+    assert rejected.ok is False
+    assert rejected.data_status == "schema_incompatible"
+    assert "close" in rejected.error
+    assert current.status.trade_date == "20260508"
+    assert list(current.data["000001"]["close"]) == [10.2]
+
+
 def test_warehouse_helper_branches_and_atomic_cleanup(tmp_path, monkeypatch):
     assert _frame_to_polars("000001", None) is None
     assert _frame_to_polars("000001", pd.DataFrame()) is None
@@ -125,6 +237,27 @@ def test_warehouse_helper_branches_and_atomic_cleanup(tmp_path, monkeypatch):
 
     with pytest.raises(RuntimeError, match="write failed"):
         _atomic_parquet_write(_BrokenFrame(), tmp_path / "final.parquet")
+
+
+def test_warehouse_generation_cleanup_keeps_active_previous_and_fresh_files(tmp_path):
+    warehouse = _warehouse(tmp_path)
+    generation_dir = warehouse.parquet_dir / "generations"
+    generation_dir.mkdir(parents=True)
+    active = generation_dir / "market_data.active.parquet"
+    previous = generation_dir / "market_data.previous.parquet"
+    stale = generation_dir / "market_data.stale.parquet"
+    fresh = generation_dir / "market_data.fresh.parquet"
+    for path in (active, previous, stale, fresh):
+        path.write_bytes(b"generation")
+    os.utime(previous, (0, 0))
+    os.utime(stale, (0, 0))
+
+    warehouse._cleanup_stale_generations(active, previous_path=previous)
+
+    assert active.exists()
+    assert previous.exists()
+    assert fresh.exists()
+    assert not stale.exists()
 
 
 def test_warehouse_current_status_and_validation_edge_statuses(tmp_path, monkeypatch):
@@ -396,6 +529,35 @@ def test_provider_get_data_falls_back_to_vipdoc_when_warehouse_missing_symbol(tm
     assert provider.fetch_calls == 1
     assert provider.cache_data["600000"] is local
     assert provider._last_market_data_source_status["active_layer"] == "vipdoc_fallback"
+
+
+def test_provider_get_data_batch_uses_one_warehouse_read_and_falls_back_missing_symbol(tmp_path, monkeypatch):
+    warehouse = _warehouse(tmp_path)
+    warehouse.write_market_dataset({"000001": _sample_frame([10.0, 10.5])}, "20260511")
+    local = _sample_frame([30.0, 30.5])
+    provider = _DummyProvider(warehouse=warehouse, local_df=local)
+
+    read_symbols_calls = []
+    real_read_symbols = warehouse.read_symbols
+
+    def _read_symbols(codes):
+        read_symbols_calls.append(tuple(codes))
+        return real_read_symbols(codes)
+
+    monkeypatch.setattr(warehouse, "read_symbols", _read_symbols)
+    monkeypatch.setattr(
+        warehouse,
+        "read_symbol",
+        lambda _code: (_ for _ in ()).throw(AssertionError("batch path must not call read_symbol")),
+    )
+
+    result = provider.get_data_batch(["000001", "600000", "000001"])
+
+    assert len(read_symbols_calls) == 1
+    assert read_symbols_calls[0] == ("000001", "600000")
+    assert list(result["000001"]["close"]) == [10.2, 10.7]
+    assert result["600000"] is local
+    assert provider.fetch_calls == 1
 
 
 class _NoopLogger:

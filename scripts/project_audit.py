@@ -21,6 +21,7 @@ PYTHON_TARGETS = (
     "earnings",
     "scripts",
     "tests",
+    "vcp_hunter_qt.pyw",
 )
 
 PERF_REPORT_OPTIONS = (
@@ -37,6 +38,7 @@ PERF_REPORT_OPTIONS = (
 RUNTIME_HEALTH_SHORT_OUTPUT = "tmp/runtime_health_stability_short.json"
 RUNTIME_HEALTH_SHORT_SAMPLE_OUTPUT_DIR = "tmp/runtime_health_stability_short_samples"
 COMPLEXITY_HOTSPOT_AUDIT_OUTPUT = "tmp/complexity_hotspot_audit.json"
+COLD_IMPORT_BUDGET_OUTPUT = "tmp/cold_import_budget.json"
 DEPENDENCY_AUDIT_OUTPUT = "tmp/dependency_audit.json"
 HTTP_SAFETY_AUDIT_OUTPUT = "tmp/http_safety_audit.json"
 COVERAGE_REPORT_OUTPUT = "tmp/coverage.json"
@@ -152,6 +154,10 @@ def build_audit_commands(args: argparse.Namespace) -> list[AuditCommand]:
             [python, "scripts/complexity_hotspot_audit.py", "--output", COMPLEXITY_HOTSPOT_AUDIT_OUTPUT],
         ),
         AuditCommand(
+            "cold-import-budget",
+            [python, "scripts/cold_import_budget.py", "--output", COLD_IMPORT_BUDGET_OUTPUT],
+        ),
+        AuditCommand(
             "http-safety-audit",
             [python, "scripts/http_safety_audit.py", "--output", HTTP_SAFETY_AUDIT_OUTPUT],
         ),
@@ -222,7 +228,7 @@ def build_audit_commands(args: argparse.Namespace) -> list[AuditCommand]:
         )
 
     if args.type_check:
-        commands.append(AuditCommand("type-check", [python, "-m", "pyright", *TYPE_CHECK_TARGETS]))
+        commands.append(AuditCommand("type-check", [python, "-m", "pyright", "--warnings", *TYPE_CHECK_TARGETS]))
 
     if args.coverage_report:
         commands.append(

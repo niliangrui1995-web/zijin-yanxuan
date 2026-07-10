@@ -148,40 +148,6 @@ def _event_receiver_trend(samples: list[dict]) -> dict:
     return trend
 
 
-def disable_rt_monitor_auto_start(workspace) -> dict:
-    service = getattr(getattr(workspace, "host", None), "rt_monitor_service", None)
-    if service is None:
-        tab_for_service = _loaded_tab(workspace, "rt_monitor")
-        service = getattr(tab_for_service, "_rt_monitor_service", None)
-    if service is not None:
-        try:
-            stop = getattr(service, "stop", None)
-            if callable(stop):
-                stop(auto=False)
-            service._manual_stop_requested = True
-            service._manual_stop_trade_date = service._manual_stop_reference_date()
-            return {"disabled": True, "reason": "probe_isolation_service"}
-        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-            return {"disabled": False, "reason": f"service_stop_failed:{exc.__class__.__name__}"}
-
-    tab = _loaded_tab(workspace, "rt_monitor")
-    if tab is None:
-        return {"disabled": False, "reason": "rt_monitor_not_loaded"}
-    timer = getattr(tab, "_auto_timer", None)
-    if timer is None or not hasattr(timer, "stop"):
-        return {"disabled": False, "reason": "auto_timer_unavailable"}
-    try:
-        timer.stop()
-    except (RuntimeError, TypeError, ValueError) as exc:
-        return {"disabled": False, "reason": f"timer_stop_failed:{exc.__class__.__name__}"}
-    try:
-        tab._manual_stop_requested = True
-        tab._manual_stop_trade_date = tab._manual_stop_reference_date()
-    except (AttributeError, RuntimeError, TypeError, ValueError):
-        pass
-    return {"disabled": True, "reason": "probe_isolation"}
-
-
 def _loaded_info_source_keys(workspace) -> set[str]:
     tab_specs = getattr(workspace, "tab_specs", None)
     specs = list(tab_specs() or []) if callable(tab_specs) else []
@@ -571,7 +537,6 @@ def run_post_f5_network_probe(args: argparse.Namespace, app: QApplication) -> di
             "stub_quote_provider": bool(args.stub_quote_provider),
             "force_online": bool(args.force_online),
             "force_quote_refresh_time": bool(args.force_quote_refresh_time),
-            "isolate_rt_monitor_autostart": bool(args.isolate_rt_monitor_autostart),
             "isolate_info_source_refresh": bool(args.isolate_info_source_refresh),
             "synthetic_quote_codes": list(args.synthetic_quote_codes or []),
             "post_windows_s": list(args.post_windows),
@@ -597,8 +562,6 @@ def run_post_f5_network_probe(args: argparse.Namespace, app: QApplication) -> di
                 timeout_ms=args.tab_timeout_ms,
                 settle_ms=args.tab_settle_ms,
             )
-        if args.isolate_rt_monitor_autostart:
-            report["rt_monitor_auto_start_isolation"] = disable_rt_monitor_auto_start(workspace)
         if args.isolate_info_source_refresh:
             report["information_source_refresh_isolation"] = disable_information_source_refresh_after_f5(workspace)
         _force_quote_runtime(args, window)
@@ -675,7 +638,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--stub-quote-provider", action="store_true")
     parser.add_argument("--force-online", action="store_true")
     parser.add_argument("--force-quote-refresh-time", action="store_true")
-    parser.add_argument("--isolate-rt-monitor-autostart", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--isolate-info-source-refresh", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--output", type=Path, default=None)
     return parser.parse_args(argv)

@@ -29,6 +29,7 @@ _QT_APPLICATION = None
 _QT_SETTINGS_CONFIGURED = False
 _QT_SETTINGS_ROOT = None
 _TEST_LOG_ROOT = None
+_TEST_DB_ROOT = None
 
 _QT_APPLICATION_IMPORT_PREFIXES = (
     "ui.components",
@@ -172,6 +173,27 @@ def _qsettings_test_root():
 
 
 _qsettings_test_root()
+
+
+def _pytest_db_path():
+    """在任何项目模块导入前把默认 SQLite 隔离到本次 pytest 会话。"""
+    global _TEST_DB_ROOT
+
+    configured = str(os.environ.get("VCP_HUNTER_TEST_DB_PATH", "") or "").strip()
+    if configured:
+        db_path = Path(configured).resolve()
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        root = Path(tempfile.mkdtemp(prefix="vcp_hunter_db_", dir=tempfile.gettempdir())).resolve()
+        db_path = root / "vcp_hunter_test.db"
+        _TEST_DB_ROOT = root
+        atexit.register(shutil.rmtree, root, ignore_errors=True)
+
+    os.environ["VCP_HUNTER_DB_PATH"] = str(db_path)
+    return db_path
+
+
+_pytest_db_path()
 
 
 def _pytest_log_root():

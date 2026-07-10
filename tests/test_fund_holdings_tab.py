@@ -5,9 +5,18 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtTest import QSignalSpy
 
+from core.ai_industry_chain_pool import (
+    load_cached_ai_industry_chain_context_map,
+    load_cached_ai_industry_chain_stock_codes,
+)
 from core.event_bus import event_bus
 from ui.tabs import fund_holdings_tab as fund_holdings_module
 from ui.theme import theme_manager
+
+
+def test_fund_holdings_tab_defaults_to_cache_only_ai_chain_data():
+    assert fund_holdings_module.FundHoldingsTab._stock_universe_provider is load_cached_ai_industry_chain_stock_codes
+    assert fund_holdings_module.FundHoldingsTab._chain_context_provider is load_cached_ai_industry_chain_context_map
 
 
 class _DummyProvider:

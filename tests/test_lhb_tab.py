@@ -8,9 +8,14 @@ from PyQt6.QtTest import QSignalSpy, QTest
 
 import ui.tabs.lhb_tab as lhb_tab_module
 import ui.workers.lhb_worker as lhb_worker_module
+from core.ai_industry_chain_pool import load_cached_ai_industry_chain_context_map
 from core.market_calendar import MarketCalendar
 from ui.tabs.base_stock_tab import BaseStockTab
 from ui.tabs.lhb_tab import LhbTab
+
+
+def test_lhb_tab_defaults_to_cache_only_ai_chain_context():
+    assert LhbTab._chain_context_provider is load_cached_ai_industry_chain_context_map
 
 
 def _visible_lhb_codes(tab: LhbTab) -> list[str]:

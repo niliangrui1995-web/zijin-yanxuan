@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import datetime
+import threading
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QObject, QTimer
 
@@ -12,7 +14,9 @@ from app.services.ui_market_calendar_service import MarketCalendar
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
 from core.logger import get_logger
-from ui.services.auto_refresh_tasks import AutoRefreshTaskService
+
+if TYPE_CHECKING:
+    from ui.services.auto_refresh_tasks import AutoRefreshTaskService
 
 log = get_logger(__name__)
 
@@ -42,7 +46,6 @@ class AutoRefreshScheduler(QObject):
         *,
         data_provider=None,
         engine=None,
-        rt_monitor_service=None,
         na_daily_service=None,
         asian_market_service=None,
         earnings_service=None,
@@ -53,15 +56,16 @@ class AutoRefreshScheduler(QObject):
     ):
         super().__init__(parent)
         self._settings = app_config.section("auto_refresh_scheduler")
-        self._task_service = task_service or AutoRefreshTaskService(
-            data_provider=data_provider,
-            engine=engine,
-            na_daily_service=na_daily_service,
-            asian_market_service=asian_market_service,
-            earnings_service=earnings_service,
-        )
+        self._task_service = task_service
+        self._task_service_kwargs = {
+            "data_provider": data_provider,
+            "engine": engine,
+            "na_daily_service": na_daily_service,
+            "asian_market_service": asian_market_service,
+            "earnings_service": earnings_service,
+        }
+        self._task_service_lock = threading.Lock()
         self._job_runner = job_runner or task_manager
-        self._rt_monitor_service = rt_monitor_service
         self._clock = clock or (lambda: MarketCalendar.now("CN"))
         self._running_jobs: set[str] = set()
         self.extended_jobs_enabled = True
@@ -89,12 +93,10 @@ class AutoRefreshScheduler(QObject):
         for job in self.DAILY_JOBS:
             self._maybe_submit_daily_job(job, now)
         if not self.extended_jobs_enabled:
-            self._sync_rt_monitor(now)
             return
         self._maybe_submit_na_daily_incremental(now)
         self._maybe_submit_na_daily_full(now)
-        self._sync_rt_monitor(now)
-        self._sync_asian_market_runtime(now)
+        self._maybe_submit_asian_market_runtime(now)
         self._maybe_submit_asian_cache_sync(now)
         self._maybe_submit_earnings_startup_gap_fill(now)
         self._maybe_submit_earnings_routines(now)
@@ -159,15 +161,29 @@ class AutoRefreshScheduler(QObject):
 
     def _submit_daily_job(self, job: AutoRefreshJob, trade_date: str) -> None:
         def _run():
+            task_service = self._task_service_instance()
             if job.key == "lhb_daily":
-                return self._task_service.run_lhb_daily(trade_date)
+                return task_service.run_lhb_daily(trade_date)
             if job.key == "foreign_block_daily":
-                return self._task_service.run_foreign_block_daily(trade_date)
+                return task_service.run_foreign_block_daily(trade_date)
             if job.key == "fund_holdings_daily":
-                return self._task_service.run_fund_holdings_daily(trade_date)
+                return task_service.run_fund_holdings_daily(trade_date)
             raise ValueError(f"unknown auto refresh job: {job.key}")
 
         self._submit_job(job.key, trade_date, _run)
+
+    def _task_service_instance(self):
+        service = self._task_service
+        if service is not None:
+            return service
+        with self._task_service_lock:
+            service = self._task_service
+            if service is None:
+                from ui.services.auto_refresh_tasks import AutoRefreshTaskService
+
+                service = AutoRefreshTaskService(**self._task_service_kwargs)
+                self._task_service = service
+        return service
 
     def _submit_job(
         self,
@@ -267,7 +283,7 @@ class AutoRefreshScheduler(QObject):
         self._submit_job(
             state_key,
             trade_date,
-            lambda: self._task_service.run_na_daily_incremental(trade_date),
+            lambda: self._task_service_instance().run_na_daily_incremental(trade_date),
             mark_success_date=False,
         )
         return True
@@ -286,25 +302,57 @@ class AutoRefreshScheduler(QObject):
         self._submit_job(
             state_key,
             trade_date,
-            lambda: self._task_service.run_na_daily_full_0925(trade_date),
+            lambda: self._task_service_instance().run_na_daily_full_0925(trade_date),
         )
         return True
 
-    def _sync_asian_market_runtime(self, now: datetime.datetime) -> None:
+    def _maybe_submit_asian_market_runtime(self, now: datetime.datetime) -> bool:
+        state_key = "asian_market_runtime"
         trade_date = now.strftime("%Y%m%d")
-        try:
-            result = self._task_service.sync_asian_market_runtime()
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-            self._emit_status("asian_market_runtime", "failed", trade_date, message="failed", error=str(exc))
-            return
-        status = str((result or {}).get("status") or "skipped")
-        if status in {"started", "stopped", "running"}:
-            self._emit_status("asian_market_runtime", "success", trade_date, message=status)
+        if state_key in self._running_jobs or self._job_runner.is_active_task(self._task_id(state_key)):
+            return False
+        self._running_jobs.add(state_key)
+
+        def _prepare():
+            return self._task_service_instance().prepare_asian_market_runtime()
+
+        def _on_success(prepared):
+            try:
+                result = self._task_service_instance().sync_asian_market_runtime(prepared)
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                _on_error(str(exc))
+                return
+            self._running_jobs.discard(state_key)
+            status = str((result or {}).get("status") or "skipped")
+            if status in {"started", "stopped", "running"}:
+                self._emit_status(state_key, "success", trade_date, message=status)
+            self._maybe_submit_asian_cache_sync(self._clock())
+
+        def _on_error(error_message: str):
+            self._running_jobs.discard(state_key)
+            self._emit_status(
+                state_key,
+                "failed",
+                trade_date,
+                message="failed",
+                error=str(error_message or "").strip(),
+            )
+            self._maybe_submit_asian_cache_sync(self._clock())
+
+        self._job_runner.run_in_background(
+            _prepare,
+            on_success=_on_success,
+            on_error=_on_error,
+            task_id=self._task_id(state_key),
+        )
+        return True
 
     def _maybe_submit_asian_cache_sync(self, now: datetime.datetime) -> bool:
         state_key = "asian_market_cache_sync"
         trade_date = now.strftime("%Y%m%d")
         if not self._time_reached(now, 16, 30):
+            return False
+        if "asian_market_runtime" in self._running_jobs:
             return False
         if self._last_success_date(state_key) == trade_date:
             return False
@@ -313,7 +361,7 @@ class AutoRefreshScheduler(QObject):
         self._submit_job(
             state_key,
             trade_date,
-            lambda: self._task_service.run_asian_market_cache_sync(trade_date),
+            lambda: self._task_service_instance().run_asian_market_cache_sync(trade_date),
             skipped_is_success=True,
         )
         return True
@@ -331,7 +379,7 @@ class AutoRefreshScheduler(QObject):
         self._submit_job(
             state_key,
             trade_date,
-            lambda: self._task_service.run_earnings_startup_gap_fill(trade_date),
+            lambda: self._task_service_instance().run_earnings_startup_gap_fill(trade_date),
         )
         return True
 
@@ -356,7 +404,7 @@ class AutoRefreshScheduler(QObject):
         self._submit_job(
             "earnings_routine",
             trade_date,
-            lambda routine_time=routine_time: self._task_service.run_earnings_routine(
+            lambda routine_time=routine_time: self._task_service_instance().run_earnings_routine(
                 trade_date,
                 routine_time=routine_time,
             ),
@@ -391,21 +439,6 @@ class AutoRefreshScheduler(QObject):
             event_bus.sig_asian_klines_ready.emit()
         elif job_key in {"earnings_startup_gap_fill", "earnings_routine"}:
             event_bus.sig_earnings_updated.emit()
-
-    def _sync_rt_monitor(self, now: datetime.datetime) -> None:
-        service = self._rt_monitor_service
-        if service is None:
-            return
-        trade_date = now.strftime("%Y%m%d")
-        try:
-            result = service.sync_to_market_state()
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-            self._emit_status("rt_monitor_market", "failed", trade_date, message="failed", error=str(exc))
-            return
-        if result == "started":
-            self._emit_status("rt_monitor_market", "success", trade_date, message="started")
-        elif result == "stopped":
-            self._emit_status("rt_monitor_market", "success", trade_date, message="stopped")
 
     @staticmethod
     def _emit_status(

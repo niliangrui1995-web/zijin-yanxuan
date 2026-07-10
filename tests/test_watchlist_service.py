@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from copy import deepcopy
 from types import SimpleNamespace
 
@@ -183,3 +184,44 @@ def test_watchlist_service_save_data_success_and_failure(monkeypatch):
         watchlist_vm._save_data()
     finally:
         watchlist_vm._cache = original_cache
+
+
+def test_watchlist_save_serializes_snapshot_and_commit(monkeypatch):
+    view_model = object.__new__(WatchlistViewModel)
+    view_model._lock = threading.RLock()
+    view_model._cache = {"000001": {"版本": 1}}
+    first_save_entered = threading.Event()
+    release_first_save = threading.Event()
+    second_save_finished = threading.Event()
+    writes = []
+
+    class BlockingDataStore:
+        def save_json(self, key, payload):
+            assert key == "watchlist_special"
+            version = payload["000001"]["版本"]
+            if version == 1:
+                first_save_entered.set()
+                assert release_first_save.wait(timeout=3)
+            writes.append(deepcopy(payload))
+            if version == 2:
+                second_save_finished.set()
+
+    monkeypatch.setattr(data_store_module, "DataStore", BlockingDataStore)
+
+    first = threading.Thread(target=view_model._save_data)
+    first.start()
+    assert first_save_entered.wait(timeout=2)
+
+    def mutate_and_save():
+        with view_model._lock:
+            view_model._cache = {"000001": {"版本": 2}}
+        view_model._save_data()
+
+    second = threading.Thread(target=mutate_and_save)
+    second.start()
+    second_save_finished.wait(timeout=0.25)
+    release_first_save.set()
+    first.join(timeout=3)
+    second.join(timeout=3)
+
+    assert writes[-1] == {"000001": {"版本": 2}}

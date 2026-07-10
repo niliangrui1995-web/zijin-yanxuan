@@ -6,7 +6,7 @@
 
 ## 1. 系统定位
 
-紫金研选是 Windows 优先的 PyQt6 桌面量化终端，核心围绕 A 股 VCP 扫描、盘中监控、关注池、情报源联动、K 线复盘和多市场辅助观察展开。
+紫金研选是 Windows 优先的 PyQt6 桌面量化终端，核心围绕 A 股 VCP 扫描、关注池、情报源联动、K 线复盘和多市场辅助观察展开。
 
 它不是 Web 服务，也没有后端 API 服务器。当前主要运行形态是单机桌面应用：
 
@@ -54,7 +54,7 @@ vcp_hunter_qt.pyw
 - `MainWindowQT` 是主窗口外壳，负责无边框窗口、标题栏、快捷键、状态栏、工作区挂载、全局事件接线、F5 入口和运行时健康入口。
 - `ApplicationBootstrap` 负责装配工作区，并通过 `service_toggle_registry` 决定是否安装中央行情广播服务。
 - `create_data_provider(offline=True)` 默认离线优先，冷启动时先保证本地缓存和 UI 可用。
-- `StartupOrchestrator` 延迟恢复历史缓存、RPS 缓存、实时缓存，异步探测网络，并按服务开关调度亚洲缓存、全球财报日历和盘中监控启动。
+- `StartupOrchestrator` 延迟恢复历史缓存和 RPS 缓存，异步探测网络，并按服务开关调度亚洲缓存与全球财报日历。
 
 ## 4. 应用层服务入口
 
@@ -91,7 +91,6 @@ vcp_hunter_qt.pyw
 | `stock_candidates` | 综合候选 | `ui/tabs/stock_candidate_tab.py` | 主工作台 |
 | `ai_industry_chain` | AI产业链 | `ui/tabs/ai_industry_chain_tab.py` | 情报源 |
 | `lhb` | 龙虎榜 | `ui/tabs/lhb_tab.py` | 主工作台 |
-| `rt_monitor` | 盘中监控 | `ui/tabs/rt_monitor_tab.py` | 主工作台 |
 | `scan` | VCP扫描 | `ui/tabs/scan_tab.py` | 情报源 |
 | `foreign_block` | 大宗交易 | `ui/tabs/foreign_block_trade_tab.py` | 情报源 |
 | `earnings` | 业绩异动 | `ui/tabs/earnings_tab.py` | 情报源 |
@@ -167,7 +166,7 @@ QuoteUniverseService.collect_realtime_quote_codes()
 - `IndicatorService` 计算基础指标。
 - `RpsService` 维护 RPS 矩阵和预计算结果。
 - `VcpScannerService` 评估 VCP 条件。
-- `BreakoutMonitorService` 预计算待突破池并执行盘中快速判断。
+- `BreakoutMonitorService` 预计算待突破池并执行实时突破判断。
 - `vcp/engine.py` 当前是兼容别名，内部已委托到应用层 facade。
 
 ### 7.3 情报源和个股上下文
@@ -257,7 +256,6 @@ MainWindowQT._action_refresh_f5()
 - `central_quotes_service`
 - `silent_asian_sync`
 - `daily_global_earnings_calendar_sync`
-- `workspace_auto_rt_monitor`
 - `startup_history_cache_load`
 
 新增可选运行能力应先进入服务开关，而不是在 UI 或启动编排器里散落布尔变量。
@@ -290,7 +288,7 @@ runtime health 的 `market_data` 段会展示当前 active layer，例如 `memor
 
 运行时会生成或维护：
 
-- `data/Cache/`：RPS、盘中监控、亚洲市场、财务/股本、全球财报日历等缓存
+- `data/Cache/`：RPS、亚洲市场、财务/股本、全球财报日历等缓存
 - `data/Cache/parquet/market_data.parquet`：全市场历史日线明细；`meta.parquet` 保留兼容元数据
 - `data/vcp_hunter.db`：SQLite 数据，例如交易日、基金持仓、扫描缓存，以及 `market_data_manifest` 仓库 manifest
 - `data/logs/`：应用日志

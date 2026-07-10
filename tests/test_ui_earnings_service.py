@@ -4,6 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from app.services import ui_earnings_service
 from app.services.ui_earnings_service import EarningsRefreshService, EarningsScheduler
 
 
@@ -46,6 +47,56 @@ class _FakeJobRunner:
             if on_success is not None:
                 on_success(result)
         return str(task_id)
+
+
+def test_earnings_refresh_service_defers_default_engine_construction(monkeypatch, qt_application):
+    sentinel = object()
+    created = []
+    monkeypatch.setattr(
+        ui_earnings_service,
+        "_create_default_engine",
+        lambda: created.append("engine") or sentinel,
+    )
+
+    service = EarningsRefreshService(job_runner=_FakeJobRunner())
+
+    assert service._engine is None
+    assert created == []
+    assert service.engine is sentinel
+    assert service.engine is sentinel
+    assert created == ["engine"]
+
+
+def test_startup_cache_probe_uses_rows_without_importing_dataframe_layer(monkeypatch, qt_application):
+    class RowOnlyEngine:
+        last_sync_date = "2026-04-16"
+        local_records = [{"股票代码": "000001"}]
+
+        @staticmethod
+        def get_cached_record_rows():
+            return [{"股票代码": "000001"}]
+
+        @staticmethod
+        def get_cached_records():
+            raise AssertionError("startup cache probe should use row records")
+
+    monkeypatch.setattr(
+        EarningsScheduler,
+        "_build_startup_scan_dates",
+        staticmethod(lambda last_sync_date, has_cached_records: []),
+    )
+    monkeypatch.setattr(
+        ui_earnings_service,
+        "_pandas_module",
+        lambda: (_ for _ in ()).throw(AssertionError("pandas should stay cold without UI receivers")),
+    )
+    service = EarningsRefreshService(engine=RowOnlyEngine(), job_runner=_FakeJobRunner())
+
+    result = service.run_startup_gap_fill()
+
+    assert result["records"] == 1
+    assert result["cached_records"] == 1
+    assert result["gap_records"] == 0
 
 
 def test_earnings_refresh_startup_gap_fill_emits_cached_then_gap_rows(monkeypatch, qt_application):

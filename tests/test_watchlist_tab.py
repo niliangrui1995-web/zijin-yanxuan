@@ -1057,6 +1057,21 @@ def test_watchlist_indicator_apply_batches_model_update(monkeypatch):
                     "龙虎榜": "",
                 },
                 {
+                    "代码": "300750",
+                    "名称": "宁德时代",
+                    "来源": "手动",
+                    "现价": "--",
+                    "涨幅%": "--",
+                    "市值": "--",
+                    "RPS强度": "",
+                    "细分板块": "",
+                    "摘要": "",
+                    "备注": "",
+                    "业绩异动": "",
+                    "大宗交易": "",
+                    "龙虎榜": "",
+                },
+                {
                     "代码": "000001",
                     "名称": "平安银行",
                     "来源": "手动",
@@ -1073,7 +1088,10 @@ def test_watchlist_indicator_apply_batches_model_update(monkeypatch):
                 },
             ]
         )
+        rps_column = tab.model.headers.index("RPS强度")
+        tab.proxy_model.sort(rps_column, Qt.SortOrder.DescendingOrder)
         spy = QSignalSpy(tab.model.dataChanged)
+        proxy_layout_spy = QSignalSpy(tab.proxy_model.layoutChanged)
 
         tab._apply_vcp_indicators_ui(
             {
@@ -1083,10 +1101,15 @@ def test_watchlist_indicator_apply_batches_model_update(monkeypatch):
         )
 
         assert len(spy) == 1
+        roles = {int(getattr(role, "value", role)) for role in spy[0][2]}
+        assert int(Qt.ItemDataRole.UserRole) + 1 not in roles
+        assert tab.table_sp._flash_repaint_timer.isActive() is False
+        assert len(proxy_layout_spy) <= 1
         assert tab.model.row_data[0]["RPS强度"] == "95"
         assert tab.model.row_data[0]["摘要"] == "AI链备注"
         assert tab.model.row_data[0]["备注"] == ""
-        assert tab.model.row_data[1]["细分板块"] == "银行"
+        assert tab.model.row_data[2]["细分板块"] == "银行"
+        assert tab.proxy_model.data(tab.proxy_model.index(0, rps_column), Qt.ItemDataRole.DisplayRole) == "95"
         assert persist_calls[0]["task_id"] == "watchlist_vcp_persist"
     finally:
         tab.deleteLater()

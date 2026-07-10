@@ -50,8 +50,12 @@ class DataStore:
         self._initialized = True
 
         if not db_path:
+            db_path = str(os.environ.get("VCP_HUNTER_DB_PATH", "") or "").strip()
+        if not db_path:
             root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             db_path = os.path.join(root_dir, "data", "vcp_hunter.db")
+
+        db_path = os.path.abspath(os.path.expanduser(db_path))
 
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self._db_path = db_path

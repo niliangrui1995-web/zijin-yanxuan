@@ -91,6 +91,35 @@ def test_task_manager_user_facing_error_uses_clean_message():
     assert task_manager.active_count == 0
 
 
+def test_task_manager_unexpected_exception_reaches_terminal_state():
+    task_manager.cancel_all()
+    task_manager._shutting_down = False
+    errors = []
+
+    def unexpected_failure():
+        raise IndexError("unexpected index")
+
+    task_manager.run_in_background(
+        unexpected_failure,
+        on_error=lambda message: errors.append(message),
+        task_id="unexpected_error_test",
+    )
+
+    assert _pump_events_until(lambda: task_manager.active_count == 0)
+    assert errors == ["unexpected index"]
+
+
+def test_background_worker_cancelled_before_run_emits_terminal_signal():
+    terminal = []
+    worker = BackgroundWorker(lambda: "unreachable")
+    worker.signals.terminated.connect(lambda: terminal.append(True))
+
+    worker.cancel()
+    worker.run()
+
+    assert terminal == [True]
+
+
 def test_task_manager_abandon_task_releases_same_id_slot():
     task_manager.cancel_all()
     task_manager._shutting_down = False

@@ -727,17 +727,33 @@ def _fetch_yfinance_history_rows(
     start_date: date,
     end_date: date,
 ) -> list[dict]:
+    rate_limit_status = get_yf_rate_limit_status()
+    if rate_limit_status["active"]:
+        logging.warning(
+            "⚠️ %s: Yahoo Finance 回退源冷却中，跳过回退请求 (剩余 %.0fs)",
+            ticker,
+            rate_limit_status["remaining_sec"],
+        )
+        return []
+
     try:
         import yfinance as yf
     except (ImportError, ModuleNotFoundError):
         return []
 
     end_exclusive = end_date + timedelta(days=1)
-    frame = yf.Ticker(ticker, session=http_session).history(
-        start=start_date.isoformat(),
-        end=end_exclusive.isoformat(),
-        auto_adjust=False,
-    )
+    try:
+        frame = yf.Ticker(ticker, session=http_session).history(
+            start=start_date.isoformat(),
+            end=end_exclusive.isoformat(),
+            auto_adjust=False,
+        )
+    except Exception as exc:
+        if not is_yf_rate_limit_error(exc):
+            raise
+        remaining_sec = mark_yf_rate_limited(exc)
+        logging.warning(f"⚠️ {ticker}: Yahoo Finance 回退源限流，冷却 {remaining_sec:.0f}s — {exc}")
+        return []
     if frame is None or frame.empty:
         return []
 
@@ -879,16 +895,6 @@ def fetch_single_kline(
             ]
         }
     """
-    rate_limit_status = get_yf_rate_limit_status()
-    if rate_limit_status["active"]:
-        logging.warning(
-            "⚠️ %s(%s): Yahoo Finance 冷却中，跳过请求 (剩余 %.0fs)",
-            name,
-            ticker,
-            rate_limit_status["remaining_sec"],
-        )
-        return None
-
     try:
         ticker = str(ticker or "").strip().upper()
         http_session = session or build_yf_session()
@@ -922,8 +928,7 @@ def fetch_single_kline(
 
     except Exception as e:
         if is_yf_rate_limit_error(e):
-            remaining_sec = mark_yf_rate_limited(e)
-            logging.warning(f"⚠️ {name}({ticker}): Yahoo Finance 限流，冷却 {remaining_sec:.0f}s — {e}")
+            logging.warning(f"⚠️ {name}({ticker}): 上游请求限流 — {e}")
             return None
         if isinstance(
             e,
@@ -990,9 +995,6 @@ def fetch_all_asian_klines(
                 len(tickers),
             )
             break
-        if get_yf_rate_limit_status()["active"]:
-            logging.warning("⚠️ Yahoo Finance 已进入冷却，提前结束本轮亚洲 K 线抓取")
-            break
         time.sleep(0.3)
         try:
             data = fetch_single_kline(
@@ -1009,9 +1011,8 @@ def fetch_all_asian_klines(
         except Exception as e:
             failed.append(f"{name}({ticker})")
             if is_yf_rate_limit_error(e):
-                remaining_sec = mark_yf_rate_limited(e)
-                logging.warning(f"  ⚠️ {name}({ticker}): Yahoo Finance 限流，冷却 {remaining_sec:.0f}s — {e}")
-                break
+                logging.warning(f"  ⚠️ {name}({ticker}): 上游请求限流 — {e}")
+                continue
             if isinstance(e, (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError)):
                 logging.error(f"  ❌ {name}({ticker}): {e}")
                 continue
@@ -1164,9 +1165,6 @@ def sync_asian_kline_cache(
                 break
             name = ticker_to_name.get(ticker, ticker)
             try:
-                if get_yf_rate_limit_status()["active"]:
-                    logging.warning("⚠️ Yahoo Finance 冷却中，停止单票补抓")
-                    break
                 one = fetch_single_kline(
                     name,
                     ticker,
@@ -1178,9 +1176,8 @@ def sync_asian_kline_cache(
                     single_recovered.append(ticker)
             except Exception as exc:
                 if is_yf_rate_limit_error(exc):
-                    remaining_sec = mark_yf_rate_limited(exc)
-                    logging.warning(f"⚠️ 单票补抓触发 Yahoo Finance 限流 {ticker}: 冷却 {remaining_sec:.0f}s — {exc}")
-                    break
+                    logging.warning(f"⚠️ 单票补抓遇到上游限流 {ticker}: {exc}")
+                    continue
                 if isinstance(exc, (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError)):
                     logging.warning(f"⚠️ 单票补抓失败 {ticker}: {exc}")
                     continue

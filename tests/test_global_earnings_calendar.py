@@ -2,6 +2,7 @@
 import datetime as dt
 import io
 import json
+import threading
 from types import SimpleNamespace
 
 import yfinance as yf
@@ -861,6 +862,52 @@ def test_upsert_confirmed_event_writes_json_and_cache_without_touching_trade_dat
     ]
 
 
+def test_confirmed_event_upsert_serializes_concurrent_writers(tmp_path):
+    confirmed_path = tmp_path / "confirmed_events.json"
+    confirmed_path.write_text('{"events":[]}', encoding="utf-8")
+    providers = [ConfirmedEarningsEventsProvider(confirmed_path) for _ in range(2)]
+    events = [
+        EarningsCalendarEvent(
+            "CoreWeave",
+            "CRWV",
+            "云巨头/算力租赁/数据基础设施",
+            "2026-05-07",
+            status="confirmed",
+            source="confirmed",
+            market="US",
+        ),
+        EarningsCalendarEvent(
+            "Applied Materials",
+            "AMAT",
+            "前道晶圆设备与量测",
+            "2026-05-14",
+            status="confirmed",
+            source="confirmed",
+            market="US",
+        ),
+    ]
+    start = threading.Barrier(2)
+    errors = []
+
+    def upsert(provider, event):
+        try:
+            start.wait(timeout=2)
+            provider.upsert(event)
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=upsert, args=pair) for pair in zip(providers, events, strict=True)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    payload = json.loads(confirmed_path.read_text(encoding="utf-8"))
+    assert errors == []
+    assert all(not thread.is_alive() for thread in threads)
+    assert {row["ticker"] for row in payload["events"]} == {"AMAT", "CRWV"}
+
+
 def test_service_returns_empty_when_all_real_sources_are_empty(monkeypatch, tmp_path):
     class EmptyStore:
         def load_json(self, key, default=None):
@@ -930,7 +977,7 @@ def test_service_merges_confirmed_and_network_events_without_demo(tmp_path):
     assert "示例" not in {event.source for event in events}
 
 
-def test_refresh_events_preserves_cached_provider_events_when_network_fails(tmp_path):
+def test_refresh_events_marks_all_provider_failures_retryable_and_preserves_cache(tmp_path):
     class MemoryStore:
         def __init__(self):
             self.saved = None
@@ -955,10 +1002,14 @@ def test_refresh_events_preserves_cached_provider_events_when_network_fails(tmp_
 
         def save_json(self, key, data):
             self.saved = (key, data)
+            self.data[key] = json.loads(json.dumps(data, ensure_ascii=False))
+
+    class ProviderFetchError(Exception):
+        pass
 
     class FailingProvider:
         def fetch(self, *_args, **_kwargs):
-            raise RuntimeError("network down")
+            raise ProviderFetchError("network down")
 
     confirmed_path = tmp_path / "confirmed.json"
     confirmed_path.write_text(
@@ -986,7 +1037,60 @@ def test_refresh_events_preserves_cached_provider_events_when_network_fails(tmp_
         ("CRWV", "confirmed"),
         ("AMAT", "Nasdaq"),
     ]
-    assert store.saved is None
+    payload = store.data["global_earnings_calendar"]
+    assert payload["source"] == "stale_cache"
+    assert payload["cache_state"]["status"] == "failed"
+    assert payload["cache_state"]["reason"] == "all_providers_failed"
+    assert payload["cache_state"]["retryable"] is True
+    assert payload["cache_state"]["all_providers_failed"] is True
+    assert payload["cache_state"]["provider_attempted_count"] == 4
+    assert payload["cache_state"]["provider_total_failure_count"] == 4
+    assert payload["cache_state"]["providers"] == ["Alpha Vantage", "Company IR", "Nasdaq", "Yahoo Finance"]
+
+
+def test_refresh_events_marks_single_provider_exception_as_degraded(tmp_path):
+    class MemoryStore:
+        def __init__(self):
+            self.data = {}
+
+        def load_json(self, key, default=None):
+            return json.loads(json.dumps(self.data.get(key, default), ensure_ascii=False))
+
+        def save_json(self, key, data):
+            self.data[key] = json.loads(json.dumps(data, ensure_ascii=False))
+
+    class ProviderFetchError(Exception):
+        pass
+
+    class FailingProvider:
+        def fetch(self, *_args, **_kwargs):
+            raise ProviderFetchError("network down")
+
+    class EmptyProvider:
+        def fetch(self, *_args, **_kwargs):
+            return []
+
+    store = MemoryStore()
+    service = GlobalEarningsCalendarService(
+        data_store=store,
+        universe={},
+        confirmed_provider=ConfirmedEarningsEventsProvider(tmp_path / "missing.json"),
+        nasdaq_provider=FailingProvider(),
+        provider=EmptyProvider(),
+        yfinance_provider=EmptyProvider(),
+        official_providers=[],
+    )
+
+    assert service.refresh_events(today=dt.date(2026, 5, 8), lookahead_days=10) == []
+
+    state = store.data["global_earnings_calendar"]["cache_state"]
+    assert state["status"] == "degraded"
+    assert state["reason"] == "provider_fetch_degraded"
+    assert state["retryable"] is True
+    assert state["all_providers_failed"] is False
+    assert state["providers"] == ["Nasdaq"]
+    assert state["provider_attempted_count"] == 3
+    assert state["provider_total_failure_count"] == 1
 
 
 def test_refresh_events_marks_degraded_nasdaq_week_and_reuses_cached_snapshot():
@@ -1075,6 +1179,8 @@ def test_refresh_events_marks_degraded_nasdaq_week_and_reuses_cached_snapshot():
     ]
     assert payload["cache_state"]["stale_cache_reused"] is True
     assert payload["cache_state"]["reused_event_count"] == 1
+    assert payload["cache_state"]["retryable"] is True
+    assert payload["cache_state"]["all_providers_failed"] is False
     assert service.load_cache_status()["status"] == "degraded"
 
 

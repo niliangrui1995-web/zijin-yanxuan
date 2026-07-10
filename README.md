@@ -1,6 +1,6 @@
 # 紫金研选量化终端
 
-Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatility Contraction Pattern）扫描、盘中监控、关注池联动和多市场辅助观察构建。
+Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatility Contraction Pattern）扫描、关注池联动和多市场辅助观察构建。
 
 最后校验：2026-06-14（按当前源码、`docs/technical-architecture.md` 和 `docs/module-owners.md` 重新核对）。
 
@@ -27,7 +27,6 @@ Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatil
 | 综合候选 | `ui/tabs/stock_candidate_tab.py` | 汇总扫描、战报、AI 产业链、业绩、基金持仓等多源候选 |
 | AI产业链 | `ui/tabs/ai_industry_chain_tab.py` | AI 产业链标的、细分环节与上下文信号跟踪 |
 | 龙虎榜 | `ui/tabs/lhb_tab.py` | 30 日滚动龙虎榜关注池，带上榜次数、最近上榜、净买额等字段 |
-| 盘中监控 | `ui/tabs/rt_monitor_tab.py` | 盘中轮询待突破池，展示实时突破状态 |
 | VCP 扫描 | `ui/tabs/scan_tab.py` | 全市场 VCP 静态扫描结果页 |
 | 大宗交易 | `ui/tabs/foreign_block_trade_tab.py` | 外资席位相关大宗交易监控与过滤 |
 | 业绩异动 | `ui/tabs/earnings_tab.py` | 业绩预告、快报、财报高增跟踪 |
@@ -424,7 +423,6 @@ Windows 环境下可以在标题栏的系统菜单中勾选 `开机自启动`。
 | `central_quotes_service` | `VCP_TOGGLE_CENTRAL_QUOTES_SERVICE` | 开 | 中央 A 股实时报价轮询 |
 | `silent_asian_sync` | `VCP_TOGGLE_SILENT_ASIAN_SYNC` | 开 | 启动后静默同步亚洲 K 线缓存 |
 | `daily_global_earnings_calendar_sync` | `VCP_TOGGLE_DAILY_GLOBAL_EARNINGS_CALENDAR_SYNC` | 开 | 运行期间定时刷新全球寡头财报日历 |
-| `workspace_auto_rt_monitor` | `VCP_TOGGLE_WORKSPACE_AUTO_RT_MONITOR` | 开 | 满足交易时段和数据条件时自动启动盘中监控 |
 | `startup_history_cache_load` | `VCP_TOGGLE_STARTUP_HISTORY_CACHE_LOAD` | 开 | 启动时预加载本地历史行情缓存 |
 
 其他重要环境变量：
@@ -441,7 +439,6 @@ Windows 环境下可以在标题栏的系统菜单中勾选 `开机自启动`。
 
 - `data/Cache/`
   - RPS 预计算缓存
-  - 盘中监控缓存
   - 亚洲市场缓存
   - 财务/股本缓存
   - 全球寡头财报日历缓存
@@ -512,10 +509,10 @@ python scripts/check_utf8.py
 
 ### 运行时健康与 WebEngine 探针
 
-提交前可以用短模式验证主窗口运行时健康、`stock_candidates / scan / watchlist / rt_monitor / lhb / fund_holdings` DataLineage、后台任务、Timer、事件订阅和 WebEngine 子进程预算：
+提交前可以用短模式验证主窗口运行时健康、`stock_candidates / scan / watchlist / lhb / fund_holdings` DataLineage、后台任务、Timer、事件订阅和 WebEngine 子进程预算：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\runtime_health_stability_suite.py --mode short --tabs stock_candidates scan watchlist rt_monitor lhb fund_holdings --sample-output-dir tmp\runtime_health_samples_short --output tmp\runtime_health_stability_short.json
+.\.venv\Scripts\python.exe scripts\runtime_health_stability_suite.py --mode short --tabs stock_candidates scan watchlist lhb fund_holdings --sample-output-dir tmp\runtime_health_samples_short --output tmp\runtime_health_stability_short.json
 .\.venv\Scripts\python.exe scripts\perf_budget_check.py --runtime-health-report tmp\runtime_health_stability_short.json
 ```
 

@@ -53,6 +53,7 @@ class StockTableModel(QAbstractTableModel):
         self._plain_style_headers = set()
         self._plain_background_headers = set()
         self._muted_text_headers = set()
+        self._sparse_update_coalescing = False
         self.dataChanged.connect(self._invalidate_sort_cache_for_changed_indexes)
 
         fonts = _build_table_model_fonts()
@@ -85,6 +86,9 @@ class StockTableModel(QAbstractTableModel):
 
     def set_muted_text_headers(self, headers):
         self._muted_text_headers = {str(header) for header in (headers or []) if str(header).strip()}
+
+    def set_sparse_update_coalescing(self, enabled: bool) -> None:
+        self._sparse_update_coalescing = bool(enabled)
 
     def _uses_muted_text(self, header: str) -> bool:
         return header in self._muted_text_headers
@@ -250,14 +254,15 @@ class StockTableModel(QAbstractTableModel):
             return False
         return set(old_ids) == set(new_ids)
 
-    def _record_cell_flash(self, row: int, col: int, old_value, new_value) -> None:
+    def _record_cell_flash(self, row: int, col: int, old_value, new_value) -> bool:
         if row < 0 or col < 0 or col >= len(self._headers):
-            return
+            return False
         self._sort_value_cache.pop((row, col), None)
         flash_record = _build_flash_record(self._headers[col], old_value, new_value)
         if not flash_record:
-            return
+            return False
         self._flash_records.setdefault(row, {})[col] = flash_record
+        return True
 
     def _clear_sort_value_cache(self) -> None:
         self._sort_value_cache.clear()
@@ -285,15 +290,17 @@ class StockTableModel(QAbstractTableModel):
             if row_start <= row <= row_end and col_start <= col <= col_end:
                 self._sort_value_cache.pop(cache_key, None)
 
-    def _record_row_flashes(self, row: int, old_row: dict, new_row: dict) -> None:
+    def _record_row_flashes(self, row: int, old_row: dict, new_row: dict) -> bool:
         if not isinstance(old_row, dict) or not isinstance(new_row, dict):
-            return
+            return False
+        recorded = False
         for col, header in enumerate(self._headers):
             if old_row.get(header) != new_row.get(header):
-                self._record_cell_flash(row, col, old_row.get(header), new_row.get(header))
+                recorded = self._record_cell_flash(row, col, old_row.get(header), new_row.get(header)) or recorded
+        return recorded
 
-    def _flash_roles(self) -> list[Qt.ItemDataRole]:
-        return [
+    def _flash_roles(self, *, include_flash: bool = True) -> list[Qt.ItemDataRole]:
+        roles = [
             Qt.ItemDataRole.DisplayRole,
             Qt.ItemDataRole.ToolTipRole,
             Qt.ItemDataRole.ForegroundRole,
@@ -301,18 +308,21 @@ class StockTableModel(QAbstractTableModel):
             Qt.ItemDataRole.FontRole,
             Qt.ItemDataRole.TextAlignmentRole,
             Qt.ItemDataRole.UserRole,
-            Qt.ItemDataRole.UserRole + 1,
             Qt.ItemDataRole.UserRole + 2,
             Qt.ItemDataRole.UserRole + 4,
             Qt.ItemDataRole.UserRole + 5,
         ]
+        if include_flash:
+            roles.insert(7, Qt.ItemDataRole.UserRole + 1)
+        return roles
 
     def _emit_incremental_rows(self, rows: list) -> None:
         _sync_serial_values(rows)
         changed_rows = []
+        flash_recorded = False
         for row_idx, new_row in enumerate(rows):
             if self._data[row_idx] != new_row:
-                self._record_row_flashes(row_idx, self._data[row_idx], new_row)
+                flash_recorded = self._record_row_flashes(row_idx, self._data[row_idx], new_row) or flash_recorded
                 self._data[row_idx] = new_row
                 changed_rows.append(row_idx)
 
@@ -325,7 +335,8 @@ class StockTableModel(QAbstractTableModel):
             changed_rows,
             0,
             max(0, self.columnCount() - 1),
-            self._flash_roles(),
+            self._flash_roles(include_flash=flash_recorded),
+            coalesce=self._sparse_update_coalescing,
         )
 
     def _emit_reordered_rows(self, rows: list) -> None:
@@ -339,7 +350,7 @@ class StockTableModel(QAbstractTableModel):
             self.dataChanged.emit(
                 self.index(0, 0),
                 self.index(self.rowCount() - 1, self.columnCount() - 1),
-                self._flash_roles(),
+                self._flash_roles(include_flash=False),
             )
 
     def update_data(self, new_data, *, hydrate_latest_quotes: bool = True):
@@ -441,6 +452,7 @@ class StockTableModel(QAbstractTableModel):
         return False
 
     def set_cell_value(self, row, col_name, new_val, emit_signal: bool = True):
+        flash_recorded = False
         if 0 <= row < len(self._data):
             old_val = self._data[row].get(col_name)
             self._data[row][col_name] = new_val
@@ -451,11 +463,12 @@ class StockTableModel(QAbstractTableModel):
                 col_idx = -1
             if col_idx >= 0:
                 self._sort_value_cache.pop((row, col_idx), None)
-                self._record_cell_flash(row, col_idx, old_val, new_val)
+                flash_recorded = self._record_cell_flash(row, col_idx, old_val, new_val)
 
             if emit_signal and col_idx >= 0:
                 idx = self.index(row, col_idx)
-                self.dataChanged.emit(idx, idx, self._flash_roles())
+                self.dataChanged.emit(idx, idx, self._flash_roles(include_flash=flash_recorded))
+        return flash_recorded
 
     def update_quotes(self, quotes: dict) -> int:
         started_at = time.perf_counter()
@@ -465,8 +478,8 @@ class StockTableModel(QAbstractTableModel):
             return 0
         _prune_flash_records(self._flash_records)
 
-        changed_rows = []
         changed_row_set = set()
+        flash_recorded = False
         quote_cols = []
         for header in ("现价", "市价", "涨幅%", "涨幅", "市值"):
             if header in self._headers:
@@ -496,22 +509,23 @@ class StockTableModel(QAbstractTableModel):
             if price_text is not None:
                 for price_key in ("现价", "市价"):
                     if price_key in self._headers and item_dict.get(price_key) != price_text:
-                        self.set_cell_value(row, price_key, price_text, emit_signal=False)
+                        flash_recorded = (
+                            self.set_cell_value(row, price_key, price_text, emit_signal=False) or flash_recorded
+                        )
                         row_changed = True
             if pct is not None:
                 for pct_key in ("涨幅%", "涨幅"):
                     if pct_key in self._headers and item_dict.get(pct_key) != pct:
-                        self.set_cell_value(row, pct_key, pct, emit_signal=False)
+                        flash_recorded = self.set_cell_value(row, pct_key, pct, emit_signal=False) or flash_recorded
                         row_changed = True
 
             if "市值" in self._headers:
                 cap_text = metrics.get("market_cap_text")
                 if cap_text and item_dict.get("市值") != cap_text:
-                    self.set_cell_value(row, "市值", cap_text, emit_signal=False)
+                    flash_recorded = self.set_cell_value(row, "市值", cap_text, emit_signal=False) or flash_recorded
                     row_changed = True
 
             if row_changed:
-                changed_rows.append(row)
                 changed_row_set.add(row)
 
             if buy_point_col >= 0 and rt_close > 0:
@@ -551,25 +565,20 @@ class StockTableModel(QAbstractTableModel):
                     )
 
                 if pos_str != item_dict.get("买点", ""):
-                    self.set_cell_value(row, "买点", pos_str)
+                    flash_recorded = self.set_cell_value(row, "买点", pos_str, emit_signal=False) or flash_recorded
                     changed_row_set.add(row)
 
-        if start_col is not None and end_col is not None:
+        if changed_row_set and start_col is not None and end_col is not None:
+            if buy_point_col >= 0:
+                start_col = min(start_col, buy_point_col)
+                end_col = max(end_col, buy_point_col)
             _emit_model_row_ranges(
                 self,
-                changed_rows,
+                sorted(changed_row_set),
                 start_col,
                 end_col,
-                [
-                    Qt.ItemDataRole.DisplayRole,
-                    Qt.ItemDataRole.ForegroundRole,
-                    Qt.ItemDataRole.BackgroundRole,
-                    Qt.ItemDataRole.UserRole,
-                    Qt.ItemDataRole.UserRole + 1,
-                    Qt.ItemDataRole.UserRole + 2,
-                    Qt.ItemDataRole.UserRole + 4,
-                    Qt.ItemDataRole.UserRole + 5,
-                ],
+                self._flash_roles(include_flash=flash_recorded),
+                coalesce=self._sparse_update_coalescing,
             )
         changed_row_count = len(changed_row_set)
         elapsed_ms = (time.perf_counter() - started_at) * 1000.0

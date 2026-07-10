@@ -12,9 +12,7 @@ from ui.workspaces.stock_context_service import StockContextService
 from ui.workspaces.stock_signal import StockSignal
 from ui.workspaces.tab_capabilities import (
     PostF5DataRefreshCapability,
-    RtMonitorControlCapability,
     ScanResultsCapability,
-    TableCollectionCapability,
 )
 from ui.workspaces.workspace_navigation_service import WorkspaceNavigationService
 from ui.workspaces.workspace_table_service import WorkspaceTableService
@@ -67,13 +65,6 @@ class WorkspaceFacade:
         if not isinstance(tab, ScanResultsCapability):
             return []
         return list(tab.get_scan_results() or [])
-
-    def get_rt_table(self):
-        tab = self._get_loaded_tab("rt_monitor")
-        if isinstance(tab, TableCollectionCapability):
-            tables = list(tab.iter_tables() or [])
-            return tables[0] if tables else None
-        return None
 
     def iter_tables(self) -> list:
         return self._workspace_table_service.iter_tables()
@@ -229,26 +220,6 @@ class WorkspaceFacade:
     def select_scan_row(self, index: int) -> bool:
         return self._workspace_navigation_service.select_scan_row(index)
 
-    def is_rt_monitor_running(self) -> bool:
-        service = getattr(getattr(self._workspace, "host", None), "rt_monitor_service", None)
-        is_running = getattr(service, "is_running", None)
-        if callable(is_running):
-            return bool(is_running())
-        tab = self._get_loaded_tab("rt_monitor")
-        if not isinstance(tab, RtMonitorControlCapability):
-            return False
-        return bool(tab.is_rt_running())
-
-    def toggle_rt_monitor(self) -> bool:
-        service = getattr(getattr(self._workspace, "host", None), "rt_monitor_service", None)
-        toggle = getattr(service, "toggle", None)
-        if callable(toggle):
-            return bool(toggle(auto=False))
-        tab = self._get_tab("rt_monitor")
-        if not isinstance(tab, RtMonitorControlCapability):
-            return False
-        return bool(tab.toggle_rt_monitor())
-
     def run_incremental_scan(self) -> bool:
         return self._call_bool(self._get_tab("scan"), "run_incremental_scan")
 
@@ -281,18 +252,6 @@ class WorkspaceFacade:
             self._call_bool(self._get_loaded_tab(key), "run_post_online_refresh")
 
         self.schedule_watchlist_special_quotes(task_manager)
-
-    def auto_start_rt_monitor(self) -> bool:
-        service = getattr(getattr(self._workspace, "host", None), "rt_monitor_service", None)
-        start = getattr(service, "start", None)
-        if callable(start):
-            return bool(start(auto=True))
-        tab = self._get_tab("rt_monitor")
-        if not isinstance(tab, RtMonitorControlCapability):
-            return False
-        if tab.is_rt_running():
-            return False
-        return bool(tab.toggle_rt_monitor(auto=True))
 
     def collect_watchlist_radar_data(
         self,
