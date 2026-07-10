@@ -787,9 +787,14 @@ def test_external_terminal_navigator_input_quote_code_empty_and_type_fallback(mo
         "infra.navigation.external_terminal_navigator.event_bus.sig_system_log",
         SimpleNamespace(emit=lambda level, message: emitted.append((level, message))),
     )
-    monkeypatch.setattr(navigator, "_activate_window", lambda user32, hwnd: None)
+    monkeypatch.setattr(navigator, "_can_send_input_to_window", lambda _hwnd: True)
+    monkeypatch.setattr(navigator, "_activate_window", lambda user32, hwnd: True)
     monkeypatch.setattr(navigator, "_try_fill_input_control", lambda hwnd, bare, app_name: False)
-    monkeypatch.setattr(ExternalTerminalNavigator, "_type_quote_code", staticmethod(lambda bare, app_name: True))
+    monkeypatch.setattr(
+        ExternalTerminalNavigator,
+        "_type_quote_code",
+        staticmethod(lambda bare, app_name, expected_hwnd=None: True),
+    )
 
     assert navigator._input_quote_code("user32", "hwnd", "", "APP") is False
     assert navigator._input_quote_code("user32", "hwnd", "sh600000", "APP") is True
@@ -862,6 +867,19 @@ def test_external_terminal_navigator_activate_window_and_type_quote_code(monkeyp
     class _User32:
         def __init__(self, iconic):
             self.iconic = iconic
+            self.foreground = "other"
+
+        def GetForegroundWindow(self):
+            return self.foreground
+
+        @staticmethod
+        def GetWindowThreadProcessId(hwnd, _process_id):
+            return {"other": 101, "hwnd": 202}[hwnd]
+
+        @staticmethod
+        def AttachThreadInput(current_thread, target_thread, attach):
+            calls.append(("attach", current_thread, target_thread, bool(attach)))
+            return True
 
         def IsIconic(self, hwnd):
             return self.iconic
@@ -871,7 +889,13 @@ def test_external_terminal_navigator_activate_window_and_type_quote_code(monkeyp
 
         def SetForegroundWindow(self, hwnd):
             calls.append(("foreground", hwnd))
+            self.foreground = hwnd
 
+        @staticmethod
+        def SetFocus(_hwnd):
+            return None
+
+    monkeypatch.setitem(sys.modules, "win32api", SimpleNamespace(GetCurrentThreadId=lambda: 303))
     monkeypatch.setitem(sys.modules, "win32gui", SimpleNamespace(BringWindowToTop=lambda hwnd: calls.append(("top", hwnd))))
     monkeypatch.setattr("infra.navigation.external_terminal_navigator.time.sleep", lambda _seconds: None)
 
@@ -880,6 +904,8 @@ def test_external_terminal_navigator_activate_window_and_type_quote_code(monkeyp
 
     assert ("show", 9) in calls
     assert ("show", 5) in calls
+    assert ("attach", 303, 101, True) in calls
+    assert ("attach", 303, 202, False) in calls
 
     pyautogui_calls = []
     monkeypatch.setitem(
@@ -897,6 +923,96 @@ def test_external_terminal_navigator_activate_window_and_type_quote_code(monkeyp
 
     assert ExternalTerminalNavigator._type_quote_code("600000", "APP") is True
     assert ("write", "600000", {"interval": 0.04}) in pyautogui_calls
+
+
+def test_external_terminal_navigator_blocks_higher_integrity_input(monkeypatch):
+    monkeypatch.setattr("infra.navigation.external_terminal_navigator.os.getpid", lambda: 10)
+    monkeypatch.setattr(
+        ExternalTerminalNavigator,
+        "_window_process_id",
+        staticmethod(lambda _hwnd: 20),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        ExternalTerminalNavigator,
+        "_process_integrity_level",
+        staticmethod(lambda process_id: {10: 8192, 20: 12288}[process_id]),
+        raising=False,
+    )
+
+    assert ExternalTerminalNavigator._can_send_input_to_window("hwnd") is False
+
+
+@pytest.mark.parametrize(
+    ("target_process_id", "integrity_levels"),
+    [
+        (None, {}),
+        (20, {10: None, 20: 12288}),
+        (20, {10: 8192, 20: None}),
+    ],
+)
+def test_external_terminal_navigator_blocks_unknown_integrity_input(
+    monkeypatch,
+    target_process_id,
+    integrity_levels,
+):
+    monkeypatch.setattr("infra.navigation.external_terminal_navigator.os.getpid", lambda: 10)
+    monkeypatch.setattr(
+        ExternalTerminalNavigator,
+        "_window_process_id",
+        staticmethod(lambda _hwnd: target_process_id),
+    )
+    monkeypatch.setattr(
+        ExternalTerminalNavigator,
+        "_process_integrity_level",
+        staticmethod(lambda process_id: integrity_levels[process_id]),
+    )
+
+    assert ExternalTerminalNavigator._can_send_input_to_window("hwnd") is False
+
+
+def test_external_terminal_navigator_rejects_typing_when_foreground_changed(monkeypatch):
+    emitted = []
+    monkeypatch.setitem(sys.modules, "win32gui", SimpleNamespace(GetForegroundWindow=lambda: "other"))
+    monkeypatch.setattr(
+        "infra.navigation.external_terminal_navigator.event_bus.sig_system_log",
+        SimpleNamespace(emit=lambda level, message: emitted.append((level, message))),
+    )
+
+    assert ExternalTerminalNavigator._type_quote_code("600000", "APP", expected_hwnd="hwnd") is False
+    assert emitted == [("warn", "[APP] 目标窗口未处于前台，已取消快捷输入")]
+
+
+@pytest.mark.parametrize(
+    ("can_send_input", "activated", "message_fragment"),
+    [(False, True, "权限"), (True, False, "激活")],
+)
+def test_external_terminal_navigator_skips_typing_when_input_boundary_fails(
+    monkeypatch,
+    can_send_input,
+    activated,
+    message_fragment,
+):
+    emitted = []
+    typed = []
+    navigator = ExternalTerminalNavigator(SimpleNamespace())
+    monkeypatch.setattr(navigator, "_can_send_input_to_window", lambda _hwnd: can_send_input, raising=False)
+    monkeypatch.setattr(navigator, "_activate_window", lambda _user32, _hwnd: activated)
+    monkeypatch.setattr(navigator, "_try_fill_input_control", lambda *_args: False)
+    monkeypatch.setattr(
+        navigator,
+        "_type_quote_code",
+        lambda bare, app_name: typed.append((bare, app_name)) or True,
+    )
+    monkeypatch.setattr(
+        "infra.navigation.external_terminal_navigator.event_bus.sig_system_log",
+        SimpleNamespace(emit=lambda level, message: emitted.append((level, message))),
+    )
+
+    assert navigator._input_quote_code("user32", "hwnd", "600000", "TDX") is False
+    assert typed == []
+    assert emitted and emitted[-1][0] == "warn"
+    assert message_fragment in emitted[-1][1]
 
 
 def test_external_terminal_navigator_thread_entrypoints_run_targets(monkeypatch):
@@ -951,6 +1067,20 @@ def test_external_terminal_navigator_window_helpers_cover_error_branches(monkeyp
     calls = []
 
     class _User32:
+        def __init__(self):
+            self.foreground = "other"
+
+        def GetForegroundWindow(self):
+            return self.foreground
+
+        @staticmethod
+        def GetWindowThreadProcessId(hwnd, _process_id):
+            return {"other": 101, "hwnd": 202}[hwnd]
+
+        @staticmethod
+        def AttachThreadInput(_current_thread, _target_thread, _attach):
+            return True
+
         def IsIconic(self, hwnd):
             return False
 
@@ -959,6 +1089,11 @@ def test_external_terminal_navigator_window_helpers_cover_error_branches(monkeyp
 
         def SetForegroundWindow(self, hwnd):
             calls.append(("foreground", hwnd))
+            self.foreground = hwnd
+
+        @staticmethod
+        def SetFocus(_hwnd):
+            return None
 
     class _Win32Gui:
         @staticmethod
@@ -966,6 +1101,7 @@ def test_external_terminal_navigator_window_helpers_cover_error_branches(monkeyp
             raise OSError("not allowed")
 
     monkeypatch.setitem(sys.modules, "win32gui", _Win32Gui)
+    monkeypatch.setitem(sys.modules, "win32api", SimpleNamespace(GetCurrentThreadId=lambda: 303))
     monkeypatch.setattr("infra.navigation.external_terminal_navigator.time.sleep", lambda _seconds: None)
 
     ExternalTerminalNavigator._activate_window(_User32(), "hwnd")
@@ -1046,7 +1182,8 @@ def test_external_terminal_navigator_input_control_success_and_typing_failure(mo
         "infra.navigation.external_terminal_navigator.event_bus.sig_system_log",
         SimpleNamespace(emit=lambda level, message: emitted.append((level, message))),
     )
-    monkeypatch.setattr(navigator, "_activate_window", lambda user32, hwnd: None)
+    monkeypatch.setattr(navigator, "_can_send_input_to_window", lambda _hwnd: True)
+    monkeypatch.setattr(navigator, "_activate_window", lambda user32, hwnd: True)
     monkeypatch.setattr(navigator, "_try_fill_input_control", lambda hwnd, bare, app_name: True)
 
     assert navigator._input_quote_code("user32", "hwnd", "600000", "APP") is True
@@ -1055,7 +1192,9 @@ def test_external_terminal_navigator_input_control_success_and_typing_failure(mo
     monkeypatch.setattr(
         ExternalTerminalNavigator,
         "_type_quote_code",
-        staticmethod(lambda bare, app_name: (_ for _ in ()).throw(RuntimeError("keyboard blocked"))),
+        staticmethod(
+            lambda bare, app_name, expected_hwnd=None: (_ for _ in ()).throw(RuntimeError("keyboard blocked"))
+        ),
     )
 
     assert navigator._input_quote_code("user32", "hwnd", "600000", "APP") is False

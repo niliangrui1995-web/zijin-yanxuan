@@ -80,19 +80,107 @@ class ExternalTerminalNavigator:
         return cls._wintypes_module(ctypes_module).HWND(0)
 
     @staticmethod
-    def _activate_window(user32, hwnd) -> None:
+    def _window_process_id(hwnd) -> int | None:
+        try:
+            import pywintypes
+            import win32process
+        except ImportError:
+            return None
+
+        try:
+            return int(win32process.GetWindowThreadProcessId(hwnd)[1])
+        except (OSError, RuntimeError, TypeError, ValueError, pywintypes.error):
+            return None
+
+    @staticmethod
+    def _process_integrity_level(process_id: int) -> int | None:
+        try:
+            import pywintypes
+            import win32api
+            import win32con
+            import win32security
+        except ImportError:
+            return None
+
+        process_handle = None
+        token_handle = None
+        try:
+            process_handle = win32api.OpenProcess(0x1000, False, int(process_id))
+            token_handle = win32security.OpenProcessToken(process_handle, win32con.TOKEN_QUERY)
+            integrity_info = win32security.GetTokenInformation(token_handle, win32security.TokenIntegrityLevel)
+            sid = integrity_info[0] if isinstance(integrity_info, tuple) else integrity_info
+            return int(sid.GetSubAuthority(sid.GetSubAuthorityCount() - 1))
+        except (OSError, RuntimeError, TypeError, ValueError, pywintypes.error):
+            return None
+        finally:
+            for handle in (token_handle, process_handle):
+                try:
+                    if handle is not None:
+                        handle.Close()
+                except (AttributeError, OSError, pywintypes.error):
+                    pass
+
+    @classmethod
+    def _can_send_input_to_window(cls, hwnd) -> bool:
+        target_process_id = cls._window_process_id(hwnd)
+        if target_process_id is None:
+            return False
+        current_level = cls._process_integrity_level(os.getpid())
+        target_level = cls._process_integrity_level(target_process_id)
+        if current_level is None or target_level is None:
+            return False
+        return current_level >= target_level
+
+    @staticmethod
+    def _activate_window(user32, hwnd) -> bool:
+        import win32api
         import win32gui
 
-        if user32.IsIconic(hwnd):
-            user32.ShowWindow(hwnd, 9)
-        else:
-            user32.ShowWindow(hwnd, 5)
+        win32_errors = (OSError, RuntimeError, TypeError, ValueError)
         try:
-            win32gui.BringWindowToTop(hwnd)
-        except OSError:
+            import pywintypes
+
+            win32_errors += (pywintypes.error,)
+        except ImportError:
             pass
-        user32.SetForegroundWindow(hwnd)
-        time.sleep(0.3)
+
+        attached_threads = []
+        try:
+            current_thread = win32api.GetCurrentThreadId()
+            foreground_hwnd = user32.GetForegroundWindow()
+            thread_ids = []
+            if foreground_hwnd:
+                thread_ids.append(user32.GetWindowThreadProcessId(foreground_hwnd, None))
+            thread_ids.append(user32.GetWindowThreadProcessId(hwnd, None))
+
+            for thread_id in dict.fromkeys(thread_ids):
+                if thread_id and thread_id != current_thread:
+                    try:
+                        if user32.AttachThreadInput(current_thread, thread_id, True):
+                            attached_threads.append(thread_id)
+                    except win32_errors:
+                        continue
+
+            user32.ShowWindow(hwnd, 9 if user32.IsIconic(hwnd) else 5)
+            try:
+                win32gui.BringWindowToTop(hwnd)
+            except win32_errors:
+                pass
+            user32.SetForegroundWindow(hwnd)
+            try:
+                user32.SetFocus(hwnd)
+            except win32_errors:
+                pass
+            time.sleep(0.3)
+            return bool(user32.GetForegroundWindow() == hwnd)
+        except win32_errors:
+            return False
+        finally:
+            for thread_id in reversed(attached_threads):
+                try:
+                    user32.AttachThreadInput(current_thread, thread_id, False)
+                except win32_errors:
+                    pass
 
     @staticmethod
     def _find_input_controls(hwnd):
@@ -150,7 +238,14 @@ class ExternalTerminalNavigator:
         return False
 
     @staticmethod
-    def _type_quote_code(bare: str, app_name: str) -> bool:
+    def _type_quote_code(bare: str, app_name: str, *, expected_hwnd=None) -> bool:
+        if expected_hwnd is not None:
+            import win32gui
+
+            if win32gui.GetForegroundWindow() != expected_hwnd:
+                event_bus.sig_system_log.emit("warn", f"[{app_name}] 目标窗口未处于前台，已取消快捷输入")
+                return False
+
         import pyautogui
 
         pyautogui.press("esc", presses=2, interval=0.05)
@@ -167,12 +262,20 @@ class ExternalTerminalNavigator:
             event_bus.sig_system_log.emit("warn", f"[{app_name}] 股票代码为空，跳转取消")
             return False
 
-        self._activate_window(user32, hwnd)
+        if not self._can_send_input_to_window(hwnd):
+            event_bus.sig_system_log.emit(
+                "warn",
+                f"[{app_name}] 无法确认输入权限，或目标程序权限高于紫金研选；请以相同权限运行两个程序",
+            )
+            return False
+        if not self._activate_window(user32, hwnd):
+            event_bus.sig_system_log.emit("warn", f"[{app_name}] 未能激活目标窗口，已取消快捷输入")
+            return False
         if self._try_fill_input_control(hwnd, bare, app_name):
             return True
 
         try:
-            return self._type_quote_code(bare, app_name)
+            return self._type_quote_code(bare, app_name, expected_hwnd=hwnd)
         except (OSError, RuntimeError, ValueError) as exc:
             event_bus.sig_system_log.emit("warn", f"[{app_name}] 快捷输入失败: {exc}")
             return False
