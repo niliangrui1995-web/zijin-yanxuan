@@ -12,7 +12,7 @@ class _DummyProvider(TdxDataProviderHistoryMixin):
     def __init__(self, local_df=None):
         self.cache_data = {}
         self.cache_lock = threading.Lock()
-        self.tdx_vipdoc = "C:\\zd_huatai\\vipdoc"
+        self.tdx_vipdoc = "D:\\HT\\vipdoc"
         self._local_df = local_df
         self.fetch_calls = 0
 

@@ -158,7 +158,7 @@ def test_local_history_provider_prefers_sufficient_local_data():
     ).set_index("datetime")
     adjusted = local_df.copy()
     provider = SimpleNamespace(
-        tdx_vipdoc="C:/zd_huatai/vipdoc",
+        tdx_vipdoc="D:/HT/vipdoc",
         _get_market_code=lambda code: 0,
         _fetch_from_local_tdx=lambda code: local_df,
         _apply_forward_adjustment=lambda api, market, code, df: adjusted,
@@ -373,7 +373,7 @@ def test_local_history_provider_local_data_edge_paths():
     logger = _RecorderLog()
     frame = _PolarsLikeFrame()
     provider = SimpleNamespace(
-        tdx_vipdoc="C:/zd_huatai/vipdoc",
+        tdx_vipdoc="D:/HT/vipdoc",
         _get_market_code=lambda code: 0,
         _fetch_from_local_tdx=lambda code: frame,
         _apply_forward_adjustment=lambda api, market, code, df: frame,
@@ -1119,7 +1119,7 @@ def test_external_terminal_navigator_tdx_missing_path_and_exception_fallbacks(mo
     fallbacks = []
     emitted = []
     navigator = ExternalTerminalNavigator(
-        SimpleNamespace(data_provider=SimpleNamespace(tdx_vipdoc="C:/zd_huatai/vipdoc"))
+        SimpleNamespace(data_provider=SimpleNamespace(tdx_vipdoc="D:/HT/vipdoc"))
     )
 
     monkeypatch.setattr("infra.navigation.external_terminal_navigator.os.path.exists", lambda _path: False)
@@ -1153,7 +1153,7 @@ def test_external_terminal_navigator_tdx_existing_and_unfound_window_paths(monke
     fallbacks = []
     spawned = []
     navigator = ExternalTerminalNavigator(
-        SimpleNamespace(data_provider=SimpleNamespace(tdx_vipdoc="C:/zd_huatai/vipdoc"))
+        SimpleNamespace(data_provider=SimpleNamespace(tdx_vipdoc="D:/HT/vipdoc"))
     )
 
     monkeypatch.setattr("infra.navigation.external_terminal_navigator.os.path.exists", lambda _path: True)
@@ -1177,7 +1177,7 @@ def test_external_terminal_navigator_tdx_existing_and_unfound_window_paths(monke
 
     navigator._launch_tdx_impl("000001")
 
-    assert spawned == [["C:/zd_huatai/tdxw.exe"]]
+    assert spawned == [["D:/HT/tdxw.exe"]]
     assert inputs == []
     assert fallbacks[-1][0] == "000001"
 
@@ -1191,7 +1191,7 @@ def test_external_terminal_navigator_tdx_ignores_windows_until_spawned_window_ap
         visible={1: False},
     )
     navigator = ExternalTerminalNavigator(
-        SimpleNamespace(data_provider=SimpleNamespace(tdx_vipdoc="C:/zd_huatai/vipdoc"))
+        SimpleNamespace(data_provider=SimpleNamespace(tdx_vipdoc="D:/HT/vipdoc"))
     )
 
     def fake_sleep(_seconds):
@@ -1213,7 +1213,7 @@ def test_external_terminal_navigator_tdx_ignores_windows_until_spawned_window_ap
 def test_external_terminal_navigator_tdx_input_failure_uses_web_fallback(monkeypatch):
     fallbacks = []
     navigator = ExternalTerminalNavigator(
-        SimpleNamespace(data_provider=SimpleNamespace(tdx_vipdoc="C:/zd_huatai/vipdoc"))
+        SimpleNamespace(data_provider=SimpleNamespace(tdx_vipdoc="D:/HT/vipdoc"))
     )
 
     monkeypatch.setattr("infra.navigation.external_terminal_navigator.os.path.exists", lambda _path: True)

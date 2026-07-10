@@ -11,8 +11,8 @@ def test_tdx_local_config_defaults_to_huatai_installation(monkeypatch):
     monkeypatch.setattr(utils.os.path, "exists", lambda _path: False)
     monkeypatch.setattr(utils, "_check_vipdoc_valid", lambda path: path == DEFAULT_TDX_VIPDOC)
 
-    assert DEFAULT_TDX_ROOT == r"C:\zd_huatai"
-    assert DEFAULT_TDX_VIPDOC == r"C:\zd_huatai\vipdoc"
+    assert DEFAULT_TDX_ROOT == r"D:\HT"
+    assert DEFAULT_TDX_VIPDOC == r"D:\HT\vipdoc"
     assert utils._load_tdx_local_config() == DEFAULT_TDX_VIPDOC
 
 

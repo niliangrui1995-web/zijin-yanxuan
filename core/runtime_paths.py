@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 PROJECT_ROOT = str(Path(__file__).resolve().parents[1])
-DEFAULT_TDX_ROOT = r"C:\zd_huatai"
+DEFAULT_TDX_ROOT = r"D:\HT"
 DEFAULT_TDX_VIPDOC = DEFAULT_TDX_ROOT + r"\vipdoc"
 
 

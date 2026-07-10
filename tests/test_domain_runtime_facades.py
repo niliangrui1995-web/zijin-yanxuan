@@ -25,8 +25,8 @@ def test_sector_runtime_service_returns_sector_manager(monkeypatch):
         classmethod(lambda cls, root=None: calls.append(root) or {"root": root}),
     )
 
-    assert sector_runtime_service.get_sector_manager("C:/zd_huatai") == {"root": "C:/zd_huatai"}
-    assert calls == ["C:/zd_huatai"]
+    assert sector_runtime_service.get_sector_manager("D:/HT") == {"root": "D:/HT"}
+    assert calls == ["D:/HT"]
 
 
 def test_domains_lazy_exports_resolve_and_cache(monkeypatch):
