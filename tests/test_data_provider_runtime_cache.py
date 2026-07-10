@@ -75,7 +75,7 @@ def test_tdx_provider_market_data_source_status_uses_memory_then_warehouse():
     provider.market_data_warehouse = SimpleNamespace(
         current_status=lambda validate_parquet=False: SimpleNamespace(to_dict=lambda: {"ok": True, "data_status": "ok"})
     )
-    provider.tdx_vipdoc = "D:/HT/vipdoc"
+    provider.tdx_vipdoc = "C:/zd_huatai/vipdoc"
 
     status = provider.get_market_data_source_status()
 
@@ -96,7 +96,7 @@ def test_tdx_provider_market_data_source_status_handles_warehouse_error_and_unav
     provider.market_data_warehouse = SimpleNamespace(
         current_status=lambda validate_parquet=False: (_ for _ in ()).throw(RuntimeError("broken"))
     )
-    provider.tdx_vipdoc = "D:/HT/vipdoc"
+    provider.tdx_vipdoc = "C:/zd_huatai/vipdoc"
 
     status = provider.get_market_data_source_status()
 
@@ -112,7 +112,7 @@ def test_tdx_provider_market_data_source_status_handles_warehouse_error_and_unav
 
 def test_tdx_provider_loads_gbbq_code_cache_with_lru_eviction():
     provider = _make_provider()
-    provider.tdx_vipdoc = "D:/HT/vipdoc"
+    provider.tdx_vipdoc = "C:/zd_huatai/vipdoc"
     provider._local_gbbq = {}
     provider._local_gbbq_loaded = False
     provider._local_gbbq_lock = threading.RLock()
@@ -208,7 +208,7 @@ def test_tdx_provider_small_helpers_and_local_gbbq_paths(monkeypatch):
     assert provider._get_local_gbbq_for_code("000001") == {"all": "cached"}
 
     loaded_calls = []
-    provider.tdx_vipdoc = "D:/HT/vipdoc"
+    provider.tdx_vipdoc = "C:/zd_huatai/vipdoc"
     provider._get_adjustment_service = lambda: SimpleNamespace(
         load_local_gbbq=lambda force=False: loaded_calls.append(force) or {"fresh": force},
         load_local_gbbq_for_code=lambda code: {code: f"frame-{code}"},
@@ -240,7 +240,7 @@ def test_tdx_provider_status_and_cache_helpers_handle_fallbacks(monkeypatch):
     provider.cache_data = {"bad": _BadFrame()}
     provider._last_market_data_source_status = {"ok": False}
     provider.market_data_warehouse = None
-    provider.tdx_vipdoc = "D:/HT/vipdoc"
+    provider.tdx_vipdoc = "C:/zd_huatai/vipdoc"
     status = provider.get_market_data_source_status()
     assert status["memory_row_count"] == 0
     assert status["active_layer"] == "memory_cache"

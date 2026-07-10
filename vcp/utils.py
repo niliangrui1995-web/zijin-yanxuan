@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from core.logger import get_logger
-from vcp.constants import PROJECT_ROOT
+from core.runtime_paths import DEFAULT_TDX_ROOT, DEFAULT_TDX_VIPDOC, PROJECT_ROOT
 
 _log = get_logger(__name__)
 
@@ -29,7 +29,7 @@ def _load_tdx_local_config():
     """读取通达信本地路径配置。"""
     candidates = [
         os.path.join("D:\\", "vcp_qt", "vcp_tdx_config.json"),
-        os.path.join("D:\\", "HT", "vcp_tdx_config.json"),
+        os.path.join(DEFAULT_TDX_ROOT, "vcp_tdx_config.json"),
         os.path.join(PROJECT_ROOT, "vcp_tdx_config.json"),
     ]
     for cfg_path in candidates:
@@ -49,9 +49,8 @@ def _load_tdx_local_config():
         except (FileNotFoundError, PermissionError, OSError, TypeError, ValueError, json.JSONDecodeError) as _e:
             _log.debug(f"[配置] 通达信配置文件 {cfg_path} 读取异常: {_e}")
             continue
-    default_ht = os.path.join("D:\\", "HT", "vipdoc")
-    if _check_vipdoc_valid(default_ht):
-        return default_ht
+    if _check_vipdoc_valid(DEFAULT_TDX_VIPDOC):
+        return DEFAULT_TDX_VIPDOC
     return None
 
 

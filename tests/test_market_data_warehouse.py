@@ -495,7 +495,7 @@ class _DummyProvider(TdxDataProviderHistoryMixin):
         self.cache_data = {}
         self.cache_lock = threading.Lock()
         self.market_data_warehouse = warehouse
-        self.tdx_vipdoc = "D:\\HT\\vipdoc"
+        self.tdx_vipdoc = "C:\\zd_huatai\\vipdoc"
         self._local_df = local_df
         self.fetch_calls = 0
 

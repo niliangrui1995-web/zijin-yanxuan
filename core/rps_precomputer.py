@@ -11,7 +11,13 @@ import time
 
 from core.json_cache import remove_cache_file, save_json_file
 from core.logger import get_logger, system_log_backpressure
-from core.runtime_paths import PROJECT_ROOT, RPS_CACHE_FILE, SECTOR_RPS_CACHE_FILE, ensure_cache_dir
+from core.runtime_paths import (
+    DEFAULT_TDX_ROOT,
+    PROJECT_ROOT,
+    RPS_CACHE_FILE,
+    SECTOR_RPS_CACHE_FILE,
+    ensure_cache_dir,
+)
 
 log = get_logger(__name__)
 
@@ -217,7 +223,7 @@ class RPSPrecomputer:
                 try:
                     from vcp.sector import SectorManager
 
-                    tdx_root = os.path.dirname(data_provider.tdx_vipdoc) if data_provider.tdx_vipdoc else r"D:\HT"
+                    tdx_root = os.path.dirname(data_provider.tdx_vipdoc) if data_provider.tdx_vipdoc else DEFAULT_TDX_ROOT
                     sm = SectorManager.get_instance(tdx_root)
                     all_data_f5 = {
                         c: df for c, df in data_provider.cache_data.items() if df is not None and len(df) >= 60

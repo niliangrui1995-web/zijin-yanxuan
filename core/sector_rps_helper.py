@@ -16,7 +16,7 @@ from core.exceptions import CacheIOError, DataFormatError
 from core.json_cache import load_json_file, save_json_file
 from core.logger import get_logger
 from core.market_calendar import MarketCalendar
-from core.runtime_paths import SECTOR_RPS_CACHE_FILE
+from core.runtime_paths import DEFAULT_TDX_ROOT, SECTOR_RPS_CACHE_FILE
 from vcp.sector import SectorManager
 
 log = get_logger(__name__)
@@ -59,7 +59,7 @@ def _normalize_sector_rps(sector_rps: dict) -> dict:
 
 def _get_sector_manager(data_provider) -> SectorManager:
     tdx_vipdoc = getattr(data_provider, "tdx_vipdoc", "")
-    tdx_root = os.path.dirname(tdx_vipdoc) if tdx_vipdoc else r"D:\HT"
+    tdx_root = os.path.dirname(tdx_vipdoc) if tdx_vipdoc else DEFAULT_TDX_ROOT
     return SectorManager.get_instance(tdx_root)
 
 

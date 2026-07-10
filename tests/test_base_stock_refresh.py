@@ -124,7 +124,7 @@ def test_market_cap_batcher_prefers_local_tdx_capital(monkeypatch, tmp_path):
     monkeypatch.setattr(refresh_module, "publish_rt_quotes", lambda payload, source="": dict(payload or {}))
 
     owner = _DummyOwner()
-    owner.data_provider = SimpleNamespace(tdx_vipdoc="D:/HT/vipdoc")
+    owner.data_provider = SimpleNamespace(tdx_vipdoc="C:/zd_huatai/vipdoc")
 
     MarketCapRefreshBatcher.enqueue(owner, ["000001"])
 
@@ -622,7 +622,7 @@ def test_load_cached_finance_snapshot_prefers_local_tdx_capital(monkeypatch, tmp
     refresh_module._FINANCE_CACHE_SIGNATURE = None
     refresh_module._FINANCE_CACHE_PAYLOAD = None
 
-    snapshot = refresh_module.load_cached_finance_snapshot(["000001"], tdx_vipdoc="D:/HT/vipdoc")
+    snapshot = refresh_module.load_cached_finance_snapshot(["000001"], tdx_vipdoc="C:/zd_huatai/vipdoc")
 
     assert snapshot["000001"]["zongguben"] == 2000000000
     assert snapshot["000001"]["market_cap"] == 11000000000

@@ -34,7 +34,7 @@ def test_central_quote_poller_prefers_local_tdx_capital(monkeypatch):
     from app.services import central_quote_polling_service as polling_service
 
     class DummyProvider:
-        tdx_vipdoc = "D:/HT/vipdoc"
+        tdx_vipdoc = "C:/zd_huatai/vipdoc"
 
         def fetch_realtime_quotes_batch(self, codes):
             return {codes[0]: {"close": 10.5, "last_close": 10.0, "source": "local_cache"}}
@@ -110,7 +110,7 @@ def test_central_quote_poller_handles_invalid_share_capital_and_empty_lookup():
 
 def test_central_quote_poller_falls_back_when_local_tdx_lookup_fails(monkeypatch):
     class DummyProvider:
-        tdx_vipdoc = "D:/HT/vipdoc"
+        tdx_vipdoc = "C:/zd_huatai/vipdoc"
 
     monkeypatch.setattr(
         polling_service,

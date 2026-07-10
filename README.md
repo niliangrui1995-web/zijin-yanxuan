@@ -315,11 +315,11 @@ python -m pip install -r requirements.txt
 
 ### 4. 配置通达信数据目录
 
-推荐在项目根目录放置 `vcp_tdx_config.json`：
+程序默认读取 `C:\zd_huatai\vipdoc`。如需覆盖默认位置，可在项目根目录放置 `vcp_tdx_config.json`：
 
 ```json
 {
-  "tdx_vipdoc_root": "D:\\HT\\vipdoc"
+  "tdx_vipdoc_root": "C:\\zd_huatai\\vipdoc"
 }
 ```
 

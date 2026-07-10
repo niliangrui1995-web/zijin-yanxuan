@@ -18,6 +18,7 @@ from datetime import datetime as _datetime
 import numpy as np
 
 from core.logger import get_logger
+from core.runtime_paths import DEFAULT_TDX_ROOT
 
 _log = get_logger(__name__)
 
@@ -39,7 +40,7 @@ class SectorManager:
             from core.app_config import app_config
 
             vipdoc = app_config.get("scan/tdx_vipdoc", "")
-            tdx_root = os.path.dirname(vipdoc) if vipdoc else r"D:\HT"
+            tdx_root = os.path.dirname(vipdoc) if vipdoc else DEFAULT_TDX_ROOT
         if cls._instance is None or cls._instance_root != tdx_root:
             cls._instance = cls(tdx_root)
             cls._instance_root = tdx_root
@@ -55,7 +56,7 @@ class SectorManager:
             from core.app_config import app_config
 
             vipdoc = app_config.get("scan/tdx_vipdoc", "")
-            tdx_root = os.path.dirname(vipdoc) if vipdoc else r"D:\HT"
+            tdx_root = os.path.dirname(vipdoc) if vipdoc else DEFAULT_TDX_ROOT
         self.tdx_root = tdx_root
         # 股票代码 → 所属板块名列表
         self.code_to_sectors = defaultdict(list)
