@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import importlib
+
 from vcp.data_provider_history_mixin import TdxDataProviderHistoryMixin
+
+data_store_module = importlib.import_module("infra.storage.data_store")
 
 
 class _Store:
@@ -44,7 +48,7 @@ class _VipdocProvider(TdxDataProviderHistoryMixin):
 
 def test_ensure_code_name_map_with_targets_avoids_full_vipdoc_scan(monkeypatch):
     store = _Store()
-    monkeypatch.setattr("core.data_store.DataStore", lambda: store)
+    monkeypatch.setattr(data_store_module, "DataStore", lambda: store)
     provider = _Provider()
 
     result = provider.ensure_code_name_map(
@@ -63,7 +67,7 @@ def test_ensure_code_name_map_with_targets_avoids_full_vipdoc_scan(monkeypatch):
 
 def test_load_cached_code_name_map_avoids_vipdoc_and_local_master_scan(monkeypatch):
     store = _Store()
-    monkeypatch.setattr("core.data_store.DataStore", lambda: store)
+    monkeypatch.setattr(data_store_module, "DataStore", lambda: store)
     provider = _Provider()
 
     result = provider.load_cached_code_name_map()
@@ -77,7 +81,7 @@ def test_load_cached_code_name_map_avoids_vipdoc_and_local_master_scan(monkeypat
 
 def test_get_codes_from_vipdoc_without_local_path_returns_cached_names(monkeypatch):
     store = _Store()
-    monkeypatch.setattr("core.data_store.DataStore", lambda: store)
+    monkeypatch.setattr(data_store_module, "DataStore", lambda: store)
     provider = _VipdocProvider()
 
     result = provider._get_codes_from_vipdoc()

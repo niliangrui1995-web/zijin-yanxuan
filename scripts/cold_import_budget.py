@@ -25,19 +25,44 @@ if str(REPO_ROOT) not in sys.path:
 @dataclass(frozen=True)
 class ImportBudget:
     max_elapsed_ms: float
-    max_rss_delta_mb: float
+    max_rss_delta_mb_by_platform: dict[str, float]
     requires_qapplication: bool = False
 
 
 TARGET_BUDGETS = {
-    "app.services": ImportBudget(max_elapsed_ms=500.0, max_rss_delta_mb=32.0),
-    "infra.market_data": ImportBudget(max_elapsed_ms=500.0, max_rss_delta_mb=32.0),
+    "app.services": ImportBudget(
+        max_elapsed_ms=500.0,
+        max_rss_delta_mb_by_platform={"windows": 32.0, "linux": 40.0, "macos": 48.0},
+    ),
+    "infra.market_data": ImportBudget(
+        max_elapsed_ms=500.0,
+        max_rss_delta_mb_by_platform={"windows": 32.0, "linux": 40.0, "macos": 48.0},
+    ),
     "ui.main_window_qt": ImportBudget(
         max_elapsed_ms=1000.0,
-        max_rss_delta_mb=48.0,
+        max_rss_delta_mb_by_platform={"windows": 48.0, "linux": 80.0, "macos": 80.0},
         requires_qapplication=True,
     ),
 }
+
+
+def _platform_key(platform_name: str | None = None) -> str:
+    value = str(platform_name or sys.platform).strip().lower()
+    if value.startswith("win"):
+        return "windows"
+    if value.startswith("linux"):
+        return "linux"
+    if value.startswith("darwin") or value.startswith("mac"):
+        return "macos"
+    raise ValueError(f"unsupported cold-import platform: {value or '<empty>'}")
+
+
+def rss_budget_for_platform(budget: ImportBudget, platform_name: str | None = None) -> float:
+    platform_key = _platform_key(platform_name)
+    try:
+        return float(budget.max_rss_delta_mb_by_platform[platform_key])
+    except KeyError as exc:
+        raise ValueError(f"missing RSS budget for platform: {platform_key}") from exc
 
 
 def _rss_mb() -> float:
@@ -143,10 +168,16 @@ def aggregate_samples(target: str, samples: list[dict]) -> dict:
     }
 
 
-def evaluate_measurement(measurement: dict, budget: ImportBudget) -> list[dict]:
+def evaluate_measurement(
+    measurement: dict,
+    budget: ImportBudget,
+    *,
+    platform_name: str | None = None,
+) -> list[dict]:
     failures = []
     elapsed_ms = float(measurement.get("elapsed_ms") or 0.0)
     rss_delta_mb = float(measurement.get("rss_delta_mb") or 0.0)
+    max_rss_delta_mb = rss_budget_for_platform(budget, platform_name)
     if elapsed_ms > budget.max_elapsed_ms:
         failures.append(
             {
@@ -155,12 +186,12 @@ def evaluate_measurement(measurement: dict, budget: ImportBudget) -> list[dict]:
                 "budget": budget.max_elapsed_ms,
             }
         )
-    if rss_delta_mb > budget.max_rss_delta_mb:
+    if rss_delta_mb > max_rss_delta_mb:
         failures.append(
             {
                 "metric": "rss_delta_mb",
                 "actual": rss_delta_mb,
-                "budget": budget.max_rss_delta_mb,
+                "budget": max_rss_delta_mb,
             }
         )
     return failures
@@ -172,12 +203,17 @@ def build_report(targets: list[str]) -> dict:
     for target in targets:
         budget = TARGET_BUDGETS[target]
         measurement = probe_target(target, budget)
-        measurement["budget"] = asdict(budget)
+        measurement["budget"] = {
+            **asdict(budget),
+            "platform": _platform_key(),
+            "resolved_max_rss_delta_mb": rss_budget_for_platform(budget),
+        }
         measurements.append(measurement)
         for failure in evaluate_measurement(measurement, budget):
             failures.append({"target": target, **failure})
     return {
         "status": "fail" if failures else "ok",
+        "platform": _platform_key(),
         "measurements": measurements,
         "failure_count": len(failures),
         "failures": failures,

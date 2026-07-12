@@ -8,20 +8,23 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import lru_cache
+from pathlib import Path
 from threading import Lock
 
 import requests
 
-from core.ai_industry_chain_pool import (
-    load_cached_ai_industry_chain_context_map,
-    load_cached_ai_industry_chain_stock_codes,
-    normalize_ai_chain_code,
-)
 from core.logger import get_logger
+from core.runtime_paths import PROJECT_ROOT
+from domains.industry_chain.pool_service import normalize_ai_chain_code
 from domains.market_calendar import MarketCalendar
 from infra.http_safety import requests_get_https
 
 logger = get_logger()
+
+
+def _raise_if_cancelled(cancellation_token=None) -> None:
+    if cancellation_token is not None:
+        cancellation_token.raise_if_cancelled()
 
 
 class _LazyModule:
@@ -125,6 +128,13 @@ _EARNINGS_CACHE_ERRORS = (
     json.JSONDecodeError,
 )
 _EARNINGS_COMPUTE_ERRORS = _AKSHARE_FETCH_ERRORS + (ArithmeticError,)
+
+
+def resolve_legacy_earnings_cache_path(cache_file: str | os.PathLike[str]) -> str:
+    path = Path(cache_file).expanduser()
+    if not path.is_absolute():
+        path = Path(PROJECT_ROOT) / path
+    return str(path.resolve())
 
 
 @dataclass(frozen=True)
@@ -658,19 +668,253 @@ def current_active_report_dates() -> list:
     return dates if dates else [f"{year - 1}1231", f"{year}0331", f"{year}0630", f"{year}0930"]
 
 
+def _call_engine_stage(engine, method_name: str, cancellation_token, *args, **kwargs):
+    _raise_if_cancelled(cancellation_token)
+    method = getattr(engine, method_name)
+    if cancellation_token is not None:
+        kwargs["cancellation_token"] = cancellation_token
+    result = method(*args, **kwargs)
+    _raise_if_cancelled(cancellation_token)
+    return result
+
+
+def _collect_guidance_pools(engine, report_dates, target_date, cancellation_token=None):
+    rows = []
+    critical = False
+    for report_date in report_dates:
+        try:
+            rows.extend(
+                _call_engine_stage(
+                    engine,
+                    "_collect_guidance_candidates",
+                    cancellation_token,
+                    report_date,
+                    target_date,
+                )
+            )
+        except _AKSHARE_FETCH_ERRORS as exc:
+            _raise_if_cancelled(cancellation_token)
+            logger.error(f"[业绩引擎] 业绩预告({report_date})拉取失败: {exc}")
+            critical = True
+    return rows, critical
+
+
+def _collect_formal_pool(engine, report_date, target_date, degraded, cancellation_token=None):
+    if degraded:
+        logger.warning(f"[业绩引擎] ⚠️ 【正式财报池】 ({report_date}) 本轮已降级，跳过并等待下次例行扫描重试")
+        return [], True, [], True
+    try:
+        rows = _call_engine_stage(
+            engine,
+            "_collect_report_candidates",
+            cancellation_token,
+            report_date,
+            target_date,
+            fetch_func=ak.stock_yjbb_em,
+            date_col="最新公告日期",
+            data_type="财报",
+            tone="正式出炉",
+            max_fetch_elapsed_sec=EARNINGS_FORMAL_REPORT_RETRY_BUDGET_SECONDS,
+        )
+        return rows, False, [], False
+    except EarningsUpstreamDegraded as exc:
+        logger.warning(f"[业绩引擎] ⚠️ 财报({report_date})本轮降级: {exc}")
+        return [], True, [exc.to_dict()], True
+    except _AKSHARE_FETCH_ERRORS as exc:
+        _raise_if_cancelled(cancellation_token)
+        logger.error(f"[业绩引擎] 财报({report_date})拉取失败: {exc}")
+        return [], True, [], False
+
+
+def _collect_quick_pool(engine, report_date, target_date, cancellation_token=None):
+    try:
+        rows = _call_engine_stage(
+            engine,
+            "_collect_report_candidates",
+            cancellation_token,
+            report_date,
+            target_date,
+            fetch_func=ak.stock_yjkb_em,
+            date_col="公告日期",
+            data_type="快报",
+            tone="快报速递",
+        )
+        return rows, False
+    except _AKSHARE_FETCH_ERRORS as exc:
+        _raise_if_cancelled(cancellation_token)
+        logger.error(f"[业绩引擎] 业绩快报({report_date})拉取失败: {exc}")
+        return [], True
+
+
+def _collect_daily_candidates_pipeline(engine, report_dates, target_date, cancellation_token=None):
+    rows, critical = _collect_guidance_pools(engine, report_dates, target_date, cancellation_token)
+    degradations = []
+    formal_degraded = False
+    for report_date in report_dates:
+        formal_rows, formal_error, new_degradations, formal_degraded = _collect_formal_pool(
+            engine,
+            report_date,
+            target_date,
+            formal_degraded,
+            cancellation_token,
+        )
+        quick_rows, quick_error = _collect_quick_pool(engine, report_date, target_date, cancellation_token)
+        rows.extend(formal_rows)
+        rows.extend(quick_rows)
+        degradations.extend(new_degradations)
+        critical = critical or formal_error or quick_error
+    return rows, critical, degradations
+
+
+def _submit_candidate_futures(engine, executor, candidates, cancellation_token=None):
+    futures = {}
+    for candidate in candidates:
+        _raise_if_cancelled(cancellation_token)
+        kwargs = {"cancellation_token": cancellation_token} if cancellation_token is not None else {}
+        future = executor.submit(engine._check_surprise_candidate, candidate, **kwargs)
+        futures[future] = candidate
+    return futures
+
+
+def _log_candidate_progress(cand, processed_count: int, total_pending: int) -> None:
+    code = cand["股票代码"]
+    if total_pending >= 50 and processed_count % 20 == 0:
+        logger.info(f"[业绩引擎] 验证进度 {processed_count}/{total_pending}")
+    elif 10 < total_pending < 50 and processed_count % 10 == 0:
+        logger.info(f"[业绩引擎] 验证进度 {processed_count}/{total_pending}")
+    elif 0 < total_pending <= 10:
+        logger.info(f"[业绩引擎] 验证 {processed_count}/{total_pending}: {code} {cand.get('股票名称', '')}")
+
+
+def _validated_candidate(engine, future, failed_candidate, processed_count, total_pending, cancellation_token=None):
+    try:
+        cand, fingerprint, result = future.result()
+        _raise_if_cancelled(cancellation_token)
+        _log_candidate_progress(cand, processed_count, total_pending)
+        if result.get("error") is not None or not engine._surprise_result_passes_threshold(result):
+            return None
+        cand.update(result)
+        cand["揭晓日"] = str(cand.get("公告日期") or cand.get("源公告日期") or "").strip()
+        cand["发现时间"] = MarketCalendar.now("CN").isoformat(timespec="seconds")
+        return cand, fingerprint
+    except _EARNINGS_COMPUTE_ERRORS as exc:
+        _raise_if_cancelled(cancellation_token)
+        logger.debug(f"[业绩引擎] {failed_candidate.get('股票代码', '?')} 并发计算异常: {exc}")
+        return None
+
+
+def _process_pending_candidates_pipeline(engine, candidates, cancellation_token=None):
+    if not candidates:
+        return [], False
+    import concurrent.futures
+
+    valid_records = []
+    fingerprints = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        future_map = _submit_candidate_futures(engine, executor, candidates, cancellation_token)
+        for processed_count, future in enumerate(concurrent.futures.as_completed(future_map), start=1):
+            _raise_if_cancelled(cancellation_token)
+            validated = _validated_candidate(
+                engine,
+                future,
+                future_map[future],
+                processed_count,
+                len(candidates),
+                cancellation_token,
+            )
+            if validated is not None:
+                record, fingerprint = validated
+                valid_records.append(record)
+                fingerprints.append(fingerprint)
+    _raise_if_cancelled(cancellation_token)
+    engine.local_records.extend(valid_records)
+    engine.seen_fingerprints.update(fingerprints)
+    return valid_records, bool(valid_records)
+
+
+def _prepare_daily_scan(engine, target_date, cancellation_token=None):
+    report_dates = current_active_report_dates()
+    candidates, critical, degradations = engine._collect_daily_surprise_candidates(
+        report_dates,
+        target_date,
+        cancellation_token=cancellation_token,
+    )
+    candidates.sort(key=lambda item: not item["is_koufei"])
+    universe_codes = engine._resolve_stock_universe_codes(cancellation_token=cancellation_token)
+    pending = engine._pending_surprise_candidates(
+        candidates,
+        universe_codes,
+        cancellation_token=cancellation_token,
+    )
+    if pending:
+        logger.info(f"[业绩引擎] 🔍 初筛完成，{len(pending)} 只待深度验证")
+    return pending, critical, degradations
+
+
+def _commit_daily_scan(engine, target_date, valid_records, new_found, critical, cancellation_token=None):
+    _raise_if_cancelled(cancellation_token)
+    if valid_records:
+        if cancellation_token is None:
+            engine._inject_sectors(valid_records)
+        else:
+            engine._inject_sectors(valid_records, cancellation_token=cancellation_token)
+    _raise_if_cancelled(cancellation_token)
+    sync_advanced = target_date > engine.last_sync_date and not critical
+    if sync_advanced:
+        engine.last_sync_date = target_date
+    if new_found or sync_advanced:
+        engine._save_cache()
+    return sync_advanced
+
+
+def _finish_daily_scan_state(engine, target_date, started_at, valid_records, critical, degradations) -> None:
+    if degradations:
+        error_text = "; ".join(
+            f"{item.get('pool')}({item.get('report_date')}): {item.get('error')}" for item in degradations
+        )
+    else:
+        error_text = "provider_fetch_failed" if critical else ""
+    engine.last_scan_result = {
+        "status": "degraded" if critical else "success",
+        "target_publish_date": target_date,
+        "started_at": started_at,
+        "finished_at": MarketCalendar.now("CN").isoformat(timespec="seconds"),
+        "records": int(len(valid_records)),
+        "degradations": degradations,
+        "error": error_text,
+    }
+
+
+def _fetch_daily_surprises_pipeline(engine, target_publish_date=None, cancellation_token=None):
+    _raise_if_cancelled(cancellation_token)
+    target_date = target_publish_date or MarketCalendar.today("CN").strftime("%Y-%m-%d")
+    started_at = MarketCalendar.now("CN").isoformat(timespec="seconds")
+    engine.last_scan_result = {"status": "running", "target_publish_date": target_date, "started_at": started_at}
+    logger.info(f"[业绩引擎] 扫描目标日期: {target_date}")
+    pending, critical, degradations = _prepare_daily_scan(engine, target_date, cancellation_token)
+    valid_records, new_found = engine._process_pending_surprise_candidates(
+        pending,
+        cancellation_token=cancellation_token,
+    )
+    _commit_daily_scan(engine, target_date, valid_records, new_found, critical, cancellation_token)
+    _finish_daily_scan_state(engine, target_date, started_at, valid_records, critical, degradations)
+    if valid_records:
+        return pd.DataFrame(valid_records).sort_values(
+            by=["揭晓日", "环比增速_百分比"],
+            ascending=[False, False],
+        )
+    return pd.DataFrame()
+
+
 class EarningsEngine:
     def __init__(
         self,
         cache_file="data/earnings_state.json",
         keep_days=30,
-        stock_universe_provider=load_cached_ai_industry_chain_stock_codes,
-        stock_context_provider=load_cached_ai_industry_chain_context_map,
+        stock_universe_provider=None,
+        stock_context_provider=None,
     ):
-        if not os.path.isabs(cache_file):
-            root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            cache_file = os.path.join(root_dir, cache_file)
-
-        self.cache_file = cache_file
+        self.cache_file = resolve_legacy_earnings_cache_path(cache_file)
         self.keep_days = keep_days
         self.stock_universe_provider = stock_universe_provider
         self.stock_context_provider = stock_context_provider
@@ -784,7 +1028,7 @@ class EarningsEngine:
 
     def _load_cache(self):
         """恢复全天候账本。清理超过 `keep_days` 天的老账"""
-        from core.data_store import data_store
+        from infra.storage.data_store import data_store
 
         data = data_store.load_earnings_state()
         state_updated_at = ""
@@ -858,7 +1102,7 @@ class EarningsEngine:
     def _save_cache(self):
         """持久化所有追溯到的记录（写入 SQLite）"""
         try:
-            from core.data_store import data_store
+            from infra.storage.data_store import data_store
 
             data_store.save_earnings_state(
                 self.last_sync_date,
@@ -903,30 +1147,42 @@ class EarningsEngine:
 
         return cache[report_date].get(str(target_code).zfill(6), np.nan)
 
-    def _inject_sectors(self, records: list) -> list:
+    def _inject_sectors(self, records: list, *, cancellation_token=None) -> list:
+        _raise_if_cancelled(cancellation_token)
         if not records:
             return records
-        provider = getattr(self, "stock_context_provider", load_cached_ai_industry_chain_context_map)
+        provider = getattr(self, "stock_context_provider", None)
         try:
             context_map = dict(provider() or {}) if callable(provider) else {}
         except (FileNotFoundError, ImportError, OSError, RuntimeError, TypeError, ValueError) as e:
             logger.error(f"[业绩引擎] AI产业链细分板块数据加载失败: {e}")
             context_map = {}
 
+        _raise_if_cancelled(cancellation_token)
         for rec in records:
+            _raise_if_cancelled(cancellation_token)
             code = self._record_stock_code(rec)
             rec["所属行业与概念"] = context_map.get(code, "--")
         return records
 
-    def _resolve_stock_universe_codes(self) -> set[str] | None:
+    def _resolve_stock_universe_codes(self, *, cancellation_token=None) -> set[str] | None:
+        _raise_if_cancelled(cancellation_token)
         provider = getattr(self, "stock_universe_provider", None)
         if not callable(provider):
             return None
         try:
-            return {code for code in (normalize_ai_chain_code(value) for value in provider()) if code}
+            values = provider()
         except (FileNotFoundError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
             logger.warning(f"[业绩引擎] AI产业链股票池不可用，按空股票池处理: {exc}")
             return set()
+        _raise_if_cancelled(cancellation_token)
+        codes = set()
+        for value in values:
+            _raise_if_cancelled(cancellation_token)
+            code = normalize_ai_chain_code(value)
+            if code:
+                codes.add(code)
+        return codes
 
     @staticmethod
     def _record_stock_code(record: dict) -> str:
@@ -934,21 +1190,33 @@ class EarningsEngine:
             return ""
         return normalize_ai_chain_code(record.get("股票代码") or record.get("代码") or record.get("stock_code"))
 
-    def _filter_records_to_stock_universe(self, records: list[dict]) -> list[dict]:
-        allowed_codes = self._resolve_stock_universe_codes()
+    def _filter_records_to_stock_universe(self, records: list[dict], *, cancellation_token=None) -> list[dict]:
+        allowed_codes = self._resolve_stock_universe_codes(cancellation_token=cancellation_token)
         if allowed_codes is None:
             return list(records or [])
-        return [record for record in (records or []) if self._record_stock_code(record) in allowed_codes]
+        filtered = []
+        for record in records or []:
+            _raise_if_cancelled(cancellation_token)
+            if self._record_stock_code(record) in allowed_codes:
+                filtered.append(record)
+        return filtered
 
-    def get_cached_record_rows(self) -> list[dict]:
+    def get_cached_record_rows(self, *, cancellation_token=None) -> list[dict]:
         """Return cached rows without importing the dataframe stack."""
-        records = self._filter_records_to_stock_universe(self.local_records)
+        records = self._filter_records_to_stock_universe(
+            self.local_records,
+            cancellation_token=cancellation_token,
+        )
         if not records:
             return []
 
         for record in records:
+            _raise_if_cancelled(cancellation_token)
             self._normalize_record_dates(record, str(record.get("公告日期", "") or ""))
-        self._inject_sectors(records)
+        if cancellation_token is None:
+            self._inject_sectors(records)
+        else:
+            self._inject_sectors(records, cancellation_token=cancellation_token)
 
         def _sort_key(record: dict) -> tuple[str, float]:
             try:
@@ -957,11 +1225,12 @@ class EarningsEngine:
                 qoq = 0.0
             return str(record.get("揭晓日", "") or ""), qoq
 
+        _raise_if_cancelled(cancellation_token)
         return sorted((dict(record) for record in records), key=_sort_key, reverse=True)
 
-    def get_cached_records(self) -> pd.DataFrame:
+    def get_cached_records(self, *, cancellation_token=None) -> pd.DataFrame:
         """从长线账本中读取出所有还在存续期内的好股"""
-        records = self.get_cached_record_rows()
+        records = self.get_cached_record_rows(cancellation_token=cancellation_token)
         if records:
             return pd.DataFrame(records)
         return pd.DataFrame()
@@ -1042,8 +1311,16 @@ class EarningsEngine:
             "is_koufei": False,
         }
 
-    def _collect_guidance_candidates(self, report_date: str, target_publish_date: str) -> list[dict]:
+    def _collect_guidance_candidates(
+        self,
+        report_date: str,
+        target_publish_date: str,
+        *,
+        cancellation_token=None,
+    ) -> list[dict]:
+        _raise_if_cancelled(cancellation_token)
         df_yg = safe_ak_fetch(ak.stock_yjyg_em, date=report_date)
+        _raise_if_cancelled(cancellation_token)
         if df_yg.empty or "公告日期" not in df_yg.columns:
             return []
 
@@ -1055,6 +1332,7 @@ class EarningsEngine:
         )
         candidates = []
         for _, row in df_target.iterrows():
+            _raise_if_cancelled(cancellation_token)
             candidate = self._build_guidance_candidate(row, report_date, target_publish_date)
             if candidate is not None:
                 candidates.append(candidate)
@@ -1070,8 +1348,11 @@ class EarningsEngine:
         data_type: str,
         tone: str,
         max_fetch_elapsed_sec: float | None = None,
+        cancellation_token=None,
     ) -> list[dict]:
+        _raise_if_cancelled(cancellation_token)
         df_report = safe_ak_fetch(fetch_func, date=report_date, max_elapsed_sec=max_fetch_elapsed_sec)
+        _raise_if_cancelled(cancellation_token)
         if df_report.empty or date_col not in df_report.columns:
             return []
 
@@ -1083,6 +1364,7 @@ class EarningsEngine:
         )
         candidates = []
         for _, row in df_target.iterrows():
+            _raise_if_cancelled(cancellation_token)
             candidate = self._build_report_candidate(
                 row,
                 report_date=report_date,
@@ -1099,71 +1381,26 @@ class EarningsEngine:
         self,
         report_dates: list[str],
         target_publish_date: str,
+        *,
+        cancellation_token=None,
     ) -> tuple[list[dict], bool, list[dict[str, object]]]:
-        all_candidates = []
-        has_critical_error = False
-        degradations: list[dict[str, object]] = []
-
-        for report_date in report_dates:
-            try:
-                all_candidates.extend(self._collect_guidance_candidates(report_date, target_publish_date))
-            except _AKSHARE_FETCH_ERRORS as e:
-                logger.error(f"[业绩引擎] 业绩预告({report_date})拉取失败: {e}")
-                has_critical_error = True
-
-        formal_report_pool_degraded = False
-        for report_date in report_dates:
-            if formal_report_pool_degraded:
-                has_critical_error = True
-                logger.warning(
-                    f"[业绩引擎] ⚠️ 【正式财报池】 ({report_date}) 本轮已降级，跳过并等待下次例行扫描重试"
-                )
-            else:
-                try:
-                    all_candidates.extend(
-                        self._collect_report_candidates(
-                            report_date,
-                            target_publish_date,
-                            fetch_func=ak.stock_yjbb_em,
-                            date_col="最新公告日期",
-                            data_type="财报",
-                            tone="正式出炉",
-                            max_fetch_elapsed_sec=EARNINGS_FORMAL_REPORT_RETRY_BUDGET_SECONDS,
-                        )
-                    )
-                except EarningsUpstreamDegraded as e:
-                    logger.warning(f"[业绩引擎] ⚠️ 财报({report_date})本轮降级: {e}")
-                    degradations.append(e.to_dict())
-                    has_critical_error = True
-                    formal_report_pool_degraded = True
-                except _AKSHARE_FETCH_ERRORS as e:
-                    logger.error(f"[业绩引擎] 财报({report_date})拉取失败: {e}")
-                    has_critical_error = True
-
-            try:
-                all_candidates.extend(
-                    self._collect_report_candidates(
-                        report_date,
-                        target_publish_date,
-                        fetch_func=ak.stock_yjkb_em,
-                        date_col="公告日期",
-                        data_type="快报",
-                        tone="快报速递",
-                    )
-                )
-            except _AKSHARE_FETCH_ERRORS as e:
-                logger.error(f"[业绩引擎] 业绩快报({report_date})拉取失败: {e}")
-                has_critical_error = True
-
-        return all_candidates, has_critical_error, degradations
+        return _collect_daily_candidates_pipeline(
+            self,
+            report_dates,
+            target_publish_date,
+            cancellation_token,
+        )
 
     def _pending_surprise_candidates(
         self,
         candidates: list[dict],
         stock_universe_codes: set[str] | None,
+        *,
+        cancellation_token=None,
     ) -> list[dict]:
         pending_candidates = []
         for cand in candidates:
+            _raise_if_cancelled(cancellation_token)
             code = cand["股票代码"]
             if not (code.startswith("0") or code.startswith("3") or code.startswith("6")):
                 continue
@@ -1175,7 +1412,8 @@ class EarningsEngine:
             pending_candidates.append(cand)
         return pending_candidates
 
-    def _check_surprise_candidate(self, cand: dict) -> tuple[dict, str, dict]:
+    def _check_surprise_candidate(self, cand: dict, *, cancellation_token=None) -> tuple[dict, str, dict]:
+        _raise_if_cancelled(cancellation_token)
         code = cand["股票代码"]
         report_date = cand["报告期"]
         data_type = cand["数据类型"]
@@ -1189,7 +1427,9 @@ class EarningsEngine:
             report_date,
             is_koufei,
             must_wait_ths,
+            cancellation_token=cancellation_token,
         )
+        _raise_if_cancelled(cancellation_token)
         return cand, fingerprint, result
 
     @staticmethod
@@ -1201,129 +1441,24 @@ class EarningsEngine:
             and yoy_pct > 0
         )
 
-    def _process_pending_surprise_candidates(self, pending_candidates: list[dict]) -> tuple[list[dict], bool]:
-        valid_records = []
-        new_found_flag = False
-        total_pending = len(pending_candidates)
-        if total_pending == 0:
-            return valid_records, new_found_flag
-
-        # 加入并发线程池（同花顺反爬较严，保守开 3 个线程刚刚好）
-        import concurrent.futures
-
-        processed_count = 0
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-            future_to_candidate = {
-                executor.submit(self._check_surprise_candidate, candidate): candidate for candidate in pending_candidates
-            }
-            for future in concurrent.futures.as_completed(future_to_candidate):
-                processed_count += 1
-                failed_candidate = future_to_candidate[future]
-                try:
-                    cand, fingerprint, result = future.result()
-                    code = cand["股票代码"]
-
-                    # --- 节奏感极强的白话心跳 ---
-                    if total_pending >= 50 and processed_count % 20 == 0:
-                        logger.info(f"[业绩引擎] 验证进度 {processed_count}/{total_pending}")
-                    elif 10 < total_pending < 50 and processed_count % 10 == 0:
-                        logger.info(f"[业绩引擎] 验证进度 {processed_count}/{total_pending}")
-                    elif 0 < total_pending <= 10:
-                        logger.info(
-                            f"[业绩引擎] 验证 {processed_count}/{total_pending}: {code} {cand.get('股票名称', '')}"
-                        )
-
-                    error_code = result.get("error")
-                    if error_code in ["THS_PENDING", "抛锚"]:
-                        continue
-
-                    if error_code is not None:
-                        continue
-
-                    # 三重硬门槛：① 单季利润为正 ② 环比>=30% ③ 同比为正（扣非同比增长）
-                    if self._surprise_result_passes_threshold(result):
-                        cand.update(result)
-                        capture_time = MarketCalendar.now("CN").isoformat(timespec="seconds")
-                        cand["揭晓日"] = str(cand.get("公告日期") or cand.get("源公告日期") or "").strip()
-                        cand["发现时间"] = capture_time
-                        valid_records.append(cand)
-                        self.local_records.append(cand)
-                        self.seen_fingerprints.add(fingerprint)
-                        new_found_flag = True
-                except _EARNINGS_COMPUTE_ERRORS as _e:
-                    logger.debug(f"[业绩引擎] {failed_candidate.get('股票代码', '?')} 并发计算异常: {_e}")
-
-        return valid_records, new_found_flag
-
-    def fetch_daily_surprises(self, target_publish_date: str = None) -> pd.DataFrame:
-        if target_publish_date is None:
-            target_publish_date = MarketCalendar.today("CN").strftime("%Y-%m-%d")
-
-        started_at = MarketCalendar.now("CN").isoformat(timespec="seconds")
-        self.last_scan_result = {
-            "status": "running",
-            "target_publish_date": target_publish_date,
-            "started_at": started_at,
-        }
-        logger.info(f"[业绩引擎] 扫描目标日期: {target_publish_date}")
-
-        sync_date_advanced = False
-        should_advance_sync_date = False
-        if target_publish_date > self.last_sync_date:
-            should_advance_sync_date = True
-
-        report_dates = current_active_report_dates()
-        all_candidates, has_critical_error, degradations = self._collect_daily_surprise_candidates(
-            report_dates,
-            target_publish_date,
+    def _process_pending_surprise_candidates(
+        self,
+        pending_candidates: list[dict],
+        *,
+        cancellation_token=None,
+    ) -> tuple[list[dict], bool]:
+        return _process_pending_candidates_pipeline(
+            self,
+            pending_candidates,
+            cancellation_token,
         )
 
-        # 强制将携带真实扣非数值的记录排在前面，以防同日被互斥锁误杀
-        all_candidates.sort(key=lambda x: not x["is_koufei"])
-
-        stock_universe_codes = self._resolve_stock_universe_codes()
-
-        # 初筛：把根本不用查水表的股票直接踢掉，算出真实的待审名单
-        pending_candidates = self._pending_surprise_candidates(all_candidates, stock_universe_codes)
-
-        total_pending = len(pending_candidates)
-        if total_pending > 0:
-            logger.info(f"[业绩引擎] 🔍 初筛完成，{total_pending} 只待深度验证")
-
-        valid_records, new_found_flag = self._process_pending_surprise_candidates(pending_candidates)
-
-        # 致命判断：本轮雷达扫描如果没有遭遇伤筋动骨的异常断连，才允许它推移游标。
-        if should_advance_sync_date and not has_critical_error:
-            self.last_sync_date = target_publish_date
-            sync_date_advanced = True
-
-        if new_found_flag or sync_date_advanced:
-            self._save_cache()
-
-        status = "degraded" if has_critical_error else "success"
-        error_text = ""
-        if degradations:
-            error_text = "; ".join(
-                f"{item.get('pool')}({item.get('report_date')}): {item.get('error')}" for item in degradations
-            )
-        elif has_critical_error:
-            error_text = "provider_fetch_failed"
-        self.last_scan_result = {
-            "status": status,
-            "target_publish_date": target_publish_date,
-            "started_at": started_at,
-            "finished_at": MarketCalendar.now("CN").isoformat(timespec="seconds"),
-            "records": int(len(valid_records)),
-            "degradations": degradations,
-            "error": error_text,
-        }
-
-        if valid_records:
-            # === 补齐 AI 产业链细分板块与备注 ===
-            self._inject_sectors(valid_records)
-
-            return pd.DataFrame(valid_records).sort_values(by=["揭晓日", "环比增速_百分比"], ascending=[False, False])
-        return pd.DataFrame()
+    def fetch_daily_surprises(self, target_publish_date: str = None, *, cancellation_token=None) -> pd.DataFrame:
+        return _fetch_daily_surprises_pipeline(
+            self,
+            target_publish_date,
+            cancellation_token,
+        )
 
     def compute_single_quarter_qoq(
         self,
@@ -1332,14 +1467,16 @@ class EarningsEngine:
         report_date: str,
         is_koufei: bool = True,
         must_wait_ths: bool = False,
+        cancellation_token=None,
     ) -> dict:
+        _raise_if_cancelled(cancellation_token)
         try:
             df_fin = safe_ak_fetch(ak.stock_financial_benefit_ths, symbol=target_code)
+            _raise_if_cancelled(cancellation_token)
             if df_fin.empty:
                 return {"error": "无历史"}
             df_fin["报告期"] = pd.to_datetime(df_fin["报告期"])
             df_fin = df_fin.sort_values(by="报告期", ascending=False)
-
             # --- 核心拦截：如果强制要求纯粹的扣非财报，抛弃之前传进来的虚假预估值，直接从底层提 ---
             if must_wait_ths:
                 cols = [c for c in df_fin.columns if "扣除" in c]
@@ -1356,20 +1493,15 @@ class EarningsEngine:
                 if pd.isna(target_est_cum_profit):
                     return {"error": "THS_PENDING"}
                 is_koufei = True
-
             cols = _select_profit_columns(df_fin.columns, is_koufei)
             if not cols:
                 return {"error": "无利润字段"}
             kf_col = cols[0]
-
             df_fin["累计扣非_元"] = df_fin[kf_col].apply(_parse_amount)
-
             r_datetime = pd.to_datetime(report_date)
             year, month = r_datetime.year, r_datetime.month
-
             # 【性能优化】将 dataframe 的查找时间复杂度从 O(N) 降维到 O(1) 的 Hash 查找
             df_fin.set_index("报告期", inplace=True)
-
             def get_cum_profit(target_date):
                 td = pd.to_datetime(target_date)
                 if td in df_fin.index:
@@ -1377,12 +1509,14 @@ class EarningsEngine:
                 return np.nan
 
             def get_cum_profit_with_quick(target_date, basis_desc):
+                _raise_if_cancelled(cancellation_token)
                 value = get_cum_profit(target_date)
                 if pd.notna(value):
                     return value, False
 
                 quick_report_period = pd.to_datetime(target_date).strftime("%Y%m%d")
                 quick_report_cum = self._get_quick_report_cum_profit(target_code, quick_report_period)
+                _raise_if_cancelled(cancellation_token)
                 if pd.notna(quick_report_cum):
                     logger.info(
                         f"[业绩引擎] {target_code} 缺 {target_date} 财报，"
@@ -1428,5 +1562,6 @@ class EarningsEngine:
                 result["上季基数口径"] = last_single_basis
             return result
         except _EARNINGS_COMPUTE_ERRORS as e:
+            _raise_if_cancelled(cancellation_token)
             logger.error(f"[业绩预告] 获取失败: {e}")
             return {"error": "抛锚"}

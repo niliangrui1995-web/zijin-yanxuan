@@ -14,20 +14,23 @@ K 线图窗口 — ECharts 5.5.0 + QWebEngineView 高性能版
 import json
 import os as _os
 
-from app.services.asian_market_service import is_yf_rate_limit_error, mark_yf_rate_limited
-from app.services.scan_runtime_service import calculate_scan_indicators
-from app.services.ui_event_service import domain_events as event_bus
-from app.services.ui_market_calendar_service import MarketCalendar
-from app.services.ui_task_service import background_job_runner, task_registry
-from app.services.ui_watchlist_service import watchlist_vm
-from core.logger import get_logger
-
-log = get_logger(__name__)
 import pandas as pd
 from PyQt6.QtCore import QEvent, Qt, QTimer, QUrl
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
+from app.services.asian_market_service import is_yf_rate_limit_error, mark_yf_rate_limited
+from app.services.scan_runtime_service import calculate_scan_indicators
+from app.services.ui_event_service import domain_events as event_bus
+from app.services.ui_market_calendar_service import MarketCalendar
+from app.services.ui_task_lifecycle_service import (
+    shutdown_task_lifecycle_for_owner,
+    task_lifecycle_for,
+)
+from app.services.ui_task_service import background_job_runner, task_registry
+from app.services.ui_trade_record_service import load_trade_records_for_security
+from app.services.ui_watchlist_service import watchlist_vm
+from core.logger import get_logger
 from ui.kline_chart_payload import (
     build_kline_echarts_payload,
     build_kline_html,
@@ -58,8 +61,9 @@ from ui.kline_window_runtime import (
     refresh_last_bar,
 )
 from ui.theme import theme_manager
-from ui.trade_record_store import load_trade_records_for_security
 from ui.window_flags import enable_windows_native_shadow, enable_windows_system_backdrop
+
+log = get_logger(__name__)
 
 # ECharts JS 本地路径（断网也能用）
 _ECHARTS_JS_PATH = _os.path.join(
@@ -73,6 +77,38 @@ def fetch_single_kline(*args, **kwargs):
     from app.services.asian_market_service import fetch_single_kline as _fetch_single_kline
 
     return _fetch_single_kline(*args, **kwargs)
+
+
+def _submit_owned_kline_task(window, name, fn, on_success, on_error, task_id, timeout_sec) -> None:
+    task_lifecycle_for(window, runner=background_job_runner).run_background(
+        name,
+        fn,
+        on_success=on_success,
+        on_error=on_error,
+        task_id=task_id,
+        timeout_sec=timeout_sec,
+        runner=background_job_runner,
+    )
+
+
+def _abandon_owned_kline_tasks(window, code: str, generation: int) -> None:
+    lifecycle = getattr(window, "_task_lifecycle", None)
+    if lifecycle is not None:
+        for name in ("history_load", "realtime_quote", "asian_cache_load", "asian_history_backfill"):
+            lifecycle.cancel(name, reason="symbol_switched")
+    normalized_code = str(code or "").strip()
+    if not normalized_code:
+        return
+    for task_key in (
+        task_registry.transient_window(f"kline_{normalized_code}_{generation}"),
+        task_registry.transient_window(f"kline_rt_{normalized_code}_{generation}"),
+        task_registry.transient_window(f"kline_asian_cache_{normalized_code}_{generation}"),
+        task_registry.transient_window(f"kline_asian_{normalized_code}_{generation}"),
+    ):
+        try:
+            background_job_runner.abandon(task_key)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
 
 
 class KLineChartWindow(QWidget):
@@ -715,7 +751,7 @@ class KLineChartWindow(QWidget):
                 and int(getattr(self, "_render_generation", 0) or 0) == request_generation
             )
 
-        def _bg_load():
+        def _bg_load(_cancellation_token):
             target_stock = load_cached_asian_stock(JSON_CACHE, request_code)
             quote = cached_quote
             quote_error = None
@@ -780,13 +816,9 @@ class KLineChartWindow(QWidget):
             if _is_current_request():
                 self._set_status_message(f"亚洲日线缓存读取失败: {error_message}", tone="error")
 
-        background_job_runner.run_in_background(
-            _bg_load,
-            on_success=_on_load_success,
-            on_error=_on_load_error,
-            task_id=task_registry.transient_window(
-                f"kline_asian_cache_{request_code}_{request_generation}"
-            ),
+        _submit_owned_kline_task(
+            self, "asian_cache_load", _bg_load, _on_load_success, _on_load_error,
+            task_registry.transient_window(f"kline_asian_cache_{request_code}_{request_generation}"), 120.0,
         )
 
     # ======================== 图表渲染 ========================
@@ -976,19 +1008,7 @@ class KLineChartWindow(QWidget):
         self.btn_next.setEnabled(self.current_idx < len(self.code_list) - 1)
 
     def _abandon_render_tasks(self, code: str, generation: int):
-        normalized_code = str(code or "").strip()
-        if not normalized_code:
-            return
-        for task_key in (
-            task_registry.transient_window(f"kline_{normalized_code}_{generation}"),
-            task_registry.transient_window(f"kline_rt_{normalized_code}_{generation}"),
-            task_registry.transient_window(f"kline_asian_cache_{normalized_code}_{generation}"),
-            task_registry.transient_window(f"kline_asian_{normalized_code}_{generation}"),
-        ):
-            try:
-                background_job_runner.abandon(task_key)
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                pass
+        _abandon_owned_kline_tasks(self, code, generation)
 
     def _switch_to_stock(self, new_idx):
         """切换到指定索引的股票"""
@@ -1049,6 +1069,7 @@ class KLineChartWindow(QWidget):
 
         current_generation = int(getattr(self, "_render_generation", 0) or 0)
         self._abandon_render_tasks(self.code, current_generation)
+        shutdown_task_lifecycle_for_owner(self, timeout_ms=1_000)
 
         self.df = None
 

@@ -3,7 +3,7 @@ import logging
 
 import pandas as pd
 
-from ui.workers import lhb_worker
+import infra.market_data.lhb_provider as lhb_worker
 
 
 def test_fetch_lhb_data_for_date_returns_empty_meta(monkeypatch):

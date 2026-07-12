@@ -4,10 +4,11 @@
 from __future__ import annotations
 
 import datetime as dt
-import os
 
 from PyQt6.QtCore import QTimer
 
+from app.services.asian_market_cache_service import cache_mtime
+from app.services.ui_task_lifecycle_service import task_lifecycle_for
 from core.logger import get_logger
 from ui.tabs.asian_market_meta import get_market_status
 from ui.tabs.asian_market_workers import JSON_CACHE, AsianCacheFetcherThread
@@ -75,7 +76,7 @@ def check_auto_cache(tab):
     while target_dt.weekday() >= 5:
         target_dt -= dt.timedelta(days=1)
 
-    mtime = os.path.getmtime(JSON_CACHE) if os.path.exists(JSON_CACHE) else 0
+    mtime = cache_mtime(JSON_CACHE)
     cache_dt = MarketCalendar.from_timestamp(mtime, "CN") if mtime else dt.datetime.min
     cache_latest_trade_dates = (
         tab._get_cache_latest_trade_dates() if hasattr(tab, "_get_cache_latest_trade_dates") else {}
@@ -147,7 +148,11 @@ def continue_auto_cache_sync(tab):
     tab._cache_sync_wait_deadline = None
     tab._is_fetching_cache = True
     _set_tab_status(tab, "正在同步收盘缓存", "完成后会自动重载本地 K 线")
-    thread = AsianCacheFetcherThread()
+    cancellation_token = task_lifecycle_for(tab).begin(
+        "asian_cache_sync",
+        timeout_sec=15 * 60.0,
+    )
+    thread = AsianCacheFetcherThread(cancellation_token=cancellation_token)
     thread.finished.connect(lambda: _handle_auto_cache_thread_finished(tab, thread))
     thread.finished.connect(thread.deleteLater)
     tab.cache_thread = thread
@@ -159,6 +164,13 @@ def _handle_auto_cache_thread_finished(tab, thread):
     msg = str(getattr(thread, "result_message", "") or "")
     if getattr(tab, "cache_thread", None) is thread:
         tab.cache_thread = None
+    cancellation_token = getattr(thread, "cancellation_token", None)
+    lifecycle = getattr(tab, "_task_lifecycle", None)
+    if cancellation_token is not None and lifecycle is not None:
+        if not lifecycle.complete("asian_cache_sync", cancellation_token) or cancellation_token.cancelled:
+            return
+    if getattr(tab, "_asian_shutting_down", False) or getattr(tab, "_runtime_cleanup_done", False):
+        return
     tab._on_auto_cache_finished(success, msg)
 
 

@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
-from ui.workers import lhb_worker
+import infra.market_data.lhb_provider as lhb_worker
+from infra.tasks.lifecycle import CancellationToken, TaskCancelledError
 
 
 def _detail_frame(*, pct: float = 3.5) -> pd.DataFrame:
@@ -149,3 +151,20 @@ def test_fetch_lhb_uses_surviving_foreign_detail_side(monkeypatch):
     assert detail_calls == [("000001", "买入"), ("000001", "卖出")]
     assert len(result) == 1
     assert result[0]["外资净买(万)"] == 200.0
+
+
+def test_fetch_lhb_honors_owner_cancellation_before_provider_call(monkeypatch):
+    token = CancellationToken()
+    token.cancel("owner_shutdown")
+    monkeypatch.setattr(
+        lhb_worker.ak,
+        "stock_lhb_detail_em",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("cancelled task must not call AkShare")),
+    )
+
+    with pytest.raises(TaskCancelledError, match="owner_shutdown"):
+        lhb_worker.fetch_lhb_data_for_date(
+            "20260421",
+            strict_filter=False,
+            cancellation_token=token,
+        )

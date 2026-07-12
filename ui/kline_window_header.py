@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QGraphicsDropShadowEffect
 
 from app.services.kline_open_service import merge_workspace_earnings_context
 from app.services.ui_market_calendar_service import MarketCalendar
+from app.services.ui_quote_service import is_provider_online
 from app.services.ui_watchlist_service import watchlist_vm
 from core.logger import get_logger
 from ui.kline_chart_payload import (
@@ -136,7 +137,7 @@ def set_header_badge(window, label, text: str, tone_name: str) -> None:
 
 def apply_header_badges(window) -> None:
     market = window._get_market()
-    is_offline = bool(getattr(window.data_provider, "_offline", False))
+    is_offline = not is_provider_online(window.data_provider)
     info_tone = getattr(window, "_info_tone", "info")
     badges = resolve_kline_runtime_badges(
         info_tone=info_tone,

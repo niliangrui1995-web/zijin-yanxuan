@@ -7,12 +7,14 @@ import pandas as pd
 import polars as pl
 
 from domains.scan import BreakoutMonitorService, IndicatorService, RpsService, VcpScannerService
-from vcp.engine_external import (
+from domains.scan.models import VCPParams
+from infra.market_data.vcp_scan_adapter import (
     batch_check_institution,
     batch_check_market_cap,
     batch_get_finance_info,
+    build_prices_matrix_fast,
+    build_rps_matrix_pl,
 )
-from vcp.models import VCPParams
 
 
 class VCPEngine:
@@ -28,13 +30,19 @@ class VCPEngine:
         if hasattr(self, "_initialized"):
             return
         self._initialized = True
-        self._rps_service = RpsService()
+        self._rps_service = RpsService(
+            prices_matrix_builder=build_prices_matrix_fast,
+            rps_matrix_builder=build_rps_matrix_pl,
+        )
 
     @property
     def rps_service(self) -> RpsService:
         service = getattr(self, "_rps_service", None)
         if service is None:
-            service = RpsService()
+            service = RpsService(
+                prices_matrix_builder=build_prices_matrix_fast,
+                rps_matrix_builder=build_rps_matrix_pl,
+            )
             self._rps_service = service
         return service
 
@@ -57,7 +65,12 @@ class VCPEngine:
         min_start: pd.Timestamp,
         end_ts: pd.Timestamp | None = None,
     ) -> pd.DataFrame:
-        return RpsService.build_prices_matrix(data_dict, min_start, end_ts)
+        return RpsService.build_prices_matrix(
+            data_dict,
+            min_start,
+            end_ts,
+            prices_matrix_builder=build_prices_matrix_fast,
+        )
 
     def build_rps_matrix(
         self,
@@ -133,6 +146,8 @@ class VCPEngine:
             code2name=code2name,
             progress_callback=progress_callback,
             cancelled_checker=cancelled_checker,
+            institution_lookup=batch_check_institution,
+            market_cap_lookup=batch_check_market_cap,
         )
 
     @staticmethod

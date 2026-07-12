@@ -1,3 +1,10 @@
+from infra.tasks.owner_lifecycle import (
+    CancellationToken,
+    TaskCancelledError,
+    TaskDeadlineExceeded,
+    TaskLifecycleGroup,
+    invoke_with_cancellation,
+)
 from infra.tasks.process_runner import (
     ProcessExecutionError,
     ProcessSubprocessError,
@@ -29,6 +36,7 @@ from infra.tasks.typed_task_registry import (
 
 __all__ = [
     "CENTRAL_QUOTES_POLL",
+    "CancellationToken",
     "NETWORK_FORCE_RECONNECT",
     "NETWORK_GO_ONLINE",
     "BackgroundWorker",
@@ -42,11 +50,15 @@ __all__ = [
     "STARTUP_SMART",
     "TaskKey",
     "TaskKeyLike",
+    "TaskCancelledError",
+    "TaskDeadlineExceeded",
+    "TaskLifecycleGroup",
     "TypedTaskRegistry",
     "UserFacingTaskError",
     "WINDOW_F5_PRECOMPUTE",
     "build_python_module_command",
     "build_domestic_process_env",
+    "invoke_with_cancellation",
     "run_process",
     "run_python_module",
     "spawn_process",

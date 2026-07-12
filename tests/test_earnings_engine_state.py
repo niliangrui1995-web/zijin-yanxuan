@@ -411,13 +411,13 @@ def test_inject_sectors_uses_ai_industry_chain_context():
     assert records[1]["所属行业与概念"] == "--"
 
 
-def test_earnings_engine_defaults_to_cache_only_ai_chain_providers(monkeypatch, tmp_path):
+def test_earnings_engine_domain_default_has_no_persistence_provider(monkeypatch, tmp_path):
     monkeypatch.setattr(EarningsEngine, "_load_cache", lambda self: None)
 
     engine = EarningsEngine(cache_file=str(tmp_path / "earnings_state.json"))
 
-    assert engine.stock_universe_provider is engine_module.load_cached_ai_industry_chain_stock_codes
-    assert engine.stock_context_provider is engine_module.load_cached_ai_industry_chain_context_map
+    assert engine.stock_universe_provider is None
+    assert engine.stock_context_provider is None
 
 
 def test_cached_record_rows_preserve_sorting_without_dataframe_conversion():

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from vcp.sector import SectorManager
+from infra.market_data.vcp_scan_adapter import SectorManager
 
 
 def get_sector_manager(tdx_root: str | None = None) -> SectorManager:

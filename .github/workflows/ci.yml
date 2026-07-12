@@ -12,6 +12,7 @@ permissions:
 
 env:
   PYTHONIOENCODING: utf-8
+  VCP_COMPLEXITY_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
 
 jobs:
   python314-audit-smoke:
@@ -19,12 +20,13 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+          fetch-depth: 0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          python-version: "3.14"
+          python-version: "3.14.5"
       - name: Install Qt runtime libraries
         run: |
           sudo apt-get update
@@ -32,21 +34,22 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements-dev.txt
+          python -m pip install -r requirements-dev.txt -c constraints-py314-linux.txt
       - name: Project audit command contract
-        run: python scripts/project_audit.py --quick --skip-webengine-preflight --skip-ruff
+        run: python scripts/project_audit.py --quick --skip-webengine-preflight --skip-ruff --keep-going
 
   test:
     runs-on: ubuntu-latest
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+          fetch-depth: 0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          python-version: "3.14"
+          python-version: "3.14.5"
       - name: Install Qt runtime libraries
         run: |
           sudo apt-get update
@@ -54,8 +57,10 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements-dev.txt
+          python -m pip install -r requirements-dev.txt -c constraints-py314-linux.txt
       - name: Ruff guardrail
+        id: ruff_guardrail
+        continue-on-error: true
         run: |
           ruff check \
             scripts/check_utf8.py \
@@ -77,12 +82,18 @@ jobs:
             ui/workspaces/quote_universe_service.py
           ruff format --check scripts/check_utf8.py
       - name: Root entrypoint guardrail
+        id: root_entrypoint
+        continue-on-error: true
         run: |
           ruff check vcp_hunter_qt.pyw
           python -m py_compile vcp_hunter_qt.pyw
       - name: UTF-8 guardrail
+        id: utf8_guardrail
+        continue-on-error: true
         run: python scripts/check_utf8.py
       - name: Architecture regression suite
+        id: architecture_regression
+        continue-on-error: true
         run: |
           pytest \
             tests/test_architecture_boundaries.py \
@@ -102,6 +113,8 @@ jobs:
             tests/test_startup_orchestrator.py \
             -q
       - name: Service regression suite
+        id: service_regression
+        continue-on-error: true
         run: |
           pytest \
             tests/test_central_quote_polling_service.py \
@@ -114,6 +127,8 @@ jobs:
             tests/test_task_manager.py \
             -q
       - name: Runtime dependency guardrail
+        id: runtime_dependency
+        continue-on-error: true
         run: |
           pytest \
             tests/test_runtime_env.py \
@@ -121,6 +136,8 @@ jobs:
             tests/test_yf_session.py \
             -q
       - name: Performance and runtime guardrail
+        id: performance_runtime
+        continue-on-error: true
         run: |
           pytest \
             tests/test_perf_probe_scripts.py \
@@ -134,31 +151,93 @@ jobs:
             tests/test_kline_webengine_lifecycle_smoke.py \
             tests/test_qt_webengine_preflight.py \
             -q
-      - name: Full regression suite
-        run: python -m pytest -q
+      - name: Full regression suite with coverage budgets
+        id: full_regression
+        continue-on-error: true
+        run: |
+          set +e
+          python -m pytest -q --cov-branch --cov=app --cov=core --cov=domains --cov=infra --cov=ui --cov=vcp --cov-report=term-missing --cov-report=json:tmp/coverage.json --cov-fail-under=60
+          pytest_status=$?
+          python scripts/coverage_budget_check.py --input tmp/coverage.json
+          budget_status=$?
+          if [ "$pytest_status" -ne 0 ] || [ "$budget_status" -ne 0 ]; then
+            exit 1
+          fi
       - name: Project audit command contract
-        run: python scripts/project_audit.py --quick --skip-webengine-preflight --type-check
+        id: project_audit
+        continue-on-error: true
+        run: python scripts/project_audit.py --quick --skip-webengine-preflight --type-check --keep-going
+      - name: Fail if any test gate failed
+        if: always()
+        env:
+          RUFF_OUTCOME: ${{ steps.ruff_guardrail.outcome }}
+          ROOT_OUTCOME: ${{ steps.root_entrypoint.outcome }}
+          UTF8_OUTCOME: ${{ steps.utf8_guardrail.outcome }}
+          ARCH_OUTCOME: ${{ steps.architecture_regression.outcome }}
+          SERVICE_OUTCOME: ${{ steps.service_regression.outcome }}
+          RUNTIME_OUTCOME: ${{ steps.runtime_dependency.outcome }}
+          PERFORMANCE_OUTCOME: ${{ steps.performance_runtime.outcome }}
+          FULL_OUTCOME: ${{ steps.full_regression.outcome }}
+          AUDIT_OUTCOME: ${{ steps.project_audit.outcome }}
+        run: |
+          failed=0
+          for result in \
+            "ruff=$RUFF_OUTCOME" \
+            "root=$ROOT_OUTCOME" \
+            "utf8=$UTF8_OUTCOME" \
+            "architecture=$ARCH_OUTCOME" \
+            "service=$SERVICE_OUTCOME" \
+            "runtime=$RUNTIME_OUTCOME" \
+            "performance=$PERFORMANCE_OUTCOME" \
+            "full=$FULL_OUTCOME" \
+            "audit=$AUDIT_OUTCOME"
+          do
+            echo "$result"
+            if [ "${result#*=}" != "success" ]; then
+              failed=1
+            fi
+          done
+          exit "$failed"
 
   windows-smoke:
     runs-on: windows-latest
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+          fetch-depth: 0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          python-version: "3.14"
+          python-version: "3.14.5"
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements-dev.txt -c constraints-py314-windows.txt
       - name: Project audit command contract
-        run: python scripts/project_audit.py --quick --skip-webengine-preflight
+        id: windows_audit
+        continue-on-error: true
+        run: python scripts/project_audit.py --quick --skip-webengine-preflight --keep-going
       - name: Windows architecture and runtime smoke
+        id: windows_runtime_smoke
+        continue-on-error: true
         run: |
           python -m pytest -q tests/test_architecture_boundaries.py tests/test_runtime_env_self_check.py tests/test_project_audit.py
+      - name: Fail if any Windows gate failed
+        if: always()
+        env:
+          AUDIT_OUTCOME: ${{ steps.windows_audit.outcome }}
+          SMOKE_OUTCOME: ${{ steps.windows_runtime_smoke.outcome }}
+        run: |
+          $failed = $false
+          foreach ($result in @("audit=$env:AUDIT_OUTCOME", "runtime-smoke=$env:SMOKE_OUTCOME")) {
+            Write-Host $result
+            if (-not $result.EndsWith("=success")) {
+              $failed = $true
+            }
+          }
+          if ($failed) { exit 1 }
 
   extended-audit:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
@@ -166,12 +245,13 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+          fetch-depth: 0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          python-version: "3.14"
+          python-version: "3.14.5"
       - name: Install Qt runtime libraries
         run: |
           sudo apt-get update
@@ -179,7 +259,31 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements-dev.txt
+          python -m pip install -r requirements-dev.txt -c constraints-py314-linux.txt
       - name: Extended quality audit
         run: |
-          python scripts/project_audit.py --quick --skip-runtime-self-check --skip-webengine-preflight --extended-ruff --type-check --dependency-audit --runtime-health-short
+          python scripts/project_audit.py --quick --skip-runtime-self-check --skip-webengine-preflight --extended-ruff --type-check --dependency-audit --runtime-health-short --keep-going
+
+  latest-allowed-canary:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.14.5"
+      - name: Install Qt runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1
+      - name: Resolve latest allowed dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+      - name: Latest allowed dependency canary
+        run: python scripts/project_audit.py --quick --skip-runtime-self-check --skip-webengine-preflight --type-check --keep-going

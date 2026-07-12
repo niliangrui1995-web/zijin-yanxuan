@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime
 import threading
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QObject, QTimer
@@ -11,6 +12,7 @@ from PyQt6.QtCore import QObject, QTimer
 from app.services.ui_config_service import app_config
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_market_calendar_service import MarketCalendar
+from app.services.ui_task_lifecycle_service import TaskLifecycleGroup, invoke_with_cancellation
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
 from core.logger import get_logger
@@ -29,11 +31,112 @@ class AutoRefreshJob:
     require_trade_day: bool
 
 
+def _job_timeout_seconds(scheduler, state_key: str, status_job_key: str = "") -> float:
+    for key in (str(state_key or ""), str(status_job_key or "")):
+        if key in scheduler.JOB_TIMEOUT_SECONDS:
+            return scheduler.JOB_TIMEOUT_SECONDS[key]
+        if key.startswith("earnings_routine"):
+            return scheduler.JOB_TIMEOUT_SECONDS["earnings_routine"]
+    return scheduler.DEFAULT_JOB_TIMEOUT_SECONDS
+
+
+def _result_status(result) -> tuple[str, str]:
+    if not isinstance(result, dict):
+        return "", ""
+    return (
+        str(result.get("status") or "").strip(),
+        str(result.get("error") or result.get("message") or "").strip(),
+    )
+
+
+def _handle_retryable_result(scheduler, state_key, status_job_key, trade_date, started_at, status, error) -> None:
+    result_error = error or status
+    scheduler._set_error(state_key, result_error)
+    scheduler._emit_status(
+        status_job_key,
+        status,
+        trade_date,
+        message=status,
+        started_at=started_at.isoformat(timespec="seconds"),
+        finished_at=scheduler._clock().isoformat(timespec="seconds"),
+        error=result_error,
+    )
+
+
+def _handle_job_success(
+    scheduler,
+    result,
+    *,
+    state_key,
+    status_job_key,
+    trade_date,
+    started_at,
+    mark_success_date,
+    skipped_is_success,
+) -> None:
+    if scheduler._is_shutdown:
+        return
+    scheduler._running_jobs.discard(state_key)
+    status, result_error = _result_status(result)
+    if status in scheduler.RETRYABLE_RESULT_STATUSES:
+        _handle_retryable_result(
+            scheduler,
+            state_key,
+            status_job_key,
+            trade_date,
+            started_at,
+            status,
+            result_error or scheduler._success_message(status_job_key, result),
+        )
+        return
+    if mark_success_date and (skipped_is_success or status != "skipped"):
+        scheduler._set_last_success_date(state_key, trade_date)
+    scheduler._emit_status(
+        status_job_key,
+        "skipped" if status == "skipped" and not skipped_is_success else "success",
+        trade_date,
+        message=scheduler._success_message(status_job_key, result),
+        started_at=started_at.isoformat(timespec="seconds"),
+        finished_at=scheduler._clock().isoformat(timespec="seconds"),
+    )
+    if status != "skipped":
+        scheduler._emit_data_event(status_job_key)
+
+
+def _handle_job_error(scheduler, error_message, *, state_key, status_job_key, trade_date, started_at) -> None:
+    if scheduler._is_shutdown:
+        return
+    scheduler._running_jobs.discard(state_key)
+    scheduler._set_error(state_key, error_message)
+    scheduler._emit_status(
+        status_job_key,
+        "failed",
+        trade_date,
+        message="failed",
+        started_at=started_at.isoformat(timespec="seconds"),
+        finished_at=scheduler._clock().isoformat(timespec="seconds"),
+        error=str(error_message or "").strip(),
+    )
+
+
 class AutoRefreshScheduler(QObject):
     CHECK_INTERVAL_MS = 30_000
     RETRY_BACKOFF_SECONDS = 5 * 60
     RETRYABLE_RESULT_STATUSES = {"failed", "degraded"}
     EARNINGS_ROUTINE_TIMES = ((8, 30), (12, 0), (17, 0), (19, 0), (21, 0), (23, 0))
+    SHUTDOWN_WAIT_TIMEOUT_MS = 1000
+    DEFAULT_JOB_TIMEOUT_SECONDS = 5 * 60.0
+    JOB_TIMEOUT_SECONDS = {
+        "lhb_daily": 5 * 60.0,
+        "foreign_block_daily": 10 * 60.0,
+        "fund_holdings_daily": 15 * 60.0,
+        "na_daily_incremental": 5 * 60.0,
+        "na_daily_full_0925": 10 * 60.0,
+        "asian_market_runtime": 2 * 60.0,
+        "asian_market_cache_sync": 10 * 60.0,
+        "earnings_startup_gap_fill": 15 * 60.0,
+        "earnings_routine": 15 * 60.0,
+    }
 
     DAILY_JOBS = (
         AutoRefreshJob("lhb_daily", 20, 0, True),
@@ -66,8 +169,10 @@ class AutoRefreshScheduler(QObject):
         }
         self._task_service_lock = threading.Lock()
         self._job_runner = job_runner or task_manager
+        self._task_lifecycle = TaskLifecycleGroup(self._job_runner)
         self._clock = clock or (lambda: MarketCalendar.now("CN"))
         self._running_jobs: set[str] = set()
+        self._is_shutdown = False
         self.extended_jobs_enabled = True
         self._timer = QTimer(self)
         self._timer.setObjectName("autoRefreshSchedulerTimer")
@@ -78,6 +183,7 @@ class AutoRefreshScheduler(QObject):
         return self._timer
 
     def start(self) -> None:
+        self._is_shutdown = False
         if not self._timer.isActive():
             self._timer.start(self.CHECK_INTERVAL_MS)
         self.tick()
@@ -87,6 +193,9 @@ class AutoRefreshScheduler(QObject):
 
     def shutdown(self) -> None:
         self.stop()
+        self._is_shutdown = True
+        self._task_lifecycle.shutdown(timeout_ms=self.SHUTDOWN_WAIT_TIMEOUT_MS)
+        self._running_jobs.clear()
 
     def tick(self) -> None:
         now = self._clock()
@@ -160,14 +269,14 @@ class AutoRefreshScheduler(QObject):
         return (now - last_attempt).total_seconds() < self.RETRY_BACKOFF_SECONDS
 
     def _submit_daily_job(self, job: AutoRefreshJob, trade_date: str) -> None:
-        def _run():
+        def _run(*, cancellation_token=None):
             task_service = self._task_service_instance()
             if job.key == "lhb_daily":
-                return task_service.run_lhb_daily(trade_date)
+                return invoke_with_cancellation(task_service.run_lhb_daily, cancellation_token, trade_date)
             if job.key == "foreign_block_daily":
-                return task_service.run_foreign_block_daily(trade_date)
+                return invoke_with_cancellation(task_service.run_foreign_block_daily, cancellation_token, trade_date)
             if job.key == "fund_holdings_daily":
-                return task_service.run_fund_holdings_daily(trade_date)
+                return invoke_with_cancellation(task_service.run_fund_holdings_daily, cancellation_token, trade_date)
             raise ValueError(f"unknown auto refresh job: {job.key}")
 
         self._submit_job(job.key, trade_date, _run)
@@ -209,57 +318,27 @@ class AutoRefreshScheduler(QObject):
             started_at=started_at.isoformat(timespec="seconds"),
         )
 
-        def _on_success(result):
-            self._running_jobs.discard(state_key)
-            result_status = ""
-            result_error = ""
-            if isinstance(result, dict):
-                result_status = str(result.get("status") or "").strip()
-                result_error = str(result.get("error") or result.get("message") or "").strip()
-            if result_status in self.RETRYABLE_RESULT_STATUSES:
-                result_error = result_error or self._success_message(status_job_key, result)
-                self._set_error(state_key, result_error)
-                self._emit_status(
-                    status_job_key,
-                    result_status,
-                    trade_date,
-                    message=result_status,
-                    started_at=started_at.isoformat(timespec="seconds"),
-                    finished_at=self._clock().isoformat(timespec="seconds"),
-                    error=result_error,
-                )
-                return
-            if mark_success_date and (skipped_is_success or result_status != "skipped"):
-                self._set_last_success_date(state_key, trade_date)
-            self._emit_status(
-                status_job_key,
-                "skipped" if result_status == "skipped" and not skipped_is_success else "success",
-                trade_date,
-                message=self._success_message(status_job_key, result),
-                started_at=started_at.isoformat(timespec="seconds"),
-                finished_at=self._clock().isoformat(timespec="seconds"),
-            )
-            if result_status != "skipped":
-                self._emit_data_event(status_job_key)
-
-        def _on_error(error_message: str):
-            self._running_jobs.discard(state_key)
-            self._set_error(state_key, error_message)
-            self._emit_status(
-                status_job_key,
-                "failed",
-                trade_date,
-                message="failed",
-                started_at=started_at.isoformat(timespec="seconds"),
-                finished_at=self._clock().isoformat(timespec="seconds"),
-                error=str(error_message or "").strip(),
-            )
-
-        self._job_runner.run_in_background(
-            run_fn,
-            on_success=_on_success,
-            on_error=_on_error,
+        callback_args = {
+            "state_key": state_key,
+            "status_job_key": status_job_key,
+            "trade_date": trade_date,
+            "started_at": started_at,
+        }
+        on_success = partial(
+            _handle_job_success,
+            self,
+            mark_success_date=mark_success_date,
+            skipped_is_success=skipped_is_success,
+            **callback_args,
+        )
+        on_error = partial(_handle_job_error, self, **callback_args)
+        self._task_lifecycle.run_background(
+            state_key,
+            lambda cancellation_token: invoke_with_cancellation(run_fn, cancellation_token),
+            on_success=on_success,
+            on_error=on_error,
             task_id=self._task_id(state_key),
+            timeout_sec=_job_timeout_seconds(self, state_key, status_job_key),
         )
 
     def _can_submit(self, state_key: str, now: datetime.datetime) -> bool:
@@ -283,7 +362,11 @@ class AutoRefreshScheduler(QObject):
         self._submit_job(
             state_key,
             trade_date,
-            lambda: self._task_service_instance().run_na_daily_incremental(trade_date),
+            lambda *, cancellation_token=None: invoke_with_cancellation(
+                self._task_service_instance().run_na_daily_incremental,
+                cancellation_token,
+                trade_date,
+            ),
             mark_success_date=False,
         )
         return True
@@ -302,7 +385,11 @@ class AutoRefreshScheduler(QObject):
         self._submit_job(
             state_key,
             trade_date,
-            lambda: self._task_service_instance().run_na_daily_full_0925(trade_date),
+            lambda *, cancellation_token=None: invoke_with_cancellation(
+                self._task_service_instance().run_na_daily_full_0925,
+                cancellation_token,
+                trade_date,
+            ),
         )
         return True
 
@@ -313,10 +400,15 @@ class AutoRefreshScheduler(QObject):
             return False
         self._running_jobs.add(state_key)
 
-        def _prepare():
-            return self._task_service_instance().prepare_asian_market_runtime()
+        def _prepare(*, cancellation_token=None):
+            return invoke_with_cancellation(
+                self._task_service_instance().prepare_asian_market_runtime,
+                cancellation_token,
+            )
 
         def _on_success(prepared):
+            if self._is_shutdown:
+                return
             try:
                 result = self._task_service_instance().sync_asian_market_runtime(prepared)
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
@@ -329,6 +421,8 @@ class AutoRefreshScheduler(QObject):
             self._maybe_submit_asian_cache_sync(self._clock())
 
         def _on_error(error_message: str):
+            if self._is_shutdown:
+                return
             self._running_jobs.discard(state_key)
             self._emit_status(
                 state_key,
@@ -339,11 +433,13 @@ class AutoRefreshScheduler(QObject):
             )
             self._maybe_submit_asian_cache_sync(self._clock())
 
-        self._job_runner.run_in_background(
-            _prepare,
+        self._task_lifecycle.run_background(
+            state_key,
+            lambda cancellation_token: invoke_with_cancellation(_prepare, cancellation_token),
             on_success=_on_success,
             on_error=_on_error,
             task_id=self._task_id(state_key),
+            timeout_sec=_job_timeout_seconds(self, state_key),
         )
         return True
 
@@ -361,7 +457,11 @@ class AutoRefreshScheduler(QObject):
         self._submit_job(
             state_key,
             trade_date,
-            lambda: self._task_service_instance().run_asian_market_cache_sync(trade_date),
+            lambda *, cancellation_token=None: invoke_with_cancellation(
+                self._task_service_instance().run_asian_market_cache_sync,
+                cancellation_token,
+                trade_date,
+            ),
             skipped_is_success=True,
         )
         return True
@@ -379,7 +479,11 @@ class AutoRefreshScheduler(QObject):
         self._submit_job(
             state_key,
             trade_date,
-            lambda: self._task_service_instance().run_earnings_startup_gap_fill(trade_date),
+            lambda *, cancellation_token=None: invoke_with_cancellation(
+                self._task_service_instance().run_earnings_startup_gap_fill,
+                cancellation_token,
+                trade_date,
+            ),
         )
         return True
 
@@ -404,7 +508,9 @@ class AutoRefreshScheduler(QObject):
         self._submit_job(
             "earnings_routine",
             trade_date,
-            lambda routine_time=routine_time: self._task_service_instance().run_earnings_routine(
+            lambda routine_time=routine_time, *, cancellation_token=None: invoke_with_cancellation(
+                self._task_service_instance().run_earnings_routine,
+                cancellation_token,
                 trade_date,
                 routine_time=routine_time,
             ),

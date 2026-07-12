@@ -120,7 +120,7 @@ class RPSPrecomputer:
                 # --- 阶段0: 除权除息 ---
                 _log_and_status("[F5] 阶段0: 重新解析通达信 gbbq 除权除息数据...")
                 try:
-                    data_provider._load_local_gbbq(force=True)
+                    data_provider.ensure_adjustment_metadata(force=True)
                 except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
                     log.error(f"[F5] gbbq 解析异常(不影响后续): {e}")
 

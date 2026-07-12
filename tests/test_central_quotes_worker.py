@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import QApplication, QWidget
 from core.event_bus import event_bus
 from core.global_store import global_store
 from core.market_calendar import MarketCalendar
+from infra.market_data.provider_ports import ProviderHealthSnapshot
 from ui.workers.central_quotes_worker import CentralQuotesService
 
 
@@ -581,6 +582,13 @@ def test_central_quotes_service_limits_fallback_cooldown_full_fetch(monkeypatch)
             self._rt_quote_batch_size = 20
             self._rt_eastmoney_cooldown_until = now + 120
 
+        def read_provider_health(self):
+            return ProviderHealthSnapshot(
+                request_stats={},
+                runtime_stats={},
+                eastmoney_cooldown_until=self._rt_eastmoney_cooldown_until,
+            )
+
         def fetch_realtime_quotes_batch(self, fetch_codes):
             ordered = tuple(sorted(fetch_codes))
             self.calls.append(ordered)
@@ -916,6 +924,13 @@ def test_central_quotes_service_heartbeat_counts_eastmoney_quote_cooldown(monkey
 
     class DummyProvider:
         _rt_eastmoney_cooldown_until = now + 90
+
+        def read_provider_health(self):
+            return ProviderHealthSnapshot(
+                request_stats={},
+                runtime_stats={},
+                eastmoney_cooldown_until=self._rt_eastmoney_cooldown_until,
+            )
 
         def compact_runtime_caches(self):
             return {

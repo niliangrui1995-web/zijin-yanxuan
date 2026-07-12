@@ -6,7 +6,10 @@ import threading
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
+from app.services.ui_task_lifecycle_service import TaskLifecycleGroup
+from infra.tasks.lifecycle import CancellationToken, TaskCancelledError
 from ui.workers.scan_worker import ScanWorker
 
 
@@ -26,6 +29,11 @@ class DummyProvider:
         self.code2name = {"300093": "300093"}
         self._offline = False
         self.repair_requests = []
+        self.adjustment_metadata_calls = []
+
+    def ensure_adjustment_metadata(self, *, force=False):
+        self.adjustment_metadata_calls.append(bool(force))
+        return {"loaded": True}
 
     def ensure_code_name_map(self, codes=None, *, refresh_missing=False):
         normalized_codes = tuple(sorted(str(code) for code in (codes or ())))
@@ -244,5 +252,123 @@ def test_scan_worker_scan_matrix_candidates_collects_hits():
     assert engine.evaluate_calls == 1
 
 
+def test_scan_worker_stops_inside_candidate_loop_when_token_is_cancelled(monkeypatch):
+    token = CancellationToken()
+    worker = ScanWorker(
+        DummyProvider(),
+        DummyEngine(),
+        "2026-04-17",
+        "2026-04-17",
+        SimpleNamespace(rps_threshold=80),
+        cancellation_token=token,
+    )
+    visited = []
+
+    def _scan(code, *_args):
+        visited.append(code)
+        token.cancel("test_cancel")
+        return None
+
+    monkeypatch.setattr(worker, "_scan_candidate_for_day", _scan)
+    matrix = {
+        "2026-04-17": {
+            "rps250": {"000001": 90, "000002": 91, "000003": 92},
+            "rps120": {},
+        }
+    }
+
+    with pytest.raises(TaskCancelledError, match="test_cancel"):
+        worker._scan_matrix_candidates(matrix)
+
+    assert visited == ["000001"]
+
+
+def test_scan_worker_checks_deadline_before_rps_provider_stage():
+    token = CancellationToken.with_timeout(0)
+    engine = DummyEngine()
+    worker = ScanWorker(
+        DummyProvider(),
+        engine,
+        "2026-04-17",
+        "2026-04-17",
+        SimpleNamespace(rps_threshold=80),
+        cancellation_token=token,
+    )
+
+    with pytest.raises(TimeoutError, match="截止时间"):
+        worker._build_scan_matrix()
+
+    assert engine.evaluate_calls == 0
+
+
+def test_scan_tab_owns_and_passes_scan_lifecycle_token(monkeypatch):
+    from ui.tabs import scan_tab as scan_tab_module
+
+    class _Signal:
+        def __init__(self):
+            self.callbacks = []
+
+        def connect(self, callback):
+            self.callbacks.append(callback)
+
+    class _Worker:
+        def __init__(self, *_args, **kwargs):
+            self.kwargs = kwargs
+            self.progress = _Signal()
+            self.result_ready = _Signal()
+            self.finished_scan = _Signal()
+            self.finished = _Signal()
+            self.started = False
+            self.cancelled = False
+
+        def start(self):
+            self.started = True
+
+        def isRunning(self):
+            return self.started
+
+        def cancel(self):
+            self.cancelled = True
+
+    monkeypatch.setattr(scan_tab_module, "ScanWorker", _Worker)
+    spin = SimpleNamespace(value=lambda: 1)
+    tab = SimpleNamespace(
+        worker=None,
+        _task_lifecycle=TaskLifecycleGroup(),
+        _scan_cancel_requested=False,
+        _set_scan_action_state=lambda _state: None,
+        _save_scan_params=lambda: None,
+        _on_scan_results=lambda _rows: None,
+        _on_scan_finished=lambda _success, _message: None,
+        _on_worker_thread_finished=lambda: None,
+        spn_scan_rps=spin,
+        spn_scan_amp=spin,
+        spn_scan_ma_bind=spin,
+        spn_scan_high250=spin,
+        spn_scan_amount=spin,
+        data_provider=object(),
+        engine=object(),
+    )
+
+    assert scan_tab_module.ScanTab.start_scan(tab, "20260417", "20260417") is True
+
+    token = tab._scan_token
+    assert tab.worker.kwargs["cancellation_token"] is token
+    assert tab.worker.kwargs["timeout_sec"] == scan_tab_module.ScanTab.SCAN_TIMEOUT_SEC
+    assert tab.worker.started is True
+
+    assert scan_tab_module.ScanTab.cancel_scan(tab) is True
+    assert token.cancelled is True
+    assert token.reason == "user_cancelled"
+    assert tab.worker.cancelled is True
+
+
 def test_scan_worker_run_stays_under_hotspot_budget():
     assert len(inspect.getsource(ScanWorker.run).splitlines()) <= 70
+
+
+def test_scan_worker_does_not_force_full_gc_from_ui_package():
+    import ui.workers.scan_worker as scan_worker_module
+
+    source = inspect.getsource(scan_worker_module)
+    assert "gc.collect(" not in source

@@ -12,8 +12,21 @@ from app.services.asian_market_service import (
     mark_yf_rate_limited,
 )
 from app.services.ui_market_calendar_service import MarketCalendar
+from app.services.ui_quote_service import is_provider_online
+from app.services.ui_task_lifecycle_service import task_lifecycle_for
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
+
+
+def _submit_owned_window_task(window, name, fn, on_success, task_suffix: str, timeout_sec: float) -> None:
+    task_lifecycle_for(window, runner=task_manager).run_background(
+        name,
+        fn,
+        on_success=on_success,
+        task_id=task_registry.transient_window(task_suffix),
+        timeout_sec=timeout_sec,
+        runner=task_manager,
+    )
 
 
 def normalize_daily_df_index(df, *, logger):
@@ -161,7 +174,7 @@ def load_and_draw(window):
     target_trade_date = window._get_cn_target_trade_date()
     window._set_status_message("正在准备日线数据...", tone="loading")
 
-    def _bg_fetch():
+    def _bg_fetch(_cancellation_token):
         quote_to_apply = None
 
         normalized_local_df = normalize_daily_df_index(data_provider.get_data(request_code), logger=request_logger)
@@ -181,7 +194,7 @@ def load_and_draw(window):
             fresh_df = normalized_local_df
 
         if (
-            not getattr(data_provider, "_offline", False)
+            is_provider_online(data_provider)
             and target_trade_date is not None
             and MarketCalendar.is_quote_refresh_time("CN")
         ):
@@ -225,10 +238,9 @@ def load_and_draw(window):
         except RuntimeError:
             return
 
-    task_manager.run_in_background(
-        _bg_fetch,
-        on_success=_on_fetch_success,
-        task_id=task_registry.transient_window(f"kline_{request_code}_{request_generation}"),
+    _submit_owned_window_task(
+        window, "history_load", _bg_fetch, _on_fetch_success,
+        f"kline_{request_code}_{request_generation}", 120.0,
     )
 
 
@@ -262,7 +274,7 @@ def poll_rt_update(window):
         if get_yf_rate_limit_status()["active"]:
             return
 
-    def _bg_fetch():
+    def _bg_fetch(_cancellation_token):
         try:
             if market != "CN":
                 from ui.tabs.asian_market_workers import fetch_asian_realtime_quote
@@ -296,10 +308,9 @@ def poll_rt_update(window):
             return
         raise
 
-    task_manager.run_in_background(
-        _bg_fetch,
-        on_success=_on_fetch_success,
-        task_id=task_registry.transient_window(f"kline_rt_{request_code}_{request_generation}"),
+    _submit_owned_window_task(
+        window, "realtime_quote", _bg_fetch, _on_fetch_success,
+        f"kline_rt_{request_code}_{request_generation}", 20.0,
     )
 
 

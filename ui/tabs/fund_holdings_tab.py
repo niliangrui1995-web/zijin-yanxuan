@@ -30,12 +30,13 @@ from app.services.ui_fund_holdings_service import (
     fund_holdings_store,
     fund_holdings_sync_service,
 )
-from app.services.ui_task_service import background_job_runner as task_manager
-from app.services.ui_task_service import task_registry
-from core.ai_industry_chain_pool import (
+from app.services.ui_industry_chain_service import (
     load_cached_ai_industry_chain_context_map,
     load_cached_ai_industry_chain_stock_codes,
 )
+from app.services.ui_task_lifecycle_service import TaskLifecycleGroup, invoke_with_cancellation
+from app.services.ui_task_service import background_job_runner as task_manager
+from app.services.ui_task_service import task_registry
 from ui.components import (
     MultiSelectFilterButton,
     TableStateWrapper,
@@ -84,6 +85,14 @@ from ui.tabs.fund_holdings_view_state import (
 )
 
 
+def _task_lifecycle_for(tab):
+    lifecycle = getattr(tab, "_task_lifecycle", None)
+    if lifecycle is None:
+        lifecycle = TaskLifecycleGroup(task_manager)
+        tab._task_lifecycle = lifecycle
+    return lifecycle
+
+
 class FundHoldingsTab(BaseStockTab):
     _F5_AUTO_SYNC_DELAY_MS = 18000
     _QUOTE_SNAPSHOT_REFRESH_DELAY_MS = 120
@@ -108,6 +117,8 @@ class FundHoldingsTab(BaseStockTab):
     _VIEW_STATE_PREFIX = "fund_holdings_view_state_v2"
     _stock_universe_provider = staticmethod(load_cached_ai_industry_chain_stock_codes)
     _chain_context_provider = staticmethod(load_cached_ai_industry_chain_context_map)
+    VIEW_LOAD_TIMEOUT_SEC = 90.0
+    SYNC_TIMEOUT_SEC = 15 * 60.0
 
     def __init__(
         self,
@@ -408,6 +419,7 @@ class FundHoldingsTab(BaseStockTab):
         *,
         quarter_scope: str = _QUERY_SCOPE_LATEST,
         quarter_keys=None,
+        cancellation_token=None,
     ) -> dict:
         return load_fund_holdings_view_payload(
             quarter_scope=quarter_scope,
@@ -418,6 +430,7 @@ class FundHoldingsTab(BaseStockTab):
             latest_scope=cls._QUERY_SCOPE_LATEST,
             all_scope=cls._QUERY_SCOPE_ALL,
             selected_scope=cls._QUERY_SCOPE_SELECTED,
+            cancellation_token=cancellation_token,
         )
 
     def _apply_view_payload(self, payload: dict):
@@ -507,11 +520,12 @@ class FundHoldingsTab(BaseStockTab):
             scope = str(quarter_scope or self._QUERY_SCOPE_LATEST).strip().lower()
             keys = set(quarter_keys or [])
 
-        def _load_bg():
+        def _load_bg(cancellation_token):
             return self._load_view_payload(
                 self.data_provider,
                 quarter_scope=scope,
                 quarter_keys=keys,
+                cancellation_token=cancellation_token,
             )
 
         def _on_success(payload):
@@ -532,11 +546,13 @@ class FundHoldingsTab(BaseStockTab):
                 action_callback=self._ensure_initial_load_started,
             )
 
-        task_manager.run_in_background(
+        _task_lifecycle_for(self).run_background(
+            "view-load",
             _load_bg,
             on_success=_on_success,
             on_error=_on_error,
             task_id=self._build_workspace_task_id(f"load_{scope}_{id(self)}"),
+            timeout_sec=self.VIEW_LOAD_TIMEOUT_SEC,
         )
 
     def _ensure_change_menu_built(self) -> None:
@@ -789,32 +805,6 @@ class FundHoldingsTab(BaseStockTab):
         latest_sync = max(sync_times)
         return f"快照 {latest_sync[-8:]}"
 
-    def _read_provider_status(self) -> dict:
-        provider = getattr(self, "data_provider", None)
-        request_stats = {}
-        runtime_stats = {}
-
-        request_getter = getattr(provider, "get_quote_request_stats", None)
-        if callable(request_getter):
-            try:
-                request_stats = request_getter() or {}
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                request_stats = {}
-
-        runtime_getter = getattr(provider, "get_realtime_runtime_stats", None)
-        if callable(runtime_getter):
-            try:
-                runtime_stats = runtime_getter() or {}
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                runtime_stats = {}
-
-        return {
-            "request_stats": request_stats,
-            "runtime_stats": runtime_stats,
-            "eastmoney_cooldown_until": float(getattr(provider, "_rt_eastmoney_cooldown_until", 0.0) or 0.0),
-            "eastmoney_last_error": str(getattr(provider, "_rt_eastmoney_last_error", "") or ""),
-        }
-
     def _latest_sync_updated_at(self) -> str:
         sync_times = []
         for sync_state in self._latest_sync_map.values():
@@ -1053,11 +1043,13 @@ class FundHoldingsTab(BaseStockTab):
         self._set_sync_active(True, "同步基金持仓中...", label)
         self._set_sync_start_status(label)
 
-        task_manager.run_in_background(
-            sync_callable,
+        _task_lifecycle_for(self).run_background(
+            "sync",
+            lambda cancellation_token: invoke_with_cancellation(sync_callable, cancellation_token),
             on_success=lambda result: self._handle_sync_success(result, label),
             on_error=lambda error_message: self._handle_sync_error(error_message, label, sync_callable),
             task_id=self._sync_task_id,
+            timeout_sec=self.SYNC_TIMEOUT_SEC,
         )
 
     def run_auto_sync_after_f5(self) -> bool:
@@ -1420,6 +1412,9 @@ class FundHoldingsTab(BaseStockTab):
     def _cleanup_runtime_state(self):
         if not getattr(self, "_fund_holdings_cleanup_done", False):
             self._fund_holdings_cleanup_done = True
+            lifecycle = getattr(self, "_task_lifecycle", None)
+            if lifecycle is not None:
+                lifecycle.shutdown(timeout_ms=1000)
             view_state_timer = getattr(self, "_view_state_save_timer", None)
             if view_state_timer is not None:
                 view_state_timer.stop()

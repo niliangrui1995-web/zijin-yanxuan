@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import datetime as dt
+import importlib
 import io
 import json
 import threading
@@ -1534,7 +1535,8 @@ def test_build_oligarch_universe_handles_missing_module_and_empty_tickers(monkey
 
 def test_service_lazy_data_store_and_load_events_network_fallback(monkeypatch):
     store = SimpleNamespace(load_json=lambda key, default=None: default, save_json=lambda key, data: None)
-    monkeypatch.setattr("core.data_store.data_store", store)
+    data_store_module = importlib.import_module("infra.storage.data_store")
+    monkeypatch.setattr(data_store_module, "data_store", store)
 
     service = GlobalEarningsCalendarService(
         data_store=None,

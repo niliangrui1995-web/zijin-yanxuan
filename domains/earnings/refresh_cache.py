@@ -8,8 +8,17 @@ import json
 
 from domains.earnings.engine import EarningsEngine
 from domains.market_calendar import MarketCalendar
+from infra.storage.industry_chain_repository import IndustryChainRepository
 
 STARTUP_BACKFILL_TRADE_DAYS = 10
+
+
+def _create_engine() -> EarningsEngine:
+    repository = IndustryChainRepository()
+    return EarningsEngine(
+        stock_universe_provider=repository.load_cached_stock_codes,
+        stock_context_provider=repository.load_cached_context_map,
+    )
 
 
 def _normalize_trade_dates(trade_dates: list[str] | None) -> list[str]:
@@ -97,7 +106,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     job_key = "earnings_startup_gap_fill" if args.mode == "startup-gap-fill" else "earnings_routine"
     try:
-        engine = EarningsEngine()
+        engine = _create_engine()
         if args.mode == "startup-gap-fill":
             summary = run_startup_gap_fill(engine)
         else:

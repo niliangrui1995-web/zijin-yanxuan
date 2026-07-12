@@ -5,12 +5,14 @@ import os
 import threading
 import time
 from collections import Counter
+from typing import Protocol, cast
 
 from core.logger import get_logger
 from core.runtime_paths import CACHE_DIR, MAX_HISTORY_BARS
 from domains.market_calendar import MarketCalendar
 from infra.market_data.adjustment_service import AdjustmentService
 from infra.market_data.local_history_provider import LocalHistoryProvider
+from infra.market_data.provider_ports import ProviderHealthSnapshot, RealtimeQuoteRequestPolicy
 from infra.market_data.realtime_quote_provider import RealtimeQuoteProvider
 from vcp.data_provider_cache import compact_runtime_caches, downcast_memory, prune_rt_quote_cache
 from vcp.data_provider_history_mixin import TdxDataProviderHistoryMixin
@@ -38,7 +40,44 @@ def _iso_from_timestamp(value) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(timestamp))
 
 
-class TdxDataProvider(TdxDataProviderHistoryMixin, TdxDataProviderRealtimeMixin):
+class _ProviderPortSource(Protocol):
+    def get_quote_request_stats(self) -> dict: ...
+
+    def get_realtime_runtime_stats(self) -> dict: ...
+
+    def _build_offline_quotes(self, codes) -> dict[str, dict]: ...
+
+    def _load_local_gbbq(self, force: bool = False) -> dict: ...
+
+
+class _ProviderHealthMixin:
+    def read_provider_health(self) -> ProviderHealthSnapshot:
+        """Publish quote-provider health without exposing mutable internals."""
+        source = cast(_ProviderPortSource, self)
+        return ProviderHealthSnapshot(
+            request_stats=source.get_quote_request_stats(),
+            runtime_stats=source.get_realtime_runtime_stats(),
+            eastmoney_cooldown_until=getattr(self, "_rt_eastmoney_cooldown_until", 0.0),
+            eastmoney_last_error=getattr(self, "_rt_eastmoney_last_error", ""),
+        )
+
+    def ensure_adjustment_metadata(self, *, force: bool = False) -> dict:
+        """Load adjustment metadata through the public provider port."""
+        return cast(_ProviderPortSource, self)._load_local_gbbq(force=force)
+
+    def build_offline_quotes(self, codes: list[str]) -> dict[str, dict]:
+        """Build local fallback quotes through the public provider port."""
+        return cast(_ProviderPortSource, self)._build_offline_quotes(codes)
+
+    def read_realtime_quote_request_policy(self) -> RealtimeQuoteRequestPolicy:
+        """Publish immutable request timing without exposing mutable internals."""
+        return RealtimeQuoteRequestPolicy(
+            api_call_timeout_sec=getattr(self, "_rt_api_call_timeout_sec", 8.0),
+            batch_size=getattr(self, "_rt_quote_batch_size", RT_QUOTE_BATCH_SIZE),
+        )
+
+
+class TdxDataProvider(_ProviderHealthMixin, TdxDataProviderHistoryMixin, TdxDataProviderRealtimeMixin):
     def __init__(self, is_trading_day=None, offline=False, offline_mode=None):
         from pytdx.hq import TdxHq_API
 

@@ -1,11 +1,16 @@
 # -*- coding: utf-8 -*-
 
+import ast
+from pathlib import Path
+
 import pandas as pd
 from PyQt6.QtTest import QSignalSpy
 from yfinance.exceptions import YFRateLimitError
 
 from ui.services import asian_market_runtime_service as runtime_service
 from ui.tabs import asian_market_workers as workers
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class _FakeResponse:
@@ -31,6 +36,175 @@ class _FakeSession:
     def get(self, url, **kwargs):
         self.urls.append(url)
         return self.response
+
+
+def test_asian_market_worker_module_is_only_thread_orchestration_and_cache_state():
+    worker_path = _REPO_ROOT / "ui" / "tabs" / "asian_market_workers.py"
+    tree = ast.parse(worker_path.read_text(encoding="utf-8"))
+
+    imported_modules = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    imported_from = {
+        node.module or ""
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+    }
+    forbidden_defs = {
+        "_load_realtime_json",
+        "_parse_jp_realtime_page",
+        "_parse_jp_yahoo_pe_from_html",
+        "_fetch_tw_realtime_quote",
+        "_fetch_hk_realtime_quote",
+        "_fetch_kr_realtime_quote",
+        "_fetch_jp_realtime_quote",
+        "_fetch_yfinance_realtime_quote",
+        "_fetch_twse_pe",
+        "_fetch_tpex_pe",
+        "_fetch_kr_naver_pe",
+        "_fetch_jp_yahoo_pe",
+        "_fetch_jp_kabutan_pe",
+    }
+    defined_functions = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    assert imported_modules.isdisjoint({"html", "importlib", "json", "re", "requests"})
+    assert "app.services.asian_market_http_service" not in imported_from
+    assert forbidden_defs.isdisjoint(defined_functions)
+    assert not any(
+        isinstance(node, ast.Attribute)
+        and node.attr in {"json", "text", "content", "fast_info", "history", "Ticker"}
+        for node in ast.walk(tree)
+    )
+
+
+def test_asian_quote_provider_boundary_exists_without_qt_dependencies():
+    provider_path = _REPO_ROOT / "infra" / "market_data" / "asian_realtime_provider.py"
+    facade_path = _REPO_ROOT / "app" / "services" / "asian_market_quote_service.py"
+
+    assert provider_path.is_file()
+    assert facade_path.is_file()
+
+    provider_source = provider_path.read_text(encoding="utf-8")
+    facade_source = facade_path.read_text(encoding="utf-8")
+    provider_tree = ast.parse(provider_source)
+    imported_roots = {
+        (node.module or "").split(".", 1)[0]
+        for node in ast.walk(provider_tree)
+        if isinstance(node, ast.ImportFrom)
+    } | {
+        alias.name.split(".", 1)[0]
+        for node in ast.walk(provider_tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    assert imported_roots.isdisjoint({"PyQt6", "app", "ui"})
+    assert "asian_realtime_provider" in facade_source
+
+
+def test_save_global_asian_rt_cache_delegates_serialization_to_cache_service(monkeypatch):
+    payload = {
+        "2330.TW": {
+            "close": 2080.0,
+            "pct": 1.25,
+            "df_today": object(),
+        }
+    }
+    captured = []
+    monkeypatch.setattr(workers, "GLOBAL_ASIAN_RT_CACHE", payload)
+    monkeypatch.setattr(
+        workers,
+        "write_realtime_quote_cache",
+        lambda quotes: captured.append(quotes),
+        raising=False,
+    )
+
+    workers.save_global_asian_rt_cache()
+
+    assert captured == [payload]
+
+
+def test_asian_display_modules_do_not_read_business_files_directly():
+    forbidden_imports = {
+        "ui/kline_window_asian.py": {"json", "os"},
+        "ui/tabs/asian_market_meta.py": {"pathlib", "re"},
+    }
+    for relative_path, forbidden_roots in forbidden_imports.items():
+        tree = ast.parse((_REPO_ROOT / relative_path).read_text(encoding="utf-8"))
+        imported_roots = {
+            alias.name.split(".", 1)[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        } | {
+            (node.module or "").split(".", 1)[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+        }
+        direct_open_calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and (
+                isinstance(node.func, ast.Name)
+                and node.func.id == "open"
+                or isinstance(node.func, ast.Attribute)
+                and node.func.attr == "open"
+            )
+        ]
+
+        assert imported_roots.isdisjoint(forbidden_roots), relative_path
+        assert direct_open_calls == [], relative_path
+
+
+def test_asian_cache_service_selects_ticker_without_ui_file_io(tmp_path):
+    from app.services.asian_market_cache_service import (
+        load_cached_asian_stock,
+        write_json_cache,
+    )
+
+    cache_path = tmp_path / "asian.json"
+    write_json_cache(
+        str(cache_path),
+        {
+            "stocks": [
+                {"ticker": "2330.TW", "klines": [{"date": "2026-07-10"}]},
+                {"ticker": "0522.HK", "klines": []},
+            ]
+        },
+    )
+
+    assert load_cached_asian_stock(str(cache_path), "2330.TW") == {
+        "ticker": "2330.TW",
+        "klines": [{"date": "2026-07-10"}],
+    }
+    assert load_cached_asian_stock(str(cache_path), "missing.T") is None
+
+
+def test_asian_metadata_repository_parses_roles_and_exclusions(tmp_path):
+    from infra.storage.asian_market_metadata import read_pipeline_industry_roles
+
+    source_path = tmp_path / "industry_dict.py"
+    source_path.write_text(
+        '\n'.join(
+            (
+                '"7735.T": "SCREEN",  # 日本PCB设备（头部｜PCB直接成像）',
+                '"6594.T": "Nidec",  # 日本设备（排除）',
+                '"000001.SZ": "CN",  # A股（不应读取）',
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    assert read_pipeline_industry_roles(source_path, excluded_tickers={"6594.T"}) == {
+        "7735.T": "头部｜PCB直接成像"
+    }
 
 
 def _jp_current_page_html():
@@ -799,6 +973,32 @@ def test_runtime_cache_sync_degrades_without_raising(monkeypatch):
     assert result["error"] == message
     assert result["missing"] == ["2308.TW"]
     assert service.last_error == message
+
+
+def test_asian_cache_fetcher_thread_interrupts_the_shared_cooperative_token(monkeypatch):
+    observed = []
+
+    def _sync(**kwargs):
+        token = kwargs["cancellation_token"]
+        observed.append(token)
+        token.raise_if_cancelled()
+        return True, "ok", {}
+
+    monkeypatch.setattr(workers, "sync_asian_kline_cache", _sync)
+    active_thread = workers.AsianCacheFetcherThread()
+    active_thread.run()
+
+    assert observed == [active_thread.cancellation_token]
+    assert active_thread.result_success is True
+
+    thread = workers.AsianCacheFetcherThread()
+
+    thread.requestInterruption()
+    thread.run()
+
+    assert thread.cancellation_token.cancelled is True
+    assert thread.result_success is False
+    assert "取消" in thread.result_message
 
 
 def test_fetch_single_code_skips_optional_network_when_deadline_is_close(monkeypatch):

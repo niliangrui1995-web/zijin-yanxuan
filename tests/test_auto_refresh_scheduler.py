@@ -4,10 +4,14 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+import pytest
 from PyQt6.QtTest import QSignalSpy
 
+import app.services.earnings_refresh_process_service as earnings_process_service
+import app.services.foreign_block_market_data_service as foreign_market_service
 from app.services.ui_config_service import app_config
 from app.services.ui_event_service import domain_events as event_bus
+from infra.tasks.lifecycle import CancellationToken, TaskCancelledError
 from ui.services import auto_refresh_tasks as auto_refresh_task_module
 from ui.services.auto_refresh_scheduler import AutoRefreshJob, AutoRefreshScheduler
 from ui.services.auto_refresh_tasks import AutoRefreshTaskService
@@ -20,7 +24,7 @@ class _ImmediateRunner:
     def is_active_task(self, _task_id):
         return False
 
-    def run_in_background(self, fn, *, on_success=None, on_error=None, task_id=None):
+    def run_in_background(self, fn, *, on_success=None, on_error=None, task_id=None, **_kwargs):
         self.jobs.append(task_id)
         try:
             result = fn()
@@ -37,14 +41,30 @@ class _QueuedRunner:
     def __init__(self):
         self.jobs = []
         self.active = set()
+        self.job_kwargs = {}
+        self.lifecycle_calls = []
 
     def is_active_task(self, task_id):
         return task_id in self.active
 
-    def run_in_background(self, fn, *, on_success=None, on_error=None, task_id=None):
+    def run_in_background(self, fn, *, on_success=None, on_error=None, task_id=None, **kwargs):
         self.jobs.append((task_id, fn, on_success, on_error))
         self.active.add(task_id)
+        self.job_kwargs[task_id] = dict(kwargs)
         return task_id
+
+    def abandon_task(self, task_id, **_kwargs):
+        self.lifecycle_calls.append(("abandon", task_id))
+        self.active.discard(task_id)
+        return True
+
+    def cancel_task(self, task_id, *, reason="cancelled"):
+        self.lifecycle_calls.append(("cancel", task_id, reason))
+        return task_id in self.active
+
+    def wait_for_tasks(self, task_ids, *, timeout_ms):
+        self.lifecycle_calls.append(("wait", tuple(task_ids), timeout_ms))
+        return True
 
 
 class _TaskService:
@@ -197,6 +217,56 @@ def test_auto_refresh_scheduler_does_not_resubmit_running_job(monkeypatch):
 
     lhb_jobs = [job for job in runner.jobs if job[0] == "auto_refresh_lhb_daily"]
     assert len(lhb_jobs) == 1
+
+
+def test_auto_refresh_scheduler_owns_token_deadline_and_cancels_on_shutdown():
+    _reset_scheduler_settings()
+    now = [datetime.datetime(2026, 4, 20, 20, 0)]
+    runner = _QueuedRunner()
+    scheduler = _scheduler(now, runner=runner, task_service=_TaskService())
+
+    scheduler._submit_job(
+        "lhb_daily",
+        "20260420",
+        lambda *, cancellation_token=None: cancellation_token.raise_if_cancelled() or {"records": 1},
+    )
+
+    task_id = "auto_refresh_lhb_daily"
+    token = runner.job_kwargs[task_id]["cancellation_token"]
+    assert runner.job_kwargs[task_id]["timeout_sec"] == scheduler.JOB_TIMEOUT_SECONDS["lhb_daily"]
+    assert token.cancelled is False
+
+    scheduler.shutdown()
+
+    assert token.cancelled is True
+    assert token.reason == "owner_shutdown"
+    assert ("cancel", task_id, "owner_shutdown") in runner.lifecycle_calls
+    assert any(call[0] == "wait" and call[2] == scheduler.SHUTDOWN_WAIT_TIMEOUT_MS for call in runner.lifecycle_calls)
+    _, run_fn, on_success, _ = runner.jobs[-1]
+    with pytest.raises(TaskCancelledError, match="owner_shutdown"):
+        run_fn()
+    assert task_id in runner.active
+    assert on_success is not None
+
+
+def test_foreign_block_fetch_stops_after_provider_stage_cancels(monkeypatch):
+    token = CancellationToken()
+    calls = []
+
+    def fetch_calendar(**_kwargs):
+        calls.append("calendar")
+        token.cancel("provider_cancelled")
+        return ["2026-04-20"]
+
+    monkeypatch.setattr(foreign_market_service, "fetch_trade_calendar", fetch_calendar)
+
+    with pytest.raises(TaskCancelledError, match="provider_cancelled"):
+        foreign_market_service.fetch_foreign_block_records(
+            days_to_fetch=30,
+            cancellation_token=token,
+        )
+
+    assert calls == ["calendar"]
 
 
 def test_auto_refresh_scheduler_catches_up_when_started_after_2000(monkeypatch):
@@ -559,7 +629,7 @@ def test_auto_refresh_task_service_runs_earnings_refresh_in_subprocess(monkeypat
         calls.append((mode, routine_time))
         return {"status": "success", "job_key": f"earnings_{mode}", "records": 3}
 
-    monkeypatch.setattr(auto_refresh_task_module, "_run_earnings_refresh_subprocess", fake_refresh)
+    monkeypatch.setattr(earnings_process_service, "run_earnings_refresh", fake_refresh)
     service = AutoRefreshTaskService(earnings_service=object())
 
     startup = service.run_earnings_startup_gap_fill("20260420")
@@ -583,15 +653,69 @@ def test_earnings_refresh_subprocess_uses_hidden_module_runner(monkeypatch):
             stderr="",
         )
 
-    monkeypatch.setattr("app.services.ui_task_service.run_python_module", fake_run)
+    monkeypatch.setattr(earnings_process_service, "run_python_module", fake_run)
 
-    result = auto_refresh_task_module._run_earnings_refresh_subprocess("routine", routine_time="08:30")
+    result = earnings_process_service.run_earnings_refresh("routine", routine_time="08:30")
 
     assert result == {"status": "success", "job_key": "earnings_routine", "records": 2}
     assert calls[0][0] == "domains.earnings.refresh_cache"
     assert calls[0][1] == ["routine", "--routine-time", "08:30"]
     assert calls[0][2]["no_window"] is True
     assert calls[0][2]["check"] is True
+
+
+def test_earnings_refresh_process_clamps_timeout_to_owner_deadline(monkeypatch):
+    calls = []
+
+    class DeadlineToken:
+        checks = 0
+
+        def raise_if_cancelled(self):
+            self.checks += 1
+
+        @staticmethod
+        def remaining_seconds():
+            return 2.5
+
+    def fake_run(_module_name, _module_args=None, **kwargs):
+        calls.append(kwargs)
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout='{"status":"success","job_key":"earnings_routine","records":0}\n',
+            stderr="",
+        )
+
+    token = DeadlineToken()
+    monkeypatch.setattr(earnings_process_service, "run_python_module", fake_run)
+
+    result = earnings_process_service.run_earnings_refresh(
+        "routine",
+        routine_time="08:30",
+        cancellation_token=token,
+    )
+
+    assert result["status"] == "success"
+    assert calls[0]["timeout"] == pytest.approx(2.5)
+    assert token.checks >= 3
+
+
+def test_earnings_refresh_process_rechecks_cancellation_after_worker_returns(monkeypatch):
+    token = CancellationToken()
+
+    def fake_run(_module_name, _module_args=None, **_kwargs):
+        token.cancel("owner_shutdown")
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout='{"status":"success","job_key":"earnings_routine","records":0}\n',
+            stderr="",
+        )
+
+    monkeypatch.setattr(earnings_process_service, "run_python_module", fake_run)
+
+    with pytest.raises(TaskCancelledError, match="owner_shutdown"):
+        earnings_process_service.run_earnings_refresh("routine", cancellation_token=token)
 
 
 def test_auto_refresh_task_service_writes_lhb_pool_cache(monkeypatch):
@@ -613,8 +737,8 @@ def test_auto_refresh_task_service_writes_lhb_pool_cache(monkeypatch):
             return ["20260420"]
 
     monkeypatch.setattr(
-        "ui.workers.lhb_worker.fetch_lhb_pool_for_date",
-        lambda date_text, emit_success_log=False, return_meta=True: {
+        "app.services.lhb_market_data_service.fetch_lhb_pool_for_date",
+        lambda date_text, emit_success_log=False, return_meta=True, cancellation_token=None: {
             "records": [{"code": "300308"}, {"code": "600000"}],
             "status": "ok",
         },
@@ -702,42 +826,38 @@ def test_auto_refresh_foreign_block_fetches_latest_chunk_first(monkeypatch):
         def now(cls):
             return cls(2026, 6, 11, 20, 0)
 
-    class FakeBlockModule:
-        _BLOCK_TRADE_TOTAL_TIMEOUT = 90
-        _BLOCK_TRADE_CALENDAR_TIMEOUT = 10
-        _BLOCK_TRADE_CHUNK_TIMEOUT = 15
-        _BLOCK_TRADE_MAX_RETRIES = 1
-        FOREIGN_KEYWORDS = ["高盛"]
-        ProcessTimeoutError = TimeoutError
+    monkeypatch.setattr(foreign_market_service.datetime, "datetime", FixedDatetime)
+    monkeypatch.setattr(foreign_market_service, "BLOCK_TRADE_MAX_RETRIES", 1)
+    monkeypatch.setattr(
+        foreign_market_service,
+        "fetch_trade_calendar",
+        lambda **_kwargs: pd.date_range("2026-04-01", "2026-06-11").strftime("%Y-%m-%d").tolist(),
+    )
 
-        @staticmethod
-        def _run_domestic_akshare(mode, *args, timeout=15):
-            if mode == "calendar":
-                return pd.date_range("2026-04-01", "2026-06-11").strftime("%Y-%m-%d").tolist()
-            calls.append(args)
-            return [
-                {
-                    "交易日期": args[1],
-                    "买方营业部": "高盛上海营业部",
-                    "卖方营业部": "普通营业部",
-                }
-            ]
+    def fetch_block_trades(start_date, end_date, **_kwargs):
+        calls.append((start_date, end_date))
+        return [
+            {
+                "交易日期": end_date,
+                "买方营业部": "高盛上海营业部",
+                "卖方营业部": "普通营业部",
+            }
+        ]
 
-        @staticmethod
-        def _raise_block_trade_timeout(stage, detail=""):
-            raise AssertionError((stage, detail))
+    monkeypatch.setattr(foreign_market_service, "fetch_block_trades", fetch_block_trades)
 
-    monkeypatch.setattr(auto_refresh_task_module.datetime, "datetime", FixedDatetime)
-    monkeypatch.setattr(auto_refresh_task_module, "_foreign_block_module", lambda: FakeBlockModule)
-
-    payload = auto_refresh_task_module._fetch_foreign_block_records(days_to_fetch=30)
+    payload = foreign_market_service.fetch_foreign_block_records(days_to_fetch=30)
 
     assert calls[0] == ("20260529", "20260611")
     assert payload["records"][0]["交易日期"] == "20260611"
 
 
 def test_auto_refresh_foreign_block_rows_filter_to_ai_chain_pool(monkeypatch):
-    monkeypatch.setattr("core.ai_industry_chain_pool.load_cached_ai_industry_chain_stock_codes", lambda: {"300308"})
+    monkeypatch.setattr(
+        foreign_market_service,
+        "_filter_rows_to_ai_chain_codes",
+        lambda rows, **_kwargs: [row for row in rows if row.get("代码") == "300308"],
+    )
 
     rows = auto_refresh_task_module._build_foreign_block_rows(
         [

@@ -2,7 +2,7 @@
 import pandas as pd
 import pytest
 
-from ui.workers import lhb_worker
+import infra.market_data.lhb_provider as lhb_worker
 
 
 def test_fetch_lhb_data_for_date_splits_foreign_net_by_reason(monkeypatch):

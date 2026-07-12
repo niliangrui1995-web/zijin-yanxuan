@@ -1,15 +1,42 @@
 # ui/workers.py - 后台工作线程
 # 从 main_window_qt.py 拆分出来的 ScanWorker
-import gc
 
 import pandas as pd
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from app.services.scan_runtime_service import batch_check_market_cap, calculate_scan_indicators
+from app.services.ui_task_lifecycle_service import CancellationToken, TaskCancelledError
 from core.logger import get_logger
 from core.sector_rps_helper import enrich_hot_sector_rows, load_sector_rps_snapshot
 
 log = get_logger(__name__)
+
+SCAN_STAGE_ERRORS = (AttributeError, IndexError, KeyError, OSError, RuntimeError, TypeError, ValueError)
+
+
+def _run_cancellable_stage(worker, fn, *args, **kwargs):
+    worker._raise_if_cancelled()
+    result = fn(*args, **kwargs)
+    worker._raise_if_cancelled()
+    return result
+
+
+def _cancellable_items(worker, values):
+    for value in values:
+        worker._raise_if_cancelled()
+        yield value
+
+
+def _load_hot_sector_snapshot(worker, all_results):
+    target_date = all_results[-1].get("触发日期", "")
+    return _run_cancellable_stage(
+        worker,
+        load_sector_rps_snapshot,
+        worker.data_provider,
+        worker.data_provider.get_all_valid_data(),
+        target_date=target_date,
+        logger=log,
+    )
 
 
 class ScanWorker(QThread):
@@ -17,21 +44,33 @@ class ScanWorker(QThread):
     result_ready = pyqtSignal(list)
     finished_scan = pyqtSignal(bool, str)
 
-    def __init__(self, data_provider, engine, sd, ed, params):
+    def __init__(
+        self,
+        data_provider,
+        engine,
+        sd,
+        ed,
+        params,
+        *,
+        cancellation_token: CancellationToken | None = None,
+        timeout_sec: float | None = None,
+    ):
         super().__init__()
         self.data_provider = data_provider
         self.engine = engine
         self.sd = sd
         self.ed = ed
         self.params = params
-        self._is_cancelled = False
+        self.cancellation_token = cancellation_token or CancellationToken.with_timeout(timeout_sec)
 
-    def cancel(self):
-        self._is_cancelled = True
+    def cancel(self, reason: str = "user_cancelled"):
+        self.requestInterruption()
+        self.cancellation_token.cancel(reason)
 
     def _raise_if_cancelled(self):
-        if self._is_cancelled:
-            raise InterruptedError("用户取消")
+        if self.isInterruptionRequested():
+            self.cancellation_token.cancel("thread_interrupted")
+        self.cancellation_token.raise_if_cancelled()
 
     def _target_codes_for_day(self, d_rps):
         return [
@@ -43,23 +82,27 @@ class ScanWorker(QThread):
 
     def _refresh_candidate_names(self, matrix):
         candidate_codes = set()
-        for d_rps in matrix.values():
+        for d_rps in _cancellable_items(self, matrix.values()):
             candidate_codes.update(self._target_codes_for_day(d_rps))
         if candidate_codes:
-            self.data_provider.code2name = self.data_provider.ensure_code_name_map(
+            self.data_provider.code2name = _run_cancellable_stage(
+                self,
+                self.data_provider.ensure_code_name_map,
                 candidate_codes,
                 refresh_missing=True,
             )
 
     def _prepare_scan_dataframe(self, code, df):
+        self._raise_if_cancelled()
         if "entangle" in df.columns:
             return df
-        prepared = calculate_scan_indicators(df.copy())
+        prepared = _run_cancellable_stage(self, calculate_scan_indicators, df.copy())
         with self.data_provider.cache_lock:
             self.data_provider.cache_data[code] = prepared
         return prepared
 
     def _dedupe_scan_results(self, all_results):
+        self._raise_if_cancelled()
         if not all_results:
             return all_results
         df_all = pd.DataFrame(all_results).sort_values("触发日期")
@@ -75,38 +118,38 @@ class ScanWorker(QThread):
             return
         self.progress.emit(99, "查询热点板块...")
         try:
-            target_date = all_results[-1].get("触发日期", "")
-            sector_manager, sector_rps, _, source = load_sector_rps_snapshot(
-                self.data_provider,
-                self.data_provider.get_all_valid_data(),
-                target_date=target_date,
-                logger=log,
-            )
+            sector_manager, sector_rps, _, source = _load_hot_sector_snapshot(self, all_results)
             if sector_manager and sector_rps:
                 log.info(f"[区间扫描] 热点板块补全就绪 ({source})")
-                enrich_hot_sector_rows(all_results, sector_manager, sector_rps, logger=log)
+
+                _run_cancellable_stage(
+                    self,
+                    enrich_hot_sector_rows,
+                    all_results, sector_manager,
+                    sector_rps, logger=log,
+                )
         except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
             log.error(f"[板块查询] 异常: {e}")
 
     def _enrich_market_caps(self, all_results):
         if not all_results:
             return
-
         import time as _time
 
         self.progress.emit(99, "计算市值...")
         started_at = _time.time()
-        df_res = pd.DataFrame(all_results)
-        unique_codes = df_res["代码"].unique().tolist()
+        unique_codes = pd.DataFrame(all_results)["代码"].unique().tolist()
         scan_close = {}
-        for code in unique_codes:
+        for code in _cancellable_items(self, unique_codes):
             code_data = self.data_provider.get_data(code)
             if code_data is not None and len(code_data) > 0:
                 scan_close[code] = float(code_data.iloc[-1]["close"])
 
-        cap_results = batch_check_market_cap(unique_codes, close_prices=scan_close)
-
-        for result in all_results:
+        cap_results = _run_cancellable_stage(
+            self, batch_check_market_cap, unique_codes,
+            close_prices=scan_close,
+        )
+        for result in _cancellable_items(self, all_results):
             code = result["代码"]
             cap = cap_results.get(code)
             if cap and cap > 0:
@@ -129,7 +172,9 @@ class ScanWorker(QThread):
 
         try:
             df_safe = self._prepare_scan_dataframe(code, df)
-            ok, reason, metrics = self.engine.evaluate_conditions(
+            ok, reason, metrics = _run_cancellable_stage(
+                self,
+                self.engine.evaluate_conditions,
                 df_safe,
                 pd.to_datetime(d_str),
                 d_rps["rps120"].get(code, 0),
@@ -139,12 +184,10 @@ class ScanWorker(QThread):
                 skip_red_check=True,
             )
             if ok:
-                metrics.update(
-                    {
+                metrics.update({
                         "代码": code,
                         "名称": self.data_provider.code2name.get(code, ""),
-                        "触发日期": d_str,
-                        "热点板块": "-",
+                        "触发日期": d_str, "热点板块": "-",
                     }
                 )
                 return metrics
@@ -163,36 +206,36 @@ class ScanWorker(QThread):
 
     def _ensure_scan_source_data(self):
         import time as _time
-
-        if not getattr(self.data_provider, "_local_gbbq", None):
-            self.progress.emit(5, "正在加载除权除息数据 (gbbq)...")
-            started_at = _time.time()
-            self.data_provider._load_local_gbbq(force=False)
-            log.info(f"[区间扫描] gbbq加载完成 ({_time.time() - started_at:.1f}s)")
+        self.progress.emit(5, "正在确认除权除息数据 (gbbq)...")
+        started_at = _time.time()
+        _run_cancellable_stage(self, self.data_provider.ensure_adjustment_metadata, force=False)
+        log.info(f"[区间扫描] gbbq就绪 ({_time.time() - started_at:.1f}s)")
 
         self.progress.emit(1, "正在查询数据...")
         if not self.data_provider.cache_data:
             self.progress.emit(0, "首次扫描:读取本地代码表...")
-            codes_dict = self.data_provider.ensure_code_name_map()
-
+            codes_dict = _run_cancellable_stage(self, self.data_provider.ensure_code_name_map)
             def _sync_cb(done, total, eta):
                 self._raise_if_cancelled()
                 if total > 0 and done % 50 == 0:
                     pct = int((done / total) * 50)
                     self.progress.emit(pct, f"缓存本地日线: {done}/{total} {eta}")
 
-            self.data_provider.sync_market_data(codes_dict, force_refresh=False, progress_callback=_sync_cb)
+            _run_cancellable_stage(
+                self, self.data_provider.sync_market_data, codes_dict,
+                force_refresh=False, progress_callback=_sync_cb,
+            )
             self.data_provider.code2name = codes_dict
         else:
-            self.data_provider.code2name = self.data_provider.ensure_code_name_map()
+            self.data_provider.code2name = _run_cancellable_stage(self, self.data_provider.ensure_code_name_map)
 
     def _build_scan_matrix(self):
         import time as _time
 
         self.progress.emit(50, "计算 RPS 相对强度矩阵...")
         started_at = _time.time()
-        market_cache = self.data_provider.get_all_valid_data()
-        matrix = self.engine.build_rps_matrix(market_cache, self.sd, self.ed)
+        market_cache = _run_cancellable_stage(self, self.data_provider.get_all_valid_data)
+        matrix = _run_cancellable_stage(self, self.engine.build_rps_matrix, market_cache, self.sd, self.ed)
         if matrix:
             self._refresh_candidate_names(matrix)
         return matrix, started_at
@@ -204,14 +247,14 @@ class ScanWorker(QThread):
         all_results = []
         reason_stats = {}
 
-        for i, (d_str, d_rps) in enumerate(matrix.items()):
-            self._raise_if_cancelled()
+        # Keep cancellation checkpoints at both the date and candidate boundaries.
+        for i, (d_str, d_rps) in enumerate(_cancellable_items(self, matrix.items())):
 
             pct = int(100 * (i + 1) / total_days)
             self.progress.emit(pct, f"扫描 {d_str} ({i + 1}/{total_days})")
 
             targets = self._target_codes_for_day(d_rps)
-            for idx_code, code in enumerate(targets):
+            for idx_code, code in enumerate(_cancellable_items(self, targets)):
                 # 防止后台扫描长时间独占 CPU，给 UI 线程留出响应窗口。
                 if idx_code % 20 == 0:
                     _time.sleep(0.001)
@@ -231,8 +274,10 @@ class ScanWorker(QThread):
         self.progress.emit(1, "准备扫描...")
 
         try:
+            # Source preparation may perform bounded local synchronization.
             self._ensure_scan_source_data()
             self._raise_if_cancelled()
+            # Matrix construction is followed by candidate-level cancellation checks.
             matrix, rps_started_at = self._build_scan_matrix()
 
             if not matrix:
@@ -242,15 +287,15 @@ class ScanWorker(QThread):
             all_results = self._scan_matrix_candidates(matrix)
             all_results = self._dedupe_scan_results(all_results)
 
-            # 释放 RPS 矩阵内存（可能占用几十MB，后续步骤不再需要）
+            # 释放 RPS 矩阵强引用，由 Python 按自身阈值回收循环对象。
             del matrix
-            gc.collect()
 
             log.info(f"[区间扫描] RPS筛选完成 ({_time.time() - rps_started_at:.1f}s)，命中 {len(all_results)} 只")
 
             # ---- 二级过滤:机构+市值筛选 ----
             self._enrich_market_caps(all_results)
 
+            # Enrichment remains optional and preserves the complete scan result set.
             # 因区间扫描需全面、不漏票，此处不按市值<40亿做硬过滤
             # 让区间扫描忠于技术形态，展示所有满足 VCP 的股票。
             # 市值计算仍保留，仅为了在界面展示数值（但不剔除）。
@@ -270,13 +315,11 @@ class ScanWorker(QThread):
 
             self._enrich_hot_sectors(all_results)
 
-            # 扫描完成，主动回收中间对象（Polars 转换等产生的临时 DataFrame）
-            gc.collect()
-
+            # Signals are emitted only after every cancellable stage completes.
             self.result_ready.emit(all_results)
             self.finished_scan.emit(True, f"扫描完成,捕获 {len(all_results)} 条信号")
 
-        except InterruptedError:
+        except (InterruptedError, TaskCancelledError):
             self.finished_scan.emit(False, "任务已取消")
         except (AttributeError, ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
             self.finished_scan.emit(False, f"扫描异常: {str(e)}")

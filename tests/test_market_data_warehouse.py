@@ -664,7 +664,7 @@ def test_f5_stage1_progress_updates_status_under_system_log_backpressure(monkeyp
             self.tdx_vipdoc = ""
 
         @staticmethod
-        def _load_local_gbbq(force=False):
+        def ensure_adjustment_metadata(*, force=False):
             return None
 
         @staticmethod
@@ -737,7 +737,7 @@ def test_f5_skips_duplicate_stage1_checkpoint_after_provider_save(monkeypatch):
             self._last_market_data_parquet_saved_date = ""
 
         @staticmethod
-        def _load_local_gbbq(force=False):
+        def ensure_adjustment_metadata(*, force=False):
             return None
 
         @staticmethod

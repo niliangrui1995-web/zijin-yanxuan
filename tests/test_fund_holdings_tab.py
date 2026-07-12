@@ -470,7 +470,7 @@ def test_fund_holdings_tab_local_snapshot_fills_market_fields_without_realtime(m
         def __init__(self):
             self.offline_calls = []
 
-        def _build_offline_quotes(self, codes):
+        def build_offline_quotes(self, codes):
             self.offline_calls.append(list(codes))
             return {"000001": {"close": 10.5, "last_close": 10.0}}
 
@@ -523,7 +523,7 @@ def test_fund_holdings_tab_does_not_schedule_late_local_quote_after_delete(monke
     )
 
     class _OfflineQuoteProvider:
-        def _build_offline_quotes(self, codes):
+        def build_offline_quotes(self, codes):
             raise AssertionError("local quote snapshot should not be primed")
 
     monkeypatch.setattr(

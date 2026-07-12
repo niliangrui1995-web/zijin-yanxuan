@@ -22,9 +22,15 @@ from vcp.fetchers import asian_kline_fetcher as asian_fetcher_module
 class _DummyProvider:
     _offline = True
 
+    def is_online(self):
+        return False
+
 
 class _LiveProvider:
     _offline = False
+
+    def is_online(self):
+        return True
 
 
 def _dispose_kline_window(window):
@@ -296,6 +302,9 @@ def test_yaohei_kline_theme_colors_bind_terminal_chart_tokens(monkeypatch):
 
 class _LunchQuoteProvider:
     _offline = False
+
+    def is_online(self):
+        return True
 
     def __init__(self):
         self.fetch_calls = 0
@@ -1165,6 +1174,9 @@ def test_kline_load_and_draw_defers_cached_render_to_background(monkeypatch):
     class _CachedProvider:
         _offline = True
 
+        def is_online(self):
+            return False
+
         def __init__(self):
             self.get_calls = 0
             self.fresh_calls = 0
@@ -1245,6 +1257,9 @@ def test_kline_load_and_draw_ignores_stale_switch_result(monkeypatch):
 
     class _SwitchingProvider:
         _offline = True
+
+        def is_online(self):
+            return False
 
         def __init__(self):
             self.window = None

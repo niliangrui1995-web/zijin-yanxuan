@@ -319,8 +319,8 @@ def test_watchlist_vcp_calc_gathers_radar_data_inside_background_task(monkeypatc
         tab._do_vcp_calc()
 
         assert gather_calls == []
-        assert queued[0]["fn"] == tab._refresh_vcp_indicators
-        queued[0]["fn"](*queued[0]["args"])
+        assert queued[0]["kwargs"]["task_id"] == "watchlist_vcp_refresh"
+        queued[0]["fn"]()
         assert gather_calls == [["600519"]]
     finally:
         tab.shutdown()
@@ -1162,9 +1162,9 @@ def test_watchlist_indicator_apply_queues_persist_without_sync_write(monkeypatch
         tab._apply_vcp_indicators_ui({"600519": {"rps": "95", "subsector": "白酒"}})
 
         assert direct_writes == []
-        assert queued[0]["fn"] == tab._persist_watchlist_metrics
         assert queued[0]["task_id"] == "watchlist_vcp_persist"
-        assert queued[0]["args"][0]["600519"]["rps"] == "95"
+        queued[0]["fn"]()
+        assert direct_writes[0][0][0]["600519"]["RPS强度"] == "95"
     finally:
         tab.deleteLater()
 

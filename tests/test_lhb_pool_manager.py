@@ -5,7 +5,7 @@ import threading
 import pandas as pd
 import pytest
 
-import core.lhb_pool_manager as lhb_pool_module
+import infra.storage.lhb_pool_repository as lhb_repository_module
 from core.ai_industry_chain_pool import load_cached_ai_industry_chain_stock_codes
 from core.lhb_pool_manager import LhbPoolManager
 
@@ -428,13 +428,13 @@ def test_lhb_pool_manager_reuses_json_payload_by_file_signature(monkeypatch, tmp
     )
     LhbPoolManager._loaded_payload_cache.clear()
     load_calls = []
-    real_load = lhb_pool_module.json.load
+    real_load = lhb_repository_module.json.load
 
     def counting_load(handle):
         load_calls.append(handle.name)
         return real_load(handle)
 
-    monkeypatch.setattr(lhb_pool_module.json, "load", counting_load)
+    monkeypatch.setattr(lhb_repository_module.json, "load", counting_load)
 
     first = object.__new__(LhbPoolManager)
     first._cache_path = str(cache_path)

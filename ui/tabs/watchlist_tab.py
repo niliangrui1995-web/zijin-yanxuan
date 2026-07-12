@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 # ui/tabs/watchlist_tab.py
 # 关注池独立组件 — 从 WatchlistMixin 解耦重构为完全自治的 QWidget
-import os
 import time
 from datetime import datetime
+from functools import partial
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QAbstractItemView, QLabel, QLineEdit, QPushButton, QVBoxLayout
@@ -13,13 +13,14 @@ from app.services.tab_data_lineage_service import TabDataLineageService
 from app.services.ui_diagnostics_service import ui_stall_span
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
+from app.services.ui_json_cache_service import load_json_file
 from app.services.ui_market_calendar_service import MarketCalendar
+from app.services.ui_task_lifecycle_service import TaskLifecycleGroup
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
 from app.services.ui_watchlist_service import watchlist_vm
 from core.buy_point import BUY_POINT_TEXT
 from core.exceptions import CacheIOError, DataFormatError
-from core.json_cache import load_json_file
 from core.logger import get_logger
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.toast_widget import show_toast
@@ -28,6 +29,51 @@ from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, St
 from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
+
+
+def _task_lifecycle_for(owner) -> TaskLifecycleGroup:
+    lifecycle = getattr(owner, "_task_lifecycle", None)
+    if lifecycle is None:
+        lifecycle = TaskLifecycleGroup(task_manager)
+        owner._task_lifecycle = lifecycle
+    return lifecycle
+
+
+def _task_cancelled(cancellation_token) -> bool:
+    return cancellation_token is not None and cancellation_token.cancelled
+
+
+def _active_items(values, cancellation_token=None):
+    for value in values:
+        if _task_cancelled(cancellation_token):
+            return
+        yield value
+
+
+def _run_vcp_refresh(owner, codes_with_rows, cancellation_token):
+    return owner._refresh_vcp_indicators(codes_with_rows, cancellation_token=cancellation_token)
+
+
+def _emit_vcp_if_current(owner, generation: int, results) -> None:
+    if owner._closing or generation != owner._vcp_task_generation or not results:
+        return
+    event_bus.sig_vcp_watchlist_ready.emit(results)
+
+
+def _log_task_error_if_current(owner, generation: int, label: str, error_message) -> None:
+    if owner._closing or generation != owner._vcp_task_generation:
+        return
+    log.error(f"[{label}] {error_message}")
+
+
+def _run_metrics_persist(owner, payload, cancellation_token):
+    return owner._persist_watchlist_metrics(payload, cancellation_token=cancellation_token)
+
+
+def _commit_watchlist_metrics(patch_payload, cancellation_token) -> None:
+    if _task_cancelled(cancellation_token):
+        return
+    watchlist_vm.bulk_patch_entries(patch_payload, remove_keys=["催化剂", "美股日报", "热点板块"])
 
 
 class WatchlistTab(BaseStockTab):
@@ -55,6 +101,7 @@ class WatchlistTab(BaseStockTab):
         super().__init__(data_provider=data_provider, parent=parent)
         self._watchlist_last_update = ""
         self._closing = False
+        self._vcp_task_generation = 0
         self._startup_tasks_enabled = bool(startup_tasks_enabled)
         self._startup_indicator_refresh_enabled = bool(startup_indicator_refresh_enabled)
         self._startup_indicator_refresh_delay_ms = self._coerce_delay_ms(startup_indicator_refresh_delay_ms, 500)
@@ -85,7 +132,6 @@ class WatchlistTab(BaseStockTab):
         self._last_watchlist_result = None
         self._last_watchlist_signature = ""
         self._init_ui()
-
         # 订阅全局报价与大一统市值更新机制
         self.subscribe_global_quotes()
 
@@ -310,32 +356,6 @@ class WatchlistTab(BaseStockTab):
             return False
         self._watchlist_last_update = text
         return True
-
-    def _read_provider_status(self) -> dict:
-        provider = getattr(self, "data_provider", None)
-        request_stats = {}
-        runtime_stats = {}
-
-        request_getter = getattr(provider, "get_quote_request_stats", None)
-        if callable(request_getter):
-            try:
-                request_stats = request_getter() or {}
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                request_stats = {}
-
-        runtime_getter = getattr(provider, "get_realtime_runtime_stats", None)
-        if callable(runtime_getter):
-            try:
-                runtime_stats = runtime_getter() or {}
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                runtime_stats = {}
-
-        return {
-            "request_stats": request_stats,
-            "runtime_stats": runtime_stats,
-            "eastmoney_cooldown_until": float(getattr(provider, "_rt_eastmoney_cooldown_until", 0.0) or 0.0),
-            "eastmoney_last_error": str(getattr(provider, "_rt_eastmoney_last_error", "") or ""),
-        }
 
     def _latest_trade_date_text(self) -> str:
         try:
@@ -752,7 +772,7 @@ class WatchlistTab(BaseStockTab):
         """防抖后的实际重载逻辑"""
         self._load_special_data()
 
-    def _refresh_vcp_indicators(self, codes_with_rows, radar_data_tuple=None):
+    def _refresh_vcp_indicators(self, codes_with_rows, radar_data_tuple=None, cancellation_token=None):
         """后台线程：计算关注池标的的 RPS 和跨 Tab 附加字段。"""
         try:
             log.debug(f"[关注池] 开始计算 {len(codes_with_rows)} 只标的附加指标")
@@ -764,8 +784,7 @@ class WatchlistTab(BaseStockTab):
 
             if not rps_bundle:
                 try:
-                    if os.path.exists(RPS_CACHE_FILE):
-                        rps_bundle = load_json_file(RPS_CACHE_FILE)
+                    rps_bundle = load_json_file(RPS_CACHE_FILE)
                 except (CacheIOError, DataFormatError) as e:
                     log.debug(f"[关注池] RPS 缓存读取失败，改用空值: {e}")
 
@@ -788,7 +807,7 @@ class WatchlistTab(BaseStockTab):
             # 剥离不再必要的重复计算市值逻辑 (由大一统机制负责)
             results = {}  # 修复局部变量未初始化的 bug
 
-            for _, code in codes_with_rows:
+            for _, code in _active_items(codes_with_rows, cancellation_token):
                 try:
                     has_rps120 = rps120_series is not None and code in rps120_series
                     has_rps250 = rps250_series is not None and code in rps250_series
@@ -832,8 +851,8 @@ class WatchlistTab(BaseStockTab):
                     continue
 
             if results:
-                event_bus.sig_vcp_watchlist_ready.emit(results)
                 log.info(f"[关注池] {len(results)} 只标的附加指标已就绪")
+            return results
 
         except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
             log.error(f"[关注池] 附加指标批量计算异常: {e}")
@@ -928,19 +947,20 @@ class WatchlistTab(BaseStockTab):
         }
         if not payload:
             return
-        task_manager.run_in_background(
-            self._persist_watchlist_metrics,
-            payload,
+        _task_lifecycle_for(self).run_background(
+            "metrics_persist",
+            partial(_run_metrics_persist, self, payload),
             on_error=lambda e: log.error(f"[watchlist] metrics persist failed: {e}"),
             task_id=task_registry.workspace("watchlist_vcp_persist").task_id,
+            timeout_sec=30,
         )
 
-    def _persist_watchlist_metrics(self, results: dict):
+    def _persist_watchlist_metrics(self, results: dict, cancellation_token=None):
         if not results:
             return
 
         patch_payload: dict[str, dict] = {}
-        for code, data in results.items():
+        for code, data in _active_items(results.items(), cancellation_token):
             entry_patch = {
                 "RPS强度": str(data.get("rps", "")),
             }
@@ -967,7 +987,7 @@ class WatchlistTab(BaseStockTab):
 
             patch_payload[str(code)] = entry_patch
 
-        watchlist_vm.bulk_patch_entries(patch_payload, remove_keys=["催化剂", "美股日报", "热点板块"])
+        _commit_watchlist_metrics(patch_payload, cancellation_token)
 
     def _on_app_closing(self):
         """应用关闭前保存缓存"""
@@ -977,6 +997,7 @@ class WatchlistTab(BaseStockTab):
 
     def shutdown(self):
         self._closing = True
+        self._vcp_task_generation += 1
         self._pending_vcp_calc = False
         self._pending_vcp_apply_payload = None
         self._pending_vcp_apply_signature = ()
@@ -988,6 +1009,9 @@ class WatchlistTab(BaseStockTab):
                 timer.stop()
             except RuntimeError:
                 pass
+        lifecycle = getattr(self, "_task_lifecycle", None)
+        if lifecycle is not None:
+            lifecycle.shutdown(timeout_ms=750)
         self._disconnect_runtime_signals()
 
     def _disconnect_runtime_signals(self):
@@ -1252,11 +1276,15 @@ class WatchlistTab(BaseStockTab):
             codes_with_rows = [(idx, str(r.get("代码"))) for idx, r in enumerate(self.model.row_data) if r.get("代码")]
             if codes_with_rows:
                 self._last_vcp_calc_started_at = time.monotonic()
-                task_manager.run_in_background(
-                    self._refresh_vcp_indicators,
-                    codes_with_rows,
-                    on_error=lambda e: log.error(f"[关注池] 附加指标后台计算异常: {e}"),
+                self._vcp_task_generation += 1
+                generation = self._vcp_task_generation
+                _task_lifecycle_for(self).run_background(
+                    "vcp_refresh",
+                    partial(_run_vcp_refresh, self, codes_with_rows),
+                    on_success=partial(_emit_vcp_if_current, self, generation),
+                    on_error=partial(_log_task_error_if_current, self, generation, "关注池"),
                     task_id=task_registry.workspace("watchlist_vcp_refresh").task_id,
+                    timeout_sec=120,
                 )
 
     # ================================================================

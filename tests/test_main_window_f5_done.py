@@ -51,7 +51,11 @@ def test_main_window_f5_done_refreshes_snapshot_and_emits_cache_reload_completed
         ),
     )
 
-    monkeypatch.setattr("ui.main_window_qt.QTimer.singleShot", lambda delay, callback: None)
+    scheduled_delays = []
+    monkeypatch.setattr(
+        "ui.main_window_qt.QTimer.singleShot",
+        lambda delay, callback: scheduled_delays.append(delay),
+    )
 
     MainWindowQT._on_f5_done(dummy_window, 321, 4.5)
     app.processEvents()
@@ -60,6 +64,20 @@ def test_main_window_f5_done_refreshes_snapshot_and_emits_cache_reload_completed
     assert dummy_window.lbl_status.text
     assert dummy_window.lbl_code_count.text
     assert len(cache_spy) == 1
+    assert 2000 not in scheduled_delays
+
+
+def test_scan_progress_completion_does_not_schedule_full_gc(monkeypatch):
+    scheduled_delays = []
+    dummy_window = SimpleNamespace(progress_bar=SimpleNamespace(setValue=lambda value: None), lbl_status=_DummyLabel())
+    monkeypatch.setattr(
+        "ui.main_window_qt.QTimer.singleShot",
+        lambda delay, callback: scheduled_delays.append(delay),
+    )
+
+    MainWindowQT._on_task_progress(dummy_window, "scan", 100, "done")
+
+    assert scheduled_delays == []
 
 
 def test_main_window_f5_done_triggers_fund_holdings_auto_sync(monkeypatch):

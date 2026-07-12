@@ -3,14 +3,21 @@ from types import SimpleNamespace
 
 import pandas as pd
 
+import app.services.foreign_block_market_data_service as foreign_market_service
+from app.services.foreign_block_market_data_service import (
+    build_foreign_block_trade_rows,
+)
+from app.services.foreign_block_market_data_service import (
+    normalize_trade_date_series as _normalize_trade_date_series,
+)
+from app.services.foreign_block_market_data_service import (
+    normalize_trade_date_value as _normalize_trade_date_value,
+)
 from ui.models.table_models import StockTableModel
 from ui.tabs import foreign_block_trade_tab as foreign_module
 from ui.tabs.foreign_block_trade_tab import (
     BlockTradeFilterProxyModel,
     ForeignBlockTradeTab,
-    _normalize_trade_date_series,
-    _normalize_trade_date_value,
-    build_foreign_block_trade_rows,
 )
 
 
@@ -26,8 +33,8 @@ def test_normalize_trade_date_series_handles_iso_and_plain_text():
 
 def test_build_foreign_block_trade_rows_groups_records_and_filters_ai_chain(monkeypatch):
     monkeypatch.setattr(
-        foreign_module,
-        "filter_rows_to_ai_chain_codes",
+        foreign_market_service,
+        "_filter_rows_to_ai_chain_codes",
         lambda rows, **kwargs: [row for row in rows if row.get("代码") == "600000"],
     )
     records = [
@@ -171,7 +178,7 @@ def test_block_trade_local_snapshot_fills_market_fields_without_realtime(monkeyp
         def __init__(self):
             self.offline_calls = []
 
-        def _build_offline_quotes(self, codes):
+        def build_offline_quotes(self, codes):
             self.offline_calls.append(list(codes))
             return {"600000": {"close": 12.3, "last_close": 12.0}}
 
@@ -217,18 +224,25 @@ def test_block_trade_load_cache_primes_local_snapshot(monkeypatch):
     )
     monkeypatch.setattr(
         foreign_module,
-        "load_json_file",
-        lambda _path: {
+        "load_foreign_block_cache",
+        lambda **_kwargs: {
             "latest_trade_date": "20260508",
             "saved_at": "2026-05-08T20:00:00",
             "rows": [{"代码": "600000", "名称": "浦发银行"}],
+            "raw_count": 1,
+            "days_to_fetch": 30,
         },
     )
 
-    class FakeTaskRunner:
-        def run_in_background(self, fn, *, task_id=None, on_success=None, on_error=None):
+    class FakeCancellationToken:
+        @staticmethod
+        def raise_if_cancelled():
+            return None
+
+    class FakeTaskLifecycle:
+        def run_background(self, _name, fn, *, task_id=None, timeout_sec=None, on_success=None, on_error=None):
             try:
-                result = fn()
+                result = fn(FakeCancellationToken())
             except Exception as exc:
                 if on_error is not None:
                     on_error(str(exc))
@@ -237,10 +251,9 @@ def test_block_trade_load_cache_primes_local_snapshot(monkeypatch):
                     on_success(result)
             return str(task_id)
 
-    monkeypatch.setattr(foreign_module, "task_manager", FakeTaskRunner())
     monkeypatch.setattr(
-        foreign_module,
-        "filter_rows_to_ai_chain_codes",
+        foreign_market_service,
+        "_filter_rows_to_ai_chain_codes",
         lambda rows, **kwargs: list(rows or []),
     )
 
@@ -249,6 +262,9 @@ def test_block_trade_load_cache_primes_local_snapshot(monkeypatch):
         table_state = SimpleNamespace(show_table=lambda: calls.append("show_table"))
         _local_cache_loading = False
         _local_cache_pending_emit_event = None
+        _local_cache_generation = 0
+        _closing = False
+        _task_lifecycle = FakeTaskLifecycle()
         _apply_local_cache_payload = ForeignBlockTradeTab._apply_local_cache_payload
         _on_local_cache_failed = ForeignBlockTradeTab._on_local_cache_failed
         _finish_local_cache_load = ForeignBlockTradeTab._finish_local_cache_load
@@ -282,8 +298,8 @@ def test_block_trade_load_cache_primes_local_snapshot(monkeypatch):
 
 def test_block_trade_filters_rows_to_ai_industry_chain_pool(monkeypatch):
     monkeypatch.setattr(
-        foreign_module,
-        "filter_rows_to_ai_chain_codes",
+        foreign_market_service,
+        "_filter_rows_to_ai_chain_codes",
         lambda rows, **kwargs: [row for row in rows if row.get("代码") == "300308"],
     )
 
@@ -511,17 +527,23 @@ def test_foreign_block_trade_local_cache_waits_during_post_f5_defer(monkeypatch)
         lambda delay, callback: scheduled.append((delay, callback)),
     )
     monkeypatch.setattr(
-        foreign_module.task_manager,
-        "run_in_background",
-        lambda *args, **kwargs: background_calls.append((args, kwargs)),
+        foreign_module,
+        "_task_lifecycle_for",
+        lambda owner: background_calls.append(owner),
     )
-    tab = ForeignBlockTradeTab.__new__(ForeignBlockTradeTab)
-    tab._post_f5_local_cache_defer_until = 15.0
-    tab._post_f5_local_cache_pending = False
-    tab._post_f5_local_cache_emit_event = False
-    tab._local_cache_loading = False
-    tab._local_cache_pending_emit_event = None
-    tab._initial_local_cache_load_started = False
+    tab = SimpleNamespace(
+        _closing=False,
+        _post_f5_local_cache_defer_until=15.0,
+        _post_f5_local_cache_pending=False,
+        _post_f5_local_cache_emit_event=False,
+        _local_cache_loading=False,
+        _local_cache_pending_emit_event=None,
+        _initial_local_cache_load_started=False,
+    )
+    tab._schedule_post_f5_local_cache_load = (
+        lambda **kwargs: ForeignBlockTradeTab._schedule_post_f5_local_cache_load(tab, **kwargs)
+    )
+    tab._run_post_f5_local_cache_load = lambda: None
 
     ForeignBlockTradeTab._load_local_cache(tab, emit_event=False)
 

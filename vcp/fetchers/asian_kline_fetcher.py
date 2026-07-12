@@ -168,14 +168,59 @@ def _deadline_from_time_budget(time_budget_sec: float | int | None) -> float | N
     return time.monotonic() + budget
 
 
-def _deadline_exceeded(deadline: float | None) -> bool:
+def _deadline_exceeded(deadline: float | None, cancellation_checkpoint=None) -> bool:
+    _check_cancellation(cancellation_checkpoint)
     return deadline is not None and time.monotonic() >= deadline
+
+
+def _check_cancellation(cancellation_checkpoint=None) -> None:
+    if cancellation_checkpoint is not None:
+        cancellation_checkpoint()
 
 
 def _remaining_time_budget(deadline: float | None) -> float | None:
     if deadline is None:
         return None
     return max(0.0, deadline - time.monotonic())
+
+
+def _time_budget_exhausted_result(target_tickers: set[str], output_dir: str) -> tuple[bool, str, dict]:
+    try:
+        old_map = _load_cached_row_map(output_dir)
+    except (FileNotFoundError, PermissionError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        logging.warning("Asian kline cache preserve failed after time budget: %s", exc)
+        old_map = {}
+
+    preserved = sorted(target_tickers & set(old_map.keys()))
+    missing = sorted(target_tickers - set(old_map.keys()))
+    if preserved and not missing:
+        return (
+            True,
+            "Asian kline sync time budget exhausted; kept existing cache",
+            {
+                "target_count": len(target_tickers),
+                "written_count": len(preserved),
+                "single_recovered": [],
+                "reused": preserved,
+                "missing": [],
+                "cache_preserved": True,
+                "time_budget_exhausted": True,
+            },
+        )
+
+    return (
+        False,
+        "Asian kline sync time budget exhausted before cache was complete",
+        {
+            "target_count": len(target_tickers),
+            "written_count": 0,
+            "single_recovered": [],
+            "reused": preserved,
+            "missing": missing or sorted(target_tickers),
+            "cache_preserved": False,
+            "time_budget_exhausted": True,
+        },
+    )
 
 
 def _ensure_industry_mappings_loaded() -> None:
@@ -953,6 +998,7 @@ def fetch_all_asian_klines(
     max_workers: int = 6,
     period: str = "1y",
     time_budget_sec: float | int | None = None,
+    cancellation_checkpoint=None,
 ) -> list[dict]:
     """并发拉取亚洲寡头 K 线数据。
 
@@ -986,9 +1032,8 @@ def fetch_all_asian_klines(
     failed = []
     yf_session = build_yf_session()
     deadline = _deadline_from_time_budget(time_budget_sec)
-
     for name, ticker in tickers.items():
-        if _deadline_exceeded(deadline):
+        if _deadline_exceeded(deadline, cancellation_checkpoint):
             logging.warning(
                 "Asian kline fetch time budget exhausted; stop early after %s/%s",
                 len(results),
@@ -1036,6 +1081,7 @@ def sync_asian_kline_cache(
     period: str = "1y",
     output_dir: str | None = None,
     time_budget_sec: float | int | None = None,
+    cancellation_checkpoint=None,
 ) -> tuple[bool, str, dict]:
     """严格同步亚洲 K 线缓存。
 
@@ -1064,6 +1110,7 @@ def sync_asian_kline_cache(
     target_tickers = set(target_map.values())
     output_dir = _resolve_cache_output_dir(output_dir)
     deadline = _deadline_from_time_budget(time_budget_sec)
+    _check_cancellation(cancellation_checkpoint)
 
     data = fetch_all_asian_klines(
         market_filter=market_filter,
@@ -1071,46 +1118,10 @@ def sync_asian_kline_cache(
         max_workers=max_workers,
         period=period,
         time_budget_sec=_remaining_time_budget(deadline),
+        cancellation_checkpoint=cancellation_checkpoint,
     )
-    if _deadline_exceeded(deadline):
-        try:
-            old_map = _load_cached_row_map(output_dir)
-        except (FileNotFoundError, PermissionError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            logging.warning("Asian kline cache preserve failed after time budget: %s", exc)
-            old_map = {}
-
-        preserved = sorted(target_tickers & set(old_map.keys()))
-        missing = sorted(target_tickers - set(old_map.keys()))
-        if preserved and not missing:
-            message = "Asian kline sync time budget exhausted; kept existing cache"
-            return (
-                True,
-                message,
-                {
-                    "target_count": len(target_tickers),
-                    "written_count": len(preserved),
-                    "single_recovered": [],
-                    "reused": preserved,
-                    "missing": [],
-                    "cache_preserved": True,
-                    "time_budget_exhausted": True,
-                },
-            )
-
-        message = "Asian kline sync time budget exhausted before cache was complete"
-        return (
-            False,
-            message,
-            {
-                "target_count": len(target_tickers),
-                "written_count": 0,
-                "single_recovered": [],
-                "reused": preserved,
-                "missing": missing or sorted(target_tickers),
-                "cache_preserved": False,
-                "time_budget_exhausted": True,
-            },
-        )
+    if _deadline_exceeded(deadline, cancellation_checkpoint):
+        return _time_budget_exhausted_result(target_tickers, output_dir)
     if not data:
         try:
             old_map = _load_cached_row_map(output_dir)
@@ -1160,7 +1171,8 @@ def sync_asian_kline_cache(
         logging.warning(f"⚠️ 全量抓取缺失 {len(missing)} 只，开始单票补抓: {missing}")
         rescue_session = build_yf_session()
         for ticker in list(missing):
-            if _deadline_exceeded(deadline):
+            _check_cancellation(cancellation_checkpoint)
+            if _deadline_exceeded(deadline, cancellation_checkpoint):
                 logging.warning("Asian kline sync time budget exhausted; stop single-symbol rescue")
                 break
             name = ticker_to_name.get(ticker, ticker)
@@ -1194,6 +1206,7 @@ def sync_asian_kline_cache(
         try:
             old_map = _load_cached_row_map(output_dir)
             for ticker in list(missing):
+                _check_cancellation(cancellation_checkpoint)
                 if ticker in old_map:
                     row_map[ticker] = old_map[ticker]
                     reused.append(ticker)
@@ -1223,6 +1236,7 @@ def sync_asian_kline_cache(
             },
         )
 
+    _check_cancellation(cancellation_checkpoint)
     final_data = list(row_map.values())
     final_data.sort(key=lambda item: (item.get("market", ""), item.get("name", "")))
     save_kline_data(final_data, output_dir)

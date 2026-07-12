@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 from scripts import project_audit
 
@@ -224,7 +225,7 @@ def test_project_audit_adds_type_check_only_when_requested():
     assert "ui" not in project_audit.TYPE_CHECK_TARGETS
 
 
-def test_project_audit_adds_observation_only_coverage_report_when_requested():
+def test_project_audit_adds_six_package_branch_coverage_gate_when_requested():
     commands = _commands(["--python", "python", "--quick", "--coverage-report"])
 
     coverage = next(command for command in commands if command.label == "coverage-report")
@@ -234,13 +235,64 @@ def test_project_audit_adds_observation_only_coverage_report_when_requested():
         "-m",
         "pytest",
         "-q",
+        "--cov-branch",
         "--cov=app",
+        "--cov=core",
         "--cov=domains",
         "--cov=infra",
+        "--cov=ui",
+        "--cov=vcp",
         "--cov-report=term-missing",
         f"--cov-report=json:{project_audit.COVERAGE_REPORT_OUTPUT}",
-        "--cov-fail-under=0",
+        f"--cov-fail-under={project_audit.COVERAGE_FAIL_UNDER}",
     ]
+    coverage_budgets = next(command for command in commands if command.label == "coverage-budgets")
+    assert coverage_budgets.command == [
+        "python",
+        "scripts/coverage_budget_check.py",
+        "--input",
+        project_audit.COVERAGE_REPORT_OUTPUT,
+    ]
+
+
+def test_project_audit_keep_going_reports_all_failed_commands(monkeypatch, capsys):
+    return_codes = iter((2, 0, 3))
+    calls = []
+
+    def fake_run(command, *, cwd, env):
+        calls.append(command)
+        return SimpleNamespace(returncode=next(return_codes))
+
+    monkeypatch.setattr(project_audit.subprocess, "run", fake_run)
+    commands = [
+        project_audit.AuditCommand("first", ["first"]),
+        project_audit.AuditCommand("middle", ["middle"]),
+        project_audit.AuditCommand("last", ["last"]),
+    ]
+
+    result = project_audit.run_audit_commands(commands, keep_going=True)
+
+    output = capsys.readouterr().out
+    assert result == 1
+    assert calls == [["first"], ["middle"], ["last"]]
+    assert "failed checks: first (2), last (3)" in output
+
+
+def test_project_audit_fail_fast_remains_available(monkeypatch):
+    calls = []
+
+    def fake_run(command, *, cwd, env):
+        calls.append(command)
+        return SimpleNamespace(returncode=2)
+
+    monkeypatch.setattr(project_audit.subprocess, "run", fake_run)
+    commands = [
+        project_audit.AuditCommand("first", ["first"]),
+        project_audit.AuditCommand("never", ["never"]),
+    ]
+
+    assert project_audit.run_audit_commands(commands, keep_going=False) == 2
+    assert calls == [["first"]]
 
 
 def test_project_audit_adds_performance_budget_when_reports_are_provided(tmp_path):
@@ -314,8 +366,9 @@ def test_project_audit_list_includes_coverage_report_when_requested(capsys):
 
     output = capsys.readouterr().out
     assert result == 0
-    assert "coverage-report: python -m pytest -q --cov=app --cov=domains --cov=infra" in output
-    assert "--cov-fail-under=0" in output
+    assert "coverage-report: python -m pytest -q --cov-branch --cov=app --cov=core" in output
+    assert "--cov=domains --cov=infra --cov=ui --cov=vcp" in output
+    assert f"--cov-fail-under={project_audit.COVERAGE_FAIL_UNDER}" in output
 
 
 def test_project_audit_list_includes_extended_ruff_when_requested(capsys):

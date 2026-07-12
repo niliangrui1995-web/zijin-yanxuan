@@ -15,8 +15,7 @@ venv/
 .venv/
 .env
 
-# This repo uses requirements.txt for runtime setup.
-uv.lock
+# Dependency lock files are intentionally trackable for reproducible environments.
 
 # Data Cache (large binary files, not versioned)
 data/Cache/*.pkl
@@ -42,6 +41,9 @@ data/scan_cache.json
 
 # Special pool data (user-generated, contains personal watchlist)
 data/special_latest_data.json
+
+# Personal account trade exports now live under the OS user-data directory.
+data/Trade/
 
 # Export (user-generated reports)
 data/Export/
@@ -110,3 +112,7 @@ data/Cache/lhb_pool_30d.json
 data/Cache/trade_dates.json
 data/Cache/foreign_block_trade_latest.json
 data/Cache/na_daily_latest.json
+
+# Coverage report
+.coverage
+

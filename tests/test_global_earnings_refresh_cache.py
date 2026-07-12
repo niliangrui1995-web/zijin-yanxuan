@@ -112,3 +112,31 @@ def test_refresh_cache_main_marks_exception_as_retryable_degraded(monkeypatch, c
     assert payload["error"] == "sqlite busy | retry later"
     assert payload["retryable"] is True
     assert payload["reused_event_count"] == 2
+
+
+def test_refresh_cache_cli_redacts_secrets_from_logs_and_json(monkeypatch, capfd):
+    alpha_secret = "ALPHA_CLI_SECRET_123"
+    dart_secret = "DART_CLI_SECRET_456"
+
+    class FakeService:
+        def refresh_events(self):
+            raise RuntimeError(f"failed https://example.test?apikey={alpha_secret}")
+
+        def mark_refresh_failed(self, _exc):
+            raise RuntimeError(f"mark failed token={dart_secret}")
+
+        def load_events(self, **_kwargs):
+            raise RuntimeError(f"load failed crtfc_key={dart_secret}")
+
+    monkeypatch.setattr(refresh_cache, "GlobalEarningsCalendarService", FakeService)
+
+    assert refresh_cache.main() == 0
+    output = capfd.readouterr().out
+    payload = json.loads([line for line in output.splitlines() if line.startswith("{")][-1])
+
+    assert alpha_secret not in output
+    assert dart_secret not in output
+    assert "<redacted>" in output
+    assert alpha_secret not in json.dumps(payload, ensure_ascii=False)
+    assert dart_secret not in json.dumps(payload, ensure_ascii=False)
+    assert payload["error"].endswith("apikey=<redacted>")

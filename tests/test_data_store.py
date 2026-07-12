@@ -39,6 +39,15 @@ def test_default_data_store_path_honors_test_environment(monkeypatch, tmp_path):
         DataStore._instance = None
 
 
+def test_default_data_store_path_stays_in_repo_data_after_infra_move(monkeypatch):
+    from infra.storage.data_store import resolve_data_store_path
+
+    monkeypatch.delenv("VCP_HUNTER_DB_PATH", raising=False)
+    expected = Path(__file__).resolve().parents[1] / "data" / "vcp_hunter.db"
+
+    assert resolve_data_store_path() == expected.resolve()
+
+
 class TestDataStore:
     """测试 DataStore 单例和 KV 读写"""
 

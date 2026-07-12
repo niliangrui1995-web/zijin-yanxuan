@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from ui.main_window_network import update_network_ui
+from ui.main_window_network import toggle_network, update_network_ui
 
 
 class _DummyAction:
@@ -52,3 +52,28 @@ def test_update_network_ui_updates_status_bar_tone_when_available():
     update_network_ui(window, False)
 
     assert window._status_bar_widget.tones == ["online", "offline"]
+
+
+def test_toggle_network_reads_the_public_online_port_only():
+    calls = []
+
+    class _Provider:
+        @property
+        def _offline(self):
+            raise AssertionError("UI must not read provider private state")
+
+        @staticmethod
+        def is_online():
+            return True
+
+        @staticmethod
+        def set_online_mode(enabled):
+            calls.append(("set_online_mode", enabled))
+
+    window = _DummyWindow()
+    window.data_provider = _Provider()
+    window._update_network_ui = lambda online: calls.append(("update_ui", online))
+
+    toggle_network(window)
+
+    assert calls == [("set_online_mode", False), ("update_ui", False)]

@@ -1,15 +1,22 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import json
-import sqlite3
 import threading
 import time
 from collections import defaultdict
 from collections.abc import Iterable
-from pathlib import Path
 
-from core.exceptions import CacheIOError, DataFormatError
+from app.services.stock_context_snapshot_service import (
+    lhb_pool_cache_signature,
+    load_ai_chain_cache_rows,
+    load_earnings_state_payload,
+    load_fund_holding_snapshot,
+    load_lhb_pool_rows,
+    load_named_cache_rows,
+    load_scan_cache_rows,
+    project_root,
+)
+from app.services.ui_task_lifecycle_service import TaskLifecycleGroup, invoke_with_cancellation
 from ui.workspaces.stock_signal import StockSignal, coerce_stock_signal
 from ui.workspaces.tab_capabilities import ForeignKeywordCapability, StockSignalSourceCapability
 
@@ -60,6 +67,82 @@ RAW_DISCLOSURE_DATE = "\u516c\u544a\u65e5\u671f"
 RAW_DATA_TYPE = "\u6570\u636e\u7c7b\u578b"
 RAW_DISCOVERED_AT = KEY_DISCOVERED_AT
 POST_F5_CONTEXT_SNAPSHOT_DEFER_SECONDS = 5.0
+FUND_SNAPSHOT_TIMEOUT_SECONDS = 90.0
+LHB_SNAPSHOT_TIMEOUT_SECONDS = 180.0
+
+
+def _checkpoint(cancellation_token=None) -> None:
+    if cancellation_token is not None:
+        cancellation_token.raise_if_cancelled()
+
+
+def _cancellable_items(values, cancellation_token=None):
+    for value in values:
+        _checkpoint(cancellation_token)
+        yield value
+
+
+def _invoke_snapshot_stage(fn, cancellation_token=None, *args, **kwargs):
+    if cancellation_token is None:
+        return fn(*args, **kwargs)
+    return invoke_with_cancellation(fn, cancellation_token, *args, **kwargs)
+
+
+def _start_fund_snapshot(service, force: bool, include_fund: bool) -> tuple[bool, bool]:
+    with service._fund_rows_lock:
+        already_running = service._fund_rows_loading
+        start = include_fund and (force or (not service._fund_rows_loading and not service._fund_rows_loaded))
+        if start:
+            service._fund_rows_loading = True
+    return start, already_running
+
+
+def _schedule_fund_snapshot(service, domain_events, task_registry) -> None:
+    def _on_success(rows):
+        if service._shutdown:
+            return
+        with service._fund_rows_lock:
+            service._fund_rows_snapshot = [dict(row) for row in (rows or [])]
+            service._fund_rows_loaded = True
+            service._fund_rows_loading = False
+        domain_events.sig_stock_context_snapshot_updated.emit()
+
+    def _on_error(_message: str):
+        with service._fund_rows_lock:
+            service._fund_rows_loading = False
+
+    service._task_lifecycle.run_background(
+        "fund-snapshot",
+        lambda token: _invoke_snapshot_stage(service._load_fund_holding_rows_snapshot, token),
+        on_success=_on_success,
+        on_error=_on_error,
+        task_id=task_registry.workspace("stock_context_fund_rows_snapshot"),
+        timeout_sec=FUND_SNAPSHOT_TIMEOUT_SECONDS,
+    )
+
+
+def _schedule_lhb_snapshot(service, domain_events, task_registry, signature) -> None:
+    def _on_success(rows):
+        if service._shutdown:
+            return
+        with service._lhb_rows_lock:
+            service._lhb_rows_snapshot = [dict(row) for row in (rows or [])]
+            service._lhb_rows_signature = signature
+            service._lhb_rows_loading = False
+        domain_events.sig_stock_context_snapshot_updated.emit()
+
+    def _on_error(_message: str):
+        with service._lhb_rows_lock:
+            service._lhb_rows_loading = False
+
+    service._task_lifecycle.run_background(
+        "lhb-snapshot",
+        lambda token: _invoke_snapshot_stage(service._load_lhb_pool_rows, token),
+        on_success=_on_success,
+        on_error=_on_error,
+        task_id=task_registry.workspace("stock_context_lhb_rows_snapshot"),
+        timeout_sec=LHB_SNAPSHOT_TIMEOUT_SECONDS,
+    )
 
 TEXT_BUY = "\u4e70\u5165"
 TEXT_SELL = "\u5356\u51fa"
@@ -96,6 +179,8 @@ class StockContextService:
         self._lhb_rows_signature: tuple[str, int, int] | None = None
         self._lhb_rows_loading = False
         self._post_f5_snapshot_defer_until = 0.0
+        self._task_lifecycle = TaskLifecycleGroup()
+        self._shutdown = False
 
     @staticmethod
     def _safe_float(value, default: float = 0.0) -> float:
@@ -203,8 +288,8 @@ class StockContextService:
         return list(get_row_data() or [])
 
     @staticmethod
-    def _project_root() -> Path:
-        return Path(__file__).resolve().parents[2]
+    def _project_root():
+        return project_root()
 
     @staticmethod
     def _coerce_cache_rows(value) -> list[dict]:
@@ -223,75 +308,16 @@ class StockContextService:
         return {str(code or "").strip() for code in target_codes if str(code or "").strip()}
 
     def _load_scan_cache_rows(self) -> list[dict]:
-        payload = None
-        try:
-            from core.data_store import DataStore
-
-            payload = DataStore().load_json("scan_cache", default={})
-        except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError, sqlite3.Error):
-            payload = None
-
-        if not payload:
-            old_path = self._project_root() / "data" / "scan_cache.json"
-            try:
-                with old_path.open("r", encoding="utf-8") as handle:
-                    payload = json.load(handle)
-            except (OSError, TypeError, ValueError, json.JSONDecodeError):
-                payload = None
-
-        if isinstance(payload, dict):
-            return self._coerce_cache_rows(payload.get("results", []))
-        return self._coerce_cache_rows(payload)
+        return load_scan_cache_rows(root=self._project_root())
 
     def _load_foreign_block_cache_rows(self) -> list[dict]:
-        cache_path = self._project_root() / "data" / "Cache" / "foreign_block_trade_latest.json"
-        try:
-            from core.json_cache import load_json_file
-
-            payload = load_json_file(str(cache_path))
-        except (
-            AttributeError,
-            ImportError,
-            CacheIOError,
-            DataFormatError,
-            OSError,
-            RuntimeError,
-            TypeError,
-            ValueError,
-        ):
-            return []
-        if not isinstance(payload, dict):
-            return []
-        return self._coerce_cache_rows(payload.get("rows", []))
+        return load_named_cache_rows("foreign_block_trade_latest.json", root=self._project_root())
 
     def _load_na_daily_cache_rows(self) -> list[dict]:
-        cache_path = self._project_root() / "data" / "Cache" / "na_daily_latest.json"
-        try:
-            from core.json_cache import load_json_file
-
-            payload = load_json_file(str(cache_path))
-        except (
-            AttributeError,
-            ImportError,
-            CacheIOError,
-            DataFormatError,
-            OSError,
-            RuntimeError,
-            TypeError,
-            ValueError,
-        ):
-            return []
-        if not isinstance(payload, dict):
-            return []
-        return self._coerce_cache_rows(payload.get("rows", []))
+        return load_named_cache_rows("na_daily_latest.json", root=self._project_root())
 
     def _load_ai_chain_cache_rows(self) -> list[dict]:
-        try:
-            from core.ai_industry_chain_pool import load_cached_ai_industry_chain_rows
-
-            return self._coerce_cache_rows(load_cached_ai_industry_chain_rows())
-        except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
-            return []
+        return self._coerce_cache_rows(load_ai_chain_cache_rows())
 
     @staticmethod
     def _normalize_earnings_code(row: dict) -> str:
@@ -300,28 +326,8 @@ class StockContextService:
             code = code.zfill(6)
         return code
 
-    @staticmethod
-    def _earnings_state_updated_at(store) -> str:
-        fetch_one = getattr(store, "fetch_one", None)
-        if not callable(fetch_one):
-            return ""
-        try:
-            row = fetch_one("SELECT updated_at FROM kv_store WHERE key = ?", ("earnings_state",), default={}) or {}
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError, sqlite3.Error):
-            return ""
-        return str(row.get("updated_at") or "").strip() if isinstance(row, dict) else ""
-
     def _load_earnings_state_payload(self) -> tuple[dict, str]:
-        try:
-            from core.data_store import data_store
-
-            payload = data_store.load_earnings_state() or {}
-            state_updated_at = self._earnings_state_updated_at(data_store)
-        except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError, sqlite3.Error):
-            return {}, ""
-        if not isinstance(payload, dict):
-            return {}, state_updated_at
-        return payload, state_updated_at
+        return load_earnings_state_payload()
 
     @staticmethod
     def _earnings_report_type(row: dict) -> str:
@@ -429,41 +435,31 @@ class StockContextService:
         return rows
 
     def _lhb_pool_cache_signature(self) -> tuple[str, int, int] | None:
-        cache_path = self._project_root() / "data" / "Cache" / "lhb_pool_30d.json"
-        legacy_path = self._project_root() / "data" / "Cache" / "lhb_pool_20d.json"
-        if not cache_path.exists() and legacy_path.exists():
-            cache_path = legacy_path
-        try:
-            stat = cache_path.stat()
-        except OSError:
-            return None
-        return (str(cache_path), int(stat.st_size), int(stat.st_mtime_ns))
+        return lhb_pool_cache_signature(root=self._project_root())
 
-    def _load_lhb_pool_rows(self) -> list[dict]:
+    def _load_lhb_pool_rows(self, *, cancellation_token=None) -> list[dict]:
+        _checkpoint(cancellation_token)
         signature = self._lhb_pool_cache_signature()
         if signature is not None:
             with self._lhb_rows_lock:
                 if signature == self._lhb_rows_signature:
                     return [dict(row) for row in self._lhb_rows_snapshot]
 
-        try:
-            from core.lhb_pool_manager import LhbPoolManager
-
-            pool = LhbPoolManager().compute_pool(
-                data_provider=None,
-                engine=getattr(self._workspace, "engine", None),
-            )
-        except (AttributeError, ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError):
-            return []
+        pool = _invoke_snapshot_stage(
+            load_lhb_pool_rows,
+            cancellation_token,
+            engine=getattr(self._workspace, "engine", None),
+        )
 
         rows: list[dict] = []
-        for row in self._coerce_cache_rows(pool):
+        for row in _cancellable_items(self._coerce_cache_rows(pool), cancellation_token):
             raw_date = str(row.get(KEY_LAST_LISTED, "") or "").strip()
             if len(raw_date) == 8:
                 row[KEY_LAST_LISTED_RAW] = raw_date
                 row[KEY_LAST_LISTED] = f"{raw_date[4:6]}-{raw_date[6:8]}"
             rows.append(row)
         if signature is not None:
+            _checkpoint(cancellation_token)
             with self._lhb_rows_lock:
                 self._lhb_rows_snapshot = [dict(row) for row in rows]
                 self._lhb_rows_signature = signature
@@ -918,7 +914,13 @@ class StockContextService:
         return f"{prefix}{number:,.2f}"
 
     @classmethod
-    def _format_fund_holding_store_rows(cls, latest_quarter_map: dict, change_rows: list[dict]) -> list[dict]:
+    def _format_fund_holding_store_rows(
+        cls,
+        latest_quarter_map: dict,
+        change_rows: list[dict],
+        *,
+        cancellation_token=None,
+    ) -> list[dict]:
         try:
             from app.services.ui_fund_holdings_service import (
                 QFII_CAPITAL_ATTRIBUTE_UNMARKED,
@@ -929,7 +931,7 @@ class StockContextService:
 
         view_rows: list[dict] = []
         qfii_subject_code = str((SUBJECT_QFII or {}).get("subject_code") or "")
-        for row in change_rows:
+        for row in _cancellable_items(change_rows, cancellation_token):
             stock_code = str(row.get("stock_code") or "").strip()
             subject_code = str(row.get("subject_code") or "").strip()
             quarter_key = str(row.get("quarter_key") or "").strip()
@@ -961,18 +963,19 @@ class StockContextService:
             )
         return view_rows
 
-    def _load_fund_holding_rows_snapshot(self, *, stock_codes=None) -> list[dict]:
-        try:
-            from app.services.ui_fund_holdings_service import fund_holdings_store
-        except (ImportError, RuntimeError):
-            return []
-
-        try:
-            latest_quarter_map = dict(fund_holdings_store.get_latest_quarter_map() or {})
-            change_rows = list(fund_holdings_store.query_change_rows(stock_codes=stock_codes) or [])
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
-            return []
-        return self._format_fund_holding_store_rows(latest_quarter_map, change_rows)
+    def _load_fund_holding_rows_snapshot(self, *, stock_codes=None, cancellation_token=None) -> list[dict]:
+        latest_quarter_map, change_rows = _invoke_snapshot_stage(
+            load_fund_holding_snapshot,
+            cancellation_token,
+            stock_codes=stock_codes,
+        )
+        rows = self._format_fund_holding_store_rows(
+            latest_quarter_map,
+            change_rows,
+            cancellation_token=cancellation_token,
+        )
+        _checkpoint(cancellation_token)
+        return rows
 
     def refresh_async_snapshots(
         self,
@@ -981,80 +984,44 @@ class StockContextService:
         include_fund: bool = True,
         include_lhb: bool = True,
     ) -> bool:
-        if self._should_defer_async_snapshots():
+        if self._shutdown or self._should_defer_async_snapshots():
             return False
         try:
             from app.services.ui_event_service import domain_events
-            from app.services.ui_task_service import (
-                background_job_runner,
-                task_registry,
-            )
+            from app.services.ui_task_service import task_registry
         except (ImportError, RuntimeError):
             return False
 
         scheduled = False
-        already_running = False
-
-        with self._fund_rows_lock:
-            already_running = already_running or self._fund_rows_loading
-            start_fund = include_fund and not self._fund_rows_loading and (force or not self._fund_rows_loaded)
-            if start_fund:
-                self._fund_rows_loading = True
-
+        start_fund, already_running = _start_fund_snapshot(self, force, include_fund)
         if start_fund:
             scheduled = True
-
-            def _on_fund_success(rows):
-                with self._fund_rows_lock:
-                    self._fund_rows_snapshot = [dict(row) for row in (rows or [])]
-                    self._fund_rows_loaded = True
-                    self._fund_rows_loading = False
-                domain_events.sig_stock_context_snapshot_updated.emit()
-
-            def _on_fund_error(_message: str):
-                with self._fund_rows_lock:
-                    self._fund_rows_loading = False
-
-            background_job_runner.run_in_background(
-                self._load_fund_holding_rows_snapshot,
-                on_success=_on_fund_success,
-                on_error=_on_fund_error,
-                task_id=task_registry.workspace("stock_context_fund_rows_snapshot"),
-            )
+            _schedule_fund_snapshot(self, domain_events, task_registry)
 
         lhb_signature = self._lhb_pool_cache_signature() if include_lhb else None
         with self._lhb_rows_lock:
             already_running = already_running or self._lhb_rows_loading
             start_lhb = (
                 lhb_signature is not None
-                and not self._lhb_rows_loading
-                and (force or lhb_signature != self._lhb_rows_signature)
+                and (force or (not self._lhb_rows_loading and lhb_signature != self._lhb_rows_signature))
             )
             if start_lhb:
                 self._lhb_rows_loading = True
 
         if start_lhb:
             scheduled = True
-
-            def _on_lhb_success(rows, signature=lhb_signature):
-                with self._lhb_rows_lock:
-                    self._lhb_rows_snapshot = [dict(row) for row in (rows or [])]
-                    self._lhb_rows_signature = signature
-                    self._lhb_rows_loading = False
-                domain_events.sig_stock_context_snapshot_updated.emit()
-
-            def _on_lhb_error(_message: str):
-                with self._lhb_rows_lock:
-                    self._lhb_rows_loading = False
-
-            background_job_runner.run_in_background(
-                self._load_lhb_pool_rows,
-                on_success=_on_lhb_success,
-                on_error=_on_lhb_error,
-                task_id=task_registry.workspace("stock_context_lhb_rows_snapshot"),
-            )
+            _schedule_lhb_snapshot(self, domain_events, task_registry, lhb_signature)
 
         return scheduled or already_running
+
+    def shutdown(self, *, timeout_ms: int = 750) -> bool:
+        self._shutdown = True
+        completed = self._task_lifecycle.shutdown(timeout_ms=timeout_ms)
+        with self._fund_rows_lock:
+            self._fund_rows_loading = False
+        with self._lhb_rows_lock:
+            self._lhb_rows_loading = False
+        return completed
 
     def _cached_fund_holding_rows(self, *, allow_async_refresh: bool = True) -> list[dict]:
         with self._fund_rows_lock:

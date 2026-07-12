@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import gc
 import time
 
 from PyQt6.QtCore import QThread, QTimer
 
+from app.services.ui_task_lifecycle_service import task_lifecycle_for
 from app.services.ui_task_service import WINDOW_F5_PRECOMPUTE
 from core.global_store import global_store
 from core.logger import get_logger
@@ -87,29 +87,69 @@ def _clear_f5_ui_stall_grace(main_window) -> None:
     setattr(main_window, "_f5_precompute_ui_grace_until", 0.0)
 
 
-def start_f5_precompute(main_window, *, task_manager):
-    from core.rps_precomputer import RPSPrecomputer
+class _F5TaskCallbacks:
+    def __init__(self, main_window) -> None:
+        self.main_window = main_window
+        self.token = None
 
+    def cancelled(self) -> bool:
+        return bool(
+            getattr(self.main_window, "_is_closing", False)
+            or getattr(self.main_window, "_f5_cancelled", False)
+            or (self.token is not None and self.token.cancelled)
+        )
+
+    def _call_in_ui(self, action) -> None:
+        if not self.cancelled():
+            self.main_window._call_in_ui(lambda: None if self.cancelled() else action())
+
+    def set_status(self, message: str) -> None:
+        def _apply() -> None:
+            if hasattr(self.main_window, "lbl_status"):
+                self.main_window.lbl_status.setText(message)
+            if hasattr(self.main_window, "_set_titlebar_sync_state"):
+                self.main_window._set_titlebar_sync_state("working", str(message or "").strip())
+
+        self._call_in_ui(_apply)
+
+    def done(self, count, elapsed) -> None:
+        self._call_in_ui(
+            lambda: (
+                _clear_f5_ui_stall_grace(self.main_window),
+                self.main_window._on_f5_done(count, elapsed),
+            )
+        )
+
+    def run(self, cancellation_token):
+        from core.rps_precomputer import RPSPrecomputer
+
+        self.token = cancellation_token
+        return RPSPrecomputer.run_f5_pipeline(
+            data_provider=self.main_window.data_provider,
+            engine=self.main_window.engine,
+            cancelled_checker=self.cancelled,
+            set_status_callback=self.set_status,
+            done_callback=self.done,
+        )
+
+
+def _submit_owned_f5_task(main_window, task_manager) -> None:
+    callbacks = _F5TaskCallbacks(main_window)
+    task_lifecycle_for(main_window, runner=task_manager).run_background(
+        "f5_precompute",
+        callbacks.run,
+        task_id=WINDOW_F5_PRECOMPUTE,
+        timeout_sec=30 * 60.0,
+        runner=task_manager,
+        task_priority=F5_BACKGROUND_TASK_PRIORITY,
+        thread_priority=F5_BACKGROUND_THREAD_PRIORITY,
+    )
+
+
+def start_f5_precompute(main_window, *, task_manager):
     if getattr(main_window, "_f5_precompute_start_pending", False):
         log.info("[F5] precompute start already pending")
         return
-
-    def _set_status_cb(message: str):
-        main_window._call_in_ui(
-            lambda: (
-                hasattr(main_window, "lbl_status") and main_window.lbl_status.setText(message),
-                hasattr(main_window, "_set_titlebar_sync_state")
-                and main_window._set_titlebar_sync_state("working", str(message or "").strip()),
-            )
-        )
-
-    def _done_cb(count, elapsed):
-        main_window._call_in_ui(
-            lambda: (
-                _clear_f5_ui_stall_grace(main_window),
-                main_window._on_f5_done(count, elapsed),
-            )
-        )
 
     wait_for_system_log = False
 
@@ -124,18 +164,7 @@ def start_f5_precompute(main_window, *, task_manager):
             return
         setattr(main_window, "_f5_precompute_start_pending", False)
         _mark_f5_ui_stall_grace(main_window)
-        task_manager.run_in_background(
-            lambda: RPSPrecomputer.run_f5_pipeline(
-                data_provider=main_window.data_provider,
-                engine=main_window.engine,
-                cancelled_checker=lambda: getattr(main_window, "_f5_cancelled", False),
-                set_status_callback=_set_status_cb,
-                done_callback=_done_cb,
-            ),
-            task_id=WINDOW_F5_PRECOMPUTE,
-            task_priority=F5_BACKGROUND_TASK_PRIORITY,
-            thread_priority=F5_BACKGROUND_THREAD_PRIORITY,
-        )
+        _submit_owned_f5_task(main_window, task_manager)
 
     delay_ms = _system_log_shell_nav_grace_remaining_ms(main_window)
     if delay_ms > 0:
@@ -150,7 +179,6 @@ def start_f5_precompute(main_window, *, task_manager):
 
 def finish_f5_reload(main_window, *, count, elapsed, event_bus):
     """完成 F5 后的缓存重载收尾，只保留 UI 壳层必须知道的结果。"""
-    QTimer.singleShot(2000, lambda: gc.collect())
     main_window._update_last_f5_time()
     workspace = getattr(main_window, "_workspace", None)
 
@@ -248,6 +276,14 @@ def shutdown_main_window(main_window, *, event_bus, task_manager):
             action()
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             log.error(f"[关闭] {label}异常: {exc}")
+
+    lifecycle = getattr(main_window, "_task_lifecycle", None)
+    if lifecycle is not None:
+        _run("停止窗口后台任务", lambda: lifecycle.shutdown(timeout_ms=1_500))
+
+    from app.services.ui_market_calendar_service import shutdown_market_calendar_tasks
+
+    _run("停止交易日历后台任务", lambda: shutdown_market_calendar_tasks(timeout_ms=750))
 
     if hasattr(main_window, "startup_orchestrator"):
         _run("停止启动编排器", main_window.startup_orchestrator.shutdown)

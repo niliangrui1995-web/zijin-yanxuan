@@ -16,6 +16,7 @@ DEFAULT_OUTPUT = Path("tmp/dependency_audit.json")
 DEFAULT_TIMEOUT_SECONDS = 120
 PIP_AUDIT_TIMEOUT_SECONDS = 180
 PIP_AUDIT_RETRY_COUNT = 1
+PIP_AUDIT_SOCKET_TIMEOUT_SECONDS = 60
 
 MANIFEST_PATTERNS = (
     "pyproject.toml",
@@ -43,7 +44,20 @@ def build_pip_inspect_command(python: str) -> list[str]:
 
 
 def build_pip_audit_command(python: str) -> list[str]:
-    return [python, "-m", "pip_audit", "--local", "--format", "json", "--progress-spinner", "off"]
+    return [
+        python,
+        "-m",
+        "pip_audit",
+        "--local",
+        "--format",
+        "json",
+        "--progress-spinner",
+        "off",
+        "--vulnerability-service",
+        "osv",
+        "--timeout",
+        str(PIP_AUDIT_SOCKET_TIMEOUT_SECONDS),
+    ]
 
 
 def _relative_path(path: Path, root: Path) -> str:

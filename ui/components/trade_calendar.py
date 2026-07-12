@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import datetime as _dt
+import inspect
 
 from PyQt6.QtCore import QDate, QRectF, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QPen, QTextCharFormat
@@ -28,6 +29,8 @@ from app.services.ui_earnings_calendar_service import (
     sorted_events,
 )
 from app.services.ui_market_calendar_service import MarketCalendar
+from app.services.ui_task_lifecycle_service import CancellationToken, TaskCancelledError, TaskDeadlineExceeded
+from ui.components.thread_shutdown import request_thread_shutdown
 from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens
 
@@ -83,6 +86,21 @@ def _remember_detached_refresh_worker(worker: QThread) -> None:
 
     try:
         worker.finished.connect(_forget_worker)
+    except (RuntimeError, TypeError):
+        pass
+
+
+def _shutdown_refresh_worker(worker: QThread) -> None:
+    try:
+        if worker.isRunning():
+            _remember_detached_refresh_worker(worker)
+            request_thread_shutdown(
+                worker,
+                label="earnings_calendar_refresh",
+                stop=lambda: worker.cancel("panel_disposed"),
+            )
+        else:
+            worker.deleteLater()
     except (RuntimeError, TypeError):
         pass
 
@@ -400,13 +418,39 @@ class EarningsCalendarRefreshWorker(QThread):
     sig_result = pyqtSignal(object)
     sig_error = pyqtSignal(str)
 
-    def __init__(self, service, parent=None):
+    def __init__(self, service, parent=None, *, timeout_seconds: float = 90.0):
         super().__init__(parent)
         self._service = service
+        self.cancellation_token = CancellationToken.with_timeout(timeout_seconds)
+
+    def cancel(self, reason: str = "cancelled") -> None:
+        self.cancellation_token.cancel(reason)
+        self.requestInterruption()
+
+    def _refresh_events(self):
+        refresh = self._service.refresh_events
+        try:
+            parameters = inspect.signature(refresh).parameters.values()
+        except (TypeError, ValueError):
+            parameters = ()
+        supports_token = any(
+            parameter.name == "cancellation_token" or parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
+        if supports_token:
+            return refresh(cancellation_token=self.cancellation_token)
+        return refresh()
 
     def run(self) -> None:
         try:
-            self.sig_result.emit(self._service.refresh_events())
+            self.cancellation_token.raise_if_cancelled()
+            events = self._refresh_events()
+            self.cancellation_token.raise_if_cancelled()
+            self.sig_result.emit(events)
+        except TaskCancelledError:
+            return
+        except TaskDeadlineExceeded as exc:
+            self.sig_error.emit(str(exc))
         except Exception as exc:  # noqa: BLE001 - keep UI worker from killing the dialog thread
             self.sig_error.emit(str(exc))
 
@@ -1073,14 +1117,7 @@ class OligarchEarningsCalendarPanel(QFrame):
             worker.setParent(None)
         except (RuntimeError, TypeError):
             pass
-        try:
-            if worker.isRunning():
-                worker.requestInterruption()
-                _remember_detached_refresh_worker(worker)
-            else:
-                worker.deleteLater()
-        except (RuntimeError, TypeError):
-            pass
+        _shutdown_refresh_worker(worker)
 
     def closeEvent(self, event):
         self._dispose()

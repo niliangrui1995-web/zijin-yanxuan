@@ -29,6 +29,8 @@ from PyQt6.QtWidgets import (
 from app.services.ui_config_service import app_config
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_navigation_service import ExternalTerminalNavigator
+from app.services.ui_quote_service import read_provider_health
+from app.services.ui_task_lifecycle_service import shutdown_task_lifecycle_for_owner
 from ui.status_registry import format_status_summary, format_workspace_status, parse_status_summary
 from ui.tabs.base_stock_refresh import (
     async_update_market_caps as run_async_market_caps,
@@ -142,7 +144,12 @@ class ToolbarStatusChipBar(QWidget):
             chip.setVisible(True)
 
 
-class BaseStockTab(QWidget):
+class _ProviderHealthMixin:
+    def _read_provider_status(self) -> dict:
+        return read_provider_health(self.data_provider).as_dict()
+
+
+class BaseStockTab(_ProviderHealthMixin, QWidget):
     """股票列表 Tab 基类 - 提供通用方法"""
 
     _TABLE_ATTR_CANDIDATES = ("table_sp", "table_scan", "table_rt", "na_daily_table", "asian_table", "table")
@@ -797,7 +804,7 @@ class BaseStockTab(QWidget):
         if getattr(self, "_runtime_cleanup_done", False):
             return
         self._runtime_cleanup_done = True
-
+        shutdown_task_lifecycle_for_owner(self, timeout_ms=750)
         self._flush_header_persistence()
 
         for timer in getattr(self, "_header_save_timers", []) or []:

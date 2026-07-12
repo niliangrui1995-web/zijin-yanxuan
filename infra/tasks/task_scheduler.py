@@ -9,12 +9,14 @@
 
 import os
 import threading
+import time
 import traceback
 import uuid
 
 from PyQt6.QtCore import QObject, QRunnable, QThread, QThreadPool, pyqtSignal, pyqtSlot
 
 from core.task_errors import UserFacingTaskError
+from infra.tasks.lifecycle import CancellationToken, TaskCancelledError
 
 DEFAULT_TASK_THREAD_POOL_MAX = 12
 
@@ -40,20 +42,31 @@ class _WorkerSignals(QObject):
 class BackgroundWorker(QRunnable):
     """通用后台 Worker — 包装任意可调用对象"""
 
-    def __init__(self, fn, *args, thread_priority=None, **kwargs):
+    def __init__(
+        self,
+        fn,
+        *args,
+        thread_priority=None,
+        cancellation_token: CancellationToken | None = None,
+        timeout_sec: float | None = None,
+        **kwargs,
+    ):
         super().__init__()
         self.fn = fn
         self.args = args
         self.kwargs = kwargs
         self.thread_priority = thread_priority
+        self.cancellation_token = cancellation_token or CancellationToken.with_timeout(timeout_sec)
         self.signals = _WorkerSignals()
         self._is_cancelled = False
+        self.terminated_event = threading.Event()
         self.task_id = ""
         # 不自动删除，由 active_workers 字典持有引用控制生命周期
         self.setAutoDelete(False)
 
-    def cancel(self):
+    def cancel(self, reason: str = "cancelled"):
         self._is_cancelled = True
+        self.cancellation_token.cancel(reason)
 
     def _apply_thread_priority(self):
         if self.thread_priority is None:
@@ -77,6 +90,20 @@ class BackgroundWorker(QRunnable):
         except (AttributeError, RuntimeError, TypeError, ValueError):
             pass
 
+    @staticmethod
+    def _safe_emit(signal, *args) -> None:
+        try:
+            signal.emit(*args)
+        except (AttributeError, RuntimeError):
+            pass
+
+    @classmethod
+    def _safe_emit_named(cls, signals, name: str, *args) -> None:
+        try:
+            cls._safe_emit(getattr(signals, name, None), *args)
+        except (AttributeError, RuntimeError):
+            pass
+
     @pyqtSlot()
     def run(self):
         task_label = self.task_id or getattr(self.fn, "__name__", "worker")
@@ -85,45 +112,36 @@ class BackgroundWorker(QRunnable):
         try:
             if self._is_cancelled:
                 return
+            self.cancellation_token.raise_if_cancelled()
             priority_thread, previous_priority = self._apply_thread_priority()
             result = self.fn(*self.args, **self.kwargs)
-            if not self._is_cancelled:
-                try:
-                    self.signals.finished.emit(result)
-                except RuntimeError:
-                    pass  # 信号对象已被销毁，安全忽略
+            if self._is_cancelled:
+                return
+            self.cancellation_token.raise_if_cancelled()
+            self._safe_emit_named(self.signals, "finished", result)
+        except TaskCancelledError:
+            pass
         except UserFacingTaskError as e:
             from core.logger import get_logger
 
             get_logger(__name__).warning(f"[任务调度][{task_label}] {e.log_message}")
-            try:
-                self.signals.error.emit(e.user_message)
-            except RuntimeError:
-                pass
+            self._safe_emit_named(self.signals, "error", e.user_message)
         except TimeoutError as e:
             from core.logger import get_logger
 
             get_logger(__name__).warning(f"[任务调度][{task_label}] 后台任务超时: {e}")
-            try:
-                self.signals.error.emit(str(e))
-            except RuntimeError:
-                pass
+            self._safe_emit_named(self.signals, "error", str(e))
         except Exception as e:
             tb = traceback.format_exc()
             from core.logger import get_logger
 
             get_logger(__name__).error(f"[任务调度][{task_label}] Worker 异常: {e}\n{tb}")
             # 无论是否被取消都 emit error，确保 _cleanup 触发清理 active_workers
-            try:
-                self.signals.error.emit(str(e))
-            except RuntimeError:
-                pass  # 信号对象已被销毁，安全忽略
+            self._safe_emit_named(self.signals, "error", str(e))
         finally:
             self._restore_thread_priority(priority_thread, previous_priority)
-            try:
-                self.signals.terminated.emit()
-            except (AttributeError, RuntimeError):
-                pass
+            self.terminated_event.set()
+            self._safe_emit_named(self.signals, "terminated")
 
 
 class GlobalTaskManager(QObject):
@@ -175,6 +193,34 @@ class GlobalTaskManager(QObject):
                 self.thread_pool.start(worker, int(priority))
             return task_id
 
+    @staticmethod
+    def _default_error_handler(task_id: str):
+        def _handle(error_message: str) -> None:
+            from core.logger import get_logger
+
+            get_logger(__name__).error(f"[TaskManager] 后台任务 '{task_id}' 未捕获异常: {error_message}")
+
+        return _handle
+
+    def _connect_worker_callbacks(self, worker, task_id: str, on_success, on_error) -> None:
+        from PyQt6.QtCore import Qt
+
+        if on_error is None:
+            on_error = self._default_error_handler(task_id)
+        if on_success:
+            worker.signals.finished.connect(on_success, type=Qt.ConnectionType.QueuedConnection)
+        worker.signals.error.connect(on_error, type=Qt.ConnectionType.QueuedConnection)
+
+        def _cleanup(_=None):
+            with self._lock:
+                current = self.active_workers.get(task_id)
+                if current is worker:
+                    self.active_workers.pop(task_id, None)
+
+        worker.signals.finished.connect(_cleanup)
+        worker.signals.error.connect(_cleanup)
+        worker.signals.terminated.connect(_cleanup)
+
     def run_in_background(
         self,
         fn,
@@ -184,6 +230,8 @@ class GlobalTaskManager(QObject):
         task_id: str | None = None,
         task_priority: int | None = None,
         thread_priority=None,
+        cancellation_token: CancellationToken | None = None,
+        timeout_sec: float | None = None,
         **kwargs,
     ) -> str:
         """便捷方法：后台执行函数，结果通过 Qt 信号安全回传主线程
@@ -194,11 +242,20 @@ class GlobalTaskManager(QObject):
             on_success: 主线程回调 fn(result)
             on_error: 主线程回调 fn(error_msg)
             task_id: 可选任务 ID
+            cancellation_token: 可选共享取消令牌，调用方可在任务闭包中协作检查
+            timeout_sec: 可选单调时钟截止时间；到期后不再回传成功结果
 
         返回:
             task_id
         """
-        worker = BackgroundWorker(fn, *args, thread_priority=thread_priority, **kwargs)
+        worker = BackgroundWorker(
+            fn,
+            *args,
+            thread_priority=thread_priority,
+            cancellation_token=cancellation_token,
+            timeout_sec=timeout_sec,
+            **kwargs,
+        )
 
         # 完成后清理 active_workers
         tid = task_id or str(uuid.uuid4())[:8]
@@ -211,41 +268,13 @@ class GlobalTaskManager(QObject):
             if task_id and task_id in self.active_workers:
                 return tid
 
-        # 防静默死亡：如果调用方没有传 on_error，注入默认兜底闭包
-        # 这样后台线程崩了，至少日志里有痕迹，不会让 UI 永远卡在"加载中"
-        if on_error is None:
-
-            def _default_error_handler(error_message: str):
-                from core.logger import get_logger
-
-                get_logger(__name__).error(f"[TaskManager] 后台任务 '{tid}' 未捕获异常: {error_message}")
-
-            on_error = _default_error_handler
-
-        from PyQt6.QtCore import Qt
-
-        if on_success:
-            finished_connect = getattr(worker.signals.finished, "connect")
-            finished_connect(on_success, type=Qt.ConnectionType.QueuedConnection)
-        if on_error:
-            error_connect = getattr(worker.signals.error, "connect")
-            error_connect(on_error, type=Qt.ConnectionType.QueuedConnection)
-
-        def _cleanup(_=None):
-            with self._lock:
-                current = self.active_workers.get(tid)
-                if current is worker:
-                    self.active_workers.pop(tid, None)
-
-        worker.signals.finished.connect(_cleanup)
-        worker.signals.error.connect(_cleanup)
-        worker.signals.terminated.connect(_cleanup)
+        self._connect_worker_callbacks(worker, tid, on_success, on_error)
 
         if task_priority is None:
             return self.submit_task(worker, tid)
         return self.submit_task(worker, tid, priority=task_priority)
 
-    def cancel_all(self):
+    def cancel_all(self, *, reason: str = "cancel_all"):
         """终极清退：停止所有排队和运行中的任务"""
         self.thread_pool.clear()
         with self._lock:
@@ -254,7 +283,13 @@ class GlobalTaskManager(QObject):
 
         for task_id, worker in workers:
             if hasattr(worker, "cancel"):
-                worker.cancel()
+                try:
+                    try:
+                        worker.cancel(reason)
+                    except TypeError:
+                        worker.cancel()
+                except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                    pass
 
     def abandon_task(self, task_id: str) -> bool:
         """放弃一个卡住任务的占位，允许同 task_id 后续重新提交。
@@ -273,16 +308,50 @@ class GlobalTaskManager(QObject):
 
         if hasattr(worker, "cancel"):
             try:
-                worker.cancel()
+                try:
+                    worker.cancel("abandoned")
+                except TypeError:
+                    worker.cancel()
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
                 pass
         return True
 
-    def shutdown(self):
-        """应用关闭时调用：禁止后续任务提交，并清理排队中的任务。"""
+    def cancel_task(self, task_id: str, *, reason: str = "cancelled") -> bool:
+        """Cooperatively cancel one task without releasing its dedupe slot."""
+        with self._lock:
+            worker = self.active_workers.get(str(task_id or ""))
+        if worker is None:
+            return False
+        try:
+            worker.cancel(reason)
+        except TypeError:
+            worker.cancel()
+        except (AttributeError, OSError, RuntimeError, ValueError):
+            return False
+        return True
+
+    def wait_for_tasks(self, task_ids, *, timeout_ms: int = 750) -> bool:
+        """Wait for a stable snapshot of selected workers using one total deadline."""
+        normalized_ids = tuple(dict.fromkeys(str(task_id or "").strip() for task_id in task_ids))
+        with self._lock:
+            workers = [self.active_workers[task_id] for task_id in normalized_ids if task_id in self.active_workers]
+        deadline = time.monotonic() + max(0, int(timeout_ms or 0)) / 1000.0
+        for worker in workers:
+            remaining = max(0.0, deadline - time.monotonic())
+            terminated_event = getattr(worker, "terminated_event", None)
+            if terminated_event is None or not terminated_event.wait(remaining):
+                return False
+        return True
+
+    def shutdown(self, *, wait_timeout_ms: int = 750) -> bool:
+        """禁止后续提交，协作取消现有任务，并执行有界线程池等待。"""
         with self._lock:
             self._shutting_down = True
-        self.cancel_all()
+        self.cancel_all(reason="manager_shutdown")
+        try:
+            return bool(self.thread_pool.waitForDone(max(0, int(wait_timeout_ms or 0))))
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return False
 
     @property
     def is_shutting_down(self) -> bool:

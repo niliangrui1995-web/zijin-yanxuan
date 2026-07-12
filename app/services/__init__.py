@@ -39,7 +39,7 @@ if TYPE_CHECKING:
         quick_check_breakout,
     )
     from app.services.sector_runtime_service import get_sector_manager
-    from vcp.models import VCPParams
+    from domains.scan.models import VCPParams
 
 __all__ = [
     "APP_VERSION",
@@ -74,7 +74,7 @@ _EXPORTS = {
     "CACHE_DIR": ("app.services.runtime_constants", "CACHE_DIR"),
     "FINANCE_CACHE_FILE": ("app.services.runtime_constants", "FINANCE_CACHE_FILE"),
     "RPS_CACHE_FILE": ("app.services.runtime_constants", "RPS_CACHE_FILE"),
-    "VCPParams": ("vcp.models", "VCPParams"),
+    "VCPParams": ("domains.scan.models", "VCPParams"),
     "batch_check_market_cap": ("app.services.scan_runtime_service", "batch_check_market_cap"),
     "batch_get_finance_info": ("app.services.scan_runtime_service", "batch_get_finance_info"),
     "build_kline_open_request": ("app.services.kline_open_service", "build_kline_open_request"),

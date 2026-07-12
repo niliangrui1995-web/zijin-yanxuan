@@ -1,14 +1,19 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import json
-import os
-
 import pandas as pd
 
+from app.services.asian_market_cache_service import (
+    load_cached_asian_stock as _load_cached_asian_stock,
+)
 from app.services.ui_market_calendar_service import MarketCalendar
+from app.services.ui_task_lifecycle_service import task_lifecycle_for
 from app.services.ui_task_service import task_registry
 from ui.kline_chart_payload import merge_kline_context
+
+
+def load_cached_asian_stock(json_cache: str, code: str) -> dict | None:
+    return _load_cached_asian_stock(json_cache, code)
 
 
 def build_asian_df_from_klines(klines, normalize_daily_df_index):
@@ -28,16 +33,6 @@ def build_asian_df_from_klines(klines, normalize_daily_df_index):
             frame[column] = pd.to_numeric(frame[column], errors="coerce").astype(float)
 
     return normalize_daily_df_index(frame)
-
-
-def load_cached_asian_stock(json_cache: str, code: str) -> dict | None:
-    if not os.path.exists(json_cache):
-        return None
-
-    with open(json_cache, "r", encoding="utf-8") as handle:
-        raw = json.load(handle)
-    stocks = raw.get("stocks", [])
-    return next((stock for stock in stocks if stock.get("ticker") == code), None)
 
 
 def merge_asian_context_payload(vcp_data: dict, stock_payload: dict, refresh_header_context):
@@ -116,7 +111,7 @@ def schedule_asian_history_backfill(window, *, task_manager, fetch_single_kline)
 
     window._set_status_message("本地缓存缺少该标的，正在单独补拉历史日线...", tone="loading")
 
-    def _bg_fetch():
+    def _bg_fetch(_cancellation_token):
         return fetch_single_kline(request_name, request_code, period="1y")
 
     def _on_fetch_success(stock_payload):
@@ -135,11 +130,14 @@ def schedule_asian_history_backfill(window, *, task_manager, fetch_single_kline)
         except RuntimeError:
             pass
 
-    task_manager.run_in_background(
+    task_lifecycle_for(window, runner=task_manager).run_background(
+        "asian_history_backfill",
         _bg_fetch,
         on_success=_on_fetch_success,
         on_error=_on_fetch_error,
         task_id=task_registry.transient_window(f"kline_asian_{request_code}_{request_generation}"),
+        timeout_sec=120.0,
+        runner=task_manager,
     )
 
 

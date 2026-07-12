@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import QApplication
 from core.process_watchdog import collect_process_snapshot
 from domains.runtime.fault_tolerance import provider_fault_tolerance
 from infra.diagnostics.ui_stall_probe import get_ui_stall_probe
+from infra.market_data.provider_ports import ProviderHealthPort, ProviderHealthSnapshot
 
 try:  # pragma: no cover - psutil is optional outside the packaged runtime.
     import psutil
@@ -364,30 +365,21 @@ def _webengine_snapshot() -> dict[str, Any]:
 def _quote_snapshot(main_window) -> dict[str, Any]:
     provider = getattr(main_window, "data_provider", None)
     central = getattr(main_window, "central_quotes_svc", None)
-    request_stats = {}
-    provider_runtime = {}
-
-    getter = getattr(provider, "get_quote_request_stats", None)
-    if callable(getter):
+    health = ProviderHealthSnapshot.empty()
+    if isinstance(provider, ProviderHealthPort):
         try:
-            request_stats = getter() or {}
+            health = provider.read_provider_health()
         except (AttributeError, RuntimeError, TypeError, ValueError):
-            request_stats = {}
-
-    runtime_getter = getattr(provider, "get_realtime_runtime_stats", None)
-    if callable(runtime_getter):
-        try:
-            provider_runtime = runtime_getter() or {}
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            provider_runtime = {}
-
-    eastmoney_cooldown_until = float(getattr(provider, "_rt_eastmoney_cooldown_until", 0.0) or 0.0)
+            health = ProviderHealthSnapshot.empty()
+    health_payload = health.as_dict()
+    request_stats = health_payload["request_stats"]
+    provider_runtime = health_payload["runtime_stats"]
     fault_tolerance = provider_fault_tolerance(
         {
             "request_stats": request_stats,
             "provider_runtime": provider_runtime,
-            "eastmoney_cooldown_until": eastmoney_cooldown_until,
-            "eastmoney_last_error": getattr(provider, "_rt_eastmoney_last_error", ""),
+            "eastmoney_cooldown_until": health.eastmoney_cooldown_until,
+            "eastmoney_last_error": health.eastmoney_last_error,
         }
     )
     provider_degraded = bool(fault_tolerance.get("provider_degraded"))

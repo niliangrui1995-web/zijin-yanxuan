@@ -9,6 +9,7 @@ from app.services.ui_diagnostics_service import ui_stall_span
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
 from app.services.ui_market_calendar_service import MarketCalendar
+from app.services.ui_task_lifecycle_service import task_lifecycle_for
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
 from ui.components import TableStateWrapper, VCPTableView
@@ -352,32 +353,6 @@ class StockCandidateTab(BaseStockTab):
         except TypeError:
             return context_reader()
 
-    def _read_provider_status(self) -> dict:
-        provider = getattr(self, "data_provider", None)
-        request_stats = {}
-        runtime_stats = {}
-
-        request_getter = getattr(provider, "get_quote_request_stats", None)
-        if callable(request_getter):
-            try:
-                request_stats = request_getter() or {}
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                request_stats = {}
-
-        runtime_getter = getattr(provider, "get_realtime_runtime_stats", None)
-        if callable(runtime_getter):
-            try:
-                runtime_stats = runtime_getter() or {}
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                runtime_stats = {}
-
-        return {
-            "request_stats": request_stats,
-            "runtime_stats": runtime_stats,
-            "eastmoney_cooldown_until": float(getattr(provider, "_rt_eastmoney_cooldown_until", 0.0) or 0.0),
-            "eastmoney_last_error": str(getattr(provider, "_rt_eastmoney_last_error", "") or ""),
-        }
-
     def get_data_lineage(self) -> dict:
         result = self._last_candidate_result
         if result is None:
@@ -597,18 +572,21 @@ class StockCandidateTab(BaseStockTab):
         self._candidate_refresh_pending = False
         tab_titles = self._tab_titles()
 
-        def _load_bg():
+        def _load_bg(_cancellation_token):
             return StockCandidatesDataService(
                 context_reader=self._read_stock_context,
                 row_builder=lambda context: self._build_candidate_rows(context, tab_titles=tab_titles),
                 provider_status_reader=self._read_provider_status,
             ).load()
 
-        task_manager.run_in_background(
+        task_lifecycle_for(self, runner=task_manager).run_background(
+            "candidate_refresh",
             _load_bg,
             on_success=self._on_candidate_refresh_success,
             on_error=self._on_candidate_refresh_error,
             task_id=task_registry.workspace(self.REFRESH_TASK_ID),
+            timeout_sec=60.0,
+            runner=task_manager,
         )
 
     def _on_candidate_refresh_success(self, result) -> None:

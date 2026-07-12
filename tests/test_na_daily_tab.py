@@ -110,7 +110,7 @@ def test_na_daily_tab_refresh_table_market_data_only_fetches_blank_quotes(monkey
     monkeypatch.setattr(
         task_manager,
         "run_in_background",
-        lambda func, on_success=None, on_error=None, task_id=None: on_success(func()),
+        lambda func, on_success=None, on_error=None, task_id=None, **_kwargs: on_success(func()),
     )
 
     tab = _build_tab(monkeypatch, provider)

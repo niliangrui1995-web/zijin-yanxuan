@@ -23,13 +23,16 @@ from app.services.runtime_constants import FINANCE_CACHE_FILE
 from app.services.runtime_services import load_local_tdx_capital_snapshot
 from app.services.scan_runtime_service import batch_get_finance_info
 from app.services.ui_diagnostics_service import ui_stall_span
+from app.services.ui_json_cache_service import cache_file_signature, load_json_file
 from app.services.ui_quote_service import (
     build_finance_quote_payload,
+    build_offline_quotes,
     coerce_number,
     enrich_quotes_with_finance,
     is_a_share_code,
     publish_rt_quotes,
 )
+from app.services.ui_task_lifecycle_service import task_lifecycle_for
 from app.services.ui_task_service import (
     SHARED_MARKET_CAPS,
     task_id_of,
@@ -182,11 +185,7 @@ def _finance_entry_has_share_capital(entry: dict | None) -> bool:
 
 
 def _get_finance_cache_signature(path: str) -> tuple[int, int] | None:
-    try:
-        stat_result = os.stat(path)
-    except (FileNotFoundError, OSError, TypeError, ValueError):
-        return None
-    return (int(stat_result.st_mtime_ns), int(stat_result.st_size))
+    return cache_file_signature(path)
 
 
 def _load_shared_finance_cache_payload(path: str) -> dict:
@@ -202,8 +201,6 @@ def _load_shared_finance_cache_payload(path: str) -> dict:
             _FINANCE_CACHE_SIGNATURE = None
             _FINANCE_CACHE_PAYLOAD = {}
             return _FINANCE_CACHE_PAYLOAD
-
-        from core.json_cache import load_json_file
 
         payload = load_json_file(path) or {}
         _FINANCE_CACHE_PATH = path
@@ -255,16 +252,11 @@ def _build_local_quote_payload(owner, target_codes: list[str]) -> dict:
     if not _is_owner_runtime_active(owner):
         return {}
 
-    offline_quotes = {}
     try:
-        offline_builder = getattr(getattr(owner, "data_provider", None), "_build_offline_quotes", None)
+        provider = owner.data_provider
     except RuntimeError:
         return {}
-    if callable(offline_builder):
-        try:
-            offline_quotes = offline_builder(target_codes) or {}
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
-            offline_quotes = {}
+    offline_quotes = build_offline_quotes(provider, target_codes)
 
     finance_loader = _resolve_cached_finance_loader(owner)
     try:
@@ -308,6 +300,18 @@ def prime_local_quote_snapshot(owner, current_model=None) -> dict:
     return published
 
 
+def _run_owner_background(owner, runner, name, fn, *, task_id, timeout_sec, on_success, on_error) -> None:
+    task_lifecycle_for(owner, runner=runner).run_background(
+        name,
+        fn,
+        task_id=task_id,
+        timeout_sec=timeout_sec,
+        on_success=on_success,
+        on_error=on_error,
+        runner=runner,
+    )
+
+
 def prime_local_quote_snapshot_async(owner, current_model=None) -> bool:
     if not _is_owner_runtime_active(owner):
         return False
@@ -348,7 +352,7 @@ def prime_local_quote_snapshot_async(owner, current_model=None) -> bool:
     owner_class_name = owner.__class__.__name__
     target_codes = list(target_codes)
 
-    def _bg_local_quote():
+    def _bg_local_quote(_cancellation_token):
         owner_obj = owner_ref()
         if not _is_owner_runtime_active(owner_obj):
             return {}
@@ -379,11 +383,9 @@ def prime_local_quote_snapshot_async(owner, current_model=None) -> bool:
         if error_message:
             logging.getLogger(__name__).debug(f"[{owner_class_name}] local quote snapshot task failed: {error_message}")
 
-    task_manager.run_in_background(
-        _bg_local_quote,
-        task_id=task_key,
-        on_success=_on_success,
-        on_error=_on_error,
+    _run_owner_background(
+        owner, task_manager, "local_quote_snapshot", _bg_local_quote,
+        task_id=task_key, timeout_sec=60.0, on_success=_on_success, on_error=_on_error,
     )
     return True
 
@@ -810,6 +812,31 @@ class MarketCapRefreshBatcher:
         )
 
 
+def _submit_owner_quote_refresh(owner, task_manager, task_id: str, target_codes: list[str]) -> None:
+    owner_ref = weakref.ref(owner)
+    provider = owner.data_provider
+    owner_class_name = owner.__class__.__name__
+
+    def _bg_task(_cancellation_token):
+        return provider.fetch_realtime_quotes_batch(target_codes)
+
+    def _on_success(quotes):
+        owner_obj = owner_ref()
+        if not _is_owner_runtime_active(owner_obj) or not quotes:
+            return
+        published = owner_obj._publish_quote_payload(quotes, source=f"{owner_class_name}.quotes")
+        owner_obj._apply_quote_snapshot(published or quotes)
+
+    def _on_error(error_message: str):
+        if error_message:
+            logging.getLogger(__name__).debug(f"[{owner_class_name}] 表格补价失败: {error_message}")
+
+    _run_owner_background(
+        owner, task_manager, "realtime_quote_refresh", _bg_task,
+        task_id=task_id, timeout_sec=30.0, on_success=_on_success, on_error=_on_error,
+    )
+
+
 def refresh_table_quotes_and_market_caps(
     owner,
     current_model=None,
@@ -864,27 +891,7 @@ def refresh_table_quotes_and_market_caps(
     if callable(is_active_task) and is_active_task(task_id):
         return
 
-    def _bg_task():
-        return owner.data_provider.fetch_realtime_quotes_batch(target_codes)
-
-    def _on_success(quotes):
-        if quotes:
-            published = owner._publish_quote_payload(
-                quotes,
-                source=f"{owner.__class__.__name__}.quotes",
-            )
-            owner._apply_quote_snapshot(published or quotes)
-
-    def _on_error(error_message: str):
-        if error_message:
-            logging.getLogger(__name__).debug(f"[{owner.__class__.__name__}] 表格补价失败: {error_message}")
-
-    task_manager.run_in_background(
-        _bg_task,
-        on_success=_on_success,
-        on_error=_on_error,
-        task_id=task_id,
-    )
+    _submit_owner_quote_refresh(owner, task_manager, task_id, target_codes)
 
 
 def refresh_table_from_latest_snapshot(owner, current_model=None, *, async_local: bool = True) -> None:

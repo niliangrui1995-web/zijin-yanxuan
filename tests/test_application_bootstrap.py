@@ -25,6 +25,13 @@ class _DummyWindow:
         self.created_central_quotes_services.append(service)
         return service
 
+    def current_workspace(self):
+        return self._workspace
+
+    def get_realtime_quote_codes(self):
+        supplier = getattr(self._workspace, "get_realtime_quote_codes", None)
+        return set(supplier() or ()) if callable(supplier) else set()
+
     def create_workspace(self, *, parent=None):
         self.workspace_parent = parent
         return {"workspace": True}

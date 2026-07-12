@@ -6,29 +6,41 @@ ui/tabs/foreign_block_trade_tab.py
 """
 
 import datetime
-import json
-import os
-import sys
 import time
+from functools import partial
 
-import pandas as pd
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QComboBox, QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
+from app.services.foreign_block_cache_service import load_foreign_block_cache, save_foreign_block_cache
+from app.services.foreign_block_market_data_service import (
+    BLOCK_TRADE_TIMEOUT_USER_MESSAGE as _BLOCK_TRADE_TIMEOUT_USER_MESSAGE,
+)
+from app.services.foreign_block_market_data_service import (
+    BLOCK_TRADE_TOTAL_TIMEOUT as _BLOCK_TRADE_TOTAL_TIMEOUT,
+)
+from app.services.foreign_block_market_data_service import (
+    FOREIGN_KEYWORDS,
+    build_foreign_block_trade_rows,
+    filter_foreign_block_rows_to_ai_chain,
+    foreign_block_direction,
+    should_include_foreign_block_row,
+)
+from app.services.foreign_block_market_data_service import (
+    fetch_foreign_block_payload as _build_block_trade_fetch_payload,
+)
+from app.services.foreign_block_market_data_service import (
+    format_incomplete_message as _format_incomplete_message,
+)
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
-from app.services.ui_task_service import (
-    ProcessExecutionError,
-    ProcessTimeoutError,
-    build_domestic_process_env,
-    run_process,
-    task_registry,
-    windows_no_window_kwargs,
+from app.services.ui_task_lifecycle_service import (
+    TaskLifecycleGroup,
+    invoke_with_cancellation,
 )
 from app.services.ui_task_service import background_job_runner as task_manager
-from core.exceptions import CacheIOError, DataFormatError
-from core.json_cache import load_json_file, save_json_file
-from core.task_errors import UserFacingTaskError
+from app.services.ui_task_service import task_registry
+from core.exceptions import CacheIOError
 from ui.components import (
     MultiSelectFilterButton,
     SearchFilter,
@@ -101,237 +113,75 @@ from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
 
-FOREIGN_KEYWORDS = ["高盛", "摩根大通", "摩根士丹利", "瑞银", "法巴", "渣打", "野村", "汇丰", "星展", "大和"]
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_BLOCK_TRADE_CACHE_FILE = os.path.join(_PROJECT_ROOT, "data", "Cache", "foreign_block_trade_latest.json")
 _FOREIGN_BLOCK_TRADE_TASK = task_registry.workspace("foreign_block_trade")
 _FOREIGN_BLOCK_LOCAL_CACHE_TASK = task_registry.workspace("foreign_block_trade_local_cache")
 
 # 模块级K线缓存：每只股票的文件只读一次，后续直接从内存取
 _kline_cache: dict = {}
-_BLOCK_TRADE_CHUNK_TIMEOUT = 15
-_BLOCK_TRADE_CALENDAR_TIMEOUT = 10
-_BLOCK_TRADE_MAX_RETRIES = 2
-_BLOCK_TRADE_TOTAL_TIMEOUT = 90
 F5_AUTO_ONLINE_REFRESH_DELAY_MS = 24000
 LOCAL_CACHE_LOAD_DELAY_MS = 650
 POST_F5_LOCAL_CACHE_DEFER_MS = 5000
-filter_rows_to_ai_chain_codes = None
-_BLOCK_TRADE_TIMEOUT_USER_MESSAGE = (
-    f"抓取超时：{_BLOCK_TRADE_TOTAL_TIMEOUT}秒内未拿到完整结果。通常是当前网络较慢，"
-    "或 VPN/代理影响了国内数据源；可稍后重试，必要时临时关闭 VPN 后再刷新。"
-)
-_AKSHARE_FETCH_SNIPPET = r"""
-import json
-import sys
-import pandas as pd
-import akshare as ak
-
-sys.stdout.reconfigure(encoding="utf-8")
-sys.stderr.reconfigure(encoding="utf-8")
-
-mode = sys.argv[1]
-if mode == "calendar":
-    df = ak.tool_trade_date_hist_sina()
-    df['trade_date'] = pd.to_datetime(df['trade_date']).dt.strftime('%Y-%m-%d')
-    print(json.dumps(df['trade_date'].tolist(), ensure_ascii=False))
-elif mode == "block_trade":
-    start_date = sys.argv[2]
-    end_date = sys.argv[3]
-    df = ak.stock_dzjy_mrmx(symbol="A股", start_date=start_date, end_date=end_date)
-    if df is None or df.empty:
-        print("[]")
-    else:
-        print(df.to_json(orient="records", force_ascii=False, date_format="iso"))
-"""
 
 
-def _resolve_filter_rows_to_ai_chain_codes():
-    global filter_rows_to_ai_chain_codes
-    if filter_rows_to_ai_chain_codes is None:
-        from core.ai_industry_chain_pool import filter_rows_to_ai_chain_codes as filter_func
-
-        filter_rows_to_ai_chain_codes = filter_func
-    return filter_rows_to_ai_chain_codes
+def _owner_attr(owner, name: str, default=None):
+    try:
+        return getattr(owner, name, default)
+    except RuntimeError:
+        return default
 
 
-def _run_domestic_akshare(mode: str, *args, timeout: int = 15):
-    env = build_domestic_process_env(extra={"PYTHONIOENCODING": "utf-8"})
-    cmd = [sys.executable, "-c", _AKSHARE_FETCH_SNIPPET, mode, *args]
-    proc = run_process(
-        cmd,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="ignore",
-        timeout=timeout,
-        env=env,
-        **windows_no_window_kwargs(),
-        check=True,
+def _task_lifecycle_for(owner) -> TaskLifecycleGroup:
+    lifecycle = getattr(owner, "_task_lifecycle", None)
+    if lifecycle is None:
+        lifecycle = TaskLifecycleGroup(task_manager)
+        owner._task_lifecycle = lifecycle
+    return lifecycle
+
+
+def _load_cache_payload(emit_event: bool, cancellation_token):
+    result = dict(
+        invoke_with_cancellation(
+            load_foreign_block_cache,
+            cancellation_token,
+            row_filter=filter_foreign_block_rows_to_ai_chain,
+        )
     )
-    payload = (proc.stdout or "").strip()
-    if not payload:
-        return []
-    return json.loads(payload)
+    result["emit_event"] = bool(emit_event)
+    return result
 
 
-def _raise_block_trade_timeout(stage: str, detail: str = ""):
-    extra = f"（{detail}）" if detail else ""
-    raise UserFacingTaskError(
-        _BLOCK_TRADE_TIMEOUT_USER_MESSAGE,
-        f"大宗交易抓取超时：{stage}{extra}，{_BLOCK_TRADE_TOTAL_TIMEOUT}秒内未完成全部请求，可能是国内数据源响应慢或网络代理影响。",
-    )
+def _apply_cache_if_current(owner, generation: int, payload) -> None:
+    if _owner_attr(owner, "_closing", False) or generation != _owner_attr(owner, "_local_cache_generation", 0):
+        return
+    owner._apply_local_cache_payload(payload)
 
 
-def _format_incomplete_message(timeout_chunks, failed_chunks):
-    parts = []
-    if timeout_chunks:
-        parts.append(f"{len(timeout_chunks)} 个区间超时")
-    if failed_chunks:
-        parts.append(f"{len(failed_chunks)} 个区间失败")
-    if not parts:
-        return ""
-    return "；" + "，".join(parts) + "，结果可能不完整"
+def _apply_cache_error_if_current(owner, generation: int, error_message) -> None:
+    if _owner_attr(owner, "_closing", False) or generation != _owner_attr(owner, "_local_cache_generation", 0):
+        return
+    owner._on_local_cache_failed(error_message)
 
 
-def _normalize_trade_date_value(value) -> str:
-    if value is None or pd.isna(value):
-        return ""
-
-    if isinstance(value, (datetime.date, datetime.datetime, pd.Timestamp)):
-        return pd.Timestamp(value).strftime("%Y-%m-%d")
-
-    text = str(value).strip()
-    if not text or text.lower() in {"nan", "nat", "none"}:
-        return ""
-
-    if text.isdigit():
-        parsed = pd.NaT
-        if len(text) == 13:
-            parsed = pd.to_datetime(int(text), unit="ms", errors="coerce")
-        elif len(text) == 10:
-            parsed = pd.to_datetime(int(text), unit="s", errors="coerce")
-        elif len(text) == 8:
-            parsed = pd.to_datetime(text, format="%Y%m%d", errors="coerce")
-        if pd.notna(parsed):
-            return parsed.strftime("%Y-%m-%d")
-        return text
-
-    parsed = pd.to_datetime(text, errors="coerce")
-    if pd.notna(parsed):
-        return parsed.strftime("%Y-%m-%d")
-    return text
+def _apply_fetch_if_current(owner, generation: int, payload) -> None:
+    if _owner_attr(owner, "_closing", False) or generation != _owner_attr(owner, "_fetch_generation", 0):
+        return
+    owner._on_data_fetched(payload)
 
 
-def _normalize_trade_date_series(series: pd.Series) -> pd.Series:
-    return series.apply(_normalize_trade_date_value)
-
-
-def should_include_foreign_block_row(buyer, seller) -> bool:
-    buyer_str = str(buyer) if pd.notna(buyer) else ""
-    seller_str = str(seller) if pd.notna(seller) else ""
-    return any(kw in buyer_str or kw in seller_str for kw in FOREIGN_KEYWORDS)
+def _apply_fetch_error_if_current(owner, generation: int, error_message) -> None:
+    if _owner_attr(owner, "_closing", False) or generation != _owner_attr(owner, "_fetch_generation", 0):
+        return
+    owner._on_data_fetch_failed(error_message)
 
 
 def determine_foreign_block_direction(buyer, seller):
-    buyer_str = str(buyer) if pd.notna(buyer) else ""
-    seller_str = str(seller) if pd.notna(seller) else ""
-
-    buy_foreign = any(kw in buyer_str for kw in FOREIGN_KEYWORDS)
-    sell_foreign = any(kw in seller_str for kw in FOREIGN_KEYWORDS)
-
-    if buy_foreign and sell_foreign:
-        return "外资对倒", "#F59E0B"
-
-    if buy_foreign:
-        return "外资买入", COLOR_RISE
-    if sell_foreign:
-        return "外资卖出", COLOR_FALL
-
-    return "--", COLOR_FLAT
-
-
-def filter_foreign_block_rows_to_ai_chain(row_data: list[dict]) -> list[dict]:
-    try:
-        return _resolve_filter_rows_to_ai_chain_codes()(row_data, code_keys=("代码", "证券代码"))
-    except (FileNotFoundError, RuntimeError, OSError, ValueError) as exc:
-        log.warning(f"[外资大宗] AI产业链股票池不可用，已按空股票池处理: {exc}")
-        return []
-
-
-def build_foreign_block_trade_rows(records: list[dict]) -> tuple[list[dict], int]:
-    if not records:
-        return [], 0
-
-    df = pd.DataFrame(records)
-    if df is None or df.empty:
-        return [], 0
-    if "交易日期" in df.columns:
-        df["交易日期"] = _normalize_trade_date_series(df["交易日期"])
-
-    df = df.groupby(["交易日期", "证券代码", "买方营业部", "卖方营业部", "证券简称"], as_index=False).agg(
-        {"收盘价": "first", "成交价": "mean", "折溢率": "mean", "成交量": "sum", "成交额": "sum"}
-    )
-    df = df.sort_values(by=["交易日期", "证券代码"], ascending=[False, True])
-    row_data = []
-    for _, record in df.iterrows():
-        trade_date = str(record.get("交易日期", ""))
-        code = str(record.get("证券代码", "")).zfill(6)
-        name = str(record.get("证券简称", ""))
-
-        close_price = record.get("收盘价", 0)
-        trade_price = record.get("成交价", 0)
-        premium = record.get("折溢率", 0)
-        vol = record.get("成交量", 0)
-        amt = record.get("成交额", 0)
-
-        close_price = 0 if pd.isna(close_price) else close_price
-        trade_price = 0 if pd.isna(trade_price) else trade_price
-        premium = 0 if pd.isna(premium) else premium
-        vol = 0 if pd.isna(vol) else vol
-        amt = 0 if pd.isna(amt) else amt
-
-        premium_pct = premium * 100
-        vol_wan = vol / 10000.0
-        amt_wan = amt / 10000.0
-
-        buyer = str(record.get("买方营业部", ""))
-        seller = str(record.get("卖方营业部", ""))
-        direction, _ = determine_foreign_block_direction(buyer, seller)
-
-        row_data.append(
-            {
-                "代码": code,
-                "名称": name,
-                "现价": "--",
-                "涨幅%": "--",
-                "市值": "--",
-                "交易日期": trade_date,
-                "交易详情": direction,
-                "当日收盘价": f"{close_price:.2f}" if close_price else "--",
-                "成交价格": f"{trade_price:.2f}" if trade_price else "--",
-                "折/溢价率(%)": f"{premium_pct:.2f}%" if not pd.isna(premium_pct) else "--",
-                "成交数量(万股)": f"{vol_wan:.2f}",
-                "成交金额(万元)": f"{amt_wan:.2f}",
-                "买方营业部": buyer,
-                "卖方营业部": seller,
-            }
-        )
-
-    return filter_foreign_block_rows_to_ai_chain(row_data), len(df)
-
-
-def build_foreign_block_local_cache_payload(cache_file: str = _BLOCK_TRADE_CACHE_FILE) -> dict:
-    payload = load_json_file(cache_file)
-    rows = payload.get("rows", []) if isinstance(payload, dict) else []
-    if not isinstance(rows, list):
-        raise DataFormatError("block trade cache rows invalid")
-    return {
-        "rows": filter_foreign_block_rows_to_ai_chain(rows),
-        "raw_count": len(rows),
-        "latest_trade_date": str(payload.get("latest_trade_date", "")).strip() if isinstance(payload, dict) else "",
-        "saved_at": str(payload.get("saved_at", "")).strip() if isinstance(payload, dict) else "",
-    }
+    direction = foreign_block_direction(buyer, seller)
+    color = {
+        "外资对倒": "#F59E0B",
+        "外资买入": COLOR_RISE,
+        "外资卖出": COLOR_FALL,
+    }.get(direction, COLOR_FLAT)
+    return direction, color
 
 
 class ForeignBlockTradeTab(BaseStockTab):
@@ -366,7 +216,9 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._post_f5_local_cache_pending = False
         self._post_f5_local_cache_emit_event = False
         self._initial_local_cache_load_started = False
-
+        self._local_cache_generation = 0
+        self._fetch_generation = 0
+        self._closing = False
         self.days_to_fetch = 30  # 默认拉取最近30个交易日
         self._init_ui()
         if autoload:
@@ -596,31 +448,12 @@ class ForeignBlockTradeTab(BaseStockTab):
     def _filter_rows_to_ai_chain(row_data: list[dict]) -> list[dict]:
         return filter_foreign_block_rows_to_ai_chain(row_data)
 
-    def _build_cache_payload(self, row_data: list[dict]) -> dict:
-        latest_trade_date = ""
-        if row_data:
-            latest_trade_date = max(
-                [
-                    str(row.get("交易日期", "")).strip()
-                    for row in row_data
-                    if isinstance(row, dict) and str(row.get("交易日期", "")).strip()
-                ],
-                default="",
-            )
-        return {
-            "saved_at": datetime.datetime.now().isoformat(timespec="seconds"),
-            "days_to_fetch": int(self.days_to_fetch),
-            "latest_trade_date": latest_trade_date,
-            "rows": row_data or [],
-        }
-
     def _save_local_cache(self, row_data: list[dict]) -> bool:
         try:
-            os.makedirs(os.path.dirname(_BLOCK_TRADE_CACHE_FILE), exist_ok=True)
-            save_json_file(_BLOCK_TRADE_CACHE_FILE, self._build_cache_payload(row_data))
+            payload = save_foreign_block_cache(row_data, days_to_fetch=int(self.days_to_fetch))
             log.info(
-                f"[外资大宗] 已保存本地缓存: {os.path.basename(_BLOCK_TRADE_CACHE_FILE)} "
-                f"(rows={len(row_data or [])}, latest={self._latest_trade_date_text() or '-'})"
+                f"[外资大宗] 已保存本地缓存 "
+                f"(rows={len(row_data or [])}, latest={payload['latest_trade_date'] or '-'})"
             )
             return True
         except CacheIOError as exc:
@@ -628,6 +461,8 @@ class ForeignBlockTradeTab(BaseStockTab):
             return False
 
     def _load_local_cache(self, *, emit_event: bool = True):
+        if _owner_attr(self, "_closing", False):
+            return
         defer_until = float(getattr(self, "_post_f5_local_cache_defer_until", 0.0) or 0.0)
         if time.monotonic() < defer_until:
             self._schedule_post_f5_local_cache_load(emit_event=emit_event)
@@ -637,17 +472,15 @@ class ForeignBlockTradeTab(BaseStockTab):
             self._local_cache_pending_emit_event = bool(emit_event)
             return
         self._local_cache_loading = True
-
-        def _load_task():
-            result = build_foreign_block_local_cache_payload(_BLOCK_TRADE_CACHE_FILE)
-            result["emit_event"] = bool(emit_event)
-            return result
-
-        task_manager.run_in_background(
-            _load_task,
+        generation = int(_owner_attr(self, "_local_cache_generation", 0)) + 1
+        self._local_cache_generation = generation
+        _task_lifecycle_for(self).run_background(
+            "local_cache",
+            partial(_load_cache_payload, bool(emit_event)),
             task_id=_FOREIGN_BLOCK_LOCAL_CACHE_TASK,
-            on_success=self._apply_local_cache_payload,
-            on_error=self._on_local_cache_failed,
+            timeout_sec=30,
+            on_success=partial(_apply_cache_if_current, self, generation),
+            on_error=partial(_apply_cache_error_if_current, self, generation),
         )
 
     def _finish_local_cache_load(self):
@@ -770,6 +603,14 @@ class ForeignBlockTradeTab(BaseStockTab):
         super()._cleanup_runtime_state()
 
     def shutdown(self) -> None:
+        self._closing = True
+        self._local_cache_generation += 1
+        self._fetch_generation += 1
+        self._local_cache_loading = False
+        self._is_loading = False
+        lifecycle = getattr(self, "_task_lifecycle", None)
+        if lifecycle is not None:
+            lifecycle.shutdown(timeout_ms=1_000)
         self._cleanup_runtime_state()
 
     def _refresh_filter_button_text(self, button, prefix: str, all_text: str):
@@ -849,7 +690,9 @@ class ForeignBlockTradeTab(BaseStockTab):
         return determine_foreign_block_direction(buyer, seller)
 
     def _load_block_trade_data(self):
-        if self._is_loading or task_manager.is_active_task(_FOREIGN_BLOCK_TRADE_TASK):
+        if _owner_attr(self, "_closing", False):
+            return
+        if self._is_loading:
             self._set_fetch_status("大宗抓取中", "上一轮任务尚未结束", freshness="快照", next_step="等待当前轮次结束")
             return
         self._is_loading = True
@@ -867,120 +710,15 @@ class ForeignBlockTradeTab(BaseStockTab):
         # 清空上一轮的K线缓存，防止跨交易日窗口后内存只增不减
         _kline_cache.clear()
 
-        def _fetch_task():
-            import time
-
-            end_dt = datetime.datetime.now()
-            deadline = time.monotonic() + _BLOCK_TRADE_TOTAL_TIMEOUT
-
-            # 使用交易日历倒推 start_dt
-            try:
-                remaining = max(5, int(deadline - time.monotonic()))
-                dates = [
-                    pd.to_datetime(d).date()
-                    for d in _run_domestic_akshare("calendar", timeout=min(_BLOCK_TRADE_CALENDAR_TIMEOUT, remaining))
-                ]
-                today_date = end_dt.date()
-                past_dates = [d for d in dates if d <= today_date]
-                if len(past_dates) >= self.days_to_fetch:
-                    start_date_val = past_dates[-self.days_to_fetch]
-                else:
-                    start_date_val = (
-                        past_dates[0] if past_dates else (today_date - datetime.timedelta(days=self.days_to_fetch))
-                    )
-                start_dt = datetime.datetime.combine(start_date_val, datetime.time())
-            except ProcessTimeoutError:
-                log.warning("[大宗交易] 获取交易日历超时，回退到自然日估算")
-                start_dt = end_dt - datetime.timedelta(days=int(self.days_to_fetch * 1.5))
-            except (json.JSONDecodeError, OSError, RuntimeError, ProcessExecutionError, TypeError, ValueError) as e:
-                log.warning(f"获取交易日历失败，使用自然日重估: {e}")
-                start_dt = end_dt - datetime.timedelta(days=int(self.days_to_fetch * 1.5))
-
-            results = []
-            timeout_chunks = []
-            failed_chunks = []
-            finished_chunks = 0
-
-            # 分段拉取：东财接口对大日期范围会截断或断连，每次只拉15天
-            CHUNK_DAYS = 15
-            cursor = start_dt
-            while cursor < end_dt:
-                if time.monotonic() >= deadline:
-                    _raise_block_trade_timeout("总耗时超限")
-
-                chunk_end = min(cursor + datetime.timedelta(days=CHUNK_DAYS), end_dt)
-                s_str = cursor.strftime("%Y%m%d")
-                e_str = chunk_end.strftime("%Y%m%d")
-                chunk_key = f"{s_str}-{e_str}"
-                chunk_done = False
-                chunk_timed_out = False
-
-                for attempt in range(_BLOCK_TRADE_MAX_RETRIES):
-                    remaining = int(deadline - time.monotonic())
-                    if remaining <= 0:
-                        _raise_block_trade_timeout("分段抓取", chunk_key)
-                    try:
-                        records = _run_domestic_akshare(
-                            "block_trade",
-                            s_str,
-                            e_str,
-                            timeout=min(_BLOCK_TRADE_CHUNK_TIMEOUT, remaining),
-                        )
-                        df = pd.DataFrame(records) if records else pd.DataFrame()
-                        if df is not None and not df.empty:
-                            for _, row in df.iterrows():
-                                if should_include_foreign_block_row(row.get("买方营业部"), row.get("卖方营业部")):
-                                    results.append(row.to_dict())
-                        chunk_done = True
-                        finished_chunks += 1
-                        break
-                    except ProcessTimeoutError:
-                        chunk_timed_out = True
-                        log.warning(f"[大宗交易] {chunk_key} 请求超时，可能是国内数据源响应慢或当前网络代理影响")
-                        if attempt < _BLOCK_TRADE_MAX_RETRIES - 1:
-                            time.sleep(1)
-                    except (
-                        json.JSONDecodeError,
-                        OSError,
-                        RuntimeError,
-                        ProcessExecutionError,
-                        TypeError,
-                        ValueError,
-                    ) as e:
-                        log.warning(f"[大宗交易] {chunk_key} 第{attempt + 1}次失败: {e}")
-                        if attempt < _BLOCK_TRADE_MAX_RETRIES - 1:
-                            time.sleep(1)
-
-                if not chunk_done:
-                    if time.monotonic() >= deadline:
-                        _raise_block_trade_timeout("分段重试后仍未完成", chunk_key)
-                    if chunk_timed_out:
-                        timeout_chunks.append(chunk_key)
-                    else:
-                        failed_chunks.append(chunk_key)
-
-                cursor = chunk_end + datetime.timedelta(days=1)
-
-            if not results and failed_chunks and finished_chunks == 0:
-                raise UserFacingTaskError(
-                    "抓取失败：本轮未拿到有效结果。通常是国内数据源响应慢或网络较差；可稍后重试。",
-                    "大宗交易抓取失败：所有分段均未返回有效结果。",
-                )
-
-            row_data, grouped_count = build_foreign_block_trade_rows(results)
-            return {
-                "records": results,
-                "row_data": row_data,
-                "grouped_count": grouped_count,
-                "timeout_chunks": timeout_chunks,
-                "failed_chunks": failed_chunks,
-            }
-
-        task_manager.run_in_background(
-            _fetch_task,
+        self._fetch_generation += 1
+        generation = self._fetch_generation
+        _task_lifecycle_for(self).run_background(
+            "fetch",
+            partial(_build_block_trade_fetch_payload, int(self.days_to_fetch)),
             task_id=_FOREIGN_BLOCK_TRADE_TASK.task_id,
-            on_success=self._on_data_fetched,
-            on_error=self._on_data_fetch_failed,
+            timeout_sec=_BLOCK_TRADE_TOTAL_TIMEOUT + 10,
+            on_success=partial(_apply_fetch_if_current, self, generation),
+            on_error=partial(_apply_fetch_error_if_current, self, generation),
         )
 
     def run_post_online_refresh(self) -> bool:

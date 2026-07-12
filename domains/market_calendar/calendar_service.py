@@ -27,9 +27,55 @@ from core.market_calendar_holidays import (
     normalize_holiday_days,
     save_holidays_to_store,
 )
-from infra.tasks import task_registry
+from infra.tasks import TaskLifecycleGroup, task_registry
 
 log = get_logger(__name__)
+_MARKET_CALENDAR_TASKS = TaskLifecycleGroup(task_manager)
+
+
+def _fetch_asian_holiday_payload(calendar_cls, market: str, pending_years: list[int], cancellation_token) -> dict:
+    fetched: dict[int, set[str]] = {}
+    transient_failed: list[int] = []
+    unpublished_years: list[int] = []
+    try:
+        for year in pending_years:
+            cancellation_token.raise_if_cancelled()
+            try:
+                fetched[year] = calendar_cls._fetch_public_holidays(market, year)
+            except BusinessRuleError as exc:
+                log.warning(f"[交易日历][SOURCE] 亚洲节假日源不可用({market} {year}): {exc}")
+                fetched[year] = set()
+                unpublished_years.append(year)
+            except DataFormatError as exc:
+                log.warning(f"[交易日历][FORMAT] 亚洲节假日数据异常({market} {year}): {exc}")
+                fetched[year] = set()
+            except NetworkServiceError as exc:
+                log.warning(f"[交易日历][NETWORK] 亚洲节假日拉取失败({market} {year}): {exc}")
+                transient_failed.append(year)
+        return {
+            "fetched": fetched,
+            "transient_failed": transient_failed,
+            "unpublished_years": unpublished_years,
+        }
+    finally:
+        if cancellation_token.cancelled:
+            with calendar_cls._asian_lock:
+                for year in pending_years:
+                    calendar_cls._refresh_inflight.discard((market, year))
+
+
+def _fetch_cn_trade_dates(calendar_cls, cancellation_token) -> set[str]:
+    try:
+        import akshare as ak
+
+        frame = ak.tool_trade_date_hist_sina()
+        if "trade_date" not in frame.columns:
+            raise DataFormatError("akshare trade_date column missing")
+        dates = [str(value)[:10] for value in frame["trade_date"]]
+        return calendar_cls._normalize_holiday_days(dates)
+    finally:
+        if cancellation_token.cancelled:
+            calendar_cls._trade_dates_loading = False
 
 
 class MarketCalendar:
@@ -418,25 +464,6 @@ class MarketCalendar:
         if not pending_years:
             return
 
-        def _bg_fetch() -> dict[str, Any]:
-            fetched: dict[int, set[str]] = {}
-            transient_failed: list[int] = []
-            unpublished_years: list[int] = []
-            for year in pending_years:
-                try:
-                    fetched[year] = cls._fetch_public_holidays(market, year)
-                except BusinessRuleError as e:
-                    log.warning(f"[交易日历][SOURCE] 亚洲节假日源不可用({market} {year}): {e}")
-                    fetched[year] = set()
-                    unpublished_years.append(year)
-                except DataFormatError as e:
-                    log.warning(f"[交易日历][FORMAT] 亚洲节假日数据异常({market} {year}): {e}")
-                    fetched[year] = set()
-                except NetworkServiceError as e:
-                    log.warning(f"[交易日历][NETWORK] 亚洲节假日拉取失败({market} {year}): {e}")
-                    transient_failed.append(year)
-            return {"fetched": fetched, "transient_failed": transient_failed, "unpublished_years": unpublished_years}
-
         def _on_success(result: Any) -> None:
             if not isinstance(result, dict):
                 result = {}
@@ -477,13 +504,16 @@ class MarketCalendar:
                     cls._refresh_inflight.discard((market, year))
             log.warning(f"[交易日历][TASK] 亚洲节假日后台补齐任务失败({market}): {error_message}")
 
-        task_manager.run_in_background(
-            _bg_fetch,
+        _MARKET_CALENDAR_TASKS.run_background(
+            f"holiday_refresh_{market}",
+            lambda token: _fetch_asian_holiday_payload(cls, market, pending_years, token),
             on_success=_on_success,
             on_error=_on_error,
             task_id=task_registry.startup(
                 f"holiday_refresh_{market}_{min(pending_years)}_{max(pending_years)}"
             ).task_id,
+            timeout_sec=120.0,
+            runner=task_manager,
         )
 
     @classmethod
@@ -535,15 +565,6 @@ class MarketCalendar:
             except (OSError, sqlite3.Error) as e:
                 log.debug(f"[交易日历][I/O] trade_dates persist skipped: {e}")
 
-        def _bg_fetch_calendar() -> set[str]:
-            import akshare as ak
-
-            df = ak.tool_trade_date_hist_sina()
-            if "trade_date" not in df.columns:
-                raise DataFormatError("akshare trade_date column missing")
-            dates = [str(d)[:10] for d in df["trade_date"]]
-            return cls._normalize_holiday_days(dates)
-
         def _on_success(dates: Any) -> None:
             cls._trade_dates_loading = False
             cleaned = cls._normalize_holiday_days(dates)
@@ -554,11 +575,14 @@ class MarketCalendar:
             cls._trade_dates_loading = False
             log.warning(f"[交易日历][NETWORK] 后台同步失败: {error_message}")
 
-        task_manager.run_in_background(
-            _bg_fetch_calendar,
+        _MARKET_CALENDAR_TASKS.run_background(
+            "cn_trade_calendar_refresh",
+            lambda token: _fetch_cn_trade_dates(cls, token),
             on_success=_on_success,
             on_error=_on_error,
             task_id=task_registry.startup("cn_trade_calendar_refresh").task_id,
+            timeout_sec=120.0,
+            runner=task_manager,
         )
 
     @classmethod
@@ -732,3 +756,12 @@ class MarketCalendar:
         上午收盘后的最新快照，因此这里将“午休”也视为可刷新报价的时段。
         """
         return cls.get_market_status(market) in cls._MARKET_QUOTE_REFRESH_STATUSES
+
+
+def shutdown_market_calendar_tasks(*, timeout_ms: int = 750) -> bool:
+    """Cancel process-lifetime calendar refreshes before the shared runner exits."""
+    completed = _MARKET_CALENDAR_TASKS.shutdown(timeout_ms=timeout_ms)
+    with MarketCalendar._asian_lock:
+        MarketCalendar._refresh_inflight.clear()
+    MarketCalendar._trade_dates_loading = False
+    return completed

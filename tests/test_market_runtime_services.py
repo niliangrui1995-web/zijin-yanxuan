@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import builtins
 import sys
+import threading
 from contextlib import nullcontext
 from datetime import datetime
 from types import SimpleNamespace
@@ -519,6 +520,8 @@ class _Runtime:
 
     def close(self):
         self.closed = True
+        self._alive = False
+        return True
 
     def request(self, params, timeout):
         self._stats["last_success_at"] = 5.0
@@ -574,6 +577,49 @@ def test_realtime_quote_provider_runtime_lifecycle(monkeypatch):
     assert provider._rt_runtime is None
     assert provider_ref.deprioritized == ("s1", "failed")
     assert provider._rt_runtime_last_error == "failed"
+
+
+def test_realtime_quote_provider_does_not_create_a_second_owner_while_reset_closes_old_runtime(monkeypatch):
+    class _BlockingCloseRuntime(_Runtime):
+        def __init__(self):
+            super().__init__(alive=True)
+            self.close_started = threading.Event()
+            self.release_close = threading.Event()
+
+        def close(self):
+            self.closed = True
+            self.close_started.set()
+            self.release_close.wait(1.0)
+            self._alive = False
+            return True
+
+    old_runtime = _BlockingCloseRuntime()
+    provider = _runtime_provider(old_runtime)
+    provider._rt_runtime_lock = threading.RLock()
+    created = []
+    monkeypatch.setattr(
+        "infra.market_data.realtime_quote_provider.RealtimeQuoteRuntime",
+        lambda provider_arg, logger_arg: created.append(_Runtime(alive=True)) or created[-1],
+    )
+    service = RealtimeQuoteProvider(provider, logger=_RecorderLog())
+    reset_thread = threading.Thread(target=lambda: service.reset_runtime("reset"))
+    reset_thread.start()
+    try:
+        assert old_runtime.close_started.wait(0.5)
+
+        with pytest.raises(RuntimeError, match="正在重置"):
+            service.ensure_runtime()
+        assert created == []
+
+        old_runtime.release_close.set()
+        reset_thread.join(1.0)
+        assert not reset_thread.is_alive()
+        new_runtime = service.ensure_runtime()
+        assert new_runtime is created[0]
+        assert old_runtime.is_alive() is False
+    finally:
+        old_runtime.release_close.set()
+        reset_thread.join(1.0)
 
 
 def test_realtime_quote_provider_failures_cooldown_and_stats(monkeypatch):

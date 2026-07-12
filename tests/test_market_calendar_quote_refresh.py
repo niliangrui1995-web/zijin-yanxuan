@@ -270,7 +270,7 @@ def test_schedule_asian_holiday_refresh_ignores_invalid_and_duplicate_requests(m
     assert called == []
 
 
-def test_schedule_trade_dates_refresh_runs_success_and_error(monkeypatch):
+def test_schedule_trade_dates_refresh_success_ignores_stale_error_callback(monkeypatch):
     saved = []
 
     class _DataStore:
@@ -304,7 +304,8 @@ def test_schedule_trade_dates_refresh_runs_success_and_error(monkeypatch):
 
     MarketCalendar._trade_dates_loading = True
     callbacks["on_error"]("failed")
-    assert MarketCalendar._trade_dates_loading is False
+    assert MarketCalendar._trade_dates_loading is True
+    MarketCalendar._trade_dates_loading = False
 
 
 def test_schedule_trade_dates_refresh_skips_persist_after_store_close(monkeypatch):

@@ -217,8 +217,7 @@ def test_asian_auto_cache_checks_stale_trade_dates_per_market(monkeypatch):
         "from_timestamp",
         classmethod(lambda cls, ts, market="CN": dt.datetime(2026, 4, 20, 14, 17)),
     )
-    monkeypatch.setattr(asian_runtime.os.path, "exists", lambda path: True)
-    monkeypatch.setattr(asian_runtime.os.path, "getmtime", lambda path: 1.0)
+    monkeypatch.setattr(asian_runtime, "cache_mtime", lambda _path: 1.0)
     monkeypatch.setattr(asian_runtime.QTimer, "singleShot", staticmethod(lambda *args, **kwargs: None))
 
     tab = _DummyTab()

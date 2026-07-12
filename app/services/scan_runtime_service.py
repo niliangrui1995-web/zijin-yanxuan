@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from app.services.scan_engine_facade import VCPEngine
 from domains.scan import BreakoutMonitorService, IndicatorService
-from vcp.models import VCPParams as VCPParams
+from domains.scan.models import VCPParams as VCPParams
+from infra.market_data.vcp_scan_adapter import build_rps_matrix_pl
 
 
 def create_scan_engine():
@@ -48,6 +49,8 @@ def precompute_ready_pool(
         code2name=code2name,
         progress_callback=progress_callback,
         cancelled_checker=cancelled_checker,
+        institution_lookup=VCPEngine.batch_check_institution,
+        market_cap_lookup=VCPEngine.batch_check_market_cap,
     )
 
 
@@ -56,6 +59,4 @@ def quick_check_breakout(quote, pool_entry):
 
 
 def build_rps_matrix(all_data, start_date: str, end_date: str, daily_cache: dict | None = None):
-    from vcp.polars_engine import build_rps_matrix_pl
-
     return build_rps_matrix_pl(all_data, start_date, end_date, daily_cache)

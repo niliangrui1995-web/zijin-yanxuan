@@ -99,6 +99,18 @@ def test_startup_cache_probe_uses_rows_without_importing_dataframe_layer(monkeyp
     assert result["gap_records"] == 0
 
 
+def test_cached_earnings_rows_capability_is_structural_and_iterable():
+    class RowStreamEngine:
+        @staticmethod
+        def get_cached_record_rows():
+            yield {"stock_code": "000001"}
+
+    engine = RowStreamEngine()
+
+    assert isinstance(engine, ui_earnings_service.CachedEarningsRowsPort)
+    assert list(engine.get_cached_record_rows()) == [{"stock_code": "000001"}]
+
+
 def test_earnings_refresh_startup_gap_fill_emits_cached_then_gap_rows(monkeypatch, qt_application):
     cached = pd.DataFrame([{"code": "000001"}])
     daily = pd.DataFrame([{"code": "000002"}])

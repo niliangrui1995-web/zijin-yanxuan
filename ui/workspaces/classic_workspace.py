@@ -143,6 +143,17 @@ def _resolve_workspace_facade(workspace) -> WorkspaceFacade:
     return facade
 
 
+def _shutdown_workspace_facade(workspace) -> None:
+    facade = getattr(workspace, "_workspace_facade", None)
+    shutdown = getattr(facade, "shutdown", None)
+    if not callable(shutdown):
+        return
+    try:
+        shutdown(timeout_ms=750)
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        log.warning(f"[Workspace] stock context shutdown failed: {exc}")
+
+
 class ClassicWorkspace(QWidget):
     mode = "classic"
     BACKGROUND_PREWARM_DELAY_MS = 350
@@ -240,7 +251,6 @@ class ClassicWorkspace(QWidget):
         self._connect_workspace_events()
         if background_prewarm:
             QTimer.singleShot(self.BACKGROUND_PREWARM_DELAY_MS, self._start_background_tab_prewarm)
-
     def _build_tab_specs(self, watchlist_kwargs: dict) -> list[dict]:
         return [
             {
@@ -1067,6 +1077,7 @@ class ClassicWorkspace(QWidget):
         disconnect_events = getattr(self, "_disconnect_workspace_events", None)
         if callable(disconnect_events):
             disconnect_events()
+        _shutdown_workspace_facade(self)
         for tab in self.iter_tabs():
             shutdown = getattr(tab, "shutdown", None)
             if not callable(shutdown):

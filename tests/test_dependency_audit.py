@@ -28,6 +28,10 @@ def test_dependency_audit_command_builders_use_selected_python():
         "json",
         "--progress-spinner",
         "off",
+        "--vulnerability-service",
+        "osv",
+        "--timeout",
+        "60",
     ]
 
 

@@ -190,7 +190,7 @@ class TdxDataProviderHistoryMixin:
         return merged_map
 
     def _merge_local_tdx_name_map(self, base_map: dict | None, *, persist: bool = False) -> dict[str, str]:
-        from core.data_store import DataStore
+        from infra.storage.data_store import DataStore
 
         merged_map = {
             str(raw_code or "").strip(): str(raw_name or "").strip()
@@ -219,7 +219,7 @@ class TdxDataProviderHistoryMixin:
         return merged_map
 
     def _get_code_name_map_for_targets(self, target_codes: list[str]) -> dict[str, str]:
-        from core.data_store import DataStore
+        from infra.storage.data_store import DataStore
 
         if not target_codes:
             return {}
@@ -253,7 +253,7 @@ class TdxDataProviderHistoryMixin:
         return base_map
 
     def load_cached_code_name_map(self) -> dict[str, str]:
-        from core.data_store import DataStore
+        from infra.storage.data_store import DataStore
 
         try:
             cached = DataStore().load_json("vcp_code_names") or {}
@@ -275,7 +275,7 @@ class TdxDataProviderHistoryMixin:
         return dict(cached_map)
 
     def get_all_codes(self):
-        from core.data_store import DataStore
+        from infra.storage.data_store import DataStore
 
         if self._offline or not self.server_pool:
             cached = DataStore().load_json("vcp_code_names")
@@ -314,7 +314,7 @@ class TdxDataProviderHistoryMixin:
 
     def _get_codes_from_vipdoc(self):
         stocks = {}
-        from core.data_store import DataStore
+        from infra.storage.data_store import DataStore
 
         name_map = self._merge_local_tdx_name_map(
             DataStore().load_json("vcp_code_names") or {},
@@ -352,7 +352,7 @@ class TdxDataProviderHistoryMixin:
         return stocks
 
     def ensure_code_name_map(self, codes=None, *, refresh_missing=False):
-        from core.data_store import DataStore
+        from infra.storage.data_store import DataStore
 
         target_codes = self._normalize_code_name_targets(codes)
         if target_codes:

@@ -1,7 +1,4 @@
-import datetime
 import json
-import os
-import sqlite3
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
@@ -15,12 +12,14 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from app.services.scan_cache_service import load_scan_cache, save_scan_cache
 from app.services.scan_runtime_service import VCPParams
 from app.services.tab_data_lineage_service import TabDataLineageService
 from app.services.ui_config_service import app_config
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
 from app.services.ui_market_calendar_service import MarketCalendar
+from app.services.ui_task_lifecycle_service import TaskLifecycleGroup
 from core.logger import get_logger
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.scan_dialogs import VCPScanRangeDialog, VCPScanSettingsDialog
@@ -43,6 +42,7 @@ class ScanTab(BaseStockTab):
 
     AUTO_F5_INCREMENTAL_SCAN_DATE_KEY = "last_auto_incremental_after_f5_date"
     F5_AUTO_INCREMENTAL_DELAY_MS = 8000
+    SCAN_TIMEOUT_SEC = 30 * 60
 
     def __init__(self, data_provider, engine, parent=None, *, initial_cache_load_delay_ms: int = 300):
         super().__init__(data_provider=data_provider, parent=parent)
@@ -53,6 +53,8 @@ class ScanTab(BaseStockTab):
             self._initial_cache_load_delay_ms = 300
         self._current_results = []
         self.worker = None
+        self._task_lifecycle = TaskLifecycleGroup()
+        self._scan_token = None
         self._scan_cancel_requested = False
         self._scan_mode = "full"
         self._scan_target_date = ""
@@ -161,32 +163,6 @@ class ScanTab(BaseStockTab):
         ]
         dates = [item for item in dates if item]
         return max(dates) if dates else ""
-
-    def _read_provider_status(self) -> dict:
-        provider = getattr(self, "data_provider", None)
-        request_stats = {}
-        runtime_stats = {}
-
-        request_getter = getattr(provider, "get_quote_request_stats", None)
-        if callable(request_getter):
-            try:
-                request_stats = request_getter() or {}
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                request_stats = {}
-
-        runtime_getter = getattr(provider, "get_realtime_runtime_stats", None)
-        if callable(runtime_getter):
-            try:
-                runtime_stats = runtime_getter() or {}
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                runtime_stats = {}
-
-        return {
-            "request_stats": request_stats,
-            "runtime_stats": runtime_stats,
-            "eastmoney_cooldown_until": float(getattr(provider, "_rt_eastmoney_cooldown_until", 0.0) or 0.0),
-            "eastmoney_last_error": str(getattr(provider, "_rt_eastmoney_last_error", "") or ""),
-        }
 
     def _describe_scan_rows(self, rows: list[dict]):
         warnings = []
@@ -710,7 +686,20 @@ class ScanTab(BaseStockTab):
 
         self._save_scan_params()
 
-        self.worker = ScanWorker(self.data_provider, self.engine, sd, ed, params)
+        lifecycle = getattr(self, "_task_lifecycle", None)
+        if lifecycle is None:
+            lifecycle = TaskLifecycleGroup()
+            self._task_lifecycle = lifecycle
+        self._scan_token = lifecycle.begin("scan", timeout_sec=ScanTab.SCAN_TIMEOUT_SEC)
+        self.worker = ScanWorker(
+            self.data_provider,
+            self.engine,
+            sd,
+            ed,
+            params,
+            cancellation_token=self._scan_token,
+            timeout_sec=ScanTab.SCAN_TIMEOUT_SEC,
+        )
         self.worker.progress.connect(lambda p, m: ui_signals.sig_task_progress.emit("scan", p, m))
         self.worker.result_ready.connect(self._on_scan_results)
         self.worker.finished_scan.connect(self._on_scan_finished)
@@ -722,6 +711,9 @@ class ScanTab(BaseStockTab):
         if self.worker and self.worker.isRunning() and not self._scan_cancel_requested:
             self._scan_cancel_requested = True
             self._set_scan_action_state("stopping")
+            lifecycle = getattr(self, "_task_lifecycle", None)
+            if lifecycle is not None:
+                lifecycle.cancel("scan", reason="user_cancelled")
             self.worker.cancel()
             return True
         return False
@@ -735,6 +727,9 @@ class ScanTab(BaseStockTab):
                 timeout_ms=2000,
                 logger=log,
             )
+        lifecycle = getattr(self, "_task_lifecycle", None)
+        if lifecycle is not None:
+            lifecycle.shutdown(timeout_ms=2000)
 
     def _on_scan_finished(self, success, msg):
         if success:
@@ -743,6 +738,11 @@ class ScanTab(BaseStockTab):
         ui_signals.sig_task_progress.emit("scan", 100 if success else 0, final_msg)
 
     def _on_worker_thread_finished(self):
+        lifecycle = getattr(self, "_task_lifecycle", None)
+        token = getattr(self, "_scan_token", None)
+        if lifecycle is not None and token is not None:
+            lifecycle.complete("scan", token)
+        self._scan_token = None
         if self.worker:
             self.worker.deleteLater()
             self.worker = None
@@ -854,13 +854,6 @@ class ScanTab(BaseStockTab):
     # ==========================
     def _save_scan_cache(self, results: list):
         try:
-            from core.data_store import DataStore
-
-            store = DataStore()
-            if not results:
-                store.delete_key("scan_cache")
-                log.info("[扫描缓存] 本次扫描无结果，已清空旧缓存")
-                return
             params_snapshot = {
                 "rps": self.spn_scan_rps.value(),
                 "amp": self.spn_scan_amp.value(),
@@ -868,43 +861,19 @@ class ScanTab(BaseStockTab):
                 "amount": self.spn_scan_amount.value(),
                 "high250": self.spn_scan_high250.value(),
             }
-            cache_data = {
-                "saved_at": datetime.datetime.now().isoformat(),
-                "count": len(results),
-                "params": params_snapshot,
-                "results": results,
-            }
-            store.save_json("scan_cache", cache_data)
+            status = save_scan_cache(results, params_snapshot)
+            if status == "cleared":
+                log.info("[扫描缓存] 本次扫描无结果，已清空旧缓存")
+                return
             log.info(f"[扫描缓存] 已保存 {len(results)} 条结果至 SQLite")
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError, sqlite3.Error) as e:
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
             log.error(f"[扫描缓存] 保存失败: {e}")
 
     def _load_scan_cache(self):
         try:
-            from core.data_store import DataStore
-
-            cache_data = DataStore().load_json("scan_cache")
-
-            # 如果 SQLite 没查到，尝试兼容旧的 JSON 并自动迁入
-            if not cache_data:
-                data_dir = os.path.join(
-                    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data"
-                )
-                old_path = os.path.join(data_dir, "scan_cache.json")
-                if os.path.exists(old_path):
-                    import json
-
-                    with open(old_path, "r", encoding="utf-8") as f:
-                        cache_data = json.load(f)
-                    if isinstance(cache_data, dict) and cache_data:
-                        DataStore().save_json("scan_cache", cache_data)
-                        try:
-                            # 迁移完成后重命名打上印记
-                            os.rename(old_path, old_path + ".migrated")
-                            log.info("[扫描缓存] 旧版的 scan_cache.json 已自动迁移入 SQLite")
-                        except OSError as _e:
-                            log.debug(f"[扫描缓存] 迁移文件重命名失败: {_e}")
-
+            cache_data, migrated = load_scan_cache()
+            if migrated:
+                log.info("[扫描缓存] 旧版的 scan_cache.json 已自动迁移入 SQLite")
             if not isinstance(cache_data, dict):
                 return
             results = cache_data.get("results", [])
@@ -918,7 +887,7 @@ class ScanTab(BaseStockTab):
                     results,
                 ),
             )
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError, sqlite3.Error, json.JSONDecodeError) as e:
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
             event_bus.sig_system_log.emit("error", f"[扫描缓存] 加载失败: {e}")
 
     def _apply_scan_cache_payload(self, cache_data: dict, results: list):
@@ -942,7 +911,7 @@ class ScanTab(BaseStockTab):
                 "info", f"[扫描缓存] 已加载 {len(results)} 条记录 (保存于 {saved_at[:16]}){params_hint}"
             )
             ui_signals.sig_task_progress.emit("scan", 100, f"已加载 {len(results)} 条扫描缓存")
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError, sqlite3.Error, json.JSONDecodeError) as e:
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
             event_bus.sig_system_log.emit("error", f"[扫描缓存] 加载失败: {e}")
 
     # ==========================

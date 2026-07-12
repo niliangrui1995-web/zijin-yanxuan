@@ -8,7 +8,8 @@ from app.services.ui_fund_holdings_service import (
     SUBJECT_QFII,
     fund_holdings_store,
 )
-from core.ai_industry_chain_pool import filter_rows_to_ai_chain_codes, normalize_ai_chain_code
+from app.services.ui_industry_chain_service import filter_rows_to_ai_chain_codes, normalize_ai_chain_code
+from app.services.ui_task_lifecycle_service import CancellationToken
 from ui.tabs.fund_holdings_rules import (
     FUND_DISPLAY_PLACEHOLDER,
     capital_attribute_label,
@@ -18,11 +19,36 @@ from ui.tabs.fund_holdings_rules import (
 from ui.tabs.fund_holdings_subjects import shorten_subject_name
 
 
-def load_ai_chain_context_map_safely(provider) -> dict[str, str]:
+def _raise_if_cancelled(cancellation_token: CancellationToken | None) -> None:
+    if cancellation_token is not None:
+        cancellation_token.raise_if_cancelled()
+
+
+def _run_stage(cancellation_token, fn, *args, **kwargs):
+    _raise_if_cancelled(cancellation_token)
+    result = fn(*args, **kwargs)
+    _raise_if_cancelled(cancellation_token)
+    return result
+
+
+def _cancellable_rows(rows, cancellation_token):
+    for row in rows or []:
+        _raise_if_cancelled(cancellation_token)
+        yield row
+
+
+def load_ai_chain_context_map_safely(
+    provider,
+    *,
+    cancellation_token: CancellationToken | None = None,
+) -> dict[str, str]:
+    _raise_if_cancelled(cancellation_token)
     try:
-        return dict(provider() or {})
+        result = dict(provider() or {})
     except (FileNotFoundError, RuntimeError, OSError, ValueError):
         return {}
+    _raise_if_cancelled(cancellation_token)
+    return result
 
 
 def build_ai_chain_context_text(
@@ -66,12 +92,28 @@ def resolve_query_quarters(
     }
 
 
-def filter_rows_to_stock_universe(rows: list[dict], stock_universe_provider) -> list[dict]:
+def filter_rows_to_stock_universe(
+    rows: list[dict],
+    stock_universe_provider,
+    *,
+    cancellation_token: CancellationToken | None = None,
+) -> list[dict]:
+    _raise_if_cancelled(cancellation_token)
     try:
         stock_codes = stock_universe_provider() or set()
-        return filter_rows_to_ai_chain_codes(rows, code_keys=("stock_code", "代码", "股票代码"), stock_codes=stock_codes)
     except (FileNotFoundError, RuntimeError, OSError, TypeError, ValueError):
         return []
+    _raise_if_cancelled(cancellation_token)
+    try:
+        result = filter_rows_to_ai_chain_codes(
+            rows,
+            code_keys=("stock_code", "代码", "股票代码"),
+            stock_codes=stock_codes,
+        )
+    except (FileNotFoundError, RuntimeError, OSError, TypeError, ValueError):
+        return []
+    _raise_if_cancelled(cancellation_token)
+    return result
 
 
 def query_change_rows_for_scope(
@@ -79,14 +121,21 @@ def query_change_rows_for_scope(
     *,
     stock_universe_provider,
     store=fund_holdings_store,
+    cancellation_token: CancellationToken | None = None,
 ) -> list[dict]:
+    _raise_if_cancelled(cancellation_token)
     try:
         rows = store.query_change_rows(quarter_keys=quarter_keys)
     except TypeError:
         rows = store.query_change_rows()
         if quarter_keys is not None:
             rows = [row for row in rows or [] if str(row.get("quarter_key") or "").strip() in quarter_keys]
-    return filter_rows_to_stock_universe(rows, stock_universe_provider)
+    _raise_if_cancelled(cancellation_token)
+    return filter_rows_to_stock_universe(
+        rows,
+        stock_universe_provider,
+        cancellation_token=cancellation_token,
+    )
 
 
 def build_fund_holdings_view_rows(
@@ -98,9 +147,10 @@ def build_fund_holdings_view_rows(
     capital_attribute_labels: dict[str, str],
     placeholder: str = FUND_DISPLAY_PLACEHOLDER,
     subject_code_qfii: str = SUBJECT_QFII["subject_code"],
+    cancellation_token: CancellationToken | None = None,
 ) -> list[dict]:
     rows: list[dict] = []
-    for row in change_rows or []:
+    for row in _cancellable_rows(change_rows, cancellation_token):
         stock_code = str(row.get("stock_code") or "").strip()
         subject_code = str(row.get("subject_code") or "").strip()
         quarter_key = str(row.get("quarter_key") or "").strip()
@@ -112,7 +162,6 @@ def build_fund_holdings_view_rows(
         capital_attribute_text = capital_attribute_label(capital_attribute, capital_attribute_labels)
         has_curr = change_type != "退出"
         has_prev = change_type != "新进"
-
         rows.append(
             {
                 "代码": stock_code,
@@ -170,9 +219,10 @@ def load_fund_holdings_view_payload(
     all_scope: str = "all",
     selected_scope: str = "selected",
     store=fund_holdings_store,
+    cancellation_token: CancellationToken | None = None,
 ) -> dict:
-    latest_quarter_map = store.get_latest_quarter_map()
-    latest_sync_map = store.get_latest_sync_map()
+    latest_quarter_map = _run_stage(cancellation_token, store.get_latest_quarter_map)
+    latest_sync_map = _run_stage(cancellation_token, store.get_latest_sync_map)
     normalized_scope = str(quarter_scope or latest_scope).strip().lower()
     query_quarters = resolve_query_quarters(
         latest_quarter_map,
@@ -186,9 +236,13 @@ def load_fund_holdings_view_payload(
         query_quarters,
         stock_universe_provider=stock_universe_provider,
         store=store,
+        cancellation_token=cancellation_token,
     )
     concept_sector_cache: dict[str, str] = {}
-    chain_context_map = load_ai_chain_context_map_safely(chain_context_provider)
+    chain_context_map = load_ai_chain_context_map_safely(
+        chain_context_provider,
+        cancellation_token=cancellation_token,
+    )
     return {
         "latest_quarter_map": latest_quarter_map,
         "latest_sync_map": latest_sync_map,
@@ -199,6 +253,7 @@ def load_fund_holdings_view_payload(
             chain_context_map=chain_context_map,
             concept_sector_cache=concept_sector_cache,
             capital_attribute_labels=capital_attribute_labels,
+            cancellation_token=cancellation_token,
         ),
         "loaded_quarter_scope": normalized_scope,
         "loaded_quarter_keys": sorted(query_quarters or []),

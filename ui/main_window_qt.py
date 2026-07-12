@@ -18,11 +18,13 @@ from app.services.runtime_constants import APP_VERSION, RPS_CACHE_FILE
 from app.services.ui_diagnostics_service import install_ui_stall_probe, ui_stall_span
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signal_hub
+from app.services.ui_json_cache_service import cache_file_mtime
 from app.services.ui_task_service import background_job_runner as task_manager
 from core.logger import get_logger
 from ui.components.kline_window_manager import WEBENGINE_PREFLIGHT_STARTUP_DELAY_MS, kline_manager
 from ui.components.tooltip_popup import hide_floating_tooltip, show_floating_tooltip
 from ui.components.vector_icons import set_button_svg_icon
+from ui.main_window_host_port import MainWindowHostPortMixin
 from ui.main_window_tables import install_table_copy_hooks
 from ui.shell import (
     DraggableTitleBar,
@@ -65,7 +67,7 @@ def create_scan_engine():
     return factory()
 
 
-class MainWindowQT(QMainWindow):
+class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
     """紫金研选主窗口 — 纯外壳控制器（Phase 2 重构后）"""
 
     _sig_f5_done = pyqtSignal(int, float)
@@ -249,10 +251,10 @@ class MainWindowQT(QMainWindow):
         if not self._auto_refresh_enabled or self.auto_refresh_scheduler is not None:
             return
 
+        from app.services.na_daily_service import NADailyRefreshService
         from ui.services.asian_market_runtime_service import AsianMarketRuntimeService
         from ui.services.auto_refresh_scheduler import AutoRefreshScheduler
         from ui.services.earnings_refresh_service import EarningsRefreshService
-        from ui.services.na_daily_service import NADailyRefreshService
 
         self.na_daily_service = NADailyRefreshService(parent=self)
         self.asian_market_service = AsianMarketRuntimeService(parent=self)
@@ -862,10 +864,9 @@ class MainWindowQT(QMainWindow):
 
     def _update_last_f5_time(self):
         import datetime
-        import os
 
-        if os.path.exists(RPS_CACHE_FILE):
-            mtime = os.path.getmtime(RPS_CACHE_FILE)
+        mtime = cache_file_mtime(RPS_CACHE_FILE)
+        if mtime > 0:
             dt = datetime.datetime.fromtimestamp(mtime)
             freshness = f"快照 {dt.strftime('%m-%d %H:%M')}"
             self._last_sync_freshness = freshness
@@ -1041,10 +1042,6 @@ class MainWindowQT(QMainWindow):
                 self.progress_bar.setValue(pct)
             if hasattr(self, "lbl_status"):
                 self.lbl_status.setText(msg)
-            if pct == 100 or pct == 0:
-                import gc
-
-                QTimer.singleShot(3000, lambda: gc.collect())
 
     # ================================================================
     # EventBus 信号处理（各 Tab 组件广播的信号）

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import builtins
 import importlib
 from datetime import datetime
 
@@ -155,7 +154,11 @@ def test_rps_service_uses_fast_prices_matrix(monkeypatch):
     dates = pd.DatetimeIndex([pd.Timestamp("2026-04-20")])
     monkeypatch.setattr(polars_engine, "build_prices_matrix_fast", lambda *_args: ([[10.0]], ["000001"], dates))
 
-    prices = RpsService.build_prices_matrix({}, pd.Timestamp("2026-04-01"))
+    prices = RpsService.build_prices_matrix(
+        {},
+        pd.Timestamp("2026-04-01"),
+        prices_matrix_builder=polars_engine.build_prices_matrix_fast,
+    )
 
     assert list(prices.columns) == ["000001"]
     assert prices.loc[pd.Timestamp("2026-04-20"), "000001"] == 10.0
@@ -170,9 +173,9 @@ def test_rps_service_build_prices_matrix_handles_empty_and_bad_frames():
 
 def test_rps_service_uses_polars_result_and_cache(monkeypatch):
     polars_engine = importlib.import_module("vcp.polars_engine")
-    service = RpsService()
     monkeypatch.setattr(MarketCalendar, "today", classmethod(lambda cls, market="CN": "2026-04-20"))
     monkeypatch.setattr(polars_engine, "build_rps_matrix_pl", lambda *_args: {"20260420": {"rps120": {"000001": 90}}})
+    service = RpsService(rps_matrix_builder=polars_engine.build_rps_matrix_pl)
 
     assert service.build_rps_matrix({"000001": pd.DataFrame()}, "2026-04-20", "2026-04-20") == {
         "20260420": {"rps120": {"000001": 90}}
@@ -184,7 +187,6 @@ def test_rps_service_uses_polars_result_and_cache(monkeypatch):
 
 def test_rps_service_returns_empty_when_polars_fails_and_prices_empty(monkeypatch):
     polars_engine = importlib.import_module("vcp.polars_engine")
-    service = RpsService()
     monkeypatch.setattr(MarketCalendar, "today", classmethod(lambda cls, market="CN": "2026-04-20"))
     monkeypatch.setattr(
         polars_engine,
@@ -192,19 +194,12 @@ def test_rps_service_returns_empty_when_polars_fails_and_prices_empty(monkeypatc
         lambda *_args: (_ for _ in ()).throw(RuntimeError("fast path failed")),
     )
     monkeypatch.setattr(RpsService, "build_prices_matrix", staticmethod(lambda *_args, **_kwargs: pd.DataFrame()))
+    service = RpsService(rps_matrix_builder=polars_engine.build_rps_matrix_pl)
 
     assert service.build_rps_matrix({"000001": pd.DataFrame()}, "2026-04-20", "2026-04-20") == {}
 
 
-def test_rps_service_handles_missing_fast_engine(monkeypatch):
-    original_import = builtins.__import__
-
-    def fake_import(name, *args, **kwargs):
-        if name == "vcp.polars_engine":
-            raise ImportError("missing fast engine")
-        return original_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", fake_import)
+def test_rps_service_falls_back_without_accelerators(monkeypatch):
     monkeypatch.setattr(MarketCalendar, "today", classmethod(lambda cls, market="CN": "2026-04-20"))
 
     assert RpsService.build_prices_matrix({}, pd.Timestamp("2026-04-01")).empty
@@ -221,8 +216,6 @@ def test_rps_service_logs_fast_prices_failure_and_uses_last_available_date(monke
         },
         index=dates,
     )
-    service = RpsService()
-
     monkeypatch.setattr(
         polars_engine,
         "build_prices_matrix_fast",
@@ -231,6 +224,10 @@ def test_rps_service_logs_fast_prices_failure_and_uses_last_available_date(monke
     monkeypatch.setattr(polars_engine, "build_rps_matrix_pl", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(RpsService, "build_prices_matrix", staticmethod(lambda *_args, **_kwargs: prices))
     monkeypatch.setattr(MarketCalendar, "today", classmethod(lambda cls, market="CN": "2026-04-20"))
+    service = RpsService(
+        prices_matrix_builder=polars_engine.build_prices_matrix_fast,
+        rps_matrix_builder=polars_engine.build_rps_matrix_pl,
+    )
 
     result = service.build_rps_matrix({"000001": prices}, "2026-01-01", "2026-01-02")
 

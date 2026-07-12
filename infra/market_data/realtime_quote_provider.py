@@ -23,15 +23,58 @@ class RealtimeQuoteProvider:
         if runtime is None:
             return
         provider = self.provider
-        try:
-            stats = runtime.snapshot()
-        except (AttributeError, RuntimeError, TypeError, ValueError):
+        stats = self._runtime_snapshot(runtime)
+        if not stats:
             return
         provider._rt_runtime_last_success_at = max(
             float(getattr(provider, "_rt_runtime_last_success_at", 0) or 0),
             float(stats.get("last_success_at") or 0),
         )
         provider._rt_runtime_reconnect_archived += int(stats.get("reconnect_count") or 0)
+
+    @staticmethod
+    def _runtime_is_alive(runtime) -> bool:
+        if runtime is None:
+            return False
+        try:
+            return bool(runtime.is_alive())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _runtime_snapshot(runtime) -> dict:
+        if runtime is None:
+            return {}
+        try:
+            return dict(runtime.snapshot() or {})
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return {}
+
+    def _clear_retired_runtime_if_stopped(self, runtime) -> None:
+        provider = self.provider
+        with provider._rt_runtime_lock:
+            is_current = getattr(provider, "_rt_runtime_retiring", None) is runtime
+            if is_current and not self._runtime_is_alive(runtime):
+                provider._rt_runtime_retiring = None
+
+    def _retire_runtime(self, runtime) -> dict:
+        if runtime is None:
+            return {}
+        runtime_stats = self._runtime_snapshot(runtime)
+        self.archive_runtime(runtime)
+        try:
+            runtime.close()
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            self._log.debug(f"[实时行情] 关闭旧运行时失败: {exc}")
+        finally:
+            self._clear_retired_runtime_if_stopped(runtime)
+        return runtime_stats
+
+    def _owner_thread_alive(self, runtime_stats: dict, runtime) -> bool:
+        explicit = runtime_stats.get("owner_thread_alive")
+        if explicit is None:
+            explicit = runtime_stats.get("worker_alive")
+        return self._runtime_is_alive(runtime) if explicit is None else bool(explicit)
 
     def ensure_runtime(self):
         provider = self.provider
@@ -41,8 +84,13 @@ class RealtimeQuoteProvider:
             raise TimeoutError(f"实时行情冷却中，剩余 {remaining}s")
 
         with provider._rt_runtime_lock:
+            retiring = getattr(provider, "_rt_runtime_retiring", None)
+            if retiring is not None:
+                if self._runtime_is_alive(retiring):
+                    raise RuntimeError("实时行情运行时正在重置")
+                provider._rt_runtime_retiring = None
             runtime = provider._rt_runtime
-            if runtime is not None and runtime.is_alive():
+            if runtime is not None and self._runtime_is_alive(runtime):
                 return runtime
             if runtime is not None:
                 self.archive_runtime(runtime)
@@ -62,15 +110,11 @@ class RealtimeQuoteProvider:
         runtime_stats = {}
         with provider._rt_runtime_lock:
             runtime = provider._rt_runtime
-            provider._rt_runtime = None
+            if runtime is not None:
+                provider._rt_runtime = None
+                provider._rt_runtime_retiring = runtime
 
-        if runtime is not None:
-            try:
-                runtime_stats = runtime.snapshot()
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                runtime_stats = {}
-            self.archive_runtime(runtime)
-            runtime.close()
+        runtime_stats = self._retire_runtime(runtime)
 
         failed_server = runtime_stats.get("server")
         if penalize_server and failed_server:
@@ -122,14 +166,11 @@ class RealtimeQuoteProvider:
         provider = self.provider
         with provider._rt_runtime_lock:
             runtime = provider._rt_runtime
+            retiring = getattr(provider, "_rt_runtime_retiring", None)
 
-        runtime_stats = runtime.snapshot() if runtime is not None else {}
-        owner_thread_alive = bool(
-            runtime_stats.get(
-                "owner_thread_alive",
-                runtime_stats.get("worker_alive", runtime.is_alive() if runtime is not None else False),
-            )
-        )
+        observed_runtime = runtime if runtime is not None else retiring
+        runtime_stats = self._runtime_snapshot(observed_runtime)
+        owner_thread_alive = self._owner_thread_alive(runtime_stats, observed_runtime)
         return {
             "inflight": int(runtime_stats.get("inflight") or 0),
             "last_success_at": max(
@@ -142,6 +183,7 @@ class RealtimeQuoteProvider:
             "cooldown_until": float(getattr(provider, "_rt_runtime_cooldown_until", 0) or 0),
             "worker_alive": owner_thread_alive,
             "owner_thread_alive": owner_thread_alive,
+            "reset_in_progress": bool(retiring is not None and self._runtime_is_alive(retiring)),
             "last_error": getattr(provider, "_rt_runtime_last_error", ""),
         }
 

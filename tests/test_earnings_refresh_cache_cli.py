@@ -73,7 +73,7 @@ def test_cli_prints_stable_json_as_last_line(monkeypatch, capsys):
         "gap": 0,
         "missing_dates": [],
     }
-    monkeypatch.setattr(refresh_cache, "EarningsEngine", lambda: object())
+    monkeypatch.setattr(refresh_cache, "_create_engine", lambda: object())
     monkeypatch.setattr(refresh_cache, "run_startup_gap_fill", lambda _engine: expected)
 
     return_code = refresh_cache.main(["startup-gap-fill"])
@@ -87,7 +87,7 @@ def test_cli_exception_prints_failed_json_and_returns_nonzero(monkeypatch, capsy
     def _raise():
         raise RuntimeError("provider failed\nretry later")
 
-    monkeypatch.setattr(refresh_cache, "EarningsEngine", _raise)
+    monkeypatch.setattr(refresh_cache, "_create_engine", _raise)
 
     return_code = refresh_cache.main(["routine", "--routine-time", "08:30"])
     output = capsys.readouterr().out.strip().splitlines()

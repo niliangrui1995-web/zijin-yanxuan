@@ -9,6 +9,7 @@ import requests
 
 from domains.global_earnings_calendar.constants import DEFAULT_HORIZON
 from domains.global_earnings_calendar.event_ops import sorted_events
+from domains.global_earnings_calendar.http_utils import raise_for_status as _raise_for_status
 from domains.global_earnings_calendar.models import EarningsCalendarEvent, OligarchCompany
 from domains.global_earnings_calendar.rules import market_from_ticker
 from infra.http_safety import requests_get_https
@@ -47,7 +48,7 @@ class AlphaVantageEarningsCalendarProvider:
             },
             timeout=self.timeout,
         )
-        response.raise_for_status()
+        _raise_for_status(response)
         return self.parse_csv(response.text or "", universe)
 
     def parse_csv(

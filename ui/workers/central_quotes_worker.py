@@ -9,7 +9,12 @@ from PyQt6.QtCore import QObject, QTimer, pyqtSlot
 
 from app.services.central_quote_polling_service import CentralQuotePoller
 from app.services.ui_market_calendar_service import MarketCalendar
-from app.services.ui_quote_service import publish_rt_quotes
+from app.services.ui_quote_service import (
+    publish_rt_quotes,
+    read_provider_health,
+    read_realtime_quote_request_policy,
+)
+from app.services.ui_task_lifecycle_service import TaskLifecycleGroup
 from app.services.ui_task_service import CENTRAL_QUOTES_POLL, task_registry
 from app.services.ui_task_service import (
     background_job_runner as task_manager,
@@ -36,6 +41,38 @@ _FALLBACK_PRESSURE_SKIP_LOG_INTERVAL_SEC = 30.0
 _FALLBACK_PRESSURE_SOURCE_TOKENS = ("sina", "tencent", "fallback", "offline", "stale")
 
 
+def _provider_request_stats(provider) -> dict:
+    snapshot = read_provider_health(provider)
+    if snapshot.request_stats:
+        return dict(snapshot.request_stats)
+    stats_getter = getattr(provider, "get_quote_request_stats", None)
+    if not callable(stats_getter):
+        return {}
+    try:
+        stats = stats_getter() or {}
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return {}
+    return stats if isinstance(stats, dict) else {}
+
+
+def _slow_fetch_threshold(provider, codes_count: int) -> float:
+    request_policy = read_realtime_quote_request_policy(provider)
+    expected_batches = max(1, (max(0, int(codes_count)) + request_policy.batch_size - 1) // request_policy.batch_size)
+    return max(20.0, expected_batches * request_policy.api_call_timeout_sec + 4.0)
+
+
+def _submit_central_task(service, name, fn, on_success, on_error, task_id, timeout_sec: float) -> None:
+    service._task_lifecycle.run_background(
+        name,
+        fn,
+        on_success=on_success,
+        on_error=on_error,
+        task_id=task_id,
+        timeout_sec=timeout_sec,
+        runner=task_manager,
+    )
+
+
 class CentralQuotesService(QObject):
     """
     统一的中央实时报价广播站。
@@ -52,6 +89,7 @@ class CentralQuotesService(QObject):
         self._code_supplier = code_supplier
         self._missing_code_supplier_warned = False
         self._closed = False
+        self._task_lifecycle = TaskLifecycleGroup(task_manager)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._trigger_fetch)
@@ -327,14 +365,7 @@ class CentralQuotesService(QObject):
             return 0.0
 
     def _get_quote_request_stats(self) -> dict:
-        stats_getter = getattr(self.data_provider, "get_quote_request_stats", None)
-        if not callable(stats_getter):
-            return {}
-        try:
-            stats = stats_getter() or {}
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            return {}
-        return stats if isinstance(stats, dict) else {}
+        return _provider_request_stats(self.data_provider)
 
     def _quote_stats_fallback_pressure(
         self,
@@ -396,7 +427,7 @@ class CentralQuotesService(QObject):
         cooldown_candidates = []
         if isinstance(provider_stats, dict):
             cooldown_candidates.append(provider_stats.get("quote_cooldown_until"))
-        cooldown_candidates.append(getattr(self.data_provider, "_rt_eastmoney_cooldown_until", 0.0))
+        cooldown_candidates.append(read_provider_health(self.data_provider).eastmoney_cooldown_until)
 
         cooldown_until = 0.0
         for value in cooldown_candidates:
@@ -617,7 +648,7 @@ class CentralQuotesService(QObject):
         self._off_market_snapshot_generation += 1
         request_generation = self._off_market_snapshot_generation
 
-        def _bg_fetch():
+        def _bg_fetch(_cancellation_token):
             return self._fetch_quote_payload(request_codes)
 
         def _on_result(payload):
@@ -644,13 +675,10 @@ class CentralQuotesService(QObject):
             if not self._closed:
                 log.warning(f"[报价站] 盘后离线快照构建失败: {error_message}")
 
-        task_manager.run_in_background(
-            _bg_fetch,
-            on_success=_on_result,
-            on_error=_on_error,
-            task_id=task_registry.transient_quotes(
-                f"central_quotes_off_market_snapshot_{request_generation}"
-            ),
+        _submit_central_task(
+            self, "off_market_snapshot", _bg_fetch, _on_result, _on_error,
+            task_registry.transient_quotes(f"central_quotes_off_market_snapshot_{request_generation}"),
+            max(30.0, _slow_fetch_threshold(self.data_provider, len(request_codes)) + 10.0),
         )
 
     @pyqtSlot()
@@ -689,11 +717,8 @@ class CentralQuotesService(QObject):
             return
 
         if self._is_fetching:
-            batch_timeout_sec = float(getattr(self.data_provider, "_rt_api_call_timeout_sec", 8.0) or 8.0)
-            batch_size = int(getattr(self.data_provider, "_rt_quote_batch_size", 20) or 20)
             codes_count = int(self._fetch_codes_count or len(codes) or 0)
-            expected_batches = max(1, (codes_count + batch_size - 1) // batch_size)
-            slow_threshold = max(20.0, expected_batches * batch_timeout_sec + 4.0)
+            slow_threshold = _slow_fetch_threshold(self.data_provider, codes_count)
             if (
                 not self._fetch_warned_slow
                 and self._fetch_start_time > 0
@@ -748,7 +773,7 @@ class CentralQuotesService(QObject):
         self._fetch_generation += 1
         fetch_token = self._fetch_generation
 
-        def _bg_task():
+        def _bg_task(_cancellation_token):
             return self._fetch_quote_payload(codes)
 
         def _on_result(payload):
@@ -827,11 +852,9 @@ class CentralQuotesService(QObject):
             self._record_failure(err_msg or "后台抓取异常")
             log.error(f"[报价站] 后台抓取异常: {err_msg}")
 
-        task_manager.run_in_background(
-            _bg_task,
-            on_success=_on_result,
-            on_error=_on_error,
-            task_id=CENTRAL_QUOTES_POLL,
+        _submit_central_task(
+            self, "realtime_poll", _bg_task, _on_result, _on_error, CENTRAL_QUOTES_POLL,
+            max(30.0, _slow_fetch_threshold(self.data_provider, len(codes)) + 10.0),
         )
 
     def shutdown(self):
@@ -840,3 +863,4 @@ class CentralQuotesService(QObject):
         self._fetch_generation += 1
         self._off_market_snapshot_generation += 1
         self._off_market_snapshot_fetching = False
+        self._task_lifecycle.shutdown(timeout_ms=1_000)

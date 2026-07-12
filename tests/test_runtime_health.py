@@ -13,6 +13,7 @@ from infra.diagnostics.runtime_health import (
     collect_runtime_health,
     export_runtime_health_report,
 )
+from infra.market_data.provider_ports import ProviderHealthSnapshot
 from scripts.runtime_health_stability_suite import DEFAULT_TABS
 
 
@@ -51,15 +52,17 @@ def _fake_main_window():
         get_loaded_tab=lambda key: tab if key == "stock_candidates" else None,
     )
     provider = SimpleNamespace(
-        get_quote_request_stats=lambda: {
-            "recent_batch_count": 1,
-            "recent_codes_count": 2,
-            "recent_duplicate_requested_codes": {"000001": 2},
-        },
-        get_realtime_runtime_stats=lambda: {
-            "cooldown_until": 0.0,
-            "last_error": "",
-        },
+        read_provider_health=lambda: ProviderHealthSnapshot(
+            request_stats={
+                "recent_batch_count": 1,
+                "recent_codes_count": 2,
+                "recent_duplicate_requested_codes": {"000001": 2},
+            },
+            runtime_stats={
+                "cooldown_until": 0.0,
+                "last_error": "",
+            },
+        ),
         get_market_data_source_status=lambda: {
             "ok": True,
             "active_layer": "parquet_sqlite_warehouse",
@@ -74,8 +77,6 @@ def _fake_main_window():
             "fallback_or_degraded": False,
             "fallback_reason": "",
         },
-        _rt_eastmoney_cooldown_until=0.0,
-        _rt_eastmoney_last_error="",
     )
     return SimpleNamespace(
         _workspace=workspace,
@@ -365,10 +366,7 @@ def test_runtime_health_process_and_webengine_snapshots_cover_psutil_edges(monke
 
 def test_runtime_health_quote_and_market_data_fallbacks():
     provider = SimpleNamespace(
-        get_quote_request_stats=_raise_runtime,
-        get_realtime_runtime_stats=_raise_runtime,
-        _rt_eastmoney_cooldown_until=0.0,
-        _rt_eastmoney_last_error="",
+        read_provider_health=_raise_runtime,
     )
     quote = runtime_health._quote_snapshot(SimpleNamespace(data_provider=provider, central_quotes_svc=None))
     assert quote["request_stats"] == {}

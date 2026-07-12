@@ -7,7 +7,6 @@ import json
 import threading
 from datetime import datetime
 
-from core.data_store import data_store
 from domains.fund_holdings.compare import (
     SUBJECT_QFII,
     SUBJECTS,
@@ -19,6 +18,7 @@ from domains.fund_holdings.compare import (
     normalize_quarter_key,
     previous_natural_quarter,
 )
+from infra.storage.data_store import data_store
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS fh_subject (

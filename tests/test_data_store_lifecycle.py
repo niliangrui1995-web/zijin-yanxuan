@@ -35,3 +35,17 @@ def test_closed_store_operations_fail_as_sqlite_lifecycle_error(monkeypatch, tmp
     assert store.is_closed is True
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         store.save_json("late_write", {"value": 1})
+
+
+def test_close_is_reentrant_when_destructor_cleanup_runs_inside_store_lock(monkeypatch, tmp_path):
+    """Coverage/GC can finalize an old singleton while the shared store lock is held."""
+    from core.data_store import DataStore
+
+    monkeypatch.setattr(DataStore, "_instance", None)
+    monkeypatch.setattr(DataStore, "_instances", weakref.WeakSet())
+    store = DataStore(db_path=str(tmp_path / "reentrant_close.db"))
+
+    with DataStore._lock:
+        store.close()
+
+    assert store.is_closed is True

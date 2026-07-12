@@ -398,7 +398,7 @@ def test_workspace_collects_scan_and_fund_holding_context_signals(monkeypatch):
 
 
 def test_workspace_collects_scan_context_from_cache_without_loading_lazy_tab(monkeypatch):
-    import core.data_store as data_store_module
+    import infra.storage.data_store as data_store_module
 
     class _FakeDataStore:
         def load_json(self, key, default=None):
@@ -519,7 +519,7 @@ def test_watchlist_radar_preserves_none_as_unfiltered_target(monkeypatch):
 
 
 def test_stock_context_ai_chain_fallback_is_cache_only(monkeypatch):
-    import core.ai_industry_chain_pool as ai_pool_module
+    from app.services import ui_industry_chain_service as ai_pool_module
 
     monkeypatch.setattr(
         ai_pool_module,
@@ -658,7 +658,7 @@ def test_workspace_skips_lhb_cache_fallback_while_loaded_lhb_tab_is_loading(monk
 
 
 def test_stock_context_service_reuses_lhb_fallback_cache_for_same_signature(monkeypatch):
-    import core.lhb_pool_manager as lhb_pool_module
+    from app.services import ui_lhb_pool_service as lhb_pool_module
 
     calls = []
 

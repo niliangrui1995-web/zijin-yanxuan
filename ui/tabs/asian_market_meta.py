@@ -3,13 +3,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from app.services.asian_market_metadata_service import load_pipeline_industry_roles
 
-from core.logger import get_logger
-
-log = get_logger(__name__)
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_PIPELINE_INDUSTRY_DICT = _PROJECT_ROOT.parent / "每日战报" / "每日战报" / "industry_dict.py"
 _EXCLUDED_ASIAN_TICKERS = {"6594.T"}
 
 
@@ -67,29 +62,8 @@ def get_role_mapping():
         "0522.HK": "头部｜先进封装设备",
     }
 
-    dict_path = _PIPELINE_INDUSTRY_DICT
-    if not dict_path.exists():
-        return roles_mapping
-    try:
-        with dict_path.open("r", encoding="utf-8") as f:
-            for line in f:
-                if "#" in line and any(marker in line for marker in ('.T"', '.TW"', '.TWO"', '.KS"', '.HK"')):
-                    import re
-
-                    match = re.search(r"\"([A-Z0-9\.]+)\"", line)
-                    if match:
-                        code = match.group(1)
-                        if code in _EXCLUDED_ASIAN_TICKERS:
-                            continue
-                        if code not in roles_mapping:
-                            comment = line.split("#")[-1].strip()
-                            role_match = re.search(r"[(（](.*?)[)）]", comment)
-                            if role_match:
-                                comment = role_match.group(1).strip()
-                            roles_mapping[code] = comment
-    except (FileNotFoundError, PermissionError, OSError, TypeError, ValueError) as exc:
-        log.error(f"[AsianTab] 解析角色字典失败: {exc}")
-    return roles_mapping
+    pipeline_roles = load_pipeline_industry_roles(excluded_tickers=_EXCLUDED_ASIAN_TICKERS)
+    return {**pipeline_roles, **roles_mapping}
 
 
 def get_ch_names_mapping() -> dict:

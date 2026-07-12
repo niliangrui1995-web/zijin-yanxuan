@@ -345,7 +345,7 @@ def test_base_stock_refresh_table_market_data_only_fetches_blank_quotes(monkeypa
             self.task_ids.append(("active", task_id))
             return False
 
-        def run_in_background(self, fn, on_success=None, on_error=None, task_id=None):
+        def run_in_background(self, fn, on_success=None, on_error=None, task_id=None, **_kwargs):
             self.task_ids.append(("run", task_id))
             result = fn()
             if on_success:
@@ -421,7 +421,7 @@ def test_base_stock_refresh_table_market_data_can_force_full_quote_refresh(monke
         def is_active_task(self, task_id):
             return False
 
-        def run_in_background(self, fn, on_success=None, on_error=None, task_id=None):
+        def run_in_background(self, fn, on_success=None, on_error=None, task_id=None, **_kwargs):
             fn()
             if on_success:
                 on_success({})
@@ -489,7 +489,7 @@ def test_base_stock_refresh_table_market_data_fetches_newly_added_blank_rows(mon
         def is_active_task(self, task_id):
             return False
 
-        def run_in_background(self, fn, on_success=None, on_error=None, task_id=None):
+        def run_in_background(self, fn, on_success=None, on_error=None, task_id=None, **_kwargs):
             result = fn()
             if on_success:
                 on_success(result)
@@ -557,7 +557,7 @@ def test_base_stock_refresh_from_latest_snapshot_primes_local_cache_for_new_code
         def __init__(self):
             self.offline_calls = []
 
-        def _build_offline_quotes(self, codes):
+        def build_offline_quotes(self, codes):
             self.offline_calls.append(list(codes))
             return {"000001": {"close": 10.5, "last_close": 10.0}}
 
@@ -714,7 +714,7 @@ def test_base_stock_refresh_table_market_data_primes_local_f5_snapshot_for_new_r
         def __init__(self):
             self.offline_calls = []
 
-        def _build_offline_quotes(self, codes):
+        def build_offline_quotes(self, codes):
             self.offline_calls.append(list(codes))
             return {"000001": {"close": 10.5, "last_close": 10.0}}
 

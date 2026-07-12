@@ -10,10 +10,11 @@ from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLa
 
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
-from core.ai_industry_chain_pool import (
+from app.services.ui_industry_chain_service import (
     AI_CHAIN_FILE,
     PLACEHOLDER,
     cell_text,
+    get_ai_industry_chain_source_mtime,
     normalize_ai_chain_code,
     refresh_ai_industry_chain_rows,
 )
@@ -276,9 +277,8 @@ class AIIndustryChainTab(BaseStockTab):
                 row[column] = PLACEHOLDER if value is None else value
 
     def _workbook_freshness(self) -> str:
-        try:
-            stamp = self.workbook_path.stat().st_mtime
-        except (FileNotFoundError, OSError, TypeError, ValueError):
+        stamp = get_ai_industry_chain_source_mtime(self.workbook_path)
+        if stamp <= 0:
             return "待加载"
 
         from datetime import datetime

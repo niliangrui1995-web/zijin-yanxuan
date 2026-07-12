@@ -22,8 +22,14 @@ log = get_logger(__name__)
 _POST_F5_INFO_REFRESH_COOLDOWN_SECONDS = 5.0
 
 
+def _shutdown_stock_context_facade(facade, *, timeout_ms: int = 750) -> bool:
+    return facade._stock_context_service.shutdown(timeout_ms=timeout_ms)
+
+
 class WorkspaceFacade:
     """ClassicWorkspace 的跨 Tab 聚合与编排门面。"""
+
+    shutdown = _shutdown_stock_context_facade
 
     def __init__(self, workspace):
         self._workspace = workspace

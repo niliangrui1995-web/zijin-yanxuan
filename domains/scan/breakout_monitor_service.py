@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time as _time
+from collections.abc import Callable
 
 import pandas as pd
 
@@ -9,9 +10,35 @@ from core.runtime_paths import MIN_MARKET_CAP
 from domains.market_calendar import MarketCalendar
 from domains.scan.indicator_service import IndicatorService
 from domains.scan.vcp_scanner_service import VcpScannerService
-from vcp.engine_external import batch_check_institution, batch_check_market_cap
 
 _log = get_logger(__name__)
+
+
+def _empty_lookup(_codes, **_kwargs) -> dict:
+    return {}
+
+
+# Compatibility seams for callers/tests that previously monkeypatched module globals.
+batch_check_institution = _empty_lookup
+batch_check_market_cap = _empty_lookup
+
+
+def _coerce_polars_frames(all_data) -> int:
+    try:
+        import polars as _pl
+    except ImportError:
+        return 0
+    converted = 0
+    for code, frame in list(all_data.items()):
+        if not isinstance(frame, _pl.DataFrame):
+            continue
+        pandas_frame = frame.to_pandas()
+        if "datetime" in pandas_frame.columns:
+            pandas_frame["datetime"] = pd.to_datetime(pandas_frame["datetime"])
+            pandas_frame.set_index("datetime", inplace=True)
+        all_data[code] = pandas_frame
+        converted += 1
+    return converted
 
 
 class BreakoutMonitorService:
@@ -30,23 +57,11 @@ class BreakoutMonitorService:
         code2name=None,
         progress_callback=None,
         cancelled_checker=None,
+        institution_lookup: Callable | None = None,
+        market_cap_lookup: Callable | None = None,
     ):
         del server_pool
-        try:
-            import polars as _pl
-        except ImportError:
-            _pl = None
-
-        converted = 0
-        for code in list(all_data.keys()):
-            df = all_data[code]
-            if _pl is not None and isinstance(df, _pl.DataFrame):
-                pdf = df.to_pandas()
-                if "datetime" in pdf.columns:
-                    pdf["datetime"] = pd.to_datetime(pdf["datetime"])
-                    pdf.set_index("datetime", inplace=True)
-                all_data[code] = pdf
-                converted += 1
+        converted = _coerce_polars_frames(all_data)
         if converted:
             _log.info(f"[ready_pool] Polars->Pandas converted {converted} stocks")
 
@@ -148,7 +163,8 @@ class BreakoutMonitorService:
             if cancelled_checker and cancelled_checker():
                 raise InterruptedError("实时突破检查已停止")
             try:
-                inst_results = batch_check_institution(list(ready_pool.keys()))
+                lookup = institution_lookup or batch_check_institution
+                inst_results = lookup(list(ready_pool.keys()))
                 inst_count = 0
                 no_inst_count = 0
                 for code, entry in ready_pool.items():
@@ -174,7 +190,8 @@ class BreakoutMonitorService:
                     df = all_data.get(code)
                     if df is not None and len(df) > 0:
                         close_prices[code] = float(df.iloc[-1]["close"])
-                cap_results = batch_check_market_cap(list(ready_pool.keys()), close_prices=close_prices)
+                lookup = market_cap_lookup or batch_check_market_cap
+                cap_results = lookup(list(ready_pool.keys()), close_prices=close_prices)
                 small_cap_count = 0
                 for code, entry in ready_pool.items():
                     cap = cap_results.get(code)

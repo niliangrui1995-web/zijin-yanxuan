@@ -24,11 +24,16 @@ from app.services.scan_runtime_service import create_scan_engine
 from app.services.tab_data_lineage_service import TabDataLineageService
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
+from app.services.ui_industry_chain_service import load_cached_ai_industry_chain_context_map, normalize_ai_chain_code
+from app.services.ui_lhb_pool_service import POOL_WINDOW, LhbPoolManager
 from app.services.ui_market_calendar_service import MarketCalendar
+from app.services.ui_task_lifecycle_service import (
+    TaskCancelledError,
+    TaskDeadlineExceeded,
+    TaskLifecycleGroup,
+)
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
-from core.ai_industry_chain_pool import load_cached_ai_industry_chain_context_map, normalize_ai_chain_code
-from core.lhb_pool_manager import POOL_WINDOW, LhbPoolManager
 from core.logger import get_logger
 from ui.components import TableStateWrapper, VCPTableView
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
@@ -37,6 +42,193 @@ from ui.tabs.base_stock_tab import BaseStockTab
 log = get_logger(__name__)
 POST_F5_POOL_BOOTSTRAP_DEFER_MS = 5000
 LHB_POOL_UPDATE_DEBOUNCE_MS = 1200
+LHB_POOL_BOOTSTRAP_TIMEOUT_SECONDS = 3 * 60
+LHB_POOL_BACKFILL_TIMEOUT_SECONDS = 15 * 60
+LHB_TASK_SHUTDOWN_WAIT_TIMEOUT_MS = 750
+
+
+def _task_lifecycle_for(owner) -> TaskLifecycleGroup:
+    lifecycle = getattr(owner, "_task_lifecycle", None)
+    if lifecycle is None:
+        lifecycle = TaskLifecycleGroup(task_manager)
+        owner._task_lifecycle = lifecycle
+    return lifecycle
+
+
+def _load_lhb_pool_payload(owner, cancellation_token) -> dict:
+    cancellation_token.raise_if_cancelled()
+    trade_dates = owner._get_lhb_trade_dates()
+    cancellation_token.raise_if_cancelled()
+    if not trade_dates:
+        return {"status": "calendar_missing"}
+    pool_manager = LhbPoolManager()
+    pool_manager.prune(trade_dates)
+    cancellation_token.raise_if_cancelled()
+    pool = pool_manager.compute_pool(data_provider=owner.data_provider, engine=owner._get_engine())
+    cancellation_token.raise_if_cancelled()
+    ai_chain_context_map = owner._load_ai_chain_context_map()
+    row_data = owner._build_pool_display_rows(pool, ai_chain_context_map)
+    validation_ref_date = max(trade_dates)
+    return {
+        "status": "ok",
+        "pool_manager": pool_manager,
+        "pool": pool,
+        "row_data": row_data,
+        "ai_chain_context_map": ai_chain_context_map,
+        "missing": pool_manager.get_missing_dates(trade_dates),
+        "pending_validation": pool_manager.get_dates_pending_validation(trade_dates, validation_ref_date),
+        "validation_ref_date": validation_ref_date,
+    }
+
+
+def _wait_lhb_backfill_step(cancellation_token, step: int, total: int) -> None:
+    if step < total and cancellation_token.wait(0.8):
+        cancellation_token.raise_if_cancelled()
+
+
+def _as_lhb_fetch_payload(value) -> dict:
+    if isinstance(value, dict):
+        return value
+    records = list(value or [])
+    return {"records": records, "count": len(records), "status": "ok", "message": ""}
+
+
+def _fetch_missing_lhb_dates(owner, dates, total: int, log_emit, cancellation_token):
+    from app.services.lhb_market_data_service import fetch_lhb_pool_for_date
+
+    fetched: dict[str, dict] = {}
+    step = 0
+    for date_str in dates:
+        cancellation_token.raise_if_cancelled()
+        step += 1
+        try:
+            payload = _as_lhb_fetch_payload(
+                fetch_lhb_pool_for_date(
+                    date_str,
+                    emit_success_log=False,
+                    return_meta=True,
+                    cancellation_token=cancellation_token,
+                )
+            )
+            if str(payload.get("status", "ok") or "ok") != "error":
+                fetched[date_str] = {"records": payload.get("records", []), "meta": None}
+            level, message = owner._build_backfill_progress_log(step, total, date_str, payload)
+            log_emit(level, message)
+        except (TaskCancelledError, TaskDeadlineExceeded):
+            raise
+        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.warning(f"[龙虎榜池] 回填 {date_str} 失败: {exc}")
+            log_emit("warn", f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 抓取失败: {exc}")
+        _wait_lhb_backfill_step(cancellation_token, step, total)
+    return fetched, step
+
+
+def _probe_validation_message(date_str, step, total, cached_count, probe_payload) -> tuple[str, str]:
+    status = str(probe_payload.get("status", "ok") or "ok")
+    if status == "ok":
+        return "info", f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 校验通过 | {cached_count}条"
+    if status == "empty":
+        return "warn", f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 源头暂为空，保留缓存{cached_count}条"
+    return "warn", f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 校验异常，保留缓存{cached_count}条"
+
+
+def _validate_lhb_date(owner, pool_manager, date_str, validation_ref_date, step, total, cancellation_token):
+    from app.services.lhb_market_data_service import fetch_lhb_pool_for_date, probe_lhb_detail_count_for_date
+
+    cached_count = pool_manager.get_cached_record_count(date_str)
+    probe_payload = _as_lhb_fetch_payload(
+        probe_lhb_detail_count_for_date(
+            date_str,
+            return_meta=True,
+            cancellation_token=cancellation_token,
+        )
+    )
+    if not owner._should_refresh_after_probe(cached_count, probe_payload):
+        level, message = _probe_validation_message(date_str, step, total, cached_count, probe_payload)
+        return None, probe_payload, level, message
+
+    refresh_payload = _as_lhb_fetch_payload(
+        fetch_lhb_pool_for_date(
+            date_str,
+            emit_success_log=False,
+            return_meta=True,
+            cancellation_token=cancellation_token,
+        )
+    )
+    if str(refresh_payload.get("status", "ok") or "ok") == "error":
+        validated = {"count": probe_payload.get("count", cached_count), "status": "repair_failed"}
+        message = f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 校验发现条数差异，但补刷失败，暂保留缓存{cached_count}条"
+        return None, validated, "warn", message
+    source_count = int(probe_payload.get("count", refresh_payload.get("count", 0)) or 0)
+    fetched = {
+        "records": refresh_payload.get("records", []),
+        "meta": {"source_count": source_count, "last_probe_ref_date": validation_ref_date, "probe_status": "ok"},
+    }
+    message = f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 校验发现缓存脏数据 | 缓存{cached_count}条 -> 源头{source_count}条，已自动补刷"
+    return fetched, None, "warn", message
+
+
+def _validate_lhb_dates(owner, pool_manager, dates, validation_ref_date, step, total, log_emit, cancellation_token):
+    fetched: dict[str, dict] = {}
+    validated: dict[str, dict] = {}
+    for date_str in dates:
+        cancellation_token.raise_if_cancelled()
+        step += 1
+        try:
+            repaired, probe, level, message = _validate_lhb_date(
+                owner, pool_manager, date_str, validation_ref_date, step, total, cancellation_token
+            )
+            if repaired is not None:
+                fetched[date_str] = repaired
+            if probe is not None:
+                validated[date_str] = probe
+            log_emit(level, message)
+        except (TaskCancelledError, TaskDeadlineExceeded):
+            raise
+        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            log.warning(f"[龙虎榜池] 校验 {date_str} 失败: {exc}")
+            log_emit("warn", f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 校验失败: {exc}")
+        _wait_lhb_backfill_step(cancellation_token, step, total)
+    return fetched, validated
+
+
+def _merge_lhb_backfill_state(pool_manager, fetched, validated, validation_ref_date, cancellation_token) -> None:
+    for date_str, payload in fetched.items():
+        cancellation_token.raise_if_cancelled()
+        pool_manager.add_day(date_str, payload.get("records", []), meta=payload.get("meta"))
+    for date_str, payload in validated.items():
+        cancellation_token.raise_if_cancelled()
+        pool_manager.mark_day_probe(
+            date_str,
+            source_count=payload.get("count", 0),
+            validation_ref_date=validation_ref_date,
+            status=payload.get("status", "ok"),
+        )
+
+
+def _build_lhb_backfill_payload(owner, missing, validation, validation_ref_date, log_emit, cancellation_token):
+    total = len(missing) + len(validation)
+    cancellation_token.raise_if_cancelled()
+    pool_manager = LhbPoolManager()
+    fetched, step = _fetch_missing_lhb_dates(owner, missing, total, log_emit, cancellation_token)
+    repaired, validated = _validate_lhb_dates(
+        owner, pool_manager, validation, validation_ref_date, step, total, log_emit, cancellation_token
+    )
+    fetched.update(repaired)
+    _merge_lhb_backfill_state(pool_manager, fetched, validated, validation_ref_date, cancellation_token)
+    cancellation_token.raise_if_cancelled()
+    pool_manager.save()
+    pool = pool_manager.compute_pool(data_provider=owner.data_provider, engine=owner._get_engine())
+    cancellation_token.raise_if_cancelled()
+    ai_chain_context_map = owner._load_ai_chain_context_map()
+    return {
+        "fetched": fetched,
+        "validated": validated,
+        "pool_manager": pool_manager,
+        "pool": pool,
+        "row_data": owner._build_pool_display_rows(pool, ai_chain_context_map),
+        "ai_chain_context_map": ai_chain_context_map,
+    }
 
 
 class LhbTab(BaseStockTab):
@@ -317,32 +509,6 @@ class LhbTab(BaseStockTab):
         cached_dates = self._get_pool_manager().get_cached_dates() or []
         return max(cached_dates) if cached_dates else ""
 
-    def _read_provider_status(self) -> dict:
-        provider = getattr(self, "data_provider", None)
-        request_stats = {}
-        runtime_stats = {}
-
-        request_getter = getattr(provider, "get_quote_request_stats", None)
-        if callable(request_getter):
-            try:
-                request_stats = request_getter() or {}
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                request_stats = {}
-
-        runtime_getter = getattr(provider, "get_realtime_runtime_stats", None)
-        if callable(runtime_getter):
-            try:
-                runtime_stats = runtime_getter() or {}
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                runtime_stats = {}
-
-        return {
-            "request_stats": request_stats,
-            "runtime_stats": runtime_stats,
-            "eastmoney_cooldown_until": float(getattr(provider, "_rt_eastmoney_cooldown_until", 0.0) or 0.0),
-            "eastmoney_last_error": str(getattr(provider, "_rt_eastmoney_last_error", "") or ""),
-        }
-
     def _latest_loaded_cached_trade_date(self) -> str:
         manager = getattr(self, "pool_manager", None)
         getter = getattr(manager, "get_cached_dates", None)
@@ -595,30 +761,6 @@ class LhbTab(BaseStockTab):
             self.table_state.show_loading("正在加载龙虎榜池", "首次进入先响应，缓存池在后台计算。")
         self._set_pool_status("正在加载龙虎榜池", freshness="后台计算", next_step="结果完成后自动落表")
 
-        def _bg_load_pool():
-            trade_dates = self._get_lhb_trade_dates()
-            if not trade_dates:
-                return {"status": "calendar_missing"}
-
-            pool_manager = LhbPoolManager()
-            pool_manager.prune(trade_dates)
-            pool = pool_manager.compute_pool(data_provider=self.data_provider, engine=self._get_engine())
-            ai_chain_context_map = self._load_ai_chain_context_map()
-            row_data = self._build_pool_display_rows(pool, ai_chain_context_map)
-            validation_ref_date = max(trade_dates)
-            pending_validation = pool_manager.get_dates_pending_validation(trade_dates, validation_ref_date)
-            missing = pool_manager.get_missing_dates(trade_dates)
-            return {
-                "status": "ok",
-                "pool_manager": pool_manager,
-                "pool": pool,
-                "row_data": row_data,
-                "ai_chain_context_map": ai_chain_context_map,
-                "missing": missing,
-                "pending_validation": pending_validation,
-                "validation_ref_date": validation_ref_date,
-            }
-
         def _on_pool_loaded(payload):
             self._pool_load_in_progress = False
             status = str((payload or {}).get("status", "") or "")
@@ -674,11 +816,13 @@ class LhbTab(BaseStockTab):
                     action_callback=self._ensure_pool_bootstrap_started,
                 )
 
-        task_manager.run_in_background(
-            _bg_load_pool,
+        _task_lifecycle_for(self).run_background(
+            "pool_bootstrap",
+            lambda token: _load_lhb_pool_payload(self, token),
             on_success=_on_pool_loaded,
             on_error=_on_pool_error,
             task_id=task_id,
+            timeout_sec=LHB_POOL_BOOTSTRAP_TIMEOUT_SECONDS,
         )
 
     def _schedule_post_f5_pool_load(self, *, emit_event: bool = True) -> bool:
@@ -754,7 +898,7 @@ class LhbTab(BaseStockTab):
         """
         from datetime import timedelta
 
-        from ui.workers.lhb_worker import probe_lhb_detail_count_for_date
+        from app.services.lhb_market_data_service import probe_lhb_detail_count_for_date
 
         now_cn = MarketCalendar._get_market_now("CN")
         today = now_cn.date()
@@ -1042,124 +1186,6 @@ class LhbTab(BaseStockTab):
                 f"[龙虎榜池] 开始校验 {len(validation_sorted)} 个已缓存交易日",
             )
 
-        def _bg_backfill():
-            """后台线程：逐日抓取缺失天数并校验已有缓存。"""
-            from ui.workers.lhb_worker import fetch_lhb_pool_for_date, probe_lhb_detail_count_for_date
-
-            fetched_results: dict[str, dict] = {}
-            validated_results: dict[str, dict] = {}
-            step = 0
-            pool_manager = LhbPoolManager()
-
-            for date_str in missing_sorted:
-                step += 1
-                try:
-                    payload = fetch_lhb_pool_for_date(
-                        date_str,
-                        emit_success_log=False,
-                        return_meta=True,
-                    )
-                    if str(payload.get("status", "ok") or "ok") != "error":
-                        fetched_results[date_str] = {
-                            "records": payload.get("records", []),
-                            "meta": None,
-                        }
-                    level, message = self._build_backfill_progress_log(step, total, date_str, payload)
-                    _safe_log_emit(level, message)
-                except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
-                    log.warning(f"[龙虎榜池] 回填 {date_str} 失败: {e}")
-                    _safe_log_emit("warn", f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 抓取失败: {e}")
-
-                if step < total:
-                    time.sleep(0.8)
-
-            for date_str in validation_sorted:
-                step += 1
-                cached_count = pool_manager.get_cached_record_count(date_str)
-                try:
-                    probe_payload = probe_lhb_detail_count_for_date(date_str, return_meta=True)
-                    if self._should_refresh_after_probe(cached_count, probe_payload):
-                        refresh_payload = fetch_lhb_pool_for_date(
-                            date_str,
-                            emit_success_log=False,
-                            return_meta=True,
-                        )
-                        refresh_status = str(refresh_payload.get("status", "ok") or "ok")
-                        if refresh_status != "error":
-                            source_count = int(probe_payload.get("count", refresh_payload.get("count", 0)) or 0)
-                            fetched_results[date_str] = {
-                                "records": refresh_payload.get("records", []),
-                                "meta": {
-                                    "source_count": source_count,
-                                    "last_probe_ref_date": validation_ref_date,
-                                    "probe_status": "ok",
-                                },
-                            }
-                            _safe_log_emit(
-                                "warn",
-                                f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 校验发现缓存脏数据 | 缓存{cached_count}条 -> 源头{source_count}条，已自动补刷",
-                            )
-                        else:
-                            validated_results[date_str] = {
-                                "count": probe_payload.get("count", cached_count),
-                                "status": "repair_failed",
-                            }
-                            _safe_log_emit(
-                                "warn",
-                                f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 校验发现条数差异，但补刷失败，暂保留缓存{cached_count}条",
-                            )
-                    else:
-                        validated_results[date_str] = probe_payload
-                        probe_status = str(probe_payload.get("status", "ok") or "ok")
-                        if probe_status == "ok":
-                            _safe_log_emit(
-                                "info", f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 校验通过 | {cached_count}条"
-                            )
-                        elif probe_status == "empty":
-                            _safe_log_emit(
-                                "warn",
-                                f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 源头暂为空，保留缓存{cached_count}条",
-                            )
-                        else:
-                            _safe_log_emit(
-                                "warn",
-                                f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 校验异常，保留缓存{cached_count}条",
-                            )
-                except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
-                    log.warning(f"[龙虎榜池] 校验 {date_str} 失败: {e}")
-                    _safe_log_emit("warn", f"[龙虎榜池] [{step:02d}/{total:02d}] {date_str} 校验失败: {e}")
-
-                if step < total:
-                    time.sleep(0.8)
-
-            for date_str, payload in fetched_results.items():
-                records = payload.get("records", []) if isinstance(payload, dict) else []
-                meta = payload.get("meta") if isinstance(payload, dict) else None
-                pool_manager.add_day(date_str, records, meta=meta)
-
-            for date_str, payload in validated_results.items():
-                if not isinstance(payload, dict):
-                    continue
-                pool_manager.mark_day_probe(
-                    date_str,
-                    source_count=payload.get("count", 0),
-                    validation_ref_date=validation_ref_date,
-                    status=payload.get("status", "ok"),
-                )
-
-            pool_manager.save()
-            pool = pool_manager.compute_pool(data_provider=self.data_provider, engine=self._get_engine())
-            ai_chain_context_map = self._load_ai_chain_context_map()
-            row_data = self._build_pool_display_rows(pool, ai_chain_context_map)
-            return {
-                "fetched": fetched_results,
-                "validated": validated_results,
-                "pool_manager": pool_manager,
-                "pool": pool,
-                "row_data": row_data,
-                "ai_chain_context_map": ai_chain_context_map,
-            }
-
         def _on_backfill_done(results: dict):
             self._backfill_in_progress = False
             self.btn_refresh.setEnabled(True)
@@ -1203,11 +1229,20 @@ class LhbTab(BaseStockTab):
             )
             event_bus.sig_system_log.emit("error", self._ensure_log_line(f"[龙虎榜池] 抓取任务异常: {error_message}"))
 
-        task_manager.run_in_background(
-            _bg_backfill,
+        _task_lifecycle_for(self).run_background(
+            "pool_backfill",
+            lambda token: _build_lhb_backfill_payload(
+                self,
+                missing_sorted,
+                validation_sorted,
+                validation_ref_date,
+                _safe_log_emit,
+                token,
+            ),
             on_success=_on_backfill_done,
             on_error=_on_backfill_error,
             task_id=task_registry.workspace("lhb_pool_backfill").task_id,
+            timeout_sec=LHB_POOL_BACKFILL_TIMEOUT_SECONDS,
         )
 
     # ================================================================
@@ -1242,6 +1277,9 @@ class LhbTab(BaseStockTab):
         self._pool_retry_timer.start(5_000)
 
     def shutdown(self) -> None:
+        _task_lifecycle_for(self).shutdown(timeout_ms=LHB_TASK_SHUTDOWN_WAIT_TIMEOUT_MS)
+        self._pool_load_in_progress = False
+        self._backfill_in_progress = False
         retry_timer = getattr(self, "_pool_retry_timer", None)
         if retry_timer is not None:
             retry_timer.stop()

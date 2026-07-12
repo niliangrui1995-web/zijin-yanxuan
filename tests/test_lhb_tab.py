@@ -6,8 +6,8 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QShowEvent
 from PyQt6.QtTest import QSignalSpy, QTest
 
+import app.services.lhb_market_data_service as lhb_worker_module
 import ui.tabs.lhb_tab as lhb_tab_module
-import ui.workers.lhb_worker as lhb_worker_module
 from core.ai_industry_chain_pool import load_cached_ai_industry_chain_context_map
 from core.market_calendar import MarketCalendar
 from ui.tabs.base_stock_tab import BaseStockTab
@@ -727,6 +727,55 @@ def test_lhb_pool_bootstrap_schedules_background_task(monkeypatch):
         assert tab._pool_load_in_progress is True
     finally:
         tab.deleteLater()
+
+
+def test_lhb_pool_tasks_use_owner_lifecycle_deadlines(monkeypatch):
+    submissions = []
+
+    class FakeLifecycle:
+        def run_background(self, name, fn, **kwargs):
+            submissions.append((name, fn, kwargs))
+            return object()
+
+        @staticmethod
+        def shutdown(*, timeout_ms=0):
+            return True
+
+    monkeypatch.setattr(lhb_tab_module.task_manager, "is_active_task", lambda _task_id: False)
+    tab = LhbTab(object(), autoload_pool=False)
+    tab._task_lifecycle = FakeLifecycle()
+    try:
+        tab._load_and_display_pool()
+        tab._backfill_in_progress = False
+        tab._start_backfill(["20260420"])
+
+        assert [item[0] for item in submissions] == ["pool_bootstrap", "pool_backfill"]
+        assert submissions[0][2]["timeout_sec"] == lhb_tab_module.LHB_POOL_BOOTSTRAP_TIMEOUT_SECONDS
+        assert submissions[1][2]["timeout_sec"] == lhb_tab_module.LHB_POOL_BACKFILL_TIMEOUT_SECONDS
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_shutdown_cancels_owned_tasks_with_bounded_wait():
+    calls = []
+
+    class FakeLifecycle:
+        @staticmethod
+        def shutdown(*, timeout_ms=0):
+            calls.append(timeout_ms)
+            return True
+
+    tab = LhbTab(object(), autoload_pool=False)
+    tab._task_lifecycle = FakeLifecycle()
+    tab._pool_load_in_progress = True
+    tab._backfill_in_progress = True
+
+    tab.shutdown()
+
+    assert calls == [lhb_tab_module.LHB_TASK_SHUTDOWN_WAIT_TIMEOUT_MS]
+    assert tab._pool_load_in_progress is False
+    assert tab._backfill_in_progress is False
+    tab.deleteLater()
 
 
 def test_lhb_pool_update_signal_debounces_visible_refresh(monkeypatch, qt_application):

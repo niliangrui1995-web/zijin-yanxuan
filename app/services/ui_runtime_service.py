@@ -8,6 +8,14 @@ in small, behavior-preserving slices.
 
 from __future__ import annotations
 
+import warnings
+
+__deprecated__ = (
+    "app.services.ui_runtime_service is deprecated; import the narrow app.services.ui_* service that owns the "
+    "required capability"
+)
+warnings.warn(__deprecated__, DeprecationWarning, stacklevel=2)
+
 from app.services.ui_config_service import TableViewStateStore, app_config
 from app.services.ui_earnings_calendar_service import (
     EarningsCalendarEvent,

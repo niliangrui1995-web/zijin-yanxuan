@@ -6,7 +6,7 @@ import importlib
 import os
 import sys
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Protocol
 
 from core.logger import get_logger
 from domains.global_earnings_calendar.constants import (
@@ -70,6 +70,7 @@ from domains.global_earnings_calendar.event_ops import (
 from domains.global_earnings_calendar.event_ops import (
     sorted_events as sorted_events,
 )
+from domains.global_earnings_calendar.http_utils import redact_sensitive_data, redact_sensitive_text
 from domains.global_earnings_calendar.models import (
     YFINANCE_CONFLICT_STATUS as YFINANCE_CONFLICT_STATUS,
 )
@@ -115,6 +116,38 @@ EXCLUDED_OLIGARCH_TICKERS = {"6594.T"}
 EXCLUDED_OLIGARCH_COMPANIES = {"Nidec"}
 
 
+class CancellationTokenLike(Protocol):
+    def raise_if_cancelled(self) -> None: ...
+
+
+def _raise_if_cancelled(token: CancellationTokenLike | None) -> None:
+    if token is not None:
+        token.raise_if_cancelled()
+
+
+def _provider_failure_detail(provider_name: str, error: object) -> dict[str, object]:
+    error_text = " | ".join(part.strip() for part in redact_sensitive_text(error).splitlines() if part.strip())
+    log.warning(f"[global earnings calendar] {provider_name} refresh failed: {error_text}")
+    return {
+        "provider": provider_name,
+        "reason": "provider_fetch_failed",
+        "sample_error": error_text[:500],
+        "all_failed": True,
+        "retryable": True,
+    }
+
+
+def _provider_result(provider_name: str, provider, rows) -> tuple[list[EarningsCalendarEvent], dict | None]:
+    provider_events = [event for event in rows if event is not None]
+    degradation = getattr(provider, "last_degradation", None)
+    if not isinstance(degradation, Mapping):
+        return provider_events, None
+    degradation_detail = dict(redact_sensitive_data(degradation))
+    if not str(degradation_detail.get("provider", "") or "").strip():
+        degradation_detail["provider"] = provider_name
+    return provider_events, degradation_detail
+
+
 def _ensure_industry_module_path() -> None:
     project_root = Path(__file__).resolve().parents[2]
     pipeline_dir = project_root.parent / "\u6bcf\u65e5\u6218\u62a5" / "\u6bcf\u65e5\u6218\u62a5"
@@ -128,7 +161,7 @@ def _load_industry_module():
     try:
         return importlib.import_module("industry_dict")
     except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
-        log.warning(f"[global earnings calendar] industry_dict unavailable: {exc}")
+        log.warning(f"[global earnings calendar] industry_dict unavailable: {redact_sensitive_text(exc)}")
         return None
 
 
@@ -227,14 +260,27 @@ class GlobalEarningsCalendarService:
     @property
     def data_store(self):
         if self._data_store is None:
-            from core.data_store import data_store
+            from infra.storage.data_store import data_store
 
             self._data_store = data_store
         return self._data_store
 
     def _load_cache_payload(self) -> Mapping:
         payload = self.data_store.load_json(CACHE_KEY, default={}) or {}
-        return payload if isinstance(payload, Mapping) else {}
+        if not isinstance(payload, Mapping):
+            return {}
+        sanitized = redact_sensitive_data(payload)
+        if not isinstance(sanitized, Mapping):
+            return {}
+        if sanitized != payload:
+            try:
+                self.data_store.save_json(CACHE_KEY, sanitized)
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                log.warning(
+                    "[global earnings calendar] failed to scrub historical cache credentials: "
+                    f"{redact_sensitive_text(exc)}"
+                )
+        return sanitized
 
     def load_cache_status(self) -> dict[str, object]:
         state = self._load_cache_payload().get("cache_state")
@@ -277,7 +323,7 @@ class GlobalEarningsCalendarService:
         try:
             return self.confirmed_provider.fetch(self.universe)
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
-            log.warning(f"[global earnings calendar] confirmed provider failed: {exc}")
+            log.warning(f"[global earnings calendar] confirmed provider failed: {redact_sensitive_text(exc)}")
             return []
 
     def _save_events(
@@ -293,18 +339,18 @@ class GlobalEarningsCalendarService:
             "events": [event.to_dict() for event in sorted_events(events)],
         }
         if cache_state:
-            payload["cache_state"] = dict(cache_state)
-        self.data_store.save_json(CACHE_KEY, payload)
+            payload["cache_state"] = dict(redact_sensitive_data(cache_state))
+        self.data_store.save_json(CACHE_KEY, redact_sensitive_data(payload))
 
     def _save_cache_state(self, cache_state: Mapping[str, object]) -> None:
         payload = dict(self._load_cache_payload())
         payload["source"] = str(payload.get("source") or "stale_cache")
         payload["updated_at"] = dt.datetime.now().isoformat(timespec="seconds")
-        payload["cache_state"] = dict(cache_state)
-        self.data_store.save_json(CACHE_KEY, payload)
+        payload["cache_state"] = dict(redact_sensitive_data(cache_state))
+        self.data_store.save_json(CACHE_KEY, redact_sensitive_data(payload))
 
     def sync_unverified_yfinance_cache(self) -> int:
-        payload = self.data_store.load_json(CACHE_KEY, default={}) or {}
+        payload = self._load_cache_payload()
         rows = payload.get("events") if isinstance(payload, Mapping) else []
         if not isinstance(rows, list):
             return 0
@@ -328,7 +374,7 @@ class GlobalEarningsCalendarService:
             synced_payload = dict(payload) if isinstance(payload, Mapping) else {}
             synced_payload["events"] = synced_rows
             synced_payload["yfinance_estimate_synced_at"] = dt.datetime.now().isoformat(timespec="seconds")
-            self.data_store.save_json(CACHE_KEY, synced_payload)
+            self.data_store.save_json(CACHE_KEY, redact_sensitive_data(synced_payload))
         return changed
 
     def upsert_confirmed_event(self, event: EarningsCalendarEvent) -> EarningsCalendarEvent:
@@ -358,7 +404,7 @@ class GlobalEarningsCalendarService:
         return confirmed
 
     def _sync_cached_confirmed_event(self, event: EarningsCalendarEvent) -> None:
-        payload = self.data_store.load_json(CACHE_KEY, default={}) or {}
+        payload = self._load_cache_payload()
         rows = payload.get("events") if isinstance(payload, Mapping) else []
         cached_events: list[EarningsCalendarEvent] = []
         for row in rows or []:
@@ -484,12 +530,12 @@ class GlobalEarningsCalendarService:
             "all_providers_failed": all_providers_failed,
             "provider_attempted_count": max(0, int(provider_attempted_count or 0)),
             "provider_total_failure_count": max(0, int(provider_total_failure_count or 0)),
-            "details": [dict(item) for item in degradations],
+            "details": [dict(redact_sensitive_data(item)) for item in degradations],
         }
 
     def mark_refresh_failed(self, error: object, *, reason: str = "refresh_exception") -> dict[str, object]:
         cached_events = self._load_cached_events()
-        error_text = str(error or "").strip()
+        error_text = redact_sensitive_text(error).strip()
         if len(error_text) > 500:
             error_text = error_text[:497] + "..."
         cache_state = {
@@ -543,7 +589,9 @@ class GlobalEarningsCalendarService:
         *,
         today: dt.date | None = None,
         lookahead_days: int = DEFAULT_LOOKAHEAD_DAYS,
+        cancellation_token: CancellationTokenLike | None = None,
     ) -> list[EarningsCalendarEvent]:
+        _raise_if_cancelled(cancellation_token)
         today = today or dt.date.today()
         lookahead_days = max(0, int(lookahead_days))
         confirmed_events = self._filter_window(
@@ -556,6 +604,7 @@ class GlobalEarningsCalendarService:
             today=today,
             lookahead_days=lookahead_days,
         )
+        _raise_if_cancelled(cancellation_token)
         network_events: list[EarningsCalendarEvent] = []
         provider_degradations: list[dict[str, object]] = []
         provider_total_failure_count = 0
@@ -567,32 +616,21 @@ class GlobalEarningsCalendarService:
         )
         provider_attempted_count = len(provider_calls)
         for provider_name, provider in provider_calls:
+            _raise_if_cancelled(cancellation_token)
             try:
-                provider_events = list(provider.fetch(self.universe, today=today, lookahead_days=lookahead_days) or [])
+                rows = list(provider.fetch(self.universe, today=today, lookahead_days=lookahead_days) or [])
             except Exception as exc:  # noqa: BLE001 - isolate independent upstream providers and record each outcome.
-                log.warning(f"[global earnings calendar] {provider_name} refresh failed: {exc}")
-                error_text = " | ".join(part.strip() for part in str(exc).splitlines() if part.strip())
-                provider_degradations.append(
-                    {
-                        "provider": provider_name,
-                        "reason": "provider_fetch_failed",
-                        "sample_error": error_text[:500],
-                        "all_failed": True,
-                        "retryable": True,
-                    }
-                )
+                provider_degradations.append(_provider_failure_detail(provider_name, exc))
                 provider_total_failure_count += 1
                 continue
-            degradation = getattr(provider, "last_degradation", None)
-            if isinstance(degradation, Mapping):
-                degradation_detail = dict(degradation)
-                if not str(degradation_detail.get("provider", "") or "").strip():
-                    degradation_detail["provider"] = provider_name
+            _raise_if_cancelled(cancellation_token)
+            provider_events, degradation_detail = _provider_result(provider_name, provider, rows)
+            if degradation_detail is not None:
                 provider_degradations.append(degradation_detail)
-                if self._provider_degradation_is_total(degradation_detail):
-                    provider_total_failure_count += 1
-            network_events.extend(event for event in provider_events if event is not None)
+                provider_total_failure_count += int(self._provider_degradation_is_total(degradation_detail))
+            network_events.extend(provider_events)
 
+        _raise_if_cancelled(cancellation_token)
         network_events = self._filter_window(network_events, today=today, lookahead_days=lookahead_days)
         failed_days_by_source = self._degraded_source_failed_days(provider_degradations)
         failed_tickers_by_source = self._degraded_source_failed_tickers(provider_degradations)

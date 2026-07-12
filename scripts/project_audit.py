@@ -42,6 +42,8 @@ COLD_IMPORT_BUDGET_OUTPUT = "tmp/cold_import_budget.json"
 DEPENDENCY_AUDIT_OUTPUT = "tmp/dependency_audit.json"
 HTTP_SAFETY_AUDIT_OUTPUT = "tmp/http_safety_audit.json"
 COVERAGE_REPORT_OUTPUT = "tmp/coverage.json"
+COVERAGE_TARGETS = ("app", "core", "domains", "infra", "ui", "vcp")
+COVERAGE_FAIL_UNDER = 60
 TYPE_CHECK_TARGETS = (
     "app/services",
     "domains/quotes",
@@ -131,6 +133,29 @@ def _python(args: argparse.Namespace) -> str:
 
 def _has_perf_reports(args: argparse.Namespace) -> bool:
     return any(getattr(args, name) for name in PERF_REPORT_OPTIONS)
+
+
+def _coverage_audit_commands(python: str) -> list[AuditCommand]:
+    return [
+        AuditCommand(
+            "coverage-report",
+            [
+                python,
+                "-m",
+                "pytest",
+                "-q",
+                "--cov-branch",
+                *(f"--cov={target}" for target in COVERAGE_TARGETS),
+                "--cov-report=term-missing",
+                f"--cov-report=json:{COVERAGE_REPORT_OUTPUT}",
+                f"--cov-fail-under={COVERAGE_FAIL_UNDER}",
+            ],
+        ),
+        AuditCommand(
+            "coverage-budgets",
+            [python, "scripts/coverage_budget_check.py", "--input", COVERAGE_REPORT_OUTPUT],
+        ),
+    ]
 
 
 def build_audit_commands(args: argparse.Namespace) -> list[AuditCommand]:
@@ -231,23 +256,7 @@ def build_audit_commands(args: argparse.Namespace) -> list[AuditCommand]:
         commands.append(AuditCommand("type-check", [python, "-m", "pyright", "--warnings", *TYPE_CHECK_TARGETS]))
 
     if args.coverage_report:
-        commands.append(
-            AuditCommand(
-                "coverage-report",
-                [
-                    python,
-                    "-m",
-                    "pytest",
-                    "-q",
-                    "--cov=app",
-                    "--cov=domains",
-                    "--cov=infra",
-                    "--cov-report=term-missing",
-                    f"--cov-report=json:{COVERAGE_REPORT_OUTPUT}",
-                    "--cov-fail-under=0",
-                ],
-            )
-        )
+        commands.extend(_coverage_audit_commands(python))
 
     if _has_perf_reports(args):
         perf_command = [python, "scripts/perf_budget_check.py"]
@@ -278,16 +287,36 @@ def _audit_subprocess_env() -> dict[str, str]:
     return child_env
 
 
-def run_audit_commands(commands: list[AuditCommand]) -> int:
+def run_audit_commands(commands: list[AuditCommand], *, keep_going: bool = False) -> int:
     child_env = _audit_subprocess_env()
+    failures: list[tuple[str, int]] = []
     for item in commands:
         print(f"[audit] {item.label}: {_display_command(item.command)}", flush=True)
         completed = subprocess.run(item.command, cwd=REPO_ROOT, env=child_env)  # noqa: S603
         if completed.returncode != 0:
             print(f"[audit] failed: {item.label} ({completed.returncode})", flush=True)
-            return int(completed.returncode)
+            failures.append((item.label, int(completed.returncode)))
+            if not keep_going:
+                return int(completed.returncode)
+    if failures:
+        summary = ", ".join(f"{label} ({returncode})" for label, returncode in failures)
+        print(f"[audit] failed checks: {summary}", flush=True)
+        return 1
     print("[audit] all checks passed", flush=True)
     return 0
+
+
+def _add_result_reporting_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--keep-going",
+        action="store_true",
+        help="Run every selected check and report all failures instead of stopping at the first one.",
+    )
+    parser.add_argument(
+        "--coverage-report",
+        action="store_true",
+        help=f"Run six-package branch coverage and fail below {COVERAGE_FAIL_UNDER} percent.",
+    )
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -297,6 +326,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--python", type=Path, default=None, help="Python executable to use for child checks.")
     parser.add_argument("--quick", action="store_true", help="Skip full pytest and WebEngine preflight.")
     parser.add_argument("--list", action="store_true", help="Print planned commands without running them.")
+    _add_result_reporting_args(parser)
     parser.add_argument("--skip-ruff", action="store_true", help="Skip the Ruff style/lint gate.")
     parser.add_argument("--skip-full-pytest", action="store_true")
     parser.add_argument("--skip-runtime-self-check", action="store_true")
@@ -331,11 +361,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Run gradual pyright checking for app/, domains/, and infra/.",
     )
-    parser.add_argument(
-        "--coverage-report",
-        action="store_true",
-        help="Generate an observation-only pytest coverage report with no minimum threshold.",
-    )
     parser.add_argument("--gbbq-report", type=Path, default=None)
     parser.add_argument("--tab-report", type=Path, default=None)
     parser.add_argument("--kline-report", type=Path, default=None)
@@ -355,7 +380,7 @@ def main(argv: list[str] | None = None) -> int:
         for item in commands:
             print(f"{item.label}: {_display_command(item.command)}")
         return 0
-    return run_audit_commands(commands)
+    return run_audit_commands(commands, keep_going=bool(args.keep_going))
 
 
 if __name__ == "__main__":

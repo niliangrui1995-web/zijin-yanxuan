@@ -1,15 +1,22 @@
 # -*- coding: utf-8 -*-
 import datetime
-import json
-import os
 import re
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
+from app.services.asian_market_cache_service import (
+    load_latest_trade_dates,
+    read_mapping_cache,
+    write_json_cache,
+)
 from app.services.asian_market_service import filter_asian_tickers, find_asian_track
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
+from app.services.ui_task_lifecycle_service import (
+    shutdown_task_lifecycle_for_owner,
+    task_lifecycle_for,
+)
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
 from core.logger import get_logger
@@ -316,11 +323,9 @@ def build_asian_market_local_cache_payload(
     rt_updates: dict[str, dict] = {}
     history_points_by_code = {}
 
-    if os.path.exists(json_cache):
+    raw = read_mapping_cache(json_cache)
+    if raw:
         try:
-            with open(json_cache, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-
             roles_map = get_role_mapping()
             ch_names_map = get_ch_names_mapping()
             stocks_list = raw.get("stocks", [])
@@ -438,21 +443,15 @@ def build_asian_market_local_cache_payload(
                 if missing_codes:
                     log.warning(f"[亚洲页] 本地缓存缺失 {len(missing_codes)} 只，已补齐占位行: {sorted(missing_codes)}")
         except (
-            FileNotFoundError,
-            PermissionError,
-            OSError,
             TypeError,
             ValueError,
             KeyError,
-            json.JSONDecodeError,
         ) as exc:
             log.error(f"[亚洲页] JSON 历史缓存加载失败: {exc}")
 
-    if os.path.exists(rt_json_cache):
+    rt_cache = read_mapping_cache(rt_json_cache)
+    if rt_cache:
         try:
-            with open(rt_json_cache, "r", encoding="utf-8") as f:
-                rt_cache = json.load(f)
-
             for row_dict in row_data:
                 code = row_dict.get("代码")
                 if code not in rt_cache:
@@ -475,13 +474,9 @@ def build_asian_market_local_cache_payload(
                 updated_info.update(info)
                 rt_updates[code] = updated_info
         except (
-            FileNotFoundError,
-            PermissionError,
-            OSError,
             TypeError,
             ValueError,
             KeyError,
-            json.JSONDecodeError,
         ) as exc:
             log.error(f"[亚洲页] 恢复 RT 盘口缓存失败: {exc}")
 
@@ -512,6 +507,7 @@ class AsianMarketTab(BaseStockTab):
         self._last_health_log_at = 0.0
         self._last_health_signature = None
         self._runtime_started = False
+        self._asian_shutting_down = False
         self._pending_hidden_rt_update = False
         self.row_data = []
         self._pinned_asian_codes = self._load_pinned_asian_codes()
@@ -910,44 +906,7 @@ class AsianMarketTab(BaseStockTab):
         self._schedule_fit_columns()
 
     def _get_cache_latest_trade_dates(self):
-        try:
-            from app.services.ui_market_calendar_service import MarketCalendar
-
-            if not os.path.exists(JSON_CACHE):
-                return {}
-            with open(JSON_CACHE, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-
-            latest_dates = {}
-            for item in raw.get("stocks", []):
-                ticker = str(item.get("ticker", "") or "").strip().upper()
-                if "." not in ticker:
-                    continue
-                market = MarketCalendar.normalize_market(ticker.split(".")[-1])
-                klines = item.get("klines", [])
-                if not klines:
-                    continue
-                last_date_raw = str(klines[-1].get("date", "")).strip()
-                if not last_date_raw:
-                    continue
-                try:
-                    last_date = datetime.datetime.strptime(last_date_raw[:10], "%Y-%m-%d").date()
-                except (TypeError, ValueError):
-                    continue
-                if latest_dates.get(market) is None or last_date > latest_dates[market]:
-                    latest_dates[market] = last_date
-            return latest_dates
-        except (
-            FileNotFoundError,
-            PermissionError,
-            OSError,
-            TypeError,
-            ValueError,
-            KeyError,
-            json.JSONDecodeError,
-        ) as e:
-            log.warning(f"[亚洲页] 解析缓存最新交易日失败: {e}")
-            return {}
+        return load_latest_trade_dates(JSON_CACHE)
 
     def _get_cache_latest_trade_date(self):
         latest_dates = self._get_cache_latest_trade_dates()
@@ -1214,15 +1173,13 @@ class AsianMarketTab(BaseStockTab):
                     "source": v.get("source", ""),
                     "quote_quality": v.get("quote_quality", ""),
                 }
-            cache_dir = os.path.dirname(RT_JSON_CACHE)
-            if cache_dir:
-                os.makedirs(cache_dir, exist_ok=True)
-            with open(RT_JSON_CACHE, "w", encoding="utf-8") as f:
-                json.dump(cache_friendly, f, ensure_ascii=False)
+            write_json_cache(RT_JSON_CACHE, cache_friendly)
         except (PermissionError, OSError, TypeError, ValueError) as e:
             log.error(f"[亚洲页] 持久化 RT 缓存失败: {e}")
 
     def _load_local_cache(self):
+        if self._asian_shutting_down or getattr(self, "_runtime_cleanup_done", False):
+            return
         if self._load_cache_in_progress:
             self._load_cache_pending = True
             log.info("[亚洲页] 本地缓存重载进行中，已追加一次待执行重载")
@@ -1233,22 +1190,25 @@ class AsianMarketTab(BaseStockTab):
             self.table_state.show_loading("正在加载本地缓存...", "请稍候")
 
         existing_rt_cache = dict(GLOBAL_ASIAN_RT_CACHE or {})
-        task_manager.run_in_background(
-            lambda: build_asian_market_local_cache_payload(
+        task_lifecycle_for(self, runner=task_manager).run_background(
+            "local_cache_load",
+            lambda _cancellation_token: build_asian_market_local_cache_payload(
                 json_cache=JSON_CACHE,
                 rt_json_cache=RT_JSON_CACHE,
                 existing_rt_cache=existing_rt_cache,
             ),
             task_id=_ASIAN_MARKET_LOCAL_CACHE_TASK,
+            timeout_sec=60.0,
             on_success=self._apply_local_cache_payload,
             on_error=self._on_local_cache_failed,
+            runner=task_manager,
         )
 
     def _finish_local_cache_load(self):
         pending_reload = self._load_cache_pending
         self._load_cache_pending = False
         self._load_cache_in_progress = False
-        if pending_reload:
+        if pending_reload and not self._asian_shutting_down:
             log.info("[亚洲页] 执行排队中的一次本地缓存重载")
             QTimer.singleShot(0, self._load_local_cache)
 
@@ -1403,6 +1363,10 @@ class AsianMarketTab(BaseStockTab):
         ui_signals.sig_show_kline_with_list.emit(code, code_list, current_idx)
 
     def shutdown(self) -> None:
+        if self._asian_shutting_down:
+            return
+        self._asian_shutting_down = True
+        shutdown_task_lifecycle_for_owner(self, timeout_ms=1_000)
         try:
             event_bus.sig_asian_klines_ready.disconnect(self._on_asian_klines_ready)
         except (TypeError, RuntimeError):
@@ -1426,7 +1390,7 @@ class AsianMarketTab(BaseStockTab):
             request_thread_shutdown(
                 cache_thread,
                 label="Asian cache sync",
-                stop=getattr(cache_thread, "requestInterruption", None),
+                stop=getattr(cache_thread, "cancel", None),
                 timeout_ms=5000,
                 logger=log,
             )

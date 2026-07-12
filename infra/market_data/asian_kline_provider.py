@@ -31,7 +31,14 @@ def sync_asian_kline_cache(
     period: str = "1y",
     output_dir: str | None = None,
     time_budget_sec: float | int | None = None,
+    cancellation_token=None,
 ):
+    cancellation_checkpoint = None
+    if cancellation_token is not None:
+        cancellation_checkpoint = cancellation_token.raise_if_cancelled
+        remaining = cancellation_token.remaining_seconds()
+        if remaining is not None:
+            time_budget_sec = remaining if time_budget_sec is None else min(float(time_budget_sec), remaining)
     return _legacy_fetcher.sync_asian_kline_cache(
         market_filter=market_filter,
         single_ticker=single_ticker,
@@ -39,6 +46,7 @@ def sync_asian_kline_cache(
         period=period,
         output_dir=output_dir,
         time_budget_sec=time_budget_sec,
+        cancellation_checkpoint=cancellation_checkpoint,
     )
 
 

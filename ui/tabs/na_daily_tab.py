@@ -5,22 +5,53 @@ ui/tabs/na_daily_tab.py
 """
 
 import os
+from functools import partial
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
+from app.services.na_daily_service import NADailyRefreshService, build_na_daily_refresh_payload, parse_report_identity
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
+from app.services.ui_task_lifecycle_service import TaskLifecycleGroup, invoke_with_cancellation
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
 from core.logger import get_logger
 from ui.components import TableStateWrapper, VCPTableView
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
-from ui.services.na_daily_service import NADailyRefreshService, build_na_daily_refresh_payload, parse_report_identity
 from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
 _NA_DAILY_REFRESH_TASK = task_registry.workspace("na_daily_refresh")
+
+
+def _task_lifecycle_for(owner) -> TaskLifecycleGroup:
+    lifecycle = getattr(owner, "_task_lifecycle", None)
+    if lifecycle is None:
+        lifecycle = TaskLifecycleGroup(task_manager)
+        owner._task_lifecycle = lifecycle
+    return lifecycle
+
+
+def _build_refresh_payload(output_dir, cancellation_token):
+    return invoke_with_cancellation(
+        build_na_daily_refresh_payload,
+        cancellation_token,
+        output_dir,
+        limit=5,
+    )
+
+
+def _apply_refresh_if_current(owner, generation: int, payload) -> None:
+    if getattr(owner, "_closing", False) or generation != getattr(owner, "_na_daily_refresh_generation", 0):
+        return
+    owner._apply_na_daily_refresh_payload(payload)
+
+
+def _apply_refresh_error_if_current(owner, generation: int, error_message) -> None:
+    if getattr(owner, "_closing", False) or generation != getattr(owner, "_na_daily_refresh_generation", 0):
+        return
+    owner._on_na_daily_refresh_failed(error_message)
 
 
 class NADailyTab(BaseStockTab):
@@ -42,11 +73,10 @@ class NADailyTab(BaseStockTab):
         self._background_prime_done = False
         self._handling_na_daily_event = False
         self._na_daily_refresh_task_active = False
-
+        self._na_daily_refresh_generation = 0
+        self._closing = False
         self._init_ui()
-
         # 首次显示后再拉取/巡逻，避免冷启动阶段抢占首屏。
-
         # 订阅中央广播站报价及开启大一统市值更新
         self.subscribe_global_quotes()
 
@@ -327,7 +357,7 @@ class NADailyTab(BaseStockTab):
         service = getattr(self, "_na_daily_service", None)
         if service is not None:
             if run_in_background:
-                if self._na_daily_refresh_task_active or task_manager.is_active_task(_NA_DAILY_REFRESH_TASK):
+                if self._na_daily_refresh_task_active:
                     self._set_report_status(
                         "北美战报刷新中",
                         freshness=self._latest_report_freshness(),
@@ -336,11 +366,15 @@ class NADailyTab(BaseStockTab):
                     return False
                 output_dir = service._get_na_daily_output_dir()
                 self._na_daily_refresh_task_active = True
-                task_manager.run_in_background(
-                    lambda: build_na_daily_refresh_payload(output_dir, limit=5),
+                self._na_daily_refresh_generation += 1
+                generation = self._na_daily_refresh_generation
+                _task_lifecycle_for(self).run_background(
+                    "refresh",
+                    partial(_build_refresh_payload, output_dir),
                     task_id=_NA_DAILY_REFRESH_TASK,
-                    on_success=self._apply_na_daily_refresh_payload,
-                    on_error=self._on_na_daily_refresh_failed,
+                    timeout_sec=90,
+                    on_success=partial(_apply_refresh_if_current, self, generation),
+                    on_error=partial(_apply_refresh_error_if_current, self, generation),
                 )
                 return True
             service.refresh_full(emit_event=False)
@@ -362,6 +396,12 @@ class NADailyTab(BaseStockTab):
         return True
 
     def shutdown(self) -> None:
+        self._closing = True
+        self._na_daily_refresh_generation += 1
+        self._na_daily_refresh_task_active = False
+        lifecycle = getattr(self, "_task_lifecycle", None)
+        if lifecycle is not None:
+            lifecycle.shutdown(timeout_ms=750)
         try:
             event_bus.sig_na_daily_updated.disconnect(self._on_na_daily_updated)
         except (TypeError, RuntimeError):

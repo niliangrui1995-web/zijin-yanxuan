@@ -12,6 +12,7 @@ from scripts.cold_import_budget import (
     aggregate_samples,
     evaluate_measurement,
     probe_target,
+    rss_budget_for_platform,
 )
 
 
@@ -19,15 +20,38 @@ def test_cold_import_budgets_cover_light_packages_and_main_window():
     assert set(TARGET_BUDGETS) == {"app.services", "infra.market_data", "ui.main_window_qt"}
     assert TARGET_BUDGETS["ui.main_window_qt"].requires_qapplication is True
     assert TARGET_BUDGETS["ui.main_window_qt"].max_elapsed_ms == 1000.0
-    assert TARGET_BUDGETS["ui.main_window_qt"].max_rss_delta_mb == 48.0
+    assert rss_budget_for_platform(TARGET_BUDGETS["ui.main_window_qt"], "win32") == 48.0
+    assert rss_budget_for_platform(TARGET_BUDGETS["ui.main_window_qt"], "linux") == 80.0
+
+
+def test_cold_import_rss_budget_is_resolved_for_the_current_platform():
+    budget = ImportBudget(
+        max_elapsed_ms=100.0,
+        max_rss_delta_mb_by_platform={"windows": 10.0, "linux": 20.0, "macos": 30.0},
+    )
+
+    assert evaluate_measurement(
+        {"elapsed_ms": 99.0, "rss_delta_mb": 15.0},
+        budget,
+        platform_name="linux",
+    ) == []
+    assert evaluate_measurement(
+        {"elapsed_ms": 99.0, "rss_delta_mb": 15.0},
+        budget,
+        platform_name="win32",
+    ) == [{"metric": "rss_delta_mb", "actual": 15.0, "budget": 10.0}]
 
 
 def test_cold_import_budget_reports_time_and_memory_regressions():
-    budget = ImportBudget(max_elapsed_ms=100.0, max_rss_delta_mb=10.0)
+    budget = ImportBudget(
+        max_elapsed_ms=100.0,
+        max_rss_delta_mb_by_platform={"windows": 10.0, "linux": 10.0, "macos": 10.0},
+    )
 
     failures = evaluate_measurement(
         {"elapsed_ms": 101.0, "rss_delta_mb": 11.0},
         budget,
+        platform_name="win32",
     )
 
     assert failures == [

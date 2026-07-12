@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import importlib
-import sys
-from types import ModuleType
+
+import pytest
 
 from app.services import (
     runtime_services,
@@ -24,6 +24,12 @@ def test_ui_runtime_legacy_barrel_reuses_narrow_service_objects():
     assert ui_runtime_service.EarningsScheduler is ui_earnings_service.EarningsScheduler
     assert ui_runtime_service.build_finance_quote_payload is ui_quote_service.build_finance_quote_payload
     assert ui_runtime_service.background_job_runner is ui_task_service.background_job_runner
+
+
+def test_ui_runtime_legacy_barrel_is_explicitly_deprecated():
+    assert "deprecated" in ui_runtime_service.__deprecated__.lower()
+    with pytest.warns(DeprecationWarning, match="deprecated"):
+        importlib.reload(ui_runtime_service)
 
 
 def test_scan_engine_facade_delegates_to_domain_services(monkeypatch):
@@ -84,7 +90,7 @@ def test_scan_engine_facade_covers_lazy_rps_and_remaining_delegates(monkeypatch)
     calls = []
 
     class FakeRpsService:
-        def __init__(self):
+        def __init__(self, **_accelerators):
             self.bundle = None
 
         def set_precomputed_rps(self, cache_date, rps120, rps250):
@@ -94,7 +100,7 @@ def test_scan_engine_facade_covers_lazy_rps_and_remaining_delegates(monkeypatch)
             return self.bundle
 
         @staticmethod
-        def build_prices_matrix(data_dict, min_start, end_ts=None):
+        def build_prices_matrix(data_dict, min_start, end_ts=None, **_accelerators):
             calls.append(("prices", data_dict, min_start, end_ts))
             return {"prices": data_dict}
 
@@ -163,9 +169,11 @@ def test_legacy_vcp_engine_import_points_at_scan_facade():
 
 
 def test_runtime_services_load_local_tdx_capital_snapshot_delegates(monkeypatch):
-    module = ModuleType("vcp.data_provider_local")
-    module.load_local_tdx_capital_snapshot = lambda codes, tdx_vipdoc: {"codes": list(codes), "tdx_vipdoc": tdx_vipdoc}
-    monkeypatch.setitem(sys.modules, "vcp.data_provider_local", module)
+    monkeypatch.setattr(
+        runtime_services,
+        "_load_snapshot",
+        lambda codes, tdx_vipdoc: {"codes": list(codes), "tdx_vipdoc": tdx_vipdoc},
+    )
 
     assert runtime_services.load_local_tdx_capital_snapshot(["000001"], "D:/vipdoc") == {
         "codes": ["000001"],

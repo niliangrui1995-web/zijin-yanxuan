@@ -58,6 +58,21 @@ class BackgroundJobRunner:
     def abandon_task(self, task_id: TaskKeyLike) -> bool:
         return self.abandon(task_id)
 
+    def cancel_task(self, task_id: TaskKeyLike, *, reason: str = "cancelled") -> bool:
+        manager = self._resolve_manager()
+        cancel_task = getattr(manager, "cancel_task", None)
+        if not callable(cancel_task):
+            return False
+        return bool(cancel_task(task_id_of(task_id), reason=reason))
+
+    def wait_for_tasks(self, task_ids, *, timeout_ms: int = 750) -> bool:
+        manager = self._resolve_manager()
+        wait_for_tasks = getattr(manager, "wait_for_tasks", None)
+        if not callable(wait_for_tasks):
+            return False
+        normalized = tuple(task_id_of(task_id) for task_id in task_ids)
+        return bool(wait_for_tasks(normalized, timeout_ms=timeout_ms))
+
     def is_active(self, task_id: TaskKeyLike) -> bool:
         manager = self._resolve_manager()
         is_active_task = getattr(manager, "is_active_task", None)

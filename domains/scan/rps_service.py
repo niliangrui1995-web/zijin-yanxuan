@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pandas as pd
 
 from core.logger import get_logger
@@ -12,10 +14,17 @@ _log = get_logger(__name__)
 class RpsService:
     """RPS 预计算与矩阵构建服务。"""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        prices_matrix_builder: Callable | None = None,
+        rps_matrix_builder: Callable | None = None,
+    ) -> None:
         self._daily_rps_cache: dict = {}
         self._rps_cache_date = None
         self._precomputed_rps_bundle: dict | None = None
+        self._prices_matrix_builder = prices_matrix_builder
+        self._rps_matrix_builder = rps_matrix_builder
 
     def set_precomputed_rps(self, cache_date: str, rps120, rps250) -> None:
         self._precomputed_rps_bundle = {
@@ -32,17 +41,16 @@ class RpsService:
         data_dict: dict[str, pd.DataFrame],
         min_start: pd.Timestamp,
         end_ts: pd.Timestamp | None = None,
+        *,
+        prices_matrix_builder: Callable | None = None,
     ) -> pd.DataFrame:
-        try:
-            from vcp.polars_engine import build_prices_matrix_fast
-
-            matrix, cols, dates = build_prices_matrix_fast(data_dict, min_start, end_ts)
-            if len(cols) > 0:
-                return pd.DataFrame(matrix, index=dates, columns=cols)
-        except ImportError:
-            pass
-        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
-            _log.error(f"[策略中台] 加速矩阵构建失败，回退 pandas: {exc}")
+        if prices_matrix_builder is not None:
+            try:
+                matrix, cols, dates = prices_matrix_builder(data_dict, min_start, end_ts)
+                if len(cols) > 0:
+                    return pd.DataFrame(matrix, index=dates, columns=cols)
+            except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                _log.error(f"[策略中台] 加速矩阵构建失败，回退 pandas: {exc}")
 
         valid = [(code, df) for code, df in data_dict.items() if df is not None and not df.empty]
         if not valid:
@@ -65,6 +73,15 @@ class RpsService:
         prices = prices.ffill(limit=5)
         return prices
 
+    def _build_accelerated_rps(self, data_dict, start_date: str, end_date: str) -> dict | None:
+        if self._rps_matrix_builder is None:
+            return None
+        try:
+            return self._rps_matrix_builder(data_dict, start_date, end_date, self._daily_rps_cache) or None
+        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            _log.error(f"[策略中台] Polars RPS 计算失败，回退 pandas: {exc}")
+            return None
+
     def build_rps_matrix(
         self,
         data_dict: dict[str, pd.DataFrame],
@@ -82,23 +99,21 @@ class RpsService:
             _log.warning(f"\n[策略中台] RPS 矩阵命中缓存 (区间 {start_date} ~ {end_date})，跳过重算")
             return self._daily_rps_cache[cache_key]
 
-        try:
-            from vcp.polars_engine import build_rps_matrix_pl
-
-            result = build_rps_matrix_pl(data_dict, start_date, end_date, self._daily_rps_cache)
-            if result:
-                return result
-        except ImportError:
-            pass
-        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
-            _log.error(f"[策略中台] Polars RPS 计算失败，回退 pandas: {exc}")
+        accelerated = self._build_accelerated_rps(data_dict, start_date, end_date)
+        if accelerated:
+            return accelerated
 
         _log.info(f"\n[策略中台] 正在计算全市场 RPS 强度矩阵... (标的数: {num_stocks})")
         start_ts = pd.to_datetime(start_date)
         end_ts = pd.to_datetime(end_date)
         min_start = start_ts - pd.Timedelta(days=RPS_BUFFER_DAYS)
 
-        prices = self.build_prices_matrix(data_dict, min_start, end_ts)
+        prices = self.build_prices_matrix(
+            data_dict,
+            min_start,
+            end_ts,
+            prices_matrix_builder=self._prices_matrix_builder,
+        )
         if prices.empty:
             _log.warning(f"[策略中台] ⚠ 区间 {start_date} ~ {end_date} 无可用价格数据，跳过该段 RPS 计算。")
             return {}

@@ -35,7 +35,7 @@ class WatchlistViewModel:
     def _load_data(self):
         """将数据加载到内存中，优先读SQLite数据库，不存在则兼容读JSON"""
         try:
-            from core.data_store import DataStore
+            from infra.storage.data_store import DataStore
 
             data = DataStore().load_json("watchlist_special")
 
@@ -73,7 +73,7 @@ class WatchlistViewModel:
     def _save_data(self):
         """安全地将内存中的数据刷入 SQLite（原子写入）"""
         try:
-            from core.data_store import DataStore
+            from infra.storage.data_store import DataStore
 
             with self._lock:
                 save_data = deepcopy(self._cache)

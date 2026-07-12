@@ -486,7 +486,7 @@ def _profile_gbbq(provider, *, mode: str, code: str) -> dict:
         samples["full"] = _measure(
             "gbbq_full",
             lambda: {
-                "codes": len(provider._load_local_gbbq(force=False)),
+                "codes": len(provider.ensure_adjustment_metadata(force=False)),
                 "full_loaded": bool(getattr(provider, "_local_gbbq_loaded", False)),
                 "code_cache_size": len(getattr(provider, "_local_gbbq_code_cache", {}) or {}),
             },

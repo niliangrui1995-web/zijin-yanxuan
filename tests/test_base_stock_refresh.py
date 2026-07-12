@@ -151,7 +151,7 @@ def test_local_quote_snapshot_async_runs_in_background(monkeypatch):
         def __init__(self):
             self.offline_calls = []
 
-        def _build_offline_quotes(self, codes):
+        def build_offline_quotes(self, codes):
             self.offline_calls.append(list(codes))
             return {"000001": {"close": 10.5, "last_close": 10.0}}
 
@@ -184,7 +184,7 @@ def test_local_quote_snapshot_async_runs_in_background(monkeypatch):
     monkeypatch.setattr(
         task_manager,
         "run_in_background",
-        lambda fn, task_id=None, on_success=None, on_error=None: tasks.append(task_id) or on_success(fn()),
+        lambda fn, task_id=None, on_success=None, on_error=None, **_kwargs: tasks.append(task_id) or on_success(fn()),
     )
 
     scheduled = refresh_module.prime_local_quote_snapshot_async(owner)

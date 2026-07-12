@@ -31,7 +31,7 @@ QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 app = QApplication.instance() or QApplication([])
 
 import ui.main_window_qt as main_window_module
-import ui.services.auto_refresh_tasks as task_module
+import app.services.earnings_refresh_process_service as earnings_process_module
 from ui.services.auto_refresh_scheduler import MarketCalendar
 from ui.services.auto_refresh_tasks import AutoRefreshTaskService
 
@@ -51,7 +51,7 @@ def fake_earnings_refresh(mode, *, routine_time=""):
     job_key = "earnings_startup_gap_fill" if mode == "startup-gap-fill" else "earnings_routine"
     return {"status": "success", "job_key": job_key, "records": 0}
 
-task_module._run_earnings_refresh_subprocess = fake_earnings_refresh
+earnings_process_module.run_earnings_refresh = fake_earnings_refresh
 AutoRefreshTaskService.prepare_asian_market_runtime = lambda self: {"target_codes": []}
 AutoRefreshTaskService.sync_asian_market_runtime = (
     lambda self, prepared=None: {"job_key": "asian_market_runtime", "status": "skipped"}

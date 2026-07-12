@@ -22,7 +22,12 @@ from domains.global_earnings_calendar.event_ops import (
     merge_events,
     sorted_events,
 )
-from domains.global_earnings_calendar.http_utils import raise_for_status as _raise_for_status
+from domains.global_earnings_calendar.http_utils import (
+    raise_for_status as _raise_for_status,
+)
+from domains.global_earnings_calendar.http_utils import (
+    redact_sensitive_text as _redact_sensitive_text,
+)
 from domains.global_earnings_calendar.http_utils import response_text as _response_text
 from domains.global_earnings_calendar.models import CONFIRMED_STATUS, EarningsCalendarEvent, OligarchCompany
 from domains.global_earnings_calendar.providers._utils import _ensure_ascii_ca_bundle
@@ -674,20 +679,11 @@ class MopsEarningsDisclosureProvider:
                 )
                 _raise_for_status(response)
             except (requests.RequestException, OSError, RuntimeError, TypeError, ValueError) as exc:
-                log.debug(f"[global earnings calendar] MOPS stop after {company.ticker}: {exc}")
-                failed_companies = tw_companies[index:]
-                self.last_degradation = {
-                    "provider": MOPS_SOURCE,
-                    "reason": "ticker_fetch_stopped",
-                    "failed_tickers": [item.ticker for item in failed_companies],
-                    "failed_count": len(failed_companies),
-                    "requested_tickers": [item.ticker for item in tw_companies],
-                    "requested_count": len(tw_companies),
-                    "returned_events": len(sorted_events(events)),
-                    "all_tickers_failed": index == 0,
-                    "stop_after_ticker": company.ticker,
-                    "sample_error": str(exc),
-                }
+                error_text = _redact_sensitive_text(exc)
+                log.debug(f"[global earnings calendar] MOPS stop after {company.ticker}: {error_text}")
+                self.last_degradation = self._stopped_degradation(
+                    tw_companies, index=index, returned_events=len(sorted_events(events)), error_text=error_text
+                )
                 break
             events.extend(
                 self.parse_html(
@@ -699,6 +695,28 @@ class MopsEarningsDisclosureProvider:
                 )
             )
         return sorted_events(events)
+
+    @staticmethod
+    def _stopped_degradation(
+        companies: list[OligarchCompany],
+        *,
+        index: int,
+        returned_events: int,
+        error_text: str,
+    ) -> dict[str, object]:
+        failed_companies = companies[index:]
+        return {
+            "provider": MOPS_SOURCE,
+            "reason": "ticker_fetch_stopped",
+            "failed_tickers": [item.ticker for item in failed_companies],
+            "failed_count": len(failed_companies),
+            "requested_tickers": [item.ticker for item in companies],
+            "requested_count": len(companies),
+            "returned_events": returned_events,
+            "all_tickers_failed": index == 0,
+            "stop_after_ticker": companies[index].ticker,
+            "sample_error": error_text,
+        }
 
     @staticmethod
     def _detail_url(row_html: str, source_base_url: str) -> str:

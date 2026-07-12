@@ -2,7 +2,7 @@
 
 Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatility Contraction Pattern）扫描、关注池联动和多市场辅助观察构建。
 
-最后校验：2026-06-14（按当前源码、`docs/technical-architecture.md` 和 `docs/module-owners.md` 重新核对）。
+最后校验：2026-07-12（按当前源码、`docs/technical-architecture.md` 和 `docs/module-owners.md` 重新核对）。
 
 当前代码基于本地通达信日线数据和 Parquet/SQLite 本地仓库运行，盘中实时行情通过东方财富 HTTP 链路获取，并在必要时回退到新浪、腾讯批量报价；海外、亚洲、龙虎榜、大宗交易、业绩和基金持仓页面各自维护独立抓取、清洗、缓存和展示链路。
 
@@ -17,7 +17,7 @@ Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatil
 
 ## 当前功能面
 
-当前 `ClassicWorkspace` 装配了 12 个主 Tab：
+当前 `ClassicWorkspace` 装配了 11 个主 Tab：
 
 | 页面 | 模块 | 说明 |
 | --- | --- | --- |
@@ -54,7 +54,7 @@ Windows 优先的 PyQt6 桌面看盘与选股工具，围绕 A 股 VCP（Volatil
 当前仓库的主工作区已经完成一轮统一化交互收口，主要约束如下：
 
 - 主窗口标题栏集成 Tab 分组导航、全局 F5 同步、交易日历入口和同步状态摘要
-- 除关注池外，各 Tab 默认以轻量占位页挂载，进入时按需加载，并在后台分批预热
+- 所有 Tab 首先挂载 `LazyTabPlaceholder`；用户首次进入页面时才创建真实 Tab，当前不后台预热真实 Tab
 - 主要数据页统一采用页面级状态反馈，明确区分 `加载中 / 最新数据 / 缓存数据 / 刷新失败 / 离线`
 - 各 Tab 页头统一回答“当前看的是什么数据、筛选是否生效、数据何时更新”
 - 通用工具栏已经按窄宽度场景重排，优先保证筛选控件、状态摘要和动作按钮不互相挤压
@@ -115,7 +115,7 @@ vcp_hunter_qt.pyw
 - 主窗口外壳：`ui/main_window_qt.py`
 - 工作区装配：`ui/workspaces/classic_workspace.py`
 - 当前仅装配 `ClassicWorkspace`
-- 首屏先挂载 `LazyTabPlaceholder` 占位，所有页面再按需加载或进入后台预热队列逐个创建
+- 所有页面先挂载 `LazyTabPlaceholder` 占位，真实 Tab 仅在用户进入时按需创建；当前真实 Tab 后台预热白名单为空
 - 跨 Tab 表格聚合、实时订阅代码收集、个股信号汇总和导航定位统一通过 `WorkspaceFacade` 及能力协议完成
 - 各 Tab 大多继承 `ui/tabs/base_stock_tab.py`，共享：
   - 右键菜单
@@ -378,12 +378,12 @@ Windows 环境下可以在标题栏的系统菜单中勾选 `开机自启动`。
 
 | Tab | 原始数据来源 | 本地加工逻辑 | 主要代码 |
 | --- | --- | --- | --- |
-| 龙虎榜 | AkShare 东方财富龙虎榜封装：`stock_lhb_detail_em`、`stock_lhb_jgmmtj_em`、`stock_lhb_hyyyb_em`、`stock_lhb_stock_detail_em` | 按日期取每日原始榜单，合并多上榜原因，匹配机构、外资/知名席位，计算净买额和 30 日滚动关注池 | `ui/workers/lhb_worker.py`、`ui/tabs/lhb_tab.py` |
-| 大宗交易 | AkShare 东方财富大宗交易：`stock_dzjy_mrmx`；交易日历用 `tool_trade_date_hist_sina` | 子进程隔离 AkShare 抓取，按外资席位关键字过滤，聚合对倒/买入/卖出方向，写入本地 JSON 缓存 | `ui/tabs/foreign_block_trade_tab.py` |
-| 业绩预告/快报/财报 | AkShare 东方财富：`stock_yjyg_em`、`stock_yjkb_em`、`stock_yjbb_em`；同花顺利润表接口补充单季度口径 | 按公告日期过滤候选，去重，估算单季度环比，必要时用快报净利润回填，写入 SQLite 状态 | `domains/earnings/engine.py`、`ui/tabs/earnings_tab.py` |
+| 龙虎榜 | AkShare 东方财富龙虎榜封装：`stock_lhb_detail_em`、`stock_lhb_jgmmtj_em`、`stock_lhb_hyyyb_em`、`stock_lhb_stock_detail_em` | `infra` 按日期抓取并聚合机构、外资/知名席位，`app` 提供可取消的窄入口；30 日滚动池规则与持久化保持独立 | `infra/market_data/lhb_provider.py`、`app/services/lhb_market_data_service.py`、`domains/lhb/pool_service.py`、`app/services/ui_lhb_pool_service.py` |
+| 大宗交易 | AkShare 东方财富大宗交易：`stock_dzjy_mrmx`；交易日历用 `tool_trade_date_hist_sina` | `infra` 隔离 AkShare 子进程，`app` 负责 deadline、重试、分段和字段口径编排；缓存 schema 与原子写由专用 app/infra 边界负责 | `infra/market_data/foreign_block_provider.py`、`app/services/foreign_block_market_data_service.py`、`app/services/foreign_block_cache_service.py`、`infra/storage/foreign_block_repository.py` |
+| 业绩预告/快报/财报 | AkShare 东方财富：`stock_yjyg_em`、`stock_yjkb_em`、`stock_yjbb_em`；同花顺利润表接口补充单季度口径 | 按公告日期过滤候选，去重，估算单季度环比，必要时用快报净利润回填，写入 SQLite 状态；自动刷新进程协议与 deadline 由 app facade 承担 | `domains/earnings/engine.py`、`app/services/earnings_refresh_process_service.py`、`ui/tabs/earnings_tab.py` |
 | 基金持仓/QFII | 东方财富数据中心 `datacenter-web.eastmoney.com/api/data/v1/get`；东方财富基金档案 `FundArchivesDatas.aspx` | 同步 QFII 和睿远成长价值混合A，规范季度、主体、资金属性，生成快照和变动缓存，落到 SQLite | `domains/fund_holdings/sync.py`、`domains/fund_holdings/store.py`、`ui/tabs/fund_holdings_tab.py` |
-| AI 产业链 | 本地产业链股票池、上下文映射和行业字典 | 作为跨 Tab 股票池和概念上下文来源，供大宗、基金、综合候选和个股上下文过滤/展示 | `core/ai_industry_chain_pool.py`、`ui/tabs/ai_industry_chain_tab.py` |
-| 北美战报 | 兄弟项目“每日战报”的本地输出文件 | 读取最近战报产物并回填标的、细分板块、催化描述，再挂接实时/海外辅助行情 | `ui/services/na_daily_service.py`、`ui/tabs/na_daily_tab.py` |
+| AI 产业链 | 本地产业链股票池、上下文映射和行业字典 | 作为跨 Tab 股票池和概念上下文来源，供大宗、基金、综合候选和个股上下文过滤/展示 | `domains/industry_chain/pool_service.py`、`app/services/ui_industry_chain_service.py`、`ui/tabs/ai_industry_chain_tab.py` |
+| 北美战报 | 兄弟项目“每日战报”的本地输出文件 | 由 infra 读取最近战报产物、domain 解析内容、app 编排缓存，再回填标的、细分板块和催化描述 | `domains/na_daily/`、`infra/storage/na_daily_repository.py`、`app/services/na_daily_service.py`、`ui/tabs/na_daily_tab.py` |
 | 综合候选 | VCP 扫描、关注池、龙虎榜、大宗、业绩、基金持仓、AI 产业链、北美战报等本地信号 | 汇总成候选池和个股上下文，不直接抓新数据源 | `ui/tabs/stock_candidate_tab.py`、`ui/workspaces/stock_context_service.py` |
 
 ### 海外 / 亚洲辅助链路
@@ -453,6 +453,8 @@ Windows 环境下可以在标题栏的系统菜单中勾选 `开机自启动`。
   - 按天滚动的应用日志
 - `data/crash_report.log`
   - `faulthandler` 写入的底层崩溃日志
+- `%LOCALAPPDATA%/ZijinYanxuan/Trade/`（可用 `VCP_HUNTER_TRADE_RECORD_DIR` 覆盖）
+  - 用户账户成交导出，仅保存在操作系统用户数据目录，不进入仓库
 - `tmp/runtime_health_*`、`tmp/perf_*`
   - 运行时健康、长稳、性能预算和 WebEngine 探针报告
 
@@ -464,15 +466,13 @@ Windows 环境下可以在标题栏的系统菜单中勾选 `开机自启动`。
 
 仓库当前提供单独的开发与审计依赖文件：
 
-```powershell
-python -m pip install -r requirements-dev.txt
-```
-
-Windows Python 3.14 的已验证依赖组合可以使用约束文件安装：
+Python 3.14 的 CI/开发依赖必须配合平台约束文件安装，避免直接依赖解析随时间漂移：
 
 ```powershell
 python -m pip install -r requirements-dev.txt -c constraints-py314-windows.txt
 ```
+
+Linux CI 对应使用 `constraints-py314-linux.txt`。两个文件均由 `uv pip compile` 生成；`requirements*.txt` 表达允许范围，constraints 表达已经验证的确定版本。
 
 ### 运行测试
 
@@ -497,7 +497,7 @@ pytest tests/test_table_refresh_state.py tests/test_rt_table_model_incremental.p
 
 - `tests/conftest.py` 会统一创建 `QApplication`，避免 PyQt 测试直接崩溃
 - 多数表格与行情链路已经有回归测试覆盖
-- CI 当前覆盖 Python 3.14 快速审计、主测试、Windows smoke、Ruff、UTF-8、架构边界、启动编排、服务边界和工作区聚合等核心护栏，配置位于 `.github/workflows/ci.yml`
+- CI 当前覆盖 Python 3.14 快速审计、主测试、Windows smoke、Ruff、UTF-8、架构边界、启动编排、服务边界和工作区聚合等核心护栏；定时任务另以未锁定的允许版本运行 latest-allowed canary，配置位于 `.github/workflows/ci.yml`
 
 ### 代码检查
 

@@ -6,8 +6,8 @@ import threading
 from copy import deepcopy
 from types import SimpleNamespace
 
-import core.data_store as data_store_module
 import domains.watchlist.service as watchlist_module
+import infra.storage.data_store as data_store_module
 from domains.watchlist.service import WatchlistViewModel, watchlist_vm
 
 

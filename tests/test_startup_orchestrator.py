@@ -108,6 +108,27 @@ class _DummyMainWindow(QObject):
     def _call_in_ui(self, callback):
         callback()
 
+    def call_in_ui(self, callback):
+        self._call_in_ui(callback)
+
+    def is_closing(self):
+        return self._is_closing
+
+    def current_workspace(self):
+        return self._workspace
+
+    def refresh_code_count_label_from_provider(self):
+        return None
+
+    def set_titlebar_sync_state(self, *args):
+        self._set_titlebar_sync_state(*args)
+
+    def update_network_ui(self, online):
+        self._update_network_ui(online)
+
+    def on_smart_startup_online_done(self):
+        self._on_smart_startup_online_done()
+
     def _set_titlebar_sync_state(self, *args):
         self.titlebar_sync_states.append(args)
 

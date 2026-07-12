@@ -57,15 +57,43 @@ _RUIYUAN_ROW_RE = re.compile(
 )
 
 
-def _read_limited_response(response, *, max_bytes: int | None = None) -> bytes:
+def _raise_if_cancelled(cancellation_token=None) -> None:
+    if cancellation_token is not None:
+        cancellation_token.raise_if_cancelled()
+
+
+def _call_with_cancellation(fn, *args, cancellation_token=None, **kwargs):
+    if cancellation_token is not None:
+        kwargs["cancellation_token"] = cancellation_token
+    return fn(*args, **kwargs)
+
+
+def _cancellable_values(values, cancellation_token=None):
+    for value in values:
+        _raise_if_cancelled(cancellation_token)
+        yield value
+
+
+def _qfii_payloads_for_sync(quarter_key, cancellation_token=None):
+    return _call_with_cancellation(
+        _candidate_qfii_payloads,
+        quarter_key,
+        cancellation_token=cancellation_token,
+    )
+
+
+def _read_limited_response(response, *, max_bytes: int | None = None, cancellation_token=None) -> bytes:
+    _raise_if_cancelled(cancellation_token)
     max_bytes = _MAX_RESPONSE_BYTES if max_bytes is None else int(max_bytes)
     payload = response.read(max_bytes + 1)
+    _raise_if_cancelled(cancellation_token)
     if len(payload) > max_bytes:
         raise UserFacingTaskError("基金持仓接口返回过大，已停止处理", f"response bytes exceed {max_bytes}")
     return payload
 
 
-def _fetch_text(url: str, *, params: dict | None = None, referer: str = "") -> str:
+def _fetch_text(url: str, *, params: dict | None = None, referer: str = "", cancellation_token=None) -> str:
+    _raise_if_cancelled(cancellation_token)
     if params:
         url = f"{url}?{urllib.parse.urlencode(params)}"
     request = urllib.request.Request(
@@ -79,7 +107,13 @@ def _fetch_text(url: str, *, params: dict | None = None, referer: str = "") -> s
     try:
         response = urlopen_https(request, timeout=15)
         try:
-            return _read_limited_response(response).decode("utf-8", errors="ignore")
+            payload = _call_with_cancellation(
+                _read_limited_response,
+                response,
+                cancellation_token=cancellation_token,
+            )
+            _raise_if_cancelled(cancellation_token)
+            return payload.decode("utf-8", errors="ignore")
         finally:
             with suppress(AttributeError, OSError, RuntimeError, TypeError):
                 response.close()
@@ -87,12 +121,21 @@ def _fetch_text(url: str, *, params: dict | None = None, referer: str = "") -> s
         raise UserFacingTaskError("抓取基金持仓数据失败，请稍后重试", str(exc)) from exc
 
 
-def _fetch_json(url: str, *, params: dict, referer: str = "") -> dict:
-    text = _fetch_text(url, params=params, referer=referer)
+def _fetch_json(url: str, *, params: dict, referer: str = "", cancellation_token=None) -> dict:
+    text = _call_with_cancellation(
+        _fetch_text,
+        url,
+        params=params,
+        referer=referer,
+        cancellation_token=cancellation_token,
+    )
+    _raise_if_cancelled(cancellation_token)
     try:
-        return json.loads(text)
+        payload = json.loads(text)
     except json.JSONDecodeError as exc:
         raise UserFacingTaskError("基金持仓接口返回异常，稍后再试", f"JSON 解析失败: {exc}") from exc
+    _raise_if_cancelled(cancellation_token)
+    return payload
 
 
 def _coerce_float(value) -> float:
@@ -116,10 +159,12 @@ def _clean_js_html(raw_text: str) -> str:
     return html.unescape(html_text)
 
 
-def _parse_ruiyuan_sections(raw_text: str) -> dict[str, dict]:
+def _parse_ruiyuan_sections(raw_text: str, *, cancellation_token=None) -> dict[str, dict]:
+    _raise_if_cancelled(cancellation_token)
     html_text = _clean_js_html(raw_text)
     quarter_payloads: dict[str, dict] = {}
     for section in _RUIYUAN_SECTION_RE.finditer(html_text):
+        _raise_if_cancelled(cancellation_token)
         header = section.group("header")
         table_html = section.group("table")
         date_match = _RUIYUAN_DATE_RE.search(header)
@@ -131,6 +176,7 @@ def _parse_ruiyuan_sections(raw_text: str) -> dict[str, dict]:
         end_date = date_match.group(1)
         rows = []
         for row_match in _RUIYUAN_ROW_RE.finditer(table_html):
+            _raise_if_cancelled(cancellation_token)
             stock_code = str(row_match.group("code") or "").strip()
             if not stock_code:
                 continue
@@ -152,11 +198,13 @@ def _parse_ruiyuan_sections(raw_text: str) -> dict[str, dict]:
             "raw_rows": rows,
         }
 
+    _raise_if_cancelled(cancellation_token)
     return quarter_payloads
 
 
-def _fetch_ruiyuan_year(year: int) -> dict[str, dict]:
-    raw_text = _fetch_text(
+def _fetch_ruiyuan_year(year: int, *, cancellation_token=None) -> dict[str, dict]:
+    raw_text = _call_with_cancellation(
+        _fetch_text,
         _RUIYUAN_API_URL,
         params={
             "type": "jjcc",
@@ -166,11 +214,21 @@ def _fetch_ruiyuan_year(year: int) -> dict[str, dict]:
             "month": "12",
         },
         referer=f"https://fund.eastmoney.com/{SUBJECT_RUIYUAN['subject_code']}.html",
+        cancellation_token=cancellation_token,
     )
-    return _parse_ruiyuan_sections(raw_text)
+    _raise_if_cancelled(cancellation_token)
+    return _call_with_cancellation(
+        _parse_ruiyuan_sections,
+        raw_text,
+        cancellation_token=cancellation_token,
+    )
 
 
-def _candidate_ruiyuan_payloads(target_quarter_key: str | None = None) -> tuple[dict[str, dict], str]:
+def _candidate_ruiyuan_payloads(
+    target_quarter_key: str | None = None,
+    *,
+    cancellation_token=None,
+) -> tuple[dict[str, dict], str]:
     quarter_payloads: dict[str, dict] = {}
 
     if target_quarter_key:
@@ -178,7 +236,14 @@ def _candidate_ruiyuan_payloads(target_quarter_key: str | None = None) -> tuple[
         compare_quarter = get_compare_quarter_key(SUBJECT_RUIYUAN["subject_type"], resolved)
         target_years = {quarter_parts(resolved)[0], quarter_parts(compare_quarter)[0]}
         for year in sorted(target_years, reverse=True):
-            quarter_payloads.update(_fetch_ruiyuan_year(year))
+            _raise_if_cancelled(cancellation_token)
+            quarter_payloads.update(
+                _call_with_cancellation(
+                    _fetch_ruiyuan_year,
+                    year,
+                    cancellation_token=cancellation_token,
+                )
+            )
         if resolved not in quarter_payloads:
             raise UserFacingTaskError(
                 f"睿远 {resolved} 暂无已披露持仓数据",
@@ -192,22 +257,31 @@ def _candidate_ruiyuan_payloads(target_quarter_key: str | None = None) -> tuple[
     target_years = sorted({quarter_parts(quarter_key)[0] for quarter_key in target_quarters}, reverse=True)
     fetched_payloads: dict[str, dict] = {}
     for year in target_years:
-        fetched_payloads.update(_fetch_ruiyuan_year(year))
+        _raise_if_cancelled(cancellation_token)
+        fetched_payloads.update(
+            _call_with_cancellation(
+                _fetch_ruiyuan_year,
+                year,
+                cancellation_token=cancellation_token,
+            )
+        )
 
     for quarter_key in target_quarters:
+        _raise_if_cancelled(cancellation_token)
         quarter_payloads[quarter_key] = fetched_payloads.get(quarter_key) or _empty_quarter_payload(quarter_key)
 
     return quarter_payloads, natural_current
 
 
-def _fetch_qfii_quarter(quarter_key: str) -> dict:
+def _fetch_qfii_quarter(quarter_key: str, *, cancellation_token=None) -> dict:
     norm_quarter = normalize_quarter_key(quarter_key)
     end_date = quarter_end_date_text(norm_quarter)
     page_number = 1
     raw_rows: list[dict] = []
-
     while True:
-        payload = _fetch_json(
+        _raise_if_cancelled(cancellation_token)
+        payload = _call_with_cancellation(
+            _fetch_json,
             _QFII_API_URL,
             params={
                 "sortColumns": "UPDATE_DATE,SECURITY_CODE",
@@ -221,7 +295,9 @@ def _fetch_qfii_quarter(quarter_key: str) -> dict:
                 "filter": f"(END_DATE='{end_date}')(HOLDER_TYPE=\"QFII\")",
             },
             referer="https://data.eastmoney.com/",
+            cancellation_token=cancellation_token,
         )
+        _raise_if_cancelled(cancellation_token)
         result = payload.get("result") or {}
         try:
             pages = int(result.get("pages") or 0)
@@ -237,6 +313,7 @@ def _fetch_qfii_quarter(quarter_key: str) -> dict:
         if len(raw_rows) + len(data) > _QFII_MAX_ROWS:
             raise UserFacingTaskError("基金持仓接口返回过多记录，已停止处理", f"QFII rows>{_QFII_MAX_ROWS}")
         raw_rows.extend(dict(row) for row in data)
+        _raise_if_cancelled(cancellation_token)
         if page_number >= pages:
             break
         page_number += 1
@@ -270,22 +347,40 @@ def _qfii_quarter_disclosure_ready(quarter_key: str, as_of: date | None = None) 
     return check_date > _qfii_quarter_disclosure_deadline(quarter_key)
 
 
-def _candidate_qfii_payloads(target_quarter_key: str | None = None) -> tuple[dict[str, dict], str]:
+def _candidate_qfii_payloads(
+    target_quarter_key: str | None = None,
+    *,
+    cancellation_token=None,
+) -> tuple[dict[str, dict], str]:
     quarter_payloads: dict[str, dict] = {}
 
     if target_quarter_key:
         resolved = normalize_quarter_key(target_quarter_key)
-        quarter_payloads[resolved] = _fetch_qfii_quarter(resolved)
+        quarter_payloads[resolved] = _call_with_cancellation(
+            _fetch_qfii_quarter,
+            resolved,
+            cancellation_token=cancellation_token,
+        )
         if not quarter_payloads[resolved]["raw_rows"]:
             raise UserFacingTaskError(f"QFII {resolved} 暂无已披露持仓数据", f"QFII 指定季度无数据: {resolved}")
         compare_quarter = get_compare_quarter_key(SUBJECT_QFII["subject_type"], resolved)
-        quarter_payloads[compare_quarter] = _fetch_qfii_quarter(compare_quarter)
+        _raise_if_cancelled(cancellation_token)
+        quarter_payloads[compare_quarter] = _call_with_cancellation(
+            _fetch_qfii_quarter,
+            compare_quarter,
+            cancellation_token=cancellation_token,
+        )
         return quarter_payloads, resolved
 
     natural_current = quarter_key_for_date(date.today())
     compare_quarter = get_compare_quarter_key(SUBJECT_QFII["subject_type"], natural_current)
     for quarter_key in (natural_current, compare_quarter):
-        quarter_payloads[quarter_key] = _fetch_qfii_quarter(quarter_key)
+        _raise_if_cancelled(cancellation_token)
+        quarter_payloads[quarter_key] = _call_with_cancellation(
+            _fetch_qfii_quarter,
+            quarter_key,
+            cancellation_token=cancellation_token,
+        )
     return quarter_payloads, natural_current
 
 
@@ -293,12 +388,12 @@ class FundHoldingsSyncService:
     def __init__(self, store=None):
         self._store = store or fund_holdings_store
 
-    def sync_qfii(self, quarter_key: str | None = None) -> dict:
-        quarter_payloads, resolved_quarter = _candidate_qfii_payloads(quarter_key)
+    def sync_qfii(self, quarter_key: str | None = None, *, cancellation_token=None) -> dict:
+        quarter_payloads, resolved_quarter = _qfii_payloads_for_sync(quarter_key, cancellation_token)
         skipped_quarters: dict[str, str] = {}
         available_payloads: dict[str, dict] = {}
         quarter_payloads_to_store: dict[str, dict] = {}
-        for key, value in quarter_payloads.items():
+        for key, value in _cancellable_values(quarter_payloads.items(), cancellation_token):
             if not value.get("raw_rows"):
                 continue
             if not quarter_key and not _qfii_quarter_disclosure_ready(key):
@@ -307,14 +402,13 @@ class FundHoldingsSyncService:
                 continue
             available_payloads[key] = value
             quarter_payloads_to_store[key] = value
-        for payload in available_payloads.values():
+        for payload in _cancellable_values(available_payloads.values(), cancellation_token):
             payload["snapshots"] = build_qfii_snapshots(
                 payload["raw_rows"],
                 SUBJECT_QFII,
                 payload["quarter_key"],
                 payload["end_date"],
             )
-
         message = (
             f"QFII 已检查 {resolved_quarter} / {get_compare_quarter_key(SUBJECT_QFII['subject_type'], resolved_quarter)}"
             if not quarter_key
@@ -326,6 +420,7 @@ class FundHoldingsSyncService:
                 skipped = "、".join(sorted(skipped_quarters, key=quarter_sort_value, reverse=True))
                 message += f"；已跳过未到完整披露窗口的季度：{skipped}"
 
+        _raise_if_cancelled(cancellation_token)
         self._store.replace_qfii_quarters(
             SUBJECT_QFII,
             quarter_payloads_to_store,
@@ -349,10 +444,14 @@ class FundHoldingsSyncService:
             "snapshot_count": len((available_payloads.get(resolved_quarter) or {}).get("snapshots") or []),
         }
 
-    def sync_ruiyuan(self, quarter_key: str | None = None) -> dict:
-        quarter_payloads, resolved_quarter = _candidate_ruiyuan_payloads(quarter_key)
+    def sync_ruiyuan(self, quarter_key: str | None = None, *, cancellation_token=None) -> dict:
+        quarter_payloads, resolved_quarter = _call_with_cancellation(
+            _candidate_ruiyuan_payloads,
+            quarter_key,
+            cancellation_token=cancellation_token,
+        )
         available_payloads = {key: value for key, value in quarter_payloads.items() if value.get("raw_rows")}
-        for payload in available_payloads.values():
+        for payload in _cancellable_values(available_payloads.values(), cancellation_token):
             payload["snapshots"] = build_ruiyuan_snapshots(
                 payload["raw_rows"],
                 SUBJECT_RUIYUAN,
@@ -368,6 +467,7 @@ class FundHoldingsSyncService:
         if not quarter_key:
             message += "（固定抓取当季与上一季度）"
 
+        _raise_if_cancelled(cancellation_token)
         self._store.replace_ruiyuan_quarters(
             SUBJECT_RUIYUAN,
             available_payloads,
@@ -390,9 +490,17 @@ class FundHoldingsSyncService:
             "snapshot_count": len((available_payloads.get(resolved_quarter) or {}).get("snapshots") or []),
         }
 
-    def sync_latest_all(self) -> dict:
-        qfii_result = self.sync_qfii()
-        ruiyuan_result = self.sync_ruiyuan()
+    def sync_latest_all(self, *, cancellation_token=None) -> dict:
+        qfii_result = _call_with_cancellation(
+            self.sync_qfii,
+            cancellation_token=cancellation_token,
+        )
+        _raise_if_cancelled(cancellation_token)
+        ruiyuan_result = _call_with_cancellation(
+            self.sync_ruiyuan,
+            cancellation_token=cancellation_token,
+        )
+        _raise_if_cancelled(cancellation_token)
         return {
             "subject_code": "ALL",
             "message": f"{qfii_result['message']}；{ruiyuan_result['message']}",

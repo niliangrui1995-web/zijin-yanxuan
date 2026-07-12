@@ -74,14 +74,15 @@ vcp_hunter_qt.pyw
 | `ui_config_service.py` / `ui_event_service.py` / `ui_task_service.py` | 给 UI 暴露配置、事件总线、后台任务和进程执行入口 |
 | `ui_quote_service.py` / `ui_market_calendar_service.py` | 给 UI 暴露行情标准化、广播、指标解析和交易日历入口 |
 | `ui_earnings_calendar_service.py` / `ui_earnings_service.py` | 给 UI 暴露全球财报日历和业绩调度入口 |
+| `earnings_refresh_process_service.py` | 封装业绩自动刷新子进程参数、输出协议、deadline 与取消检查 |
 | `ui_fund_holdings_service.py` / `ui_watchlist_service.py` / `ui_navigation_service.py` | 给 UI 暴露基金持仓、关注池和外部终端跳转入口 |
-| `ui_runtime_service.py` | 迁移期兼容门面，只转发上述窄服务；新 UI 代码不再从这里导入 |
+| `ui_runtime_service.py` | 已弃用兼容门面，只转发上述窄服务；新 UI 和脚本不得新增导入 |
 
-`ui_runtime_service.py` 已从 UI 主调用面退到兼容门面。新 UI 代码应按能力导入更窄的 `ui_*_service.py`，旧脚本或外部探针可以继续通过该门面过渡。
+`ui_runtime_service.py` 已通过 `__deprecated__` 和 `DeprecationWarning` 明确弃用。新调用应按能力导入更窄的 `ui_*_service.py`；仅尚未迁移的外部调用可以临时使用该门面，兼容期内不再扩展导出。
 
 ## 5. 主工作区与 Tab 装配
 
-当前唯一工作区是 `ClassicWorkspace`，代码位置为 `ui/workspaces/classic_workspace.py`。它通过 `_tab_specs` 装配 12 个主 Tab：
+当前唯一工作区是 `ClassicWorkspace`，代码位置为 `ui/workspaces/classic_workspace.py`。它通过 `_tab_specs` 装配 11 个主 Tab：
 
 | key | 页面 | 模块 | 分组 |
 | --- | --- | --- | --- |
@@ -99,10 +100,9 @@ vcp_hunter_qt.pyw
 
 当前工作区的启动策略是：
 
-- 首屏只真实加载 `watchlist`。
-- 其他 Tab 先挂载 `LazyTabPlaceholder`。
+- 所有 Tab 首先挂载 `LazyTabPlaceholder`，启动阶段不创建真实业务 Tab。
 - 用户切换到某个 Tab 时通过 `ensure_tab_loaded()` 按需加载。
-- 后台通过 `BACKGROUND_PREWARM_DELAY_MS` 和 `BACKGROUND_PREWARM_INTERVAL_MS` 分批预热未加载 Tab。
+- `BACKGROUND_PREWARM_KEYS` 当前为空，因此定时器只预热股票上下文快照，不创建真实 Tab；以后只有经过交互预算验证的 key 才能显式加入白名单。
 - 上次 Tab 恢复通过 `RESTORE_LAST_TAB_DELAY_MS` 延后执行，避免挤占首屏响应。
 
 跨 Tab 编排不直接访问具体 Tab 的私有字段，而是通过 `WorkspaceFacade` 和能力协议聚合：
@@ -150,6 +150,7 @@ QuoteUniverseService.collect_realtime_quote_codes()
 - `WarehouseManifest` 在 `data/vcp_hunter.db` 中维护 `market_data_manifest`，只记录 dataset、trade_date、schema_version、source、parquet_path、symbol_count、row_count、updated_at、data_status、error 等状态字段，不保存大规模行情明细。
 - `provider_ports.py` 给测试和服务层提供更窄的数据端口视图。
 - `vcp/data_provider.py` 是兼容入口，真实 provider 子服务已经迁入 `infra/market_data`。
+- 通用 SQLite `DataStore` 的真实实现位于 `infra/storage/data_store.py`；`core/data_store.py` 只保留历史导入别名。
 
 本地历史数据读取顺序为：
 
@@ -181,7 +182,7 @@ QuoteUniverseService.collect_realtime_quote_codes()
 - 龙虎榜提供最近上榜、净买、机构和外资信号。
 - VCP 扫描提供评分、RPS、距突破和触发日。
 
-这些信号由 `StockContextService` 汇总成 `StockSignal`，供关注池雷达、综合候选、个股详情和 K 线摘要使用。
+这些信号由 `StockContextService` 汇总成 `StockSignal`，供关注池雷达、综合候选、个股详情和 K 线摘要使用。AI 产业链与龙虎榜的纯规则分别位于 `domains/industry_chain/pool_service.py`、`domains/lhb/pool_service.py`，持久化分别由 `infra/storage/industry_chain_repository.py`、`infra/storage/lhb_pool_repository.py` 负责；龙虎榜 AkShare 调用由 `infra/market_data/lhb_provider.py` 承担，并经 `app.services.lhb_market_data_service` 暴露。大宗交易的 AkShare 子进程位于 `infra/market_data/foreign_block_provider.py`，分段、deadline 与字段兼容编排位于 `app.services.foreign_block_market_data_service`。UI 只保留任务生命周期和展示，不直接持有业务抓取进程。`core/ai_industry_chain_pool.py`、`core/lhb_pool_manager.py` 仅保留兼容别名。
 
 ## 8. K 线打开链路
 
@@ -293,6 +294,7 @@ runtime health 的 `market_data` 段会展示当前 active layer，例如 `memor
 - `data/vcp_hunter.db`：SQLite 数据，例如交易日、基金持仓、扫描缓存，以及 `market_data_manifest` 仓库 manifest
 - `data/logs/`：应用日志
 - `data/crash_report.log`：`faulthandler` 崩溃日志
+- `%LOCALAPPDATA%/ZijinYanxuan/Trade/`：账户成交导出（可用 `VCP_HUNTER_TRADE_RECORD_DIR` 覆盖）；UI 通过 `app.services.ui_trade_record_service` 查询，文件读写位于 `infra/storage/trade_record_repository.py`
 - `tmp/runtime_health_*`：运行时健康报告和稳定性采样
 - `tmp/perf_*`：性能探针输出
 
@@ -350,7 +352,7 @@ CI 当前不再引用已删除的 `ui/workspaces/watchlist_radar_service.py`。�
 
 但当前也确实需要第二阶段架构升级，重点不是换技术栈，而是收窄边界和拆分热点：
 
-- `app/services/ui_runtime_service.py` 已退为兼容门面；后续新增 UI 跨层依赖应继续落到更窄的 `ui_*_service.py`。
+- `app/services/ui_runtime_service.py` 是已弃用兼容门面；后续新增 UI 或脚本跨层依赖必须落到更窄的 `ui_*_service.py`。
 - `domains/global_earnings_calendar/service.py`、`ui/tabs/fund_holdings_tab.py`、`ui/kline_chart_payload.py`、`vcp/fetchers/asian_kline_fetcher.py`、`ui/tabs/asian_market_workers.py` 等大文件应继续按数据获取、转换、缓存、展示拆分；当前第一刀已先抽出财报日历模型、基金持仓过滤代理、K 线摘要转换和亚洲 K 线缓存写入。
 - UI 卡顿探针真实实现位于 `infra/diagnostics/ui_stall_probe.py`，UI 侧通过 `app/services/ui_diagnostics_service.py` 访问；`core/ui_stall_probe.py` 仅保留历史导入兼容门面，新代码不应继续从 `core` 引入该诊断能力。
 - `vcp/` 和 `core/` 仍有兼容入口。新增真实实现不应继续落入这些目录。

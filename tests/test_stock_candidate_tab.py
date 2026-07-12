@@ -762,21 +762,19 @@ def test_stock_candidate_refresh_exposes_service_lineage(monkeypatch):
     _run_candidate_refreshes_inline(monkeypatch)
 
     class _Provider:
-        _rt_eastmoney_cooldown_until = 0.0
-        _rt_eastmoney_last_error = ""
-
         @staticmethod
-        def get_quote_request_stats():
-            return {
-                "recent_triggered_network": False,
-                "recent_cache_hit_count": 1,
-                "recent_status": "runtime_cache_hit",
-                "recent_source_layers": ["runtime_cache"],
-            }
+        def read_provider_health():
+            from infra.market_data.provider_ports import ProviderHealthSnapshot
 
-        @staticmethod
-        def get_realtime_runtime_stats():
-            return {"cooldown_until": 0.0, "last_error": ""}
+            return ProviderHealthSnapshot(
+                request_stats={
+                    "recent_triggered_network": False,
+                    "recent_cache_hit_count": 1,
+                    "recent_status": "runtime_cache_hit",
+                    "recent_source_layers": ["runtime_cache"],
+                },
+                runtime_stats={"cooldown_until": 0.0, "last_error": ""},
+            )
 
     class _Workspace(QWidget):
         def collect_stock_context(self):

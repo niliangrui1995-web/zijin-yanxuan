@@ -7,7 +7,7 @@
 | 模块 | 主要路径 | 责任边界 | 稳定入口 |
 | --- | --- | --- | --- |
 | 应用启动 | `vcp_hunter_qt.pyw`、`ui/main_window_qt.py`、`app/bootstrap/` | 进程启动、主窗口外壳、工作区装配、全局快捷键、状态栏、启动页 | `MainWindowQT`、`ApplicationBootstrap` |
-| 运行时服务导出 | `app/services/` | 给 UI 提供稳定应用层 API，隔离 `domains`、`infra`、`vcp` 的真实实现；新 UI 调用优先使用按能力拆分的 `ui_*_service.py` | `app.services.ui_*`、`app.services.*`、兼容门面 `app.services.ui_runtime_service` |
+| 运行时服务导出 | `app/services/` | 给 UI 提供稳定应用层 API，隔离 `domains`、`infra`、`vcp` 的真实实现；新调用使用按能力拆分的 `ui_*_service.py` | `app.services.ui_*`、`app.services.*`；`app.services.ui_runtime_service` 仅为已弃用兼容门面 |
 | 应用诊断服务 | `app/services/runtime_health_service.py`、`app/services/tab_data_lineage_service.py`、`app/services/ui_diagnostics_service.py` | 给 UI 和稳定性脚本提供运行时健康、数据血缘、降级状态、UI 卡顿探针和导出入口 | `collect_runtime_health`、`export_runtime_health_report`、`TabDataLineageService`、`ui_stall_span` |
 | 工作区编排 | `ui/workspaces/` | Tab 注册、跨 Tab 导航、表格聚合、实时订阅代码集合、个股信号聚合 | `ClassicWorkspace`、`WorkspaceFacade` |
 | UI 组件 | `ui/components/`、`ui/shell/`、`ui/styles/` | 可复用控件、主窗口壳、主题、QSS、通知、命令面板 | 组件公开方法和信号 |
@@ -17,12 +17,21 @@
 | 行情快照 | `domains/quotes/`、`core/global_store.py` | quote payload 标准化、深合并、市值补齐、全局快照存储和广播 | `publish_rt_quotes`、`GlobalStore` |
 | 实时行情抓取 | `ui/workers/central_quotes_worker.py`、`infra/market_data/realtime_quote_provider.py` | 中央轮询、单飞行任务、失败冷却、provider 运行态保护 | `CentralQuotesService`、`RealtimeQuoteProvider` |
 | 本地行情数据 | `infra/market_data/`、`vcp/data_provider.py`、`vcp/polars_engine.py` | Parquet/SQLite-first 仓库、SQLite manifest、通达信历史数据生产/fallback、复权、名称映射、运行时缓存 | `TdxDataProvider`、`MarketDataWarehouse`、`WarehouseManifest` |
+| 通用本地存储 | `infra/storage/data_store.py` | SQLite `kv_store` 的读写、连接和事务边界；`core/data_store.py` 仅兼容导出 | `DataStore` |
+| JSON 缓存 | `infra/storage/json_cache_repository.py`、`app/services/ui_json_cache_service.py` | UTF-8 读取、结构错误、原子写和文件元数据；`core/json_cache.py` 仅兼容别名 | `load_json_file`、`save_json_file` |
+| 账户成交记录 | `infra/storage/trade_record_repository.py`、`app/services/ui_trade_record_service.py` | 用户目录解析、旧路径无损迁移、CSV 读取与证券匹配；UI 不直接持有文件 I/O | `load_trade_records_for_security` |
 | VCP/RPS 扫描 | `domains/scan/`、`app/services/scan_engine_facade.py` | 指标计算、RPS、VCP 条件、待突破池、实时突破判断 | `VCPEngine`、`IndicatorService`、`BreakoutMonitorService` |
-| 业绩异动 | `domains/earnings/`、`ui/tabs/earnings_tab.py` | 业绩数据扫描、去重、调度和页面展示 | `EarningsScheduler`、`EarningsTab` |
+| AI 产业链池 | `domains/industry_chain/`、`infra/storage/industry_chain_repository.py`、`app/services/ui_industry_chain_service.py` | domain 只保留规范化/过滤/上下文规则；XLSX、JSON、签名缓存与原子写归 infra；`core/ai_industry_chain_pool.py` 仅兼容导出 | `ui_industry_chain_service` |
+| 龙虎榜池 | `domains/lhb/`、`infra/storage/lhb_pool_repository.py`、`app/services/ui_lhb_pool_service.py` | domain 只保留滚动池纯策略；锁、差量合并、JSON 原子写和旧缓存迁移归 infra；`core/lhb_pool_manager.py` 仅兼容导出 | `LhbPoolManager`、`ui_lhb_pool_service` |
+| 龙虎榜市场数据 | `infra/market_data/lhb_provider.py`、`app/services/lhb_market_data_service.py` | AkShare 端点调用、机构/外资席位聚合与协作取消归 infra；UI 和自动刷新只依赖 app 窄入口 | `fetch_lhb_pool_for_date`、`probe_lhb_detail_count_for_date` |
+| 业绩异动 | `domains/earnings/`、`app/services/ui_earnings_service.py`、`app/services/earnings_refresh_process_service.py`、`ui/tabs/earnings_tab.py` | 业绩数据扫描、去重、owner 级取消/截止时间和页面展示；自动刷新子进程协议归 app；deprecated `domains.earnings.scheduler.EarningsScheduler` 仅别名到 `EarningsRefreshService` | `EarningsRefreshService`、`run_earnings_refresh`、`EarningsTab` |
 | 基金持仓 | `domains/fund_holdings/`、`ui/tabs/fund_holdings_tab.py` | 基金/QFII 持仓同步、存储、对比、信号输出 | `fund_holdings_store`、`fund_holdings_sync_service` |
+| 大宗交易缓存 | `infra/storage/foreign_block_repository.py`、`app/services/foreign_block_cache_service.py` | 大宗交易快照路径、schema 校验、原子读写和 UI 视图过滤 | `load_foreign_block_cache`、`save_foreign_block_cache` |
+| 大宗交易市场数据 | `infra/market_data/foreign_block_provider.py`、`app/services/foreign_block_market_data_service.py` | AkShare 子进程归 infra；分段、deadline、重试、字段兼容和外资席位过滤归 app；UI 只保留 lifecycle 与展示 | `fetch_foreign_block_payload`、`fetch_foreign_block_records` |
+| 北美战报 | `domains/na_daily/`、`infra/storage/na_daily_repository.py`、`app/services/na_daily_service.py` | 纯内容解析、兄弟项目产物读取、缓存及刷新事件编排；`ui/services/na_daily_service.py` 仅兼容别名 | `NADailyRefreshService` |
 | 关注池 | `domains/watchlist/`、`ui/tabs/watchlist_tab.py` | 自选池状态、来源标签、关注池雷达展示 | `watchlist_vm`、`WatchlistTab` |
 | 市场日历 | `domains/market_calendar/` | 交易日、交易时段、报价刷新窗口、多市场时间判断 | `MarketCalendar` |
-| 后台任务 | `infra/tasks/`、`core/background_job_runner.py` | Typed task registry、后台执行、子进程封装、任务取消与错误表示 | `task_registry`、`background_job_runner` |
+| 后台任务 | `infra/tasks/`、`app/services/ui_task_lifecycle_service.py`、`core/background_job_runner.py` | Typed task registry、后台执行、子进程封装、协作取消、截止时间和 owner 级有界关闭 | `task_registry`、`TaskLifecycleGroup`、`background_job_runner` |
 | 服务开关 | `infra/features/` | 可选运行能力的稳定开关、环境变量覆盖和启动编排门控 | `service_toggle_registry` |
 | 运行诊断 | `infra/diagnostics/`、`ui/components/runtime_health_dialog.py`、`scripts/runtime_health_stability_suite.py` | Runtime health 采集、WebEngine/进程/Timer/事件订阅观测、UI 卡顿探针、长稳采样和预算报告 | `collect_runtime_health`、`UiStallProbe`、`RuntimeHealthDialog`、`perf_budget_check.py` |
 | 配置持久化 | `infra/settings/`、`core/app_config.py` | QSettings、表格状态、窗口状态、配置 schema | `app_config`、`TableViewStateStore` |
@@ -32,7 +41,7 @@
 
 ## 变更落点规则
 
-- UI 新交互优先落在 `ui/tabs/`、`ui/components/` 或 `ui/workspaces/`，跨层依赖通过按能力拆分的 `app.services.ui_*` 或其他明确 `app.services.*` 入口暴露，不再新增 `ui_runtime_service.py` 依赖。
+- UI 新交互优先落在 `ui/tabs/`、`ui/components/` 或 `ui/workspaces/`，跨层依赖通过按能力拆分的 `app.services.ui_*` 或其他明确 `app.services.*` 入口暴露；已弃用的 `ui_runtime_service.py` 不再接受新依赖或新导出。
 - UI 需要诊断能力时通过 `app/services/ui_diagnostics_service.py` 访问；真实采集实现落在 `infra/diagnostics/`，不要让 UI 直接 import `infra`。
 - 新领域规则优先落在 `domains/`，不要塞进主窗口或 Tab 私有方法。
 - 新外部数据源、文件读写、进程调用优先落在 `infra/`。

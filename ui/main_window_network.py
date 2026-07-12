@@ -1,3 +1,4 @@
+from app.services.ui_task_lifecycle_service import task_lifecycle_for
 from app.services.ui_task_service import (
     NETWORK_FORCE_RECONNECT,
     NETWORK_GO_ONLINE,
@@ -27,26 +28,29 @@ def _set_status_tone(main_window, tone: str):
 
 
 def toggle_network(main_window):
-    if main_window.data_provider._offline:
+    if not main_window.data_provider.is_online():
 
-        def _go_online():
-            try:
-                main_window.data_provider.set_online_mode(True)
-                main_window._call_in_ui(lambda: main_window._update_network_ui(True))
-            except (
-                ConnectionError,
-                OSError,
-                RuntimeError,
-                TimeoutError,
-                TypeError,
-                ValueError,
-            ) as exc:
-                log.error(f"[网络] 切换联网失败: {exc}")
-                main_window._call_in_ui(lambda: main_window._update_network_ui(False))
+        def _go_online(_cancellation_token):
+            main_window.data_provider.set_online_mode(True)
+            return True
+
+        def _on_error(error_message: str):
+            log.error(f"[网络] 切换联网失败: {error_message}")
+            main_window._call_in_ui(lambda: main_window._update_network_ui(False))
 
         from app.services.ui_task_service import background_job_runner as task_manager
 
-        task_manager.run_in_background(_go_online, task_id=NETWORK_GO_ONLINE)
+        task_lifecycle_for(main_window, runner=task_manager).run_background(
+            "network_mode",
+            _go_online,
+            task_id=NETWORK_GO_ONLINE,
+            timeout_sec=30.0,
+            on_success=lambda online: main_window._call_in_ui(
+                lambda: main_window._update_network_ui(bool(online))
+            ),
+            on_error=_on_error,
+            runner=task_manager,
+        )
         return
 
     main_window.data_provider.set_online_mode(False)
@@ -73,7 +77,7 @@ def force_reconnect(main_window):
     if hasattr(main_window, "_status_bar_widget") and main_window._status_bar_widget:
         main_window._status_bar_widget.set_status_tone("busy")
 
-    def _reconnect_task():
+    def _reconnect_task(_cancellation_token):
         try:
             main_window.data_provider.force_reconnect_servers()
             return main_window.data_provider.test_network(timeout=2)
@@ -100,8 +104,11 @@ def force_reconnect(main_window):
 
     from app.services.ui_task_service import background_job_runner as task_manager
 
-    task_manager.run_in_background(
+    task_lifecycle_for(main_window, runner=task_manager).run_background(
+        "force_reconnect",
         _reconnect_task,
         on_success=lambda res: main_window._call_in_ui(lambda: _on_done(res)),
         task_id=NETWORK_FORCE_RECONNECT,
+        timeout_sec=15.0,
+        runner=task_manager,
     )

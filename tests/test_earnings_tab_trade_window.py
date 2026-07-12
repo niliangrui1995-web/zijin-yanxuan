@@ -397,7 +397,7 @@ def test_earnings_local_snapshot_fills_market_fields_and_pe_without_realtime(mon
         def __init__(self):
             self.offline_calls = []
 
-        def _build_offline_quotes(self, codes):
+        def build_offline_quotes(self, codes):
             self.offline_calls.append(list(codes))
             return {"000001": {"close": 10.5, "last_close": 10.0}}
 

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import time
+from typing import Any
 
 from core.logger import get_logger
 from core.observability import emit_structured_log, record_metric
@@ -13,26 +14,27 @@ log = get_logger(__name__)
 
 
 class ApplicationBootstrap:
-    def __init__(self, main_window):
+    def __init__(self, main_window: Any) -> None:
         self._window = main_window
 
-    def _call_host(self, method_name: str, *args, **kwargs):
+    def _call_host(self, method_name: str, *args, **kwargs) -> Any:
         callback = getattr(self._window, method_name, None)
         if not callable(callback):
             raise AttributeError(f"Main window is missing required bootstrap hook: {method_name}")
         return callback(*args, **kwargs)
 
-    def workspace_tables(self):
+    def workspace_tables(self) -> list[Any]:
         iter_workspace_tables = getattr(self._window, "iter_workspace_tables", None)
         if callable(iter_workspace_tables):
             return list(iter_workspace_tables() or [])
-        workspace = getattr(self._window, "_workspace", None)
+        current_workspace = getattr(self._window, "current_workspace", None)
+        workspace = current_workspace() if callable(current_workspace) else None
         if workspace is None:
             return []
         iter_tables = getattr(workspace, "iter_tables", None)
         return list(iter_tables() or []) if callable(iter_tables) else []
 
-    def mount_workspace(self):
+    def mount_workspace(self) -> Any:
         started_at = time.perf_counter()
         workspace = self._call_host(
             "create_workspace",
@@ -56,13 +58,15 @@ class ApplicationBootstrap:
         )
         return workspace
 
-    def install_central_quotes(self):
+    def install_central_quotes(self) -> Any:
         if not service_toggle_registry.is_enabled("central_quotes_service"):
             log.info("[UI] central_quotes_service disabled by toggle")
             self._window.central_quotes_svc = None
             return None
 
-        code_supplier = getattr(getattr(self._window, "_workspace", None), "get_realtime_quote_codes", None)
+        code_supplier = getattr(self._window, "get_realtime_quote_codes", None)
+        if not callable(code_supplier):
+            code_supplier = None
         self._window.central_quotes_svc = self._call_host(
             "create_central_quotes_service",
             code_supplier=code_supplier,

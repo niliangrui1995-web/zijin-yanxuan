@@ -26,7 +26,7 @@ from core.runtime_paths import (
     PEAKS_FROM_GROUPS,
 )
 from domains.scan.indicator_service import IndicatorService
-from vcp.models import VCPParams
+from domains.scan.models import VCPParams
 
 _log = get_logger(__name__)
 

@@ -1,8 +1,8 @@
 from PyQt6.QtCore import Qt
 
 from core.lhb_pool_manager import LhbPoolManager
+from infra.market_data.lhb_provider import _build_foreign_display
 from ui.models.table_models import StockTableModel
-from ui.workers.lhb_worker import _build_foreign_display
 
 
 def test_build_foreign_display_lists_all_seats_and_tooltip():

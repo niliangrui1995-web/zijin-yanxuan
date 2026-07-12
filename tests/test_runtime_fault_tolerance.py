@@ -7,6 +7,7 @@ from app.services.tab_data_lineage_service import TabDataLineageService
 from domains.runtime import fault_tolerance as fault_tolerance_module
 from domains.runtime.fault_tolerance import provider_fault_tolerance
 from infra.diagnostics.runtime_health import _quote_snapshot
+from infra.market_data.provider_ports import ProviderHealthSnapshot
 
 NOW = 1_800_000_000.0
 
@@ -112,10 +113,12 @@ def test_fault_tolerance_status_is_consistent_across_consumers(monkeypatch):
     )
 
     runtime_provider = SimpleNamespace(
-        get_quote_request_stats=lambda: status["request_stats"],
-        get_realtime_runtime_stats=lambda: status["runtime_stats"],
-        _rt_eastmoney_cooldown_until=status["eastmoney_cooldown_until"],
-        _rt_eastmoney_last_error=status["eastmoney_last_error"],
+        read_provider_health=lambda: ProviderHealthSnapshot(
+            request_stats=status["request_stats"],
+            runtime_stats=status["runtime_stats"],
+            eastmoney_cooldown_until=status["eastmoney_cooldown_until"],
+            eastmoney_last_error=status["eastmoney_last_error"],
+        )
     )
     runtime_quotes = _quote_snapshot(SimpleNamespace(data_provider=runtime_provider, central_quotes_svc=None))
 

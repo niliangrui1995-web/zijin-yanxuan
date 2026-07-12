@@ -47,6 +47,7 @@ def sync_asian_kline_cache(
     period: str = "1y",
     output_dir: str | None = None,
     time_budget_sec: float | int | None = None,
+    cancellation_token=None,
 ):
     return asian_fetcher_module.sync_asian_kline_cache(
         market_filter=market_filter,
@@ -55,6 +56,7 @@ def sync_asian_kline_cache(
         period=period,
         output_dir=output_dir,
         time_budget_sec=time_budget_sec,
+        cancellation_token=cancellation_token,
     )
 
 

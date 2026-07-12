@@ -2,14 +2,22 @@
 from __future__ import annotations
 
 import datetime as dt
-import json
-import os
 import re
 import time
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from app.services.runtime_constants import CACHE_DIR
+from app.services.asian_market_cache_service import (
+    ASIAN_KLINE_CACHE as JSON_CACHE,
+)
+from app.services.asian_market_cache_service import (
+    ASIAN_REALTIME_CACHE as RT_JSON_CACHE,
+)
+from app.services.asian_market_cache_service import (
+    cache_mtime,
+    load_latest_trade_dates,
+    write_json_cache,
+)
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_market_calendar_service import MarketCalendar
 from core.logger import get_logger
@@ -17,8 +25,6 @@ from ui.components.thread_shutdown import request_thread_shutdown
 
 log = get_logger(__name__)
 _DEFERRED_REPAINT_COUNT_RE = re.compile(r"cached\s+(\d+)\s+updates", re.IGNORECASE)
-JSON_CACHE = os.path.join(CACHE_DIR, "asian_klines_latest.json")
-RT_JSON_CACHE = os.path.join(CACHE_DIR, "asian_rt_latest.json")
 
 
 def filter_asian_tickers(market_filter: str | None = None) -> dict[str, str]:
@@ -345,52 +351,13 @@ class AsianMarketRuntimeService(QObject):
                     "source": value.get("source", ""),
                     "quote_quality": value.get("quote_quality", ""),
                 }
-            cache_dir = os.path.dirname(RT_JSON_CACHE)
-            if cache_dir:
-                os.makedirs(cache_dir, exist_ok=True)
-            with open(RT_JSON_CACHE, "w", encoding="utf-8") as file_obj:
-                json.dump(cache_friendly, file_obj, ensure_ascii=False)
+            write_json_cache(RT_JSON_CACHE, cache_friendly)
         except (PermissionError, OSError, TypeError, ValueError) as exc:
             log.error(f"[亚洲市场] 持久化 RT 缓存失败: {exc}")
 
     @staticmethod
     def _cache_latest_trade_dates() -> dict:
-        try:
-            if not os.path.exists(JSON_CACHE):
-                return {}
-            with open(JSON_CACHE, "r", encoding="utf-8") as file_obj:
-                raw = json.load(file_obj)
-
-            latest_dates = {}
-            for item in raw.get("stocks", []):
-                ticker = str(item.get("ticker", "") or "").strip().upper()
-                if "." not in ticker:
-                    continue
-                market = MarketCalendar.normalize_market(ticker.split(".")[-1])
-                klines = item.get("klines", [])
-                if not klines:
-                    continue
-                last_date_raw = str(klines[-1].get("date", "")).strip()
-                if not last_date_raw:
-                    continue
-                try:
-                    last_date = dt.datetime.strptime(last_date_raw[:10], "%Y-%m-%d").date()
-                except (TypeError, ValueError):
-                    continue
-                if latest_dates.get(market) is None or last_date > latest_dates[market]:
-                    latest_dates[market] = last_date
-            return latest_dates
-        except (
-            FileNotFoundError,
-            PermissionError,
-            OSError,
-            TypeError,
-            ValueError,
-            KeyError,
-            json.JSONDecodeError,
-        ) as exc:
-            log.warning(f"[亚洲市场] 解析缓存最新交易日失败: {exc}")
-            return {}
+        return load_latest_trade_dates(JSON_CACHE)
 
     def _expected_latest_trade_dates(self) -> dict:
         from datetime import timedelta
@@ -434,7 +401,7 @@ class AsianMarketRuntimeService(QObject):
         while target_dt.weekday() >= 5:
             target_dt -= dt.timedelta(days=1)
 
-        mtime = os.path.getmtime(JSON_CACHE) if os.path.exists(JSON_CACHE) else 0
+        mtime = cache_mtime(JSON_CACHE)
         cache_dt = MarketCalendar.from_timestamp(mtime, "CN") if mtime else dt.datetime.min
         cache_latest = self._cache_latest_trade_dates()
         expected_latest = self._expected_latest_trade_dates()
