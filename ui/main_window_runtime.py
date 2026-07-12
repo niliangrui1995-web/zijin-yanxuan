@@ -5,6 +5,7 @@ import time
 
 from PyQt6.QtCore import QThread, QTimer
 
+from app.services.ui_market_calendar_service import shutdown_market_calendar_tasks
 from app.services.ui_task_lifecycle_service import task_lifecycle_for
 from app.services.ui_task_service import WINDOW_F5_PRECOMPUTE
 from core.global_store import global_store
@@ -280,8 +281,6 @@ def shutdown_main_window(main_window, *, event_bus, task_manager):
     lifecycle = getattr(main_window, "_task_lifecycle", None)
     if lifecycle is not None:
         _run("停止窗口后台任务", lambda: lifecycle.shutdown(timeout_ms=1_500))
-
-    from app.services.ui_market_calendar_service import shutdown_market_calendar_tasks
 
     _run("停止交易日历后台任务", lambda: shutdown_market_calendar_tasks(timeout_ms=750))
 
