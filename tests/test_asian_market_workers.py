@@ -130,6 +130,22 @@ def test_save_global_asian_rt_cache_delegates_serialization_to_cache_service(mon
     assert captured == [payload]
 
 
+def test_runtime_service_save_rt_cache_delegates_serialization_to_cache_service(monkeypatch):
+    payload = {"2330.TW": {"close": 2080.0, "pct": 1.25}}
+    captured = []
+    monkeypatch.setattr(workers, "GLOBAL_ASIAN_RT_CACHE", payload)
+    monkeypatch.setattr(runtime_service, "RT_JSON_CACHE", "rt-cache.json")
+    monkeypatch.setattr(
+        runtime_service,
+        "write_realtime_quote_cache",
+        lambda quotes, path: captured.append((quotes, path)),
+    )
+
+    runtime_service.AsianMarketRuntimeService._save_rt_cache()
+
+    assert captured == [(payload, "rt-cache.json")]
+
+
 def test_asian_display_modules_do_not_read_business_files_directly():
     forbidden_imports = {
         "ui/kline_window_asian.py": {"json", "os"},

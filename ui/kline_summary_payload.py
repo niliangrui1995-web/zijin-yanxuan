@@ -68,17 +68,6 @@ def _summary_compact_list(*values, default: str = "--", max_items: int = 2, sep:
     return text
 
 
-def _summary_active_labels(
-    payload: dict, mappings: list[tuple[str, tuple[str, ...]]], *, default: str = "--", max_items: int = 2
-) -> str:
-    labels = []
-    for label, keys in mappings:
-        value = _summary_pick(payload, *keys, default="")
-        if value:
-            labels.append(label)
-    return _summary_compact_list(*labels, default=default, max_items=max_items)
-
-
 def _summary_parse_float(value) -> float | None:
     if value in (None, "", [], {}):
         return None

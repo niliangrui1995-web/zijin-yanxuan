@@ -7,6 +7,7 @@ import urllib.request
 from contextlib import suppress
 
 from core.logger import get_logger
+from domains.quotes.snapshot import coerce_number
 from infra.http_safety import urlopen_https
 
 log = get_logger(__name__)
@@ -112,23 +113,11 @@ def to_sina_symbol(code: str) -> str:
 
 
 def to_tencent_symbol(code: str) -> str:
-    code = str(code).strip()
-    if code.startswith(("5", "6", "9")):
-        prefix = "sh"
-    elif code.startswith(("4", "8")):
-        prefix = "bj"
-    else:
-        prefix = "sz"
-    return f"{prefix}{code}"
+    return to_sina_symbol(code)
 
 
 def coerce_quote_number(value) -> float:
-    if value in (None, "", "-", "--"):
-        return 0.0
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return 0.0
+    return coerce_number(value)
 
 
 def request_eastmoney_quote_batch(provider, codes, inferred_trade_date: str):

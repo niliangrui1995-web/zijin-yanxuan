@@ -475,15 +475,7 @@ class LhbTab(BaseStockTab):
 
     @staticmethod
     def _record_stock_code(record: dict) -> str:
-        if not isinstance(record, dict):
-            return ""
-        return normalize_ai_chain_code(
-            record.get("代码")
-            or record.get("股票代码")
-            or record.get("证券代码")
-            or record.get("stock_code")
-            or record.get("code")
-        )
+        return LhbPoolManager._record_stock_code(record)
 
     @classmethod
     def _context_text_for_code(cls, stock_code: str, context_map: dict[str, str] | None) -> str:

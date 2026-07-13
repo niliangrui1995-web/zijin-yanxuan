@@ -242,14 +242,6 @@ def build_foreign_block_cache_rows(records: list[dict], *, cancellation_token=No
     return filter_foreign_block_rows_to_ai_chain(rows)
 
 
-def _raise_block_trade_timeout(stage: str, detail: str = "") -> None:
-    extra = f"（{detail}）" if detail else ""
-    raise UserFacingTaskError(
-        BLOCK_TRADE_TIMEOUT_USER_MESSAGE,
-        f"大宗交易抓取超时：{stage}{extra}，{BLOCK_TRADE_TOTAL_TIMEOUT}秒内未完成全部请求。",
-    )
-
-
 def _deadline(cancellation_token=None) -> float:
     deadline = time.monotonic() + BLOCK_TRADE_TOTAL_TIMEOUT
     if cancellation_token is None:

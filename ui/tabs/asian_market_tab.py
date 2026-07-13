@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLa
 from app.services.asian_market_cache_service import (
     load_latest_trade_dates,
     read_mapping_cache,
-    write_json_cache,
+    write_realtime_quote_cache,
 )
 from app.services.asian_market_service import filter_asian_tickers, find_asian_track
 from app.services.ui_event_service import domain_events as event_bus
@@ -1152,28 +1152,7 @@ class AsianMarketTab(BaseStockTab):
 
     def _save_rt_cache(self):
         try:
-            cache_friendly = {}
-            for k, v in GLOBAL_ASIAN_RT_CACHE.items():
-                cache_friendly[k] = {
-                    "date": v.get("date", ""),
-                    "close": v.get("close", 0.0),
-                    "open": v.get("open", 0.0),
-                    "high": v.get("high", 0.0),
-                    "low": v.get("low", 0.0),
-                    "volume": v.get("volume", 0.0),
-                    "previous_close": v.get("previous_close", 0.0),
-                    "pct": _round_pct(v.get("pct", 0.0)),
-                    "pe": v.get("pe"),
-                    "pe_source": v.get("pe_source", ""),
-                    "pe_updated_at": v.get("pe_updated_at", 0.0),
-                    "pct_5": _round_pct(v.get("pct_5", 0.0)),
-                    "pct_10": _round_pct(v.get("pct_10", 0.0)),
-                    "pct_20": _round_pct(v.get("pct_20", 0.0)),
-                    "currency": v.get("currency", ""),
-                    "source": v.get("source", ""),
-                    "quote_quality": v.get("quote_quality", ""),
-                }
-            write_json_cache(RT_JSON_CACHE, cache_friendly)
+            write_realtime_quote_cache(GLOBAL_ASIAN_RT_CACHE, RT_JSON_CACHE)
         except (PermissionError, OSError, TypeError, ValueError) as e:
             log.error(f"[亚洲页] 持久化 RT 缓存失败: {e}")
 

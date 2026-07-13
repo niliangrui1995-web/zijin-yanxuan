@@ -7,7 +7,7 @@ import datetime
 import json
 import os
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from typing import Any
 
 from PyQt6.QtCore import QTimer
@@ -16,6 +16,7 @@ from core.background_job_runner import background_job_runner
 from core.logger import get_logger
 from core.observability import emit_structured_log, record_metric
 from core.process_watchdog import log_process_snapshot
+from domains.quotes.tdx_name_map import normalize_code_name_targets as _normalize_a_share_codes
 from domains.runtime import domain_events as event_bus
 from infra.features import service_toggle_registry
 from infra.tasks import (
@@ -176,15 +177,6 @@ def _mark_global_earnings_calendar_refresh_degraded(error: object, *, reason: st
     if isinstance(providers, (list, tuple, set)):
         result["providers"] = [str(provider or "").strip() for provider in providers if str(provider or "").strip()]
     return result
-
-
-def _normalize_a_share_codes(codes: Iterable[object] | None) -> list[str]:
-    normalized: list[str] = []
-    for raw_code in codes or []:
-        code = str(raw_code or "").strip()
-        if len(code) == 6 and code.isdigit():
-            normalized.append(code)
-    return list(dict.fromkeys(normalized))
 
 
 def ms_until_next_global_earnings_calendar_daily_refresh(now: datetime.datetime | None = None) -> int:

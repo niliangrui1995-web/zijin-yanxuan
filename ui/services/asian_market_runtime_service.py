@@ -16,7 +16,7 @@ from app.services.asian_market_cache_service import (
 from app.services.asian_market_cache_service import (
     cache_mtime,
     load_latest_trade_dates,
-    write_json_cache,
+    write_realtime_quote_cache,
 )
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_market_calendar_service import MarketCalendar
@@ -51,17 +51,6 @@ def _create_asian_market_worker(codes):
 
 def is_asian_quote_refresh_time(codes) -> bool:
     return bool(_asian_market_workers_module().is_asian_quote_refresh_time(codes))
-
-
-def _safe_float(value) -> float:
-    try:
-        return float(str(value).replace("%", ""))
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _round_pct(value) -> float:
-    return round(_safe_float(value), 2)
 
 
 def _runtime_degraded_progress_message(message: str) -> str:
@@ -330,28 +319,7 @@ class AsianMarketRuntimeService(QObject):
     @staticmethod
     def _save_rt_cache() -> None:
         try:
-            cache_friendly = {}
-            for key, value in _asian_market_workers_module().GLOBAL_ASIAN_RT_CACHE.items():
-                cache_friendly[key] = {
-                    "date": value.get("date", ""),
-                    "close": value.get("close", 0.0),
-                    "open": value.get("open", 0.0),
-                    "high": value.get("high", 0.0),
-                    "low": value.get("low", 0.0),
-                    "volume": value.get("volume", 0.0),
-                    "previous_close": value.get("previous_close", 0.0),
-                    "pct": _round_pct(value.get("pct", 0.0)),
-                    "pe": value.get("pe"),
-                    "pe_source": value.get("pe_source", ""),
-                    "pe_updated_at": value.get("pe_updated_at", 0.0),
-                    "pct_5": _round_pct(value.get("pct_5", 0.0)),
-                    "pct_10": _round_pct(value.get("pct_10", 0.0)),
-                    "pct_20": _round_pct(value.get("pct_20", 0.0)),
-                    "currency": value.get("currency", ""),
-                    "source": value.get("source", ""),
-                    "quote_quality": value.get("quote_quality", ""),
-                }
-            write_json_cache(RT_JSON_CACHE, cache_friendly)
+            write_realtime_quote_cache(_asian_market_workers_module().GLOBAL_ASIAN_RT_CACHE, RT_JSON_CACHE)
         except (PermissionError, OSError, TypeError, ValueError) as exc:
             log.error(f"[亚洲市场] 持久化 RT 缓存失败: {exc}")
 

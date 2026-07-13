@@ -13,6 +13,7 @@ from datetime import datetime
 from core.exceptions import CacheIOError, DataFormatError
 from core.json_cache import load_json_file, remove_cache_file, save_json_file
 from core.logger import get_logger
+from domains.quotes.snapshot import coerce_number as _coerce_number
 from infra.http_safety import urlopen_https
 from vcp.constants import (
     FINANCE_CACHE_FILE,
@@ -24,15 +25,6 @@ from vcp.data_provider_local import load_local_tdx_capital_snapshot
 from vcp.utils import _load_tdx_local_config
 
 _log = get_logger(__name__)
-
-
-def _coerce_number(value) -> float:
-    if value in (None, "", "-", "--"):
-        return 0.0
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return 0.0
 
 
 def _to_eastmoney_secid(code: str) -> str:

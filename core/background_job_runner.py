@@ -19,14 +19,8 @@ class BackgroundJobRunner:
         return self._manager or _resolve_default_manager()
 
     def run(self, task_id: TaskKeyLike, fn, *args, on_success=None, on_error=None, **kwargs) -> str:
-        normalized_task_id = task_id_of(task_id)
-        return self._resolve_manager().run_in_background(
-            fn,
-            *args,
-            on_success=on_success,
-            on_error=on_error,
-            task_id=normalized_task_id,
-            **kwargs,
+        return BackgroundJobRunner.run_in_background(
+            self, fn, *args, on_success=on_success, on_error=on_error, task_id=task_id, **kwargs
         )
 
     def run_in_background(

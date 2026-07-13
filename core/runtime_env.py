@@ -234,10 +234,6 @@ def append_bootstrap_event(
         return ""
 
 
-def _append_bootstrap_log(project_root: str, message: str) -> None:
-    append_bootstrap_event(project_root, message)
-
-
 def relaunch_into_project_venv_if_needed(
     project_root: str,
     *,
