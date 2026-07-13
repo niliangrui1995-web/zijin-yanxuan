@@ -18,13 +18,9 @@ from core.runtime_paths import PROJECT_ROOT
 from domains.industry_chain.pool_service import normalize_ai_chain_code
 from domains.market_calendar import MarketCalendar
 from infra.http_safety import requests_get_https
+from infra.tasks.lifecycle import raise_if_cancelled as _raise_if_cancelled
 
 logger = get_logger()
-
-
-def _raise_if_cancelled(cancellation_token=None) -> None:
-    if cancellation_token is not None:
-        cancellation_token.raise_if_cancelled()
 
 
 class _LazyModule:
@@ -145,6 +141,10 @@ class _SingleQuarterMetrics:
     last_single_basis: str
 
 
+type _ProfitGetter = Callable[[str, str], tuple[float, bool]]
+type _SingleQuarterMetricResult = tuple[_SingleQuarterMetrics | None, str | None]
+
+
 class EarningsUpstreamDegraded(RuntimeError):
     def __init__(self, func_cn: str, param_str: str, elapsed_sec: float, original_error: Exception):
         self.func_cn = str(func_cn or "").strip()
@@ -230,69 +230,56 @@ def _basis_from_quick_flags(*quick_flags: bool) -> str:
     return "快报净利润回填" if any(quick_flags) else "财报"
 
 
-def _q4_single_quarter_metrics(
-    year: int,
+def _cumulative_single_quarter_metrics(
     target_est_cum_profit: float,
-    get_cum_profit_with_quick: Callable[[str, str], tuple[float, bool]],
-) -> tuple[_SingleQuarterMetrics | None, str | None]:
-    q3_date, q2_date = f"{year}-09-30", f"{year}-06-30"
-    last_q4_date, last_q3_date = f"{year - 1}-12-31", f"{year - 1}-09-30"
-    q3_cum, q3_quick = get_cum_profit_with_quick(q3_date, "本期累计基数")
-    q2_cum, q2_quick = get_cum_profit_with_quick(q2_date, "上一季基数")
-    if pd.isna(q3_cum) or pd.isna(q2_cum):
+    current_dates: tuple[str, str],
+    yoy_dates: tuple[str, str],
+    get_cum_profit_with_quick: _ProfitGetter,
+) -> _SingleQuarterMetricResult:
+    current_cum, current_quick = get_cum_profit_with_quick(current_dates[0], "本期累计基数")
+    previous_cum, previous_quick = get_cum_profit_with_quick(current_dates[1], "上一季基数")
+    if pd.isna(current_cum) or pd.isna(previous_cum):
         return None, "缺记录"
 
-    yoy_base_single = np.nan
-    ly_q4_cum, _ = get_cum_profit_with_quick(last_q4_date, "去年同期基数")
-    ly_q3_cum, _ = get_cum_profit_with_quick(last_q3_date, "去年同期基数")
-    if pd.notna(ly_q4_cum) and pd.notna(ly_q3_cum):
-        yoy_base_single = ly_q4_cum - ly_q3_cum
+    yoy_current_cum, _ = get_cum_profit_with_quick(yoy_dates[0], "去年同期基数")
+    yoy_previous_cum, _ = get_cum_profit_with_quick(yoy_dates[1], "去年同期基数")
+    yoy_base_single = (
+        yoy_current_cum - yoy_previous_cum if pd.notna(yoy_current_cum) and pd.notna(yoy_previous_cum) else np.nan
+    )
 
-    return (
-        _SingleQuarterMetrics(
-            current_single=target_est_cum_profit - q3_cum,
-            last_single=q3_cum - q2_cum,
-            yoy_base_single=yoy_base_single,
-            last_single_basis=_basis_from_quick_flags(q3_quick, q2_quick),
-        ),
-        None,
+    return _SingleQuarterMetrics(
+        current_single=target_est_cum_profit - current_cum,
+        last_single=current_cum - previous_cum,
+        yoy_base_single=yoy_base_single,
+        last_single_basis=_basis_from_quick_flags(current_quick, previous_quick),
+    ), None
+
+
+def _q4_single_quarter_metrics(
+    year: int, target_est_cum_profit: float, get_cum_profit_with_quick: _ProfitGetter
+) -> _SingleQuarterMetricResult:
+    return _cumulative_single_quarter_metrics(
+        target_est_cum_profit,
+        (f"{year}-09-30", f"{year}-06-30"),
+        (f"{year - 1}-12-31", f"{year - 1}-09-30"),
+        get_cum_profit_with_quick,
     )
 
 
 def _q3_single_quarter_metrics(
-    year: int,
-    target_est_cum_profit: float,
-    get_cum_profit_with_quick: Callable[[str, str], tuple[float, bool]],
-) -> tuple[_SingleQuarterMetrics | None, str | None]:
-    q2_date, q1_date = f"{year}-06-30", f"{year}-03-31"
-    last_q3_date, last_q2_date = f"{year - 1}-09-30", f"{year - 1}-06-30"
-    q2_cum, q2_quick = get_cum_profit_with_quick(q2_date, "本期累计基数")
-    q1_cum, q1_quick = get_cum_profit_with_quick(q1_date, "上一季基数")
-    if pd.isna(q2_cum) or pd.isna(q1_cum):
-        return None, "缺记录"
-
-    yoy_base_single = np.nan
-    ly_q3_cum, _ = get_cum_profit_with_quick(last_q3_date, "去年同期基数")
-    ly_q2_cum, _ = get_cum_profit_with_quick(last_q2_date, "去年同期基数")
-    if pd.notna(ly_q3_cum) and pd.notna(ly_q2_cum):
-        yoy_base_single = ly_q3_cum - ly_q2_cum
-
-    return (
-        _SingleQuarterMetrics(
-            current_single=target_est_cum_profit - q2_cum,
-            last_single=q2_cum - q1_cum,
-            yoy_base_single=yoy_base_single,
-            last_single_basis=_basis_from_quick_flags(q2_quick, q1_quick),
-        ),
-        None,
+    year: int, target_est_cum_profit: float, get_cum_profit_with_quick: _ProfitGetter
+) -> _SingleQuarterMetricResult:
+    return _cumulative_single_quarter_metrics(
+        target_est_cum_profit,
+        (f"{year}-06-30", f"{year}-03-31"),
+        (f"{year - 1}-09-30", f"{year - 1}-06-30"),
+        get_cum_profit_with_quick,
     )
 
 
 def _q2_single_quarter_metrics(
-    year: int,
-    target_est_cum_profit: float,
-    get_cum_profit_with_quick: Callable[[str, str], tuple[float, bool]],
-) -> tuple[_SingleQuarterMetrics | None, str | None]:
+    year: int, target_est_cum_profit: float, get_cum_profit_with_quick: _ProfitGetter
+) -> _SingleQuarterMetricResult:
     q1_date = f"{year}-03-31"
     last_q2_date, last_q1_date = f"{year - 1}-06-30", f"{year - 1}-03-31"
     q1_cum, q1_quick = get_cum_profit_with_quick(q1_date, "上一季基数")
@@ -305,22 +292,17 @@ def _q2_single_quarter_metrics(
     if pd.notna(ly_q2_cum) and pd.notna(ly_q1_cum):
         yoy_base_single = ly_q2_cum - ly_q1_cum
 
-    return (
-        _SingleQuarterMetrics(
-            current_single=target_est_cum_profit - q1_cum,
-            last_single=q1_cum,
-            yoy_base_single=yoy_base_single,
-            last_single_basis=_basis_from_quick_flags(q1_quick),
-        ),
-        None,
-    )
+    return _SingleQuarterMetrics(
+        current_single=target_est_cum_profit - q1_cum,
+        last_single=q1_cum,
+        yoy_base_single=yoy_base_single,
+        last_single_basis=_basis_from_quick_flags(q1_quick),
+    ), None
 
 
 def _q1_single_quarter_metrics(
-    year: int,
-    target_est_cum_profit: float,
-    get_cum_profit_with_quick: Callable[[str, str], tuple[float, bool]],
-) -> tuple[_SingleQuarterMetrics | None, str | None]:
+    year: int, target_est_cum_profit: float, get_cum_profit_with_quick: _ProfitGetter
+) -> _SingleQuarterMetricResult:
     last_q4_date, last_q3_date = f"{year - 1}-12-31", f"{year - 1}-09-30"
     last_q1_date = f"{year - 1}-03-31"
     last_q4_cum, q4_quick = get_cum_profit_with_quick(last_q4_date, "上一季基数")
@@ -333,15 +315,12 @@ def _q1_single_quarter_metrics(
     if pd.notna(ly_q1_cum):
         yoy_base_single = ly_q1_cum
 
-    return (
-        _SingleQuarterMetrics(
-            current_single=target_est_cum_profit,
-            last_single=last_q4_cum - last_q3_cum,
-            yoy_base_single=yoy_base_single,
-            last_single_basis=_basis_from_quick_flags(q4_quick, q3_quick),
-        ),
-        None,
-    )
+    return _SingleQuarterMetrics(
+        current_single=target_est_cum_profit,
+        last_single=last_q4_cum - last_q3_cum,
+        yoy_base_single=yoy_base_single,
+        last_single_basis=_basis_from_quick_flags(q4_quick, q3_quick),
+    ), None
 
 
 _SINGLE_QUARTER_METRIC_RESOLVERS = {
@@ -356,7 +335,7 @@ def _compute_single_quarter_metrics(
     year: int,
     month: int,
     target_est_cum_profit: float,
-    get_cum_profit_with_quick: Callable[[str, str], tuple[float, bool]],
+    get_cum_profit_with_quick: _ProfitGetter,
 ) -> tuple[_SingleQuarterMetrics, str | None]:
     resolver = _SINGLE_QUARTER_METRIC_RESOLVERS.get(month)
     if resolver is None:
@@ -778,9 +757,7 @@ def _submit_candidate_futures(engine, executor, candidates, cancellation_token=N
 
 def _log_candidate_progress(cand, processed_count: int, total_pending: int) -> None:
     code = cand["股票代码"]
-    if total_pending >= 50 and processed_count % 20 == 0:
-        logger.info(f"[业绩引擎] 验证进度 {processed_count}/{total_pending}")
-    elif 10 < total_pending < 50 and processed_count % 10 == 0:
+    if (total_pending >= 50 and processed_count % 20 == 0) or (10 < total_pending < 50 and processed_count % 10 == 0):
         logger.info(f"[业绩引擎] 验证进度 {processed_count}/{total_pending}")
     elif 0 < total_pending <= 10:
         logger.info(f"[业绩引擎] 验证 {processed_count}/{total_pending}: {code} {cand.get('股票名称', '')}")

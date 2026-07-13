@@ -134,11 +134,10 @@ def batch_get_finance_info(codes):
             _log.debug(f"[财务股本] 缓存读取异常，将重建: {exc}")
             cache = {}
 
-    results = {}
     local_results = _load_local_tdx_finance_info(normalized_codes)
-    for code, info in (local_results or {}).items():
-        if _has_valid_share_capital(info):
-            results[code] = info
+    results = {
+        code: info for code, info in (local_results or {}).items() if _has_valid_share_capital(info)
+    }
 
     need_query = []
     now = datetime.now()
@@ -228,15 +227,9 @@ def batch_check_market_cap(codes: list[str], close_prices: dict[str, float] | No
 
 
 def is_institution(name, holder_type):
-    for kw in INSTITUTION_KEYWORDS:
-        if kw in (holder_type or ""):
-            return True
-
-    for kw in INSTITUTION_NAME_KEYWORDS:
-        if kw in (name or ""):
-            return True
-
-    return False
+    return any(kw in (holder_type or "") for kw in INSTITUTION_KEYWORDS) or any(
+        kw in (name or "") for kw in INSTITUTION_NAME_KEYWORDS
+    )
 
 
 def check_institutional_shareholders(code):

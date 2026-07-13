@@ -115,9 +115,9 @@ def render_stock_cell(ctx: _StockCellRenderContext):
             return
         if visual_kind == "money_bar":
             _draw_money_bar(ctx, ctx.visual_payload)
-        elif visual_kind == "risk_light" and _draw_indicator(ctx, ctx.visual_payload, center_only=True):
-            return
-        elif visual_kind == "status_light" and _draw_indicator(ctx, ctx.visual_payload, center_only=False):
+        elif visual_kind in {"risk_light", "status_light"} and _draw_indicator(
+            ctx, ctx.visual_payload, center_only=visual_kind == "risk_light"
+        ):
             return
         elif visual_kind == "currency_stamp":
             _draw_currency_stamp(ctx, ctx.visual_payload)

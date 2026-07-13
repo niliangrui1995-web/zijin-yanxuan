@@ -9,6 +9,7 @@ import pandas as pd
 from core.logger import get_logger
 from infra.http_safety import requests_get_https
 from infra.tasks.lifecycle import TaskCancelledError, TaskDeadlineExceeded
+from infra.tasks.lifecycle import raise_if_cancelled as _raise_if_cancelled
 
 log = get_logger(__name__)
 
@@ -20,11 +21,6 @@ class _AkshareLhbHttp:
 
 
 ak_lhb.requests = _AkshareLhbHttp()
-
-
-def _raise_if_cancelled(cancellation_token=None) -> None:
-    if cancellation_token is not None:
-        cancellation_token.raise_if_cancelled()
 
 
 def _series_value(row: pd.Series, name: str, default: Any = None) -> Any:
@@ -458,11 +454,11 @@ def _load_daily_foreign_detail_cache(date_str: str, cancellation_token=None) -> 
         source_columns = ["SECURITY_CODE", "OPERATEDEPT_NAME", "EXPLANATION", "BUY", "SELL", "NET"]
         columns = ["代码", "交易营业部名称", "类型", "买入金额", "卖出金额", "净额"]
         frame = pd.DataFrame(rows).rename(columns=dict(zip(source_columns, columns, strict=True)))[columns]
-        frame["代码"] = frame["代码"].astype(str).str.zfill(6)
+        frame["代码"] = cast(pd.Series, frame["代码"]).astype(str).str.zfill(6)
         for column in ("买入金额", "卖出金额", "净额"):
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
         return {
-            code: group.drop(columns="代码").reset_index(drop=True)
+            str(code): cast(pd.DataFrame, group).drop(columns="代码").reset_index(drop=True)
             for code, group in frame.groupby("代码", sort=False)
         }
     except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:

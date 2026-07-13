@@ -809,10 +809,6 @@ class ScanTab(BaseStockTab):
 
                 # Format score cleanly
                 score_str = str(row_data.get("评分", ""))
-                try:
-                    _ = float(score_str)
-                except (ValueError, TypeError):
-                    pass
 
                 formatted_row = {
                     "代码": code_str,

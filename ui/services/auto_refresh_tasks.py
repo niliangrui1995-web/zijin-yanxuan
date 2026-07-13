@@ -4,15 +4,11 @@ from __future__ import annotations
 import datetime
 
 from app.services.ui_task_lifecycle_service import invoke_with_cancellation
+from app.services.ui_task_lifecycle_service import raise_if_cancelled as _raise_if_cancelled
 from core.logger import get_logger
 from core.task_errors import UserFacingTaskError
 
 log = get_logger(__name__)
-
-
-def _raise_if_cancelled(cancellation_token=None) -> None:
-    if cancellation_token is not None:
-        cancellation_token.raise_if_cancelled()
 
 
 def _fetch_foreign_block_records(*, days_to_fetch: int, cancellation_token=None) -> dict:

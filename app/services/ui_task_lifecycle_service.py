@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """UI-facing facade for owner-bound cooperative task lifecycle primitives."""
 
+from infra.tasks.lifecycle import raise_if_cancelled
 from infra.tasks.owner_lifecycle import (
     CancellationToken,
     TaskCancelledError,
@@ -17,6 +18,7 @@ __all__ = [
     "TaskDeadlineExceeded",
     "TaskLifecycleGroup",
     "invoke_with_cancellation",
+    "raise_if_cancelled",
     "shutdown_task_lifecycle_for_owner",
     "task_lifecycle_for",
 ]

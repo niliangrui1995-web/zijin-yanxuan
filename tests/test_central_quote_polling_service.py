@@ -169,3 +169,20 @@ def test_central_quote_poller_runtime_guard_failures_return_defaults():
     assert poller.compact_runtime_caches() == {}
     assert poller.protect_against_thread_anomaly(3) is False
     poller.enter_realtime_cooldown("bad source", cooldown_sec=300)
+
+
+def test_central_quote_poller_mapping_guards_reject_non_dict_and_missing_methods():
+    class InvalidProvider:
+        def get_realtime_runtime_stats(self):
+            return []
+
+        def get_quote_request_stats(self):
+            return "invalid"
+
+        def compact_runtime_caches(self):
+            return None
+
+    assert CentralQuotePoller(InvalidProvider()).get_runtime_stats() == {}
+    assert CentralQuotePoller(InvalidProvider()).get_quote_request_stats() == {}
+    assert CentralQuotePoller(InvalidProvider()).compact_runtime_caches() == {}
+    assert CentralQuotePoller(object()).get_runtime_stats() == {}

@@ -10,6 +10,7 @@ from app.services.ui_fund_holdings_service import (
 )
 from app.services.ui_industry_chain_service import filter_rows_to_ai_chain_codes, normalize_ai_chain_code
 from app.services.ui_task_lifecycle_service import CancellationToken
+from app.services.ui_task_lifecycle_service import raise_if_cancelled as _raise_if_cancelled
 from ui.tabs.fund_holdings_rules import (
     FUND_DISPLAY_PLACEHOLDER,
     capital_attribute_label,
@@ -17,11 +18,6 @@ from ui.tabs.fund_holdings_rules import (
     format_pct,
 )
 from ui.tabs.fund_holdings_subjects import shorten_subject_name
-
-
-def _raise_if_cancelled(cancellation_token: CancellationToken | None) -> None:
-    if cancellation_token is not None:
-        cancellation_token.raise_if_cancelled()
 
 
 def _run_stage(cancellation_token, fn, *args, **kwargs):

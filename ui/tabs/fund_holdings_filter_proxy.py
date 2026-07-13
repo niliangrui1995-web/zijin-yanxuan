@@ -117,10 +117,7 @@ class FundHoldingsFilterProxyModel(RtSortFilterProxyModel):
         if filter_text in subject_text:
             return True
 
-        for value in row_data.values():
-            if filter_text in str(value or "").lower():
-                return True
-        return False
+        return any(filter_text in str(value or "").lower() for value in row_data.values())
 
 
 __all__ = ["FundHoldingsFilterProxyModel"]

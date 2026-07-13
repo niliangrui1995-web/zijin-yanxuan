@@ -117,9 +117,7 @@ def _holder_name_display_score(value) -> int:
         for fragment in _HOLDER_NAME_FRAGMENT_RE.findall(token.upper()):
             if len(fragment) >= 4:
                 score += 2
-            elif len(fragment) == 3:
-                score += 1
-            elif fragment in _HOLDER_NAME_SHORT_TOKENS:
+            elif len(fragment) == 3 or fragment in _HOLDER_NAME_SHORT_TOKENS:
                 score += 1
             else:
                 short_penalty += 2

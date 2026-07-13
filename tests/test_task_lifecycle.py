@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from infra.tasks.lifecycle import CancellationToken, TaskCancelledError, TaskDeadlineExceeded
+from infra.tasks.lifecycle import CancellationToken, TaskCancelledError, TaskDeadlineExceeded, raise_if_cancelled
 from infra.tasks.task_scheduler import BackgroundWorker, task_manager
 
 
@@ -26,6 +26,23 @@ def test_cancellation_token_supports_manual_cancel_and_deadline():
     assert expired.remaining_seconds() == 0.0
     with pytest.raises(TaskDeadlineExceeded):
         expired.raise_if_cancelled()
+
+
+def test_shared_cancellation_checkpoint_preserves_optional_token_behavior():
+    from app.services.ui_task_lifecycle_service import raise_if_cancelled as ui_raise_if_cancelled
+
+    assert ui_raise_if_cancelled is raise_if_cancelled
+    assert raise_if_cancelled(None) is None
+
+    token = CancellationToken()
+    assert raise_if_cancelled(token) is None
+    token.cancel("shared_checkpoint")
+    with pytest.raises(TaskCancelledError, match="shared_checkpoint"):
+        raise_if_cancelled(token)
+
+    expired = CancellationToken(deadline_monotonic=time.monotonic() - 0.01)
+    with pytest.raises(TaskDeadlineExceeded):
+        raise_if_cancelled(expired)
 
 
 def test_background_worker_uses_shared_cancellation_token():

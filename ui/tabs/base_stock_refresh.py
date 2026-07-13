@@ -12,6 +12,7 @@ import os
 import threading
 import time
 import weakref
+from contextlib import suppress
 
 try:
     from PyQt6 import sip
@@ -162,10 +163,8 @@ def load_cached_finance_snapshot(codes, *, tdx_vipdoc: str | None = None) -> dic
 
     finance_snapshot: dict[str, dict] = {}
     if tdx_vipdoc:
-        try:
+        with suppress(AttributeError, OSError, RuntimeError, TypeError, ValueError):
             finance_snapshot.update(load_local_tdx_capital_snapshot(normalized_codes, tdx_vipdoc))
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
-            pass
 
     try:
         cache_payload = _load_shared_finance_cache_payload(_current_finance_cache_file())
@@ -197,7 +196,7 @@ def _load_shared_finance_cache_payload(path: str) -> dict:
 
     signature = _get_finance_cache_signature(path)
     with _FINANCE_CACHE_LOCK:
-        if _FINANCE_CACHE_PATH == path and _FINANCE_CACHE_SIGNATURE == signature and _FINANCE_CACHE_PAYLOAD is not None:
+        if path == _FINANCE_CACHE_PATH and signature == _FINANCE_CACHE_SIGNATURE and _FINANCE_CACHE_PAYLOAD is not None:
             return _FINANCE_CACHE_PAYLOAD
 
         if signature is None:
@@ -297,11 +296,10 @@ def prime_local_quote_snapshot(owner, current_model=None) -> dict:
     if not warm_payload:
         return {}
 
-    published = publish_rt_quotes(
+    return publish_rt_quotes(
         warm_payload,
         source=f"{owner.__class__.__name__}.local_cache",
     )
-    return published
 
 
 def _run_owner_background(owner, runner, name, fn, *, task_id, timeout_sec, on_success, on_error) -> None:
@@ -397,10 +395,8 @@ def prime_local_quote_snapshot_async(owner, current_model=None) -> bool:
 def _invoke_after_market_caps_updated(owner) -> None:
     after_cap_hook = getattr(owner, "_after_market_caps_updated", None)
     if callable(after_cap_hook):
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError):
             after_cap_hook()
-        except (AttributeError, RuntimeError, TypeError):
-            pass
 
 
 def _should_defer_cache_snapshot_apply(owner, *, async_local: bool, force_apply: bool = False) -> bool:
@@ -419,9 +415,7 @@ def _should_defer_cache_snapshot_apply(owner, *, async_local: bool, force_apply:
             return False
 
     app = QCoreApplication.instance()
-    if app is None or app.closingDown():
-        return False
-    return True
+    return not (app is None or app.closingDown())
 
 
 _QUOTE_SNAPSHOT_APPLY_CHUNK_SIZE = 48
@@ -841,6 +835,21 @@ def _submit_owner_quote_refresh(owner, task_manager, task_id: str, target_codes:
     )
 
 
+def _prepare_table_refresh(owner, current_model, async_local: bool):
+    if current_model is not None:
+        owner._active_model_ref = current_model
+    model = current_model or owner._resolve_active_quote_model()
+    if not model or not hasattr(model, "row_data"):
+        return None
+    codes = collect_table_codes(owner, model)
+    if not codes:
+        return None
+    if _should_prime_local_snapshot(owner, async_local=async_local):
+        primer = prime_local_quote_snapshot_async if async_local else prime_local_quote_snapshot
+        primer(owner, model)
+    return model, codes
+
+
 def refresh_table_quotes_and_market_caps(
     owner,
     current_model=None,
@@ -849,22 +858,10 @@ def refresh_table_quotes_and_market_caps(
     *,
     async_local: bool = False,
 ) -> None:
-    if current_model is not None:
-        owner._active_model_ref = current_model
-
-    model = current_model or owner._resolve_active_quote_model()
-    if not model or not hasattr(model, "row_data"):
+    prepared = _prepare_table_refresh(owner, current_model, async_local)
+    if prepared is None:
         return
-
-    codes = collect_table_codes(owner, model)
-    if not codes:
-        return
-
-    if _should_prime_local_snapshot(owner, async_local=async_local):
-        if async_local:
-            prime_local_quote_snapshot_async(owner, model)
-        else:
-            prime_local_quote_snapshot(owner, model)
+    model, codes = prepared
 
     snapshot = _latest_quote_snapshot()
 
@@ -903,22 +900,10 @@ def refresh_table_from_latest_snapshot(owner, current_model=None, *, async_local
 
 
 def _refresh_table_from_latest_snapshot_impl(owner, current_model=None, *, async_local: bool = True) -> None:
-    if current_model is not None:
-        owner._active_model_ref = current_model
-
-    model = current_model or owner._resolve_active_quote_model()
-    if not model or not hasattr(model, "row_data"):
+    prepared = _prepare_table_refresh(owner, current_model, async_local)
+    if prepared is None:
         return
-
-    codes = collect_table_codes(owner, model)
-    if not codes:
-        return
-
-    if _should_prime_local_snapshot(owner, async_local=async_local):
-        if async_local:
-            prime_local_quote_snapshot_async(owner, model)
-        else:
-            prime_local_quote_snapshot(owner, model)
+    model, codes = prepared
 
     snapshot = _latest_quote_snapshot()
 
@@ -926,13 +911,12 @@ def _refresh_table_from_latest_snapshot_impl(owner, current_model=None, *, async
         return
 
     quote_subset = {code: dict(snapshot[code]) for code in codes if code in snapshot}
-    if quote_subset:
-        if not CacheSnapshotApplyQueue.enqueue(owner, quote_subset, async_local=async_local):
-            _apply_cache_snapshot_payload(
-                owner,
-                quote_subset,
-                signal="cache_snapshot" if async_local else "cache_snapshot_sync",
-            )
+    if quote_subset and not CacheSnapshotApplyQueue.enqueue(owner, quote_subset, async_local=async_local):
+        _apply_cache_snapshot_payload(
+            owner,
+            quote_subset,
+            signal="cache_snapshot" if async_local else "cache_snapshot_sync",
+        )
 
 
 def subscribe_global_quotes(owner, current_model=None) -> None:
@@ -953,9 +937,7 @@ def subscribe_global_quotes(owner, current_model=None) -> None:
             else:
                 owner._deferred_quote_refresh = True
 
-    try:
-        owner._quote_signal_connected
-    except AttributeError:
+    if not hasattr(owner, "_quote_signal_connected"):
         owner._quote_signal_connected = False
 
     if owner._quote_signal_connected:

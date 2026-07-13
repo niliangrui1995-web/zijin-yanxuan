@@ -17,6 +17,7 @@ from app.services.stock_context_snapshot_service import (
     project_root,
 )
 from app.services.ui_task_lifecycle_service import TaskLifecycleGroup, invoke_with_cancellation
+from app.services.ui_task_lifecycle_service import raise_if_cancelled as _checkpoint
 from ui.workspaces.stock_signal import StockSignal, coerce_stock_signal
 from ui.workspaces.tab_capabilities import ForeignKeywordCapability, StockSignalSourceCapability
 
@@ -69,11 +70,6 @@ RAW_DISCOVERED_AT = KEY_DISCOVERED_AT
 POST_F5_CONTEXT_SNAPSHOT_DEFER_SECONDS = 5.0
 FUND_SNAPSHOT_TIMEOUT_SECONDS = 90.0
 LHB_SNAPSHOT_TIMEOUT_SECONDS = 180.0
-
-
-def _checkpoint(cancellation_token=None) -> None:
-    if cancellation_token is not None:
-        cancellation_token.raise_if_cancelled()
 
 
 def _cancellable_items(values, cancellation_token=None):
@@ -289,11 +285,7 @@ class StockContextService:
     def _coerce_cache_rows(value) -> list[dict]:
         if not isinstance(value, (list, tuple)):
             return []
-        rows: list[dict] = []
-        for row in value:
-            if isinstance(row, dict):
-                rows.append(dict(row))
-        return rows
+        return [dict(row) for row in value if isinstance(row, dict)]
 
     @staticmethod
     def _normalize_target_codes(target_codes) -> set[str]:

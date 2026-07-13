@@ -499,7 +499,7 @@ def test_stock_candidate_auto_refresh_accepts_watchlist_signal_args(monkeypatch)
         tab.close()
 
 
-def test_stock_candidate_prime_background_load_primes_snapshot_and_refresh(monkeypatch):
+def test_stock_candidate_prime_background_load_primes_snapshot_and_starts_refresh(monkeypatch):
     scheduled = []
     monkeypatch.setattr(
         "ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda delay, callback: scheduled.append(delay)
@@ -512,8 +512,8 @@ def test_stock_candidate_prime_background_load_primes_snapshot_and_refresh(monke
         tab.prime_background_load()
 
         assert primes == ["prime", "prime"]
-        assert 350 not in scheduled
-        assert tab._initial_refresh_started is False
+        assert scheduled.count(350) == 1
+        assert tab._initial_refresh_started is True
     finally:
         tab.close()
         workspace.deleteLater()
@@ -568,7 +568,8 @@ def test_stock_candidate_prime_background_load_primes_anchor_sources(monkeypatch
         ]
         assert primed == ["na_daily", "ai_industry_chain"]
         assert snapshots == ["prime"]
-        assert 350 not in scheduled
+        assert scheduled.count(350) == 1
+        assert tab._initial_refresh_started is True
     finally:
         tab.close()
         workspace.deleteLater()

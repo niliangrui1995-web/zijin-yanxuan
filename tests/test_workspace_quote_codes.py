@@ -661,6 +661,8 @@ def test_stock_context_service_reuses_lhb_fallback_cache_for_same_signature(monk
     from app.services import ui_lhb_pool_service as lhb_pool_module
 
     calls = []
+    checkpoints = []
+    monkeypatch.setattr(stock_context_module, "_checkpoint", lambda token=None: checkpoints.append(token))
 
     class _FakePoolManager:
         def compute_pool(self, *, data_provider=None, engine=None):
@@ -686,6 +688,7 @@ def test_stock_context_service_reuses_lhb_fallback_cache_for_same_signature(monk
     second = service._load_lhb_pool_rows()
 
     assert calls == [(None, "engine")]
+    assert checkpoints == [None, None, None, None]
     assert second[0][stock_context_module.KEY_CODE] == "300750"
 
 
@@ -1878,9 +1881,24 @@ def test_workspace_background_prewarm_primes_context_without_forcing_current_tab
 
         workspace._start_background_tab_prewarm()
 
-        assert constructed == []
-        assert primed == []
-        assert ctor_kwargs == {}
+        expected_order = [
+            "watchlist",
+            "system_log",
+            "ai_industry_chain",
+            "na_daily",
+            "scan",
+            "foreign_block",
+            "earnings",
+            "fund_holdings",
+            "lhb",
+            "asian_market",
+            "stock_candidates",
+        ]
+        assert constructed == expected_order
+        assert primed == expected_order
+        assert set(ctor_kwargs) == set(expected_order)
+        assert all(spec["loaded"] for spec in workspace.tab_specs())
+        assert workspace.tabs.currentIndex() == 0
         assert snapshot_primes == [{"include_lhb": False}]
     finally:
         workspace.shutdown()
@@ -2061,7 +2079,7 @@ def test_workspace_debounces_table_copy_hook_install(monkeypatch):
         workspace.deleteLater()
 
 
-def test_workspace_auto_refresh_does_not_load_daily_tabs_without_manual_click(monkeypatch):
+def test_workspace_startup_sequence_loads_daily_tabs_without_manual_click(monkeypatch):
     ctor_kwargs = {}
     constructed = []
 
@@ -2093,11 +2111,17 @@ def test_workspace_auto_refresh_does_not_load_daily_tabs_without_manual_click(mo
     )
     try:
         assert constructed == []
-        assert not hasattr(workspace, "_start_daily_auto_tab_bootstrap")
-        assert workspace.get_loaded_tab("watchlist") is None
-        assert workspace.get_loaded_tab("lhb") is None
-        assert workspace.get_loaded_tab("foreign_block") is None
-        assert workspace.get_loaded_tab("fund_holdings") is None
+        workspace.prime_stock_context_snapshots = lambda **_kwargs: True
+        monkeypatch.setattr(classic_workspace_module.QTimer, "singleShot", lambda _delay, callback: callback())
+
+        workspace._start_background_tab_prewarm()
+
+        assert constructed == list(classic_workspace_module.ClassicWorkspace.STARTUP_TAB_LOAD_ORDER)
+        assert all(spec["loaded"] for spec in workspace.tab_specs())
+        assert workspace.get_loaded_tab("watchlist") is not None
+        assert workspace.get_loaded_tab("lhb") is not None
+        assert workspace.get_loaded_tab("foreign_block") is not None
+        assert workspace.get_loaded_tab("fund_holdings") is not None
     finally:
         workspace.shutdown()
         workspace.deleteLater()
@@ -2116,6 +2140,36 @@ def test_classic_workspace_default_restore_waits_past_first_paint_window(qt_appl
         assert timer is not None
         assert timer.interval() == classic_workspace_module.ClassicWorkspace.RESTORE_LAST_TAB_DELAY_MS
         assert timer.interval() == 2500
+    finally:
+        workspace.shutdown()
+        workspace.deleteLater()
+
+
+def test_classic_workspace_restore_waits_for_startup_tab_sequence(qt_application):
+    workspace = classic_workspace_module.ClassicWorkspace(
+        data_provider=object(),
+        engine=object(),
+        background_prewarm=False,
+    )
+    restored = []
+    try:
+        workspace.restore_last_tab = lambda index: restored.append(index)
+        workspace._background_prewarm_queue = ["scan"]
+        workspace.schedule_restore_last_tab(3, delay_ms=999_999)
+        timer = workspace._restore_last_tab_timer
+
+        assert timer is not None
+        timer.timeout.emit()
+
+        assert restored == []
+        assert workspace._restore_last_tab_timer is timer
+        assert timer.isActive()
+
+        workspace._background_prewarm_queue.clear()
+        timer.timeout.emit()
+
+        assert restored == [3]
+        assert workspace._restore_last_tab_timer is None
     finally:
         workspace.shutdown()
         workspace.deleteLater()
@@ -2147,8 +2201,10 @@ def test_classic_workspace_pending_restore_timer_is_cancelled_on_shutdown(monkey
         assert timer is not None
         assert timer.isActive()
 
+        workspace._background_prewarm_queue = ["scan"]
         workspace.shutdown()
 
+        assert workspace._background_prewarm_queue == []
         assert workspace._restore_last_tab_timer is None
         assert timer.isActive() is False
 

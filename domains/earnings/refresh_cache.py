@@ -8,6 +8,7 @@ import json
 
 from domains.earnings.engine import EarningsEngine
 from domains.market_calendar import MarketCalendar
+from domains.market_calendar.calendar_service import normalize_trade_dates as _normalize_trade_dates
 from infra.storage.industry_chain_repository import IndustryChainRepository
 
 STARTUP_BACKFILL_TRADE_DAYS = 10
@@ -21,21 +22,8 @@ def _create_engine() -> EarningsEngine:
     )
 
 
-def _normalize_trade_dates(trade_dates: list[str] | None) -> list[str]:
-    normalized: list[str] = []
-    for raw in trade_dates or []:
-        text = str(raw or "").strip()
-        if len(text) == 8 and text.isdigit():
-            normalized.append(f"{text[:4]}-{text[4:6]}-{text[6:8]}")
-        elif len(text) >= 10:
-            normalized.append(text[:10])
-    return sorted(dict.fromkeys(normalized))
-
-
 def _startup_scan_dates(engine: EarningsEngine) -> list[str]:
-    recent_trade_dates = _normalize_trade_dates(
-        MarketCalendar.get_recent_trade_dates(STARTUP_BACKFILL_TRADE_DAYS)
-    )
+    recent_trade_dates = _normalize_trade_dates(MarketCalendar.get_recent_trade_dates(STARTUP_BACKFILL_TRADE_DAYS))
     if not recent_trade_dates:
         return []
     if not engine.local_records or not engine.last_sync_date:

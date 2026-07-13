@@ -38,7 +38,12 @@ from app.services.ui_task_service import task_registry
 from core.logger import get_logger
 from ui.components import TableStateWrapper, VCPTableView
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
-from ui.tabs.base_stock_tab import BaseStockTab, _show_stock_context_menu_from_proxy_index
+from ui.tabs.base_stock_tab import (
+    BaseStockTab,
+    _is_direct_workspace_tab,
+    _show_kline_from_proxy_index,
+    _show_stock_context_menu_from_proxy_index,
+)
 
 log = get_logger(__name__)
 POST_F5_POOL_BOOTSTRAP_DEFER_MS = 5000
@@ -356,15 +361,7 @@ class LhbTab(BaseStockTab):
         )
 
     def _is_current_workspace_tab(self) -> bool:
-        parent = self.parent()
-        tabs = getattr(parent, "tabs", None)
-        current_widget = getattr(tabs, "currentWidget", None)
-        if not callable(current_widget):
-            return True
-        try:
-            return current_widget() is self
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            return True
+        return _is_direct_workspace_tab(self)
 
     def _should_start_pool_on_show(self) -> bool:
         return BaseStockTab._should_start_interactive_runtime_on_show(self)
@@ -1266,31 +1263,7 @@ class LhbTab(BaseStockTab):
     # 交互事件
     # ================================================================
     def _on_double_click(self, index):
-        if not index.isValid():
-            return
-        source_idx = self.proxy_model.mapToSource(index)
-        row = source_idx.row()
-        if row >= len(self.model.row_data):
-            return
-
-        code = self.model.row_data[row].get("代码", "")
-
-        # 提取当前表格顺序以传递给 K 线窗口
-        code_list = []
-        clicked_visual_row = index.row()
-        for r in range(self.proxy_model.rowCount()):
-            s_idx = self.proxy_model.mapToSource(self.proxy_model.index(r, 0))
-            if s_idx.row() < len(self.model.row_data):
-                rd = dict(self.model.row_data[s_idx.row()] or {})
-                rd.setdefault("代码", rd.get("代码", ""))
-                rd.setdefault("名称", rd.get("名称", ""))
-                code_list.append(rd)
-
-        current_idx = 0
-        if 0 <= clicked_visual_row < len(code_list):
-            current_idx = clicked_visual_row
-
-        ui_signals.sig_show_kline_with_list.emit(code, code_list, current_idx)
+        _show_kline_from_proxy_index(self, index, ui_signals)
 
     def _show_context_menu(self, pos):
         _show_stock_context_menu_from_proxy_index(self, pos)

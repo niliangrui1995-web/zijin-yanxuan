@@ -425,10 +425,9 @@ def _kr_previous_close(info: Mapping[str, Any], close_price: float) -> float | N
     direction = _mapping(info.get("compareToPreviousPrice"))
     direction_code = _text(direction.get("code")).strip()
     if difference is not None:
-        if ratio is not None:
-            if ratio != 0:
-                signed = abs(difference) if ratio > 0 else -abs(difference)
-                return close_price - signed
+        if ratio is not None and ratio != 0:
+            signed = abs(difference) if ratio > 0 else -abs(difference)
+            return close_price - signed
         if direction_code in {"4", "5"}:
             return close_price + abs(difference)
         if direction_code:

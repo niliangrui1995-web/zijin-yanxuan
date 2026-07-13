@@ -54,8 +54,7 @@ def normalize_daily_df_index(df, *, logger):
         if isinstance(idx, pd.DatetimeIndex) and idx.tz is not None:
             idx = idx.tz_localize(None)
         normalized.index = idx.normalize()
-        normalized = normalized[~normalized.index.duplicated(keep="last")].sort_index()
-        return normalized
+        return normalized[~normalized.index.duplicated(keep="last")].sort_index()
     except (TypeError, ValueError, KeyError) as exc:
         logger.debug(f"[K线] 日线索引归一化失败: {exc}")
         return df

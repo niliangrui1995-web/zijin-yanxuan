@@ -12,6 +12,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_task_lifecycle_service import TaskLifecycleGroup, invoke_with_cancellation
+from app.services.ui_task_lifecycle_service import raise_if_cancelled as shared_raise_if_cancelled
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
 from core.logger import get_logger
@@ -56,14 +57,9 @@ def _create_default_engine():
 
 
 def _normalize_trade_dates(trade_dates: list[str] | None) -> list[str]:
-    normalized: list[str] = []
-    for raw in trade_dates or []:
-        text = str(raw or "").strip()
-        if len(text) == 8 and text.isdigit():
-            normalized.append(f"{text[:4]}-{text[4:6]}-{text[6:8]}")
-        elif len(text) >= 10:
-            normalized.append(text[:10])
-    return sorted(dict.fromkeys(normalized))
+    from domains.market_calendar.calendar_service import normalize_trade_dates
+
+    return normalize_trade_dates(trade_dates)
 
 
 def _build_startup_scan_dates(last_sync_date: str, has_cached_records: bool) -> list[str]:
@@ -141,6 +137,7 @@ class EarningsRefreshService(QObject):
 
     _normalize_trade_dates = staticmethod(_normalize_trade_dates)
     _build_startup_scan_dates = staticmethod(_build_startup_scan_dates)
+    _raise_if_cancelled = staticmethod(shared_raise_if_cancelled)
 
     def __init__(self, parent=None, *, engine: EarningsEngine | None = None, job_runner=None):
         super().__init__(parent)
@@ -184,11 +181,6 @@ class EarningsRefreshService(QObject):
     def _emit_failure(self, mode: str, error) -> None:
         error_text = str(error or "unknown error")
         self.sig_fetch_failed.emit(mode, error_text)
-
-    @staticmethod
-    def _raise_if_cancelled(cancellation_token=None) -> None:
-        if cancellation_token is not None:
-            cancellation_token.raise_if_cancelled()
 
     def _emit_failure_unless_cancelled(self, mode: str, error, cancellation_token=None) -> None:
         if cancellation_token is not None and cancellation_token.cancelled:

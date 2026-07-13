@@ -1,5 +1,6 @@
 import io
 import sys
+from contextlib import suppress
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QTextCharFormat, QTextCursor
@@ -240,21 +241,10 @@ class LogTab(QWidget):
         return count
 
     def _refresh_level_filter_button_text(self):
-        text, tooltip = format_multi_select_summary(
-            "级别",
-            self.level_filter.selected_labels(),
-            all_text="全部",
-        )
-        self.level_filter.setText(text)
-        self.level_filter.setToolTip(tooltip)
+        self.level_filter.apply_summary("级别", all_text="全部")
 
     def _level_filter_status_text(self) -> str:
-        labels = self.level_filter.selected_labels()
-        if not labels:
-            return "全部"
-        if len(labels) <= 2:
-            return " / ".join(labels)
-        return f"{len(labels)}项"
+        return format_multi_select_summary("", self.level_filter.selected_labels(), all_text="全部")[0]
 
     def _entry_visible(self, level, text, selected_levels: set[str], search_text: str) -> bool:
         normalized = self._normalize_level(level)
@@ -263,9 +253,7 @@ class LogTab(QWidget):
         payload = str(text).lower()
         if search_text and search_text not in payload:
             return False
-        if not search_text and normalized != "error" and self._is_diagnostic_log(payload):
-            return False
-        return True
+        return not (not search_text and normalized != "error" and self._is_diagnostic_log(payload))
 
     def _filtered_entries(self, entries=None):
         selected_levels = self.level_filter.selected_values() if hasattr(self, "level_filter") else set()
@@ -445,10 +433,8 @@ class LogTab(QWidget):
         task_status_panel = getattr(self, "task_status_panel", None)
         if task_status_panel is not None:
             task_status_panel.shutdown()
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError):
             event_bus.sig_system_log.disconnect(self._on_log_msg)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
         self._restore_log_redirect()
 
     def _on_log_msg(self, level, text):

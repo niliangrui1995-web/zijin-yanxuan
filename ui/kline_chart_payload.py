@@ -754,29 +754,15 @@ def _build_vcp_lines(
     box_low: float,
     box_high: float,
 ) -> list:
-    vcp_lines = []
-    vertical_indices = peak_indices[:]
-    if x_end not in vertical_indices:
-        vertical_indices.append(x_end)
-    for xi in sorted(set(vertical_indices)):
-        if x_start <= xi <= x_end:
-            vcp_lines.append(
-                [
-                    {"xAxis": dates[xi], "yAxis": box_low},
-                    {"xAxis": dates[xi], "yAxis": box_high},
-                ]
-            )
-
-    vcp_lines.append(
+    vcp_lines = [
+        [{"xAxis": dates[xi], "yAxis": y} for y in (box_low, box_high)]
+        for xi in sorted({*peak_indices, x_end})
+        if x_start <= xi <= x_end
+    ]
+    vcp_lines.extend(
         [
-            {"xAxis": dates[x_start], "yAxis": box_high},
-            {"xAxis": dates[x_end], "yAxis": box_high},
-        ]
-    )
-    vcp_lines.append(
-        [
-            {"xAxis": dates[x_start], "yAxis": box_low},
-            {"xAxis": dates[x_end], "yAxis": box_low},
+            [{"xAxis": dates[x_start], "yAxis": y}, {"xAxis": dates[x_end], "yAxis": y}]
+            for y in (box_high, box_low)
         ]
     )
     return vcp_lines

@@ -327,21 +327,10 @@ class EarningsTab(BaseStockTab):
         self._ensure_scheduler().force_manual_scan(date_list)
 
     def _refresh_type_filter_button_text(self):
-        text, tooltip = format_multi_select_summary(
-            "分类",
-            self.type_filter.selected_labels(),
-            all_text="全看",
-        )
-        self.type_filter.setText(text)
-        self.type_filter.setToolTip(tooltip)
+        self.type_filter.apply_summary("分类", all_text="全看")
 
     def _type_filter_status_text(self) -> str:
-        labels = self.type_filter.selected_labels()
-        if not labels:
-            return "全看"
-        if len(labels) <= 2:
-            return " / ".join(labels)
-        return f"{len(labels)}项"
+        return format_multi_select_summary("", self.type_filter.selected_labels(), all_text="全看")[0]
 
     def _on_type_filter_changed(self):
         """联动到底层 Proxy Model 进行实时列过滤"""

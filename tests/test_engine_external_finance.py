@@ -20,6 +20,18 @@ class _FakeResponse:
         return None
 
 
+@pytest.mark.parametrize(
+    ("name", "holder_type", "expected"),
+    [
+        ("普通股东", "QFII", True),
+        ("中央汇金资产管理有限责任公司", "个人", True),
+        ("普通股东", "个人", False),
+    ],
+)
+def test_is_institution_matches_holder_type_or_name(name, holder_type, expected):
+    assert engine_external.is_institution(name, holder_type) is expected
+
+
 def test_batch_get_finance_info_uses_eastmoney_market_cap_fields(monkeypatch, tmp_path):
     cache_file = tmp_path / "finance.json"
     seen_urls = []

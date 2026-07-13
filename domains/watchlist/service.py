@@ -39,19 +39,18 @@ class WatchlistViewModel:
 
             data = DataStore().load_json("watchlist_special")
 
-            if not data:
+            if not data and os.path.exists(SPECIAL_LATEST_DATA):
                 # 兼容旧 JSON 迁移
-                if os.path.exists(SPECIAL_LATEST_DATA):
-                    with open(SPECIAL_LATEST_DATA, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    if isinstance(data, dict):
-                        DataStore().save_json("watchlist_special", data)
-                        try:
-                            # 迁移后标记旧文件，留作备用30天后自动清除
-                            os.rename(SPECIAL_LATEST_DATA, SPECIAL_LATEST_DATA + ".migrated")
-                            log.info("[WatchlistVM] 关注池数据已自动迁移入 SQLite")
-                        except OSError as _e:
-                            log.debug(f"[WatchlistVM] 迁移旧 JSON 文件重命名失败: {_e}")
+                with open(SPECIAL_LATEST_DATA, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    DataStore().save_json("watchlist_special", data)
+                    try:
+                        # 迁移后标记旧文件，留作备用30天后自动清除
+                        os.rename(SPECIAL_LATEST_DATA, SPECIAL_LATEST_DATA + ".migrated")
+                        log.info("[WatchlistVM] 关注池数据已自动迁移入 SQLite")
+                    except OSError as _e:
+                        log.debug(f"[WatchlistVM] 迁移旧 JSON 文件重命名失败: {_e}")
 
             if isinstance(data, dict):
                 # 洗掉硬盘上的旧照片：抹除老旧的历史价格快照，全部重置为横杠 '--'

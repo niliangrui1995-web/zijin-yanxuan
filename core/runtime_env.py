@@ -152,9 +152,7 @@ def resolve_project_python(
 
     current_name = os.path.basename(os.path.abspath(executable or sys.executable)).lower()
     if _is_windows():
-        if prefer_windowless:
-            preferred_names = ("pythonw.exe", "python.exe")
-        elif current_name == "pythonw.exe":
+        if prefer_windowless or current_name == "pythonw.exe":
             preferred_names = ("pythonw.exe", "python.exe")
         else:
             preferred_names = (

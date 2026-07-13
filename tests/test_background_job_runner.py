@@ -91,6 +91,20 @@ def test_background_job_runner_accepts_typed_task_key(monkeypatch):
     ]
 
 
+def test_background_job_runner_optional_manager_methods_keep_fallbacks(monkeypatch):
+    runner = BackgroundJobRunner(manager=object())
+
+    def fail_if_called(_):
+        raise AssertionError("missing optional methods must not normalize task ids")
+
+    monkeypatch.setattr("core.background_job_runner.task_id_of", fail_if_called)
+    assert runner.abandon("job") is False
+    assert runner.cancel_task("job", reason="shutdown") is False
+    assert runner.is_active("job") is False
+    assert runner.cancel_all() is None
+    assert runner.shutdown() is None
+
+
 def test_typed_task_registry_validation_and_quote_refresh_helpers():
     registry = TypedTaskRegistry()
 

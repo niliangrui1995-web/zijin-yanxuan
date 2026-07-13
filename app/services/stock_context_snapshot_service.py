@@ -12,11 +12,7 @@ from infra.storage.stock_context_repository import (
     load_scan_cache_rows,
     project_root,
 )
-
-
-def _raise_if_cancelled(cancellation_token=None) -> None:
-    if cancellation_token is not None:
-        cancellation_token.raise_if_cancelled()
+from infra.tasks.lifecycle import raise_if_cancelled as _raise_if_cancelled
 
 
 def load_ai_chain_cache_rows() -> list[dict]:

@@ -19,7 +19,7 @@ from app.services.ui_task_service import task_registry
 from core.logger import get_logger
 from ui.components import TableStateWrapper, VCPTableView
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
-from ui.tabs.base_stock_tab import BaseStockTab
+from ui.tabs.base_stock_tab import BaseStockTab, _show_kline_from_proxy_index
 
 log = get_logger(__name__)
 _NA_DAILY_REFRESH_TASK = task_registry.workspace("na_daily_refresh")
@@ -379,28 +379,7 @@ class NADailyTab(BaseStockTab):
             pass
 
     def _on_double_click(self, index):
-        if not index.isValid():
-            return
-        source_index = self.proxy_model.mapToSource(index)
-        row = source_index.row()
-
-        code = self.model.row_data[row].get("代码")
-        if code:
-            code_list = []
-            clicked_visual_row = index.row()
-            for r in range(self.proxy_model.rowCount()):
-                s_idx = self.proxy_model.mapToSource(self.proxy_model.index(r, 0))
-                if s_idx.row() < len(self.model.row_data):
-                    rd = dict(self.model.row_data[s_idx.row()] or {})
-                    rd.setdefault("代码", rd.get("代码", ""))
-                    rd.setdefault("名称", rd.get("名称", ""))
-                    code_list.append(rd)
-
-            current_idx = 0
-            if 0 <= clicked_visual_row < len(code_list):
-                current_idx = clicked_visual_row
-
-            ui_signals.sig_show_kline_with_list.emit(code, code_list, current_idx)
+        _show_kline_from_proxy_index(self, index, ui_signals, require_code=True)
 
     def _show_context_menu(self, pos):
         index = self.na_daily_table.indexAt(pos)

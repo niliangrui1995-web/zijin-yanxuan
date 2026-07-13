@@ -15,6 +15,11 @@ class TaskDeadlineExceeded(TimeoutError):
     """Raised when a cooperative task has exceeded its deadline."""
 
 
+def raise_if_cancelled(cancellation_token=None) -> None:
+    if cancellation_token is not None:
+        cancellation_token.raise_if_cancelled()
+
+
 class CancellationToken:
     """Thread-safe cancellation token with an optional monotonic deadline."""
 
@@ -84,4 +89,4 @@ class CancellationToken:
         return self._deadline_monotonic is not None and time.monotonic() >= self._deadline_monotonic
 
 
-__all__ = ["CancellationToken", "TaskCancelledError", "TaskDeadlineExceeded"]
+__all__ = ["CancellationToken", "TaskCancelledError", "TaskDeadlineExceeded", "raise_if_cancelled"]

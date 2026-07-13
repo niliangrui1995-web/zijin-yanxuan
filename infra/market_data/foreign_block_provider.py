@@ -11,6 +11,7 @@ from infra.tasks import (
     run_process,
     windows_no_window_kwargs,
 )
+from infra.tasks.lifecycle import raise_if_cancelled as _raise_if_cancelled
 
 _AKSHARE_FETCH_SNIPPET = r"""
 import json
@@ -35,11 +36,6 @@ elif mode == "block_trade":
     else:
         print(df.to_json(orient="records", force_ascii=False, date_format="iso"))
 """
-
-
-def _raise_if_cancelled(cancellation_token=None) -> None:
-    if cancellation_token is not None:
-        cancellation_token.raise_if_cancelled()
 
 
 def _bounded_timeout(timeout: float, cancellation_token=None) -> float:

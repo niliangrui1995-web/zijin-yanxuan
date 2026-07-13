@@ -182,6 +182,7 @@ def determine_foreign_block_direction(buyer, seller):
 
 
 class ForeignBlockTradeTab(BaseStockTab):
+
     def __init__(
         self,
         data_provider,
@@ -379,9 +380,7 @@ class ForeignBlockTradeTab(BaseStockTab):
             return False
         if last_auto_refresh_date == today_compact:
             return False
-        if last_success_at is not None and last_success_at.date() == now.date() and last_success_at.hour >= 20:
-            return False
-        return True
+        return not (last_success_at is not None and last_success_at.date() == now.date() and last_success_at.hour >= 20)
 
     @staticmethod
     def _ensure_log_line(message: str) -> str:
@@ -590,21 +589,10 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._cleanup_runtime_state()
 
     def _refresh_filter_button_text(self, button, prefix: str, all_text: str):
-        text, tooltip = format_multi_select_summary(
-            prefix,
-            button.selected_labels(),
-            all_text=all_text,
-        )
-        button.setText(text)
-        button.setToolTip(tooltip)
+        button.apply_summary(prefix, all_text=all_text)
 
     def _filter_status_text(self, button, *, all_text: str) -> str:
-        labels = button.selected_labels()
-        if not labels:
-            return all_text
-        if len(labels) <= 2:
-            return " / ".join(labels)
-        return f"{len(labels)}项"
+        return format_multi_select_summary("", button.selected_labels(), all_text=all_text)[0]
 
     def _current_filter_summary(self) -> str:
         parts = []

@@ -18,6 +18,10 @@ class BackgroundJobRunner:
     def _resolve_manager(self):
         return self._manager or _resolve_default_manager()
 
+    def _manager_method(self, method_name: str):
+        method = getattr(self._resolve_manager(), method_name, None)
+        return method if callable(method) else None
+
     def run(self, task_id: TaskKeyLike, fn, *args, on_success=None, on_error=None, **kwargs) -> str:
         return BackgroundJobRunner.run_in_background(
             self, fn, *args, on_success=on_success, on_error=on_error, task_id=task_id, **kwargs
@@ -43,53 +47,36 @@ class BackgroundJobRunner:
         )
 
     def abandon(self, task_id: TaskKeyLike) -> bool:
-        manager = self._resolve_manager()
-        abandon_task = getattr(manager, "abandon_task", None)
-        if callable(abandon_task):
-            return bool(abandon_task(task_id_of(task_id)))
-        return False
+        method = self._manager_method("abandon_task")
+        return bool(method(task_id_of(task_id))) if method is not None else False
 
     def abandon_task(self, task_id: TaskKeyLike) -> bool:
         return self.abandon(task_id)
 
     def cancel_task(self, task_id: TaskKeyLike, *, reason: str = "cancelled") -> bool:
-        manager = self._resolve_manager()
-        cancel_task = getattr(manager, "cancel_task", None)
-        if not callable(cancel_task):
-            return False
-        return bool(cancel_task(task_id_of(task_id), reason=reason))
+        method = self._manager_method("cancel_task")
+        return bool(method(task_id_of(task_id), reason=reason)) if method is not None else False
 
     def wait_for_tasks(self, task_ids, *, timeout_ms: int = 750) -> bool:
-        manager = self._resolve_manager()
-        wait_for_tasks = getattr(manager, "wait_for_tasks", None)
-        if not callable(wait_for_tasks):
+        method = self._manager_method("wait_for_tasks")
+        if method is None:
             return False
-        normalized = tuple(task_id_of(task_id) for task_id in task_ids)
-        return bool(wait_for_tasks(normalized, timeout_ms=timeout_ms))
+        return bool(method(tuple(task_id_of(task_id) for task_id in task_ids), timeout_ms=timeout_ms))
 
     def is_active(self, task_id: TaskKeyLike) -> bool:
-        manager = self._resolve_manager()
-        is_active_task = getattr(manager, "is_active_task", None)
-        if callable(is_active_task):
-            return bool(is_active_task(task_id_of(task_id)))
-        return False
+        method = self._manager_method("is_active_task")
+        return bool(method(task_id_of(task_id))) if method is not None else False
 
     def is_active_task(self, task_id: TaskKeyLike) -> bool:
         return self.is_active(task_id)
 
     def cancel_all(self):
-        manager = self._resolve_manager()
-        cancel_all = getattr(manager, "cancel_all", None)
-        if callable(cancel_all):
-            return cancel_all()
-        return None
+        method = self._manager_method("cancel_all")
+        return method() if method is not None else None
 
     def shutdown(self):
-        manager = self._resolve_manager()
-        shutdown = getattr(manager, "shutdown", None)
-        if callable(shutdown):
-            return shutdown()
-        return None
+        method = self._manager_method("shutdown")
+        return method() if method is not None else None
 
     @property
     def is_shutting_down(self) -> bool:

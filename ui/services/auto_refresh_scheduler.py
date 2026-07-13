@@ -345,9 +345,7 @@ class AutoRefreshScheduler(QObject):
         if state_key in self._running_jobs or self._job_runner.is_active_task(self._task_id(state_key)):
             self._emit_status(state_key, "skipped", now.strftime("%Y%m%d"), message="already running")
             return False
-        if self._in_retry_backoff(state_key, now):
-            return False
-        return True
+        return not self._in_retry_backoff(state_key, now)
 
     def _earnings_job_running(self) -> bool:
         return any(str(key).startswith("earnings_") for key in self._running_jobs)

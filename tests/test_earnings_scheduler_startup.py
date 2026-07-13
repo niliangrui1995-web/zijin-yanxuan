@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import app.services.ui_earnings_service as ui_earnings_service
 import domains.earnings.scheduler as legacy_scheduler
+import domains.market_calendar as market_calendar_module
 from app.services.ui_earnings_service import EarningsRefreshService
 from domains.market_calendar import MarketCalendar
 from earnings.scheduler import EarningsScheduler
@@ -47,10 +49,16 @@ def test_legacy_start_patrol_uses_owner_lifecycle_and_deadline(qt_application):
 
 
 def test_build_startup_scan_dates_returns_recent_window_when_cache_is_empty(monkeypatch):
+    class FakeMarketCalendar:
+        get_recent_trade_dates = classmethod(
+            lambda cls, n=20, ref_date=None: ["20260416", "20260415", "20260414"]
+        )
+
+    monkeypatch.setattr(market_calendar_module, "MarketCalendar", FakeMarketCalendar)
     monkeypatch.setattr(
-        MarketCalendar,
-        "get_recent_trade_dates",
-        classmethod(lambda cls, n=20, ref_date=None: ["20260416", "20260415", "20260414"]),
+        ui_earnings_service,
+        "_normalize_trade_dates",
+        lambda _values: ["2026-04-14", "2026-04-15", "2026-04-16"],
     )
 
     dates = EarningsScheduler._build_startup_scan_dates("2026-04-16", has_cached_records=False)

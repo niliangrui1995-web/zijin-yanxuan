@@ -3,7 +3,13 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 
 from ui.components import VCPTableView
-from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel, _qcolor_from_token
+from ui.models.table_models import (
+    RtSortFilterProxyModel,
+    RtTableModel,
+    StockItemDelegate,
+    StockTableModel,
+    _qcolor_from_token,
+)
 from ui.theme import theme_manager
 
 
@@ -14,6 +20,23 @@ def test_stock_table_model_prepends_serial_header():
     assert model.headers[0] == "序号"
     assert model.data(model.index(0, 0), Qt.ItemDataRole.DisplayRole) == "1"
     assert model.get_row_data(0)["序号"] == 1
+
+
+def test_stock_models_keep_identical_signed_amount_colors():
+    stock_model = StockTableModel(["上榜净买额(万)"])
+    realtime_model = RtTableModel()
+
+    for key in ("上榜净买额(万)", "机构净买(万)"):
+        for value, token in ((1, "COLOR_RISE"), (-1, "COLOR_FALL")):
+            expected = QColor(theme_manager.get(token)).name()
+            assert stock_model._net_buy_foreground_value(key, value).name() == expected
+            assert realtime_model._signed_amount_foreground(key, value).name() == expected
+        for value in (0, "bad", None):
+            assert stock_model._net_buy_foreground_value(key, value) is None
+            assert realtime_model._signed_amount_foreground(key, value) is None
+
+    assert stock_model._net_buy_foreground_value("其他", 1) is None
+    assert realtime_model._signed_amount_foreground("其他", 1) is None
 
 
 def test_proxy_serial_column_stays_continuous_after_sort():

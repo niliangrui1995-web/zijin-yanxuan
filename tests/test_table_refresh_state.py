@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+from types import SimpleNamespace
+
 from PyQt6.QtCore import QEvent, QPoint, Qt
 from PyQt6.QtGui import QHelpEvent, QStandardItem, QStandardItemModel
 
@@ -38,6 +40,8 @@ from ui.models.table_models import RtSortFilterProxyModel, StockTableModel
 
 
 def test_table_controls_are_reexported_from_components():
+    from ui.tabs.fund_holdings_tab import format_multi_select_summary as tab_format_multi_select_summary
+
     assert VCPTableView is ModuleVCPTableView
     assert PulsingDot is ModulePulsingDot
     assert StatusGlyph is ModuleStatusGlyph
@@ -45,6 +49,89 @@ def test_table_controls_are_reexported_from_components():
     assert TableStateOverlay is ModuleTableStateOverlay
     assert TableStateWrapper is ModuleTableStateWrapper
     assert format_multi_select_summary is module_format_multi_select_summary
+    assert tab_format_multi_select_summary is format_multi_select_summary
+
+
+def test_multi_select_filter_button_applies_summary_without_emitting_signal(qt_application):
+    button = MultiSelectFilterButton("全看")
+    emitted = []
+    button.selectionChanged.connect(lambda: emitted.append(True))
+    button.set_options([("a", "甲"), ("b", "乙"), ("c", "丙")], preserve_selection=False)
+
+    try:
+        for selected, expected_text, expected_tooltip in (
+            (set(), "分类：全看", "全看"),
+            ({"a"}, "分类：甲", "甲"),
+            ({"a", "b"}, "分类：甲 / 乙", "甲、乙"),
+            ({"a", "b", "c"}, "分类：3项", "甲、乙、丙"),
+        ):
+            button.set_selected_values(selected, emit=False)
+            emitted_before = len(emitted)
+
+            button.apply_summary("分类", all_text="全看")
+
+            assert button.text() == expected_text
+            assert button.toolTip() == expected_tooltip
+            assert len(emitted) == emitted_before
+    finally:
+        button.deleteLater()
+
+
+def test_multi_select_filter_button_applies_text_before_tooltip():
+    calls = []
+    target = SimpleNamespace(
+        selected_labels=lambda: ["甲", "乙", "丙"],
+        setText=lambda text: calls.append(("text", text)),
+        setToolTip=lambda text: calls.append(("tooltip", text)),
+    )
+
+    MultiSelectFilterButton.apply_summary(target, "分类", all_text="全看")
+
+    assert calls == [("text", "分类：3项"), ("tooltip", "甲、乙、丙")]
+
+
+def test_tab_filter_summary_refresh_entrypoints_keep_their_existing_arguments():
+    from ui.tabs.earnings_tab import EarningsTab
+    from ui.tabs.foreign_block_trade_tab import ForeignBlockTradeTab
+    from ui.tabs.fund_holdings_tab import FundHoldingsTab
+    from ui.tabs.log_tab import LogTab
+
+    calls = []
+    button = SimpleNamespace(apply_summary=lambda prefix, *, all_text: calls.append((prefix, all_text)))
+
+    EarningsTab._refresh_type_filter_button_text(SimpleNamespace(type_filter=button))
+    ForeignBlockTradeTab._refresh_filter_button_text(object(), button, "日期", "全部")
+    FundHoldingsTab._refresh_subject_button_text(SimpleNamespace(cmb_subject=button))
+    FundHoldingsTab._refresh_capital_attribute_button_text(SimpleNamespace(cmb_capital_attribute=button))
+    LogTab._refresh_level_filter_button_text(SimpleNamespace(level_filter=button))
+
+    assert calls == [("分类", "全看"), ("日期", "全部"), ("主体", "全部"), ("资金属性", "全部"), ("级别", "全部")]
+
+
+def test_tab_filter_status_entrypoints_keep_zero_one_two_many_text():
+    from ui.tabs.earnings_tab import EarningsTab
+    from ui.tabs.foreign_block_trade_tab import ForeignBlockTradeTab
+    from ui.tabs.log_tab import LogTab
+
+    class SelectedLabels:
+        def __init__(self, labels):
+            self._labels = labels
+
+        def selected_labels(self):
+            return list(self._labels)
+
+    for labels, expected in (
+        ([], None),
+        (["甲"], "甲"),
+        (["甲", "乙"], "甲 / 乙"),
+        (["甲", "乙", "丙"], "3项"),
+    ):
+        filter_button = SelectedLabels(labels)
+        assert EarningsTab._type_filter_status_text(SimpleNamespace(type_filter=filter_button)) == (expected or "全看")
+        assert LogTab._level_filter_status_text(SimpleNamespace(level_filter=filter_button)) == (expected or "全部")
+        assert ForeignBlockTradeTab._filter_status_text(object(), filter_button, all_text="全部") == (
+            expected or "全部"
+        )
 
 
 def _rows(count: int):

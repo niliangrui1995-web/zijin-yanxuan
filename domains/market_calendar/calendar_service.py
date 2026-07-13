@@ -77,6 +77,17 @@ def _fetch_cn_trade_dates(calendar_cls, cancellation_token) -> set[str]:
             calendar_cls._trade_dates_loading = False
 
 
+def normalize_trade_dates(trade_dates: list[str] | None) -> list[str]:
+    normalized: list[str] = []
+    for raw in trade_dates or []:
+        text = str(raw or "").strip()
+        if len(text) == 8 and text.isdigit():
+            normalized.append(f"{text[:4]}-{text[4:6]}-{text[6:8]}")
+        elif len(text) >= 10:
+            normalized.append(text[:10])
+    return sorted(dict.fromkeys(normalized))
+
+
 class MarketCalendar:
     _trade_dates: set[str] | None = None
     _trade_dates_loading = False
@@ -374,15 +385,9 @@ class MarketCalendar:
         target_year = int(year)
         now = now or cls._get_market_now(canonical)
         unpublished_until = cls._holiday_unpublished_until.get((canonical, target_year))
-        if unpublished_until is not None and now < unpublished_until:
-            return True
-        if (
-            canonical == "TW"
-            and target_year > now.year
-            and now.month < cls._TW_FUTURE_YEAR_REFRESH_MONTH
-        ):
-            return True
-        return False
+        return (unpublished_until is not None and now < unpublished_until) or (
+            canonical == "TW" and target_year > now.year and now.month < cls._TW_FUTURE_YEAR_REFRESH_MONTH
+        )
 
     @classmethod
     def _validate_asian_year_coverage(cls) -> None:
@@ -637,9 +642,7 @@ class MarketCalendar:
             if cls._trade_dates:
                 return target_day.isoformat() in cls._trade_dates
             # 交易日历尚未确认时，对“今天”采用保守策略，避免节假日误触发盘中刷新。
-            if target_day == cls.today("CN"):
-                return False
-            return True
+            return target_day != cls.today("CN")
 
         if market in cls._ASIAN_MARKETS:
             cls._ensure_market_year(market, target_day.year)

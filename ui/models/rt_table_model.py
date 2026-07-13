@@ -5,7 +5,6 @@ from PyQt6.QtGui import QColor
 
 from ui.models.table_model_helpers import (
     SERIAL_HEADER,
-    _accent_rail_color_for_row_style,
     _active_flash_record,
     _alignment_for_cell,
     _apply_quote_metrics_to_row,
@@ -21,6 +20,8 @@ from ui.models.table_model_helpers import (
     _numeric_heat_color,
     _parse_numeric_value,
     _prune_flash_records,
+    _row_accent_color,
+    _signed_amount_foreground,
     _status_badge_color,
     _summarize_long_text,
     _sync_serial_values,
@@ -308,17 +309,7 @@ class RtTableModel(QAbstractTableModel):
         return None
 
     def _signed_amount_foreground(self, key: str, raw_val):
-        if key not in ["上榜净买额(万)", "机构净买(万)"]:
-            return None
-        try:
-            f_val = float(raw_val)
-            if f_val > 0:
-                return QColor(_c("COLOR_RISE"))
-            if f_val < 0:
-                return QColor(_c("COLOR_FALL"))
-        except (ValueError, TypeError):
-            pass
-        return None
+        return _signed_amount_foreground(key, raw_val)
 
     def _foreign_net_buy_foreground(self, key: str, item_dict: dict):
         if key != "外资净买入":
@@ -362,16 +353,7 @@ class RtTableModel(QAbstractTableModel):
         return QColor(_c("TEXT_PRIMARY"))
 
     def _row_accent_value(self, item_dict: dict):
-        rail_color = _accent_rail_color_for_row_style(item_dict.get("_row_style", ""))
-        if rail_color:
-            return rail_color
-        for header in self._headers:
-            if not _is_status_header(header):
-                continue
-            badge = _status_badge_color(item_dict.get(header, ""), header)
-            if badge:
-                return badge
-        return None
+        return _row_accent_color(item_dict, self._headers)
 
     def _sort_value(self, row: int, key: str, raw_val):
         if key == SERIAL_HEADER:

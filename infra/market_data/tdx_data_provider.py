@@ -5,7 +5,7 @@ import os
 import threading
 import time
 from collections import Counter
-from typing import Protocol, cast
+from typing import Any, Callable, Protocol, cast
 
 from core.logger import get_logger
 from core.runtime_paths import CACHE_DIR, MAX_HISTORY_BARS
@@ -38,6 +38,14 @@ def _iso_from_timestamp(value) -> str:
     if timestamp <= 0:
         return ""
     return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(timestamp))
+
+
+def _get_or_create_service(owner, attr_name: str, factory: Callable[[], Any]) -> Any:
+    service = getattr(owner, attr_name, None)
+    if service is None:
+        service = factory()
+        setattr(owner, attr_name, service)
+    return service
 
 
 class _ProviderPortSource(Protocol):
@@ -153,25 +161,13 @@ class TdxDataProvider(_ProviderHealthMixin, TdxDataProviderHistoryMixin, TdxData
             _log.info("[启动] A股盘中实时行情改为东方财富接口，跳过旧通达信节点测速")
 
     def _get_adjustment_service(self) -> AdjustmentService:
-        service = getattr(self, "_adjustment_service", None)
-        if service is None:
-            service = AdjustmentService(self)
-            self._adjustment_service = service
-        return service
+        return _get_or_create_service(self, "_adjustment_service", lambda: AdjustmentService(self))
 
     def _get_local_history_provider(self) -> LocalHistoryProvider:
-        service = getattr(self, "_local_history_provider", None)
-        if service is None:
-            service = LocalHistoryProvider(self, logger=_log)
-            self._local_history_provider = service
-        return service
+        return _get_or_create_service(self, "_local_history_provider", lambda: LocalHistoryProvider(self, logger=_log))
 
     def _get_realtime_quote_provider(self) -> RealtimeQuoteProvider:
-        service = getattr(self, "_realtime_quote_provider", None)
-        if service is None:
-            service = RealtimeQuoteProvider(self, logger=_log)
-            self._realtime_quote_provider = service
-        return service
+        return _get_or_create_service(self, "_realtime_quote_provider", lambda: RealtimeQuoteProvider(self, logger=_log))
 
     def _get_market_data_warehouse(self):
         warehouse = getattr(self, "market_data_warehouse", None)

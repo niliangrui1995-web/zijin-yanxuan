@@ -112,6 +112,7 @@ from domains.global_earnings_calendar.rules import (
     market_from_ticker,
 )
 from domains.global_earnings_calendar.storage import ConfirmedEarningsEventsProvider
+from infra.tasks.lifecycle import raise_if_cancelled as _raise_if_cancelled
 
 log = get_logger(__name__)
 EXCLUDED_OLIGARCH_TICKERS = {"6594.T"}
@@ -120,11 +121,6 @@ EXCLUDED_OLIGARCH_COMPANIES = {"Nidec"}
 
 class CancellationTokenLike(Protocol):
     def raise_if_cancelled(self) -> None: ...
-
-
-def _raise_if_cancelled(token: CancellationTokenLike | None) -> None:
-    if token is not None:
-        token.raise_if_cancelled()
 
 
 def _provider_failure_detail(provider_name: str, error: object) -> dict[str, object]:

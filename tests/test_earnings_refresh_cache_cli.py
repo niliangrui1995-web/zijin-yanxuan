@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 
+from domains import market_calendar
 from domains.earnings import refresh_cache
 
 
@@ -25,10 +26,16 @@ class _FakeEngine:
 
 def test_startup_gap_fill_summary_uses_recent_missing_trade_dates(monkeypatch):
     engine = _FakeEngine()
+    assert refresh_cache.MarketCalendar is market_calendar.MarketCalendar
     monkeypatch.setattr(
         refresh_cache.MarketCalendar,
         "get_recent_trade_dates",
         staticmethod(lambda _days: ["20260414", "20260415", "20260416"]),
+    )
+    monkeypatch.setattr(
+        refresh_cache,
+        "_normalize_trade_dates",
+        lambda _values: ["2026-04-14", "2026-04-15", "2026-04-16"],
     )
 
     summary = refresh_cache.run_startup_gap_fill(engine)

@@ -108,10 +108,9 @@ class WarehouseManifest:
             conn.close()
 
     def _ensure_table(self) -> None:
-        with self._lock:
-            with self._connection() as conn:
-                conn.executescript(
-                    """
+        with self._lock, self._connection() as conn:
+            conn.executescript(
+                """
                     CREATE TABLE IF NOT EXISTS market_data_manifest (
                         dataset TEXT NOT NULL,
                         trade_date TEXT NOT NULL,
@@ -136,14 +135,13 @@ class WarehouseManifest:
                         updated_at TEXT NOT NULL
                     );
                     """
-                )
+            )
 
     def upsert(self, record: WarehouseManifestRecord) -> None:
         payload = record.to_dict()
-        with self._lock:
-            with self._connection() as conn:
-                conn.execute(
-                    """
+        with self._lock, self._connection() as conn:
+            conn.execute(
+                """
                     INSERT INTO market_data_manifest (
                         dataset, trade_date, schema_version, source, source_version,
                         parquet_path, symbol_count, row_count, updated_at, data_status, error
@@ -163,24 +161,23 @@ class WarehouseManifest:
                         data_status=excluded.data_status,
                         error=excluded.error
                     """,
-                    payload,
-                )
-                conn.execute(
-                    """
+                payload,
+            )
+            conn.execute(
+                """
                     INSERT INTO market_data_manifest_active (dataset, trade_date, updated_at)
                     VALUES (:dataset, :trade_date, :updated_at)
                     ON CONFLICT(dataset) DO UPDATE SET
                         trade_date=excluded.trade_date,
                         updated_at=excluded.updated_at
                     """,
-                    payload,
-                )
+                payload,
+            )
 
     def latest(self, dataset: str) -> WarehouseManifestRecord | None:
-        with self._lock:
-            with self._connection() as conn:
-                row = conn.execute(
-                    """
+        with self._lock, self._connection() as conn:
+            row = conn.execute(
+                """
                     SELECT manifest.*
                     FROM market_data_manifest_active AS active
                     JOIN market_data_manifest AS manifest
@@ -189,28 +186,27 @@ class WarehouseManifest:
                     WHERE active.dataset = ?
                     LIMIT 1
                     """,
-                    (dataset,),
-                ).fetchone()
-                if row is None:
-                    row = conn.execute(
-                        """
+                (dataset,),
+            ).fetchone()
+            if row is None:
+                row = conn.execute(
+                    """
                         SELECT * FROM market_data_manifest
                         WHERE dataset = ?
                         ORDER BY updated_at DESC, trade_date DESC
                         LIMIT 1
                         """,
-                        (dataset,),
-                    ).fetchone()
+                    (dataset,),
+                ).fetchone()
         return WarehouseManifestRecord.from_row(row) if row is not None else None
 
     def get(self, dataset: str, trade_date: str) -> WarehouseManifestRecord | None:
-        with self._lock:
-            with self._connection() as conn:
-                row = conn.execute(
-                    """
+        with self._lock, self._connection() as conn:
+            row = conn.execute(
+                """
                     SELECT * FROM market_data_manifest
                     WHERE dataset = ? AND trade_date = ?
                     """,
-                    (dataset, trade_date),
-                ).fetchone()
+                (dataset, trade_date),
+            ).fetchone()
         return WarehouseManifestRecord.from_row(row) if row is not None else None

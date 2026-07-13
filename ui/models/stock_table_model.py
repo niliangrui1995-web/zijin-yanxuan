@@ -10,7 +10,6 @@ from core.buy_point import BUY_POINT_STYLE_TEXT, BUY_POINT_TEXT, calculate_buy_p
 from core.observability import record_metric
 from ui.models.table_model_helpers import (
     SERIAL_HEADER,
-    _accent_rail_color_for_row_style,
     _active_flash_record,
     _alignment_for_cell,
     _build_flash_record,
@@ -26,6 +25,8 @@ from ui.models.table_model_helpers import (
     _numeric_heat_color,
     _parse_numeric_value,
     _prune_flash_records,
+    _row_accent_color,
+    _signed_amount_foreground,
     _status_badge_color,
     _summarize_long_text,
     _sync_serial_values,
@@ -745,17 +746,7 @@ class StockTableModel(QAbstractTableModel):
 
     @staticmethod
     def _net_buy_foreground_value(key, raw_val):
-        if key not in ["上榜净买额(万)", "机构净买(万)"]:
-            return None
-        try:
-            f_val = float(raw_val)
-            if f_val > 0:
-                return QColor(_c("COLOR_RISE"))
-            if f_val < 0:
-                return QColor(_c("COLOR_FALL"))
-        except (ValueError, TypeError):
-            pass
-        return None
+        return _signed_amount_foreground(key, raw_val)
 
     @staticmethod
     def _foreign_net_foreground_value(key, item_dict):
@@ -893,16 +884,7 @@ class StockTableModel(QAbstractTableModel):
     def _accent_rail_value(self, item_dict):
         if item_dict.get("_suppress_accent_rail"):
             return None
-        rail_color = _accent_rail_color_for_row_style(item_dict.get("_row_style", ""))
-        if rail_color:
-            return rail_color
-        for header in self._headers:
-            if not _is_status_header(header):
-                continue
-            badge = _status_badge_color(item_dict.get(header, ""), header)
-            if badge:
-                return badge
-        return None
+        return _row_accent_color(item_dict, self._headers)
 
     def data(self, index, role):
         if not index.isValid():

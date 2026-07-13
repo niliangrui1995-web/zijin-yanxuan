@@ -116,8 +116,7 @@ def read_tdx_day_file(filepath, price_div=100.0):
                 "volume": vol,
             }
         )
-        pdf = pdf.sort_values("datetime").reset_index(drop=True)
-        return pdf
+        return pdf.sort_values("datetime").reset_index(drop=True)
     except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as e:
         _log.error(f"[Error] read_tdx_day_file: {str(e)}")
         return None

@@ -91,7 +91,7 @@ def _is_direct_workspace_tab(owner) -> bool:
         return True
 
 
-def _show_kline_from_proxy_index(owner, index, signal_hub):
+def _show_kline_from_proxy_index(owner, index, signal_hub, *, require_code: bool = False):
     if not index.isValid():
         return
     source_idx = owner.proxy_model.mapToSource(index)
@@ -100,6 +100,8 @@ def _show_kline_from_proxy_index(owner, index, signal_hub):
         return
 
     code = owner.model.row_data[row].get("代码", "")
+    if require_code and not code:
+        return
     code_list = []
     clicked_visual_row = index.row()
     for visual_row in range(owner.proxy_model.rowCount()):
@@ -250,9 +252,7 @@ class BaseStockTab(_ProviderHealthMixin, QWidget):
             result = _check_owner(self.window())
         except RuntimeError:
             result = None
-        if result is not None:
-            return result
-        return True
+        return True if result is None else result
 
     def _should_start_interactive_runtime_on_show(self) -> bool:
         is_current = self._is_current_workspace_tab()
@@ -288,9 +288,7 @@ class BaseStockTab(_ProviderHealthMixin, QWidget):
         text = "" if value is None else str(value).strip()
         if text in {"", "--"}:
             return True
-        if zero_is_blank and text in {"0", "0.0", "0.00"}:
-            return True
-        return False
+        return bool(zero_is_blank and text in {"0", "0.0", "0.00"})
 
     def _collect_table_codes(self, current_model=None) -> list[str]:
         return collect_refresh_table_codes(self, current_model)

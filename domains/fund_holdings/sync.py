@@ -26,6 +26,7 @@ from domains.fund_holdings.compare import (
 )
 from domains.fund_holdings.store import fund_holdings_store
 from infra.http_safety import urlopen_https
+from infra.tasks.lifecycle import raise_if_cancelled as _raise_if_cancelled
 
 _USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 _QFII_API_URL = "https://datacenter-web.eastmoney.com/api/data/v1/get"
@@ -55,11 +56,6 @@ _RUIYUAN_ROW_RE = re.compile(
     r"<td class='tor'>(?P<market>[^<]+)</td>\s*</tr>",
     re.S,
 )
-
-
-def _raise_if_cancelled(cancellation_token=None) -> None:
-    if cancellation_token is not None:
-        cancellation_token.raise_if_cancelled()
 
 
 def _call_with_cancellation(fn, *args, cancellation_token=None, **kwargs):

@@ -87,9 +87,7 @@ def should_trigger_daily_auto_sync(
         return False
     if normalize_auto_sync_date(last_auto_sync_date) == today_compact:
         return False
-    if (now.hour, now.minute) < (trigger_hour, trigger_minute):
-        return False
-    return True
+    return not (now.hour, now.minute) < (trigger_hour, trigger_minute)
 
 
 def capital_attribute_label(value: str, labels: dict[str, str], *, placeholder: str = FUND_DISPLAY_PLACEHOLDER) -> str:

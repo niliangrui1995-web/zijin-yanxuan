@@ -9,7 +9,7 @@ import threading
 import time
 import uuid
 from contextlib import suppress
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -60,6 +60,20 @@ class WarehouseStatus:
 class WarehouseReadResult:
     data: Any
     status: WarehouseStatus
+
+
+def _read_failure(status: WarehouseStatus, data_status: str, error: str) -> WarehouseReadResult:
+    return WarehouseReadResult(
+        None,
+        replace(
+            status,
+            ok=False,
+            data_status=data_status,
+            error=error,
+            active_layer="warehouse_unavailable",
+            fallback_reason=data_status,
+        ),
+    )
 
 
 def _default_parquet_dir() -> Path:
@@ -310,18 +324,10 @@ class MarketDataWarehouse:
                 pl_df = pl.read_parquet(str(Path(status.parquet_path or self.parquet_path)))
             missing_columns = sorted(REQUIRED_MARKET_COLUMNS.difference(pl_df.columns))
             if missing_columns:
-                return WarehouseReadResult(
-                    None,
-                    WarehouseStatus(
-                        **{
-                            **status.to_dict(),
-                            "ok": False,
-                            "data_status": "schema_incompatible",
-                            "error": f"missing columns: {', '.join(missing_columns)}",
-                            "active_layer": "warehouse_unavailable",
-                            "fallback_reason": "schema_incompatible",
-                        }
-                    ),
+                return _read_failure(
+                    status,
+                    "schema_incompatible",
+                    f"missing columns: {', '.join(missing_columns)}",
                 )
 
             cache_data = {}
@@ -332,32 +338,16 @@ class MarketDataWarehouse:
             row_count = int(pl_df.height)
             symbol_count = len(cache_data)
             if status.row_count and status.row_count != row_count:
-                return WarehouseReadResult(
-                    None,
-                    WarehouseStatus(
-                        **{
-                            **status.to_dict(),
-                            "ok": False,
-                            "data_status": "manifest_mismatch",
-                            "error": f"row_count manifest={status.row_count} parquet={row_count}",
-                            "active_layer": "warehouse_unavailable",
-                            "fallback_reason": "manifest_mismatch",
-                        }
-                    ),
+                return _read_failure(
+                    status,
+                    "manifest_mismatch",
+                    f"row_count manifest={status.row_count} parquet={row_count}",
                 )
             if status.symbol_count and status.symbol_count != symbol_count:
-                return WarehouseReadResult(
-                    None,
-                    WarehouseStatus(
-                        **{
-                            **status.to_dict(),
-                            "ok": False,
-                            "data_status": "manifest_mismatch",
-                            "error": f"symbol_count manifest={status.symbol_count} parquet={symbol_count}",
-                            "active_layer": "warehouse_unavailable",
-                            "fallback_reason": "manifest_mismatch",
-                        }
-                    ),
+                return _read_failure(
+                    status,
+                    "manifest_mismatch",
+                    f"symbol_count manifest={status.symbol_count} parquet={symbol_count}",
                 )
             return WarehouseReadResult(
                 cache_data,
@@ -372,19 +362,7 @@ class MarketDataWarehouse:
                 ),
             )
         except (ImportError, OSError, RuntimeError, TypeError, ValueError, PolarsError) as exc:
-            return WarehouseReadResult(
-                None,
-                WarehouseStatus(
-                    **{
-                        **status.to_dict(),
-                        "ok": False,
-                        "data_status": "parquet_unreadable",
-                        "error": str(exc),
-                        "active_layer": "warehouse_unavailable",
-                        "fallback_reason": "parquet_unreadable",
-                    }
-                ),
-            )
+            return _read_failure(status, "parquet_unreadable", str(exc))
 
     def read_symbols(self, codes) -> WarehouseReadResult:
         code_texts = tuple(
@@ -417,18 +395,10 @@ class MarketDataWarehouse:
                 )
             missing_columns = sorted(REQUIRED_MARKET_COLUMNS.difference(part.columns))
             if missing_columns:
-                return WarehouseReadResult(
-                    None,
-                    WarehouseStatus(
-                        **{
-                            **status.to_dict(),
-                            "ok": False,
-                            "data_status": "schema_incompatible",
-                            "error": f"missing columns: {', '.join(missing_columns)}",
-                            "active_layer": "warehouse_unavailable",
-                            "fallback_reason": "schema_incompatible",
-                        }
-                    ),
+                return _read_failure(
+                    status,
+                    "schema_incompatible",
+                    f"missing columns: {', '.join(missing_columns)}",
                 )
 
             frames: dict[str, pd.DataFrame] = {}
@@ -457,19 +427,7 @@ class MarketDataWarehouse:
                 ),
             )
         except (ImportError, OSError, RuntimeError, TypeError, ValueError, PolarsError) as exc:
-            return WarehouseReadResult(
-                None,
-                WarehouseStatus(
-                    **{
-                        **status.to_dict(),
-                        "ok": False,
-                        "data_status": "parquet_unreadable",
-                        "error": str(exc),
-                        "active_layer": "warehouse_unavailable",
-                        "fallback_reason": "parquet_unreadable",
-                    }
-                ),
-            )
+            return _read_failure(status, "parquet_unreadable", str(exc))
 
     def read_symbol(self, code: str) -> WarehouseReadResult:
         code_text = str(code or "").strip()
@@ -487,33 +445,17 @@ class MarketDataWarehouse:
                     .collect()
                 )
             if part.height == 0:
-                return WarehouseReadResult(
-                    None,
-                    WarehouseStatus(
-                        **{
-                            **status.to_dict(),
-                            "ok": False,
-                            "data_status": "symbol_missing",
-                            "error": f"symbol is missing from warehouse: {code_text}",
-                            "active_layer": "warehouse_unavailable",
-                            "fallback_reason": "symbol_missing",
-                        }
-                    ),
+                return _read_failure(
+                    status,
+                    "symbol_missing",
+                    f"symbol is missing from warehouse: {code_text}",
                 )
             missing_columns = sorted(REQUIRED_MARKET_COLUMNS.difference(part.columns))
             if missing_columns:
-                return WarehouseReadResult(
-                    None,
-                    WarehouseStatus(
-                        **{
-                            **status.to_dict(),
-                            "ok": False,
-                            "data_status": "schema_incompatible",
-                            "error": f"missing columns: {', '.join(missing_columns)}",
-                            "active_layer": "warehouse_unavailable",
-                            "fallback_reason": "schema_incompatible",
-                        }
-                    ),
+                return _read_failure(
+                    status,
+                    "schema_incompatible",
+                    f"missing columns: {', '.join(missing_columns)}",
                 )
             if "_code" in part.columns:
                 part = part.drop("_code")
@@ -535,19 +477,7 @@ class MarketDataWarehouse:
                 ),
             )
         except (ImportError, OSError, RuntimeError, TypeError, ValueError, PolarsError) as exc:
-            return WarehouseReadResult(
-                None,
-                WarehouseStatus(
-                    **{
-                        **status.to_dict(),
-                        "ok": False,
-                        "data_status": "parquet_unreadable",
-                        "error": str(exc),
-                        "active_layer": "warehouse_unavailable",
-                        "fallback_reason": "parquet_unreadable",
-                    }
-                ),
-            )
+            return _read_failure(status, "parquet_unreadable", str(exc))
 
     def write_market_dataset(
         self,

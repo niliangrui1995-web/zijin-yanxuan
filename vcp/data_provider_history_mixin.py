@@ -4,6 +4,7 @@ import gc
 import os
 import random
 import time
+from contextlib import suppress
 
 import pandas as pd
 
@@ -295,9 +296,7 @@ class TdxDataProviderHistoryMixin:
                         code, name = s["code"], s["name"]
                         if "ST" in name:
                             continue
-                        if market == 1 and code.startswith(("60", "68")):
-                            stocks[code] = name
-                        elif market == 0 and code.startswith(("00", "30")):
+                        if code.startswith(("60", "68") if market == 1 else ("00", "30")):
                             stocks[code] = name
         if stocks:
             try:
@@ -338,9 +337,7 @@ class TdxDataProviderHistoryMixin:
                 if code in MANUAL_NAME_ALIASES:
                     display_name = MANUAL_NAME_ALIASES[code]
 
-                if prefix == "sh" and code.startswith(("60", "68")):
-                    stocks[code] = display_name
-                elif prefix == "sz" and code.startswith(("00", "30")):
+                if code.startswith(("60", "68") if prefix == "sh" else ("00", "30")):
                     stocks[code] = display_name
         has_names = sum(1 for c, n in stocks.items() if c != n)
         _log.info(f"[离线模式] 已从 vipdoc 扫描 {len(stocks)} 只标的（其中 {has_names} 只有名称）")
@@ -425,7 +422,7 @@ class TdxDataProviderHistoryMixin:
                             else:
                                 local_df.rename(columns={"vol": "volume"}, inplace=True)
                         return code, local_df, "OK"
-                    elif local_df is not None:
+                    if local_df is not None:
                         return code, None, "次新股/上市不足250天"
                 return code, None, "offline data missing"
             except (OSError, RuntimeError, TypeError, ValueError) as e:
@@ -438,11 +435,10 @@ class TdxDataProviderHistoryMixin:
             if existing_df is not None and not force_refresh:
                 import pandas as pd
 
-                if not isinstance(existing_df, pd.DataFrame):
-                    if hasattr(existing_df, "to_pandas"):
-                        existing_df = existing_df.to_pandas()
-                        if "datetime" in existing_df.columns:
-                            existing_df = existing_df.set_index("datetime")
+                if not isinstance(existing_df, pd.DataFrame) and hasattr(existing_df, "to_pandas"):
+                    existing_df = existing_df.to_pandas()
+                    if "datetime" in existing_df.columns:
+                        existing_df = existing_df.set_index("datetime")
 
                 new = self._fetch_standard_data(api, code, count=INCREMENTAL_BARS)
                 if new is not None:
@@ -466,14 +462,12 @@ class TdxDataProviderHistoryMixin:
                     combined = pd.concat([existing_df, new])
                     return code, combined[~combined.index.duplicated(keep="last")].iloc[-MAX_HISTORY_BARS:], "OK"
                 return code, None, "增量下载超时"
-            else:
-                df = self._fetch_standard_data(api, code, count=MAX_HISTORY_BARS)
-                if df is not None:
-                    if len(df) >= 250:
-                        return code, df, "OK"
-                    else:
-                        return code, None, "次新股/上市不足250天"
-                return code, None, "全量下载超时"
+            df = self._fetch_standard_data(api, code, count=MAX_HISTORY_BARS)
+            if df is not None:
+                if len(df) >= 250:
+                    return code, df, "OK"
+                return code, None, "次新股/上市不足250天"
+            return code, None, "全量下载超时"
         except ValueError as ve:
             return code, None, str(ve)
         except (ConnectionError, KeyError, OSError, RuntimeError, TimeoutError, TypeError) as e:
@@ -623,7 +617,7 @@ class TdxDataProviderHistoryMixin:
                 if isinstance(normalized_df, pd.DataFrame) and normalized_df is not df:
                     self.cache_data[code] = normalized_df
                     df = normalized_df
-                try:
+                with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                     self._last_market_data_source_status = {
                         "ok": True,
                         "active_layer": "memory_cache",
@@ -632,8 +626,6 @@ class TdxDataProviderHistoryMixin:
                         "row_count": len(df) if hasattr(df, "__len__") else 0,
                         "fallback_reason": "",
                     }
-                except (AttributeError, RuntimeError, TypeError, ValueError):
-                    pass
                 return df
 
         warehouse = None
@@ -652,15 +644,11 @@ class TdxDataProviderHistoryMixin:
                         if cached_df is None:
                             self.cache_data[code] = warehouse_df
                             cached_df = warehouse_df
-                    try:
+                    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                         self._last_market_data_source_status = result.status.to_dict()
-                    except (AttributeError, RuntimeError, TypeError, ValueError):
-                        pass
                     return cached_df
-            try:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 self._last_market_data_source_status = result.status.to_dict()
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                pass
 
         # K 线窗口等历史图表不能依赖“缓存先被别处预热”这一前置条件；
         # 当内存缓存为空时，直接回退读取本地通达信日线并写回缓存。
@@ -671,7 +659,7 @@ class TdxDataProviderHistoryMixin:
                     cached_df = self.cache_data.get(code)
                     if cached_df is None:
                         self.cache_data[code] = local_df
-                        try:
+                        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                             self._last_market_data_source_status = {
                                 "ok": True,
                                 "active_layer": "vipdoc_fallback",
@@ -680,10 +668,8 @@ class TdxDataProviderHistoryMixin:
                                 "row_count": len(local_df),
                                 "fallback_reason": "warehouse_unavailable_or_symbol_missing",
                             }
-                        except (AttributeError, RuntimeError, TypeError, ValueError):
-                            pass
                         return local_df
-                    try:
+                    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                         self._last_market_data_source_status = {
                             "ok": True,
                             "active_layer": "memory_cache_after_vipdoc",
@@ -692,19 +678,15 @@ class TdxDataProviderHistoryMixin:
                             "row_count": len(cached_df) if hasattr(cached_df, "__len__") else 0,
                             "fallback_reason": "",
                         }
-                    except (AttributeError, RuntimeError, TypeError, ValueError):
-                        pass
                     return cached_df
 
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             self._last_market_data_source_status = {
                 "ok": False,
                 "active_layer": "unavailable",
                 "data_status": "history_unavailable",
                 "fallback_reason": "warehouse_and_vipdoc_unavailable",
             }
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            pass
         return None
 
     def get_data_batch(self, codes):
@@ -742,10 +724,8 @@ class TdxDataProviderHistoryMixin:
                     warehouse_result = None
 
         if warehouse_result is not None:
-            try:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 self._last_market_data_source_status = warehouse_result.status.to_dict()
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                pass
             if warehouse_result.status.ok and isinstance(warehouse_result.data, dict):
                 for code, frame in warehouse_result.data.items():
                     normalized = ensure_pandas_dataframe(frame)

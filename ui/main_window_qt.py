@@ -1,5 +1,6 @@
 import os
 import time
+from contextlib import suppress
 
 from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
@@ -508,10 +509,8 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
         existing_tabs = getattr(existing_workspace, "tabs", None)
         previous_tabs = getattr(self, "tabs", None)
         if existing_workspace is not None:
-            try:
+            with suppress(AttributeError, TypeError, RuntimeError):
                 existing_tabs.currentChanged.disconnect(self._remember_last_active_tab)
-            except (AttributeError, TypeError, RuntimeError):
-                pass
 
         self._tabs_wrapper_layout.addWidget(workspace, 1)
         self._workspace = workspace
@@ -532,10 +531,8 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
             self._rebind_workspace_chrome()
             self._refresh_central_quote_code_supplier()
         except Exception:
-            try:
+            with suppress(AttributeError, TypeError, RuntimeError):
                 self.tabs.currentChanged.disconnect(self._remember_last_active_tab)
-            except (AttributeError, TypeError, RuntimeError):
-                pass
             try:
                 workspace.shutdown()
             except (AttributeError, OSError, RuntimeError, TypeError) as exc:
@@ -551,10 +548,8 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
             except (AttributeError, RuntimeError, TypeError) as exc:
                 log.warning(f"[UI] 恢复旧工作区标题栏导航失败: {exc}")
             if existing_tabs is not None:
-                try:
+                with suppress(AttributeError, TypeError, RuntimeError):
                     existing_tabs.currentChanged.connect(self._remember_last_active_tab)
-                except (AttributeError, TypeError, RuntimeError):
-                    pass
             raise
 
         if existing_workspace is not None:
@@ -664,18 +659,15 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
         ):
             obj.setCursor(Qt.CursorShape.PointingHandCursor if obj.isEnabled() else Qt.CursorShape.ArrowCursor)
 
-        if obj in target_objects:
-            if event_type in (
-                QEvent.Type.Enter,
-                QEvent.Type.HoverEnter,
-                QEvent.Type.HoverMove,
-                QEvent.Type.MouseMove,
-            ):
-                try:
-                    QApplication.restoreOverrideCursor()
-                except (ImportError, RuntimeError):
-                    pass
-                obj.setCursor(Qt.CursorShape.PointingHandCursor)
+        if obj in target_objects and event_type in (
+            QEvent.Type.Enter,
+            QEvent.Type.HoverEnter,
+            QEvent.Type.HoverMove,
+            QEvent.Type.MouseMove,
+        ):
+            with suppress(ImportError, RuntimeError):
+                QApplication.restoreOverrideCursor()
+            obj.setCursor(Qt.CursorShape.PointingHandCursor)
         return super().eventFilter(obj, event)
 
     def _show_trade_calendar(self):

@@ -9,6 +9,7 @@ from contextlib import suppress
 from core.logger import get_logger
 from domains.quotes.snapshot import coerce_number
 from infra.http_safety import urlopen_https
+from vcp.realtime_quote_batch import normalize_error_text
 
 log = get_logger(__name__)
 
@@ -30,20 +31,7 @@ _EASTMONEY_EDGE_FAILURE_TOKENS = (
 
 
 def _is_eastmoney_edge_failure(exc_or_text) -> bool:
-    if isinstance(exc_or_text, BaseException):
-        text_parts = [str(exc_or_text or "").strip()]
-        reason = getattr(exc_or_text, "reason", None)
-        if reason:
-            text_parts.append(str(reason).strip())
-        if getattr(exc_or_text, "__cause__", None):
-            text_parts.append(str(exc_or_text.__cause__).strip())
-        if getattr(exc_or_text, "__context__", None):
-            text_parts.append(str(exc_or_text.__context__).strip())
-        text = " | ".join(part for part in text_parts if part)
-    else:
-        text = str(exc_or_text or "").strip()
-
-    normalized = " ".join(text.lower().split())
+    normalized = normalize_error_text(exc_or_text)
     return bool(normalized) and any(token in normalized for token in _EASTMONEY_EDGE_FAILURE_TOKENS)
 
 

@@ -94,9 +94,9 @@ class StockCandidateTab(BaseStockTab):
             self._context_refresh_pending = True
 
     def prime_background_load(self) -> None:
-        workspace = self._workspace()
-        self._prime_anchor_source_tabs(workspace)
+        self._prime_anchor_source_tabs(workspace := self._workspace())
         self._prime_stock_context_snapshots(workspace)
+        self._ensure_runtime_started()
 
     @staticmethod
     def _prime_stock_context_snapshots(

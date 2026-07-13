@@ -838,10 +838,7 @@ def format_multi_select_summary(
         return text, all_text
 
     tooltip = "、".join(labels)
-    if len(labels) <= max(1, int(inline_limit or 1)):
-        body = separator.join(labels)
-    else:
-        body = f"{len(labels)}{count_suffix}"
+    body = separator.join(labels) if len(labels) <= max(1, int(inline_limit or 1)) else f"{len(labels)}{count_suffix}"
 
     text = f"{prefix_text}：{body}" if prefix_text else body
     return text, tooltip
@@ -883,6 +880,11 @@ class MultiSelectFilterButton(QToolButton):
     def selected_labels(self) -> list[str]:
         selected = self.selected_values()
         return [self._labels[value] for value in self.option_values() if value in selected]
+
+    def apply_summary(self, prefix: str, *, all_text: str = "全部") -> None:
+        text, tooltip = format_multi_select_summary(prefix, self.selected_labels(), all_text=all_text)
+        self.setText(text)
+        self.setToolTip(tooltip)
 
     def has_value(self, value: str) -> bool:
         return str(value or "").strip() in self._actions

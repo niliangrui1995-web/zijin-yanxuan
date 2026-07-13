@@ -21,10 +21,7 @@ def normalize_quote_payload(payload: Mapping | None) -> dict[str, dict]:
 
 
 def has_valid_quote(payload: Mapping | None) -> bool:
-    for quote in dict(payload or {}).values():
-        if coerce_number(dict(quote or {}).get("close")) > 0:
-            return True
-    return False
+    return any(coerce_number(dict(quote or {}).get("close")) > 0 for quote in dict(payload or {}).values())
 
 
 def publish_rt_quotes(

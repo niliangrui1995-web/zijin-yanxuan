@@ -70,8 +70,7 @@ class RpsService:
         if not series_list:
             return pd.DataFrame()
         prices = pd.concat(series_list, axis=1).sort_index()
-        prices = prices.ffill(limit=5)
-        return prices
+        return prices.ffill(limit=5)
 
     def _build_accelerated_rps(self, data_dict, start_date: str, end_date: str) -> dict | None:
         if self._rps_matrix_builder is None:

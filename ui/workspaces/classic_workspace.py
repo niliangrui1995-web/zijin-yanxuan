@@ -30,6 +30,20 @@ EarningsTab = None
 FundHoldingsTab = None
 LogTab = None
 
+_STARTUP_TAB_LOAD_ORDER = (
+    "watchlist",
+    "system_log",
+    "ai_industry_chain",
+    "na_daily",
+    "scan",
+    "foreign_block",
+    "earnings",
+    "fund_holdings",
+    "lhb",
+    "asian_market",
+    "stock_candidates",
+)
+
 
 def _resolve_tab_class(class_name: str, module_name: str):
     tab_class = globals().get(class_name)
@@ -158,8 +172,8 @@ class ClassicWorkspace(QWidget):
     mode = "classic"
     BACKGROUND_PREWARM_DELAY_MS = 350
     BACKGROUND_PREWARM_INTERVAL_MS = 260
-    CONTEXT_PREWARM_PRIORITY = ("ai_industry_chain", "na_daily")
-    BACKGROUND_PREWARM_KEYS = frozenset()
+    STARTUP_TAB_LOAD_ORDER = _STARTUP_TAB_LOAD_ORDER
+    BACKGROUND_PREWARM_KEYS = frozenset(STARTUP_TAB_LOAD_ORDER)
     RESTORE_LAST_TAB_DELAY_MS = 2500
     COPY_HOOK_REFRESH_DELAY_MS = 240
     STARTUP_TRANSITION_SUSPEND_MS = 60_000
@@ -723,26 +737,14 @@ class ClassicWorkspace(QWidget):
         self.prime_stock_context_snapshots(include_lhb=False)
 
         prewarm_keys = set(self.BACKGROUND_PREWARM_KEYS)
-        unloaded_keys = [
+        unloaded_by_key = {
             str(spec.get("key") or "").strip()
             for spec in self._tab_specs
             if not spec.get("loaded")
             and str(spec.get("key") or "").strip()
             and str(spec.get("key") or "").strip() in prewarm_keys
-        ]
-        current_spec = self._spec_for_key_or_index(self.tabs.currentIndex())
-        current_key = str((current_spec or {}).get("key") or "").strip()
-        lead_key = current_key if current_key in prewarm_keys else ""
-        if lead_key in unloaded_keys:
-            unloaded_keys.remove(lead_key)
-            unloaded_keys.insert(0, lead_key)
-        priority_insert_at = 1 if lead_key and unloaded_keys[:1] == [lead_key] else 0
-        for priority_key in reversed(self.CONTEXT_PREWARM_PRIORITY):
-            if priority_key not in unloaded_keys:
-                continue
-            unloaded_keys.remove(priority_key)
-            unloaded_keys.insert(priority_insert_at, priority_key)
-        self._background_prewarm_queue = unloaded_keys
+        }
+        self._background_prewarm_queue = [key for key in self.STARTUP_TAB_LOAD_ORDER if key in unloaded_by_key]
         self._prewarm_next_tab()
 
     def _prewarm_next_tab(self) -> None:
@@ -763,6 +765,7 @@ class ClassicWorkspace(QWidget):
 
     def _prime_tab_runtime(self, widget) -> None:
         for method_name in (
+            "prime_startup_state",
             "prime_background_load",
             "_ensure_runtime_started",
             "_ensure_initial_load_started",
@@ -839,6 +842,9 @@ class ClassicWorkspace(QWidget):
         self._restore_last_tab_timer = timer
 
         def _restore() -> None:
+            if self._background_prewarm_queue:
+                timer.start(self.BACKGROUND_PREWARM_INTERVAL_MS)
+                return
             if self._restore_last_tab_timer is timer:
                 self._restore_last_tab_timer = None
             self.restore_last_tab(index)
@@ -1063,6 +1069,9 @@ class ClassicWorkspace(QWidget):
         return self.select_code_row(code_text, preferred_tab_index=source_index if source_index >= 0 else None)
 
     def shutdown(self):
+        prewarm_queue = getattr(self, "_background_prewarm_queue", None)
+        if prewarm_queue is not None:
+            prewarm_queue.clear()
         restore_timer = getattr(self, "_restore_last_tab_timer", None)
         if restore_timer is not None:
             restore_timer.stop()

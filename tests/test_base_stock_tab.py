@@ -226,25 +226,37 @@ def test_base_stock_kline_navigation_uses_visual_proxy_order():
         1,
     ]
 
+    base_stock_tab_module._show_kline_from_proxy_index(
+        owner, proxy_model.index(0, 0), event_bus, require_code=True
+    )
+    assert len(spy) == 1
+
     base_stock_tab_module._show_kline_from_proxy_index(owner, QModelIndex(), event_bus)
     assert len(spy) == 1
 
 
 def test_stock_tabs_keep_double_click_compatibility_entrypoints(monkeypatch):
-    from ui.tabs import asian_market_tab, earnings_tab, foreign_block_trade_tab
+    from ui.tabs import asian_market_tab, earnings_tab, foreign_block_trade_tab, lhb_tab, na_daily_tab
 
     marker = object()
     for tab_module, tab_type in (
         (asian_market_tab, asian_market_tab.AsianMarketTab),
         (earnings_tab, earnings_tab.EarningsTab),
         (foreign_block_trade_tab, foreign_block_trade_tab.ForeignBlockTradeTab),
+        (lhb_tab, lhb_tab.LhbTab),
+        (na_daily_tab, na_daily_tab.NADailyTab),
     ):
         calls = []
         owner = object()
-        monkeypatch.setattr(tab_module, "_show_kline_from_proxy_index", lambda *args: calls.append(args))
+        monkeypatch.setattr(
+            tab_module,
+            "_show_kline_from_proxy_index",
+            lambda *args, **kwargs: calls.append((args, kwargs)),
+        )
 
         assert tab_type._on_double_click(owner, marker) is None
-        assert calls == [(owner, marker, tab_module.ui_signals)]
+        expected_kwargs = {"require_code": True} if tab_module is na_daily_tab else {}
+        assert calls == [((owner, marker, tab_module.ui_signals), expected_kwargs)]
 
 
 def test_base_stock_header_persistence_delegates_to_view_state_binding(monkeypatch):

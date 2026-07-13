@@ -6,13 +6,9 @@ from __future__ import annotations
 import json
 
 from infra.tasks import run_python_module
+from infra.tasks.lifecycle import raise_if_cancelled as _raise_if_cancelled
 
 EARNINGS_REFRESH_TIMEOUT_SECONDS = 15 * 60
-
-
-def _raise_if_cancelled(cancellation_token=None) -> None:
-    if cancellation_token is not None:
-        cancellation_token.raise_if_cancelled()
 
 
 def _process_timeout(cancellation_token=None) -> float:

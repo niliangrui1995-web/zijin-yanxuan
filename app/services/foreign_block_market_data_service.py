@@ -15,6 +15,7 @@ from core.task_errors import UserFacingTaskError
 from infra.market_data.foreign_block_provider import fetch_block_trades, fetch_trade_calendar
 from infra.tasks import ProcessExecutionError, ProcessTimeoutError
 from infra.tasks.lifecycle import TaskCancelledError, TaskDeadlineExceeded
+from infra.tasks.lifecycle import raise_if_cancelled as _raise_if_cancelled
 
 log = get_logger(__name__)
 
@@ -29,11 +30,6 @@ BLOCK_TRADE_TIMEOUT_USER_MESSAGE = (
 )
 _FETCH_ERRORS = (json.JSONDecodeError, OSError, RuntimeError, ProcessExecutionError, TypeError, ValueError)
 _filter_rows_to_ai_chain_codes = None
-
-
-def _raise_if_cancelled(cancellation_token=None) -> None:
-    if cancellation_token is not None:
-        cancellation_token.raise_if_cancelled()
 
 
 def _cooperative_wait(cancellation_token, seconds: float) -> None:
@@ -210,7 +206,7 @@ def _build_foreign_block_cache_row(record: pd.Series) -> dict:
         "成交价格": f"{trade_price:.2f}" if trade_price else "--",
         "折/溢价率(%)": f"{_safe_float(record.get('折溢率', 0)) * 100:.2f}%",
         "成交数量(万股)": f"{_safe_float(record.get('成交量', 0)) / 10000.0:.2f}",
-        "成交金额(万元)": f"{amount:.2f}",
+        "成交金额(万元)": f"{amount / 10000.0:.2f}",
         "买方营业部": buyer,
         "卖方营业部": seller,
     }

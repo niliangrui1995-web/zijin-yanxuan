@@ -83,35 +83,24 @@ class CentralQuotePoller:
             "quote_request_stats": quote_request_stats,
         }
 
-    def get_runtime_stats(self) -> dict:
-        stats_getter = getattr(self.data_provider, "get_realtime_runtime_stats", None)
-        if callable(stats_getter):
+    def _provider_mapping(self, method_name: str, error_label: str) -> dict:
+        provider_method = getattr(self.data_provider, method_name, None)
+        if callable(provider_method):
             try:
-                stats = stats_getter() or {}
+                stats = provider_method() or {}
                 return stats if isinstance(stats, dict) else {}
             except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-                log.debug(f"[报价站] 读取运行态统计失败: {exc}")
+                log.debug(f"[报价站] {error_label}: {exc}")
         return {}
+
+    def get_runtime_stats(self) -> dict:
+        return self._provider_mapping("get_realtime_runtime_stats", "读取运行态统计失败")
 
     def get_quote_request_stats(self) -> dict:
-        stats_getter = getattr(self.data_provider, "get_quote_request_stats", None)
-        if callable(stats_getter):
-            try:
-                stats = stats_getter() or {}
-                return stats if isinstance(stats, dict) else {}
-            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-                log.debug(f"[报价站] 读取报价请求统计失败: {exc}")
-        return {}
+        return self._provider_mapping("get_quote_request_stats", "读取报价请求统计失败")
 
     def compact_runtime_caches(self) -> dict:
-        compact = getattr(self.data_provider, "compact_runtime_caches", None)
-        if callable(compact):
-            try:
-                stats = compact() or {}
-                return stats if isinstance(stats, dict) else {}
-            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-                log.debug(f"[报价站] 运行时缓存清理失败: {exc}")
-        return {}
+        return self._provider_mapping("compact_runtime_caches", "运行时缓存清理失败")
 
     def protect_against_thread_anomaly(self, pytdx_threads: int) -> bool:
         protect = getattr(self.data_provider, "protect_against_thread_anomaly", None)

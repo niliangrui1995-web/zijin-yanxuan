@@ -5,6 +5,7 @@ from contextlib import suppress
 
 from core.market_calendar import MarketCalendar
 from vcp.realtime_quote_batch import (
+    normalize_error_text,
     normalize_quote_codes,
     should_log_pressure,
     split_quote_cache_hits,
@@ -30,20 +31,7 @@ def summarize_probe_error(exc: Exception) -> str:
 
 
 def is_disconnect_like_error(exc_or_text) -> bool:
-    if isinstance(exc_or_text, BaseException):
-        text_parts = [str(exc_or_text or "").strip()]
-        reason = getattr(exc_or_text, "reason", None)
-        if reason:
-            text_parts.append(str(reason).strip())
-        if getattr(exc_or_text, "__cause__", None):
-            text_parts.append(str(exc_or_text.__cause__).strip())
-        if getattr(exc_or_text, "__context__", None):
-            text_parts.append(str(exc_or_text.__context__).strip())
-        text = " | ".join(part for part in text_parts if part)
-    else:
-        text = str(exc_or_text or "").strip()
-
-    normalized = " ".join(text.lower().split())
+    normalized = normalize_error_text(exc_or_text)
     if not normalized:
         return False
 
@@ -580,9 +568,7 @@ def _finalize_realtime_quote_stats(
     missing_codes: list[str],
 ) -> None:
     final_status = "network_ok"
-    if request_stats.get("network_throttled"):
-        final_status = "network_partial_with_fallback"
-    elif batch_failures and new_fetch:
+    if request_stats.get("network_throttled") or (batch_failures and new_fetch):
         final_status = "network_partial_with_fallback"
     elif batch_failures:
         final_status = "network_failed_offline_fallback" if missing_codes else "network_failed"

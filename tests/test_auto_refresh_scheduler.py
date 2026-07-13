@@ -871,7 +871,7 @@ def test_auto_refresh_foreign_block_rows_filter_to_ai_chain_pool(monkeypatch):
                 "成交价格": 118,
                 "折溢率": -0.02,
                 "成交量": 10000,
-                "成交金额": 1180000,
+                "成交额": 1180000,
             },
             {
                 "交易日期": "20260420",
@@ -883,9 +883,10 @@ def test_auto_refresh_foreign_block_rows_filter_to_ai_chain_pool(monkeypatch):
                 "成交价格": 9.8,
                 "折溢率": -0.02,
                 "成交量": 10000,
-                "成交金额": 98000,
+                "成交额": 98000,
             },
         ]
     )
 
     assert [row["代码"] for row in rows] == ["300308"]
+    assert rows[0]["成交金额(万元)"] == "118.00"

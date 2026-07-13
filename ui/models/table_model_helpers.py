@@ -195,6 +195,20 @@ def _parse_numeric_value(raw_val):
     return value
 
 
+def _signed_amount_foreground(key: str, raw_val):
+    if key not in ("上榜净买额(万)", "机构净买(万)"):
+        return None
+    try:
+        value = float(raw_val)
+    except (TypeError, ValueError):
+        return None
+    if value > 0:
+        return QColor(_c("COLOR_RISE"))
+    if value < 0:
+        return QColor(_c("COLOR_FALL"))
+    return None
+
+
 _MARKET_CAP_HEADERS = {"\u5e02\u503c", "\u603b\u5e02\u503c"}
 
 
@@ -518,6 +532,18 @@ def _accent_rail_color_for_row_style(row_style: str):
     }
     color_key = style_map.get(style)
     return _c(color_key) if color_key else None
+
+
+def _row_accent_color(item_dict: dict, headers):
+    rail_color = _accent_rail_color_for_row_style(item_dict.get("_row_style", ""))
+    if rail_color:
+        return rail_color
+    for header in headers:
+        if _is_status_header(header):
+            badge = _status_badge_color(item_dict.get(header, ""), header)
+            if badge:
+                return badge
+    return None
 
 
 def _contains_cjk(text: str) -> bool:

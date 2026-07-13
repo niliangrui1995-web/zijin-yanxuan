@@ -92,9 +92,8 @@ def _read_gbbq_cache_mtime(gbbq_cache_file: str) -> float | None:
 
 def _load_gbbq_cache_rows_for_code(gbbq_cache_file: str, code: str, expected_mtime: float | None) -> list[dict]:
     cached_mtime = _read_gbbq_cache_mtime(gbbq_cache_file) if expected_mtime is not None else None
-    if expected_mtime is not None:
-        if cached_mtime is not None and cached_mtime != float(expected_mtime):
-            raise ValueError("gbbq cache mtime mismatch")
+    if expected_mtime is not None and cached_mtime is not None and cached_mtime != float(expected_mtime):
+        raise ValueError("gbbq cache mtime mismatch")
 
     with open(gbbq_cache_file, "r", encoding="utf-8") as handle:
         payload = handle.read()
@@ -121,7 +120,7 @@ def _parse_tdx_base_dbf(path: str) -> dict[str, dict]:
 
     signature = _dbf_signature(path)
     with _BASE_DBF_LOCK:
-        if _BASE_DBF_PATH == path and _BASE_DBF_SIGNATURE == signature and _BASE_DBF_CAPITALS is not None:
+        if path == _BASE_DBF_PATH and signature == _BASE_DBF_SIGNATURE and _BASE_DBF_CAPITALS is not None:
             return _BASE_DBF_CAPITALS
 
         if signature is None:

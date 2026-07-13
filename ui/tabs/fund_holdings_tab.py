@@ -41,8 +41,8 @@ from ui.components import (
     MultiSelectFilterButton,
     TableStateWrapper,
     VCPTableView,
-    format_multi_select_summary,
 )
+from ui.components import format_multi_select_summary as format_multi_select_summary
 from ui.models.table_models import StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_refresh import load_cached_finance_snapshot
 from ui.tabs.base_stock_tab import BaseStockTab, _is_direct_workspace_tab
@@ -714,22 +714,10 @@ class FundHoldingsTab(BaseStockTab):
         self._view_state_save_timer.start()
 
     def _refresh_subject_button_text(self):
-        text, tooltip = format_multi_select_summary(
-            "主体",
-            self.cmb_subject.selected_labels(),
-            all_text="全部",
-        )
-        self.cmb_subject.setText(text)
-        self.cmb_subject.setToolTip(tooltip)
+        self.cmb_subject.apply_summary("主体", all_text="全部")
 
     def _refresh_capital_attribute_button_text(self):
-        text, tooltip = format_multi_select_summary(
-            "资金属性",
-            self.cmb_capital_attribute.selected_labels(),
-            all_text="全部",
-        )
-        self.cmb_capital_attribute.setText(text)
-        self.cmb_capital_attribute.setToolTip(tooltip)
+        self.cmb_capital_attribute.apply_summary("资金属性", all_text="全部")
 
     def _on_subject_selection_changed(self):
         self._refresh_subject_button_text()

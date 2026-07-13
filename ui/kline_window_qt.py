@@ -53,6 +53,7 @@ from ui.kline_window_header import (
     refresh_header_context,
     resolve_vcp_context,
 )
+from ui.kline_window_runtime import _is_current_request as _runtime_is_current_request
 from ui.kline_window_runtime import (
     load_and_draw,
     normalize_daily_df_index,
@@ -640,13 +641,6 @@ class KLineChartWindow(QWidget):
         latest_trade_date = MarketCalendar.get_latest_trade_date(market)
         cached_quote = dict(GLOBAL_ASIAN_RT_CACHE.get(request_code) or {}) or None
 
-        def _is_current_request() -> bool:
-            return (
-                not getattr(self, "_closing", False)
-                and str(getattr(self, "code", "") or "").strip() == request_code
-                and int(getattr(self, "_render_generation", 0) or 0) == request_generation
-            )
-
         def _bg_load(_cancellation_token):
             target_stock = load_cached_asian_stock(JSON_CACHE, request_code)
             quote = cached_quote
@@ -669,7 +663,7 @@ class KLineChartWindow(QWidget):
             return target_stock, quote, fetched_quote, quote_error
 
         def _on_load_success(result):
-            if not _is_current_request() or result is None:
+            if not _runtime_is_current_request(self, request_code, request_generation) or result is None:
                 return
             target_stock, quote, fetched_quote, quote_error = result
             if target_stock is None:
@@ -709,7 +703,7 @@ class KLineChartWindow(QWidget):
             self._render_chart(df, loading=False)
 
         def _on_load_error(error_message: str):
-            if _is_current_request():
+            if _runtime_is_current_request(self, request_code, request_generation):
                 self._set_status_message(f"亚洲日线缓存读取失败: {error_message}", tone="error")
 
         _submit_owned_kline_task(

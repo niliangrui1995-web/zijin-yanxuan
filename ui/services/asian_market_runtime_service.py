@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime as dt
 import re
 import time
+from contextlib import suppress
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -126,10 +127,8 @@ class AsianMarketRuntimeService(QObject):
             self._codes = list(dict.fromkeys(normalized))
         worker = self._worker
         if worker is not None:
-            try:
+            with suppress(RuntimeError):
                 worker.codes = self.target_codes()
-            except RuntimeError:
-                pass
 
     def is_running(self) -> bool:
         worker = self._worker
@@ -200,19 +199,15 @@ class AsianMarketRuntimeService(QObject):
     def resume_auto_refresh(self) -> None:
         self.clear_auto_refresh_defer()
         worker = self._ensure_worker()
-        try:
+        with suppress(AttributeError, RuntimeError):
             worker.resume_auto_refresh()
-        except (AttributeError, RuntimeError):
-            pass
         self._set_runtime_state("running")
 
     def pause_for_cache_sync(self) -> None:
         worker = self._worker
         if worker is not None:
-            try:
+            with suppress(AttributeError, RuntimeError):
                 worker.pause_for_cache_sync()
-            except (AttributeError, RuntimeError):
-                pass
         self._set_runtime_state("paused_for_cache_sync")
 
     def trigger_refresh_once(self) -> bool:
@@ -286,10 +281,8 @@ class AsianMarketRuntimeService(QObject):
     def _on_worker_finished(self) -> None:
         worker = self._worker
         if worker is not None:
-            try:
+            with suppress(RuntimeError):
                 worker.deleteLater()
-            except RuntimeError:
-                pass
         self._worker = None
         if self._runtime_state != "manual_refresh_once":
             self._set_runtime_state("idle")

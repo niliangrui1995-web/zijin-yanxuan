@@ -12,6 +12,7 @@ import threading
 import time
 import traceback
 import uuid
+from contextlib import suppress
 
 from PyQt6.QtCore import QObject, QRunnable, QThread, QThreadPool, pyqtSignal, pyqtSlot
 
@@ -85,24 +86,18 @@ class BackgroundWorker(QRunnable):
     def _restore_thread_priority(thread, previous_priority) -> None:
         if thread is None or previous_priority is None:
             return
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             thread.setPriority(previous_priority)
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            pass
 
     @staticmethod
     def _safe_emit(signal, *args) -> None:
-        try:
+        with suppress(AttributeError, RuntimeError):
             signal.emit(*args)
-        except (AttributeError, RuntimeError):
-            pass
 
     @classmethod
     def _safe_emit_named(cls, signals, name: str, *args) -> None:
-        try:
+        with suppress(AttributeError, RuntimeError):
             cls._safe_emit(getattr(signals, name, None), *args)
-        except (AttributeError, RuntimeError):
-            pass
 
     @pyqtSlot()
     def run(self):
