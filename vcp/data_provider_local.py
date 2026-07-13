@@ -15,6 +15,7 @@ import pandas as pd
 from core.exceptions import CacheIOError, DataFormatError
 from core.json_cache import load_json_file, remove_cache_file, save_json_file
 from core.logger import get_logger
+from infra.storage.json_cache_repository import cache_file_signature as _dbf_signature
 from vcp.constants import CACHE_DIR, MAX_HISTORY_BARS
 from vcp.utils import ensure_pandas_dataframe, read_tdx_day_file
 
@@ -113,14 +114,6 @@ def _load_gbbq_cache_rows_for_code(gbbq_cache_file: str, code: str, expected_mti
     array_end = _find_json_array_end(payload, array_start)
     rows = json.loads(payload[array_start:array_end])
     return rows if isinstance(rows, list) else []
-
-
-def _dbf_signature(path: str) -> tuple[int, int] | None:
-    try:
-        stat_result = os.stat(path)
-    except (FileNotFoundError, OSError, TypeError, ValueError):
-        return None
-    return (int(stat_result.st_mtime_ns), int(stat_result.st_size))
 
 
 def _parse_tdx_base_dbf(path: str) -> dict[str, dict]:

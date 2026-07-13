@@ -42,12 +42,16 @@ _EXPORTS = {
 }
 
 
-def __getattr__(name: str):
-    target = _EXPORTS.get(name)
+def _resolve_lazy_export(name: str, exports: dict, namespace: dict, importer):
+    target = exports.get(name)
     if target is None:
         raise AttributeError(name)
     module_name, attr_name = target
-    module = import_module(module_name)
+    module = importer(module_name)
     value = getattr(module, attr_name)
-    globals()[name] = value
+    namespace[name] = value
     return value
+
+
+def __getattr__(name: str):
+    return _resolve_lazy_export(name, _EXPORTS, globals(), import_module)

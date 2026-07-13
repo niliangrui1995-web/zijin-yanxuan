@@ -1,11 +1,170 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pandas as pd
 import pytest
 
 import infra.market_data.lhb_provider as provider
 from infra.tasks.lifecycle import TaskCancelledError, TaskDeadlineExceeded
+
+
+def test_akshare_lhb_http_adapter_uses_safe_bounded_request(monkeypatch) -> None:
+    calls = []
+    response = object()
+    monkeypatch.setattr(
+        provider,
+        "requests_get_https",
+        lambda url, **kwargs: calls.append((url, kwargs)) or response,
+    )
+
+    assert provider.ak_lhb.requests.get("https://datacenter-web.eastmoney.com/api", params={"x": 1}) is response
+    assert calls == [
+        (
+            "https://datacenter-web.eastmoney.com/api",
+            {
+                "allowed_hosts": {"datacenter-web.eastmoney.com"},
+                "timeout": (5, 15),
+                "params": {"x": 1},
+            },
+        )
+    ]
+    assert all(
+        fn.__globals__["requests"] is provider.ak_lhb.requests
+        for fn in (
+            provider.ak.stock_lhb_detail_em,
+            provider.ak.stock_lhb_jgmmtj_em,
+            provider.ak.stock_lhb_hyyyb_em,
+            provider.ak.stock_lhb_stock_detail_em,
+        )
+    )
+
+
+def test_daily_foreign_detail_cache_batches_flags_and_pages(monkeypatch) -> None:
+    calls = []
+    rows = {
+        ("BUY", 1): [
+            {
+                "SECURITY_CODE": "1",
+                "OPERATEDEPT_NAME": "深股通专用",
+                "EXPLANATION": "原因A",
+                "BUY": 30,
+                "SELL": 10,
+                "NET": 20,
+            }
+        ],
+        ("BUY", 2): [
+            {
+                "SECURITY_CODE": "2",
+                "OPERATEDEPT_NAME": "高盛证券",
+                "EXPLANATION": "原因B",
+                "BUY": 40,
+                "SELL": 5,
+                "NET": 35,
+            }
+        ],
+        ("SELL", 1): [
+            {
+                "SECURITY_CODE": "1",
+                "OPERATEDEPT_NAME": "深股通专用",
+                "EXPLANATION": "原因A",
+                "BUY": 30,
+                "SELL": 10,
+                "NET": 20,
+            }
+        ],
+    }
+
+    def fake_get(_url, *, params):
+        key = (params["sortColumns"], int(params["pageNumber"]))
+        calls.append(key)
+        return SimpleNamespace(json=lambda: {"result": {"pages": 2 if key[0] == "BUY" else 1, "data": rows[key]}})
+
+    monkeypatch.setattr(provider.ak_lhb.requests, "get", fake_get)
+    cache = provider._load_daily_foreign_detail_cache("20260710")
+
+    assert calls == [("BUY", 1), ("BUY", 2), ("SELL", 1)]
+    assert set(cache) == {"000001", "000002"}
+    assert cache["000001"][["交易营业部名称", "类型", "买入金额", "卖出金额", "净额"]].to_dict("records") == [
+        {"交易营业部名称": "深股通专用", "类型": "原因A", "买入金额": 30, "卖出金额": 10, "净额": 20},
+        {"交易营业部名称": "深股通专用", "类型": "原因A", "买入金额": 30, "卖出金额": 10, "净额": 20},
+    ]
+
+
+def test_daily_foreign_detail_fetch_stops_before_next_page_when_cancelled(monkeypatch) -> None:
+    pages = []
+    response = SimpleNamespace(json=lambda: {"result": {"pages": 2, "data": []}})
+    monkeypatch.setattr(
+        provider.ak_lhb.requests,
+        "get",
+        lambda _url, *, params: pages.append(params["pageNumber"]) or response,
+    )
+
+    with pytest.raises(TaskCancelledError, match="stop"):
+        provider._fetch_daily_foreign_detail_side(
+            "20260710",
+            "BUY",
+            cancellation_token=_CancelAfterProviderCall(error_type=TaskCancelledError),
+        )
+
+    assert pages == [1]
+
+
+def test_daily_foreign_detail_cache_rejects_partial_payload(monkeypatch) -> None:
+    response = SimpleNamespace(json=lambda: {"result": {"pages": 1, "count": 2, "data": [{"SECURITY_CODE": "1"}]}})
+    monkeypatch.setattr(provider.ak_lhb.requests, "get", lambda *_args, **_kwargs: response)
+
+    assert provider._load_daily_foreign_detail_cache("20260710") is None
+
+
+@pytest.mark.parametrize("failed_side", ["BUY", "SELL"])
+def test_daily_foreign_detail_cache_keeps_surviving_side(monkeypatch, failed_side: str) -> None:
+    row = {
+        "SECURITY_CODE": "1",
+        "OPERATEDEPT_NAME": "深股通专用",
+        "EXPLANATION": "原因A",
+        "BUY": 30,
+        "SELL": 10,
+        "NET": 20,
+    }
+
+    def fake_fetch(_date_str, sort_column, _cancellation_token=None):
+        if sort_column == failed_side:
+            raise OSError(f"{failed_side} unavailable")
+        return [row]
+
+    monkeypatch.setattr(provider, "_fetch_daily_foreign_detail_side", fake_fetch)
+
+    cache = provider._load_daily_foreign_detail_cache("20260710")
+
+    assert set(cache) == {"000001"}
+    assert cache["000001"]["净额"].tolist() == [20]
+
+
+def test_daily_foreign_detail_cache_returns_none_when_both_sides_fail(monkeypatch) -> None:
+    monkeypatch.setattr(
+        provider,
+        "_fetch_daily_foreign_detail_side",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("unavailable")),
+    )
+
+    assert provider._load_daily_foreign_detail_cache("20260710") is None
+
+
+def test_pool_fetch_falls_back_when_daily_details_are_incomplete(monkeypatch) -> None:
+    monkeypatch.setattr(provider, "_load_daily_foreign_detail_cache", lambda *_args, **_kwargs: None)
+    observed = {}
+    monkeypatch.setattr(
+        provider,
+        "fetch_lhb_data_for_date",
+        lambda *_args, **kwargs: observed.update(kwargs) or [{"代码": "000001"}],
+    )
+
+    payload = provider.fetch_lhb_pool_for_date("20260710", return_meta=True)
+
+    assert payload == [{"代码": "000001"}]
+    assert observed["_foreign_detail_cache"] == {}
 
 
 def _candidate(
@@ -92,24 +251,13 @@ def test_institution_resolution_uses_exact_single_price_token_then_ranked_fallba
     token = _candidate(reason="C|D", close=30, pct=3, net=30)
     fallback = _candidate(reason="E", close=40, pct=4, net=40)
 
-    assert (
-        provider._resolve_jg_info("000001", "A", 99, 99, {("000001", "A"): [exact]}, {"000001": [price]})
-        == exact
-    )
+    assert provider._resolve_jg_info("000001", "A", 99, 99, {("000001", "A"): [exact]}, {"000001": [price]}) == exact
     assert provider._resolve_jg_info("000001", "", 99, 99, {}, {"000001": [exact]}) == exact
     assert provider._resolve_jg_info("000001", "A", 99, 99, {}, {}) == provider.DEFAULT_JG_INFO
-    assert provider._resolve_jg_info(
-        "000001", "unknown", 20, 2, {}, {"000001": [exact, price]}
-    ) == price
-    assert provider._resolve_jg_info(
-        "000001", "C", 99, 99, {}, {"000001": [exact, token]}
-    ) == token
-    assert provider._resolve_jg_info(
-        "000001", "unknown", 99, 99, {}, {"000001": [exact, fallback]}
-    ) == fallback
-    assert provider._resolve_jg_info(
-        "000001", "", 99, 99, {}, {"000001": [exact, fallback]}
-    ) == fallback
+    assert provider._resolve_jg_info("000001", "unknown", 20, 2, {}, {"000001": [exact, price]}) == price
+    assert provider._resolve_jg_info("000001", "C", 99, 99, {}, {"000001": [exact, token]}) == token
+    assert provider._resolve_jg_info("000001", "unknown", 99, 99, {}, {"000001": [exact, fallback]}) == fallback
+    assert provider._resolve_jg_info("000001", "", 99, 99, {}, {"000001": [exact, fallback]}) == fallback
 
 
 def test_foreign_row_key_tolerates_nan_invalid_numbers_and_optional_reason() -> None:
@@ -364,6 +512,8 @@ def test_public_entrypoints_cover_plain_error_success_log_probe_and_pool_delegat
         observed.update(kwargs)
         return [{"代码": "000001"}]
 
+    daily_cache = {"000001": pd.DataFrame()}
+    monkeypatch.setattr(provider, "_load_daily_foreign_detail_cache", lambda *_args, **_kwargs: daily_cache)
     monkeypatch.setattr(provider, "fetch_lhb_data_for_date", fake_fetch)
     assert provider.fetch_lhb_pool_for_date(
         "20260710",
@@ -377,6 +527,7 @@ def test_public_entrypoints_cover_plain_error_success_log_probe_and_pool_delegat
         "emit_success_log": False,
         "return_meta": True,
         "cancellation_token": "token",
+        "_foreign_detail_cache": daily_cache,
     }
 
 

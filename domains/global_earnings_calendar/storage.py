@@ -7,7 +7,7 @@ import os
 import sqlite3
 import tempfile
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Mapping
 
@@ -19,6 +19,7 @@ from domains.global_earnings_calendar.models import (
     EarningsCalendarEvent,
     OligarchCompany,
     _events_match_identity,
+    _hydrate_event_from_company,
 )
 
 log = get_logger(__name__)
@@ -39,10 +40,8 @@ def _serialized_json_write(path: Path):
         connection.commit()
     finally:
         if connection.in_transaction:
-            try:
+            with suppress(sqlite3.Error):
                 connection.rollback()
-            except sqlite3.Error:
-                pass
         connection.close()
 
 
@@ -70,23 +69,11 @@ class ConfirmedEarningsEventsProvider:
             if company is None:
                 continue
             events.append(
-                EarningsCalendarEvent(
-                    company=company.company,
-                    ticker=ticker,
-                    sector=company.sector or event.sector,
-                    report_date=event.report_date,
-                    fiscal_period=event.fiscal_period,
-                    time_label=event.time_label,
-                    beijing_time=event.beijing_time,
+                _hydrate_event_from_company(
+                    event,
+                    company,
                     status=event.status or "confirmed",
                     source=event.source or "confirmed",
-                    priority=company.priority or event.priority,
-                    conference_url=event.conference_url,
-                    market=company.market or event.market,
-                    original_call_time_text=event.original_call_time_text,
-                    original_timezone=event.original_timezone,
-                    call_time_source_url=event.call_time_source_url,
-                    call_time_source_type=event.call_time_source_type,
                 )
             )
         return sorted_events(events)
@@ -127,10 +114,8 @@ class ConfirmedEarningsEventsProvider:
             temp_path.replace(self.path)
         finally:
             if temp_path.exists():
-                try:
+                with suppress(OSError):
                     temp_path.unlink()
-                except OSError:
-                    pass
 
     def upsert(self, event: EarningsCalendarEvent) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

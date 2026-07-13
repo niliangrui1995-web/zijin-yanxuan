@@ -8,6 +8,7 @@ import shutil
 import threading
 import time
 import uuid
+from contextlib import suppress
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -73,10 +74,8 @@ def _atomic_parquet_write(df, final_path: Path, compression: str = "zstd") -> No
         os.replace(str(tmp_path), str(final_path))
     finally:
         if tmp_path.exists():
-            try:
+            with suppress(OSError):
                 tmp_path.unlink()
-            except OSError:
-                pass
 
 
 def _atomic_file_copy(source_path: Path, final_path: Path) -> None:
@@ -87,10 +86,8 @@ def _atomic_file_copy(source_path: Path, final_path: Path) -> None:
         os.replace(str(tmp_path), str(final_path))
     finally:
         if tmp_path.exists():
-            try:
+            with suppress(OSError):
                 tmp_path.unlink()
-            except OSError:
-                pass
 
 
 def _frame_to_polars(code: str, frame):
@@ -674,10 +671,8 @@ class MarketDataWarehouse:
             published = True
         finally:
             if not published:
-                try:
+                with suppress(OSError):
                     generation_path.unlink()
-                except OSError:
-                    pass
 
         # Keep the historical fixed filenames as best-effort compatibility mirrors.
         # Warehouse readers only follow the immutable generation recorded above.
@@ -734,10 +729,8 @@ class MarketDataWarehouse:
                 _atomic_file_copy(legacy_path, generation_path)
             inspected = self._inspect_parquet(generation_path)
         except (OSError, RuntimeError, TypeError, ValueError, PolarsError) as exc:
-            try:
+            with suppress(OSError):
                 generation_path.unlink()
-            except OSError:
-                pass
             return WarehouseStatus(
                 ok=False,
                 dataset=self.dataset,
@@ -750,10 +743,8 @@ class MarketDataWarehouse:
             )
         missing_columns = sorted(REQUIRED_MARKET_COLUMNS.difference(inspected["columns"]))
         if missing_columns:
-            try:
+            with suppress(OSError):
                 generation_path.unlink()
-            except OSError:
-                pass
             return WarehouseStatus(
                 ok=False,
                 dataset=self.dataset,
@@ -785,10 +776,8 @@ class MarketDataWarehouse:
             published = True
         finally:
             if not published:
-                try:
+                with suppress(OSError):
                     generation_path.unlink()
-                except OSError:
-                    pass
         previous_path = Path(previous_record.parquet_path) if previous_record and previous_record.parquet_path else None
         self._cleanup_stale_generations(generation_path, previous_path=previous_path)
         return WarehouseStatus(

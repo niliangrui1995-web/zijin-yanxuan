@@ -38,6 +38,25 @@ class _FakeSession:
         return self.response
 
 
+class _JapanTickerStub:
+    def __init__(self, code, session=None):
+        self.code = code
+        self.session = session
+
+    @property
+    def fast_info(self):
+        return {
+            "lastPrice": 26460.0,
+            "open": 26850.0,
+            "dayHigh": 27690.0,
+            "dayLow": 26340.0,
+            "lastVolume": 1760500.0,
+            "currency": "JPY",
+            "previousClose": 27450.0,
+            "regularMarketPreviousClose": 26720.0,
+        }
+
+
 def test_asian_market_worker_module_is_only_thread_orchestration_and_cache_state():
     worker_path = _REPO_ROOT / "ui" / "tabs" / "asian_market_workers.py"
     tree = ast.parse(worker_path.read_text(encoding="utf-8"))
@@ -1133,24 +1152,7 @@ def test_fetch_asian_realtime_quote_uses_regular_market_previous_close_for_yfina
         index=pd.to_datetime(["2026-04-20", "2026-04-21"]).tz_localize("Asia/Tokyo"),
     )
 
-    class _Ticker:
-        def __init__(self, code, session=None):
-            self.code = code
-            self.session = session
-
-        @property
-        def fast_info(self):
-            return {
-                "lastPrice": 26460.0,
-                "open": 26850.0,
-                "dayHigh": 27690.0,
-                "dayLow": 26340.0,
-                "lastVolume": 1760500.0,
-                "currency": "JPY",
-                "previousClose": 27450.0,
-                "regularMarketPreviousClose": 26720.0,
-            }
-
+    class _Ticker(_JapanTickerStub):
         def history(self, *args, **kwargs):
             return history
 
@@ -1186,24 +1188,7 @@ def test_fetch_single_code_prefers_resolved_previous_close_for_pct(monkeypatch):
         index=pd.to_datetime(["2026-04-20", "2026-04-21"]).tz_localize("Asia/Tokyo"),
     )
 
-    class _Ticker:
-        def __init__(self, code, session=None):
-            self.code = code
-            self.session = session
-
-        @property
-        def fast_info(self):
-            return {
-                "lastPrice": 26460.0,
-                "open": 26850.0,
-                "dayHigh": 27690.0,
-                "dayLow": 26340.0,
-                "lastVolume": 1760500.0,
-                "currency": "JPY",
-                "previousClose": 27450.0,
-                "regularMarketPreviousClose": 26720.0,
-            }
-
+    class _Ticker(_JapanTickerStub):
         @property
         def info(self):
             return {}

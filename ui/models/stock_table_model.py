@@ -9,11 +9,10 @@ from app.services.ui_quote_service import resolve_quote_metrics
 from core.buy_point import BUY_POINT_STYLE_TEXT, BUY_POINT_TEXT, calculate_buy_point_from_history
 from core.observability import record_metric
 from ui.models.table_model_helpers import (
-    FLASH_DURATION_SECONDS,
     SERIAL_HEADER,
     _accent_rail_color_for_row_style,
+    _active_flash_record,
     _alignment_for_cell,
-    _build_cell_tooltip,
     _build_flash_record,
     _build_table_model_fonts,
     _c,
@@ -30,6 +29,7 @@ from ui.models.table_model_helpers import (
     _status_badge_color,
     _summarize_long_text,
     _sync_serial_values,
+    _tooltip_for_cell,
     _with_serial_header,
 )
 
@@ -641,13 +641,7 @@ class StockTableModel(QAbstractTableModel):
 
     @staticmethod
     def _tooltip_value(key, raw_val, item_dict):
-        if key == SERIAL_HEADER:
-            return None
-        if key == "外资净买入":
-            custom_tip = item_dict.get("_外资净买入_tooltip")
-            if custom_tip:
-                return custom_tip
-        return _build_cell_tooltip(raw_val)
+        return _tooltip_for_cell(key, raw_val, item_dict)
 
     @staticmethod
     def _alignment_value(key, raw_val):
@@ -889,14 +883,6 @@ class StockTableModel(QAbstractTableModel):
             self._sort_value_cache[cache_key] = self._uncached_sort_value(row, key, raw_val, item_dict)
         return self._sort_value_cache[cache_key]
 
-    def _flash_record_value(self, row, col):
-        flash_record = self._flash_records.get(row, {}).get(col, None)
-        if not flash_record:
-            return None
-        if time.time() - float(flash_record.get("time", 0) or 0) > FLASH_DURATION_SECONDS:
-            return None
-        return flash_record
-
     def _status_badge_value(self, key, raw_val):
         if key == "买点" and str(raw_val or "").strip() == BUY_POINT_TEXT:
             return None
@@ -943,7 +929,7 @@ class StockTableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.UserRole:
             return self._sort_value(row, col, key, raw_val, item_dict)
         if role == Qt.ItemDataRole.UserRole + 1:
-            return self._flash_record_value(row, col)
+            return _active_flash_record(self._flash_records, row, col)
         if role == Qt.ItemDataRole.UserRole + 2:
             return self._status_badge_value(key, raw_val)
         if role == Qt.ItemDataRole.UserRole + 3:

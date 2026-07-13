@@ -528,8 +528,8 @@ def test_foreign_block_trade_local_cache_waits_during_post_f5_defer(monkeypatch)
     )
     monkeypatch.setattr(
         foreign_module,
-        "_task_lifecycle_for",
-        lambda owner: background_calls.append(owner),
+        "task_lifecycle_for",
+        lambda owner, **_kwargs: background_calls.append(owner),
     )
     tab = SimpleNamespace(
         _closing=False,

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import datetime as _dt
 import inspect
+from contextlib import suppress
 
 from PyQt6.QtCore import QDate, QRectF, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QPen, QTextCharFormat
@@ -79,19 +80,15 @@ def _remember_detached_refresh_worker(worker: QThread) -> None:
     _DETACHED_EARNINGS_REFRESH_WORKERS.append(worker)
 
     def _forget_worker() -> None:
-        try:
+        with suppress(ValueError):
             _DETACHED_EARNINGS_REFRESH_WORKERS.remove(worker)
-        except ValueError:
-            pass
 
-    try:
+    with suppress(RuntimeError, TypeError):
         worker.finished.connect(_forget_worker)
-    except (RuntimeError, TypeError):
-        pass
 
 
 def _shutdown_refresh_worker(worker: QThread) -> None:
-    try:
+    with suppress(RuntimeError, TypeError):
         if worker.isRunning():
             _remember_detached_refresh_worker(worker)
             request_thread_shutdown(
@@ -101,8 +98,6 @@ def _shutdown_refresh_worker(worker: QThread) -> None:
             )
         else:
             worker.deleteLater()
-    except (RuntimeError, TypeError):
-        pass
 
 
 def _priority_marker_styles(calendar_tokens: dict | None = None) -> dict[str, dict[str, int | str]]:
@@ -309,10 +304,8 @@ class TradeCalendarWidget(QCalendarWidget):
 
     def _dispose(self) -> None:
         self._closing = True
-        try:
+        with suppress(RuntimeError, TypeError):
             theme_manager.sig_theme_changed.disconnect(self._apply_theme_stylesheet)
-        except (RuntimeError, TypeError):
-            pass
 
     def closeEvent(self, event):
         self._dispose()
@@ -1093,10 +1086,8 @@ class OligarchEarningsCalendarPanel(QFrame):
         if self._closing:
             return
         self._closing = True
-        try:
+        with suppress(RuntimeError, TypeError):
             theme_manager.sig_theme_changed.disconnect(self._apply_theme)
-        except (RuntimeError, TypeError):
-            pass
         worker = self._refresh_worker
         self._refresh_worker = None
         if worker is None:
@@ -1109,14 +1100,10 @@ class OligarchEarningsCalendarPanel(QFrame):
             signal = getattr(worker, signal_name, None)
             if signal is None:
                 continue
-            try:
+            with suppress(RuntimeError, TypeError):
                 signal.disconnect(slot)
-            except (RuntimeError, TypeError):
-                pass
-        try:
+        with suppress(RuntimeError, TypeError):
             worker.setParent(None)
-        except (RuntimeError, TypeError):
-            pass
         _shutdown_refresh_worker(worker)
 
     def closeEvent(self, event):

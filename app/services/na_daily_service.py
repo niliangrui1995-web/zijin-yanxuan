@@ -178,9 +178,7 @@ class NADailyRefreshService(QObject):
     def cache_file() -> str:
         return NA_DAILY_CACHE_FILE
 
-    @staticmethod
-    def _project_root() -> str:
-        return project_root()
+    _project_root = staticmethod(project_root)
 
     def _get_na_daily_output_dir(self) -> str:
         return na_daily_output_dir()
@@ -188,9 +186,7 @@ class NADailyRefreshService(QObject):
     def _list_recent_report_files(self, limit: int = 5) -> list[str]:
         return list_recent_report_files(self._get_na_daily_output_dir(), limit=limit)
 
-    @staticmethod
-    def _signature_for(report_files: list[str]) -> tuple[str, ...]:
-        return signature_for_report_files(report_files)
+    _signature_for = staticmethod(signature_for_report_files)
 
     def load_cache(self) -> dict:
         try:

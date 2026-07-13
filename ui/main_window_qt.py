@@ -155,8 +155,6 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
             direct_watchdog=True,
         )
 
-        # 拖拽相关状态
-        self._drag_pos = None
         # 绑定系统级全局网络状态变更，确保所有角色的状态与UI强同步
         event_bus.sig_network_status_changed.connect(self._update_network_ui)
 
@@ -436,11 +434,6 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
                 controlled_startup_probe_guard=self._controlled_startup_probe_guard,
             )
 
-    def _set_status_text(self, text: str) -> None:
-        label = getattr(self, "lbl_status", None)
-        if label is not None:
-            label.setText(str(text or ""))
-
     def _current_workspace_tab_key(self) -> str:
         workspace = getattr(self, "_workspace", None)
         tabs = getattr(self, "tabs", None)
@@ -584,22 +577,13 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
             code_supplier=code_supplier,
         )
 
-    def _build_command_palette_entries(self) -> list[dict]:
-        return self._command_service.build_commands()
-
-    def _build_workspace_command_palette_entries(self) -> list[dict]:
-        return self._command_service.build_commands()
-
-    def _build_stock_command_entries(self, query: str) -> list[dict]:
-        return self._command_service.build_stock_commands(query)
-
     def _open_command_palette(self):
         if self._command_palette is None:
             from ui.components.command_palette import CommandPaletteDialog
 
             self._command_palette = CommandPaletteDialog(parent=self)
-            self._command_palette.set_dynamic_provider(self._build_stock_command_entries)
-        self._command_palette.set_commands(self._build_command_palette_entries())
+            self._command_palette.set_dynamic_provider(self._command_service.build_stock_commands)
+        self._command_palette.set_commands(self._command_service.build_commands())
         self._command_palette.show()
         self._command_palette.raise_()
         self._command_palette.activateWindow()
@@ -783,7 +767,7 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
         ui_signal_hub.sig_show_kline.connect(self._on_show_kline)
         ui_signal_hub.sig_show_kline_with_list.connect(self._on_show_kline_with_list)
 
-        self._mount_workspace()
+        self._bootstrap.mount_workspace()
         self._init_gear_menu()
         self._inject_tabbar_into_titlebar()
         return
@@ -800,9 +784,6 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
     def _remember_last_active_tab(self, index: int):
         self._app_config.last_active_tab = index
 
-    def _workspace_tables(self):
-        return self.iter_workspace_tables()
-
     def iter_workspace_tables(self):
         workspace = getattr(self, "_workspace", None)
         if workspace is None:
@@ -810,14 +791,8 @@ class MainWindowQT(MainWindowHostPortMixin, QMainWindow):
         iter_tables = getattr(workspace, "iter_tables", None)
         return list(iter_tables() or []) if callable(iter_tables) else []
 
-    def _install_table_copy_hooks(self):
-        self.install_workspace_table_copy_hooks()
-
     def install_workspace_table_copy_hooks(self):
         install_table_copy_hooks(self.iter_workspace_tables())
-
-    def _mount_workspace(self):
-        self._bootstrap.mount_workspace()
 
     def _save_ui_state(self):
         """Persist window geometry with version tag."""

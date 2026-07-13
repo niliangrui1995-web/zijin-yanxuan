@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from contextlib import suppress
+
 import pandas as pd
 
 from app.services.asian_market_cache_service import (
@@ -10,6 +12,7 @@ from app.services.ui_market_calendar_service import MarketCalendar
 from app.services.ui_task_lifecycle_service import task_lifecycle_for
 from app.services.ui_task_service import task_registry
 from ui.kline_chart_payload import merge_kline_context
+from ui.kline_window_runtime import _is_current_request
 
 
 def load_cached_asian_stock(json_cache: str, code: str) -> dict | None:
@@ -102,33 +105,22 @@ def schedule_asian_history_backfill(window, *, task_manager, fetch_single_kline)
     request_name = str(getattr(window, "name", "") or "").strip()
     request_generation = int(getattr(window, "_render_generation", 0) or 0)
 
-    def _is_current_request() -> bool:
-        return (
-            not getattr(window, "_closing", False)
-            and str(getattr(window, "code", "") or "").strip() == request_code
-            and int(getattr(window, "_render_generation", 0) or 0) == request_generation
-        )
-
     window._set_status_message("本地缓存缺少该标的，正在单独补拉历史日线...", tone="loading")
 
     def _bg_fetch(_cancellation_token):
         return fetch_single_kline(request_name, request_code, period="1y")
 
     def _on_fetch_success(stock_payload):
-        try:
-            if not _is_current_request():
+        with suppress(RuntimeError):
+            if not _is_current_request(window, request_code, request_generation):
                 return
             render_asian_history_payload(window, stock_payload)
-        except RuntimeError:
-            pass
 
     def _on_fetch_error(error_msg):
-        try:
-            if not _is_current_request():
+        with suppress(RuntimeError):
+            if not _is_current_request(window, request_code, request_generation):
                 return
             window._set_status_message(f"历史日线拉取失败: {error_msg}", tone="error")
-        except RuntimeError:
-            pass
 
     task_lifecycle_for(window, runner=task_manager).run_background(
         "asian_history_backfill",

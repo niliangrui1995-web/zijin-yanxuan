@@ -5,6 +5,7 @@ import datetime as dt
 import importlib
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Mapping, Protocol
 
@@ -80,6 +81,7 @@ from domains.global_earnings_calendar.models import (
     EarningsCalendarEvent,
     OligarchCompany,
     _events_match_identity,
+    _hydrate_event_from_company,
     _normalize_status_value,
 )
 from domains.global_earnings_calendar.models import (
@@ -299,24 +301,10 @@ class GlobalEarningsCalendarService:
         company = self.universe.get(ticker)
         if company is None:
             return None
-        status = _normalize_status_value(event.status, event.source)
-        return EarningsCalendarEvent(
-            company=company.company,
-            ticker=ticker,
-            sector=company.sector or event.sector,
-            report_date=event.report_date,
-            fiscal_period=event.fiscal_period,
-            time_label=event.time_label,
-            beijing_time=event.beijing_time,
-            status=status,
-            source=event.source,
-            priority=company.priority or event.priority,
-            conference_url=event.conference_url,
-            market=company.market or event.market,
-            original_call_time_text=event.original_call_time_text,
-            original_timezone=event.original_timezone,
-            call_time_source_url=event.call_time_source_url,
-            call_time_source_type=event.call_time_source_type,
+        return _hydrate_event_from_company(
+            event,
+            company,
+            status=_normalize_status_value(event.status, event.source),
         )
 
     def _load_confirmed_events(self) -> list[EarningsCalendarEvent]:
@@ -381,24 +369,7 @@ class GlobalEarningsCalendarService:
         confirmed = self._hydrate_event_from_universe(event)
         if confirmed is None:
             raise ConfirmedEventWriteError(f"unknown_ticker: {event.ticker}")
-        confirmed = EarningsCalendarEvent(
-            company=confirmed.company,
-            ticker=confirmed.ticker,
-            sector=confirmed.sector,
-            report_date=confirmed.report_date,
-            fiscal_period=confirmed.fiscal_period,
-            time_label=confirmed.time_label,
-            beijing_time=confirmed.beijing_time,
-            status="confirmed",
-            source="confirmed",
-            priority=confirmed.priority,
-            conference_url=confirmed.conference_url,
-            market=confirmed.market,
-            original_call_time_text=confirmed.original_call_time_text,
-            original_timezone=confirmed.original_timezone,
-            call_time_source_url=confirmed.call_time_source_url,
-            call_time_source_type=confirmed.call_time_source_type,
-        )
+        confirmed = replace(confirmed, status="confirmed", source="confirmed")
         self.confirmed_provider.upsert(confirmed)
         self._sync_cached_confirmed_event(confirmed)
         return confirmed

@@ -9,6 +9,16 @@ from infra.market_data.provider_ports import ProviderHealthSnapshot
 from ui.workers.central_quotes_worker import CentralQuotesService
 
 
+class _SinaQuoteProviderStub:
+    def fetch_realtime_quotes_batch(self, fetch_codes):
+        ordered = tuple(sorted(fetch_codes))
+        self.calls.append(ordered)
+        return {
+            code: {"close": 10.0, "last_close": 9.8, "source": "sina"}
+            for code in ordered
+        }
+
+
 def test_central_quotes_service_uses_30s_a_share_polling():
     _ = QApplication.instance() or QApplication([])
     main_window = QWidget()
@@ -575,7 +585,7 @@ def test_central_quotes_service_limits_fallback_cooldown_full_fetch(monkeypatch)
     now = 1_800_000_000.0
     codes = {f"{idx:06d}" for idx in range(1, 8)}
 
-    class DummyProvider:
+    class DummyProvider(_SinaQuoteProviderStub):
         def __init__(self):
             self.calls = []
             self._rt_api_call_timeout_sec = 1.0
@@ -588,14 +598,6 @@ def test_central_quotes_service_limits_fallback_cooldown_full_fetch(monkeypatch)
                 runtime_stats={},
                 eastmoney_cooldown_until=self._rt_eastmoney_cooldown_until,
             )
-
-        def fetch_realtime_quotes_batch(self, fetch_codes):
-            ordered = tuple(sorted(fetch_codes))
-            self.calls.append(ordered)
-            return {
-                code: {"close": 10.0, "last_close": 9.8, "source": "sina"}
-                for code in ordered
-            }
 
         def is_online(self):
             return True
@@ -657,20 +659,12 @@ def test_central_quotes_service_limits_recent_fallback_pressure_after_cooldown(m
     now = 1_800_000_000.0
     codes = {f"{idx:06d}" for idx in range(1, 8)}
 
-    class DummyProvider:
+    class DummyProvider(_SinaQuoteProviderStub):
         def __init__(self):
             self.calls = []
             self._rt_api_call_timeout_sec = 1.0
             self._rt_quote_batch_size = 20
             self._rt_eastmoney_cooldown_until = now - 1
-
-        def fetch_realtime_quotes_batch(self, fetch_codes):
-            ordered = tuple(sorted(fetch_codes))
-            self.calls.append(ordered)
-            return {
-                code: {"close": 10.0, "last_close": 9.8, "source": "sina"}
-                for code in ordered
-            }
 
         def is_online(self):
             return True
@@ -757,20 +751,12 @@ def test_central_quotes_service_uses_own_pressure_stats_when_scan_recent_overwri
         "recent_ended_at_ts": now - 20,
     }
 
-    class DummyProvider:
+    class DummyProvider(_SinaQuoteProviderStub):
         def __init__(self):
             self.calls = []
             self._rt_api_call_timeout_sec = 1.0
             self._rt_quote_batch_size = 20
             self._rt_eastmoney_cooldown_until = now - 1
-
-        def fetch_realtime_quotes_batch(self, fetch_codes):
-            ordered = tuple(sorted(fetch_codes))
-            self.calls.append(ordered)
-            return {
-                code: {"close": 10.0, "last_close": 9.8, "source": "sina"}
-                for code in ordered
-            }
 
         def is_online(self):
             return True

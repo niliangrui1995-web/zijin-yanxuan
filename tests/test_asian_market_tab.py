@@ -108,28 +108,37 @@ def _install_immediate_local_cache_runner(monkeypatch):
     monkeypatch.setattr(asian_module, "task_manager", FakeTaskRunner())
 
 
-def _build_asian_tab_for_view_tests(monkeypatch, settings=None):
-    settings = settings or _SettingsStub()
-    monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
-    monkeypatch.setattr(
-        asian_module.AsianMarketTab,
-        "_load_local_cache",
-        lambda self: setattr(self, "row_data", []),
-    )
+def _patch_asian_tab_constructor(monkeypatch):
     monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
-    monkeypatch.setattr(
-        asian_module.AsianMarketTab,
-        "_settings_section",
-        lambda self: settings,
-        raising=False,
-    )
     monkeypatch.setattr(
         asian_module.AsianMarketTab,
         "bind_header_persistence",
         lambda self, table, settings_key="header_state": None,
         raising=False,
     )
-    return asian_module.AsianMarketTab(), settings
+
+
+def _build_empty_asian_tab(monkeypatch, settings=None):
+    monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
+    monkeypatch.setattr(
+        asian_module.AsianMarketTab,
+        "_load_local_cache",
+        lambda self: setattr(self, "row_data", []),
+    )
+    _patch_asian_tab_constructor(monkeypatch)
+    if settings is not None:
+        monkeypatch.setattr(
+            asian_module.AsianMarketTab,
+            "_settings_section",
+            lambda self: settings,
+            raising=False,
+        )
+    return asian_module.AsianMarketTab()
+
+
+def _build_asian_tab_for_view_tests(monkeypatch, settings=None):
+    settings = settings or _SettingsStub()
+    return _build_empty_asian_tab(monkeypatch, settings), settings
 
 
 def test_infer_asian_markets_normalizes_from_code_suffixes():
@@ -229,21 +238,7 @@ def test_asian_auto_cache_checks_stale_trade_dates_per_market(monkeypatch):
 
 
 def test_asian_market_table_scales_columns_to_fill_view(monkeypatch):
-    monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
-    monkeypatch.setattr(
-        asian_module.AsianMarketTab,
-        "_load_local_cache",
-        lambda self: setattr(self, "row_data", []),
-    )
-    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
-    monkeypatch.setattr(
-        asian_module.AsianMarketTab,
-        "bind_header_persistence",
-        lambda self, table, settings_key="header_state": None,
-        raising=False,
-    )
-
-    tab = asian_module.AsianMarketTab()
+    tab = _build_empty_asian_tab(monkeypatch)
     try:
         assert not hasattr(tab, "auto_cache_timer")
         tab.resize(1200, 720)
@@ -268,21 +263,7 @@ def test_asian_market_table_scales_columns_to_fill_view(monkeypatch):
 
 
 def test_asian_market_table_suppresses_left_rails(monkeypatch):
-    monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
-    monkeypatch.setattr(
-        asian_module.AsianMarketTab,
-        "_load_local_cache",
-        lambda self: setattr(self, "row_data", []),
-    )
-    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
-    monkeypatch.setattr(
-        asian_module.AsianMarketTab,
-        "bind_header_persistence",
-        lambda self, table, settings_key="header_state": None,
-        raising=False,
-    )
-
-    tab = asian_module.AsianMarketTab()
+    tab = _build_empty_asian_tab(monkeypatch)
     try:
         assert tab.asian_table.property("suppressLeftRails") is True
         assert tab.asian_table.property("simpleCellPaint") is True
@@ -337,21 +318,7 @@ def test_asian_market_table_keeps_saved_column_widths(monkeypatch):
 
 
 def test_asian_market_toolbar_keeps_search_and_refresh(monkeypatch):
-    monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
-    monkeypatch.setattr(
-        asian_module.AsianMarketTab,
-        "_load_local_cache",
-        lambda self: setattr(self, "row_data", []),
-    )
-    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
-    monkeypatch.setattr(
-        asian_module.AsianMarketTab,
-        "bind_header_persistence",
-        lambda self, table, settings_key="header_state": None,
-        raising=False,
-    )
-
-    tab = asian_module.AsianMarketTab()
+    tab = _build_empty_asian_tab(monkeypatch)
     try:
         assert tab.search_box.property("inToolbar") is True
         assert tab.btn_refresh.property("inToolbar") is True
@@ -584,21 +551,7 @@ def test_asian_market_rt_update_hidden_tab_defers_table_signal(monkeypatch):
         tab.deleteLater()
 
 def test_asian_market_status_column_uses_plain_style(monkeypatch):
-    monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
-    monkeypatch.setattr(
-        asian_module.AsianMarketTab,
-        "_load_local_cache",
-        lambda self: setattr(self, "row_data", []),
-    )
-    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
-    monkeypatch.setattr(
-        asian_module.AsianMarketTab,
-        "bind_header_persistence",
-        lambda self, table, settings_key="header_state": None,
-        raising=False,
-    )
-
-    tab = asian_module.AsianMarketTab()
+    tab = _build_empty_asian_tab(monkeypatch)
     try:
         assert "状态" in tab.model._plain_style_headers
         assert "涨幅%" not in tab.model._plain_style_headers
@@ -608,21 +561,7 @@ def test_asian_market_status_column_uses_plain_style(monkeypatch):
 
 
 def test_asian_market_pct_column_keeps_rise_fall_color(monkeypatch):
-    monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
-    monkeypatch.setattr(
-        asian_module.AsianMarketTab,
-        "_load_local_cache",
-        lambda self: setattr(self, "row_data", []),
-    )
-    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
-    monkeypatch.setattr(
-        asian_module.AsianMarketTab,
-        "bind_header_persistence",
-        lambda self, table, settings_key="header_state": None,
-        raising=False,
-    )
-
-    tab = asian_module.AsianMarketTab()
+    tab = _build_empty_asian_tab(monkeypatch)
     try:
         tab.model.update_data(
             [
@@ -696,13 +635,7 @@ def test_asian_market_constructor_schedules_local_cache_background(monkeypatch, 
     monkeypatch.setattr(asian_module, "task_manager", FakeTaskRunner())
     monkeypatch.setattr(asian_module, "JSON_CACHE", str(tmp_path / "asian_klines_latest.json"))
     monkeypatch.setattr(asian_module, "RT_JSON_CACHE", str(tmp_path / "asian_rt_latest.json"))
-    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
-    monkeypatch.setattr(
-        asian_module.AsianMarketTab,
-        "bind_header_persistence",
-        lambda self, table, settings_key="header_state": None,
-        raising=False,
-    )
+    _patch_asian_tab_constructor(monkeypatch)
 
     tab = asian_module.AsianMarketTab()
     try:
@@ -771,13 +704,7 @@ def test_asian_market_placeholder_rows_fill_track_for_missing_cache(monkeypatch,
     monkeypatch.setattr(asian_module, "RT_JSON_CACHE", str(tmp_path / "asian_rt_cache.json"))
     monkeypatch.setattr(asian_module, "GLOBAL_ASIAN_RT_CACHE", {})
     _install_immediate_local_cache_runner(monkeypatch)
-    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
-    monkeypatch.setattr(
-        asian_module.AsianMarketTab,
-        "bind_header_persistence",
-        lambda self, table, settings_key="header_state": None,
-        raising=False,
-    )
+    _patch_asian_tab_constructor(monkeypatch)
 
     tab = asian_module.AsianMarketTab()
     try:
@@ -867,13 +794,7 @@ def test_asian_market_load_local_cache_normalizes_stale_yfinance_pct(monkeypatch
     monkeypatch.setattr(asian_module, "RT_JSON_CACHE", str(rt_cache_file))
     monkeypatch.setattr(asian_module, "GLOBAL_ASIAN_RT_CACHE", {})
     _install_immediate_local_cache_runner(monkeypatch)
-    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
-    monkeypatch.setattr(
-        asian_module.AsianMarketTab,
-        "bind_header_persistence",
-        lambda self, table, settings_key="header_state": None,
-        raising=False,
-    )
+    _patch_asian_tab_constructor(monkeypatch)
 
     tab = asian_module.AsianMarketTab()
     try:
@@ -939,13 +860,7 @@ def test_asian_market_load_local_cache_normalizes_stale_naver_pct(monkeypatch, t
     monkeypatch.setattr(asian_module, "RT_JSON_CACHE", str(rt_cache_file))
     monkeypatch.setattr(asian_module, "GLOBAL_ASIAN_RT_CACHE", {})
     _install_immediate_local_cache_runner(monkeypatch)
-    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
-    monkeypatch.setattr(
-        asian_module.AsianMarketTab,
-        "bind_header_persistence",
-        lambda self, table, settings_key="header_state": None,
-        raising=False,
-    )
+    _patch_asian_tab_constructor(monkeypatch)
 
     tab = asian_module.AsianMarketTab()
     try:
@@ -1011,13 +926,7 @@ def test_asian_market_load_local_cache_prefers_hk_daily_close_over_delayed_quote
     monkeypatch.setattr(asian_module, "RT_JSON_CACHE", str(rt_cache_file))
     monkeypatch.setattr(asian_module, "GLOBAL_ASIAN_RT_CACHE", {})
     _install_immediate_local_cache_runner(monkeypatch)
-    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
-    monkeypatch.setattr(
-        asian_module.AsianMarketTab,
-        "bind_header_persistence",
-        lambda self, table, settings_key="header_state": None,
-        raising=False,
-    )
+    _patch_asian_tab_constructor(monkeypatch)
 
     tab = asian_module.AsianMarketTab()
     try:
@@ -1086,13 +995,7 @@ def test_asian_market_load_local_cache_keeps_history_when_rt_cache_is_zero(monke
     monkeypatch.setattr(asian_module, "GLOBAL_ASIAN_RT_CACHE", {})
     monkeypatch.setattr(asian_module, "filter_asian_tickers", lambda: {"Murata": "6981.T"})
     _install_immediate_local_cache_runner(monkeypatch)
-    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
-    monkeypatch.setattr(
-        asian_module.AsianMarketTab,
-        "bind_header_persistence",
-        lambda self, table, settings_key="header_state": None,
-        raising=False,
-    )
+    _patch_asian_tab_constructor(monkeypatch)
 
     tab = asian_module.AsianMarketTab()
     try:
@@ -1256,21 +1159,7 @@ def test_asian_market_load_local_cache_recomputes_short_pct_for_direct_quote_sou
 
 
 def test_asian_market_status_rows_refresh_without_quote_tick(monkeypatch):
-    monkeypatch.setattr(asian_module, "AsianMarketWorker", _DummyWorker)
-    monkeypatch.setattr(
-        asian_module.AsianMarketTab,
-        "_load_local_cache",
-        lambda self: setattr(self, "row_data", []),
-    )
-    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
-    monkeypatch.setattr(
-        asian_module.AsianMarketTab,
-        "bind_header_persistence",
-        lambda self, table, settings_key="header_state": None,
-        raising=False,
-    )
-
-    tab = asian_module.AsianMarketTab()
+    tab = _build_empty_asian_tab(monkeypatch)
     try:
         tab.row_data = [
             {
@@ -1338,13 +1227,7 @@ def test_asian_market_runtime_state_uses_actual_tracked_markets(monkeypatch):
         "_load_local_cache",
         lambda self: setattr(self, "row_data", [{"代码": "0522.HK"}]),
     )
-    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
-    monkeypatch.setattr(
-        asian_module.AsianMarketTab,
-        "bind_header_persistence",
-        lambda self, table, settings_key="header_state": None,
-        raising=False,
-    )
+    _patch_asian_tab_constructor(monkeypatch)
     monkeypatch.setattr(asian_module, "is_asian_quote_refresh_time", lambda codes: codes == ["0522.HK"])
 
     tab = asian_module.AsianMarketTab()
@@ -1361,13 +1244,7 @@ def test_manual_refresh_starts_lazy_runtime_worker(monkeypatch):
         "_load_local_cache",
         lambda self: setattr(self, "row_data", [{"代码": "0522.HK"}]),
     )
-    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
-    monkeypatch.setattr(
-        asian_module.AsianMarketTab,
-        "bind_header_persistence",
-        lambda self, table, settings_key="header_state": None,
-        raising=False,
-    )
+    _patch_asian_tab_constructor(monkeypatch)
 
     tab = asian_module.AsianMarketTab()
     try:
@@ -1391,13 +1268,7 @@ def test_asian_market_minute_tick_uses_tracked_market_refresh_window(monkeypatch
         "_load_local_cache",
         lambda self: setattr(self, "row_data", [{"代码": "8035.T"}]),
     )
-    monkeypatch.setattr(asian_module.AsianMarketTab, "_check_auto_cache", lambda self: None)
-    monkeypatch.setattr(
-        asian_module.AsianMarketTab,
-        "bind_header_persistence",
-        lambda self, table, settings_key="header_state": None,
-        raising=False,
-    )
+    _patch_asian_tab_constructor(monkeypatch)
 
     tab = asian_module.AsianMarketTab()
     try:

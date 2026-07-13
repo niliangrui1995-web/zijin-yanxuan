@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import datetime
 import re
+from contextlib import suppress
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
@@ -71,7 +72,7 @@ from ui.tabs.asian_market_workers import (
     AsianMarketWorker,
     is_asian_quote_refresh_time,
 )
-from ui.tabs.base_stock_tab import BaseStockTab
+from ui.tabs.base_stock_tab import BaseStockTab, _show_kline_from_proxy_index
 
 log = get_logger(__name__)
 _ASIAN_MARKET_LOCAL_CACHE_TASK = task_registry.workspace("asian_market_local_cache")
@@ -499,7 +500,6 @@ class AsianMarketTab(BaseStockTab):
         self._load_cache_in_progress = False
         self._load_cache_pending = False
         self._last_asian_success_at = None
-        self._last_asian_error = ""
         self._status_primary = "系统初始化..."
         self._status_segments = ()
         self._status_freshness = ""
@@ -575,16 +575,6 @@ class AsianMarketTab(BaseStockTab):
         current_worker = getattr(service, "current_worker", None)
         if callable(current_worker):
             return current_worker()
-        return None
-
-    def _call_worker_method(self, method_name: str):
-        service = getattr(self, "_asian_market_service", None)
-        worker = service.current_worker() if service is not None else None
-        if worker is None:
-            return None
-        method = getattr(worker, method_name, None)
-        if callable(method):
-            return method()
         return None
 
     def _get_tracked_codes(self) -> list[str]:
@@ -853,7 +843,6 @@ class AsianMarketTab(BaseStockTab):
 
         error_markers = ("失败", "异常", "429", "检查外网", "切换网络", "空响应")
         if any(marker in text for marker in error_markers):
-            self._last_asian_error = text
             cached_hint = "当前保留本地缓存" if getattr(self, "row_data", None) else "当前没有可展示缓存"
             self._set_asian_status(
                 "本次刷新失败",
@@ -888,9 +877,6 @@ class AsianMarketTab(BaseStockTab):
             return
 
         self._set_asian_status(text)
-
-    def _should_start_runtime_on_show(self) -> bool:
-        return BaseStockTab._should_start_interactive_runtime_on_show(self)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -1277,7 +1263,6 @@ class AsianMarketTab(BaseStockTab):
             changed_rows.append(row_idx)
 
         self._last_asian_success_at = datetime.datetime.now()
-        self._last_asian_error = ""
         if not changed_rows:
             return
 
@@ -1315,41 +1300,15 @@ class AsianMarketTab(BaseStockTab):
                     self._worker_pause_for_cache_sync()
 
     def _on_double_click(self, index):
-        if not index.isValid():
-            return
-        source_idx = self.proxy_model.mapToSource(index)
-        row = source_idx.row()
-        if row >= len(self.model.row_data):
-            return
-
-        code = self.model.row_data[row].get("代码", "")
-        # 按当前表格视觉排序顺序构建列表，让 K 线窗口的"上一只/下一只"跟随用户排序
-        code_list = []
-        clicked_visual_row = index.row()
-        for r in range(self.proxy_model.rowCount()):
-            s_idx = self.proxy_model.mapToSource(self.proxy_model.index(r, 0))
-            if s_idx.row() < len(self.model.row_data):
-                rd = dict(self.model.row_data[s_idx.row()] or {})
-                rd.setdefault("代码", rd.get("代码", ""))
-                rd.setdefault("名称", rd.get("名称", ""))
-                code_list.append(rd)
-
-        current_idx = 0
-        if 0 <= clicked_visual_row < len(code_list):
-            current_idx = clicked_visual_row
-
-        # 触发全局画图事件
-        ui_signals.sig_show_kline_with_list.emit(code, code_list, current_idx)
+        _show_kline_from_proxy_index(self, index, ui_signals)
 
     def shutdown(self) -> None:
         if self._asian_shutting_down:
             return
         self._asian_shutting_down = True
         shutdown_task_lifecycle_for_owner(self, timeout_ms=1_000)
-        try:
+        with suppress(TypeError, RuntimeError):
             event_bus.sig_asian_klines_ready.disconnect(self._on_asian_klines_ready)
-        except (TypeError, RuntimeError):
-            pass
         service = getattr(self, "_asian_market_service", None)
         if service is not None:
             for signal, callback in (
@@ -1357,11 +1316,9 @@ class AsianMarketTab(BaseStockTab):
                 (getattr(service, "sig_rt_update", None), self._on_rt_update),
                 (getattr(service, "sig_runtime_state_changed", None), self._on_service_runtime_state_changed),
             ):
-                try:
+                with suppress(TypeError, RuntimeError):
                     if signal is not None:
                         signal.disconnect(callback)
-                except (TypeError, RuntimeError):
-                    pass
             if getattr(self, "_owns_asian_market_service", False):
                 service.shutdown()
         cache_thread = getattr(self, "cache_thread", None)

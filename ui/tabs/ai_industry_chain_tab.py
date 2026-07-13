@@ -13,9 +13,7 @@ from app.services.ui_event_service import ui_signals
 from app.services.ui_industry_chain_service import (
     AI_CHAIN_FILE,
     PLACEHOLDER,
-    cell_text,
     get_ai_industry_chain_source_mtime,
-    normalize_ai_chain_code,
     refresh_ai_industry_chain_rows,
 )
 from core.logger import get_logger
@@ -86,9 +84,6 @@ class AIIndustryChainTab(BaseStockTab):
         finally:
             self._background_prime_loading = False
             self._background_prime_done = True
-
-    def _should_start_runtime_on_show(self) -> bool:
-        return BaseStockTab._should_start_interactive_runtime_on_show(self)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -191,14 +186,6 @@ class AIIndustryChainTab(BaseStockTab):
         self._status_freshness = str(freshness or "").strip()
         self._status_next_step = str(next_step or "").strip()
         self._refresh_chain_status()
-
-    @staticmethod
-    def _cell_text(value) -> str:
-        return cell_text(value)
-
-    @classmethod
-    def _normalize_code(cls, value) -> str:
-        return normalize_ai_chain_code(value)
 
     def _read_workbook_rows(self) -> list[dict]:
         return refresh_ai_industry_chain_rows(self.workbook_path)

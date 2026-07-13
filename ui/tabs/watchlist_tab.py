@@ -15,7 +15,7 @@ from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
 from app.services.ui_json_cache_service import load_json_file
 from app.services.ui_market_calendar_service import MarketCalendar
-from app.services.ui_task_lifecycle_service import TaskLifecycleGroup
+from app.services.ui_task_lifecycle_service import task_lifecycle_for
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
 from app.services.ui_watchlist_service import watchlist_vm
@@ -29,14 +29,6 @@ from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, St
 from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
-
-
-def _task_lifecycle_for(owner) -> TaskLifecycleGroup:
-    lifecycle = getattr(owner, "_task_lifecycle", None)
-    if lifecycle is None:
-        lifecycle = TaskLifecycleGroup(task_manager)
-        owner._task_lifecycle = lifecycle
-    return lifecycle
 
 
 def _task_cancelled(cancellation_token) -> bool:
@@ -947,7 +939,7 @@ class WatchlistTab(BaseStockTab):
         }
         if not payload:
             return
-        _task_lifecycle_for(self).run_background(
+        task_lifecycle_for(self, runner=task_manager).run_background(
             "metrics_persist",
             partial(_run_metrics_persist, self, payload),
             on_error=lambda e: log.error(f"[watchlist] metrics persist failed: {e}"),
@@ -1121,11 +1113,6 @@ class WatchlistTab(BaseStockTab):
             return
         self._schedule_vcp_payload_apply(payload_dict)
 
-    def _apply_deferred_vcp_payload(self, payload: object):
-        if self._closing or not payload:
-            return
-        self._schedule_vcp_payload_apply(payload)
-
     def _vcp_apply_delay_ms(self) -> int:
         delay_ms = self.FOREGROUND_VCP_APPLY_DELAY_MS
         shown_at = float(getattr(self, "_last_vcp_tab_shown_at", 0.0) or 0.0)
@@ -1278,7 +1265,7 @@ class WatchlistTab(BaseStockTab):
                 self._last_vcp_calc_started_at = time.monotonic()
                 self._vcp_task_generation += 1
                 generation = self._vcp_task_generation
-                _task_lifecycle_for(self).run_background(
+                task_lifecycle_for(self, runner=task_manager).run_background(
                     "vcp_refresh",
                     partial(_run_vcp_refresh, self, codes_with_rows),
                     on_success=partial(_emit_vcp_if_current, self, generation),

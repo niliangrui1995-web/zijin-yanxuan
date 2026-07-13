@@ -323,10 +323,6 @@ class AsianMarketRuntimeService(QObject):
         except (PermissionError, OSError, TypeError, ValueError) as exc:
             log.error(f"[亚洲市场] 持久化 RT 缓存失败: {exc}")
 
-    @staticmethod
-    def _cache_latest_trade_dates() -> dict:
-        return load_latest_trade_dates(JSON_CACHE)
-
     def _expected_latest_trade_dates(self) -> dict:
         from datetime import timedelta
 
@@ -371,7 +367,7 @@ class AsianMarketRuntimeService(QObject):
 
         mtime = cache_mtime(JSON_CACHE)
         cache_dt = MarketCalendar.from_timestamp(mtime, "CN") if mtime else dt.datetime.min
-        cache_latest = self._cache_latest_trade_dates()
+        cache_latest = load_latest_trade_dates(JSON_CACHE)
         expected_latest = self._expected_latest_trade_dates()
         cache_latest_date = max(cache_latest.values()) if cache_latest else None
         expected_latest_date = max(expected_latest.values()) if expected_latest else None

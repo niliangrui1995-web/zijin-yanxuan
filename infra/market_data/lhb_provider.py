@@ -3,12 +3,23 @@ from __future__ import annotations
 from typing import Any, cast
 
 import akshare as ak
+import akshare.stock_feature.stock_lhb_em as ak_lhb
 import pandas as pd
 
 from core.logger import get_logger
+from infra.http_safety import requests_get_https
 from infra.tasks.lifecycle import TaskCancelledError, TaskDeadlineExceeded
 
 log = get_logger(__name__)
+
+
+class _AkshareLhbHttp:
+    def get(self, url, **kwargs):
+        kwargs["timeout"] = (5, 15)
+        return requests_get_https(url, allowed_hosts={"datacenter-web.eastmoney.com"}, **kwargs)
+
+
+ak_lhb.requests = _AkshareLhbHttp()
 
 
 def _raise_if_cancelled(cancellation_token=None) -> None:
@@ -399,6 +410,66 @@ def _load_foreign_presence(
     return _build_foreign_presence_maps(df_yyb, cancellation_token)
 
 
+def _fetch_daily_foreign_detail_side(date_str: str, sort_column: str, cancellation_token=None) -> list[dict]:
+    rows = []
+    page = pages = 1
+    expected_count = None
+    while page <= pages:
+        _raise_if_cancelled(cancellation_token)
+        response = ak_lhb.requests.get(
+            "https://datacenter-web.eastmoney.com/api/data/v1/get",
+            params={
+                "reportName": f"RPT_BILLBOARD_DAILYDETAILS{sort_column}",
+                "columns": "ALL",
+                "filter": f"(TRADE_DATE='{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}')",
+                "pageNumber": page,
+                "pageSize": 500,
+                "sortTypes": "-1",
+                "sortColumns": sort_column,
+                "source": "WEB",
+                "client": "WEB",
+            },
+        )
+        result = response.json().get("result") or {}
+        pages = max(1, int(result.get("pages") or 1))
+        expected_count = result.get("count", expected_count)
+        rows.extend(result.get("data") or [])
+        page += 1
+    if expected_count is not None and len(rows) != int(expected_count):
+        raise ValueError(f"{sort_column} detail count mismatch")
+    return rows
+
+
+def _load_daily_foreign_detail_cache(date_str: str, cancellation_token=None) -> dict[str, pd.DataFrame] | None:
+    rows = []
+    failed_sides = 0
+    for sort_column in ("BUY", "SELL"):
+        try:
+            rows.extend(_fetch_daily_foreign_detail_side(date_str, sort_column, cancellation_token))
+        except (TaskCancelledError, TaskDeadlineExceeded):
+            raise
+        except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            failed_sides += 1
+            log.warning(f"[龙虎榜抓取] 日期级{sort_column}席位明细抓取失败: {exc}")
+    if failed_sides == 2:
+        return None
+
+    try:
+        source_columns = ["SECURITY_CODE", "OPERATEDEPT_NAME", "EXPLANATION", "BUY", "SELL", "NET"]
+        columns = ["代码", "交易营业部名称", "类型", "买入金额", "卖出金额", "净额"]
+        frame = pd.DataFrame(rows).rename(columns=dict(zip(source_columns, columns, strict=True)))[columns]
+        frame["代码"] = frame["代码"].astype(str).str.zfill(6)
+        for column in ("买入金额", "卖出金额", "净额"):
+            frame[column] = pd.to_numeric(frame[column], errors="coerce")
+        return {
+            code: group.drop(columns="代码").reset_index(drop=True)
+            for code, group in frame.groupby("代码", sort=False)
+        }
+    except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        log.warning(f"[龙虎榜抓取] 日期级席位明细抓取失败: {exc}")
+        return None
+
+
 def _load_stock_foreign_details(code: str, date_str: str, *, cancellation_token=None) -> pd.DataFrame:
     frames = []
     for flag in ("买入", "卖出"):
@@ -623,6 +694,7 @@ def fetch_lhb_data_for_date(
     emit_success_log: bool = True,
     return_meta: bool = False,
     cancellation_token=None,
+    _foreign_detail_cache: dict[str, pd.DataFrame] | None = None,
 ) -> list[dict] | dict:
     """
     抓取指定日期的龙虎榜数据，并将 基础详情、机构统计、外资/知名游资参与情况聚合返回。
@@ -639,6 +711,8 @@ def fetch_lhb_data_for_date(
         return []
 
     context = _load_lhb_enrichment_context(date_str, cancellation_token)
+    if _foreign_detail_cache is not None:
+        context["foreign_detail_cache"] = _foreign_detail_cache
     results = _build_lhb_records(
         df_detail,
         date_str=date_str,
@@ -684,10 +758,12 @@ def fetch_lhb_pool_for_date(
     """为 30 日关注池抓取指定日期的龙虎榜数据。
     现在直接复用完整提取器（strict_filter=False），彻底解决旧版历史记录外资和共振数据全部强行涂 0 的重大 BUG。
     """
+    foreign_detail_cache = _load_daily_foreign_detail_cache(date_str, cancellation_token)
     return fetch_lhb_data_for_date(
         date_str,
         strict_filter=False,
         emit_success_log=emit_success_log,
         return_meta=return_meta,
         cancellation_token=cancellation_token,
+        _foreign_detail_cache=foreign_detail_cache or {},
     )

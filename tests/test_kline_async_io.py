@@ -4,6 +4,10 @@ from __future__ import annotations
 import datetime as dt
 from types import SimpleNamespace
 
+from ui import kline_window_asian as asian
+from ui import kline_window_qt as kline_module
+from ui import kline_window_runtime as runtime
+
 
 class _CapturingRunner:
     def __init__(self):
@@ -24,14 +28,13 @@ class _CapturingRunner:
 
 
 def test_kline_realtime_timer_defers_provider_network_call(monkeypatch, qt_application):
-    from ui import kline_window_runtime as runtime
-
     provider_calls = []
     applied = []
     runner = _CapturingRunner()
     provider = SimpleNamespace(
-        fetch_realtime_quotes_batch=lambda codes: provider_calls.append(tuple(codes))
-        or {"000001": {"open": 10, "close": 11}}
+        fetch_realtime_quotes_batch=lambda codes: (
+            provider_calls.append(tuple(codes)) or {"000001": {"open": 10, "close": 11}}
+        )
     )
     window = SimpleNamespace(
         code="000001",
@@ -56,10 +59,41 @@ def test_kline_realtime_timer_defers_provider_network_call(monkeypatch, qt_appli
     assert provider_calls == [("000001",)]
     pending["on_success"](result)
     assert applied == [{"open": 10, "close": 11}]
+    window._render_generation += 1
+    pending["on_success"](result)
+    assert applied == [{"open": 10, "close": 11}]
+
+
+def test_asian_history_backfill_ignores_stale_callbacks(monkeypatch):
+    calls = []
+    lifecycle = SimpleNamespace(
+        run_background=lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    statuses = []
+    rendered = []
+    window = SimpleNamespace(
+        code="2330.TW",
+        name="台积电",
+        _render_generation=2,
+        _closing=False,
+        _set_status_message=lambda *args, **kwargs: statuses.append((args, kwargs)),
+    )
+    monkeypatch.setattr(asian, "task_lifecycle_for", lambda *_args, **_kwargs: lifecycle)
+    monkeypatch.setattr(asian, "render_asian_history_payload", lambda *args: rendered.append(args))
+
+    asian.schedule_asian_history_backfill(
+        window, task_manager=object(), fetch_single_kline=lambda *_args, **_kwargs: {}
+    )
+    window._render_generation += 1
+    calls[0][1]["on_success"]({"history": []})
+    calls[0][1]["on_error"]("stale")
+
+    assert rendered == []
+    assert len(statuses) == 1
+    assert statuses[0][1] == {"tone": "loading"}
 
 
 def test_kline_asian_cache_file_is_read_inside_background_task(monkeypatch, qt_application):
-    from ui import kline_window_qt as kline_module
     from ui.tabs import asian_market_tab as asian_module
 
     cache_reads = []

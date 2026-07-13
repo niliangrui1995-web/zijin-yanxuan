@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Callable, Mapping, Sequence
 
@@ -141,18 +141,8 @@ class TabDataLineageService:
 
     def empty_lineage(self, *, row_count: int = 0, warnings: Sequence[str] | None = None) -> TabDataLineage:
         result = self.describe([], warnings=warnings)
-        return TabDataLineage(
-            key=result.lineage.key,
-            view=result.lineage.view,
-            source=result.lineage.source,
-            provider=result.lineage.provider,
-            cache_refs=result.lineage.cache_refs,
-            updated_at=result.lineage.updated_at,
+        return replace(
+            result.lineage,
             row_count=max(0, int(row_count or 0)),
             triggered_network=False,
-            fallback_or_degraded=result.lineage.fallback_or_degraded,
-            errors=result.lineage.errors,
-            warnings=result.lineage.warnings,
-            provider_fault_tolerance=result.lineage.provider_fault_tolerance,
-            extra=result.lineage.extra,
         )

@@ -7,17 +7,13 @@ from core.market_calendar import MarketCalendar
 from infra.http_safety import urlopen_https
 from vcp.data_provider_local import build_offline_quotes
 from vcp.data_provider_quotes import (
-    coerce_quote_number,
     ensure_eastmoney_quote_state,
     enter_eastmoney_cooldown,
     log_quote_fallback,
-    register_eastmoney_success,
     request_eastmoney_quote_batch,
     request_sina_quote_batch,
     request_tencent_quote_batch,
     to_eastmoney_secid,
-    to_sina_symbol,
-    to_tencent_symbol,
 )
 from vcp.data_provider_realtime import fetch_eastmoney_quotes_with_split_retry, summarize_probe_error
 from vcp.data_provider_realtime import fetch_realtime_quotes_batch as fetch_realtime_quotes_batch_runtime
@@ -208,23 +204,8 @@ class TdxDataProviderRealtimeMixin:
             default_cooldown_sec=RT_EASTMONEY_COOLDOWN_SEC,
         )
 
-    def _register_eastmoney_success(self):
-        register_eastmoney_success(self)
-
     def _to_eastmoney_secid(self, code: str) -> str:
         return to_eastmoney_secid(code)
-
-    @staticmethod
-    def _to_sina_symbol(code: str) -> str:
-        return to_sina_symbol(code)
-
-    @staticmethod
-    def _to_tencent_symbol(code: str) -> str:
-        return to_tencent_symbol(code)
-
-    @staticmethod
-    def _coerce_quote_number(value) -> float:
-        return coerce_quote_number(value)
 
     def _request_eastmoney_quote_batch(self, codes, inferred_trade_date: str):
         return request_eastmoney_quote_batch(self, codes, inferred_trade_date)

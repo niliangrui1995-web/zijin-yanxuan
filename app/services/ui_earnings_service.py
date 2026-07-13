@@ -82,18 +82,12 @@ class _ActiveEarningsJob:
     mode: str
 
 
-def _invoke_earnings_stage(fn, cancellation_token=None, *args, **kwargs):
-    if cancellation_token is None:
-        return fn(*args, **kwargs)
-    return invoke_with_cancellation(fn, cancellation_token, *args, **kwargs)
-
-
 def _load_startup_cache(service, cancellation_token=None):
     engine = service.engine
     if isinstance(engine, CachedEarningsRowsPort):
-        rows = [dict(row) for row in _invoke_earnings_stage(engine.get_cached_record_rows, cancellation_token)]
+        rows = [dict(row) for row in invoke_with_cancellation(engine.get_cached_record_rows, cancellation_token)]
         return rows, len(rows), True
-    frame = _invoke_earnings_stage(engine.get_cached_records, cancellation_token)
+    frame = invoke_with_cancellation(engine.get_cached_records, cancellation_token)
     frame = frame if frame is not None else _empty_frame()
     return frame, len(frame), False
 

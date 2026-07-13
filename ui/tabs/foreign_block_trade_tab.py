@@ -7,6 +7,7 @@ ui/tabs/foreign_block_trade_tab.py
 
 import datetime
 import time
+from contextlib import suppress
 from functools import partial
 
 from PyQt6.QtCore import Qt, QTimer
@@ -35,8 +36,8 @@ from app.services.foreign_block_market_data_service import (
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
 from app.services.ui_task_lifecycle_service import (
-    TaskLifecycleGroup,
     invoke_with_cancellation,
+    task_lifecycle_for,
 )
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
@@ -109,7 +110,11 @@ class BlockTradeFilterProxyModel(RtSortFilterProxyModel):
 
 
 from core.logger import get_logger
-from ui.tabs.base_stock_tab import BaseStockTab
+from ui.tabs.base_stock_tab import (
+    BaseStockTab,
+    _show_kline_from_proxy_index,
+    _show_stock_context_menu_from_proxy_index,
+)
 
 log = get_logger(__name__)
 
@@ -128,14 +133,6 @@ def _owner_attr(owner, name: str, default=None):
         return getattr(owner, name, default)
     except RuntimeError:
         return default
-
-
-def _task_lifecycle_for(owner) -> TaskLifecycleGroup:
-    lifecycle = getattr(owner, "_task_lifecycle", None)
-    if lifecycle is None:
-        lifecycle = TaskLifecycleGroup(task_manager)
-        owner._task_lifecycle = lifecycle
-    return lifecycle
 
 
 def _load_cache_payload(emit_event: bool, cancellation_token):
@@ -198,17 +195,13 @@ class ForeignBlockTradeTab(BaseStockTab):
             self._initial_cache_load_delay_ms = max(0, int(initial_cache_load_delay_ms))
         except (TypeError, ValueError):
             self._initial_cache_load_delay_ms = LOCAL_CACHE_LOAD_DELAY_MS
-        self._cap_cache = {}
         self._is_loading = False
-        self._block_trade_codes = []
         self._last_success_at = None
         self._status_primary = "等待加载"
         self._status_segments = ()
         self._status_freshness = ""
         self._status_next_step = ""
         self._had_rows_before_refresh = False
-        self._last_auto_refresh_date = ""
-        self._pending_auto_refresh_date = ""
         self._pending_f5_online_refresh = False
         self._local_cache_loading = False
         self._local_cache_pending_emit_event: bool | None = None
@@ -232,12 +225,6 @@ class ForeignBlockTradeTab(BaseStockTab):
         super().showEvent(event)
         if self._should_start_runtime_on_show():
             self._schedule_initial_local_cache_load()
-
-    def hideEvent(self, event):
-        super().hideEvent(event)
-
-    def _should_start_runtime_on_show(self) -> bool:
-        return BaseStockTab._should_start_interactive_runtime_on_show(self)
 
     def _schedule_initial_local_cache_load(self) -> bool:
         if self._initial_local_cache_load_started:
@@ -434,13 +421,6 @@ class ForeignBlockTradeTab(BaseStockTab):
         self.cmb_filter_branch.set_options(unique_branches, preserve_selection=preserve_selection)
         self._refresh_filter_button_text(self.cmb_filter_date, "日期", "全部")
         self._refresh_filter_button_text(self.cmb_filter_branch, "席位", "全部")
-        self._block_trade_codes = list(
-            dict.fromkeys(
-                row.get("代码", "")
-                for row in (row_data or [])
-                if isinstance(row, dict) and str(row.get("代码", "")).strip()
-            )
-        )
         self.model.update_data(row_data or [])
         return unique_dates, unique_branches
 
@@ -474,7 +454,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._local_cache_loading = True
         generation = int(_owner_attr(self, "_local_cache_generation", 0)) + 1
         self._local_cache_generation = generation
-        _task_lifecycle_for(self).run_background(
+        task_lifecycle_for(self, runner=task_manager).run_background(
             "local_cache",
             partial(_load_cache_payload, bool(emit_event)),
             task_id=_FOREIGN_BLOCK_LOCAL_CACHE_TASK,
@@ -592,14 +572,10 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._load_local_cache(emit_event=False)
 
     def _cleanup_runtime_state(self):
-        try:
+        with suppress(TypeError, RuntimeError):
             event_bus.sig_cache_reload_completed.disconnect(self._on_cache_reload_completed)
-        except (TypeError, RuntimeError):
-            pass
-        try:
+        with suppress(TypeError, RuntimeError):
             event_bus.sig_block_trade_updated.disconnect(self._on_block_trade_updated)
-        except (TypeError, RuntimeError):
-            pass
         super()._cleanup_runtime_state()
 
     def shutdown(self) -> None:
@@ -706,13 +682,12 @@ class ForeignBlockTradeTab(BaseStockTab):
         )
         if hasattr(self, "table_state"):
             self.table_state.show_loading("正在抓取大宗交易...", "请稍候")
-        self._block_trade_codes = []
         # 清空上一轮的K线缓存，防止跨交易日窗口后内存只增不减
         _kline_cache.clear()
 
         self._fetch_generation += 1
         generation = self._fetch_generation
-        _task_lifecycle_for(self).run_background(
+        task_lifecycle_for(self, runner=task_manager).run_background(
             "fetch",
             partial(_build_block_trade_fetch_payload, int(self.days_to_fetch)),
             task_id=_FOREIGN_BLOCK_TRADE_TASK.task_id,
@@ -784,9 +759,6 @@ class ForeignBlockTradeTab(BaseStockTab):
             failed_chunks = []
 
         if not data_list:
-            self._block_trade_codes = []
-            if self._pending_auto_refresh_date and not timeout_chunks and not failed_chunks:
-                self._last_auto_refresh_date = self._pending_auto_refresh_date
             if not timeout_chunks and not failed_chunks:
                 self._apply_row_data([], preserve_selection=False)
                 self._save_local_cache([])
@@ -829,10 +801,7 @@ class ForeignBlockTradeTab(BaseStockTab):
                         "暂无大宗交易数据",
                         "当前窗口内没有命中监控席位的大宗交易记录。",
                     )
-                if self._pending_auto_refresh_date:
-                    self._last_auto_refresh_date = self._pending_auto_refresh_date
             event_bus.sig_block_trade_updated.emit()
-            self._pending_auto_refresh_date = ""
             return
 
         if row_data is None:
@@ -851,12 +820,8 @@ class ForeignBlockTradeTab(BaseStockTab):
             self.table_state.show_table()
         if self._should_save_cache(timeout_chunks, failed_chunks):
             self._save_local_cache(row_data)
-            if self._pending_auto_refresh_date:
-                self._last_auto_refresh_date = self._pending_auto_refresh_date
         elif timeout_chunks or failed_chunks:
             log.warning("[外资大宗] 本轮结果不完整，已跳过覆盖本地缓存")
-        self._pending_auto_refresh_date = ""
-
         # 强制应用当前的筛选状态
         self._filter_table_combo()
         event_bus.sig_block_trade_updated.emit()
@@ -867,13 +832,11 @@ class ForeignBlockTradeTab(BaseStockTab):
     def _on_data_fetch_failed(self, error_message: str):
         self._is_loading = False
         self.btn_refresh.setEnabled(True)
-        self._pending_auto_refresh_date = ""
         msg = str(error_message or "").strip()
         if not msg:
             msg = "大宗交易抓取失败，请稍后重试。"
         elif not msg.startswith(("抓取超时", "抓取失败")):
             msg = f"大宗交易抓取失败：{msg}"
-        self._block_trade_codes = []
         if getattr(self.model, "row_data", []):
             self._set_fetch_status("刷新失败", msg, "已保留上次成功结果", freshness="远端失败沿用", next_step="")
         else:
@@ -903,47 +866,7 @@ class ForeignBlockTradeTab(BaseStockTab):
         self._refresh_header_status()
 
     def _on_double_click(self, index):
-        if not index.isValid():
-            return
-        source_idx = self.proxy_model.mapToSource(index)
-        row = source_idx.row()
-        if row >= len(self.model.row_data):
-            return
-
-        code = self.model.row_data[row].get("代码", "")
-
-        # 提取当前表格顺序以传递给K线窗口
-        code_list = []
-        clicked_visual_row = index.row()
-        for r in range(self.proxy_model.rowCount()):
-            s_idx = self.proxy_model.mapToSource(self.proxy_model.index(r, 0))
-            if s_idx.row() < len(self.model.row_data):
-                rd = dict(self.model.row_data[s_idx.row()] or {})
-                rd.setdefault("代码", rd.get("代码", ""))
-                rd.setdefault("名称", rd.get("名称", ""))
-                code_list.append(rd)
-
-        current_idx = 0
-        if 0 <= clicked_visual_row < len(code_list):
-            current_idx = clicked_visual_row
-
-        ui_signals.sig_show_kline_with_list.emit(code, code_list, current_idx)
+        _show_kline_from_proxy_index(self, index, ui_signals)
 
     def _show_context_menu(self, pos):
-        index = self.table.indexAt(pos)
-        if not index.isValid():
-            return
-        source_idx = self.proxy_model.mapToSource(index)
-        row = source_idx.row()
-        if row >= len(self.model.row_data):
-            return
-
-        code = self.model.row_data[row].get("代码", "")
-        name = self.model.row_data[row].get("名称", "")
-        row_data = self.model.row_data[row]
-        if not code:
-            return
-
-        from ui.components.stock_context_menu import build_stock_context_menu
-
-        build_stock_context_menu(self, code, name, vcp_data=row_data)
+        _show_stock_context_menu_from_proxy_index(self, pos)

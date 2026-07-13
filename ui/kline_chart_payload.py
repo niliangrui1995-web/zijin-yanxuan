@@ -11,6 +11,19 @@ import numpy as np
 import pandas as pd
 from PyQt6.QtCore import QUrl
 
+from app.services.kline_open_service import (
+    KEY_CODE,
+    KEY_DISCOVERED_AT,
+    KEY_EARNINGS_MARK_DATE,
+    KEY_EARNINGS_TEXT,
+    KEY_NAME,
+    KEY_REVEAL_DATE,
+    KEY_TRIGGER_DATE,
+    _build_scan_signal_payload,
+    _is_scan_signal,
+    _signal_matches_code,
+    _signal_scan_identity,
+)
 from app.services.ui_market_calendar_service import MarketCalendar
 from ui.kline_summary_payload import (
     build_kline_summary_cards as build_kline_summary_cards,
@@ -20,15 +33,6 @@ from ui.kline_summary_payload import (
 )
 from ui.theme import theme_manager
 from ui.theme_tokens import build_ui_tokens
-
-KEY_CODE = "\u4ee3\u7801"
-KEY_NAME = "\u540d\u79f0"
-KEY_TRIGGER_DATE = "\u89e6\u53d1\u65e5\u671f"
-KEY_REVEAL_DATE = "\u63ed\u6653\u65e5"
-KEY_DISCOVERED_AT = "\u53d1\u73b0\u65f6\u95f4"
-KEY_EARNINGS_MARK_DATE = "\u4e1a\u7ee9\u65e5"
-KEY_EARNINGS_TEXT = "\u4e1a\u7ee9\u5f02\u52a8"
-SCAN_SOURCE_KEY = "scan"
 
 _KLINE_SCRIPT_DIR = Path(__file__).resolve().parent / "assets" / "kline"
 
@@ -62,52 +66,12 @@ def merge_kline_context(base: dict, extra: dict, *, overwrite: bool = False) -> 
     return base
 
 
-def _signal_value(signal, key: str, default=""):
-    if isinstance(signal, dict):
-        return signal.get(key, default)
-    return getattr(signal, key, default)
-
-
-def _signal_matches_code(signal, code: str) -> bool:
-    signal_code = str(_signal_value(signal, "code") or _signal_value(signal, KEY_CODE) or "").strip()
-    return not signal_code or signal_code == str(code).strip()
-
-
-def _signal_scan_identity(signal) -> tuple[str, str]:
-    source_tab = str(_signal_value(signal, "source_tab") or "").strip()
-    signal_type = str(_signal_value(signal, "signal_type") or "").strip()
-    return source_tab, signal_type
-
-
-def _is_scan_signal(source_tab: str, signal_type: str) -> bool:
-    return source_tab == SCAN_SOURCE_KEY or signal_type == "vcp_scan"
-
-
-def _build_scan_signal_payload(signal, code: str, source_tab: str, signal_type: str) -> dict:
-    raw_payload = _signal_value(signal, "payload", {}) or {}
-    payload = dict(raw_payload) if isinstance(raw_payload, dict) else {}
-    payload.setdefault(KEY_CODE, code)
-
-    signal_name = str(_signal_value(signal, "name") or "").strip()
-    if signal_name:
-        payload.setdefault(KEY_NAME, signal_name)
-
-    observed_at = str(_signal_value(signal, "observed_at") or "").strip()
-    if observed_at:
-        payload.setdefault(KEY_TRIGGER_DATE, observed_at)
-
-    payload["source_tab"] = source_tab or SCAN_SOURCE_KEY
-    payload["signal_type"] = signal_type or "vcp_scan"
-    payload["_vcp_overlay_allowed"] = True
-    return payload
-
-
 def _extract_scan_signal_payload(item_data: dict | None, code: str) -> dict:
     if not isinstance(item_data, dict):
         return {}
 
     for signal in item_data.get("_signals") or []:
-        if not _signal_matches_code(signal, code):
+        if not _signal_matches_code(signal, str(code).strip()):
             continue
 
         source_tab, signal_type = _signal_scan_identity(signal)
@@ -232,10 +196,6 @@ def build_kline_theme_colors() -> dict:
         "earnings_marker": t.get("KLINE_EARNINGS_MARKER", t.get("COLOR_WARNING", t["KLINE_VCP_STAR"])),
         "earnings_marker_bg": t.get("KLINE_EARNINGS_MARKER_BG", t.get("ACCENT_SUBTLE", "rgba(49, 95, 134, 0.10)")),
         "earnings_marker_border": t.get("KLINE_EARNINGS_MARKER_BORDER", t.get("ACCENT_BORDER", t["KLINE_VCP_LINE"])),
-        "trade_buy": t.get("KLINE_TRADE_BUY_MARKER", t["KLINE_UP_COLOR"]),
-        "trade_sell": t.get("KLINE_TRADE_SELL_MARKER", t["KLINE_DOWN_COLOR"]),
-        "trade_t": t.get("KLINE_TRADE_T_MARKER", t.get("ACCENT_PRIMARY", "#3B82F6")),
-        "trade_marker_border": t.get("KLINE_TRADE_MARKER_BORDER", t.get("KLINE_BG_CANVAS", "#0A0A0A")),
         "ma_ribbon_up": t.get("KLINE_MA_RIBBON_UP", "rgba(242, 54, 69, 0.08)"),
         "ma_ribbon_down": t.get("KLINE_MA_RIBBON_DOWN", "rgba(8, 153, 129, 0.08)"),
         "volume_dry": t.get("KLINE_VOLUME_DRY", "rgba(126, 142, 160, 0.22)"),
@@ -637,11 +597,6 @@ def _store_earnings_markers(data: dict, markers: list) -> None:
         data["earningsMarkers"] = markers
 
 
-def _store_trade_markers(data: dict, markers: list) -> None:
-    if markers:
-        data["tradeMarkers"] = markers
-
-
 def _build_vcp_markers(data: dict, trigger_idx: int, theme: dict) -> list:
     if trigger_idx == -1:
         return []
@@ -754,85 +709,6 @@ def _build_earnings_markers(data: dict, dates: list, payload: dict | None) -> li
             "symbolOffset": [0, 8],
         }
     ]
-
-
-def _trade_side(record: dict) -> str:
-    side = str(record.get("side") or "").strip().lower()
-    if side in {"buy", "sell"}:
-        return side
-    quantity = _to_float(record.get("quantity"))
-    if quantity > 0:
-        return "buy"
-    if quantity < 0:
-        return "sell"
-    return "other"
-
-
-def _trade_side_text(side: str) -> str:
-    return {"buy": "\u4e70\u5165", "sell": "\u5356\u51fa"}.get(side, "\u5176\u4ed6")
-
-
-def _trade_marker_offset(side: str, label: str, stack_index: int = 0) -> list[int]:
-    extra = max(0, int(stack_index or 0)) * 12
-    if label == "T":
-        return [0, 13 + extra] if side == "buy" else [0, -13 - extra]
-    if side == "buy":
-        return [0, 12 + extra]
-    return [0, -12 - extra]
-
-
-def _trade_marker_size(label: str) -> list[int]:
-    return [13, 11] if label == "T" else [12, 11]
-
-
-def _build_trade_markers(data: dict, dates: list, trade_records: list[dict] | None) -> list:
-    if not trade_records:
-        return []
-
-    date_to_idx = {d: i for i, d in enumerate(dates)}
-    prepared = []
-    sides_by_date: dict[str, set[str]] = {}
-    for record in trade_records:
-        trade_date = _event_date_text(record.get("date") or record.get("成交日期"))
-        idx = _find_date_idx(trade_date, date_to_idx)
-        quantity = _to_float(record.get("quantity") if "quantity" in record else record.get("成交数量"))
-        price = _to_float(record.get("price") if "price" in record else record.get("成交均价"))
-        side = _trade_side(record)
-        if idx == -1 or side not in {"buy", "sell"} or quantity == 0 or price <= 0:
-            continue
-
-        prepared.append((record, trade_date, idx, side, quantity, price))
-        sides_by_date.setdefault(trade_date, set()).add(side)
-
-    markers = []
-    stack_counts: dict[tuple[int, str], int] = {}
-    for record, trade_date, idx, side, quantity, price in prepared:
-        label = "T" if sides_by_date.get(trade_date) == {"buy", "sell"} else ("B" if side == "buy" else "S")
-        kline = data["klines"][idx]
-        marker_y = kline[2] if side == "buy" else kline[3]
-        stack_key = (idx, side)
-        stack_index = stack_counts.get(stack_key, 0)
-        stack_counts[stack_key] = stack_index + 1
-        markers.append(
-            {
-                "coord": [idx, round(float(marker_y), 4)],
-                "tradeDate": trade_date,
-                "label": label,
-                "side": side,
-                "sideText": _trade_side_text(side),
-                "name": str(record.get("name") or record.get("证券名称") or ""),
-                "quantity": abs(quantity),
-                "signedQuantity": quantity,
-                "price": round(price, 4),
-                "amount": round(_to_float(record.get("amount") if "amount" in record else record.get("成交金额")), 2),
-                "fee": round(_to_float(record.get("fee") if "fee" in record else record.get("手续费")), 2),
-                "stampTax": round(_to_float(record.get("stampTax") if "stampTax" in record else record.get("印花税")), 2),
-                "otherFee": round(_to_float(record.get("otherFee") if "otherFee" in record else record.get("其他杂费")), 2),
-                "symbolSize": _trade_marker_size(label),
-                "symbolOffset": _trade_marker_offset(side, label, stack_index),
-            }
-        )
-    return markers
 
 
 def _valid_vcp_peak_indices(peak_dates: list, date_to_idx: dict) -> list[int]:
@@ -1097,18 +973,12 @@ def inject_earnings_markers(data: dict, dates: list, vcp_data: dict | None) -> N
     _store_earnings_markers(data, markers)
 
 
-def inject_trade_markers(data: dict, dates: list, trade_records: list[dict] | None) -> None:
-    markers = _build_trade_markers(data, dates, trade_records)
-    _store_trade_markers(data, markers)
-
-
 def build_kline_echarts_payload(
     df: pd.DataFrame,
     *,
     code: str,
     name: str,
     vcp_data: dict | None,
-    trade_records: list[dict] | None = None,
 ) -> dict:
     theme = theme_manager.current_theme
     up_color = theme["KLINE_UP_COLOR"]
@@ -1136,12 +1006,10 @@ def build_kline_echarts_payload(
         "vcpLines": None,
         "vcpArea": None,
         "earningsMarkers": None,
-        "tradeMarkers": None,
     }
 
     if vcp_data:
         inject_vcp_overlays(result, dates, vcp_data)
         inject_earnings_markers(result, dates, vcp_data)
-    inject_trade_markers(result, dates, trade_records)
 
     return result

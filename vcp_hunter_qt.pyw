@@ -3,6 +3,9 @@ import os
 import sys
 import traceback
 
+if sys.stderr is None:
+    os.environ["TQDM_DISABLE"] = "1"
+
 from core.runtime_env import (
     append_bootstrap_event,
     configure_qt_webengine_runtime,

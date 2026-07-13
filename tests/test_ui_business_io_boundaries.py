@@ -256,5 +256,5 @@ def test_lhb_tab_owns_background_work_through_lifecycle_group():
 
     assert "task_manager.run_in_background" not in source
     assert "app.services.ui_task_lifecycle_service" in imports
-    assert "TaskLifecycleGroup" in source
-    assert "_task_lifecycle_for(self).shutdown" in source
+    assert "task_lifecycle_for" in source
+    assert "task_lifecycle_for(self, runner=task_manager).shutdown" in source

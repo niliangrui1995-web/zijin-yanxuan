@@ -14,11 +14,32 @@ def test_runtime_sync_requires_python_314_and_uses_windows_constraints():
     assert "constraints-py314-windows.txt" in script
 
 
-def test_trade_data_is_ignored_and_lock_files_are_trackable():
+def test_lock_files_are_trackable():
     gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
 
     assert "data/Trade/" in gitignore
     assert "uv.lock" not in gitignore
+
+
+def test_public_ui_and_http_compatibility_exports_remain_available():
+    from app.services import http_client_service
+    from infra.http_safety import DEFAULT_REQUESTS_USER_AGENT, requests_get_https
+    from ui.components import ToggleSwitch
+    from ui.components.toggle_switch import ToggleSwitch as ToggleSwitchImplementation
+
+    assert http_client_service.__all__ == ["DEFAULT_REQUESTS_USER_AGENT", "requests_get_https"]
+    assert http_client_service.DEFAULT_REQUESTS_USER_AGENT is DEFAULT_REQUESTS_USER_AGENT
+    assert http_client_service.requests_get_https is requests_get_https
+    assert ToggleSwitch is ToggleSwitchImplementation
+
+
+def test_account_trade_record_modules_stay_removed():
+    for relative_path in (
+        "infra/storage/trade_record_repository.py",
+        "app/services/ui_trade_record_service.py",
+        "ui/trade_record_store.py",
+    ):
+        assert not (REPO_ROOT / relative_path).exists()
 
 
 def test_docs_match_eleven_lazy_tabs_and_disabled_real_tab_prewarm():

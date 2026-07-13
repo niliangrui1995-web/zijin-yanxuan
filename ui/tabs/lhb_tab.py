@@ -4,13 +4,14 @@ ui/tabs/lhb_tab.py
 龙虎榜 · 30 日关注池 Tab
 
 替代旧的"单日视图"，改为滚动 30 个交易日的关注池：
-- 入池条件：30 日内至少有一天同时满足 上榜净买额>0 且 机构净买>0
+- 入池条件：30 日内至少有一天同时满足 上榜净买额>0 且 机构净买>=0
 - 展示每只合格标的的最近一次上榜详情 + 30 日内满足条件天数
 - 每天 20:00 后自动抓取当天龙虎榜数据并刷新池
 - 首次使用自动回填缺失的历史交易日数据
 """
 
 import time
+from contextlib import suppress
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
@@ -30,14 +31,14 @@ from app.services.ui_market_calendar_service import MarketCalendar
 from app.services.ui_task_lifecycle_service import (
     TaskCancelledError,
     TaskDeadlineExceeded,
-    TaskLifecycleGroup,
+    task_lifecycle_for,
 )
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
 from core.logger import get_logger
 from ui.components import TableStateWrapper, VCPTableView
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
-from ui.tabs.base_stock_tab import BaseStockTab
+from ui.tabs.base_stock_tab import BaseStockTab, _show_stock_context_menu_from_proxy_index
 
 log = get_logger(__name__)
 POST_F5_POOL_BOOTSTRAP_DEFER_MS = 5000
@@ -47,12 +48,20 @@ LHB_POOL_BACKFILL_TIMEOUT_SECONDS = 15 * 60
 LHB_TASK_SHUTDOWN_WAIT_TIMEOUT_MS = 750
 
 
-def _task_lifecycle_for(owner) -> TaskLifecycleGroup:
-    lifecycle = getattr(owner, "_task_lifecycle", None)
-    if lifecycle is None:
-        lifecycle = TaskLifecycleGroup(task_manager)
-        owner._task_lifecycle = lifecycle
-    return lifecycle
+def _finish_lhb_backfill_error(owner, title: str, message: str) -> None:
+    if getattr(owner.model, "row_data", []):
+        owner.table_state.show_table()
+        return
+    owner.table_state.show_error(title, message, action_text="重试", action_callback=owner._manual_refresh)
+
+
+def _retry_lhb_pool(owner) -> None:
+    request = getattr(owner, "_pending_backfill_request", None)
+    owner._pending_backfill_request = None
+    if request:
+        owner._start_backfill(*request)
+    else:
+        owner._load_and_display_pool()
 
 
 def _load_lhb_pool_payload(owner, cancellation_token) -> dict:
@@ -266,8 +275,6 @@ class LhbTab(BaseStockTab):
         self._pool_load_in_progress = False
         self.pool_manager = None
         self._backfill_in_progress = False
-        # 记录今天是否已经自动抓取过，避免重复拉取
-        self._today_auto_fetched = False
         # 交易日历加载重试计数器，防止网络永久断开时无限重试
         self._calendar_retry_count = 0
         self._status_primary = "加载中..."
@@ -299,7 +306,7 @@ class LhbTab(BaseStockTab):
         self._pool_update_refresh_timer.timeout.connect(self._run_pending_pool_refresh)
         self._pool_retry_timer = QTimer(self)
         self._pool_retry_timer.setSingleShot(True)
-        self._pool_retry_timer.timeout.connect(self._load_and_display_pool)
+        self._pool_retry_timer.timeout.connect(lambda: _retry_lhb_pool(self))
         self._pending_quote_snapshot: dict = {}
         self._applying_pending_quote_snapshot = False
         self._quote_apply_timer = QTimer(self)
@@ -335,9 +342,6 @@ class LhbTab(BaseStockTab):
             else:
                 self._pending_pool_refresh = False
                 self._ensure_pool_bootstrap_started(delay_ms=self._initial_load_delay_ms)
-
-    def hideEvent(self, event):
-        super().hideEvent(event)
 
     def prime_background_load(self):
         self._ensure_pool_bootstrap_started(delay_ms=0)
@@ -488,9 +492,6 @@ class LhbTab(BaseStockTab):
         if self._ai_chain_context_map is None:
             self._ai_chain_context_map = self._load_ai_chain_context_map()
         return self._ai_chain_context_map or {}
-
-    def _get_ai_chain_context_text(self, stock_code: str) -> str:
-        return self._context_text_for_code(stock_code, self._get_ai_chain_context_map())
 
     @staticmethod
     def _ensure_log_line(message: str) -> str:
@@ -698,40 +699,6 @@ class LhbTab(BaseStockTab):
     # ================================================================
     # 池加载与展示
     # ================================================================
-    def _load_and_display_pool_sync(self):
-        """启动时执行：用缓存计算池 → 展示 → 检查缺失天数 → 后台回填"""
-        trade_dates = self._get_lhb_trade_dates()
-        if not trade_dates:
-            self._calendar_retry_count += 1
-            if self._calendar_retry_count <= 3:
-                self._set_pool_status("交易日历未就绪", f"第{self._calendar_retry_count}次重试")
-                self._schedule_pool_retry()
-            else:
-                self._set_pool_status("交易日历加载失败", freshness="待回补", next_step="点击历史回补重新抓取")
-            return
-        self._calendar_retry_count = 0
-
-        # 裁剪掉超出窗口的历史数据
-        pool_manager = self._get_pool_manager()
-        pool_manager.prune(trade_dates)
-
-        # 先用现有缓存展示
-        pool = pool_manager.compute_pool(data_provider=self.data_provider, engine=self._get_engine())
-        if pool:
-            self._display_pool(pool)
-
-        validation_ref_date = max(trade_dates)
-        pending_validation = pool_manager.get_dates_pending_validation(trade_dates, validation_ref_date)
-
-        # 检查缺失天数和脏缓存，有问题就后台回填/纠偏
-        missing = pool_manager.get_missing_dates(trade_dates)
-        if missing or pending_validation:
-            self._start_backfill(missing, pending_validation, validation_ref_date)
-        elif not pool:
-            self._set_pool_status("暂无龙虎榜数据", freshness="待回补", next_step="点击历史回补开始抓取")
-            if hasattr(self, "table_state"):
-                self.table_state.show_empty("暂无龙虎榜数据")
-
     def _load_and_display_pool(self, *, emit_event: bool = True):
         """Schedule the cached pool computation off the UI thread."""
         defer_until = max(
@@ -808,7 +775,7 @@ class LhbTab(BaseStockTab):
                     action_callback=self._ensure_pool_bootstrap_started,
                 )
 
-        _task_lifecycle_for(self).run_background(
+        task_lifecycle_for(self, runner=task_manager).run_background(
             "pool_bootstrap",
             lambda token: _load_lhb_pool_payload(self, token),
             on_success=_on_pool_loaded,
@@ -951,9 +918,6 @@ class LhbTab(BaseStockTab):
             [cls._format_pool_row_with_context(rec, context_map) for rec in pool]
         )
 
-    def _format_pool_row(self, rec: dict) -> dict:
-        return self._format_pool_row_with_context(rec, self._get_ai_chain_context_map())
-
     def _is_default_lhb_sort_active(self) -> bool:
         try:
             return int(self.proxy_model.sortColumn()) < 0
@@ -961,10 +925,8 @@ class LhbTab(BaseStockTab):
             return True
 
     def _clear_proxy_sort_for_default_lhb_order(self) -> None:
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             self.table.sortByColumn(-1, Qt.SortOrder.AscendingOrder)
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            pass
 
     def _sort_model_for_default_lhb_order(self) -> None:
         if not self._is_default_lhb_sort_active():
@@ -1027,8 +989,6 @@ class LhbTab(BaseStockTab):
             self._quote_apply_timer.start(max(1, int(self.OPENING_WARMUP_QUOTE_APPLY_CONTINUE_MS)))
 
     def _schedule_default_lhb_quote_sort(self) -> None:
-        if not self._is_opening_warmup_window():
-            return
         if not self._is_default_lhb_sort_active():
             return
         if not getattr(self.model, "row_data", None):
@@ -1122,9 +1082,13 @@ class LhbTab(BaseStockTab):
         """后台逐日回填缺失的龙虎榜数据"""
         if self._backfill_in_progress:
             return
+        task_id = task_registry.workspace("lhb_pool_backfill").task_id
+        if task_manager.is_active_task(task_id):
+            self._pending_backfill_request = (missing_dates, validation_dates, validation_ref_date)
+            self._schedule_pool_retry()
+            return
         self._backfill_in_progress = True
         self.btn_refresh.setEnabled(False)
-
         def _safe_log_emit(level: str, message: str):
             try:
                 main_win = self.window()
@@ -1133,7 +1097,6 @@ class LhbTab(BaseStockTab):
                 event_bus.sig_system_log.emit(level, self._ensure_log_line(message))
             except RuntimeError:
                 pass
-
         missing_sorted = sorted(set(missing_dates))
         validation_sorted = sorted(set(validation_dates or []))
         total = len(missing_sorted) + len(validation_sorted)
@@ -1177,11 +1140,9 @@ class LhbTab(BaseStockTab):
                 "info",
                 f"[龙虎榜池] 开始校验 {len(validation_sorted)} 个已缓存交易日",
             )
-
         def _on_backfill_done(results: dict):
             self._backfill_in_progress = False
             self.btn_refresh.setEnabled(True)
-
             fetched_results = results.get("fetched", {}) if isinstance(results, dict) else {}
             validated_results = results.get("validated", {}) if isinstance(results, dict) else {}
             if not fetched_results and not validated_results:
@@ -1190,16 +1151,15 @@ class LhbTab(BaseStockTab):
                     freshness="远端失败沿用" if getattr(self.model, "row_data", []) else "待回补",
                     next_step="请稍后重试",
                 )
+                _finish_lhb_backfill_error(self, "同步失败", "未获取到有效龙虎榜数据")
                 event_bus.sig_system_log.emit("error", self._ensure_log_line("[龙虎榜池] 同步任务未产出有效结果"))
                 return
-
             pool_manager = results.get("pool_manager")
             if pool_manager is not None:
                 self.pool_manager = pool_manager
             ai_chain_context_map = results.get("ai_chain_context_map")
             if isinstance(ai_chain_context_map, dict):
                 self._ai_chain_context_map = ai_chain_context_map
-
             pool = list(results.get("pool") or [])
             row_data = list(results.get("row_data") or [])
             self._display_pool(pool, row_data=row_data)
@@ -1209,7 +1169,6 @@ class LhbTab(BaseStockTab):
                     f"[龙虎榜池] 同步完成 | 更新{len(fetched_results)}天 | 校验{len(validated_results)}天 | 入池{len(pool)}只"
                 ),
             )
-
         def _on_backfill_error(error_message: str):
             self._backfill_in_progress = False
             self.btn_refresh.setEnabled(True)
@@ -1219,9 +1178,10 @@ class LhbTab(BaseStockTab):
                 freshness="远端失败沿用" if getattr(self.model, "row_data", []) else "待回补",
                 next_step="请稍后重试",
             )
+            _finish_lhb_backfill_error(self, "抓取异常", error_message)
             event_bus.sig_system_log.emit("error", self._ensure_log_line(f"[龙虎榜池] 抓取任务异常: {error_message}"))
 
-        _task_lifecycle_for(self).run_background(
+        task_lifecycle_for(self, runner=task_manager).run_background(
             "pool_backfill",
             lambda token: _build_lhb_backfill_payload(
                 self,
@@ -1233,7 +1193,7 @@ class LhbTab(BaseStockTab):
             ),
             on_success=_on_backfill_done,
             on_error=_on_backfill_error,
-            task_id=task_registry.workspace("lhb_pool_backfill").task_id,
+            task_id=task_id,
             timeout_sec=LHB_POOL_BACKFILL_TIMEOUT_SECONDS,
         )
 
@@ -1241,7 +1201,7 @@ class LhbTab(BaseStockTab):
     # 历史回补
     # ================================================================
     def _manual_refresh(self):
-        """历史回补：清空缓存，重新获取全新 30 个交易日的龙虎榜数据"""
+        """历史回补：重新获取 30 个交易日数据，成功后按日替换缓存。"""
         if self._backfill_in_progress:
             from ui.components.toast_widget import show_toast
 
@@ -1257,8 +1217,6 @@ class LhbTab(BaseStockTab):
         if strategy_message:
             event_bus.sig_system_log.emit(strategy_level, self._ensure_log_line(strategy_message))
 
-        # 清空全部缓存，强制全量重拉
-        self._get_pool_manager().clear_all()
         self._start_backfill(trade_dates)
 
     def refresh_history(self) -> bool:
@@ -1269,7 +1227,7 @@ class LhbTab(BaseStockTab):
         self._pool_retry_timer.start(5_000)
 
     def shutdown(self) -> None:
-        _task_lifecycle_for(self).shutdown(timeout_ms=LHB_TASK_SHUTDOWN_WAIT_TIMEOUT_MS)
+        task_lifecycle_for(self, runner=task_manager).shutdown(timeout_ms=LHB_TASK_SHUTDOWN_WAIT_TIMEOUT_MS)
         self._pool_load_in_progress = False
         self._backfill_in_progress = False
         retry_timer = getattr(self, "_pool_retry_timer", None)
@@ -1284,18 +1242,12 @@ class LhbTab(BaseStockTab):
         pool_update_timer = getattr(self, "_pool_update_refresh_timer", None)
         if pool_update_timer is not None:
             pool_update_timer.stop()
-        try:
+        with suppress(TypeError, RuntimeError):
             event_bus.sig_cache_bootstrap_ready.disconnect(self._on_cache_bootstrap_ready)
-        except (TypeError, RuntimeError):
-            pass
-        try:
+        with suppress(TypeError, RuntimeError):
             event_bus.sig_cache_reload_completed.disconnect(self._on_cache_reload_completed)
-        except (TypeError, RuntimeError):
-            pass
-        try:
+        with suppress(TypeError, RuntimeError):
             event_bus.sig_lhb_pool_updated.disconnect(self._on_lhb_pool_updated)
-        except (TypeError, RuntimeError):
-            pass
 
     def closeEvent(self, event):
         self.shutdown()
@@ -1341,20 +1293,4 @@ class LhbTab(BaseStockTab):
         ui_signals.sig_show_kline_with_list.emit(code, code_list, current_idx)
 
     def _show_context_menu(self, pos):
-        index = self.table.indexAt(pos)
-        if not index.isValid():
-            return
-        source_idx = self.proxy_model.mapToSource(index)
-        row = source_idx.row()
-        if row >= len(self.model.row_data):
-            return
-
-        code = self.model.row_data[row].get("代码", "")
-        name = self.model.row_data[row].get("名称", "")
-        row_data = self.model.row_data[row]
-        if not code:
-            return
-
-        from ui.components.stock_context_menu import build_stock_context_menu
-
-        build_stock_context_menu(self, code, name, vcp_data=row_data)
+        _show_stock_context_menu_from_proxy_index(self, pos)

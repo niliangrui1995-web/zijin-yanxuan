@@ -10,6 +10,7 @@
 """
 
 import logging
+from contextlib import suppress
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QAction
@@ -33,10 +34,10 @@ from app.services.ui_quote_service import read_provider_health
 from app.services.ui_task_lifecycle_service import shutdown_task_lifecycle_for_owner
 from ui.status_registry import format_status_summary, format_workspace_status, parse_status_summary
 from ui.tabs.base_stock_refresh import (
-    async_update_market_caps as run_async_market_caps,
+    _latest_quote_snapshot as latest_quote_snapshot,
 )
 from ui.tabs.base_stock_refresh import (
-    collect_missing_finance_codes as collect_refresh_missing_finance_codes,
+    async_update_market_caps as run_async_market_caps,
 )
 from ui.tabs.base_stock_refresh import (
     collect_quote_refresh_codes as collect_refresh_quote_codes,
@@ -76,6 +77,58 @@ def _compact_status_text(text: str, limit: int) -> str:
     if len(value) <= limit:
         return value
     return value[: max(1, limit - 1)] + "…"
+
+
+def _is_direct_workspace_tab(owner) -> bool:
+    parent = owner.parent()
+    tabs = getattr(parent, "tabs", None)
+    current_widget = getattr(tabs, "currentWidget", None)
+    if not callable(current_widget):
+        return True
+    try:
+        return current_widget() is owner
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return True
+
+
+def _show_kline_from_proxy_index(owner, index, signal_hub):
+    if not index.isValid():
+        return
+    source_idx = owner.proxy_model.mapToSource(index)
+    row = source_idx.row()
+    if row >= len(owner.model.row_data):
+        return
+
+    code = owner.model.row_data[row].get("代码", "")
+    code_list = []
+    clicked_visual_row = index.row()
+    for visual_row in range(owner.proxy_model.rowCount()):
+        source_idx = owner.proxy_model.mapToSource(owner.proxy_model.index(visual_row, 0))
+        if source_idx.row() < len(owner.model.row_data):
+            row_data = dict(owner.model.row_data[source_idx.row()] or {})
+            row_data.setdefault("代码", row_data.get("代码", ""))
+            row_data.setdefault("名称", row_data.get("名称", ""))
+            code_list.append(row_data)
+
+    current_idx = clicked_visual_row if 0 <= clicked_visual_row < len(code_list) else 0
+    signal_hub.sig_show_kline_with_list.emit(code, code_list, current_idx)
+
+
+def _show_stock_context_menu_from_proxy_index(owner, pos):
+    index = owner.table.indexAt(pos)
+    if not index.isValid():
+        return
+    source_idx = owner.proxy_model.mapToSource(index)
+    row = source_idx.row()
+    if row >= len(owner.model.row_data):
+        return
+    row_data = owner.model.row_data[row]
+    code = row_data.get("代码", "")
+    if not code:
+        return
+    from ui.components.stock_context_menu import build_stock_context_menu
+
+    build_stock_context_menu(owner, code, row_data.get("名称", ""), vcp_data=row_data)
 
 
 class ToolbarStatusChipBar(QWidget):
@@ -219,6 +272,8 @@ class BaseStockTab(_ProviderHealthMixin, QWidget):
             return False
         return is_current
 
+    _should_start_runtime_on_show = _should_start_interactive_runtime_on_show
+
     def _resolve_active_quote_model(self):
         return resolve_active_quote_model(self)
 
@@ -242,9 +297,6 @@ class BaseStockTab(_ProviderHealthMixin, QWidget):
 
     def _collect_quote_refresh_codes(self, current_model=None, force=False) -> list[str]:
         return collect_refresh_quote_codes(self, current_model, force=force)
-
-    def _collect_missing_finance_codes(self, current_model=None) -> list[str]:
-        return collect_refresh_missing_finance_codes(self, current_model)
 
     def refresh_table_quotes_and_market_caps(
         self,
@@ -293,12 +345,7 @@ class BaseStockTab(_ProviderHealthMixin, QWidget):
         if not codes:
             return
 
-        try:
-            from core.global_store import global_store
-
-            snapshot = global_store.get_latest_quotes() or {}
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            snapshot = {}
+        snapshot = latest_quote_snapshot()
 
         quote_subset = {code: dict(snapshot[code]) for code in codes if code in snapshot}
         if quote_subset:
@@ -808,30 +855,22 @@ class BaseStockTab(_ProviderHealthMixin, QWidget):
         self._flush_header_persistence()
 
         for timer in getattr(self, "_header_save_timers", []) or []:
-            try:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 timer.stop()
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                pass
 
         proxy_filter_timers = getattr(self, "_proxy_filter_timers", {}) or {}
         if hasattr(proxy_filter_timers, "values"):
             proxy_filter_timers = list(proxy_filter_timers.values())
         for timer in proxy_filter_timers:
-            try:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 timer.stop()
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                pass
 
-        try:
+        with suppress(TypeError, RuntimeError):
             event_bus.sig_app_closing.disconnect(self._flush_header_persistence)
-        except (TypeError, RuntimeError):
-            pass
 
         if getattr(self, "_quote_signal_connected", False):
-            try:
+            with suppress(TypeError, RuntimeError):
                 event_bus.sig_rt_quotes.disconnect(self._on_rt_quotes_direct)
-            except (TypeError, RuntimeError):
-                pass
             self._quote_signal_connected = False
 
     def closeEvent(self, event):

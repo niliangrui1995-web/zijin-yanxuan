@@ -1,3 +1,5 @@
+from contextlib import suppress
+
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
@@ -140,18 +142,12 @@ def show_trade_calendar(main_window):
         for widget in (earnings_panel, calendar):
             dispose = getattr(widget, "_dispose", None)
             if dispose is not None:
-                try:
+                with suppress(RuntimeError, TypeError):
                     dispose()
-                except (RuntimeError, TypeError):
-                    pass
-        try:
+        with suppress(RuntimeError, TypeError):
             domain_events.sig_earnings_updated.disconnect(earnings_panel.reload_from_service_cache)
-        except (RuntimeError, TypeError):
-            pass
-        try:
+        with suppress(RuntimeError, TypeError):
             theme_manager.sig_theme_changed.disconnect(_apply_dialog_live_theme)
-        except (RuntimeError, TypeError):
-            pass
 
     theme_manager.sig_theme_changed.connect(_apply_dialog_live_theme)
     dlg.finished.connect(_cleanup_dialog)

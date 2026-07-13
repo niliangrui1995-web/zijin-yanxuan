@@ -13,6 +13,7 @@ K 线图窗口 — ECharts 5.5.0 + QWebEngineView 高性能版
 
 import json
 import os as _os
+from contextlib import suppress
 
 import pandas as pd
 from PyQt6.QtCore import QEvent, Qt, QTimer, QUrl
@@ -28,7 +29,6 @@ from app.services.ui_task_lifecycle_service import (
     task_lifecycle_for,
 )
 from app.services.ui_task_service import background_job_runner, task_registry
-from app.services.ui_trade_record_service import load_trade_records_for_security
 from app.services.ui_watchlist_service import watchlist_vm
 from core.logger import get_logger
 from ui.kline_chart_payload import (
@@ -52,7 +52,6 @@ from ui.kline_window_header import (
     get_cn_target_trade_date,
     refresh_header_context,
     resolve_vcp_context,
-    set_header_badge,
 )
 from ui.kline_window_runtime import (
     load_and_draw,
@@ -105,10 +104,8 @@ def _abandon_owned_kline_tasks(window, code: str, generation: int) -> None:
         task_registry.transient_window(f"kline_asian_cache_{normalized_code}_{generation}"),
         task_registry.transient_window(f"kline_asian_{normalized_code}_{generation}"),
     ):
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             background_job_runner.abandon(task_key)
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            pass
 
 
 class KLineChartWindow(QWidget):
@@ -332,10 +329,8 @@ class KLineChartWindow(QWidget):
         self.browser = browser or QWebEngineView()
         self.browser.setParent(self.container)
         self._pending_chart_status = None
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError):
             self.browser.loadFinished.connect(self._on_chart_load_finished)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
         container_layout.addWidget(self.browser)
 
         main_layout.addWidget(self.container)
@@ -389,15 +384,9 @@ class KLineChartWindow(QWidget):
         if hasattr(self, "info_lbl"):
             self.info_lbl.setText(str(text or "").strip())
         if hasattr(self, "info_lbl"):
-            self._apply_info_styles()
+            apply_info_styles(self)
         if hasattr(self, "feed_badge_lbl"):
-            self._apply_header_badges()
-
-    def _set_header_badge(self, label: QLabel, text: str, tone_name: str):
-        set_header_badge(self, label, text, tone_name)
-
-    def _apply_header_badges(self):
-        apply_header_badges(self)
+            apply_header_badges(self)
 
     def _refresh_header_context(self):
         refresh_header_context(self)
@@ -528,10 +517,8 @@ class KLineChartWindow(QWidget):
             " })(" + payload_json + ");"
         )
 
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError):
             browser.page().runJavaScript(script)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
 
     def _apply_chart_market_state(self) -> None:
         browser = getattr(self, "browser", None)
@@ -546,10 +533,8 @@ class KLineChartWindow(QWidget):
             " return window.applyMarketState(payload);"
             " })(" + payload_json + ");"
         )
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError):
             browser.page().runJavaScript(script)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
 
     def _apply_chart_glass_mode(self) -> None:
         browser = getattr(self, "browser", None)
@@ -562,10 +547,8 @@ class KLineChartWindow(QWidget):
             " return window.setGlassMode(payload);"
             " })(" + payload_json + ");"
         )
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError):
             browser.page().runJavaScript(script)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
 
     def _toggle_fullscreen(self) -> None:
         if self.isFullScreen():
@@ -597,16 +580,6 @@ class KLineChartWindow(QWidget):
         self.btn_fullscreen.setToolTip("全屏 / 还原 K 线图 (F11)")
         self._apply_qt_theme()
 
-    def _apply_info_styles(
-        self, widget_text: str | None = None, info_color: str | None = None, is_dark: bool | None = None
-    ):
-        apply_info_styles(
-            self,
-            widget_text=widget_text,
-            info_color=info_color,
-            is_dark=is_dark,
-        )
-
     def _get_market(self) -> str:
         return MarketCalendar.infer_market(self.code)
 
@@ -633,83 +606,6 @@ class KLineChartWindow(QWidget):
     def _load_and_draw(self):
         self._render_generation = int(getattr(self, "_render_generation", 0) or 0) + 1
         load_and_draw(self)
-
-    def _show_chart_placeholder(self):
-        if getattr(self, "_closing", False):
-            return
-        self._set_status_message("正在准备图表...", tone="loading")
-        browser = getattr(self, "browser", None)
-        if not hasattr(browser, "setHtml"):
-            return
-        colors = build_kline_theme_colors()
-        placeholder = f"""<!doctype html>
-<html>
-<head>
-    <meta charset=\"utf-8\">
-    <style>
-        html, body {{
-            margin: 0;
-            width: 100%;
-            height: 100%;
-            background: {colors["bg_canvas"]};
-            color: {colors["text_secondary"]};
-            font-family: \"Microsoft YaHei UI\", sans-serif;
-        }}
-        .stage {{
-            height: 100%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            overflow: hidden;
-        }}
-        .skeleton {{
-            width: min(860px, 82vw);
-            height: min(420px, 64vh);
-            border: 1px solid {colors["depth_line"]};
-            border-radius: 12px;
-            background:
-                linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.08) 48%, transparent 100%),
-                repeating-linear-gradient(0deg, transparent 0 47px, {colors["grid_line"]} 48px),
-                repeating-linear-gradient(90deg, transparent 0 63px, {colors["grid_line"]} 64px),
-                linear-gradient(180deg, {colors["vcp_area_top"]}, {colors["vcp_area_bottom"]});
-            background-size: 220px 100%, auto, auto, auto;
-            animation: sweep 1.25s cubic-bezier(0.22, 1, 0.36, 1) infinite;
-            box-shadow: 0 16px 36px rgba(0, 0, 0, 0.14);
-            position: relative;
-        }}
-        .skeleton::before {{
-            content: "";
-            position: absolute;
-            left: 6%;
-            right: 6%;
-            top: 18%;
-            bottom: 20%;
-            background:
-                linear-gradient(135deg, transparent 0 12%, {colors["up_gradient_top"]} 13% 14%, transparent 15% 32%, {colors["down_gradient_top"]} 33% 34%, transparent 35% 54%, {colors["volume_spike"]} 55% 56%, transparent 57%);
-            opacity: 0.40;
-        }}
-        .skeleton::after {{
-            content: "";
-            position: absolute;
-            left: 7%;
-            right: 7%;
-            bottom: 8%;
-            height: 14%;
-            background: repeating-linear-gradient(90deg, {colors["volume_dry"]} 0 8px, transparent 8px 18px);
-            opacity: 0.58;
-        }}
-        @keyframes sweep {{
-            from {{ background-position: -240px 0, 0 0, 0 0, 0 0; }}
-            to {{ background-position: 1000px 0, 0 0, 0 0, 0 0; }}
-        }}
-    </style>
-</head>
-<body><div class=\"stage\"><div class=\"skeleton\" aria-label=\"K line loading\"></div></div></body>
-</html>"""
-        try:
-            browser.setHtml(placeholder, QUrl("about:blank"))
-        except (AttributeError, RuntimeError, TypeError):
-            pass
 
     def _set_pending_chart_status(self, text: str, tone: str) -> None:
         self._pending_chart_status = (str(text or "").strip(), str(tone or "info").strip() or "info")
@@ -858,18 +754,11 @@ class KLineChartWindow(QWidget):
                 self.df[col] = self.df[col].ffill().bfill()
 
         # 构建 ECharts 数据
-        try:
-            trade_records = load_trade_records_for_security(self.code, self.name)
-        except (OSError, RuntimeError, TypeError, ValueError) as exc:
-            self._log.debug(f"[K绾縘 {self.code} 浜ゆ槗璁板綍璇诲彇澶辫触: {exc}")
-            trade_records = []
-
         echarts_data = build_kline_echarts_payload(
             self.df,
             code=self.code,
             name=self.name,
             vcp_data=self.vcp_data,
-            trade_records=trade_records,
         )
         self._last_chart_payload_bytes = len(
             json.dumps(echarts_data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -978,15 +867,12 @@ class KLineChartWindow(QWidget):
         if not quotes or self.code not in quotes:
             return
         try:
-            self._refresh_last_bar(quotes[self.code])
+            refresh_last_bar(self, quotes[self.code])
         except (AttributeError, RuntimeError, TypeError, ValueError) as e:
             log.debug(f"[K线] 全局实时行情刷新失败: {e}")
 
     def _on_rt_timer(self):
         poll_rt_update(self)
-
-    def _refresh_last_bar(self, quote):
-        refresh_last_bar(self, quote)
 
     # ======================== 导航 ========================
     def _nav_stock(self, delta):
@@ -1053,14 +939,10 @@ class KLineChartWindow(QWidget):
         """窗口关闭时彻底释放 WebEngine 资源，防止内存泄漏"""
         self._closing = True
         # 断开主题切换信号，防止信号调用已销毁的窗口
-        try:
+        with suppress(TypeError):
             theme_manager.sig_theme_changed.disconnect(self._on_theme_changed)
-        except TypeError:
-            pass
-        try:
+        with suppress(TypeError):
             event_bus.sig_rt_quotes.disconnect(self._on_global_rt_quotes)
-        except TypeError:
-            pass
 
         # 停止定时器
         if self._rt_timer is not None:
@@ -1078,18 +960,12 @@ class KLineChartWindow(QWidget):
         self.browser = None
         try:
             if browser is not None:
-                try:
+                with suppress(AttributeError, RuntimeError, TypeError):
                     browser.loadFinished.disconnect(self._on_chart_load_finished)
-                except (AttributeError, RuntimeError, TypeError):
-                    pass
-                try:
+                with suppress(AttributeError, RuntimeError, TypeError):
                     browser.stop()
-                except (AttributeError, RuntimeError, TypeError):
-                    pass
-                try:
+                with suppress(AttributeError, RuntimeError, TypeError):
                     browser.setUpdatesEnabled(False)
-                except (AttributeError, RuntimeError, TypeError):
-                    pass
         except (AttributeError, RuntimeError, TypeError) as _e:
             log.debug(f"[K线] WebEngine 释放异常: {_e}")
 

@@ -122,6 +122,22 @@ def test_lhb_manual_refresh_falls_back_to_previous_trade_day_when_today_empty(mo
     assert level == "info"
 
 
+def test_lhb_manual_refresh_preserves_cache_until_replacement_succeeds(monkeypatch):
+    dates = ["20260709", "20260710"]
+    monkeypatch.setattr(LhbTab, "_get_manual_refresh_trade_dates", lambda self: (dates, "", "info"))
+
+    tab = LhbTab(object(), autoload_pool=False)
+    tab._get_pool_manager = lambda: (_ for _ in ()).throw(AssertionError("refresh must not clear usable cache first"))
+    calls = []
+    tab._start_backfill = lambda requested: calls.append(requested)
+    try:
+        tab._manual_refresh()
+
+        assert calls == [dates]
+    finally:
+        tab.deleteLater()
+
+
 def test_lhb_ensure_log_line_appends_newline_once():
     assert LhbTab._ensure_log_line("[龙虎榜池] 完成") == "[龙虎榜池] 完成\n"
     assert LhbTab._ensure_log_line("[龙虎榜池] 完成\n") == "[龙虎榜池] 完成\n"
@@ -516,7 +532,7 @@ def test_lhb_opening_warmup_quote_snapshot_flushes_in_chunks(monkeypatch):
         tab.deleteLater()
 
 
-def test_lhb_deferred_quote_snapshot_outside_opening_does_not_resort_pool(monkeypatch):
+def test_lhb_deferred_quote_snapshot_outside_opening_resorts_pool(monkeypatch, qt_application):
     applied = []
     sort_calls = []
 
@@ -529,12 +545,16 @@ def test_lhb_deferred_quote_snapshot_outside_opening_does_not_resort_pool(monkey
     monkeypatch.setattr(LhbTab, "_sort_model_for_default_lhb_order", lambda self: sort_calls.append("sort"))
 
     tab = LhbTab(object(), autoload_pool=False)
+    tab.model.update_data([{"代码": "300750", "涨幅%": 0.0}], hydrate_latest_quotes=False)
     try:
         assert tab._apply_quote_snapshot_now({"300750": {"close": 1.0}}, defer_sort=True) == "applied"
 
         assert len(applied) == 1
         assert sort_calls == []
-        assert not tab._quote_sort_timer.isActive()
+        assert tab._quote_sort_timer.isActive()
+        QTest.qWait(LhbTab.QUOTE_SORT_DEBOUNCE_MS + 30)
+        qt_application.processEvents()
+        assert sort_calls == ["sort"]
     finally:
         tab.deleteLater()
 
@@ -604,7 +624,7 @@ def test_lhb_display_pool_shows_ai_chain_context_in_reason_slot(monkeypatch):
         tab.deleteLater()
 
 
-def test_lhb_display_keeps_buy_points_sorted_by_live_pct(monkeypatch):
+def test_lhb_display_uses_buy_point_pct_then_date_pct_order(monkeypatch):
     monkeypatch.setattr(
         LhbTab,
         "refresh_table_quotes_and_market_caps",
@@ -627,22 +647,33 @@ def test_lhb_display_keeps_buy_points_sorted_by_live_pct(monkeypatch):
                     "_history_date": "2026-04-18",
                 },
                 {"代码": "000002", "名称": "高涨幅买点", "最近上榜": "20260417", "买点": "触发", "涨幅%": 3.0},
-                {"代码": "000003", "名称": "无买点高涨幅", "最近上榜": "20260420", "买点": "", "涨幅%": 9.0},
+                {"代码": "000003", "名称": "无买点低涨幅", "最近上榜": "20260420", "买点": "", "涨幅%": 1.0},
+                {"代码": "000004", "名称": "无买点高涨幅", "最近上榜": "20260420", "买点": "", "涨幅%": 9.0},
+                {"代码": "000005", "名称": "较早无买点", "最近上榜": "20260419", "买点": "", "涨幅%": 20.0},
             ]
         )
 
         assert _visible_lhb_codes(tab) == [
             "000002",
             "000001",
+            "000004",
             "000003",
+            "000005",
         ]
 
-        tab._apply_quote_snapshot({"000001": {"open": 9.0, "close": 12.0, "last_close": 10.0}})
+        tab._apply_quote_snapshot(
+            {
+                "000001": {"open": 9.0, "close": 12.0, "last_close": 10.0},
+                "000003": {"close": 12.0, "last_close": 10.0},
+            }
+        )
 
         assert _visible_lhb_codes(tab) == [
             "000001",
             "000002",
             "000003",
+            "000004",
+            "000005",
         ]
     finally:
         tab.deleteLater()
@@ -752,6 +783,83 @@ def test_lhb_pool_tasks_use_owner_lifecycle_deadlines(monkeypatch):
         assert [item[0] for item in submissions] == ["pool_bootstrap", "pool_backfill"]
         assert submissions[0][2]["timeout_sec"] == lhb_tab_module.LHB_POOL_BOOTSTRAP_TIMEOUT_SECONDS
         assert submissions[1][2]["timeout_sec"] == lhb_tab_module.LHB_POOL_BACKFILL_TIMEOUT_SECONDS
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_backfill_retries_when_global_task_is_active(monkeypatch):
+    active_states = iter((True, False))
+    monkeypatch.setattr(lhb_tab_module.task_manager, "is_active_task", lambda _task_id: next(active_states))
+    submissions = []
+    captured = []
+    monkeypatch.setattr(
+        lhb_tab_module,
+        "_build_lhb_backfill_payload",
+        lambda _owner, missing, validation, ref, _log, _token: captured.append((missing, validation, ref)) or {},
+    )
+
+    class FakeLifecycle:
+        def run_background(self, name, fn, **kwargs):
+            submissions.append((name, fn, kwargs))
+            return object()
+
+        @staticmethod
+        def shutdown(*, timeout_ms=0):
+            return True
+
+    tab = LhbTab(object(), autoload_pool=False)
+    tab._task_lifecycle = FakeLifecycle()
+    try:
+        tab._start_backfill(["20260420"], ["20260419"], "20260420")
+
+        assert tab._backfill_in_progress is False
+        assert tab.btn_refresh.isEnabled() is True
+        assert tab._pool_retry_timer.isActive() is True
+        tab._pool_retry_timer.stop()
+        tab._pool_retry_timer.timeout.emit()
+        assert tab._pending_backfill_request is None
+        assert submissions[0][0] == "pool_backfill"
+        submissions[0][1](object())
+        assert captured == [(["20260420"], ["20260419"], "20260420")]
+    finally:
+        tab.deleteLater()
+
+
+def test_lhb_backfill_failures_replace_stale_loading_overlay():
+    callbacks = {}
+
+    class FakeLifecycle:
+        def run_background(self, _name, _fn, **kwargs):
+            callbacks.update(kwargs)
+            return object()
+
+        @staticmethod
+        def shutdown(*, timeout_ms=0):
+            return True
+
+    tab = LhbTab(object(), autoload_pool=False)
+    tab._task_lifecycle = FakeLifecycle()
+    try:
+        tab.table_state.show_loading("正在加载龙虎榜池")
+        tab._start_backfill(["20260420"])
+        callbacks["on_success"]({})
+
+        assert tab.table_state._overlay._mode == "error"
+        assert tab.table_state._overlay._title.text() == "同步失败"
+
+        tab.table_state.show_loading("正在加载龙虎榜池")
+        tab._start_backfill(["20260420"])
+        callbacks["on_error"]("远端异常")
+
+        assert tab.table_state._overlay._mode == "error"
+        assert tab.table_state._overlay._title.text() == "抓取异常"
+
+        tab.model.update_data([{"代码": "000001"}])
+        tab.table_state.show_loading("正在加载龙虎榜池")
+        tab._start_backfill(["20260420"])
+        callbacks["on_error"]("远端异常")
+
+        assert tab.table_state._stack.currentWidget() is tab.table_state.table
     finally:
         tab.deleteLater()
 

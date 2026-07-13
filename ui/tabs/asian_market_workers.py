@@ -62,8 +62,6 @@ _fetch_jp_kabutan_pe = quote_service.fetch_jp_kabutan_pe
 _parse_jp_realtime_page = quote_service.parse_jp_realtime_page
 _parse_jp_yahoo_pe_from_html = quote_service.parse_jp_yahoo_pe_from_html
 _to_float = quote_service.to_float
-_normalize_pe_value = quote_service.normalize_pe_value
-_resolve_previous_close = quote_service.resolve_previous_close
 _round_pct = quote_service.round_pct
 _format_cooldown_eta = quote_service.format_cooldown_eta
 
@@ -408,10 +406,6 @@ class AsianMarketWorker(QThread):
             return code, None
         GLOBAL_ASIAN_RT_CACHE[code] = payload
         return code, payload
-
-    @staticmethod
-    def _normalize_pe(value):
-        return _normalize_pe_value(value)
 
     def _fetch_updates(self, *, open_markets_only: bool = False) -> dict:
         updates = {}

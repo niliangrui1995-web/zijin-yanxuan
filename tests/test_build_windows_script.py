@@ -51,6 +51,14 @@ def test_qapplication_is_created_before_ui_modules_are_imported():
     assert app_created < source.index("from ui.theme import theme_manager")
 
 
+def test_silent_startup_disables_tqdm_before_project_imports():
+    source = (Path(__file__).resolve().parents[1] / "vcp_hunter_qt.pyw").read_text(encoding="utf-8")
+
+    guard = 'if sys.stderr is None:\n    os.environ["TQDM_DISABLE"] = "1"'
+    assert guard in source
+    assert source.index(guard) < source.index("from core.runtime_env import")
+
+
 def test_runtime_requirements_target_python314_scipy():
     requirements = (Path(__file__).resolve().parents[1] / "requirements.txt").read_text(encoding="utf-8")
 

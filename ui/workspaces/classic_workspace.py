@@ -238,7 +238,6 @@ class ClassicWorkspace(QWidget):
         self._lazy_loading_keys: set[str] = set()
         self._background_prewarm_queue: list[str] = []
         self._background_prewarm_started = False
-        self._pending_restore_index: int | None = None
         self._restore_last_tab_timer: QTimer | None = None
         self._last_system_log_shell_nav_load_at = 0.0
         self._copy_hook_refresh_queued = False
@@ -552,7 +551,7 @@ class ClassicWorkspace(QWidget):
         if callable(ensure_polished):
             QTimer.singleShot(0, ensure_polished)
         QTimer.singleShot(250, lambda widget=widget: setattr(widget, "_workspace_load_reason", ""))
-        self._notify_tab_loaded(key, widget)
+        self._schedule_workspace_table_copy_hooks()
         if self.tabs.currentWidget() is widget:
             self._startup_last_allowed_index = index
             self._notify_tab_activated(key, widget)
@@ -794,9 +793,6 @@ class ClassicWorkspace(QWidget):
 
         QTimer.singleShot(self.COPY_HOOK_REFRESH_DELAY_MS, _install_hooks)
 
-    def _notify_tab_loaded(self, _key: str, _widget) -> None:
-        self._schedule_workspace_table_copy_hooks()
-
     def _notify_tab_activated(self, _key: str, widget) -> None:
         callback = getattr(widget, "on_workspace_tab_activated", None)
         if callable(callback):
@@ -828,7 +824,6 @@ class ClassicWorkspace(QWidget):
     def schedule_restore_last_tab(self, index: int, *, delay_ms: int | None = None) -> None:
         if not isinstance(index, int) or index < 0:
             return
-        self._pending_restore_index = index
         try:
             delay = self.RESTORE_LAST_TAB_DELAY_MS if delay_ms is None else max(0, int(delay_ms))
         except (TypeError, ValueError):

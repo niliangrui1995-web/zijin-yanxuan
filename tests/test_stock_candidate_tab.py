@@ -28,6 +28,32 @@ def _run_candidate_refreshes_inline(monkeypatch, submitted=None):
     )
 
 
+class _PrimingWorkspace(QWidget):
+    def __init__(self, primes):
+        super().__init__()
+        self._primes = primes
+
+    def collect_stock_context(self):
+        return {}
+
+    def prime_stock_context_snapshots(self):
+        self._primes.append("prime")
+        return True
+
+
+class _KwargPrimingWorkspace(QWidget):
+    def __init__(self, primes):
+        super().__init__()
+        self._primes = primes
+
+    def collect_stock_context(self):
+        return {}
+
+    def prime_stock_context_snapshots(self, **kwargs):
+        self._primes.append(dict(kwargs))
+        return True
+
+
 def test_stock_candidate_rows_keep_multi_source_names_and_rank_score():
     class DummyTab:
         @staticmethod
@@ -344,16 +370,7 @@ def test_stock_candidate_earnings_update_primes_context_snapshot(monkeypatch):
     monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(stock_candidate_module.MarketCalendar, "is_quote_refresh_time", lambda: True)
     primes = []
-
-    class _Workspace(QWidget):
-        def collect_stock_context(self):
-            return {}
-
-        def prime_stock_context_snapshots(self):
-            primes.append("prime")
-            return True
-
-    workspace = _Workspace()
+    workspace = _PrimingWorkspace(primes)
     tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
     try:
         event_bus.sig_earnings_updated.emit()
@@ -370,16 +387,7 @@ def test_stock_candidate_hidden_context_update_defers_refresh_until_visible(monk
     monkeypatch.setattr(stock_candidate_module.MarketCalendar, "is_quote_refresh_time", lambda: True)
     primes = []
     current = {"value": False}
-
-    class _Workspace(QWidget):
-        def collect_stock_context(self):
-            return {}
-
-        def prime_stock_context_snapshots(self):
-            primes.append("prime")
-            return True
-
-    workspace = _Workspace()
+    workspace = _PrimingWorkspace(primes)
     tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
     tab._is_current_workspace_tab = lambda: current["value"]
     try:
@@ -403,16 +411,7 @@ def test_stock_candidate_after_hours_hidden_update_skips_snapshot_prime(monkeypa
     monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(stock_candidate_module.MarketCalendar, "is_quote_refresh_time", lambda: False)
     primes = []
-
-    class _Workspace(QWidget):
-        def collect_stock_context(self):
-            return {}
-
-        def prime_stock_context_snapshots(self, **kwargs):
-            primes.append(dict(kwargs))
-            return True
-
-    workspace = _Workspace()
+    workspace = _KwargPrimingWorkspace(primes)
     tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
     tab._is_current_workspace_tab = lambda: False
     try:
@@ -430,16 +429,7 @@ def test_stock_candidate_hidden_lhb_update_does_not_prime_lhb_snapshot(monkeypat
     monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(stock_candidate_module.MarketCalendar, "is_quote_refresh_time", lambda: True)
     primes = []
-
-    class _Workspace(QWidget):
-        def collect_stock_context(self):
-            return {}
-
-        def prime_stock_context_snapshots(self, **kwargs):
-            primes.append(dict(kwargs))
-            return True
-
-    workspace = _Workspace()
+    workspace = _KwargPrimingWorkspace(primes)
     tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
     tab._is_current_workspace_tab = lambda: False
     try:
@@ -457,16 +447,7 @@ def test_stock_candidate_current_lhb_update_does_not_reprime_lhb_snapshot(monkey
     monkeypatch.setattr("ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(stock_candidate_module.MarketCalendar, "is_quote_refresh_time", lambda: True)
     primes = []
-
-    class _Workspace(QWidget):
-        def collect_stock_context(self):
-            return {}
-
-        def prime_stock_context_snapshots(self, **kwargs):
-            primes.append(dict(kwargs))
-            return True
-
-    workspace = _Workspace()
+    workspace = _KwargPrimingWorkspace(primes)
     tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
     tab._is_current_workspace_tab = lambda: True
     try:
@@ -524,16 +505,7 @@ def test_stock_candidate_prime_background_load_primes_snapshot_and_refresh(monke
         "ui.tabs.stock_candidate_tab.QTimer.singleShot", lambda delay, callback: scheduled.append(delay)
     )
     primes = []
-
-    class _Workspace(QWidget):
-        def collect_stock_context(self):
-            return {}
-
-        def prime_stock_context_snapshots(self):
-            primes.append("prime")
-            return True
-
-    workspace = _Workspace()
+    workspace = _PrimingWorkspace(primes)
     tab = StockCandidateTab(data_provider=SimpleNamespace(), parent=workspace)
     try:
         tab.prime_background_load()

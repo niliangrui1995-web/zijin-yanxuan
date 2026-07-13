@@ -41,8 +41,6 @@ data/scan_cache.json
 
 # Special pool data (user-generated, contains personal watchlist)
 data/special_latest_data.json
-
-# Personal account trade exports now live under the OS user-data directory.
 data/Trade/
 
 # Export (user-generated reports)
@@ -115,4 +113,3 @@ data/Cache/na_daily_latest.json
 
 # Coverage report
 .coverage
-

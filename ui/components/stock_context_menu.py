@@ -29,7 +29,6 @@ CODEX_INDUSTRY_RESEARCH_PROJECT = Path(r"D:\vcp_hunter\产业链投研")
 CODEX_NEW_THREAD_ROUTE = "codex://new"
 CODEX_PROMPT_MAX_LENGTH = 800
 CODEX_STOCK_FIELD_MAX_LENGTH = 80
-CODEX_STOCK_ANALYSIS_SKILL = "$stock-fundamental-moat-triad"
 CODEX_STOCK_PROMPT_INTRO = "深度研究"
 CODEX_CURRENT_STOCK_PROMPT = "深度研究 当前股票"
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]+")

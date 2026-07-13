@@ -123,7 +123,7 @@ def test_compute_pool_allows_zero_institution_net_buy(monkeypatch):
                 "涨幅%": 9.99,
             },
             {
-                "代码": "600000",
+                "代码": "000001",
                 "名称": "负机构净买",
                 "上榜日期": "20260508",
                 "上榜净买额(万)": 1200,

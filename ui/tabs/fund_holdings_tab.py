@@ -34,7 +34,7 @@ from app.services.ui_industry_chain_service import (
     load_cached_ai_industry_chain_context_map,
     load_cached_ai_industry_chain_stock_codes,
 )
-from app.services.ui_task_lifecycle_service import TaskLifecycleGroup, invoke_with_cancellation
+from app.services.ui_task_lifecycle_service import invoke_with_cancellation, task_lifecycle_for
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
 from ui.components import (
@@ -45,7 +45,7 @@ from ui.components import (
 )
 from ui.models.table_models import StockItemDelegate, StockTableModel
 from ui.tabs.base_stock_refresh import load_cached_finance_snapshot
-from ui.tabs.base_stock_tab import BaseStockTab
+from ui.tabs.base_stock_tab import BaseStockTab, _is_direct_workspace_tab
 from ui.tabs.fund_holdings_filter_menu import build_change_filter_menu, build_quarter_filter_menu
 from ui.tabs.fund_holdings_filter_proxy import FundHoldingsFilterProxyModel
 from ui.tabs.fund_holdings_filter_state import (
@@ -58,9 +58,7 @@ from ui.tabs.fund_holdings_filter_state import (
     resolve_quarter_query_scope,
 )
 from ui.tabs.fund_holdings_payload import (
-    build_ai_chain_context_text,
     build_fund_holdings_view_rows,
-    filter_rows_to_stock_universe,
     load_ai_chain_context_map_safely,
     load_fund_holdings_view_payload,
     query_change_rows_for_scope,
@@ -71,10 +69,7 @@ from ui.tabs.fund_holdings_rules import (
     FUND_DISPLAY_PLACEHOLDER,
     capital_attribute_label,
     filter_ai_related_concepts,
-    format_amount,
-    format_pct,
     is_ai_related_concept,
-    normalize_ai_concept_display,
 )
 from ui.tabs.fund_holdings_view_state import (
     FundHoldingsViewState,
@@ -83,14 +78,6 @@ from ui.tabs.fund_holdings_view_state import (
     sort_order_to_int,
     write_fund_holdings_view_state,
 )
-
-
-def _task_lifecycle_for(tab):
-    lifecycle = getattr(tab, "_task_lifecycle", None)
-    if lifecycle is None:
-        lifecycle = TaskLifecycleGroup(task_manager)
-        tab._task_lifecycle = lifecycle
-    return lifecycle
 
 
 class FundHoldingsTab(BaseStockTab):
@@ -159,9 +146,7 @@ class FundHoldingsTab(BaseStockTab):
             provider_status_reader=self._read_provider_status,
         )
         self._last_fund_holdings_result = None
-        self._last_fund_holdings_signature = ""
         self._settings = self._create_settings()
-        self._pending_daily_auto_sync_date = ""
         self._pending_f5_auto_sync = False
         self._cache_reload_refresh_pending = False
         self._quote_snapshot_refresh_pending = False
@@ -189,25 +174,11 @@ class FundHoldingsTab(BaseStockTab):
         if self._should_start_runtime_on_show():
             self._ensure_initial_load_started()
 
-    def hideEvent(self, event):
-        super().hideEvent(event)
-
     def prime_background_load(self):
         self._ensure_initial_load_started()
 
     def _is_current_workspace_tab(self) -> bool:
-        parent = self.parent()
-        tabs = getattr(parent, "tabs", None)
-        current_widget = getattr(tabs, "currentWidget", None)
-        if not callable(current_widget):
-            return True
-        try:
-            return current_widget() is self
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            return True
-
-    def _should_start_runtime_on_show(self) -> bool:
-        return BaseStockTab._should_start_interactive_runtime_on_show(self)
+        return _is_direct_workspace_tab(self)
 
     @staticmethod
     def _create_settings():
@@ -374,20 +345,6 @@ class FundHoldingsTab(BaseStockTab):
         return load_ai_chain_context_map_safely(cls._chain_context_provider)
 
     @classmethod
-    def _build_ai_chain_context_text(
-        cls,
-        stock_code: str,
-        context_map: dict[str, str],
-        concept_sector_cache: dict[str, str],
-    ) -> str:
-        return build_ai_chain_context_text(
-            stock_code,
-            context_map,
-            concept_sector_cache,
-            placeholder=cls._DISPLAY_PLACEHOLDER,
-        )
-
-    @classmethod
     def _resolve_query_quarters(
         cls,
         latest_quarter_map: dict[str, str],
@@ -407,10 +364,6 @@ class FundHoldingsTab(BaseStockTab):
     @classmethod
     def _query_change_rows_for_scope(cls, quarter_keys: set[str] | None) -> list[dict]:
         return query_change_rows_for_scope(quarter_keys, stock_universe_provider=cls._stock_universe_provider)
-
-    @classmethod
-    def _filter_rows_to_stock_universe(cls, rows: list[dict]) -> list[dict]:
-        return filter_rows_to_stock_universe(rows, cls._stock_universe_provider)
 
     @classmethod
     def _load_view_payload(
@@ -546,7 +499,7 @@ class FundHoldingsTab(BaseStockTab):
                 action_callback=self._ensure_initial_load_started,
             )
 
-        _task_lifecycle_for(self).run_background(
+        task_lifecycle_for(self, runner=task_manager).run_background(
             "view-load",
             _load_bg,
             on_success=_on_success,
@@ -856,7 +809,6 @@ class FundHoldingsTab(BaseStockTab):
         row_list = list(rows if rows is not None else self.get_row_data(current_model=getattr(self, "model", None)))
         result = self._describe_fund_holdings_rows(row_list)
         self._last_fund_holdings_result = result
-        self._last_fund_holdings_signature = result.signature
         return result
 
     def get_data_lineage(self) -> dict:
@@ -1043,7 +995,7 @@ class FundHoldingsTab(BaseStockTab):
         self._set_sync_active(True, "同步基金持仓中...", label)
         self._set_sync_start_status(label)
 
-        _task_lifecycle_for(self).run_background(
+        task_lifecycle_for(self, runner=task_manager).run_background(
             "sync",
             lambda cancellation_token: invoke_with_cancellation(sync_callable, cancellation_token),
             on_success=lambda result: self._handle_sync_success(result, label),
@@ -1196,24 +1148,9 @@ class FundHoldingsTab(BaseStockTab):
             self.table_state.show_table()
         self._update_status_summary()
 
-    def _get_concept_sector_text(self, stock_code: str) -> str:
-        if self._ai_chain_context_map is None:
-            self._ai_chain_context_map = self._load_ai_chain_context_map()
-
-        return build_ai_chain_context_text(
-            stock_code,
-            self._ai_chain_context_map,
-            self._concept_sector_cache,
-            placeholder=self._DISPLAY_PLACEHOLDER,
-        )
-
     @classmethod
     def _is_ai_related_concept(cls, concept_name: str) -> bool:
         return is_ai_related_concept(concept_name)
-
-    @classmethod
-    def _normalize_ai_concept_display(cls, concept_name: str) -> str:
-        return normalize_ai_concept_display(concept_name)
 
     @classmethod
     def _filter_ai_related_concepts(cls, concepts) -> list[str]:
@@ -1235,28 +1172,6 @@ class FundHoldingsTab(BaseStockTab):
     @staticmethod
     def _load_cached_finance_snapshot(codes) -> dict[str, dict]:
         return load_cached_finance_snapshot(codes)
-
-    def _prime_local_quote_snapshot(self):
-        self.prime_local_quote_snapshot()
-
-    @staticmethod
-    def _format_pct(value, *, show: bool, signed: bool = False) -> str:
-        return format_pct(
-            value,
-            show=show,
-            signed=signed,
-            placeholder=FundHoldingsTab._DISPLAY_PLACEHOLDER,
-        )
-
-    @staticmethod
-    def _format_amount(value, *, divisor: float, show: bool, signed: bool = False) -> str:
-        return format_amount(
-            value,
-            divisor=divisor,
-            show=show,
-            signed=signed,
-            placeholder=FundHoldingsTab._DISPLAY_PLACEHOLDER,
-        )
 
     def _apply_latest_quotes_from_store(self):
         self._apply_quote_store_snapshot()
@@ -1404,10 +1319,6 @@ class FundHoldingsTab(BaseStockTab):
                 show_watchlist_toggle=True,
                 vcp_data={"代码": code, "名称": str(row.get("名称") or "").strip()},
             )
-
-    def closeEvent(self, event):
-        self._cleanup_runtime_state()
-        super().closeEvent(event)
 
     def _cleanup_runtime_state(self):
         if not getattr(self, "_fund_holdings_cleanup_done", False):

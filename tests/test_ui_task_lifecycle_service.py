@@ -98,6 +98,7 @@ def test_invoke_with_cancellation_supports_new_and_legacy_callables():
         token,
     ) == "new"
     assert invoke_with_cancellation(lambda: "legacy", token) == "legacy"
+    assert invoke_with_cancellation(lambda: "legacy", None) == "legacy"
     assert observed == [token]
 
 

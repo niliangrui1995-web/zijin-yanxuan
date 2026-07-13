@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 
 from PyQt6.QtCore import QEvent, QRectF, QSize, Qt, QTimer
@@ -95,12 +96,10 @@ class MarketPulseStrip(QWidget):
         self._timer.timeout.connect(self._tick)
         host.installEventFilter(self)
         self.apply_theme()
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError):
             from ui.theme import theme_manager
 
             theme_manager.sig_theme_changed.connect(self._on_theme_changed)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
         self._sync_geometry()
         self._timer.start()
 
@@ -424,17 +423,6 @@ class MainWindowStatusBar(QFrame):
 
         self.apply_theme()
 
-    def _resolve_status_dot_color(self, tone: str) -> str:
-        from ui.theme import theme_manager
-
-        theme = theme_manager.current_theme
-        mapping = {
-            "online": theme.get("NETWORK_ONLINE", theme.get("COLOR_REALTIME", theme.get("COLOR_SUCCESS", "#10B981"))),
-            "busy": theme.get("NETWORK_BUSY", theme.get("COLOR_WARNING", "#F59E0B")),
-            "offline": theme.get("NETWORK_OFFLINE", theme.get("COLOR_ERROR", "#EF4444")),
-        }
-        return mapping.get(tone, mapping["offline"])
-
     def set_status_tone(self, tone: str, *, animate: bool = True) -> None:
         self._status_tone = tone if tone in {"online", "busy", "offline"} else "offline"
         self.status_dot.set_tone(self._status_tone)
@@ -542,10 +530,8 @@ class ShellNavigationWidget(QWidget):
 
     def bind_workspace(self, workspace, tabs) -> None:
         if self._tabs is not None:
-            try:
+            with suppress(TypeError, RuntimeError):
                 self._tabs.currentChanged.disconnect(self._on_tabs_changed)
-            except (TypeError, RuntimeError):
-                pass
 
         self._workspace = workspace
         self._tabs = tabs
@@ -707,17 +693,13 @@ class ShellNavigationWidget(QWidget):
         interval_ms = self.GROUP_REBUILD_TRANSITION_SUSPEND_MS
         suspend_transitions = getattr(self._tabs, "suspendTransitionsFor", None)
         if callable(suspend_transitions):
-            try:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 suspend_transitions(interval_ms)
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                pass
 
         prepare_workspace = getattr(self._workspace, "prepare_shell_group_rebuild_navigation", None)
         if callable(prepare_workspace):
-            try:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 prepare_workspace(interval_ms=interval_ms)
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                pass
 
     def sync_from_current_tab(self, tab_index: int) -> None:
         group = self._find_group_for_index(tab_index)
@@ -729,11 +711,9 @@ class ShellNavigationWidget(QWidget):
     def _activate_workspace_index(self, tab_index: int, *, reason: str) -> None:
         activate_tab = getattr(self._workspace, "activate_tab", None)
         if callable(activate_tab):
-            try:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 if activate_tab(tab_index, reason=reason):
                     return
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                pass
         self._tabs.setCurrentIndex(tab_index)
 
     def _on_tabbar_changed(self, visible_index: int) -> None:
@@ -1078,12 +1058,10 @@ def setup_system_menu(window) -> SystemMenuRefs:
 
     sys_menu = QMenu(window)
     install_menu_fade(sys_menu)
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError):
         sys_menu.aboutToShow.connect(lambda: QApplication.restoreOverrideCursor())
         sys_menu.aboutToShow.connect(lambda: _sync_launch_at_login_action(window))
         sys_menu.aboutToHide.connect(lambda: QApplication.restoreOverrideCursor())
-    except (AttributeError, RuntimeError, TypeError):
-        pass
 
     sys_menu.setObjectName("sysMenu")
 

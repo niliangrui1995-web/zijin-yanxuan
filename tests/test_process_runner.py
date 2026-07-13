@@ -5,6 +5,19 @@ import pytest
 from infra.tasks import process_runner
 
 
+class _FakeStartupInfo:
+    def __init__(self):
+        self.dwFlags = 0
+        self.wShowWindow = None
+
+
+def _patch_windows_startup_info(monkeypatch):
+    monkeypatch.setattr(process_runner.os, "name", "nt", raising=False)
+    monkeypatch.setattr(process_runner.subprocess, "STARTUPINFO", _FakeStartupInfo, raising=False)
+    monkeypatch.setattr(process_runner.subprocess, "STARTF_USESHOWWINDOW", 4, raising=False)
+    monkeypatch.setattr(process_runner.subprocess, "SW_HIDE", 7, raising=False)
+
+
 def test_run_process_normalizes_sequence_commands(monkeypatch):
     captured = {}
 
@@ -35,15 +48,7 @@ def test_process_runner_rejects_shell_true():
 
 
 def test_windows_no_window_kwargs_uses_creationflags_and_startupinfo(monkeypatch):
-    class FakeStartupInfo:
-        def __init__(self):
-            self.dwFlags = 0
-            self.wShowWindow = None
-
-    monkeypatch.setattr(process_runner.os, "name", "nt", raising=False)
-    monkeypatch.setattr(process_runner.subprocess, "STARTUPINFO", FakeStartupInfo, raising=False)
-    monkeypatch.setattr(process_runner.subprocess, "STARTF_USESHOWWINDOW", 4, raising=False)
-    monkeypatch.setattr(process_runner.subprocess, "SW_HIDE", 7, raising=False)
+    _patch_windows_startup_info(monkeypatch)
 
     kwargs = process_runner.windows_no_window_kwargs()
 
@@ -143,20 +148,12 @@ def test_python_executable_for_no_window_branches(monkeypatch):
 def test_run_python_module_no_window_preserves_existing_creationflags(monkeypatch):
     captured = {}
 
-    class FakeStartupInfo:
-        def __init__(self):
-            self.dwFlags = 0
-            self.wShowWindow = None
-
     def fake_run_process(command, **kwargs):
         captured["command"] = command
         captured["kwargs"] = kwargs
         return "ok"
 
-    monkeypatch.setattr(process_runner.os, "name", "nt", raising=False)
-    monkeypatch.setattr(process_runner.subprocess, "STARTUPINFO", FakeStartupInfo, raising=False)
-    monkeypatch.setattr(process_runner.subprocess, "STARTF_USESHOWWINDOW", 4, raising=False)
-    monkeypatch.setattr(process_runner.subprocess, "SW_HIDE", 7, raising=False)
+    _patch_windows_startup_info(monkeypatch)
     monkeypatch.setattr(process_runner, "run_process", fake_run_process)
 
     result = process_runner.run_python_module("pkg.tool", no_window=True, creationflags=0x20)
@@ -171,22 +168,14 @@ def test_run_python_module_no_window_preserves_existing_creationflags(monkeypatc
 def test_run_python_module_no_window_uses_console_python_for_pythonw(monkeypatch):
     captured = {}
 
-    class FakeStartupInfo:
-        def __init__(self):
-            self.dwFlags = 0
-            self.wShowWindow = None
-
     def fake_run_process(command, **kwargs):
         captured["command"] = command
         captured["kwargs"] = kwargs
         return "ok"
 
-    monkeypatch.setattr(process_runner.os, "name", "nt", raising=False)
+    _patch_windows_startup_info(monkeypatch)
     monkeypatch.setattr(process_runner.sys, "executable", r"C:\Python314\pythonw.exe")
     monkeypatch.setattr(process_runner.os.path, "exists", lambda path: path == r"C:\Python314\python.exe")
-    monkeypatch.setattr(process_runner.subprocess, "STARTUPINFO", FakeStartupInfo, raising=False)
-    monkeypatch.setattr(process_runner.subprocess, "STARTF_USESHOWWINDOW", 4, raising=False)
-    monkeypatch.setattr(process_runner.subprocess, "SW_HIDE", 7, raising=False)
     monkeypatch.setattr(process_runner, "run_process", fake_run_process)
 
     result = process_runner.run_python_module("pkg.tool", no_window=True)

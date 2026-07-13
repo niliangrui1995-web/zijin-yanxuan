@@ -25,14 +25,10 @@ from core.logger import get_logger
 from domains.industry_chain.pool_service import normalize_ai_chain_code
 from domains.lhb.pool_service import (
     POOL_WINDOW,
-    build_day_meta,
     build_full_foreign_display_from_tooltip,
     collect_qualifying_codes,
     filter_records_to_stock_universe,
-    is_bse_code,
-    is_st_stock,
     normalize_day_meta,
-    pool_sort_key,
     record_stock_code,
     repair_day_meta,
     sort_pool_rows_for_display,
@@ -67,18 +63,6 @@ class LhbPoolManager:
     # ================================================================
     # 持久化
     # ================================================================
-    @staticmethod
-    def _cache_file_signature(cache_path: str) -> tuple[int, int] | None:
-        return LhbPoolRepository.cache_file_signature(cache_path)
-
-    @classmethod
-    def _load_json_payload(cls, cache_path: str) -> dict:
-        return LhbPoolRepository.load_json_payload(cache_path)
-
-    @classmethod
-    def _remember_json_payload(cls, cache_path: str, payload: dict) -> None:
-        LhbPoolRepository.remember_json_payload(cache_path, payload)
-
     def _load(self) -> None:
         try:
             raw, cache_path = LhbPoolRepository.load_state(self._cache_path, self._legacy_pool_cache_path)
@@ -108,10 +92,6 @@ class LhbPoolManager:
         self._clear_requested = False
 
     @staticmethod
-    def _read_uncached_payload(cache_path: str) -> dict:
-        return LhbPoolRepository.read_uncached_payload(cache_path)
-
-    @staticmethod
     def _build_full_foreign_display_from_tooltip(tooltip: str) -> str:
         return build_full_foreign_display_from_tooltip(tooltip)
 
@@ -127,27 +107,8 @@ class LhbPoolManager:
         return to_float(value, default)
 
     @classmethod
-    def _pool_sort_key(cls, row: dict) -> tuple:
-        return pool_sort_key(row)
-
-    @classmethod
     def sort_pool_rows_for_display(cls, rows: Any) -> list[dict]:
         return sort_pool_rows_for_display(rows)
-
-    def _build_day_meta(
-        self,
-        records: list[dict],
-        *,
-        source_count: int | None = None,
-        validation_ref_date: str = "",
-        probe_status: str = "unverified",
-    ) -> dict:
-        return build_day_meta(
-            records,
-            source_count=source_count,
-            validation_ref_date=validation_ref_date,
-            probe_status=probe_status,
-        )
 
     def _normalize_day_meta_item(self, meta: dict | None, records: list[dict]) -> dict:
         return normalize_day_meta(meta, records)
@@ -322,16 +283,6 @@ class LhbPoolManager:
     # ================================================================
     # 池计算
     # ================================================================
-
-    @staticmethod
-    def _is_bse_code(code: str) -> bool:
-        """判断是否为北交所或B股（代码首位为 4/8/9，或前两位为 43/83/87）"""
-        return is_bse_code(code)
-
-    @staticmethod
-    def _is_st_stock(name: str) -> bool:
-        """判断是否为 ST 股票（名称含 ST，不区分大小写）"""
-        return is_st_stock(name)
 
     @staticmethod
     def _count_rps250_eligible_symbols(data_provider: Any) -> int:

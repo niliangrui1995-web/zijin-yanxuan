@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from contextlib import suppress
+
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
@@ -15,7 +17,7 @@ from app.services.ui_task_service import task_registry
 from ui.components import TableStateWrapper, VCPTableView
 from ui.components.stock_detail_dialog import signal_source_label
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
-from ui.tabs.base_stock_tab import BaseStockTab
+from ui.tabs.base_stock_tab import BaseStockTab, _is_direct_workspace_tab
 from ui.workspaces.stock_signal import StockSignal
 
 
@@ -74,18 +76,7 @@ class StockCandidateTab(BaseStockTab):
         QTimer.singleShot(self._runtime_start_delay_ms, self.refresh_candidates)
 
     def _is_current_workspace_tab(self) -> bool:
-        parent = self.parent()
-        tabs = getattr(parent, "tabs", None)
-        current_widget = getattr(tabs, "currentWidget", None)
-        if not callable(current_widget):
-            return True
-        try:
-            return current_widget() is self
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            return True
-
-    def _should_start_runtime_on_show(self) -> bool:
-        return BaseStockTab._should_start_interactive_runtime_on_show(self)
+        return _is_direct_workspace_tab(self)
 
     def showEvent(self, event):  # noqa: N802 - Qt API naming
         super().showEvent(event)
@@ -172,21 +163,6 @@ class StockCandidateTab(BaseStockTab):
             return
 
     @staticmethod
-    def _auto_refresh_signals():
-        return (
-            event_bus.sig_cache_reload_completed,
-            event_bus.sig_na_daily_updated,
-            event_bus.sig_ai_industry_chain_updated,
-            event_bus.sig_block_trade_updated,
-            event_bus.sig_earnings_updated,
-            event_bus.sig_lhb_pool_updated,
-            event_bus.sig_scan_updated,
-            event_bus.sig_fund_holdings_updated,
-            event_bus.sig_stock_context_snapshot_updated,
-            event_bus.sig_watchlist_changed,
-        )
-
-    @staticmethod
     def _auto_refresh_signal_specs():
         return (
             (event_bus.sig_cache_reload_completed, {"include_lhb": False}),
@@ -230,15 +206,11 @@ class StockCandidateTab(BaseStockTab):
         self._context_refresh_pending = False
         timer = getattr(self, "_auto_refresh_timer", None)
         if timer is not None:
-            try:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 timer.stop()
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                pass
         for signal, slot in list(getattr(self, "_auto_refresh_connections", []) or []):
-            try:
+            with suppress(TypeError, RuntimeError):
                 signal.disconnect(slot)
-            except (TypeError, RuntimeError):
-                pass
         self._auto_refresh_connections = []
         super()._cleanup_runtime_state()
 
@@ -312,18 +284,14 @@ class StockCandidateTab(BaseStockTab):
             if i < len(self.model.headers):
                 header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
                 self.table.setColumnWidth(i, width)
-        try:
+        with suppress(ValueError):
             header.setSectionResizeMode(self.model.headers.index("核心信号"), QHeaderView.ResizeMode.Stretch)
-        except ValueError:
-            pass
 
         restored_sort = self.bind_header_persistence(self.table, self.HEADER_STATE_KEY)
         if not restored_sort:
-            try:
+            with suppress(ValueError):
                 score_col = self.model.headers.index("共振分")
                 self.table.sortByColumn(score_col, Qt.SortOrder.DescendingOrder)
-            except ValueError:
-                pass
 
         self.table.doubleClicked.connect(self._on_double_click)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)

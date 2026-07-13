@@ -40,6 +40,10 @@ def _stub_global_earnings_cache_probe(monkeypatch):
     )
 
 
+def _asian_sync_path_exists(path):
+    return not str(path).endswith("asian_klines_latest.json")
+
+
 class _DummyLabel:
     def __init__(self):
         self.value = ""
@@ -197,14 +201,6 @@ def test_startup_orchestrator_asian_sync_uses_process_runner(monkeypatch):
     run_calls = []
     delayed = []
 
-    def fake_exists(path):
-        path = str(path)
-        if path.endswith("asian_klines_latest.json"):
-            return False
-        if path.endswith("asian_kline_fetcher.py"):
-            return True
-        return True
-
     def fake_run_python_module(module_name, module_args=None, **kwargs):
         run_calls.append(
             {
@@ -215,7 +211,7 @@ def test_startup_orchestrator_asian_sync_uses_process_runner(monkeypatch):
         )
         return types.SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr("core.startup_orchestrator.os.path.exists", fake_exists)
+    monkeypatch.setattr("core.startup_orchestrator.os.path.exists", _asian_sync_path_exists)
     monkeypatch.setattr("core.startup_orchestrator.run_python_module", fake_run_python_module)
     monkeypatch.setattr(
         "core.startup_orchestrator.QTimer.singleShot",
@@ -252,18 +248,10 @@ def test_startup_orchestrator_asian_sync_timeout_extends_runtime_backoff(monkeyp
     orchestrator = StartupOrchestrator(mw, job_runner=_InlineJobRunner())
     delayed = []
 
-    def fake_exists(path):
-        path = str(path)
-        if path.endswith("asian_klines_latest.json"):
-            return False
-        if path.endswith("asian_kline_fetcher.py"):
-            return True
-        return True
-
     def fake_run_python_module(*_args, **_kwargs):
         raise startup_module.ProcessTimeoutError(cmd="python", timeout=ASIAN_DATA_SYNC_TIMEOUT_SEC)
 
-    monkeypatch.setattr("core.startup_orchestrator.os.path.exists", fake_exists)
+    monkeypatch.setattr("core.startup_orchestrator.os.path.exists", _asian_sync_path_exists)
     monkeypatch.setattr("core.startup_orchestrator.run_python_module", fake_run_python_module)
     monkeypatch.setattr("core.startup_orchestrator.log_process_snapshot", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
@@ -291,6 +279,7 @@ def test_startup_orchestrator_deferred_load_emits_cache_bootstrap_ready(monkeypa
     monkeypatch.setattr("core.startup_orchestrator.os.path.exists", fake_exists)
 
     orchestrator.deferred_data_load()
+    orchestrator.shutdown()
 
     assert len(spy) == 1
 
@@ -309,6 +298,7 @@ def test_startup_orchestrator_deferred_load_records_process_snapshots(monkeypatc
     )
 
     orchestrator.deferred_data_load()
+    orchestrator.shutdown()
 
     assert "startup.deferred_load.begin" in labels
     assert "startup.deferred_load.end" in labels
@@ -326,6 +316,7 @@ def test_startup_orchestrator_deferred_load_loads_history_cache_by_default(monke
     monkeypatch.setattr("core.startup_orchestrator.os.path.exists", fake_exists)
 
     orchestrator.deferred_data_load()
+    orchestrator.shutdown()
 
     assert calls == ["load"]
 
@@ -384,6 +375,7 @@ def test_startup_orchestrator_code_count_uses_lightweight_code_map_when_history_
     )
 
     orchestrator.deferred_data_load()
+    orchestrator.shutdown()
 
     assert mw.lbl_code_count.value == "标的池: 3 只"
 
@@ -406,14 +398,6 @@ def test_startup_orchestrator_asian_sync_logs_succinct_failure_message(monkeypat
         def error(self, _message):
             return None
 
-    def fake_exists(path):
-        path = str(path)
-        if path.endswith("asian_klines_latest.json"):
-            return False
-        if path.endswith("asian_kline_fetcher.py"):
-            return True
-        return True
-
     def fake_run_python_module(*_args, **_kwargs):
         raise subprocess.CalledProcessError(
             returncode=1,
@@ -421,7 +405,7 @@ def test_startup_orchestrator_asian_sync_logs_succinct_failure_message(monkeypat
             stderr="connect failed\nHTTP 429 Too Many Requests",
         )
 
-    monkeypatch.setattr("core.startup_orchestrator.os.path.exists", fake_exists)
+    monkeypatch.setattr("core.startup_orchestrator.os.path.exists", _asian_sync_path_exists)
     monkeypatch.setattr("core.startup_orchestrator.run_python_module", fake_run_python_module)
     monkeypatch.setattr("core.startup_orchestrator.log", _FakeLog())
     monkeypatch.setattr("core.startup_orchestrator.log_process_snapshot", lambda *_args, **_kwargs: None)

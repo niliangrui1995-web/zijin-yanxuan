@@ -85,6 +85,22 @@ class EarningsCalendarEvent:
         )
 
 
+def _hydrate_event_from_company(
+    event: EarningsCalendarEvent,
+    company: OligarchCompany,
+    **changes,
+) -> EarningsCalendarEvent:
+    return replace(
+        event,
+        company=company.company,
+        ticker=event.ticker.strip().upper(),
+        sector=company.sector or event.sector,
+        priority=company.priority or event.priority,
+        market=company.market or event.market,
+        **changes,
+    )
+
+
 class ConfirmedEventWriteError(RuntimeError):
     pass
 

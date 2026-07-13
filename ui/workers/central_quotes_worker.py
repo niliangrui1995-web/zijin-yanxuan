@@ -170,9 +170,6 @@ class CentralQuotesService(QObject):
                 codes.add(normalized)
         return codes
 
-    def _get_missing_finance_codes(self, codes: set[str]) -> list[str]:
-        return self._poller.missing_finance_codes(codes)
-
     def _fetch_quote_payload(self, codes: set[str]) -> dict:
         return self._poller.fetch_payload(codes)
 
@@ -364,9 +361,6 @@ class CentralQuotesService(QObject):
         except (TypeError, ValueError):
             return 0.0
 
-    def _get_quote_request_stats(self) -> dict:
-        return _provider_request_stats(self.data_provider)
-
     def _quote_stats_fallback_pressure(
         self,
         stats: dict,
@@ -414,7 +408,7 @@ class CentralQuotesService(QObject):
         now = time.time() if now is None else float(now)
         candidates = (
             ("central", self._last_central_quote_request_stats),
-            ("provider", self._get_quote_request_stats()),
+            ("provider", _provider_request_stats(self.data_provider)),
         )
         for label, stats in candidates:
             pressure, reason = self._quote_stats_fallback_pressure(stats, now=now, label=label)

@@ -139,7 +139,6 @@ class SettingsRepository:
         )
         self._schema_version = self._migrator.migrate()
         self._organization = organization
-        self._application = application
 
     @property
     def root_settings(self) -> QSettings:

@@ -42,6 +42,52 @@ def _make_provider():
     return provider
 
 
+def _patch_open_market(monkeypatch):
+    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", lambda: True)
+    for name in ("get_latest_trade_date", "today"):
+        monkeypatch.setattr(MarketCalendar, name, lambda market="CN": dt.date(2026, 4, 15))
+
+
+def _offline_quotes(codes):
+    return {
+        code: {
+            "open": 9.8,
+            "high": 10.0,
+            "low": 9.7,
+            "close": 9.9,
+            "volume": 0.0,
+            "amount": 0.0,
+            "last_close": 9.8,
+            "date": "2026-04-15",
+            "source": "offline",
+        }
+        for code in codes
+    }
+
+
+def _make_sina_quote_fetcher(seen):
+    def _fetch(batch, inferred_trade_date):
+        seen.append(tuple(batch))
+        return {
+            code: {
+                "open": 10.0,
+                "high": 10.1,
+                "low": 9.9,
+                "close": 10.0,
+                "volume": 1.0,
+                "amount": 2.0,
+                "last_close": 9.8,
+                "change": 0.2,
+                "pct": 2.04,
+                "date": inferred_trade_date,
+                "source": "sina",
+            }
+            for code in batch
+        }
+
+    return _fetch
+
+
 class _FakeHttpResponse:
     def __init__(self, payload):
         self._payload = json.dumps(payload).encode("utf-8")
@@ -151,9 +197,7 @@ def test_fetch_realtime_quotes_batch_uses_eastmoney_live_quotes_without_tdx_pool
             }
         )
 
-    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", lambda: True)
-    monkeypatch.setattr(MarketCalendar, "get_latest_trade_date", lambda market="CN": dt.date(2026, 4, 15))
-    monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
+    _patch_open_market(monkeypatch)
     monkeypatch.setattr(data_provider_quotes, "urlopen_https", _fake_urlopen)
 
     result = provider.fetch_realtime_quotes_batch(["000001", "600519"])
@@ -291,9 +335,7 @@ def test_fetch_realtime_quotes_batch_retries_backup_eastmoney_host(monkeypatch):
             }
         )
 
-    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", lambda: True)
-    monkeypatch.setattr(MarketCalendar, "get_latest_trade_date", lambda market="CN": dt.date(2026, 4, 15))
-    monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
+    _patch_open_market(monkeypatch)
     monkeypatch.setattr(data_provider_quotes, "urlopen_https", _fake_urlopen)
 
     result = provider.fetch_realtime_quotes_batch(["000001"])
@@ -315,51 +357,17 @@ def test_opening_warmup_pressure_fast_fails_eastmoney_backup_host(monkeypatch):
     seen_hosts = []
     sina_seen = []
 
-    provider._build_offline_quotes = lambda missing_codes: {
-        code: {
-            "open": 9.8,
-            "high": 10.0,
-            "low": 9.7,
-            "close": 9.9,
-            "volume": 0.0,
-            "amount": 0.0,
-            "last_close": 9.8,
-            "date": "2026-04-15",
-            "source": "offline",
-        }
-        for code in missing_codes
-    }
+    provider._build_offline_quotes = _offline_quotes
 
     def _fake_urlopen(request, timeout=8):
         del timeout
         seen_hosts.append(request.full_url.split("/")[2])
         raise urllib.error.HTTPError(request.full_url, 502, "Bad Gateway", hdrs=None, fp=None)
 
-    def _fake_sina(batch, inferred_trade_date):
-        sina_seen.append(tuple(batch))
-        return {
-            code: {
-                "open": 10.0,
-                "high": 10.1,
-                "low": 9.9,
-                "close": 10.0,
-                "volume": 1.0,
-                "amount": 2.0,
-                "last_close": 9.8,
-                "change": 0.2,
-                "pct": 2.04,
-                "date": inferred_trade_date,
-                "source": "sina",
-            }
-            for code in batch
-        }
-
-    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", lambda: True)
-    monkeypatch.setattr(MarketCalendar, "get_latest_trade_date", lambda market="CN": dt.date(2026, 4, 15))
-    monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
+    _patch_open_market(monkeypatch)
     monkeypatch.setattr(MarketCalendar, "get_market_status", lambda market="CN": "\u5f00\u76d8\u96c6\u5408\u7ade\u4ef7")
     monkeypatch.setattr(data_provider_quotes, "urlopen_https", _fake_urlopen)
-    monkeypatch.setattr(provider, "_request_sina_quote_batch", _fake_sina)
+    monkeypatch.setattr(provider, "_request_sina_quote_batch", _make_sina_quote_fetcher(sina_seen))
     monkeypatch.setattr(
         provider,
         "_request_tencent_quote_batch",
@@ -514,9 +522,7 @@ def test_fetch_realtime_quotes_batch_uses_recent_cache_within_dedup_window(monke
     provider._rt_quote_cache["000001"] = dict(cached_quote)
     provider._rt_quote_time["000001"] = 100.0
 
-    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", lambda: True)
-    monkeypatch.setattr(MarketCalendar, "get_latest_trade_date", lambda market="CN": dt.date(2026, 4, 15))
-    monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
+    _patch_open_market(monkeypatch)
     monkeypatch.setattr("time.time", lambda: 105.0)
     monkeypatch.setattr(
         provider,
@@ -556,9 +562,7 @@ def test_fetch_realtime_quotes_batch_pauses_between_batches(monkeypatch):
             [],
         )
 
-    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", lambda: True)
-    monkeypatch.setattr(MarketCalendar, "get_latest_trade_date", lambda market="CN": dt.date(2026, 4, 15))
-    monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
+    _patch_open_market(monkeypatch)
     monkeypatch.setattr(provider, "_fetch_eastmoney_quotes_with_split_retry", _fake_fetch)
     monkeypatch.setattr("time.sleep", lambda seconds: sleep_calls.append(seconds))
 
@@ -598,9 +602,7 @@ def test_fetch_realtime_quotes_batch_records_request_stats(monkeypatch):
             [],
         )
 
-    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", lambda: True)
-    monkeypatch.setattr(MarketCalendar, "get_latest_trade_date", lambda market="CN": dt.date(2026, 4, 15))
-    monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
+    _patch_open_market(monkeypatch)
     monkeypatch.setattr(provider, "_fetch_eastmoney_quotes_with_split_retry", _fake_fetch)
 
     provider.fetch_realtime_quotes_batch(["000001", "000001", "000002", "000003"])
@@ -688,9 +690,7 @@ def test_fetch_realtime_quotes_batch_switches_remaining_batches_to_sina_after_di
         seen_batches.append(tuple(batch))
         return {}, ["Remote end closed connection without response"]
 
-    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", lambda: True)
-    monkeypatch.setattr(MarketCalendar, "get_latest_trade_date", lambda market="CN": dt.date(2026, 4, 15))
-    monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
+    _patch_open_market(monkeypatch)
     monkeypatch.setattr(provider, "_fetch_eastmoney_quotes_with_split_retry", _fake_fetch)
     monkeypatch.setattr(
         provider,
@@ -754,9 +754,7 @@ def test_fetch_realtime_quotes_batch_switches_remaining_batches_to_sina_after_ea
             for code in codes
         }
 
-    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", lambda: True)
-    monkeypatch.setattr(MarketCalendar, "get_latest_trade_date", lambda market="CN": dt.date(2026, 4, 15))
-    monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
+    _patch_open_market(monkeypatch)
     monkeypatch.setattr(provider, "_fetch_eastmoney_quotes_with_split_retry", _fake_fetch)
     monkeypatch.setattr(provider, "_request_sina_quote_batch", _fake_sina)
     monkeypatch.setattr(
@@ -783,50 +781,16 @@ def test_fetch_realtime_quotes_batch_throttles_large_request_after_midround_fall
     eastmoney_seen = []
     sina_seen = []
 
-    provider._build_offline_quotes = lambda missing_codes: {
-        code: {
-            "open": 9.8,
-            "high": 10.0,
-            "low": 9.7,
-            "close": 9.9,
-            "volume": 0.0,
-            "amount": 0.0,
-            "last_close": 9.8,
-            "date": "2026-04-15",
-            "source": "offline",
-        }
-        for code in missing_codes
-    }
+    provider._build_offline_quotes = _offline_quotes
 
     def _fake_fetch(batch, inferred_trade_date, min_batch_size):
         del inferred_trade_date, min_batch_size
         eastmoney_seen.append(tuple(batch))
         return {}, ["HTTP Error 502: Bad Gateway"]
 
-    def _fake_sina(batch, inferred_trade_date):
-        sina_seen.append(tuple(batch))
-        return {
-            code: {
-                "open": 10.0,
-                "high": 10.1,
-                "low": 9.9,
-                "close": 10.0,
-                "volume": 1.0,
-                "amount": 2.0,
-                "last_close": 9.8,
-                "change": 0.2,
-                "pct": 2.04,
-                "date": inferred_trade_date,
-                "source": "sina",
-            }
-            for code in batch
-        }
-
-    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", lambda: True)
-    monkeypatch.setattr(MarketCalendar, "get_latest_trade_date", lambda market="CN": dt.date(2026, 4, 15))
-    monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
+    _patch_open_market(monkeypatch)
     monkeypatch.setattr(provider, "_fetch_eastmoney_quotes_with_split_retry", _fake_fetch)
-    monkeypatch.setattr(provider, "_request_sina_quote_batch", _fake_sina)
+    monkeypatch.setattr(provider, "_request_sina_quote_batch", _make_sina_quote_fetcher(sina_seen))
     monkeypatch.setattr(
         provider,
         "_request_tencent_quote_batch",
@@ -858,49 +822,15 @@ def test_fetch_realtime_quotes_batch_limits_medium_cooldown_fallback_to_first_ba
     codes = [f"{idx:06d}" for idx in range(1, 61)]
     sina_seen = []
 
-    provider._build_offline_quotes = lambda missing_codes: {
-        code: {
-            "open": 9.8,
-            "high": 10.0,
-            "low": 9.7,
-            "close": 9.9,
-            "volume": 0.0,
-            "amount": 0.0,
-            "last_close": 9.8,
-            "date": "2026-04-15",
-            "source": "offline",
-        }
-        for code in missing_codes
-    }
+    provider._build_offline_quotes = _offline_quotes
 
-    def _fake_sina(batch, inferred_trade_date):
-        sina_seen.append(tuple(batch))
-        return {
-            code: {
-                "open": 10.0,
-                "high": 10.1,
-                "low": 9.9,
-                "close": 10.0,
-                "volume": 1.0,
-                "amount": 2.0,
-                "last_close": 9.8,
-                "change": 0.2,
-                "pct": 2.04,
-                "date": inferred_trade_date,
-                "source": "sina",
-            }
-            for code in batch
-        }
-
-    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", lambda: True)
-    monkeypatch.setattr(MarketCalendar, "get_latest_trade_date", lambda market="CN": dt.date(2026, 4, 15))
-    monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
+    _patch_open_market(monkeypatch)
     monkeypatch.setattr(
         provider,
         "_fetch_eastmoney_quotes_with_split_retry",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("Eastmoney is cooling down")),
     )
-    monkeypatch.setattr(provider, "_request_sina_quote_batch", _fake_sina)
+    monkeypatch.setattr(provider, "_request_sina_quote_batch", _make_sina_quote_fetcher(sina_seen))
     monkeypatch.setattr(
         provider,
         "_request_tencent_quote_batch",
@@ -966,9 +896,7 @@ def test_fetch_realtime_quotes_batch_keeps_later_fallback_batches_alive_after_di
         tencent_seen.append(tuple(codes))
         raise OSError("[WinError 10053] 你的主机中的软件中止了一个已建立的连接。")
 
-    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", lambda: True)
-    monkeypatch.setattr(MarketCalendar, "get_latest_trade_date", lambda market="CN": dt.date(2026, 4, 15))
-    monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
+    _patch_open_market(monkeypatch)
     monkeypatch.setattr(provider, "_fetch_eastmoney_quotes_with_split_retry", _fake_fetch)
     monkeypatch.setattr(provider, "_request_sina_quote_batch", _fake_sina)
     monkeypatch.setattr(provider, "_request_tencent_quote_batch", _fake_tencent)
@@ -998,9 +926,7 @@ def test_fetch_realtime_quotes_batch_falls_back_to_sina_after_eastmoney_disconne
     provider._rt_runtime_consecutive_failures = 2
     provider._rt_runtime_last_error = "stale-error"
 
-    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", lambda: True)
-    monkeypatch.setattr(MarketCalendar, "get_latest_trade_date", lambda market="CN": dt.date(2026, 4, 15))
-    monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
+    _patch_open_market(monkeypatch)
     monkeypatch.setattr(
         provider,
         "_fetch_eastmoney_quotes_with_split_retry",
@@ -1048,9 +974,7 @@ def test_fetch_realtime_quotes_batch_falls_back_to_tencent_after_sina_failure(mo
     provider._rt_quote_batch_pause_sec = 0.0
     provider._build_offline_quotes = lambda codes: {code: {"close": 0} for code in codes}
 
-    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", lambda: True)
-    monkeypatch.setattr(MarketCalendar, "get_latest_trade_date", lambda market="CN": dt.date(2026, 4, 15))
-    monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
+    _patch_open_market(monkeypatch)
     monkeypatch.setattr(
         provider,
         "_fetch_eastmoney_quotes_with_split_retry",
@@ -1095,9 +1019,7 @@ def test_fetch_realtime_quotes_batch_uses_tencent_for_sina_missing_codes(monkeyp
     provider._build_offline_quotes = lambda codes: {code: {"close": 0} for code in codes}
     tencent_seen = []
 
-    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", lambda: True)
-    monkeypatch.setattr(MarketCalendar, "get_latest_trade_date", lambda market="CN": dt.date(2026, 4, 15))
-    monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
+    _patch_open_market(monkeypatch)
     monkeypatch.setattr(
         provider,
         "_fetch_eastmoney_quotes_with_split_retry",
@@ -1169,9 +1091,7 @@ def test_fetch_realtime_quotes_batch_skips_eastmoney_when_in_cooldown(monkeypatc
     provider = _make_provider()
     provider._rt_eastmoney_cooldown_until = 9999999999.0
 
-    monkeypatch.setattr(MarketCalendar, "is_quote_refresh_time", lambda: True)
-    monkeypatch.setattr(MarketCalendar, "get_latest_trade_date", lambda market="CN": dt.date(2026, 4, 15))
-    monkeypatch.setattr(MarketCalendar, "today", lambda market="CN": dt.date(2026, 4, 15))
+    _patch_open_market(monkeypatch)
     monkeypatch.setattr(
         provider,
         "_fetch_eastmoney_quotes_with_split_retry",

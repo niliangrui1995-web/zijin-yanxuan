@@ -248,7 +248,7 @@ def test_workspace_collects_na_daily_context_from_cache_without_loading_lazy_tab
         tab_specs=lambda: [{"key": "na_daily", "group": "info"}],
         get_loaded_tab=lambda key: None,
         get_tab=lambda key: get_tab_calls.append(key) or None,
-        iter_tabs=lambda: [],
+        iter_tabs=list,
     )
 
     context = ClassicWorkspace.collect_stock_context(workspace)
@@ -422,7 +422,7 @@ def test_workspace_collects_scan_context_from_cache_without_loading_lazy_tab(mon
         tab_specs=lambda: [{"key": "scan", "group": "info"}],
         get_loaded_tab=lambda key: None,
         get_tab=lambda key: get_tab_calls.append(key) or None,
-        iter_tabs=lambda: [],
+        iter_tabs=list,
     )
 
     context = ClassicWorkspace.collect_stock_context(workspace)
@@ -447,7 +447,7 @@ def test_watchlist_radar_skips_scan_cache_fallback_on_ui_thread(monkeypatch):
         tab_specs=lambda: [{"key": "scan", "group": "info"}],
         get_loaded_tab=lambda key: None,
         get_tab=lambda key: (_ for _ in ()).throw(AssertionError("lazy tab should not load")),
-        iter_tabs=lambda: [],
+        iter_tabs=list,
     )
 
     na_data, na_subsector_data, block_data, earn_data, lhb_data, rps_bundle = (
@@ -465,9 +465,9 @@ def test_watchlist_radar_skips_scan_cache_fallback_on_ui_thread(monkeypatch):
 def test_watchlist_radar_passes_target_codes_into_signal_collection(monkeypatch):
     workspace = SimpleNamespace(
         engine=None,
-        tab_specs=lambda: [],
+        tab_specs=list,
         get_loaded_tab=lambda _key: None,
-        iter_tabs=lambda: [],
+        iter_tabs=list,
     )
     service = StockContextService(workspace)
     calls = []
@@ -488,9 +488,9 @@ def test_watchlist_radar_passes_target_codes_into_signal_collection(monkeypatch)
 def test_stock_context_explicit_empty_target_codes_skip_signal_sources(monkeypatch):
     workspace = SimpleNamespace(
         engine=None,
-        tab_specs=lambda: [],
+        tab_specs=list,
         get_loaded_tab=lambda _key: None,
-        iter_tabs=lambda: [],
+        iter_tabs=list,
     )
     service = StockContextService(workspace)
     monkeypatch.setattr(
@@ -505,9 +505,9 @@ def test_stock_context_explicit_empty_target_codes_skip_signal_sources(monkeypat
 def test_watchlist_radar_preserves_none_as_unfiltered_target(monkeypatch):
     workspace = SimpleNamespace(
         engine=None,
-        tab_specs=lambda: [],
+        tab_specs=list,
         get_loaded_tab=lambda _key: None,
-        iter_tabs=lambda: [],
+        iter_tabs=list,
     )
     service = StockContextService(workspace)
     calls = []
@@ -533,9 +533,9 @@ def test_stock_context_ai_chain_fallback_is_cache_only(monkeypatch):
     )
     workspace = SimpleNamespace(
         engine=None,
-        tab_specs=lambda: [],
+        tab_specs=list,
         get_loaded_tab=lambda _key: None,
-        iter_tabs=lambda: [],
+        iter_tabs=list,
     )
 
     rows = StockContextService(workspace)._load_ai_chain_cache_rows()
@@ -560,7 +560,7 @@ def test_watchlist_radar_can_use_source_cache_without_scan_fallback(monkeypatch)
         tab_specs=lambda: [{"key": "scan", "group": "info"}, {"key": "ai_industry_chain", "group": "info"}],
         get_loaded_tab=lambda key: None,
         get_tab=lambda key: (_ for _ in ()).throw(AssertionError("lazy tab should not load")),
-        iter_tabs=lambda: [],
+        iter_tabs=list,
     )
 
     remark_data, na_subsector_data, block_data, earn_data, lhb_data, rps_bundle = (
@@ -598,7 +598,7 @@ def test_workspace_collect_stock_context_schedules_lhb_snapshot_by_default(monke
         tab_specs=lambda: [{"key": "lhb", "group": "info"}],
         get_loaded_tab=lambda key: None,
         get_tab=lambda key: (_ for _ in ()).throw(AssertionError("lazy tab should not load")),
-        iter_tabs=lambda: [],
+        iter_tabs=list,
     )
 
     context = ClassicWorkspace.collect_stock_context(workspace)
@@ -613,7 +613,7 @@ def test_workspace_collect_stock_context_uses_ready_lhb_snapshot_by_default():
         tab_specs=lambda: [{"key": "lhb", "group": "info"}],
         get_loaded_tab=lambda key: None,
         get_tab=lambda key: (_ for _ in ()).throw(AssertionError("lazy tab should not load")),
-        iter_tabs=lambda: [],
+        iter_tabs=list,
     )
     service = StockContextService(workspace)
     service._lhb_rows_signature = ("cache", 1, 2)
@@ -644,12 +644,12 @@ def test_workspace_skips_lhb_cache_fallback_while_loaded_lhb_tab_is_loading(monk
         "_load_lhb_pool_rows",
         lambda self: (_ for _ in ()).throw(AssertionError("loading LHB tab should own its cache read")),
     )
-    lhb_tab = SimpleNamespace(get_row_data=lambda: [], _pool_load_in_progress=True)
+    lhb_tab = SimpleNamespace(get_row_data=list, _pool_load_in_progress=True)
     workspace = SimpleNamespace(
         tab_specs=lambda: [{"key": "lhb", "group": "info"}],
         get_loaded_tab=lambda key: lhb_tab if key == "lhb" else None,
         get_tab=lambda key: (_ for _ in ()).throw(AssertionError("lazy tab should not load")),
-        iter_tabs=lambda: [],
+        iter_tabs=list,
     )
 
     context = ClassicWorkspace.collect_stock_context(workspace)
@@ -707,7 +707,7 @@ def test_watchlist_radar_schedules_lhb_snapshot_instead_of_blocking_cache_comput
         tab_specs=lambda: [{"key": "lhb", "group": "info"}],
         get_loaded_tab=lambda key: None,
         get_tab=lambda key: (_ for _ in ()).throw(AssertionError("lazy tab should not load")),
-        iter_tabs=lambda: [],
+        iter_tabs=list,
     )
 
     *_, lhb_data, _ = ClassicWorkspace.collect_watchlist_radar_data(
@@ -738,7 +738,7 @@ def test_workspace_collect_stock_context_schedules_lhb_snapshot_without_blocking
         tab_specs=lambda: [{"key": "lhb", "group": "info"}],
         get_loaded_tab=lambda key: None,
         get_tab=lambda key: (_ for _ in ()).throw(AssertionError("lazy tab should not load")),
-        iter_tabs=lambda: [],
+        iter_tabs=list,
     )
 
     context = ClassicWorkspace.collect_stock_context(workspace, allow_lhb_cache_compute=False)
@@ -768,7 +768,7 @@ def test_workspace_collect_stock_context_can_suppress_async_snapshot_refresh(mon
         ],
         get_loaded_tab=lambda key: None,
         get_tab=lambda key: (_ for _ in ()).throw(AssertionError("lazy tab should not load")),
-        iter_tabs=lambda: [],
+        iter_tabs=list,
     )
 
     context = ClassicWorkspace.collect_stock_context(

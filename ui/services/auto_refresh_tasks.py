@@ -15,12 +15,6 @@ def _raise_if_cancelled(cancellation_token=None) -> None:
         cancellation_token.raise_if_cancelled()
 
 
-def _invoke_stage(fn, *args, cancellation_token=None, **kwargs):
-    if cancellation_token is None:
-        return fn(*args, **kwargs)
-    return invoke_with_cancellation(fn, cancellation_token, *args, **kwargs)
-
-
 def _fetch_foreign_block_records(*, days_to_fetch: int, cancellation_token=None) -> dict:
     from app.services.foreign_block_market_data_service import fetch_foreign_block_records
 
@@ -120,26 +114,26 @@ class AutoRefreshTaskService:
         days_to_fetch: int = 30,
         cancellation_token=None,
     ) -> dict:
-        payload = _invoke_stage(
+        payload = invoke_with_cancellation(
             _fetch_foreign_block_records,
+            cancellation_token,
             days_to_fetch=days_to_fetch,
-            cancellation_token=cancellation_token,
         )
-        row_data = _invoke_stage(
+        row_data = invoke_with_cancellation(
             _build_foreign_block_rows,
+            cancellation_token,
             payload.get("records", []),
-            cancellation_token=cancellation_token,
         )
         timeout_chunks = list(payload.get("timeout_chunks") or [])
         failed_chunks = list(payload.get("failed_chunks") or [])
         latest_trade_date = _latest_foreign_block_trade_date(row_data)
         if row_data:
-            _invoke_stage(
+            invoke_with_cancellation(
                 _save_foreign_block_cache,
+                cancellation_token,
                 row_data,
                 days_to_fetch=days_to_fetch,
                 latest_trade_date=latest_trade_date,
-                cancellation_token=cancellation_token,
             )
         if timeout_chunks or failed_chunks:
             return _foreign_incomplete_result(
@@ -150,12 +144,12 @@ class AutoRefreshTaskService:
                 failed_chunks,
             )
         if not row_data:
-            _invoke_stage(
+            invoke_with_cancellation(
                 _save_foreign_block_cache,
+                cancellation_token,
                 row_data,
                 days_to_fetch=days_to_fetch,
                 latest_trade_date=latest_trade_date,
-                cancellation_token=cancellation_token,
             )
         return {
             "job_key": "foreign_block_daily",
@@ -260,10 +254,10 @@ class AutoRefreshTaskService:
     def run_earnings_startup_gap_fill(self, trade_date: str, *, cancellation_token=None) -> dict:
         from app.services.earnings_refresh_process_service import run_earnings_refresh
 
-        result = _invoke_stage(
+        result = invoke_with_cancellation(
             run_earnings_refresh,
+            cancellation_token,
             "startup-gap-fill",
-            cancellation_token=cancellation_token,
         )
         result["trade_date"] = str(trade_date or "").strip()
         return result
@@ -271,11 +265,11 @@ class AutoRefreshTaskService:
     def run_earnings_routine(self, trade_date: str, *, routine_time: str, cancellation_token=None) -> dict:
         from app.services.earnings_refresh_process_service import run_earnings_refresh
 
-        result = _invoke_stage(
+        result = invoke_with_cancellation(
             run_earnings_refresh,
+            cancellation_token,
             "routine",
             routine_time=routine_time,
-            cancellation_token=cancellation_token,
         )
         result["trade_date"] = str(trade_date or "").strip()
         result["routine_time"] = str(routine_time or "").strip()

@@ -308,6 +308,15 @@ def _prune_flash_records(flash_records: dict, *, now: float | None = None) -> No
         flash_records.pop(row, None)
 
 
+def _active_flash_record(flash_records: dict, row: int, col: int):
+    flash_record = flash_records.get(row, {}).get(col)
+    if not flash_record:
+        return None
+    if time.time() - float(flash_record.get("time", 0) or 0) > FLASH_DURATION_SECONDS:
+        return None
+    return flash_record
+
+
 def _is_status_header(header: str) -> bool:
     return header in {
         SERIAL_HEADER,
@@ -444,6 +453,16 @@ def _build_cell_tooltip(raw_val):
     """统一表格悬浮提示文本，交给自绘悬浮窗渲染。"""
     text = str(raw_val).strip()
     return _build_cell_tooltip_cached(text)
+
+
+def _tooltip_for_cell(key: str, raw_val, item_dict: dict):
+    if key == SERIAL_HEADER:
+        return None
+    if key == "外资净买入":
+        custom_tip = item_dict.get("_外资净买入_tooltip")
+        if custom_tip:
+            return custom_tip
+    return _build_cell_tooltip(raw_val)
 
 
 _DYNAMIC_ELIDE_HEADERS = {

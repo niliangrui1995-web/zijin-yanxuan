@@ -22,7 +22,6 @@ from core.market_calendar_holidays import (
     apply_market_holiday_supplements,
     ensure_holiday_table,
     fetch_public_holidays,
-    is_iso_date,
     load_holidays_from_store,
     normalize_holiday_days,
     save_holidays_to_store,
@@ -228,10 +227,6 @@ class MarketCalendar:
                 return
             ensure_holiday_table(cls._project_root())
             cls._holiday_table_ready = True
-
-    @staticmethod
-    def _is_iso_date(text: str) -> bool:
-        return is_iso_date(text)
 
     @classmethod
     def _normalize_holiday_days(cls, days: Any) -> set[str]:

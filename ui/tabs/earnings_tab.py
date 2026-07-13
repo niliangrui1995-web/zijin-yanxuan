@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from contextlib import suppress
 from datetime import datetime
 from typing import TYPE_CHECKING, cast
 
@@ -10,7 +11,7 @@ from app.services.ui_event_service import ui_signals
 from core.logger import get_logger
 from ui.components import MultiSelectFilterButton, TableStateWrapper, VCPTableView, format_multi_select_summary
 from ui.models.table_models import RtSortFilterProxyModel, StockItemDelegate, StockTableModel
-from ui.tabs.base_stock_tab import BaseStockTab
+from ui.tabs.base_stock_tab import BaseStockTab, _is_direct_workspace_tab, _show_kline_from_proxy_index
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -154,9 +155,6 @@ class EarningsTab(BaseStockTab):
         if self._should_delay_initial_visible_work():
             return False
         return BaseStockTab._prime_visible_local_quote_snapshot(self, current_model=current_model)
-
-    def _start_scheduler_patrol(self) -> None:
-        return None
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -601,29 +599,7 @@ class EarningsTab(BaseStockTab):
             build_stock_context_menu(self, code, name, vcp_data=row_data)
 
     def _on_double_click(self, index):
-        if not index.isValid():
-            return
-        source_idx = self.proxy_model.mapToSource(index)
-        row = source_idx.row()
-        if row >= len(self.model.row_data):
-            return
-
-        code = self.model.row_data[row].get("代码", "")
-        code_list = []
-        clicked_visual_row = index.row()
-        for r in range(self.proxy_model.rowCount()):
-            s_idx = self.proxy_model.mapToSource(self.proxy_model.index(r, 0))
-            if s_idx.row() < len(self.model.row_data):
-                rd = dict(self.model.row_data[s_idx.row()] or {})
-                rd.setdefault("代码", rd.get("代码", ""))
-                rd.setdefault("名称", rd.get("名称", ""))
-                code_list.append(rd)
-
-        current_idx = 0
-        if 0 <= clicked_visual_row < len(code_list):
-            current_idx = clicked_visual_row
-
-        ui_signals.sig_show_kline_with_list.emit(code, code_list, current_idx)
+        _show_kline_from_proxy_index(self, index, ui_signals)
 
     def get_realtime_quote_codes(self, current_model=None) -> set[str]:
         """业绩异动不向中央报价站贡献代码，避免盘中触发联网补价。"""
@@ -678,52 +654,31 @@ class EarningsTab(BaseStockTab):
         self._apply_latest_quotes_from_store()
 
     def _is_current_workspace_tab(self) -> bool:
-        parent = self.parent()
-        tabs = getattr(parent, "tabs", None)
-        current_widget = getattr(tabs, "currentWidget", None)
-        if not callable(current_widget):
-            return True
-        try:
-            return current_widget() is self
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            return True
-
-    def _should_start_runtime_on_show(self) -> bool:
-        return BaseStockTab._should_start_interactive_runtime_on_show(self)
+        return _is_direct_workspace_tab(self)
 
     def _cleanup_runtime_state(self):
         recalc_timer = getattr(self, "_recalc_pe_timer", None)
         if recalc_timer is not None:
             recalc_timer.stop()
         if self.scheduler is not None:
-            try:
+            with suppress(TypeError, RuntimeError):
                 disconnect = getattr(self.scheduler.sig_new_surprises_found, "disconnect", None)
                 if callable(disconnect):
                     disconnect(self._on_new_data_found)
-            except (TypeError, RuntimeError):
-                pass
-            try:
+            with suppress(TypeError, RuntimeError):
                 disconnect = getattr(self.scheduler.sig_fetch_failed, "disconnect", None)
                 if callable(disconnect):
                     disconnect(self._on_fetch_failed)
-            except (TypeError, RuntimeError):
-                pass
             if getattr(self, "_owns_earnings_service", False):
                 shutdown = getattr(self.scheduler, "shutdown", None)
                 if callable(shutdown):
                     shutdown()
-        try:
+        with suppress(TypeError, RuntimeError):
             event_bus.sig_cache_reload_completed.disconnect(self._on_cache_reload_completed)
-        except (TypeError, RuntimeError):
-            pass
         super()._cleanup_runtime_state()
 
     def shutdown(self) -> None:
         self._cleanup_runtime_state()
-
-    def closeEvent(self, event):
-        self.shutdown()
-        super().closeEvent(event)
 
     def showEvent(self, event):
         """隐藏页首次打开时，父类会补现价/市值快照，这里紧跟着补算 PE。"""

@@ -33,6 +33,22 @@ class _LiveProvider:
         return True
 
 
+class _WarmBrowser:
+    def __init__(self):
+        self.parent = "old"
+        self.hidden = False
+        self.deleted = False
+
+    def hide(self):
+        self.hidden = True
+
+    def setParent(self, parent):
+        self.parent = parent
+
+    def deleteLater(self):
+        self.deleted = True
+
+
 def _dispose_kline_window(window):
     if window._rt_timer is not None:
         window._rt_timer.stop()
@@ -678,21 +694,6 @@ def test_kline_window_constructor_does_not_load_webengine_placeholder(monkeypatc
 def test_kline_manager_consumes_prewarm_but_uses_fresh_browser(monkeypatch):
     captured = {}
 
-    class _WarmBrowser:
-        def __init__(self):
-            self.parent = "old"
-            self.hidden = False
-            self.deleted = False
-
-        def hide(self):
-            self.hidden = True
-
-        def setParent(self, parent):
-            self.parent = parent
-
-        def deleteLater(self):
-            self.deleted = True
-
     class _Chart:
         def __init__(self, **kwargs):
             captured.update(kwargs)
@@ -750,21 +751,6 @@ def test_kline_manager_consumes_prewarm_but_uses_fresh_browser(monkeypatch):
 
 
 def test_kline_manager_expires_unused_prewarm_browser():
-    class _WarmBrowser:
-        def __init__(self):
-            self.parent = "old"
-            self.hidden = False
-            self.deleted = False
-
-        def hide(self):
-            self.hidden = True
-
-        def setParent(self, parent):
-            self.parent = parent
-
-        def deleteLater(self):
-            self.deleted = True
-
     manager = KLineWindowManager()
     manager._charts = []
     manager._prewarm_started = True

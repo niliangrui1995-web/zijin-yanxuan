@@ -294,7 +294,6 @@ runtime health 的 `market_data` 段会展示当前 active layer，例如 `memor
 - `data/vcp_hunter.db`：SQLite 数据，例如交易日、基金持仓、扫描缓存，以及 `market_data_manifest` 仓库 manifest
 - `data/logs/`：应用日志
 - `data/crash_report.log`：`faulthandler` 崩溃日志
-- `%LOCALAPPDATA%/ZijinYanxuan/Trade/`：账户成交导出（可用 `VCP_HUNTER_TRADE_RECORD_DIR` 覆盖）；UI 通过 `app.services.ui_trade_record_service` 查询，文件读写位于 `infra/storage/trade_record_repository.py`
 - `tmp/runtime_health_*`：运行时健康报告和稳定性采样
 - `tmp/perf_*`：性能探针输出
 

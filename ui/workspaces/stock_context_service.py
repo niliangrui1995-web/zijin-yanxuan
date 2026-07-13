@@ -82,12 +82,6 @@ def _cancellable_items(values, cancellation_token=None):
         yield value
 
 
-def _invoke_snapshot_stage(fn, cancellation_token=None, *args, **kwargs):
-    if cancellation_token is None:
-        return fn(*args, **kwargs)
-    return invoke_with_cancellation(fn, cancellation_token, *args, **kwargs)
-
-
 def _start_fund_snapshot(service, force: bool, include_fund: bool) -> tuple[bool, bool]:
     with service._fund_rows_lock:
         already_running = service._fund_rows_loading
@@ -113,7 +107,7 @@ def _schedule_fund_snapshot(service, domain_events, task_registry) -> None:
 
     service._task_lifecycle.run_background(
         "fund-snapshot",
-        lambda token: _invoke_snapshot_stage(service._load_fund_holding_rows_snapshot, token),
+        lambda token: invoke_with_cancellation(service._load_fund_holding_rows_snapshot, token),
         on_success=_on_success,
         on_error=_on_error,
         task_id=task_registry.workspace("stock_context_fund_rows_snapshot"),
@@ -137,7 +131,7 @@ def _schedule_lhb_snapshot(service, domain_events, task_registry, signature) -> 
 
     service._task_lifecycle.run_background(
         "lhb-snapshot",
-        lambda token: _invoke_snapshot_stage(service._load_lhb_pool_rows, token),
+        lambda token: invoke_with_cancellation(service._load_lhb_pool_rows, token),
         on_success=_on_success,
         on_error=_on_error,
         task_id=task_registry.workspace("stock_context_lhb_rows_snapshot"),
@@ -307,9 +301,6 @@ class StockContextService:
             return set()
         return {str(code or "").strip() for code in target_codes if str(code or "").strip()}
 
-    def _load_scan_cache_rows(self) -> list[dict]:
-        return load_scan_cache_rows(root=self._project_root())
-
     def _load_foreign_block_cache_rows(self) -> list[dict]:
         return load_named_cache_rows("foreign_block_trade_latest.json", root=self._project_root())
 
@@ -445,7 +436,7 @@ class StockContextService:
                 if signature == self._lhb_rows_signature:
                     return [dict(row) for row in self._lhb_rows_snapshot]
 
-        pool = _invoke_snapshot_stage(
+        pool = invoke_with_cancellation(
             load_lhb_pool_rows,
             cancellation_token,
             engine=getattr(self._workspace, "engine", None),
@@ -639,7 +630,7 @@ class StockContextService:
         if not rows:
             rows = self._get_rows(scan_tab)
         if not rows and include_cache_fallback:
-            rows = self._load_scan_cache_rows()
+            rows = load_scan_cache_rows(root=self._project_root())
 
         signals: list[StockSignal] = []
         for row_idx, row in enumerate(rows):
@@ -964,7 +955,7 @@ class StockContextService:
         return view_rows
 
     def _load_fund_holding_rows_snapshot(self, *, stock_codes=None, cancellation_token=None) -> list[dict]:
-        latest_quarter_map, change_rows = _invoke_snapshot_stage(
+        latest_quarter_map, change_rows = invoke_with_cancellation(
             load_fund_holding_snapshot,
             cancellation_token,
             stock_codes=stock_codes,

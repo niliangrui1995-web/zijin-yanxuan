@@ -1,16 +1,14 @@
 import re
-import time
 
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PyQt6.QtGui import QColor
 
 from ui.models.table_model_helpers import (
-    FLASH_DURATION_SECONDS,
     SERIAL_HEADER,
     _accent_rail_color_for_row_style,
+    _active_flash_record,
     _alignment_for_cell,
     _apply_quote_metrics_to_row,
-    _build_cell_tooltip,
     _build_flash_record,
     _build_table_model_fonts,
     _c,
@@ -26,6 +24,7 @@ from ui.models.table_model_helpers import (
     _status_badge_color,
     _summarize_long_text,
     _sync_serial_values,
+    _tooltip_for_cell,
     _with_serial_header,
 )
 
@@ -138,23 +137,6 @@ class RtTableModel(QAbstractTableModel):
 
         self._reset_data(normalized_rows)
 
-    def _emit_row_update_ranges(self, changed_rows):
-        if not changed_rows:
-            return
-
-        roles = self._flash_roles()
-        start_row = prev_row = changed_rows[0]
-        last_column = self.columnCount() - 1
-
-        for row in changed_rows[1:]:
-            if row == prev_row + 1:
-                prev_row = row
-                continue
-            self.dataChanged.emit(self.index(start_row, 0), self.index(prev_row, last_column), roles)
-            start_row = prev_row = row
-
-        self.dataChanged.emit(self.index(start_row, 0), self.index(prev_row, last_column), roles)
-
     def _emit_incremental_rows(self, rows: list) -> None:
         changed_rows = []
         for row_idx, new_row in enumerate(rows):
@@ -163,7 +145,7 @@ class RtTableModel(QAbstractTableModel):
                 self._data[row_idx] = new_row
                 changed_rows.append(row_idx)
 
-        self._emit_row_update_ranges(changed_rows)
+        _emit_model_row_ranges(self, changed_rows, 0, self.columnCount() - 1, self._flash_roles())
 
     def _emit_reordered_rows(self, rows: list) -> None:
         self.layoutAboutToBeChanged.emit()
@@ -275,13 +257,7 @@ class RtTableModel(QAbstractTableModel):
         return _summarize_long_text(key, raw_val)
 
     def _tooltip_value(self, key: str, raw_val, item_dict: dict):
-        if key == SERIAL_HEADER:
-            return None
-        if key == "外资净买入":
-            custom_tip = item_dict.get("_外资净买入_tooltip")
-            if custom_tip:
-                return custom_tip
-        return _build_cell_tooltip(raw_val)
+        return _tooltip_for_cell(key, raw_val, item_dict)
 
     def _font_value(self, key: str, raw_val, item_dict: dict):
         if key == SERIAL_HEADER:
@@ -385,14 +361,6 @@ class RtTableModel(QAbstractTableModel):
                 return color
         return QColor(_c("TEXT_PRIMARY"))
 
-    def _flash_value(self, row: int, col: int):
-        flash_record = self._flash_records.get(row, {}).get(col, None)
-        if not flash_record:
-            return None
-        if time.time() - float(flash_record.get("time", 0) or 0) > FLASH_DURATION_SECONDS:
-            return None
-        return flash_record
-
     def _row_accent_value(self, item_dict: dict):
         rail_color = _accent_rail_color_for_row_style(item_dict.get("_row_style", ""))
         if rail_color:
@@ -461,7 +429,7 @@ class RtTableModel(QAbstractTableModel):
                 return heat_color
 
         elif role == Qt.ItemDataRole.UserRole + 1:
-            return self._flash_value(row, col)
+            return _active_flash_record(self._flash_records, row, col)
 
         elif role == Qt.ItemDataRole.UserRole + 2:
             if _is_status_header(key):

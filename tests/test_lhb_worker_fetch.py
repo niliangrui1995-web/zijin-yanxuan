@@ -153,6 +153,30 @@ def test_fetch_lhb_uses_surviving_foreign_detail_side(monkeypatch):
     assert result[0]["外资净买(万)"] == 200.0
 
 
+def test_pool_fetch_uses_daily_foreign_cache_without_per_stock_requests(monkeypatch):
+    yyb = pd.DataFrame([{"营业部名称": "深股通专用", "买入股票": "平安银行", "卖出股票": ""}])
+    detail_calls = _install_base_apis(monkeypatch, yyb=yyb)
+    daily_cache = {
+        "000001": pd.DataFrame(
+            [
+                {
+                    "交易营业部名称": "深股通专用",
+                    "买入金额": 3000000.0,
+                    "卖出金额": 1000000.0,
+                    "净额": 2000000.0,
+                    "类型": "日涨幅偏离值达到7%的前5只证券",
+                }
+            ]
+        )
+    }
+    monkeypatch.setattr(lhb_worker, "_load_daily_foreign_detail_cache", lambda *_args, **_kwargs: daily_cache)
+
+    result = lhb_worker.fetch_lhb_pool_for_date("20260421", emit_success_log=False)
+
+    assert detail_calls == []
+    assert result[0]["外资净买(万)"] == 200.0
+
+
 def test_fetch_lhb_honors_owner_cancellation_before_provider_call(monkeypatch):
     token = CancellationToken()
     token.cancel("owner_shutdown")

@@ -30,7 +30,7 @@ HOTSPOT_BUDGETS = {
         "apply_qt_theme": 199,
     },
     "ui/kline_window_qt.py": {
-        "KLineChartWindow.__init__": 246,
+        "KLineChartWindow.__init__": 244,
     },
     "ui/kline_chart_payload.py": {
         "build_kline_html": 28,
@@ -62,7 +62,7 @@ HOTSPOT_BUDGETS = {
         "ScanWorker._enrich_hot_sectors": 17,
     },
     "ui/workspaces/classic_workspace.py": {
-        "ClassicWorkspace.__init__": 54,
+        "ClassicWorkspace.__init__": 53,
     },
     "vcp/fetchers/asian_kline_fetcher.py": {
         "sync_asian_kline_cache": 185,

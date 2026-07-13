@@ -16,7 +16,6 @@ from domains.quotes.tdx_name_map import (
     TNF_NAME_FILES,
     TNF_NAME_OFFSET,
     TNF_RECORD_SIZE,
-    decode_tnf_name,
     is_placeholder_name,
     normalize_code_name_targets,
     parse_tnf_name_file,
@@ -121,10 +120,6 @@ class TdxDataProviderHistoryMixin:
     @staticmethod
     def _normalize_code_name_targets(codes) -> list[str]:
         return normalize_code_name_targets(codes)
-
-    @classmethod
-    def _decode_tnf_name(cls, raw_name: bytes) -> str:
-        return decode_tnf_name(raw_name)
 
     @classmethod
     def _parse_tnf_name_file(cls, tnf_path: str) -> dict[str, str]:

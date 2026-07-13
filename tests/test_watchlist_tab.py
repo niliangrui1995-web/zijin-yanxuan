@@ -21,6 +21,18 @@ class _DummyProvider:
         return False
 
 
+def _patch_watchlist_constructor(monkeypatch):
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
+    monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)
+    monkeypatch.setattr(
+        watchlist_module.WatchlistTab,
+        "bind_header_persistence",
+        lambda self, table, settings_key="header_state": None,
+        raising=False,
+    )
+    monkeypatch.setattr(watchlist_module.QTimer, "singleShot", staticmethod(lambda *_args, **_kwargs: None))
+
+
 def _run_background_inline(calls=None):
     def _run(fn, *args, on_success=None, on_error=None, task_id=None, **kwargs):
         if calls is not None:
@@ -363,15 +375,7 @@ def test_watchlist_source_column_is_hidden_from_display_model():
 
 
 def test_watchlist_lhb_column_displays_buy_point_rocket(monkeypatch):
-    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
-    monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)
-    monkeypatch.setattr(
-        watchlist_module.WatchlistTab,
-        "bind_header_persistence",
-        lambda self, table, settings_key="header_state": None,
-        raising=False,
-    )
-    monkeypatch.setattr(watchlist_module.QTimer, "singleShot", staticmethod(lambda *_args, **_kwargs: None))
+    _patch_watchlist_constructor(monkeypatch)
 
     captured = {}
 
@@ -442,15 +446,7 @@ def test_watchlist_lhb_column_displays_buy_point_rocket(monkeypatch):
 
 
 def test_watchlist_lhb_note_stays_blank_when_no_buy_point(monkeypatch):
-    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
-    monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)
-    monkeypatch.setattr(
-        watchlist_module.WatchlistTab,
-        "bind_header_persistence",
-        lambda self, table, settings_key="header_state": None,
-        raising=False,
-    )
-    monkeypatch.setattr(watchlist_module.QTimer, "singleShot", staticmethod(lambda *_args, **_kwargs: None))
+    _patch_watchlist_constructor(monkeypatch)
 
     captured = {}
 
@@ -896,16 +892,31 @@ def test_watchlist_requests_recalc_after_ai_chain_update(monkeypatch):
         tab.deleteLater()
 
 
-def test_watchlist_gather_radar_data_requests_source_cache_fallback(monkeypatch):
+def test_watchlist_requests_recalc_after_lhb_pool_update(monkeypatch):
     monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
     monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)
+    monkeypatch.setattr(watchlist_module.QTimer, "singleShot", staticmethod(lambda *_args, **_kwargs: None))
+
+    calls = []
+    current = {}
     monkeypatch.setattr(
         watchlist_module.WatchlistTab,
-        "bind_header_persistence",
-        lambda self, table, settings_key="header_state": None,
-        raising=False,
+        "_request_vcp_calc",
+        lambda self, **kwargs: calls.append(kwargs) if current.get("tab") is self else None,
     )
-    monkeypatch.setattr(watchlist_module.QTimer, "singleShot", staticmethod(lambda *_args, **_kwargs: None))
+
+    tab = watchlist_module.WatchlistTab(_DummyProvider())
+    current["tab"] = tab
+    try:
+        watchlist_module.event_bus.sig_lhb_pool_updated.emit()
+
+        assert calls == [{"min_interval_ms": tab.CONTEXT_REFRESH_MIN_INTERVAL_MS}]
+    finally:
+        tab.deleteLater()
+
+
+def test_watchlist_gather_radar_data_requests_source_cache_fallback(monkeypatch):
+    _patch_watchlist_constructor(monkeypatch)
 
     captured = {}
 
@@ -929,15 +940,7 @@ def test_watchlist_gather_radar_data_requests_source_cache_fallback(monkeypatch)
 
 
 def test_watchlist_clears_stale_special_columns_when_current_round_has_no_signal(monkeypatch):
-    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
-    monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)
-    monkeypatch.setattr(
-        watchlist_module.WatchlistTab,
-        "bind_header_persistence",
-        lambda self, table, settings_key="header_state": None,
-        raising=False,
-    )
-    monkeypatch.setattr(watchlist_module.QTimer, "singleShot", staticmethod(lambda *_args, **_kwargs: None))
+    _patch_watchlist_constructor(monkeypatch)
 
     captured = {}
 
@@ -1017,15 +1020,7 @@ def test_watchlist_clears_stale_special_columns_when_current_round_has_no_signal
 
 
 def test_watchlist_indicator_apply_batches_model_update(monkeypatch):
-    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
-    monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)
-    monkeypatch.setattr(
-        watchlist_module.WatchlistTab,
-        "bind_header_persistence",
-        lambda self, table, settings_key="header_state": None,
-        raising=False,
-    )
-    monkeypatch.setattr(watchlist_module.QTimer, "singleShot", staticmethod(lambda *_args, **_kwargs: None))
+    _patch_watchlist_constructor(monkeypatch)
     monkeypatch.setattr(watchlist_vm, "bulk_patch_entries", lambda *_args, **_kwargs: True)
     persist_calls = []
     monkeypatch.setattr(
@@ -1116,15 +1111,7 @@ def test_watchlist_indicator_apply_batches_model_update(monkeypatch):
 
 
 def test_watchlist_indicator_apply_queues_persist_without_sync_write(monkeypatch):
-    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
-    monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)
-    monkeypatch.setattr(
-        watchlist_module.WatchlistTab,
-        "bind_header_persistence",
-        lambda self, table, settings_key="header_state": None,
-        raising=False,
-    )
-    monkeypatch.setattr(watchlist_module.QTimer, "singleShot", staticmethod(lambda *_args, **_kwargs: None))
+    _patch_watchlist_constructor(monkeypatch)
     direct_writes = []
     queued = []
     monkeypatch.setattr(watchlist_vm, "bulk_patch_entries", lambda *args, **kwargs: direct_writes.append((args, kwargs)))
@@ -1170,15 +1157,7 @@ def test_watchlist_indicator_apply_queues_persist_without_sync_write(monkeypatch
 
 
 def test_watchlist_indicator_apply_skips_redundant_payload_persist(monkeypatch):
-    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
-    monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)
-    monkeypatch.setattr(
-        watchlist_module.WatchlistTab,
-        "bind_header_persistence",
-        lambda self, table, settings_key="header_state": None,
-        raising=False,
-    )
-    monkeypatch.setattr(watchlist_module.QTimer, "singleShot", staticmethod(lambda *_args, **_kwargs: None))
+    _patch_watchlist_constructor(monkeypatch)
     queued = []
     monkeypatch.setattr(
         watchlist_module.task_manager,
@@ -1222,15 +1201,7 @@ def test_watchlist_indicator_apply_skips_redundant_payload_persist(monkeypatch):
 
 
 def test_watchlist_writes_earnings_report_label_to_column(monkeypatch):
-    monkeypatch.setattr(watchlist_module.WatchlistTab, "subscribe_global_quotes", lambda self: None)
-    monkeypatch.setattr(watchlist_module.WatchlistTab, "_load_special_data", lambda self: None)
-    monkeypatch.setattr(
-        watchlist_module.WatchlistTab,
-        "bind_header_persistence",
-        lambda self, table, settings_key="header_state": None,
-        raising=False,
-    )
-    monkeypatch.setattr(watchlist_module.QTimer, "singleShot", staticmethod(lambda *_args, **_kwargs: None))
+    _patch_watchlist_constructor(monkeypatch)
 
     captured = {}
 

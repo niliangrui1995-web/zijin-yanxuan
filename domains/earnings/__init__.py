@@ -6,6 +6,8 @@ from __future__ import annotations
 from importlib import import_module
 from typing import TYPE_CHECKING
 
+from domains import _resolve_lazy_export
+
 if TYPE_CHECKING:
     from domains.earnings.engine import EarningsEngine
     from domains.earnings.scheduler import EarningsScheduler
@@ -19,13 +21,7 @@ _EXPORTS = {
 
 
 def __getattr__(name: str):
-    target = _EXPORTS.get(name)
-    if target is None:
-        raise AttributeError(name)
-    module_name, attr_name = target
-    value = getattr(import_module(module_name), attr_name)
-    globals()[name] = value
-    return value
+    return _resolve_lazy_export(name, _EXPORTS, globals(), import_module)
 
 
 def __dir__() -> list[str]:

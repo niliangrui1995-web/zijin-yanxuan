@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from types import SimpleNamespace
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QModelIndex, QSortFilterProxyModel, Qt
 from PyQt6.QtGui import QStandardItemModel
 from PyQt6.QtTest import QSignalSpy, QTest
 from PyQt6.QtWidgets import QApplication, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTableView, QToolButton, QWidget
@@ -16,6 +16,45 @@ from ui.theme_tokens import build_ui_tokens
 class DummyQuotePublisher:
     def publish_external_quotes(self, payload, *, source: str, require_valid: bool = False):
         return publish_rt_quotes(payload, source=source, require_valid=require_valid)
+
+
+class _OfflineSnapshotModel:
+    def __init__(self):
+        self.headers = ["代码", "现价", "涨幅%", "市值"]
+        self.row_data = [
+            {"代码": "000001", "现价": "--", "涨幅%": "--", "市值": "--"},
+        ]
+
+    def update_quotes(self, quotes):
+        for row in self.row_data:
+            code = row.get("代码")
+            payload = dict(quotes.get(code) or {})
+            if not payload:
+                continue
+            close = float(payload.get("close", 0) or 0)
+            last_close = float(payload.get("last_close", 0) or 0)
+            zongguben = float(payload.get("_zongguben") or payload.get("zongguben") or 0)
+            if close > 0:
+                row["现价"] = f"{close:.2f}"
+            if close > 0 and last_close > 0:
+                row["涨幅%"] = ((close / last_close) - 1) * 100
+            if close > 0 and zongguben > 0:
+                row["市值"] = f"{(close * zongguben) / 1e8:.0f}亿"
+
+
+class _OfflineSnapshotProvider:
+    def __init__(self):
+        self.offline_calls = []
+
+    def build_offline_quotes(self, codes):
+        self.offline_calls.append(list(codes))
+        return {"000001": {"close": 10.5, "last_close": 10.0}}
+
+
+class _OfflineSnapshotTab(BaseStockTab):
+    def __init__(self, provider):
+        super().__init__(data_provider=provider)
+        self.model = _OfflineSnapshotModel()
 
 
 def test_base_stock_toolbar_applies_shell_object_names_and_toolbutton_style():
@@ -162,6 +201,50 @@ def test_base_stock_external_quote_jumps_delegate_to_terminal_launcher(monkeypat
         assert calls == [("tdx", "600519"), ("eastmoney", "000001")]
     finally:
         tab.deleteLater()
+
+
+def test_base_stock_kline_navigation_uses_visual_proxy_order():
+    _app = QApplication.instance() or QApplication([])
+    source_model = QStandardItemModel(3, 1)
+    for row, value in enumerate(("b", "c", "a")):
+        source_model.setData(source_model.index(row, 0), value)
+    proxy_model = QSortFilterProxyModel()
+    proxy_model.setSourceModel(source_model)
+    proxy_model.sort(0)
+    owner = SimpleNamespace(
+        proxy_model=proxy_model,
+        model=SimpleNamespace(row_data=[{"代码": "000001"}, None, {"名称": "丙"}]),
+    )
+    spy = QSignalSpy(event_bus.sig_show_kline_with_list)
+
+    base_stock_tab_module._show_kline_from_proxy_index(owner, proxy_model.index(1, 0), event_bus)
+
+    assert len(spy) == 1
+    assert spy[0] == [
+        "000001",
+        [{"名称": "丙", "代码": ""}, {"代码": "000001", "名称": ""}, {"代码": "", "名称": ""}],
+        1,
+    ]
+
+    base_stock_tab_module._show_kline_from_proxy_index(owner, QModelIndex(), event_bus)
+    assert len(spy) == 1
+
+
+def test_stock_tabs_keep_double_click_compatibility_entrypoints(monkeypatch):
+    from ui.tabs import asian_market_tab, earnings_tab, foreign_block_trade_tab
+
+    marker = object()
+    for tab_module, tab_type in (
+        (asian_market_tab, asian_market_tab.AsianMarketTab),
+        (earnings_tab, earnings_tab.EarningsTab),
+        (foreign_block_trade_tab, foreign_block_trade_tab.ForeignBlockTradeTab),
+    ):
+        calls = []
+        owner = object()
+        monkeypatch.setattr(tab_module, "_show_kline_from_proxy_index", lambda *args: calls.append(args))
+
+        assert tab_type._on_double_click(owner, marker) is None
+        assert calls == [(owner, marker, tab_module.ui_signals)]
 
 
 def test_base_stock_header_persistence_delegates_to_view_state_binding(monkeypatch):
@@ -530,46 +613,10 @@ def test_base_stock_refresh_table_market_data_fetches_newly_added_blank_rows(mon
 
 
 def test_base_stock_refresh_from_latest_snapshot_primes_local_cache_for_new_codes(monkeypatch):
-    class DummyModel:
-        def __init__(self):
-            self.headers = ["代码", "现价", "涨幅%", "市值"]
-            self.row_data = [
-                {"代码": "000001", "现价": "--", "涨幅%": "--", "市值": "--"},
-            ]
-
-        def update_quotes(self, quotes):
-            for row in self.row_data:
-                code = row.get("代码")
-                payload = dict(quotes.get(code) or {})
-                if not payload:
-                    continue
-                close = float(payload.get("close", 0) or 0)
-                last_close = float(payload.get("last_close", 0) or 0)
-                zongguben = float(payload.get("_zongguben") or payload.get("zongguben") or 0)
-                if close > 0:
-                    row["现价"] = f"{close:.2f}"
-                if close > 0 and last_close > 0:
-                    row["涨幅%"] = ((close / last_close) - 1) * 100
-                if close > 0 and zongguben > 0:
-                    row["市值"] = f"{(close * zongguben) / 1e8:.0f}亿"
-
-    class DummyProvider:
-        def __init__(self):
-            self.offline_calls = []
-
-        def build_offline_quotes(self, codes):
-            self.offline_calls.append(list(codes))
-            return {"000001": {"close": 10.5, "last_close": 10.0}}
-
-    class DummyTab(BaseStockTab):
-        def __init__(self, provider):
-            super().__init__(data_provider=provider)
-            self.model = DummyModel()
-
     from core.global_store import global_store
 
-    provider = DummyProvider()
-    tab = DummyTab(provider)
+    provider = _OfflineSnapshotProvider()
+    tab = _OfflineSnapshotTab(provider)
     monkeypatch.setattr(tab, "isVisible", lambda: True)
 
     global_store.reset_quotes()
@@ -687,46 +734,10 @@ def test_show_event_keeps_noninteractive_probe_snapshot_gate(monkeypatch, qt_app
 
 
 def test_base_stock_refresh_table_market_data_primes_local_f5_snapshot_for_new_rows(monkeypatch):
-    class DummyModel:
-        def __init__(self):
-            self.headers = ["代码", "现价", "涨幅%", "市值"]
-            self.row_data = [
-                {"代码": "000001", "现价": "--", "涨幅%": "--", "市值": "--"},
-            ]
-
-        def update_quotes(self, quotes):
-            for row in self.row_data:
-                code = row.get("代码")
-                payload = dict(quotes.get(code) or {})
-                if not payload:
-                    continue
-                close = float(payload.get("close", 0) or 0)
-                last_close = float(payload.get("last_close", 0) or 0)
-                zongguben = float(payload.get("_zongguben") or payload.get("zongguben") or 0)
-                if close > 0:
-                    row["现价"] = f"{close:.2f}"
-                if close > 0 and last_close > 0:
-                    row["涨幅%"] = ((close / last_close) - 1) * 100
-                if close > 0 and zongguben > 0:
-                    row["市值"] = f"{(close * zongguben) / 1e8:.0f}亿"
-
-    class DummyProvider:
-        def __init__(self):
-            self.offline_calls = []
-
-        def build_offline_quotes(self, codes):
-            self.offline_calls.append(list(codes))
-            return {"000001": {"close": 10.5, "last_close": 10.0}}
-
-    class DummyTab(BaseStockTab):
-        def __init__(self, provider):
-            super().__init__(data_provider=provider)
-            self.model = DummyModel()
-
     from core.global_store import global_store
 
-    provider = DummyProvider()
-    tab = DummyTab(provider)
+    provider = _OfflineSnapshotProvider()
+    tab = _OfflineSnapshotTab(provider)
     monkeypatch.setattr(tab, "isVisible", lambda: True)
 
     global_store.reset_quotes()

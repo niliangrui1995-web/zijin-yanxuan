@@ -19,7 +19,6 @@
 | 本地行情数据 | `infra/market_data/`、`vcp/data_provider.py`、`vcp/polars_engine.py` | Parquet/SQLite-first 仓库、SQLite manifest、通达信历史数据生产/fallback、复权、名称映射、运行时缓存 | `TdxDataProvider`、`MarketDataWarehouse`、`WarehouseManifest` |
 | 通用本地存储 | `infra/storage/data_store.py` | SQLite `kv_store` 的读写、连接和事务边界；`core/data_store.py` 仅兼容导出 | `DataStore` |
 | JSON 缓存 | `infra/storage/json_cache_repository.py`、`app/services/ui_json_cache_service.py` | UTF-8 读取、结构错误、原子写和文件元数据；`core/json_cache.py` 仅兼容别名 | `load_json_file`、`save_json_file` |
-| 账户成交记录 | `infra/storage/trade_record_repository.py`、`app/services/ui_trade_record_service.py` | 用户目录解析、旧路径无损迁移、CSV 读取与证券匹配；UI 不直接持有文件 I/O | `load_trade_records_for_security` |
 | VCP/RPS 扫描 | `domains/scan/`、`app/services/scan_engine_facade.py` | 指标计算、RPS、VCP 条件、待突破池、实时突破判断 | `VCPEngine`、`IndicatorService`、`BreakoutMonitorService` |
 | AI 产业链池 | `domains/industry_chain/`、`infra/storage/industry_chain_repository.py`、`app/services/ui_industry_chain_service.py` | domain 只保留规范化/过滤/上下文规则；XLSX、JSON、签名缓存与原子写归 infra；`core/ai_industry_chain_pool.py` 仅兼容导出 | `ui_industry_chain_service` |
 | 龙虎榜池 | `domains/lhb/`、`infra/storage/lhb_pool_repository.py`、`app/services/ui_lhb_pool_service.py` | domain 只保留滚动池纯策略；锁、差量合并、JSON 原子写和旧缓存迁移归 infra；`core/lhb_pool_manager.py` 仅兼容导出 | `LhbPoolManager`、`ui_lhb_pool_service` |

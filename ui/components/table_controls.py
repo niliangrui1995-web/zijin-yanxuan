@@ -3,6 +3,7 @@
 import logging
 import math
 import time
+from contextlib import suppress
 
 from PyQt6.QtCore import (
     QEasingCurve,
@@ -199,10 +200,8 @@ class VCPTableView(QTableView):
             signal = getattr(model, signal_name, None)
             if signal is None:
                 continue
-            try:
+            with suppress(TypeError, RuntimeError):
                 signal.connect(slot)
-            except (TypeError, RuntimeError):
-                pass
 
     def _disconnect_refresh_model(self) -> None:
         model = self._bound_refresh_model
@@ -218,10 +217,8 @@ class VCPTableView(QTableView):
             signal = getattr(model, signal_name, None)
             if signal is None:
                 continue
-            try:
+            with suppress(TypeError, RuntimeError):
                 signal.disconnect(slot)
-            except (TypeError, RuntimeError):
-                pass
         self._bound_refresh_model = None
 
     def _row_identity(self, row: int) -> str:
@@ -321,25 +318,19 @@ class VCPTableView(QTableView):
             header = self.horizontalHeader()
             header_state = snapshot.get("header_state")
             if header_state is not None:
-                try:
+                with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                     header.restoreState(header_state)
-                except (AttributeError, RuntimeError, TypeError, ValueError):
-                    pass
 
             sort_column = int(snapshot.get("proxy_sort_column", snapshot.get("sort_column", -1)) or -1)
             sort_order = snapshot.get("proxy_sort_order", snapshot.get("sort_order", Qt.SortOrder.AscendingOrder))
             if sort_column >= 0:
-                try:
+                with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                     self.sortByColumn(sort_column, sort_order)
-                except (AttributeError, RuntimeError, TypeError, ValueError):
-                    pass
 
             selection_model = self.selectionModel()
             if selection_model is not None:
-                try:
+                with suppress(AttributeError, RuntimeError):
                     selection_model.clearSelection()
-                except (AttributeError, RuntimeError):
-                    pass
 
             restored_rows = []
             for code in snapshot.get("selected_codes", []) or []:
@@ -407,10 +398,8 @@ class VCPTableView(QTableView):
         self._pending_scrollbar_restore = None
         self._disconnect_refresh_model()
         hide_floating_tooltip()
-        try:
+        with suppress(AttributeError, TypeError, RuntimeError):
             self._theme_manager.sig_theme_changed.disconnect(self._on_theme_changed)
-        except (AttributeError, TypeError, RuntimeError):
-            pass
 
     def closeEvent(self, event):
         self._stop_deferred_restores()
@@ -565,11 +554,9 @@ class VCPTableView(QTableView):
                 return True
             return super().viewportEvent(event)
         except Exception as exc:  # noqa: BLE001 - Qt event handlers must not leak into sys.excepthook.
-            try:
+            with suppress(Exception):
                 hide_floating_tooltip()
                 event.ignore()
-            except Exception:
-                pass
             log.debug("suppressed VCPTableView viewport event failure during Qt event handling: %s", exc)
             return True
 
@@ -1257,10 +1244,8 @@ class TableStateWrapper(QWidget):
     def _fade_in_widget(self, widget: QWidget) -> None:
         animation = self._state_animation
         if animation is not None:
-            try:
+            with suppress(RuntimeError):
                 animation.stop()
-            except RuntimeError:
-                pass
             self._state_animation = None
 
         if not self.isVisible() or widget.width() <= 0 or widget.height() <= 0:

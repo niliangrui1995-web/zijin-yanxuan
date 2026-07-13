@@ -99,7 +99,7 @@ def test_default_hotspot_budgets_cover_known_refactor_targets():
     assert HOTSPOT_BUDGETS["core/rps_precomputer.py"]["RPSPrecomputer.run_f5_pipeline"] == 176
     assert HOTSPOT_BUDGETS["app/bootstrap/startup_orchestrator.py"]["StartupOrchestrator.deferred_data_load"] == 187
     assert HOTSPOT_BUDGETS["scripts/perf_budget_check.py"]["_parse_args"] == 194
-    assert HOTSPOT_BUDGETS["ui/kline_window_qt.py"]["KLineChartWindow.__init__"] == 246
+    assert HOTSPOT_BUDGETS["ui/kline_window_qt.py"]["KLineChartWindow.__init__"] == 244
     assert HOTSPOT_BUDGETS["ui/kline_chart_payload.py"]["build_kline_html"] == 28
     assert HOTSPOT_BUDGETS["ui/tabs/asian_market_tab.py"]["build_asian_market_local_cache_payload"] == 171
     assert HOTSPOT_BUDGETS["ui/theme_tokens.py"]["build_ui_tokens"] == 192

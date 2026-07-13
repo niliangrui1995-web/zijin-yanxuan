@@ -72,6 +72,15 @@ def _should_prime_local_snapshot(owner, *, async_local: bool) -> bool:
     return True
 
 
+def _latest_quote_snapshot() -> dict:
+    try:
+        from core.global_store import global_store
+
+        return global_store.get_latest_quotes() or {}
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return {}
+
+
 def _current_finance_cache_file() -> str:
     return str(FINANCE_CACHE_FILE)
 
@@ -125,12 +134,7 @@ def collect_missing_finance_codes(owner, current_model=None) -> list[str]:
     if not model or not hasattr(model, "row_data"):
         return []
 
-    try:
-        from core.global_store import global_store
-
-        snapshot = global_store.get_latest_quotes() or {}
-    except (AttributeError, RuntimeError, TypeError, ValueError):
-        snapshot = {}
+    snapshot = _latest_quote_snapshot()
 
     missing = []
     for row_dict in getattr(model, "row_data", []) or []:
@@ -862,12 +866,7 @@ def refresh_table_quotes_and_market_caps(
         else:
             prime_local_quote_snapshot(owner, model)
 
-    try:
-        from core.global_store import global_store
-
-        snapshot = global_store.get_latest_quotes() or {}
-    except (AttributeError, RuntimeError, TypeError, ValueError):
-        snapshot = {}
+    snapshot = _latest_quote_snapshot()
 
     quote_subset = {code: dict(snapshot[code]) for code in codes if code in snapshot}
     if quote_subset:
@@ -921,12 +920,7 @@ def _refresh_table_from_latest_snapshot_impl(owner, current_model=None, *, async
         else:
             prime_local_quote_snapshot(owner, model)
 
-    try:
-        from core.global_store import global_store
-
-        snapshot = global_store.get_latest_quotes() or {}
-    except (AttributeError, RuntimeError, TypeError, ValueError):
-        snapshot = {}
+    snapshot = _latest_quote_snapshot()
 
     if not snapshot:
         return

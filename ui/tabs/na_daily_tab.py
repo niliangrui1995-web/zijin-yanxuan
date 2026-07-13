@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import QHeaderView, QLabel, QLineEdit, QPushButton, QVBoxLa
 from app.services.na_daily_service import NADailyRefreshService, build_na_daily_refresh_payload, parse_report_identity
 from app.services.ui_event_service import domain_events as event_bus
 from app.services.ui_event_service import ui_signals
-from app.services.ui_task_lifecycle_service import TaskLifecycleGroup, invoke_with_cancellation
+from app.services.ui_task_lifecycle_service import invoke_with_cancellation, task_lifecycle_for
 from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
 from core.logger import get_logger
@@ -23,14 +23,6 @@ from ui.tabs.base_stock_tab import BaseStockTab
 
 log = get_logger(__name__)
 _NA_DAILY_REFRESH_TASK = task_registry.workspace("na_daily_refresh")
-
-
-def _task_lifecycle_for(owner) -> TaskLifecycleGroup:
-    lifecycle = getattr(owner, "_task_lifecycle", None)
-    if lifecycle is None:
-        lifecycle = TaskLifecycleGroup(task_manager)
-        owner._task_lifecycle = lifecycle
-    return lifecycle
 
 
 def _build_refresh_payload(output_dir, cancellation_token):
@@ -62,7 +54,6 @@ class NADailyTab(BaseStockTab):
         except (TypeError, ValueError):
             self._runtime_start_delay_ms = 350
         self._na_daily_codes = set()
-        self._last_report_signature = ()
         self._status_primary = "等待北美战报"
         self._status_segments: list[str] = []
         self._status_freshness = ""
@@ -83,7 +74,6 @@ class NADailyTab(BaseStockTab):
         self._na_daily_service = self._resolve_na_daily_service()
         event_bus.sig_na_daily_updated.connect(self._on_na_daily_updated)
         self._render_service_cache()
-        self._initial_quotes_done = False
 
     def _ensure_runtime_started(self):
         if self._runtime_started:
@@ -99,9 +89,6 @@ class NADailyTab(BaseStockTab):
         if not scheduled:
             self._background_prime_loading = False
             self._background_prime_done = True
-
-    def _should_start_runtime_on_show(self) -> bool:
-        return BaseStockTab._should_start_interactive_runtime_on_show(self)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -246,12 +233,6 @@ class NADailyTab(BaseStockTab):
         self._status_next_step = str(next_step or "").strip()
         self._refresh_report_status()
 
-    def _get_na_daily_output_dir(self):
-        return self._na_daily_service._get_na_daily_output_dir()
-
-    def _list_recent_report_files(self, limit: int = 5):
-        return self._na_daily_service._list_recent_report_files(limit=limit)
-
     def _apply_na_daily_rows(
         self,
         final_list,
@@ -261,7 +242,6 @@ class NADailyTab(BaseStockTab):
         emit_event: bool = True,
         refresh_quotes: bool = True,
     ):
-        self._last_report_signature = report_signature
         self._current_report_files = list(report_files or [])
 
         if not report_files:
@@ -368,7 +348,7 @@ class NADailyTab(BaseStockTab):
                 self._na_daily_refresh_task_active = True
                 self._na_daily_refresh_generation += 1
                 generation = self._na_daily_refresh_generation
-                _task_lifecycle_for(self).run_background(
+                task_lifecycle_for(self, runner=task_manager).run_background(
                     "refresh",
                     partial(_build_refresh_payload, output_dir),
                     task_id=_NA_DAILY_REFRESH_TASK,
@@ -381,15 +361,6 @@ class NADailyTab(BaseStockTab):
             self._apply_na_daily_rows(service.rows, service.report_files, service.report_signature)
             return True
         return False
-
-    def _load_na_daily_incremental(self):
-        service = getattr(self, "_na_daily_service", None)
-        if service is not None:
-            result = service.refresh_incremental(emit_event=False)
-            if str(result.get("status") or "") == "skipped":
-                return
-            self._apply_na_daily_rows(service.rows, service.report_files, service.report_signature)
-            return
 
     def run_post_online_refresh(self) -> bool:
         self._load_na_daily_report()

@@ -7,28 +7,13 @@ from core import fund_holdings_sync as sync_module
 from core.task_errors import UserFacingTaskError
 
 
-class _FakeQ2Date(real_date):
-    @classmethod
-    def today(cls):
-        return cls(2026, 5, 10)
+def _fake_date(year, month, day):
+    class _FakeDate(real_date):
+        @classmethod
+        def today(cls):
+            return cls(year, month, day)
 
-
-class _FakeQ3BeforeQ2DisclosureDate(real_date):
-    @classmethod
-    def today(cls):
-        return cls(2026, 7, 9)
-
-
-class _FakeQ3AfterQ2DisclosureDate(real_date):
-    @classmethod
-    def today(cls):
-        return cls(2026, 9, 1)
-
-
-class _FakeQ1Date(real_date):
-    @classmethod
-    def today(cls):
-        return cls(2026, 2, 10)
+    return _FakeDate
 
 
 def test_candidate_qfii_payloads_only_fetches_current_and_previous_quarter(monkeypatch):
@@ -42,7 +27,7 @@ def test_candidate_qfii_payloads_only_fetches_current_and_previous_quarter(monke
             "raw_rows": [],
         }
 
-    monkeypatch.setattr(sync_module, "date", _FakeQ2Date)
+    monkeypatch.setattr(sync_module, "date", _fake_date(2026, 5, 10))
     monkeypatch.setattr(sync_module, "_fetch_qfii_quarter", _fake_fetch)
 
     quarter_payloads, resolved = sync_module._candidate_qfii_payloads()
@@ -80,7 +65,7 @@ def test_candidate_ruiyuan_payloads_only_keeps_current_and_previous_quarter(monk
             }
         return {}
 
-    monkeypatch.setattr(sync_module, "date", _FakeQ1Date)
+    monkeypatch.setattr(sync_module, "date", _fake_date(2026, 2, 10))
     monkeypatch.setattr(sync_module, "_fetch_ruiyuan_year", _fake_fetch_year)
 
     quarter_payloads, resolved = sync_module._candidate_ruiyuan_payloads()
@@ -168,7 +153,7 @@ def test_sync_qfii_auto_skips_and_clears_quarters_before_disclosure_deadline(mon
             ],
         },
     }
-    monkeypatch.setattr(sync_module, "date", _FakeQ3BeforeQ2DisclosureDate)
+    monkeypatch.setattr(sync_module, "date", _fake_date(2026, 7, 9))
     monkeypatch.setattr(sync_module, "_candidate_qfii_payloads", lambda quarter_key=None: (payloads, "2026Q3"))
     store = _RecordingStore()
 
@@ -210,7 +195,7 @@ def test_sync_qfii_auto_keeps_quarter_after_disclosure_deadline(monkeypatch):
             ],
         },
     }
-    monkeypatch.setattr(sync_module, "date", _FakeQ3AfterQ2DisclosureDate)
+    monkeypatch.setattr(sync_module, "date", _fake_date(2026, 9, 1))
     monkeypatch.setattr(sync_module, "_candidate_qfii_payloads", lambda quarter_key=None: (payloads, "2026Q3"))
     store = _RecordingStore()
 

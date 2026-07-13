@@ -25,12 +25,6 @@ class CacheManager:
     def _legacy_pickle_path(path: str) -> str:
         return f"{os.path.splitext(path)[0]}.pkl"
 
-    def _load_json(self, path: str):
-        return load_json_file(path)
-
-    def _save_json(self, path: str, data) -> None:
-        save_json_file(path, data)
-
     @staticmethod
     def _count_valid_rps_values(rps120) -> int:
         if isinstance(rps120, dict):
@@ -162,7 +156,7 @@ class CacheManager:
             raise BusinessRuleError("rps120/rps250 missing in rebuilt payload")
 
         payload = {"date": resolved_date, "rps120": rps120, "rps250": rps250}
-        self._save_json(self.rps_path, payload)
+        save_json_file(self.rps_path, payload)
         remove_cache_file(self._legacy_pickle_path(self.rps_path))
         engine.set_precomputed_rps(resolved_date, rps120, rps250)
         count = self._count_valid_rps_values(rps120)
@@ -179,7 +173,7 @@ class CacheManager:
         """
         try:
             if os.path.exists(self.rps_path):
-                payload = self._load_json(self.rps_path)
+                payload = load_json_file(self.rps_path)
                 cached_date = payload.get("date", "")
                 rps120 = payload.get("rps120")
                 rps250 = payload.get("rps250")

@@ -453,8 +453,6 @@ Windows 环境下可以在标题栏的系统菜单中勾选 `开机自启动`。
   - 按天滚动的应用日志
 - `data/crash_report.log`
   - `faulthandler` 写入的底层崩溃日志
-- `%LOCALAPPDATA%/ZijinYanxuan/Trade/`（可用 `VCP_HUNTER_TRADE_RECORD_DIR` 覆盖）
-  - 用户账户成交导出，仅保存在操作系统用户数据目录，不进入仓库
 - `tmp/runtime_health_*`、`tmp/perf_*`
   - 运行时健康、长稳、性能预算和 WebEngine 探针报告
 

@@ -18,6 +18,14 @@ from app.services.ui_task_service import background_job_runner as task_manager
 from app.services.ui_task_service import task_registry
 
 
+def _is_current_request(window, request_code: str, request_generation: int) -> bool:
+    return (
+        not getattr(window, "_closing", False)
+        and str(getattr(window, "code", "") or "").strip() == request_code
+        and int(getattr(window, "_render_generation", 0) or 0) == request_generation
+    )
+
+
 def _submit_owned_window_task(window, name, fn, on_success, task_suffix: str, timeout_sec: float) -> None:
     task_lifecycle_for(window, runner=task_manager).run_background(
         name,
@@ -158,13 +166,6 @@ def load_and_draw(window):
     request_code = str(getattr(window, "code", "") or "").strip()
     request_generation = int(getattr(window, "_render_generation", 0) or 0)
 
-    def _is_current_request() -> bool:
-        return (
-            not getattr(window, "_closing", False)
-            and str(getattr(window, "code", "") or "").strip() == request_code
-            and int(getattr(window, "_render_generation", 0) or 0) == request_generation
-        )
-
     if "." in request_code:
         window._load_asian_chart()
         return
@@ -215,7 +216,7 @@ def load_and_draw(window):
 
     def _on_fetch_success(result):
         try:
-            if not _is_current_request():
+            if not _is_current_request(window, request_code, request_generation):
                 return
             if not result:
                 return
@@ -259,13 +260,6 @@ def poll_rt_update(window):
     request_generation = int(getattr(window, "_render_generation", 0) or 0)
     data_provider = window.data_provider
 
-    def _is_current_request() -> bool:
-        return (
-            not getattr(window, "_closing", False)
-            and str(getattr(window, "code", "") or "").strip() == request_code
-            and int(getattr(window, "_render_generation", 0) or 0) == request_generation
-        )
-
     if market != "CN":
         quote = window._build_asian_rt_quote()
         if quote is not None:
@@ -286,7 +280,7 @@ def poll_rt_update(window):
             return exc
 
     def _on_fetch_success(result):
-        if not _is_current_request() or result is None:
+        if not _is_current_request(window, request_code, request_generation) or result is None:
             return
         if isinstance(result, Exception):
             _handle_rt_error(result)

@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 import weakref
+from contextlib import suppress
 from pathlib import Path
 
 from app.services.kline_webengine_preflight import check_qt_webengine_available
@@ -149,12 +150,10 @@ class KLineWindowManager:
             show_toast(f"{message}：{reason}", "warning", main_window, duration=3500)
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             log.debug(f"[K线管理] WebEngine 不可用提示失败: {exc}")
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             status_bar = main_window.statusBar() if main_window is not None else None
             if status_bar is not None:
                 status_bar.showMessage(f"{message}：{reason}", 5000)
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            pass
         record_metric(
             "kline_webengine_unavailable",
             1,
@@ -176,12 +175,10 @@ class KLineWindowManager:
             show_toast(message, "info", main_window, duration=2200)
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             log.debug(f"[K线管理] WebEngine 准备中提示失败: {exc}")
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             status_bar = main_window.statusBar() if main_window is not None else None
             if status_bar is not None:
                 status_bar.showMessage(message, 3000)
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            pass
         record_metric(
             "kline_webengine_preparing",
             1,
@@ -203,12 +200,10 @@ class KLineWindowManager:
             show_toast(f"{message}：{reason}", "warning", main_window, duration=3500)
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             log.debug(f"[K线管理] K线模块加载失败提示发送失败: {exc}")
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             status_bar = main_window.statusBar() if main_window is not None else None
             if status_bar is not None:
                 status_bar.showMessage(f"{message}：{reason}", 5000)
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            pass
         record_metric(
             "kline_window_module_unavailable",
             1,
@@ -227,13 +222,9 @@ class KLineWindowManager:
         self._prewarm_expire_timer = None
         if timer is None:
             return
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError):
             timer.stop()
             timer.deleteLater()
-        except RuntimeError:
-            pass
-        except (AttributeError, TypeError):
-            pass
 
     def _schedule_prewarm_expiry(self) -> None:
         ttl_ms = max(0, int(getattr(self, "_prewarm_ttl_ms", PREWARM_VIEW_TTL_MS) or 0))
@@ -260,14 +251,10 @@ class KLineWindowManager:
         self._cancel_prewarm_expire_timer()
         if view is None:
             return
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError):
             view.hide()
             view.setParent(None)
             view.deleteLater()
-        except RuntimeError:
-            pass
-        except (AttributeError, TypeError):
-            pass
         record_metric(
             "kline_webengine_prewarm_released",
             1,
@@ -410,18 +397,16 @@ class KLineWindowManager:
         # 清理已关闭/已销毁的窗口
         alive = []
         for chart in self._charts:
-            try:
+            # C++ 对象已被底层销毁时忽略即可。
+            with suppress(RuntimeError):
                 if chart.isVisible():
                     alive.append(chart)
-            except RuntimeError:
-                # C++ 对象已被底层销毁，忽略即可
-                pass
         self._charts = alive
 
         # 窗口数量到达上限时，关闭最旧的并给出 toast 提示
         while len(self._charts) >= MAX_CHART_WINDOWS:
             oldest = self._charts.pop(0)
-            try:
+            with suppress(RuntimeError):
                 # 提取旧窗口的标题用于 toast 提示
                 old_title = oldest.windowTitle() or "未知"
                 oldest.close()
@@ -437,8 +422,6 @@ class KLineWindowManager:
                     )
                 except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as _e:
                     log.debug(f"[K线管理] toast 提示发送失败: {_e}")
-            except RuntimeError:
-                pass
 
         # 构建 vcp_data 兜底
         if vcp_data is None:
@@ -458,11 +441,9 @@ class KLineWindowManager:
             current_idx=current_idx,
             browser=browser,
         )
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError):
             chart_ref = weakref.ref(chart)
             chart.destroyed.connect(lambda _obj=None, ref=chart_ref: self._remove_chart_ref(ref()))
-        except (AttributeError, RuntimeError, TypeError):
-            pass
         chart.show()
         try:
             chart.raise_()

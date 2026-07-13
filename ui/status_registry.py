@@ -41,14 +41,6 @@ _MARKET_STATUS_OVERRIDES = {
 
 _STATUS_OPEN_KEYWORDS = ("盘中", "交易中", "开盘")
 _STATUS_CLOSED_KEYWORDS = ("休市", "收盘", "闭市", "盘后")
-_RUNTIME_STATUS_LABEL = {
-    "idle": "静默",
-    "realtime": "实时",
-    "cache": "本地缓存",
-    "fallback": "远端失败沿用",
-    "error": "错误",
-    "working": "处理中",
-}
 
 
 def format_status_summary(primary: str, *segments: str) -> str:
@@ -145,22 +137,6 @@ def parse_status_summary(text: str) -> dict[str, object]:
     }
 
 
-def join_semantic_badges(*badge_groups) -> str:
-    badges: list[str] = []
-    for group in badge_groups:
-        if isinstance(group, (list, tuple, set)):
-            iterable = group
-        else:
-            iterable = [group]
-
-        for badge in iterable:
-            text = str(badge or "").strip()
-            if text and text not in badges:
-                badges.append(text)
-
-    return "｜".join(badges)
-
-
 def resolve_market_status_badge(raw_status: str, market: str) -> dict[str, str]:
     canonical_market = MarketCalendar.normalize_market(market)
     label = _MARKET_STATUS_OVERRIDES.get(canonical_market, {}).get(
@@ -230,22 +206,3 @@ def resolve_kline_runtime_badges(*, info_tone: str, is_offline: bool, market: st
         "session_text": session_text,
         "session_tone": session_tone,
     }
-
-
-def format_runtime_status_text(
-    state: str,
-    detail: str = "",
-    next_step: str = "",
-) -> str:
-    status_label = _RUNTIME_STATUS_LABEL.get(str(state or "").strip(), "处理中")
-    parts = [f"状态 {status_label}"]
-
-    detail_text = str(detail or "").strip()
-    if detail_text:
-        parts.append(f"说明 {detail_text}")
-
-    next_text = str(next_step or "").strip()
-    if next_text:
-        parts.append(f"下一步 {next_text}")
-
-    return format_status_summary(*parts)

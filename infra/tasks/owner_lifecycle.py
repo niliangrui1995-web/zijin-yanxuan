@@ -29,8 +29,10 @@ def _default_background_runner():
     return background_job_runner
 
 
-def invoke_with_cancellation(fn, cancellation_token: CancellationToken, *args, **kwargs):
+def invoke_with_cancellation(fn, cancellation_token: CancellationToken | None, *args, **kwargs):
     """Invoke a provider stage with a token when its public signature accepts it."""
+    if cancellation_token is None:
+        return fn(*args, **kwargs)
     cancellation_token.raise_if_cancelled()
     try:
         parameters = inspect.signature(fn).parameters.values()
@@ -263,7 +265,7 @@ class TaskLifecycleGroup:
 def task_lifecycle_for(owner, *, runner=None, attr_name: str = "_task_lifecycle") -> TaskLifecycleGroup:
     """Return the lifecycle group owned by one UI component, creating it lazily."""
     lifecycle = getattr(owner, attr_name, None)
-    if isinstance(lifecycle, TaskLifecycleGroup):
+    if lifecycle is not None:
         return lifecycle
     lifecycle = TaskLifecycleGroup(runner)
     setattr(owner, attr_name, lifecycle)
@@ -291,5 +293,3 @@ __all__ = [
     "shutdown_task_lifecycle_for_owner",
     "task_lifecycle_for",
 ]
-
-

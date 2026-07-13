@@ -13,14 +13,10 @@ from ui.styles.global_qss_sections import (
     build_toolbar_status_qss,
 )
 from ui.theme import theme_manager
-from ui.theme_tokens import build_ui_tokens, invalidate_ui_token_cache
+from ui.theme_tokens import _theme_cache_signature, build_ui_tokens, invalidate_ui_token_cache
 
 _GLOBAL_QSS_CACHE_MAX_SIZE = 8
 _GLOBAL_QSS_CACHE: dict[tuple[int, str, tuple[tuple[str, str], ...]], str] = {}
-
-
-def _theme_cache_signature(theme: dict) -> tuple[tuple[str, str], ...]:
-    return tuple(sorted((str(key), repr(value)) for key, value in theme.items()))
 
 
 def _global_qss_cache_key(theme: dict, density: str) -> tuple[int, str, tuple[tuple[str, str], ...]]:
