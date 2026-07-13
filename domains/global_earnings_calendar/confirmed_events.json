@@ -557,6 +557,42 @@
       "original_timezone": "America/New_York",
       "call_time_source_url": "https://investors.micron.com/events/event-details/microns-third-quarter-2026-financial-call",
       "call_time_source_type": "official_ir_event"
+    },
+    {
+      "company": "Mycronic",
+      "ticker": "MYCR.ST",
+      "sector": "AI PCB设备与关键耗材",
+      "report_date": "2026-07-14",
+      "fiscal_period": "Jun/2026",
+      "time_label": "10:00 CEST results presentation webcast with Q&A",
+      "beijing_time": "2026-07-14 16:00",
+      "status": "confirmed",
+      "source": "confirmed",
+      "priority": "normal",
+      "conference_url": "https://www.youtube.com/live/mz7jaU9VnIE",
+      "market": "SE",
+      "original_call_time_text": "The presentation will be held on July 14, 2026, at 10:00 a.m. CEST.",
+      "original_timezone": "Europe/Stockholm",
+      "call_time_source_url": "https://www.mycronic.com/news-events/our-press-releases/invitation-to-the-presentation-of-mycronics-q2-2026/",
+      "call_time_source_type": "official_ir_press_release"
+    },
+    {
+      "company": "ASML",
+      "ticker": "ASML",
+      "sector": "前道晶圆设备与量测",
+      "report_date": "2026-07-15",
+      "fiscal_period": "Jun/2026",
+      "time_label": "15:00 CEST investor call",
+      "beijing_time": "2026-07-15 21:00",
+      "status": "confirmed",
+      "source": "confirmed",
+      "priority": "super_giant",
+      "conference_url": "https://www.asml.com/en/investors/financial-results/q2-2026",
+      "market": "US",
+      "original_call_time_text": "Investor call at 15:00 CEST on Wednesday, July 15, 2026.",
+      "original_timezone": "Europe/Amsterdam",
+      "call_time_source_url": "https://www.asml.com/en/investors/financial-results/q2-2026",
+      "call_time_source_type": "official_ir_webcast"
     }
   ]
 }
