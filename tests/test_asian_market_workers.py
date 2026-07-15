@@ -187,10 +187,8 @@ def test_asian_display_modules_do_not_read_business_files_directly():
             for node in ast.walk(tree)
             if isinstance(node, ast.Call)
             and (
-                isinstance(node.func, ast.Name)
-                and node.func.id == "open"
-                or isinstance(node.func, ast.Attribute)
-                and node.func.attr == "open"
+                (isinstance(node.func, ast.Name) and node.func.id == "open")
+                or (isinstance(node.func, ast.Attribute) and node.func.attr == "open")
             )
         ]
 

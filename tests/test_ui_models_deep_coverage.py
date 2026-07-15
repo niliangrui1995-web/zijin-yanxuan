@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import time
+from contextlib import contextmanager
+from dataclasses import replace
 
 import pytest
 from PyQt6.QtCore import QMimeData, QModelIndex, QRect, Qt
@@ -34,7 +36,9 @@ def test_table_models_obey_qt_model_contract_during_mutations():
         ["代码", "名称", "现价", "涨幅%"],
         [{"代码": "000001", "名称": "A", "现价": "10", "涨幅%": "1"}],
     )
-    realtime = RtTableModel([{"\u4ee3\u7801": "000001", "\u540d\u79f0": "A", "\u73b0\u4ef7": "10", "\u6da8\u5e45%": "1"}])
+    realtime = RtTableModel(
+        [{"\u4ee3\u7801": "000001", "\u540d\u79f0": "A", "\u73b0\u4ef7": "10", "\u6da8\u5e45%": "1"}]
+    )
 
     stock_tester = QAbstractItemModelTester(stock, QAbstractItemModelTester.FailureReportingMode.Warning)
     realtime_tester = QAbstractItemModelTester(realtime, QAbstractItemModelTester.FailureReportingMode.Warning)
@@ -479,7 +483,9 @@ def test_stock_quote_update_non_trade_history_and_no_quote_columns(monkeypatch):
             "zongguben": 1,
         },
     )
-    monkeypatch.setattr(stock_module, "calculate_buy_point_from_history", lambda **kwargs: histories.append(kwargs["history"]) or "")
+    monkeypatch.setattr(
+        stock_module, "calculate_buy_point_from_history", lambda **kwargs: histories.append(kwargs["history"]) or ""
+    )
     monkeypatch.setattr(stock_module, "record_metric", lambda *args, **kwargs: None)
     from app.services.ui_market_calendar_service import MarketCalendar
 
@@ -571,7 +577,14 @@ def test_stock_display_font_foreground_background_and_sort_boundaries(monkeypatc
     assert _valid_color(model._base_foreground_value("变化类型", "新进", row))
     assert _valid_color(model._base_foreground_value("评级", "A", row))
 
-    for key, raw in (("涨幅%", "10"), ("涨幅%", "1"), ("涨幅%", "-10"), ("涨幅%", "-1"), ("涨幅%", "0"), ("涨幅%", "bad")):
+    for key, raw in (
+        ("涨幅%", "10"),
+        ("涨幅%", "1"),
+        ("涨幅%", "-10"),
+        ("涨幅%", "-1"),
+        ("涨幅%", "0"),
+        ("涨幅%", "bad"),
+    ):
         assert _valid_color(model._market_move_foreground_value(key, raw, row))
     assert model._market_move_foreground_value("名称", "1", row) is None
     assert _valid_color(model._broker_foreground_value("卖方营业部", "高盛"))
@@ -628,7 +641,10 @@ def test_stock_data_role_dispatch_header_and_badge_suppression():
         model.data(idx, role)
     assert model.data(idx, Qt.ItemDataRole.UserRole + 99) is None
     assert model.headerData(0, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) == "序号"
-    assert model.headerData(0, Qt.Orientation.Horizontal, Qt.ItemDataRole.TextAlignmentRole) & Qt.AlignmentFlag.AlignCenter.value
+    assert (
+        model.headerData(0, Qt.Orientation.Horizontal, Qt.ItemDataRole.TextAlignmentRole)
+        & Qt.AlignmentFlag.AlignCenter.value
+    )
     assert model.headerData(0, Qt.Orientation.Vertical, Qt.ItemDataRole.DisplayRole) is None
     assert model._status_badge_value("买点", stock_module.BUY_POINT_TEXT) is None
     model.set_plain_style_headers(["状态"])
@@ -661,14 +677,21 @@ def test_rt_model_identity_update_guards_and_public_accessors():
     model._record_row_flashes(0, "bad", {})
     assert not model._flash_records
 
-    assert model.update_rows_incremental([{"\u4ee3\u7801": "1", "\u540d\u79f0": "A2"}, {"\u4ee3\u7801": "2", "\u540d\u79f0": "B"}])
+    assert model.update_rows_incremental(
+        [{"\u4ee3\u7801": "1", "\u540d\u79f0": "A2"}, {"\u4ee3\u7801": "2", "\u540d\u79f0": "B"}]
+    )
     assert model.update_rows_incremental([{"\u4ee3\u7801": "2"}, {"\u4ee3\u7801": "1"}])
     assert not model.update_rows_incremental([{"\u4ee3\u7801": "3"}])
 
 
 def test_rt_quote_updates_cover_missing_columns_unmatched_rows_and_cap_optional(monkeypatch):
     assert RtTableModel().update_quotes({"1": {}}) is None
-    model = RtTableModel([{"\u4ee3\u7801": "1", "\u73b0\u4ef7": "10", "\u6da8\u5e45%": "0", "\u5e02\u503c": "10\u4ebf"}, {"\u4ee3\u7801": ""}])
+    model = RtTableModel(
+        [
+            {"\u4ee3\u7801": "1", "\u73b0\u4ef7": "10", "\u6da8\u5e45%": "0", "\u5e02\u503c": "10\u4ebf"},
+            {"\u4ee3\u7801": ""},
+        ]
+    )
     monkeypatch.setattr(
         rt_module,
         "_apply_quote_metrics_to_row",
@@ -764,7 +787,10 @@ def test_rt_display_font_foreground_sort_and_role_dispatch():
         model.data(idx, role)
     assert model.data(idx, Qt.ItemDataRole.UserRole + 99) is None
     assert model.headerData(0, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) == "序号"
-    assert model.headerData(0, Qt.Orientation.Horizontal, Qt.ItemDataRole.TextAlignmentRole) & Qt.AlignmentFlag.AlignCenter.value
+    assert (
+        model.headerData(0, Qt.Orientation.Horizontal, Qt.ItemDataRole.TextAlignmentRole)
+        & Qt.AlignmentFlag.AlignCenter.value
+    )
     assert model.headerData(0, Qt.Orientation.Vertical, Qt.ItemDataRole.DisplayRole) is None
 
 
@@ -810,7 +836,9 @@ def test_proxy_serial_roles_sort_comparison_and_filters(monkeypatch):
     assert proxy.rowCount() == 1
     proxy._exact_column_filters = {}
 
-    monkeypatch.setattr("ui.models.table_model_views.SearchFilter.match_pinyin_or_text", lambda query, code, name: query in code)
+    monkeypatch.setattr(
+        "ui.models.table_model_views.SearchFilter.match_pinyin_or_text", lambda query, code, name: query in code
+    )
     proxy.setFilterText("000001")
     assert proxy.rowCount() == 1
     proxy.setFilterText("独有词")
@@ -884,3 +912,473 @@ def test_delegate_simple_paint_path_restores_painter(qt_application):
     finally:
         painter.end()
         widget.deleteLater()
+
+
+class _PaintWidget(QWidget):
+    def __init__(self, current=QModelIndex(), sorted_column=-1):
+        super().__init__()
+        self._current = current
+        self._sorted_column = sorted_column
+
+    def currentIndex(self):
+        return self._current
+
+    def sorted_column(self):
+        return self._sorted_column
+
+
+@contextmanager
+def _paint_context(
+    *,
+    text="value",
+    tooltip=None,
+    pill_color=None,
+    visual_payload=None,
+    flash_data=None,
+    rail_color=None,
+    plain_style=False,
+    foreground=None,
+    font=None,
+    alignment=None,
+    state=QStyle.StateFlag.State_None,
+    width=180,
+    height=32,
+    sorted_column=-1,
+    current=True,
+    suppress_left_rails=False,
+    show_current_indicator=False,
+):
+    model = QStandardItemModel(1, 1)
+    index = model.index(0, 0)
+    model.setData(index, text, Qt.ItemDataRole.DisplayRole)
+    if tooltip is not None:
+        model.setData(index, tooltip, Qt.ItemDataRole.ToolTipRole)
+    if pill_color is not None:
+        model.setData(index, pill_color, Qt.ItemDataRole.UserRole + 2)
+    if visual_payload is not None:
+        model.setData(index, visual_payload, Qt.ItemDataRole.UserRole + 5)
+    if flash_data is not None:
+        model.setData(index, flash_data, Qt.ItemDataRole.UserRole + 1)
+    if rail_color is not None:
+        model.setData(index, rail_color, Qt.ItemDataRole.UserRole + 4)
+    model.setData(index, plain_style, Qt.ItemDataRole.UserRole + 3)
+    if foreground is not None:
+        model.setData(index, foreground, Qt.ItemDataRole.ForegroundRole)
+    if font is not None:
+        model.setData(index, font, Qt.ItemDataRole.FontRole)
+    if alignment is not None:
+        model.setData(index, alignment, Qt.ItemDataRole.TextAlignmentRole)
+
+    widget = _PaintWidget(index if current else QModelIndex(), sorted_column)
+    widget.setProperty("suppressLeftRails", suppress_left_rails)
+    widget.setProperty("showCurrentCellIndicator", show_current_indicator)
+    option = QStyleOptionViewItem()
+    option.rect = QRect(0, 0, width, height)
+    option.state = state
+    option.widget = widget
+    option.font = QFont("Segoe UI", 10)
+    option.palette = widget.palette()
+    option.textElideMode = Qt.TextElideMode.ElideRight
+    opt = QStyleOptionViewItem(option)
+    opt.text = str(text or "")
+
+    image = QImage(max(1, width), max(1, height), QImage.Format.Format_ARGB32)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    ctx = renderers.build_stock_cell_context(
+        painter=painter,
+        option=option,
+        opt=opt,
+        index=index,
+        style=widget.style(),
+        widget=widget,
+        flash_duration=0.5,
+    )
+    try:
+        yield ctx, image
+    finally:
+        painter.end()
+        widget.deleteLater()
+
+
+def test_renderer_context_derives_selection_sort_rail_and_current_state():
+    with _paint_context(
+        rail_color="#ff0000",
+        sorted_column=0,
+        show_current_indicator=True,
+        current=True,
+    ) as (ctx, _image):
+        assert ctx.show_accent_rail is True
+        assert ctx.rail_width > 0
+        assert ctx.is_current is True
+        assert ctx.sorted_overlay is not None
+        assert ctx.suppress_left_rails is False
+
+    selected = QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_MouseOver
+    with _paint_context(
+        rail_color="#ff0000",
+        sorted_column=0,
+        state=selected,
+        suppress_left_rails=True,
+    ) as (ctx, _image):
+        assert ctx.is_selected and ctx.is_hovered
+        assert not ctx.show_accent_rail
+        assert ctx.rail_color is None
+        assert ctx.sorted_overlay is None
+
+    with _paint_context(plain_style=True, sorted_column=0, current=False) as (ctx, _image):
+        assert ctx.sorted_overlay is None
+        assert not ctx.is_current
+
+
+@pytest.mark.parametrize(
+    ("text", "pill_color", "visual_payload", "tooltip"),
+    [
+        ("触发", "#ff0000", None, None),
+        ("龙虎榜", None, {"kind": "tag_badges", "tags": [{"text": "龙虎榜", "color": "#ff0000"}]}, None),
+        ("1200", None, {"kind": "money_bar", "value": 1200, "max_abs": 2400}, None),
+        ("-1200", None, {"kind": "money_bar", "value": -1200, "max_abs": 2400}, None),
+        ("", None, {"kind": "risk_light", "tone": "error"}, None),
+        ("交易中", None, {"kind": "status_light", "tone": "success", "pulse": True}, None),
+        ("12.34", None, {"kind": "currency_stamp", "stamp": "HK$"}, None),
+        ("这是一段超过十二个字的长文本", None, None, "完整提示"),
+        ("short", None, None, None),
+    ],
+)
+def test_render_stock_cell_routes_each_visual_payload(text, pill_color, visual_payload, tooltip):
+    with _paint_context(
+        text=text,
+        pill_color=pill_color,
+        visual_payload=visual_payload,
+        tooltip=tooltip,
+        foreground=QColor("#123456"),
+        font=QFont("Segoe UI", 10),
+        alignment=int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+    ) as (ctx, image):
+        renderers.render_stock_cell(ctx)
+        assert ctx.painter.isActive()
+        assert any(image.pixelColor(x, y).alpha() > 0 for x in range(image.width()) for y in range(image.height()))
+
+
+def test_renderer_text_style_content_rect_and_plain_text_fallbacks():
+    with _paint_context(text="abcdef", width=80, foreground=QColor("#123456"), font=QFont("Consolas", 11)) as (
+        ctx,
+        _image,
+    ):
+        ctx.rail_width = 3
+        text_color, alignment = renderers._resolve_text_style(ctx)
+        assert text_color.name() == "#123456"
+        assert alignment & Qt.AlignmentFlag.AlignLeft.value
+        assert renderers._content_rect(ctx).left() == 15
+        renderers._draw_plain_text(ctx, "abcdef", fade=True)
+        renderers._draw_plain_text(
+            ctx,
+            "abcdef",
+            alignment_override=int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
+        )
+
+    selected = QStyle.StateFlag.State_Selected
+    with _paint_context(text="fallback", state=selected) as (ctx, _image):
+        ctx.opt.font = QFont("Segoe UI", 9)
+        color, alignment = renderers._resolve_text_style(ctx)
+        assert color.isValid()
+        assert alignment & Qt.AlignmentFlag.AlignLeft.value
+
+
+def test_current_indicator_and_selected_marker_cover_size_and_alpha_branches():
+    with _paint_context(
+        show_current_indicator=True,
+        current=True,
+        state=QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_MouseOver,
+    ) as (ctx, _image):
+        ctx.table_tokens = dict(ctx.table_tokens)
+        ctx.table_tokens["selected_hover_bg"] = "rgba(10, 20, 30, 0.5)"
+        renderers._draw_current_cell_indicator(ctx)
+        renderers._clear_default_selected_left_marker(ctx)
+
+    with _paint_context(show_current_indicator=False) as (ctx, _image):
+        renderers._draw_current_cell_indicator(ctx)
+        renderers._clear_default_selected_left_marker(ctx)
+
+    with _paint_context(width=4, height=4, show_current_indicator=True, current=True) as (ctx, _image):
+        renderers._draw_current_cell_indicator(ctx)
+
+
+def test_flash_background_and_rail_cover_direction_timing_and_suppression(monkeypatch):
+    monkeypatch.setattr(renderers.time, "time", lambda: 100.0)
+    with _paint_context() as (ctx, _image):
+        renderers._draw_flash_background(ctx)
+        renderers._draw_flash_rail(ctx)
+
+        for flash_data in (
+            "invalid",
+            {"time": 101.0, "diff": 1},
+            {"time": 99.0, "diff": 1},
+            {"time": 99.8, "diff": 1},
+            {"time": 99.8, "diff": -1},
+            {"time": 99.8, "diff": 0},
+        ):
+            flash_ctx = replace(ctx, flash_data=flash_data)
+            renderers._draw_flash_background(flash_ctx)
+            renderers._draw_flash_rail(flash_ctx)
+
+        renderers._draw_flash_rail(replace(ctx, flash_data={"time": 99.8, "diff": 1}, suppress_left_rails=True))
+
+
+def test_left_rail_covers_selected_hover_accent_and_invalid_width():
+    with _paint_context(rail_color="#ff0000") as (ctx, _image):
+        renderers._draw_left_rail(replace(ctx, show_selected_rail=False, show_accent_rail=False, show_hover_rail=False))
+        renderers._draw_left_rail(replace(ctx, show_selected_rail=True, rail_width=0))
+        renderers._draw_left_rail(replace(ctx, show_selected_rail=True, rail_width=3))
+        renderers._draw_left_rail(
+            replace(ctx, show_selected_rail=False, show_accent_rail=False, show_hover_rail=True, rail_width=3)
+        )
+        renderers._draw_left_rail(
+            replace(ctx, show_selected_rail=False, show_accent_rail=True, show_hover_rail=False, rail_width=3)
+        )
+
+
+def test_money_bar_tag_badges_and_indicator_edge_inputs():
+    with _paint_context(width=180) as (ctx, _image):
+        renderers._draw_money_bar(ctx, {"value": "bad", "max_abs": 1})
+        renderers._draw_money_bar(ctx, {"value": 0, "max_abs": 1})
+        renderers._draw_money_bar(ctx, {"value": 1, "max_abs": 2})
+        renderers._draw_money_bar(ctx, {"value": -1, "max_abs": 2})
+
+        assert renderers._draw_tag_badges(ctx, {}) is False
+        assert renderers._draw_tag_badges(ctx, {"tags": [{}]}) is False
+        assert renderers._draw_tag_badges(
+            ctx,
+            {
+                "tags": [
+                    {"text": "A", "color": "not-a-color"},
+                    {"text": "B", "color": "#00ff00"},
+                    {"text": "C", "color": "#0000ff"},
+                    {"text": "D", "color": "#ff00ff"},
+                    {"text": "E", "color": "#ffffff"},
+                ]
+            },
+        )
+        assert renderers._draw_indicator(ctx, {"tone": "warning"}, center_only=True)
+        assert renderers._draw_indicator(ctx, {"tone": "offline", "pulse": False, "label": None}, center_only=False)
+
+    with _paint_context(width=20) as (ctx, _image):
+        assert renderers._draw_tag_badges(ctx, {"tags": [{"text": "too-wide"}]}) is False
+
+    for tone in ("success", "warning", "error", "offline", "neutral", "unknown"):
+        assert _valid_color(renderers._indicator_color(tone))
+
+
+def test_currency_stamp_and_pill_cover_blank_stamp_alignment_and_color_fallback(monkeypatch):
+    with _paint_context(text="12.34") as (ctx, _image):
+        renderers._draw_currency_stamp(ctx, {"stamp": ""})
+        renderers._draw_currency_stamp(ctx, {"stamp": "NT$"})
+
+    with _paint_context(
+        text="触发",
+        pill_color="#ff0000",
+        alignment=int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+        rail_color="#00ff00",
+    ) as (ctx, _image):
+        original_c = renderers._c
+        monkeypatch.setattr(
+            renderers, "_c", lambda token: "invalid-color" if token == "INFO_BADGE_FG" else original_c(token)
+        )
+        renderers._draw_pill(ctx)
+
+    with _paint_context(
+        text="触发",
+        pill_color="#ff0000",
+        alignment=int(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter),
+    ) as (ctx, _image):
+        renderers._draw_pill(ctx)
+
+
+def test_delegate_normal_paint_path_uses_renderer(qt_application):
+    model = QStandardItemModel(1, 1)
+    index = model.index(0, 0)
+    model.setData(index, "normal", Qt.ItemDataRole.DisplayRole)
+    widget = _PaintWidget(index, 0)
+    option = QStyleOptionViewItem()
+    option.rect = QRect(0, 0, 120, 30)
+    option.widget = widget
+    image = QImage(120, 30, QImage.Format.Format_ARGB32)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    try:
+        StockItemDelegate(widget).paint(painter, option, index)
+        assert painter.isActive()
+    finally:
+        painter.end()
+        widget.deleteLater()
+
+
+def test_stock_remaining_public_branches_keep_safe_coverage_margin():
+    model = _stock(
+        ["代码", "名称", "现价", "涨幅%", "市值", "状态", "上榜净买额(万)"],
+        [
+            {
+                "代码": "1",
+                "名称": "A",
+                "现价": "10",
+                "涨幅%": "1",
+                "市值": "1234亿",
+                "状态": "交易中",
+                "上榜净买额(万)": 1,
+            },
+            {
+                "代码": "2",
+                "名称": "B",
+                "现价": "20",
+                "涨幅%": "2",
+                "市值": "2345亿",
+                "状态": "收盘",
+                "上榜净买额(万)": 2,
+            },
+        ],
+    )
+    row = model.row_data[0]
+
+    assert model.get_row_data(0) is row
+    assert StockTableModel._source_badge_color("手动自选")
+    assert StockTableModel._source_badge_color("其他")
+    assert model._money_value_for_visual("外资净买入", {"外资净买(万)": "3"}) == 3
+    assert StockTableModel._indicator_tone("绿色安全") == "success"
+    assert model._currency_stamp_payload("名称", row) is None
+
+    model._headers.append("货币")
+    row["货币"] = "--"
+    assert model._currency_stamp_payload("现价", row) is None
+    model._headers.remove("货币")
+
+    emissions = []
+    model.dataChanged.connect(lambda *args: emissions.append(args))
+    assert model.set_cell_value(0, "现价", "11", emit_signal=True)
+    assert emissions
+    assert model._display_value(0, "买点", stock_module.BUY_POINT_TEXT, row) == stock_module.BUY_POINT_TRIGGER_ICON
+    assert model._display_value(0, "市值", "1234亿", row) == "1,234亿"
+    assert model._display_value(0, "涨幅%", "1", row) == "+1.00%"
+    assert StockTableModel._percent_display_value("涨幅%", "--") == "--"
+    assert model._alignment_value("风控", "") & Qt.AlignmentFlag.AlignCenter.value
+    assert model._font_value("代码", "1", row) is model.bold_mono_font
+    assert model._font_value("评分", "80", row) is model.mono_font
+
+    model.set_muted_text_headers(["名称"])
+    assert _valid_color(model._base_foreground_value("名称", "A", row))
+    model.set_plain_style_headers(["名称"])
+    assert _valid_color(model._base_foreground_value("名称", "A", row))
+    assert _valid_color(model._market_move_foreground_value("现价", "10", {"涨幅%": "2"}))
+    assert model._amount_foreground_value("成交金额(万元)", "9999") is None
+
+    for value in (-1, 0, "bad"):
+        model._foreign_net_foreground_value("外资净买入", {"外资净买(万)": value})
+    assert _valid_color(model._elasticity_foreground_value("股价弹性", "低"))
+    assert _valid_color(model._foreground_value("未知列", "x", row))
+    assert StockTableModel._uncached_sort_value(0, "序号", 99, row) == 1
+    assert StockTableModel._uncached_sort_value(0, "最近上榜", "07-14", {}) == 7.0
+    assert StockTableModel._uncached_sort_value(0, "日报时间", "x", {}) == "x"
+
+    reordered = [dict(model.row_data[1]), dict(model.row_data[0])]
+    model.update_data(reordered, hydrate_latest_quotes=False)
+    assert [item["代码"] for item in model.row_data] == ["2", "1"]
+    model.update_data([dict(item) for item in model.row_data], hydrate_latest_quotes=False)
+
+
+def test_rt_update_data_and_remaining_role_branches():
+    model = RtTableModel(
+        [
+            {"\u4ee3\u7801": "1", "\u73b0\u4ef7": "10", "\u6da8\u5e45%": "1"},
+            {"\u4ee3\u7801": "2", "\u73b0\u4ef7": "20", "\u6da8\u5e45%": "2"},
+        ]
+    )
+    model.update_data(
+        [
+            {"\u4ee3\u7801": "2", "\u73b0\u4ef7": "21", "\u6da8\u5e45%": "3"},
+            {"\u4ee3\u7801": "1", "\u73b0\u4ef7": "11", "\u6da8\u5e45%": "2"},
+        ]
+    )
+    assert [row["代码"] for row in model.row_data] == ["2", "1"]
+    model.update_data([{"\u4ee3\u7801": "3"}])
+    assert model.row_data[0]["代码"] == "3"
+    assert model._font_value("PE", "12", {}) is model.mono_font
+
+    model = RtTableModel([{"\u4ee3\u7801": "1", "\u6da8\u5e45%": "3", "\u7a81\u7834\u72b6\u6001": "--"}])
+    pct_idx = model.index(0, model.headers.index("涨幅%"))
+    assert _valid_color(model.data(pct_idx, Qt.ItemDataRole.BackgroundRole))
+    status_idx = model.index(0, model.headers.index("突破状态"))
+    assert model.data(status_idx, Qt.ItemDataRole.UserRole + 2) is None
+
+
+def test_proxy_comparison_right_placeholder_and_empty_source_mime():
+    plain = QStandardItemModel(2, 1)
+    plain.setData(plain.index(0, 0), "10", Qt.ItemDataRole.DisplayRole)
+    plain.setData(plain.index(1, 0), "--", Qt.ItemDataRole.DisplayRole)
+    proxy = RtSortFilterProxyModel()
+    proxy.setSourceModel(plain)
+    assert not proxy.lessThan(plain.index(0, 0), plain.index(1, 0))
+    assert not proxy.mimeData([QModelIndex()]).hasFormat("application/x-watchlist-row")
+
+
+def test_renderer_unknown_payload_opaque_selection_and_pixel_font_branch():
+    with _paint_context(visual_payload={"kind": "unknown"}) as (ctx, _image):
+        renderers.render_stock_cell(ctx)
+
+    with _paint_context(state=QStyle.StateFlag.State_Selected) as (ctx, _image):
+        ctx.table_tokens = dict(ctx.table_tokens)
+        ctx.table_tokens["selected_bg"] = "#112233"
+        renderers._clear_default_selected_left_marker(ctx)
+
+    with _paint_context(text="12.34") as (ctx, _image):
+        pixel_font = QFont()
+        pixel_font.setPixelSize(10)
+        ctx.opt.font = pixel_font
+        renderers._draw_currency_stamp(ctx, {"stamp": "HK$"})
+
+
+def test_helper_config_failure_and_empty_metric_branches(monkeypatch):
+    from app.services import ui_config_service
+
+    class _BrokenConfig:
+        def __getattribute__(self, name):
+            if name == "table_density":
+                raise RuntimeError("settings unavailable")
+            return object.__getattribute__(self, name)
+
+    monkeypatch.setattr(ui_config_service, "app_config", _BrokenConfig())
+    helpers.invalidate_table_token_cache()
+    assert helpers._current_table_density() is None
+
+    monkeypatch.setattr(
+        helpers,
+        "resolve_quote_metrics",
+        lambda _row, _quote: {
+            "zongguben": 0,
+            "price_text": None,
+            "pct": None,
+            "market_cap_text": None,
+        },
+    )
+    assert helpers._apply_quote_metrics_to_row({}, {})[0] is False
+    assert helpers._strong_market_pct_from_row({"涨幅%": "bad", "涨幅": None}) is None
+    assert helpers._normalized_alignment_text("名称", "") == ""
+    helpers.invalidate_table_token_cache("舒适")
+
+
+def test_stock_quote_hydration_guards_and_exception(monkeypatch):
+    no_code = _stock(["名称", "现价"], [{"名称": "A", "现价": "10"}])
+    assert no_code._hydrate_latest_quotes_from_store() is None
+    no_quote_fields = _stock(["代码", "名称"], [{"代码": "1", "名称": "A"}])
+    assert no_quote_fields._hydrate_latest_quotes_from_store() is None
+
+    from core.global_store import global_store
+
+    monkeypatch.setattr(global_store, "get_latest_quotes", lambda: (_ for _ in ()).throw(RuntimeError("offline")))
+    model = _stock(["代码", "现价"], [{"代码": "1", "现价": "10"}])
+    assert model._hydrate_latest_quotes_from_store() is None
+
+
+def test_proxy_serial_unknown_role_falls_back_to_source_model():
+    source = _stock(["代码"], [{"代码": "1"}])
+    proxy = RtSortFilterProxyModel()
+    proxy.setSourceModel(source)
+    assert proxy.data(proxy.index(0, 0), Qt.ItemDataRole.UserRole + 99) is None

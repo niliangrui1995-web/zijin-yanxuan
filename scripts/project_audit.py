@@ -43,7 +43,7 @@ DEPENDENCY_AUDIT_OUTPUT = "tmp/dependency_audit.json"
 HTTP_SAFETY_AUDIT_OUTPUT = "tmp/http_safety_audit.json"
 COVERAGE_REPORT_OUTPUT = "tmp/coverage.json"
 COVERAGE_TARGETS = ("app", "core", "domains", "infra", "ui", "vcp")
-COVERAGE_FAIL_UNDER = 60
+COVERAGE_FAIL_UNDER = 90
 TYPE_CHECK_TARGETS = (
     "app/services",
     "domains/quotes",

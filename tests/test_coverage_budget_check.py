@@ -18,6 +18,7 @@ def _summary(*, covered_lines: int, statements: int, covered_branches: int = 0, 
 
 def test_coverage_budgets_cover_six_canonical_packages_and_realtime_runtime():
     assert set(COVERAGE_PACKAGE_BUDGETS) == {"app", "core", "domains", "infra", "ui", "vcp"}
+    assert all(budget >= 90.0 for budget in COVERAGE_PACKAGE_BUDGETS.values())
     assert COVERAGE_FILE_BUDGETS["vcp/realtime_quote_runtime.py"] == 80.0
 
 

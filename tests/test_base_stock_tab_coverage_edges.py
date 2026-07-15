@@ -3,11 +3,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
-from PyQt6.QtCore import QModelIndex, Qt
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QStandardItem, QStandardItemModel
 from PyQt6.QtTest import QSignalSpy, QTest
-from PyQt6.QtWidgets import QLabel, QLineEdit, QPushButton, QTableView, QToolButton, QWidget
+from PyQt6.QtWidgets import QLabel, QLineEdit, QPushButton, QTableView, QToolButton
 
 from core.event_bus import event_bus
 from ui.tabs import base_stock_tab as module

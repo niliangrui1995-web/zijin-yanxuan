@@ -7,12 +7,12 @@ import sys
 from pathlib import Path
 
 COVERAGE_PACKAGE_BUDGETS = {
-    "app": 82.0,
-    "core": 68.0,
-    "domains": 84.0,
+    "app": 90.0,
+    "core": 90.0,
+    "domains": 90.0,
     "infra": 90.0,
-    "ui": 64.0,
-    "vcp": 52.0,
+    "ui": 90.0,
+    "vcp": 90.0,
 }
 COVERAGE_FILE_BUDGETS = {
     "vcp/realtime_quote_runtime.py": 80.0,

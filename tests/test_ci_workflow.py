@@ -38,7 +38,7 @@ def test_ci_default_test_job_runs_full_pytest_with_coverage_budgets():
 
     assert "- name: Full regression suite with coverage budgets" in text
     assert "--cov-branch --cov=app --cov=core --cov=domains --cov=infra --cov=ui --cov=vcp" in text
-    assert "--cov-fail-under=60" in text
+    assert "--cov-fail-under=90" in text
     assert "python scripts/coverage_budget_check.py --input tmp/coverage.json" in text
 
 
